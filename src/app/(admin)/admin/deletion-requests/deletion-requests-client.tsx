@@ -27,6 +27,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  AdminViewOnlyNotice,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action";
+import {
+  ADMIN_VIEW_ONLY_ACTION_REASON,
+  useAdminAreaEditAccess,
+} from "@/hooks/use-admin-area-edit-access";
 
 interface DeletionRequestMember {
   id: string;
@@ -93,6 +101,9 @@ export default function DeletionRequestsClient({
 }: {
   sessionMemberId: string;
 }) {
+  // Approve/reject write the membership-area deletion routes; a view-only
+  // membership admin browses the queues but cannot act (#1997).
+  const canEdit = useAdminAreaEditAccess("membership");
   const [statusFilter, setStatusFilter] = useState("PENDING");
   const [page, setPage] = useState(1);
   const [data, setData] = useState<ApiResponse | null>(null);
@@ -189,6 +200,13 @@ export default function DeletionRequestsClient({
         </p>
       </div>
 
+      {!canEdit && (
+        <AdminViewOnlyNotice canEdit={canEdit}>
+          Your admin role can view deletion requests but cannot approve or reject
+          them.
+        </AdminViewOnlyNotice>
+      )}
+
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
@@ -273,7 +291,8 @@ export default function DeletionRequestsClient({
                     </div>
                     {req.status === "PENDING" && (
                       <div className="flex gap-2 shrink-0">
-                        <Button
+                        <ViewOnlyActionButton
+                          canEdit={canEdit}
                           size="sm"
                           variant="outline"
                           className="text-red-600 border-red-200 hover:bg-red-50"
@@ -282,8 +301,9 @@ export default function DeletionRequestsClient({
                           }
                         >
                           Reject
-                        </Button>
-                        <Button
+                        </ViewOnlyActionButton>
+                        <ViewOnlyActionButton
+                          canEdit={canEdit}
                           size="sm"
                           variant="destructive"
                           onClick={() =>
@@ -291,7 +311,7 @@ export default function DeletionRequestsClient({
                           }
                         >
                           Approve
-                        </Button>
+                        </ViewOnlyActionButton>
                       </div>
                     )}
                   </div>
@@ -457,6 +477,7 @@ function AdminInitiatedDeletionSection({
   statusFilter: string;
   statusBadge: (status: string) => React.ReactNode;
 }) {
+  const canEdit = useAdminAreaEditAccess("membership");
   const [page, setPage] = useState(1);
   const [data, setData] = useState<LifecycleApiResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -598,11 +619,13 @@ function AdminInitiatedDeletionSection({
                             size="sm"
                             variant="outline"
                             className="text-red-600 border-red-200 hover:bg-red-50"
-                            disabled={isOwnRequest}
+                            disabled={isOwnRequest || !canEdit}
                             title={
-                              isOwnRequest
-                                ? "A different admin must review this request"
-                                : undefined
+                              !canEdit
+                                ? ADMIN_VIEW_ONLY_ACTION_REASON
+                                : isOwnRequest
+                                  ? "A different admin must review this request"
+                                  : undefined
                             }
                             onClick={() =>
                               setDialog({ request: req, action: "reject" })
@@ -613,11 +636,13 @@ function AdminInitiatedDeletionSection({
                           <Button
                             size="sm"
                             variant="destructive"
-                            disabled={isOwnRequest}
+                            disabled={isOwnRequest || !canEdit}
                             title={
-                              isOwnRequest
-                                ? "A different admin must review this request"
-                                : undefined
+                              !canEdit
+                                ? ADMIN_VIEW_ONLY_ACTION_REASON
+                                : isOwnRequest
+                                  ? "A different admin must review this request"
+                                  : undefined
                             }
                             onClick={() =>
                               setDialog({ request: req, action: "approve" })

@@ -46,6 +46,14 @@ export interface PriceQuote {
   }[];
   totalPriceCents: number;
   availableCreditCents?: number;
+  // The deferred non-member "guest portion" in integer cents (#2003): the
+  // non-member subset priced the way booking-create charges the split child
+  // (group discount qualifies only when the subset itself meets minGroupSize).
+  // The review-step banner shows this figure so its "about $X" equals what is
+  // actually deferred. Null when there are no non-member guests; absent only on
+  // an old cached response predating the field, where the banner falls back to
+  // summing the whole-party non-member rows.
+  deferredGuestPortionCents?: number | null;
   nonMemberHoldDecision?: {
     enabled: boolean;
     holdDays: number;

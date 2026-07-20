@@ -1,7 +1,11 @@
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
-import { Button } from "@/components/ui/button"
+import {
+  AdminViewOnlyNotice,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action"
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
 import {
   Card,
   CardContent,
@@ -24,6 +28,9 @@ interface LodgeAccessRow {
 // to its lodge. Renders nothing while fewer than two lodges exist (ADR-002
 // presentation rule).
 export function MemberLodgeAccessCard({ memberId }: { memberId: string }) {
+  // lodge-access writes /api/admin/members/[id]/lodge-access (membership area);
+  // a view-only membership admin sees the grants but cannot change them (#1997).
+  const canEdit = useAdminAreaEditAccess("membership")
   const { lodges, loading: lodgesLoading } = useLodgeOptions("admin")
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -125,6 +132,11 @@ export function MemberLodgeAccessCard({ memberId }: { memberId: string }) {
           <p className="text-sm text-slate-500">Loading lodge access...</p>
         ) : (
           <div className="space-y-4">
+            {!canEdit ? (
+              <AdminViewOnlyNotice canEdit={canEdit}>
+                Your admin role can view lodge access but cannot change it.
+              </AdminViewOnlyNotice>
+            ) : null}
             <div className="space-y-2">
               <Label>Restrict bookings to</Label>
               <div className="flex flex-wrap gap-4">
@@ -133,6 +145,7 @@ export function MemberLodgeAccessCard({ memberId }: { memberId: string }) {
                     <input
                       type="checkbox"
                       checked={bookingRestrictionLodgeIds.includes(lodge.id)}
+                      disabled={!canEdit}
                       onChange={(e) =>
                         toggle(
                           lodge.id,
@@ -160,6 +173,7 @@ export function MemberLodgeAccessCard({ memberId }: { memberId: string }) {
                     <input
                       type="checkbox"
                       checked={staffLodgeIds.includes(lodge.id)}
+                      disabled={!canEdit}
                       onChange={(e) =>
                         toggle(lodge.id, e.target.checked, setStaffLodgeIds)
                       }
@@ -178,9 +192,13 @@ export function MemberLodgeAccessCard({ memberId }: { memberId: string }) {
             {success ? (
               <p className="text-sm text-green-700">{success}</p>
             ) : null}
-            <Button onClick={() => void save()} disabled={saving}>
+            <ViewOnlyActionButton
+              canEdit={canEdit}
+              onClick={() => void save()}
+              disabled={saving}
+            >
               {saving ? "Saving..." : "Save Lodge Access"}
-            </Button>
+            </ViewOnlyActionButton>
           </div>
         )}
       </CardContent>

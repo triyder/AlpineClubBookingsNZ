@@ -1,0 +1,291 @@
+/**
+ * Joining-fee classification, narration, and preview (#1931, E5).
+ *
+ * The one-off "joining fee" (formerly "entrance fee") is keyed by a member's
+ * membership type x optional age tier. This module is the single source of
+ * truth for:
+ *   - classifying a member (or raw type+tier/DOB inputs) into a display
+ *     category (Adult | Family | Youth | Child) plus the type+tier key the
+ *     JoiningFee schedule is resolved by,
+ *   - the invoice-line narration (shared BY REFERENCE with the Xero invoice
+ *     builder and the admin preview endpoint — item 15),
+ *   - the read-only default amount/narration preview.
+ *
+ * Family is STRICTLY TYPE-DRIVEN: only members assigned the built-in Family
+ * membership type resolve the flat family fee. The old composition heuristic
+ * (>=2 adults + a dependent) is removed — a deliberate behaviour change flagged
+ * in the PR body, docs, and an admin-visible note.
+ *
+ * The N/A age tier (organisations/schools, #1440) is exempt; this is an
+ * age-tier exemption evaluated BEFORE membership-type resolution.
+ */
+
+import type { AgeTier, EntranceFeeCategory, Prisma } from "@prisma/client";
+import { prisma } from "@/lib/prisma";
+import { buildJoiningFeeNarration } from "@/lib/joining-fee-narration";
+import { getEffectiveJoiningFee, type JoiningFeeScheduleSource } from "@/lib/authoritative-fees";
+import { resolveMembershipTypePolicyForMember } from "@/lib/membership-type-policy";
+import { computeAgeTier } from "@/lib/age-tier";
+import { getSeasonYear } from "@/lib/utils";
+import { getTodayDateOnly } from "@/lib/date-only";
+
+type JoiningFeeStore = Prisma.TransactionClient | typeof prisma;
+
+export const JOINING_FEE_EXEMPT_MESSAGE =
+  "Organisations and schools (N/A age tier) are exempt from joining fees.";
+
+const FAMILY_MEMBERSHIP_TYPE_KEY = "FAMILY";
+
+/**
+ * Map a membership type key + age tier to the display category used for the
+ * joining-fee narration and the (frozen) Xero reference label. Family is
+ * type-driven; every other type derives from the age tier (INFANT folds onto
+ * CHILD, matching the schedule fan-out). NOT_APPLICABLE nominally returns ADULT
+ * so this stays total, but such members are exempt and never reach billing.
+ */
+export function deriveJoiningFeeCategory(
+  membershipTypeKey: string | null,
+  ageTier: AgeTier | null,
+): EntranceFeeCategory {
+  if (membershipTypeKey === FAMILY_MEMBERSHIP_TYPE_KEY) return "FAMILY";
+  if (ageTier === "YOUTH") return "YOUTH";
+  if (ageTier === "CHILD" || ageTier === "INFANT") return "CHILD";
+  return "ADULT";
+}
+
+/**
+ * Human display label for a category. Byte-identical to the (frozen) inline
+ * label expression in the Xero invoice builder, so preview/narration copy
+ * matches what invoicing produces.
+ */
+export function joiningFeeCategoryLabel(category: EntranceFeeCategory): string {
+  return category === "FAMILY"
+    ? "Family"
+    : category === "YOUTH"
+      ? "Youth"
+      : category === "CHILD"
+        ? "Child"
+        : "Adult";
+}
+
+// The default narration builder lives in @/lib/joining-fee-narration (see its
+// docblock for the referential-reuse contract); re-exported here so existing
+// importers keep one import site for the joining-fee API surface.
+export { buildJoiningFeeNarration };
+
+export interface MemberJoiningFeeClassification {
+  exempt: boolean;
+  exemptReason?: string;
+  /** null when no membership type could be resolved (graceful runtime skip). */
+  membershipTypeId: string | null;
+  membershipTypeKey: string | null;
+  ageTier: AgeTier | null;
+  category: EntranceFeeCategory;
+}
+
+async function resolveMembershipTypeId(
+  store: JoiningFeeStore,
+  membershipTypeKey: string,
+  candidateId: string | null,
+): Promise<string | null> {
+  if (candidateId) return candidateId;
+  const row = await store.membershipType.findFirst({
+    where: { key: membershipTypeKey },
+    select: { id: true },
+  });
+  return row?.id ?? null;
+}
+
+/**
+ * Classify a member for joining-fee resolution. Reads the member's age tier and
+ * resolves the effective membership type via the shared policy helper. Accepts
+ * an optional transaction client (#1886) so approval can classify a member and
+ * assignment created inside the still-open transaction.
+ */
+export async function resolveMemberJoiningFeeClassification(
+  memberId: string,
+  store: JoiningFeeStore = prisma,
+): Promise<MemberJoiningFeeClassification> {
+  const member = await store.member.findUnique({
+    where: { id: memberId },
+    select: { ageTier: true },
+  });
+
+  if (!member) {
+    return {
+      exempt: false,
+      membershipTypeId: null,
+      membershipTypeKey: null,
+      ageTier: null,
+      category: "ADULT",
+    };
+  }
+
+  // Age-tier exemption is evaluated BEFORE membership-type resolution (#1440).
+  if (member.ageTier === "NOT_APPLICABLE") {
+    return {
+      exempt: true,
+      exemptReason: JOINING_FEE_EXEMPT_MESSAGE,
+      membershipTypeId: null,
+      membershipTypeKey: null,
+      ageTier: member.ageTier,
+      category: "ADULT",
+    };
+  }
+
+  const policy = await resolveMembershipTypePolicyForMember(store, {
+    memberId,
+    seasonYear: getSeasonYear(),
+  });
+
+  if (!policy) {
+    return {
+      exempt: false,
+      membershipTypeId: null,
+      membershipTypeKey: null,
+      ageTier: member.ageTier,
+      category: deriveJoiningFeeCategory(null, member.ageTier),
+    };
+  }
+
+  const membershipTypeKey = policy.membershipType.key;
+  const membershipTypeId = await resolveMembershipTypeId(
+    store,
+    membershipTypeKey,
+    policy.membershipType.id,
+  );
+
+  return {
+    exempt: false,
+    membershipTypeId,
+    membershipTypeKey,
+    ageTier: member.ageTier,
+    category: deriveJoiningFeeCategory(membershipTypeKey, member.ageTier),
+  };
+}
+
+export interface JoiningFeePreview {
+  defaultAmountCents: number | null;
+  defaultNarration: string;
+  exempt: boolean;
+  exemptReason?: string;
+  effectiveFrom: string | null;
+  source: JoiningFeeScheduleSource;
+}
+
+async function buildPreview(
+  classification: {
+    exempt: boolean;
+    exemptReason?: string;
+    membershipTypeId: string | null;
+    ageTier: AgeTier | null;
+    category: EntranceFeeCategory;
+  },
+  options: { asOf: Date; store: JoiningFeeStore },
+): Promise<JoiningFeePreview> {
+  const defaultNarration = buildJoiningFeeNarration(
+    joiningFeeCategoryLabel(classification.category),
+  );
+
+  if (classification.exempt) {
+    return {
+      defaultAmountCents: null,
+      defaultNarration,
+      exempt: true,
+      exemptReason: classification.exemptReason,
+      effectiveFrom: null,
+      source: "NONE",
+    };
+  }
+
+  if (!classification.membershipTypeId) {
+    return {
+      defaultAmountCents: null,
+      defaultNarration,
+      exempt: false,
+      effectiveFrom: null,
+      source: "NONE",
+    };
+  }
+
+  const fee = await getEffectiveJoiningFee(
+    { membershipTypeId: classification.membershipTypeId, ageTier: classification.ageTier },
+    options.asOf,
+    options.store,
+  );
+
+  return {
+    defaultAmountCents: fee.amountCents,
+    defaultNarration,
+    exempt: false,
+    effectiveFrom: fee.effectiveFrom,
+    source: fee.source,
+  };
+}
+
+/**
+ * Preview the default joining-fee amount + narration for an existing member.
+ * Read-only; no writes, no Xero calls. Reuses the exact narration builder the
+ * invoice line uses (item 15 referential-reuse contract).
+ */
+export async function getJoiningFeePreviewForMember(
+  memberId: string,
+  options?: { asOf?: Date; store?: JoiningFeeStore },
+): Promise<JoiningFeePreview> {
+  const store = options?.store ?? prisma;
+  const asOf = options?.asOf ?? getTodayDateOnly();
+  const classification = await resolveMemberJoiningFeeClassification(memberId, store);
+  return buildPreview(classification, { asOf, store });
+}
+
+export interface JoiningFeeInputs {
+  membershipTypeId?: string | null;
+  membershipTypeKey?: string | null;
+  ageTier?: AgeTier | null;
+  /** Optional DOB (date-only or Date) resolved to an age tier for applicants. */
+  dateOfBirth?: Date | null;
+}
+
+/**
+ * Preview the default joining-fee amount + narration for RAW inputs — a
+ * membership type (id or key) plus an age tier (or a DOB to resolve one). Used
+ * for not-yet-created applicants (E10 consumes this). Read-only.
+ */
+export async function getJoiningFeePreviewForInputs(
+  inputs: JoiningFeeInputs,
+  options?: { asOf?: Date; store?: JoiningFeeStore },
+): Promise<JoiningFeePreview> {
+  const store = options?.store ?? prisma;
+  const asOf = options?.asOf ?? getTodayDateOnly();
+
+  const ageTier: AgeTier | null = inputs.ageTier
+    ?? (inputs.dateOfBirth ? await computeAgeTier(inputs.dateOfBirth) : null);
+
+  // Resolve the membership type's key and id from whichever was supplied.
+  let membershipTypeKey = inputs.membershipTypeKey ?? null;
+  let membershipTypeId = inputs.membershipTypeId ?? null;
+  if (membershipTypeId && !membershipTypeKey) {
+    const row = await store.membershipType.findUnique({
+      where: { id: membershipTypeId },
+      select: { key: true },
+    });
+    membershipTypeKey = row?.key ?? null;
+    if (!row) membershipTypeId = null;
+  } else if (membershipTypeKey && !membershipTypeId) {
+    membershipTypeId = await resolveMembershipTypeId(store, membershipTypeKey, null);
+  }
+
+  const exempt = ageTier === "NOT_APPLICABLE";
+  const category = deriveJoiningFeeCategory(membershipTypeKey, ageTier);
+
+  return buildPreview(
+    {
+      exempt,
+      exemptReason: exempt ? JOINING_FEE_EXEMPT_MESSAGE : undefined,
+      membershipTypeId,
+      ageTier,
+      category,
+    },
+    { asOf, store },
+  );
+}

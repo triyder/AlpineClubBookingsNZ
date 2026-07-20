@@ -5,13 +5,15 @@ import { requireAdmin } from "@/lib/session-guards";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
 import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
-import { ageTierEnum } from "@/lib/age-tier-schema";
+import logger from "@/lib/logger";
+import { ageTierEnum, canonicalizeAgeTiers } from "@/lib/age-tier-schema";
 import { getXeroContactGroups, getXeroContactGroupCacheLastRefreshedAt } from "@/lib/xero";
 import { isXeroConnected } from "@/lib/xero-token-store";
 import { getXeroGroupingMode } from "@/lib/xero-member-grouping";
 import {
-  getXeroMemberGroupingSnapshot,
+  recordXeroMemberGroupingDryRun,
   runXeroMemberGroupingBulkResyncChunk,
+  StaleDryRunError,
 } from "@/lib/xero-member-grouping-resync";
 
 function requireFinanceEdit(
@@ -34,7 +36,10 @@ const groupingModeEnum = z.enum(["NONE", "MEMBERSHIP_TYPE", "MEMBERSHIP_TYPE_AND
 
 const ruleShape = {
   membershipTypeId: z.string().trim().min(1).nullable().optional(),
-  ageTier: ageTierEnum.nullable().optional(),
+  // Multi-select tier set (#2093). Omitted / empty = "all age tiers" (the old
+  // null "Any age" wildcard). Canonical-sorted and full-set-collapsed on
+  // normalize; a duplicate tier in the payload is de-duped there too.
+  ageTiers: z.array(ageTierEnum).optional(),
   mode: ruleModeEnum,
   groupId: z.string().trim().min(1).max(100),
   groupName: z.string().trim().min(1).max(255).nullable().optional(),
@@ -54,8 +59,12 @@ const postSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("dry-run"), limit: z.number().int().min(1).max(1000).optional() }),
   z.object({
     action: z.literal("bulk-resync"),
-    // Ships code-only this wave: the run cannot fire unless the admin has seen
-    // the dry-run and explicitly confirms it.
+    // Server-enforced anchor (#1961): the run must reference a persisted dry-run
+    // (`dryRunId`), whose freshness — recent, and still matching the
+    // CONTACT_GROUP_FULL_REFRESH cache cursor + active rules — the engine
+    // re-validates at execution start. This is the enforcing check; the
+    // client-asserted `confirmDryRunReviewed` below is only a UI confirmation.
+    dryRunId: z.string().min(1),
     confirmDryRunReviewed: z.literal(true),
     // Capped low: each mismatched member costs ~4 Xero calls, so 100 members
     // is already ~400 calls of the ~5k/day budget in one request.
@@ -72,7 +81,7 @@ async function loadConfig() {
       select: {
         id: true,
         membershipTypeId: true,
-        ageTier: true,
+        ageTiers: true,
         mode: true,
         groupId: true,
         groupName: true,
@@ -98,7 +107,7 @@ async function loadConfig() {
       id: rule.id,
       membershipTypeId: rule.membershipTypeId,
       membershipTypeName: rule.membershipType?.name ?? null,
-      ageTier: rule.ageTier,
+      ageTiers: rule.ageTiers,
       mode: rule.mode,
       groupId: rule.groupId,
       groupName: rule.groupName,
@@ -122,7 +131,7 @@ export async function GET() {
 
 type RuleFields = {
   membershipTypeId?: string | null;
-  ageTier?: AgeTier | null;
+  ageTiers?: AgeTier[];
   mode: "MANAGED" | "ACCEPTED";
   groupId: string;
   groupName?: string | null;
@@ -131,22 +140,28 @@ type RuleFields = {
 function normalizeRule(input: RuleFields) {
   return {
     membershipTypeId: input.membershipTypeId?.trim() || null,
-    ageTier: input.ageTier ?? null,
+    // Canonical-sorted + full-set-collapse (#2093, D-B2): empty = "all tiers".
+    ageTiers: canonicalizeAgeTiers(input.ageTiers),
     mode: input.mode,
     groupId: input.groupId.trim(),
     groupName: input.groupName?.trim() || null,
   };
 }
 
-/** App-side dedupe for a friendly message before the DB partial unique index. */
+/**
+ * App-side dedupe for a friendly message before the DB partial unique index.
+ * The tier set is compared for exact array equality — Prisma's list `equals`
+ * is order-sensitive, so both operands must be canonical-sorted (normalizeRule
+ * guarantees this for the candidate; stored rows are canonical by construction).
+ */
 async function isDuplicateRuleShape(
-  rule: { membershipTypeId: string | null; ageTier: AgeTier | null; mode: "MANAGED" | "ACCEPTED"; groupId: string },
+  rule: { membershipTypeId: string | null; ageTiers: AgeTier[]; mode: "MANAGED" | "ACCEPTED"; groupId: string },
   excludeId?: string,
 ): Promise<boolean> {
   const existing = await prisma.xeroContactGroupRule.findFirst({
     where: {
       membershipTypeId: rule.membershipTypeId,
-      ageTier: rule.ageTier,
+      ageTiers: { equals: rule.ageTiers },
       mode: rule.mode,
       groupId: rule.groupId,
       ...(excludeId ? { id: { not: excludeId } } : {}),
@@ -158,7 +173,7 @@ async function isDuplicateRuleShape(
 
 const duplicateResponse = () =>
   NextResponse.json(
-    { error: "A rule with the same membership type, age tier, mode, and Xero group already exists." },
+    { error: "A rule with the same membership type, age tiers, mode, and Xero group already exists." },
     { status: 409 },
   );
 
@@ -183,7 +198,10 @@ export async function POST(request: NextRequest) {
   }
   const data = parsed.data;
 
-  // The dry-run is read-only; everything else requires finance:edit.
+  // The dry-run needs only finance:view. It reads the local caches to build the
+  // diff, but also persists a small provenance row (XeroMemberGroupingDryRun)
+  // that the bulk re-sync validates — a view-level audit artefact, not a
+  // finance-mutating action. Every other action requires finance:edit.
   if (data.action !== "dry-run" && !requireFinanceEdit(session)) {
     return forbidden();
   }
@@ -255,8 +273,15 @@ export async function POST(request: NextRequest) {
       }
 
       case "dry-run": {
-        const snapshot = await getXeroMemberGroupingSnapshot({ limit: data.limit ?? 500 });
-        return NextResponse.json({ snapshot });
+        // Persist the dry-run's provenance (cache cursor + rules fingerprint +
+        // planned digest) so a later bulk re-sync can prove server-side that a
+        // recent, still-matching reviewed diff exists (#1961). Returns the id
+        // the client threads back into the bulk re-sync.
+        const { snapshot, dryRunId } = await recordXeroMemberGroupingDryRun({
+          limit: data.limit ?? 500,
+          createdByMemberId: session.user.id,
+        });
+        return NextResponse.json({ snapshot, dryRunId });
       }
 
       case "bulk-resync": {
@@ -270,15 +295,51 @@ export async function POST(request: NextRequest) {
             { status: 409 },
           );
         }
-        const result = await runXeroMemberGroupingBulkResyncChunk({
-          limit: data.limit,
-          afterMemberId: data.afterMemberId,
-          createdByMemberId: session.user.id,
-        });
+        let result;
+        try {
+          result = await runXeroMemberGroupingBulkResyncChunk({
+            dryRunId: data.dryRunId,
+            limit: data.limit,
+            afterMemberId: data.afterMemberId,
+            createdByMemberId: session.user.id,
+          });
+        } catch (resyncError) {
+          // Server-side dry-run freshness rejection (#1961): audit the refusal
+          // and tell the admin to re-run the dry-run. `not_found` -> 422 (the
+          // referenced dry-run does not exist), everything else -> 409 (a
+          // conflict developed since the reviewed diff).
+          if (resyncError instanceof StaleDryRunError) {
+            // Audit the refusal, but never let an audit-log failure convert the
+            // 409/422 into a 500 (which would also lose the reason taxonomy):
+            // log-and-continue so the typed rejection always reaches the client.
+            try {
+              await logAudit({
+                action: "XERO_GROUPING_BULK_RESYNC_REJECTED",
+                memberId: session.user.id,
+                details: JSON.stringify({
+                  dryRunId: data.dryRunId,
+                  reason: resyncError.reason,
+                  afterMemberId: data.afterMemberId ?? null,
+                }),
+              });
+            } catch (auditError) {
+              logger.error(
+                { err: auditError, dryRunId: data.dryRunId },
+                "Failed to audit-log XERO_GROUPING_BULK_RESYNC_REJECTED",
+              );
+            }
+            return NextResponse.json(
+              { error: resyncError.message, reason: resyncError.reason },
+              { status: resyncError.reason === "not_found" ? 422 : 409 },
+            );
+          }
+          throw resyncError;
+        }
         await logAudit({
           action: "XERO_GROUPING_BULK_RESYNC",
           memberId: session.user.id,
           details: JSON.stringify({
+            dryRunId: data.dryRunId,
             processed: result.processed,
             added: result.added,
             removed: result.removed,

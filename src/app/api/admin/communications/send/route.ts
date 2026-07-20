@@ -46,7 +46,9 @@ const sendSchema = z.object({
 });
 
 export async function GET() {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "membership", level: "view" },
+  });
   if (!guard.ok) return guard.response;
 
   return NextResponse.json({
@@ -56,7 +58,9 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "membership", level: "edit" },
+  });
   if (!guard.ok) return guard.response;
   const session = guard.session;
   // Rate limit is keyed by "admin" since this is a global communication action.

@@ -174,9 +174,24 @@ export function PhotoGalleryToken({
 
   return (
     <div id={galleryId} className={containerClassName}>
-      {images.map((image) => (
+      {images.map((image, index) => {
+        // Guarantee a non-empty, non-noisy alt even when the source image has
+        // no filename (e.g. a base64 data: URI): fall back to a positional
+        // label so screen readers can distinguish gallery items (#1947).
+        // NOTE: this deliberately overrides even an explicit alt="" (which the
+        // data layer preserves as "decorative"). Here each image is the sole
+        // content of an <a> lightbox link, so an empty alt would leave the link
+        // with no accessible name (WCAG 2.4.4 / 4.1.2). A positional name is the
+        // correct trade-off for a linked image; the plain decorative rule only
+        // applies to a non-interactive standalone <img>.
+        const altText =
+          image.alt ||
+          (variant === "slideshow"
+            ? `Slide ${index + 1}`
+            : `Gallery image ${index + 1}`);
+        return (
         <a
-          key={`${image.src}-${image.alt}`}
+          key={`${image.src}-${image.alt}-${index}`}
           href={image.src}
           data-pswp-width={image.width ?? undefined}
           data-pswp-height={image.height ?? undefined}
@@ -186,7 +201,7 @@ export function PhotoGalleryToken({
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={image.src}
-              alt={image.alt}
+              alt={altText}
               width={image.width ?? undefined}
               height={image.height ?? undefined}
               className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
@@ -199,7 +214,8 @@ export function PhotoGalleryToken({
             </div>
           ) : null}
         </a>
-      ))}
+        );
+      })}
     </div>
   );
 }

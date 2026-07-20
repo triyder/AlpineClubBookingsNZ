@@ -46,6 +46,89 @@ export async function register() {
     } catch {
       // Ignore — the email palette self-warms in the background on first use.
     }
+
+    // #1943 (C2): boot-time config self-heal. Copies each registered setting's
+    // current EFFECTIVE config value into its DB row IFF that row is absent, so
+    // later epic-#1943 collapse children can drop their file/env fallback
+    // without stranding a live deploy (`prisma migrate deploy` runs, but the
+    // seed never does and a SQL migration cannot read config/club.json).
+    // Create-if-absent, idempotent, and blue/green-safe. Best-effort: it runs
+    // on every Node boot regardless of cron config and can never block or fail
+    // startup. `runConfigSelfHeal` already swallows per-step errors; the outer
+    // try/catch guards the dynamic imports themselves.
+    try {
+      const { prisma } = await import("./lib/prisma");
+      const { runConfigSelfHeal } = await import("./lib/config-self-heal");
+      await runConfigSelfHeal({ db: prisma });
+    } catch (err) {
+      const { default: logger } = await import("./lib/logger");
+      logger.warn(
+        { err, scope: "config-self-heal" },
+        "Boot-time config self-heal did not run (non-fatal)",
+      );
+    }
+
+    // #2021 (residual of #1986 / #2015): the email-identity env vars removed in
+    // #1986 (EMAIL_FROM_NAME / SUPPORT_EMAIL / CONTACT_EMAIL /
+    // NEXT_PUBLIC_CONTACT_EMAIL) are no longer read. If a deployment still sets
+    // one, warn ONCE at boot that its value is ignored and email identity is
+    // admin-managed (Admin → Email Messages). Best-effort: its own try/catch,
+    // greppable scope, and it can never block or fail startup.
+    try {
+      const { getIgnoredEmailEnvWarning } = await import("./lib/ignored-email-env");
+      const ignoredEmailEnv = getIgnoredEmailEnvWarning(process.env);
+      if (ignoredEmailEnv) {
+        const { default: logger } = await import("./lib/logger");
+        logger.warn(
+          { scope: "ignored-email-env", vars: ignoredEmailEnv.vars },
+          ignoredEmailEnv.message,
+        );
+      }
+    } catch {
+      // Ignore — a boot-time advisory warning must never block startup.
+    }
+
+    // #1988 (C9): boot-time config-bundle auto-import (ADR-003, DR / clone).
+    // Runs AFTER the self-heal. When CONFIG_BUNDLE_IMPORT_PATH names a readable
+    // bundle AND the database is empty of non-seed configuration (the six
+    // "no operator footprint" signals — see bootstrap-import.ts), it applies
+    // the bundle non-interactively through the same validated import pipeline
+    // the admin route uses (untrusted-input validation, allowlist, DMMF
+    // type-checks, atomic upsert-only transaction, audit). It fails CLOSED — a
+    // non-empty target, a malformed/oversized bundle, or any I/O/apply failure
+    // refuses and writes nothing; the emptiness probe is re-run inside the
+    // apply advisory lock, so on a multi-replica boot exactly one replica
+    // applies and the others log a calm INFO refusal. Best-effort:
+    // `runConfigBootstrapImport` never throws, and this outer try/catch
+    // additionally guards the dynamic imports so a bootstrap bundle can never
+    // block or fail startup. A successful apply re-warms the identity/email
+    // caches primed earlier this boot so the imported values take effect
+    // immediately.
+    try {
+      const { prisma } = await import("./lib/prisma");
+      const { runConfigBootstrapImport } = await import(
+        "./lib/config-transfer/bootstrap-import"
+      );
+      const bootstrap = await runConfigBootstrapImport({ db: prisma });
+      if (bootstrap.outcome === "applied") {
+        try {
+          const { primeEmailPalette } = await import("./lib/email-theme");
+          const { primeClubIdentitySync } = await import(
+            "./lib/club-identity-settings"
+          );
+          await primeEmailPalette();
+          await primeClubIdentitySync();
+        } catch {
+          // Non-fatal: both caches self-warm on first use.
+        }
+      }
+    } catch (err) {
+      const { default: logger } = await import("./lib/logger");
+      logger.warn(
+        { err, scope: "config-bootstrap-import" },
+        "Boot-time config bundle auto-import did not run (non-fatal)",
+      );
+    }
   }
 
   if (process.env.NEXT_RUNTIME === "edge") {
@@ -147,6 +230,8 @@ export async function register() {
             job: "general-cron",
             confirmed: result.confirmPending?.confirmedBookingIds.length ?? 0,
             bumped: result.confirmPending?.bumpedBookingIds.length ?? 0,
+            // #1993 Part A: split children auto-cancelled at end of check-in day.
+            cancelled: result.confirmPending?.cancelledBookingIds.length ?? 0,
             failed: result.confirmPending?.failedBookingIds.length ?? 0,
             preArrivalSent:
               result.preArrivalReminders?.sentBookingIds.length ?? 0,
@@ -620,6 +705,14 @@ export async function register() {
             where: { expiresAt: { lt: new Date() } },
           }),
         );
+        // Magic-link tokens (#2034): prune expired OR already-used rows. Used
+        // rows are single-use and inert, so they can be swept immediately
+        // alongside the expired ones.
+        await runStep("prune-magic-link-tokens", () =>
+          prisma.magicLinkToken.deleteMany({
+            where: { OR: [{ expiresAt: { lt: new Date() } }, { used: true }] },
+          }),
+        );
         // Expired partner-invite tokens (#1682): idempotent hard-delete sweep.
         await runStep("expire-partner-invite-tokens", () =>
           expireStalePartnerInviteTokens(),
@@ -952,8 +1045,14 @@ export async function register() {
 
     logger.info({ job: "email-retry" }, "Scheduled email retry (every 30 minutes)");
 
-    // Cron job - Complete bookings (daily at 1:00 AM NZST)
-    // Transitions PAID bookings to COMPLETED once check-in date has passed
+    // Cron job - Complete bookings. Fires at 01:00 in APP_TIME_ZONE
+    // (Pacific/Auckland) via the timezone option below; the exact fire time is
+    // NOT load-bearing. Transitions PAID bookings to COMPLETED once their
+    // check-out date has fully passed (#2029): the booking stays PAID/editable
+    // through the whole NZ check-out day and completes on the first run where
+    // checkOut < NZ today. Boundary correctness is timezone-independent —
+    // getTodayDateOnly() always resolves the NZ calendar date regardless of when
+    // the job runs (so re-running it, or a server-local clock, cannot shift it).
     let isCompleteBookingsRunning = false;
     cron.default.schedule("0 1 * * *", async () => {
       if (isCompleteBookingsRunning) {

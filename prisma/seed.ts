@@ -11,6 +11,7 @@ import {
   clubDomainEmail,
 } from "../src/config/club-identity";
 import { slugifyLodgeName } from "../src/lib/lodges";
+import { CLUB_CONFIG_LODGE_CAPACITY } from "../src/lib/lodge-capacity";
 import {
   CLUB_THEME_ID,
   DEFAULT_CLUB_THEME_VALUES,
@@ -26,7 +27,7 @@ import {
 import { ensureAccessRoleDefinitions } from "../src/lib/access-role-definitions";
 import { ensureBuiltInDisplays } from "../src/lib/lodge-display/built-in-seeds";
 import { ensureMemberAccessRolesFromCompatibilityFields } from "../src/lib/member-access-role-writes";
-import { ensureNotRequiredSubscriptionForRole } from "../src/lib/member-subscription-defaults";
+import { ensureDefaultSeasonSubscriptionForNewMember } from "../src/lib/member-subscription-defaults";
 import { createPrismaPgAdapter } from "../src/lib/prisma-adapter";
 import {
   buildSeedAdminMemberData,
@@ -404,9 +405,48 @@ async function main() {
       name: clubConfig.name,
       shortName: clubConfig.shortName ?? null,
       hutLeaderLabel: clubConfig.hutLeaderLabel ?? null,
+      // Normalise identically to the self-heal step (currentFacebookUrl in
+      // config-self-heal.ts): trim and collapse blank → null, so a seed-created
+      // row and a boot-healed row hold byte-identical values (#1984).
+      facebookUrl: clubConfig.socialLinks?.facebook?.trim() || null,
     },
   });
   console.log("Club identity settings seeded (create-only)");
+
+  // DB-only lodge capacity parity (#1982): since #1982 removed the runtime
+  // club.json capacity fallback, the default lodge's bookable capacity is the
+  // DB `LodgeSettings.capacity` — normally backfilled by the boot-time config
+  // self-heal (config-self-heal.ts). Seed it here too so a freshly seeded DB is
+  // immediately bookable and matches a booted DB (the #1984 parity standard),
+  // rather than resolving to 0 until first boot. Mirrors the self-heal step
+  // exactly: the 20260627100000 migration INSERTs the "default" row with a NULL
+  // capacity, so a bare create-only upsert would leave it null; the null-scoped
+  // updateMany fills that migration null while NEVER overwriting an admin-set
+  // value (or a re-run). A fresh seed configures no beds and Bed Allocation
+  // defaults OFF, so the config bed total is the correct bookable value (the E1
+  // gate reasoning: module off → no bed count to cap). Guarded value > 0; the
+  // row is linked to the seeded default lodge so its capacity never leaks to an
+  // additional lodge lacking its own row.
+  if (Number.isFinite(CLUB_CONFIG_LODGE_CAPACITY) && CLUB_CONFIG_LODGE_CAPACITY > 0) {
+    await prisma.lodgeSettings.upsert({
+      where: { id: "default" },
+      update: {},
+      create: {
+        id: "default",
+        capacity: CLUB_CONFIG_LODGE_CAPACITY,
+        lodgeId: seedLodgeId,
+      },
+    });
+    await prisma.lodgeSettings.updateMany({
+      where: { id: "default", capacity: null },
+      data: { capacity: CLUB_CONFIG_LODGE_CAPACITY },
+    });
+    await prisma.lodgeSettings.updateMany({
+      where: { id: "default", lodgeId: null },
+      data: { lodgeId: seedLodgeId },
+    });
+    console.log("Default lodge capacity seeded (create-only, null-scoped fill)");
+  }
 
   // Seed default cancellation policy tiers (create-if-missing).
   const policies = [
@@ -468,8 +508,8 @@ async function main() {
         lastName: process.env.SEED_ADMIN_LAST_NAME,
       }),
     });
-    // Admin accounts never owe a membership subscription.
-    await ensureNotRequiredSubscriptionForRole(prisma, admin);
+    // Admin accounts resolve to the NOT_REQUIRED built-in ADMIN type (#2149).
+    await ensureDefaultSeasonSubscriptionForNewMember(prisma, admin);
     await ensureMemberAccessRolesFromCompatibilityFields(prisma, {
       memberId: admin.id,
       role: admin.role,
@@ -505,7 +545,7 @@ async function main() {
         passwordHash: lodgePasswordHash,
       }),
     });
-    await ensureNotRequiredSubscriptionForRole(prisma, lodge);
+    await ensureDefaultSeasonSubscriptionForNewMember(prisma, lodge);
     await ensureMemberAccessRolesFromCompatibilityFields(prisma, {
       memberId: lodge.id,
       role: lodge.role,
@@ -626,6 +666,9 @@ async function main() {
       where: { tier: setting.tier },
       update: {},
       create: setting,
+      // Not a deployed-runtime path, but narrowed with the rest for
+      // consistency (#2130): no caller reads the returned row.
+      select: { tier: true },
     });
   }
   console.log("Age tier settings seeded");
@@ -688,7 +731,7 @@ async function main() {
 
   await seedInductionChecklistTemplate();
 
-  // Seed the three built-in lobby-display designs as v2 Layout + Template rows
+  // Seed the built-in lobby-display designs as v2 Layout + Template rows
   // (LTV-038). DELIBERATE EXCEPTION to this file's "never overwrite" contract
   // (see the header): the built-ins are code-managed scaffolding, so
   // `ensureBuiltInDisplays` upserts each by `key` and REFRESHES its definition

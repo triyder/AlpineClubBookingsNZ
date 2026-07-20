@@ -517,28 +517,57 @@ const adminHelpEntries: HelpEntry[] = [
   entry(
     "/admin/seasons",
     help(
-      "Hut Fees & Seasons",
-      "This page defines seasonal date ranges, hut fees, and rate settings used by booking quotes.",
+      "Seasons",
+      "This page defines the seasonal date windows (name, type, dates, active) used by booking quotes. Nightly hut-fee rates live on the Fees page.",
       [
-        "Create or edit seasons before the booking period opens.",
-        "Set adult, child, youth, infant, member, and non-member fee rules according to the club policy.",
-        "Check overlapping dates and future booking impact before saving changes.",
+        "Create or edit season windows before the booking period opens.",
+        "Set overlapping dates carefully; a season window drives which nightly rates apply.",
+        "Manage the nightly rates for each season on the Fees page (Hut Fees section).",
       ],
       [
         {
           name: "Season dates",
           description:
-            "The date-only range where this season's rates apply.",
+            "The date-only range where this season applies.",
         },
         {
-          name: "Age tier",
+          name: "Season type",
           description:
-            "The configured age band used by guest pricing.",
+            "Whether the window is a Winter or Summer season.",
         },
         {
-          name: "Rate",
+          name: "Active",
           description:
-            "The nightly price stored as integer cents and used by booking quotes.",
+            "Whether the season window is currently in effect.",
+        },
+      ],
+    ),
+  ),
+  entry(
+    "/admin/fees",
+    help(
+      "Fees",
+      "This page consolidates every fee schedule: Hut Fees (nightly rates per lodge, season, membership type and age tier), Joining Fees, and Annual Membership Fees with their invoice components and family billing recipients.",
+      [
+        "Hut Fees editing needs bookings edit access; Joining and Annual fees need finance edit access.",
+        "Amounts are stored as GST-inclusive integer cents; effective-dated ranges may not overlap for one schedule.",
+        "Choose a lodge to edit its per-season nightly rate grid.",
+      ],
+      [
+        {
+          name: "Hut fee rate",
+          description:
+            "The nightly price for a membership type and age tier in a season, stored as integer cents.",
+        },
+        {
+          name: "Joining fee",
+          description:
+            "The one-off fee a new member pays, per membership type and age tier.",
+        },
+        {
+          name: "Annual membership fee",
+          description:
+            "The recurring membership fee, optionally split into named invoice-line components.",
         },
       ],
     ),

@@ -149,6 +149,59 @@ describe("executeMemberMerge", () => {
     expect(memberSpy.delete).toHaveBeenCalledWith({ where: { id: LOSER_ID } });
   });
 
+  it("nulls the loser's googleSub before delete and never transfers it to the master (#2035)", async () => {
+    // Loser carries a linked Google account; master has none. googleSub is a
+    // scalar @unique excluded from the field-fill lists, so the master must NOT
+    // inherit it (no login-identity takeover), and the loser's is nulled before
+    // the hard-delete. Recomputed preview token is unaffected (googleSub is not
+    // a merged field), so validToken() still verifies.
+    const loserWithGoogle = { ...loser, googleSub: "sub-loser" };
+    const memberDelegate = {
+      ...defaultDelegate(),
+      findUnique: vi.fn(({ where }: { where: { id: string } }) =>
+        Promise.resolve(
+          where.id === MASTER_ID
+            ? master
+            : where.id === LOSER_ID
+              ? loserWithGoogle
+              : null,
+        ),
+      ),
+      count: vi.fn(({ where }: { where: { id?: string } }) =>
+        Promise.resolve(where?.id === ACTOR_ID ? 1 : 0),
+      ),
+      update: vi.fn().mockResolvedValue({}),
+      delete: vi.fn().mockResolvedValue({}),
+    };
+    const { client } = makeClient({ member: memberDelegate });
+
+    await executeMemberMerge({
+      masterId: MASTER_ID,
+      loserId: LOSER_ID,
+      actorMemberId: ACTOR_ID,
+      previewToken: validToken(),
+      confirmationText: "MERGE Dup Person",
+      db: client as never,
+    });
+
+    const updateCalls = memberDelegate.update.mock.calls.map(([arg]) => arg) as {
+      where: { id: string };
+      data: Record<string, unknown>;
+    }[];
+    // Loser's googleSub explicitly nulled.
+    expect(updateCalls).toContainEqual({
+      where: { id: LOSER_ID },
+      data: { googleSub: null },
+    });
+    // Master is never written a googleSub value.
+    for (const call of updateCalls) {
+      if (call.where.id === MASTER_ID) {
+        expect(call.data).not.toHaveProperty("googleSub");
+      }
+    }
+    expect(memberDelegate.delete).toHaveBeenCalledWith({ where: { id: LOSER_ID } });
+  });
+
   it("returns 409 preview_drift when the token does not match current state", async () => {
     const { client, member } = makeClient();
     await expect(

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   emptyAdminPermissionMatrix,
@@ -44,7 +44,10 @@ function stubFetch(
           enabled: false,
           financialYearEndMonthOverride: null,
           textFallbackEnabled: false,
+          useFeeScheduleItemCodes: false,
         },
+        feeScheduleItemCodes: [],
+        overlappingCodes: [],
       };
     } else if (url.includes("xero/account-mappings")) {
       body = { subscriptionIncome: { code: null, itemCode: null } };
@@ -173,5 +176,135 @@ describe("SubscriptionLockoutSettingsPanel — permission-aware cross-area secti
     await new Promise((resolve) => setTimeout(resolve));
     // Still loading (not hidden): a 403 here would have rendered null instead.
     expect(screen.getByText("Loading settings…")).toBeTruthy();
+  });
+});
+
+describe("SubscriptionLockoutSettingsPanel — item-code matching mode (#2109)", () => {
+  const fullMatrix = () =>
+    matrix({
+      support: "view",
+      membership: "edit",
+      finance: "edit",
+      bookings: "edit",
+    });
+
+  // Serve a fee-schedule-on body with a resolved preview + an overlap.
+  function stubWithLookThrough(
+    overrides: {
+      useFeeScheduleItemCodes?: boolean;
+      feeScheduleItemCodes?: string[];
+      overlappingCodes?: string[];
+    } = {},
+  ) {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const fetchMock = vi.fn(async (input: unknown, init?: RequestInit) => {
+      const url = String(input);
+      calls.push({ url, init });
+      let body: unknown = {};
+      if (url.includes("membership-lockout-settings")) {
+        body = {
+          settings: {
+            enabled: false,
+            financialYearEndMonthOverride: null,
+            textFallbackEnabled: false,
+            useFeeScheduleItemCodes: overrides.useFeeScheduleItemCodes ?? true,
+          },
+          feeScheduleItemCodes: overrides.feeScheduleItemCodes ?? [
+            "FULL-ADULT",
+            "FULL-YOUTH",
+          ],
+          overlappingCodes: overrides.overlappingCodes ?? ["FULL-ADULT"],
+        };
+      } else if (url.includes("xero/account-mappings")) {
+        body = { subscriptionIncome: { code: "203", itemCode: "SUBS" } };
+      } else if (url.includes("xero/chart-of-accounts")) {
+        body = { accounts: [{ code: "203", name: "Annual Subs" }] };
+      } else if (url.includes("xero/items")) {
+        body = { items: [{ code: "SUBS", name: "Subscription" }] };
+      } else if (url.includes("xero/organisation")) {
+        body = { financialYearEndMonth: 3 };
+      } else if (url.includes("age-tier-settings")) {
+        body = { settings: [] };
+      }
+      return { ok: true, status: 200, json: async () => body };
+    }) as unknown as typeof fetch;
+    vi.stubGlobal("fetch", fetchMock);
+    return { fetchMock, calls };
+  }
+
+  it("renders the resolved fee-schedule item codes as chips, flagging overlaps", async () => {
+    stubWithLookThrough();
+    render(<SubscriptionLockoutSettingsPanel permissionMatrix={fullMatrix()} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Item code matching")).toBeTruthy();
+    });
+    // Both resolved codes show as preview chips.
+    expect(screen.getByText("FULL-ADULT")).toBeTruthy();
+    expect(screen.getByText("FULL-YOUTH")).toBeTruthy();
+    // The overlapping code triggers the warning.
+    expect(screen.getByText(/Overlap warning:/)).toBeTruthy();
+  });
+
+  it("hides the preview and overlap warning when look-through is off", async () => {
+    stubWithLookThrough({
+      useFeeScheduleItemCodes: false,
+      overlappingCodes: [],
+    });
+    render(<SubscriptionLockoutSettingsPanel permissionMatrix={fullMatrix()} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Item code matching")).toBeTruthy();
+    });
+    expect(screen.queryByText(/Overlap warning:/)).toBeNull();
+    expect(
+      screen.queryByText("Membership fee item codes matched as paid"),
+    ).toBeNull();
+  });
+
+  it("persists useFeeScheduleItemCodes via the membership route on save", async () => {
+    const { calls } = stubWithLookThrough({ overlappingCodes: [] });
+    render(<SubscriptionLockoutSettingsPanel permissionMatrix={fullMatrix()} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Item code matching")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Save settings/ }));
+
+    await waitFor(() => {
+      const put = calls.find(
+        (c) =>
+          c.url.includes("membership-lockout-settings") &&
+          c.init?.method === "PUT",
+      );
+      expect(put).toBeTruthy();
+      expect(JSON.parse(String(put!.init!.body))).toEqual(
+        expect.objectContaining({ useFeeScheduleItemCodes: true }),
+      );
+    });
+  });
+
+  it("disables the mode select for a membership view-only admin", async () => {
+    stubWithLookThrough();
+    render(
+      <SubscriptionLockoutSettingsPanel
+        permissionMatrix={matrix({
+          support: "view",
+          membership: "view",
+          finance: "edit",
+          bookings: "view",
+        })}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Item code matching")).toBeTruthy();
+    });
+    // The Radix Select trigger carries the disabled attribute when the
+    // membership area is view-only (the mode is a membership setting).
+    const trigger = document.getElementById("item-code-mode");
+    expect(trigger).toBeTruthy();
+    expect(trigger).toHaveProperty("disabled", true);
   });
 });

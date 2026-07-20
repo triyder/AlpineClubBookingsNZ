@@ -70,3 +70,4 @@ review-fixes.log
 .vscode/
 .github/agents/
 public/images/
+.env.capture

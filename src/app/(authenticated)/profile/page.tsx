@@ -11,6 +11,7 @@ import {
 import { ProfileSectionCard } from "./profile-section-card";
 import { ChangeEmailForm } from "./change-email-form";
 import { NotificationPreferences } from "./notification-preferences";
+import { PostLoginLandingPreference } from "./post-login-landing-preference";
 import { FamilyGroupSection } from "./family-group-section";
 import { PartnerLinkSection } from "./partner-link-section";
 import { AccountCreditSection } from "./account-credit-section";
@@ -19,6 +20,8 @@ import { DataExportButton } from "./data-export-button";
 import { DeleteAccountButton } from "./delete-account-button";
 import { MembershipCancellationPanel } from "./membership-cancellation-panel";
 import { TwoFactorSecurityCard } from "./two-factor-security-card";
+import { GoogleAccountCard } from "./google-account-card";
+import { googleCredentialsConfigured } from "@/lib/google-oauth";
 import { AuditTimeline } from "@/components/audit-timeline";
 import { SectionNav, type SectionNavItem } from "@/components/section-nav";
 import {
@@ -41,6 +44,8 @@ import {
 import { loadMemberFieldsFlags } from "@/lib/member-fields-settings";
 import { requiresPaidSubscriptionForMemberForBooking } from "@/lib/membership-type-policy";
 import { hasAdminAccess } from "@/lib/access-roles";
+import { getFirstAccessibleAdminHref } from "@/lib/admin-permissions";
+import { MEMBER_ACCESS_ROLE_SELECT } from "@/lib/access-role-definitions";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 
 function singleSearchParam(value?: string | string[]) {
@@ -118,6 +123,8 @@ export default async function ProfilePage({
     emailChangeError?: string | string[];
     emailChanged?: string | string[];
     returnTo?: string | string[];
+    googleLinked?: string | string[];
+    googleError?: string | string[];
   }>;
 }) {
   const session = await auth();
@@ -125,6 +132,8 @@ export default async function ProfilePage({
   const params = await searchParams;
   const emailChangeError = singleSearchParam(params.emailChangeError);
   const emailChanged = singleSearchParam(params.emailChanged) === "true";
+  const googleLinked = singleSearchParam(params.googleLinked) === "1";
+  const googleError = singleSearchParam(params.googleError);
   const returnTo = getSafeInternalReturnPath(params.returnTo);
 
   const currentSeasonYear = getSeasonYear(new Date());
@@ -153,7 +162,12 @@ export default async function ProfilePage({
       postalPostalCode: true,
       postalCountry: true,
       role: true,
-      accessRoles: { select: { role: true } },
+      financeAccessLevel: true,
+      // Joined definitions so getFirstAccessibleAdminHref resolves the merged
+      // matrix (custom / club-edited roles included) for the landing-preference
+      // control's visibility (#2090).
+      accessRoles: { select: MEMBER_ACCESS_ROLE_SELECT },
+      postLoginLanding: true,
       ageTier: true,
       occupation: true,
       lodgeScreenPhoneOptIn: true,
@@ -164,6 +178,7 @@ export default async function ProfilePage({
       passwordChangedAt: true,
       twoFactorEnabled: true,
       twoFactorMethod: true,
+      googleSub: true,
       canLogin: true,
       familyGroupMemberships: {
         select: {
@@ -193,6 +208,12 @@ export default async function ProfilePage({
 
   if (!member) redirect("/login");
   const isAdmin = hasAdminAccess(member);
+  // The landing-preference control (#2090) is offered to any member whose role
+  // resolves to an admin page (Full Admin, scoped admins, finance viewers) —
+  // i.e. those affected by the new admin default, who may want to opt back to
+  // the member dashboard. Members with no accessible admin page have no
+  // meaningful choice, so the control is hidden.
+  const canChooseLanding = getFirstAccessibleAdminHref(member) !== null;
 
   const currentSub = member.subscriptions.find(
     (s) => s.seasonYear === currentSeasonYear,
@@ -213,6 +234,11 @@ export default async function ProfilePage({
   const modules = await loadEffectiveModuleFlags();
   const showTwoFactorSecurityCard =
     modules.twoFactor || member.twoFactorEnabled;
+  const googleLinkedNow = Boolean(member.googleSub);
+  // Show the Connected-accounts control when the club offers Google sign-in, or
+  // whenever the member already has an account linked (so they can disconnect it
+  // even after the club turns the module off).
+  const showGoogleAccountCard = modules.googleLogin || googleLinkedNow;
   const profileFormMember = {
     id: member.id,
     firstName: member.firstName,
@@ -351,6 +377,7 @@ export default async function ProfilePage({
                 {subscriptionStatusLabel(subscriptionStatus ?? "NOT_INVOICED")}
               </Badge>
             </div>
+            {canChooseLanding ? <PostLoginLandingPreference /> : null}
           </CardContent>
         </Card>
 
@@ -393,6 +420,31 @@ export default async function ProfilePage({
                 enabled={member.twoFactorEnabled}
                 method={member.twoFactorMethod}
                 moduleEnabled={modules.twoFactor}
+              />
+            ) : null}
+            {googleLinked ? (
+              <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+                Your Google account has been connected.
+              </div>
+            ) : null}
+            {googleError ? (
+              <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">
+                {googleError === "unverified"
+                  ? "That Google account's email is not verified, so it cannot be linked."
+                  : googleError === "already_linked"
+                    ? "That Google account is already linked to another member."
+                    : googleError === "account_conflict"
+                      ? "Your account is already linked to a different Google account. Disconnect it first."
+                      : googleError === "disabled"
+                        ? "Google sign-in is currently turned off by your club."
+                        : "Google account linking could not be completed. Please try again."}
+              </div>
+            ) : null}
+            {showGoogleAccountCard ? (
+              <GoogleAccountCard
+                linked={googleLinkedNow}
+                moduleEnabled={modules.googleLogin}
+                credentialsConfigured={googleCredentialsConfigured()}
               />
             ) : null}
           </CardContent>

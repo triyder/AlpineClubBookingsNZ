@@ -84,6 +84,399 @@ as a red flag and check the release notes before deploying.
 
 ---
 
+## Unreleased
+
+The unreleased range **closes the config-transfer import compatibility window
+for old bundles** (#2131) and **re-sources the public `{{hut-fees}}` embed onto
+the authoritative per-membership-type rate table** (#2129 step 1). There is
+**no migration and no schema change**, so the deploy itself needs no special
+window: any deploy window is fine, and the old colour is unaffected. The
+operator impact is about **archived configuration bundles** and, if you publish
+hut fees, about which membership types are flagged **Publicly listed**.
+
+### Before deployment
+
+1. **Re-export any archived config bundle you intend to keep, before you
+   upgrade.** From this release the importer rejects the legacy bundle shapes
+   at dry-run — the `isMember` column on `season-rates.csv` and on the Xero
+   `item-code-mappings.csv` HUT_FEE rows, and the pre-#1931 `ENTRANCE_FEE`
+   item-code category name. Any bundle exported by **v0.12.2 or earlier** is
+   likely to carry them. Export a fresh bundle from your still-running v0.12.2
+   install (**Admin → Setup & Configuration → Export & Import**) and archive
+   that instead; a bundle exported after the upgrade is already in the current
+   shape.
+2. **If your source install is already gone**, the old zip is not lost — it can
+   be hand-fixed. Follow "Converting a legacy bundle by hand" in the
+   [Export & Import operator guide](guides/config-transfer.md#converting-a-legacy-bundle-by-hand),
+   then **Reseal edited bundle** and re-preview.
+3. **Check your bootstrap path.** If you set `CONFIG_BUNDLE_IMPORT_PATH` for
+   disaster-recovery or clone boots, make sure the bundle at that path is a
+   current-shape export. A legacy bundle there is refused at boot
+   (`refused-invalid`, nothing written) and the replacement install comes up
+   **unconfigured** — the cause is only visible in the boot logs.
+
+### Post-upgrade actions
+
+1. **Nothing changes for current-shape bundles.** Export and import of bundles
+   produced by this release are byte-identical to before, and the #1931
+   item-code-amount joining-fee materialisation (from current `JOINING_FEE`
+   rows, e.g. when `membership-fees` is deselected) is unchanged.
+2. **Hand-authored Xero bundles now need a membership type on every HUT_FEE
+   row.** A `HUT_FEE` row in `item-code-mappings.csv` with a blank
+   `membershipTypeKey` is now a blocking row error instead of writing a keyless
+   mapping the runtime never reads. Fill in the column (the exporter always
+   does) before re-importing a hand-edited bundle.
+3. **Check your public hut-fee table if you use the `{{hut-fees}}` embed
+   (#2129).** The embed now reads the authoritative per-membership-type rate
+   table instead of the frozen legacy member/non-member one, and it renders
+   **one column per publicly-listed membership type** (types priced identically
+   share a column). Which columns appear is now controlled entirely by the
+   **Publicly listed** flag on each membership type — the same flag the joining-
+   fee and annual-fee embeds already use. If you have not set that flag on the
+   types you advertise, the table can collapse to a single column and quietly
+   stop showing non-member pricing. Set **Admin → Membership Types → Publicly
+   listed** on every type you want on the public rate card *before* upgrading,
+   then check the page. Setup readiness also warns on **Seasons And Rates** when
+   the embed is enabled but fewer than two types would produce a column.
+
+**Rollback boundary.** No schema change, so there is nothing to roll back at the
+database level: reverting to the previous colour simply restores the old
+importer, which still accepts legacy bundles, and the previous `{{hut-fees}}`
+rendering.
+
+---
+
+## v0.12.1 → v0.12.2
+
+`v0.12.2` is a patch release with **four migrations — two expand/additive and
+two breaking `contract` migrations** (one of them destructive). This is the
+first release since the expand/migrate/contract series began that carries a
+destructive contract migration, so it needs more deployment care than `v0.12.1`.
+It fixes the production Xero lock-date 503, adds a Xero lock-date error taxonomy
+and a connection-health probe, brings the age-exempt (N/A) membership-type
+lifecycle (single-source enforcement, bulk assignment, Xero Setup import, opt-in
+fee item-code paid-detection), multi-select age tiers for Xero member-grouping,
+a changed admin post-login landing default, and a batch of admin/booking UX
+fixes. Read the full inventory in `docs/releases/v0.12.2.md` and the `0.12.2`
+changelog section before starting.
+
+### Before deployment
+
+1. **Take and restore-test a fresh backup — this release drops schema.** As
+   always take a fresh `pg_dump` immediately before migrating and confirm it
+   restores, but treat it as mandatory here: `20260720120000_contract_drop_...`
+   issues `DROP TABLE`s that cannot be undone by rolling the app back (there is
+   no down-migration). Restore is your only recovery for the dropped data.
+2. **Two of the four migrations are breaking `contract` migrations and need the
+   `ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS=1` acknowledgement.** The blue/green
+   validator refuses a breaking migration without it; set it (with the
+   acknowledgement as the override reason) for this deploy only:
+   - `20260719170000_xero_grouping_age_tiers_multiselect` backfills the scalar
+     `XeroContactGroupRule.ageTier` into a new `ageTiers` array (`X → [X]`,
+     `null → []` = "all tiers") and then **drops the scalar column**. It is
+     `old_code_compatible=yes` but **window-bounded and admin-only**: between
+     migrate and cutover the old colour's grouping/membership-admin reads still
+     name `ageTier` and error with column-does-not-exist. The live grouping sync
+     fails **closed** (a member edit/age-up that would re-group errors and is
+     retried post-cutover — no partial write, no money, no booking capacity).
+     **Deploy with grouping/membership-admin traffic idle (a quiet admin window)
+     and cut over promptly.** No member is re-grouped in Xero by the migration.
+   - `20260720120000_contract_drop_entrance_fee_and_agetier_xero_group` (E13,
+     the blue/green-safe subset of #1939) drops the dead `EntranceFee` and
+     `AgeTierXeroAcceptedContactGroup` tables and deletes the orphaned
+     `entranceFeeAmountCents` account-mapping row. It is `old_code_compatible=yes`
+     — an independent drop-proof review re-verified **zero readers against the
+     `v0.12.1` tag** (the colour draining during this deploy): the current
+     runtime issues no SQL naming those structures and there is no FK/cascade
+     trap — so the draining old colour keeps working. The acknowledgement is
+     required only because a `DROP` is breaking by class, not because the old
+     colour breaks. Deliberately **kept/deferred** (still read by the current
+     runtime): the `EntranceFeeCategory` enum, `SeasonRate` (the live public
+     `{{hut-fees}}` embed), `MembershipTypeAgeTier`, and the
+     `XeroItemCodeMapping.isMember` / `AgeTierSetting.xeroContactGroup*` columns
+     — follow-ups #2129/#2130/#2131.
+     *(Superseded after this release: #2129 step 1 re-sourced the public
+     `{{hut-fees}}` embed onto `MembershipTypeSeasonRate`, removing the last
+     **application-runtime** `SeasonRate` reader — see the following release's
+     entry. One reader and two writers still remain in seed code
+     (`e2e/setup/seed-second-lodge.ts:202` and `:218-224`, `prisma/seed.ts:208-227`)
+     and must be removed in the same PR as the DROP migration. The sentence above
+     describes the position as at v0.12.2.)*
+3. **The two additive migrations need no special handling.**
+   `20260719150000_add_post_login_landing` adds a `PostLoginLanding` enum plus a
+   nullable `Member.postLoginLanding` column with no default (metadata-only
+   catalog change even on the hot `Member` table; ledgered
+   `old_code_compatible=yes`). `20260719180000_add_use_fee_schedule_item_codes`
+   adds a single flagged-**off** boolean on the cold single-row
+   `MembershipLockoutSettings` table (additive, constant default, ledger-exempt
+   under the same policy as v0.12.1's `add_login_security_setting`).
+4. **Know what is opt-in vs behaviour-changing.** The new **fee item-code**
+   subscription paid-detection mode is **off by default** — nothing changes until
+   an admin enables "Use membership fee item codes", and it is config-only (its
+   migration only adds the flag). The **age-exempt (N/A) membership types**
+   feature is config-only too — no migration; it takes effect only when an admin
+   sets a type's allowed age tiers to include or restrict to N/A. The one genuine
+   **behaviour change** is admin **post-login landing** (below): it is applied by
+   the application, not by stored data, so it takes effect at the first login
+   after cutover with no migration flag to set.
+
+**Rollback boundary.** A validator or pre-migration failure aborts the deploy
+before any schema change: the old colour is untouched and keeps serving. A failed
+cutover auto-restores traffic to the old colour, which then runs against the
+migrated schema — every migration this release is old-colour compatible (the two
+additive ones trivially; the grouping drop only under the quiet-admin-window rule
+above; the E13 drops because nothing in the old colour reads the dropped
+structures), so the old colour keeps working. Roll forward (fix and redeploy the
+new colour — the preferred path) or restore the pre-upgrade backup, losing all
+writes since it was taken. **There is no down-migration, and the E13 `DROP TABLE`s
+are irreversible without that backup.**
+
+### Post-upgrade actions
+
+1. **Tell your admins their landing changes on the next sign-in (behaviour
+   change).** From the first login after cutover, a member with admin access who
+   has set no preference lands on their **admin area** (their first accessible
+   admin page) instead of `/dashboard`. This applies to **every** member whose
+   role resolves to an accessible admin page — not just full admins, but also
+   **read-only admins** and **finance-only viewers** (for example, a finance-only
+   viewer lands on `/admin/payments`). It is applied by the application, not by
+   stored data. A plain member is unaffected; a member with no accessible admin
+   area — including a demoted ex-admin holding a stale preference — still lands on
+   `/dashboard`, never a permission-denied loop. Point admins who prefer the
+   member view at the new "After sign-in, take me to" control on the profile
+   **Account Information** card.
+2. **Verify Xero is healthy and past-dated bookings work.** Open Admin → Xero and
+   confirm the new connection-health chip shows Connected (click the probe if
+   needed); if it shows reconnect-required, reconnect from Setup. Confirm that
+   creating a retroactive (past-dated) booking no longer returns the 503 lock-date
+   error when the org has lock dates set.
+3. **Check member-grouping rules survived the multi-select migration.** Each
+   former single-tier rule should now show that one tier and each former
+   "Any age" rule should show "all tiers"; run the admin "Refresh from Xero" and
+   confirm no unexpected full regroup. Create per-tier annual-fee rows only if you
+   are on the new colour (the v0.12.1 caveat still stands).
+4. **Decide on the opt-in membership tooling.** If you bill one Xero item code per
+   membership type + age tier, you can now enable "Use membership fee item codes"
+   for subscription paid-detection (default off). The members-page **bulk set
+   membership type** tool and the Xero **Setup import** mapping modes (age tiers /
+   membership types / both) are available; imports never overwrite an existing
+   current-season assignment and report what they skip.
+5. **Confirm age-exempt types behave as intended.** For any membership type whose
+   allowed age tiers restrict to or include **N/A (no age)**, check that holders
+   resolve to `NOT_APPLICABLE` as expected and that N/A members remain
+   non-bookable as linked guests.
+6. **Note the in-stay extension semantics.** A member already at the lodge can
+   extend night-by-night from the booking edit panel; minimum-stay is now
+   evaluated against the **whole contiguous stay** (a one-night extension of an
+   already-valid stay is no longer wrongly rejected) and surfaced as an advisory
+   warning on the quote. Adopters with clubs mid-stay get this new evaluation
+   immediately.
+
+No one-off data backfill command is required after a successful migration. Apart
+from the E13 drops, the migrations write no rows; all new feature behaviour is
+opt-in through admin surfaces except the admin post-login landing default.
+
+---
+
+## v0.12.0 → v0.12.1
+
+`v0.12.1` is a patch release with five migrations, **all expand/additive and
+none contract**. It adds optional sign-in methods (a per-club password-complexity
+policy plus module-flagged email magic-link and Google OAuth, both default off),
+per-age-tier membership billing (subscription requirement and annual fees),
+Lobby Display template/builder polish, a full operator and member documentation
+library, and a screenshot-forward README. Read the full release inventory in
+`docs/releases/v0.12.1.md` and the `0.12.1` changelog section before starting.
+
+### Before deployment
+
+1. **Take and restore-test a fresh backup.** As always, take a fresh `pg_dump`
+   immediately before migrating and confirm it restores before you cut over.
+2. **A normal deploy window is sufficient — no contract migration this
+   release.** Four of the five migrations are catalog-only changes on cold
+   config tables. The one build to note is the `add_google_oauth` unique index
+   over `Member.googleSub`: it builds over an all-NULL new column (NULLs never
+   collide), so it is a fast, trivially-distinct build that briefly blocks
+   `Member` writes — negligible on a normal club, but switch its statement to
+   `CREATE UNIQUE INDEX CONCURRENTLY` if `Member` is very large. Review the four
+   ledger rows in `docs/BLUE_GREEN_MIGRATION_SAFETY.tsv`
+   (`add_magic_link`, `add_google_oauth`,
+   `add_based_on_age_tier_subscription_behavior`, `annual_fee_age_tier` — all
+   `old_code_compatible=yes`). The fifth, `add_login_security_setting`, is a
+   single additive cold table and carries no ledger row (same policy as
+   v0.12.0's ledger-exempt additive migrations).
+3. **Do not author any per-age-tier annual-fee rows until cutover completes.**
+   `20260719140000_annual_fee_age_tier` adds a nullable
+   `MembershipAnnualFee.ageTier` with no backfill, so every existing row stays
+   the flat (`NULL`-tier) fallback and prices identically. But the old colour's
+   fee resolver does **not** filter by age tier, so a per-tier row is **not**
+   invisible to it: once such a row falls in an active window the old colour can
+   select it for a member of any tier (first match by `effectiveFrom` desc) and
+   mis-price them at the wrong tier's amount. Keep annual fees flat-only across
+   both colours for the whole migrate→cutover window; create per-tier annual-fee
+   rows only after the new colour is serving. (Per-tier joining fees already
+   shipped in v0.12.0 and are unaffected.)
+4. **Know that the two new sign-in modules default off.** `magicLink` and
+   `googleLogin` are flagged off, so magic-link and Google sign-in stay disabled
+   through the migrate→cutover window until an admin enables them after cutover.
+   The password-complexity policy applies only at password-set time and never
+   re-validates an existing password, so no member is locked out at cutover.
+
+**Rollback boundary.** A validator or pre-migration failure aborts the deploy
+before any schema change: the old colour is untouched and keeps serving. A
+failed cutover auto-restores traffic to the old colour, which then runs against
+the migrated schema — every migration this release is old-colour compatible, so
+the old colour keeps working (the only rule is the per-age-tier annual-fee
+authoring caveat above). Roll forward (fix and redeploy the new colour — the
+preferred path) or restore the pre-upgrade backup, losing all writes since it
+was taken. There is no down-migration.
+
+### Post-upgrade actions
+
+1. Open the admin **Login & Security** page and confirm the password-complexity
+   policy is what the club intends (an un-configured club keeps the previous
+   default behaviour). Confirm existing members can still sign in with their
+   password.
+2. Under **Admin > Modules**, decide whether to enable email magic-link and/or
+   Google OAuth — both default off. For Google, set the per-club
+   `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` per `CONFIGURATION.md`, then confirm
+   a member can link their verified Google account from their profile and sign
+   in; the magic-link TTL is set on the Login & Security page.
+3. For any membership type set to *Required based on age tier*, verify the
+   age-tier settings (`subscriptionRequiredForBooking`) drive which tiers are
+   billed and that exempt tiers receive no subscription invoice.
+4. Confirm annual fees render correctly in admin fee configuration and the
+   public annual-fees embed; create per-age-tier annual-fee rows only now that
+   cutover is complete. Check the annual-fee editor's Xero Account/Item pickers
+   list the expected codes (or fall back to manual entry with the amber notice
+   if Xero is disconnected).
+5. If the club uses Lobby Display, confirm the module is still off unless
+   intended; if enabled, spot-check the template pack and the guided builder at
+   `/admin/display/builder`.
+
+No one-off data backfill command is required after a successful migration. The
+migrations write no rows; all new behaviour is opt-in through admin surfaces.
+
+---
+
+## v0.11.0 → v0.12.0
+
+`v0.12.0` is a large minor release with 25 migrations (24 expand/additive, one
+contract). It adds the flagged-off Lobby Display module, exclusive whole-lodge
+holds, un-flagged core multi-lodge operation, database-first club identity and
+configuration with boot-time self-heal, authoritative fee schedules with
+subscription and joining-fee billing, and rule-based Xero member grouping,
+alongside broad booking-settlement and Xero/finance hardening. Read the full
+release inventory in `docs/releases/v0.12.0.md` and the `0.12.0` changelog
+section before starting.
+
+### Before deployment
+
+1. **Take and restore-test a fresh backup.** Neither Configuration Export nor
+   the new `CONFIG_BUNDLE_IMPORT_PATH` boot auto-import is a database backup;
+   both intentionally exclude members and transactional data.
+2. **Schedule a quiet, low-write window.** Most of the 25 migrations are
+   catalog-only, but single index builds run over `Booking`, `Member`, and
+   `MemberSubscription` — each fast over an all-NULL new column, but a plain
+   (non-`CONCURRENTLY`) build that briefly blocks writes to that table — and
+   the fee, joining-fee, and Xero-grouping migrations run one-time backfills
+   over small configuration tables.
+3. **Plan the contract-migration window.**
+   `20260714140000_drop_committee_member` drops the legacy standalone
+   committee directory table. Its expand predecessor,
+   `20260629130000_add_committee_roles_assignments`, shipped in `v0.11.0`
+   (deployed 2026-07-13) and backfilled the member-linked roles/assignments
+   while the table still existed, so confirm `v0.11.0` is fully deployed. The
+   drop loses no data beyond the retired directory itself — no assignment or
+   contact data lives only in the dropped table. The old colour's admin
+   committee CRUD routes error with relation-does-not-exist between migrate
+   and cutover (public committee and contact surfaces are unaffected). Idle
+   or drain old-colour admin traffic, cut over promptly, and use
+   `ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS=1` only with a non-empty
+   `BLUE_GREEN_MIGRATION_OVERRIDE_REASON` acknowledging this reviewed window.
+   Do not use the override to bypass an unreviewed validator failure.
+4. **Review the new fee and billing configuration surfaces.** Season rates
+   keyed by membership type, joining fees, annual-fee components,
+   subscription-billing settings, and family billing modes are backfilled
+   from the club's existing configuration, and the legacy tables are retained
+   so both colours price season and annual fees identically during cutover
+   (entrance/joining fees carry the window caveat below). Read
+   `docs/AUTHORITATIVE_FEES.md`, and where possible confirm on a staging
+   restore that the backfilled schedules reproduce the club's current
+   amounts before deploying.
+5. **Idle membership approvals and entrance-fee minting on the old colour
+   from migrate until cutover.** Once `20260717170000_joining_fee_model`
+   re-keys the entrance-fee Xero item-code mappings from `ENTRANCE_FEE` to
+   `JOINING_FEE`, the old colour resolves **both** the item code **and** the
+   amount of a new entrance-fee invoice from the legacy flat mappings: it can
+   mint a wrong per-category amount, or — if the flat amount is unset — mark
+   the operation SUCCEEDED and silently never create the invoice. Operations
+   queued before the window carry frozen amount/item payloads and replay
+   safely. Keep membership approvals and entrance-fee minting fully idle on
+   the old colour for the whole migrate→cutover window.
+6. **Know the Xero member-grouping cutover plan.** The
+   `xero_member_grouping` migration converges grouping configuration locally
+   and performs **zero** Xero calls; no member is re-grouped until an admin
+   runs the dry-run and bulk re-sync in
+   `docs/XERO_MEMBER_GROUPING_RUNBOOK.md`. Avoid saving membership-type
+   grouping rules on the draining old colour during the window, and re-run
+   the runbook pre-checks after cutover.
+
+**Rollback boundary.** A validator or pre-migration failure aborts the deploy
+before any schema change: the old colour is untouched and keeps serving. A
+failed cutover auto-restores traffic to the old colour, which then runs
+against the migrated schema — the admin committee CRUD errors and the
+old-colour entrance-fee caveat above apply until you either roll forward (fix
+and redeploy the new colour — the preferred path) or restore the pre-upgrade
+backup, losing all writes since it was taken. There is no down-migration.
+
+### Post-upgrade actions
+
+1. Verify database-first identity and configuration: open the admin club
+   identity, lodge, capacity, age-tier, and email settings surfaces and
+   confirm the expected values. These now resolve from the database with
+   config-file fallback; the boot-time config self-heal backfills any missing
+   database values from the effective configuration and never overwrites an
+   admin edit.
+2. Remove the retired email environment variables — `EMAIL_FROM_NAME`,
+   `SUPPORT_EMAIL`, `CONTACT_EMAIL`, and `NEXT_PUBLIC_CONTACT_EMAIL` — from
+   the deployment `.env`: their values are ignored, and a boot warning fires
+   while any of them remains set (`EMAIL_FROM` remains required). Then
+   confirm the support and contact addresses under **Admin > Email
+   Messages**.
+3. Confirm fee schedules render correctly: admin fee configuration (season
+   rates by membership type, joining fees, annual fees and their components,
+   subscription billing) and the public join/fees pages must show the same
+   amounts the club charged before the upgrade. A previously visible public
+   fee embed stays visible — the `public_content_annual_fees` migration seeds
+   the new `{{annual-fees}}` visibility gate from the legacy public
+   membership-types toggle — while a hidden one stays hidden until
+   deliberately enabled, so verify public amounts wherever the club displayed
+   them before.
+4. Review **Admin > Modules**: the Lobby Display module defaults off —
+   enable it only deliberately, following `docs/lobby-display/operating.md`,
+   and confirm guest phone numbers stay hidden unless both the member and
+   the lodge opt in (and only adult members' phones ever show; youth/child
+   are never shown). Multi-lodge is no longer a module and needs no flag.
+5. If the club uses school/group requests, smoke-check exclusive holds: a
+   request can flag exclusivity, and an admin whole-lodge hold blocks all
+   other bookings for its nights until released.
+6. Before enabling any Xero member-grouping bulk re-sync, verify only the
+   migration's backfilled tier rules are active (runbook pre-check) and run
+   a fresh dry-run; the re-sync refuses a stale dry-run.
+7. Spot-check a view-only admin access role: it can read admin surfaces but
+   every action button, editor, and mutating route refuses writes.
+8. Confirm `CONFIG_BUNDLE_IMPORT_PATH` is unset on the production deployment
+   unless deliberately used for disaster recovery or cloning; when set, it
+   imports only at boot and only into a database empty of non-seed
+   configuration.
+
+No one-off data backfill command is required after a successful migration.
+The release's fee, grouping, and content backfills are migration-driven and
+idempotent, and the configuration self-heal runs automatically at boot.
+
+---
+
 ## v0.10.1 → v0.11.0
 
 `v0.11.0` is a large minor release with 30 migrations and first-class

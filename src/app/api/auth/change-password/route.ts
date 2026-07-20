@@ -8,11 +8,8 @@ import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
 } from "@/lib/audit";
-
-const changePasswordSchema = z.object({
-  currentPassword: z.string().min(1, "Current password is required"),
-  newPassword: z.string().min(12, "Password must be at least 12 characters").max(128, "Password must be at most 128 characters"),
-});
+import { loadLoginSecuritySettings } from "@/lib/login-security-settings";
+import { buildPasswordSchema } from "@/lib/password-policy";
 
 export async function POST(req: NextRequest) {
   const session = await auth();
@@ -27,6 +24,14 @@ export async function POST(req: NextRequest) {
   }
 
   const body = await req.json();
+  // Validate the new password against the club's configured login-security
+  // policy (min length + optional character classes; hard 128 ceiling always).
+  // No configured row is byte-identical to the historical min(12).max(128).
+  const { policy } = await loadLoginSecuritySettings();
+  const changePasswordSchema = z.object({
+    currentPassword: z.string().min(1, "Current password is required"),
+    newPassword: buildPasswordSchema(policy),
+  });
   const parsed = changePasswordSchema.safeParse(body);
 
   if (!parsed.success) {

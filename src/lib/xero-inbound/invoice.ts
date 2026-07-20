@@ -3,9 +3,11 @@ import { prisma } from "@/lib/prisma";
 import { getSeasonYear } from "@/lib/utils";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import { callXeroApi, getAuthenticatedXeroClient } from "@/lib/xero-api-client";
-import { checkMembershipStatus, findSubscriptionInvoice } from "@/lib/xero-membership-sync";
-import { getResolvedAccountMapping } from "@/lib/xero-mappings";
-import { loadMembershipLockoutSettings } from "@/lib/membership-lockout-settings";
+import {
+  buildSubscriptionInvoiceMatchOptions,
+  checkMembershipStatus,
+  hasStrongSubscriptionInvoiceMatch,
+} from "@/lib/xero-membership-sync";
 import { type XeroObjectLinkInput, upsertXeroObjectLink } from "@/lib/xero-sync";
 import { type IncrementalInvoiceReconciliationResult, type IncrementalMembershipReconciliationResult } from "./types";
 import { buildXeroPaymentDisplayNumber } from "./amounts";
@@ -157,14 +159,21 @@ export async function reconcileXeroInvoice(
       );
 
   const seasonYear = buildSeasonYearFromInvoice(invoice);
-  const subscriptionMapping = await getResolvedAccountMapping("subscriptionIncome");
-  const lockoutSettings = await loadMembershipLockoutSettings();
-  const looksLikeSubscriptionInvoice =
-    findSubscriptionInvoice([invoice], seasonYear, {
-      accountCode: subscriptionMapping.code ?? "203",
-      itemCode: subscriptionMapping.itemCode,
-      textFallbackEnabled: lockoutSettings.textFallbackEnabled,
-    }) !== null;
+  // Member-less inbound gate (#2109 FIX-3): the reconciler sees ONE invoice at a
+  // time and cannot run prefer-paid selection, so it treats an invoice as a
+  // subscription ONLY on a STRONG match (account code, the flat primary/fallback
+  // item code, or the text fallback) — never on a union-only fee-schedule code
+  // shared with hut/joining/promo fees. A union-only inbound invoice is simply
+  // not treated as a subscription here (writing no SUBSCRIPTION_INVOICE audit
+  // links and triggering no per-member checkMembershipStatus refresh, which also
+  // removes a recurring per-webhook Xero API cost); per-member detection still
+  // sees it when a member's full invoice set is evaluated. The settings overlap
+  // warning still steers admins away from configuring overlapping codes.
+  const looksLikeSubscriptionInvoice = hasStrongSubscriptionInvoiceMatch(
+    [invoice],
+    seasonYear,
+    await buildSubscriptionInvoiceMatchOptions()
+  );
   const fallbackSubscriptionMemberIds: string[] = [];
 
   if (

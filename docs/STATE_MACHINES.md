@@ -75,6 +75,121 @@ so if the promotion fails the booking stays CONFIRMED holding its beds, admins
 are alerted, and the Stripe webhook finishes the promotion idempotently —
 captured money is never silently orphaned.
 
+Split-booking guest-portion settlement with no card on file (#1967). A split
+non-member child (#738) is normally auto-charged at its hold deadline to the
+member's saved card inherited from the parent payment
+(`savedPaymentMethodForBooking`). But a `PAYMENT_PENDING` parent can legitimately
+pay by **Internet Banking** (switch-at-pay flips the parent to `CONFIRMED` with
+an IB-source payment), which leaves the parent payment with no
+`stripeCustomerId`/`stripePaymentMethodId` — so the child resolves to no saved
+card and is not `originBookingRequest`. Rather than stranding the guests (the old
+`missing_payment_method` path only logged), `cron-confirm-pending.ts` now mirrors
+the #707 request-origin path — but only for a **genuine split child whose parent
+is genuinely settled without a card** (an IB-source payment on a live parent, or
+a parent already `CONFIRMED`/`PAID`/`COMPLETED`). #796 group joiners also carry
+`parentBookingId` but always have a `GroupBookingJoin` row written atomically at
+creation; that row is the discriminator, and joiners keep the pre-existing
+`missing_payment_method` log path. When the gate passes the cron extends the
+hold, mints a tokenised `/pay/<token>` PaymentLink (reusing the #707 machinery)
+so the member can settle the guest portion, and emails the member that link.
+The **member email fires once per mint** — `mintSplitGuestPaymentLinkIfAbsent`
+is guarded on the absence of an active (unrevoked, unused, unexpired)
+PaymentLink for the child — while the **admin alert
+(`sendAdminSplitSettlementUnpaidAlert`) follows a derived cadence** (#1993 Part
+B): it fires on hold-extension windows 1, 2 and 3, then every 7th window
+thereafter, capping the previously-uncapped ~2-daily alert. The window number is
+a pure function of elapsed time — `floor((now − originalHoldExpiry) /
+REQUEST_HOLD_EXTENSION_MS) + 1`, where `originalHoldExpiry` is re-derived (no
+schema, no counter) as `max(checkIn − holdDays, createdAt)` — and the upstream
+extension CAS still fires exactly once per ~2-day window, so a cron rerun in the
+same window never re-alerts. If the parent is NOT settled (e.g. an abandoned-card
+`PAYMENT_PENDING` parent), no link is minted or emailed — the guest portion must
+not settle ahead of the member's own place — and the same capped admin alert
+fires with parent-unpaid wording instead.
+
+Payment-link recovery and supersession (#1967). Raw tokens are never stored, so
+a minted-but-undelivered link would otherwise stall settlement forever behind
+the active-link sentinel. Recovery is revoke-and-remint: (a) if the cron's
+post-commit member email throws or is suppressed, the cron revokes the
+just-minted link **by row id** (never the whole booking, so a newer concurrent
+link survives) and the next extension run re-mints and re-sends; (b) the
+on-demand button (`POST /api/bookings/[id]/send-guest-payment-link` →
+`issueSplitGuestPaymentLink`) is a true send/RE-SEND — it revokes the existing
+active link and mints+emails a fresh one atomically under the per-lodge
+advisory lock, except that an active link minted within the last minute
+short-circuits as just-sent (the double-click guard); (c) an EXPIRED link is
+not active (matching #707's `expired_payable` re-issue convention), so a child
+whose dates moved out after its link lapsed gets a fresh link, while a child
+whose check-in day has already ended never gets one minted at all. Every mint
+site (cron, button, `/pay` re-issue) revokes-then-creates under the per-lodge
+advisory lock, so at most one live token can exist per booking. Conversely,
+once a saved card appears (e.g. the member later pays the parent by card), the
+cron's auto-charge claim revokes the child's active links inside the claim
+transaction and the `/pay` intent path re-reads the link under the same lock —
+the tokenised link and the saved-card charge are never both live. The on-demand
+issue path refuses (`not_payable`) whenever a saved card exists for the same
+reason.
+
+Reachable composite states (#1967): the parent and child settle independently,
+so a child can be PAID while its parent is still unpaid (IB transfer never
+reconciled) or after the parent is CANCELLED — the parent-cancel sweep
+(`cancelLinkedProvisionalChildBookings`) only cancels children still PENDING
+(and revokes their links); an already-PAID child deliberately survives, exactly
+like any other paid booking (captured-money invariant), and needs the ordinary
+cancel/refund flow if the party is not coming.
+
+Terminal state at check-in (#1993 Part A, owner-selected Option 1). A split
+child still `PENDING` (unsettled, no saved card) once its check-in day has ended
+is **auto-cancelled** by the settlement cron: `PENDING -> CANCELLED`. The boundary
+is the same one the link-mint stop uses
+(`endOfDateOnlyForTimeZone(formatDateOnly(checkIn)) <= now`), so the two can never
+disagree about "check-in has passed". Because the child holds no capacity this is
+bookkeeping + notification, not a capacity change: under the per-lodge lock a
+guarded `updateMany({ status: PENDING } -> CANCELLED)` CAS (count 0 => a payment
+won the lock seconds earlier — `already_processed`, safe), then bed reconcile and
+payment-link revocation, in the same transaction. Post-commit (outside the tx,
+per `booking-events.ts` — an in-tx narrative INSERT failure would abort the whole
+transaction and block the cancel) the `CANCELLED` booking event is recorded, the
+member gets a **dedicated** guest-portion-cancelled email
+(`split-guest-portion-cancelled`: nothing was ever charged, their own booking is
+untouched — and it only promises "remains confirmed" when the parent is genuinely
+settled), and admins get ONE **dedicated** terminal notice
+(`sendAdminSplitSettlementCancelledAlert` / the `admin-split-settlement-cancelled`
+template — its own registry entry, so an override or mute of the recurring
+`admin-split-settlement-unpaid` alert cannot rewrite or suppress it). The recurring
+alert itself now fires on a capped cadence (hold-extension windows 1, 2, 3, then
+every 7th) and the terminal cancel ends that series. A **PAID child is never reached** (it is
+not `PENDING`); the **parent is never touched**; and there is **no Xero void** —
+an unsettled child never had an invoice. A split child that DOES have a saved
+card is still auto-charged at its hold deadline as before (that path settles it,
+so the terminal cancel is only for the no-card link path). The child otherwise
+stays PENDING and holds no capacity throughout; if the lodge fills first, the
+capacity re-check bumps it and revokes its link like any other provisional child.
+Paying the parent by card instead keeps the automatic saved-card settlement path
+unchanged.
+
+Terminal state at check-in for request-origin holds (#2012, the #1993 sibling).
+A request-origin booking (`originBookingRequest` set, request `CONVERTED`) still
+`PENDING` with no saved card once its check-in day has ended is likewise
+**auto-cancelled** by the settlement cron under the same boundary and the same
+per-lodge-lock + guarded `PENDING -> CANCELLED` CAS discipline (count 0 => a
+`/pay` settlement won — `already_processed`, zero side effects). The structural
+difference from the split child: a request booking **holds real capacity**, so
+the in-transaction bed reconcile genuinely RELEASES beds (mirroring the `bumped`
+path), promo redemptions are cleaned up, and the post-commit waitlist wake has
+real freed capacity to offer. The `CONVERTED` request row is deliberately left
+as the historical record — the booking's CANCELLED status is the capacity source
+of truth (a CONVERTED request is not declinable, so the decline flow cannot and
+does not run here). Post-commit the requester gets a **dedicated**
+`booking-request-payment-expired` email (no payment link — it is dead past
+check-in; the path back is a new request) and admins get ONE dedicated
+`admin-booking-request-hold-cancelled` notice with its own registry entry
+(independently mutable/overridable from the recurring hold alert). The recurring
+request-hold alert now follows the same capped cadence (extension windows 1, 2,
+3, then every 7th), and the terminal cancel ends the series. A booking whose
+parent request path acquired a saved card still auto-charges as before; `$0`
+request bookings still auto-confirm.
+
 Lodge check-in gate (F27 / #1372 + #1422) — status-preserving. A booking that
 carries a pending admin review (`requiresAdminReview` true and
 `adminReviewStatus = PENDING`) is BLOCKED from lodge check-in, but the block
@@ -291,15 +406,31 @@ Edit-eligibility is governed by a date-window edit policy
 
 ```text
 checkIn > today                     -> "future"        (edit dates/guests freely)
-checkIn <= today < checkOut         -> "in-progress"   (extend future nights only;
-                                                         check-in locked)
-checkOut <= today                   -> null            (not self-editable)
+checkIn <= today <= checkOut        -> "in-progress"   (extend future nights only;
+                                                         check-in locked; #2029:
+                                                         the whole check-out day
+                                                         is still editable)
+checkOut < today                    -> null            (not self-editable)
 
 adminOverride && role === "ADMIN"   -> "admin-override" (issue #1668: date-window
                                                          locks lifted; status
                                                          eligibility + capacity
                                                          lock still enforced)
 ```
+
+Self-service cancellation of a **started** stay is blocked (#2029). Once
+`checkIn <= todayNZ`, the member-facing cancel route
+(`enforceStartedStayBlock`) refuses cancellation for a booking owner or Booking
+Officer with a clear "edit to shorten your remaining nights, or contact the
+club" message; a Full Admin (`sessionUserRole === "ADMIN"`) keeps full
+cancellation capability, and every internal/admin cancel path (decline,
+release-hold, review-reject, account-deletion) is unaffected. This restores the
+invariant that a started stay is not member-cancellable — previously implicit
+because the completion cron flipped a started PAID booking to the
+non-cancellable COMPLETED state on day one, an implicit guard #2029's widened
+PAID window removed. Leaving early is done by shrinking the remaining future
+nights through the in-progress edit path (policy-retained), never an
+irreversible `PAID -> CANCELLED` that releases beds with guests present.
 
 The admin-override mode is date-only and takes one of two pricing modes:
 `shift` (pure relocation, all cents frozen, night count preserved, no fee /
@@ -575,6 +706,37 @@ at repay settlement (see `docs/DOMAIN_INVARIANTS.md`). The repay path assumes
 no saved card: it always goes through the immediate card-entry PaymentIntent
 flow.
 
+Duplicate capture on an already-PAID booking (#1992): when a success arrives
+carrying the SAME intent the booking settled with, every reconciliation path
+returns `already_paid` unchanged (webhook redelivery, confirm-payment racing
+the webhook, payment-link reconcile, charge-saved-method / cron reruns
+replaying their `pending_charge_` Stripe idempotency key,
+confirm-pending-guests retries). A success carrying a DIFFERENT intent while
+another captured PRIMARY transaction still holds net cash is double money (the
+residual #1967 split-child link-vs-auto-charge window) and is auto-refunded:
+the duplicate's transaction goes `SUCCEEDED -> REFUNDED` via a durable
+`duplicate_capture_<bookingId>_<pi>` recovery operation, the settlement
+transaction and the booking's PAID status are untouched, and
+`markBookingPaymentSucceeded` reports `duplicate_capture_refunded` /
+`duplicate_capture_refund_failed`. A fully `REFUNDED` prior capture is history
+(#1765), never a settlement a repay generation could "duplicate", and at most
+one side of a capture pair is ever refunded (adjudicated under `lock(1)`).
+
+Audit trail (#2008): the auto-refund is recorded as a durable, ADMIN-ONLY
+`BookingEvent` once its recovery operation reaches `SUCCEEDED` — a `REFUNDED`
+event carrying a `duplicate_capture_refund` discriminator in its `snapshot`
+(`src/lib/duplicate-capture-refund-event.ts`). It is written exactly once
+across the inline and cron-replay paths, each gated on the operation's terminal
+`SUCCEEDED` transition (`count > 0`). Because the discriminator makes
+`isDuplicateCaptureRefundEvent` true, `resolveBookingNarrative` EXCLUDES it from
+the settlement finder, so a later member cancellation never misreads it as its
+own refund clause. The admin booking-history timeline renders it with honest
+copy ("Duplicate capture auto-refunded — the booking's settlement is
+unaffected"), while the shared member/guest narrative and every member-facing
+surface show nothing new. The rest of the audit trail (recovery-operation row,
+`PaymentRefund` ledger entries, error log, and the dedicated #2007 admin alert)
+is unchanged.
+
 To verify: whether Internet Banking uses the same `PaymentStatus` transitions
 or Xero invoice state as the effective settlement state.
 
@@ -628,6 +790,9 @@ provider reference exists but is not AUTHORISED -> CONFLICT (never emailed)
 late member joins already-billed family -> FAMILY_ALREADY_BILLED exception (old coverage unchanged; no second invoice)
 stale per-family schedule under individual billing -> PER_FAMILY_FEE_IN_INDIVIDUAL_MODE exception (no invoice; basis must change)
 NO_INVOICE -> NOT_REQUIRED (zero-cent durable snapshot; no provider work)
+age-tier not subscription-liable, no PER_MEMBER fee due -> Exempt (no charge, no MISSING_FEE_SCHEDULE; confirm writes NOT_REQUIRED; PER_FAMILY child stays family-covered)
+OPEN exception -> superseding confirm run -> RESOLVED (resolvedVia CONFIRM)
+OPEN exception -> edit-gated preview refresh no longer regenerates it -> RESOLVED (resolvedVia PREVIEW_RECONCILE; whole-club refresh resolves every superseded OPEN row, member-specific and club-level null-member alike; read-only GET never resolves)
 ```
 
 To verify: preview digest changes with fee/recipient/due-day inputs; only finance
@@ -644,10 +809,12 @@ existing invoices are adopted; amount/contact/account mismatch becomes visible
 `PAID`, `OVERDUE`.
 
 ```text
-(no row) -> NOT_REQUIRED            role/policy never owes (ensureNotRequiredSubscriptionForRole, billing NO_INVOICE)
+(no row) -> NOT_REQUIRED            membership type never owes (ensureDefaultSeasonSubscriptionForNewMember, billing NO_INVOICE)
 (no row) -> NOT_INVOICED            billing sweep creates a billable-but-uninvoiced row
+NOT_REQUIRED -> NOT_INVOICED        REQUIRED-type season assignment supersedes a stale creation-seeded NOT_REQUIRED row (reconcileSeasonSubscriptionForAssignment, #2149)
 NOT_INVOICED -> UNPAID              Xero subscription invoice created (xero-subscription-invoices)
 UNPAID/OVERDUE <-> PAID             Xero discovery/webhook reflects the invoice's real payment state
+UNPAID/OVERDUE/PAID -> NOT_INVOICED Xero invoice observed VOIDED/DELETED (#2147): invoice link nulled, member re-billable — deliberately reads NOT locked out (was UNPAID/locked out pre-#2147)
 NOT_INVOICED -> PAID (manual)       manual mark-paid (finance:edit) — sets manuallyMarkedPaidAt/By/Note, never calls Xero
 PAID (manual) -> NOT_INVOICED      manual reversal when no Xero invoice link exists (clears provenance)
 PAID (manual) -> UNPAID            manual reversal on a legacy row that somehow carries an invoice link (clears provenance)
@@ -667,12 +834,31 @@ covered subscription became `PAID` while it was queued. `checkMembershipStatus`
 never downgrades a manually marked-paid row that carries no Xero invoice link
 (enforced by a write-time fence, not just an up-front read), and
 `flushMemberSubscriptionHistory` never deletes a manual-PAID row on contact
-link/push/unlink. Every manual transition is audited with the acting admin.
+link/push/unlink. The assignment reconcile
+(`reconcileSeasonSubscriptionForAssignment`, #2149) only ever flips a row that is
+still the untouched creation-seeded `NOT_REQUIRED` default (null Xero invoice, no
+charge/family coverage, no manual mark-paid) and only when the newly-effective
+type is `REQUIRED`; it is a status-guarded, idempotent `updateMany` (no advisory
+lock, no provider call) that runs inside the assignment transaction, so it can
+never downgrade a paid/invoiced/covered/manual row and never fires for a
+`BASED_ON_AGE_TIER` type (whose `NOT_REQUIRED` row is the authoritative #2041
+season-start exemption). Every manual transition is audited with the acting admin.
+
+The annual sweep (#2147) skips a member who is already `PAID` **OR** holds a LIVE
+Xero invoice link (any of UNPAID/OVERDUE/PAID) — an additive dedup guard so an
+invoiced-but-unpaid member is never double-billed, while a manually marked-paid
+member (PAID, null invoice link) is still skipped. On a void/delete the sync
+marks the covering `MembershipSubscriptionCharge` `VOIDED` (kept for audit, never
+re-enqueued), releases its coverage claim (`releasedAt` set — row kept), and
+bumps `MemberSubscription.voidGeneration` so a re-bill mints a NEW charge with a
+fresh idempotency key.
 
 To verify: manual mark-paid sets PAID + provenance and never calls Xero; the
-sweep skips a manual-PAID member; a Xero force-sync leaves a manual-PAID row
-untouched; a contact link/unlink resync leaves a manual-PAID row in place;
-reversal restores UNPAID vs NOT_INVOICED by invoice-link presence.
+sweep skips a manual-PAID member and an invoiced-but-unpaid member; a Xero
+force-sync leaves a manual-PAID row untouched; a contact link/unlink resync
+leaves a manual-PAID row in place; reversal restores UNPAID vs NOT_INVOICED by
+invoice-link presence; a voided invoice makes the member NOT_INVOICED and
+re-billable with a new charge.
 
 ## Committee Assignment Lifecycle
 
@@ -858,9 +1044,14 @@ Runtime booking paths resolve the policy for the booking season. `BLOCK_BOOKING`
 stops owners or linked member guests with a structured policy error.
 `NON_MEMBER_RATE` uses non-member nightly rates while keeping the stored member
 identity. `NOT_REQUIRED` changes effective subscription lockout and display
-without deleting raw subscription, payment, or Xero invoice history. `ADMIN` and
-`LODGE` operational subscription exemptions remain governed by access-role
-helpers, separate from seasonal type policy. The optional assignment `applyFrom`
+without deleting raw subscription, payment, or Xero invoice history. Membership
+type is the sole authority for the subscription-required answer (#2149): access
+**role carries no exemption of its own**. `ADMIN` and `LODGE` accounts are exempt
+only because — with no explicit season assignment — they resolve via the
+role→default-type fallback to their own built-in `NOT_REQUIRED` types (`ADMIN` =
+BLOCK_BOOKING, `LODGE` = MEMBER_RATE so the kiosk still books); a fee-paying
+human holding the admin permission carries a normal REQUIRED type and owes a
+subscription like anyone else. The optional assignment `applyFrom`
 date is date-only metadata for mid-season changeover reporting and audit; the
 guarded preview remains the required save path and existing future bookings are
 not automatically repriced by a type or apply-from change.
@@ -978,6 +1169,24 @@ visible. The list API (`/api/admin/member-lifecycle-action-requests`) takes an
 To verify: financial blockers, future booking blockers, family cleanup, Xero
 group/archive behavior, and email visibility.
 
+Direct import into the cancelled end-state (#1946): the admin member CSV import
+accepts an optional **Cancelled Date** column. A row with a cancelled date is
+created directly as a cancelled member — `active = false`, `canLogin = false`,
+`cancelledAt` = the given NZ date-only value, `cancelledReason` and
+`cancelledViaRequestId` null (no `MembershipCancellationRequest` exists for a
+legacy import). This produces the same terminal member fields the normal
+approval transition writes, minus side effects: the import sends no cancellation
+email and queues no Xero cancellation operation (a freshly imported member has
+no Xero contact to cancel), and never sends a setup invite. A cancelled import
+row does not claim the login for a shared email (an active member keeps it), and
+a cancelled date in the future is rejected (mirrors the flow's `cancelledAt =
+now`). Because the import only ever creates members and skips a row whose
+email+name identity already exists, it cannot cancel an existing active member —
+that remains an admin cancellation-flow action, with its blockers, confirmations,
+and Xero handling. The import establishes no family links, so there is no
+cross-row cancellation cascade between a cancelled primary and active family
+rows in the same file; each row's status is independent.
+
 ## Family And Dependent Lifecycle
 
 ```text
@@ -1051,6 +1260,73 @@ To verify: Auth.js JWT callback claim handling, challenge-token single-use
 consumption, protected route-group layout redirects, API guard rejection,
 email-code expiry, TOTP skew window, recovery code single-use consumption, and
 lockout reset after successful verification.
+
+## Magic-Link Sign-In Lifecycle
+
+Passwordless email sign-in (issue #2034, epic #2030). Additive to password
+login, module-gated (`magicLink`, default off), and never an email-verification
+bypass. The token is a single-use, SHA-256-hashed `MagicLinkToken` (the same
+primitive as password reset).
+
+```text
+member requests link (POST /api/auth/magic-link) -> ALWAYS {success:true} (enumeration-safe)
+  module off, unknown, canLogin=false, inactive, or unverified -> silent no-op, zero email
+  module on + active + verified -> old tokens deleted, one fresh token minted, link emailed (magic-link-login, sensitive-log redacted)
+click /login/magic?token=… -> signIn("magic-link") verify provider:
+  bad format / missing / used / expired token -> rejected (generic failure)
+  conditional claim updateMany({id, used:false}) count===1 -> claimed (two concurrent clicks -> at most one session)
+  member gate: canLogin && active (else reject); unverified -> EMAIL_NOT_VERIFIED; forcePasswordChange -> refuse, point to Forgot password
+  success -> JWT issued with twoFactorVerified=false (2FA member still routed to /login/verify)
+TTL: read from LoginSecuritySetting.magicLinkTtlMinutes (#2033) via loadLoginSecuritySettings(), default 15, clamped 5..60
+```
+
+To verify: enumeration safety (4 no-op cases + zero email), module-off no-op,
+the conditional-claim single-use race, expired/tampered rejection, the
+archived/dependent and forcePasswordChange refusals, the unverified block, that
+the emailed link's HTML never persists in `EmailLog`, and that a 2FA-enrolled
+member still lands on `/login/verify`.
+
+## Google Sign-In Lifecycle (profile-initiated linking)
+
+Google OAuth sign-in (issue #2035, epic #2030). JWT strategy, NO adapter.
+Additive to password login, module-gated (`googleLogin`, default off, plus
+`GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`). **Profile-initiated linking only** —
+no account is ever created from Google, and login never matches by email
+(closes the Workspace-domain takeover). Sign-in resolves a member solely by the
+pinned subject id `Member.googleSub`. The single Google provider serves both
+login and linking; the `signIn` callback disambiguates via a short-lived,
+HttpOnly, HMAC-signed link-intent cookie set by the authenticated
+`POST /api/profile/google/link/start`.
+
+```text
+LINK (signed-in member, profile > Connected accounts > Connect Google):
+  POST /api/profile/google/link/start -> sets signed link-intent cookie (binds memberId), then signIn("google")
+  Google OAuth round-trip -> signIn callback sees the intent cookie:
+    module off -> refuse -> /profile?googleError=disabled
+    email_verified !== true -> refuse -> /profile?googleError=unverified
+    sub already linked to ANOTHER member -> refuse (audited) -> /profile?googleError=already_linked
+    member already linked to a DIFFERENT sub -> refuse (audited) -> /profile?googleError=account_conflict
+    else -> pin Member.googleSub = profile.sub (audited, security), RETURN redirect STRING
+            -> Auth.js redirects BEFORE minting a session (no identity switch) -> /profile?googleLinked=1
+UNLINK: POST /api/profile/google/unlink -> googleSub = null (audited); password login always remains
+
+LOGIN (/login "Continue with Google", shown only when module on + creds present):
+  Google OAuth round-trip -> provider profile() resolves by googleSub === profile.sub (login-capable only):
+    no match -> unlinked -> /login?error=google_unlinked (NEVER email-match, NEVER provision)
+    inactive or unverified -> refused -> /login?error=google_refused
+    forcePasswordChange -> /login?error=google_password_change
+    eligible -> same user shape as password login -> lastLoginAt bumped
+  signIn callback: module off -> /login?error=google_disabled (even for linked members)
+    eligible -> allow -> JWT issued with twoFactorVerified=false (2FA member still routed to /login/verify)
+```
+
+To verify: sub-path sign-in; the email-match-without-link refusal (takeover
+regression — no auto-link, no provision); the unverified-email link block; the
+link/unlink/re-link audited flows; the sub-already-linked-to-another and
+member-already-linked refusals; archived/dependent/forcePasswordChange refusals
+even when linked; the module kill-switch in both directions; that a linked
+2FA-enrolled member still lands on `/login/verify`; and that every refusal
+renders a visible friendly message via the `/login?error=…` wiring.
 
 ## Analytics Consent Lifecycle
 

@@ -125,7 +125,7 @@ vi.mock("@/lib/xero-mappings", () => ({
     memberId: string,
     category: string,
     amountCents: number
-  ) => `member:${memberId}:entrance-fee-invoice:${category}:${amountCents}:v1`,
+  ) => `member:${memberId}:joining-fee-invoice:${category}:${amountCents}:v2`,
   getEntranceFeeContext: mocks.getEntranceFeeContext,
 }));
 
@@ -205,7 +205,7 @@ describe("enqueueXeroEntranceFeeInvoiceOperation", () => {
       })
     ).resolves.toEqual({
       queueOperationId: "op_entrance_1",
-      message: "Xero entrance fee invoice queued for background processing.",
+      message: "Xero joining fee invoice queued for background processing.",
     });
 
     expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
@@ -216,8 +216,8 @@ describe("enqueueXeroEntranceFeeInvoiceOperation", () => {
         localModel: "Member",
         localId: "member_1",
         status: "PENDING",
-        idempotencyKey: "member:member_1:entrance-fee-invoice:ADULT:15000:v1",
-        correlationKey: "member:member_1:entrance-fee-invoice:ADULT:15000:v1",
+        idempotencyKey: "member:member_1:joining-fee-invoice:ADULT:15000:v2",
+        correlationKey: "member:member_1:joining-fee-invoice:ADULT:15000:v2",
         createdByMemberId: "admin_1",
         requestPayload: {
           queueType: "ENTRANCE_FEE_INVOICE",
@@ -238,13 +238,13 @@ describe("enqueueXeroEntranceFeeInvoiceOperation", () => {
       })
     ).resolves.toEqual({
       queueOperationId: "op_entrance_1",
-      message: "Xero entrance fee invoice queued for background processing.",
+      message: "Xero joining fee invoice queued for background processing.",
     });
 
     expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
       expect.objectContaining({
-        idempotencyKey: "member:member_1:entrance-fee-invoice:ADULT:12345:v1",
-        correlationKey: "member:member_1:entrance-fee-invoice:ADULT:12345:v1",
+        idempotencyKey: "member:member_1:joining-fee-invoice:ADULT:12345:v2",
+        correlationKey: "member:member_1:joining-fee-invoice:ADULT:12345:v2",
         requestPayload: {
           queueType: "ENTRANCE_FEE_INVOICE",
           category: "ADULT",
@@ -269,7 +269,7 @@ describe("enqueueXeroEntranceFeeInvoiceOperation", () => {
       enqueueXeroEntranceFeeInvoiceOperation("member_1")
     ).resolves.toEqual({
       queueOperationId: null,
-      message: "No entrance fee is configured for this member category.",
+      message: "No joining fee is configured for this membership type.",
     });
 
     expect(mocks.startXeroSyncOperation).not.toHaveBeenCalled();

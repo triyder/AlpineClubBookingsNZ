@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
+import { STATUS_COLORS } from "@/components/admin-booking-calendar";
 
 // --- P1.1: canModify logic tests ---
 
@@ -62,19 +63,11 @@ describe("P1.1: Admin canModify override", () => {
 
 // --- P1.4: Calendar STATUS_COLORS tests ---
 
+// These assertions run against the REAL exported map in
+// `admin-booking-calendar.tsx`, not a local fixture copy (#2137). The previous
+// local literal constrained nothing: it would have kept passing even if the
+// calendar itself lost or collided its waitlist swatches.
 describe("P1.4: Admin calendar status colors include waitlist statuses", () => {
-  const STATUS_COLORS: Record<string, string> = {
-    DRAFT: "bg-gray-300",
-    PENDING: "bg-yellow-400",
-    CONFIRMED: "bg-green-500",
-    PAID: "bg-blue-500",
-    COMPLETED: "bg-purple-500",
-    CANCELLED: "bg-red-500",
-    BUMPED: "bg-orange-500",
-    WAITLISTED: "bg-purple-400",
-    WAITLIST_OFFERED: "bg-teal-500",
-  };
-
   it("has WAITLISTED color", () => {
     expect(STATUS_COLORS.WAITLISTED).toBeDefined();
   });

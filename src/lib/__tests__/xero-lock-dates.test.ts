@@ -64,6 +64,29 @@ describe("getXeroLockDates (#1695)", () => {
     expect(result.endOfYearLockDate).toBeNull();
   });
 
+  it("parses Date-object lock dates (xero-node deserialises /Date(...)/ strings to Dates at runtime)", async () => {
+    // The SDK types these fields as strings, but ObjectSerializer converts any
+    // string payload starting with "/Date(" into a JS Date — the shape a real
+    // organisation with lock dates set produces. Regression for the production
+    // "e.slice is not a function" crash that 503'd every retroactive booking.
+    stubOrganisation({
+      periodLockDate: new Date(Date.UTC(2026, 2, 31)),
+      endOfYearLockDate: new Date(Date.UTC(2025, 11, 31)),
+    });
+
+    const result = await getXeroLockDates();
+    expect(iso(result.periodLockDate)).toBe("2026-03-31");
+    expect(iso(result.endOfYearLockDate)).toBe("2025-12-31");
+  });
+
+  it("treats an invalid Date object as unset rather than crashing", async () => {
+    stubOrganisation({ periodLockDate: new Date(Number.NaN) });
+
+    const result = await getXeroLockDates();
+    expect(result.periodLockDate).toBeNull();
+    expect(result.endOfYearLockDate).toBeNull();
+  });
+
   it("returns null for both when unset or no organisation is present", async () => {
     stubOrganisation(undefined);
     await expect(getXeroLockDates()).resolves.toEqual({

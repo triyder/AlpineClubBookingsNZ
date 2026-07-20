@@ -9,6 +9,7 @@ import {
 import {
   MEMBERSHIP_TYPE_BOOKING_BEHAVIORS,
   MEMBERSHIP_TYPE_AGE_TIERS,
+  DEFAULT_MEMBERSHIP_TYPE_AGE_TIERS,
   MEMBERSHIP_TYPE_SUBSCRIPTION_BEHAVIORS,
   buildUniqueMembershipTypeKey,
   membershipTypeOrderBy,
@@ -20,6 +21,7 @@ import {
 } from "@/lib/membership-types";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
+import { getSeasonYear } from "@/lib/utils";
 
 const membershipTypeSelect = {
   id: true,
@@ -65,11 +67,17 @@ async function loadMembershipTypes() {
 
   return {
     membershipTypes: membershipTypes.map(serializeMembershipType),
+    // #2107: expose the config-driven current season year so clients (the bulk
+    // membership dialog) can default the season select correctly Jan–season-start
+    // instead of guessing the calendar year.
+    currentSeasonYear: getSeasonYear(),
   };
 }
 
 export async function GET() {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "membership", level: "view" },
+  });
   if (!guard.ok) {
     return guard.response;
   }
@@ -78,7 +86,9 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "membership", level: "edit" },
+  });
   if (!guard.ok) {
     return guard.response;
   }
@@ -131,11 +141,15 @@ export async function POST(request: Request) {
     subscriptionBehavior: parsed.data.subscriptionBehavior,
     sortOrder,
   };
+  // Omitting allowedAgeTiers falls back to the four real age tiers only — never
+  // the full selectable set — so N/A is never silently added to a new type
+  // (#2069).
   const allowedAgeTiers = normalizeMembershipTypeAgeTiers(
-    parsed.data.allowedAgeTiers ?? MEMBERSHIP_TYPE_AGE_TIERS,
+    parsed.data.allowedAgeTiers ?? DEFAULT_MEMBERSHIP_TYPE_AGE_TIERS,
   );
   const configurationError = validateMembershipTypeRuleConfiguration({
     allowedAgeTiers,
+    subscriptionBehavior: parsed.data.subscriptionBehavior,
   });
   if (configurationError) {
     return NextResponse.json({ error: configurationError }, { status: 400 });

@@ -272,6 +272,26 @@ describe("GET/PUT /api/admin/display/templates/[id]", () => {
     expect(mockPrisma.displayTemplate.update).toHaveBeenCalledTimes(1);
   });
 
+  // §S1: built-in rows are code-managed and read-only — a PUT is refused
+  // server-side (duplicate-to-customise, ADR-004), not just hidden in the UI.
+  it("refuses a PUT to a built-in template (409, read-only — duplicate to customise)", async () => {
+    mockPrisma.displayTemplate.findUnique.mockResolvedValue({
+      id: "builtin-template-everyday-board",
+      key: "everyday-board",
+      name: "Everyday board",
+      layoutId: "layout-1",
+      layout: { bodyHtml: LAYOUT.bodyHtml, areas: LAYOUT.areas },
+    });
+    const { PUT } = await import("@/app/api/admin/display/templates/[id]/route");
+    const res = await PUT(
+      await jsonRequest("http://localhost/x", "PUT", VALID_BODY),
+      routeParams("builtin-template-everyday-board")
+    );
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toMatch(/read-only — duplicate to customise/i);
+    expect(mockPrisma.displayTemplate.update).not.toHaveBeenCalled();
+  });
+
   it("404s an unknown template", async () => {
     mockPrisma.displayTemplate.findUnique.mockResolvedValue(null);
     const { PUT } = await import("@/app/api/admin/display/templates/[id]/route");

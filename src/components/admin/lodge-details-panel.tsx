@@ -127,7 +127,7 @@ export function LodgeDetailsPanel() {
       </p>
       {!canEdit ? (
         <div id={viewOnlyReasonId}>
-          <AdminViewOnlyNotice>
+          <AdminViewOnlyNotice canEdit={canEdit}>
             Lodge view access can inspect lodge details. Lodge edit access is
             required to change them.
           </AdminViewOnlyNotice>

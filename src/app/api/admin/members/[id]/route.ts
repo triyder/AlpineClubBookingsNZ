@@ -27,7 +27,10 @@ export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const guard = await requireAdmin(adminGuardOptions);
+  const guard = await requireAdmin({
+    ...adminGuardOptions,
+    permission: { area: "membership", level: "view" },
+  });
   if (!guard.ok) return guard.response;
 
   const parsed = paramsSchema.safeParse(await params);
@@ -53,7 +56,10 @@ export async function PUT(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const guard = await requireAdmin(adminGuardOptions);
+  const guard = await requireAdmin({
+    ...adminGuardOptions,
+    permission: { area: "membership", level: "edit" },
+  });
   if (!guard.ok) return guard.response;
 
   const parsedParams = paramsSchema.safeParse(await params);
@@ -94,7 +100,10 @@ export async function PUT(
  * Direct member deletion is intentionally disabled.
  */
 export async function DELETE() {
-  const guard = await requireAdmin(adminGuardOptions);
+  const guard = await requireAdmin({
+    ...adminGuardOptions,
+    permission: { area: "membership", level: "edit" },
+  });
   if (!guard.ok) return guard.response;
 
   return NextResponse.json(

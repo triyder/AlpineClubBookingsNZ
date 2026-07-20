@@ -1,0 +1,130 @@
+# Export & Import (config transfer)
+
+Audience: Operator
+
+## What it is
+
+A full-admin tool that exports your club's **configuration, site content, and
+lodge setup** as a single portable `.zip` bundle, and imports such a bundle into
+another (or the same) instance through a **preview → apply** flow that never
+deletes. Find it at **Admin → Setup & Configuration → Export & Import**
+(`/admin/config-transfer`).
+
+Only **Full Admins** can open this page (others see a "full administrators only"
+notice). It is **not** a database backup: importing never removes anything added
+since the export, and members, bookings, payments, and other transactional data
+are never included. The full contract — categories, validation rules, and safety
+model — lives in the [config-transfer feature hub](../config-transfer/README.md).
+
+## When you'd use it
+
+- Cloning a configured club into a new environment (staging → production, or a
+  fresh fork).
+- Moving site content, lodge setup, or fee schedules between instances without
+  re-entering them by hand.
+- Taking a portable, human-editable snapshot of configuration to review or edit.
+
+## Step-by-step
+
+### Export a bundle
+
+1. Go to **Admin → Setup & Configuration → Export & Import**.
+
+   ![Configuration Export & Import page with the export category checkboxes and the import upload / dry-run panel](../images/admin/admin-config-transfer.png)
+
+2. In **Export**, tick the categories to include. **Include lodge door codes** is
+   an opt-in checkbox (physical-access information), off by default.
+3. Click **Export bundle** to download `config-transfer-<date>.zip`.
+
+### Import a bundle
+
+1. In **Import**, choose a `.zip` file and click **Preview (dry-run)** — nothing
+   is written yet. The plan shows, per entity, what would be **New**, **Updated**,
+   or **Unchanged**, plus any door-code, Xero-org, or edited-bundle warnings.
+2. Pick a **write mode** — **Merge** (recommended; only fields with a value in
+   the bundle are written) or **Overwrite** (the bundle fully defines each
+   record; blank fields clear it). You can also untick categories or resolve a
+   rename via its match picker; each change re-previews.
+3. If validation shows **errors**, Apply stays disabled — fix the bundle, use
+   **Reseal edited bundle** to regenerate its manifest, and re-preview. When the
+   plan is clean, click **Apply import**: the server takes a `pg_dump` backup
+   first, then applies in one transaction.
+
+## Settings reference
+
+Exportable categories:
+
+| Category | Contains |
+| --- | --- |
+| Site content & appearance | CMS pages, keyed site content, club theme (embedded images travel in the bundle) |
+| Club settings | Club-wide singletons: modules, booking defaults, member fields, club identity, email message settings, etc. |
+| Lodge configuration | Lodges, rooms, beds, seasons, season rates, lodge instructions, chore templates |
+| Committee (roles) | `CommitteeRole` definitions only (not member-linked assignments) |
+| Induction checklists | Induction templates with their sections and items |
+| Membership fees (joining & annual) | Joining-fee and annual-fee schedules with invoice-line components (integer cents) |
+| Xero configuration | Xero account and item-code mappings |
+
+| Control | Effect |
+| --- | --- |
+| Include lodge door codes | Opt-in; adds physical-access door codes to the export |
+| Write mode: Merge / Overwrite | Merge patches only bundled fields; Overwrite makes the bundle authoritative (blank clears) |
+| Categories to import | Untick to import a subset (re-previews) |
+| Match picker | Resolve an unmatched season/chore/induction template as *create new* or *match existing* |
+| Reseal edited bundle | Regenerate the manifest after hand-editing a bundle |
+
+Import **never deletes**; the automatic pre-apply `pg_dump` backup is the true
+rollback. Validation errors (bad dates, non-integer money, invalid slugs, unknown
+keys) **block** apply until fixed.
+
+## Troubleshooting
+
+| Symptom | Likely cause | Fix |
+| --- | --- | --- |
+| "available to full administrators only" | You aren't a Full Admin | Ask a Full Admin to run the transfer |
+| Apply is disabled | The plan has validation errors | Fix the named rows, **Reseal**, and re-preview |
+| Errors naming a legacy `isMember` column or an `ENTRANCE_FEE` item-code row, with Apply disabled | The bundle was exported by **v0.12.2 or earlier** — that bundle shape is no longer imported | Re-export the bundle from the source install if it is still running the current release; otherwise hand-fix the columns as below, **Reseal**, and re-preview |
+| `item-code-mappings.csv` error: "a HUT_FEE item-code row must name a membership type" | A hand-authored (or hand-edited) HUT_FEE row left `membershipTypeKey` blank | Fill in the membership type key — the exporter always emits one — then **Reseal** and re-preview |
+| A fresh install came up **unconfigured** and the logs say nothing was written | The boot-time bundle at `CONFIG_BUNDLE_IMPORT_PATH` failed validation, so the auto-import refused (`refused-invalid`) and wrote nothing — a legacy bundle is the usual cause | Read the boot log line, which names the first validation error; replace the file with a current-shape export (or hand-fix and reseal it) and reboot, or import the bundle interactively on this page |
+| "This bundle was edited since export" warning | Manifest checksums don't match the files | Advisory only — apply anyway, or **Reseal** to refresh the manifest |
+| Xero org mismatch warning | The Xero config came from a different connected org | Verify the codes, or untick the Xero category before applying |
+| A door-code change warning appears | The bundle would set/change a lodge door code | Confirm it's intended before applying |
+| A "restore" didn't remove stale rows | Import never deletes | Remove them on the owning admin page; the backup is the true rollback |
+
+### Converting a legacy bundle by hand
+
+If the install that produced an old bundle is gone and all you hold is the zip,
+you do not have to abandon it. Bundles are plain CSVs in a zip and are meant to
+be edited: unzip it, make the three substitutions below, re-zip it, upload it,
+click **Reseal edited bundle** to regenerate the manifest, and re-preview. The
+old shape used a `true`/`false` "is this a member?" column where the current
+shape names the **membership type** directly.
+
+| File | Old column / value | Change it to |
+| --- | --- | --- |
+| `lodge-config/lodges/<slug>/season-rates.csv` | `isMember` column, `true` | a `membershipTypeKey` column with `FULL` |
+| `lodge-config/lodges/<slug>/season-rates.csv` | `isMember` column, `false` | a `membershipTypeKey` column with `NON_MEMBER` |
+| `xero-config/item-code-mappings.csv` (HUT_FEE rows) | `isMember` column, `true` / `false` | a `membershipTypeKey` column with `FULL` / `NON_MEMBER` |
+| `xero-config/item-code-mappings.csv` | `category` value `ENTRANCE_FEE` | `JOINING_FEE` (the same rows, renamed) |
+
+Practical notes:
+
+- **Rename the header, not just the values.** Replace the `isMember` header cell
+  with `membershipTypeKey` and rewrite each row's `true`/`false` to `FULL` /
+  `NON_MEMBER`. A row that still carries an `isMember` value with no
+  `membershipTypeKey` is what triggers the rejection.
+- `FULL` and `NON_MEMBER` are the built-in membership type **keys**. If your club
+  renamed or replaced them, use the keys shown on **Admin → Membership Types** —
+  an unknown key is its own clear row error.
+- Leave `JOINING_FEE` rows' `membershipTypeKey` **blank**; that column keys
+  HUT_FEE rows only.
+- The dry-run is safe to repeat as often as you like — nothing is written until
+  you click **Apply import** — so fix, reseal, re-preview, and iterate until the
+  plan is clean.
+
+## Related links
+
+- Back to the [documentation hub](../README.md).
+- Feature hub: [Configuration Export & Import](../config-transfer/README.md).
+- Sibling guides: [Setup](setup.md), [Modules](modules.md),
+  [Site Content](site-content.md), [Xero Sync](xero.md).
+- Reference: the pre-apply backup and DR flow in [`DEPLOYMENT.md`](../../DEPLOYMENT.md).

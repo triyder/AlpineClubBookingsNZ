@@ -20,7 +20,10 @@ const adminGuardOptions = {
  * List members with search, filtering, sorting, and pagination.
  */
 export async function GET(req: NextRequest) {
-  const guard = await requireAdmin(adminGuardOptions);
+  const guard = await requireAdmin({
+    ...adminGuardOptions,
+    permission: { area: "membership", level: "view" },
+  });
   if (!guard.ok) return guard.response;
 
   const sp = req.nextUrl.searchParams;
@@ -67,7 +70,10 @@ export async function GET(req: NextRequest) {
  * Create a new member.
  */
 export async function POST(req: NextRequest) {
-  const guard = await requireAdmin(adminGuardOptions);
+  const guard = await requireAdmin({
+    ...adminGuardOptions,
+    permission: { area: "membership", level: "edit" },
+  });
   if (!guard.ok) return guard.response;
 
   let body: unknown;

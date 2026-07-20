@@ -14,7 +14,9 @@ import { getLatestFinanceSyncRun } from "@/lib/finance-sync-storage";
 import { requireAdmin } from "@/lib/session-guards";
 
 async function requireFinanceSetupWriteAccess() {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "finance", level: "edit" },
+  });
   if (!guard.ok) {
     return guard;
   }

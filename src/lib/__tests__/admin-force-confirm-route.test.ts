@@ -28,6 +28,9 @@ const mocks = vi.hoisted(() => {
     requiresAdultSupervisionReview: vi.fn(),
     reconcileBedAllocationsForBooking: vi.fn(),
     sendBookingConfirmedEmail: vi.fn(),
+    // Split-parent describe helper reads the provisional non-member child via
+    // prisma.booking.findFirst; default null = not a split parent.
+    prismaBookingFindFirst: vi.fn().mockResolvedValue(null),
     loggerError: vi.fn(),
   };
 });
@@ -40,6 +43,9 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     lodge: {
       findFirst: vi.fn().mockResolvedValue({ id: "lodge-1" }),
+    },
+    booking: {
+      findFirst: mocks.prismaBookingFindFirst,
     },
     $transaction: mocks.transaction,
   },
@@ -461,6 +467,23 @@ describe("POST /api/admin/bookings/[id]/force-confirm", () => {
       const metadata =
         mocks.tx.auditLog.create.mock.calls[0][0].data.metadata;
       expect(metadata).not.toHaveProperty("notifyMember");
+    });
+
+    it("threads the provisional non-member child into the split-parent force-confirm confirmation email (#1942 FIX 4b)", async () => {
+      const holdUntil = new Date("2026-06-25T00:00:00.000Z");
+      mocks.prismaBookingFindFirst.mockResolvedValue({
+        nonMemberHoldUntil: holdUntil,
+        _count: { guests: 3 },
+      });
+
+      const response = await POST(forceConfirmRequest({}), routeParams());
+      expect(response.status).toBe(200);
+
+      expect(mocks.sendBookingConfirmedEmail).toHaveBeenCalledTimes(1);
+      const options = mocks.sendBookingConfirmedEmail.mock.calls[0][6];
+      expect(options).toMatchObject({
+        provisionalGuests: { guestCount: 3, holdUntil },
+      });
     });
 
     it("suppresses the email and records notifyMember:false when notifyMember is false", async () => {

@@ -1,6 +1,7 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
+import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -27,6 +28,10 @@ import {
   TITLE_OPTIONS,
 } from "@/lib/member-enums";
 import type { MemberAddressValues } from "@/lib/member-address";
+import {
+  ageTierSelectOptions,
+  formatAgeTierName,
+} from "@/lib/use-age-tier-options";
 import { useMemberFieldsSettings } from "@/lib/use-member-fields-settings";
 import type { MemberGroupEditState } from "../_hooks/use-member-group-edit";
 import type { MemberDetail } from "../_types";
@@ -36,6 +41,9 @@ interface MemberContactGroupProps {
   isSelf: boolean;
   actorIsFullAdmin: boolean;
   edit: MemberGroupEditState<MemberContactEditForm>;
+  /** Whether the actor may edit contact details (membership edit, #1997). */
+  // Tri-state (#2065): `undefined` while the session resolves (neutral disabled).
+  canEdit: boolean | undefined;
 }
 
 function addressLines(input: {
@@ -74,6 +82,7 @@ export function MemberContactGroup({
   isSelf,
   actorIsFullAdmin,
   edit,
+  canEdit,
 }: MemberContactGroupProps) {
   const { showTitle, showGender, showOccupation } = useMemberFieldsSettings();
   // Mirror of the server-side Full Admin gate: only a Full Admin may change a
@@ -84,6 +93,13 @@ export function MemberContactGroup({
   // legacy SCHOOL role (whose resolved tokens omit ORG when login is off).
   const isOrganisationMember =
     (member.accessRoles ?? []).includes("ORG") || member.role === "SCHOOL";
+  // #2106: age-exemption of the current-season membership type. This is always
+  // an edit context (never create), so an ALLOWED type makes N/A hand-pickable,
+  // a FORCED type makes N/A a read-only readout, and DISALLOWED/null offers the
+  // four person tiers only. Org accounts keep their own fixed readout above.
+  const ageExemption = member.currentSeasonAgeExemption ?? null;
+  const naForced = ageExemption === "FORCED";
+  const naSelectable = ageExemption === "ALLOWED";
 
   const { editing, form, saving, error, errorRef } = edit;
 
@@ -269,21 +285,38 @@ export function MemberContactGroup({
                 N/A — organisations don&apos;t have an age tier
               </p>
             </div>
+          ) : naForced ? (
+            // FORCED type (#2106): the allowed tiers are exactly {N/A}, so
+            // every member on it is N/A. The tier is read-only, mirroring the
+            // org readout but driven by the membership type.
+            <div className="space-y-2">
+              <Label>Age Tier</Label>
+              <p className="flex h-9 items-center rounded-md border border-input bg-muted px-3 text-sm text-muted-foreground">
+                N/A — this membership type has no age tier
+              </p>
+            </div>
           ) : (
             <div className="space-y-2">
               <Label>Age Tier</Label>
               <Select
-                value={form.ageTier === "NOT_APPLICABLE" ? "" : form.ageTier}
+                value={
+                  form.ageTier === "NOT_APPLICABLE"
+                    ? naSelectable
+                      ? "NOT_APPLICABLE"
+                      : ""
+                    : form.ageTier
+                }
                 onValueChange={(v) => updateForm((f) => ({ ...f, ageTier: v }))}
               >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="INFANT">Infant</SelectItem>
-                  <SelectItem value="CHILD">Child</SelectItem>
-                  <SelectItem value="YOUTH">Youth</SelectItem>
-                  <SelectItem value="ADULT">Adult</SelectItem>
+                  {ageTierSelectOptions(ageExemption).map((tier) => (
+                    <SelectItem key={tier} value={tier}>
+                      {formatAgeTierName(tier)}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -340,9 +373,13 @@ export function MemberContactGroup({
           <Button variant="outline" onClick={edit.cancelEdit} disabled={saving}>
             Cancel
           </Button>
-          <Button onClick={() => void edit.save()} disabled={saving}>
+          <ViewOnlyActionButton
+            canEdit={canEdit}
+            onClick={() => void edit.save()}
+            disabled={saving}
+          >
             {saving ? "Saving..." : "Save Changes"}
-          </Button>
+          </ViewOnlyActionButton>
         </div>
       </div>
     );
@@ -369,10 +406,10 @@ export function MemberContactGroup({
   return (
     <div className="space-y-3">
       <div className="flex justify-end">
-        <Button variant="outline" size="sm" onClick={edit.startEdit}>
+        <ViewOnlyActionButton canEdit={canEdit} variant="outline" size="sm" onClick={edit.startEdit}>
           <Pencil className="h-4 w-4 mr-1" />
           Edit
-        </Button>
+        </ViewOnlyActionButton>
       </div>
       <dl className="grid grid-cols-1 gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
         {showTitle && (

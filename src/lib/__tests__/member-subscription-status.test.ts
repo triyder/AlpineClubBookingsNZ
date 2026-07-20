@@ -10,7 +10,14 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     member: {
       findUnique: vi.fn(),
+      // Delegates the membership-type-policy resolver reads. Default to empty so
+      // the resolver returns null (no policy) and existing tests are unchanged.
+      findMany: vi.fn(async () => []),
     },
+    seasonalMembershipAssignment: { findMany: vi.fn(async () => []) },
+    membershipType: { findMany: vi.fn(async () => []) },
+    // #2041 NOT_REQUIRED-row dominance lookup (booking resolver).
+    memberSubscription: { findFirst: vi.fn(async () => null) },
   },
 }));
 
@@ -149,6 +156,38 @@ describe("GET /api/member/subscription-status", () => {
     expect(body.subscriptionRequired).toBe(false);
     expect(body.rawStatus).toBe("NOT_INVOICED");
     expect(body.invoiceUrl).toBeNull();
+  });
+
+  it("reports MEMBERSHIP_TYPE_AGE_TIER_NOT_REQUIRED for a BASED_ON_AGE_TIER type on an exempt tier (#2041)", async () => {
+    mockAuth.mockResolvedValue({ user: { id: "member-1" } });
+    mockFindUnique.mockResolvedValue({
+      role: "MEMBER",
+      ageTier: "CHILD",
+      subscriptions: [],
+    });
+    const findMany = prisma.member.findMany as ReturnType<typeof vi.fn>;
+    findMany.mockResolvedValue([
+      { id: "member-1", firstName: "Alex", lastName: "Member", email: "a@x.test", role: "MEMBER", ageTier: "CHILD" },
+    ]);
+    (prisma.seasonalMembershipAssignment.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([
+      {
+        memberId: "member-1",
+        seasonYear: 2026,
+        membershipType: {
+          id: "type-full", key: "FULL", name: "Full", isActive: true, isBuiltIn: true,
+          bookingBehavior: "MEMBER_RATE", subscriptionBehavior: "BASED_ON_AGE_TIER",
+        },
+      },
+    ]);
+
+    const res = await GET();
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.subscriptionRequired).toBe(false);
+    expect(body.status).toBe("NOT_REQUIRED");
+    expect(body.effectiveStatusReason).toBe("MEMBERSHIP_TYPE_AGE_TIER_NOT_REQUIRED");
+    expect(body.membershipTypeSubscriptionBehavior).toBe("BASED_ON_AGE_TIER");
   });
 
   it("returns not required when the Xero module is effectively off", async () => {

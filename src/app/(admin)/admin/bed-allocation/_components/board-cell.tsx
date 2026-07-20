@@ -15,6 +15,16 @@ export const BED_ALLOCATION_COLUMN_WIDTH_REM = 11;
 export const BED_ALLOCATION_COLUMN_WIDTH_CLASS =
   "w-[11rem] min-w-[11rem] max-w-[11rem]";
 
+// The label column (room name header / bed name cells) needs more room than a
+// date column: bed names like "Bunk Bed Lower Right" truncated illegibly at
+// the shared 11rem width (#2150). Kept as its own fixed-width constant (never
+// w-auto) so use-synced-scroll's scrollLeft sync — which assumes every room
+// table renders the exact same total width — still lines every column up
+// across rooms.
+export const BED_ALLOCATION_LABEL_COLUMN_WIDTH_REM = 14;
+export const BED_ALLOCATION_LABEL_COLUMN_WIDTH_CLASS =
+  "w-[14rem] min-w-[14rem] max-w-[14rem]";
+
 interface BoardCellProps {
   bedId: string;
   roomId: string;
@@ -28,7 +38,9 @@ interface BoardCellProps {
   pendingAllocationIds: Set<string>;
   highlightedBookingId: string;
   activeDragLane?: boolean;
-  canEdit?: boolean;
+  // Tri-state (#2065): `undefined` while the client session resolves; the
+  // `!canEdit` idiom treats that as disabled, so no truthy default here.
+  canEdit: boolean | undefined;
 }
 
 export function BoardCell({
@@ -43,7 +55,7 @@ export function BoardCell({
   pendingAllocationIds,
   highlightedBookingId,
   activeDragLane,
-  canEdit = true,
+  canEdit,
 }: BoardCellProps) {
   const { setNodeRef, isOver } = useDroppable({
     id: cellDroppableId(bedId, stayDate),

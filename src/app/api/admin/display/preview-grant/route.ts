@@ -7,6 +7,18 @@ import {
   encodePreviewGrant,
   PREVIEW_GRANT_TTL_SECONDS,
 } from "@/lib/lodge-display-auth";
+import { buildDisplayState } from "@/lib/lodge-display-state";
+import { buildLayoutRender } from "@/lib/lodge-display/layout-render";
+import {
+  validateLayoutForSave,
+  validateTemplateForSave,
+} from "@/lib/lodge-display/authoring-validation";
+import { getWebsiteThemeRenderState } from "@/lib/club-theme";
+import { parseDateOnly } from "@/lib/date-only";
+import {
+  storeDraftPreview,
+  DRAFT_PREVIEW_TTL_SECONDS,
+} from "@/lib/lodge-display/draft-preview-store";
 
 // Preview grant mint (LTV-036, ADR-003 §5). The authoring pages preview an
 // AUTHORED template inside a `sandbox="allow-scripts"` iframe (opaque origin, no
@@ -23,10 +35,28 @@ import {
 
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 
+// An UNSAVED builder draft to preview (ADR-004 §7). The HTML/CSS fields are
+// strings; `areas` / `slotContent` are untyped JSON the save contract validates
+// (mirrors the LayoutForSave / TemplateForSave shapes). Passed under the admin
+// session only; validated + rendered before any grant is minted.
+const draftField = z
+  .object({
+    bodyHtml: z.string(),
+    defaultCss: z.string(),
+    areas: z.unknown(),
+    slotContent: z.unknown(),
+    cssOverrides: z.string(),
+    footerHtml: z.string(),
+  })
+  .strict();
+
 const bodyField = z
   .object({
     // Null/omitted → preview the lodge's legacy board (no authored template).
     templateId: z.string().min(1).nullish(),
+    // An unsaved draft to preview instead of a stored template (ADR-004 §7).
+    // Mutually exclusive with templateId (a draft wins if both are somehow sent).
+    draft: draftField.nullish(),
     // Templates are lodge-agnostic, so the lodge is explicit; omitted → the
     // club default lodge (resolveOptionalActiveLodgeId).
     previewLodge: z.string().min(1).nullish(),
@@ -51,6 +81,98 @@ export async function POST(req: NextRequest) {
   const lodgeId = await resolveOptionalActiveLodgeId(prisma, body.previewLodge);
   if (!lodgeId) {
     return NextResponse.json({ error: "Unknown or inactive lodge" }, { status: 400 });
+  }
+
+  // ---- Unsaved-draft preview (ADR-004 §7) ---------------------------------
+  // Under the admin session, validate the draft through the EXACT save contract,
+  // then render it against the chosen lodge's privacy-reduced DisplayState and
+  // hold the result in the ephemeral store. Preview IS the save gate (ADR-003 §5
+  // "preview-before-save"): a broken draft returns the same structured
+  // errors/warnings the save UI shows and NO grant is minted, so a broken draft
+  // can never reach a rendered frame. buildLayoutRender re-runs the same
+  // validation + sanitisation the serve path applies, so nothing unsafe is stored.
+  if (body.draft) {
+    const draft = body.draft;
+    const layoutVerdict = validateLayoutForSave({
+      bodyHtml: draft.bodyHtml,
+      defaultCss: draft.defaultCss,
+      areas: draft.areas,
+    });
+    const templateVerdict = validateTemplateForSave({
+      layout: { bodyHtml: draft.bodyHtml, areas: draft.areas },
+      slotContent: draft.slotContent,
+      cssOverrides: draft.cssOverrides,
+      footerHtml: draft.footerHtml,
+    });
+    if (!layoutVerdict.ok || !templateVerdict.ok) {
+      // Merge both halves' findings into the save-UI shape (errors refuse; the
+      // warnings ride along). No grant is minted.
+      const errors = [
+        ...(layoutVerdict.ok ? [] : layoutVerdict.errors),
+        ...(templateVerdict.ok ? [] : templateVerdict.errors),
+      ];
+      const warnings = [...layoutVerdict.warnings, ...templateVerdict.warnings];
+      return NextResponse.json({ ok: false, errors, warnings }, { status: 422 });
+    }
+
+    const windowStart = body.previewDate ? parseDateOnly(body.previewDate) : null;
+    const state = await buildDisplayState(lodgeId, { windowStart });
+    if (!state) {
+      return NextResponse.json({ error: "Unknown or inactive lodge" }, { status: 400 });
+    }
+    const lodge = await prisma.lodge.findUnique({
+      where: { id: lodgeId },
+      select: { id: true, name: true },
+    });
+    if (!lodge) {
+      return NextResponse.json({ error: "Unknown or inactive lodge" }, { status: 400 });
+    }
+    const theme = await getWebsiteThemeRenderState();
+    // buildLayoutRender validates + sanitises again; it cannot throw here (the
+    // save contract already passed) but a defensive guard keeps a surprise from
+    // 500ing rather than reporting.
+    let nonce: string;
+    try {
+      const rendered = buildLayoutRender(
+        {
+          bodyHtml: draft.bodyHtml,
+          defaultCss: draft.defaultCss,
+          areas: draft.areas,
+          slotContent: draft.slotContent,
+          cssOverrides: draft.cssOverrides,
+          footerHtml: draft.footerHtml,
+          themeCss: theme.css,
+        },
+        state
+      );
+      nonce = storeDraftPreview(rendered, DRAFT_PREVIEW_TTL_SECONDS);
+    } catch {
+      return NextResponse.json(
+        {
+          ok: false,
+          errors: [{ path: "draft", message: "The draft could not be rendered." }],
+          warnings: [] as { path: string; message: string }[],
+        },
+        { status: 422 }
+      );
+    }
+
+    const token = encodePreviewGrant({
+      templateId: null,
+      draftNonce: nonce,
+      lodgeId,
+      ...(body.previewDate ? { windowStart: body.previewDate } : {}),
+      exp: Math.floor(Date.now() / 1000) + PREVIEW_GRANT_TTL_SECONDS,
+    });
+    return NextResponse.json({
+      token,
+      lodgeId: lodge.id,
+      lodgeName: lodge.name,
+      expiresInSeconds: PREVIEW_GRANT_TTL_SECONDS,
+      // Warnings ride along on a successful draft mint so the builder surfaces
+      // auto-sanitised CSS the same way the save UI does.
+      warnings: [...layoutVerdict.warnings, ...templateVerdict.warnings],
+    });
   }
 
   // A named template must actually exist — mint a grant only for something the

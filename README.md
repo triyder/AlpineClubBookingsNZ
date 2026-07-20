@@ -1,200 +1,112 @@
-# AlpineClubBookingsNZ
+<h1 align="center">
+  <img src="docs/images/readme/hero-banner.png" alt="AlpineClubBookingsNZ" width="100%">
+</h1>
 
-AlpineClubBookingsNZ is an open-source booking, membership, payment, lodge, and finance
-platform for small clubs. It is published as a real-world reference
-implementation for a production Next.js application with payments, accounting,
-email, scheduled jobs, and Docker-based deployment.
+<p align="center">
+  <a href="https://github.com/thatskiff33/AlpineClubBookingsNZ/actions/workflows/ci.yml"><img src="https://github.com/thatskiff33/AlpineClubBookingsNZ/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
+  <a href="https://github.com/thatskiff33/AlpineClubBookingsNZ/actions/workflows/e2e.yml"><img src="https://github.com/thatskiff33/AlpineClubBookingsNZ/actions/workflows/e2e.yml/badge.svg" alt="E2E status"></a>
+  <a href="https://github.com/thatskiff33/AlpineClubBookingsNZ/releases"><img src="https://img.shields.io/github/v/release/thatskiff33/AlpineClubBookingsNZ" alt="Latest release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT license"></a>
+  <img src="https://img.shields.io/badge/Next.js%2016-React%2019-000000?logo=nextdotjs" alt="Next.js 16 / React 19">
+  <img src="https://img.shields.io/badge/PostgreSQL%2016-Prisma%207-4169E1?logo=postgresql&logoColor=white" alt="PostgreSQL 16 / Prisma 7">
+</p>
 
-AlpineClubBookingsNZ is the open-source booking system originally built for and deployed
-at [Tokoroa Alpine Club](https://tokoroa.org.nz).
+<p align="center">
+  <a href="https://tokoroa.org.nz">Live club site</a> ·
+  <a href="docs/README.md">Documentation</a> ·
+  <a href="#quickstart">Quickstart</a> ·
+  <a href="#see-it-in-action">Screenshots</a> ·
+  <a href="https://github.com/thatskiff33/AlpineClubBookingsNZ/releases">Releases</a>
+</p>
 
-The code is MIT licensed. Project branding, logos, copy, domains, and
-operational content are included for context only; replace them before using a
-fork for another organisation. See `NOTICE.md`.
+**AlpineClubBookingsNZ** is an open-source booking, membership, payment, and
+lodge-operations platform for small clubs — built for and running
+[Tokoroa Alpine Club](https://tokoroa.org.nz) in production today. It is also
+published as a real-world reference implementation of a production Next.js
+application with payments, accounting, email, scheduled jobs, and Docker-based
+blue/green deployment.
 
-Start with [docs/README.md](docs/README.md) for the documentation hub and
-recommended reading paths.
+Members book real beds against real capacity; admins run the whole club —
+bookings, membership lifecycle, fees, Stripe and bank-transfer payments,
+Xero accounting, lodge chores, even the TV in the lodge lobby — from one app.
 
-## What It Does
+<p align="center">
+  <img src="docs/images/readme/demo-booking.gif" alt="Animated demo of the member booking flow showing stay dates being chosen on the availability calendar and the priced booking summary with payment options" width="90%">
+</p>
 
-- Member registration, profile management, family/dependent relationships,
-  declared partner relationships (request→confirm consent with admin
-  assignment), and membership nomination workflows with reminder and admin
-  recovery paths
-- Bed-capacity booking flow with date-only New Zealand lodge nights, per-guest
-  stay ranges, admin-placed partner second-occupants sharing a double bed (a
-  reserved capacity slot per double, admin-only), waitlist, non-member holds,
-  booking changes, cancellation rules, refunds, credits, promo codes, Stripe
-  payments, and Xero-backed Internet Banking invoice payments
-- Admin tools for members, shared-email-aware CSV import, bookings, bed
-  allocation, payments, seasons, policies, reports, email, audit logs, issue
-  reports, waitlist, lodge settings, Xero operations, and hut leaders, with
-  contextual help popups on Admin and Finance pages
-- Admin date override for bookings the normal edit window locks (an in-progress
-  or fully-past stay): a Full Admin or Booking Officer can move the dates only,
-  choosing either **Shift** (keep the price and night count — no fee, refund, or
-  Xero activity) or **Recalculate** (reprice at season rates). A Recalculate
-  whose new (or unchanged past) check-in falls on or before the Xero
-  organisation lock date is rejected with unlock instructions — the same
-  lock-date guard as retroactive creation; Shift is exempt because it writes no
-  Xero documents. Moving onto full
-  nights requires an explicit over-capacity confirmation, and every override is
-  audited and linked to any approved change request
-- Retroactive booking creation for a stay that already happened: a Full Admin or
-  Booking Officer can create a booking on behalf of a member with a past
-  check-in (up to 365 days back), guarded by the Xero organisation lock dates
-  (the check-in must clear the locked period, unlock it in Xero to proceed),
-  with over-capacity nights allowed via an explicit confirmation, an explicit
-  per-create choice of whether to email the member, and full audit metadata
-- Admin-editable public website pages and footer sections with sanitised HTML
-  content, embed/text tokens where supported, and a menu generated from page
-  settings (see `CONFIGURATION.md`, "Website Page Content" and "Website Site
-  Content"). Authoritative public fee and policy blocks remain hidden until
-  explicitly enabled in Admin > Page Content; every admin rich-text editor includes a token help button listing
-  the tokens it supports
-- Admin-managed site banners (urgent/warning/notify) shown above the site
-  header for a set NZ date window, dismissible per browser
-- Lodge kiosk with PIN access, week-at-a-glance counts, arrivals/departures,
-- Lobby TV display: read-only paired screens per lodge showing arrivals,
-  departures, rooms, chores, and lodge info, driven entirely by live booking
-  data with privacy-reduced names (module-flagged, off by default; see
-  `docs/lobby-display/`)
-  chores, and issue reporting
-- Xero integrations for operational accounting, Internet Banking settlement,
-  and finance reports backed by the same operational Xero connection
-- AWS SES email, SES SNS suppression feedback, Sentry/pino observability, cron
-  jobs, PostgreSQL backups, and blue/green Docker deployment
+## What's in the box
 
-## Stack
+| | |
+|---|---|
+| 🛏️ **Booking engine** — bed-capacity availability, NZ date-only lodge nights, waitlist and offers, holds, changes, cancellation rules, refunds, credits, promo and group discounts, exclusive whole-lodge holds → [guide](docs/guides/bookings.md) | 👪 **Membership lifecycle** — registration, families and partners, nominations, seasonal membership types and age tiers, annual subscription billing, cancellation with GST-aware refunds → [guide](docs/guides/members.md) |
+| 💳 **Payments, two ways** — Stripe card payments (PaymentIntents + webhooks) and Xero-backed Internet Banking invoices with settlement tracking → [guide](docs/guides/payments.md) | 📒 **Xero accounting built in** — OAuth, webhooks, retry queues, invoice/credit-note lifecycle, and a native finance dashboard on Postgres snapshots → [finance docs](docs/finance-dashboard/README.md) |
+| 🏔️ **Lodge operations** — rooms and beds, drag-and-drop bed allocation, chores and rosters, work parties, hut leaders, lockers, inductions, PIN lodge kiosk → [guide](docs/guides/bed-allocation.md) | 📺 **Lobby TV displays** — paired read-only screens showing arrivals, rooms, chores, and notices, driven by live booking data with privacy-reduced names → [display docs](docs/lobby-display/README.md) |
+| 🏘️ **Multi-lodge core** — lodge-scoped rooms, seasons, lockers, and chores with a cross-lodge waitlist → [multi-lodge docs](docs/multi-lodge/README.md) | 🔐 **Granular admin roles** — seeded permission bundles (Booking Officer, Treasurer, …), custom roles, full audit log → [guide](docs/guides/access-roles.md) |
+| 🌐 **Admin-editable public website** — sanitised rich-text pages, menus, banners, club theming with no redeploy → [guide](docs/guides/page-content.md) | ✉️ **Branded email** — AWS SES with suppression feedback, editable lifecycle templates that inherit the club theme → [guide](docs/guides/email-messages.md) |
 
-- Next.js 16 App Router, React 19, TypeScript
-- PostgreSQL 16 and Prisma 7
-- Auth.js / NextAuth credentials sessions
-- Stripe PaymentIntents, SetupIntents, and webhooks
-- Xero OAuth, webhooks, retry queues, local caches, and metering
-- AWS SES email and S3 backup storage
-- Tailwind CSS, Radix UI, Recharts, Vitest, ESLint
-- Docker Compose and Caddy for production-style deployment
+Every feature above ships with an operator guide — 65 of them, nearly all
+illustrated with captured screenshots — plus member-facing
+[user guides](docs/user-guide/README.md), all indexed in the
+[documentation hub](docs/README.md).
 
-## Requirements
+## See it in action
 
-- Node.js 24 LTS
-- npm 11 or newer
-- Docker and Docker Compose for local PostgreSQL or production-style runs
+| | |
+|---|---|
+| [![Admin dashboard showing the Needs Attention queue cards and club activity](docs/images/admin/admin-dashboard.png)](docs/guides/dashboard.md) *Admin dashboard* | [![Member booking wizard showing the availability calendar with per-night colour-coded bed counts](docs/images/public/member-book.png)](docs/user-guide/booking-a-stay.md) *Member booking wizard* |
+| [![Bed allocation screen showing rooms and beds with drag-and-drop guest placement](docs/images/admin/admin-bed-allocation.png)](docs/guides/bed-allocation.md) *Drag-and-drop bed allocation* | [![Lobby TV board design concept showing a whole-lodge night board with arrivals and rooms](docs/lobby-display/mockups/screenshots/whole-lodge.png)](docs/lobby-display/README.md) *Lobby TV board (design concept)* |
+| [![Reports page showing occupancy and booking report tiles with charts](docs/images/admin/admin-reports.png)](docs/guides/reports.md) *Reports* | [![Public club website home page showing the admin-editable hero and menu](docs/images/public/public-home.png)](docs/guides/page-content.md) *Public club website* |
 
-## Adopting This For Your Club
+<details>
+<summary>There are over 80 captured screens across the admin, member, and public surfaces.</summary>
 
-1. Copy `.env.example` to `.env` and set the required local variables listed in
-   `CONFIGURATION.md`.
-2. Copy `config/club.example.json` to `config/club.json` and replace the club
-   name, contact emails, public URL, beds, age tiers, and integer-cent rates.
-   If `config/club.json` is absent, the app falls back to
-   `config/club.example.json`. After seeding, the club **name**, **short name**,
-   and **hut-leader label** are admin-editable under Admin > Site Appearance &
-   Content > Club Identity (DB-first, no redeploy); `config/club.json` stays the
-   seed and fallback. That screen also edits your lodge's public name and
-   address.
-3. Complete `/admin/site-style` after first sign-in to set the shared public,
-   member, and admin brand colours and fonts, plus the database-stored public
-   logo. Operational success, warning, information, and danger colours remain
-   curated rather than editable. Replace the remaining images in
-   `public/branding/` with your own favicon, Open Graph image, and public
-   website photos. Keep the `*.example.*` files as reusable placeholders for
-   forks.
-4. Set `SEED_ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD`, and `SEED_LODGE_PASSWORD`,
-   run the seed command, then change the seeded admin password on first login.
-5. After sign-in, use **Admin > Modules** to set club-level activation for
-   optional modules. Kiosk, chores, finance dashboard, waitlist, Xero, bed
-   allocation, multiple lodges, Internet Banking payments, address autocomplete,
-   two-factor authentication, and Google Analytics default off until an admin enables
-   them. General-purpose modules default on and can be disabled there.
-6. Use **Admin > Members** to assign access roles. `Full Admin` keeps all
-   admin permissions and is never editable; `Read-only Admin`,
-   `Booking Officer`, `Membership Officer`, `Treasurer`, `Finance Viewer`, and
-   `Content Manager` are seeded permission bundles that can be combined on one
-   login-enabled member for custom access. Use **Admin > Access Roles**
-   (Full Admin only) to rename them, adjust their per-area permissions, delete
-   unused ones, or create brand-new roles.
-7. Use **Admin > Membership Types** to review the seeded seasonal membership
-   types in the ordered list, then open a type editor to adjust its settings:
-   Full, Associate, Life, School, Non-Member, and Family. Associate is the
-   built-in Associate/Reserve-style type and can be renamed by the club.
-   These records drive season-aware booking policy (`MEMBER_RATE`,
-   `NON_MEMBER_RATE`, `BLOCK_BOOKING`) and subscription policy (`REQUIRED`,
-   `NOT_REQUIRED`) without granting app access. Admins can also configure the
-   age tiers allowed for each type and optional membership-type Xero contact
-   group rules. Admins assign a member's seasonal type from that member's admin
-   detail page, with an optional date-only **apply from** changeover, after
-   previewing affected future bookings, drafts, waitlist records, and
-   subscription history;
-   existing future bookings are not automatically repriced by this change.
-   Membership editors also maintain the distinct public description and must
-   explicitly enable public listing; migrated and new types start hidden.
-   Finance editors use **Admin > Membership & Entrance Fees** for effective-dated
-   amounts and explicit family billing members. See
-   `docs/AUTHORITATIVE_FEES.md`.
-   Treasurers then use **Admin > Subscriptions** to preview an annual billing
-   batch, resolve configuration/recipient exceptions, set invoice due days
-   (30 by default), and explicitly confirm immutable charges before authorised,
-   GST-inclusive Xero invoices are queued. Confirmation requires and freezes the
-   explicit `subscriptionIncome` account/item mapping. New-member approval queues the same
-   durable workflow when configuration is complete and never rolls approval
-   back when it is not.
-8. Use **Admin > Committee** to review seeded committee master roles and
-   member-linked committee assignments. Assignments remain hidden/unpublished
-   until an admin explicitly enables their presentation flags; public contact
-   options use only published, contactable assignments. Each contactable
-   assignment chooses per assignment whether messages route to the committee
-   **role** email alias, the linked **member's** own email, or a **custom**
-   address; when the selected address is blank the delivery falls back to the
-   role alias and then the member's personal email so contact mail is never
-   lost. Phone numbers display only when **show phone** is enabled.
-9. Use test/demo credentials for Stripe, Xero, SES, and Sentry until you are
-   ready for a controlled deployment of your own environment.
+Apart from the lobby-display design concept above, screenshots are generated
+by a deterministic capture harness against seeded demo data
+(`npm run docs:screenshots`, see [`docs/images/README.md`](docs/images/README.md))
+and embedded throughout the [operator guides](docs/README.md).
+</details>
 
-You can use the setup helpers for a guided path:
+## Architecture at a glance
 
-```bash
-npm run setup:check
-npm run setup:wizard
+```mermaid
+flowchart LR
+  subgraph users [At the club]
+    M["Members & guests"]
+    A["Admins & committee"]
+    K["Lodge kiosk (PIN)"]
+    TV["Lobby TV displays"]
+  end
+  subgraph app [Next.js 16 App Router]
+    W["Web app · API routes · cron jobs"]
+  end
+  M & A & K & TV --> W
+  W --> DB[("PostgreSQL 16<br/>Prisma 7")]
+  W <--> S["Stripe<br/>payments"]
+  W <--> X["Xero<br/>accounting"]
+  W --> E["AWS SES<br/>email"]
+  W --> O["Sentry · pino<br/>observability"]
+  W -. "blue/green deploys" .-> D["Docker Compose + Caddy"]
 ```
 
-The CLI only writes `config/club.json`. API keys, OAuth secrets, SMTP secrets,
-and deployment secrets stay in environment variables. After migrations and seed
-data are in place, log in as an admin and finish the in-app checklist at
-`/admin/setup`, using the setup hub cards for booking policy, finance,
-membership cancellation, email, and provider readiness settings. Finance report
-mappings live in the Finance drill-down at `/admin/setup/finance` and are
-collapsed by default. Admin Setup and Admin Notifications also expose the
-editable lifecycle email templates and delivery policies used for membership
-cancellation, archive, and safe-delete review alerts. Emails also inherit their
-brand palette from the club theme set in `/admin/site-style` (via a cache that
-refreshes at most every five minutes), so they match the live site; see
-`CONFIGURATION.md` → Branding Assets.
+TypeScript end to end: Next.js 16 App Router and React 19, PostgreSQL 16 with
+Prisma 7, Auth.js credentials sessions (optional TOTP/email two-factor,
+magic-link, and Google sign-in), Tailwind CSS and Radix UI, Vitest and
+Playwright. The full system design — data model, booking capacity rules,
+integration boundaries, cron, and deployment shape — is in
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
-See `CONFIGURATION.md` for the full environment and `config/club.json` schema
-reference.
-
-## Fresh Clone Setup
+## Quickstart
 
 ```bash
 git clone https://github.com/thatskiff33/AlpineClubBookingsNZ.git
 cd AlpineClubBookingsNZ
-cp .env.example .env
+cp .env.example .env                              # then edit — see CONFIGURATION.md
 cp config/club.example.json config/club.json
-npm ci
-npx prisma generate
-npm run setup:check
+npm ci && npx prisma generate
+npm run setup:check                               # guided: npm run setup:wizard
 ```
 
-Edit `.env` before running the app. For a local database-backed setup, set at
-least `DATABASE_URL`, `DB_PASSWORD`, `AUTH_SECRET`, `NEXTAUTH_SECRET`,
-`NEXTAUTH_URL`, `CRON_SECRET`, `SEED_ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD`, and
-`SEED_LODGE_PASSWORD`. External integrations can use test/demo credentials or
-remain blank unless the feature under test requires them.
-
-For a Docker-only local boot using example config, use the staging Compose
-target:
+Boot a full production-style stack (app + PostgreSQL) with Docker only:
 
 ```bash
 cp .env.staging.example .env.staging
@@ -206,181 +118,83 @@ docker compose --env-file .env.staging -p tacbookings-staging \
   -f docker-compose.yml -f docker-compose.staging.yml exec app npx tsx prisma/seed.ts
 ```
 
-The seed data creates the first admin account from those `SEED_ADMIN_*`
-variables and marks it for password change on first login, and the shared
-lodge kiosk account from `SEED_LODGE_PASSWORD`. It also creates or repairs
-the matching normalized `MemberAccessRole.ADMIN` and `MemberAccessRole.LODGE`
-rows for those seeded accounts. Change those passwords immediately in any
-shared or persistent environment.
+Then open `http://localhost:3001` and sign in with your `SEED_ADMIN_*`
+credentials.
 
-The Docker-only app listens on `http://localhost:3001` by default.
+**Adopting this for your club** is a documented, tested path:
 
-If you prefer `npm run dev`, run a local PostgreSQL server that matches
-`DATABASE_URL`, then apply migrations and seed from the host:
+1. Set your club name, beds, age tiers, and integer-cent rates in
+   `config/club.json`.
+2. Seed the first admin, then finish the in-app checklist at `/admin/setup`.
+3. Brand it — colours, fonts, and logo at `/admin/site-style`, no redeploy
+   needed — and replace the included club branding and copy with your own
+   ([`NOTICE.md`](NOTICE.md)).
+4. Toggle optional modules (kiosk, Xero, waitlist, lobby displays, Internet
+   Banking, …) under **Admin → Modules**.
 
-```bash
-npm run db:migrate
-SEED_ADMIN_EMAIL=admin@example.org \
-SEED_ADMIN_PASSWORD=replace-with-a-local-password \
-SEED_LODGE_PASSWORD=replace-with-a-local-kiosk-password \
-  npm run db:seed
-npm run dev
-```
+The step-by-step adopter path from clone to first deployment is
+[`docs/IMPLEMENTATION_GUIDE.md`](docs/IMPLEMENTATION_GUIDE.md); every
+environment variable and the `config/club.json` schema are in
+[`CONFIGURATION.md`](CONFIGURATION.md); the reference Lightsail + Docker +
+Caddy blue/green production setup is in [`DEPLOYMENT.md`](DEPLOYMENT.md).
 
-For richer local-only demo data, run the destructive demo seed only against a
-throwaway PostgreSQL database on a development machine. Never run it on a
-deployment host, including hosts where production PostgreSQL is reachable via
-`localhost`. The command requires an explicit opt-in, refuses
-`NODE_ENV=production`, refuses non-local `DATABASE_URL` hosts, and refuses to
-run when any existing `Member` email is outside `demo.alpineclub.test`:
+## Engineering quality
 
-```bash
-ALLOW_DEMO_SEED=1 npm run db:seed:demo
-```
+- **Money is property-tested.** Pricing, promo discounts, refund tiers, change
+  fees, credits, and Xero settlement math are enforced as universally-quantified
+  properties (integer cents; refund + retained = paid) with fast-check — see
+  [`docs/DOMAIN_INVARIANTS.md`](docs/DOMAIN_INVARIANTS.md).
+- **Critical journeys run in real browsers.** Playwright E2E suites cover
+  booking, payments, waitlist, two-factor login, bed allocation, and more
+  against a seeded staging stack ([`docs/E2E_PLAYWRIGHT.md`](docs/E2E_PLAYWRIGHT.md)).
+- **Migrations are gated for zero-downtime.** Every schema change is classified
+  under the blue/green ledger before it can merge
+  ([`docs/BLUE_GREEN_MIGRATION_POLICY.md`](docs/BLUE_GREEN_MIGRATION_POLICY.md)).
+- **Accessibility is a baseline, not a feature.** Semantic status tokens,
+  icon-or-text redundancy, keyboard focus outlines, and a reduced-motion guard,
+  verified by a staging Lighthouse workflow
+  ([`docs/STAGING_ACCESSIBILITY.md`](docs/STAGING_ACCESSIBILITY.md)).
+- **CI blocks the merge.** Lint, typecheck, unit + property tests, build,
+  migration-drift, static-analysis, and E2E checks are all required on `main`
+  ([`docs/MAINTENANCE.md`](docs/MAINTENANCE.md)).
+- **Backups are drilled, not assumed.** S3-backed PostgreSQL backups ship with
+  a scripted quarterly restore drill ([`DEPLOYMENT.md`](DEPLOYMENT.md),
+  [`docs/MAINTENANCE.md`](docs/MAINTENANCE.md)).
 
-The demo seed clears demo and transactional rows before rebuilding sample
-members, bookings, payments, requests, credits, inductions, and public booking
-requests. It does not contain live provider credentials. Demo users use
-`demo1234` unless `DEMO_SEED_PASSWORD` is set.
+## Releases and upgrades
 
-## Daily Commands
-
-```bash
-npm audit --audit-level=high
-npm run lint
-DATABASE_URL=postgresql://user:pass@localhost:5432/tacbookings npx prisma validate
-npm run typecheck
-npm test
-npm run build
-```
-
-Browser E2E tests for the Critical journeys run separately against the staging
-compose stack: `npm run test:e2e` (see `docs/E2E_PLAYWRIGHT.md`).
-
-The member and admin shells use the Restrained Alpine accessibility baseline:
-semantic light/dark status tokens, icon-or-text redundancy for colour-coded
-states, responsive overflow for data tables, focusable skip-link targets, a
-visible keyboard outline, and a global reduced-motion guard. Run
-`npm run review:staging:a11y` only with an explicit non-production
-`STAGING_APP_URL`; the command refuses to guess a target.
-
-`npm test` includes property-based tests (fast-check) for the pure money math —
-pricing, promo discounts, refund tiers, change fees, member credit, and the
-Xero booking-edit settlement classifier — in
-`src/lib/policies/__tests__/*.property.test.ts` and
-`src/lib/__tests__/xero-settlement.property.test.ts`. They enforce the
-`docs/DOMAIN_INVARIANTS.md` "Money" rules as universally-quantified properties
-(integer cents, refund + retained = paid, deterministic repricing, no negative
-charge or refund totals — booking-edit components stay signed and sum to the
-net, #1356).
-
-This repository uses a current Next.js version. Before changing framework APIs,
-read the relevant versioned guide in `node_modules/next/dist/docs/`.
-
-## For Maintainers
-
-Use the public repository for generic AlpineClubBookingsNZ work and a private deployment
-fork for club-specific configuration, branding, and production release work.
-
-- Generic feature or fix: branch from public `main`, open a public PR, merge
-  after CI, then pull public `main` into the private deployment fork and deploy
-  from that fork.
-- Club-specific change: branch, review, merge, and deploy inside the private
-  fork. Keep private configuration, operational copy, service identifiers, and
-  club data out of the public upstream.
-- Production hotfix: fix and deploy from the private fork first, then port any
-  generic part back to the public upstream in a separate PR.
-
-CI should run in both repositories. Public CI should use
-`config/club.example.json` and placeholder assets; private CI should use the
-private fork's real `config/club.json`, private assets, and private CI secrets.
-
-See `docs/ONGOING_DEVELOPMENT_WORKFLOW.md` for the full maintainer workflow.
-
-## Docker
-
-Build the production image locally:
-
-```bash
-docker build -t tacbookings:local .
-```
-
-Run the full Compose stack for production-style testing:
-
-```bash
-docker compose up -d --build
-docker compose run --rm migrate
-docker compose ps
-```
-
-For accessibility or release-review checks, use the non-production staging
-target:
-
-```bash
-cp .env.staging.example .env.staging
-docker compose --env-file .env.staging -p tacbookings-staging \
-  -f docker-compose.yml -f docker-compose.staging.yml up -d --build postgres app
-```
-
-See `docs/STAGING_ACCESSIBILITY.md` for the staging URL, auth path, and
-Lighthouse workflow.
-
-## Deployment
-
-Production deployment is documented as a reference in `DEPLOYMENT.md`.
-The supported AlpineClubBookingsNZ deployment path uses the single blue/green
-production deploy script:
-
-```bash
-./scripts/run-production-blue-green-deploy.sh
-```
-
-On `main`, GitHub Actions builds and publishes the app and migration images to
-GHCR with commit-SHA tags. The production deploy script resolves `origin/main`,
-pulls those exact images, re-enters its internal deploy-engine mode, runs
-migrations, and switches Caddy after health checks pass.
-
-The public image packages are `alpineclubbookingsnz-app` for the runnable web
-application and `alpineclubbookingsnz-migrate` for Prisma migration runs.
-
-Do not use live Stripe, Xero, SES, Sentry, or production database credentials in
-forks or public CI. Configure your own service accounts and secrets.
+Versioned, classified releases with written upgrade paths:
+[GitHub Releases](https://github.com/thatskiff33/AlpineClubBookingsNZ/releases) ·
+[`CHANGELOG.md`](CHANGELOG.md) ·
+[release notes index](docs/releases/README.md) ·
+[`docs/UPGRADING.md`](docs/UPGRADING.md) ·
+[`docs/PRODUCTION_UPGRADE_RUNBOOK.md`](docs/PRODUCTION_UPGRADE_RUNBOOK.md).
+Deploys ship from GHCR images (`alpineclubbookingsnz-app`,
+`alpineclubbookingsnz-migrate`) via a single blue/green deploy script.
 
 ## Documentation
 
-- `docs/README.md` - documentation index and recommended reading paths
-- `docs/IMPLEMENTATION_GUIDE.md` - adopter path from clone to local
-  validation and first deployment
-- `docs/ARCHITECTURE.md` - system structure, data model, business logic,
-  integrations, cron, and deployment shape
-- `docs/PUBLIC_PAGE_CONTENT_TOKENS.md` - content-editor workflow and safety
-  contract for authoritative public PageContent data blocks
-- `CONFIGURATION.md` - environment variables, module controls, site style,
-  and `config/club.json` schema
-- `DEPLOYMENT.md` - reference Lightsail, Docker Compose, Caddy, blue/green, and
-  recovery guide
-- `docs/MAINTENANCE.md` - public maintenance, validation, CI, and release
-  checklist
-- `docs/CANCELLATIONS.md` - membership cancellation refund, credit-note, and
-  GST policy
-- `docs/ONGOING_DEVELOPMENT_WORKFLOW.md` - public upstream and private fork
-  development workflow
-- `docs/STAGING_ACCESSIBILITY.md` - non-production staging and accessibility
-  verification workflow
-- `docs/BLUE_GREEN_MIGRATION_POLICY.md` - migration safety policy for
-  blue/green deploys
-- `docs/AUDIT_RETENTION_ARCHIVE_RUNBOOK.md` - audit-log retention and optional
-  archive database behaviour
-- `docs/finance-dashboard/README.md` - finance reporting architecture and
-  contract index
+Start at the [documentation hub](docs/README.md) for recommended reading paths
+by audience. Key entry points:
 
-## Community
+| Audience | Where to go |
+|---|---|
+| **Club members** | [User guides](docs/user-guide/README.md) — booking a stay, paying, waitlist, family, your account — also on the [project wiki](https://github.com/thatskiff33/AlpineClubBookingsNZ/wiki) |
+| **Adopting clubs** | [`docs/IMPLEMENTATION_GUIDE.md`](docs/IMPLEMENTATION_GUIDE.md) · [`CONFIGURATION.md`](CONFIGURATION.md) · [`DEPLOYMENT.md`](DEPLOYMENT.md) · [`docs/UPGRADING.md`](docs/UPGRADING.md) |
+| **Operators / committee** | [65 illustrated operator guides](docs/README.md) · feature hubs: [finance dashboard](docs/finance-dashboard/README.md), [multi-lodge](docs/multi-lodge/README.md), [lobby display](docs/lobby-display/README.md), [Xero](docs/xero/ARCHITECTURE.md), [config transfer](docs/config-transfer/README.md) · [`docs/CANCELLATIONS.md`](docs/CANCELLATIONS.md) · [`docs/AUTHORITATIVE_FEES.md`](docs/AUTHORITATIVE_FEES.md) |
+| **Developers** | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) · [`docs/DOMAIN_INVARIANTS.md`](docs/DOMAIN_INVARIANTS.md) · [`docs/STATE_MACHINES.md`](docs/STATE_MACHINES.md) · [`docs/UX_FLOW_MAP.md`](docs/UX_FLOW_MAP.md) · [`docs/E2E_PLAYWRIGHT.md`](docs/E2E_PLAYWRIGHT.md) · [`docs/MAINTENANCE.md`](docs/MAINTENANCE.md) · [`CONTRIBUTING.md`](CONTRIBUTING.md) |
+| **Maintainers** | [`docs/ONGOING_DEVELOPMENT_WORKFLOW.md`](docs/ONGOING_DEVELOPMENT_WORKFLOW.md) · [`docs/BLUE_GREEN_MIGRATION_POLICY.md`](docs/BLUE_GREEN_MIGRATION_POLICY.md) · [`docs/PRODUCTION_UPGRADE_RUNBOOK.md`](docs/PRODUCTION_UPGRADE_RUNBOOK.md) · [`docs/SECURITY.md`](docs/SECURITY.md) |
 
-Use [SUPPORT.md](SUPPORT.md) for help and support channels, and follow
-[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) in project spaces.
+## Community, security, and licence
 
-## Contributing and Security
+- Questions and help: [`SUPPORT.md`](SUPPORT.md) · conduct:
+  [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md)
+- Contributions welcome — read [`CONTRIBUTING.md`](CONTRIBUTING.md) first
+- Report suspected vulnerabilities **privately** via [`SECURITY.md`](SECURITY.md);
+  never post secrets, personal data, or accounting records in public issues
+- MIT licensed ([`LICENSE`](LICENSE)). Club branding, logos, copy, and domains
+  are included for context only — replace them before using a fork for another
+  organisation ([`NOTICE.md`](NOTICE.md))
 
-Read `CONTRIBUTING.md` before opening a PR. Report suspected vulnerabilities
-privately using `SECURITY.md`; do not post secrets, personal data, payment
-details, or accounting records in public issues.
+Built with ❤️ for [Tokoroa Alpine Club](https://tokoroa.org.nz), and for every
+small club still running its lodge on spreadsheets.

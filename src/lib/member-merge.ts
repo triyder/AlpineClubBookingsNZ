@@ -93,7 +93,7 @@ function spec(
 }
 
 /**
- * The authoritative classification of all 70 Member FK-owning relations. The
+ * The authoritative classification of all 72 Member FK-owning relations. The
  * DMMF/schema completeness test (member-merge-dmmf.test.ts) fails CI if the
  * schema grows a Member relation that is missing here (or if a key here no
  * longer exists in the schema), so a new relation cannot silently escape merge
@@ -114,6 +114,7 @@ export const MEMBER_MERGE_RELATION_SPECS: readonly MemberMergeRelationSpec[] = [
 
   // --- Auth identity / ephemeral tokens (cascade with loser) ---
   spec("PasswordResetToken", "member", "memberId", "cascade"),
+  spec("MagicLinkToken", "member", "memberId", "cascade"),
   spec("EmailVerificationToken", "member", "memberId", "cascade"),
   spec("EmailChangeToken", "member", "memberId", "cascade"),
   spec("TwoFactorEmailCode", "member", "memberId", "cascade"),
@@ -129,6 +130,14 @@ export const MEMBER_MERGE_RELATION_SPECS: readonly MemberMergeRelationSpec[] = [
   }),
   spec("MembershipSubscriptionCharge", "recipient", "recipientMemberId", "move"),
   spec("MembershipSubscriptionCharge", "confirmedBy", "confirmedByMemberId", "move"),
+  // #2161 (D2): audit back-refs on the family "already invoiced" marker. Both are
+  // nullable + SetNull actor columns with NO member unique constraint, exactly
+  // mirroring MembershipSubscriptionCharge.confirmedByMemberId above (the schema
+  // comment on the model calls out that mirror). Classify them the same way —
+  // `move` re-points the loser's marking/release history onto the surviving
+  // member (history follows the person; no collision possible without a unique).
+  spec("FamilyGroupSeasonInvoiceMarker", "markedBy", "markedByMemberId", "move"),
+  spec("FamilyGroupSeasonInvoiceMarker", "releasedBy", "releasedByMemberId", "move"),
   spec("MemberSubscription", "manuallyMarkedPaidBy", "manuallyMarkedPaidByMemberId", "move"),
   spec("MembershipBillingException", "member", "memberId", "move"),
   spec("SeasonalMembershipAssignment", "member", "memberId", "resolve", {
@@ -352,7 +361,14 @@ export function memberRelationNamesFromDmmf(
 // Field-merge policy (master's populated scalars win; blanks filled from loser)
 // ---------------------------------------------------------------------------
 
-/** Independent optional scalars filled from the loser only when master is blank. */
+/**
+ * Independent optional scalars filled from the loser only when master is blank.
+ *
+ * `postLoginLanding` (#2090) is intentionally NOT listed: the post-login landing
+ * preference is a per-account UI choice, not shared personal data, so a losing
+ * member's preference is dropped on merge and the master keeps its own (null =
+ * role default). Do not add it here.
+ */
 const FILL_IF_BLANK_FIELDS = [
   "title",
   "gender",
@@ -862,7 +878,9 @@ const MEANINGFUL_SUBSCRIPTION_OR: Prisma.MemberSubscriptionWhereInput["OR"] = [
   { xeroInvoiceNumber: { not: null } },
   { xeroOnlineInvoiceUrl: { not: null } },
   { paidAt: { not: null } },
-  { chargeCoverage: { isNot: null } },
+  // #2147: chargeCoverage is now a list — ANY coverage row (active or a retained
+  // released one) makes the loser subscription meaningful for merge-collision.
+  { chargeCoverage: { some: {} } },
 ];
 
 /**
@@ -1384,7 +1402,23 @@ export async function executeMemberMerge(params: {
       }),
     );
 
-    // 7) Hard-delete the loser (cascade drops its auth/token rows).
+    // 7) Google OAuth identity (#2035). `Member.googleSub` is a scalar @unique,
+    // so it is deliberately NOT in FILL_IF_BLANK_FIELDS/GROUP_FILL_SPECS: the
+    // master NEVER inherits the loser's Google identity, because silently
+    // transferring a login identity to another member is an account-takeover
+    // vector. Mirroring the xeroContactId teardown, null the loser's googleSub
+    // before the hard-delete (the sub is recorded in the loser snapshot audited
+    // above) so the delete cannot race any unique constraint. The loser's Google
+    // account is simply unlinked; re-link to the master is a deliberate,
+    // profile-initiated action, never an automatic merge side effect.
+    if (loserFull.googleSub) {
+      await tx.member.update({
+        where: { id: loserId },
+        data: { googleSub: null },
+      });
+    }
+
+    // 8) Hard-delete the loser (cascade drops its auth/token rows).
     await tx.member.delete({ where: { id: loserId } });
 
     return {
@@ -1423,6 +1457,7 @@ function buildLoserSnapshot(loser: Member) {
     lastName: loser.lastName,
     email: loser.email,
     xeroContactId: loser.xeroContactId,
+    googleSub: loser.googleSub,
     joinedDate: loser.joinedDate?.toISOString() ?? null,
     createdAt: loser.createdAt.toISOString(),
   };

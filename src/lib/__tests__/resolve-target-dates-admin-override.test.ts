@@ -95,6 +95,38 @@ describe("resolveTargetDates admin override (issue #1668)", () => {
     );
   });
 
+  it("lets a MEMBER extend a still-PAID booking on its check-out day (#2029)", () => {
+    vi.useFakeTimers();
+    // 2026-08-23T12:00Z is 2026-08-24 00:00 NZ, so NZ today == the check-out day.
+    vi.setSystemTime(new Date("2026-08-23T12:00:00.000Z"));
+
+    const booking = makeBooking("PAID", "2026-08-20", "2026-08-24");
+    // Guest still at the lodge extends their stay by two nights.
+    const input: BatchModifyInput = { checkOut: "2026-08-26" };
+
+    const result = resolveTargetDates({ booking, role: "USER", input });
+
+    expect(result.isInProgressEdit).toBe(true);
+    // Check-in stays locked to its original value; only the tail extends.
+    expect(result.checkInChanged).toBe(false);
+    expect(result.newCheckIn.toISOString().slice(0, 10)).toBe("2026-08-20");
+    expect(result.newCheckOut.toISOString().slice(0, 10)).toBe("2026-08-26");
+    expect(result.datesChanged).toBe(true);
+  });
+
+  it("refuses a MEMBER trying to move an in-progress booking's tail into the past (#2029 boundary)", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-23T12:00:00.000Z")); // NZ today = 2026-08-24
+
+    const booking = makeBooking("PAID", "2026-08-20", "2026-08-24");
+    // Trying to pull check-out back to today (locked) is rejected.
+    const input: BatchModifyInput = { checkOut: "2026-08-24" };
+
+    expect(() => resolveTargetDates({ booking, role: "USER", input })).toThrow(
+      "NZ today and earlier are locked for self-service changes",
+    );
+  });
+
   it("ignores the override flag for a non-admin role (cannot self-drive an override)", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-25T12:00:00.000Z"));

@@ -159,8 +159,14 @@ export const PREVIEW_GRANT_TTL_SECONDS = 5 * 60;
 const PREVIEW_GRANT_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 export interface PreviewGrantPayload {
-  /** The authored v2 template to preview (null → the lodge's legacy board). */
+  /** The authored v2 template to preview (null → the lodge's legacy board, OR a
+   * draft preview when `draftNonce` is set). */
   templateId: string | null;
+  /** An UNSAVED builder draft to preview (ADR-004 §7): a nonce naming an
+   * ephemeral, already-rendered payload in the in-memory draft-preview store.
+   * Mutually exclusive with `templateId` (a draft grant sets templateId null).
+   * Present only on a draft grant; omitted otherwise. */
+  draftNonce?: string;
   /** The lodge to render against — explicit, never silently the default. */
   lodgeId: string;
   /** Optional simulated window start (LTV-017), date-only YYYY-MM-DD. */
@@ -215,6 +221,7 @@ export function decodePreviewGrant(raw: string): PreviewGrantPayload | null {
       payload.lodgeId.length === 0 ||
       typeof payload.exp !== "number" ||
       (payload.templateId != null && typeof payload.templateId !== "string") ||
+      (payload.draftNonce != null && typeof payload.draftNonce !== "string") ||
       (payload.windowStart != null &&
         !(
           typeof payload.windowStart === "string" &&
@@ -228,6 +235,7 @@ export function decodePreviewGrant(raw: string): PreviewGrantPayload | null {
     }
     return {
       templateId: payload.templateId ?? null,
+      ...(payload.draftNonce ? { draftNonce: payload.draftNonce } : {}),
       lodgeId: payload.lodgeId,
       ...(payload.windowStart ? { windowStart: payload.windowStart } : {}),
       exp: payload.exp,

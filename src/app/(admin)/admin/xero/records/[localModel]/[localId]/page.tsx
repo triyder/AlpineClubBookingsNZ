@@ -1,7 +1,5 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { BackLink } from "@/components/admin/back-link";
 import { XeroRecordActivityPanel } from "@/components/admin/xero-record-activity-panel";
 import { getXeroRecordActivity } from "@/lib/xero-record-activity";
 import { isXeroLocalModel } from "@/lib/xero-record-links";
@@ -33,12 +31,7 @@ export default async function XeroRecordActivityPage({
   return (
     <div className="space-y-6">
       <div className="space-y-3">
-        <Button variant="ghost" size="sm" asChild className="-ml-2 w-fit">
-          <Link href={backHref}>
-            <ArrowLeft className="h-4 w-4" />
-            {data.backLink?.label ?? "Back to Xero"}
-          </Link>
-        </Button>
+        <BackLink href={backHref} label={data.backLink?.label ?? "Xero"} />
         <div className="space-y-1">
           <p className="text-sm font-medium text-slate-500">Xero record activity</p>
           <h1 className="text-3xl font-bold text-slate-900">{data.rootRecord.label}</h1>

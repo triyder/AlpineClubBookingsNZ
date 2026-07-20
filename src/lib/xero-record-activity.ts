@@ -132,7 +132,7 @@ async function getMemberScope(localId: string): Promise<XeroRecordScope | null> 
     relatedRecords: [],
     backLink: {
       href: `/admin/members/${member.id}`,
-      label: `Back to ${member.firstName} ${member.lastName}`,
+      label: `${member.firstName} ${member.lastName}`,
     },
   };
 }
@@ -182,7 +182,7 @@ async function getPaymentScope(localId: string): Promise<XeroRecordScope | null>
     relatedRecords: [relatedBooking],
     backLink: {
       href: "/admin/payments",
-      label: "Back to Payments",
+      label: "Payments",
     },
   };
 }
@@ -265,7 +265,7 @@ async function getBookingScope(localId: string): Promise<XeroRecordScope | null>
     relatedRecords: [],
     backLink: {
       href: "/admin/bookings",
-      label: "Back to Bookings",
+      label: "Bookings",
     },
   };
 }
@@ -336,7 +336,7 @@ async function getBookingModificationScope(localId: string): Promise<XeroRecordS
     relatedRecords,
     backLink: {
       href: buildLocalAdminUrl("Booking", modification.booking.id) ?? "/admin/bookings",
-      label: "Back to Booking Activity",
+      label: "Booking Activity",
     },
   };
 }
@@ -381,7 +381,7 @@ async function getMemberSubscriptionScope(localId: string): Promise<XeroRecordSc
     relatedRecords: [relatedMember],
     backLink: {
       href: `/admin/members/${subscription.member.id}`,
-      label: `Back to ${subscription.member.firstName} ${subscription.member.lastName}`,
+      label: `${subscription.member.firstName} ${subscription.member.lastName}`,
     },
   };
 }
@@ -443,7 +443,7 @@ async function getMembershipCancellationRequestScope(localId: string): Promise<X
     relatedRecords: relatedMembers,
     backLink: {
       href: "/admin/membership-cancellations?status=ALL",
-      label: "Back to Membership Cancellations",
+      label: "Membership Cancellations",
     },
   };
 }
@@ -501,7 +501,7 @@ async function getMembershipCancellationParticipantScope(localId: string): Promi
     relatedRecords: [relatedMember],
     backLink: {
       href: "/admin/membership-cancellations?status=ALL",
-      label: "Back to Membership Cancellations",
+      label: "Membership Cancellations",
     },
   };
 }

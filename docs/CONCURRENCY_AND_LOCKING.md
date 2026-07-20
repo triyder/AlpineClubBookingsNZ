@@ -95,7 +95,7 @@ are the literal `1`.
 | **Membership applicant** | `hashtext(<applicant-email key>)` | `membershipApplicationApplicantLockKey` (`nomination.ts`) | — | Per-email applicant dedup at submit time. |
 | **Roster generation** | `hashtext("roster:<date>")` | inline (`admin-roster-service.ts`) | — | Roster generation for one calendar date. |
 | **Config-transfer import** | `hashtext("config-transfer-import")` | `acquireConfigImportLock(tx)` (`config-transfer/apply.ts`) | — | Single-flights configuration-bundle apply. |
-| **Membership subscription billing** | `hashtext("membership-subscription-billing:<seasonYear>")` | `confirmSubscriptionBillingPreview` (`membership-subscription-billing.ts`) | — | Annual/approval charge snapshot creation for one membership year. |
+| **Membership subscription billing** | `hashtext("membership-subscription-billing:<seasonYear>")` | `confirmSubscriptionBillingPreview`, `reconcileSubscriptionBillingExceptions` (`membership-subscription-billing.ts`) | — | Annual/approval charge snapshot creation for one membership year; the #2148 refresh-reconciliation holds the same key so exception auto-resolution serialises with confirm and never resolves rows a concurrent confirm is regenerating. The #2161 operator family-marker writers (MARK/UNMARK on the subscription-billing route) deliberately take **no** advisory lock: they only insert/release a `FamilyGroupSeasonInvoiceMarker` row (single-active enforced by a partial unique index, so a concurrent double-mark is a benign no-op), and confirm re-derives suppression from the live marker rows under this same lock inside its transaction, so a mark landing mid-confirm either is seen by the in-tx re-preview or shifts the confirmation token — never a torn snapshot. |
 | **Authoritative fee schedule** | `hashtext("fee-schedule:<domain>:<key>")` | `lockFeeSchedule` (`authoritative-fees.ts`) | — | Serialises effective-dated membership or entrance-fee schedule changes for one configured key. |
 | **Member partner link** | sorted `hashtext("member-partner-link:<memberId>")` keys | `lockPartnerMembers` (`member-partner-link.ts`) | — | Serialises partner-link invariants across every member touched by a link; same-family keys are sorted. |
 | **Xero member contact link (legacy key)** | `hashtext(<memberId>)` | short local-link transactions (`xero-contacts.ts`) | — | First-writer-wins local `Member.xeroContactId` linking after provider work. This legacy unnamespaced key is shared by both Xero contact-link writers; do not copy it for new domains. |
@@ -261,6 +261,25 @@ their status-guard `notIn` set BY DESIGN: a settlement marked `FAILED` by a
 captured (`payment_intent.succeeded` → settle) must still become `SUCCEEDED`, so
 settle legitimately overwrites `FAILED` → `SUCCEEDED`. `lock(1)` guarantees the
 two run whole-before-whole; it is not a veto on that transition.
+
+`lock(1)` also serialises the duplicate-capture adjudication (#1992). When a
+Stripe success arrives for an already-PAID booking, `markBookingPaymentSucceeded`
+refunds the arriving capture only if it is a DIFFERENT intent from a captured
+PRIMARY transaction still holding net cash, AND no duplicate-capture refund
+operation (`duplicate_capture_<bookingId>_<pi>`) already exists for the booking
+against another intent. That check-then-enqueue is race-free only because every
+caller runs it under `lock(1)`: interleaved webhook replays of BOTH captures
+would otherwise refund both sides and settle the booking at zero net cash. The
+refund itself follows the #1349 enqueue-then-execute shape — the durable
+operation (with the slice pinned to the duplicate's own transaction) commits
+with the detection, and the Stripe refund executes after commit under the
+shared `duplicate_capture_refund_<bookingId>_<pi>` key prefix the recovery cron
+replays. Relatedly, the auto-charge cron's pre-charge sweep that cancels
+superseded /pay link intents (#1992 Option 1) is a plain Stripe call strictly
+OUTSIDE any transaction, after the claim commit: the claim's link revocation
+under the lodge lock freezes the set of link intents, and the sweep excludes the
+cron's own `pending_hold_auto_charge` transactions because Stripe's shared
+`pending_charge_<bookingId>` idempotency key re-returns a prior run's intent.
 
 Organiser cancellation adds a durable veto before it releases the lock:
 `group-cancel.ts` writes `GroupBooking.status = CANCELLED` under `lock(1)`

@@ -19,12 +19,20 @@ export interface MembershipLockoutSettings {
    * configured account/item code.
    */
   textFallbackEnabled: boolean;
+  /**
+   * When true (#2109), paid detection matches ANY item code stamped on the fee
+   * schedule (distinct `MembershipAnnualFeeComponent.xeroItemCode`) in addition
+   * to the single configured subscription item code. Default false reproduces
+   * the single-code behaviour byte-for-byte.
+   */
+  useFeeScheduleItemCodes: boolean;
 }
 
 export interface PersistedMembershipLockoutSettings {
   enabled: boolean | null;
   financialYearEndMonthOverride: number | null;
   textFallbackEnabled: boolean | null;
+  useFeeScheduleItemCodes: boolean | null;
   updatedByMemberId?: string | null;
   createdAt?: Date | string | null;
   updatedAt?: Date | string | null;
@@ -35,6 +43,7 @@ function getDefaultMembershipLockoutSettings(): MembershipLockoutSettings {
     enabled: true,
     financialYearEndMonthOverride: null,
     textFallbackEnabled: true,
+    useFeeScheduleItemCodes: false,
   };
 }
 
@@ -59,6 +68,8 @@ export function normalizeMembershipLockoutSettings(
     ),
     textFallbackEnabled:
       persisted?.textFallbackEnabled ?? defaults.textFallbackEnabled,
+    useFeeScheduleItemCodes:
+      persisted?.useFeeScheduleItemCodes ?? defaults.useFeeScheduleItemCodes,
   };
 }
 

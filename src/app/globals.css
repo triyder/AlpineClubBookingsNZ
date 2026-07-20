@@ -175,89 +175,96 @@
   --hue-emerald-muted: #d1fae5;
 }
 
-.dark {
-  /* Dark mode is a LAYERED NEUTRAL GREY ramp (#1247), not pure-black: the page,
-     cards/popovers, and secondary surfaces each sit a perceptible step apart, and
-     borders are lifted to a clearly visible mid-grey. Values are tuned against the
-     WCAG contrast helpers in club-theme-schema.ts:
-       - --foreground on --card 13.98:1, on --background 17.34:1 (text >= 4.5:1)
-       - --border vs --card 3.01:1, vs --background 3.73:1 (non-text >= 3:1)
-       - --card vs --background 1.24:1 (visible surface separation)
-     Kiosk pages use literal slate-* classes, so this token change leaves their
-     dark rendering unchanged. */
-  --background: oklch(0.2 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.28 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.28 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.985 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.32 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.32 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.32 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.396 0.141 25.723);
-  --destructive-foreground: oklch(0.637 0.237 25.331);
-  --border: oklch(0.55 0 0);
-  --input: oklch(0.55 0 0);
-  --ring: oklch(0.55 0 0);
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.24 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.32 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(0.55 0 0);
-  --sidebar-ring: oklch(0.55 0 0);
-  /* Semantic status tokens (#1801) — dark re-tint mirrors the colored-callout
-     remap tones (green hue 150, amber hue 75): muted bg oklch(0.33 0.05 h) and
-     accent/text oklch(0.84 0.11 h), which clears >= 5.8:1 text-on-muted (the same
-     ratio documented for the family-text remap below); solid-accent foreground is
-     near-black. */
-  --success: oklch(0.84 0.11 150);
-  --success-foreground: oklch(0.2 0 0);
-  --success-muted: oklch(0.33 0.05 150);
-  --warning: oklch(0.84 0.11 75);
-  --warning-foreground: oklch(0.2 0 0);
-  --warning-muted: oklch(0.33 0.05 75);
-  /* Semantic status tokens continued (#1804) — dark re-tint follows the
-     colored-callout remap structure (muted bg oklch(0.33 0.05 h), accent/text
-     oklch(0.84 0.11 h), near-black solid foreground), matching the same ratios
-     documented for the family-text remap. `--danger` hue 27 mirrors the existing
-     red callout tone; `--info` hue 250 is NOT an existing callout tone (blue
-     callout is 262) — it is held byte-identical to the sibling Alert lane (#1802)
-     so the two lanes' additive `--info*` blocks de-dupe trivially at merge.
-     info 7.37:1, danger 7.06:1 text-on-muted. */
-  --info: oklch(0.84 0.11 250);
-  --info-foreground: oklch(0.2 0 0);
-  --info-muted: oklch(0.33 0.05 250);
-  --danger: oklch(0.84 0.11 27);
-  --danger-foreground: oklch(0.2 0 0);
-  --danger-muted: oklch(0.33 0.05 27);
-  /* Per-value accent hue pairs (#156) — dark re-tint follows the same structure
-     as the semantic pairs and the colored-callout remap: accent text
-     oklch(0.84 0.11 h) on muted bg oklch(0.33 0.05 h). Lightness is held equal
-     to the semantic pairs, so contrast is the documented >= 5.8:1 regardless of
-     hue. Hues match the callout ramp (orange 55, emerald 165, teal 185, indigo
-     275, purple 315). */
-  --hue-orange: oklch(0.84 0.11 55);
-  --hue-orange-muted: oklch(0.33 0.05 55);
-  --hue-teal: oklch(0.84 0.11 185);
-  --hue-teal-muted: oklch(0.33 0.05 185);
-  --hue-indigo: oklch(0.84 0.11 275);
-  --hue-indigo-muted: oklch(0.33 0.05 275);
-  --hue-purple: oklch(0.84 0.11 315);
-  --hue-purple-muted: oklch(0.33 0.05 315);
-  --hue-emerald: oklch(0.84 0.11 165);
-  --hue-emerald-muted: oklch(0.33 0.05 165);
+/* Screen-only (#2146). Print is always ink on white paper, so the dark ramp is
+   excluded from it entirely and :root's light values stand. This covers the
+   tokens the .app-theme-scope light block does NOT restate — --destructive,
+   the semantic --success/--warning/--info/--danger pairs, and the --hue-*
+   pairs — which would otherwise print a light accent onto white. */
+@media not print {
+  .dark {
+    /* Dark mode is a LAYERED NEUTRAL GREY ramp (#1247), not pure-black: the page,
+       cards/popovers, and secondary surfaces each sit a perceptible step apart, and
+       borders are lifted to a clearly visible mid-grey. Values are tuned against the
+       WCAG contrast helpers in club-theme-schema.ts:
+         - --foreground on --card 13.98:1, on --background 17.34:1 (text >= 4.5:1)
+         - --border vs --card 3.01:1, vs --background 3.73:1 (non-text >= 3:1)
+         - --card vs --background 1.24:1 (visible surface separation)
+       Kiosk pages use literal slate-* classes, so this token change leaves their
+       dark rendering unchanged. */
+    --background: oklch(0.2 0 0);
+    --foreground: oklch(0.985 0 0);
+    --card: oklch(0.28 0 0);
+    --card-foreground: oklch(0.985 0 0);
+    --popover: oklch(0.28 0 0);
+    --popover-foreground: oklch(0.985 0 0);
+    --primary: oklch(0.985 0 0);
+    --primary-foreground: oklch(0.205 0 0);
+    --secondary: oklch(0.32 0 0);
+    --secondary-foreground: oklch(0.985 0 0);
+    --muted: oklch(0.32 0 0);
+    --muted-foreground: oklch(0.708 0 0);
+    --accent: oklch(0.32 0 0);
+    --accent-foreground: oklch(0.985 0 0);
+    --destructive: oklch(0.396 0.141 25.723);
+    --destructive-foreground: oklch(0.637 0.237 25.331);
+    --border: oklch(0.55 0 0);
+    --input: oklch(0.55 0 0);
+    --ring: oklch(0.55 0 0);
+    --chart-1: oklch(0.488 0.243 264.376);
+    --chart-2: oklch(0.696 0.17 162.48);
+    --chart-3: oklch(0.769 0.188 70.08);
+    --chart-4: oklch(0.627 0.265 303.9);
+    --chart-5: oklch(0.645 0.246 16.439);
+    --sidebar: oklch(0.24 0 0);
+    --sidebar-foreground: oklch(0.985 0 0);
+    --sidebar-primary: oklch(0.488 0.243 264.376);
+    --sidebar-primary-foreground: oklch(0.985 0 0);
+    --sidebar-accent: oklch(0.32 0 0);
+    --sidebar-accent-foreground: oklch(0.985 0 0);
+    --sidebar-border: oklch(0.55 0 0);
+    --sidebar-ring: oklch(0.55 0 0);
+    /* Semantic status tokens (#1801) — dark re-tint mirrors the colored-callout
+       remap tones (green hue 150, amber hue 75): muted bg oklch(0.33 0.05 h) and
+       accent/text oklch(0.84 0.11 h), which clears >= 5.8:1 text-on-muted (the same
+       ratio documented for the family-text remap below); solid-accent foreground is
+       near-black. */
+    --success: oklch(0.84 0.11 150);
+    --success-foreground: oklch(0.2 0 0);
+    --success-muted: oklch(0.33 0.05 150);
+    --warning: oklch(0.84 0.11 75);
+    --warning-foreground: oklch(0.2 0 0);
+    --warning-muted: oklch(0.33 0.05 75);
+    /* Semantic status tokens continued (#1804) — dark re-tint follows the
+       colored-callout remap structure (muted bg oklch(0.33 0.05 h), accent/text
+       oklch(0.84 0.11 h), near-black solid foreground), matching the same ratios
+       documented for the family-text remap. `--danger` hue 27 mirrors the existing
+       red callout tone; `--info` hue 250 is NOT an existing callout tone (blue
+       callout is 262) — it is held byte-identical to the sibling Alert lane (#1802)
+       so the two lanes' additive `--info*` blocks de-dupe trivially at merge.
+       info 7.37:1, danger 7.06:1 text-on-muted. */
+    --info: oklch(0.84 0.11 250);
+    --info-foreground: oklch(0.2 0 0);
+    --info-muted: oklch(0.33 0.05 250);
+    --danger: oklch(0.84 0.11 27);
+    --danger-foreground: oklch(0.2 0 0);
+    --danger-muted: oklch(0.33 0.05 27);
+    /* Per-value accent hue pairs (#156) — dark re-tint follows the same structure
+       as the semantic pairs and the colored-callout remap: accent text
+       oklch(0.84 0.11 h) on muted bg oklch(0.33 0.05 h). Lightness is held equal
+       to the semantic pairs, so contrast is the documented >= 5.8:1 regardless of
+       hue. Hues match the callout ramp (orange 55, emerald 165, teal 185, indigo
+       275, purple 315). */
+    --hue-orange: oklch(0.84 0.11 55);
+    --hue-orange-muted: oklch(0.33 0.05 55);
+    --hue-teal: oklch(0.84 0.11 185);
+    --hue-teal-muted: oklch(0.33 0.05 185);
+    --hue-indigo: oklch(0.84 0.11 275);
+    --hue-indigo-muted: oklch(0.33 0.05 275);
+    --hue-purple: oklch(0.84 0.11 315);
+    --hue-purple-muted: oklch(0.33 0.05 315);
+    --hue-emerald: oklch(0.84 0.11 165);
+    --hue-emerald-muted: oklch(0.33 0.05 165);
+  }
 }
 
 .website-theme {
@@ -503,7 +510,29 @@
   --secondary: var(--brand-mist);
   --secondary-foreground: var(--brand-deep);
   --muted: var(--brand-mist);
-  --muted-foreground: var(--brand-deep);
+  /* #2145 — `muted` is a SEMANTIC ROLE, so it must not alias `--foreground`.
+     It used to be `var(--brand-deep)`, byte-identical to `--foreground`, which
+     made every `text-muted-foreground` label across the admin and finance
+     surfaces render as primary-weight text. The value is now derived from the
+     brand palette by `deriveAppMutedForeground` in
+     `src/lib/club-theme-schema.ts`: 70% `--brand-deep` + 30% `--brand-snow`
+     (i.e. mostly foreground, softened toward the surface — NOT 70% toward
+     snow), then stepped BACK toward `--brand-deep` until it clears WCAG AA
+     4.5:1 against every light surface muted text can land on: `--brand-snow`
+     (`--background`/`--card`/`--popover`), `--brand-mist`
+     (`--muted`/`--secondary`/`--accent`), and the four curated `*-muted` panel
+     fills declared on `:root` above, which #1808 deliberately leaves out of
+     this scope and which therefore do NOT move with the brand palette.
+     NOT checked, deliberately: `--border`/`--input`. They are hairline tokens,
+     not text backgrounds — see APP_MUTED_FOREGROUND_EXCLUDED_SURFACES.
+     It is computed in TypeScript and injected as a solid colour rather than
+     written here as a `color-mix()` on purpose: a mix is unmeasurable from the
+     contrast gate, which is exactly why every other app TEXT token in this
+     block stays a solid brand endpoint. The literal fallback below is the
+     derivation of DEFAULT_CLUB_THEME_VALUES and applies only when no ClubTheme
+     stylesheet is injected; it is pinned in app-theme-layout-contract.test.ts
+     so the two cannot drift. */
+  --muted-foreground: var(--app-muted-foreground, #555f59);
   --accent: var(--brand-mist);
   --accent-foreground: var(--brand-deep);
   --app-accent-text: var(--brand-deep);
@@ -549,33 +578,45 @@
   font-family: var(--font-sans);
 }
 
-.dark .app-theme-scope {
-  --background: var(--brand-deep);
-  --foreground: var(--brand-snow);
-  --card: var(--brand-charcoal);
-  --card-foreground: var(--brand-snow);
-  --popover: var(--brand-charcoal);
-  --popover-foreground: var(--brand-snow);
-  --primary: var(--brand-gold);
-  --primary-foreground: var(--brand-charcoal);
-  --secondary: var(--brand-charcoal);
-  --secondary-foreground: var(--brand-snow);
-  --muted: var(--brand-charcoal);
-  --muted-foreground: var(--brand-snow);
-  --accent: var(--brand-charcoal);
-  --accent-foreground: var(--brand-snow);
-  --app-accent-text: var(--brand-snow);
-  --border: color-mix(in srgb, var(--brand-mist) 28%, var(--brand-deep));
-  --input: color-mix(in srgb, var(--brand-mist) 28%, var(--brand-deep));
-  --ring: var(--brand-snow);
-  --sidebar: var(--brand-charcoal);
-  --sidebar-foreground: var(--brand-snow);
-  --sidebar-primary: var(--brand-gold);
-  --sidebar-primary-foreground: var(--brand-charcoal);
-  --sidebar-accent: var(--brand-deep);
-  --sidebar-accent-foreground: var(--brand-snow);
-  --sidebar-border: color-mix(in srgb, var(--brand-mist) 25%, var(--brand-deep));
-  --sidebar-ring: var(--brand-snow);
+/* Screen-only (#2146): on paper the app scope keeps the light block above, so
+   every descendant token (notably --card-foreground, which Card sets directly
+   and therefore beat the print block's inherited colour) resolves light. */
+@media not print {
+  .dark .app-theme-scope {
+    --background: var(--brand-deep);
+    --foreground: var(--brand-snow);
+    --card: var(--brand-charcoal);
+    --card-foreground: var(--brand-snow);
+    --popover: var(--brand-charcoal);
+    --popover-foreground: var(--brand-snow);
+    --primary: var(--brand-gold);
+    --primary-foreground: var(--brand-charcoal);
+    --secondary: var(--brand-charcoal);
+    --secondary-foreground: var(--brand-snow);
+    --muted: var(--brand-charcoal);
+    /* #2145, the dark half of the derived muted role: 70% `--brand-snow` + 30%
+       `--brand-deep`, clamped for AA against `--brand-deep`,
+       `--brand-charcoal`, and the four curated `.dark` `*-muted` panel fills.
+       (`--border` is excluded — hairline, not a text background.)
+       The light block above restates `--muted-foreground`,
+       so excluding this block from print leaves the LIGHT derived tone standing
+       on paper — the #2146 pairing invariant is preserved. */
+    --muted-foreground: var(--app-muted-foreground-dark, #b2b8b5);
+    --accent: var(--brand-charcoal);
+    --accent-foreground: var(--brand-snow);
+    --app-accent-text: var(--brand-snow);
+    --border: color-mix(in srgb, var(--brand-mist) 28%, var(--brand-deep));
+    --input: color-mix(in srgb, var(--brand-mist) 28%, var(--brand-deep));
+    --ring: var(--brand-snow);
+    --sidebar: var(--brand-charcoal);
+    --sidebar-foreground: var(--brand-snow);
+    --sidebar-primary: var(--brand-gold);
+    --sidebar-primary-foreground: var(--brand-charcoal);
+    --sidebar-accent: var(--brand-deep);
+    --sidebar-accent-foreground: var(--brand-snow);
+    --sidebar-border: color-mix(in srgb, var(--brand-mist) 25%, var(--brand-deep));
+    --sidebar-ring: var(--brand-snow);
+  }
 }
 
 /* Filled brand controls keep the editable accent with its gated charcoal
@@ -598,10 +639,20 @@
   outline-offset: -1px;
 }
 
-.dark
-  .app-theme-scope
-  :is(.bg-primary, .bg-brand-gold):not(.website-theme *) {
-  outline: none;
+/* Screen-only (#2146). This one assigns no colour, so the earlier revision of
+   the print contract test (which only probed for literal colour values) let it
+   through — but it still made the SAME page print differently depending on the
+   operator's theme: a printed `bg-primary` chip kept its charcoal hairline in
+   light mode and lost it in dark. Print renders the light palette, so it must
+   also render the light palette's outline. The contract test now flags ANY
+   `.dark`-gated rule reachable from print media unless every value it assigns
+   is a `var(--token)` that self-heals against the light `:root`. */
+@media not print {
+  .dark
+    .app-theme-scope
+    :is(.bg-primary, .bg-brand-gold):not(.website-theme *) {
+    outline: none;
+  }
 }
 
 /* A native outline is independent of Tailwind's ring opacity and component
@@ -829,10 +880,15 @@
   color: var(--accent-foreground);
 }
 
-.dark
-  .app-theme-scope
-  :is(.shadow, .shadow-sm, .shadow-md, .shadow-lg, .shadow-xl) {
-  --tw-shadow-color: rgb(0 0 0 / 0.45);
+/* Screen-only (#2146): the deepened dark shadow is a literal value, so it cannot
+   resolve back to light on paper. A printed report keeps the light shadow (and
+   the print block drops it entirely on report cards). */
+@media not print {
+  .dark
+    .app-theme-scope
+    :is(.shadow, .shadow-sm, .shadow-md, .shadow-lg, .shadow-xl) {
+    --tw-shadow-color: rgb(0 0 0 / 0.45);
+  }
 }
 
 /* Dark-mode colored-callout pass (#1248). Light colored surfaces
@@ -853,6 +909,12 @@
    and the fill is applied UNCONDITIONALLY (translucency dropped for an opaque
    tint), matching the solid rules — do NOT rely on it for a deliberate
    `dark:bg-{family}-50/…` translucent overlay (none exist today). */
+/* Screen-only (#2146). Unlike the neutral remap above, these callout rules
+   carry LITERAL dark oklch values rather than tokens, so forcing the light
+   palette on the theme scopes cannot reach them. Excluding them from print
+   lets Tailwind's own light `-50/-100/-200` fills and `-600..950` text win
+   back on paper. */
+@media not print {
   .dark .app-theme-scope :is(.bg-red-50, [class~="hover:bg-red-50"]:hover, [class*="bg-red-50/"]) { background-color: oklch(0.29 0.05 27); }
   .dark .app-theme-scope :is(.bg-red-100, [class~="hover:bg-red-100"]:hover, [class*="bg-red-100/"]) { background-color: oklch(0.33 0.05 27); }
   .dark .app-theme-scope :is(.bg-red-200, [class*="bg-red-200/"]) { background-color: oklch(0.38 0.05 27); }
@@ -933,6 +995,7 @@
   .dark .app-theme-scope :is(.bg-rose-200, [class*="bg-rose-200/"]) { background-color: oklch(0.38 0.05 12); }
   .dark .app-theme-scope :is(.text-rose-600, .text-rose-700, .text-rose-800, .text-rose-900, .text-rose-950) { color: oklch(0.84 0.11 12); }
   .dark .app-theme-scope :is(.border-rose-100, .border-rose-200, .border-rose-300) { border-color: oklch(0.5 0.08 12); }
+}
 
 /* Kiosk light-mode readability (#1249). The kiosk is authored in dark tones
    (literal slate-900/800/700/600 + saturated accent buttons + dark tinted status
@@ -1229,6 +1292,18 @@ html:not(.dark)
   @page {
     size: A4 portrait;
     margin: 12mm;
+  }
+
+  /* Print is ink on white paper, so it always renders the LIGHT palette (#2146).
+     Every `.dark` token block and the literal dark callout remap are excluded
+     from print media above, which is what makes descendant-set tokens such as
+     Card's own `text-card-foreground` resolve light instead of losing to an
+     inherited `!important` on the print root. next-themes also writes
+     `color-scheme` as an INLINE style on <html>, and an inline style outranks any
+     non-important rule, so pinning it light here needs the one `!important` —
+     otherwise the UA paints dark form controls and default surfaces on paper. */
+  :root {
+    color-scheme: light !important;
   }
 
   aside,

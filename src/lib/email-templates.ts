@@ -5,11 +5,15 @@
 
 import { getAppBaseUrl, sanitizeEmailHref } from "./app-url";
 import {
-  CLUB_EMAIL_FROM_NAME,
   CLUB_HUT_LEADER_LABEL,
   CLUB_LODGE_TRAVEL_NOTE,
   CLUB_NAME,
 } from "@/config/club-identity";
+// Search key (C6 #1985): the `<title>` bakes the config-derived default from-name,
+// which applyEmailMessageSettingsToHtml swaps for the DB-first
+// EmailMessageSetting.emailFromName at send time. Must NOT come from the severed
+// club-identity export (now safe-default-derived) or the replacement would no-op.
+import { EMAIL_DEFAULT_FROM_NAME } from "@/lib/email-message-settings";
 import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
 import { formatCents as formatMoneyCents } from "@/lib/utils";
 import { FALLBACK_LODGE_CAPACITY } from "@/lib/lodge-capacity";
@@ -46,7 +50,7 @@ function layout(content: string): string {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${escapeHtml(CLUB_EMAIL_FROM_NAME)}</title>
+  <title>${escapeHtml(EMAIL_DEFAULT_FROM_NAME)}</title>
 </head>
 <body style="margin: 0; padding: 0; background-color: ${p.snow}; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color: ${p.snow};">
@@ -247,6 +251,16 @@ export function passwordResetTemplate(resetUrl: string): string {
   `);
 }
 
+export function magicLinkLoginTemplate(loginUrl: string): string {
+  return layout(`
+    ${heading("Sign In")}
+    ${paragraph(`You asked to sign in to your ${escapeHtml(CLUB_NAME)} booking account with an email link.`)}
+    ${paragraph("Click the button below to sign in. This link can be used once and expires shortly.")}
+    ${button("Sign In", loginUrl)}
+    ${muted("If you didn't request this, you can safely ignore this email — your account stays secure and you can still sign in with your password.")}
+  `);
+}
+
 export function adminPasswordResetTemplate(
   resetUrl: string,
   expiryLabel = "1 hour"
@@ -306,6 +320,13 @@ export function bookingConfirmedTemplate(
     promoCode?: string;
     lodgeTravelNote?: string;
     doorCode?: string | null;
+    // Split-booking parent (#738): the non-member places on this party are held
+    // as a provisional linked booking, charged separately around the hold
+    // deadline. Present only when this confirmation is a split parent.
+    provisionalGuests?: {
+      guestCount: number;
+      holdUntil: Date;
+    };
   }
 ): string {
   const promoAdjustmentCents =
@@ -313,6 +334,20 @@ export function bookingConfirmedTemplate(
     (options?.discountCents && options.discountCents > 0
       ? -options.discountCents
       : 0);
+  const provisional = options?.provisionalGuests;
+  const provisionalSection =
+    provisional && provisional.guestCount > 0
+      ? alertBox(
+          `Your ${provisional.guestCount} non-member guest${
+            provisional.guestCount === 1 ? "" : "s"
+          } ${
+            provisional.guestCount === 1 ? "is" : "are"
+          } held provisionally as a linked booking — no bed is reserved for them yet, and the payment above covers only your member places. If beds remain around ${formatNZDateTime(
+            provisional.holdUntil,
+          )}, we'll automatically take that guest portion from your saved payment method and your guests are confirmed. If we can't take payment, we'll contact you to arrange it. If the lodge fills with member bookings first, that portion is not charged and those guests are bumped.`,
+          "warning",
+        )
+      : "";
   const rows: Array<{ label: string; value: string }> = [
     { label: "Check-in", value: formatNZDate(checkIn) },
     { label: "Check-out", value: formatNZDate(checkOut) },
@@ -339,6 +374,7 @@ export function bookingConfirmedTemplate(
     ${paragraph("Hi " + escapeHtml(firstName) + ", your lodge booking has been confirmed!")}
     ${infoTable(rows)}
     ${alertBox("Payment has been processed successfully.", "success")}
+    ${provisionalSection}
     ${arrivalInstructionsSection({
       travelNote: options?.lodgeTravelNote ?? CLUB_LODGE_TRAVEL_NOTE,
       doorCode: options?.doorCode ?? null,
@@ -878,6 +914,78 @@ export function adminPaymentFailureTemplate(data: {
       { label: "Stripe PI", value: escapeHtml(data.paymentIntentId) },
     ])}
     ${button("View Payments", BASE_URL + "/admin/payments")}
+  `);
+}
+
+/**
+ * #1992 / #2007 — dedicated admin alert for the duplicate-capture auto-refund.
+ * A SECOND, distinct Stripe capture arrived on a booking already settled by a
+ * different intent (the residual #1967 split-child window), so the duplicate
+ * charge is auto-refunded. This replaces the generic payment-anomaly template on
+ * both outcomes so the copy states the real situation instead of reading as a
+ * payment failure. `refundFailed` selects the variant (one-template-with-boolean
+ * precedent, like adminSplitSettlementUnpaidTemplate's parentUnpaid):
+ * - false: the duplicate charge was refunded in full inline — no action needed;
+ * - true: the inline refund could not complete, a durable recovery operation is
+ *   queued and the recovery cron will retry it — watch the recovery queue.
+ * No bearer token, so this is not sensitive-log material.
+ */
+export function adminDuplicateCaptureRefundTemplate(data: {
+  memberName: string;
+  checkIn: Date;
+  checkOut: Date;
+  amountCents: number;
+  paymentIntentId: string;
+  settledPaymentIntentId: string | null;
+  operationReference: string;
+  errorMessage?: string | null;
+  reviewUrl: string;
+  refundFailed: boolean;
+}): string {
+  const settledBy = data.settledPaymentIntentId
+    ? escapeHtml(data.settledPaymentIntentId)
+    : "another capture";
+  return layout(`
+    ${heading(
+      data.refundFailed
+        ? "Duplicate Capture Auto-Refund Failed — Retry Queued"
+        : "Duplicate Card Capture Auto-Refunded"
+    )}
+    ${
+      data.refundFailed
+        ? alertBox(
+            "A duplicate card charge could not be automatically refunded. A durable retry is queued — watch the recovery queue and confirm the refund lands.",
+            "warning"
+          )
+        : alertBox(
+            "A duplicate card charge was automatically refunded in full — no action is needed.",
+            "success"
+          )
+    }
+    ${paragraph(
+      data.refundFailed
+        ? "A second, distinct card capture arrived on a booking that was already paid and settled by another capture. The system tried to refund the duplicate charge automatically, but the refund could not complete inline. A durable recovery operation is queued and the payment recovery cron will retry it with backoff — watch the recovery queue and confirm the refund lands. The booking's own settlement is untouched."
+        : "A second, distinct card capture arrived on a booking that was already paid and settled by another capture. The duplicate charge was automatically refunded in full, so the member has not been double-charged and no action is needed unless the member reports otherwise. The booking's own settlement is untouched."
+    )}
+    ${infoTable([
+      { label: "Member", value: escapeHtml(data.memberName) },
+      { label: "Check-in", value: formatNZDate(data.checkIn) },
+      { label: "Check-out", value: formatNZDate(data.checkOut) },
+      {
+        label: data.refundFailed ? "Amount to refund" : "Amount refunded",
+        value: formatCents(data.amountCents),
+      },
+      { label: "Duplicate Stripe PI", value: escapeHtml(data.paymentIntentId) },
+      { label: "Settled by", value: settledBy },
+      {
+        label: "Recovery operation",
+        value: escapeHtml(data.operationReference),
+      },
+      ...(data.refundFailed && data.errorMessage
+        ? [{ label: "Failure detail", value: escapeHtml(data.errorMessage) }]
+        : []),
+    ])}
+    ${button("View Payments", data.reviewUrl, { sameOrigin: true })}
   `);
 }
 
@@ -2665,6 +2773,38 @@ export function bookingRequestApprovedTemplate(data: {
   `);
 }
 
+/**
+ * Split-booking guest-portion payment link (#1967). Sent to the member when the
+ * provisional non-member child of a split booking reaches its hold deadline but
+ * there is no card on file to auto-charge (the member paid their own place by
+ * Internet Banking via the switch-at-pay path). Reuses the #707 tokenised
+ * `/pay/<token>` PaymentLink so the member can settle their guests' portion.
+ */
+export function splitGuestPaymentLinkTemplate(data: {
+  firstName: string;
+  payUrl: string;
+  checkIn: Date;
+  checkOut: Date;
+  guestCount: number;
+  priceCents: number;
+  expiresAt: Date;
+}): string {
+  return layout(`
+    ${heading("Pay for Your Guests to Confirm Their Place")}
+    ${paragraph("Hi " + escapeHtml(data.firstName) + ", your own place is taken care of separately, but your non-member guests still need to be paid for before we can hold beds for them. Because there is no card on file for this part of your booking, please use the secure link below to pay for your guests.")}
+    ${infoTable([
+      { label: "Check-in", value: formatNZDate(data.checkIn) },
+      { label: "Check-out", value: formatNZDate(data.checkOut) },
+      { label: "Guests", value: String(data.guestCount) },
+      { label: "Amount due", value: formatCents(data.priceCents) },
+    ])}
+    ${paragraph("Use the secure link below to pay. You can pay by card, or by internet banking using the reference shown on the payment page.")}
+    ${button("Pay for My Guests", data.payUrl)}
+    ${alertBox("Until payment is received, no beds are held for your guests and their place may be bumped if the lodge fills for these dates.", "info")}
+    ${muted("This payment link expires on " + escapeHtml(formatNZDateTime(data.expiresAt)) + ". If you have any questions, just reply to this email or contact the club.")}
+  `);
+}
+
 export function bookingRequestQuoteTemplate(data: {
   firstName: string;
   respondUrl: string;
@@ -2717,6 +2857,32 @@ export function bookingRequestDeclinedTemplate(data: {
     ${paragraph("Unfortunately the club is unable to accommodate your request for " + escapeHtml(formatNZDate(data.checkIn)) + " to " + escapeHtml(formatNZDate(data.checkOut)) + " at this time.")}
     ${data.reason ? multilineBlock("<strong>Note from the club:</strong>\n" + escapeHtml(data.reason)) : ""}
     ${paragraph("You are welcome to submit another request for different dates.")}
+    ${supportContactSentence("If you have questions, contact the club at ")}
+  `);
+}
+
+/**
+ * #2012 — member-facing terminal notice that the booking created from their
+ * approved public booking request (#707) stayed unpaid up to the check-in day,
+ * so the provisional booking was released. Distinct wording from
+ * bookingRequestDeclinedTemplate ("unable to accommodate"): this request WAS
+ * approved and priced — the payment window simply lapsed — so it must not
+ * imply a refusal. Reassures that nothing was ever charged. No bearer token, so
+ * this is not sensitive-log material.
+ */
+export function bookingRequestPaymentExpiredTemplate(data: {
+  firstName: string;
+  checkIn: Date;
+  checkOut: Date;
+}): string {
+  return layout(`
+    ${heading("Your Booking Was Released — Payment Not Received")}
+    ${paragraph("Hi " + escapeHtml(data.firstName) + ", the booking we approved from your request stayed unpaid up to the check-in day, so it has now been released. Nothing was ever charged.")}
+    ${infoTable([
+      { label: "Check-in", value: formatNZDate(data.checkIn) },
+      { label: "Check-out", value: formatNZDate(data.checkOut) },
+    ])}
+    ${paragraph("If you still want to stay, you are welcome to submit a new booking request for these or other dates.")}
     ${supportContactSentence("If you have questions, contact the club at ")}
   `);
 }
@@ -2786,10 +2952,171 @@ export function adminBookingRequestHoldExpiredTemplate(data: {
       { label: "Hold extended to", value: formatNZDateTime(data.holdUntil) },
     ])}
     ${paragraph("Consider following up with the requester or cancelling the booking if payment is not expected.")}
+    ${muted("This alert repeats on a capped cadence (the first three hold extensions, then every seventh) while the request booking stays unpaid; a terminal cancellation past the check-in day ends the series with a separate final notice.")}
     ${button("View Bookings", data.reviewUrl, { sameOrigin: true })}
   `);
 }
 
+/**
+ * #2012 — terminal one-off admin notice: a booking created from an approved
+ * public booking request (#707) was still unpaid at the end of its check-in day
+ * with no saved card to charge, so it was automatically cancelled and its held
+ * capacity released. A DEDICATED registered template
+ * (`admin-booking-request-hold-cancelled`), not a variant of the recurring
+ * adminBookingRequestHoldExpiredTemplate, so an admin override of the noisy
+ * recurring alert cannot rewrite this terminal notice and muting the recurring
+ * one does not mute this. Symmetric twin of adminSplitSettlementCancelledTemplate,
+ * but this booking DID hold real beds, so the copy states the release explicitly.
+ */
+export function adminBookingRequestHoldCancelledTemplate(data: {
+  requesterName: string;
+  checkIn: Date;
+  checkOut: Date;
+  guestCount: number;
+  totalCents: number;
+  reviewUrl: string;
+}): string {
+  return layout(`
+    ${heading("Request Booking Auto-Cancelled — Unpaid Past Check-in")}
+    ${paragraph("A booking created from a public booking request was still unpaid at the end of its check-in day, with no saved card to charge. The provisional booking has now been automatically cancelled and the beds it was holding have been released back to availability. No payment was taken. The requester has been notified.")}
+    ${infoTable([
+      { label: "Requester", value: escapeHtml(data.requesterName) },
+      { label: "Check-in", value: formatNZDate(data.checkIn) },
+      { label: "Check-out", value: formatNZDate(data.checkOut) },
+      { label: "Guests", value: String(data.guestCount) },
+      { label: "Amount (unpaid)", value: formatCents(data.totalCents) },
+    ])}
+    ${paragraph("No further action is required. If the requester still intends to come and pay, ask them to submit a new booking request.")}
+    ${muted("This is a one-off notice — it ends the capped hold-extension alert series for this request booking.")}
+    ${button("View Bookings", data.reviewUrl, { sameOrigin: true })}
+  `);
+}
+
+
+/**
+ * Split-booking guest portion unpaid at hold expiry, no card on file (#1967).
+ * Admin alert fired while a split non-member child remains unsettled with no
+ * saved card. #1993 Part B caps the previously-every-run cadence to hold
+ * extension windows 1, 2, 3, then every 7th; the terminal auto-cancel past
+ * check-in ends the series with a separate one-off notice
+ * (adminSplitSettlementCancelledTemplate). Two variants:
+ * - parent settled (member paid their own place by internet banking): a
+ *   payment link has been emailed to the member;
+ * - parent unpaid (e.g. an abandoned card payment): NO link was sent — the
+ *   guest portion must not settle ahead of the member's own place, so a human
+ *   needs to chase the whole booking.
+ */
+export function adminSplitSettlementUnpaidTemplate(data: {
+  memberName: string;
+  checkIn: Date;
+  checkOut: Date;
+  guestCount: number;
+  totalCents: number;
+  holdUntil: Date;
+  reviewUrl: string;
+  parentUnpaid: boolean;
+}): string {
+  return layout(`
+    ${heading("Split Booking Guest Portion Unpaid — No Card on File")}
+    ${paragraph(
+      data.parentUnpaid
+        ? "A split booking reached its hold deadline for the non-member guest portion, but there is no saved card to charge and the member's own linked booking has not been paid either. No payment link has been sent — the guest portion should not be paid ahead of the member's own place. The hold has been extended; follow up with the member about paying for the whole booking."
+        : "A split booking reached its hold deadline for the non-member guest portion, but there is no saved card to charge — the member paid their own place by internet banking. A secure payment link has been emailed to the member so they can pay for their guests, and the hold has been extended."
+    )}
+    ${infoTable([
+      { label: "Member", value: escapeHtml(data.memberName) },
+      { label: "Check-in", value: formatNZDate(data.checkIn) },
+      { label: "Check-out", value: formatNZDate(data.checkOut) },
+      { label: "Guests", value: String(data.guestCount) },
+      { label: "Amount due", value: formatCents(data.totalCents) },
+      { label: "Hold extended to", value: formatNZDateTime(data.holdUntil) },
+    ])}
+    ${paragraph("No beds are held for these guests until payment is received. Follow up with the member or cancel the guest portion if payment is not expected.")}
+    ${muted("This alert repeats on a capped cadence (the first three hold extensions, then every seventh) while the guest portion stays unpaid; a terminal cancellation past the check-in day ends the series with a separate final notice.")}
+    ${button("View Bookings", data.reviewUrl, { sameOrigin: true })}
+  `);
+}
+
+/**
+ * #1993 Part A — terminal one-off admin notice: a split non-member guest
+ * portion was still unpaid (no saved card) at the end of its check-in day, so
+ * the provisional guest booking was automatically cancelled. Distinct from the
+ * recurring adminSplitSettlementUnpaidTemplate: there is no hold to extend and
+ * no repeating cadence, and it ends the capped alert series. `parentUnpaid`
+ * only selects wording — it reports the member's own linked booking as either
+ * settled-and-unaffected (internet-banking parent) or not-settled (an unpaid or
+ * already-cancelled parent that a human should review), never a false "also
+ * unpaid" for a parent that is in fact cancelled or bumped.
+ */
+export function adminSplitSettlementCancelledTemplate(data: {
+  memberName: string;
+  checkIn: Date;
+  checkOut: Date;
+  guestCount: number;
+  totalCents: number;
+  reviewUrl: string;
+  parentUnpaid: boolean;
+}): string {
+  return layout(`
+    ${heading("Split Booking Guest Portion Auto-Cancelled — Unpaid Past Check-in")}
+    ${paragraph(
+      data.parentUnpaid
+        ? "A split booking's non-member guest portion was still unpaid at the end of its check-in day, with no saved card to charge, and the member's own linked booking is not settled either (it may be unpaid or already cancelled). The provisional guest booking has now been automatically cancelled. No payment was taken and no beds were held. The member has been notified. Review the whole booking to confirm the state of the member's own place."
+        : "A split booking's non-member guest portion was still unpaid at the end of its check-in day, with no saved card to charge (the member had paid their own place by internet banking). The provisional guest booking has now been automatically cancelled. No payment was taken and no beds were held. The member has been notified; the member's own linked booking is settled and is unaffected."
+    )}
+    ${infoTable([
+      { label: "Member", value: escapeHtml(data.memberName) },
+      { label: "Check-in", value: formatNZDate(data.checkIn) },
+      { label: "Check-out", value: formatNZDate(data.checkOut) },
+      { label: "Guests", value: String(data.guestCount) },
+      { label: "Amount (unpaid)", value: formatCents(data.totalCents) },
+    ])}
+    ${paragraph("No further action is required for the guest portion. If these guests are in fact coming and the member intends to pay, create a new booking for them.")}
+    ${muted("This is a one-off notice — it ends the capped hold-extension alert series for this guest portion.")}
+    ${button("View Bookings", data.reviewUrl, { sameOrigin: true })}
+  `);
+}
+
+/**
+ * #1993 Part A — member-facing notice that the provisional non-member guest
+ * portion of their stay was auto-cancelled because it stayed unpaid up to the
+ * check-in day. Reassures that nothing was ever charged for the guest portion
+ * and that the cancellation touches only that portion. `parentConfirmed`
+ * selects the reassurance about their own booking: a settled/internet-banking
+ * parent "remains confirmed"; otherwise the copy only states the parent was not
+ * changed by this cancellation, never a false "confirmed". No bearer token, so
+ * this is not sensitive-log material.
+ */
+export function splitGuestPortionCancelledTemplate(data: {
+  firstName: string;
+  checkIn: Date;
+  checkOut: Date;
+  parentConfirmed: boolean;
+  parentBookingReference?: string | null;
+}): string {
+  const ownBookingLine = data.parentConfirmed
+    ? "This only affects your guests' provisional place — your own booking is unaffected and remains confirmed."
+    : "This only affects your guests' provisional place — your own linked booking has not been changed by this cancellation.";
+  return layout(`
+    ${heading("Your Guests' Provisional Place Was Cancelled")}
+    ${paragraph("Hi " + escapeHtml(data.firstName) + ", the provisional place we were holding for your non-member guests stayed unpaid up to the check-in day, so it has now been automatically cancelled. Nothing was ever charged for it, and no beds were held.")}
+    ${infoTable([
+      { label: "Check-in", value: formatNZDate(data.checkIn) },
+      { label: "Check-out", value: formatNZDate(data.checkOut) },
+      ...(data.parentBookingReference
+        ? [
+            {
+              label: "Your booking reference",
+              value: escapeHtml(data.parentBookingReference),
+            },
+          ]
+        : []),
+    ])}
+    ${paragraph(ownBookingLine)}
+    ${paragraph("If your guests are still coming, you can make a new booking for them at any time.")}
+    ${button("Make a New Booking", BASE_URL + "/book")}
+  `);
+}
 
 /**
  * School attendee confirmation prompt (#1101): tokenized link where the

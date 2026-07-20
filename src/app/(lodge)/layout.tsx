@@ -3,6 +3,8 @@ import { redirect } from "next/navigation";
 import { AppProviders } from "@/components/app-providers";
 import { auth } from "@/lib/auth";
 import { getCachedClubIdentity } from "@/lib/public-layout-config";
+import { clubThemeFontVariableClassName } from "@/lib/club-theme-fonts";
+import { getWebsiteThemeRenderState } from "@/lib/club-theme";
 import { CSP_NONCE_HEADER } from "@/lib/csp";
 import { getDefaultLodgeCapacity } from "@/lib/lodge-capacity";
 import { prisma } from "@/lib/prisma";
@@ -58,8 +60,9 @@ export default async function LodgeLayout({
     );
   }
 
-  const [lodgeCapacity, clubIdentity] = await Promise.all([
+  const [lodgeCapacity, theme, clubIdentity] = await Promise.all([
     getDefaultLodgeCapacity(),
+    getWebsiteThemeRenderState(),
     getCachedClubIdentity(),
   ]);
   const liveClubIdentity = { ...clubIdentity, lodgeCapacity };
@@ -67,7 +70,13 @@ export default async function LodgeLayout({
 
   return (
     <AppProviders clubIdentity={liveClubIdentity} nonce={nonce}>
-      <div className="app-theme-scope min-h-screen bg-background text-foreground">
+      <div
+        className={`${clubThemeFontVariableClassName} app-theme-scope min-h-screen bg-background text-foreground`}
+      >
+        <style
+          dangerouslySetInnerHTML={{ __html: theme.appCss }}
+          data-site-style="club-theme"
+        />
         {children}
       </div>
     </AppProviders>

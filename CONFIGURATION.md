@@ -17,29 +17,133 @@ example and edit it:
 cp config/club.example.json config/club.json
 ```
 
-You can also run:
+Copying the example is optional. Under the DB-first model the club's live
+configuration lives in the **database**, and `config/club.json` is only an
+optional seed/fallback (see "DB-first identity" below). The primary way to
+configure a club is the admin UI at `/admin/setup` and its linked editors
+(identity, lodges/capacity, seasons/rates, email, Stripe, Xero).
+
+You can also run the setup wizard once the database is migrated and seeded:
 
 ```bash
 npm run setup:wizard
 ```
 
-The wizard writes `config/club.json` only. It does not write `.env` files and
-does not store API keys, OAuth secrets, SMTP secrets, or bearer tokens.
+The wizard now **writes the club's configuration to the database**, not to a
+file — it upserts the same settings rows the admin editors write:
 
-`config/club.json` is validated by `src/config/schema.ts`.
+- club name / short name → `ClubIdentitySettings`
+- club/booking name, email from-name, support and contact email, public URL →
+  `EmailMessageSetting`
+- total bunk/bed capacity → `LodgeSettings.capacity`
+- age-tier labels, ages, and subscription rules → `AgeTierSetting` (the four
+  fixed slots INFANT/CHILD/YOUTH/ADULT; per-tier nightly **rates** are set at
+  `/admin/seasons`, not by the wizard)
+
+It writes no `config/club.json`, no `.env` file, and stores no API keys, OAuth
+secrets, SMTP secrets, or bearer tokens. If the database is not yet reachable
+(pre-migration), the wizard writes nothing and instead points you at
+`/admin/setup` to complete configuration after the deploy. Re-running the wizard
+against an already-configured database prompts for confirmation before it
+overwrites existing values (it is an interactive operator tool).
+
+`config/club.json`, when present, is validated by `src/config/schema.ts`.
+
+### Boot-safe config loading
+
+The config loader (`src/config/club.ts`) never throws, so an absent or broken
+`config/club.json` can never crash the app at boot. Resolution rules:
+
+- **Valid `club.json`** → used as-is (no change for healthy installs).
+- **Malformed `club.json`** (present but invalid JSON or failing schema
+  validation) → the app degrades to the built-in `SAFE_DEFAULT_CONFIG` and logs
+  a warning. The `club.example.json` fallback is intentionally **skipped** in
+  this case so a broken primary is not silently masked, and `npm run setup`
+  reports the Club Config step as **blocked**. Fix `config/club.json`.
+- **Absent `club.json`** → falls back to a valid `config/club.example.json`; if
+  the example is also absent or malformed, the app boots on
+  `SAFE_DEFAULT_CONFIG` with a logged warning.
+
+`SAFE_DEFAULT_CONFIG` (`src/config/safe-default-config.ts`) is the single
+canonical "unconfigured club" default; the setup wizard/CLI reference the same
+constant, and it always carries a valid absolute `publicUrl` so the identity
+bootstrap layer (`src/config/club-identity.ts`) cannot throw. It is a safe
+placeholder only — a real deployment must still configure the club.
+
+#### Bootstrap layer for the collapsing identity fields (C6)
+
+Five identity fields — **public URL**, **support email**, **contact email**,
+**email from-name**, and **social links** — are never read from
+`config/club.json` at runtime. Every consumer resolves them one of two ways:
+
+- **Async-context readers resolve DB-first.** Outbound email identity (sender
+  from-name, support/contact addresses) comes from `EmailMessageSetting`,
+  applied at send time via `applyEmailMessageSettings*` /
+  `formatEmailFromAddressWithSettings` (`src/lib/email-message-settings.ts`); the
+  public contact `mailto:` (contact route + the pre-setup website screen) reads
+  `EmailMessageSetting.contactEmail`; CMS `{{facebook-url}}` /
+  URL tokens resolve through the DB-first `getClubIdentity()` identity
+  (`src/lib/page-content-embeds.ts`).
+- **Genuinely synchronous, boot-critical sites use the bootstrap layer, not
+  `club.json`.** The app origin (sitemap, root metadata `metadataBase`, the
+  identity `publicHost` used for `clubDomainEmail`) comes from the `NEXTAUTH_URL`
+  bootstrap env var, falling back to `SAFE_DEFAULT_CONFIG.publicUrl`. The
+  outbound **envelope sender** (`EMAIL_FROM` in `src/lib/email-sender.ts`) is a
+  bootstrap concern — it must be a provider-verified (SES) address — so it comes
+  from the `EMAIL_FROM` env var, falling back to
+  `SAFE_DEFAULT_CONFIG.supportEmail`. The From/envelope **address** is always
+  this bootstrap value — the DB-first `EmailMessageSetting.supportEmail` is
+  never used as the sender address (it governs the body/footer support links via
+  send-time replacement, and `emailFromName` governs the From display name), so
+  production must set `EMAIL_FROM` to a provider-verified address. The
+  `SUPPORT_EMAIL` / `EMAIL_FROM_NAME` module constants and
+  `email-message-settings.ts`'s `EMAIL_DEFAULT_FROM_NAME` / default settings are
+  the **stable search keys** that the send-time replacement swaps for the live DB
+  values, so they stay config-derived (never the safe default) — mirroring the
+  `EMAIL_DEFAULT_LODGE_NAME` invariant.
+
+`NEXTAUTH_URL` and `EMAIL_FROM` are the only genuine bootstrap env inputs here;
+these fallbacks are intentional bootstrap defaults, never a `club.json` runtime
+read. On a real install the club's `config/club.json` values reach the DB via the
+seed / boot self-heal (see below), after which the DB is authoritative.
 
 ### DB-first identity (admin-editable)
 
-The club **name**, **short name**, and **hut-leader label** are DB-first: an
-admin edits them under **Admin > Site Appearance & Content > Club Identity** (no
-redeploy). Each field resolves through a per-field fallback chain —
+The club **name**, **short name**, **hut-leader label**, and **Facebook URL** are
+DB-first: an admin edits them under **Admin > Site Appearance & Content > Club
+Identity** (no redeploy). Each field resolves through a per-field fallback chain —
 **database (`ClubIdentitySettings`) → `config/club.json` → hard default** — so an
 empty/absent row keeps working from the file config, and clearing a field in the
-admin UI restores the configured default. Changes propagate to the site header,
+admin UI restores the configured default. The Facebook URL resolves
+**`ClubIdentitySettings.facebookUrl` → `config/club.json` `socialLinks.facebook` →
+undefined** and, when set, must be a valid http(s) URL. **Clearing the Facebook
+URL is not durable like the other three fields.** Clearing the name, short name,
+or hut-leader label leaves that column null permanently, so it keeps tracking
+`config/club.json` on every later boot; clearing the Facebook URL is only transient, because
+`facebookUrl` is filled by a **column-level** boot backfill (not a row-level
+create-if-absent) — the next boot re-heals it from the *then-current*
+`socialLinks.facebook`, after which the column holds that snapshot and stops
+tracking subsequent `club.json` edits. To change it durably, set the new value in
+the admin UI rather than clearing it to fall back to the file. Changes propagate to the site header,
 footer, page titles, and emails within a few seconds (a 15s tagged cache; the
 TOTP issuer label used at 2FA enrolment can lag by a short process-cache TTL and
 only affects new enrolments). `config/club.json` is never modified by these
 edits — it remains the seed and the fallback.
+
+On a fresh install `prisma/seed.ts` create-only upserts the `config/club.json`
+identity into `ClubIdentitySettings` so the admin card shows the configured
+values. A routine production upgrade runs `prisma migrate deploy` **only** (the
+seed never fires, and a SQL migration cannot read `config/club.json`), so the
+app also **self-heals this row on every boot**: it copies the current effective
+config value into the DB row if — and only if — the row is still absent, and
+never overwrites an admin edit. Healing runs **only from a valid primary
+`config/club.json`** — a boot that fell back to the example or the safe default
+(missing/malformed primary) skips healing so a placeholder identity is never
+frozen into the DB, and self-repairs on a later boot once the primary is fixed
+(the manual `npm run config:self-heal` exits non-zero on such a fallback skip).
+This is what lets later collapse work drop the file/env fallbacks without
+stranding a live deploy. See "Config self-heal on boot" in `docs/DEPLOYMENT.md`
+and `src/lib/config-self-heal.ts`.
 
 The **lodge display name** is not stored in club identity: it always resolves
 from the **default lodge**'s `Lodge.name` (edit it under Club Identity > Lodge
@@ -52,6 +156,34 @@ Messages) → `ClubIdentitySettings.name` → `config/club.json`. Email template
 default subjects keep the config-derived lodge name as their stable search key;
 the live lodge name is substituted at send time.
 
+**Email identity is admin-managed, DB-first (Admin > Email Messages).** The
+sender **display name** (`emailFromName`), the **support address**
+(`supportEmail`, used for body/footer support links), and the **contact-form
+recipient** (`contactEmail`, which falls back to `supportEmail`) all resolve from
+`EmailMessageSetting` → `config/club.json`. There are **no** `EMAIL_FROM_NAME`,
+`SUPPORT_EMAIL`, or `CONTACT_EMAIL` env vars — they were removed (#1986) so
+`EmailMessageSetting` is the single source for email identity. `EMAIL_FROM`
+remains the sole email env var (besides transport secrets): it is the
+envelope / Return-Path sender **address** and must be a provider-verified (SES)
+address in production; the DB `supportEmail` is never used as the sender address.
+The now-dead `NEXT_PUBLIC_CONTACT_EMAIL` build arg was deleted at the same time.
+**Upgrade note:** a deployment that previously routed the contact form via the
+`CONTACT_EMAIL` env var must set the DB `contactEmail` under Admin > Email
+Messages; if left unset it falls back to `club.json`'s `contactEmail`, then to
+the support address, per the precedence above (via the boot self-heal chain),
+so removing the env var causes no hard break. As a safety net, if any of the
+removed vars (`EMAIL_FROM_NAME`, `SUPPORT_EMAIL`, `CONTACT_EMAIL`,
+`NEXT_PUBLIC_CONTACT_EMAIL`) is still set at boot, the server logs a single
+warning naming it (scope `ignored-email-env`) so an operator knows the value is
+ignored and identity is admin-managed.
+
+Split-booking confirmations depend on the `{{provisionalGuestsNote}}` token in
+the **booking-confirmed** body (Admin > Email Messages): it renders the
+provisional non-member portion story on a split parent and nothing otherwise
+(the `{{paymentNote}}` precedent). An operator who overrides the
+booking-confirmed body must keep this token, or split-parent confirmations
+silently lose the "held provisionally / charged later" explanation.
+
 | Field                                              | Required | Description                                                                                                      |
 | -------------------------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------- |
 | `name`                                             | yes      | Full public club name.                                                                                           |
@@ -62,10 +194,10 @@ the live lodge name is substituted at send time.
 | `emailFromName`                                    | yes      | Display name for outbound email sender headers.                                                                  |
 | `lodgeTravelNote`                                  | no       | Email reminder travel/location note.                                                                             |
 | `hutLeaderLabel`                                   | no       | User-facing label for the hut-leader **role** (e.g. `Lodge Leader`, `Warden`, `Duty Manager`), rendered wherever `{{hut-leader}}` appears — it is the role name, never a specific person. Defaults to `Hut Leader`. Who currently holds the role is assigned separately under Admin > Hut Leaders. |
-| `socialLinks.facebook`                             | no       | Facebook URL used by public pages/footer. Must be an http(s) URL, like `publicUrl`.                              |
+| `socialLinks.facebook`                             | no       | Facebook URL used by public pages/footer. Must be an http(s) URL, like `publicUrl`. DB-first: admin-editable as **Facebook URL** under Club Identity (`ClubIdentitySettings.facebookUrl`); this file value is the seed/fallback. |
 | `beds[].id`                                        | yes      | Stable bed or lodge identifier.                                                                                  |
 | `beds[].name`                                      | yes      | User-facing bed/lodge name.                                                                                      |
-| `beds[].capacity`                                  | yes      | Positive integer fallback/import capacity.                                                                       |
+| `beds[].capacity`                                  | yes      | Positive integer. Seed-template/import capacity + the value the boot self-heal backfills into the default lodge (not read at runtime, #1982). |
 | `beds[].type`                                      | yes      | One of `dormitory`, `private`, or `shared`.                                                                      |
 | `ageTiers[].id`                                    | yes      | One of `INFANT`, `CHILD`, `YOUTH`, or `ADULT`. (`NOT_APPLICABLE` is the fixed organisation/school tier — server-managed, never configured here.) |
 | `ageTiers[].label`                                 | yes      | User-facing age-tier label.                                                                                      |
@@ -77,6 +209,37 @@ the live lodge name is substituted at send time.
 | `ageTiers[].nightlyRates.winter.nonMemberCents`    | yes      | Winter non-member nightly rate in integer cents.                                                                 |
 | `ageTiers[].nightlyRates.summer.memberCents`       | yes      | Summer member nightly rate in integer cents.                                                                     |
 | `ageTiers[].nightlyRates.summer.nonMemberCents`    | yes      | Summer non-member nightly rate in integer cents.                                                                 |
+
+> **Age tiers are DB-only at runtime (#1983).** `config/club.json ageTiers[]` is
+> a **seed input only**. At runtime the age tiers (boundaries, labels, per-tier
+> subscription/family flags) are read solely from the `AgeTierSetting` table;
+> `config/club.json` is never consulted for age classification once the DB is
+> populated. On a fresh install `prisma/seed.ts` create-only upserts the config
+> tiers into `AgeTierSetting`, and — because a routine `prisma migrate deploy`
+> never runs the seed — the app **self-heals the tiers on every boot**: if the
+> table is EMPTY it populates it from the current effective config tiers (only
+> from a valid primary `config/club.json`; never overwriting an existing row, so
+> admin edits survive). A hard-coded 4-tier TAC default (INFANT 0-4, CHILD 5-9,
+> YOUTH 10-17, ADULT 18+) is the last-resort safety net if the table is still
+> empty, so age classification never breaks. Nightly RATES are NOT self-healed
+> here — they live independently in `MembershipTypeSeasonRate` (see below). See
+> `src/lib/policies/age-tier.ts`, `src/lib/config-self-heal.ts`, and "Config
+> self-heal on boot" in `docs/DEPLOYMENT.md`.
+
+> **Admins may run a contiguous SUBSET of the four slots (#2009).** On
+> `/admin/age-tier-settings` an admin can save any contiguous subset of the four
+> built-in age slots, not just all four. The saved rows must still tile `[0, ∞)`
+> with no gaps or overlaps: the youngest tier starts at age 0, and `ADULT` is
+> always present as the unbounded terminal (top) tier. So `CHILD 0-17 + ADULT
+> 18+` or `ADULT 0+` alone are both valid; a set without `ADULT`, or one that
+> leaves a gap, is rejected. Removing a tier is blocked (HTTP 409) while any
+> member (archived members included) or any current/upcoming booking guest is
+> still classified into it — reclassify those people first (edit their age tier
+> or date of birth on the member page, and trim upcoming bookings' guests), then
+> save again. The four enum slots (`INFANT`, `CHILD`, `YOUTH`, `ADULT`) remain
+> the identity ceiling — a club cannot add a fifth tier or rename a slot's
+> identity here (labels are free text); the data-driven-identities epic is the
+> path beyond four.
 
 > **Hut rates are keyed by membership type (#1930, E4).** The `memberCents` /
 > `nonMemberCents` seed values above are fanned out at seed time into
@@ -96,9 +259,16 @@ active bed count from that configurator — unless a per-lodge capacity is set
 below that count, which caps it (the lower of the two applies, so a lodge may
 have more beds than it is allowed to sleep). If the module is disabled, or the
 module is enabled but no active beds exist yet, the system falls back to the
-per-lodge capacity, else the `beds[].capacity` total in `config/club.json`. Use
-the Rooms & Beds import action to seed the configurator from `config/club.json`
-during transition. See `docs/CAPACITY_MODEL.md` for the full resolution table.
+per-lodge `LodgeSettings.capacity`; if that is also unset the lodge resolves to
+**0** (unbookable) and the setup-readiness Club Config check warns.
+
+Since #1982 the DB is the **sole runtime source** of booking capacity —
+`beds[].capacity` in `config/club.json` is **not** read at runtime. Instead the
+default lodge's `LodgeSettings.capacity` is backfilled from the `config/club.json`
+bed total by the boot-time config self-heal (see `DEPLOYMENT.md`), and
+`config/club.json` remains a **seed template**: use the Rooms & Beds import
+action to seed the configurator from it. See `docs/CAPACITY_MODEL.md` for the
+full resolution table.
 
 Keep all money values in integer cents.
 
@@ -208,12 +378,31 @@ menu.
   `{{member-application-form}}`, `{{join-apply-form}}`, `{{contact-form}}`,
   `{{skifield-whakapapa}}`, `{{skifield-conditions:dataHash}}`,
   `{{photo-gallery}}`, `{{photo-gallery:path}}`, `{{photo-slideshow}}`, and
-  `{{photo-slideshow:path}}`. Authoritative embeds are `{{membership-types}}`,
-  `{{entrance-fees}}`, `{{hut-fees}}`, `{{booking-policy-summary}}`, and
-  `{{cancellation-policy}}`; the last three accept `:lodge-slug`. They default
-  hidden until enabled in Admin > Page Content, and membership types also need
-  their individual public-listing flag. Unknown/inactive lodge slugs render no
-  data rather than another lodge's fallback. Legal and help-copy pages can also use text
+  `{{photo-slideshow:path}}`. Authoritative fee embeds are `{{hut-fees}}`,
+  `{{joining-fees}}`, and `{{annual-fees}}` (with `{{entrance-fees}}` and
+  `{{membership-types}}` retained as deprecated aliases of `{{joining-fees}}`
+  and `{{annual-fees}}` respectively); the policy embeds are
+  `{{booking-policy-summary}}` and `{{cancellation-policy}}`. Each defaults
+  hidden until its family is enabled in Admin > Page Content — hut fees use the
+  **Hut fees** toggle, joining fees the **Joining fees** toggle, and annual fees
+  their own dedicated **Annual membership fees** double-opt-in (which also
+  governs the `{{membership-types}}` alias); annual fees additionally require
+  each type's public-listing flag. `{{hut-fees}}` renders a **table** per lodge
+  × season — age tiers down the side, one nightly-rate column per publicly
+  listed membership type that carries rates for that season, with
+  identically-priced types collapsed into a single shared column headed by their
+  names (#2129). Publicly listing at least two membership types is what makes
+  the table worth publishing; the setup-readiness **Seasons And Rates** step
+  warns when a season would show fewer than two columns. The fee embeds accept
+  comma-separated parameters after a colon (`lodge=`, `type=`, `group-by=`, plus
+  a bare lodge slug for `{{hut-fees}}` back-compat; `by-age` ≡ `group-by=age`;
+  `{{annual-fees:components}}` shows the per-line breakdown); the policy embeds
+  accept `:lodge-slug`. For `{{hut-fees}}`, `type=` filters the table to that
+  one membership type's column, `group-by=type` splits a season into one table
+  per column, and `group-by=age` transposes the table so membership types are
+  the rows. An unknown key, unlisted `type=`, or inactive lodge slug
+  renders no data rather than another group's or lodge's fallback. See
+  `docs/PUBLIC_PAGE_CONTENT_TOKENS.md` for the full grammar. Legal and help-copy pages can also use text
   tokens `{{club-name}}`, `{{currency}}`, `{{lodge-capacity}}`,
   `{{lodge-capacity:lodge-slug}}` (a named lodge's capacity; unknown slug falls
   back to the default lodge), `{{lodge-name}}` / `{{lodge-name:lodge-slug}}`,
@@ -612,10 +801,17 @@ Run this before bootstrapping a new install:
 npm run setup:check
 ```
 
-The check validates `config/club.json`, environment variable presence/format,
-module capability flags, and first-install readiness. Database-backed checks,
-including Admin Modules activation, are reported inside the admin setup wizard
-after migrations and seed data run.
+The check validates environment variable presence/format, module capability
+flags, and first-install readiness. It reads club configuration **DB-first**: it
+attempts a database snapshot and reports the club-config, age-tier, admin,
+booking, and integration steps from real database state. When the database is
+reachable, an absent `config/club.json` is normal — the club-config step is
+satisfied by the persisted identity (`ClubIdentitySettings` /
+`EmailMessageSetting`), not by a file. A **malformed** primary `config/club.json`
+still surfaces loudly as **blocked**. When the database is not reachable
+(pre-migration), the DB-backed steps are reported as "not checked" and the
+club-config step is a warning that points at `/admin/setup` rather than a hard
+block.
 
 After signing in as an administrator, open `/admin/setup` to review:
 
@@ -708,13 +904,31 @@ Xero contact-group rules, and committee assignment are separate axes:
   **Lodge** area. The matching route handlers require `content` (or `lodge`)
   `view` on reads and `edit` on writes, so a stale-tab save is rejected with a
   visible error even if the editors were still on screen.
+  The same read-only pattern extends to the settings/config editors in the other
+  areas (#1940), each gating on its own area: **Membership** — Nomination gate
+  (Induction Settings), Induction checklist templates, and Membership
+  Cancellation settings; **Support & System** — Email Settings/Templates and
+  Booking Messages; **Finance** — Finance Report Mappings; **Bookings** — the
+  Rooms & Beds manager (its writes hit the bed-allocation APIs, which enforce
+  `bookings:edit`, even though the page lives under Lodge Operations). A viewer
+  sees disabled inputs, a "view only" notice, and, on a stale-tab 403 save, a
+  persistent forbidden-save error. Message/template **Preview** actions are pure
+  renders and stay available to viewers.
 - `MembershipType` stores admin-configurable seasonal categories and policy:
   Full, Associate (renameable, including Reserve naming), Life, School,
   Non-Member, Family, or club-created types. The `/admin/membership-types`
   page shows these as a compact ordered list; creating or editing a type opens
   a dedicated editor for identity fields, booking behavior (`MEMBER_RATE`,
   `NON_MEMBER_RATE`, `BLOCK_BOOKING`), subscription behavior (`REQUIRED`,
-  `NOT_REQUIRED`), and allowed age tiers. Xero contact-group rules are no longer
+  `NOT_REQUIRED`), and allowed age tiers. New types default to the four age
+  tiers (Infant/Child/Youth/Adult); the explicit **N/A (no age)**
+  (`NOT_APPLICABLE`) tier makes a type *age-exempt* — ticked **alone** every
+  member on the type becomes N/A (like an organisation); ticked **alongside**
+  person tiers admins may hand-pick N/A per member. Age-exempt config (N/A ticked
+  in either shape) is only valid when subscription behavior is `NOT_REQUIRED`
+  (N/A must never bypass subscription lockout), and an edit that turns N/A-only
+  on or off is blocked while incompatible current/future-season members exist. At
+  least one tier must always be selected. Xero contact-group rules are no longer
   edited here — they live on the single **Xero member grouping** surface (see
   below). Display names must be unique: creating or renaming a type to a
   case-insensitive exact match of an existing name is rejected.
@@ -755,15 +969,20 @@ group fields and the membership-type Xero rules.
   | Mode | Behaviour |
   |---|---|
   | `None` | The sync is a total no-op. Existing Xero group memberships are left untouched — never added, never removed — including on the membership-cancellation path. |
-  | `Membership Type` | Only type-keyed rules apply. Tier-bearing rules are inert (shown but not applied). |
-  | `Membership Type + Age` | Most-specific `MANAGED` match wins: type+tier > type-only > tier-only. `ACCEPTED` groups are the union of matching accepted rules plus the matched managed group. |
+  | `Membership Type` | Only type-keyed rules apply. Tier-bearing rules (a non-empty `ageTiers` set) are inert (shown but not applied). |
+  | `Membership Type + Age` | Most-specific `MANAGED` match wins: `type + tiers` > `type-only` > `tiers-only`; among tiered rules **fewer tiers is more specific**, and an "all age tiers" (`[]`) rule is the **least** specific. Exact ties break deterministically by `sortOrder` then group id. `ACCEPTED` groups are the union of matching accepted rules plus the matched managed group. |
 
-- **Rules** (`XeroContactGroupRule`): each rule is a (membership type?, age
-  tier?, `MANAGED`/`ACCEPTED`, group) tuple. `MANAGED` is the group the sync
-  adds; `ACCEPTED` is a group the sync tolerates and never removes. Duplicate
-  rule shapes are rejected. The effective membership type is resolved at the
-  current season year (the same resolver as pricing, but pricing resolves per
-  stay-night season and grouping resolves at "now").
+- **Rules** (`XeroContactGroupRule`): each rule is a (membership type?, **age
+  tier set**, `MANAGED`/`ACCEPTED`, group) tuple. The tier set (`ageTiers`) may
+  name any subset of tiers; an **empty set means "all age tiers"** (the wildcard,
+  displayed "All age tiers") — this is the migrated null "Any age" semantics.
+  Sets are stored canonical-sorted and a full-tier selection collapses to the
+  empty set, so `[ADULT, YOUTH] == [YOUTH, ADULT]` is one shape. `MANAGED` is the
+  group the sync adds; `ACCEPTED` is a group the sync tolerates and never removes.
+  Duplicate rule shapes are rejected (app-side for a friendly error and by a DB
+  partial unique index over the canonical array). The effective membership type
+  is resolved at the current season year (the same resolver as pricing, but
+  pricing resolves per stay-night season and grouping resolves at "now").
 - **Managed universe / never delete:** the sync only ever adds/removes a
   contact's membership of groups referenced by active rules. It **never deletes
   a Xero contact group**, and never touches a group no active rule references.
@@ -775,10 +994,16 @@ group fields and the membership-type Xero rules.
   the system. Members re-group on their next trigger (age-tier change,
   current-season membership-type change, cron age-up) or via the explicit bulk
   re-sync.
+- **Refresh from Xero + last synced:** a lightweight **"Refresh from Xero"**
+  button re-pulls the contact-group cache (the same full refresh as the
+  members-list "Refresh Xero Groups" button) and a prominent **"Last synced"**
+  header shows when the cache was last refreshed. Refreshing moves the
+  `CONTACT_GROUP_FULL_REFRESH` cursor, so it also invalidates any prior dry-run.
 - **Dry-run + bulk re-sync:** the surface shows a cache-based dry-run diff
   (counts, per-member add/remove, an estimated Xero call budget, and members
   skipped because they have no Xero contact) before any run. The bulk re-sync is
-  admin-triggered, chunked, resumable, and rate-limited; it never advances the
+  the heavyweight, admin-triggered, chunked, resumable, rate-limited action
+  (distinct from the lightweight refresh above); it never advances the
   CONTACT delta-sync watermark. See
   `docs/XERO_MEMBER_GROUPING_RUNBOOK.md` for the Tokoroa cutover procedure.
 - Existing age-configured installs migrate to `Membership Type + Age` with
@@ -794,6 +1019,7 @@ Committee settings are database-backed and managed from `/admin/committee`.
 Booking Officer, including the role email alias used for committee contact
 delivery. `CommitteeAssignment` links a member to one of those roles and stores
 presentation controls: blurb, sort order, published, show-phone, contactable,
+contact email mode (role alias, member email, or a custom override address),
 and active/deactivated state. Multiple members can hold the same master role.
 
 Committee assignment is separate from `Member.role` and
@@ -807,10 +1033,13 @@ API returns the linked member's display name, the role name, the assignment
 blurb or role description, and an opaque assignment contact key only when the
 assignment is contactable. Member email addresses are never returned to the
 browser; `/api/contact` resolves contactable assignment keys server-side and
-delivers to the role email alias configured on `CommitteeRole`, falling back to
-the linked member's email when the role has no alias, then to the configured
-club contact address when no published, contactable assignment or recipient
-email is available. Committee-routed contact emails use an opaque
+delivers to the address selected by the assignment's contact email mode — the
+role email alias configured on `CommitteeRole` (the default), the linked
+member's own email, or the assignment's custom override address. When the
+selected address is blank or missing, delivery falls back to the role alias and
+then the linked member's email so contact mail is never lost, then to the
+configured club contact address when no published, contactable assignment or
+recipient email is available. Committee-routed contact emails use an opaque
 committee-contact marker in EmailLog rows instead of persisting the recipient
 address. Phone numbers come from the linked member profile and display only when
 the assignment's show-phone flag is enabled.
@@ -834,8 +1063,21 @@ Booking and subscription enforcement is season-aware:
   `NOT_REQUIRED` for that season without deleting or hiding raw Xero invoice or
   subscription history.
 
-`ADMIN` and `LODGE` operational subscription exemptions still come from
-`roleNeverRequiresSubscription()`. Seasonal membership type changes do not
+Membership type is the **sole authority** for whether a member owes a
+subscription (#2149): `subscriptionBehavior` — plus the per-age-tier flag where
+the type is `BASED_ON_AGE_TIER`. Access **role carries no subscription
+exemption** and is a pure permission concept. Operational accounts are exempt
+only because they resolve to a `NOT_REQUIRED` membership type: `ADMIN` and
+`LODGE` accounts with no explicit season assignment fall back to the built-in
+`ADMIN` (BLOCK_BOOKING, NOT_REQUIRED) and `LODGE` (MEMBER_RATE, NOT_REQUIRED)
+types, and `SCHOOL`/`NON_MEMBER` to their own NOT_REQUIRED built-ins. A real
+fee-paying human who holds the admin permission is assigned a normal membership
+type (Full etc.) and now correctly owes a subscription — the profile, admin
+members list, subscriptions list, CSV export, booking gate, and Xero sync all
+read the same derivation, so a fee-paying admin shows their real Paid/Unpaid
+status everywhere. `Member.lifeMemberDate` is **informational only**; the Life
+exemption comes from the `LIFE` membership type (subscriptionBehavior
+`NOT_REQUIRED`), never from that field. Seasonal membership type changes do not
 automatically reprice existing future bookings, rewrite
 subscription/Xero/payment history, or call external providers.
 
@@ -863,7 +1105,7 @@ row holds `familyBillingMode`, the club billing model, also editable from
   fee schedules are allowed, and a missing or inactive same-family billing
   recipient is a visible exception.
 - `BILL_MEMBERS_INDIVIDUALLY`: every member is invoiced directly. The
-  fee-configuration family-billing card is hidden, no billing-member exception
+  Fees page family-billing card is hidden, no billing-member exception
   is raised, and `PER_FAMILY` schedules are rejected server-side on
   create/update. A `PER_FAMILY` schedule left over from a mode switch is not
   reinterpreted as per-member; it surfaces as a
@@ -876,6 +1118,23 @@ after this feature deploys. Before flipping the mode, re-base any existing
 `PER_FAMILY` fee schedules to per-member or no-invoice; a `PER_FAMILY` schedule
 left in place becomes an uninvoiceable `PER_FAMILY_FEE_IN_INDIVIDUAL_MODE`
 exception under individual billing.
+
+Each annual fee is itemised into one or more **components** (E6, #1932), edited
+under its fee row in the Annual Membership Fees section of `/admin/fees`. Every invoiceable fee has at
+least one component and the components' integer-cent amounts must sum exactly to
+the fee total (an amount edit is rejected unless its components are reconciled in
+the same request); each component becomes its own GST-inclusive Xero invoice
+line, optionally coded to its own account/item, with its own proration flag. A
+`NO_INVOICE` fee has no components. Existing installs are backfilled to a single
+default component, so day-one invoices are unchanged.
+
+A member in more than one family is billed for a `PER_FAMILY` fee via an
+admin-chosen **billing family** (`Member.billingFamilyGroupId`), set from the
+member detail family card or the fee-config family-billing panel (audited; greyed
+in `BILL_MEMBERS_INDIVIDUALLY` mode). An unset selection stays an
+`AMBIGUOUS_FAMILY` exception; a stale one is an `INVALID_BILLING_FAMILY_SELECTION`
+exception. Removing the member from a family clears the selection in the same
+transaction, so it can never cause silent misbilling.
 
 Missing seasonal
 type, fee schedule, family, or active same-family billing recipient becomes a
@@ -1040,6 +1299,7 @@ action; scoped admins cannot merge.
 | `TZ`, `NEXT_PUBLIC_TZ`             | Time zone; this app expects New Zealand date-only booking semantics unless a feature says otherwise. |
 | `LOCALE`, `NEXT_PUBLIC_LOCALE`     | Locale for formatting.                                                                               |
 | `NEXT_PUBLIC_GA_MEASUREMENT_ID`    | Optional GA4 measurement id. Google Analytics still requires the Admin Modules toggle and visitor consent before loading. |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Optional per-club Google OAuth credentials for "Continue with Google" sign-in (bootstrap-class secrets, never stored in the DB). Google sign-in also requires the Admin Modules `Google sign-in` toggle AND each member linking their own Google account from their profile. Set up per club in the Google Cloud console (see runbook below). |
 | `LOG_LEVEL`                        | Pino log level such as `debug`, `info`, `warn`, `error`, or `fatal`.                                 |
 | `APP_RUNTIME_ROLE`                 | Runtime label used by health/status reporting, usually set by Compose.                               |
 | `NODE_ENV`                         | Runtime mode set by Node/Next.                                                                       |
@@ -1078,6 +1338,8 @@ cannot be read, optional modules fail closed.
 | Communications | on | Admin bulk email to members. Transactional notifications are unaffected. |
 | Ski-field conditions | on | Live mountain/road status panel, public API routes, and admin cache controls. |
 | Two-factor authentication | off | Requires users to complete authenticator-app, email-code, or recovery-code verification after password login. |
+| Email sign-in link | off | Lets members request a single-use email link to sign in without their password (additive to password login, never a replacement). Only ever works for existing active members with a verified email; the `magic-link-login` link expiry defaults to 15 minutes (stored on the Login & Security settings, range 5–60) and is read by the sign-in request flow. |
+| Google sign-in | off | Lets members sign in with a Google account they have linked from their profile (additive to password login, never a replacement). Requires `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`; the "Continue with Google" button appears only when the module is on AND both secrets are configured. No account is ever created from Google, and an unlinked Google account is refused with a friendly message. See the Google sign-in section below. |
 | Google Analytics | off | Consent-gated GA4 tracking on public website and public account pages. Requires `NEXT_PUBLIC_GA_MEASUREMENT_ID`; GA scripts load only after a visitor accepts the analytics banner. |
 
 Cron-backed optional module schedules are still registered when
@@ -1090,6 +1352,39 @@ clean skipped result rather than running the module task.
 The Admin dashboard includes `/admin/modules` for club-level activation of the
 optional modules above. These settings are stored in the `ClubModuleSettings`
 database table as booleans only.
+
+## Login And Security (Password Policy)
+
+Admin > Login & Security (`/admin/security`) sets the club-wide password
+complexity policy, stored in the `LoginSecuritySetting` singleton (one row,
+`id = "default"`). The page is gated by the `support` admin permission area
+(view to read, edit to change), and every save is written to the audit log under
+the `security` category.
+
+| Setting | Default | Accepted range | Notes |
+| --- | --- | --- | --- |
+| Minimum password length | 12 | 8–64 | A non-configurable hard maximum of 128 characters always applies. |
+| Require an uppercase letter | off | on/off | `A–Z` |
+| Require a lowercase letter | off | on/off | `a–z` |
+| Require a number | off | on/off | `0–9` |
+| Require a symbol | off | on/off | any non-alphanumeric character |
+| Magic-link TTL (minutes) | 15 | 5–60 | Read by the magic-link sign-in flow (#2034). Shown on the Login & Security page's Email sign-in link card; editing the value from that page is a planned follow-up, so it is read-only there for now. |
+
+The policy governs only the paths where a member **chooses** a password —
+`/change-password` and the reset/setup-invite redemption at `/reset-password`.
+It is enforced at set time by a shared validator (`src/lib/password-policy.ts`,
+loaded from the DB via `src/lib/login-security-settings.ts`); existing password
+hashes are never re-validated, so a stronger policy never locks anyone out at
+login. When no row is configured the effective policy is the code default (min
+12, no required character classes), which is byte-identical to the historical
+behaviour. To force existing members onto a new policy, set
+`Member.forcePasswordChange` (the "require password change" lever), which routes
+them through `/change-password` on next sign-in.
+
+A public, unauthenticated endpoint (`GET /api/auth/password-policy`) discloses
+the active rules so the reset and change-password forms can show live hints and
+validate length client-side; disclosing the policy is standard and the server
+enforces it regardless.
 
 ## Two-Factor Authentication
 
@@ -1106,6 +1401,86 @@ The member Profile page shows its Two-factor authentication security card only
 when the module is enabled or the member is already enrolled. If the club later
 turns the module off, enrolled members still see their enabled state and recovery
 code controls, while non-enrolled members do not see an enrollment prompt.
+
+The Email sign-in link (magic link) Admin Modules toggle is additive to password
+login and defaults off. When enabled, `/login` shows an "Email me a sign-in link"
+option that posts to `POST /api/auth/magic-link`. That endpoint is
+enumeration-safe (it always returns `{success:true}` and gives an identical
+confirmation) and mints a single-use, SHA-256-hashed token (`MagicLinkToken`)
+ONLY for an existing active member whose email is verified — deliberately
+stricter than forgot-password, so a magic link is never an email-verification
+bypass. The link (`/login/magic?token=…`) is emailed through the club's own SES
+pipeline as the `magic-link-login` template, whose rendered HTML is never
+persisted in `EmailLog` (sensitive-log redaction). Clicking it signs in through a
+second Auth.js Credentials provider that replicates every password-login gate,
+claims the token single-use via a conditional `updateMany` (so two concurrent
+clicks mint at most one session), refuses members with a pending forced password
+change (pointing them at Forgot password, which clears the flag), and never sets
+`twoFactorVerified` — so a 2FA-enabled member is still challenged on
+`/login/verify`. The link expiry defaults to 15 minutes (supported range 5–60),
+is stored on the `LoginSecuritySetting` singleton, and is read by the request
+route when a link is minted. The Login & Security page's Email sign-in link card
+shows the current expiry; changing it from that page is a planned follow-up, so
+the value is read-only there for now.
+
+### Google sign-in (profile-initiated linking)
+
+The Google sign-in Admin Modules toggle is additive to password login and
+defaults off. It is **profile-initiated linking only**: a member is never created
+from Google, and Google is never matched to an account by email at login (that
+would let anyone controlling the matching Google Workspace domain take over an
+account — closed by owner decision). Sign-in resolves a member **solely** by a
+pinned Google subject id (`Member.googleSub`).
+
+**How linking works (no adapter, JWT strategy).** A signed-in member opens their
+profile → Security → "Connected accounts" and clicks **Connect Google**. That
+posts to `POST /api/profile/google/link/start`, which sets a short-lived,
+HttpOnly, HMAC-signed "link intent" cookie bound to that member's id, then starts
+the Google OAuth round-trip. The single Google provider serves both login and
+linking; the callback distinguishes them by the presence of that cookie. On the
+link round-trip the `signIn` callback requires `email_verified === true` on the
+Google profile, pins `Member.googleSub = profile.sub` (guarded: refused if the
+sub is already linked to another member, or the member is already linked to a
+different Google account), writes a `security`-category audit, and returns a
+redirect **string** — which makes Auth.js redirect **before** minting a session,
+so linking never switches the member's session identity. Unlinking
+(`POST /api/profile/google/unlink`) nulls `googleSub`, is audited, and is always
+allowed because every login-capable member keeps password login.
+
+**How sign-in works.** When the module is on and both secrets are configured,
+`/login` shows a "Continue with Google" button. The provider resolves the member
+by `googleSub === profile.sub` among login-capable members only — never by email,
+never provisioning — and applies the same gate as password login
+(`canLogin && active && emailVerified`) plus a forced-password-change refusal. An
+unlinked or ineligible identity is refused with a friendly message surfaced via
+`/login?error=…` (unlinked, refused, password-change, disabled, generic). The
+resolved member returns the exact same user shape as password login, so 2FA and
+the admin-permission matrix apply identically — a 2FA-enabled member is still
+challenged on `/login/verify`. Disabling the module refuses both new Google logins
+and new links immediately, even for already-linked members. Because linking pins
+the Google subject id (not the email), a member whose Google **or** club email
+later changes stays signed in; a member with a brand-new Google account unlinks
+then re-links.
+
+**Per-club Google Cloud console setup (runbook).**
+
+1. In the [Google Cloud console](https://console.cloud.google.com/), create (or
+   select) a project for the club.
+2. Configure the **OAuth consent screen** (External user type unless the club is
+   a Google Workspace and wants Internal): set the app name, support email, and
+   the club's public domain as an authorised domain.
+3. Under **APIs & Services → Credentials**, create an **OAuth client ID** of type
+   **Web application**.
+4. Add the authorised redirect URI:
+   `https://<your-domain>/api/auth/callback/google` (and
+   `http://localhost:3000/api/auth/callback/google` for local development). The
+   requested scopes are the defaults `openid email profile`.
+5. Copy the generated client id and secret into `GOOGLE_CLIENT_ID` and
+   `GOOGLE_CLIENT_SECRET` on the server (never in the database). These are
+   bootstrap-class secrets.
+6. In Admin > Login & Security, turn on **Google sign-in**. The card warns if the
+   module is on but the credentials are not configured (`credentials_missing`
+   readiness). Members can then link their Google accounts from their profiles.
 
 Users enroll either an authenticator app (TOTP) or an email one-time code. TOTP
 secrets are encrypted at rest using key material derived from `AUTH_SECRET` (or
@@ -1162,13 +1537,33 @@ invalid app, email, or recovery-code attempts lock the two-factor challenge for
 Annual membership and joining fee amounts are database configuration, not
 environment variables or provider metadata. Membership editors own public
 descriptions/listing under `/admin/membership-types`; Finance editors own
-effective-dated amounts and family billing members under
-`/admin/fee-configuration`. Hut fees remain lodge season/rate configuration.
-See `docs/AUTHORITATIVE_FEES.md` for operator and compatibility rules.
+effective-dated amounts and family billing members in the Joining Fees and
+Annual Membership Fees sections of `/admin/fees`. Joining fees (`JoiningFee`, #1931) key on membership
+type × optional age tier, resolved with no legacy mapping fallback; the Family
+fee is strictly type-driven (only members assigned the Family type get it — the
+composition heuristic is removed). Hut fees remain lodge season/rate
+configuration. See `docs/AUTHORITATIVE_FEES.md` for operator rules and the
+frozen Xero idempotency contract.
 
-The `/admin/fee-configuration` page shows annual membership fees, joining fees,
-and (only when `familyBillingMode` is `BILL_FAMILY_VIA_BILLING_MEMBER`) family
-billing members. Each section loads read-only. Use the section's Edit button to
+These fee schedules are config-transferable (#1941): the `membership-fees`
+category of the configuration transfer tool carries `joining-fees.csv`,
+`annual-fees.csv`, and `annual-fee-components.csv` (money in integer cents), so a
+club can move its joining-fee and annual-fee schedules — with their per-line Xero
+components — between installs. This schedule takes **precedence** over the Xero
+**item-code-amount** joining-fee materialisation (#1931 — still live, not
+retired): when a bundle carries the joining-fee schedule and the
+`membership-fees` category is applied, the authoritative amounts come from these
+CSVs and the item-code fan-out is skipped (an import that deselects
+`membership-fees` keeps the item-code-amount path, so its joining fees are not
+silently dropped). See [`docs/config-transfer/README.md`](docs/config-transfer/README.md).
+
+The consolidated `/admin/fees` page (#1933, E7) shows Hut Fees (per lodge →
+season → membership-type × age-tier nightly rates; edits need `bookings:edit`),
+Joining Fees, Annual Membership Fees, and (only when `familyBillingMode` is
+`BILL_FAMILY_VIA_BILLING_MEMBER`) family billing members; Joining/Annual/family
+edits need `finance:edit`, and the page admits any viewer with finance **or**
+bookings access. `/admin/fee-configuration` redirects here and `/admin/seasons`
+now holds only season windows. Each section loads read-only. Use the section's Edit button to
 expose its form and per-row controls; changes are staged locally and only
 written when you commit that section (Add/Update fee, or Save billing members).
 Leaving a section without committing (Close section on the fee sections, Cancel
@@ -1214,11 +1609,7 @@ read `MemberAccessRole` rows.
 | `EMAIL_SERVER_PORT`                      | SMTP relay port (required when `USE_SMTP_RELAY=true`).                                                                                                       |
 | `EMAIL_SERVER_USER`                      | SMTP relay username (required when `USE_SMTP_RELAY=true`).                                                                                                   |
 | `EMAIL_SERVER_PASSWORD`                  | SMTP relay password (required when `USE_SMTP_RELAY=true`).                                                                                                   |
-| `EMAIL_FROM`                             | Sender email address.                                                                                                                                        |
-| `EMAIL_FROM_NAME`                        | Optional sender display name override.                                                                                                                       |
-| `SUPPORT_EMAIL`                          | Optional support email override.                                                                                                                             |
-| `CONTACT_EMAIL`                          | Server-side contact-form recipient override.                                                                                                                 |
-| `NEXT_PUBLIC_CONTACT_EMAIL`              | Public contact email displayed in client-rendered UI.                                                                                                        |
+| `EMAIL_FROM`                             | Envelope / Return-Path sender address (bootstrap; must be a provider-verified SES address in production). The ONLY email-identity env var besides transport secrets — from display name, support address, and contact-form recipient are admin-managed DB-first (Admin > Email Messages). |
 | `SES_SNS_TOPIC_ARN`                      | SNS topic ARN for SES bounce/complaint webhooks (required for full SES feedback handling when `USE_AWS_SES=true`).                                           |
 | `SES_SNS_ALLOW_UNSAFE_MISSING_TOPIC_ARN` | Local/dev escape hatch only; never enable for deployed SES feedback ingestion.                                                                               |
 | `SES_SNS_ALLOW_SIGNATURE_V1`             | Temporarily permit legacy SNS SignatureVersion 1 (SHA1). Default rejects v1; enable SignatureVersion 2 on the SNS topic and leave this unset in production.   |
@@ -1307,6 +1698,7 @@ rate-limited, or temporarily unavailable.
 | `ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS` | Explicit migration safety override.                                   |
 | `BLUE_GREEN_MIGRATION_OVERRIDE_REASON` | Required explanation when allowing a breaking migration.              |
 | `MIGRATION_SAFETY_LEDGER`              | Path to the migration safety ledger.                                  |
+| `CONFIG_BUNDLE_IMPORT_PATH`            | Optional. Path to a config-transfer bundle applied non-interactively on boot **only** when the database is empty of non-seed configuration (DR / clone provisioning, ADR-003). Fails closed on a non-empty target, a bad bundle, or an unreadable path, and never blocks startup. See "Config Bundle Auto-Import On Boot (DR / clone)" in `DEPLOYMENT.md`. |
 
 ## Staging And Accessibility
 

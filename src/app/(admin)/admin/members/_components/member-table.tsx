@@ -38,7 +38,9 @@ interface MemberTableProps {
   loading: boolean
   debouncedSearch: string
   selectedIds: Set<string>
-  canEdit?: boolean
+  // Tri-state (#2065): `undefined` while the session resolves; the affordance
+  // columns falsy-hide (accepted neutral) rather than flash enabled.
+  canEdit: boolean | undefined
   sortBy: string
   sortDir: "asc" | "desc"
   membersListPath: string
@@ -87,7 +89,7 @@ export function MemberTable({
   loading,
   debouncedSearch,
   selectedIds,
-  canEdit = true,
+  canEdit,
   sortBy,
   sortDir,
   membersListPath,

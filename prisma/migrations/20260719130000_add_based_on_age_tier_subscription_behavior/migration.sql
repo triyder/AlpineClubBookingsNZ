@@ -1,0 +1,13 @@
+-- Issue #2041: per-age-tier subscription requirement.
+-- Adds the BASED_ON_AGE_TIER value to MembershipTypeSubscriptionBehavior so a
+-- membership type can defer its subscription-required answer down to the
+-- per-age-tier AgeTierSetting.subscriptionRequiredForBooking flag (the single
+-- source of truth for both booking-lockout and invoice minting).
+--
+-- Blue/green: ALTER TYPE ... ADD VALUE cannot run inside a transaction that
+-- also USES the new value; this migration only registers the label, so Prisma's
+-- per-migration transaction is safe (the label is not referenced here). Old app
+-- colours never write BASED_ON_AGE_TIER (the enum is additive; no existing type
+-- is changed), so old Prisma clients keep reading REQUIRED/NOT_REQUIRED rows
+-- unchanged during the migrate->cutover window. IF NOT EXISTS keeps re-runs safe.
+ALTER TYPE "MembershipTypeSubscriptionBehavior" ADD VALUE IF NOT EXISTS 'BASED_ON_AGE_TIER';

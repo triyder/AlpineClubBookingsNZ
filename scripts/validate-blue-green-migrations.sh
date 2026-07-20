@@ -20,6 +20,39 @@ MIGRATION_SAFETY_LEDGER="${MIGRATION_SAFETY_LEDGER:-docs/BLUE_GREEN_MIGRATION_SA
 # check-migration-safety-coverage.sh (skip anything sorting before the baseline).
 SESSION_CLOCK_DML_BASELINE="${SESSION_CLOCK_DML_BASELINE:-20260709000000}"
 
+# Session-clock DML acknowledgements (#2038): migrations at or after the baseline
+# whose INSERT/UPDATE payload trips the session-clock gate but has been reviewed
+# and accepted as benign in context. This is a NARROW, per-migration, code-reviewed
+# waiver — NOT the blanket ALLOW_BREAKING override (which still cannot rescue this
+# gate). It mirrors the grandfathered-prefix allowlist in
+# check-migration-safety-coverage.sh: each entry is the exact migration directory
+# name and carries a comment justifying why the session clock is harmless there.
+# Prefer FIXING a new migration to write timezone('UTC', statement_timestamp()) (or
+# an explicit UTC literal) over adding a row here; only acknowledge when the write
+# is cosmetic on a cold table with no createdAt-ordering invariant to skew.
+SESSION_CLOCK_DML_ACKNOWLEDGED=(
+  # 20260717180000_genericise_starter_lodge_copy: three UPDATEs on the cold
+  # PageContent table set "updatedAt" = CURRENT_TIMESTAMP purely for content-edit
+  # freshness. PageContent carries no createdAt/updatedAt ordering invariant (unlike
+  # the #1627 default-lodge row whose relative createdAt decides the club default),
+  # so the local-wall-clock skew this gate guards against is cosmetic here. The gate
+  # historically missed it because the $cms$/$previous$-quoted HTML bodies contain
+  # &mdash;/&ndash; HTML-entity semicolons that fragmented the statement before the
+  # check (#2038); the dollar-quote-aware splitter now sees the whole UPDATE, so this
+  # acknowledgement records the reviewed disposition instead.
+  20260717180000_genericise_starter_lodge_copy
+)
+
+# True when the migration directory name is on the reviewed session-clock
+# acknowledgement allowlist above.
+session_clock_acknowledged() {
+  local migration_name="$1" acked
+  for acked in "${SESSION_CLOCK_DML_ACKNOWLEDGED[@]}"; do
+    [ "$migration_name" = "$acked" ] && return 0
+  done
+  return 1
+}
+
 HOT_TABLE_SQL_REGEX='(ALTER TABLE|UPDATE|DELETE FROM|TRUNCATE|CREATE[[:space:]]+(UNIQUE[[:space:]]+)?INDEX|DROP INDEX|CREATE[[:space:]]+(CONSTRAINT[[:space:]]+)?TRIGGER|DROP TRIGGER|ADD CONSTRAINT|DROP CONSTRAINT|REFERENCES)[^;]*"(Member|MemberSubscription|MemberApplication|MemberCredit|FamilyGroup|FamilyGroupMember|FamilyGroupJoinRequest|Booking|BookingGuest|BookingModification|Payment|PaymentTransaction|PaymentRefund|RefundRequest|PasswordResetToken|EmailVerificationToken|EmailChangeToken|GuestChoreToken|NominationToken|XeroToken|FinanceXeroToken)"'
 BREAKING_SQL_REGEX='(^|[^A-Z_])(DROP TABLE|DROP COLUMN|DROP TYPE|DROP CONSTRAINT|ALTER TABLE .* RENAME|RENAME COLUMN|ALTER COLUMN .* TYPE|ALTER COLUMN .* SET NOT NULL)'
 DESTRUCTIVE_REMOVAL_SQL_REGEX='(^|[^A-Z_])(DROP TABLE|DROP COLUMN|DROP TYPE|ALTER TABLE .* RENAME|RENAME COLUMN)'
@@ -108,23 +141,57 @@ sql_lines() {
 # and strips "--" line comments (same quote-parity approach as
 # strip_sql_comment), splitting only on a ";" seen outside every quote.
 #
+# Dollar-quote awareness (#2038): the splitter recognises ARBITRARY dollar-quote
+# tags — $$, $cms$, $previous$, $do$, etc. — not just the empty $$ tag. A ";"
+# inside a $tag$...$tag$ body is NOT a split point, so a payload such as the
+# starter PageContent HTML (whose &mdash;/&ndash; entities embed literal ";")
+# stays a single statement and its CURRENT_TIMESTAMP is evaluated against the
+# whole INSERT/UPDATE instead of leaking out of a mid-body fragment. Tag matching
+# follows Postgres rules: a tag is empty or [A-Za-z_][A-Za-z0-9_]* and cannot
+# contain "$"; once a body opens with $a$ only a matching $a$ closes it (an inner
+# $b$ is literal body text). Quotes inside a dollar body are literal (an
+# apostrophe in "Stripe's" no longer toggles string state). An UNTERMINATED
+# dollar-quote (no closing tag before EOF) fails LOUDLY: awk exits non-zero and
+# the caller records a hard failure rather than silently passing an unparsed file.
+#
 # Limitations (documented, consistent with strip_sql_comment): C-style /* */
 # comments and a literal 'CURRENT_TIMESTAMP'/'now()' inside a quoted string are
 # not modelled; a WITH ... INSERT/UPDATE CTE is not anchored (its leading
-# keyword is WITH). Dollar-quoted bodies ($$...$$) are treated as opaque so a
-# ";" inside them is not a split point — this deliberately avoids false
-# positives from CREATE FUNCTION bodies, but it ALSO means an INSERT/UPDATE
-# nested inside a DO-block or function body is NOT surfaced (the enclosing
-# statement starts with DO/CREATE, not INSERT/UPDATE). This repo does write some
-# data migrations as DO-blocks, so a future DO-block using now()/CURRENT_TIMESTAMP
-# in a payload is an uncaught vector; the primary #1627 vector — a top-level
-# INSERT ... VALUES (..., CURRENT_TIMESTAMP), like the lodge seed — is caught.
-# Full PL/pgSQL body coverage would need a parser and is out of scope for this
-# line-oriented gate.
+# keyword is WITH). Dollar-quoted bodies are treated as opaque, so an
+# INSERT/UPDATE nested inside a DO-block or function body is NOT surfaced (the
+# enclosing statement starts with DO/CREATE, not INSERT/UPDATE) — a deliberate
+# trade that avoids false positives from PL/pgSQL bodies. This repo writes such
+# payloads with explicit UTC (timezone('UTC', statement_timestamp())), so a
+# future DO-block using now()/CURRENT_TIMESTAMP in a payload is a known uncaught
+# vector; the primary #1627 vector — a top-level INSERT/UPDATE ...
+# CURRENT_TIMESTAMP, like the lodge seed — is caught. Full PL/pgSQL body coverage
+# would need a parser and is out of scope for this line-oriented gate.
+#
+# Returns 2 (with no usable output) when the file has an unterminated
+# dollar-quote; the caller must treat that as a hard failure.
 session_clock_dml_violations() {
-  local file="$1"
+  local file="$1" statements
 
-  awk -v sq="'" -v dq='"' '
+  statements="$(awk -v sq="'" -v dq='"' '
+    # If s[i] == "$", return the full "$...$" opening delimiter when a valid
+    # dollar-quote tag begins here, else "" (a bare literal "$", e.g. "$5.00",
+    # or a "$" that runs to end-of-line without a closing "$").
+    function dollar_open(s, i,   n, j, c, first) {
+      n = length(s)
+      j = i + 1
+      first = 1
+      while (j <= n) {
+        c = substr(s, j, 1)
+        if (c == "$") return substr(s, i, j - i + 1)
+        if (first) {
+          if (c ~ /[A-Za-z_]/) { first = 0; j++; continue }
+          return ""
+        }
+        if (c ~ /[A-Za-z0-9_]/) { j++; continue }
+        return ""
+      }
+      return ""
+    }
     function flush() {
       if (stmt ~ /[^[:space:]]/) print stmt
       stmt = ""
@@ -134,12 +201,14 @@ session_clock_dml_violations() {
       n = length(line)
       i = 1
       while (i <= n) {
-        c = substr(line, i, 1)
-        two = substr(line, i, 2)
         if (in_dollar) {
-          if (two == "$$") { in_dollar = 0; stmt = stmt two; i += 2; continue }
-          stmt = stmt c; i++; continue
+          tlen = length(dollar_tag)
+          if (substr(line, i, tlen) == dollar_tag) {
+            stmt = stmt dollar_tag; in_dollar = 0; i += tlen; continue
+          }
+          stmt = stmt substr(line, i, 1); i++; continue
         }
+        c = substr(line, i, 1)
         if (in_s) {
           stmt = stmt c
           if (c == sq) in_s = 0
@@ -150,7 +219,13 @@ session_clock_dml_violations() {
           if (c == dq) in_d = 0
           i++; continue
         }
-        if (two == "$$") { in_dollar = 1; stmt = stmt two; i += 2; continue }
+        if (c == "$") {
+          dt = dollar_open(line, i)
+          if (dt != "") {
+            stmt = stmt dt; in_dollar = 1; dollar_tag = dt; i += length(dt); continue
+          }
+          stmt = stmt c; i++; continue
+        }
         if (c == sq) { in_s = 1; stmt = stmt c; i++; continue }
         if (c == dq) { in_d = 1; stmt = stmt c; i++; continue }
         if (c == "-" && substr(line, i + 1, 1) == "-") { break }
@@ -160,8 +235,16 @@ session_clock_dml_violations() {
       }
       stmt = stmt " "
     }
-    END { flush() }
-  ' "$file" |
+    END {
+      if (in_dollar) {
+        printf "validate-blue-green-migrations: unterminated dollar-quoted string %s in %s\n", dollar_tag, FILENAME > "/dev/stderr"
+        exit 2
+      }
+      flush()
+    }
+  ' "$file")" || return 2
+
+  printf '%s\n' "$statements" |
     grep -Ei '^[[:space:]]*(INSERT|UPDATE)([[:space:]]|$)' |
     grep -Ei 'CURRENT_TIMESTAMP|(^|[^A-Za-z_])now[[:space:]]*\(' ||
     true
@@ -343,11 +426,22 @@ for migration_sql in "$@"; do
   # ledger-coverage gate — which sets ALLOW_BREAKING=1 — still enforces it.
   migration_prefix="${migration_name%%_*}"
   if [[ ! "$migration_prefix" < "$SESSION_CLOCK_DML_BASELINE" ]]; then
-    session_clock_matches="$(session_clock_dml_violations "$migration_sql")"
-    if [ -n "$session_clock_matches" ]; then
-      printf 'Session-clock CURRENT_TIMESTAMP/now() in an INSERT/UPDATE payload (write an explicit UTC value instead): %s\n' "$migration_sql" >&2
-      printf '%s\n\n' "$session_clock_matches" >&2
+    if ! session_clock_matches="$(session_clock_dml_violations "$migration_sql")"; then
+      # Unterminated dollar-quote (or other unparsable state): fail loudly rather
+      # than let a file the splitter cannot tokenise pass the gate unchecked.
+      printf 'Unterminated dollar-quoted string in migration SQL — cannot verify session-clock safety: %s\n' "$migration_sql" >&2
       found_failure=1
+    elif [ -n "$session_clock_matches" ]; then
+      if session_clock_acknowledged "$migration_name"; then
+        # Reviewed benign (see SESSION_CLOCK_DML_ACKNOWLEDGED): surface the match
+        # as a note so the waiver stays visible, but do not fail the gate.
+        printf 'Acknowledged benign session-clock DML (reviewed cold-table cosmetic write; see SESSION_CLOCK_DML_ACKNOWLEDGED): %s\n' "$migration_sql" >&2
+        printf '%s\n\n' "$session_clock_matches" >&2
+      else
+        printf 'Session-clock CURRENT_TIMESTAMP/now() in an INSERT/UPDATE payload (write an explicit UTC value instead): %s\n' "$migration_sql" >&2
+        printf '%s\n\n' "$session_clock_matches" >&2
+        found_failure=1
+      fi
     fi
   fi
 

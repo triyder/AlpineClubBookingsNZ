@@ -893,6 +893,15 @@ export function buildAuditDrilldownLinks(params: {
   return links;
 }
 
+/**
+ * Prefix for synthetic (non-member) audit actor ids written by system
+ * processes — e.g. the boot-time config bootstrap importer writes
+ * `system:config-bootstrap` (`SYSTEM_AUDIT_ACTOR_PREFIX` in
+ * `src/lib/config-transfer/bootstrap-import.ts`). Kept as a local constant so
+ * the display layer does not import the server-only bootstrap module.
+ */
+const SYSTEM_ACTOR_ID_PREFIX = "system:";
+
 function serializeActorForAudience(params: {
   actorMemberId: string | null;
   actor: AuditTimelineActorRecord | undefined;
@@ -902,6 +911,12 @@ function serializeActorForAudience(params: {
   const { actorMemberId, actor, audience, currentMemberId } = params;
 
   if (!actorMemberId) {
+    return { actor: null, actorDisplayName: "System" };
+  }
+
+  // Synthetic `system:` actors are not Member rows; render them as "System"
+  // for every audience instead of "Unknown member".
+  if (actorMemberId.startsWith(SYSTEM_ACTOR_ID_PREFIX)) {
     return { actor: null, actorDisplayName: "System" };
   }
 

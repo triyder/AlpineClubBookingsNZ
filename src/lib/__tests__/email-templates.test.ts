@@ -11,8 +11,12 @@ import {
   adminPendingDeadlineTemplate,
   adminIssueReportTemplate,
   adminRefundRequestTemplate,
+  adminDuplicateCaptureRefundTemplate,
   preArrivalReminderTemplate,
   waitlistOfferTemplate,
+  adminSplitSettlementUnpaidTemplate,
+  adminSplitSettlementCancelledTemplate,
+  splitGuestPortionCancelledTemplate,
 } from "../email-templates";
 import { getAppBaseUrl } from "../app-url";
 import { formatNZDateTime } from "../nzst-date";
@@ -32,6 +36,172 @@ describe("email-templates", () => {
 
       expect(html).toContain("background-color: #d4ddd7; color: #17231c;");
       expect(html).not.toContain("background-color: #d4ddd7; color: #57b3ab;");
+    });
+  });
+
+  describe("adminDuplicateCaptureRefundTemplate (#1992 / #2007)", () => {
+    const base = {
+      memberName: "Alice Member",
+      checkIn: new Date("2026-08-10"),
+      checkOut: new Date("2026-08-12"),
+      amountCents: 10000,
+      paymentIntentId: "pi_link_intent",
+      settledPaymentIntentId: "pi_auto_charge",
+      operationReference: "duplicate_capture_booking-1_pi_link_intent",
+      reviewUrl: "https://example.com/admin/payments",
+    };
+
+    it("success variant states the duplicate was refunded in full and needs no action", () => {
+      const html = adminDuplicateCaptureRefundTemplate({
+        ...base,
+        refundFailed: false,
+      });
+      expect(html).toContain("Duplicate Card Capture Auto-Refunded");
+      expect(html).toContain("automatically refunded in full");
+      expect(html).toContain("no action is needed");
+      // Booking/member/amount/intent context is carried.
+      expect(html).toContain("Alice Member");
+      expect(html).toContain("pi_link_intent");
+      expect(html).toContain("pi_auto_charge");
+      expect(html).toContain("duplicate_capture_booking-1_pi_link_intent");
+      // Not the failed wording.
+      expect(html).not.toContain("could not complete");
+      expect(html).not.toContain("Retry Queued");
+    });
+
+    it("failed variant states the refund could not complete and a durable retry is queued, with the op reference and failure detail", () => {
+      const html = adminDuplicateCaptureRefundTemplate({
+        ...base,
+        refundFailed: true,
+        errorMessage: "Stripe is unavailable (503)",
+      });
+      expect(html).toContain("Retry Queued");
+      expect(html).toContain("could not be automatically refunded");
+      expect(html).toContain("watch the recovery queue");
+      // Op reference and the inline failure detail are surfaced.
+      expect(html).toContain("duplicate_capture_booking-1_pi_link_intent");
+      expect(html).toContain("Stripe is unavailable (503)");
+      // Not the success wording.
+      expect(html).not.toContain("no action is needed");
+    });
+
+    it("falls back to 'another capture' when the settling intent id is unknown", () => {
+      const html = adminDuplicateCaptureRefundTemplate({
+        ...base,
+        settledPaymentIntentId: null,
+        refundFailed: false,
+      });
+      expect(html).toContain("another capture");
+    });
+  });
+
+  describe("adminSplitSettlementUnpaidTemplate (#1993)", () => {
+    const base = {
+      memberName: "Jane Doe",
+      checkIn: new Date("2026-07-01"),
+      checkOut: new Date("2026-07-03"),
+      guestCount: 2,
+      totalCents: 12000,
+      holdUntil: new Date("2026-07-11T12:00:00.000Z"),
+      reviewUrl: "https://example.com/admin/bookings",
+      parentUnpaid: false,
+    };
+
+    it("recurring variant reports the hold extension and the capped repeating cadence", () => {
+      const html = adminSplitSettlementUnpaidTemplate(base);
+      expect(html).toContain("Hold extended to");
+      // #1993 Part B / C3: the cadence is capped (1, 2, 3, then every 7th) and a
+      // terminal cancellation ends the series — no more "repeats each run".
+      expect(html).toContain("capped cadence");
+      expect(html).toContain("first three hold extensions");
+      expect(html).not.toContain("This alert repeats each time the hold is extended");
+      expect(html).not.toContain("automatically cancelled");
+    });
+
+    it("recurring variant distinguishes parent-unpaid wording", () => {
+      const settled = adminSplitSettlementUnpaidTemplate({
+        ...base,
+        parentUnpaid: false,
+      });
+      const parentUnpaid = adminSplitSettlementUnpaidTemplate({
+        ...base,
+        parentUnpaid: true,
+      });
+      expect(settled).toContain("internet banking");
+      expect(parentUnpaid).toContain("has not been paid either");
+    });
+  });
+
+  describe("adminSplitSettlementCancelledTemplate (#1993 Part A, C1)", () => {
+    const base = {
+      memberName: "Jane Doe",
+      checkIn: new Date("2026-07-01"),
+      checkOut: new Date("2026-07-03"),
+      guestCount: 2,
+      totalCents: 12000,
+      reviewUrl: "https://example.com/admin/bookings",
+      parentUnpaid: false,
+    };
+
+    it("reports the auto-cancellation and drops any hold/repeat wording", () => {
+      const html = adminSplitSettlementCancelledTemplate(base);
+      expect(html).toContain("Auto-Cancelled");
+      expect(html).toContain("automatically cancelled");
+      // A terminal one-off notice: no "hold extended" row, no recurring cadence.
+      expect(html).not.toContain("Hold extended to");
+      expect(html).not.toContain("capped cadence");
+      expect(html).toContain("one-off notice");
+    });
+
+    it("states the parent's actual state accurately (never a false 'also unpaid')", () => {
+      const settled = adminSplitSettlementCancelledTemplate({
+        ...base,
+        parentUnpaid: false,
+      });
+      const parentUnpaid = adminSplitSettlementCancelledTemplate({
+        ...base,
+        parentUnpaid: true,
+      });
+      expect(settled).toContain("internet banking");
+      expect(settled).toContain("settled and is unaffected");
+      // For a not-settled parent the copy says "not settled (it may be unpaid or
+      // already cancelled)" rather than asserting it is specifically unpaid.
+      expect(parentUnpaid).toContain("not settled either");
+      expect(parentUnpaid).toContain("already cancelled");
+    });
+  });
+
+  describe("splitGuestPortionCancelledTemplate (#1993 Part A, C2)", () => {
+    const base = {
+      firstName: "Sam",
+      checkIn: new Date("2026-07-01"),
+      checkOut: new Date("2026-07-03"),
+      parentConfirmed: true,
+    };
+
+    it("reassures nothing was charged and only the guest portion was cancelled", () => {
+      const html = splitGuestPortionCancelledTemplate(base);
+      expect(html).toContain("Your Guests' Provisional Place Was Cancelled");
+      expect(html).toContain("Nothing was ever charged");
+      expect(html).toContain("your own booking is unaffected and remains confirmed");
+    });
+
+    it("does not promise 'remains confirmed' when the parent is not settled", () => {
+      const html = splitGuestPortionCancelledTemplate({
+        ...base,
+        parentConfirmed: false,
+      });
+      expect(html).not.toContain("remains confirmed");
+      expect(html).toContain("has not been changed by this cancellation");
+    });
+
+    it("shows the member's own booking reference when available", () => {
+      const html = splitGuestPortionCancelledTemplate({
+        ...base,
+        parentBookingReference: "parent_abc",
+      });
+      expect(html).toContain("Your booking reference");
+      expect(html).toContain("parent_abc");
     });
   });
 
@@ -89,6 +259,33 @@ describe("email-templates", () => {
       expect(html).toContain("How to get to the lodge");
       expect(html).toContain("Take the Bruce Road and carry chains.");
       expect(html).not.toContain("Door code");
+    });
+
+    it("explains the split provisional guest portion when this is a split parent (#1942)", () => {
+      const holdUntil = new Date("2026-07-08T00:30:00Z");
+      const html = bookingConfirmedTemplate("Test", checkIn, checkOut, 2, 10000, {
+        provisionalGuests: { guestCount: 2, holdUntil },
+      });
+
+      expect(html).toContain("2 non-member guests");
+      expect(html).toContain("held provisionally");
+      expect(html).toContain("no bed is reserved for them yet");
+      expect(html).toContain("covers only your member places");
+      expect(html).toContain(formatNZDateTime(holdUntil));
+    });
+
+    it("uses singular wording for a single provisional guest (#1942)", () => {
+      const holdUntil = new Date("2026-07-08T00:30:00Z");
+      const html = bookingConfirmedTemplate("Test", checkIn, checkOut, 1, 10000, {
+        provisionalGuests: { guestCount: 1, holdUntil },
+      });
+
+      expect(html).toContain("1 non-member guest is held provisionally");
+    });
+
+    it("omits the provisional section for an ordinary (non-split) confirmation (#1942)", () => {
+      const html = bookingConfirmedTemplate("Test", checkIn, checkOut, 2, 10000);
+      expect(html).not.toContain("held provisionally");
     });
   });
 
@@ -296,16 +493,25 @@ describe("email-templates", () => {
   });
 
   describe("support contact config", () => {
-    it("uses the shared support email instead of hard-coded copy", async () => {
+    it("renders the config-derived support email as a stable search key, and the removed SUPPORT_EMAIL env has no effect (#1986)", async () => {
       vi.resetModules();
       vi.stubEnv("EMAIL_FROM", "sender@example.com");
+      // C7 #1986 removed the SUPPORT_EMAIL env override — email identity is now
+      // DB-first / config-derived only. Setting the env var must NOT change what
+      // the template bakes in (the config-derived search key that send-time
+      // replacement later swaps for the live EmailMessageSetting.supportEmail).
       vi.stubEnv("SUPPORT_EMAIL", "help@example.com");
 
-      const { accountDeletionApprovedTemplate } = await import("../email-templates");
+      const [{ accountDeletionApprovedTemplate }, { clubConfig }] =
+        await Promise.all([
+          import("../email-templates"),
+          import("@/config/club"),
+        ]);
       const html = accountDeletionApprovedTemplate("Alice");
 
-      expect(html).toContain("help@example.com");
-      expect(html).not.toContain("support@example.org");
+      // The config-derived support address renders; the env value is ignored.
+      expect(html).toContain(clubConfig.supportEmail);
+      expect(html).not.toContain("help@example.com");
 
       vi.unstubAllEnvs();
     });

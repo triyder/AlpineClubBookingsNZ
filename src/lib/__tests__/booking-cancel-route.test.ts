@@ -147,7 +147,7 @@ describe("POST /api/bookings/[id]/cancel", () => {
       "USER",
       "127.0.0.1",
       "credit",
-      { hasBookingsEditAccess: false }
+      { hasBookingsEditAccess: false, enforceStartedStayBlock: true }
     );
   });
 
@@ -175,7 +175,7 @@ describe("POST /api/bookings/[id]/cancel", () => {
       "USER", // an officer keeps their honest legacy authorization role
       "127.0.0.1",
       "card",
-      { hasBookingsEditAccess: true }
+      { hasBookingsEditAccess: true, enforceStartedStayBlock: true }
     );
   });
 
@@ -203,7 +203,7 @@ describe("POST /api/bookings/[id]/cancel", () => {
       "USER",
       "127.0.0.1",
       "card",
-      { hasBookingsEditAccess: false }
+      { hasBookingsEditAccess: false, enforceStartedStayBlock: true }
     );
     expect(res.status).toBe(403);
   });
@@ -243,7 +243,7 @@ describe("POST /api/bookings/[id]/cancel", () => {
       "USER",
       "127.0.0.1",
       "card",
-      { hasBookingsEditAccess: true }
+      { hasBookingsEditAccess: true, enforceStartedStayBlock: true }
     );
   });
 });

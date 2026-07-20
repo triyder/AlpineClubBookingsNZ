@@ -55,6 +55,29 @@ type ItemCodeMappingRow = {
   amountCents: number | null;
 };
 
+// Blue/green runtime-prep (#2130): name ONLY the columns buildResponseBody
+// reads so the deployed client stops SELECTing XeroItemCodeMapping.isMember
+// before the #2130 contract migration drops that legacy key column. Matches
+// ItemCodeMappingRow field-for-field, so the serialised response is unchanged.
+const ITEM_CODE_MAPPING_SELECT = {
+  category: true,
+  ageTier: true,
+  seasonType: true,
+  membershipTypeId: true,
+  entranceFeeCategory: true,
+  itemCode: true,
+  amountCents: true,
+} as const;
+
+// Blue/green runtime-prep (#2130), WRITE half. Prisma emits `RETURNING` over
+// every scalar column of a create/update/upsert unless a `select` narrows it,
+// so an unnarrowed mutation still names `isMember` even though the reads above
+// no longer do — a draining old colour would keep issuing that SQL. Every
+// mutation in this route discards its return value, so the minimal `id`
+// projection is the correct narrowing: reusing the wider
+// ITEM_CODE_MAPPING_SELECT would name columns no caller reads.
+const ITEM_CODE_MAPPING_WRITE_SELECT = { id: true } as const;
+
 /**
  * Serialise DB rows into the response shape. Hut fees are keyed by membership
  * type (#1930, E4); the frozen legacy isMember-keyed HUT_FEE rows are hidden
@@ -72,7 +95,7 @@ function buildResponseBody(rows: ItemCodeMappingRow[]) {
     ) {
       const key = `${row.membershipTypeId}_${row.seasonType}_${row.ageTier ?? FLAT_KEY}`;
       hutFees[key] = { itemCode: row.itemCode };
-    } else if (row.category === "ENTRANCE_FEE" && row.entranceFeeCategory) {
+    } else if (row.category === "JOINING_FEE" && row.entranceFeeCategory) {
       entranceFees[row.entranceFeeCategory] = {
         itemCode: row.itemCode ?? null,
         amountCents: row.amountCents,
@@ -88,10 +111,14 @@ function buildResponseBody(rows: ItemCodeMappingRow[]) {
  * keys are `${membershipTypeId}_${seasonType}_${ageTier|FLAT}` (#1930, E4).
  */
 export async function GET() {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "finance", level: "view" },
+  });
   if (!guard.ok) return guard.response;
   try {
-    const rows = await prisma.xeroItemCodeMapping.findMany();
+    const rows = await prisma.xeroItemCodeMapping.findMany({
+      select: ITEM_CODE_MAPPING_SELECT,
+    });
     return NextResponse.json(buildResponseBody(rows));
   } catch (error) {
     logger.error({ err: error }, "Failed to fetch item code mappings");
@@ -105,9 +132,14 @@ const HutFeeEntrySchema = z.object({
   itemCode: z.string().min(1, "Item code is required"),
 });
 
+// amountCents is OPTIONAL and deprecated (#1931, E5): joining-fee amounts are
+// authoritative in the JoiningFee schedule and this column is no longer read
+// at runtime. The admin panel is item-code-only and omits it; when omitted the
+// stored value is left untouched (never silently written), and the explicit
+// null/null pair keeps its historical "clear the row" meaning.
 const EntranceFeeEntrySchema = z.object({
   itemCode: z.string().min(1, "Item code is required").nullable(),
-  amountCents: z.number().int().min(0).nullable(),
+  amountCents: z.number().int().min(0).nullable().optional(),
 });
 
 const UpdateItemCodeMappingsSchema = z.object({
@@ -126,17 +158,22 @@ const UpdateItemCodeMappingsSchema = z.object({
  * {
  *   hutFees: { "<membershipTypeId>_WINTER_ADULT": { itemCode: "HUTFEE-001" },
  *              "<membershipTypeId>_SUMMER_FLAT": { itemCode: "HUTFEE-002" }, ... },
- *   entranceFees: { "ADULT": { itemCode: "ENTFEE-001" | null, amountCents: 5000 }, ... }
+ *   entranceFees: { "ADULT": { itemCode: "ENTFEE-001" | null }, ... }
  * }
  *
  * Hut-fee keys must reference a rate-bearing membership type (a MEMBER_RATE
  * type or the built-in NON_MEMBER type — the D2 invariant). The `FLAT` tier is
  * the single all-ages cell of an ageGroupsApply=false type. Sending null for a
- * key deletes that mapping. For entrance fees, sending both `itemCode` and
- * `amountCents` as null also clears the row.
+ * key deletes that mapping. For joining fees, `amountCents` is optional and
+ * deprecated (#1931 — amounts are authoritative in the JoiningFee schedule):
+ * omitting it leaves the stored value untouched; sending both `itemCode` and
+ * `amountCents` as explicit nulls clears the row; a null `itemCode` with no
+ * `amountCents` blanks only the code.
  */
 export async function PUT(request: NextRequest) {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "finance", level: "edit" },
+  });
   if (!guard.ok) return guard.response;
   const session = guard.session;
   let body: unknown;
@@ -244,6 +281,7 @@ export async function PUT(request: NextRequest) {
             ageTier,
             itemCode: value.itemCode,
           },
+          select: ITEM_CODE_MAPPING_WRITE_SELECT,
         });
       } else {
         const existing = await prisma.xeroItemCodeMapping.findFirst({
@@ -254,6 +292,7 @@ export async function PUT(request: NextRequest) {
           await prisma.xeroItemCodeMapping.update({
             where: { id: existing.id },
             data: { itemCode: value.itemCode },
+            select: ITEM_CODE_MAPPING_WRITE_SELECT,
           });
         } else {
           await prisma.xeroItemCodeMapping.create({
@@ -264,38 +303,50 @@ export async function PUT(request: NextRequest) {
               ageTier: null,
               itemCode: value.itemCode,
             },
+            select: ITEM_CODE_MAPPING_WRITE_SELECT,
           });
         }
       }
     }
 
-    // Entrance fee entries (unchanged by the #1930 re-key).
+    // Joining fee entries: item-code writes only unless an amount is sent
+    // explicitly (#1931, E5 — amounts are authoritative in JoiningFee and the
+    // panel no longer edits them; an omitted amountCents must never overwrite
+    // the stored historical value).
     for (const [category, value] of Object.entries(entranceFees ?? {})) {
       const entranceFeeCategory = category as typeof ENTRANCE_FEE_CATEGORIES[number];
       if (!ENTRANCE_FEE_CATEGORIES.includes(entranceFeeCategory)) continue;
 
       if (value === null || (value.itemCode === null && value.amountCents === null)) {
         await prisma.xeroItemCodeMapping.deleteMany({
-          where: { category: "ENTRANCE_FEE", entranceFeeCategory },
+          where: { category: "JOINING_FEE", entranceFeeCategory },
+        });
+      } else if (value.itemCode === null && value.amountCents === undefined) {
+        // Item-code-only clear: blank the code but keep the row (and its
+        // frozen historical amount, still exported by config transfer).
+        await prisma.xeroItemCodeMapping.updateMany({
+          where: { category: "JOINING_FEE", entranceFeeCategory },
+          data: { itemCode: null },
         });
       } else {
+        const write: { itemCode: string | null; amountCents?: number | null } = {
+          itemCode: value.itemCode,
+        };
+        if (value.amountCents !== undefined) write.amountCents = value.amountCents;
         await prisma.xeroItemCodeMapping.upsert({
           where: {
             category_entranceFeeCategory: {
-              category: "ENTRANCE_FEE",
+              category: "JOINING_FEE",
               entranceFeeCategory,
             },
           },
-          update: {
-            itemCode: value.itemCode,
-            amountCents: value.amountCents,
-          },
+          update: write,
           create: {
-            category: "ENTRANCE_FEE",
+            category: "JOINING_FEE",
             entranceFeeCategory,
-            itemCode: value.itemCode,
-            amountCents: value.amountCents,
+            ...write,
           },
+          select: ITEM_CODE_MAPPING_WRITE_SELECT,
         });
       }
     }
@@ -307,7 +358,9 @@ export async function PUT(request: NextRequest) {
     });
 
     // Return the full updated set (reuse GET logic)
-    const rows = await prisma.xeroItemCodeMapping.findMany();
+    const rows = await prisma.xeroItemCodeMapping.findMany({
+      select: ITEM_CODE_MAPPING_SELECT,
+    });
     return NextResponse.json(buildResponseBody(rows));
   } catch (error) {
     if (

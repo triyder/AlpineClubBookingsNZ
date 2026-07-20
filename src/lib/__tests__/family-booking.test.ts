@@ -117,4 +117,72 @@ describe("family member booking block messages", () => {
       "Pending admin approval"
     );
   });
+
+  it("appends the provisional-hold consequence only when the hold policy applies (#1942)", () => {
+    const member = {
+      relationship: "dependent" as const,
+      firstName: "Sam",
+      canBeBooked: false,
+      pendingRequestStatus: "PENDING",
+      action: "pending_admin_approval",
+    };
+
+    // Default (no options → "none") keeps the original message, unchanged.
+    expect(getFamilyMemberBookingBlockMessage(member)).not.toContain(
+      "held provisionally"
+    );
+    expect(getFamilyMemberBookingBlockMessage(member, { holdPolicy: "none" })).not.toContain(
+      "held provisionally"
+    );
+
+    // When the hold policy applies to the stay, spell out the consequence.
+    expect(
+      getFamilyMemberBookingBlockMessage(member, { holdPolicy: "applies" })
+    ).toContain("held provisionally");
+  });
+
+  it("warns conditionally when the party has no non-member yet, so the hold decision is unknown (#1942 FIX 7)", () => {
+    const member = {
+      relationship: "dependent" as const,
+      firstName: "Sam",
+      canBeBooked: false,
+      canLogin: true,
+    };
+
+    const conditional = getFamilyMemberBookingBlockMessage(member, {
+      holdPolicy: "conditional",
+    });
+    expect(conditional).toContain("may be held provisionally");
+    expect(conditional).toContain("depending on how far out your booking is");
+
+    // Definite wording when the decision is known true; omitted when known false.
+    expect(
+      getFamilyMemberBookingBlockMessage(member, { holdPolicy: "applies" })
+    ).toContain("they'll be held provisionally");
+    expect(
+      getFamilyMemberBookingBlockMessage(member, { holdPolicy: "none" })
+    ).not.toContain("held provisionally");
+  });
+
+  it("does not repeat 'add them as a non-member guest' in the pending-approval message (#1942 FIX 6)", () => {
+    const member = {
+      relationship: "dependent" as const,
+      firstName: "Sam",
+      canBeBooked: false,
+      pendingRequestStatus: "PENDING",
+      action: "pending_admin_approval",
+    };
+
+    for (const holdPolicy of ["applies", "conditional"] as const) {
+      const message = getFamilyMemberBookingBlockMessage(member, { holdPolicy });
+      // The phrase must appear exactly once — the consequence now reads as a
+      // continuation ("...until approved — if you do, ...") rather than a second
+      // sentence that repeats the whole clause.
+      const occurrences = (
+        message?.match(/add them as a non-member guest/g) ?? []
+      ).length;
+      expect(occurrences).toBe(1);
+      expect(message).toContain("until approved — if you do,");
+    }
+  });
 });

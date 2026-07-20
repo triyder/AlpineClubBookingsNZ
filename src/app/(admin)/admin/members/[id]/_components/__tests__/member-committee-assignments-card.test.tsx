@@ -10,6 +10,29 @@ import {
   within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+// #1997: the card derives view-only gating from the session matrix via
+// useAdminAreaEditAccess("membership"). Mock an all-edit admin so the existing
+// add/edit/remove assertions (enabled controls) hold.
+vi.mock("next-auth/react", () => ({
+  useSession: () => ({
+    data: {
+      user: {
+        id: "admin-1",
+        adminPermissionMatrix: {
+          overview: "edit",
+          bookings: "edit",
+          membership: "edit",
+          finance: "edit",
+          lodge: "edit",
+          content: "edit",
+          support: "edit",
+        },
+      },
+    },
+  }),
+}));
+
 import { MemberCommitteeAssignmentsCard } from "../member-committee-assignments-card";
 import type { MemberDetail } from "../../_types";
 

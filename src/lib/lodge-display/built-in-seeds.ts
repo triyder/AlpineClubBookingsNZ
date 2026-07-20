@@ -285,20 +285,363 @@ const SINGLES_TEMPLATE: BuiltInTemplateSeed = {
   footerHtml: "<p>Have a nice day 👋</p>",
 };
 
-/** The three built-in Layouts, in seed order (a Template's Layout must exist
- * first). */
+// ===========================================================================
+// Template pack (issue #2047) — pre-built layouts exercising the full module
+// catalogue. Owner-ticked delivery split (see docs/lobby-display/README.md
+// "Template gallery"): the four BROADLY-USEFUL boards below ship as built-in
+// seeds (every install gets them, refreshed on re-seed like the originals); the
+// two situational boards (busy-weekend rotator, minimal arrivals strip) travel
+// in the importable extras bundle (docs/lobby-display/seeds/) instead, so the
+// built-in set stays focused on the boards any lodge wants day to day.
+//
+// Between them these four ALSO complete built-in coverage of the module
+// catalogue: they are the first built-in use of room-cards, night-columns, and
+// status-board (the originals covered the other content modules), so after this
+// pack every content module is exercised by a built-in — asserted in
+// lodge-display-built-in-seeds.test.ts. New keys are permanent (re-seed matches
+// on key), so they are chosen carefully and never reused.
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// room-by-room — tonight's room cards (first built-in use of room-cards) with a
+// live arrivals side rail. Two-column board+rail, like everyday-board.
+// ---------------------------------------------------------------------------
+
+const ROOM_BY_ROOM_BODY =
+  '<div class="rbr-grid">' +
+  '<div class="rbr-main">{{area:rooms}}</div>' +
+  '<div class="rbr-rail">{{area:arrivals}}</div>' +
+  "</div>";
+
+const ROOM_BY_ROOM_CSS = `
+.display-layout-body { height: 100%; min-height: 0; }
+.rbr-grid {
+  display: grid;
+  grid-template-columns: 1fr 34vw;
+  grid-template-rows: 1fr;
+  column-gap: 2.6vmin;
+  height: 100%;
+  min-height: 0;
+}
+.rbr-main { overflow: hidden; min-width: 0; }
+.rbr-main > [data-display-area] { display: block; height: 100%; }
+.rbr-rail { overflow: hidden; min-width: 0; }
+.rbr-rail > [data-display-area] { display: block; height: 100%; }
+`;
+
+const ROOM_BY_ROOM_LAYOUT: BuiltInLayoutSeed = {
+  key: "room-by-room",
+  name: "Room by room",
+  description:
+    "Tonight's rooms as cards (who sleeps where) with a live arrivals side rail. Needs bed allocation — the room cards degrade to a short note without it.",
+  bodyHtml: ROOM_BY_ROOM_BODY,
+  defaultCss: ROOM_BY_ROOM_CSS,
+  areas: [
+    {
+      key: "rooms",
+      description: "Tonight's room cards.",
+      kind: "static",
+      defaultContent: { module: "room-cards" },
+    },
+    {
+      key: "arrivals",
+      description: "Arrivals side rail.",
+      kind: "static",
+      defaultContent: { module: "arrivals-board", options: { days: 3 } },
+    },
+  ],
+};
+
+const ROOM_BY_ROOM_TEMPLATE: BuiltInTemplateSeed = {
+  key: "room-by-room",
+  name: "Room by room",
+  layoutKey: "room-by-room",
+  slotContent: {
+    rooms: { module: "room-cards" },
+    arrivals: { module: "arrivals-board", options: { days: 3 } },
+  },
+  cssOverrides: "",
+  footerHtml: "<p>Welcome to the lodge 🏔️</p>",
+};
+
+// ---------------------------------------------------------------------------
+// nights-ahead — the coming nights at a glance (first built-in use of
+// night-columns): room-level night columns over a notice band that only appears
+// when a committee notice is set. Named "Nights ahead" (not "Week ahead")
+// because it honestly renders a handful of nights, not a full week — see the
+// `days` note below.
+// ---------------------------------------------------------------------------
+
+const NIGHTS_AHEAD_BODY =
+  '<div class="na-grid">' +
+  '<div class="na-main">{{area:planner}}</div>' +
+  '<div class="na-band">{{area:notice}}</div>' +
+  "</div>";
+
+const NIGHTS_AHEAD_CSS = `
+.display-layout-body { height: 100%; min-height: 0; }
+.na-grid {
+  display: grid;
+  grid-template-rows: 1fr auto;
+  row-gap: 1.8vmin;
+  height: 100%;
+  min-height: 0;
+}
+.na-main { overflow: hidden; min-height: 0; }
+.na-main > [data-display-area] { display: block; height: 100%; }
+.na-band { overflow: hidden; }
+.na-band .display-notice-board {
+  height: auto;
+  padding: 1.6vmin 2vmin;
+  text-align: left;
+  gap: 1vmin;
+  background: color-mix(in srgb, var(--display-accent) 10%, var(--display-panel));
+  border: 1px solid color-mix(in srgb, var(--display-accent) 40%, transparent);
+  border-radius: 1.4vmin;
+}
+`;
+
+const NIGHTS_AHEAD_LAYOUT: BuiltInLayoutSeed = {
+  key: "nights-ahead",
+  name: "Nights ahead",
+  description:
+    "The next three nights at a glance — room-level night columns (rooms shown when bed allocation is on) over a committee-notice band that appears only when a notice is set.",
+  bodyHtml: NIGHTS_AHEAD_BODY,
+  defaultCss: NIGHTS_AHEAD_CSS,
+  areas: [
+    {
+      key: "planner",
+      description: "The coming nights, one column each.",
+      kind: "static",
+      // A permanent 3-night board: `days` matches NIGHT_COLUMNS_MAX_DAYS = 3,
+      // which in turn matches the fixed 3-day display-device data window
+      // (issue #2056 Option C). Bookings beyond three nights are never fetched,
+      // so asking for more would render fewer columns than promised — hence the
+      // name "Nights ahead" over the next three nights, never "Week ahead".
+      defaultContent: {
+        module: "night-columns",
+        options: { days: 3, "show-rooms": true },
+      },
+    },
+    {
+      key: "notice",
+      description: "Committee notice band — shown only when a notice is set.",
+      kind: "conditional",
+      condition: "content:notice",
+      defaultContent: { module: "notice-board" },
+    },
+  ],
+};
+
+const NIGHTS_AHEAD_TEMPLATE: BuiltInTemplateSeed = {
+  key: "nights-ahead",
+  name: "Nights ahead",
+  layoutKey: "nights-ahead",
+  slotContent: {
+    planner: { module: "night-columns", options: { days: 3, "show-rooms": true } },
+    notice: { module: "notice-board" },
+  },
+  cssOverrides: "",
+  footerHtml: "<p>See you on the hill ⛷️</p>",
+};
+
+// ---------------------------------------------------------------------------
+// operations-board — the roomless status board (first built-in use of
+// status-board) with a chores + notice rail. chores-board is a `hides` module,
+// so with the Chores flag off it drops to an empty placeholder and the rail
+// keeps its shape (status + notice) — the required graceful auto-degrade.
+// ---------------------------------------------------------------------------
+
+const OPERATIONS_BODY =
+  '<div class="ops-grid">' +
+  '<div class="ops-main">{{area:status}}</div>' +
+  '<div class="ops-rail">{{area:chores}}{{area:notice}}</div>' +
+  "</div>";
+
+const OPERATIONS_CSS = `
+.display-layout-body { height: 100%; min-height: 0; }
+.ops-grid {
+  display: grid;
+  grid-template-columns: 1fr 30vw;
+  grid-template-rows: 1fr;
+  column-gap: 2.6vmin;
+  height: 100%;
+  min-height: 0;
+}
+.ops-main { overflow: hidden; min-width: 0; }
+.ops-main > [data-display-area] { display: block; height: 100%; }
+.ops-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 1.8vmin;
+  overflow: hidden;
+}
+.ops-rail .display-notice-board {
+  height: auto;
+  padding: 1.7vmin;
+  text-align: left;
+  gap: 1.1vmin;
+  background: color-mix(in srgb, var(--display-departing) 10%, var(--display-panel));
+  border: 1px solid color-mix(in srgb, var(--display-departing) 40%, transparent);
+  border-radius: 1.4vmin;
+}
+`;
+
+const OPERATIONS_LAYOUT: BuiltInLayoutSeed = {
+  key: "operations-board",
+  name: "Lodge operations",
+  description:
+    "The roomless tonight status board (arriving / staying / leaving) with a chores and committee-notice rail. The chores card hides itself when the Chores module is off, so the rail keeps its shape.",
+  bodyHtml: OPERATIONS_BODY,
+  defaultCss: OPERATIONS_CSS,
+  areas: [
+    {
+      key: "status",
+      description: "Tonight status board.",
+      kind: "static",
+      defaultContent: { module: "status-board" },
+    },
+    {
+      key: "chores",
+      description: "Today's chores — hides when the Chores module is off.",
+      kind: "static",
+      defaultContent: { module: "chores-board" },
+    },
+    {
+      key: "notice",
+      description: "Committee notice — shown only when a notice is set.",
+      kind: "conditional",
+      condition: "content:notice",
+      defaultContent: { module: "notice-board" },
+    },
+  ],
+};
+
+const OPERATIONS_TEMPLATE: BuiltInTemplateSeed = {
+  key: "operations-board",
+  name: "Lodge operations",
+  layoutKey: "operations-board",
+  slotContent: {
+    status: { module: "status-board" },
+    chores: { module: "chores-board" },
+    notice: { module: "notice-board" },
+  },
+  cssOverrides: "",
+  footerHtml: "<p>Thanks for pitching in 🧹</p>",
+};
+
+// ---------------------------------------------------------------------------
+// welcome-kiosk — the maximum-privacy board: a welcome hero over a rotator that
+// cycles house rules and (when set) the committee notice. It embeds ONLY
+// welcome / lodge-rules / notice-board — none of the guest-roster / arrivals
+// modules — so no guest ROSTER or arrivals name ever appears on it. The one name
+// it can show is the whole-lodge GROUP label (WelcomePanel renders
+// `wholeLodgeRow.label`), which is `bookingLabel` already reduced to the lodge's
+// privacy granularity and never exceeds it — for an exclusive whole-lodge hold
+// booked by a single named member (no minors, not an organisation) that label
+// CAN be that member's own name at the lodge's setting, so this is the
+// lowest-name-surface board, not a zero-name board. Enforced by tests that
+// render it against named bookings and assert nothing MORE than the lodge
+// granularity's whole-lodge label ever shows (no roster/arrivals names).
+// ---------------------------------------------------------------------------
+
+const WELCOME_KIOSK_BODY =
+  '<div class="wk-grid">' +
+  '<div class="wk-hero">{{area:welcome}}</div>' +
+  '<div class="wk-info">{{area:info}}</div>' +
+  "</div>";
+
+const WELCOME_KIOSK_CSS = `
+.display-layout-body { height: 100%; min-height: 0; }
+.wk-grid {
+  display: grid;
+  grid-template-rows: minmax(0, 1.1fr) minmax(0, 1fr);
+  row-gap: 2.2vmin;
+  height: 100%;
+  min-height: 0;
+}
+.wk-hero { overflow: hidden; min-height: 0; }
+.wk-hero > [data-display-area] { display: block; height: 100%; }
+.wk-info { overflow: hidden; min-height: 0; }
+.wk-info > [data-display-area] { display: block; height: 100%; }
+`;
+
+const WELCOME_KIOSK_LAYOUT: BuiltInLayoutSeed = {
+  key: "welcome-kiosk",
+  name: "Welcome kiosk",
+  description:
+    "Maximum-privacy greeter: a welcome hero over a rotator cycling the house rules and, when one is set, the committee notice. Shows no guest roster or arrivals names — only the whole-lodge group label, reduced to the lodge's privacy setting — so it is safe for the most public spot in the lodge.",
+  bodyHtml: WELCOME_KIOSK_BODY,
+  defaultCss: WELCOME_KIOSK_CSS,
+  areas: [
+    {
+      key: "welcome",
+      description: "Welcome hero.",
+      kind: "static",
+      defaultContent: { module: "welcome" },
+    },
+    {
+      key: "info",
+      description: "House rules, rotating with any committee notice.",
+      kind: "rotator",
+      rotateSeconds: 10,
+      children: [
+        {
+          key: "rules",
+          description: "House rules / arrival information.",
+          // Gated so the rotator never flashes an empty rules card when the
+          // lodge has no instruction docs (F3): with no docs, LodgeRules renders
+          // an empty div, which would otherwise rotate 10s-blank / 10s-notice.
+          // With docs absent AND no notice, the rotator has no eligible child and
+          // degrades to nothing (no crash), exactly as any all-gated rotator does.
+          condition: "content:instructions",
+        },
+        {
+          key: "notice",
+          description: "Committee notice — shown only when a notice is set.",
+          condition: "content:notice",
+        },
+      ],
+    },
+  ],
+};
+
+const WELCOME_KIOSK_TEMPLATE: BuiltInTemplateSeed = {
+  key: "welcome-kiosk",
+  name: "Welcome kiosk",
+  layoutKey: "welcome-kiosk",
+  slotContent: {
+    welcome: { module: "welcome" },
+    "info/rules": { module: "lodge-rules" },
+    "info/notice": { module: "notice-board" },
+  },
+  cssOverrides: "",
+  footerHtml: "<p>Make yourself at home 👋</p>",
+};
+
+/** The built-in Layouts, in seed order (a Template's Layout must exist first).
+ * The three originals (LTV-038) plus the issue-#2047 template-pack built-ins. */
 export const BUILT_IN_DISPLAY_LAYOUTS: BuiltInLayoutSeed[] = [
   EVERYDAY_LAYOUT,
   WHOLE_LODGE_LAYOUT,
   SINGLES_LAYOUT,
+  ROOM_BY_ROOM_LAYOUT,
+  NIGHTS_AHEAD_LAYOUT,
+  OPERATIONS_LAYOUT,
+  WELCOME_KIOSK_LAYOUT,
 ];
 
-/** The three built-in Templates, one per Layout, keyed identically to the legacy
- * code built-ins (the registry keys `resolveDisplayTemplate` still resolves). */
+/** The built-in Templates, one per Layout. The first three are keyed identically
+ * to the legacy code built-ins (the registry keys `resolveDisplayTemplate` still
+ * resolves); the rest are the issue-#2047 template pack. */
 export const BUILT_IN_DISPLAY_TEMPLATES: BuiltInTemplateSeed[] = [
   EVERYDAY_TEMPLATE,
   WHOLE_LODGE_TEMPLATE,
   SINGLES_TEMPLATE,
+  ROOM_BY_ROOM_TEMPLATE,
+  NIGHTS_AHEAD_TEMPLATE,
+  OPERATIONS_TEMPLATE,
+  WELCOME_KIOSK_TEMPLATE,
 ];
 
 // The reserved built-in keys. `ensureBuiltInDisplays` upserts the Layout/Template

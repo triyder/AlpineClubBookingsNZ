@@ -143,6 +143,7 @@ enum MembershipTypeBookingBehavior {
 enum MembershipTypeSubscriptionBehavior {
   REQUIRED
   NOT_REQUIRED
+  BASED_ON_AGE_TIER
 }
 
 enum MembershipFeeBillingBasis {
@@ -169,11 +170,26 @@ enum MembershipSubscriptionChargeStatus {
   EMAIL_FAILED
   EMAILED
   CONFLICT
+  // #2147: the charge's Xero invoice was observed VOIDED/DELETED by the
+  // membership sync. The row is KEPT for audit; its coverage claim is released
+  // (MembershipSubscriptionChargeCoverage.releasedAt) so the member becomes
+  // re-billable. Every delivery/retry consumer ignores a VOIDED charge.
+  VOIDED
 }
 
 enum MembershipBillingExceptionStatus {
   OPEN
   RESOLVED
+}
+
+// #2148 (D2): how an OPEN billing exception reached RESOLVED. CONFIRM =
+// resolved by a confirm run superseding it; PREVIEW_RECONCILE = auto-resolved
+// by an edit-gated preview refresh whose fresh preview no longer regenerated
+// it. Null on legacy rows resolved before this field existed and on every
+// still-OPEN row.
+enum MembershipBillingExceptionResolution {
+  CONFIRM
+  PREVIEW_RECONCILE
 }
 
 enum FamilyBillingMode {
@@ -183,7 +199,12 @@ enum FamilyBillingMode {
 
 enum MembershipAssignmentSource {
   ADMIN
-  /// retired (2026-07 audit, #1525 S4): never written in code (`source` always defaults to ADMIN); kept because Postgres enum-value removal requires a type rebuild.
+  /// revived by #2108: the Xero member-import writes IMPORT on assignments it
+  /// creates — both the `createMany` batch for newly-imported members
+  /// (`sourceDetail` carries the contact group name) AND the
+  /// `saveSeasonalMembershipAssignment` path for matched-existing members with
+  /// no current-season assignment. Comment-only revival — the value was always
+  /// in the Postgres enum.
   IMPORT
   /// retired (2026-07 audit, #1525 S4): never written in code; kept — see IMPORT.
   FAMILY_SUBSCRIPTION
@@ -428,6 +449,15 @@ enum ClubThemeFont {
 // Member & Auth
 // ---------------------------------------------------------------------------
 
+// Per-member post-login landing preference (#2090). NULL = follow the role
+// default (members with admin access land on their first accessible admin page,
+// everyone else on /dashboard); an explicit value overrides that default. A
+// typed enum — never a free-text path — so there is no open-redirect surface.
+enum PostLoginLanding {
+  MEMBER_DASHBOARD
+  ADMIN_DASHBOARD
+}
+
 model Member {
   id                      String           @id @default(cuid())
   // Lookup index only in Prisma schema. Login identity uniqueness is enforced
@@ -441,6 +471,12 @@ model Member {
   twoFactorEnabled        Boolean          @default(false)
   twoFactorMethod         TwoFactorMethod?
   totpSecret              String?
+  // Google OAuth subject (#2035). Nullable + unique: at most one member per
+  // Google account. Pinned ONLY via profile-initiated linking (member signs in,
+  // then links from their profile); sign-in resolves solely by this sub — never
+  // by email-match, never auto-provisioned. Nulled on unlink; password login
+  // always remains.
+  googleSub               String?          @unique
   twoFactorEnrolledAt     DateTime?
   twoFactorFailedAttempts Int              @default(0)
   twoFactorLockedUntil    DateTime?
@@ -498,6 +534,11 @@ model Member {
   xeroContactId                       String?            @unique
   active                              Boolean            @default(true)
   canLogin                            Boolean            @default(false) // true for members allowed to authenticate; the DB enforces one canLogin member per email
+  // Post-login landing preference (#2090). NULL = role default (admin access ⇒
+  // first accessible admin page, else /dashboard); an explicit value overrides.
+  // Intentionally excluded from member-merge FILL_IF_BLANK_FIELDS — a losing
+  // member's preference is dropped on merge.
+  postLoginLanding                    PostLoginLanding?
   profileCompletedAt                  DateTime?
   detailsConfirmedAt                  DateTime?
   detailsConfirmedByMemberId          String?
@@ -550,8 +591,18 @@ model Member {
   // Many-to-many family group memberships via join table
   familyGroupMemberships FamilyGroupMember[]
 
+  // Per-member billing-family selection (#1932, E6). When a member belongs to
+  // more than one family group, an admin picks which family's PER_FAMILY fee
+  // covers this member so annual billing no longer stalls on AMBIGUOUS_FAMILY.
+  // onDelete: SetNull so deleting the chosen group clears the selection; the six
+  // FamilyGroupMember removal paths NULL it in-transaction so a stale pointer
+  // surfaces as INVALID_BILLING_FAMILY_SELECTION, never silent misbilling.
+  billingFamilyGroupId String?
+  billingFamilyGroup   FamilyGroup? @relation("MemberBillingFamily", fields: [billingFamilyGroupId], references: [id], onDelete: SetNull)
+
   // Relations
   passwordResetTokens                        PasswordResetToken[]
+  magicLinkTokens                            MagicLinkToken[]
   emailVerificationTokens                    EmailVerificationToken[]
   emailChangeTokens                          EmailChangeToken[]
   twoFactorEmailCodes                        TwoFactorEmailCode[]
@@ -561,6 +612,8 @@ model Member {
   memberSubscriptionsManuallyPaid            MemberSubscription[]                       @relation("MemberSubscriptionManualPaidBy")
   membershipChargesReceived                  MembershipSubscriptionCharge[]             @relation("MembershipChargeRecipient")
   membershipChargesConfirmed                 MembershipSubscriptionCharge[]             @relation("MembershipChargeConfirmer")
+  familyInvoiceMarkersMarked                 FamilyGroupSeasonInvoiceMarker[]           @relation("FamilyInvoiceMarkerMarkedBy")
+  familyInvoiceMarkersReleased               FamilyGroupSeasonInvoiceMarker[]           @relation("FamilyInvoiceMarkerReleasedBy")
   membershipBillingExceptions                MembershipBillingException[]               @relation("MembershipBillingExceptionMember")
   seasonalMembershipAssignments              SeasonalMembershipAssignment[]             @relation("SeasonalMembershipAssignmentMember")
   seasonalMembershipAssignmentsAssigned      SeasonalMembershipAssignment[]             @relation("SeasonalMembershipAssignmentAssignedBy")
@@ -629,6 +682,7 @@ model Member {
   @@index([parentMemberId])
   @@index([secondaryParentId])
   @@index([familyGroupId])
+  @@index([billingFamilyGroupId])
   @@index([inheritEmailFromId])
   @@index([detailsConfirmedByMemberId])
   @@index([cancelledViaRequestId])
@@ -695,6 +749,25 @@ model AccessRoleDefinition {
 }
 
 model PasswordResetToken {
+  id        String   @id @default(cuid())
+  tokenHash String   @unique
+  memberId  String
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  // Relations
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@index([memberId])
+}
+
+// Single-use, short-lived passwordless sign-in token (#2034). Cloned from
+// PasswordResetToken: only the SHA-256 hash of the emailed token is stored, the
+// row is claimed atomically on first use, and it expires after the configurable
+// magic-link TTL (default 15 minutes). Additive to password login — never a
+// replacement or an email-verification bypass.
+model MagicLinkToken {
   id        String   @id @default(cuid())
   tokenHash String   @unique
   memberId  String
@@ -886,13 +959,25 @@ model MemberSubscription {
   manuallyMarkedPaidAt         DateTime?
   manuallyMarkedPaidByMemberId String?
   manualPaymentNote            String?            @db.VarChar(500)
+  // #2147: monotonic re-bill discriminator. Incremented each time the
+  // membership sync observes this season's Xero invoice VOIDED/DELETED and
+  // releases the coverage claim. The confirm step folds it into the charge
+  // idempotencyKey so a post-void re-bill mints a NEW charge instead of
+  // no-op-ing onto the released one. Stays 0 for a never-voided subscription,
+  // which keeps the idempotencyKey byte-identical to the pre-#2147 shape.
+  voidGeneration               Int                @default(0)
   createdAt                    DateTime           @default(now())
   updatedAt                    DateTime           @updatedAt
 
   // Relations
-  member               Member                                @relation(fields: [memberId], references: [id], onDelete: Cascade)
-  manuallyMarkedPaidBy Member?                               @relation("MemberSubscriptionManualPaidBy", fields: [manuallyMarkedPaidByMemberId], references: [id], onDelete: SetNull)
-  chargeCoverage       MembershipSubscriptionChargeCoverage?
+  member               Member                                 @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  manuallyMarkedPaidBy Member?                                @relation("MemberSubscriptionManualPaidBy", fields: [manuallyMarkedPaidByMemberId], references: [id], onDelete: SetNull)
+  // #2147: was a to-one relation while coverage.subscriptionId was @unique.
+  // Now that a released claim is retained alongside a fresh active claim, a
+  // subscription can accrue several coverage rows over its lifetime (at most
+  // one ACTIVE — releasedAt IS NULL — at a time, enforced by the raw-SQL
+  // partial unique index in prisma/partial-unique-indexes.tsv).
+  chargeCoverage       MembershipSubscriptionChargeCoverage[]
 
   @@unique([memberId, seasonYear])
   @@index([memberId])
@@ -945,9 +1030,10 @@ model MembershipSubscriptionCharge {
   createdAt             DateTime                           @default(now())
   updatedAt             DateTime                           @updatedAt
 
-  recipient   Member                                 @relation("MembershipChargeRecipient", fields: [recipientMemberId], references: [id], onDelete: Restrict)
-  confirmedBy Member?                                @relation("MembershipChargeConfirmer", fields: [confirmedByMemberId], references: [id], onDelete: SetNull)
+  recipient   Member                                  @relation("MembershipChargeRecipient", fields: [recipientMemberId], references: [id], onDelete: Restrict)
+  confirmedBy Member?                                 @relation("MembershipChargeConfirmer", fields: [confirmedByMemberId], references: [id], onDelete: SetNull)
   coverage    MembershipSubscriptionChargeCoverage[]
+  components  MembershipSubscriptionChargeComponent[]
 
   @@unique([seasonYear, membershipTypeId, familyGroupId], map: "MembershipCharge_family_type_year_key")
   @@index([seasonYear, status, createdAt])
@@ -955,39 +1041,119 @@ model MembershipSubscriptionCharge {
   @@index([familyGroupId, seasonYear])
 }
 
+// Frozen per-line snapshot of an annual-fee component at the moment the charge
+// was confirmed (#1932, E6). One row per Xero invoice line. The immutable-charge
+// invariant EXTENDS to these rows: once written they are never mutated, and the
+// invoice builder emits one line per component in sortOrder. A legacy charge
+// backfilled with a single component reproduces the identical historical
+// single-line invoice on re-drive (adoption / EMAIL_FAILED retry). xeroAccountCode
+// is required because a NO_INVOICE charge has zero components and every invoiceable
+// charge resolves an account (override else the frozen subscriptionIncome mapping).
+model MembershipSubscriptionChargeComponent {
+  id                 String   @id @default(cuid())
+  chargeId           String
+  label              String
+  description        String
+  annualAmountCents  Int
+  chargedAmountCents Int
+  prorated           Boolean
+  xeroAccountCode    String
+  xeroItemCode       String?
+  sortOrder          Int      @default(0)
+  createdAt          DateTime @default(now())
+
+  charge MembershipSubscriptionCharge @relation(fields: [chargeId], references: [id], onDelete: Restrict)
+
+  @@index([chargeId, sortOrder])
+}
+
 model MembershipSubscriptionChargeCoverage {
-  id             String   @id @default(cuid())
+  id             String    @id @default(cuid())
   chargeId       String
-  subscriptionId String   @unique
+  subscriptionId String
   memberId       String
   memberName     String
-  createdAt      DateTime @default(now())
+  // #2147: null while the claim is ACTIVE. Set (never cleared, row never
+  // deleted) when the membership sync observes the charge's Xero invoice
+  // VOIDED/DELETED, releasing the claim so a fresh preview can re-bill the
+  // member. The dedup skip-set and the confirm coveredAlready check count only
+  // active (releasedAt IS NULL) claims. "One active claim per subscription" is
+  // enforced by the raw-SQL partial unique index
+  // MembershipSubscriptionChargeCoverage_active_subscription_unique
+  // (prisma/partial-unique-indexes.tsv) — Prisma cannot express it, which is
+  // why the plain subscriptionId @unique was dropped.
+  releasedAt     DateTime?
+  createdAt      DateTime  @default(now())
 
   charge       MembershipSubscriptionCharge @relation(fields: [chargeId], references: [id], onDelete: Restrict)
   subscription MemberSubscription           @relation(fields: [subscriptionId], references: [id], onDelete: Restrict)
 
   @@unique([chargeId, subscriptionId], map: "MembershipChargeCoverage_charge_subscription_key")
   @@index([chargeId])
+  @@index([subscriptionId])
   @@index([memberId, createdAt])
 }
 
+// #2161 (D2): an explicit operator "already invoiced" marker for one family
+// group in one membership season. An operator sets this when they KNOW an
+// ambiguous legacy invoice — e.g. one sitting on a member whose current resolved
+// billing basis is PER_MEMBER — actually covered the whole family. It closes the
+// double-billing window the #2161 D1 predicate refinement re-opens for
+// mixed-basis families (where a PER_MEMBER member's personal live invoice no
+// longer blocks the family fee). An ACTIVE marker (releasedAt IS NULL) suppresses
+// the family's PER_FAMILY charge in the billing preview — and therefore in the
+// in-transaction confirm re-preview — regardless of the D1 predicate. Unmark sets
+// releasedAt (the row is retained for audit, mirroring the coverage-release
+// pattern in MembershipSubscriptionChargeCoverage); a fresh mark then inserts a
+// new row. "At most one ACTIVE marker per (familyGroupId, seasonYear)" is enforced
+// by the raw-SQL partial unique index FamilyGroupSeasonInvoiceMarker_active_unique
+// (prisma/partial-unique-indexes.tsv) — Prisma cannot express a partial unique
+// index. The audit FKs are nullable + SetNull (mirroring
+// MembershipSubscriptionCharge.confirmedByMemberId) so removing the operator
+// account never deletes the marker.
+model FamilyGroupSeasonInvoiceMarker {
+  id                 String    @id @default(cuid())
+  familyGroupId      String
+  seasonYear         Int
+  markedByMemberId   String?
+  markedAt           DateTime  @default(now())
+  // Optional free text, e.g. the covering invoice number the operator knows about.
+  note               String?
+  releasedAt         DateTime?
+  releasedByMemberId String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  familyGroup FamilyGroup @relation(fields: [familyGroupId], references: [id], onDelete: Cascade)
+  markedBy    Member?     @relation("FamilyInvoiceMarkerMarkedBy", fields: [markedByMemberId], references: [id], onDelete: SetNull)
+  releasedBy  Member?     @relation("FamilyInvoiceMarkerReleasedBy", fields: [releasedByMemberId], references: [id], onDelete: SetNull)
+
+  @@index([familyGroupId, seasonYear])
+  @@index([seasonYear])
+  @@index([markedByMemberId])
+  @@index([releasedByMemberId])
+}
+
 model MembershipBillingException {
-  id               String                             @id @default(cuid())
-  fingerprint      String                             @unique
+  id               String                                @id @default(cuid())
+  fingerprint      String                                @unique
   seasonYear       Int
   source           MembershipSubscriptionChargeSource
-  status           MembershipBillingExceptionStatus   @default(OPEN)
+  status           MembershipBillingExceptionStatus      @default(OPEN)
   code             String
   message          String
   memberId         String?
   familyGroupId    String?
   membershipTypeId String?
   context          Json?
-  firstSeenAt      DateTime                           @default(now())
-  lastSeenAt       DateTime                           @default(now())
+  firstSeenAt      DateTime                              @default(now())
+  lastSeenAt       DateTime                              @default(now())
   resolvedAt       DateTime?
-  createdAt        DateTime                           @default(now())
-  updatedAt        DateTime                           @updatedAt
+  // #2148 (D2): resolution provenance — CONFIRM vs PREVIEW_RECONCILE. Null while
+  // OPEN and on rows resolved before this column existed.
+  resolvedVia      MembershipBillingExceptionResolution?
+  createdAt        DateTime                              @default(now())
+  updatedAt        DateTime                              @updatedAt
 
   member Member? @relation("MembershipBillingExceptionMember", fields: [memberId], references: [id], onDelete: SetNull)
 
@@ -1041,14 +1207,29 @@ model MembershipType {
   xeroContactGroupRules XeroContactGroupRule[]
   annualFees            MembershipAnnualFee[]
   seasonRates           MembershipTypeSeasonRate[]
+  joiningFees           JoiningFee[]
 
   @@index([isActive, sortOrder])
   @@index([sortOrder])
 }
 
+// Annual membership fee schedule keyed by membership type x optional age tier
+// (#2067). Mirrors JoiningFee's Flat-vs-per-tier shape: an age-keyed type may
+// carry one row per tier, while the flat NULL-ageTier row is the whole-type
+// fallback (a member of any tier resolves it when no per-tier row matches, and
+// NOT_APPLICABLE members resolve it directly). A companion raw-SQL partial
+// unique index (WHERE "ageTier" IS NULL) enforces one flat window per (type,
+// effectiveFrom) and lives in the migration + prisma/partial-unique-indexes.tsv.
+// PER_FAMILY fees stay flat-only (a raw-SQL CHECK forbids ageTier IS NOT NULL
+// for PER_FAMILY), and two partial GiST EXCLUDE constraints (one over flat rows,
+// one over per-tier rows — an enum->text cast is only STABLE, so a single
+// COALESCE-based EXCLUDE is illegal) keep windows non-overlapping per (type,
+// tier) while letting flat-vs-tier and cross-tier windows coexist — all raw SQL,
+// not modelled here.
 model MembershipAnnualFee {
   id               String                     @id @default(cuid())
   membershipTypeId String
+  ageTier          AgeTier?
   amountCents      Int
   billingBasis     MembershipFeeBillingBasis
   prorationRule    MembershipFeeProrationRule @default(NONE)
@@ -1057,23 +1238,71 @@ model MembershipAnnualFee {
   createdAt        DateTime                   @default(now())
   updatedAt        DateTime                   @updatedAt
 
-  membershipType MembershipType @relation(fields: [membershipTypeId], references: [id], onDelete: Restrict)
+  membershipType MembershipType                 @relation(fields: [membershipTypeId], references: [id], onDelete: Restrict)
+  components     MembershipAnnualFeeComponent[]
 
-  @@unique([membershipTypeId, effectiveFrom])
-  @@index([membershipTypeId, effectiveFrom, effectiveTo], map: "MembershipAnnualFee_effective_lookup_idx")
+  @@unique([membershipTypeId, ageTier, effectiveFrom])
+  @@index([membershipTypeId, ageTier, effectiveFrom, effectiveTo], map: "MembershipAnnualFee_effective_lookup_idx")
 }
 
-model EntranceFee {
-  id            String              @id @default(cuid())
-  category      EntranceFeeCategory
-  amountCents   Int
-  effectiveFrom DateTime            @db.Date
-  effectiveTo   DateTime?           @db.Date
-  createdAt     DateTime            @default(now())
-  updatedAt     DateTime            @updatedAt
+// Named components of an annual membership fee (#1932, E6, item 9). Each becomes
+// its own Xero invoice line — e.g. base membership + work party fee + FMC
+// subscription — optionally coded to its own GL account/item, each with its own
+// choice of whether it is prorated for mid-year joiners. INVARIANT: Σ(amountCents)
+// == the parent fee's amountCents, validated server-side in one transaction, so
+// the fee total stays authoritative and existing preview/consumers are unchanged.
+// Every non-NO_INVOICE MembershipAnnualFee carries ≥1 component at all times; a
+// NO_INVOICE fee is a zero total with no components. The default component (label
+// "Annual membership fee", prorate true) is auto-created on fee creation and
+// copied forward when a new effective-dated fee row supersedes a predecessor.
+model MembershipAnnualFeeComponent {
+  id                    String   @id @default(cuid())
+  membershipAnnualFeeId String
+  label                 String
+  amountCents           Int
+  prorate               Boolean  @default(true)
+  xeroAccountCode       String?
+  xeroItemCode          String?
+  sortOrder             Int      @default(0)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
 
-  @@unique([category, effectiveFrom])
-  @@index([category, effectiveFrom, effectiveTo])
+  membershipAnnualFee MembershipAnnualFee @relation(fields: [membershipAnnualFeeId], references: [id], onDelete: Cascade)
+
+  @@index([membershipAnnualFeeId, sortOrder])
+}
+
+// EntranceFee (the category-keyed one-off fee table) was dropped by the E13
+// contract migration 20260720120000 (#1939): the joining-fee re-key (JoiningFee,
+// keyed by membership type x optional age tier) superseded it in E5 (#1931) and
+// no runtime code reads it. The `EntranceFeeCategory` enum is deliberately
+// RETAINED — it still keys XeroItemCodeMapping.entranceFeeCategory for the live
+// JOINING_FEE item-code mappings (the E5 re-key carried those rows forward under
+// category "JOINING_FEE" but kept the physical column + enum names).
+
+// Joining-fee schedule keyed by membership type x optional age tier (#1931,
+// E5). Renames + re-keys the legacy category-keyed EntranceFee: an age-keyed
+// type carries one row per age tier (INFANT folds onto the CHILD amount), while
+// a flat-fee type (the built-in Family type) carries a single NULL-ageTier row.
+// The migration fans the old category amounts out to every joining-fee-liable
+// membership type so day-one resolution stays byte-identical. A companion
+// raw-SQL partial unique index (WHERE "ageTier" IS NULL) enforces one flat row
+// per (type, effectiveFrom) and lives in the migration +
+// prisma/partial-unique-indexes.tsv.
+model JoiningFee {
+  id               String    @id @default(cuid())
+  membershipTypeId String
+  ageTier          AgeTier?
+  amountCents      Int
+  effectiveFrom    DateTime  @db.Date
+  effectiveTo      DateTime? @db.Date
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  membershipType MembershipType @relation(fields: [membershipTypeId], references: [id], onDelete: Restrict)
+
+  @@unique([membershipTypeId, ageTier, effectiveFrom])
+  @@index([membershipTypeId, ageTier, effectiveFrom, effectiveTo], map: "JoiningFee_effective_lookup_idx")
 }
 
 model MembershipTypeAgeTier {
@@ -1092,7 +1321,11 @@ model MembershipTypeAgeTier {
 model XeroContactGroupRule {
   id               String                   @id @default(cuid())
   membershipTypeId String?
-  ageTier          AgeTier?
+  // Set of age tiers this rule targets (#2093). Stored canonical-sorted; the
+  // empty array `[]` means "all age tiers" (the old null "Any age" semantics).
+  // Normalization collapses a full-tier-set selection to `[]` so "all tiers"
+  // has exactly one canonical shape.
+  ageTiers         AgeTier[]
   mode             XeroContactGroupRuleMode
   groupId          String
   groupName        String?
@@ -1103,14 +1336,16 @@ model XeroContactGroupRule {
 
   membershipType MembershipType? @relation(fields: [membershipTypeId], references: [id], onDelete: Cascade)
   // Dedupe of identical rule shapes is enforced by a raw-SQL partial unique
-  // index (E8, #1934) — Prisma cannot express NULLS NOT DISTINCT, so the index
-  // lives in the migration and is recorded in prisma/partial-unique-indexes.tsv:
+  // index (E8 #1934, multi-select #2093) — Prisma cannot express NULLS NOT
+  // DISTINCT, so the index lives in the migration and is recorded in
+  // prisma/partial-unique-indexes.tsv:
   //   XeroContactGroupRule_shape_unique on
-  //   (membershipTypeId, ageTier, mode, groupId) NULLS NOT DISTINCT.
+  //   (membershipTypeId, ageTiers, mode, groupId) NULLS NOT DISTINCT.
+  // Canonical-sorted array storage makes [ADULT, YOUTH] == [YOUTH, ADULT] a
+  // single stored shape, so btree array equality dedupes correctly.
   // App-side rule CRUD enforces the same dedupe for friendly errors.
 
   @@index([membershipTypeId])
-  @@index([ageTier])
   @@index([mode, isActive, sortOrder])
   @@index([groupId])
 }
@@ -1127,6 +1362,39 @@ model XeroGroupingSettings {
   updatedAt         DateTime               @updatedAt
 
   @@index([updatedByMemberId])
+}
+
+// Server-side provenance of a member-grouping dry-run (#1961, follow-up to E8
+// #1934). Persisted whenever an admin runs the dry-run so the bulk re-sync can
+// enforce, server-side and independent of any client-asserted flag, that a
+// recent reviewed diff exists AND still matches the CONTACT_GROUP_FULL_REFRESH
+// group-cache cursor + active grouping rules it was computed against. The bulk
+// re-sync rejects a run whose referenced dry-run is absent, expired, or was
+// computed against a now-changed cache cursor / rule set.
+model XeroMemberGroupingDryRun {
+  id                String                 @id @default(cuid())
+  mode              XeroMemberGroupingMode
+  // The CONTACT_GROUP_FULL_REFRESH cursor lastSuccessfulSyncAt this dry-run was
+  // computed against; the bulk re-sync rejects when the live cursor differs.
+  cacheCursorAt     DateTime
+  // Stable digest of (mode + active rules) at dry-run time; a rule/mode change
+  // moves the live fingerprint and the bulk re-sync rejects.
+  rulesFingerprint  String
+  // Stable digest of the planned add/remove operations the admin reviewed.
+  plannedDigest     String
+  mismatchCount     Int
+  addCount          Int
+  removeCount       Int
+  // Server-set claim marker (#1961): stamped once, atomically, when the bulk
+  // re-sync is INITIATED from this dry-run. Null = never started. A resume is
+  // valid only against a started run; the status-guarded claim rejects
+  // double-initiates.
+  startedAt         DateTime?
+  createdByMemberId String?
+  createdAt         DateTime               @default(now())
+
+  @@index([createdAt])
+  @@index([createdByMemberId])
 }
 
 model SeasonalMembershipAssignment {
@@ -1255,10 +1523,30 @@ model Season {
   updatedAt DateTime   @updatedAt
 
   // Relations
-  // `rates` is the legacy member/non-member boolean-keyed rate table. It is
-  // retained (frozen, read only by the public {{hut-fees}} embed) after the
-  // E4 re-key (#1930); the authoritative pricing rows now live in
-  // `membershipTypeRates`. E13 drops `rates` after a release soak.
+  // `rates` is the legacy member/non-member boolean-keyed rate table, frozen
+  // since the E4 re-key (#1930); the authoritative pricing rows live in
+  // `membershipTypeRates`. Its last APPLICATION-RUNTIME reader is gone: #2129
+  // step 1 re-sourced the public {{hut-fees}} embed onto `membershipTypeRates`,
+  // dropped the admin season routes' unused `rates` include, and switched the
+  // lodge-setup copy-seasons flow onto `membershipTypeRates`.
+  // The relation is NOT unreferenced, though — the seeders still use it:
+  // ONE READER and TWO WRITERS survive, all outside `src/`. Note that none of
+  // them contains the string "SeasonRate" (they go through this `rates`
+  // relation), so a string grep for the model name will not find them.
+  //   READ   e2e/setup/seed-second-lodge.ts:202 — `include: { rates: true }`
+  //   WRITE  e2e/setup/seed-second-lodge.ts:218-224 — `rates: { create: ... }`
+  //   WRITE  prisma/seed.ts:208-227 — `createMissingSeasonRates` → `seasonRate.upsert`
+  // #2129 step 2 (Release B) must, IN THE SAME PR as the DROP migration:
+  //   1. strip the `rates` include AND the `rates: { create: ... }` block from
+  //      e2e/setup/seed-second-lodge.ts, and
+  //   2. delete `createMissingSeasonRates` (and its two call sites) from prisma/seed.ts.
+  // Both are load-bearing, not cosmetic: `e2e/**` is inside tsconfig.json's
+  // `include` (`**/*.ts`) and is NOT excluded (only node_modules and test/
+  // `__tests__` paths are), so dropping the model without editing the seeder
+  // fails `npm run typecheck` on both lines; and scripts/e2e-stack.sh:92 runs
+  // that seeder under E2E_MULTI_LODGE=1, so the REQUIRED `E2E multi-lodge`
+  // branch-protection check fails at seed time. Dropping without step 1 lands
+  // `main` red. This PR carries no schema change.
   rates               SeasonRate[]
   membershipTypeRates MembershipTypeSeasonRate[]
   lodge               Lodge                      @relation(fields: [lodgeId], references: [id], onDelete: Restrict)
@@ -1267,6 +1555,21 @@ model Season {
   @@index([lodgeId])
 }
 
+// Frozen legacy hut-rate table (member/non-member boolean key). #2129 step 1
+// removed the last APPLICATION-RUNTIME reader (the public {{hut-fees}} embed),
+// but the table is NOT unreferenced: one reader and two writers remain, all in
+// seed code outside `src/` —
+//   READ   e2e/setup/seed-second-lodge.ts:202 — `include: { rates: true }`
+//   WRITE  e2e/setup/seed-second-lodge.ts:218-224 — `rates: { create: ... }`
+//   WRITE  prisma/seed.ts:208-227 — `createMissingSeasonRates` → `seasonRate.upsert`
+// Scheduled for removal by #2129 step 2 (Release B), whose DROP migration MUST
+// ship in the same PR as: stripping the `rates` include and the
+// `rates: { create: ... }` block from e2e/setup/seed-second-lodge.ts, AND
+// deleting `createMissingSeasonRates` from prisma/seed.ts. Otherwise
+// `npm run typecheck` fails (e2e/** is inside tsconfig.json's `**/*.ts`
+// include and is not excluded) and the required `E2E multi-lodge` check fails
+// at seed time (scripts/e2e-stack.sh:92 runs the seeder under
+// E2E_MULTI_LODGE=1). Do not add new readers or writers.
 model SeasonRate {
   id                 String  @id @default(cuid())
   seasonId           String
@@ -3079,8 +3382,12 @@ model ClubModuleSettings {
   skifieldConditions      Boolean  @default(true)
   multiLodge              Boolean  @default(false)
   twoFactor               Boolean  @default(false)
+  magicLink               Boolean  @default(false)
   analytics               Boolean  @default(false)
   lobbyDisplay            Boolean  @default(false)
+  // Google OAuth sign-in (#2035). Default OFF; per-club opt-in on the Login &
+  // Security page. Additive to password login, never a replacement.
+  googleLogin             Boolean  @default(false)
   updatedByMemberId       String?
   createdAt               DateTime @default(now())
   updatedAt               DateTime @default(now()) @updatedAt
@@ -3213,9 +3520,33 @@ model ClubIdentitySettings {
   name              String?
   shortName         String?
   hutLeaderLabel    String?
+  facebookUrl       String?
   updatedByMemberId String?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
+
+  @@index([updatedByMemberId])
+}
+
+// Club-wide login & security policy singleton (epic #2030, child #2033). Mirrors
+// the BookingDefaults / ClubModuleSettings / ClubIdentitySettings singleton
+// pattern (one row, id "default"). Governs the password-complexity rules applied
+// wherever a member CHOOSES a password (reset-password / change-password). An
+// absent row means "today's behaviour": min length 12, no required character
+// classes (loadLoginSecuritySettings() supplies these code defaults, so no
+// SELF_HEAL/backfill is needed). magicLinkTtlMinutes is landed here for the
+// sibling magic-link issue (#2034) to consume — no reader exists in #2033.
+model LoginSecuritySetting {
+  id                  String   @id @default("default")
+  minPasswordLength   Int      @default(12)
+  requireUppercase    Boolean  @default(false)
+  requireLowercase    Boolean  @default(false)
+  requireDigit        Boolean  @default(false)
+  requireSymbol       Boolean  @default(false)
+  magicLinkTtlMinutes Int      @default(15)
+  updatedByMemberId   String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @default(now()) @updatedAt
 
   @@index([updatedByMemberId])
 }
@@ -3698,17 +4029,21 @@ model GuestChoreToken {
 // ---------------------------------------------------------------------------
 
 model FamilyGroup {
-  id                  String                   @id @default(cuid())
-  name                String?
-  createdAt           DateTime                 @default(now())
-  updatedAt           DateTime                 @updatedAt
+  id                     String                           @id @default(cuid())
+  name                   String?
+  createdAt              DateTime                         @default(now())
+  updatedAt              DateTime                         @updatedAt
   // @deprecated — legacy single-group FK; use memberships (FamilyGroupMember) instead
-  legacyMembers       Member[]                 @relation("FamilyGroupLegacy")
-  memberships         FamilyGroupMember[]
-  joinRequests        FamilyGroupJoinRequest[]
-  partnerInviteTokens PartnerInviteToken[]
-  billingMembershipId String?                  @unique
-  billingMembership   FamilyGroupMember?       @relation("FamilyBillingMembership", fields: [billingMembershipId], references: [id], onDelete: SetNull)
+  legacyMembers          Member[]                         @relation("FamilyGroupLegacy")
+  memberships            FamilyGroupMember[]
+  // Members who have selected this group as their per-member billing family (#1932, E6).
+  billingSelectedMembers Member[]                         @relation("MemberBillingFamily")
+  joinRequests           FamilyGroupJoinRequest[]
+  partnerInviteTokens    PartnerInviteToken[]
+  // #2161 (D2): operator "already invoiced" markers for this group, per season.
+  seasonInvoiceMarkers   FamilyGroupSeasonInvoiceMarker[]
+  billingMembershipId    String?                          @unique
+  billingMembership      FamilyGroupMember?               @relation("FamilyBillingMembership", fields: [billingMembershipId], references: [id], onDelete: SetNull)
 }
 
 model FamilyGroupMember {
@@ -3895,10 +4230,19 @@ model XeroItemCodeMapping {
   category            String // "HUT_FEE" | "ENTRANCE_FEE"
   ageTier             AgeTier? // HUT_FEE only
   seasonType          SeasonType? // HUT_FEE only
-  // Legacy member/non-member key column (#1930, E4). Retained alongside the
-  // new membershipTypeId key so day-one item-code resolution stays
-  // byte-identical; E13 drops it and the old unique after a release soak.
-  isMember            Boolean? // HUT_FEE only (legacy key, retained)
+  // Legacy member/non-member key column (#1930, E4), superseded by
+  // membershipTypeId. DROP-ELIGIBLE ONLY AFTER THE #2130 RUNTIME-PREP RELEASE
+  // HAS DEPLOYED — not before. That release (CHANGELOG `Unreleased`, the
+  // release that follows v0.12.2) is STEP 1: it narrowed every read AND write
+  // path on this model with an explicit `select`, so its runtime names only
+  // the columns it selects (Prisma otherwise emits every scalar in a
+  // mutation's implicit RETURNING). Until that release is itself the
+  // deployed/draining colour in production, the live v0.12.2 colour still
+  // names this column in SQL, and dropping it would break the blue/green
+  // deploy this two-step exists to prevent. STEP 2 — the contract migration
+  // that drops this column and the @@unique below — is legal only in a LATER
+  // release, once STEP 1 has shipped and soaked in production.
+  isMember            Boolean? // HUT_FEE only (legacy key, drop-eligible)
   // Membership-type key for HUT_FEE item codes (#1930, E4). Nullable ageTier
   // mirrors MembershipTypeSeasonRate: a per-tier type has one row per tier, a
   // flat type has a single NULL-ageTier row. A companion raw-SQL partial
@@ -3928,34 +4272,35 @@ model XeroItemCodeMapping {
 // ---------------------------------------------------------------------------
 
 model AgeTierSetting {
-  id                                    String                            @id @default(cuid())
-  tier                                  AgeTier                           @unique
+  id                                    String   @id @default(cuid())
+  tier                                  AgeTier  @unique
   minAge                                Int
   maxAge                                Int? // null for ADULT (no upper limit)
   label                                 String // e.g. "Child (under 10)"
-  subscriptionRequiredForBooking        Boolean                           @default(true)
-  familyGroupRequestCreateMemberAllowed Boolean                           @default(false)
+  subscriptionRequiredForBooking        Boolean  @default(true)
+  familyGroupRequestCreateMemberAllowed Boolean  @default(false)
+  // xeroContactGroupId / xeroContactGroupName are legacy single-group columns
+  // superseded by XeroContactGroupRule (E8, #1934). DROP-ELIGIBLE ONLY AFTER
+  // THE #2130 RUNTIME-PREP RELEASE HAS DEPLOYED — not before. That release
+  // (CHANGELOG `Unreleased`, the release that follows v0.12.2) is STEP 1: it
+  // narrowed every read AND write path on this model with an explicit `select`
+  // (getAgeTierSettings and friends; the age-tier route, setup wizard,
+  // config self-heal and seed upserts), so its runtime names only the columns
+  // it selects — Prisma otherwise emits every scalar in a mutation's implicit
+  // RETURNING. Until that release is itself the deployed/draining colour in
+  // production, the live v0.12.2 colour still names these columns in SQL, and
+  // dropping them would break the blue/green deploy this two-step exists to
+  // prevent. STEP 2 — the contract migration that drops both columns — is
+  // legal only in a LATER release, once STEP 1 has shipped and soaked in
+  // production. The AgeTierXeroAcceptedContactGroup child table was already
+  // dropped in the E13 contract migration 20260720120000 (#1939).
   xeroContactGroupId                    String?
   xeroContactGroupName                  String?
-  xeroAcceptedContactGroups             AgeTierXeroAcceptedContactGroup[]
-  sortOrder                             Int                               @default(0)
-  createdAt                             DateTime                          @default(now())
-  updatedAt                             DateTime                          @updatedAt
+  sortOrder                             Int      @default(0)
+  createdAt                             DateTime @default(now())
+  updatedAt                             DateTime @updatedAt
 
   @@index([sortOrder])
-}
-
-model AgeTierXeroAcceptedContactGroup {
-  id               String   @id @default(cuid())
-  ageTierSettingId String
-  groupId          String   @unique
-  groupName        String?
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
-
-  ageTierSetting AgeTierSetting @relation(fields: [ageTierSettingId], references: [id], onDelete: Cascade)
-
-  @@index([ageTierSettingId])
 }
 
 // ---------------------------------------------------------------------------
@@ -4136,6 +4481,10 @@ model PublicContentSettings {
   hutFees              Boolean       @default(false)
   bookingPolicySummary Boolean       @default(false)
   cancellationPolicy   Boolean       @default(false)
+  // Dedicated double-opt-in gate for the {{annual-fees}} embed (#1933, E7).
+  // Annual membership fees are more sensitive than the entrance/joining headline
+  // (D-R4), so they get their own visibility flag rather than reusing entranceFees.
+  annualFees           Boolean       @default(false)
   // Configurable public "Book Now" button (E3 #1929). Default preserves the
   // historical behaviour: shown, pointing at the booking flow. When target is
   // PAGE, bookNowPageId names a published PageContent; getBookNowConfig() fails
@@ -4442,6 +4791,12 @@ model MembershipLockoutSettings {
   // When true, an invoice whose reference/description text reads like a
   // membership subscription also counts, in addition to account/item code.
   textFallbackEnabled           Boolean  @default(true)
+  // When true (#2109), paid detection matches ANY item code stamped on the fee
+  // schedule (distinct MembershipAnnualFeeComponent.xeroItemCode) in addition to
+  // the single subscriptionIncome item code, so clubs that bill one item code
+  // per membership type + age tier are still recognised as paid. Default false =
+  // single-code behaviour byte-for-byte.
+  useFeeScheduleItemCodes       Boolean  @default(false)
   updatedByMemberId             String?
   createdAt                     DateTime @default(now())
   updatedAt                     DateTime @updatedAt

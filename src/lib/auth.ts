@@ -1,9 +1,11 @@
 import NextAuth, { CredentialsSignin, type NextAuthConfig } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
+import Google from "next-auth/providers/google";
 import bcrypt from "bcryptjs";
 import { prisma } from "./prisma";
 import { getAuthSecret, getAuthTrustHost } from "./runtime-config";
 import logger from "./logger";
+import type { PostLoginLanding } from "@prisma/client";
 import type { AppRole } from "./member-roles";
 import {
   hasAccessRole,
@@ -19,9 +21,25 @@ import {
 import { MEMBER_ACCESS_ROLE_SELECT } from "./access-role-definitions";
 import { loadEffectiveModuleFlags } from "./module-settings";
 import { consumeTwoFactorSessionChallenge } from "./two-factor";
+import { hashActionToken, isActionTokenFormat } from "./action-tokens";
+import {
+  linkGoogleAccount,
+  readGoogleLinkIntent,
+  resolveGoogleProfile,
+  type GoogleMemberUser,
+  type GoogleProfileResult,
+} from "./google-oauth";
 
 class EmailNotVerifiedError extends CredentialsSignin {
   code = "EMAIL_NOT_VERIFIED";
+}
+
+// A magic link must never trap a member who has a pending forced password
+// change: the /change-password flow requires the current password, and only the
+// password-reset flow clears `forcePasswordChange`. So passwordless sign-in
+// refuses these members and points them at "Forgot password" (#2034).
+class MagicLinkPasswordChangeRequiredError extends CredentialsSignin {
+  code = "PASSWORD_CHANGE_REQUIRED";
 }
 
 // bcrypt hash of a random throwaway value. Compared against when no member
@@ -41,6 +59,9 @@ const SESSION_MEMBER_SECURITY_SELECT = {
   passwordChangedAt: true,
   twoFactorEnabled: true,
   twoFactorMethod: true,
+  // Post-login landing preference (#2090), refreshed per request alongside the
+  // security fields so a profile toggle change takes effect on the next request.
+  postLoginLanding: true,
   // Joined definitions (#1367) so the per-request token refresh can compute
   // the merged admin-permission matrix over custom and club-edited
   // definition-backed roles, not just the enum bundles.
@@ -89,6 +110,11 @@ declare module "next-auth" {
       twoFactorVerified: boolean;
       twoFactorEnrolled: boolean;
       twoFactorMethod: "TOTP" | "EMAIL" | null;
+      /**
+       * Post-login landing preference (#2090). null = follow the role default
+       * (admin access ⇒ first accessible admin page, else /dashboard).
+       */
+      postLoginLanding: PostLoginLanding | null;
     };
   }
   interface User {
@@ -181,8 +207,228 @@ export const authConfig = {
         };
       },
     }),
+    // Passwordless magic-link sign-in (#2034). Additive to the password
+    // provider above and returns the EXACT same user shape, so the unchanged
+    // jwt/session callbacks stamp role, the admin-permission matrix, and the
+    // 2FA claims identically — a 2FA-enabled member still lands on
+    // /login/verify. This provider NEVER sets twoFactorVerified.
+    Credentials({
+      id: "magic-link",
+      name: "magic-link",
+      credentials: {
+        token: { label: "Token", type: "text" },
+      },
+      async authorize(credentials) {
+        const rawToken = credentials?.token;
+        if (typeof rawToken !== "string" || !isActionTokenFormat(rawToken)) {
+          return null;
+        }
+
+        // Verify-side kill-switch: a fresh (never cached) module read, matching
+        // the request endpoint's own fresh-read posture, so disabling the
+        // magicLink module immediately stops outstanding links being redeemed
+        // rather than leaving them live for up to the full TTL. Placed BEFORE
+        // the single-use token claim on purpose: a temporary disable must not
+        // burn an unredeemed link — re-enabling the module lets the same link
+        // still work within its TTL, which is what an admin toggling expects.
+        const modules = await loadEffectiveModuleFlags();
+        if (!modules.magicLink) {
+          return null;
+        }
+
+        const tokenHash = hashActionToken(rawToken.trim());
+        const tokenRow = await prisma.magicLinkToken.findUnique({
+          where: { tokenHash },
+        });
+
+        // Reject missing, already-used, or expired tokens.
+        if (
+          !tokenRow ||
+          tokenRow.used ||
+          tokenRow.expiresAt.getTime() <= Date.now()
+        ) {
+          return null;
+        }
+
+        // Single-use via a conditional claim: only the update that flips
+        // used:false -> used:true wins, so two concurrent clicks of the same
+        // link mint at most one session (planning-review finding — a plain
+        // $transaction wrapper does NOT stop the race; the WHERE used:false
+        // guard does). count !== 1 means another request already claimed it.
+        const claim = await prisma.magicLinkToken.updateMany({
+          where: { id: tokenRow.id, used: false },
+          data: { used: true },
+        });
+        if (claim.count !== 1) {
+          return null;
+        }
+
+        // Same gate as password login: only canLogin members, and only while
+        // active. Archived/dependent members cannot mint a session even with a
+        // valid, freshly-claimed token row.
+        const member = await prisma.member.findFirst({
+          where: { id: tokenRow.memberId, canLogin: true },
+        });
+        if (!member || !member.active) {
+          return null;
+        }
+
+        // Block unverified members — magic link must never be an
+        // email-verification bypass (owner decision, #2030).
+        if (!member.emailVerified) {
+          throw new EmailNotVerifiedError();
+        }
+
+        // Refuse while a forced password change is pending: signing in here
+        // would strand the member on /change-password (which needs the current
+        // password). Point them at Forgot password, which clears the flag.
+        if (member.forcePasswordChange) {
+          throw new MagicLinkPasswordChangeRequiredError();
+        }
+
+        try {
+          await prisma.member.update({
+            where: { id: member.id },
+            data: { lastLoginAt: new Date() },
+          });
+        } catch (error) {
+          logger.warn(
+            { err: error, memberId: member.id },
+            "Failed to update member last login timestamp"
+          );
+        }
+
+        return {
+          id: member.id,
+          email: member.email,
+          name: `${member.firstName} ${member.lastName}`,
+          role: member.role,
+          forcePasswordChange: member.forcePasswordChange,
+          isEmailVerified: member.emailVerified,
+          twoFactorEnabled: member.twoFactorEnabled,
+          twoFactorMethod: member.twoFactorMethod,
+        };
+      },
+    }),
+    // Google OAuth sign-in via profile-initiated linking (#2035). JWT strategy,
+    // NO adapter. The provider `profile()` maps a Google identity to OUR member
+    // identity by `googleSub === profile.sub` ONLY (never email-match, never
+    // provision), returning the EXACT same user shape as the Credentials
+    // providers so the UNCHANGED jwt/session callbacks stamp role, the
+    // admin-permission matrix, and the 2FA claims identically. Every gate and
+    // the module kill-switch are finalised in the signIn callback below. The
+    // same provider also serves account-linking, disambiguated there by the
+    // short-lived link-intent cookie.
+    Google({
+      clientId: process.env.GOOGLE_CLIENT_ID,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+      // Never auto-link by matching email across identity providers — linking is
+      // profile-initiated only.
+      allowDangerousEmailAccountLinking: false,
+      async profile(profile) {
+        // Pure sub-only resolver (no writes). Returns the member user shape when
+        // eligible, else a sentinel carrying the refusal reason for signIn. The
+        // sentinel intentionally omits the augmented User fields (it can never
+        // mint a session — signIn refuses first), so cast past the User type.
+        return (await resolveGoogleProfile(profile)) as unknown as GoogleMemberUser;
+      },
+    }),
   ],
   callbacks: {
+    // Gate + disambiguate every Google round-trip. Non-Google providers are
+    // untouched (they had no signIn callback before; returning true preserves
+    // "allow"). Returning a STRING makes @auth/core redirect and return EARLY,
+    // BEFORE minting a session — so the link path performs its write and
+    // redirects with no session identity switch, and every refusal lands on a
+    // friendly /login?error=… (or /profile?googleError=…) page.
+    async signIn({ user, account, profile }) {
+      if (account?.provider !== "google") {
+        return true;
+      }
+
+      const sub =
+        profile && typeof profile.sub === "string" ? profile.sub : null;
+      // Read (and best-effort clear) the link-intent cookie set by the
+      // authenticated profile "Connect Google" route. Present ⇒ link round-trip.
+      const intent = await readGoogleLinkIntent();
+
+      // Fresh module read (never cached), mirroring magic-link's verify-side
+      // kill-switch: disabling googleLogin immediately refuses BOTH new logins
+      // AND linking — even for already-linked members.
+      const modules = await loadEffectiveModuleFlags();
+      if (!modules.googleLogin) {
+        return intent
+          ? "/profile?googleError=disabled#security"
+          : "/login?error=google_disabled";
+      }
+
+      if (!sub) {
+        return intent
+          ? "/profile?googleError=failed#security"
+          : "/login?error=google_failed";
+      }
+
+      if (intent) {
+        // LINK path (profile-initiated, authenticated via the signed cookie).
+        //
+        // CRITICAL (planning-review MAJOR): bind the link to the CURRENT
+        // session, not just to whoever the intent cookie names. Intent clearing
+        // is best-effort (@auth/core builds its own Response, so the cookie can
+        // survive to its TTL), so on a shared device (e.g. a lodge iPad) a stale
+        // intent from member V must NOT convert member W's later Google LOGIN
+        // into a cross-member link. Require the session that completed consent to
+        // BE the member who started linking. In the legitimate flow the linker
+        // always holds an active session equal to the intent, so this is
+        // non-breaking; anyone else (no session, or a different member) is
+        // refused and simply retries a normal login. auth() is callable here —
+        // same request context, and it only decodes the session cookie (it never
+        // re-enters this signIn callback, so there is no recursion).
+        const session = await auth();
+        if (!session?.user?.id || session.user.id !== intent.memberId) {
+          return "/login?error=google_refused";
+        }
+
+        // Require a verified Google email before pinning the sub.
+        const emailVerified =
+          profile && (profile as { email_verified?: unknown }).email_verified;
+        if (emailVerified !== true) {
+          return "/profile?googleError=unverified#security";
+        }
+        const outcome = await linkGoogleAccount(intent.memberId, sub);
+        return `/profile?${outcome}#security`;
+      }
+
+      // LOGIN path — sub-only resolution already ran in profile(); read its
+      // verdict from the carried status. Never provision, never email-match.
+      const status = (user as Partial<GoogleProfileResult> | undefined)
+        ?.googleLoginStatus;
+      if (status !== "ok") {
+        switch (status) {
+          case "unlinked":
+            return "/login?error=google_unlinked";
+          case "password_change":
+            return "/login?error=google_password_change";
+          default:
+            return "/login?error=google_refused";
+        }
+      }
+
+      // Eligible: record the login timestamp, then allow — the unchanged
+      // jwt/session callbacks stamp the member identity (never the Google sub)
+      // and leave 2FA to be challenged as usual.
+      try {
+        await prisma.member.update({
+          where: { id: user.id as string },
+          data: { lastLoginAt: new Date() },
+        });
+      } catch (error) {
+        logger.warn(
+          { err: error, memberId: user.id },
+          "Failed to update member last login timestamp (Google sign-in)",
+        );
+      }
+      return true;
+    },
     async jwt({ token, user, trigger, session }) {
       if (user) {
         token.role = user.role;
@@ -254,6 +500,7 @@ export const authConfig = {
             canLogin: member.canLogin,
           });
           token.forcePasswordChange = member.forcePasswordChange;
+          token.postLoginLanding = member.postLoginLanding ?? null;
           token.isEmailVerified = member.emailVerified;
           token.sessionInvalidated =
             member.passwordChangedAt instanceof Date &&
@@ -304,6 +551,11 @@ export const authConfig = {
         emptyAdminPermissionMatrix();
       session.user.id = token.id as string;
       session.user.forcePasswordChange = token.forcePasswordChange as boolean;
+      session.user.postLoginLanding =
+        token.postLoginLanding === "MEMBER_DASHBOARD" ||
+        token.postLoginLanding === "ADMIN_DASHBOARD"
+          ? token.postLoginLanding
+          : null;
       session.user.isEmailVerified = token.isEmailVerified as boolean;
       session.user.sessionInvalidated = Boolean(token.sessionInvalidated);
       if (typeof token.sessionIssuedAt === "number") {
@@ -321,6 +573,12 @@ export const authConfig = {
   },
   pages: {
     signIn: "/login",
+    // Route genuine provider-side aborts (Google consent denied, OAuth state
+    // mismatch, etc.) that never reach our signIn callback to /login instead of
+    // the bare Auth.js /api/auth/error page. @auth/core appends ?error=<Code>
+    // (e.g. OAuthCallbackError, AccessDenied), which the login form's generic
+    // OAuth branch renders as a sensible "couldn't complete sign-in" message.
+    error: "/login",
   },
   session: {
     strategy: "jwt",

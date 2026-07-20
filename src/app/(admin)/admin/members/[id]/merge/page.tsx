@@ -3,8 +3,9 @@
 import { use, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
-import { ArrowLeft, ArrowLeftRight, AlertTriangle } from "lucide-react";
+import { ArrowLeftRight, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { BackLink } from "@/components/admin/back-link";
 import { Input } from "@/components/ui/input";
 import { MemberPicker, type PickedMember } from "@/components/admin/member-picker";
 
@@ -211,14 +212,9 @@ export default function MemberMergePage({
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-6">
-      <Button
-        variant="ghost"
-        size="sm"
-        className="mb-4"
-        onClick={() => router.push(`/admin/members/${masterId}`)}
-      >
-        <ArrowLeft className="mr-1 h-4 w-4" /> Back to member
-      </Button>
+      <div className="mb-4">
+        <BackLink href={`/admin/members/${masterId}`} label="Member" />
+      </div>
 
       <h1 className="text-xl font-semibold text-gray-900">Merge duplicate member</h1>
       <p className="mt-1 text-sm text-gray-500">

@@ -39,6 +39,40 @@ export type DisplayModuleDependencyKey =
  */
 export type DisplayModuleDependencyMode = "degrades" | "hides";
 
+/**
+ * A declarative, machine-readable descriptor for one module option (ADR-004 §3).
+ * The visual builder's per-module settings drawer is generated from these — a
+ * new module without descriptors offers no options in the drawer, and a
+ * descriptor can never present an option the module's real parser
+ * (`intOption`/`boolOption`/`enumOption`, `module-options.ts`) would reject or
+ * silently default: a drift-guard test binds each descriptor's
+ * default/bounds/allowed set to the parser's behaviour and to the source
+ * constants (issue #30 AC6 keeps the parser the runtime authority; these are the
+ * UI mirror). Scalars only (int/bool/enum) — the same constraint the save
+ * contract enforces in `validateSlotContent`. No descriptor may widen a privacy
+ * field (ADR-004 §5): widening is structurally impossible (modules only see the
+ * already-reduced DisplayState) and a privacy test asserts none is offered.
+ */
+export type DisplayModuleOptionDescriptor =
+  | {
+      key: string;
+      label: string;
+      description?: string;
+      type: "int";
+      default: number;
+      min: number;
+      max: number;
+    }
+  | { key: string; label: string; description?: string; type: "bool"; default: boolean }
+  | {
+      key: string;
+      label: string;
+      description?: string;
+      type: "enum";
+      default: string;
+      allowed: readonly string[];
+    };
+
 export interface DisplayModuleMetadata {
   /** Registry key — one of DISPLAY_MODULE_NAMES. */
   name: DisplayModuleName;
@@ -56,6 +90,13 @@ export interface DisplayModuleMetadata {
   contributes: readonly string[];
   /** The token an authored Layout/Template references this module by. */
   embedToken: string;
+  /**
+   * Declarative option descriptors driving the visual builder's settings drawer
+   * (ADR-004 §3). Empty for a module that takes no options. Every descriptor is
+   * bound to the module's real parser by the drift-guard test, so the drawer can
+   * never present an option the renderer would reject.
+   */
+  options: readonly DisplayModuleOptionDescriptor[];
 }
 
 function embedToken(name: DisplayModuleName): string {
@@ -86,6 +127,7 @@ const DISPLAY_MODULE_METADATA: DisplayModuleMetadata[] = [
     ],
     contributes: [],
     embedToken: embedToken("lodge-header"),
+    options: [],
   },
   {
     name: "arrivals-board",
@@ -113,6 +155,29 @@ const DISPLAY_MODULE_METADATA: DisplayModuleMetadata[] = [
     ],
     contributes: [],
     embedToken: embedToken("arrivals-board"),
+    // Mirrors arrivals-board.tsx: `days` (intOption 1–7), `max-names` (intOption
+    // 1–10), `name-style` (enumOption over ARRIVALS_BOARD_NAME_STYLES). "lead-count"
+    // shows the lead name + a count — a privacy RESTRICTION, never a widening.
+    options: [
+      { key: "days", label: "Nights to show", type: "int", default: 3, min: 1, max: 7 },
+      {
+        key: "max-names",
+        label: "Names per bar",
+        description: "How many of the already-privacy-reduced names to list before a +N overflow.",
+        type: "int",
+        default: 5,
+        min: 1,
+        max: 10,
+      },
+      {
+        key: "name-style",
+        label: "Name style",
+        description: "Show the reduced names, or just the lead name and a count (more private).",
+        type: "enum",
+        default: "names",
+        allowed: ["names", "lead-count"],
+      },
+    ],
   },
   {
     name: "occupancy-grid",
@@ -139,6 +204,27 @@ const DISPLAY_MODULE_METADATA: DisplayModuleMetadata[] = [
     ],
     contributes: [],
     embedToken: embedToken("occupancy-grid"),
+    // Mirrors occupancy-grid.tsx: `days` (intOption 1–7), `max-names` (intOption
+    // 1–10), `variant` (enumOption over OCCUPANCY_GRID_VARIANTS).
+    options: [
+      { key: "days", label: "Nights in the strip", type: "int", default: 3, min: 1, max: 7 },
+      {
+        key: "max-names",
+        label: "Names per bar",
+        type: "int",
+        default: 5,
+        min: 1,
+        max: 10,
+      },
+      {
+        key: "variant",
+        label: "Variant",
+        description: "Auto picks board when rooms exist, else the statement view; or force one.",
+        type: "enum",
+        default: "auto",
+        allowed: ["auto", "board", "statement"],
+      },
+    ],
   },
   {
     name: "welcome",
@@ -162,6 +248,7 @@ const DISPLAY_MODULE_METADATA: DisplayModuleMetadata[] = [
     ],
     contributes: [],
     embedToken: embedToken("welcome"),
+    options: [],
   },
   {
     name: "singles-board",
@@ -183,6 +270,10 @@ const DISPLAY_MODULE_METADATA: DisplayModuleMetadata[] = [
     ],
     contributes: [],
     embedToken: embedToken("singles-board"),
+    // Mirrors singles-board.tsx: `days` (intOption 1–7, default ARRIVALS_BOARD_DEFAULT_DAYS).
+    options: [
+      { key: "days", label: "Nights to show", type: "int", default: 3, min: 1, max: 7 },
+    ],
   },
   {
     name: "room-cards",
@@ -209,6 +300,7 @@ const DISPLAY_MODULE_METADATA: DisplayModuleMetadata[] = [
     ],
     contributes: [],
     embedToken: embedToken("room-cards"),
+    options: [],
   },
   {
     name: "night-columns",
@@ -237,6 +329,21 @@ const DISPLAY_MODULE_METADATA: DisplayModuleMetadata[] = [
     ],
     contributes: [],
     embedToken: embedToken("night-columns"),
+    // Mirrors night-columns.tsx: `days` (intOption 1–NIGHT_COLUMNS_MAX_DAYS,
+    // default NIGHT_COLUMNS_DEFAULT_DAYS), `show-rooms` (boolOption default true).
+    options: [
+      // max mirrors NIGHT_COLUMNS_MAX_DAYS = 3 (#2056 Option C: the board is a
+      // permanent 3-night board matching the fixed device data window); the
+      // descriptor drift-guard test fails if these ever diverge.
+      { key: "days", label: "Nights ahead", type: "int", default: 3, min: 1, max: 3 },
+      {
+        key: "show-rooms",
+        label: "Annotate with rooms",
+        description: "Show each guest's room when bed allocation is on.",
+        type: "bool",
+        default: true,
+      },
+    ],
   },
   {
     name: "status-board",
@@ -262,6 +369,7 @@ const DISPLAY_MODULE_METADATA: DisplayModuleMetadata[] = [
     ],
     contributes: [],
     embedToken: embedToken("status-board"),
+    options: [],
   },
   {
     name: "chores-board",
@@ -284,6 +392,7 @@ const DISPLAY_MODULE_METADATA: DisplayModuleMetadata[] = [
     ],
     contributes: ["chores:enabled", "chores:today"],
     embedToken: embedToken("chores-board"),
+    options: [],
   },
   {
     name: "lodge-rules",
@@ -301,6 +410,7 @@ const DISPLAY_MODULE_METADATA: DisplayModuleMetadata[] = [
     ],
     contributes: [],
     embedToken: embedToken("lodge-rules"),
+    options: [],
   },
   {
     name: "notice-board",
@@ -317,6 +427,7 @@ const DISPLAY_MODULE_METADATA: DisplayModuleMetadata[] = [
     ],
     contributes: [],
     embedToken: embedToken("notice-board"),
+    options: [],
   },
   {
     name: "info-footer",
@@ -334,6 +445,7 @@ const DISPLAY_MODULE_METADATA: DisplayModuleMetadata[] = [
     ],
     contributes: [],
     embedToken: embedToken("info-footer"),
+    options: [],
   },
 ];
 
@@ -351,6 +463,26 @@ export function getDisplayModule(
   name: DisplayModuleName
 ): DisplayModuleMetadata | undefined {
   return MODULE_REGISTRY.get(name);
+}
+
+/**
+ * Modules that are PAGE FURNITURE, not content the builder palette offers
+ * (ADR-004 §3): `lodge-header` and `info-footer` are rendered by the display
+ * shell (the footer is authored via the footer editor), so neither is a
+ * draggable palette item. Kept as an explicit set so a test can assert the
+ * palette never surfaces them.
+ */
+export const DISPLAY_PALETTE_EXCLUDED_MODULES: readonly DisplayModuleName[] = [
+  "lodge-header",
+  "info-footer",
+];
+
+/** The content modules the visual builder's palette offers (ADR-004 §3) — every
+ * module except the page furniture the shell renders. */
+export function listPaletteDisplayModules(): DisplayModuleMetadata[] {
+  return DISPLAY_MODULE_METADATA.filter(
+    (metadata) => !DISPLAY_PALETTE_EXCLUDED_MODULES.includes(metadata.name)
+  ).map((metadata) => ({ ...metadata }));
 }
 
 // Guard against a name drifting out of the metadata registry: fail fast at

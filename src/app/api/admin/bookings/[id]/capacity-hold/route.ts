@@ -43,7 +43,9 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "bookings", level: "edit" },
+  });
   if (!guard.ok) return guard.response;
   const session = guard.session;
   const { id: bookingId } = await params;
@@ -261,7 +263,9 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "bookings", level: "edit" },
+  });
   if (!guard.ok) return guard.response;
   const session = guard.session;
   const { id: bookingId } = await params;

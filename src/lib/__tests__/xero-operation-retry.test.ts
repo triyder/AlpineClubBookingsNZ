@@ -169,6 +169,28 @@ describe("getXeroOperationRetryMeta", () => {
     });
   });
 
+  it("sums a multi-line invoice request payload when the response total is absent (regression, #1932 E6)", () => {
+    // Subscription invoices are now multi-line (one line per fee component).
+    // readStoredInvoiceTotalCents must still recover a repairable total by
+    // summing quantity*unitAmount across every line when no response total exists.
+    expect(
+      getXeroOperationRetryMeta(
+        makeOperation({
+          status: "PARTIAL",
+          xeroObjectId: "inv_multi",
+          responsePayload: null,
+          requestPayload: {
+            invoices: [{ lineItems: [
+              { quantity: 1, unitAmount: 90 },
+              { quantity: 1, unitAmount: 30 },
+              { quantity: 2, unitAmount: 15 },
+            ] }],
+          },
+        })
+      )
+    ).toEqual({ supported: true, reason: null });
+  });
+
   it("blocks partial repairs when the stored invoice state is incomplete", () => {
     expect(getXeroOperationRetryMeta(makeOperation({ status: "PARTIAL" })).supported).toBe(false);
     expect(getXeroOperationRetryMeta(makeOperation({ status: "PARTIAL" })).reason).toContain(
@@ -501,7 +523,7 @@ describe("retryXeroSyncOperation", () => {
     await expect(
       retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" })
     ).resolves.toEqual({
-      message: "Retried Xero entrance fee invoice creation.",
+      message: "Retried Xero joining fee invoice creation.",
     });
 
     expect(mocks.createXeroEntranceFeeInvoice).toHaveBeenCalledWith("mem_123", {

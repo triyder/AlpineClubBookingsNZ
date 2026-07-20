@@ -414,7 +414,7 @@ describe("member delete lifecycle actions", () => {
           { xeroInvoiceNumber: { not: null } },
           { xeroOnlineInvoiceUrl: { not: null } },
           { paidAt: { not: null } },
-          { chargeCoverage: { isNot: null } },
+          { chargeCoverage: { some: {} } },
         ],
       },
     });
@@ -440,7 +440,7 @@ describe("member delete lifecycle actions", () => {
     );
     expect(mockPrisma.memberSubscription.count).toHaveBeenCalledWith({
       where: expect.objectContaining({
-        OR: expect.arrayContaining([{ chargeCoverage: { isNot: null } }]),
+        OR: expect.arrayContaining([{ chargeCoverage: { some: {} } }]),
       }),
     });
   });
@@ -841,6 +841,7 @@ describe("member archive lifecycle actions", () => {
       .mockResolvedValueOnce({ count: 1 }) // parentMemberId cleanup
       .mockResolvedValueOnce({ count: 1 }) // secondaryParentId cleanup
       .mockResolvedValueOnce({ count: 1 }) // inheritEmailFromId cleanup
+      .mockResolvedValueOnce({ count: 1 }) // billingFamilyGroupId cleanup (#1932, E6)
       .mockResolvedValueOnce({ count: 0 }); // archive claim - LOST
 
     await expect(

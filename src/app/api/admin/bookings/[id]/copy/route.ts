@@ -14,7 +14,9 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "bookings", level: "edit" },
+  });
   if (!guard.ok) return guard.response;
 
   let body: unknown;

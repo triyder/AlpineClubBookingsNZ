@@ -115,4 +115,16 @@ describe("POST /api/bookings/[id]/cancel notify choice (issue #1705)", () => {
     expect(res.status).toBe(400);
     expect(h.cancelBooking).not.toHaveBeenCalled();
   });
+
+  it("threads enforceStartedStayBlock: true so the service applies the #2029 started-stay guard", async () => {
+    // The self-service cancel surface always opts in; the service exempts a Full
+    // Admin internally, so this flag is safe to pass unconditionally here.
+    const res = await POST(req({ refundMethod: "card" }), { params });
+
+    expect(res.status).toBe(200);
+    expect(h.cancelBooking).toHaveBeenCalledTimes(1);
+    expect(h.cancelBooking.mock.calls[0][5]).toMatchObject({
+      enforceStartedStayBlock: true,
+    });
+  });
 });

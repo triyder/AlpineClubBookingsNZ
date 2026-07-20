@@ -6,6 +6,7 @@ import { buildDisplayState, type DisplayState } from "@/lib/lodge-display-state"
 import { resolveDisplayTemplateForDevice } from "@/lib/lodge-display/template-resolution";
 import { buildLayoutRender } from "@/lib/lodge-display/layout-render";
 import type { LayoutRenderPayload } from "@/lib/lodge-display/layout-registry";
+import { getDraftPreview } from "@/lib/lodge-display/draft-preview-store";
 import {
   clampPollSeconds,
   DISPLAY_DEFAULT_POLL_SECONDS,
@@ -266,9 +267,20 @@ export async function GET(req: NextRequest) {
       return grantJson({ error: "Unauthorised" }, 401);
     }
     const template = resolveDisplayTemplateForDevice({ templateKey: null });
-    const layoutResult = grant.templateId
-      ? await loadLayoutRender(grant.templateId, state)
-      : null;
+    // A draft grant (ADR-004 §7) names an ephemeral, ALREADY-RENDERED payload in
+    // the in-memory draft-preview store — read it by nonce (no DB row). An
+    // expired/unknown nonce yields a broken-binding result, exactly like a
+    // missing template row, so the frame falls back to the legacy board rather
+    // than erroring. A saved-template grant keeps the DB render path.
+    let layoutResult: LoadLayoutRenderResult | null;
+    if (grant.draftNonce) {
+      const rendered = getDraftPreview(grant.draftNonce);
+      layoutResult = rendered ? { ok: true, render: rendered } : { ok: false };
+    } else if (grant.templateId) {
+      layoutResult = await loadLayoutRender(grant.templateId, state);
+    } else {
+      layoutResult = null;
+    }
     return grantJson({
       ...state,
       template: template.definition,

@@ -1,7 +1,11 @@
 import { type BrowserContext, expect, test, type Page } from "@playwright/test";
 import { storageStatePath } from "./helpers/auth";
 import { personas } from "./helpers/personas";
-import { E2E_ADMIN } from "./helpers/fixtures";
+import {
+  DEMO_BOOKING_WINDOWS,
+  E2E_ADMIN,
+  WAITLIST_FULL_WINDOW,
+} from "./helpers/fixtures";
 import { calendarDayLabel } from "./helpers/stay-dates";
 
 // docs/END_TO_END_TEST_MATRIX.md row "Admin retroactive create (#1695)": a Full
@@ -14,8 +18,10 @@ import { calendarDayLabel } from "./helpers/stay-dates";
 // is rejected 403.
 //
 // Past dates are chosen relative to the run clock and must land inside the
-// seeded Winter 2026 window (2026-06-01..2026-09-30, see prisma/seed.ts) — the
-// same season-coverage constraint every date-based spec carries.
+// seeded (relative) Winter season — the same season-coverage constraint every
+// date-based spec carries (issue #2117: seasons and seeded bookings are now
+// relative, so the -7..-15 past window is always in-season and clear of the
+// seeded windows on any run date).
 test.describe.configure({ mode: "serial" });
 
 let memberContext: BrowserContext;
@@ -30,19 +36,17 @@ function isoDay(offsetDays: number): string {
   return `${y}-${m}-${day}`;
 }
 
-// Seeded fixed-date windows the sliding past window must dodge
-// (prisma/demo-seed.ts). The retroactive create would otherwise fail on
-// specific CI run dates:
-// - Alice's bookings that count for the (cross-lodge) member-night conflict
-//   check: the second-lodge DRAFT 2026-08-05..07 has no draftExpiresAt; the
-//   primary DRAFT 2026-07-10..12 is belt-and-braces (its expiry has passed).
-// - The waitlist fixture window 2026-09-14..16 is seeded full to lodge
-//   capacity, which would trigger the over-capacity confirm dialog this
-//   happy-path spec deliberately does not drive.
+// Seeded windows the sliding past window must dodge (prisma/e2e-fixtures.ts,
+// now RELATIVE — issue #2117). The retroactive create would otherwise fail:
+// - Alice's own DRAFT booking counts for the member-night conflict check
+//   (aliceDraft sits deep in the past, well clear of the -7..-15 sweep, but is
+//   listed so the dodge stays honest if its offset ever changes).
+// - The waitlist fixture window is seeded full to lodge capacity, which would
+//   trigger the over-capacity confirm dialog this happy-path spec does not
+//   drive (it is a future Monday, so it never overlaps a past window anyway).
 const SEEDED_BLOCKED_RANGES: ReadonlyArray<readonly [string, string]> = [
-  ["2026-07-10", "2026-07-12"],
-  ["2026-08-05", "2026-08-07"],
-  ["2026-09-14", "2026-09-16"],
+  [DEMO_BOOKING_WINDOWS.aliceDraft.checkIn, DEMO_BOOKING_WINDOWS.aliceDraft.checkOut],
+  [WAITLIST_FULL_WINDOW.checkIn, WAITLIST_FULL_WINDOW.checkOut],
 ];
 
 function overlapsSeededRange(checkIn: string, checkOut: string): boolean {

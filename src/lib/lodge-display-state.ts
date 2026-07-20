@@ -11,7 +11,7 @@ import {
   formatDateOnly,
   getTodayDateOnly,
 } from "./date-only";
-import { clubConfig } from "@/config/club";
+import { getCachedClubIdentity } from "./public-layout-config";
 import { CLUB_THEME_ID } from "./club-theme-schema";
 import { getSanitizedLodgeInstructions } from "./lodge-instructions";
 import { DISPLAY_RELEVANT_MODULE_KEYS } from "./lodge-display/conditions";
@@ -563,9 +563,17 @@ export async function buildDisplayState(
     .findUnique({ where: { id: CLUB_THEME_ID }, select: { logoDataUrl: true } })
     .catch(() => null);
 
+  // DB-first club name (E3 #1929, leak fixed C5 #1984): resolve through
+  // ClubIdentitySettings so an admin rename reaches the lobby display, instead of
+  // reading the raw config/club.json name. Uses the tagged 15s cache (invalidated
+  // by the admin identity PUT via invalidatePublicClubIdentity) rather than an
+  // uncached read, because /api/display/state is polled. Never throws — falls
+  // back to config.
+  const clubIdentity = await getCachedClubIdentity();
+
   return {
     lodge: { name: lodge.name },
-    club: { name: clubConfig.name, logoDataUrl: theme?.logoDataUrl ?? null },
+    club: { name: clubIdentity.name, logoDataUrl: theme?.logoDataUrl ?? null },
     generatedAt: new Date().toISOString(),
     window: { start: formatDateOnly(startDate), days },
     rooms,

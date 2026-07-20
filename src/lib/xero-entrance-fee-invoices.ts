@@ -41,6 +41,7 @@ import {
   type FindOrCreateXeroContactOptions,
 } from "./xero-contacts";
 import { formatDate } from "./xero-invoice-helpers";
+import { buildJoiningFeeNarration } from "./joining-fee-narration";
 
 export interface CreateXeroEntranceFeeInvoiceOptions
   extends FindOrCreateXeroContactOptions {
@@ -78,6 +79,52 @@ async function findEntranceFeeInvoicesByReference(
     },
   );
   return response.body.invoices ?? [];
+}
+
+// #1931 (E5) adopt-time dual-read: the joining-fee re-key deliberately flips
+// the display category for two cohorts (composition-family adults FAMILY ->
+// ADULT; Family-type dependents CHILD/YOUTH/INFANT -> FAMILY). The frozen Xero
+// reference embeds that label, so a PRE-rename mint whose durable
+// ENTRANCE_FEE_INVOICE link is missing/inactive would never be found under the
+// NEW label's reference — and a replay would mint a SECOND invoice for an
+// already-billed member. This recomputes the label the OLD (pre-#1931,
+// age+composition-driven) classifier would have produced, byte-for-byte
+// replicating the removed `determineEntranceFeeCategory`:
+//   YOUTH tier -> Youth; CHILD/INFANT -> Child; ADULT -> Family when any of
+//   the member's family groups has >=2 adults and >=1 dependent, else Adult.
+// The caller looks the legacy-label reference up ONLY when it differs from the
+// new label. New mints always carry the frozen NEW-label reference; this is a
+// read-side adoption fallback, never a write-side format change.
+async function deriveLegacyEntranceFeeCategoryLabel(
+  memberId: string,
+): Promise<string> {
+  const member = await prisma.member.findUnique({
+    where: { id: memberId },
+    select: { ageTier: true },
+  });
+  if (!member) return "Adult";
+  if (member.ageTier === "YOUTH") return "Youth";
+  if (member.ageTier === "CHILD" || member.ageTier === "INFANT") return "Child";
+
+  const familyMemberships = await prisma.familyGroupMember.findMany({
+    where: { memberId },
+    select: { familyGroupId: true },
+  });
+  for (const fm of familyMemberships) {
+    const groupMembers = await prisma.familyGroupMember.findMany({
+      where: { familyGroupId: fm.familyGroupId },
+      include: { member: { select: { ageTier: true } } },
+    });
+    const adults = groupMembers.filter((gm) => gm.member.ageTier === "ADULT");
+    const dependents = groupMembers.filter(
+      (gm) =>
+        gm.member.ageTier === "CHILD" ||
+        gm.member.ageTier === "YOUTH" ||
+        gm.member.ageTier === "INFANT",
+    );
+    if (adults.length >= 2 && dependents.length >= 1) return "Family";
+  }
+  return "Adult";
 }
 
 // Total of a Xero invoice in integer cents. Prefers the provider-computed
@@ -139,7 +186,7 @@ export function buildEntranceFeeLineItem(
       lineItem.description = description;
     }
   } else {
-    lineItem.description = description || `Membership entrance fee (${categoryLabel})`;
+    lineItem.description = description || buildJoiningFeeNarration(categoryLabel);
   }
 
   if (!itemCode || accountCode !== "200" || accountCodeExplicitlyConfigured) {
@@ -157,7 +204,7 @@ export async function createXeroEntranceFeeInvoice(
   const { category, feeMapping } = entranceFee;
   const queuedOperationId = options?.syncOperationId ?? null;
 
-  // Organisations/schools are exempt from entrance fees (owner decision,
+  // Organisations/schools are exempt from joining fees (owner decision,
   // 2026-07-07). The fresh tier read also covers replayed operations that
   // were queued (with a precomputed context or amount override) before the
   // member was reclassified as an organisation.
@@ -189,7 +236,7 @@ export async function createXeroEntranceFeeInvoice(
         status: "SUCCEEDED",
         responsePayload: {
           skipped: true,
-          reason: "No entrance fee is configured for this member category.",
+          reason: "No joining fee is configured for this membership type.",
           category,
         },
       });
@@ -227,7 +274,7 @@ export async function createXeroEntranceFeeInvoice(
       await completeXeroSyncOperation(queuedOperationId, {
         responsePayload: {
           adopted: true,
-          reason: "Entrance fee invoice already linked for this member.",
+          reason: "Joining fee invoice already linked for this member.",
           category,
         },
         xeroObjectType: "INVOICE",
@@ -333,11 +380,33 @@ export async function createXeroEntranceFeeInvoice(
     // member's own AUTHORISED invoice for the expected amount is adoptable, and
     // a genuine duplicate surfaces a conflict for a human rather than being
     // silently adopted-first.
-    const existingByReference = await findEntranceFeeInvoicesByReference(
+    const existingByNewReference = await findEntranceFeeInvoicesByReference(
       authenticatedXero,
       authenticatedTenantId,
       reference,
     );
+    // #1931 (E5) dual-read: also look up the reference the OLD classifier
+    // would have produced when its label differs (label-flipped cohorts), so a
+    // pre-rename mint with a missing/inactive link is ADOPTED, not re-minted.
+    // An invoice carries exactly one Reference, so the two lookups can never
+    // return the same invoice twice.
+    const legacyCategoryLabel =
+      await deriveLegacyEntranceFeeCategoryLabel(memberId);
+    const legacyReference =
+      legacyCategoryLabel !== categoryLabel
+        ? `Entrance fee (${legacyCategoryLabel}) - ${memberId}`
+        : null;
+    const existingByLegacyReference = legacyReference
+      ? await findEntranceFeeInvoicesByReference(
+          authenticatedXero,
+          authenticatedTenantId,
+          legacyReference,
+        )
+      : [];
+    const existingByReference = [
+      ...existingByNewReference,
+      ...existingByLegacyReference,
+    ];
     // Only this member's AUTHORISED invoices are adoption candidates. A VOIDED/
     // DELETED/DRAFT invoice is ignored (so it can never suppress a legitimate
     // re-issue), and an invoice on a different contact (a residual reference
@@ -369,6 +438,7 @@ export async function createXeroEntranceFeeInvoice(
           memberId,
           category,
           reference,
+          legacyReference,
           conflict: "DUPLICATE_REFERENCE",
           invoiceIds: conflictInvoiceIds,
           invoiceCount: adoptableCandidates.length,
@@ -416,6 +486,7 @@ export async function createXeroEntranceFeeInvoice(
           memberId,
           category,
           reference,
+          legacyReference,
           conflict: "PROVIDER_MISMATCH",
           invoiceId: conflictInvoiceId,
           expectedAmountCents: feeAmountCents,

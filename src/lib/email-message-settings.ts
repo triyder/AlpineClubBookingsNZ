@@ -25,6 +25,18 @@ const FALLBACK_PUBLIC_URL = "http://localhost:3000";
 // replacing the retired CLUB_LODGE_NAME export from config/club-identity.ts.
 export const EMAIL_DEFAULT_LODGE_NAME = `${clubConfig.name} Lodge`;
 
+// STABLE SEARCH-REPLACE KEY (E3 #1929 / C6 #1985): the outbound email FROM-name
+// baked into the HTML template `<title>` (email-templates.ts). Like
+// EMAIL_DEFAULT_LODGE_NAME it is the config-derived default that
+// applyEmailMessageSettingsToHtml replaces with the live
+// EmailMessageSetting.emailFromName at send time, so it MUST equal
+// getDefaultEmailMessageSettings().emailFromName (config-derived), never
+// SAFE_DEFAULT_CONFIG — or the substitution would silently no-op for a club
+// whose config differs from the safe default. This is the email bootstrap
+// search-key layer, not a runtime club.json identity read: delivered mail always
+// shows the DB value via the send-time replacement.
+export const EMAIL_DEFAULT_FROM_NAME = clubConfig.emailFromName;
+
 /**
  * Resolve ClubIdentitySettings.name defensively (E3 #1929). Used only as the
  * middle rung of the email club-name precedence: EmailMessageSetting.clubName ->
@@ -297,11 +309,8 @@ export function applyEmailMessageSettingsToSubject(
     [defaults.bookingsName, settings.bookingsName],
     [defaults.lodgeName, settings.lodgeName],
     [defaults.emailFromName, settings.emailFromName],
-    [process.env.EMAIL_FROM_NAME, settings.emailFromName],
     [defaults.supportEmail, settings.supportEmail],
-    [process.env.SUPPORT_EMAIL, settings.supportEmail],
     [defaults.contactEmail, settings.contactEmail],
-    [process.env.CONTACT_EMAIL, settings.contactEmail],
     [defaults.publicUrl, settings.publicUrl],
     [process.env.NEXTAUTH_URL?.replace(/\/+$/, ""), settings.publicUrl],
     [defaults.lodgeTravelNote, settings.lodgeTravelNote],
@@ -324,11 +333,8 @@ export function applyEmailMessageSettingsToHtml(
     [defaults.bookingsName, settings.bookingsName],
     [defaults.lodgeName, settings.lodgeName],
     [defaults.emailFromName, settings.emailFromName],
-    [process.env.EMAIL_FROM_NAME, settings.emailFromName],
     [defaults.supportEmail, settings.supportEmail],
-    [process.env.SUPPORT_EMAIL, settings.supportEmail],
     [defaults.contactEmail, settings.contactEmail],
-    [process.env.CONTACT_EMAIL, settings.contactEmail],
     [defaults.publicUrl, settings.publicUrl],
     [process.env.NEXTAUTH_URL?.replace(/\/+$/, ""), settings.publicUrl],
     [defaults.lodgeTravelNote, settings.lodgeTravelNote],

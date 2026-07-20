@@ -4,6 +4,12 @@ vi.mock("server-only", () => ({}));
 
 // Mutable identity state so URL-token tests can vary the configured values;
 // getters make the mocked module read the current state on every access.
+// `facebookUrl` here is the DB-set value surfaced through getClubIdentity() —
+// the {{facebook-url}} token now resolves DB-first (C5 #1984), NOT from the
+// static CLUB_FACEBOOK_URL config constant (kept below only to prove the token
+// no longer reads it). `publicUrl` is the fallback the token uses when no
+// facebook link is configured — as of C6 #1985 that too comes from the resolved
+// getClubIdentity().publicUrl (the bootstrap origin), NOT a static config const.
 const identityState = vi.hoisted(() => ({
   facebookUrl: undefined as string | undefined,
   publicUrl: "https://club.example.org",
@@ -11,18 +17,21 @@ const identityState = vi.hoisted(() => ({
 
 vi.mock("@/config/club-identity", () => ({
   CLUB_NAME: "Club <Name>",
-  get CLUB_FACEBOOK_URL() {
-    return identityState.facebookUrl;
-  },
-  get CLUB_PUBLIC_URL() {
-    return identityState.publicUrl;
-  },
+  // A distinct sentinel: the token must NOT read this static constant anymore.
+  CLUB_FACEBOOK_URL: "https://config-only.example/should-not-appear",
 }));
-// {{club-name}}/{{hut-leader}} now resolve DB-first via getClubIdentity (E3 #1929).
+// {{club-name}}/{{hut-leader}}/{{facebook-url}} now resolve DB-first via
+// getClubIdentity (E3 #1929, C5 #1984, C6 #1985). socialLinks.facebook mirrors
+// the DB row; publicUrl is the resolved bootstrap origin used as the token's
+// last-resort URL fallback.
 vi.mock("@/lib/club-identity-settings", () => ({
   getClubIdentity: vi.fn(async () => ({
     name: "Club <Name>",
     hutLeaderLabel: "Hut Leader",
+    publicUrl: identityState.publicUrl,
+    socialLinks: identityState.facebookUrl
+      ? { facebook: identityState.facebookUrl }
+      : {},
   })),
 }));
 vi.mock("@/config/operational", () => ({ APP_CURRENCY: "NZD & GST" }));
@@ -42,15 +51,19 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 vi.mock("@/lib/public-page-content-tokens", () => ({
-  loadPublicMembershipTypes: vi.fn(async () => [{ name: "Public member" }]),
-  loadPublicEntranceFees: vi.fn(async () => [{ category: "Adult" }]),
-  loadPublicHutFees: vi.fn(async (slug?: string) => [{ slug: slug ?? "all" }]),
+  loadPublicAnnualFees: vi.fn(async () => [{ heading: "Annual membership fees", rows: [{ label: "Public member", fee: { amountCents: 1000, label: "$10.00" } }] }]),
+  loadPublicJoiningFees: vi.fn(async () => [{ heading: "Adult", rows: [] }]),
+  loadPublicHutFees: vi.fn(async (slug?: string) => [{ heading: slug ?? "all", rowHeading: "Age", columns: [], rows: [] }]),
   loadPublicBookingPolicy: vi.fn(async (slug?: string) => ({ lodge: slug ?? null })),
   loadPublicCancellationPolicy: vi.fn(async (slug?: string) => ({ lodge: slug ?? null })),
 }));
 // sanitizePageContentHtml is pure but its module imports the prisma client.
 
-import { buildEmbeddedBody, resolveTextTokens } from "../page-content-embeds";
+import {
+  buildEmbeddedBody,
+  deriveAltFromImageSrc,
+  resolveTextTokens,
+} from "../page-content-embeds";
 import { sanitizePageContentHtml } from "../page-content-html";
 import { starterSiteContent } from "../../../prisma/starter-site-content";
 import logger from "@/lib/logger";
@@ -60,17 +73,23 @@ describe("buildEmbeddedBody", () => {
     const parts = await buildEmbeddedBody(
       "<p>Start</p>{{membership-types}}{{entrance-fees}}{{hut-fees}}{{hut-fees:river-lodge}}{{booking-policy-summary}}{{booking-policy-summary:river-lodge}}{{cancellation-policy}}{{cancellation-policy:river-lodge}}<p>End</p>",
     );
+    // {{membership-types}} and {{entrance-fees}} are deprecated aliases (#1933,
+    // E7) that resolve to the annual-fees and joining-fees parts respectively.
     expect(parts.map((part) => part.type)).toEqual([
-      "html", "membership-types", "entrance-fees", "hut-fees", "hut-fees",
+      "html", "annual-fees", "joining-fees", "hut-fees", "hut-fees",
       "booking-policy-summary", "booking-policy-summary", "cancellation-policy",
       "cancellation-policy", "html",
     ]);
-    expect(parts[4]).toEqual({ type: "hut-fees", lodges: [{ slug: "river-lodge" }] });
+    // The positional back-compat slug still flows to loadPublicHutFees.
+    expect(parts[4]).toEqual({
+      type: "hut-fees",
+      tables: [{ heading: "river-lodge", rowHeading: "Age", columns: [], rows: [] }],
+    });
   });
 
   it("preserves mixed rich HTML and repeated tokens without falling back to contact form", async () => {
     const parts = await buildEmbeddedBody("<h2>Fees</h2>{{entrance-fees}}<p>Again</p>{{entrance-fees}}");
-    expect(parts.map((part) => part.type)).toEqual(["html", "entrance-fees", "html", "entrance-fees"]);
+    expect(parts.map((part) => part.type)).toEqual(["html", "joining-fees", "html", "joining-fees"]);
     expect(parts.some((part) => part.type === "contact-form")).toBe(false);
   });
   it("preserves inline images when no gallery token is present", async () => {
@@ -125,6 +144,59 @@ describe("buildEmbeddedBody", () => {
             width: 800,
             height: 600,
           },
+        ],
+      },
+    ]);
+  });
+
+  it("backfills a filename-derived alt for gallery images with no alt attribute (#1947)", async () => {
+    const parts = await buildEmbeddedBody(
+      '<p>Before</p><img src="/api/images/uploaded/Lodge_Winter-Sunset.jpg" width="640" height="480" />{{photo-gallery}}',
+    );
+
+    expect(parts).toEqual([
+      { type: "html", value: "<p>Before</p>" },
+      {
+        type: "photo-gallery",
+        images: [
+          {
+            src: "/api/images/uploaded/Lodge_Winter-Sunset.jpg",
+            alt: "Lodge Winter Sunset",
+            width: 640,
+            height: 480,
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("preserves an explicit empty alt (decorative marker) on gallery images (#1947)", async () => {
+    const parts = await buildEmbeddedBody(
+      '<p>Before</p><img src="/api/images/uploaded/gallery.jpg" alt="" width="640" height="480" />{{photo-gallery}}',
+    );
+
+    expect(parts).toEqual([
+      { type: "html", value: "<p>Before</p>" },
+      {
+        type: "photo-gallery",
+        images: [
+          { src: "/api/images/uploaded/gallery.jpg", alt: "", width: 640, height: 480 },
+        ],
+      },
+    ]);
+  });
+
+  it("leaves the alt empty for a base64 data: gallery image with no alt (#1947)", async () => {
+    const parts = await buildEmbeddedBody(
+      '<p>Before</p><img src="data:image/png;base64,iVBORw0KGgoAAAANSU" width="10" height="10" />{{photo-gallery}}',
+    );
+
+    expect(parts).toEqual([
+      { type: "html", value: "<p>Before</p>" },
+      {
+        type: "photo-gallery",
+        images: [
+          { src: "data:image/png;base64,iVBORw0KGgoAAAANSU", alt: "", width: 10, height: 10 },
         ],
       },
     ]);
@@ -192,6 +264,54 @@ describe("buildEmbeddedBody", () => {
   });
 });
 
+describe("fee-embed block placement contract (D-R8, #1933)", () => {
+  it("renders a fee block before all other content", async () => {
+    const parts = await buildEmbeddedBody("{{annual-fees}}<p>Body</p>");
+    expect(parts.map((part) => part.type)).toEqual(["annual-fees", "html"]);
+  });
+
+  it("renders a fee block between two paragraphs, preserving document order", async () => {
+    const parts = await buildEmbeddedBody("<p>Before</p>{{annual-fees}}<p>After</p>");
+    expect(parts.map((part) => part.type)).toEqual(["html", "annual-fees", "html"]);
+    expect(parts[0]).toEqual({ type: "html", value: "<p>Before</p>" });
+    expect(parts[2]).toEqual({ type: "html", value: "<p>After</p>" });
+  });
+
+  it("renders multiple fee blocks on one page, each independently, in token order", async () => {
+    const parts = await buildEmbeddedBody("{{joining-fees}}<p>Mid</p>{{annual-fees}}<p>End</p>{{hut-fees}}");
+    expect(parts.map((part) => part.type)).toEqual([
+      "joining-fees", "html", "annual-fees", "html", "hut-fees",
+    ]);
+  });
+
+  it("splits a fee token placed mid-paragraph into repaired HTML fragments around the block", async () => {
+    // buildEmbeddedBody splits at the token, so the surrounding <p> is emitted
+    // as two unbalanced fragments (opening then closing). Each is rendered via
+    // dangerouslySetInnerHTML, and the browser repairs the fragments; the block
+    // itself still renders in document order between them.
+    const parts = await buildEmbeddedBody("<p>Fees: {{annual-fees}} shown here</p>");
+    expect(parts.map((part) => part.type)).toEqual(["html", "annual-fees", "html"]);
+    expect(parts[0]).toEqual({ type: "html", value: "<p>Fees: " });
+    expect(parts[2]).toEqual({ type: "html", value: " shown here</p>" });
+  });
+});
+
+describe("deprecated fee-token aliases render identically (#1933)", () => {
+  it("{{entrance-fees}} resolves to the same part as {{joining-fees}}", async () => {
+    const alias = await buildEmbeddedBody("{{entrance-fees}}");
+    const canonical = await buildEmbeddedBody("{{joining-fees}}");
+    expect(alias).toEqual(canonical);
+    expect(alias[0].type).toBe("joining-fees");
+  });
+
+  it("{{membership-types}} resolves to the same part as {{annual-fees}}", async () => {
+    const alias = await buildEmbeddedBody("{{membership-types}}");
+    const canonical = await buildEmbeddedBody("{{annual-fees}}");
+    expect(alias).toEqual(canonical);
+    expect(alias[0].type).toBe("annual-fees");
+  });
+});
+
 describe("resolveTextTokens URL scheme validation", () => {
   let warnSpy: ReturnType<typeof vi.spyOn>;
 
@@ -216,6 +336,21 @@ describe("resolveTextTokens URL scheme validation", () => {
       '<a href="https://www.facebook.com/exampleclub">Facebook</a>',
     );
     expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it("prefers the DB-set facebook URL over the static config constant", async () => {
+    identityState.facebookUrl = "https://www.facebook.com/db-club";
+
+    const resolved = await resolveTextTokens(
+      '<a href="{{facebook-url}}">Facebook</a>',
+    );
+
+    expect(resolved).toBe(
+      '<a href="https://www.facebook.com/db-club">Facebook</a>',
+    );
+    // Proves the token no longer sources CLUB_FACEBOOK_URL (the config mock's
+    // sentinel value must never appear).
+    expect(resolved).not.toContain("config-only.example");
   });
 
   it("passes a mailto value through unchanged", async () => {
@@ -281,5 +416,32 @@ describe("resolveTextTokens URL scheme validation", () => {
 
     expect(resolved).not.toContain("javascript:");
     expect(resolved).toContain('href="https://club.example.org"');
+  });
+});
+
+describe("deriveAltFromImageSrc (#1947)", () => {
+  it("humanises a path-based image filename", () => {
+    expect(deriveAltFromImageSrc("/api/images/uploaded/Lodge_Winter.jpg")).toBe(
+      "Lodge Winter",
+    );
+    expect(deriveAltFromImageSrc("/images/mt-ruapehu-sunset.PNG")).toBe(
+      "mt ruapehu sunset",
+    );
+  });
+
+  it("strips query and hash before deriving the name", () => {
+    expect(deriveAltFromImageSrc("/images/gallery.webp?v=3#frag")).toBe("gallery");
+  });
+
+  it("decodes percent-encoded filenames", () => {
+    expect(deriveAltFromImageSrc("/images/Whakapapa%20Lodge.jpg")).toBe(
+      "Whakapapa Lodge",
+    );
+  });
+
+  it("returns empty for a base64 data: URI (no filename to derive)", () => {
+    expect(
+      deriveAltFromImageSrc("data:image/png;base64,iVBORw0KGgoAAAANSU"),
+    ).toBe("");
   });
 });

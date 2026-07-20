@@ -100,7 +100,15 @@ export function getBookingEditPolicy(
     };
   }
 
-  if (checkIn <= today && checkOut > today) {
+  // In-progress window (issue #2029): a stay is still amendable/extendable
+  // through the ENTIRE check-out day (NZ), not just up to it. `checkOut` is the
+  // departure date, so guests can be at the lodge on the morning of `checkOut`
+  // and must be able to extend then — the booking also stays PAID that whole
+  // day (the completion cron only flips once `checkOut < today`). The window is
+  // therefore `checkIn <= today <= checkOut`. `editableFrom` stays `tomorrow`:
+  // an extension moves check-out forward (new check-out >= tomorrow adds the
+  // check-out-day night and beyond), while today and earlier remain locked.
+  if (checkIn <= today && checkOut >= today) {
     const canModify = isInProgressEditStatusAllowed(input.status);
     return {
       canModify,
@@ -122,6 +130,21 @@ export function getBookingEditPolicy(
     checkInEditable: false,
     reason: "This booking has no future nights available for self-service changes",
   };
+}
+
+/**
+ * #2029: a stay has "started" once its NZ check-in date is today or earlier.
+ * The single source of truth shared by the self-service started-stay cancel
+ * block (`booking-cancel.ts`) and the booking-detail UI, so the cancel route and
+ * the Cancel button can never disagree about when a stay has begun. `today` is
+ * injectable purely for deterministic tests; production always resolves the NZ
+ * calendar date via `getTodayDateOnly()`.
+ */
+export function bookingStayHasStarted(
+  checkIn: Date,
+  today: Date = getTodayDateOnly(),
+): boolean {
+  return normalizeDateOnlyForTimeZone(checkIn) <= today;
 }
 
 export function canModifyBookingStatusForRole(status: string, role: string): boolean {

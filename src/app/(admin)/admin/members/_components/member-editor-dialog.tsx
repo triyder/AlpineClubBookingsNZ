@@ -23,6 +23,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useMemberFieldsSettings } from "@/lib/use-member-fields-settings";
+import {
+  ageTierSelectOptions,
+  formatAgeTierName,
+} from "@/lib/use-age-tier-options";
 import { GENDER_OPTIONS, TITLE_OPTIONS } from "@/lib/member-enums";
 import { MEMBER_SETUP_INVITE_TTL_DAYS } from "@/lib/member-setup-invite";
 import { useXeroEntranceFeeDecision } from "@/lib/admin-xero-entrance-fee";
@@ -153,6 +157,14 @@ export function MemberEditorDialog({
   const [currentEditingMember, setCurrentEditingMember] =
     useState<Member | null>(editingMember);
   const [form, setForm] = useState<MemberForm>(memberToForm(editingMember));
+  // #2106: age-exemption of the member's current-season membership type drives
+  // whether N/A is forced (read-only), hand-pickable, or omitted. Null (no
+  // current-season assignment) and create mode both fall back to person-only.
+  const ageExemption =
+    currentEditingMember?.currentMembershipType?.ageExemption ?? null;
+  const naForced = ageExemption === "FORCED";
+  const naSelectable =
+    Boolean(currentEditingMember) && ageExemption === "ALLOWED";
   const [sameAsPhysical, setSameAsPhysical] = useState(() =>
     shouldDefaultPostalSameAsPhysical(memberToForm(editingMember)),
   );
@@ -485,11 +497,18 @@ export function MemberEditorDialog({
         dateOfBirth: form.dateOfBirth || null,
         role: form.role,
         accessRoles: form.accessRoles,
-        // NOT_APPLICABLE is server-managed (#1440): organisations get it
-        // forced on every write, and a member reclassified away from
-        // Organisation needs the server to restore a DOB-derived tier — so
-        // it is never submitted.
-        ...(form.ageTier === "NOT_APPLICABLE" ? {} : { ageTier: form.ageTier }),
+        // Age tier: a real person tier is always sent. NOT_APPLICABLE is
+        // normally server-managed (#1440) — organisations get it forced on
+        // every write, and a member reclassified away from Organisation needs
+        // the server to restore a DOB-derived tier — so it is omitted for
+        // org/FORCED types and in create mode. The ONE case we must submit N/A
+        // is an ALLOWED-type manual pick on an existing member (#2106), where
+        // the admin hand-picked N/A and the server would otherwise not know.
+        ...(form.ageTier === "NOT_APPLICABLE"
+          ? naSelectable
+            ? { ageTier: "NOT_APPLICABLE" }
+            : {}
+          : { ageTier: form.ageTier }),
         financeAccessLevel: form.financeAccessLevel,
         active: form.active,
         canLogin: form.canLogin,
@@ -861,11 +880,7 @@ export function MemberEditorDialog({
                 </p>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="joinedDate">
-                  {!currentEditingMember && xeroChoice === "create"
-                    ? "Joined Date *"
-                    : "Joined Date"}
-                </Label>
+                <Label htmlFor="joinedDate">Joined Date</Label>
                 <Input
                   id="joinedDate"
                   type="date"
@@ -877,9 +892,6 @@ export function MemberEditorDialog({
                     }))
                   }
                 />
-                <p className="text-xs text-muted-foreground">
-                  Required when creating a new Xero contact.
-                </p>
               </div>
             </div>
 
@@ -927,11 +939,27 @@ export function MemberEditorDialog({
                     N/A — organisations don&apos;t have an age tier
                   </p>
                 </div>
+              ) : naForced ? (
+                // FORCED type (#2106): the allowed tiers are exactly {N/A}, so
+                // every member on it is N/A. The tier is read-only, mirroring
+                // the org readout but driven by the membership type.
+                <div className="space-y-2">
+                  <Label>Age Tier</Label>
+                  <p className="flex h-9 items-center rounded-md border border-input bg-muted px-3 text-sm text-muted-foreground">
+                    N/A — this membership type has no age tier
+                  </p>
+                </div>
               ) : (
                 <div className="space-y-2">
                   <Label>Age Tier</Label>
                   <Select
-                    value={form.ageTier === "NOT_APPLICABLE" ? "" : form.ageTier}
+                    value={
+                      form.ageTier === "NOT_APPLICABLE"
+                        ? naSelectable
+                          ? "NOT_APPLICABLE"
+                          : ""
+                        : form.ageTier
+                    }
                     onValueChange={(value) =>
                       setForm((current) => ({
                         ...current,
@@ -943,10 +971,13 @@ export function MemberEditorDialog({
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="INFANT">Infant</SelectItem>
-                      <SelectItem value="CHILD">Child</SelectItem>
-                      <SelectItem value="YOUTH">Youth</SelectItem>
-                      <SelectItem value="ADULT">Adult</SelectItem>
+                      {ageTierSelectOptions(ageExemption, {
+                        isCreate: !currentEditingMember,
+                      }).map((tier) => (
+                        <SelectItem key={tier} value={tier}>
+                          {formatAgeTierName(tier)}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>

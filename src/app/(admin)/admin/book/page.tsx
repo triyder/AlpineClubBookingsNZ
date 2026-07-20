@@ -2,6 +2,7 @@
 
 import type { AgeTier } from "@prisma/client";
 import { useState, useEffect } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { BookingCalendar } from "@/components/booking-calendar";
 import { GuestForm, type GuestData } from "@/components/guest-form";
@@ -23,6 +24,11 @@ import { LodgeSelect, useLodgeOptions } from "@/components/lodge-select";
 import { PromoCodeInput, type PromoResult } from "@/components/promo-code-input";
 import { TimePicker } from "@/components/time-picker";
 import { MemberPicker } from "@/components/admin/member-picker";
+import {
+  AdminViewOnlyNotice,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action";
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import {
   NonMemberContactForm,
   type NonMemberOwner,
@@ -66,6 +72,10 @@ interface SelectedMember {
 
 export default function AdminBookPage() {
   const router = useRouter();
+  // Booking on behalf writes POST /api/bookings, which admits only a
+  // bookings-manage (bookings:edit) actor. A view-only bookings admin can walk
+  // the wizard but cannot create/confirm the booking (#1997).
+  const canEditBookings = useAdminAreaEditAccess("bookings");
   const { lodgeCapacity } = useClubIdentity();
   const [selectedMember, setSelectedMember] = useState<SelectedMember | null>(null);
   // Book for an existing member, or inline-create a non-login non-member owner
@@ -85,6 +95,9 @@ export default function AdminBookPage() {
   const [priceQuote, setPriceQuote] = useState<PriceQuote | null>(null);
   const [priceLoading, setPriceLoading] = useState(false);
   const [error, setError] = useState("");
+  // The admin-audience `reason` a XERO_LOCK_DATE_CHECK_FAILED 503 carries
+  // (#2105) — drives the "Go to Xero setup" link on a reconnect-required cause.
+  const [errorReason, setErrorReason] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [savingDraft, setSavingDraft] = useState(false);
   const [availableBeds, setAvailableBeds] = useState(lodgeCapacity);
@@ -357,6 +370,7 @@ export default function AdminBookPage() {
   }) {
     setSubmitting(true);
     setError("");
+    setErrorReason(null);
     const checkInStr = formatLocalDateOnly(checkIn!);
     const checkOutStr = formatLocalDateOnly(checkOut!);
 
@@ -407,8 +421,10 @@ export default function AdminBookPage() {
       return;
     }
     // XERO_PERIOD_LOCKED / XERO_LOCK_DATE_CHECK_FAILED and every other error
-    // surface verbatim in the existing banner.
+    // surface verbatim in the existing banner. A reconnect-required lock-date
+    // check failure additionally offers a link to the Xero setup page (#2105).
     setError(data.error || "Failed to create booking");
+    setErrorReason(typeof data.reason === "string" ? data.reason : null);
     setSubmitting(false);
   }
 
@@ -477,6 +493,13 @@ export default function AdminBookPage() {
     <div className="max-w-3xl space-y-6">
       <h1 className="text-3xl font-bold">Book on Behalf of Member</h1>
 
+      {!canEditBookings && (
+        <AdminViewOnlyNotice canEdit={canEditBookings}>
+          Your admin role can view booking tools but cannot create bookings on
+          behalf of members.
+        </AdminViewOnlyNotice>
+      )}
+
       {/* Owner selection — pick an existing member, or inline-create a
           non-login non-member owner (#1935). The toggle only shows before an
           owner is chosen; once chosen the MemberPicker's selected card (with a
@@ -515,6 +538,13 @@ export default function AdminBookPage() {
       {error && (
         <div className="rounded-md bg-red-50 p-3 text-sm text-red-700">
           <p>{error}</p>
+          {errorReason === "reconnect_required" && (
+            <p className="mt-1">
+              <Link href="/admin/xero/setup" className="font-medium underline">
+                Go to Xero setup
+              </Link>
+            </p>
+          )}
         </div>
       )}
 
@@ -917,7 +947,8 @@ export default function AdminBookPage() {
                   </li>
                 ))}
               </ul>
-              <Button
+              <ViewOnlyActionButton
+                canEdit={canEditBookings}
                 className="mt-3"
                 variant="destructive"
                 disabled={submitting}
@@ -929,7 +960,7 @@ export default function AdminBookPage() {
                 }
               >
                 Confirm over-capacity and create
-              </Button>
+              </ViewOnlyActionButton>
             </div>
           )}
 
@@ -938,7 +969,8 @@ export default function AdminBookPage() {
               Back
             </Button>
             <div className="flex gap-3">
-              <Button
+              <ViewOnlyActionButton
+                canEdit={canEditBookings}
                 variant="outline"
                 onClick={handleSaveAsDraft}
                 disabled={
@@ -956,14 +988,15 @@ export default function AdminBookPage() {
                 }
               >
                 {savingDraft ? "Saving draft..." : "Save as Draft"}
-              </Button>
-              <Button
+              </ViewOnlyActionButton>
+              <ViewOnlyActionButton
+                canEdit={canEditBookings}
                 onClick={handleConfirmClick}
                 disabled={submitting || savingDraft}
                 size="lg"
               >
                 {submitting ? "Creating booking..." : "Confirm Booking"}
-              </Button>
+              </ViewOnlyActionButton>
             </div>
           </div>
         </div>

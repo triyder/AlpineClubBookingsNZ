@@ -24,6 +24,13 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { BackLink } from "@/components/admin/back-link";
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import {
+  ADMIN_FORBIDDEN_SAVE_REASON,
+  AdminViewOnlyNotice,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action";
 
 // Lodge configuration hub (ADR-003): one place to see a lodge's setup state,
 // with links into the existing per-area pages pre-filtered via ?lodgeId=.
@@ -51,13 +58,17 @@ const CAPACITY_SOURCE_LABELS: Record<string, string> = {
   configured_beds: "active configured beds",
   capped_beds: "the capacity set below, capping the bed count",
   capacity_override: "the capacity set below",
-  club_config: "the club's default lodge capacity",
+  // `club_config` was retired in #1982 (the club.json runtime fallback was
+  // removed); a lodge with no beds and no override now resolves to 0.
   unconfigured_lodge: "not configured yet",
 };
 
 export default function LodgeConfigurationHubPage() {
   const params = useParams<{ id: string }>();
   const lodgeId = params.id;
+  // Lodge capacity is lodge config; the write route enforces lodge:edit, so a
+  // lodge:view admin sees this screen read-only (#1940).
+  const canEdit = useAdminAreaEditAccess("lodge");
   const [lodge, setLodge] = useState<LodgeRecord | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -242,6 +253,10 @@ export default function LodgeConfigurationHubPage() {
           body: JSON.stringify({ capacity, lodgeId }),
         },
       );
+      if (res.status === 403) {
+        setCapacityMessage({ type: "error", text: ADMIN_FORBIDDEN_SAVE_REASON });
+        return;
+      }
       if (!res.ok) {
         const data = await res.json().catch(() => null);
         throw new Error(data?.error ?? "Failed to save capacity");
@@ -301,7 +316,10 @@ export default function LodgeConfigurationHubPage() {
       enabled: true,
       title: "Seasons & Rates",
       icon: CalendarRange,
-      href: `/admin/seasons?lodgeId=${encodeURIComponent(lodgeId)}`,
+      // Consolidated fee console (#1933, E7): hut nightly rates now live in
+      // Fees → Hut Fees with the lodge pre-selected (?lodgeId=). Season windows
+      // remain editable on /admin/seasons.
+      href: `/admin/fees?lodgeId=${encodeURIComponent(lodgeId)}`,
       summary: seasons,
       emptyHint: "No seasons yet — nights here cannot be priced until one exists.",
       unit: "season",
@@ -330,12 +348,7 @@ export default function LodgeConfigurationHubPage() {
         <p className="text-sm text-destructive" role="alert">
           {error ?? "Lodge not found."}
         </p>
-        <Button asChild variant="outline">
-          <Link href="/admin/lodges">
-            <ArrowLeft className="mr-2 h-4 w-4" />
-            Back to lodges
-          </Link>
-        </Button>
+        <BackLink href="/admin/lodges" label="Lodges" />
       </div>
     );
   }
@@ -414,6 +427,12 @@ export default function LodgeConfigurationHubPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
+          {!canEdit && (
+            <AdminViewOnlyNotice canEdit={canEdit}>
+              Your admin role can view this lodge&apos;s capacity but cannot
+              change it. Lodge edit access is required.
+            </AdminViewOnlyNotice>
+          )}
           <div className="text-sm">
             <p className="text-muted-foreground">Current capacity</p>
             <p className="font-medium">
@@ -446,14 +465,16 @@ export default function LodgeConfigurationHubPage() {
                 min="1"
                 value={capacityOverride}
                 onChange={(e) => setCapacityOverride(e.target.value)}
+                disabled={!canEdit}
                 className="w-28"
               />
-              <Button
+              <ViewOnlyActionButton
+                canEdit={canEdit}
                 onClick={() => void saveCapacityOverride()}
                 disabled={savingCapacity || capacityOverride.trim() === savedCapacityOverride.trim()}
               >
                 {savingCapacity ? "Saving..." : "Save"}
-              </Button>
+              </ViewOnlyActionButton>
             </div>
             <p className="text-xs text-muted-foreground">
               Leave blank to fall back to the club default (default lodge) or

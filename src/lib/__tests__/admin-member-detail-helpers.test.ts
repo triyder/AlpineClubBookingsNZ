@@ -17,7 +17,6 @@ import {
   formatPromoBenefit,
   getAuditActorDisplayName,
   getMemberDetailBackLabel,
-  getMissingFieldsForXeroCreate,
   isCollapsibleMemberSection,
   memberSectionStorageKeys,
   memberUsesSamePostalAddress,
@@ -29,16 +28,16 @@ import {
 describe("admin-member-detail-helpers", () => {
   describe("getMemberDetailBackLabel", () => {
     it("returns context-specific label for known return paths", () => {
-      expect(getMemberDetailBackLabel("/admin/bookings")).toBe("Back to Bookings")
-      expect(getMemberDetailBackLabel("/admin/payments/123")).toBe("Back to Payments")
-      expect(getMemberDetailBackLabel("/admin/subscriptions")).toBe("Back to Subscriptions")
-      expect(getMemberDetailBackLabel("/admin/refund-requests")).toBe("Back to Refund Requests")
-      expect(getMemberDetailBackLabel("/admin/xero/health")).toBe("Back to Xero")
+      expect(getMemberDetailBackLabel("/admin/bookings")).toBe("Bookings")
+      expect(getMemberDetailBackLabel("/admin/payments/123")).toBe("Payments")
+      expect(getMemberDetailBackLabel("/admin/subscriptions")).toBe("Subscriptions")
+      expect(getMemberDetailBackLabel("/admin/refund-requests")).toBe("Refund Requests")
+      expect(getMemberDetailBackLabel("/admin/xero/health")).toBe("Xero")
     })
 
     it("defaults to Members for unknown paths", () => {
-      expect(getMemberDetailBackLabel("/admin/something-else")).toBe("Back to Members")
-      expect(getMemberDetailBackLabel("/")).toBe("Back to Members")
+      expect(getMemberDetailBackLabel("/admin/something-else")).toBe("Members")
+      expect(getMemberDetailBackLabel("/")).toBe("Members")
     })
   })
 
@@ -258,58 +257,6 @@ describe("admin-member-detail-helpers", () => {
         postalCountry: "New Zealand",
       })
       expect(result).toBe(false)
-    })
-  })
-
-  describe("getMissingFieldsForXeroCreate", () => {
-    const completeForm = {
-      firstName: "Alice",
-      lastName: "Smith",
-      email: "alice@example.com",
-      phoneCountryCode: "64",
-      phoneAreaCode: "27",
-      phoneNumber: "1234567",
-      dateOfBirth: "1990-01-15",
-      joinedDate: "2024-05-01",
-      streetAddressLine1: "1 Main Rd",
-      streetCity: "Wellington",
-      streetRegion: "Wellington",
-      streetPostalCode: "6011",
-      streetCountry: "New Zealand",
-      postalAddressLine1: "1 Main Rd",
-      postalCity: "Wellington",
-      postalRegion: "Wellington",
-      postalPostalCode: "6011",
-      postalCountry: "New Zealand",
-    }
-
-    it("returns an empty array when all required fields are present", () => {
-      expect(getMissingFieldsForXeroCreate(completeForm)).toEqual([])
-    })
-
-    it("flags missing first and last names", () => {
-      expect(
-        getMissingFieldsForXeroCreate({ ...completeForm, firstName: "", lastName: "" })
-      ).toContain("First Name")
-      expect(
-        getMissingFieldsForXeroCreate({ ...completeForm, firstName: "", lastName: "" })
-      ).toContain("Last Name")
-    })
-
-    it("requires all three phone parts", () => {
-      expect(
-        getMissingFieldsForXeroCreate({ ...completeForm, phoneAreaCode: "" })
-      ).toContain("Phone")
-    })
-
-    it("flags missing physical and postal addresses", () => {
-      const missing = getMissingFieldsForXeroCreate({
-        ...completeForm,
-        streetAddressLine1: "",
-        postalCity: "",
-      })
-      expect(missing).toContain("Physical Address")
-      expect(missing).toContain("Postal Address")
     })
   })
 

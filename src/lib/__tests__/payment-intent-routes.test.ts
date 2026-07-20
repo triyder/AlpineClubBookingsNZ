@@ -19,6 +19,9 @@ const mocks = vi.hoisted(() => ({
   checkCapacityForGuestRanges: vi.fn(),
   getDefaultLodgeId: vi.fn().mockResolvedValue("lodge-1"),
   reconcileBedAllocationsForBooking: vi.fn(),
+  // #1976 — split-parent describe helper. Default null = non-split, so every
+  // pre-existing fixture keeps its single-total (non-split) response shape.
+  getProvisionalNonMemberChildSummary: vi.fn().mockResolvedValue(null),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -97,6 +100,11 @@ vi.mock("@/lib/member-credit", () => ({
   deriveBookingAppliedCreditCents: vi.fn().mockResolvedValue(0),
 }));
 
+vi.mock("@/lib/booking-split-summary", () => ({
+  getProvisionalNonMemberChildSummary:
+    mocks.getProvisionalNonMemberChildSummary,
+}));
+
 vi.mock("@/lib/logger", () => ({
   default: {
     error: vi.fn(),
@@ -141,6 +149,10 @@ const mockGetSetupIntent = getSetupIntent as ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // clearAllMocks resets call history but not implementations, so restore the
+  // non-split default here — a split-case test's mockResolvedValue would
+  // otherwise leak into every following test (#1976).
+  mocks.getProvisionalNonMemberChildSummary.mockResolvedValue(null);
   mockAuth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER", accessRoles: [{ role: "USER" }] } });
   mockFindOrCreateCustomer.mockResolvedValue({ id: "cus_123" });
   mocks.markBookingPaymentSucceeded.mockResolvedValue({
@@ -191,6 +203,107 @@ describe("payment intent routes", () => {
 
     expect(res.status).toBe(200);
     expect(data.clientSecret).toBe("cs_existing");
+    expect(mockStripeCreatePaymentIntent).not.toHaveBeenCalled();
+  });
+
+  it("reuses a matching-amount intent and returns the split charge figures for a split parent (#1976)", async () => {
+    // Reuse branch (route ~L271-285): an existing non-canceled intent whose
+    // amount already equals effectivePriceCents is handed back as-is. The
+    // response must still carry the split shape and the reused intent's own
+    // amount as chargedAmountCents.
+    mockPrisma.booking.findUnique.mockResolvedValue({
+      id: "booking-1",
+      memberId: "member-1",
+      status: "PAYMENT_PENDING",
+      hasNonMembers: false,
+      organiserSettled: false,
+      finalPriceCents: 12000,
+      member: {
+        id: "member-1",
+        email: "member@example.com",
+        firstName: "Test",
+        lastName: "Member",
+      },
+      guests: [{ id: "guest-1", isMember: true }],
+      payment: {
+        stripePaymentIntentId: "pi_reuse",
+        status: "FAILED",
+      },
+    });
+    mocks.getProvisionalNonMemberChildSummary.mockResolvedValue({
+      guestCount: 2,
+      holdUntil: new Date("2026-08-01"),
+      deferredAmountCents: 8000,
+    });
+    // Existing intent already priced at the member portion (12000c).
+    mockGetPaymentIntent.mockResolvedValue({
+      id: "pi_reuse",
+      client_secret: "cs_reuse",
+      status: "requires_payment_method",
+      amount: 12000,
+    });
+
+    const req = new NextRequest("http://localhost/api/payments/create-payment-intent", {
+      method: "POST",
+      body: JSON.stringify({ bookingId: "booking-1" }),
+      headers: { "Content-Type": "application/json" },
+    });
+
+    const res = await createPaymentIntentRoute(req);
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.clientSecret).toBe("cs_reuse");
+    // chargedAmountCents is the reused intent's own amount (server-authoritative).
+    expect(data.chargedAmountCents).toBe(12000);
+    expect(data.isSplit).toBe(true);
+    expect(data.deferredGuestAmountCents).toBe(8000);
+    // No fresh intent minted — the existing one is reused.
+    expect(mockStripeCreatePaymentIntent).not.toHaveBeenCalled();
+  });
+
+  it("reuses a matching-amount intent with the unchanged non-split shape (#1976)", async () => {
+    mockPrisma.booking.findUnique.mockResolvedValue({
+      id: "booking-1",
+      memberId: "member-1",
+      status: "PAYMENT_PENDING",
+      hasNonMembers: false,
+      organiserSettled: false,
+      finalPriceCents: 12500,
+      member: {
+        id: "member-1",
+        email: "member@example.com",
+        firstName: "Test",
+        lastName: "Member",
+      },
+      guests: [{ id: "guest-1", isMember: true }],
+      payment: {
+        stripePaymentIntentId: "pi_reuse",
+        status: "FAILED",
+      },
+    });
+    // Default getProvisionalNonMemberChildSummary mock returns null → non-split.
+    mockGetPaymentIntent.mockResolvedValue({
+      id: "pi_reuse",
+      client_secret: "cs_reuse",
+      status: "requires_payment_method",
+      amount: 12500,
+    });
+
+    const req = new NextRequest("http://localhost/api/payments/create-payment-intent", {
+      method: "POST",
+      body: JSON.stringify({ bookingId: "booking-1" }),
+      headers: { "Content-Type": "application/json" },
+    });
+
+    const res = await createPaymentIntentRoute(req);
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.clientSecret).toBe("cs_reuse");
+    expect(data.chargedAmountCents).toBe(12500);
+    expect(data.isSplit).toBe(false);
+    expect(data.deferredGuestAmountCents).toBeNull();
     expect(mockStripeCreatePaymentIntent).not.toHaveBeenCalled();
   });
 
@@ -251,6 +364,96 @@ describe("payment intent routes", () => {
     expect(mockStripeCreatePaymentIntent).toHaveBeenCalledWith(
       expect.objectContaining({ amountCents: 15000 }),
     );
+  });
+
+  it("returns the member-portion charge and deferred guest portion for a split parent (#1976)", async () => {
+    // Split parent: priced on the member subset only (12000c). Its non-member
+    // guests live on a provisional child priced at 8000c, charged later.
+    mockPrisma.booking.findUnique.mockResolvedValue({
+      id: "booking-1",
+      memberId: "member-1",
+      status: "PAYMENT_PENDING",
+      hasNonMembers: false,
+      organiserSettled: false,
+      finalPriceCents: 12000,
+      member: {
+        id: "member-1",
+        email: "member@example.com",
+        firstName: "Test",
+        lastName: "Member",
+      },
+      guests: [{ id: "guest-1", isMember: true }],
+      payment: null,
+    });
+    mocks.getProvisionalNonMemberChildSummary.mockResolvedValue({
+      guestCount: 2,
+      holdUntil: new Date("2026-08-01"),
+      deferredAmountCents: 8000,
+    });
+    mockStripeCreatePaymentIntent.mockResolvedValue({
+      id: "pi_split",
+      client_secret: "cs_split",
+      amount: 12000,
+    });
+    mockPrisma.payment.upsert.mockResolvedValue({ id: "pay-split" });
+
+    const req = new NextRequest("http://localhost/api/payments/create-payment-intent", {
+      method: "POST",
+      body: JSON.stringify({ bookingId: "booking-1" }),
+      headers: { "Content-Type": "application/json" },
+    });
+
+    const res = await createPaymentIntentRoute(req);
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    // The card is charged the member portion, and that is the figure returned.
+    expect(mockStripeCreatePaymentIntent).toHaveBeenCalledWith(
+      expect.objectContaining({ amountCents: 12000 }),
+    );
+    expect(data.chargedAmountCents).toBe(12000);
+    expect(data.isSplit).toBe(true);
+    expect(data.deferredGuestAmountCents).toBe(8000);
+  });
+
+  it("returns the full charge and no deferred portion for a non-split booking (#1976)", async () => {
+    mockPrisma.booking.findUnique.mockResolvedValue({
+      id: "booking-1",
+      memberId: "member-1",
+      status: "PAYMENT_PENDING",
+      hasNonMembers: false,
+      organiserSettled: false,
+      finalPriceCents: 12500,
+      member: {
+        id: "member-1",
+        email: "member@example.com",
+        firstName: "Test",
+        lastName: "Member",
+      },
+      guests: [{ id: "guest-1", isMember: true }],
+      payment: null,
+    });
+    // Default mock returns null → non-split.
+    mockStripeCreatePaymentIntent.mockResolvedValue({
+      id: "pi_full",
+      client_secret: "cs_full",
+      amount: 12500,
+    });
+    mockPrisma.payment.upsert.mockResolvedValue({ id: "pay-full" });
+
+    const req = new NextRequest("http://localhost/api/payments/create-payment-intent", {
+      method: "POST",
+      body: JSON.stringify({ bookingId: "booking-1" }),
+      headers: { "Content-Type": "application/json" },
+    });
+
+    const res = await createPaymentIntentRoute(req);
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.chargedAmountCents).toBe(12500);
+    expect(data.isSplit).toBe(false);
+    expect(data.deferredGuestAmountCents).toBeNull();
   });
 
   it("does not disclose an existing payment intent client secret to a non-owner", async () => {

@@ -16,6 +16,31 @@ import {
   type PriceQuote,
 } from "./types";
 
+interface GuestsStepProps {
+  checkIn: Date | null;
+  checkOut: Date | null;
+  nights: number;
+  familyMembers: FamilyMember[];
+  guests: GuestData[];
+  lodgeCapacity: number;
+  addFamilyMemberAsGuest: (fm: FamilyMember) => void;
+  showInviteFamilyGroupMembersLink: boolean;
+  handleGuestsChange: (nextGuests: GuestData[]) => void;
+  perGuestDatesEnabled: boolean;
+  handlePerGuestDatesEnabledChange: (enabled: boolean) => void;
+  multiDateRangesEnabled: boolean;
+  handleMultiDateRangesEnabledChange: (enabled: boolean) => void;
+  priceQuote: PriceQuote | null;
+  groupBookingsEnabled: boolean;
+  groupTrip: boolean;
+  setGroupTrip: (value: boolean) => void;
+  groupPaymentMode: GroupPaymentMode;
+  setGroupPaymentMode: (mode: GroupPaymentMode) => void;
+  setStep: (step: "dates" | "guests" | "review" | "pay") => void;
+  handleGuestsDone: () => void | Promise<void>;
+  priceLoading: boolean;
+}
+
 export function GuestsStep({
   checkIn,
   checkOut,
@@ -39,30 +64,77 @@ export function GuestsStep({
   setStep,
   handleGuestsDone,
   priceLoading,
-}: {
-  checkIn: Date | null;
-  checkOut: Date | null;
-  nights: number;
-  familyMembers: FamilyMember[];
-  guests: GuestData[];
-  lodgeCapacity: number;
-  addFamilyMemberAsGuest: (fm: FamilyMember) => void;
-  showInviteFamilyGroupMembersLink: boolean;
-  handleGuestsChange: (nextGuests: GuestData[]) => void;
-  perGuestDatesEnabled: boolean;
-  handlePerGuestDatesEnabledChange: (enabled: boolean) => void;
-  multiDateRangesEnabled: boolean;
-  handleMultiDateRangesEnabledChange: (enabled: boolean) => void;
-  priceQuote: PriceQuote | null;
-  groupBookingsEnabled: boolean;
-  groupTrip: boolean;
-  setGroupTrip: (value: boolean) => void;
-  groupPaymentMode: GroupPaymentMode;
-  setGroupPaymentMode: (mode: GroupPaymentMode) => void;
-  setStep: (step: "dates" | "guests" | "review" | "pay") => void;
-  handleGuestsDone: () => void | Promise<void>;
-  priceLoading: boolean;
-}) {
+}: GuestsStepProps) {
+  // Tri-state for the "add as a non-member guest" fallback warning (#1942). The
+  // live quote only computes nonMemberHoldDecision once a non-member is already
+  // in the party, so the FIRST non-member add has no decision yet — warn
+  // conditionally in that case rather than omitting the consequence entirely:
+  //   - a non-member already in the party + quote says hold applies → "applies"
+  //   - a non-member already in the party + quote says it does not    → "none"
+  //   - no non-member in the party yet (decision unavailable)          → "conditional"
+  const partyHasNonMember = guests.some((g) => !g.isMember);
+  const holdPolicy: "applies" | "conditional" | "none" = !partyHasNonMember
+    ? "conditional"
+    : priceQuote?.nonMemberHoldDecision?.shouldBePending === true
+      ? "applies"
+      : "none";
+
+  // Active steer (#1942): a typed-in non-member guest whose first+last name
+  // matches one of THIS member's own family group members who can be booked as a
+  // linked member guest. Matching is case-insensitive and scoped strictly to the
+  // member's own family list (never other members' data — no enumeration). We
+  // suggest switching them to the member guest (bed held, member rate, no split)
+  // — a suggestion only, never a forced switch.
+  const memberSwitchSuggestions = guests
+    .map((guest, index) => ({ guest, index }))
+    .filter(({ guest }) => {
+      if (guest.isMember || guest.memberId) return false;
+      const first = guest.firstName.trim().toLowerCase();
+      const last = guest.lastName.trim().toLowerCase();
+      if (!first || !last) return false;
+      return true;
+    })
+    .map(({ guest, index }) => {
+      const first = guest.firstName.trim().toLowerCase();
+      const last = guest.lastName.trim().toLowerCase();
+      const match = familyMembers.find(
+        (fm) =>
+          fm.canBeBooked !== false &&
+          !guests.some((g) => g.memberId === fm.id) &&
+          fm.firstName.trim().toLowerCase() === first &&
+          fm.lastName.trim().toLowerCase() === last,
+      );
+      return match ? { index, guest, match } : null;
+    })
+    .filter(
+      (entry): entry is { index: number; guest: GuestData; match: FamilyMember } =>
+        entry !== null,
+    );
+
+  function switchGuestToMember(index: number, fm: FamilyMember) {
+    if (guests.some((g) => g.memberId === fm.id)) return;
+    const next = guests.map((g, i) =>
+      i === index
+        ? {
+            firstName: fm.firstName,
+            lastName: fm.lastName,
+            ageTier: fm.ageTier,
+            isMember: true,
+            memberId: fm.id,
+            // Preserve any per-guest stay range the member already set.
+            ...(perGuestDatesEnabled && g.stayStart && g.stayEnd
+              ? { stayStart: g.stayStart, stayEnd: g.stayEnd }
+              : {}),
+            // Preserve the guest's per-night selection (multi-date-range mode,
+            // #713) — switching to a member guest must not silently drop the
+            // nights they picked.
+            ...(g.nights ? { nights: g.nights } : {}),
+          }
+        : g,
+    );
+    handleGuestsChange(next);
+  }
+
   return (
     <Card>
       <CardHeader>
@@ -86,7 +158,9 @@ export function GuestsStep({
                 const label = fm.relationship === "self"
                   ? `${fm.firstName} ${fm.lastName} (You)`
                   : `${fm.firstName} ${fm.lastName} (${fm.ageTier})`;
-                const blockMessage = getFamilyMemberBookingBlockMessage(fm);
+                const blockMessage = getFamilyMemberBookingBlockMessage(fm, {
+                  holdPolicy,
+                });
                 const actionLabel = getFamilyMemberBookingActionLabel(fm);
                 return (
                   <div
@@ -166,6 +240,36 @@ export function GuestsStep({
             return idx >= 0 ? g.perNightCents[idx] : null;
           }}
         />
+        {memberSwitchSuggestions.length > 0 && (
+          <div className="space-y-2 rounded-md border border-indigo-200 bg-indigo-50/60 p-4 dark:border-indigo-800 dark:bg-indigo-950/30">
+            <p className="text-sm font-medium text-indigo-900 dark:text-indigo-200">
+              Add these as member guests instead?
+            </p>
+            {memberSwitchSuggestions.map(({ index, match }) => (
+              <div
+                key={`${match.id}-${index}`}
+                className="flex flex-col gap-2 text-sm text-indigo-900 dark:text-indigo-200 sm:flex-row sm:items-center sm:justify-between"
+              >
+                <span>
+                  <strong>
+                    {match.firstName} {match.lastName}
+                  </strong>{" "}
+                  is in your family group. Adding them as a linked member guest
+                  holds a bed at member rates now — no provisional hold.
+                </span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0"
+                  onClick={() => switchGuestToMember(index, match)}
+                >
+                  Add as member guest
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
         {groupBookingsEnabled && (
           <div className="space-y-3 rounded-md border border-slate-200 p-4">
             <label className="flex items-center gap-2 text-sm font-medium cursor-pointer">

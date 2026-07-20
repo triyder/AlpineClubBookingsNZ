@@ -111,11 +111,13 @@ function Harness({
   editing = true,
   isSelf = false,
   actorIsFullAdmin = true,
+  canEdit = true,
 }: {
   member: MemberDetail;
   editing?: boolean;
   isSelf?: boolean;
   actorIsFullAdmin?: boolean;
+  canEdit?: boolean;
 }) {
   const [form, setForm] = useState<MemberAccountEditForm | null>(
     editing ? buildForm(member) : null,
@@ -141,6 +143,7 @@ function Harness({
         memberLifecycleLocked={false}
         edit={edit}
         inheritEmail={inheritEmailStub}
+        canEdit={canEdit}
       />
       <div data-testid="tokens">{form?.accessRoles.join(",") ?? ""}</div>
     </>
@@ -150,6 +153,23 @@ function Harness({
 const tokens = () => screen.getByTestId("tokens").textContent;
 const typeSelect = () =>
   screen.getByRole("combobox", { name: "User Type" }) as HTMLSelectElement;
+
+describe("MemberAccountAccessGroup view-only gating (#1997, membership)", () => {
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+  });
+
+  it("disables the Edit button for a view-only admin (canEdit=false)", () => {
+    render(<Harness member={buildMember()} editing={false} canEdit={false} />);
+    expect(screen.getByRole("button", { name: /^Edit$/i })).toBeDisabled();
+  });
+
+  it("enables the Edit button for an edit-capable admin (canEdit=true)", () => {
+    render(<Harness member={buildMember()} editing={false} canEdit />);
+    expect(screen.getByRole("button", { name: /^Edit$/i })).toBeEnabled();
+  });
+});
 
 describe("MemberAccountAccessGroup user type select (#1439)", () => {
   afterEach(() => {

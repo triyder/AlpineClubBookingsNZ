@@ -76,6 +76,18 @@ function readinessMessage(params: {
   }
 
   if (
+    params.key === "googleLogin" &&
+    (!process.env.GOOGLE_CLIENT_ID?.trim() ||
+      !process.env.GOOGLE_CLIENT_SECRET?.trim())
+  ) {
+    return {
+      status: "credentials_missing",
+      message:
+        "Google sign-in is enabled, but GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are not both configured.",
+    };
+  }
+
+  if (
     params.key === "analytics" &&
     !process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID?.trim()
   ) {

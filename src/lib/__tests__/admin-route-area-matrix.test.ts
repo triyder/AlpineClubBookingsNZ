@@ -240,6 +240,7 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/members/[id]/dependents/[dependentId]": "membership",
   "/api/admin/members/[id]/dependents/link": "membership",
   "/api/admin/members/[id]/family": "membership",
+  "/api/admin/members/[id]/joining-fee/preview": "membership",
   "/api/admin/members/[id]/lifecycle/archive": "membership",
   "/api/admin/members/[id]/lifecycle/delete": "membership",
   "/api/admin/members/[id]/lodge-access": "membership",
@@ -252,6 +253,8 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/members/[id]/xero-link": "finance",
   "/api/admin/members/[id]/xero-push": "finance",
   "/api/admin/members/[id]/xero-unlink": "finance",
+  "/api/admin/members/bulk-membership-type": "membership",
+  "/api/admin/members/bulk-membership-type/preview": "membership",
   "/api/admin/members/bulk-update": "membership",
   "/api/admin/members/export": "membership",
   "/api/admin/members/import": "membership",
@@ -290,6 +293,13 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/runtime-status": "support",
   "/api/admin/seasons": "bookings",
   "/api/admin/seasons/[id]": "bookings",
+  // Login & Security config (#2033/#2103): support-area system config, pinned
+  // alongside /api/admin/modules. Each route names support:edit explicitly
+  // rather than relying on path inference, which depends on the middleware-set
+  // request-path header (absent header ⇒ full-ADMIN fallback, silently
+  // excluding support-area admins). See admin-permissions.ts.
+  "/api/admin/security/magic-link": "support",
+  "/api/admin/security/password-policy": "support",
   "/api/admin/setup": "support",
   "/api/admin/setup/finance-report-mappings": "finance",
   "/api/admin/setup/finance-report-mappings/backfill": "finance",

@@ -18,8 +18,12 @@ import {
   type PlanContext,
   type PlanItem,
   type ReadDb,
+  type TxDb,
 } from "../import-types";
 import { RowValidator, nz, readCsvRows } from "../values";
+import type { ConfigTransferCategory } from "../manifest";
+import { bundleCarriesJoiningFeeSchedule } from "./membership-fees";
+import { addDaysDateOnly, getTodayDateOnly } from "@/lib/date-only";
 
 // xero-config category: the accounting mappings — GL account/item-code mappings
 // and per-category item codes. Contact-group rules/accepted-groups are excluded
@@ -32,10 +36,12 @@ import { RowValidator, nz, readCsvRows } from "../values";
 // ageTier, seasonType, entranceFeeCategory) INCLUDING nulls, matched via an
 // in-memory map — never the compound unique with a null coerced to false, which
 // could not match a null row and duplicated it on every import. HUT_FEE codes
-// are keyed by membership type (#1930, E4); OLD bundles carrying the legacy
-// `isMember` column are still accepted (true -> FULL, false -> NON_MEMBER,
-// documented lossy compat). The frozen legacy isMember-keyed rows are not
-// exported.
+// are keyed by membership type (#1930, E4). The old-bundle IMPORT compat — the
+// legacy `isMember` HUT_FEE key (true -> FULL, false -> NON_MEMBER) and the
+// pre-#1931 `ENTRANCE_FEE` category name — was retired one release after the E13
+// contraction (#2131): such a bundle is now REJECTED with a clear validation
+// error, never silently upgraded. The frozen legacy isMember-keyed rows are not
+// exported (export side unchanged).
 
 const ACCOUNT_FILE = "xero-config/account-mappings.csv";
 const ITEM_FILE = "xero-config/item-code-mappings.csv";
@@ -47,14 +53,20 @@ const ITEM_FIELDS = [
   "category", "membershipTypeKey", "ageTier", "seasonType", "entranceFeeCategory",
   "itemCode", "amountCents",
 ] as const;
-/** Legacy isMember -> membershipTypeKey mapping for OLD import bundles. */
-const LEGACY_IS_MEMBER_TYPE_KEY: Record<"true" | "false", string> = {
-  true: "FULL",
-  false: "NON_MEMBER",
-};
 
-/** XeroItemCodeMapping.category is a plain string column with two known values. */
-const ITEM_CATEGORIES = new Set(["HUT_FEE", "ENTRANCE_FEE"]);
+/**
+ * XeroItemCodeMapping.category is a plain string column. HUT_FEE and JOINING_FEE
+ * are the current categories. ENTRANCE_FEE was the pre-#1931 name for
+ * JOINING_FEE; the old-bundle import compat that normalised it — and the legacy
+ * isMember HUT_FEE key — closed one release after the E13 contraction (#2131),
+ * so such a bundle is now rejected with a clear error instead of being silently
+ * upgraded. The deeper transfer of joining-fee SCHEDULE amounts is follow-up
+ * #1941.
+ */
+const ITEM_CATEGORIES = new Set(["HUT_FEE", "JOINING_FEE"]);
+/** Pre-#1931 category name; rejected on import now the compat window closed (#2131). */
+const LEGACY_ENTRANCE_FEE_CATEGORY = "ENTRANCE_FEE";
+const JOINING_FEE_CATEGORY = "JOINING_FEE";
 
 const xeroSourceSchema = z.object({ tenantId: z.string().nullable() });
 
@@ -144,22 +156,47 @@ function parseItemRow(
   >,
 ): ParsedItemRow | null {
   const v = new RowValidator(ITEM_FILE, index, errors);
-  const category = v.required("category", raw.category);
-  if (category && !ITEM_CATEGORIES.has(category)) {
+  const rawCategory = v.required("category", raw.category);
+  // Pre-#1931 ENTRANCE_FEE rows (old bundles) are no longer silently upgraded to
+  // JOINING_FEE — the import compat window closed one release after E13 (#2131).
+  // Reject them with a specific, actionable message rather than the generic
+  // unknown-category error or a quiet normalisation.
+  if (rawCategory === LEGACY_ENTRANCE_FEE_CATEGORY) {
     errors.push(
-      `${ITEM_FILE} row ${index + 2}: category — "${category}" is not HUT_FEE or ENTRANCE_FEE`,
+      `${ITEM_FILE} row ${index + 2}: category — legacy "ENTRANCE_FEE" item-code rows are no longer imported (renamed to JOINING_FEE in #1931); re-export this bundle from an install running the current release`,
     );
     return null;
   }
+  if (rawCategory && !ITEM_CATEGORIES.has(rawCategory)) {
+    errors.push(
+      `${ITEM_FILE} row ${index + 2}: category — "${rawCategory}" is not HUT_FEE or JOINING_FEE`,
+    );
+    return null;
+  }
+  const category = rawCategory;
 
-  // Membership-type key (HUT_FEE only). OLD bundles carry `isMember` instead:
-  // true -> FULL, false -> NON_MEMBER (documented lossy compat, #1930 E4).
+  // Membership-type key (HUT_FEE only). The legacy pre-#1930 `isMember` column
+  // (true -> FULL, false -> NON_MEMBER) is no longer imported — the compat
+  // window closed one release after E13 (#2131) — so a bundle carrying it is
+  // rejected here, never silently mapped.
   let membershipTypeKey: string | null = null;
   if (nz(raw.membershipTypeKey) !== null) {
     membershipTypeKey = String(nz(raw.membershipTypeKey));
   } else if (nz(raw.isMember) !== null) {
-    const isMember = v.bool("isMember", raw.isMember);
-    membershipTypeKey = LEGACY_IS_MEMBER_TYPE_KEY[String(isMember) as "true" | "false"];
+    errors.push(
+      `${ITEM_FILE} row ${index + 2}: the legacy 'isMember' HUT_FEE key is no longer imported; re-export this bundle from an install running the current release`,
+    );
+    return null;
+  }
+  // A current HUT_FEE row is always membership-type-keyed; one carrying neither a
+  // membershipTypeKey nor the (now rejected) legacy isMember column is malformed
+  // — block it rather than silently create a keyless frozen-legacy-shaped row
+  // (no silent partial import).
+  if (category === "HUT_FEE" && membershipTypeKey === null) {
+    errors.push(
+      `${ITEM_FILE} row ${index + 2}: membershipTypeKey — a HUT_FEE item-code row must name a membership type`,
+    );
+    return null;
   }
   const membershipType =
     membershipTypeKey !== null ? membershipTypesByKey.get(membershipTypeKey) : undefined;
@@ -273,6 +310,252 @@ async function loadXeroBatch(db: ReadDb): Promise<XeroBatch> {
   };
 }
 
+// ---- Joining-fee materialisation from item-code amounts (#1931, E5) ---------
+//
+// A bundle can carry joining-fee AMOUNTS in the amountCents column of
+// xero-config/item-code-mappings.csv — a column the runtime no longer reads
+// (authoritative amounts live in the JoiningFee schedule). (Pre-#1931 bundles
+// used the ENTRANCE_FEE category name for these rows; that import compat closed
+// in #2131, so a genuinely old bundle is now rejected before it reaches here and
+// only current JOINING_FEE rows arrive.) Importing such a bundle into a fresh
+// install would otherwise configure item codes but ZERO fee amounts: every
+// member would join with no joining fee, silently. Mirror the migration's D-R1
+// fan-out at apply time: for each imported JOINING_FEE row with a positive
+// amount whose category has no
+// JoiningFee window covering today on the target, materialise open windows —
+// the per-tier amounts (ADULT / YOUTH / CHILD folding onto CHILD+INFANT) onto
+// every joining-fee-liable membership type (all types except the built-in
+// NON_MEMBER and SCHOOL and the Family type), and the FAMILY amount as a
+// single flat NULL-tier row on the built-in Family type. A materialised row's
+// effectiveTo is bounded to the day before that cell's earliest future window
+// so it never overlaps a deliberately scheduled future fee. A category that
+// already has a covering window is left entirely alone (deliberate target
+// config wins). First-class fee-schedule transfer is follow-up #1941.
+
+const JOINING_FEE_PER_TIER_TARGETS: Record<string, string[]> = {
+  ADULT: ["ADULT"],
+  YOUTH: ["YOUTH"],
+  CHILD: ["CHILD", "INFANT"],
+};
+const JOINING_FEE_EXCLUDED_TYPE_KEYS = new Set(["NON_MEMBER", "SCHOOL", "FAMILY"]);
+const FAMILY_MEMBERSHIP_TYPE_KEY = "FAMILY";
+
+interface JoiningFeeWindow {
+  membershipTypeId: string;
+  ageTier: string | null;
+  effectiveFrom: Date;
+  effectiveTo: Date | null;
+}
+
+function joiningFeeWindowCovers(
+  window: { effectiveFrom: Date; effectiveTo: Date | null },
+  day: Date,
+): boolean {
+  return (
+    window.effectiveFrom.getTime() <= day.getTime() &&
+    (window.effectiveTo === null || window.effectiveTo.getTime() >= day.getTime())
+  );
+}
+
+/** Positive imported JOINING_FEE amounts by entrance-fee category. */
+function importedJoiningFeeAmounts(rows: ParsedItemRow[]): Map<string, number> {
+  const amounts = new Map<string, number>();
+  for (const row of rows) {
+    if (row.identity.category !== JOINING_FEE_CATEGORY) continue;
+    const category = row.identity.entranceFeeCategory;
+    const amount = row.data.amountCents;
+    if (!category || amount === null || amount <= 0) continue;
+    if (!amounts.has(category)) amounts.set(category, amount); // first wins
+  }
+  return amounts;
+}
+
+interface JoiningFeeMaterialisationDecision {
+  /** Categories (with amounts) that will materialise: no covering window. */
+  materialise: Array<{ category: string; amountCents: number }>;
+  warnings: string[];
+  /** Coverage state per amount-bearing category, bound into the fingerprint. */
+  fingerprintParts: string[];
+}
+
+/**
+ * Decide which imported joining-fee categories need materialisation. Shared by
+ * plan (dry-run visibility + fingerprint) and apply (re-derived in-lock on the
+ * same inputs), so what was previewed is exactly what is applied.
+ */
+async function decideJoiningFeeMaterialisation(
+  db: ReadDb,
+  rows: ParsedItemRow[],
+  membershipTypesByKey: Map<string, { id: string }>,
+  today: Date,
+): Promise<JoiningFeeMaterialisationDecision> {
+  const decision: JoiningFeeMaterialisationDecision = {
+    materialise: [],
+    warnings: [],
+    fingerprintParts: [],
+  };
+  const amounts = importedJoiningFeeAmounts(rows);
+  if (amounts.size === 0) return decision;
+
+  const windows: JoiningFeeWindow[] = await db.joiningFee.findMany({
+    select: {
+      membershipTypeId: true,
+      ageTier: true,
+      effectiveFrom: true,
+      effectiveTo: true,
+    },
+  });
+  const familyTypeId =
+    membershipTypesByKey.get(FAMILY_MEMBERSHIP_TYPE_KEY)?.id ?? null;
+
+  for (const [category, amountCents] of [...amounts.entries()].sort(([a], [b]) =>
+    a.localeCompare(b),
+  )) {
+    const covered =
+      category === "FAMILY"
+        ? windows.some(
+            (w) =>
+              w.membershipTypeId === familyTypeId &&
+              w.ageTier === null &&
+              joiningFeeWindowCovers(w, today),
+          )
+        : windows.some(
+            (w) =>
+              w.ageTier !== null &&
+              (JOINING_FEE_PER_TIER_TARGETS[category] ?? []).includes(w.ageTier) &&
+              joiningFeeWindowCovers(w, today),
+          );
+    decision.fingerprintParts.push(
+      `joining-fee-coverage:${category}:${covered ? "covered" : "absent"}`,
+    );
+    if (covered) continue;
+    if (category === "FAMILY" && !familyTypeId) {
+      decision.warnings.push(
+        "The bundle carries a FAMILY joining-fee amount but this install has no built-in Family membership type; the family amount was not materialised.",
+      );
+      continue;
+    }
+    decision.materialise.push({ category, amountCents });
+  }
+
+  if (decision.materialise.length > 0) {
+    decision.warnings.push(
+      `Joining-fee windows will be created from the bundle's legacy amounts for: ${decision.materialise
+        .map((m) => m.category)
+        .join(", ")} (no covering JoiningFee window exists on this install). Review the amounts on the fee configuration page after importing.`,
+    );
+  }
+  return decision;
+}
+
+/**
+ * The legacy-amount fill windows for one fan-out cell: the complement, within
+ * [today, +infinity), of the cell's existing JoiningFee windows (#1931 F1). The
+ * removed runtime fallback billed the legacy amount on EVERY uncovered date, so
+ * every gap must be filled — the leading gap before the earliest window, each
+ * inter-window gap, and the open tail after a bounded last window. An existing
+ * window's effectiveTo === null covers to infinity (no tail); windows ending
+ * before today are irrelevant. Returned windows never overlap an existing one.
+ */
+function joiningFeeLegacyFillWindows(
+  existing: Array<{ effectiveFrom: Date; effectiveTo: Date | null }>,
+  today: Date,
+): Array<{ effectiveFrom: Date; effectiveTo: Date | null }> {
+  const relevant = existing
+    .filter((w) => w.effectiveTo === null || w.effectiveTo.getTime() >= today.getTime())
+    .sort((a, b) => a.effectiveFrom.getTime() - b.effectiveFrom.getTime());
+  const fills: Array<{ effectiveFrom: Date; effectiveTo: Date | null }> = [];
+  // `cursor` is the first still-uncovered day, sweeping forward from today.
+  let cursor = today;
+  let coveredToInfinity = false;
+  for (const window of relevant) {
+    // Clip a window that started before today to today, so the leading gap is
+    // measured from today (nothing joins in the past).
+    const start =
+      window.effectiveFrom.getTime() > today.getTime() ? window.effectiveFrom : today;
+    if (start.getTime() > cursor.getTime()) {
+      fills.push({ effectiveFrom: cursor, effectiveTo: addDaysDateOnly(start, -1) });
+    }
+    if (window.effectiveTo === null) {
+      coveredToInfinity = true;
+      break; // an open window covers the rest of the line — no later gaps
+    }
+    const next = addDaysDateOnly(window.effectiveTo, 1);
+    if (next.getTime() > cursor.getTime()) cursor = next;
+  }
+  if (!coveredToInfinity) {
+    // Open tail after the last bounded window (or the whole line when there were
+    // no relevant windows at all).
+    fills.push({ effectiveFrom: cursor, effectiveTo: null });
+  }
+  return fills;
+}
+
+/** The (membershipTypeId, ageTier) cells one category's amount fans out to. */
+function joiningFeeFanOutCells(
+  category: string,
+  membershipTypesByKey: Map<string, { id: string }>,
+): Array<{ membershipTypeId: string; ageTier: string | null }> {
+  if (category === "FAMILY") {
+    const familyTypeId = membershipTypesByKey.get(FAMILY_MEMBERSHIP_TYPE_KEY)?.id;
+    return familyTypeId ? [{ membershipTypeId: familyTypeId, ageTier: null }] : [];
+  }
+  const tiers = JOINING_FEE_PER_TIER_TARGETS[category] ?? [];
+  const cells: Array<{ membershipTypeId: string; ageTier: string | null }> = [];
+  for (const [key, type] of membershipTypesByKey) {
+    if (JOINING_FEE_EXCLUDED_TYPE_KEYS.has(key)) continue;
+    for (const tier of tiers) cells.push({ membershipTypeId: type.id, ageTier: tier });
+  }
+  return cells;
+}
+
+/**
+ * Materialise the decided categories into JoiningFee windows. Runs inside the
+ * apply transaction. Returns the number of rows created.
+ */
+async function applyJoiningFeeMaterialisation(
+  tx: TxDb,
+  decision: JoiningFeeMaterialisationDecision,
+  membershipTypesByKey: Map<string, { id: string }>,
+  today: Date,
+): Promise<number> {
+  if (decision.materialise.length === 0) return 0;
+  const windows: JoiningFeeWindow[] = await tx.joiningFee.findMany({
+    select: {
+      membershipTypeId: true,
+      ageTier: true,
+      effectiveFrom: true,
+      effectiveTo: true,
+    },
+  });
+  let created = 0;
+  for (const { category, amountCents } of decision.materialise) {
+    for (const cell of joiningFeeFanOutCells(category, membershipTypesByKey)) {
+      // Fill EVERY gap this cell leaves uncovered on the today-onward date line
+      // with the legacy amount (leading gap, inter-window gaps, and the open
+      // tail), never overlapping an existing window — reproducing the removed
+      // uncovered-date runtime fallback (#1931 F1).
+      const cellWindows = windows.filter(
+        (w) =>
+          w.membershipTypeId === cell.membershipTypeId && w.ageTier === cell.ageTier,
+      );
+      for (const fill of joiningFeeLegacyFillWindows(cellWindows, today)) {
+        await tx.joiningFee.create({
+          data: {
+            membershipTypeId: cell.membershipTypeId,
+            ageTier: cell.ageTier as never,
+            amountCents,
+            effectiveFrom: fill.effectiveFrom,
+            effectiveTo: fill.effectiveTo,
+          },
+        });
+        created += 1;
+      }
+    }
+  }
+  return created;
+}
+
 // ---- Export ----------------------------------------------------------------
 
 export const xeroConfigExporter: CategoryExporter = {
@@ -293,8 +576,10 @@ export const xeroConfigExporter: CategoryExporter = {
       ctx.db.membershipType.findMany({ select: { id: true, key: true } }),
     ]);
     const membershipTypeKeyById = new Map(membershipTypeRows.map((t) => [t.id, t.key]));
-    // Emit membership-type-keyed HUT_FEE rows and all ENTRANCE_FEE rows; the
+    // Emit membership-type-keyed HUT_FEE rows and all JOINING_FEE rows; the
     // frozen legacy isMember-keyed HUT_FEE rows are skipped (#1930, E4).
+    // ENTRANCE_FEE is not an emitted category — the #1931 migration re-keyed
+    // every such row to JOINING_FEE, and it is a rejected import shape (#2131).
     const items = itemRows
       .filter((r) => !(r.category === "HUT_FEE" && !r.membershipTypeId))
       .map((r) => ({
@@ -332,6 +617,25 @@ export const xeroConfigExporter: CategoryExporter = {
   },
 };
 
+/**
+ * The #1941 precedence guard. The item-code-amount joining-fee materialisation
+ * (#1931 — live behaviour, not old-bundle compat) is SUPERSEDED only when the
+ * bundle carries the first-class joining-fee schedule
+ * (membership-fees/joining-fees.csv) AND the membership-fees category is actually
+ * being applied. If an admin imports xero-config with membership-fees DESELECTED,
+ * the membership-fees importer never runs, so the item-code fan-out MUST still
+ * run or the joining fees silently vanish (neither path writes them).
+ */
+function itemCodeJoiningFeeSuperseded(
+  files: Map<string, Uint8Array>,
+  selectedCategories: ConfigTransferCategory[] | undefined,
+): boolean {
+  return (
+    bundleCarriesJoiningFeeSchedule(files) &&
+    (selectedCategories?.includes("membership-fees") ?? false)
+  );
+}
+
 // ---- Plan ------------------------------------------------------------------
 
 async function planXeroConfig(ctx: PlanContext): Promise<CategoryPlanResult> {
@@ -354,9 +658,11 @@ async function planXeroConfig(ctx: PlanContext): Promise<CategoryPlanResult> {
     items.push({ entity: "xero-account-mapping", key, action: planActionFor(current, changed), changedFields: changed.length ? changed : undefined });
   });
 
+  const parsedItemRows: ParsedItemRow[] = [];
   readCsvRows(ctx.files, ITEM_FILE).forEach((raw, i) => {
     const parsed = parseItemRow(i, raw, errors, batch.membershipTypesByKey);
     if (!parsed) return;
+    parsedItemRows.push(parsed);
     const current = batch.items.get(parsed.key) ?? null;
     fingerprintParts.push(
       `xero-item-code-mapping:${parsed.key}:${current ? hashRow(["itemCode", "amountCents"], current) : "absent"}`,
@@ -365,6 +671,30 @@ async function planXeroConfig(ctx: PlanContext): Promise<CategoryPlanResult> {
     const changed = changedFields(write, current);
     items.push({ entity: "xero-item-code-mapping", key: parsed.key, action: planActionFor(current, changed), changedFields: changed.length ? changed : undefined });
   });
+
+  // Joining-fee materialisation preview (#1931, E5): surface which categories
+  // will fan out into JoiningFee windows, and bind the coverage state into the
+  // fingerprint so a concurrent fee-configuration change forces a re-plan.
+  // SUPERSEDED by #1941: a bundle carrying the authoritative joining-fee
+  // schedule in membership-fees/joining-fees.csv means the item-code-amount
+  // fan-out must not also run/duplicate — but ONLY when the membership-fees
+  // category is actually being applied (see itemCodeJoiningFeeSuperseded). A
+  // bundle without joining-fees.csv, or a bundle imported with membership-fees
+  // deselected, keeps the item-code-amount fan-out so its joining fees are not
+  // silently dropped.
+  if (!itemCodeJoiningFeeSuperseded(ctx.files, ctx.selectedCategories)) {
+    const materialisation = await decideJoiningFeeMaterialisation(
+      ctx.db,
+      parsedItemRows,
+      batch.membershipTypesByKey,
+      getTodayDateOnly(),
+    );
+    warnings.push(...materialisation.warnings);
+    fingerprintParts.push(...materialisation.fingerprintParts);
+    for (const m of materialisation.materialise) {
+      items.push({ entity: "joining-fee-window", key: m.category, action: "create" });
+    }
+  }
 
   if (items.length > 0) {
     warnings.push("Xero codes are only valid for the connected Xero org — verify after importing.");
@@ -395,9 +725,11 @@ async function applyXeroConfig(ctx: ApplyContext): Promise<CategoryApplyResult> 
     });
   }
 
+  const parsedItemRows: ParsedItemRow[] = [];
   for (const [i, raw] of readCsvRows(ctx.files, ITEM_FILE).entries()) {
     const parsed = parseItemRow(i, raw, errors, batch.membershipTypesByKey);
     if (!parsed) { result.skipped += 1; continue; }
+    parsedItemRows.push(parsed);
     const current = batch.items.get(parsed.key) ?? null;
     const membershipTypeId = parsed.identity.membershipTypeKey
       ? batch.membershipTypesByKey.get(parsed.identity.membershipTypeKey)?.id ?? null
@@ -419,10 +751,45 @@ async function applyXeroConfig(ctx: ApplyContext): Promise<CategoryApplyResult> 
             entranceFeeCategory: parsed.identity.entranceFeeCategory as never,
             ...data,
           },
+          // Blue/green runtime-prep (#2130): narrow the implicit RETURNING so
+          // this write stops naming the doomed `isMember` column. `applyRow`
+          // types create/update as `Promise<unknown>` and discards the result,
+          // so `id` is a safe minimal projection.
+          select: { id: true },
         }),
-      update: (write) => ctx.tx.xeroItemCodeMapping.update({ where: { id: current!.id }, data: write }),
+      update: (write) =>
+        ctx.tx.xeroItemCodeMapping.update({
+          where: { id: current!.id },
+          data: write,
+          select: { id: true },
+        }),
       result,
     });
+  }
+
+  // Materialise JoiningFee windows from the bundle's JOINING_FEE item-code
+  // amounts (#1931, E5): re-derive the same decision the plan previewed (the
+  // fingerprint guarantees the coverage state has not drifted) and fan the
+  // amounts out per D-R1 inside this transaction. SUPERSEDED by #1941 — when
+  // membership-fees/joining-fees.csv is present AND the membership-fees
+  // category is being applied it is the authoritative joining-fee schedule, so
+  // the item-code-amount fan-out is skipped to avoid duplicating/skewing it
+  // (the precedence the plan previewed). With membership-fees deselected the
+  // fan-out still runs, so the fees are not silently dropped.
+  if (!itemCodeJoiningFeeSuperseded(ctx.files, ctx.selectedCategories)) {
+    const today = getTodayDateOnly();
+    const materialisation = await decideJoiningFeeMaterialisation(
+      ctx.tx,
+      parsedItemRows,
+      batch.membershipTypesByKey,
+      today,
+    );
+    result.created += await applyJoiningFeeMaterialisation(
+      ctx.tx,
+      materialisation,
+      batch.membershipTypesByKey,
+      today,
+    );
   }
 
   return result;

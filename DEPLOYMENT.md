@@ -96,7 +96,7 @@ Minimum production categories:
 
 - Database: `DATABASE_URL`, `DB_PASSWORD`
 - Auth: `AUTH_SECRET`, `NEXTAUTH_SECRET`, `NEXTAUTH_URL`, `AUTH_TRUST_HOST`
-- Public app: `DOMAIN`, `NEXT_PUBLIC_CONTACT_EMAIL`
+- Public app: `DOMAIN`.
   `DOMAIN` is the root public host consumed by `Caddyfile` through the
   `{$DOMAIN}` placeholder. Caddy derives `www`, `bookings`, and `dashboard`
   subdomains from that value.
@@ -117,9 +117,23 @@ Minimum production categories:
   stale generic all-reports scope; reconnect Xero from `/admin/xero` after
   changing allowed scopes so new tokens carry the granular report scopes.
 - Email: `SMTP_HOST`, `SMTP_PORT`, `AWS_SES_ACCESS_KEY_ID`,
-  `AWS_SES_SECRET_ACCESS_KEY`, `EMAIL_FROM`, `SES_SNS_TOPIC_ARN`
+  `AWS_SES_SECRET_ACCESS_KEY`, `EMAIL_FROM`, `SES_SNS_TOPIC_ARN`. `EMAIL_FROM` is
+  the only email-identity env var (besides these transport secrets): it is the
+  envelope / Return-Path sender and must be a provider-verified (SES) address.
+  Email identity — from display name, support address, and contact-form
+  recipient — is admin-managed DB-first from **Admin > Email Messages**
+  (`EmailMessageSetting`); the former `EMAIL_FROM_NAME`, `SUPPORT_EMAIL`,
+  `CONTACT_EMAIL`, and the dead `NEXT_PUBLIC_CONTACT_EMAIL` env vars were removed
+  (#1986). **Upgrade note:** a deployment that previously relied on the
+  `CONTACT_EMAIL` env var to route the contact form must set the DB
+  `contactEmail` (Admin > Email Messages); if unset it falls back to the support
+  address per the existing precedence, so there is no hard break.
 - Cron and backups: `CRON_SECRET`, `BACKUP_*`, optional
   `AUDIT_ARCHIVE_DATABASE_URL`
+- Bootstrap provisioning (optional): `CONFIG_BUNDLE_IMPORT_PATH` — path to a
+  config-transfer bundle applied non-interactively on boot **only** when the
+  database is empty of non-seed configuration. See "Config Bundle Auto-Import On
+  Boot (DR / clone)".
 - Admin health: optional `CRON_LEADER_RUNTIME_STATUS_URL` when the cron leader
   is not reachable from web containers at
   `http://app:3000/api/deploy/runtime-status`
@@ -155,14 +169,28 @@ From the target host:
 git clone https://github.com/<owner>/AlpineClubBookingsNZ.git AlpineClubBookingsNZ
 cd AlpineClubBookingsNZ
 cp .env.example .env
-cp config/club.example.json config/club.json
 # edit .env with your own values
-# edit config/club.json with your club identity, beds, and rates
 docker compose up -d --build postgres
 docker compose run --rm migrate
 docker compose up -d --build app app_blue app_green caddy
 docker compose ps
 ```
+
+To validate the production image alone (without Compose), build it locally:
+
+```bash
+docker build -t tacbookings:local .
+```
+
+Club identity, capacity, age tiers, seasons, and rates are configured **in the
+database**, not in a file. After the migrate/seed steps, sign in as the seeded
+admin and complete configuration at `/admin/setup` (identity, lodges/capacity,
+seasons/rates, email, Stripe, Xero). Optionally run `npm run setup:wizard`
+against the migrated database to bootstrap the club identity, capacity, and age
+tiers from the CLI — it writes those database settings rows (no `config/club.json`
+is written). `config/club.json` remains an optional seed/fallback only: copy
+`config/club.example.json` to `config/club.json` and edit it if you want to pin
+a boot-time fallback, but it is no longer required.
 
 Create or seed accounts only for the intended environment. The first admin
 from `prisma/seed.ts` is controlled by `SEED_ADMIN_EMAIL` and
@@ -259,6 +287,245 @@ branches alive until the contract release lands. Follow
 verification queries, sequencing, and the ledger entries that release needs;
 each contract migration must name its `previous_expand_release` in
 `docs/BLUE_GREEN_MIGRATION_SAFETY.tsv`.
+
+## Config Self-Heal On Boot
+
+A routine production deploy runs `prisma migrate deploy` **only**. The seed
+(`prisma/seed.ts`) does **not** run on an upgrade, and a SQL migration **cannot
+read `config/club.json`** — so any config value the DB is expected to hold
+cannot be backfilled by the migration or the seed on a live upgrade.
+
+To close that gap the app runs a **boot-time config self-heal**
+(`src/lib/config-self-heal.ts`, invoked from `src/instrumentation.node.ts`).
+On every Node process start it walks a registry of self-heal steps and, for each
+registered setting, copies the current **effective `config/club.json` value**
+into the DB — using one of two presence rules, depending on whether the migration
+that enabled the setting added a whole **row** or a single **column**. Properties:
+
+- **Never overwrites admin intent.** Two write shapes, both guarded so a value an
+  admin (or an earlier boot) already set is never touched:
+  - **Row-level create-if-absent** — for a setting that owns its table/singleton
+    row (e.g. the club identity row). The step writes only when the row is
+    **absent** and leaves an existing row — including one an admin deliberately
+    left partially null — completely untouched (`update: {}`).
+  - **Column-level backfill** — for a **new nullable column** added to an existing
+    singleton row long after that row was created (e.g.
+    `ClubIdentitySettings.facebookUrl`, C5 #1984). A row-level check would skip
+    every install whose row predates the column, so presence is keyed on the
+    **column** instead: the step create-if-absent-upserts the row, then fills the
+    column with an atomic `updateMany` scoped to `WHERE facebookUrl IS NULL`. It
+    can therefore only ever populate a **still-null** column and never clobbers an
+    admin-set value or a concurrent booter's write. A null on such a
+    later-added column cannot be admin intent — the column did not exist when any
+    prior admin edit was made.
+- **Idempotent.** A healthy install re-checks and writes nothing on later boots.
+- **Blue/green-safe.** When both slots boot at once, the second writer's
+  unique-constraint conflict (Prisma `P2002`) is treated as already-present, so
+  exactly one row is populated and no error surfaces.
+- **Best-effort.** Self-heal runs regardless of `CRON_ENABLED` and can never
+  block or fail startup; a step failure is logged (`scope: "config-self-heal"`)
+  and boot continues.
+- **Fallback-guarded.** Healing runs **only when the effective config came from
+  a valid primary `config/club.json`** (loader provenance `"primary"`). If the
+  primary is missing, unreadable, or malformed, the app boots on the
+  `club.example.json` identity or the hard-coded safe default — and the
+  self-heal **skips every step** rather than freezing that placeholder identity
+  (or safe-default capacity and rates) into the create-if-absent DB rows. Those
+  rows are DB-first authoritative and are never overwritten, so one bad boot
+  would otherwise strand the site on `"Example Mountain Club"` until an admin
+  edit or DB surgery. A skipped run logs a warning
+  (`scope: "config-self-heal"`) naming the provenance; **it self-repairs
+  automatically on the next boot** once a valid primary config is present. Every
+  step (including the capacity / age-tier / rate steps later collapse children
+  register) inherits this guard automatically.
+
+This mechanism — not migration/seed backfill — is what lets later config
+"collapse" changes remove a file/env fallback without stranding an existing
+deployment: the DB is already populated with the club's real value before the
+fallback is dropped. New settings register their own step in `SELF_HEAL_STEPS`.
+Registered steps:
+
+- **`club-identity-settings`** — backfills the club identity
+  (`ClubIdentitySettings`) from `config/club.json`.
+- **`club-identity-facebook-url`** (#1984) — column-level backfill of the
+  `facebookUrl` column added after the identity row existed.
+- **`age-tiers`** (#1983) — table-empty presence + one atomic create-if-absent
+  row per effective-config tier (mirroring `prisma/seed.ts`'s tier seed); an
+  admin-edited or pruned tier set is never touched. Heals **tiers only** —
+  nightly rates live independently in `MembershipTypeSeasonRate` (#1930, E4).
+  `src/lib/policies/age-tier.ts` reads age tiers DB-only at runtime; its
+  hard-coded 4-tier default is only the last-resort net for an empty table.
+- **`lodge-capacity`** (#1982) — backfills the default lodge's
+  `LodgeSettings.capacity` from the `config/club.json` bed total (column-level:
+  it fills a null `capacity`, create-if-absent, and never overwrites an
+  admin-set value), gated so it only fires when the lodge would otherwise
+  resolve to capacity 0. This is what keeps a Bed-Allocation-off default lodge
+  from dropping to capacity 0 — and refusing all bookings — after the runtime
+  `club.json` capacity fallback was removed.
+
+For a deliberate two-phase deploy, or to heal a cold database out-of-band
+without a restart, run the same routine manually:
+
+```bash
+npm run config:self-heal
+```
+
+It prints, per registered setting, whether the row was `healed`,
+`already-present`, or `failed`, and exits non-zero if any step failed. If the
+effective config is a fallback (no valid primary `config/club.json`), it writes
+nothing, prints the provenance and the remediation ("fix `config/club.json`,
+then rerun"), and **exits non-zero** — an out-of-band run that silently no-oped
+would hide the misconfiguration.
+
+## Config Bundle Auto-Import On Boot (DR / clone)
+
+To seed a fresh instance — disaster recovery, or standing up a replacement /
+clone — from a known-good configuration instead of hand-configuring it, drop the
+club's exported **config-transfer bundle** on disk and point
+`CONFIG_BUNDLE_IMPORT_PATH` at it. On the next Node boot — **after** migrations,
+the base seed, and the C2 self-heal — the app applies that bundle
+**non-interactively**, through the same validated import pipeline the admin
+Export & Import page uses (`src/lib/config-transfer/bootstrap-import.ts`,
+implementing ADR-003).
+
+The whole provisioning flow becomes:
+
+```text
+deploy env + bundle file  →  prisma migrate deploy  →  base seed  →  boot auto-import  →  operational site
+```
+
+### Placement and enabling
+
+- Export the source club's bundle from **Admin → Setup & Configuration →
+  Export & Import** (tick the categories to carry; door codes are opt-in).
+- The app containers run with a **read-only root filesystem** and, out of the
+  box, mount only the `image_uploads` volume — there is no pre-existing
+  `config/` mount. Bind-mount a host directory containing the bundle into the
+  app services (read-only), and add the env var to the shared
+  `x-app-environment` anchor so **all** replicas (`app`, `app_blue`,
+  `app_green`) see the same file and the same setting:
+
+  ```yaml
+  # docker-compose.yml (or an override file)
+  x-app-environment: &app-environment
+    # ... existing entries ...
+    CONFIG_BUNDLE_IMPORT_PATH: ${CONFIG_BUNDLE_IMPORT_PATH:-}
+
+  x-app-service: &app-service
+    # ... existing entries ...
+    volumes:
+      - image_uploads:/app/public/images
+      - ./config-bundle:/app/config-bundle:ro   # bundle drop directory
+  ```
+
+  Then on the host:
+
+  ```bash
+  mkdir -p config-bundle
+  cp /path/to/club-bundle.zip config-bundle/
+  echo 'CONFIG_BUNDLE_IMPORT_PATH=/app/config-bundle/club-bundle.zip' >> .env
+  docker compose up -d
+  ```
+
+  The path is the **in-container** path (`/app/config-bundle/club-bundle.zip`
+  in this example). Because every replica boots the import step, the file must
+  be readable by all of them — a shared bind mount on the `x-app-service`
+  anchor guarantees that; the in-lock re-check (below) guarantees only one
+  replica actually applies. The variable is unset by default; leaving it unset
+  is a silent no-op.
+- The file is **operator-controlled deployment configuration** but its bytes are
+  treated as **untrusted** — full structural validation, resource caps, the
+  secret/auth/member-coupling allowlist, and per-field Prisma-DMMF type checks
+  all apply (a bundle can never carry secrets, auth material, members, or
+  transactional data). The file is also `stat`ed before it is read: an
+  oversized (> 50 MB bundle cap) or non-regular file is refused without being
+  loaded into memory.
+
+### The empty-target guarantee (fail closed)
+
+The import applies **only when the database is empty of non-seed configuration**
+— the pristine post-seed state with **no operator footprint**, defined as the
+absence of ALL SIX of these signals:
+
+1. no config bundle has ever been imported (interactive or bootstrap),
+2. no bookings exist,
+3. no members exist beyond the seeded system accounts (admin + lodge kiosk),
+4. the setup wizard was never marked finished,
+5. the setup wizard was never even started — no completed or skipped wizard
+   steps (a club configured through `/admin/setup` without pressing "finish"
+   is still configured), and
+6. no audit-log row has a member actor (every admin configuration edit —
+   direct editors included — audits with the admin's member id; only
+   `system:`-prefixed synthetic actors and actor-less system rows are ignored).
+
+If **any** of those is present, the import is **refused and nothing is written**
+— a file dropped on disk can never overwrite a live or already-configured club,
+whether it was configured by imports, bookings, members, the wizard, or direct
+admin edits. A malformed / tampered / oversized bundle, an unreadable
+`CONFIG_BUNDLE_IMPORT_PATH`, a probe query error, or any apply failure also
+refuses and leaves the database untouched. The apply runs in a single atomic
+transaction — with the emptiness probe **re-run inside the import lock** before
+anything is written, and the idempotence marker committed in the same
+transaction — so a mid-apply failure rolls back completely and two concurrent
+boots can never double-apply. **Boot always continues**; a bootstrap bundle can
+never block or crash startup.
+
+One refusal deserves a special note: the seed creates key-weak defaults (the
+default induction template, the example chore templates), so a bundle whose
+source club **renamed** those defaults produces rename candidates that need a
+human decision, and the bootstrap aborts with `refused-invalid` (nothing
+written) — see the rename-abort log below. The fallback is the interactive
+import (**Admin → Setup & Configuration → Export & Import**), where the renames
+are resolved by hand.
+
+Unlike the self-heal, this import is **not** gated on config provenance: the
+bundle is the config source in a DR restore where `config/club.json` may be
+absent, so it runs regardless of `clubConfigSource`. The pre-apply `pg_dump`
+backup is the **one** ADR-002 safeguard waived here (an empty database has
+nothing to protect); every other safeguard applies.
+
+### Expected logs (`scope: "config-bootstrap-import"`)
+
+- **Applied** (fresh empty target — exactly ONE replica logs this):
+  `Config bundle auto-imported on boot: created N, updated M, unchanged K.`
+  A `configuration.bootstrap_imported` audit row is written in the same
+  transaction (system/deploy actor, bundle sha256, outcome); the admin audit
+  log shows the actor as "System".
+- **Multi-replica first boot** (INFO — expected, not an error): the compose
+  stack boots `app`, `app_blue`, and `app_green` near-simultaneously; every
+  replica probes, one wins the import lock and applies, and each **losing
+  replica** logs
+  `Config bundle auto-import refused: another writer configured the target
+  while this import was being prepared (…). On a multi-replica boot this is the
+  expected outcome for every replica that did not win the race. Nothing was
+  written by this replica; boot continues.`
+  (A replica that boots after the winner committed logs the steady-state
+  refusal below instead. Either way: one "auto-imported" line total, calm INFO
+  everywhere else.)
+- **Steady state** (later boots with the variable still set, INFO — expected,
+  not an error): `Config bundle auto-import refused: a config bundle was already
+  auto-imported on a prior boot; the target is configured (steady state).`
+  Steady-state boots do **zero file I/O** — the probe refuses before the bundle
+  file is even statted.
+- **Non-empty target** (WARN):
+  `Config bundle auto-import refused: target already has … ; …` (or the
+  wizard/member-actor variants of the six signals above).
+- **Rename abort** (ERROR, `refused-invalid` — see the note above):
+  `Config bundle auto-import refused: N row(s) need an interactive rename
+  decision, which cannot be made non-interactively: induction-template "…", … .
+  This can happen when the source club renamed seed-created defaults (e.g. the
+  induction template or example chore templates). Import the bundle through
+  Admin → Setup & Configuration → Export & Import instead, and resolve the
+  renames there. Nothing was written.`
+- **Bad bundle / path** (ERROR or WARN): a validation-error, oversized-file,
+  unreadable-path, or apply-failure message — always stating that nothing was
+  written and boot continues.
+
+Because a successful import commits the `configuration.bootstrap_imported`
+marker atomically with the config writes, the step is **idempotent and
+race-safe**: leaving `CONFIG_BUNDLE_IMPORT_PATH` set across restarts simply
+logs the calm steady-state refusal (with no file I/O) on every subsequent boot.
+You may unset it once the site is up.
 
 ## Staging
 

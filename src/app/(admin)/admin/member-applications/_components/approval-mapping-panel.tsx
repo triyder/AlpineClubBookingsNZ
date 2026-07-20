@@ -2,6 +2,12 @@
 
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
+import {
+  JoiningFeePreviewHint,
+  useJoiningFeePrefill,
+  useJoiningFeePreview,
+} from "@/components/admin/joining-fee-preview";
 
 // E10 (#1936): the extracted application-approval flow — per-person Create/Map
 // decisions, candidate chips + live search, a field-by-field diff preview, the
@@ -23,6 +29,9 @@ type PanelApplication = {
   applicantFirstName: string;
   applicantLastName: string;
   applicantEmail: string;
+  /** NZ date-only (YYYY-MM-DD) from the applications API — passed verbatim to
+   * the joining-fee preview endpoint, whose schema is strictly date-only. */
+  applicantDateOfBirth: string | null;
   familyMembers: ApplicationFamilyMember[];
 };
 
@@ -105,11 +114,15 @@ function candidateLabel(candidate: Candidate) {
 export default function ApprovalMappingPanel({
   application,
   submitting,
+  canEdit,
   onRequestReview,
   onError,
 }: {
   application: PanelApplication;
   submitting: boolean;
+  /** Whether the actor may approve/decline (membership edit, #1997). */
+  // Tri-state (#2065): `undefined` while the session resolves (neutral disabled).
+  canEdit: boolean | undefined;
   onRequestReview: (payload: ReviewRequestPayload) => void;
   onError: (message: string) => void;
 }) {
@@ -175,6 +188,29 @@ export default function ApprovalMappingPanel({
     (hasMappings && (!previewIsFresh || previewErrors.length > 0));
 
   const effectiveFee = applicantSel.mode === "MAP" && !feeTouched ? MAPPED_FEE : fee;
+
+  // Item 15 (#1931, E5): surface the default joining fee for the not-yet-created
+  // applicant via the preview lib's raw-inputs mode (an approved applicant
+  // becomes a FULL member; the DOB resolves the age tier). The fetch runs only
+  // while the fee action is CREATE, and the resolved default prefills the amount
+  // + narration override fields so the admin overrides from an informed
+  // baseline. Prefill never clobbers an admin edit and does not mark the fee as
+  // touched, so it stays behaviour-preserving.
+  const joiningFeePreview = useJoiningFeePreview({
+    pathId: application.id,
+    enabled: effectiveFee.action === "CREATE",
+    inputs: application.applicantDateOfBirth
+      ? { membershipTypeKey: "FULL", dateOfBirth: application.applicantDateOfBirth }
+      : { membershipTypeKey: "FULL", ageTier: "ADULT" },
+  });
+  useJoiningFeePrefill({
+    preview: joiningFeePreview.preview,
+    prefillKey: application.id,
+    amount: fee.amount,
+    narration: fee.narration,
+    setAmount: (value) => setFee((prev) => ({ ...prev, amount: value })),
+    setNarration: (value) => setFee((prev) => ({ ...prev, narration: value })),
+  });
 
   function updateApplicantMode(mode: PersonMode) {
     setApplicantSel((prev) => ({ mode, member: mode === "MAP" ? prev.member : null }));
@@ -633,6 +669,9 @@ export default function ApprovalMappingPanel({
                 }}
               />
             </label>
+            <div className="md:col-span-2">
+              <JoiningFeePreviewHint state={joiningFeePreview} />
+            </div>
           </div>
         ) : (
           <label className="space-y-1">
@@ -652,17 +691,23 @@ export default function ApprovalMappingPanel({
       </div>
 
       <div className="flex flex-wrap gap-3">
-        <Button type="button" disabled={approveDisabled} onClick={handleApprove}>
+        <ViewOnlyActionButton
+          canEdit={canEdit}
+          type="button"
+          disabled={approveDisabled}
+          onClick={handleApprove}
+        >
           {submitting ? "Working..." : "Approve"}
-        </Button>
-        <Button
+        </ViewOnlyActionButton>
+        <ViewOnlyActionButton
+          canEdit={canEdit}
           type="button"
           variant="outline"
           disabled={submitting}
           onClick={handleReject}
         >
           Reject
-        </Button>
+        </ViewOnlyActionButton>
       </div>
     </div>
   );

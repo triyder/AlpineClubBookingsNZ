@@ -1,3 +1,4 @@
+import { todayDateOnlyForTimeZone } from "@/lib/date-only";
 import {
   GENDER_OPTIONS,
   TITLE_OPTIONS,
@@ -72,6 +73,7 @@ interface MemberImportRowPayload {
   phoneNumber?: string;
   dateOfBirth?: string;
   joinedDate?: string;
+  cancelledDate?: string;
   streetAddressLine1?: string;
   streetAddressLine2?: string;
   streetCity?: string;
@@ -221,6 +223,28 @@ export const MEMBER_IMPORT_FIELD_DEFINITIONS = [
     aliases: ["lifememberdate", "lifemember", "lifememberon"],
   },
   {
+    key: "cancelledDate",
+    label: "Cancelled Date",
+    required: false,
+    // Only date-specific aliases here. The bare `cancelled`/`resigned` aliases
+    // were removed (issue #1946 review): they auto-mapped a legacy Y/N flag
+    // column onto the cancelled date, and a "Yes"/"No" value then failed date
+    // parsing and blocked the whole all-or-nothing import. `cancelledat` closes
+    // the export round-trip — the export's "Cancelled At" header normalizes to
+    // `cancelledat` and now carries an NZ date-only value.
+    aliases: [
+      "cancelleddate",
+      "cancellationdate",
+      "cancelledon",
+      "cancelledat",
+      "membershipcancelleddate",
+      "membershipenddate",
+      "dateleft",
+      "leftdate",
+      "resigneddate",
+    ],
+  },
+  {
     key: "comments",
     label: "Comments",
     required: false,
@@ -246,6 +270,7 @@ export const MEMBER_IMPORT_DATE_FIELD_KEYS = [
   "dateOfBirth",
   "joinedDate",
   "lifeMemberDate",
+  "cancelledDate",
 ] as const;
 export type MemberImportDateFieldKey =
   (typeof MEMBER_IMPORT_DATE_FIELD_KEYS)[number];
@@ -288,6 +313,15 @@ export interface MemberImportPreview {
   fileErrors: string[];
   hasErrors: boolean;
 }
+
+/**
+ * Hint appended to a cancelled-date parse failure. The cancelled date is the
+ * one import field whose column is easily confused with a legacy Yes/No
+ * "cancelled?" flag, so a value like "Yes" that fails date parsing gets an
+ * actionable nudge to unmap the column rather than a bare format error.
+ */
+export const MEMBER_IMPORT_CANCELLED_DATE_FLAG_HINT =
+  "if this column is a Yes/No cancelled flag rather than a date, leave it unmapped";
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const VALID_ROLES = new Set<string>(MEMBER_IMPORT_ROLE_VALUES);
@@ -550,6 +584,7 @@ function createEmptyMemberImportColumnMapping(): MemberImportColumnMapping {
     phoneNumber: null,
     dateOfBirth: null,
     joinedDate: null,
+    cancelledDate: null,
     streetAddressLine1: null,
     streetAddressLine2: null,
     streetCity: null,
@@ -567,7 +602,25 @@ export function createDefaultMemberImportDateFormatMapping(): MemberImportDateFo
     dateOfBirth: DEFAULT_MEMBER_IMPORT_DATE_FORMAT,
     joinedDate: DEFAULT_MEMBER_IMPORT_DATE_FORMAT,
     lifeMemberDate: DEFAULT_MEMBER_IMPORT_DATE_FORMAT,
+    cancelledDate: DEFAULT_MEMBER_IMPORT_DATE_FORMAT,
   };
+}
+
+/**
+ * A membership cancellation is always dated to the moment it happens
+ * (`cancelledAt = now` in the normal admin cancellation flow), so a cancelled
+ * date in the future is never legitimate. The import mirrors that rule: an
+ * imported cancelled date may be today or earlier (a historical/legacy
+ * cancellation being brought across), never a future date. Both operands are
+ * NZ date-only (`yyyy-MM-dd`) strings, so a lexical comparison is a correct
+ * calendar comparison. `today` defaults to the club time zone; the server
+ * re-runs this check authoritatively (the browser may sit in another zone).
+ */
+export function isMemberImportCancelledDateInFuture(
+  normalizedDateOnly: string,
+  today: string = todayDateOnlyForTimeZone(),
+): boolean {
+  return Boolean(normalizedDateOnly) && normalizedDateOnly > today;
 }
 
 export function isMemberImportDateField(
@@ -851,6 +904,7 @@ export function buildMemberImportPreview(
     const phoneNumber = getValue(record, "phoneNumber");
     const dateOfBirth = getValue(record, "dateOfBirth");
     const joinedDate = getValue(record, "joinedDate");
+    const cancelledDate = getValue(record, "cancelledDate");
     const streetAddressLine1 = getValue(record, "streetAddressLine1");
     const streetAddressLine2 = getValue(record, "streetAddressLine2");
     const streetCity = getValue(record, "streetCity");
@@ -870,6 +924,7 @@ export function buildMemberImportPreview(
     if (phoneNumber) values.phoneNumber = phoneNumber;
     if (dateOfBirth) values.dateOfBirth = dateOfBirth;
     if (joinedDate) values.joinedDate = joinedDate;
+    if (cancelledDate) values.cancelledDate = cancelledDate;
     if (streetAddressLine1) values.streetAddressLine1 = streetAddressLine1;
     if (streetAddressLine2) values.streetAddressLine2 = streetAddressLine2;
     if (streetCity) values.streetCity = streetCity;
@@ -936,10 +991,23 @@ export function buildMemberImportPreview(
         const definition = MEMBER_IMPORT_FIELD_DEFINITIONS.find(
           (field) => field.key === fieldKey,
         );
+        const cancelledFlagHint =
+          fieldKey === "cancelledDate"
+            ? ` — ${MEMBER_IMPORT_CANCELLED_DATE_FLAG_HINT}`
+            : "";
         errors.push(
-          `${definition?.label ?? fieldKey}${getColumnContext(sourceColumnLabels, fieldKey)} ${normalized.error}`,
+          `${definition?.label ?? fieldKey}${getColumnContext(sourceColumnLabels, fieldKey)} ${normalized.error}${cancelledFlagHint}`,
         );
       }
+    }
+    const normalizedCancelledDate = normalizedDateValues.cancelledDate;
+    if (
+      normalizedCancelledDate &&
+      isMemberImportCancelledDateInFuture(normalizedCancelledDate)
+    ) {
+      errors.push(
+        `Cancelled Date${getColumnContext(sourceColumnLabels, "cancelledDate")} cannot be in the future`,
+      );
     }
     if (roleInput && !role) {
       errors.push(`Role must be one of ${MEMBER_IMPORT_ROLE_LABEL}`);

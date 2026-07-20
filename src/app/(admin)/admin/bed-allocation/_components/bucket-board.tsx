@@ -24,7 +24,9 @@ interface BucketBoardProps {
   onAllocate: (group: BucketGuestGroup) => void;
   pendingGuestIds: Set<string>;
   highlightedBookingId: string;
-  canEdit?: boolean;
+  // Tri-state (#2065): `undefined` while the client session resolves; the
+  // `!canEdit` idiom treats that as disabled, so no truthy default here.
+  canEdit: boolean | undefined;
 }
 
 export function BucketBoard({
@@ -37,7 +39,7 @@ export function BucketBoard({
   onAllocate,
   pendingGuestIds,
   highlightedBookingId,
-  canEdit = true,
+  canEdit,
 }: BucketBoardProps) {
   const { setNodeRef, isOver } = useDroppable({
     id: BUCKET_DROPPABLE_ID,
@@ -122,7 +124,7 @@ export function BucketBoard({
                     "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium",
                     holdsCapacity
                       ? "bg-secondary text-secondary-foreground"
-                      : "border border-dashed border-muted-foreground/60 text-muted-foreground",
+                      : "border border-dashed border-muted-foreground/80 text-muted-foreground",
                   )}
                   title={
                     holdsCapacity

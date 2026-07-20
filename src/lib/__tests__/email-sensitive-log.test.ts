@@ -18,7 +18,33 @@ describe("sensitive EmailLog HTML classification", () => {
     expect(shouldPersistEmailHtml("chore-roster")).toBe(false);
   });
 
+  it("redacts the split-guest payment link, whose HTML carries a live /pay/<token> link (#1967/#1994)", () => {
+    // Registering the template must not weaken #1885 suppression truthfulness:
+    // its rendered HTML embeds a bearer /pay/<token> link, so it must never be
+    // persisted at rest in EmailLog or the retry table.
+    expect(shouldPersistEmailHtml("split-guest-payment-link")).toBe(false);
+  });
+
+  it("redacts the magic-link sign-in template, whose HTML carries a live /login/magic?token link (#2034)", () => {
+    // The rendered HTML embeds a single-use /login/magic?token=<token> sign-in
+    // link, so it must never persist at rest in EmailLog or the retry table.
+    expect(shouldPersistEmailHtml("magic-link-login")).toBe(false);
+  });
+
   it("continues to retain HTML for a non-sensitive template", () => {
     expect(shouldPersistEmailHtml("booking-request-declined")).toBe(true);
+  });
+
+  it("retains HTML for the #1992/#2007 duplicate-capture refund alert (no bearer token)", () => {
+    // The dedicated duplicate-capture alert carries no bearer /pay link, so its
+    // HTML must NOT be redacted at rest.
+    expect(shouldPersistEmailHtml("admin-duplicate-capture-refund")).toBe(true);
+  });
+
+  it("retains HTML for the #1993 terminal split-cancellation templates (no bearer token)", () => {
+    // Neither the admin terminal notice nor the member guest-portion-cancelled
+    // notice carries a bearer /pay link, so they must NOT be redacted at rest.
+    expect(shouldPersistEmailHtml("admin-split-settlement-cancelled")).toBe(true);
+    expect(shouldPersistEmailHtml("split-guest-portion-cancelled")).toBe(true);
   });
 });

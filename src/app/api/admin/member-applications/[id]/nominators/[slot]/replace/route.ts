@@ -23,7 +23,9 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string; slot: string }> }
 ) {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "membership", level: "edit" },
+  });
   if (!guard.ok) return guard.response;
   const { id, slot: rawSlot } = await params;
   const slot = parseSlot(rawSlot);

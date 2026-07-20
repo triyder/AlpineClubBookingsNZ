@@ -50,6 +50,22 @@ export default function BookingPaymentWrapper({
   onPaymentComplete,
 }: BookingPaymentWrapperProps) {
   const [clientSecret, setClientSecret] = useState<string | null>(null);
+  // #1976 — the charge figures the SERVER returns for this booking's payment
+  // intent. chargedAmountCents is the amount actually taken today (the member
+  // portion for a split); deferredGuestAmountCents is the non-member guest
+  // portion charged closer to the stay. Rendered by PaymentForm instead of the
+  // client-computed amountCents prop so a split parent never shows the full
+  // party total against a member-portion charge.
+  const [chargedAmountCents, setChargedAmountCents] = useState<number | null>(
+    null,
+  );
+  // #1976 — the SERVER's authoritative split verdict for this intent. Forwarded
+  // to PaymentForm so the split display is driven by the route, not re-derived
+  // client-side from the deferred amount.
+  const [isSplit, setIsSplit] = useState<boolean | null>(null);
+  const [deferredGuestAmountCents, setDeferredGuestAmountCents] = useState<
+    number | null
+  >(null);
   const [initFailed, setInitFailed] = useState(false);
   const [loading, setLoading] = useState(true);
   const handleAlreadyComplete = useEffectEvent(() => onPaymentComplete());
@@ -87,6 +103,18 @@ export default function BookingPaymentWrapper({
           return;
         }
 
+        // #1976 — adopt the server's charge figures when present (additive
+        // fields; older/other responses simply omit them and PaymentForm falls
+        // back to the amountCents prop, preserving today's non-split display).
+        if (typeof data.chargedAmountCents === "number") {
+          setChargedAmountCents(data.chargedAmountCents);
+        }
+        setIsSplit(typeof data.isSplit === "boolean" ? data.isSplit : null);
+        setDeferredGuestAmountCents(
+          typeof data.deferredGuestAmountCents === "number"
+            ? data.deferredGuestAmountCents
+            : null,
+        );
         setClientSecret(data.clientSecret);
       } catch (error) {
         reportPaymentInitError(bookingId, error);
@@ -157,6 +185,9 @@ export default function BookingPaymentWrapper({
       {paymentMode === "payment" ? (
         <PaymentForm
           amountCents={amountCents}
+          chargedAmountCents={chargedAmountCents}
+          isSplit={isSplit}
+          deferredGuestAmountCents={deferredGuestAmountCents}
           returnUrl={returnUrl}
           onSuccess={handlePaymentSuccess}
           onError={() => undefined}

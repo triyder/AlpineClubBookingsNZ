@@ -11,6 +11,7 @@ import {
   GuestInput,
   ChoreHistoryEntry,
 } from "@/lib/chore-allocator";
+import { getLodgeCapacity, FALLBACK_LODGE_CAPACITY } from "@/lib/lodge-capacity";
 import {
   getActiveGuestsForNight,
   getGuestStayEnd,
@@ -163,9 +164,25 @@ export async function POST(
         date: h.date,
       }));
 
+    // #2021 (#1982/#2013 residual): scale per-chore people-counts by this
+    // lodge's real resolved sleeping capacity (lodge-scoped), not the fixed
+    // display constant. DB read failure or a non-positive resolution keeps the
+    // constant fallback so roster generation never breaks.
+    let capacity = FALLBACK_LODGE_CAPACITY;
+    try {
+      const resolved = await getLodgeCapacity(lodgeId);
+      if (resolved > 0) capacity = resolved;
+    } catch (capacityErr) {
+      logger.warn(
+        { err: capacityErr, lodgeId },
+        "Falling back to default lodge capacity for chore people-count scaling",
+      );
+    }
+
     // Run allocator (no frequency filtering since wizard already selected chores)
     const allocations = allocateChores(templateInputs, guests, history, {
       includeNonEssential: true, // wizard explicitly chose chores
+      capacity,
     });
 
     // Return allocations with guest/chore names for display

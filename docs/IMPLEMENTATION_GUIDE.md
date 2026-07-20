@@ -46,6 +46,13 @@ The wizard writes `config/club.json` only. Keep provider keys, OAuth secrets,
 SMTP credentials, and deployment secrets in environment variables or your
 deployment secret store.
 
+After the first administrator can sign in, the club name, short name, and
+hut-leader label can also be overridden at runtime (without editing
+`config/club.json`) from Admin > Appearance > Club Identity — cross-linked from
+Admin > Setup > Initial Setup as "Club Identity". A blank field falls back to
+the configured default, and the change reaches the public site and emails within
+a few seconds.
+
 Configure public website colours, fonts, and the logo from the admin
 `/admin/site-style` wizard after the first administrator can sign in. The public
 website shows a neutral setup holding page until that wizard is finished. The
@@ -91,9 +98,12 @@ bring up the core app.
 
 After migrations and seed data run, admins activate or deactivate optional
 modules at `/admin/modules`. Kiosk, chores, finance dashboard, waitlist, Xero,
-bed allocation, Internet Banking payments, and address autocomplete default off
-until an admin enables them. General-purpose modules default on and can be
-disabled there.
+bed allocation, Internet Banking payments, address autocomplete, lobby
+display, two-factor authentication, email sign-in link (a passwordless magic
+link, additive to password login), Google sign-in (profile-initiated Google
+account linking, additive to password login; requires `GOOGLE_CLIENT_ID` and
+`GOOGLE_CLIENT_SECRET`), and Google Analytics default off until an admin
+enables them. General-purpose modules default on and can be disabled there.
 Internet Banking payments also require operational Xero to be enabled,
 configured, and connected because invoice issuing and settlement reconciliation
 run through that integration.
@@ -126,6 +136,8 @@ docker compose --env-file .env.staging -p tacbookings-staging \
   -f docker-compose.yml -f docker-compose.staging.yml exec app npx tsx prisma/seed.ts
 ```
 
+The Docker-only app listens on `http://localhost:3001` by default.
+
 For a host-run development app, point `DATABASE_URL` at PostgreSQL and run:
 
 ```bash
@@ -140,7 +152,8 @@ or contains only `demo.alpineclub.test` emails. The demo seed refuses
 `NODE_ENV=production`, non-local `DATABASE_URL` hosts, and non-demo member
 data, then deletes demo plus transactional rows before rebuilding sample
 members, bookings, payments, credits, requests, inductions, and public booking
-requests. It must not be used on deployment hosts or against shared, staging,
+requests. Demo users sign in with `demo1234` unless `DEMO_SEED_PASSWORD` is
+set. It must not be used on deployment hosts or against shared, staging,
 or production databases.
 
 Do not start a development server in a shared, staging, or production checkout

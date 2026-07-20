@@ -1,6 +1,31 @@
 import jsPDF from "jspdf";
 import html2canvas from "html2canvas";
 
+/**
+ * Force the light palette onto the off-screen document html2canvas renders from
+ * (#2146).
+ *
+ * The capture is always composited onto a white PDF page (`backgroundColor`
+ * below), so a dark-mode operator would otherwise get near-white text on white —
+ * a report that looks blank. next-themes marks the active theme with a `dark`
+ * class plus an inline `color-scheme` on <html>; dropping both in the CLONE makes
+ * every theme token resolve light without flashing the live page the operator is
+ * looking at. The class is also cleared from any nested element, so a scoped
+ * theme wrapper cannot re-darken part of the capture.
+ *
+ * Exported for the contract test; `generateReportPDF` is the only caller.
+ */
+export function forceLightPaletteInClone(clonedDocument: Document): void {
+  const root = clonedDocument.documentElement;
+  if (root) {
+    root.classList.remove("dark");
+    root.style.colorScheme = "light";
+  }
+  for (const element of Array.from(clonedDocument.querySelectorAll(".dark"))) {
+    element.classList.remove("dark");
+  }
+}
+
 export async function generateReportPDF(
   reportElement: HTMLElement,
   dateRange: { from: string; to: string },
@@ -16,6 +41,9 @@ export async function generateReportPDF(
     foreignObjectRendering: false,
     allowTaint: true,
     removeContainer: true,
+    // Renders the capture in the light palette even when the operator is
+    // browsing in dark mode, so the white PDF page never receives white text.
+    onclone: forceLightPaletteInClone,
   });
 
   // A4: 210mm x 297mm

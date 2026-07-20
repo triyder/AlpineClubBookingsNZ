@@ -20,6 +20,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  AdminViewOnlyNotice,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action";
 import type { AdminPermissionMatrix } from "@/lib/admin-permissions";
 
 const MONTH_NAMES = [
@@ -49,7 +53,11 @@ interface LockoutSettings {
   enabled: boolean;
   financialYearEndMonthOverride: number | null;
   textFallbackEnabled: boolean;
+  useFeeScheduleItemCodes: boolean;
 }
+
+const ITEM_CODE_MODE_SINGLE = "single";
+const ITEM_CODE_MODE_FEE_SCHEDULE = "fee-schedule";
 
 interface XeroCode {
   code: string;
@@ -74,6 +82,18 @@ export function SubscriptionLockoutSettingsPanel({
   const canFinance = permissionMatrix.finance !== "none";
   const canBookings = permissionMatrix.bookings !== "none";
 
+  // Edit gating (#1927/#1940). Each control is gated on the area its OWN backing
+  // route enforces at `edit`: the lockout enable, the financial-year override,
+  // and the invoice-text fallback all write the membership-area
+  // membership-lockout-settings route; the detection account/item codes write
+  // the finance-area xero/account-mappings route. A view-level admin sees the
+  // data but every editor is disabled.
+  const membershipCanEdit = permissionMatrix.membership === "edit";
+  const financeCanEdit = permissionMatrix.finance === "edit";
+  // Save fans out to at most two writes; enable it when the viewer can edit at
+  // least one, and skip each write below unless its own area is editable.
+  const canSave = membershipCanEdit || financeCanEdit;
+
   const [settings, setSettings] = useState<LockoutSettings | null>(null);
   const [subscriptionCode, setSubscriptionCode] = useState<string | null>(null);
   const [subscriptionItemCode, setSubscriptionItemCode] = useState<
@@ -81,6 +101,10 @@ export function SubscriptionLockoutSettingsPanel({
   >(null);
   const [accounts, setAccounts] = useState<XeroCode[] | null>(null);
   const [items, setItems] = useState<XeroCode[] | null>(null);
+  // #2109 fee-schedule look-through preview, computed server-side from the fee
+  // schedule and the other fee configs.
+  const [feeScheduleItemCodes, setFeeScheduleItemCodes] = useState<string[]>([]);
+  const [overlappingCodes, setOverlappingCodes] = useState<string[]>([]);
   const [xeroYearEndMonth, setXeroYearEndMonth] = useState<number | null>(null);
   const [ageTiers, setAgeTiers] = useState<AgeTierRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -146,6 +170,12 @@ export function SubscriptionLockoutSettingsPanel({
         if (lockoutBody?.settings) {
           setSettings(lockoutBody.settings as LockoutSettings);
         }
+        if (lockoutBody) {
+          setFeeScheduleItemCodes(
+            (lockoutBody.feeScheduleItemCodes as string[]) ?? [],
+          );
+          setOverlappingCodes((lockoutBody.overlappingCodes as string[]) ?? []);
+        }
 
         const mappingsBody = mappingsRes?.ok ? await mappingsRes.json() : null;
         if (mappingsBody?.subscriptionIncome) {
@@ -189,32 +219,51 @@ export function SubscriptionLockoutSettingsPanel({
     if (!settings) return;
     setSaving(true);
     try {
-      const lockoutRes = await fetch("/api/admin/membership-lockout-settings", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        credentials: "same-origin",
-        body: JSON.stringify({
-          enabled: settings.enabled,
-          financialYearEndMonthOverride: settings.financialYearEndMonthOverride,
-          textFallbackEnabled: settings.textFallbackEnabled,
-        }),
-      });
-      const lockoutBody = await lockoutRes.json().catch(() => ({}));
-      if (!lockoutRes.ok) {
-        toast.error(lockoutBody.error ?? "Failed to save settings");
-        return;
-      }
-      if (lockoutBody.settings) {
-        setSettings(lockoutBody.settings as LockoutSettings);
+      // Membership-area write: gated on membership edit. A membership-view admin
+      // (finance-only editor) skips it — the lockout/year/text controls are
+      // disabled for them, so there is nothing to persist and the route would
+      // 403.
+      if (membershipCanEdit) {
+        const lockoutRes = await fetch(
+          "/api/admin/membership-lockout-settings",
+          {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            credentials: "same-origin",
+            body: JSON.stringify({
+              enabled: settings.enabled,
+              financialYearEndMonthOverride:
+                settings.financialYearEndMonthOverride,
+              textFallbackEnabled: settings.textFallbackEnabled,
+              useFeeScheduleItemCodes: settings.useFeeScheduleItemCodes,
+            }),
+          },
+        );
+        const lockoutBody = await lockoutRes.json().catch(() => ({}));
+        if (!lockoutRes.ok) {
+          toast.error(lockoutBody.error ?? "Failed to save settings");
+          return;
+        }
+        if (lockoutBody.settings) {
+          setSettings(lockoutBody.settings as LockoutSettings);
+        }
+        if (lockoutBody.feeScheduleItemCodes !== undefined) {
+          setFeeScheduleItemCodes(
+            (lockoutBody.feeScheduleItemCodes as string[]) ?? [],
+          );
+        }
+        if (lockoutBody.overlappingCodes !== undefined) {
+          setOverlappingCodes((lockoutBody.overlappingCodes as string[]) ?? []);
+        }
       }
 
       // Persist the detection codes via the shared Xero account-mappings row so
       // there is a single source of truth with the Xero mappings panel. Send
-      // only the subscriptionIncome key so other mappings are untouched. Skipped
-      // for a viewer without finance access, whose detection card is hidden and
-      // whose codes were never loaded (writing them would 403 and — worse —
-      // attempt to null out a mapping they cannot see).
-      if (canFinance) {
+      // only the subscriptionIncome key so other mappings are untouched. Gated on
+      // finance edit: a viewer without finance edit has their detection card
+      // hidden or read-only, so writing them would 403 and — worse — attempt to
+      // null out a mapping they cannot change.
+      if (financeCanEdit) {
         const mappingsRes = await fetch("/api/admin/xero/account-mappings", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
@@ -268,6 +317,12 @@ export function SubscriptionLockoutSettingsPanel({
 
   return (
     <div className="space-y-6">
+      {!membershipCanEdit ? (
+        <AdminViewOnlyNotice canEdit={membershipCanEdit}>
+          Your admin role can view the membership booking-lockout settings but
+          cannot change them.
+        </AdminViewOnlyNotice>
+      ) : null}
       <Card>
         <CardHeader>
           <CardTitle>Booking lockout</CardTitle>
@@ -280,6 +335,7 @@ export function SubscriptionLockoutSettingsPanel({
             <Checkbox
               className="mt-0.5"
               checked={settings.enabled}
+              disabled={!membershipCanEdit}
               onCheckedChange={(checked) =>
                 update({ enabled: checked === true })
               }
@@ -347,6 +403,7 @@ export function SubscriptionLockoutSettingsPanel({
             <Label htmlFor="fy-override">Financial year-end month</Label>
             <Select
               value={overrideValue}
+              disabled={!membershipCanEdit}
               onValueChange={(value) =>
                 update({
                   financialYearEndMonthOverride:
@@ -398,6 +455,17 @@ export function SubscriptionLockoutSettingsPanel({
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
+          {!financeCanEdit ? (
+            // Scoped to the finance-gated fields only (the subscription account
+            // and item codes). A membership-edit admin can still change the
+            // item-code matching mode and the invoice-text fallback in this card,
+            // so the notice must not claim they cannot change anything here.
+            <AdminViewOnlyNotice canEdit={financeCanEdit}>
+              Your admin role can view the subscription account and item codes
+              but cannot change them.
+            </AdminViewOnlyNotice>
+          ) : null}
+
           {!xeroConnected && (
             <p className="text-sm text-muted-foreground">
               <Link href="/admin/xero/setup" className="font-medium underline">
@@ -414,7 +482,7 @@ export function SubscriptionLockoutSettingsPanel({
               onValueChange={(value) =>
                 setSubscriptionCode(value === NONE ? null : value)
               }
-              disabled={!xeroConnected}
+              disabled={!xeroConnected || !financeCanEdit}
             >
               <SelectTrigger id="sub-account" className="w-full sm:w-[360px]">
                 <SelectValue placeholder="Not set" />
@@ -443,7 +511,7 @@ export function SubscriptionLockoutSettingsPanel({
               onValueChange={(value) =>
                 setSubscriptionItemCode(value === NONE ? null : value)
               }
-              disabled={!xeroConnected}
+              disabled={!xeroConnected || !financeCanEdit}
             >
               <SelectTrigger id="sub-item" className="w-full sm:w-[360px]">
                 <SelectValue placeholder="Not set" />
@@ -460,15 +528,115 @@ export function SubscriptionLockoutSettingsPanel({
               </SelectContent>
             </Select>
             <p className="text-xs text-muted-foreground">
-              An invoice line using this Xero item also counts, even if its
-              account code differs.
+              {settings.useFeeScheduleItemCodes
+                ? "Fallback item code — always included in matching, alongside every membership fee item code below."
+                : "An invoice line using this Xero item also counts, even if its account code differs."}
             </p>
           </div>
+
+          {/* Item-code matching mode (#2109). This is a membership setting saved
+              via the membership-lockout-settings route, so it is gated on
+              membership edit even though it sits in the finance detection card
+              (same as the text fallback below). */}
+          <div className="space-y-1.5">
+            <Label htmlFor="item-code-mode">Item code matching</Label>
+            <Select
+              value={
+                settings.useFeeScheduleItemCodes
+                  ? ITEM_CODE_MODE_FEE_SCHEDULE
+                  : ITEM_CODE_MODE_SINGLE
+              }
+              disabled={!membershipCanEdit}
+              onValueChange={(value) =>
+                update({
+                  useFeeScheduleItemCodes:
+                    value === ITEM_CODE_MODE_FEE_SCHEDULE,
+                })
+              }
+            >
+              <SelectTrigger
+                id="item-code-mode"
+                className="w-full sm:w-[360px]"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ITEM_CODE_MODE_SINGLE}>
+                  Single item code
+                </SelectItem>
+                <SelectItem value={ITEM_CODE_MODE_FEE_SCHEDULE}>
+                  Use membership fee item codes (per type + age tier)
+                </SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              With look-through on, an invoice also counts when a line uses any
+              item code from your{" "}
+              <Link
+                href="/admin/fee-configuration"
+                className="font-medium underline"
+              >
+                fee configuration
+              </Link>{" "}
+              (every membership type and age tier, across all seasons). The
+              fallback item code above is always included.
+            </p>
+          </div>
+
+          {settings.useFeeScheduleItemCodes && (
+            <div className="space-y-2">
+              <p className="text-sm font-medium">
+                Membership fee item codes matched as paid
+              </p>
+              {feeScheduleItemCodes.length > 0 ? (
+                <div className="flex flex-wrap gap-1.5">
+                  {feeScheduleItemCodes.map((code) => (
+                    <span
+                      key={code}
+                      className={`inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-medium ${
+                        overlappingCodes.includes(code)
+                          ? "border-amber-300 bg-amber-50 text-amber-900"
+                          : "border-border bg-muted text-foreground"
+                      }`}
+                    >
+                      {code}
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  No item codes are configured on your fee schedule yet, so only
+                  the fallback item code and account code above are matched. Add
+                  item codes on the{" "}
+                  <Link
+                    href="/admin/fee-configuration"
+                    className="font-medium underline"
+                  >
+                    fee configuration
+                  </Link>{" "}
+                  page.
+                </p>
+              )}
+              {overlappingCodes.length > 0 && (
+                <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+                  <span className="font-medium">Overlap warning:</span> the item
+                  code{overlappingCodes.length > 1 ? "s" : ""}{" "}
+                  {overlappingCodes.join(", ")} also identif
+                  {overlappingCodes.length > 1 ? "y" : "ies"} a hut-fee, joining-fee,
+                  or promo line. With look-through on, an unpaid invoice using{" "}
+                  {overlappingCodes.length > 1 ? "one of these" : "this"} could be
+                  mistaken for a paid subscription. Give subscriptions their own
+                  dedicated item codes to avoid false matches.
+                </div>
+              )}
+            </div>
+          )}
 
           <label className="flex items-start gap-3">
             <Checkbox
               className="mt-0.5"
               checked={settings.textFallbackEnabled}
+              disabled={!membershipCanEdit}
               onCheckedChange={(checked) =>
                 update({ textFallbackEnabled: checked === true })
               }
@@ -525,9 +693,9 @@ export function SubscriptionLockoutSettingsPanel({
       </Card>
       ) : null}
 
-      <Button onClick={save} disabled={saving}>
+      <ViewOnlyActionButton canEdit={canSave} onClick={save} disabled={saving}>
         {saving ? "Saving…" : "Save settings"}
-      </Button>
+      </ViewOnlyActionButton>
     </div>
   );
 }

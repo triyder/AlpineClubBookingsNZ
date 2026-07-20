@@ -24,14 +24,18 @@ const updateSchema = z
   .strict();
 
 export async function GET() {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "support", level: "view" },
+  });
   if (!guard.ok) return guard.response;
 
   return NextResponse.json(await listNotificationDeliveryPolicySettings());
 }
 
 export async function PUT(request: NextRequest) {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "support", level: "edit" },
+  });
   if (!guard.ok) return guard.response;
   const session = guard.session;
 

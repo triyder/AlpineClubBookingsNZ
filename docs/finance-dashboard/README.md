@@ -1,5 +1,7 @@
 # Finance Dashboard
 
+> Part of the [documentation hub](../README.md).
+
 The finance dashboard is the native AlpineClubBookingsNZ reporting workspace under
 `/finance`. It uses AlpineClubBookingsNZ credentials, explicit finance access
 roles, first-party booking data, and the single operational Xero connection.
@@ -73,6 +75,10 @@ PDF/CSV exports for the active selection. Dashboard displays show whole
 dollars with thousands separators; exact cents appear only where tie-out
 matters (the reconciliation panel and CSV/PDF export rows). It does not render
 daily detail tables or route users to the removed `/finance/*` report pages.
+
+**Download PDF** and the browser print dialog always render the light colour
+scheme — dark text on a white page — even when you are browsing the dashboard in
+dark mode (#2146). No theme switch is needed before exporting.
 
 The revenue, costs, pricing-sensitivity, cash, working-capital, and
 balance-sheet views read `FinanceAccountMonthlyBalance` facts (see

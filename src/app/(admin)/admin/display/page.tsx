@@ -18,10 +18,17 @@ const sections: AdminHubSection[] = [
     icon: Tv,
   },
   {
-    href: "/admin/display/layouts",
-    title: "Layouts",
+    href: "/admin/display/builder",
+    title: "Visual builder",
     description:
-      "Author the structural skeleton of a display: named areas, an HTML body, and a default CSS block.",
+      "Compose a board by picking a shape and dropping modules into zones — no HTML. Writes a valid layout + template for you.",
+    icon: LayoutTemplate,
+  },
+  {
+    href: "/admin/display/layouts",
+    title: "Layouts (Advanced)",
+    description:
+      "Advanced mode: author the structural skeleton by hand — named areas, an HTML body, and a default CSS block.",
     icon: LayoutTemplate,
   },
   {

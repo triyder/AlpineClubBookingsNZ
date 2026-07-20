@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+// The route now also imports the draft-render path (ADR-004 §7), which pulls in
+// `server-only` (via buildLayoutRender / the save contract / the draft store);
+// stub it so the route module evaluates in the test's node context.
+vi.mock("server-only", () => ({}));
+
 // LTV-036 (ADR-003 §5): the admin-only preview-grant endpoint mints the
 // short-lived, signed capability the sandboxed preview iframe carries in place
 // of a session. Admin guard, lodge validation (explicit or default), template

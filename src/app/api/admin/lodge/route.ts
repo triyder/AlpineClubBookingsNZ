@@ -8,7 +8,7 @@ import { z } from "zod";
 import { nameField } from "@/lib/zod-helpers";
 import { clubDomainEmail } from "@/config/club-identity";
 import { ensureMemberAccessRolesFromCompatibilityFields } from "@/lib/member-access-role-writes";
-import { ensureNotRequiredSubscriptionForRole } from "@/lib/member-subscription-defaults";
+import { ensureDefaultSeasonSubscriptionForNewMember } from "@/lib/member-subscription-defaults";
 import { isFullAdmin } from "@/lib/access-roles";
 import { getDefaultLodgeId } from "@/lib/lodges";
 
@@ -127,7 +127,9 @@ function serializeLodge(lodge: {
  * Returns the lodge account details. Auto-creates if missing.
  */
 export async function GET() {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "lodge", level: "view" },
+  });
   if (!guard.ok) return guard.response;
   const session = guard.session;
   let accounts = await prisma.member.findMany({
@@ -158,8 +160,9 @@ export async function GET() {
       },
       select: KIOSK_SELECT,
     });
-    // LODGE accounts never owe a membership subscription.
-    await ensureNotRequiredSubscriptionForRole(prisma, {
+    // LODGE accounts resolve to the NOT_REQUIRED built-in LODGE type, so seed a
+    // NOT_REQUIRED current-season row (#2149).
+    await ensureDefaultSeasonSubscriptionForNewMember(prisma, {
       id: lodge.id,
       role: "LODGE",
     });
@@ -217,7 +220,9 @@ const updateSchema = z.object({
  * Updates the lodge account email and/or password.
  */
 export async function PUT(request: NextRequest) {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "lodge", level: "edit" },
+  });
   if (!guard.ok) return guard.response;
   const session = guard.session;
   const body = await request.json();
@@ -335,7 +340,9 @@ const createSchema = z.object({
  * lodge device), optionally bound to a lodge via a STAFF grant.
  */
 export async function POST(request: NextRequest) {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "lodge", level: "edit" },
+  });
   if (!guard.ok) return guard.response;
   const session = guard.session;
   // Separation of duties (upstream #1012): creating an account that holds
@@ -399,9 +406,10 @@ export async function POST(request: NextRequest) {
     return member;
   });
 
-  // LODGE accounts never owe a membership subscription; normalized access
-  // rows mirror the compatibility fields (same as the auto-create path).
-  await ensureNotRequiredSubscriptionForRole(prisma, {
+  // LODGE accounts resolve to the NOT_REQUIRED built-in LODGE type (#2149);
+  // normalized access rows mirror the compatibility fields (same as the
+  // auto-create path).
+  await ensureDefaultSeasonSubscriptionForNewMember(prisma, {
     id: created.id,
     role: "LODGE",
   });

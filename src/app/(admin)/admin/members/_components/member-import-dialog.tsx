@@ -279,6 +279,9 @@ function ValidationTable({ preview }: { preview: MemberImportPreview }) {
               Life Member
             </TableHead>
             <TableHead className="sticky top-0 z-10 bg-background">
+              Cancelled
+            </TableHead>
+            <TableHead className="sticky top-0 z-10 bg-background">
               Role
             </TableHead>
             <TableHead className="sticky top-0 z-10 min-w-56 bg-background">
@@ -316,6 +319,11 @@ function ValidationTable({ preview }: { preview: MemberImportPreview }) {
               <TableCell>
                 {row.normalizedDateValues.lifeMemberDate ||
                   row.values.lifeMemberDate ||
+                  ""}
+              </TableCell>
+              <TableCell>
+                {row.normalizedDateValues.cancelledDate ||
+                  row.values.cancelledDate ||
                   ""}
               </TableCell>
               <TableCell>{row.values.role || "USER"}</TableCell>
@@ -651,6 +659,19 @@ export function MemberImportDialog({
                   ))}
                 </div>
               )}
+              <div className="rounded-md border border-sky-200 bg-sky-50 p-3 text-xs text-sky-800">
+                <p>
+                  Map a <span className="font-medium">Cancelled Date</span>{" "}
+                  column to import a member who has already left. Rows with a
+                  cancelled date are created inactive and can&apos;t log in
+                  (dated to the value you provide), never claim the login for a
+                  shared email, and are never sent a setup invite. The date must
+                  not be in the future. Cancelling an{" "}
+                  <span className="font-medium">existing</span> member is not
+                  done here — the import only creates new members, so a row that
+                  matches an existing member is skipped unchanged.
+                </p>
+              </div>
               <div className="flex items-center gap-2 rounded-md border p-3">
                 <Checkbox
                   id="sendInvites"
@@ -707,7 +728,7 @@ export function MemberImportDialog({
                         Login. Skipped {importResult.skipped}.
                       </div>
                     )}
-                  <div className="grid gap-3 md:grid-cols-5">
+                  <div className="grid gap-3 md:grid-cols-6">
                     <div className="rounded-md border p-3">
                       <p className="text-xs uppercase text-slate-500">
                         Created
@@ -731,6 +752,14 @@ export function MemberImportDialog({
                       </p>
                       <p className="text-sm font-medium text-slate-700">
                         {importResult.createdNonLogin ?? 0}
+                      </p>
+                    </div>
+                    <div className="rounded-md border p-3">
+                      <p className="text-xs uppercase text-slate-500">
+                        Cancelled
+                      </p>
+                      <p className="text-sm font-medium text-slate-700">
+                        {importResult.createdCancelled ?? 0}
                       </p>
                     </div>
                     <div className="rounded-md border p-3">

@@ -13,6 +13,7 @@ import { formatCents } from "@/lib/utils";
 import { CancelBookingButton } from "@/components/cancel-booking-button";
 import { BookingPaymentSection } from "@/components/booking-payment-section";
 import { SwitchToInternetBankingButton } from "@/components/switch-to-internet-banking-button";
+import { SendGuestPaymentLinkButton } from "@/components/send-guest-payment-link-button";
 import { BookingNotesEditor } from "@/components/booking-notes-editor";
 import { BookingEditor, type BookingEditorData } from "@/components/booking-editor";
 import { AdditionalPaymentCard } from "@/components/additional-payment-card";
@@ -24,11 +25,15 @@ import { ArrivalTimeEditor } from "@/components/arrival-time-editor";
 import { RequestedRoomEditor } from "@/components/requested-room-editor";
 import { WaitlistOfferCard } from "@/components/waitlist-offer-card";
 import { DeleteBookingButton } from "@/components/delete-booking-button";
-import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
+import { getBookingEditPolicy, bookingStayHasStarted } from "@/lib/booking-edit-policy";
 import { getBookingPaymentMode } from "@/lib/booking-payment-flow";
 import { RefundAppealButton } from "@/components/refund-appeal-button";
 import { humanizeStatus, paymentStatusClass } from "@/lib/status-colors";
 import { BookingHelpDialog } from "@/components/booking-help-dialog";
+import {
+  NonMemberGuestsSection,
+  type NonMemberGuestChild,
+} from "@/app/(authenticated)/bookings/_components/non-member-guests-section";
 import { loadCancellationPolicy } from "@/lib/cancellation";
 import { describeCancellationSchedule } from "@/lib/cancellation-schedule";
 import { WAITLIST_OFFER_HOURS } from "@/lib/waitlist";
@@ -45,6 +50,10 @@ import {
   type BookingNarrativeState,
   type NarrativeEvent,
 } from "@/lib/booking-narrative";
+import {
+  asDuplicateCaptureRefundSnapshot,
+  isDuplicateCaptureRefundEvent,
+} from "@/lib/duplicate-capture-refund-event";
 import {
   getRemainingRefundableCents,
   hasCapturedPayment,
@@ -102,6 +111,7 @@ const narrativeBannerClasses: Record<string, string> = {
 // set here (rather than re-deriving each card's render condition) is safe.
 const BOOKING_SECTIONS: SectionNavItem[] = [
   { id: "details", label: "Booking Details" },
+  { id: "non-member-guests", label: "Non-member Guests" },
   { id: "group", label: "Group Booking" },
   { id: "arrival", label: "Arrival Time" },
   { id: "room-request", label: "Room Request" },
@@ -215,7 +225,14 @@ export default async function BookingDetailPage({
           status: true,
           finalPriceCents: true,
           hasNonMembers: true,
+          // #1975: dates for the "Your non-member guests" section — shown only
+          // when they differ from the parent's stay dates.
+          checkIn: true,
+          checkOut: true,
           guests: { select: { id: true } },
+          // Discriminates a genuine #738 split child from a #796 group joiner
+          // (joiners also carry parentBookingId but always have a join row).
+          groupBookingJoin: { select: { id: true } },
         },
       },
       // Group booking the owner organises on this booking (#796+). Drives the
@@ -331,6 +348,7 @@ export default async function BookingDetailPage({
     where: { bookingId: booking.id },
     orderBy: { occurredAt: "asc" },
     select: {
+      id: true,
       type: true,
       occurredAt: true,
       amountCents: true,
@@ -369,10 +387,21 @@ export default async function BookingDetailPage({
   const isWaitlisted = booking.status === "WAITLISTED";
   const isWaitlistOffered = booking.status === "WAITLIST_OFFERED";
   const isDeleted = Boolean(booking.deletedAt);
+  // #2029: a self-service actor (booking owner or Booking Officer) can no longer
+  // cancel a stay that has already started (NZ check-in on or before today) —
+  // the service enforces this behind enforceStartedStayBlock. Mirror it here so
+  // the button is honest and never 400s (same "no button that fails" pattern as
+  // the view-only work). A Full Admin (isAdmin) keeps the button; they leave
+  // early via edit/shrink otherwise.
+  const stayHasStarted = bookingStayHasStarted(booking.checkIn);
   // Issue #1313 (option A2): a Booking Officer (bookings:edit) may cancel any
   // booking; the /api/bookings/[id]/cancel route authorizes bookings:edit and the
   // notes editor below is gated on this same predicate.
-  const canCancel = (canManageBooking || canAdminEditBookings) && !isDeleted && ["PAYMENT_PENDING", "CONFIRMED", "PAID", "PENDING", "WAITLISTED", "WAITLIST_OFFERED"].includes(booking.status);
+  const canCancel =
+    (canManageBooking || canAdminEditBookings) &&
+    !isDeleted &&
+    (isAdmin || !stayHasStarted) &&
+    ["PAYMENT_PENDING", "CONFIRMED", "PAID", "PENDING", "WAITLISTED", "WAITLIST_OFFERED"].includes(booking.status);
   const showArrivalTime = !isDeleted && !["CANCELLED", "COMPLETED"].includes(booking.status);
   const modules = await loadEffectiveModuleFlags();
   const bookingMessages = await loadPublicBookingMessages();
@@ -473,6 +502,23 @@ export default async function BookingDetailPage({
     : 0;
   const latestRefundAppeal = booking.refundRequests[0] ?? null;
   const maxRefundableCents = getRemainingRefundableCents(booking.payment);
+  // #2008 — the #1992 duplicate-capture auto-refund is an ADMIN-ONLY history
+  // entry: it never enters the shared member/guest narrative, and only admin
+  // viewers see it on the timeline. Gating the data feed (not just the render)
+  // keeps it off member-facing surfaces entirely.
+  const duplicateCaptureRefunds = canSeeAdminTools
+    ? bookingEvents
+        .filter((event) => isDuplicateCaptureRefundEvent(event))
+        .map((event) => ({
+          id: event.id,
+          occurredAt: event.occurredAt,
+          amountCents: event.amountCents ?? 0,
+          duplicatePaymentIntentId:
+            asDuplicateCaptureRefundSnapshot(event.snapshot)
+              ?.duplicatePaymentIntentId ?? null,
+        }))
+    : [];
+
   const bookingHistory = buildBookingHistoryItems({
     createdAt: booking.createdAt,
     payment: booking.payment
@@ -489,6 +535,7 @@ export default async function BookingDetailPage({
     modifications: booking.modifications,
     refundRequests: booking.refundRequests,
     auditLogs: bookingAuditLogs,
+    duplicateCaptureRefunds,
   });
 
   const editorData: BookingEditorData = {
@@ -527,6 +574,12 @@ export default async function BookingDetailPage({
     nonMemberHoldUntil: booking.nonMemberHoldUntil?.toISOString() ?? null,
     canEditNonMemberGuestNames,
     canFixNonMemberGuestNameTypos,
+    // #2104: an already-flagged/reviewed booking must not re-prompt the member
+    // for a justification when the guest list shuffles — the edit panel keys the
+    // proactive field on these (the server only demands a reason on the FIRST
+    // trip; see resolveModifyReviewUpdate).
+    requiresAdminReview: booking.requiresAdminReview,
+    adminReviewStatus: booking.adminReviewStatus,
     editPolicy: {
       // This is the member (non-override) policy, so mode is never
       // "admin-override" here; the ternary only narrows the widened union.
@@ -559,9 +612,17 @@ export default async function BookingDetailPage({
     ? await loadEmailMessageSettingsForLodge(booking.lodgeId)
     : null;
 
-  // Split-booking group presentation (#738).
+  // Split-booking group presentation (#738). Genuine split children only:
+  // #796 group joiners also link via parentBookingId but are presented by the
+  // organiser group card, not as "your provisional non-member guests" — and
+  // the guest-payment-link affordance below must match the send route's
+  // filter (PENDING + hasNonMembers + no join row) so the button never
+  // renders for children the route would refuse.
   const linkedProvisionalChildren = booking.linkedBookings.filter(
-    (linked) => linked.status === "PENDING"
+    (linked) =>
+      linked.status === "PENDING" &&
+      linked.hasNonMembers &&
+      !linked.groupBookingJoin
   );
   const provisionalChildGuestCount = linkedProvisionalChildren.reduce(
     (total, linked) => total + linked.guests.length,
@@ -569,6 +630,47 @@ export default async function BookingDetailPage({
   );
   const hasProvisionalChildren = provisionalChildGuestCount > 0;
   const isProvisionalChild = Boolean(booking.parentBooking);
+  // #1975: the "Your non-member guests" section lists every genuine #738 split
+  // child regardless of status (a cancelled or bumped child must still be
+  // visible to the member paying for the party), unlike linkedProvisionalChildren
+  // above which is PENDING-only because it gates the guest-payment-link route.
+  // #796 group joiners (which carry a join row) stay excluded — the organiser
+  // group card presents them. Dates are compared as date-only NZ lodge nights.
+  const parentCheckInDate = booking.checkIn.toISOString().split("T")[0];
+  const parentCheckOutDate = booking.checkOut.toISOString().split("T")[0];
+  const nonMemberGuestChildren: NonMemberGuestChild[] = booking.linkedBookings
+    .filter((linked) => linked.hasNonMembers && !linked.groupBookingJoin)
+    .map((linked) => {
+      const childCheckIn = linked.checkIn.toISOString().split("T")[0];
+      const childCheckOut = linked.checkOut.toISOString().split("T")[0];
+      return {
+        id: linked.id,
+        status: linked.status,
+        guestCount: linked.guests.length,
+        finalPriceCents: linked.finalPriceCents,
+        datesDiffer:
+          childCheckIn !== parentCheckInDate ||
+          childCheckOut !== parentCheckOutDate,
+        checkIn: linked.checkIn,
+        checkOut: linked.checkOut,
+      };
+    });
+  // Owner and admin viewers see the section; a linked non-member guest viewer
+  // (someone listed on the child) does not manage the parent, so they never
+  // land on this member-facing parent card with children to present.
+  const showNonMemberGuestsSection =
+    !isDeleted && canManageBooking && nonMemberGuestChildren.length > 0;
+  // #1967: once the member's own place is settled by Internet Banking there is
+  // no card on file for the later guest charge, so keep the guest-payment-link
+  // affordance visible AFTER the switch too (the pre-switch warning below only
+  // renders while the switch button is still available). Owner-only: the copy
+  // is second-person and the emailed link goes to the member.
+  const showGuestPaymentLinkStandalone =
+    !isDeleted &&
+    isBookingOwner &&
+    hasProvisionalChildren &&
+    Boolean(internetBankingPayment) &&
+    booking.status !== "CANCELLED";
   const isFlaggedProvisional =
     !booking.parentBookingId &&
     booking.status === "PENDING" &&
@@ -969,6 +1071,20 @@ export default async function BookingDetailPage({
         />
       </section>
 
+      {/* #1975: "Your non-member guests" — the parent card surfaces each genuine
+          split child inline (status, differing dates, amount, link), so the
+          member reads one family stay with the guest portion nested, not a
+          disconnected sibling booking. Presentation only: no pricing, capacity,
+          settlement, or invoicing behaviour changes here. */}
+      {showNonMemberGuestsSection && (
+        <section id="non-member-guests" className="scroll-mt-20">
+          <NonMemberGuestsSection
+            guests={nonMemberGuestChildren}
+            nonOwnerAdminViewer={nonOwnerAdminViewer}
+          />
+        </section>
+      )}
+
       {showGroupSection && (
         <section id="group" className="scroll-mt-20">
           <OrganiserGroupBookingCard
@@ -1249,6 +1365,32 @@ export default async function BookingDetailPage({
           </Card>
         )}
 
+      {/* #1967: parent settled by Internet Banking with a genuine split child
+          still provisional — no card on file for the guest charge, so offer
+          the payment-link affordance here too (the pre-switch warning inside
+          the payment card is gone once the switch has happened). */}
+      {showGuestPaymentLinkStandalone && (
+        <Card className="border-amber-200 bg-amber-50">
+          <CardHeader>
+            <CardTitle className="text-amber-900">
+              Your guests still need paying for
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2 text-sm text-amber-900">
+            <p>
+              You&apos;re paying for your own place by internet banking, so we
+              don&apos;t have a card on file to charge for your{" "}
+              {provisionalChildGuestCount} non-member guest
+              {provisionalChildGuestCount === 1 ? "" : "s"} closer to your
+              stay. Email yourself a secure link to pay for your guests — if a
+              link was already sent, this sends a fresh one and the old link
+              stops working.
+            </p>
+            <SendGuestPaymentLinkButton bookingId={booking.id} />
+          </CardContent>
+        </Card>
+      )}
+
       {/* Provisional/on-hold booking: explain why no payment is collected yet
           (issue #777). */}
       {showPaymentOnHoldNotice && (
@@ -1303,10 +1445,37 @@ export default async function BookingDetailPage({
               returnUrl={`${process.env.NEXTAUTH_URL || "http://localhost:3000"}/bookings/${booking.id}`}
             />
             {canSwitchToInternetBanking && (
-              <SwitchToInternetBankingButton
-                bookingId={booking.id}
-                description={switchToInternetBankingDescription}
-              />
+              <>
+                {hasProvisionalChildren ? (
+                  // #1967: paying your own place by internet banking leaves no
+                  // card on file for the later guest charge. Warn (do not block)
+                  // and offer to email a payment link for the guest portion now,
+                  // making the hedged "we'll contact you to arrange it" promise
+                  // (#1942) real.
+                  <div className="mt-4 space-y-2 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                    <p className="font-medium">
+                      Paying by internet banking? Your guests still need paying
+                      for
+                    </p>
+                    <p>
+                      If you switch to internet banking we won&apos;t have a card
+                      on file to charge for your{" "}
+                      {provisionalChildGuestCount} non-member guest
+                      {provisionalChildGuestCount === 1 ? "" : "s"} closer to
+                      your stay. To keep it automatic, pay for this booking by
+                      card instead so we have a card on file. Otherwise, email
+                      yourself a secure link now to pay for your guests
+                      separately — if we can&apos;t take payment, we&apos;ll
+                      contact you to arrange it.
+                    </p>
+                    <SendGuestPaymentLinkButton bookingId={booking.id} />
+                  </div>
+                ) : null}
+                <SwitchToInternetBankingButton
+                  bookingId={booking.id}
+                  description={switchToInternetBankingDescription}
+                />
+              </>
             )}
           </CardContent>
         </Card>

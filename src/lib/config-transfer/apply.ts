@@ -3,7 +3,7 @@ import "server-only";
 import type { PrismaClient } from "@prisma/client";
 
 import { createAuditLog } from "@/lib/audit";
-import { runDatabaseBackup } from "@/lib/backup";
+import { runDatabaseBackup, type BackupResult } from "@/lib/backup";
 import { readBundle, sha256Hex } from "./bundle";
 import { buildImportPlanFromParsed, CATEGORY_IMPORTERS } from "./import";
 import { mediaApplies, recreateBundleMedia } from "./media";
@@ -16,6 +16,7 @@ import {
   type TxDb,
 } from "./import-types";
 import type { ConfigTransferCategory } from "./manifest";
+import type { BootstrapEmptyTargetProof } from "./bootstrap-import";
 
 // Apply orchestrator. Order (ADR-002): parse once → pre-apply database backup →
 // ONE transaction { advisory lock → re-plan against in-lock state → refuse on
@@ -54,6 +55,40 @@ async function acquireConfigImportLock(tx: TxDb): Promise<void> {
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('config-transfer-import'))`;
 }
 
+/**
+ * The backup-skip variant for the boot-time empty-target bootstrap (ADR-003,
+ * `bootstrap-import.ts`) — the ONLY caller allowed to waive the ADR-002
+ * pre-apply backup. A bare string is deliberately not accepted: the `proof`
+ * field's type can only be minted by `assessBootstrapReadiness` returning an
+ * "apply" decision (the class is unexported and nominal), so the waiver cannot
+ * compile without a positive empty-target probe.
+ */
+export type BootstrapBackupSkip = {
+  kind: "skip-empty-bootstrap";
+  /** Branded proof from `assessBootstrapReadiness` ("apply" decision only). */
+  proof: BootstrapEmptyTargetProof;
+  /**
+   * Re-runs the emptiness probe INSIDE the advisory lock, before anything is
+   * written (TOCTOU / multi-replica-boot guard). Throws to refuse; the throw
+   * rolls the transaction back and the bootstrap caller maps it to a calm
+   * refusal.
+   */
+  recheckEmptyTarget: (tx: TxDb) => Promise<void>;
+  /**
+   * Writes the bootstrap's `configuration.bootstrap_imported` idempotence
+   * marker on the TRANSACTION client, after all category applies, so the
+   * marker and the config writes commit or roll back atomically.
+   */
+  writeBootstrapMarker: (
+    tx: TxDb,
+    info: {
+      totals: CategoryApplyResult;
+      doorCodesWritten: string[];
+      selectedCategories: ConfigTransferCategory[];
+    },
+  ) => Promise<void>;
+};
+
 export type ApplyConfigImportParams = {
   prisma: PrismaClient;
   bundleBytes: Uint8Array;
@@ -66,6 +101,26 @@ export type ApplyConfigImportParams = {
   selectedCategories?: ConfigTransferCategory[];
   /** Key-weak match resolutions chosen in the dry-run picker. */
   resolutions?: MatchResolution[];
+  /**
+   * Pre-apply backup policy (ADR-002 §backup). Default `"required"` runs the
+   * pre-apply `pg_dump` and its durability gate — the mandatory path for every
+   * interactive/admin import.
+   *
+   * A {@link BootstrapBackupSkip} object skips the pre-apply backup ENTIRELY.
+   * It is available to ONE caller only: the boot-time, empty-target
+   * config-bundle bootstrap (ADR-003, `bootstrap-import.ts`), which applies a
+   * bundle on a database that is empty of non-seed configuration. An empty
+   * database has no prior configuration to protect, so the ADR-002 pre-apply
+   * backup is waived there and there alone — and the waiver is enforced at the
+   * type level: the object's `proof` field can only be minted by a positive
+   * `assessBootstrapReadiness` probe, so the interactive route cannot even
+   * compile a skip. Every other ADR-002 safeguard (parse/validate, sanitise,
+   * single-flight lock, in-lock re-plan + fingerprint drift refusal, atomic
+   * upsert-only transaction, audit) still applies unchanged, and the skip
+   * variant ADDS two safeguards of its own: the in-lock emptiness re-check
+   * and the in-transaction bootstrap marker (see {@link BootstrapBackupSkip}).
+   */
+  preApplyBackup?: "required" | BootstrapBackupSkip;
 };
 
 export type ApplyConfigImportResult = {
@@ -87,25 +142,40 @@ export async function applyConfigImport(
   const parsed = readBundle(bundleBytes);
   const bundleSha256 = sha256Hex(bundleBytes);
 
+  const preApplyBackup = params.preApplyBackup ?? "required";
+  const bootstrapSkip = preApplyBackup === "required" ? null : preApplyBackup;
+
   // Pre-apply backup FIRST (ADR-002: backup, then verify, then execute). A
   // hard failure aborts; an operator-disabled backup (BACKUP_ENABLED unset)
-  // proceeds but is recorded.
-  const backup = await runDatabaseBackup();
-  if (backup.error) {
-    throw new ConfigImportBackupError(backup.error);
-  }
-  // Durability gate (ADR-002): with backups ENABLED but no S3 destination the
-  // backup lands only on this web slot's local disk — wiped by the next
-  // deploy, so it is no restore path for the pre-import state. Both write
-  // modes mutate config (merge creates rows and overwrites non-blank fields),
-  // so refuse the import outright rather than clobber unrecoverable state.
-  if (backup.success && !backup.uploadedToS3) {
-    throw new ConfigImportBackupError(
-      "the backup was written only to this server's local disk, which does " +
-        "not survive a redeploy; configure BACKUP_S3_BUCKET so a durable " +
-        "pre-import backup exists, or set BACKUP_ENABLED=false to explicitly " +
-        "opt out of the safety backup",
-    );
+  // proceeds but is recorded. The empty-target bootstrap (ADR-003) is the sole
+  // exception: an empty database has no prior configuration to protect, so the
+  // backup is waived and recorded as skipped-for-bootstrap rather than run.
+  let backup: BackupResult;
+  if (bootstrapSkip) {
+    backup = {
+      success: false,
+      skipped: true,
+      reason:
+        "empty-bootstrap: pre-apply backup waived on an empty target (ADR-003)",
+    };
+  } else {
+    backup = await runDatabaseBackup();
+    if (backup.error) {
+      throw new ConfigImportBackupError(backup.error);
+    }
+    // Durability gate (ADR-002): with backups ENABLED but no S3 destination the
+    // backup lands only on this web slot's local disk — wiped by the next
+    // deploy, so it is no restore path for the pre-import state. Both write
+    // modes mutate config (merge creates rows and overwrites non-blank fields),
+    // so refuse the import outright rather than clobber unrecoverable state.
+    if (backup.success && !backup.uploadedToS3) {
+      throw new ConfigImportBackupError(
+        "the backup was written only to this server's local disk, which does " +
+          "not survive a redeploy; configure BACKUP_S3_BUCKET so a durable " +
+          "pre-import backup exists, or set BACKUP_ENABLED=false to explicitly " +
+          "opt out of the safety backup",
+      );
+    }
   }
 
   const totals: CategoryApplyResult = {
@@ -131,6 +201,15 @@ export async function applyConfigImport(
       // import queued behind the lock re-plans against the winner's committed
       // writes, so a stale preview can never apply (ADR-002).
       await acquireConfigImportLock(tx);
+
+      // ADR-003 bootstrap only: re-run the emptiness probe INSIDE the lock,
+      // before the re-plan and before anything is written. A concurrent
+      // replica's bootstrap (or an interactive import) that committed while
+      // this apply was being prepared throws here, rolling this transaction
+      // back — a calm refusal upstream, never a spurious drift ERROR.
+      if (bootstrapSkip) {
+        await bootstrapSkip.recheckEmptyTarget(tx);
+      }
 
       const replan = await buildImportPlanFromParsed(tx, parsed, bundleSha256, {
         mode,
@@ -178,6 +257,7 @@ export async function applyConfigImport(
         actorMemberId,
         imageRemap,
         notes,
+        selectedCategories,
       };
       for (const importer of CATEGORY_IMPORTERS) {
         if (!selectedCategories.includes(importer.category)) continue;
@@ -187,6 +267,18 @@ export async function applyConfigImport(
         totals.updated += result.updated;
         totals.unchanged += result.unchanged;
         totals.skipped += result.skipped;
+      }
+
+      // ADR-003 bootstrap only: write the `configuration.bootstrap_imported`
+      // idempotence marker on the SAME transaction, so the config writes and
+      // the marker commit or roll back together — no crash window in which
+      // the import committed unmarked.
+      if (bootstrapSkip) {
+        await bootstrapSkip.writeBootstrapMarker(tx, {
+          totals,
+          doorCodesWritten: notes.doorCodesWritten,
+          selectedCategories,
+        });
       }
     },
     { timeout: 60_000 },
@@ -225,7 +317,10 @@ export async function applyConfigImport(
   return {
     perCategory,
     totals,
-    backup: { attempted: true, skipped: backup.skipped === true },
+    backup: {
+      attempted: bootstrapSkip === null,
+      skipped: backup.skipped === true,
+    },
     doorCodesWritten: notes.doorCodesWritten,
   };
 }

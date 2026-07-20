@@ -38,7 +38,11 @@ import { getSeasonYear } from "@/lib/utils";
 
 export interface XeroGroupingRule {
   membershipTypeId: string | null;
-  ageTier: AgeTier | null;
+  /**
+   * Set of age tiers this rule targets (#2093). Stored canonical-sorted; the
+   * EMPTY array means "all age tiers" (the old null "Any age" wildcard).
+   */
+  ageTiers: AgeTier[];
   kind: XeroContactGroupRuleMode; // MANAGED | ACCEPTED
   groupId: string;
   groupName: string | null;
@@ -81,16 +85,46 @@ export interface MemberGroupingSyncPlan {
 // Pure resolution
 // ---------------------------------------------------------------------------
 
+/**
+ * Specificity RUNG on the ladder type+tier (3) > type-only (2) > tier-only (1)
+ * > neither (0). A rule's tier dimension counts as "present" only when it names
+ * a NON-EMPTY set of tiers: an EMPTY set is the "all age tiers" wildcard and so
+ * is the LEAST specific in the tier dimension (D-B4). Within-rung ordering by
+ * tier COUNT (fewer tiers = more specific) is applied by the comparator below,
+ * not folded into this scalar — keeping bucket boundaries clean.
+ */
 function ruleSpecificity(rule: XeroGroupingRule): number {
-  return (rule.membershipTypeId !== null ? 2 : 0) + (rule.ageTier !== null ? 1 : 0);
+  return (rule.membershipTypeId !== null ? 2 : 0) + (rule.ageTiers.length > 0 ? 1 : 0);
+}
+
+/**
+ * Compare two matched rules by specificity, most-specific first (D-B4):
+ *  1. Higher {@link ruleSpecificity} rung wins (type+tier > type > tier > none).
+ *  2. Same rung: among tier-bearing rules, FEWER tiers is more specific. Empty
+ *     (all-tiers) sets sit on a lower rung than any non-empty set with the same
+ *     type slot, so an all-tiers rule never out-ranks a tiered one here; two
+ *     all-tiers rules share length 0 and fall through to the deterministic tie
+ *     break. (The Infinity guard makes the intent explicit and is robust even
+ *     if a caller passes a non-normalized empty set on a tier-bearing rung.)
+ *  3. Deterministic tiebreak for exact ties: lower sortOrder, then groupId.
+ */
+function compareRuleSpecificity(left: XeroGroupingRule, right: XeroGroupingRule): number {
+  const specDelta = ruleSpecificity(right) - ruleSpecificity(left);
+  if (specDelta !== 0) return specDelta;
+  const leftCount = left.ageTiers.length === 0 ? Infinity : left.ageTiers.length;
+  const rightCount = right.ageTiers.length === 0 ? Infinity : right.ageTiers.length;
+  if (leftCount !== rightCount) return leftCount - rightCount; // fewer tiers first
+  if (left.sortOrder !== right.sortOrder) return left.sortOrder - right.sortOrder;
+  return left.groupId.localeCompare(right.groupId);
 }
 
 /**
  * Whether a rule applies to a member under the given mode.
- * - MEMBERSHIP_TYPE: tier-bearing rules are inert (`ageTier` must be null); a
+ * - MEMBERSHIP_TYPE: tier-bearing rules are inert (`ageTiers` must be empty); a
  *   rule matches when its (optional) membershipTypeId equals the member's type.
- * - MEMBERSHIP_TYPE_AND_AGE: the general match — type slot and tier slot each
- *   either unset (wildcard) or equal to the member's.
+ * - MEMBERSHIP_TYPE_AND_AGE: the general match — the type slot is unset
+ *   (wildcard) or equals the member's type, and the tier set is empty (all
+ *   tiers) or contains the member's tier.
  */
 function ruleMatchesMember(
   rule: XeroGroupingRule,
@@ -100,10 +134,12 @@ function ruleMatchesMember(
 ): boolean {
   const typeMatch = rule.membershipTypeId === null || rule.membershipTypeId === membershipTypeId;
   if (mode === "MEMBERSHIP_TYPE") {
-    return rule.ageTier === null && typeMatch;
+    return rule.ageTiers.length === 0 && typeMatch;
   }
-  // MEMBERSHIP_TYPE_AND_AGE
-  const tierMatch = rule.ageTier === null || rule.ageTier === ageTier;
+  // MEMBERSHIP_TYPE_AND_AGE. An empty tier set is the all-tiers wildcard; a
+  // non-empty set never matches a member with no tier (ageTier === null).
+  const tierMatch =
+    rule.ageTiers.length === 0 || (ageTier !== null && rule.ageTiers.includes(ageTier));
   return typeMatch && tierMatch;
 }
 
@@ -119,7 +155,7 @@ function computeManagedUniverse(
   for (const rule of activeRules) {
     // Tier-bearing rules are inert under MEMBERSHIP_TYPE — exclude their groups
     // from the removal universe so type-mode never strips an age-tier group.
-    if (mode === "MEMBERSHIP_TYPE" && rule.ageTier !== null) {
+    if (mode === "MEMBERSHIP_TYPE" && rule.ageTiers.length > 0) {
       continue;
     }
     universe.add(rule.groupId);
@@ -155,16 +191,12 @@ export function resolveMemberGrouping(params: {
     ruleMatchesMember(rule, mode, membershipTypeId, ageTier),
   );
 
-  // Most-specific MANAGED match (type+tier > type-only > tier-only), ties broken
-  // deterministically by sortOrder then groupId.
+  // Most-specific MANAGED match (type+tier > type-only > tier-only; fewer tiers
+  // more specific; all-tiers least specific), ties broken deterministically by
+  // sortOrder then groupId (D-B4).
   const managedMatches = matching
     .filter((rule) => rule.kind === "MANAGED")
-    .sort((left, right) => {
-      const specDelta = ruleSpecificity(right) - ruleSpecificity(left);
-      if (specDelta !== 0) return specDelta;
-      if (left.sortOrder !== right.sortOrder) return left.sortOrder - right.sortOrder;
-      return left.groupId.localeCompare(right.groupId);
-    });
+    .sort(compareRuleSpecificity);
   const managedRule = managedMatches[0] ?? null;
   const managedGroup: XeroGroupRef | null = managedRule
     ? { id: managedRule.groupId, name: managedRule.groupName }
@@ -258,7 +290,7 @@ export async function getActiveXeroGroupingRules(): Promise<XeroGroupingRule[]> 
     orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
     select: {
       membershipTypeId: true,
-      ageTier: true,
+      ageTiers: true,
       mode: true,
       groupId: true,
       groupName: true,
@@ -267,7 +299,7 @@ export async function getActiveXeroGroupingRules(): Promise<XeroGroupingRule[]> 
   });
   return rows.map((row) => ({
     membershipTypeId: row.membershipTypeId,
-    ageTier: row.ageTier,
+    ageTiers: row.ageTiers,
     kind: row.mode,
     groupId: row.groupId,
     groupName: row.groupName,

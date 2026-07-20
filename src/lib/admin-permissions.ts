@@ -172,6 +172,13 @@ const ROUTE_AREA_PREFIXES: Array<{
       "/admin/booking-change-requests",
       "/admin/booking-policies",
       "/admin/seasons",
+      // Consolidated fee console (#1933, E7). Registered under bookings so the
+      // route map resolves to a concrete area (drift guard) and bookings editors
+      // reach it; admission is actually OR (bookings OR finance) — see
+      // isConsolidatedFeesPath / canAccessConsolidatedFeesPage, honoured by the
+      // admin layout and sidebar. Each section still gates its own edits by its
+      // historical area (hut fees → bookings, joining/annual → finance).
+      "/admin/fees",
       "/admin/age-tier-settings",
       "/admin/promo-codes",
       "/api/admin/bookings",
@@ -280,6 +287,10 @@ const ROUTE_AREA_PREFIXES: Array<{
       "/admin/config-transfer",
       "/admin/setup",
       "/admin/modules",
+      // Login & Security page (epic #2030, child #2033): password policy today;
+      // magic-link / Google sign-in cards land here in #2034/#2035. Pinned to
+      // `support` alongside /admin/modules and the other system-config surfaces.
+      "/admin/security",
       "/admin/subscription-lockout",
       "/admin/notifications",
       "/admin/notification-rules",
@@ -296,6 +307,9 @@ const ROUTE_AREA_PREFIXES: Array<{
       "/api/admin/config-transfer",
       "/api/admin/setup",
       "/api/admin/modules",
+      // Login & Security config API (epic #2030, child #2033): support-area
+      // system configuration, same as /api/admin/modules.
+      "/api/admin/security",
       "/api/admin/notifications",
       "/api/admin/notification-delivery-policies",
       "/api/admin/booking-messages",
@@ -583,6 +597,31 @@ export function canViewAdminHrefWithMatrix(
   const requirement = getAdminRouteRequirement(href, "GET");
   if (!requirement) return false;
   return LEVEL_RANK[matrix[requirement.area]] >= LEVEL_RANK[requirement.level];
+}
+
+/**
+ * The consolidated fee console (#1933, E7). It surfaces Hut Fees (historically
+ * bookings), Joining Fees and Annual Fees (historically finance) on one page,
+ * so admission is granted on view of EITHER area — a bookings-only editor and a
+ * finance-only editor both reach it, and each section independently gates its
+ * own edit controls by its historical area. The `getAdminRouteRequirement`
+ * prefix keeps /admin/fees under bookings for the single-area drift guard; the
+ * admin layout and sidebar consult these two helpers for the real OR rule.
+ */
+export const CONSOLIDATED_FEES_PATH = "/admin/fees";
+
+export function isConsolidatedFeesPath(pathname: string): boolean {
+  const normalized = normalizePathname(pathname);
+  return (
+    normalized === CONSOLIDATED_FEES_PATH ||
+    normalized.startsWith(`${CONSOLIDATED_FEES_PATH}/`)
+  );
+}
+
+export function canAccessConsolidatedFeesPage(
+  matrix: AdminPermissionMatrix,
+): boolean {
+  return matrix.bookings !== "none" || matrix.finance !== "none";
 }
 
 /**

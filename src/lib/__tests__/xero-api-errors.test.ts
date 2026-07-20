@@ -114,6 +114,18 @@ describe("getXeroApiErrorInfo", () => {
     });
   });
 
+  it("maps XeroReconnectRequiredError by name to the 401-style reconnect guidance", () => {
+    const error = new Error("Xero token refresh failed. Please reconnect Xero via the admin panel.");
+    error.name = "XeroReconnectRequiredError";
+
+    expect(getXeroApiErrorInfo(error, "Fallback failure")).toEqual({
+      handled: true,
+      status: 401,
+      clientMessage: "Xero connection expired. Please reconnect Xero from the admin panel.",
+      diagnosticMessage: "Xero token refresh failed. Please reconnect Xero via the admin panel.",
+    });
+  });
+
   it("maps local transient outage cooldown errors to a friendly 503 response", () => {
     const error = new Error(
       "Xero is temporarily unavailable. Suppressing further Xero calls for 120 seconds to protect API quota."

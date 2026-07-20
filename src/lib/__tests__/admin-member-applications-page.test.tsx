@@ -2,6 +2,29 @@
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+// #1997: the page derives view-only gating from the session matrix via
+// useAdminAreaEditAccess("membership"). Mock an all-edit admin so the existing
+// approve/refresh/replace action assertions (enabled buttons) hold.
+vi.mock("next-auth/react", () => ({
+  useSession: () => ({
+    data: {
+      user: {
+        id: "admin-1",
+        adminPermissionMatrix: {
+          overview: "edit",
+          bookings: "edit",
+          membership: "edit",
+          finance: "edit",
+          lodge: "edit",
+          content: "edit",
+          support: "edit",
+        },
+      },
+    },
+  }),
+}));
+
 import MemberApplicationsPage from "@/app/(admin)/admin/member-applications/page";
 
 const fetchMock = vi.fn();
@@ -76,6 +99,19 @@ describe("MemberApplicationsPage", () => {
         return Promise.resolve({
           ok: true,
           json: async () => ({ success: true, status: "REJECTED" }),
+        });
+      }
+      // Item 15 (#1931): the joining-fee preview for a PENDING_ADMIN applicant.
+      if (url.includes("/joining-fee/preview")) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            defaultAmountCents: 7500,
+            defaultNarration: "Membership joining fee (Adult)",
+            exempt: false,
+            effectiveFrom: "2026-01-01",
+            source: "SCHEDULE",
+          }),
         });
       }
       if (init?.method === "POST") {
@@ -183,6 +219,35 @@ describe("MemberApplicationsPage", () => {
       expect(JSON.parse((postCall?.[1] as RequestInit).body as string)).toEqual({
         memberId: "nom-3",
       });
+    });
+  });
+
+  it("surfaces the default joining fee and prefills the override fields for a PENDING_ADMIN applicant (#1931)", async () => {
+    render(<MemberApplicationsPage />);
+
+    await waitFor(() => expect(screen.queryByText("Ready Admin")).not.toBeNull());
+
+    // The preview endpoint was called with the applicant's raw inputs (FULL type
+    // + DOB), and the default is surfaced.
+    await waitFor(() => {
+      const previewCall = fetchMock.mock.calls.find(
+        ([url, init]) =>
+          typeof url === "string" &&
+          url.includes("/joining-fee/preview") &&
+          (init as RequestInit | undefined)?.method === "POST",
+      );
+      expect(previewCall).toBeDefined();
+      expect(JSON.parse((previewCall?.[1] as RequestInit).body as string)).toMatchObject({
+        membershipTypeKey: "FULL",
+        dateOfBirth: "1990-01-01",
+      });
+    });
+    expect(await screen.findByText(/Default:/)).toBeTruthy();
+
+    // The amount + narration override fields are prefilled with the default.
+    await waitFor(() => {
+      expect(screen.getByDisplayValue("75.00")).toBeTruthy();
+      expect(screen.getByDisplayValue("Membership joining fee (Adult)")).toBeTruthy();
     });
   });
 

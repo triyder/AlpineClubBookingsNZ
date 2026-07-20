@@ -20,6 +20,7 @@ import { lodgeOpsImporter } from "./categories/lodge-ops";
 import { displayImporter } from "./categories/display";
 import { committeeImporter } from "./categories/committee";
 import { inductionImporter } from "./categories/induction";
+import { membershipFeesImporter } from "./categories/membership-fees";
 import { xeroConfigImporter, connectedXeroTenantId, readXeroSourceTenantId } from "./categories/xero-config";
 
 // Import plan orchestrator (dry-run). Reads + validates the bundle, runs each
@@ -37,6 +38,7 @@ export const CATEGORY_IMPORTERS: CategoryImporter[] = [
   displayImporter,
   committeeImporter,
   inductionImporter,
+  membershipFeesImporter,
   xeroConfigImporter,
 ];
 
@@ -91,6 +93,7 @@ export async function buildImportPlanFromParsed(
     manifest,
     mode,
     resolutions: resolutionMap(resolutions),
+    selectedCategories,
   };
 
   // A category may be served by more than one importer module (e.g.

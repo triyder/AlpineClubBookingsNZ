@@ -37,6 +37,26 @@ The production Compose model runs:
 - `postgres` as the database
 - `migrate` as an explicit Prisma migration runner
 
+The same runtime shape as a diagram (the `app` container is the cron leader and
+warm fallback; `app_blue`/`app_green` are web-only slots that disable cron):
+
+```mermaid
+flowchart TD
+    Browser["Browser"] --> Caddy["Caddy reverse proxy"]
+    Caddy --> AppBlue["app_blue (web only)"]
+    Caddy --> AppGreen["app_green (web only)"]
+    Caddy --> App["app (cron leader + warm fallback)"]
+    AppBlue --> PG[("PostgreSQL 16")]
+    AppGreen --> PG
+    App --> PG
+    App -->|cron leader only| Cron["Scheduled jobs"]
+    App --> Stripe["Stripe API + webhooks"]
+    App --> Xero["Xero API + webhooks"]
+    App --> SES["AWS SES SMTP + SNS feedback"]
+    App --> Obs["Sentry + structured logs"]
+    Migrate["migrate (explicit Prisma runner)"] --> PG
+```
+
 ## Project Structure
 
 ```text
@@ -69,11 +89,356 @@ Important route groups:
 - `src/app/api` contains route handlers for auth, bookings, payments, admin,
   finance, lodge, webhooks, cron, and health checks.
 
+Every app-shell layout (`(public)`, `(authenticated)`, `(admin)`, `(finance)`)
+injects the admin-configured theme via `getWebsiteThemeRenderState()` inside an
+`app-theme-scope` wrapper, so never hardcode the brand accent (e.g. Tailwind
+`teal-*`) in components: reach it through semantic tokens (`--primary`,
+`bg-primary`, `text-primary-foreground`, `border-primary/30`, ...) so the saved
+site colours apply in light and dark, and use the `--hue-*` tokens for
+categorical status hues that must stay fixed across themes.
+
+The same rule applies to raw NEUTRALS, though for a narrower reason than the
+brand accent — and the reason is worth stating precisely, because a safety net
+already exists.
+
+`globals.css` carries a **`.dark .app-theme-scope` neutral remap** (the #1263
+follow-up block, immediately after the `.finance-trend-chart` chart rules). It
+rewrites literal `bg-white`, `bg-{neutral}-50/100/200`,
+`text-{neutral}-300..950`, `border-{neutral}-100..300`, and the matching
+`divide-`/`hover:` variants onto `--card`, `--muted`, `--border`,
+`--foreground`, `--muted-foreground`, and `--accent`, treating
+slate/gray/zinc/neutral/stone as one family. So a raw neutral inside
+`app-theme-scope` is **already handled in dark mode** — that shim is why dark
+mode reads correctly today, and it is not going away.
+
+What the shim does **not** do is cover LIGHT mode: it is `.dark`-scoped only. A
+literal `slate-*` or `bg-white` therefore stays literally slate/white under a
+strongly non-default club theme in light mode, where the theme's own surface
+colours should apply. That gap — plus the plain consistency argument that a
+surface should be correct at source rather than correct-by-shim — is why new and
+migrated code inside `app-theme-scope` uses the semantic surface tokens:
+`bg-card` / `text-card-foreground` for card surfaces, `bg-popover` /
+`text-popover-foreground` for floating panels such as chart tooltips,
+`text-muted-foreground` for secondary labels and footnotes, `bg-muted` for
+tinted rows, and `border-border` for rules.
+
+**`--muted-foreground` is a DERIVED tone, not a brand colour** (#2145). Every
+other app text token in the `.app-theme-scope` block resolves to a solid brand
+endpoint (`--foreground` is `--brand-deep` in light, `--brand-snow` in dark).
+`--muted-foreground` used to do the same — which made it byte-identical to
+`--foreground`, so `text-muted-foreground` rendered as primary text and the
+`muted` role was inert. It is now computed by `deriveAppMutedForeground` in
+`src/lib/club-theme-schema.ts` and injected as `--app-muted-foreground` /
+`--app-muted-foreground-dark` by `buildClubThemeAppCss`; `globals.css` reads
+those with a static fallback for the case where no ClubTheme stylesheet is
+injected.
+
+The derivation mixes each mode's foreground 30% toward that mode's base surface
+(the same 70/30 sRGB mix `.website-theme` already uses for its own
+`--muted-foreground`) and then steps the tone BACK toward the foreground until
+it clears WCAG AA 4.5:1 against a **named, finite list** of surfaces. The list is
+the whole substance of the guard, so it is stated here in full — it is
+`APP_MUTED_FOREGROUND_LIGHT_SURFACE_TOKENS` /
+`APP_MUTED_FOREGROUND_DARK_SURFACE_TOKENS` in `club-theme-schema.ts`:
+
+| Mode  | Checked surfaces |
+| ----- | ---------------- |
+| Light | `--brand-snow` (`--background`/`--card`/`--popover`), `--brand-mist` (`--muted`/`--secondary`/`--accent`), and the curated `--warning-muted` / `--info-muted` / `--success-muted` / `--danger-muted` panel fills |
+| Dark  | `--brand-deep` (`--background`), `--brand-charcoal` (`--card`/`--popover`/`--muted`/`--secondary`/`--accent`), and the same four curated `*-muted` fills in their `.dark` values |
+
+Both **brand** surfaces are checked per mode, not only the base one, because
+that is what makes the guard hold for an endpoint-crossing palette, where moving
+toward one surface moves away from the other. The four **curated** `*-muted`
+fills are checked because #1808 deliberately leaves them out of
+`app-theme-scope`: they are fixed while the derived tone slides with the brand
+ramp, which is the one pairing that can drift apart with nothing watching. They
+are genuine muted-text backgrounds — `bg-warning-muted` and friends carry
+`text-muted-foreground` footnotes in roughly 35 places across bed-allocation,
+waitlist, committee, and family-suggestions.
+
+Deliberately **not** in the list:
+
+- `--border` / `--input`. Dark mode remaps `bg-{neutral}-200` onto `--border`,
+  so a `bg-slate-200` badge would be a muted-text surface — but the only such
+  badge (`page-content-panel.tsx`) was moved to `bg-muted text-muted-foreground`
+  instead. A mid-luminance hairline colour is the wrong background for body text
+  at any weight, and clamping against it would collapse the derived tone into
+  `--foreground` for roughly 30% of gate-passing palettes rather than the ~12%
+  it does today. (Measured like-for-like over the 77 gate-passing palettes of
+  the neutral-ramp sweep in `club-theme-schema.test.ts`, counting a palette that
+  collapses in EITHER mode: 11.7% today, 29.9% with `--border` clamped. Per-mode
+  it is 5.2% → 11.7% light and 6.5% → 24.7% dark. Any single framing shows the
+  same 2.5–3× increase; quote one, not a mixture.)
+- The dark coloured hue remaps. The `-50` (`oklch(0.29 …)`) and `-100`
+  (`oklch(0.33 …)`) tiers sit at or below the `*-muted` tier already checked, so
+  in dark mode — where the derived tone is the LIGHT one — clearing AA on
+  `--success-muted` clears them too. The `-200` tier does NOT follow from that
+  reasoning and is excluded on evidence instead: `bg-{hue}-200` remaps to
+  `oklch(0.38 …)`, which is LIGHTER than the checked `oklch(0.33 …)` tier and so
+  is the HARDER background for a light tone. The default dark tone measures
+  6.10:1 on `--warning-muted` but 5.00:1 on `bg-amber-200` and 4.93:1 on
+  `bg-sky-200`. Both shipped palettes still clear 4.5:1 there, and the only
+  coloured `-200` background in the app
+  (`admin-exclusive-hold-controls.tsx`) carries `text-amber-900`, not muted
+  text — so nothing fails today. But a `bg-*-200` + `text-muted-foreground`
+  pairing is NOT covered by the guard; on a lower-headroom palette it could drop
+  below AA, so measure before shipping one.
+
+Four things about this guard are worth stating precisely, because it is easy to
+read more into it than it delivers:
+
+- **It guarantees** a TWO-BRANCH outcome, over the surfaces **in the table
+  above** and no others. Where `--foreground` itself clears 4.5:1 on a listed
+  surface, the derived tone clears 4.5:1 there too. Where `--foreground` itself
+  FAILS AA on a listed surface — an inherited failure the derivation cannot
+  repair, because #1808 pins the curated `*-muted` fills while the brand ramp
+  moves — the derived tone is no worse than `--foreground` there. It is computed
+  from the saved palette every time the app stylesheet is rendered, so it also
+  covers palettes already stored in the database — not only newly saved ones. It
+  says nothing about a surface not in the table; a new always-on background that
+  hosts muted text has to be added to the list.
+- **It is deliberately LESS readable than `--foreground`, and that is the
+  point.** Carrying measurably less contrast than the token it softens is the
+  whole feature, so no clause here should be read as parity with `--foreground`.
+  `club-theme-schema.test.ts` pins the shipped tones at 0.41 / 0.53 (default
+  light/dark) and 0.51 / 0.59 (Tokoroa) of `--foreground`'s ratio on the same
+  surface, and fails if that fraction ever climbs past 0.75 — which is what stops
+  the role being tuned back into an invisible near-copy of `--foreground`.
+- **It does not guarantee** that the tone is visually DISTINCT from
+  `--foreground`. A palette with no contrast headroom walks all the way back and
+  the two coincide again, exactly as before #2145. Accessibility wins over the
+  semantic distinction; `getBlockingContrastWarnings` is what stops a palette
+  that poor being saved at all.
+- **It says nothing about ALPHA uses of the token.** Every ratio above is
+  measured on the opaque tone. Where a call site applies an alpha — the dashed
+  `border-muted-foreground/70` and `/80` provisional-chip outlines in
+  bed-allocation, `border-muted-foreground/30` on the display-builder drop zone,
+  the `text-muted-foreground/60` empty-state icon on the member dashboard — the
+  composited colour is materially fainter than the token, and #2145 made those
+  composites fainter still (the dashed chip outline went from 4.26:1 to 2.76:1
+  in dark mode at `/50`, which is why it is now `/70`). None of them is a WCAG
+  1.4.11 failure: each is either purely decorative alongside full-strength text,
+  or redundantly encoded by border style, icon, and label — the reasoning is
+  recorded at `allocation-chip.tsx`. But do not read the opaque guarantee onto
+  an alpha variant; measure it. An opaque non-text use (the `bg-muted-foreground`
+  meter fill on a `bg-muted` track in the Xero panel, 4.77:1 / 4.63:1) does
+  inherit the stricter-than-3:1 bar.
+
+The tone is computed in TypeScript and emitted as a resolved colour rather than
+written as a CSS `color-mix()` on purpose: a mix is unmeasurable from the
+contrast gate, and "app text tokens are solid, measurable endpoints" is the same
+invariant that keeps `--foreground` / `--card-foreground` off interpolated
+values. `src/lib/__tests__/club-theme-schema.test.ts` gates the derived values
+(including a sweep over configurable neutral ramps) and
+`src/lib/__tests__/app-theme-layout-contract.test.ts` pins the `globals.css`
+wiring and its static fallback.
+
+Two contract tests in `src/lib/__tests__/brand-color-source-contract.test.ts`
+enforce this:
+
+- **Brand accent.** No literal Tailwind `bg-`, `text-`, or `border-` `teal-*`
+  utility under `src/` (the check is scoped to those three prefixes; `ring-`,
+  `divide-`, `fill-`, and gradient `from-`/`to-` teal are not currently
+  matched). Two files are allowlisted, each because `--hue-*` has no equivalent
+  for the shape of colour they need. `src/components/admin-booking-calendar.tsx`
+  paints each booking status as a SOLID swatch (`bg-teal-500`), and `--hue-*` is
+  defined only as a muted-background / accent-text PAIR.
+  `src/app/(admin)/admin/dashboard/page.tsx` tints the Chore Roster quick-link
+  tile on the Tailwind **-50/-600** convention, whereas the `--hue-*` pair is
+  pinned at **-100/-800**; it is the fifth of five identically-built tiles whose
+  blue/green/purple/orange siblings are all -50/-600, so migrating it alone
+  would visibly break the row. Re-weighting the whole row is a redesign, not a
+  drive-by. Every other categorical teal (the waitlist-offered chip, the audit
+  `family` badge, the family-group `GROUP_CREATE` badge) reaches its hue through
+  `CHIP_TONE_CLASSES.teal` in `src/lib/chip-tones.ts`, the single source of
+  truth for chip tone classes — those were already -100/-800 pairs, so the
+  migration was value-identical.
+- **Themed neutrals.** No raw `slate-`/`gray-`/`zinc-`/`neutral-`/`stone-`
+  utility, `bg-white`, or `bg-`/`text-black` under `src/app/(finance)` or
+  `src/components/finance`, with an empty allowlist (the empty `Set` is kept in
+  the test so a future exception is a reviewable edit). This check is
+  deliberately scoped to the finance tree rather than repo-wide: the admin tree
+  still carries raw slate in many files and would have to be migrated before the
+  check could be widened.
+
+The dark-mode colored-callout pass in `globals.css` (#1248) re-tints literal
+Tailwind `bg-{family}-50/100/200`, `text-{family}-600..950`, and
+`border-{family}-100..300` inside `app-theme-scope`. It is a UNIFORM,
+palette-wide block covering every Tailwind family, not a teal-specific shim, so
+its teal rows are kept even though the migrations above left few teal literals
+behind: dropping them alone would make the block asymmetric for no benefit. They
+are also still load-bearing — the allowlisted dashboard tile's `bg-teal-50` and
+`text-teal-600` are exactly what this pass re-tints, which is why that tile
+dark-adapts correctly while staying on the -50/-600 tile convention in light
+mode. The calendar's `bg-teal-500` is outside the pass's range (it only remaps
+`-50/-100/-200` fills) and does not depend on it.
+
+**Print and PDF always render the LIGHT palette** (#2146). Paper and the
+generated PDF page are white, so dark mode must never reach them. Rather than
+stacking `!important` overrides on the print block — which cannot win against a
+token a descendant sets on itself, such as `Card`'s own `text-card-foreground` —
+every rule that installs the dark palette is wrapped in `@media not print`: the
+`:root`-level `.dark` token ramp, the `.dark .app-theme-scope` token block, and
+the literal-valued colored-callout pass. The token-driven neutral remap needs no
+wrapper because it resolves through `--card` / `--foreground` and self-heals once
+those are light. The `@media print` block then only pins `color-scheme: light`
+(the one `!important` it needs, because `next-themes` writes `color-scheme` as an
+inline style on `<html>`) plus the page/section layout rules. The
+`html2canvas`-based **Download PDF** path (`src/lib/report-pdf.ts`) is the same
+hazard in a different medium: it composites onto a hard-coded white page, so its
+`onclone` hook strips the theme class from the cloned capture document.
+
+Two rules follow for anyone adding dark-mode styling, because the guarantee has
+two halves with different enforcement:
+
+1. **In `globals.css`:** wrap any new `.dark`-gated rule in `@media not print`,
+   unless every value it assigns is a `var(--token)` for a token the light
+   blocks genuinely restate. That qualifier is the whole point and is easy to
+   get wrong: `--card` / `--foreground` are light/dark PAIRS, so excluding the
+   `.dark` block from print leaves the light `:root` value standing and the rule
+   self-heals — which is why the token-driven neutral remap is deliberately left
+   unwrapped. `--brand-charcoal` / `-deep` / `-snow` / `-gold` / `-mist` are NOT
+   pairs: they are fixed brand colours declared once on `:root` that no `.dark`
+   block restates, so `background: var(--brand-deep)` in an unwrapped
+   `.dark`-gated rule prints a near-black card. The contract test
+   `src/lib/__tests__/print-light-palette-contract.test.ts` parses this file and
+   fails on any `.dark`-gated rule left visible to print media that assigns
+   anything else — a literal colour in any syntax, a fixed brand token, or a
+   colourless but theme-dependent declaration such as `outline: none`. It
+   derives the set of self-healing tokens from the stylesheet itself (declared
+   by a print-visible light block AND by a `.dark`-gated block), so the set
+   cannot drift away from what this file actually declares. Note the
+   granularity, which pre-dates #2145 and #2146: the derived set is keyed by
+   token NAME across the whole stylesheet, not per block. A token stays
+   "healed" as long as *some* print-visible light rule and *some* `.dark` rule
+   declare it — so `--muted-foreground` would still count as healed via
+   `:root`/`.dark` even if the light `app-theme-scope` block stopped declaring
+   it, and would then quietly fall back to the `:root` value on paper without
+   the contract test objecting. A corollary that
+   bites when a token stops being a plain brand alias: the derived
+   `--muted-foreground` (#2145) reads a DIFFERENT injected variable per mode
+   (`--app-muted-foreground` vs `--app-muted-foreground-dark`), but both blocks
+   still declare `--muted-foreground` itself, so it stays a light/dark pair and
+   paper keeps the light derived tone. Splitting a paired token across two
+   differently-named declarations — light in one block, dark in the other, with
+   no shared name — would silently drop it out of the healed set.
+2. **In a class string, wherever it lives:** a Tailwind `dark:` utility carrying
+   a **literal palette colour** — a named shade (`dark:bg-slate-900`,
+   `dark:text-amber-200`) or an arbitrary value (`dark:bg-[#0b1220]`,
+   `dark:text-[rgb(2,6,23)]`) — must not go on a printable surface, whatever
+   variants are stacked in front of it. This is the half `globals.css` cannot
+   protect: `dark:` utilities compile into Tailwind's own generated stylesheet,
+   never into `globals.css`, so no `@media not print` wrapper here can ever
+   reach them — they print exactly as written. Token-driven variants
+   (`dark:bg-input/30`, `dark:checked:bg-primary`, `dark:bg-[var(--card)]`) are
+   fine, since they resolve to `var(--token)` and self-heal like the rules
+   above. The same contract test enforces this by scanning the printable trees
+   (`(finance)`, `components/finance`, `admin/reports`, `admin/roster`,
+   `admin/induction`, `lodge-instructions`, `hut-leader-instructions`, and
+   `components/ui`, plus the shared components that render on a printable page)
+   and keeps the handful of non-printable files that legitimately carry such
+   utilities on an enumerated list. The scan covers `.ts` as well as `.tsx`,
+   because this repo already keeps palette class strings in plain modules
+   (`bed-allocation/_components/booking-accent.ts`). On a printable surface,
+   reach the colour through a semantic token or the `--hue-*` pairs instead.
+
+   **What the class-string scan does and does not see.** It is a regex over
+   source text, not a Tailwind parse, so the boundary is worth stating exactly
+   rather than implying it is total. It recognises any stack of variants in
+   front of the utility — named (`dark:hover:`, `dark:md:`), the `*:` / `**:`
+   descendant variants, bare arbitrary variants (`dark:[&>tr]:`), and functional
+   bracket variants (`dark:data-[state=open]:`, `dark:has-[:checked]:`,
+   `dark:aria-[…]:`, `dark:group-[…]:`, `dark:supports-[…]:`) — and, on the
+   value side, named palette shades, `black` / `white`, and any arbitrary value
+   containing a colour token anywhere in it (hex, or `rgb`/`hsl`/`hwb`/`oklch`/
+   `oklab`/`lab`/`lch`/`color`/`color-mix`/`light-dark`/`theme(…)`, nested or
+   not). It deliberately does NOT flag arbitrary values that reach a token
+   (`dark:bg-[var(--card)]`) or that are not colours at all
+   (`dark:text-[14px]`). What it cannot see is a class name that does not exist
+   as literal text in the source: one assembled at runtime from fragments, or
+   arriving from data or a CMS field. Keep printable-surface classes written out
+   literally so this check can do its job.
+
+`e2e/print-dark-mode.spec.ts` backs the CSS and class-string halves at the
+medium the bug actually lives in: it renders `/admin/reports` and `/finance`
+under `emulateMedia({ media: "print", colorScheme: "dark" })` and asserts the
+computed ink is dark on a light surface, and that the printed result is
+identical with and without the theme class.
+
+**The `report-pdf.ts` Download PDF path has no browser-level coverage.**
+`emulateMedia` changes the print medium; it does not exercise `html2canvas`, and
+the spec never clicks Download PDF. What is covered is the jsdom unit test in
+the contract file, which calls `forceLightPaletteInClone` on a hand-built
+document and asserts the DOM mutation, plus a source-string assertion that the
+hook is still wired as `onclone`. That is the function's behaviour and the
+wiring — not the actual `html2canvas` contract, and not the produced PDF. Since
+Download PDF is the button operators actually press (and was the second half of
+#2146), a change to that path warrants a manual export check in both themes
+until real coverage exists.
+
+Chart colours are a documented carve-out. `FINANCE_MIX_COLORS` in
+`src/components/finance/charts/finance-chart-theme.ts` stays a literal hex
+palette (#1801, re-affirmed in #2137): the values feed Recharts `fill`/`stroke`
+SVG presentation attributes, where `var()` does not resolve, and they are
+categorical tones chosen to stay distinguishable independent of the club theme.
+Chart neutrals (grid, axis, ticks) are themed in `globals.css` through the
+`.finance-trend-chart .recharts-*` selectors, which override the light-mode
+literal fallbacks that `trend-chart.tsx` passes as attributes.
+
 ## Module Boundaries
 
 This application is intentionally still a single Next.js monolith. The
 important boundary is not process separation; it is keeping route handlers thin,
 business rules testable, and integration code behind narrow helpers.
+
+The curated module-boundary map below shows the allowed dependency direction:
+the route boundary (`src/app`) delegates into business logic (`src/lib`), which
+owns the database and the external providers. UI and config are leaf
+dependencies; providers and the database are the sinks. Arrows point from the
+depender to its dependency — there is no arrow back up from `src/lib` into
+`src/app`.
+
+```mermaid
+flowchart LR
+    subgraph Edge["Route boundary — src/app"]
+        Pages["Pages / Server Components"]
+        API["API route handlers /api/**"]
+    end
+    subgraph Lib["Business logic — src/lib"]
+        BookingSvc["booking-create / booking-modify"]
+        Beds["bed-allocation*"]
+        Policies["policies/*"]
+        Status["booking-status<br/>(capacity source of truth)"]
+        Locks["advisory locks<br/>(concurrency)"]
+        MemberSvc["member-* / membership-*"]
+        XeroLib["xero-* modules"]
+        EmailSvc["email registry / sendEmail"]
+    end
+    Config["config/ + src/config<br/>(club identity, module flags)"]
+    UI["src/components<br/>(shared UI)"]
+    DB[("Prisma / PostgreSQL")]
+    Providers["Stripe / Xero / SES / Sentry"]
+
+    Pages --> UI
+    Pages --> BookingSvc
+    Pages --> MemberSvc
+    API --> BookingSvc
+    API --> MemberSvc
+    API --> Config
+    Pages --> Config
+    BookingSvc --> Status
+    BookingSvc --> Policies
+    BookingSvc --> Locks
+    BookingSvc --> Beds
+    Beds --> Locks
+    BookingSvc --> XeroLib
+    BookingSvc --> EmailSvc
+    MemberSvc --> XeroLib
+    Lib --> DB
+    XeroLib --> Providers
+    EmailSvc --> Providers
+    BookingSvc --> Providers
+```
 
 Use these ownership boundaries when adding new code:
 
@@ -154,6 +519,140 @@ operator action) and feeds the amber "Provider state out of step" block on the
 booking detail Admin tools card — read-only detection mirroring the
 stuck-state queries.
 
+Admin settings sections follow one canonical edit model (developer rule, binding
+for new or modified sections; see `AGENTS.md` → Change Discipline). A section
+renders read-only on mount and stages every change behind a per-section Edit →
+Save/Cancel step: no individual control auto-persists on toggle, Cancel reverts
+to the last saved snapshot, and Save writes once. Save is **dirty-gated as well
+as view-gated**: booking write routes log an audit entry and revalidate public
+content unconditionally, so a pristine re-save would record a change that never
+happened (#2143). That gate belongs at the FORM layer, through the hook's
+`isDirty` — routes deliberately keep no ad-hoc no-op comparison, so a direct API
+caller holding `area:edit` can still write an unchanged body. Edit affordances
+gate on the tri-state `useAdminAreaEditAccess(area)` through
+`ViewOnlyActionButton` / `AdminViewOnlyNotice` (so the resolving `undefined`
+window stays neutral), and the backing write route enforces the matching
+`area:edit` permission. Where a section renders an
+`AdminViewOnlySectionBanner` instead, its buttons pass `describeReason={false}`:
+the view-only reason is then stated once, at the top of the section, in a
+permanently-mounted `role="status"` region, rather than on disabled buttons that
+are out of the tab order and whose `title` never fires at all (the shared
+`buttonVariants` set `disabled:pointer-events-none`). "Permanently mounted" is a
+POSITION rule as much as a rendering one, and it covers `PolicyFeedback`'s
+`role="alert"` / `role="status"` pair too: the section has a FRAME — banner,
+feedback regions, and, where the fetch is scope-keyed, the scope select — that
+is rendered in EVERY state, with only the cards below it swapped. A loading
+early return above that frame re-creates both defects it exists to prevent: a
+failed FIRST load mounts the section together with an already-populated alert in
+one commit, and because a scope change is itself a load it unmounts the
+`PolicyScopeSelect` the admin just operated, dropping keyboard focus to `<body>`
+for the duration of the round trip. That banner shape is
+adopted by the five Booking Policies sections only (#2142); the rest of the
+admin tree keeps `AdminViewOnlyNotice` plus the per-button reason, which stays
+the default. Any card
+that shares a strict whole-object PUT with a sibling card must GET the fresh
+settings and merge only its OWN fields before writing, so a save cannot overwrite
+a sibling's change made while the page was open. This NARROWS the
+read-modify-write window to the milliseconds between that GET and the PUT; it
+does not close it. There is no ETag or `If-Match` on the route, so two genuinely
+simultaneous writes still resolve last-writer-wins — the same property the
+`/api/admin/modules` precedent has. Do not write it up as a guarantee. That
+covers the module toggles
+sharing `PUT /api/admin/modules` (for example the magic-link and Google cards on
+`/admin/security`) and all three cards sharing
+`PUT /api/admin/booking-requests/settings` (#2162). It also constrains what a
+save may re-seed: re-seeding the snapshot from a fresh read can move a field the
+admin never touched, so re-seed that field's editor draft with it. Leaving the
+two out of step arms a dirty-gated Save the admin never armed, one click from
+reverting the other admin's change — while a draft the admin HAD typed into
+stays untouched, because it is their own in-progress input. The rule binds sections that are NEW
+or MODIFIED, so several pre-existing surfaces are acknowledged divergents it does
+not retrofit on its own: the `/admin/modules` grid (deliberate bulk toggles), the
+older staged-but-ungated settings forms, and the age-tier and notification
+settings panels — the last two were previously written up as blanket exemptions
+"because they are list sections", which is no longer the reason: list sections
+are in scope (see the per-row shape below), those two simply have not been
+touched since. Booking Policies still has one divergent, narrowed but NOT
+removed by #2162: no settings control in the area persists on change any more
+(row-level Activate/Deactivate stay plain direct writes, which the per-row shape
+below sanctions) — the last one that did, the **Show indicative pricing** checkbox in
+`public-booking-requests-section.tsx`, was brought onto Edit → Save — but the
+two timing cards in that same file (quote window / reminder lead, and the
+school-attendee prompts) remain staged-but-ungated: always editable, with a
+dirty-gated Save and no Edit or Cancel. That file has now been modified, so this
+is a LIVE divergence, not an untouched one; whether to Edit-gate those two cards
+is an owner decision tracked in #2166 and is not to be retrofitted in passing.
+The pricing card is a worked example of the two rules that meet awkwardly here.
+All five public-booking-request settings live in ONE row behind ONE whole-object
+PUT, so a single hook instance for the section would match storage exactly — but
+the hook carries one `editing` flag and the two timing cards are deliberately
+always-editable, so fusing them would have forced an Edit step onto cards that
+were not in scope and pre-empted #2166. The card therefore takes its OWN
+instance and pays for the shared write object the documented way: it GETs the
+fresh settings and merges only its own key, exactly as the module-toggle cards
+below do, so it can never persist a sibling card's uncommitted draft or its own
+load-time snapshot of one. Both timing handlers were brought onto that same
+fresh read in the same change, so no card in the section can revert another's
+saved value. It carries NO first-save exception even though the
+read synthesises defaults on a miss, because its whole draft is a single boolean
+— "unchanged" and "already effectively stored" are the same state there, so the
+exception would only unlock a pristine, audit-writing no-op.
+Reference:
+`src/components/admin/booking-policies/group-discount-section.tsx` — note that
+it now carries the section banner, so for the default per-button
+`AdminViewOnlyNotice` treatment look at any admin surface outside Booking
+Policies instead.
+
+The draft/snapshot half of that pattern lives in the shared
+`useSectionEditState` hook (`src/hooks/use-section-edit-state.ts`), which new
+sections should use instead of hand-rolling the state: it holds the draft and
+the saved snapshot together, so Cancel restores every field at once, and it
+re-seeds both from whatever the card's `save` callback returns rather than from
+the submitted draft. That re-seed is only as authoritative as the callback makes
+it. A callback should return the parsed SERVER response wherever the write
+echoes the stored row back — the group discount and password policy cards do —
+so a value the route clamps or normalises is never left misreported in the form.
+Returning locally-computed values instead (as the email sign-in link and Google
+sign-in cards do, because neither route returns the stored row) is safe only
+while those routes cannot normalise what they store: they reject out-of-range
+input rather than clamping it, so the client value always matches storage. The
+same shortcut against a normalising route would silently diverge. Each card
+keeps its own `save` callback — the
+GET-fresh-then-merge step above, multi-endpoint writes, and per-endpoint failure
+copy all stay local — and throws the hook's `ForbiddenSaveError` for a 403 so it
+maps to the shared `ADMIN_FORBIDDEN_SAVE_REASON` copy. Feedback rendering stays
+in the component, because booking-policy sections use `PolicyFeedback` while the
+security cards use `Alert`. A section whose snapshot is a LIST with per-row
+edits is not out of scope, but the hook belongs one level down: the OPEN EDITOR
+gets its own instance, keyed on the row being edited AND on an instance counter
+bumped every time an editor is opened
+(`` key={`${rowId ?? "new"}:${editorInstance}`} ``), while the list itself stays
+ordinary state and its row-level actions stay plain direct writes. The counter
+is not cosmetic: with the bare `key={rowId ?? "new"}` the key is unchanged when
+Edit is clicked again on the row already open, so React reuses the instance, the
+fresh `initial` is ignored, and the abandoned draft silently survives. Row-level
+actions that WRITE also need an in-flight guard held in a ref rather than only a
+disabled button, because a double-click dispatched inside one tick gives both
+handlers the same pre-update row and the second write becomes a no-op audit
+entry of the #2143 kind. The booking-periods and minimum-night-stay sections are
+the reference for that shape (#2142). Wherever the read endpoint SYNTHESISES
+defaults on a miss — or the editor is creating a row that does not exist yet —
+carry the first-save exception so committing the defaults stays reachable, but
+never extend it to a FAILED load, where the same fallback values would let one
+click blind-write over a real stored policy. For the same reason a snapshot is
+authoritative only for the scope it was loaded for: a section whose fetch is
+keyed on something else (a lodge scope) must track that key WITH the snapshot
+and treat a mismatch as unknown, because a failed re-fetch leaves the previous
+key's value in place. That binds LIST sections just as hard — there the stale
+value is a set of rows whose Edit, Delete, and Activate/Deactivate buttons all
+act on a row id belonging to the partition the admin has navigated away from —
+and the never-loaded state needs a SENTINEL key distinct from every real one,
+because `null` already means "club-wide" and a `null` seed makes a failed FIRST
+load compare equal to the scope the section mounts on. The unknown state must
+also be RECOVERABLE without leaving the page: it carries a **Try again** action
+that re-runs the current key's load in place. All three keyed booking-policy
+sections (default cancellation, booking periods, minimum night stay) carry this.
+
 The `/admin/xero` and `/admin/members` routes are route shells with local
 `_components` and `_hooks` folders; the member `/book` wizard follows the same
 shape, keeping its wizard-step views in `src/app/(authenticated)/book/_components`
@@ -212,6 +711,33 @@ The source of truth is `prisma/schema.prisma`. Key domains are:
   window, rendered above the public and member site headers.
 
 ## Booking and Payment Flow
+
+The happy-path request/data flow for a card booking. Capacity is claimed under
+a per-lodge advisory lock inside the transaction; the Stripe call and any Xero
+queueing happen outside it (the durable-recovery and webhook paths are covered
+in [Integrations](#integrations)):
+
+```mermaid
+sequenceDiagram
+    participant M as Member (browser)
+    participant R as /api/bookings route
+    participant B as booking-create (src/lib)
+    participant L as acquireLodgeCapacityLock
+    participant DB as PostgreSQL
+    participant S as Stripe
+    participant X as Xero outbox
+
+    M->>R: POST booking (dates, guests)
+    R->>B: validate session/input, delegate
+    B->>L: acquire per-lodge capacity lock
+    B->>DB: re-read capacity, apply policy + pricing
+    B->>DB: persist booking + guests + audit (one txn)
+    B-->>L: commit releases the lock
+    B->>S: create PaymentIntent (outside txn)
+    B->>X: queue invoice op (Internet Banking path)
+    R-->>M: booking + client secret
+    S-->>R: webhook confirms payment (idempotent)
+```
 
 1. A member selects a lodge (implicit when only one active lodge exists) and
    check-in and check-out dates.
@@ -339,6 +865,25 @@ All sidebar badge counts come from the single `GET /api/admin/pending-counts`
 endpoint (`src/lib/admin-pending-counts.ts`), whose per-queue where-clauses
 mirror the individual queue routes. Sidebar sections render expanded by
 default; a per-section collapse preference persists in localStorage.
+
+The admin command palette (#2092, `src/components/admin-command-palette.tsx`)
+opens on Ctrl/Cmd-K or the sidebar header "Search…" button (wired through a
+window event in `src/lib/admin-command-palette-events.ts`) and lets admins jump
+to any page they can access. Its index is derived at runtime by
+`getAdminFeatureSearchIndex`, which **reuses** `getVisibleAdminNavSections` and
+de-duplicates by href — so the palette applies exactly the sidebar's four
+visibility rules (module flag, `fullAdminOnly`, `orAccess`, permission matrix)
+plus the hut-leader relabel, and can never surface an href the admin is not
+permitted to open. The index is a deliberate **superset** of what the sidebar
+renders at any given moment, not a mirror of it: the two queue-driven "Needs
+Attention" deep links (Unpaid Finished Stays / Unpaid Stay Additions) stay
+searchable as always-accessible, pre-filtered views even when their queue is
+empty, whereas the sidebar reveals them only while their queue is non-empty. As
+defence in depth, `getAdminFeatureSearchIndex` fails **closed** — a missing
+permission matrix yields an empty index — even though `getVisibleAdminNavSections`
+keeps its pre-existing fail-open contract. There is no second registry to drift:
+`navSections` remains the single source of truth, optionally enriched with a
+per-entry `keywords` field that only widens palette matching.
 
 `src/lib/token-catalogue.ts` is the client-safe single source of truth for the
 `{{token}}` placeholders supported in admin HTML content (page bodies and lodge
@@ -668,6 +1213,23 @@ exposing the full admin interface.
 
 ## Integrations
 
+The external integration map: what the app calls, what calls back, and the
+gate/direction of each. Every provider call stays behind a narrow helper and, by
+policy, outside long database transactions.
+
+```mermaid
+flowchart LR
+    App["Next.js app"]
+    App -->|"PaymentIntents, SetupIntents, refunds"| Stripe["Stripe"]
+    Stripe -->|"webhooks (idempotent)"| App
+    App -->|"invoices, credit notes, contacts, payments"| Xero["Xero"]
+    Xero -->|"inbound webhooks + reconciliation"| App
+    App -->|"SMTP transactional email"| SES["AWS SES"]
+    SES -->|"SNS bounce/complaint feedback"| App
+    App -->|"cron/webhook errors via observability-bridge"| Sentry["Sentry"]
+    App -->|"address autocomplete (optional, module-gated)"| Addy["Addy proxy"]
+```
+
 ### Stripe
 
 Stripe is used for PaymentIntents, SetupIntents, saved payment methods, refunds,
@@ -809,6 +1371,19 @@ shared `sendEmail` path.
 
 Cron jobs run inside the `app` cron-leader container. Web-only blue/green slots
 disable cron with `CRON_ENABLED=false`.
+
+The jobs grouped by cadence (the table below is the authoritative per-job
+reference):
+
+```mermaid
+flowchart TD
+    Leader["app cron-leader<br/>(CRON_ENABLED=true)"]
+    Leader --> Q15["Every 15 min<br/>payment-recovery, xero-outbox,<br/>xero-operation-replay, xero-inbound-reconcile"]
+    Leader --> Q30["Every 30 min<br/>waitlist-processor, email-retry"]
+    Leader --> Q3h["Every 3 h<br/>confirm-pending, pre-arrival-reminders,<br/>purge-booking-requests, quote-expiry-reminders,<br/>school-attendee-confirmations, group-settlement-reaper"]
+    Leader --> Daily["Daily<br/>complete-bookings, data-pruning, draft-cleanup,<br/>age-up, capacity-warnings, admin-digest,<br/>credit-reconciliation, hut-leader-auto-assign,<br/>checkin-reminders, pending-deadline-alerts,<br/>nomination-reminders, finance-daily-sync,<br/>xero-membership-refresh, xero-link-backfill,<br/>xero-link-cleanup, xero-reconciliation-report"]
+    Leader --> Cfg["Configurable<br/>backup"]
+```
 
 | Job | Schedule | Purpose |
 | --- | --- | --- |

@@ -18,9 +18,25 @@ export const MEMBERSHIP_TYPE_BOOKING_BEHAVIORS = [
 export const MEMBERSHIP_TYPE_SUBSCRIPTION_BEHAVIORS = [
   "REQUIRED",
   "NOT_REQUIRED",
+  "BASED_ON_AGE_TIER",
 ] as const satisfies readonly MembershipTypeSubscriptionBehavior[];
 
+// Age tiers an admin can tick as "allowed" for a membership type. Includes the
+// explicit "N/A (no age)" option (NOT_APPLICABLE, sorted last) so
+// organisation/school types can be configured as age-exempt (#2069). This feeds
+// the create/update zod enums, the normalizer, and the dialog checkbox list.
 export const MEMBERSHIP_TYPE_AGE_TIERS = [
+  "INFANT",
+  "CHILD",
+  "YOUTH",
+  "ADULT",
+  "NOT_APPLICABLE",
+] as const satisfies readonly AgeTier[];
+
+// The default allowed-tier set for a new membership type when the caller omits
+// allowedAgeTiers. Deliberately the four real age tiers only — N/A is opt-in and
+// must never be pre-selected or silently added to a default (#2069).
+export const DEFAULT_MEMBERSHIP_TYPE_AGE_TIERS = [
   "INFANT",
   "CHILD",
   "YOUTH",
@@ -81,6 +97,33 @@ export const BUILT_IN_MEMBERSHIP_TYPES = [
     subscriptionBehavior: "REQUIRED",
     sortOrder: 5,
   },
+  {
+    // Operational account, not a membership (#2149). Role is a pure permission
+    // level, so the ADMIN membership TYPE is the sole authority that a bare admin
+    // account (no explicit season assignment) never owes a subscription. It
+    // blocks lodge bookings for the account itself — a real fee-paying human who
+    // happens to hold the admin permission is assigned a real membership type
+    // (Full etc.) and is unaffected by this fallback.
+    key: "ADMIN",
+    name: "Admin",
+    description:
+      "Operational administrator account. Carries no Annual Membership Fee obligation and does not book the lodge as itself.",
+    bookingBehavior: "BLOCK_BOOKING",
+    subscriptionBehavior: "NOT_REQUIRED",
+    sortOrder: 6,
+  },
+  {
+    // Shared lodge kiosk account (#2149). Operational, so it never owes a
+    // subscription, but it MUST remain able to create bookings on behalf of
+    // members (kiosk booking), so it keeps member booking-rate semantics.
+    key: "LODGE",
+    name: "Lodge",
+    description:
+      "Shared lodge kiosk account. Carries no Annual Membership Fee obligation but keeps member booking-rate access for kiosk bookings.",
+    bookingBehavior: "MEMBER_RATE",
+    subscriptionBehavior: "NOT_REQUIRED",
+    sortOrder: 7,
+  },
 ] as const satisfies ReadonlyArray<{
   key: string;
   name: string;
@@ -112,6 +155,10 @@ const BUILT_IN_MEMBERSHIP_TYPE_ALLOWED_AGE_TIERS = {
   SCHOOL: ["CHILD", "YOUTH", "ADULT"],
   NON_MEMBER: ["INFANT", "CHILD", "YOUTH", "ADULT"],
   FAMILY: ["INFANT", "CHILD", "YOUTH", "ADULT"],
+  // Operational fallback types (#2149): a single real person tier keeps them off
+  // the N/A path (N/A is opt-in only and would force the age-exempt branch).
+  ADMIN: ["ADULT"],
+  LODGE: ["ADULT"],
 } as const satisfies Record<BuiltInMembershipTypeKey, readonly AgeTier[]>;
 
 export function normalizeMembershipTypeAgeTiers(
@@ -121,13 +168,99 @@ export function normalizeMembershipTypeAgeTiers(
   return MEMBERSHIP_TYPE_AGE_TIERS.filter((ageTier) => requested.has(ageTier));
 }
 
+// Age-exemption classification of a membership type, derived purely from its
+// configured `allowedAgeTiers` (#2106). This is the single source that decides
+// whether a member on the type is forced to the no-age N/A tier, may hand-pick
+// it, or may never hold it:
+//   FORCED     — the set is EXACTLY {NOT_APPLICABLE}; every member on the type
+//                carries N/A (mirrors the org/school force, but driven by type).
+//   ALLOWED    — N/A appears alongside one or more real person tiers, so an
+//                admin can hand-pick N/A per member while others keep a real
+//                tier.
+//   DISALLOWED — N/A is absent; no member on the type may hold it.
+// `ageGroupsApply` (a pricing-shape flag) is deliberately NOT consulted.
+export type MembershipTypeAgeExemption = "FORCED" | "ALLOWED" | "DISALLOWED";
+
+export function membershipTypeAgeExemption(
+  allowedAgeTiers: readonly AgeTier[] | null | undefined,
+): MembershipTypeAgeExemption {
+  const tiers = allowedAgeTiers ?? [];
+  const includesNotApplicable = tiers.includes("NOT_APPLICABLE");
+  if (!includesNotApplicable) {
+    return "DISALLOWED";
+  }
+  const includesPersonTier = tiers.some((tier) => tier !== "NOT_APPLICABLE");
+  return includesPersonTier ? "ALLOWED" : "FORCED";
+}
+
 export function validateMembershipTypeRuleConfiguration(params: {
   allowedAgeTiers: readonly AgeTier[];
+  subscriptionBehavior?: MembershipTypeSubscriptionBehavior;
 }): string | null {
   if (params.allowedAgeTiers.length === 0) {
     return "Select at least one allowed age tier.";
   }
+  // Owner decision (#2106): the age-exempt N/A option must never bypass the
+  // subscription lockout on a paying type. N/A members are exempt from every
+  // age-based subscription requirement, so a type that offers N/A (FORCED or
+  // ALLOWED) is only valid when its subscription behaviour is "not required".
+  if (
+    params.subscriptionBehavior !== undefined &&
+    params.allowedAgeTiers.includes("NOT_APPLICABLE") &&
+    params.subscriptionBehavior !== "NOT_REQUIRED"
+  ) {
+    return 'The "N/A (no age)" tier is only allowed on membership types whose subscription behaviour is "not required".';
+  }
   return null;
+}
+
+// Owner decision (#2106): a membership-type allowed-tiers edit is blocked while
+// current/future-season assignments on the type would be stranded by the change.
+// Two independent stranding cases are covered (either one blocks):
+//   1. Becoming FORCED (only-N/A) — offends every member currently on a real
+//      person tier (they cannot silently be force-flipped to N/A; reassign or
+//      reclassify them first).
+//   2. Removing N/A from the allowed set (FORCED→DISALLOWED *and* the
+//      ALLOWED→DISALLOWED stranding the earlier guard missed) — offends every
+//      NON-ORG member currently on N/A. Organisation members are exempt: the org
+//      force keeps them N/A globally regardless of the type's tiers (#1440), so
+//      dropping N/A never strands them.
+// When neither case applies (e.g. FORCED→ALLOWED keeps N/A; an ordinary
+// person-tier narrowing that neither creates FORCED nor removes N/A) this
+// returns an empty list.
+export function membershipTypeForcedEditOffendingTiers(params: {
+  previousAllowedAgeTiers: readonly AgeTier[];
+  nextAllowedAgeTiers: readonly AgeTier[];
+  affectedMembers: readonly { ageTier: AgeTier; isOrganisation: boolean }[];
+}): AgeTier[] {
+  const nextAllowed = new Set(params.nextAllowedAgeTiers);
+  const previous = membershipTypeAgeExemption(params.previousAllowedAgeTiers);
+  const next = membershipTypeAgeExemption(params.nextAllowedAgeTiers);
+  const createsForced = previous !== "FORCED" && next === "FORCED";
+  const removesNotApplicable =
+    params.previousAllowedAgeTiers.includes("NOT_APPLICABLE") &&
+    !nextAllowed.has("NOT_APPLICABLE");
+  if (!createsForced && !removesNotApplicable) {
+    return [];
+  }
+  const offending = new Set<AgeTier>();
+  for (const member of params.affectedMembers) {
+    if (member.ageTier === "NOT_APPLICABLE") {
+      // Dropping N/A strands a non-org member currently on N/A; org members are
+      // exempt (global org force keeps them N/A regardless of the type).
+      if (removesNotApplicable && !member.isOrganisation) {
+        offending.add("NOT_APPLICABLE");
+      }
+      continue;
+    }
+    // A real person tier the new set does not cover strands the member. Only
+    // reachable when becoming FORCED (only-N/A excludes every real tier); an
+    // ordinary allowed-tier narrowing is out of scope for this guard.
+    if (createsForced && !nextAllowed.has(member.ageTier)) {
+      offending.add(member.ageTier);
+    }
+  }
+  return [...offending];
 }
 
 export async function replaceMembershipTypeRuleConfiguration(
@@ -306,7 +439,76 @@ export function defaultMembershipTypeKeyForRole(
   if (role === "NON_MEMBER") {
     return "NON_MEMBER";
   }
+  // #2149: operational accounts fall back to their own NOT_REQUIRED built-in
+  // types so a bare account (no explicit season assignment) is never treated as
+  // owing a subscription and — for LODGE — keeps member booking-rate access.
+  // Without this an un-remapped ADMIN/LODGE fell back to FULL (billable) once
+  // the role-based subscription exemption was dropped.
+  if (role === "ADMIN") {
+    return "ADMIN";
+  }
+  if (role === "LODGE") {
+    return "LODGE";
+  }
   return "FULL";
+}
+
+/**
+ * Effective membership-type subscription behaviour for a member (#2149). The
+ * membership TYPE is the sole authority for whether a subscription is owed:
+ * an explicit season assignment wins; with no assignment the member's role maps
+ * to a built-in default type (the same fallback the canonical policy resolver
+ * uses). This is the shared, DB-free primitive the admin members list, the
+ * subscriptions list, and the CSV export all use so their exempt classification
+ * cannot drift from the canonical resolver. Role carries NO exemption of its
+ * own; it only selects the fallback type when no assignment exists.
+ */
+export function effectiveSubscriptionBehavior(
+  assignmentBehavior: MembershipTypeSubscriptionBehavior | null | undefined,
+  role: Role | string,
+): MembershipTypeSubscriptionBehavior {
+  if (assignmentBehavior) {
+    return assignmentBehavior;
+  }
+  const key = defaultMembershipTypeKeyForRole(role);
+  return (
+    BUILT_IN_MEMBERSHIP_TYPES.find((type) => type.key === key)
+      ?.subscriptionBehavior ?? "REQUIRED"
+  );
+}
+
+/**
+ * Shared "subscription not required" (exempt) decision (#2149). Given a member's
+ * EFFECTIVE membership-type subscription behaviour plus their age tier and
+ * current-season subscription row, returns true when the member does not owe a
+ * subscription. Consolidates the four divergent inline OR-chains onto one rule:
+ *   - the membership type opts out entirely (NOT_REQUIRED), OR
+ *   - the type defers to the age tier (BASED_ON_AGE_TIER) and a NOT_REQUIRED
+ *     current-season row is authoritative (dominates a mid-season tier promotion,
+ *     #2041), OR
+ *   - the member's age tier is not subscription-liable.
+ * This is the display-side companion to the booking gate
+ * `requiresPaidSubscriptionForMemberForBooking`; the booking gate additionally
+ * layers the Xero-enforcement bypass, which display surfaces deliberately omit.
+ */
+export function isSubscriptionNotRequiredForMembershipType(params: {
+  subscriptionBehavior: MembershipTypeSubscriptionBehavior | null | undefined;
+  ageTier: AgeTier | string | null | undefined;
+  notRequiredAgeTiers: ReadonlySet<string>;
+  hasNotRequiredSeasonRow: boolean;
+}): boolean {
+  if (params.subscriptionBehavior === "NOT_REQUIRED") {
+    return true;
+  }
+  if (
+    params.subscriptionBehavior === "BASED_ON_AGE_TIER" &&
+    params.hasNotRequiredSeasonRow
+  ) {
+    return true;
+  }
+  return (
+    params.ageTier != null && params.notRequiredAgeTiers.has(params.ageTier)
+  );
 }
 
 // test seam

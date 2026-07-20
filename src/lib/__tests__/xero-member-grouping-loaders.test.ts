@@ -25,15 +25,15 @@ import {
 } from "@/lib/xero-member-grouping";
 
 const rules: XeroGroupingRule[] = [
-  { membershipTypeId: null, ageTier: "ADULT", kind: "MANAGED", groupId: "g-adult", groupName: "Adults", sortOrder: 0 },
-  { membershipTypeId: null, ageTier: "YOUTH", kind: "MANAGED", groupId: "g-youth", groupName: "Youth", sortOrder: 1 },
-  { membershipTypeId: "life", ageTier: null, kind: "MANAGED", groupId: "g-life", groupName: "Life", sortOrder: 2 },
+  { membershipTypeId: null, ageTiers: ["ADULT"], kind: "MANAGED", groupId: "g-adult", groupName: "Adults", sortOrder: 0 },
+  { membershipTypeId: null, ageTiers: ["YOUTH"], kind: "MANAGED", groupId: "g-youth", groupName: "Youth", sortOrder: 1 },
+  { membershipTypeId: "life", ageTiers: [], kind: "MANAGED", groupId: "g-life", groupName: "Life", sortOrder: 2 },
 ];
 
 function dbRule(rule: XeroGroupingRule) {
   return {
     membershipTypeId: rule.membershipTypeId,
-    ageTier: rule.ageTier,
+    ageTiers: rule.ageTiers,
     mode: rule.kind,
     groupId: rule.groupId,
     groupName: rule.groupName,

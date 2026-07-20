@@ -1,10 +1,18 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { BackLink } from "@/components/admin/back-link";
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import {
+  ADMIN_FORBIDDEN_SAVE_REASON,
+  AdminViewOnlyNotice,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action";
 import { listDisplayConditions } from "@/lib/lodge-display/conditions";
 import { listDisplayCssTokens } from "@/lib/lodge-display/css-tokens";
 import { isBuiltInDisplayLayoutKey } from "@/lib/lodge-display/built-in-seeds";
@@ -204,6 +212,11 @@ export default function AdminDisplayLayoutsPage() {
   const [errors, setErrors] = useState<ValidationIssue[]>([]);
   const [warnings, setWarnings] = useState<ValidationIssue[]>([]);
   const [saving, setSaving] = useState(false);
+  // Display layouts resolve to the "lodge" area, so gate authoring on
+  // lodge:edit — a lodge:view admin can open a layout to read it but every
+  // input, and the Save/Delete/Add/Duplicate write controls, stay disabled
+  // (#1940).
+  const canEdit = useAdminAreaEditAccess("lodge");
 
   // Closed registries surfaced read-only into the editor (client-safe pure data).
   const conditions = useMemo(() => listDisplayConditions(), []);
@@ -291,6 +304,10 @@ export default function AdminDisplayLayoutsPage() {
     const response = await fetch(`/api/admin/display/layouts/${item.id}`, {
       method: "DELETE",
     });
+    if (response.status === 403) {
+      setMessage(ADMIN_FORBIDDEN_SAVE_REASON);
+      return;
+    }
     if (!response.ok) {
       const body = (await response.json().catch(() => null)) as
         | { error?: string }
@@ -304,19 +321,23 @@ export default function AdminDisplayLayoutsPage() {
   }
 
   async function save() {
-    // Saving an in-place edit to a built-in is not upgrade-safe (it is
-    // overwritten on the next re-seed/upgrade, #111); require an explicit
-    // acknowledgement before persisting (#156).
-    if (
-      draft.id !== null &&
-      isBuiltInDisplayLayoutKey(draft.key) &&
-      !window.confirm(
-        `"${draft.name || draft.key}" is a built-in layout. Saving this ` +
-          "in-place edit is NOT upgrade-safe — it will be overwritten the next " +
-          "time the built-in designs are re-seeded or the app is upgraded. " +
-          "Duplicate it to customise safely instead.\n\nSave the in-place edit anyway?"
-      )
-    ) {
+    // Built-in layouts are code-managed and READ-ONLY: the PUT route now 409s on
+    // a `builtin-*` key (#2048), so an in-place save can never persist. Never
+    // fire that doomed PUT — offer the duplicate-to-customise fork instead, the
+    // only path that keeps the admin's changes (#156, #2048 D).
+    if (draft.id !== null && isBuiltInDisplayLayoutKey(draft.key)) {
+      if (
+        window.confirm(
+          `"${draft.name || draft.key}" is a built-in layout and is ` +
+            "read-only — in-place edits can't be saved (they would be " +
+            "overwritten the next time the built-in designs are re-seeded or " +
+            "the app is upgraded). Duplicate it to a new custom layout to keep " +
+            "your changes?\n\nOK duplicates it now; Cancel leaves the built-in " +
+            "open."
+        )
+      ) {
+        duplicateLayout();
+      }
       return;
     }
 
@@ -356,7 +377,9 @@ export default function AdminDisplayLayoutsPage() {
     setSaving(false);
 
     if (!response.ok) {
-      if (body?.errors && body.errors.length > 0) {
+      if (response.status === 403) {
+        setMessage(ADMIN_FORBIDDEN_SAVE_REASON);
+      } else if (body?.errors && body.errors.length > 0) {
         setErrors(body.errors);
         setWarnings(body.warnings ?? []);
       } else {
@@ -417,8 +440,18 @@ export default function AdminDisplayLayoutsPage() {
   return (
     <div className="space-y-6 p-6">
       <div>
-        <h1 className="text-2xl font-bold">Display Layouts</h1>
+        <BackLink href="/admin/display" label="Lobby Display" />
+        <h1 className="mt-2 text-2xl font-bold">Display Layouts — Advanced mode</h1>
         <p className="text-muted-foreground">
+          This is the <strong>Advanced mode</strong> hand-editor. Most boards are
+          easier to build in the{" "}
+          <Link className="underline" href="/admin/display/builder">
+            visual builder
+          </Link>
+          , which writes the layout and template for you; drop to Advanced mode
+          for full control over the HTML body, CSS, and areas.
+        </p>
+        <p className="text-muted-foreground mt-1">
           Author the structural skeleton of a lobby display: an HTML body with{" "}
           <code className="bg-muted rounded px-1">{"{{area:key}}"}</code>{" "}
           placeholders, a default CSS block, and the named areas each Template
@@ -434,6 +467,14 @@ export default function AdminDisplayLayoutsPage() {
           (which renders it in a sandboxed frame against a chosen lodge).
         </p>
       </div>
+
+      {!canEdit ? (
+        <AdminViewOnlyNotice canEdit={canEdit}>
+          Your admin role can view the lobby display layouts but cannot change
+          them. Lodge edit access is required to author, edit, or delete a
+          layout.
+        </AdminViewOnlyNotice>
+      ) : null}
 
       {message && <p className="text-sm font-medium">{message}</p>}
 
@@ -478,12 +519,13 @@ export default function AdminDisplayLayoutsPage() {
                   <Button variant="outline" onClick={() => void editLayout(item.id)}>
                     Edit
                   </Button>
-                  <Button
+                  <ViewOnlyActionButton
+                    canEdit={canEdit}
                     variant="destructive"
                     onClick={() => void deleteLayout(item)}
                   >
                     Delete
-                  </Button>
+                  </ViewOnlyActionButton>
                 </div>
               </div>
             ))}
@@ -515,9 +557,14 @@ export default function AdminDisplayLayoutsPage() {
                 are re-seeded or the app is upgraded. To keep your changes,
                 duplicate this layout and customise the copy instead.
               </p>
-              <Button variant="outline" className="h-9" onClick={duplicateLayout}>
+              <ViewOnlyActionButton
+                canEdit={canEdit}
+                variant="outline"
+                className="h-9"
+                onClick={duplicateLayout}
+              >
                 Duplicate to customise
-              </Button>
+              </ViewOnlyActionButton>
             </div>
           )}
           <div className="flex flex-wrap gap-4">
@@ -528,7 +575,7 @@ export default function AdminDisplayLayoutsPage() {
                 className="w-56 font-mono"
                 placeholder="everyday-board"
                 value={draft.key}
-                disabled={draft.id !== null}
+                disabled={draft.id !== null || !canEdit}
                 onChange={(event) =>
                   setDraft((current) => ({ ...current, key: event.target.value }))
                 }
@@ -545,6 +592,7 @@ export default function AdminDisplayLayoutsPage() {
                 id="layout-name"
                 placeholder="Everyday board"
                 value={draft.name}
+                disabled={!canEdit}
                 onChange={(event) =>
                   setDraft((current) => ({ ...current, name: event.target.value }))
                 }
@@ -558,6 +606,7 @@ export default function AdminDisplayLayoutsPage() {
               id="layout-description"
               placeholder="What this layout is for"
               value={draft.description}
+              disabled={!canEdit}
               onChange={(event) =>
                 setDraft((current) => ({
                   ...current,
@@ -573,6 +622,7 @@ export default function AdminDisplayLayoutsPage() {
               id="layout-body"
               className={`${textareaClass} min-h-40`}
               spellCheck={false}
+              disabled={!canEdit}
               placeholder={
                 '<main class="board">\n  {{area:arrivals}}\n  {{area:notice}}\n</main>'
               }
@@ -598,6 +648,7 @@ export default function AdminDisplayLayoutsPage() {
               id="layout-css"
               className={`${textareaClass} min-h-32`}
               spellCheck={false}
+              disabled={!canEdit}
               placeholder={".board { color: var(--display-ink); }"}
               value={draft.defaultCss}
               onChange={(event) =>
@@ -639,6 +690,7 @@ export default function AdminDisplayLayoutsPage() {
                       className="w-44 font-mono"
                       placeholder="arrivals"
                       value={area.key}
+                      disabled={!canEdit}
                       onChange={(event) =>
                         updateArea(index, { key: event.target.value })
                       }
@@ -655,6 +707,7 @@ export default function AdminDisplayLayoutsPage() {
                       id={`area-description-${index}`}
                       placeholder="Today's arrivals board"
                       value={area.description}
+                      disabled={!canEdit}
                       onChange={(event) =>
                         updateArea(index, { description: event.target.value })
                       }
@@ -668,6 +721,7 @@ export default function AdminDisplayLayoutsPage() {
                       id={`area-kind-${index}`}
                       className={selectClass}
                       value={area.kind}
+                      disabled={!canEdit}
                       onChange={(event) =>
                         updateArea(index, { kind: event.target.value as AreaKind })
                       }
@@ -679,6 +733,7 @@ export default function AdminDisplayLayoutsPage() {
                   </div>
                   <Button
                     variant="outline"
+                    disabled={!canEdit}
                     onClick={() =>
                       setDraft((current) => ({
                         ...current,
@@ -699,6 +754,7 @@ export default function AdminDisplayLayoutsPage() {
                       id={`area-condition-${index}`}
                       className={selectClass}
                       value={area.condition}
+                      disabled={!canEdit}
                       onChange={(event) =>
                         updateArea(index, { condition: event.target.value })
                       }
@@ -729,6 +785,7 @@ export default function AdminDisplayLayoutsPage() {
                         inputMode="numeric"
                         placeholder="12"
                         value={area.rotateSeconds}
+                        disabled={!canEdit}
                         onChange={(event) =>
                           updateArea(index, { rotateSeconds: event.target.value })
                         }
@@ -745,6 +802,7 @@ export default function AdminDisplayLayoutsPage() {
                             className="w-40 font-mono"
                             placeholder="child-key"
                             value={child.key}
+                            disabled={!canEdit}
                             onChange={(event) =>
                               updateChild(index, childIndex, {
                                 key: event.target.value,
@@ -755,6 +813,7 @@ export default function AdminDisplayLayoutsPage() {
                             className="min-w-40 flex-1"
                             placeholder="Description"
                             value={child.description}
+                            disabled={!canEdit}
                             onChange={(event) =>
                               updateChild(index, childIndex, {
                                 description: event.target.value,
@@ -765,6 +824,7 @@ export default function AdminDisplayLayoutsPage() {
                             className={selectClass}
                             value={child.condition}
                             title="Optional rotation condition"
+                            disabled={!canEdit}
                             onChange={(event) =>
                               updateChild(index, childIndex, {
                                 condition: event.target.value,
@@ -791,7 +851,7 @@ export default function AdminDisplayLayoutsPage() {
                                 ),
                               })
                             }
-                            disabled={area.children.length <= 1}
+                            disabled={area.children.length <= 1 || !canEdit}
                           >
                             Remove
                           </Button>
@@ -799,6 +859,7 @@ export default function AdminDisplayLayoutsPage() {
                       ))}
                       <Button
                         variant="outline"
+                        disabled={!canEdit}
                         onClick={() =>
                           updateArea(index, {
                             children: [
@@ -823,6 +884,7 @@ export default function AdminDisplayLayoutsPage() {
                       id={`area-default-${index}`}
                       className={`${textareaClass} min-h-20`}
                       spellCheck={false}
+                      disabled={!canEdit}
                       placeholder={"<p>Welcome</p> or {{module:notice}}"}
                       value={area.defaultContentHtml}
                       onChange={(event) =>
@@ -843,7 +905,8 @@ export default function AdminDisplayLayoutsPage() {
                 )}
               </div>
             ))}
-            <Button
+            <ViewOnlyActionButton
+              canEdit={canEdit}
               variant="outline"
               onClick={() =>
                 setDraft((current) => ({
@@ -853,7 +916,7 @@ export default function AdminDisplayLayoutsPage() {
               }
             >
               Add area
-            </Button>
+            </ViewOnlyActionButton>
           </div>
 
           {errors.length > 0 && (
@@ -887,9 +950,13 @@ export default function AdminDisplayLayoutsPage() {
           )}
 
           <div className="flex items-center gap-3">
-            <Button onClick={() => void save()} disabled={saving || !draft.name}>
+            <ViewOnlyActionButton
+              canEdit={canEdit}
+              onClick={() => void save()}
+              disabled={saving || !draft.name}
+            >
               {draft.id ? "Save changes" : "Create layout"}
-            </Button>
+            </ViewOnlyActionButton>
             {draft.id && (
               <Button variant="outline" onClick={startNew} disabled={saving}>
                 Cancel

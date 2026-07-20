@@ -9,20 +9,47 @@ vi.mock("@/hooks/use-scroll-to-feedback", () => ({
   useScrollToFeedback: () => ({ scrollToError: mocks.scrollToError, scrollToTop: vi.fn() }),
 }));
 
-let FeeConfigurationPage: typeof import("@/app/(admin)/admin/fee-configuration/page").default;
+// The finance fee sections moved to the consolidated /admin/fees console (#1933,
+// E7); /admin/fee-configuration now redirects there. Behaviour is unchanged, so
+// this suite exercises the moved component directly.
+let FeeConfigurationPage: typeof import("@/app/(admin)/admin/fees/_components/finance-fees-sections").FinanceFeesSections;
 
 const editableData = {
   canEdit: true,
   familyBillingMode: "BILL_FAMILY_VIA_BILLING_MEMBER",
+  // Resolved default income account for empty component Account fields (#2068).
+  defaultInvoiceAccountCode: "203",
   membershipTypes: [{
-    id: "type-1", name: "Full", isActive: true,
-    annualFees: [{ id: "fee-1", amountCents: 10000, effectiveFrom: "2026-01-01", effectiveTo: null, billingBasis: "PER_MEMBER", prorationRule: "NONE" }],
+    id: "type-1", key: "FULL", name: "Full", isActive: true,
+    annualFees: [{ id: "fee-1", ageTier: null, amountCents: 10000, effectiveFrom: "2026-01-01", effectiveTo: null, billingBasis: "PER_MEMBER", prorationRule: "NONE" }],
+    joiningFees: [{ id: "joining-1", ageTier: "ADULT", amountCents: 5000, effectiveFrom: "2026-01-01", effectiveTo: null }],
   }],
-  entranceFees: [{ id: "entrance-1", category: "ADULT", amountCents: 5000, effectiveFrom: "2026-01-01", effectiveTo: null }],
-  currentEntranceFees: [{ category: "ADULT", amountCents: 5000, source: "SCHEDULE" }],
   familyGroups: [{
     id: "family-1", name: "Example family", billingMemberId: "member-1", billingException: false,
     members: [{ id: "member-1", firstName: "Alex", lastName: "Example", email: "alex@example.test", active: true }],
+  }],
+};
+
+// Fee with saved invoice-line components, exercising the proration-display fix
+// (#2068, finding 7): a NONE-rule fee whose component is stored prorate=true
+// must still read "full", while a prorating fee reads "prorated".
+const componentFeeData = {
+  ...editableData,
+  membershipTypes: [{
+    id: "type-1", key: "FULL", name: "Full", isActive: true,
+    annualFees: [
+      {
+        id: "fee-none", ageTier: null, amountCents: 10000, effectiveFrom: "2026-01-01", effectiveTo: null,
+        billingBasis: "PER_MEMBER", prorationRule: "NONE",
+        components: [{ id: "c1", label: "Base membership", amountCents: 10000, prorate: true, xeroAccountCode: null, xeroItemCode: null, sortOrder: 0 }],
+      },
+      {
+        id: "fee-rem", ageTier: "YOUTH", amountCents: 6000, effectiveFrom: "2026-01-01", effectiveTo: null,
+        billingBasis: "PER_MEMBER", prorationRule: "REMAINING_MONTHS_INCLUSIVE",
+        components: [{ id: "c2", label: "Youth base", amountCents: 6000, prorate: true, xeroAccountCode: null, xeroItemCode: null, sortOrder: 0 }],
+      },
+    ],
+    joiningFees: [],
   }],
 };
 
@@ -32,8 +59,6 @@ const multiFamilyData = {
   canEdit: true,
   familyBillingMode: "BILL_FAMILY_VIA_BILLING_MEMBER",
   membershipTypes: editableData.membershipTypes,
-  entranceFees: editableData.entranceFees,
-  currentEntranceFees: editableData.currentEntranceFees,
   familyGroups: [
     {
       id: "family-1", name: "Alpha family", billingMemberId: "m1a", billingException: false,
@@ -59,8 +84,51 @@ const multiFamilyData = {
   ],
 };
 
+// Xero reference fixtures for the component Account/Item pickers (#2068). The
+// account picker filters to REVENUE class; 203 is the resolved default.
+const xeroAccounts = [
+  { code: "200", name: "Hut Fees Income", type: "REVENUE", class: "REVENUE" },
+  { code: "203", name: "Subscriptions Income", type: "REVENUE", class: "REVENUE" },
+  { code: "260", name: "Other Revenue", type: "REVENUE", class: "REVENUE" },
+  { code: "090", name: "Bank", type: "BANK", class: "ASSET" },
+];
+const xeroItems = [
+  { itemID: "i1", code: "MEMBER", name: "Membership", description: "" },
+  { itemID: "i2", code: "WORKPARTY", name: "Work Party", description: "" },
+];
+
 function response(ok: boolean, body: unknown) {
   return { ok, json: async () => body } as Response;
+}
+
+// A fetch stub that serves the two admin-gated Xero proxy endpoints from static
+// fixtures and routes fee-configuration GET/POST through `config` (#2068). The
+// component now loads accounts + items on mount, so every mock must be
+// URL-aware. `config` may be a single Response, a queue (consumed in order, the
+// last entry repeating), or a function called per fee-configuration request.
+function stubFetch(
+  config: Response | Response[] | ((init?: RequestInit) => Response),
+  opts: { accountsOk?: boolean; itemsOk?: boolean } = {},
+) {
+  const { accountsOk = true, itemsOk = true } = opts;
+  const queue = Array.isArray(config) ? [...config] : null;
+  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    const u = String(url);
+    if (u.includes("chart-of-accounts")) {
+      return accountsOk ? response(true, { accounts: xeroAccounts }) : response(false, { error: "Xero disconnected" });
+    }
+    if (u.includes("/admin/xero/items")) {
+      return itemsOk ? response(true, { items: xeroItems }) : response(false, { error: "Xero disconnected" });
+    }
+    if (typeof config === "function") return config(init);
+    if (queue) {
+      const next = queue.length > 1 ? queue.shift()! : queue[0];
+      return next;
+    }
+    return config;
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
 }
 
 // Stage a billing member on the Nth family Select (0-based, DOM order matches
@@ -79,7 +147,7 @@ function familyBillingPosts(fetchMock: ReturnType<typeof vi.fn>) {
     .filter((body) => body.action === "SET_FAMILY_BILLING_MEMBER");
 }
 
-// The only POST is the mutation call; the initial load is a bodyless GET.
+// The only POSTs are mutation calls; the initial loads are bodyless GETs.
 function postCalls(fetchMock: ReturnType<typeof vi.fn>) {
   return fetchMock.mock.calls.filter(([, init]) => (init as RequestInit | undefined)?.method === "POST");
 }
@@ -102,7 +170,7 @@ beforeAll(async () => {
   Element.prototype.releasePointerCapture = vi.fn();
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-07-13T12:30:00.000Z")); // 14 July in Pacific/Auckland
-  FeeConfigurationPage = (await import("@/app/(admin)/admin/fee-configuration/page")).default;
+  FeeConfigurationPage = (await import("@/app/(admin)/admin/fees/_components/finance-fees-sections")).FinanceFeesSections;
   vi.useRealTimers();
 });
 
@@ -112,8 +180,19 @@ afterEach(() => {
 });
 
 describe("fee configuration page", () => {
+  it("shows a friendly read-only notice (not a fetch-failed error) when the finance read is cross-area 403 (E7 Lens-A F1)", async () => {
+    // A bookings-only operator on the shared /admin/fees console gets a 403 from
+    // the finance-gated /api/admin/fee-configuration read.
+    stubFetch({ ok: false, status: 403, json: async () => ({ error: "Forbidden" }) } as Response);
+    render(<FeeConfigurationPage />);
+    expect(await screen.findByText(/don't have permission to view this section/i)).toBeTruthy();
+    // The raw fetch-failed error must NOT surface.
+    expect(screen.queryByText(/failed to load fee configuration/i)).toBeNull();
+    expect(screen.queryByText(/^Forbidden$/)).toBeNull();
+  });
+
   it("renders finance viewers read-only with no edit affordances", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => response(true, { ...editableData, canEdit: false })));
+    stubFetch(response(true, { ...editableData, canEdit: false }));
     render(<FeeConfigurationPage />);
     expect(await screen.findByText(/finance view access is read-only/i)).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Edit membership fees" })).toBeNull();
@@ -121,7 +200,7 @@ describe("fee configuration page", () => {
     expect(screen.queryByRole("button", { name: "Edit family billing" })).toBeNull();
     // No forms, no per-row controls, no billing Select while read-only.
     expect(screen.queryByLabelText("Annual amount (NZD)")).toBeNull();
-    expect(screen.queryByRole("button", { name: "Edit Full fee" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Edit Full Flat (all ages) fee" })).toBeNull();
     expect(screen.queryByRole("combobox", { name: "Billing member" })).toBeNull();
     // Saved values still render (fee schedule + billing member as static text).
     expect(screen.getByText("$100.00")).toBeTruthy();
@@ -129,26 +208,40 @@ describe("fee configuration page", () => {
   });
 
   it("gates the membership form and row controls behind Edit", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => response(true, editableData)));
+    stubFetch(response(true, editableData));
     render(<FeeConfigurationPage />);
     await screen.findByRole("button", { name: "Edit membership fees" });
     // Read-only on load: schedule shown, but no form and no pencil.
     expect(screen.getByText("$100.00")).toBeTruthy();
     expect(screen.queryByLabelText("Annual amount (NZD)")).toBeNull();
-    expect(screen.queryByRole("button", { name: "Edit Full fee" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Edit Full Flat (all ages) fee" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Edit membership fees" }));
     expect(screen.getByLabelText("Annual amount (NZD)")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Edit Full fee" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Edit Full Flat (all ages) fee" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Add annual fee" })).toBeTruthy();
   });
 
+  it("offers an age-tier select and sends ageTier null when creating a flat fee (#2067)", async () => {
+    const fetchMock = stubFetch([response(true, editableData), response(true, editableData)]);
+    render(<FeeConfigurationPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit membership fees" }));
+    // The per-tier select (#2067) is present and defaults to Flat (all ages).
+    expect(document.querySelector("#membership-tier")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Annual amount (NZD)"), { target: { value: "150.00" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add annual fee" }));
+    await waitFor(() => expect(mocks.toastSuccess).toHaveBeenCalledWith("Fee schedule saved"));
+    expect(postBody(fetchMock)).toMatchObject({
+      action: "CREATE_MEMBERSHIP_FEE", membershipTypeId: "type-1", ageTier: null,
+      amountCents: 15000, billingBasis: "PER_MEMBER",
+    });
+  });
+
   it("uses the NZ date and discards membership form edits on cancel with no API call", async () => {
-    const fetchMock = vi.fn(async () => response(true, editableData));
-    vi.stubGlobal("fetch", fetchMock);
+    const fetchMock = stubFetch(response(true, editableData));
     render(<FeeConfigurationPage />);
     fireEvent.click(await screen.findByRole("button", { name: "Edit membership fees" }));
     expect((document.querySelector("#membership-from") as HTMLInputElement).value).toBe("2026-07-14");
-    fireEvent.click(screen.getByRole("button", { name: "Edit Full fee" }));
+    fireEvent.click(screen.getByRole("button", { name: "Edit Full Flat (all ages) fee" }));
     expect((screen.getByLabelText("Annual amount (NZD)") as HTMLInputElement).value).toBe("100.00");
     fireEvent.click(screen.getByRole("button", { name: "Close section" }));
     // Close section leaves edit mode; re-entering shows a fresh add form.
@@ -160,13 +253,10 @@ describe("fee configuration page", () => {
   });
 
   it("commits an unchanged membership fee payload from edit mode", async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(response(true, editableData))
-      .mockResolvedValueOnce(response(true, editableData));
-    vi.stubGlobal("fetch", fetchMock);
+    const fetchMock = stubFetch([response(true, editableData), response(true, editableData)]);
     render(<FeeConfigurationPage />);
     fireEvent.click(await screen.findByRole("button", { name: "Edit membership fees" }));
-    fireEvent.click(screen.getByRole("button", { name: "Edit Full fee" }));
+    fireEvent.click(screen.getByRole("button", { name: "Edit Full Flat (all ages) fee" }));
     fireEvent.click(screen.getByRole("button", { name: "Update annual fee" }));
     await waitFor(() => expect(mocks.toastSuccess).toHaveBeenCalledWith("Fee schedule saved"));
     // Stays in edit mode after commit, back in add-mode.
@@ -174,54 +264,49 @@ describe("fee configuration page", () => {
     expect(postBody(fetchMock)).toEqual({
       action: "UPDATE_MEMBERSHIP_FEE", id: "fee-1", amountCents: 10000,
       billingBasis: "PER_MEMBER", prorationRule: "NONE", effectiveFrom: "2026-01-01", effectiveTo: null,
+      // A fee with no stored components defaults to the single reconciled
+      // component (#1932, E6); editing always sends the reconciled array.
+      components: [{ label: "Annual membership fee", amountCents: 10000, prorate: true, xeroAccountCode: null, xeroItemCode: null, sortOrder: 0 }],
     });
   });
 
   it("retains membership edit mode and surfaces feedback when an update fails", async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(response(true, editableData))
-      .mockResolvedValueOnce(response(false, { error: "Overlapping schedule" }));
-    vi.stubGlobal("fetch", fetchMock);
+    const fetchMock = stubFetch([response(true, editableData), response(false, { error: "Overlapping schedule" })]);
     render(<FeeConfigurationPage />);
     fireEvent.click(await screen.findByRole("button", { name: "Edit membership fees" }));
-    fireEvent.click(screen.getByRole("button", { name: "Edit Full fee" }));
+    fireEvent.click(screen.getByRole("button", { name: "Edit Full Flat (all ages) fee" }));
     fireEvent.click(screen.getByRole("button", { name: "Update annual fee" }));
     expect(await screen.findByText("Overlapping schedule")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Update annual fee" })).toBeTruthy();
     expect(mocks.toastError).toHaveBeenCalledWith("Overlapping schedule");
     await waitFor(() => expect(mocks.scrollToError).toHaveBeenCalled());
+    void fetchMock;
   });
 
   it("keeps failed delete confirmation context inside membership edit mode", async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(response(true, editableData))
-      .mockResolvedValueOnce(response(false, { error: "Delete failed" }));
-    vi.stubGlobal("fetch", fetchMock);
+    stubFetch([response(true, editableData), response(false, { error: "Delete failed" })]);
     render(<FeeConfigurationPage />);
     fireEvent.click(await screen.findByRole("button", { name: "Edit membership fees" }));
-    fireEvent.click(screen.getByRole("button", { name: "Delete Full fee" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete Full Flat (all ages) fee" }));
     fireEvent.click(screen.getByRole("button", { name: "Delete fee" }));
     expect(await screen.findByText("Delete failed")).toBeTruthy();
     expect(screen.getByRole("dialog")).toBeTruthy();
-    expect(screen.getByText(/Full annual fee from 2026-01-01/)).toBeTruthy();
+    expect(screen.getByText(/Full Flat \(all ages\) annual fee from 2026-01-01/)).toBeTruthy();
   });
 
   it("gates the entrance fee form and row controls behind Edit", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => response(true, editableData)));
+    stubFetch(response(true, editableData));
     render(<FeeConfigurationPage />);
     await screen.findByRole("button", { name: "Edit joining fees" });
     expect(screen.queryByLabelText("Amount (NZD)")).toBeNull();
-    expect(screen.queryByRole("button", { name: "Edit ADULT fee" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Edit Full Adult joining fee" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Edit joining fees" }));
     expect(screen.getByLabelText("Amount (NZD)")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Edit ADULT fee" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Edit Full Adult joining fee" })).toBeTruthy();
   });
 
   it("does not call SET_FAMILY_BILLING_MEMBER until the family section Save", async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(response(true, editableData))
-      .mockResolvedValueOnce(response(true, editableData));
-    vi.stubGlobal("fetch", fetchMock);
+    const fetchMock = stubFetch([response(true, editableData), response(true, editableData)]);
     render(<FeeConfigurationPage />);
     await screen.findByRole("button", { name: "Edit family billing" });
     // Read-only: billing member is static text, no Select yet.
@@ -239,8 +324,7 @@ describe("fee configuration page", () => {
   });
 
   it("reverts staged family billing changes on Cancel with no API call", async () => {
-    const fetchMock = vi.fn(async () => response(true, editableData));
-    vi.stubGlobal("fetch", fetchMock);
+    const fetchMock = stubFetch(response(true, editableData));
     render(<FeeConfigurationPage />);
     fireEvent.click(await screen.findByRole("button", { name: "Edit family billing" }));
     selectRadixOption("Billing member", /No billing member/);
@@ -252,8 +336,7 @@ describe("fee configuration page", () => {
   });
 
   it("posts only changed families on Save, one SET_FAMILY_BILLING_MEMBER call each", async () => {
-    const fetchMock = vi.fn(async () => response(true, multiFamilyData));
-    vi.stubGlobal("fetch", fetchMock);
+    const fetchMock = stubFetch(response(true, multiFamilyData));
     render(<FeeConfigurationPage />);
     fireEvent.click(await screen.findByRole("button", { name: "Edit family billing" }));
     // Change families 1 and 3; leave family 2 (index 1) on its saved member.
@@ -277,7 +360,7 @@ describe("fee configuration page", () => {
     // longer treats that family as changed. Family 2 fails on its first attempt.
     const families = JSON.parse(JSON.stringify(multiFamilyData.familyGroups)) as typeof multiFamilyData.familyGroups;
     let family2Attempts = 0;
-    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+    const fetchMock = stubFetch((init?: RequestInit) => {
       if (init?.method !== "POST") return response(true, { ...multiFamilyData, familyGroups: families });
       const body = JSON.parse(String(init.body));
       if (body.familyGroupId === "family-2") {
@@ -288,7 +371,6 @@ describe("fee configuration page", () => {
       if (target) target.billingMemberId = body.billingMemberId;
       return response(true, { ...multiFamilyData, familyGroups: families });
     });
-    vi.stubGlobal("fetch", fetchMock);
     render(<FeeConfigurationPage />);
     fireEvent.click(await screen.findByRole("button", { name: "Edit family billing" }));
     // Stage a change on all three families.
@@ -319,7 +401,7 @@ describe("fee configuration page", () => {
 
   it("hides the family billing card and per-family basis when the club bills members individually", async () => {
     const individualData = { ...editableData, familyBillingMode: "BILL_MEMBERS_INDIVIDUALLY" };
-    vi.stubGlobal("fetch", vi.fn(async () => response(true, individualData)));
+    stubFetch(response(true, individualData));
     render(<FeeConfigurationPage />);
     // Membership section still loads; family card is gone entirely.
     await screen.findByRole("button", { name: "Edit membership fees" });
@@ -339,12 +421,112 @@ describe("fee configuration page", () => {
       ...editableData,
       familyBillingMode: "BILL_MEMBERS_INDIVIDUALLY",
       membershipTypes: [{
-        id: "type-1", name: "Full", isActive: true,
+        id: "type-1", key: "FULL", name: "Full", isActive: true,
         annualFees: [{ id: "fee-1", amountCents: 10000, effectiveFrom: "2026-01-01", effectiveTo: null, billingBasis: "PER_FAMILY", prorationRule: "NONE" }],
+        joiningFees: [],
       }],
     };
-    vi.stubGlobal("fetch", vi.fn(async () => response(true, staleData)));
+    stubFetch(response(true, staleData));
     render(<FeeConfigurationPage />);
     expect(await screen.findByText(/one or more schedules still use the per-family basis/i)).toBeTruthy();
+  });
+
+  // --- #2068: Xero pickers, surfaced default, proration display ---
+
+  it("replaces the free-text Account/Item fields with pickers surfacing the resolved default (#2068)", async () => {
+    stubFetch(response(true, editableData));
+    render(<FeeConfigurationPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit membership fees" }));
+    // The account picker trigger surfaces the resolved default income account
+    // (code from the GET payload, name from the live chart of accounts).
+    const accountTrigger = screen.getByRole("button", { name: "Account (optional) for component 1" });
+    await waitFor(() => expect(accountTrigger.textContent).toContain("Subscriptions Income"));
+    expect(accountTrigger.textContent).toContain("Default: 203");
+    // Items have no default mapping; the empty state says so accurately.
+    expect(screen.getByRole("button", { name: "Item (optional) for component 1" }).textContent).toContain("Default: no item");
+  });
+
+  it("says the default is not configured when no subscriptionIncome mapping is surfaced (#2068, F1)", async () => {
+    // The route returns null when subscriptionIncome is not explicitly
+    // configured; the editor must not advertise a code billing would refuse.
+    stubFetch(response(true, { ...editableData, defaultInvoiceAccountCode: null }));
+    render(<FeeConfigurationPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit membership fees" }));
+    const accountTrigger = screen.getByRole("button", { name: "Account (optional) for component 1" });
+    expect(accountTrigger.textContent).toContain("Default: not configured");
+  });
+
+  it("saves the account and item codes chosen from the pickers (#2068)", async () => {
+    const fetchMock = stubFetch([response(true, editableData), response(true, editableData)]);
+    render(<FeeConfigurationPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit membership fees" }));
+    fireEvent.change(screen.getByLabelText("Annual amount (NZD)"), { target: { value: "150.00" } });
+    // Wait for the live lists to load, then pick a revenue account + a sales item.
+    await waitFor(() => expect(screen.getByRole("button", { name: "Account (optional) for component 1" }).textContent).toContain("Subscriptions Income"));
+    fireEvent.click(screen.getByRole("button", { name: "Account (optional) for component 1" }));
+    fireEvent.click(screen.getByRole("button", { name: /260.*Other Revenue/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Item (optional) for component 1" }));
+    fireEvent.click(screen.getByRole("button", { name: /WORKPARTY.*Work Party/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Add annual fee" }));
+    await waitFor(() => expect(mocks.toastSuccess).toHaveBeenCalledWith("Fee schedule saved"));
+    expect(postBody(fetchMock).components).toEqual([
+      { label: "Annual membership fee", amountCents: 15000, prorate: true, xeroAccountCode: "260", xeroItemCode: "WORKPARTY", sortOrder: 0 },
+    ]);
+  });
+
+  it("only lists ACTIVE revenue accounts in the account picker (#2068)", async () => {
+    stubFetch(response(true, editableData));
+    render(<FeeConfigurationPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit membership fees" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Account (optional) for component 1" }).textContent).toContain("Subscriptions Income"));
+    fireEvent.click(screen.getByRole("button", { name: "Account (optional) for component 1" }));
+    // Revenue accounts are offered; the ASSET/BANK account (090) is filtered out.
+    expect(screen.getByRole("button", { name: /260.*Other Revenue/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /090.*Bank/ })).toBeNull();
+  });
+
+  it("keeps manual code entry working with an amber notice when the Xero lists fail to load (#2068)", async () => {
+    const fetchMock = stubFetch([response(true, editableData), response(true, editableData)], { accountsOk: false, itemsOk: false });
+    render(<FeeConfigurationPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit membership fees" }));
+    fireEvent.change(screen.getByLabelText("Annual amount (NZD)"), { target: { value: "150.00" } });
+    // Amber notice, never a hard block.
+    expect(await screen.findByText(/Could not load the Xero/)).toBeTruthy();
+    // Manual code entry via the picker's disconnected fallback.
+    fireEvent.click(screen.getByRole("button", { name: "Account (optional) for component 1" }));
+    fireEvent.change(screen.getByPlaceholderText(/Search account code/), { target: { value: "250" } });
+    fireEvent.click(screen.getByRole("button", { name: /Use code/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Add annual fee" }));
+    await waitFor(() => expect(mocks.toastSuccess).toHaveBeenCalledWith("Fee schedule saved"));
+    expect(postBody(fetchMock).components[0].xeroAccountCode).toBe("250");
+  });
+
+  it("renders the fee-level proration rule and never labels a Full-annual-fee component as prorated (#2068)", async () => {
+    stubFetch(response(true, componentFeeData));
+    render(<FeeConfigurationPage />);
+    await screen.findByRole("button", { name: "Edit membership fees" });
+    // Each saved fee shows its rule label, in the editor's own words.
+    expect(screen.getByText("Full annual fee")).toBeTruthy();
+    expect(screen.getByText("Remaining months, including decision month")).toBeTruthy();
+    // The NONE fee's component reads "full" despite its stored prorate=true.
+    const baseLi = screen.getByText((content) => content.startsWith("Base membership"));
+    expect(baseLi.textContent).toMatch(/·\s*full$/);
+    expect(baseLi.textContent).not.toContain("prorated");
+    // The prorating fee's component reads "prorated".
+    const youthLi = screen.getByText((content) => content.startsWith("Youth base"));
+    expect(youthLi.textContent).toContain("prorated");
+  });
+
+  it("hides the per-component Prorate checkbox for a Full annual fee and shows it once the rule prorates (#2068)", async () => {
+    stubFetch(response(true, editableData));
+    render(<FeeConfigurationPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit membership fees" }));
+    // Add-mode defaults the rule to Full annual fee (NONE) -> no Prorate checkbox.
+    expect(screen.queryByRole("checkbox")).toBeNull();
+    expect(screen.getByText("Prorate n/a")).toBeTruthy();
+    // Switching the rule to prorating reveals the per-component opt-in.
+    selectRadixOption("Proration", /Remaining months/);
+    expect(screen.getByRole("checkbox")).toBeTruthy();
+    expect(screen.queryByText("Prorate n/a")).toBeNull();
   });
 });

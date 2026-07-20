@@ -559,7 +559,8 @@ client-safe `css-tokens.ts` before they ship in the payload:
 > which opens a **hub landing page of cards** rather than a four-item sidebar
 > group, mirroring the "Site Appearance & Content" hub. The hub cards are
 > **Devices** (`/admin/display/devices`, heading "Display Devices"),
-> **Layouts** (`/admin/display/layouts`), **Templates**
+> **Visual builder** (`/admin/display/builder`, ADR-004), **Layouts (Advanced)**
+> (`/admin/display/layouts`), **Templates**
 > (`/admin/display/templates`), and **Reference**
 > (`/admin/display/reference`). The Devices management page moved from
 > `/admin/display` to `/admin/display/devices` when `/admin/display` became the
@@ -575,6 +576,38 @@ client-safe `css-tokens.ts` before they ship in the payload:
 > `/admin/display/settings` redirects to Devices (`/admin/display/devices`).
 > Terminology follows ADR-003:
 > **Layout / Template / Module / Conditions**.
+
+> **Visual builder (ADR-004, #2048).** The **Visual builder**
+> (`/admin/display/builder`) is the guided, no-HTML authoring surface; the
+> Layouts/Templates textareas below are relabelled **Advanced mode**. The builder
+> is a *thin generator* over the ADR-003 data model — it never adds storage, a
+> save shape, or a schema field. An admin picks a **skeleton** (columns / rows /
+> main + side-rail, 1–3 zones), drops **modules** from a palette into zones (DnD
+> via `@dnd-kit/core` with a `KeyboardSensor` + live-region announcements, and a
+> pointer-free per-zone **Add** menu + arrow-button reorder fallback), and sets
+> per-zone options in a drawer **generated from the module registry's `options`
+> descriptors** (`DisplayModuleOptionDescriptor`, drift-guarded against each
+> module's real parser). A zone can be static, **conditional** (a closed-registry
+> condition), or a **rotator** (child slots + `rotateSeconds`). Deterministic
+> generators (`src/lib/lodge-display/builder-model.ts`) emit the Layout
+> (`bodyHtml` in a reserved `dlb-` class namespace + `defaultCss` + `areas[]`) and
+> the Template (`slotContent`), posted through the **existing**
+> `validateLayoutForSave` / `validateTemplateForSave` routes, so a
+> builder-produced board is valid by construction. **Round-trip contract (§4):** a
+> board opens in the builder **only if** its body carries the `dlb-root` signature
+> **and** regenerating from the parsed model reproduces the stored `bodyHtml`
+> byte-for-byte with deep-equal `areas`/`slotContent`; anything hand-edited or
+> signature-less degrades to **Advanced-only** with a clear banner + a "Rebuild in
+> builder (replaces the body)" action — never silently reinterpreted. The #2047
+> pack built-ins use their own class idioms, so they open Advanced-only (or via
+> Duplicate-to-customise) until re-expressed in the `dlb-` idiom. **Live preview**
+> reuses the LTV-036 sandboxed iframe extended for an **unsaved draft** (ADR-004
+> §7): the admin-only grant mint validates + renders the draft and holds the
+> payload in an in-memory, nonce-keyed, 5-minute store (no DB row); a broken draft
+> returns the save UI's structured errors and mints no grant. **Privacy floor
+> (§5):** the drawer offers only restrict-direction options — no descriptor can
+> widen a name field, and widening is structurally impossible because modules only
+> ever see the already-reduced `DisplayState`.
 
 > **Layouts (LTV-032, #78).** The **Layouts** entry
 > (`/admin/display/layouts`) is live: a Layout CRUD list (name, key,

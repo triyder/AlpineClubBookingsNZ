@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -41,6 +42,9 @@ interface MemberAccountAccessGroupProps {
   memberLifecycleLocked: boolean;
   edit: MemberGroupEditState<MemberAccountEditForm>;
   inheritEmail: ReturnType<typeof useInheritEmailSearch>;
+  /** Whether the actor may edit account/access details (membership edit, #1997). */
+  // Tri-state (#2065): `undefined` while the session resolves (neutral disabled).
+  canEdit: boolean | undefined;
 }
 
 export function MemberAccountAccessGroup({
@@ -50,6 +54,7 @@ export function MemberAccountAccessGroup({
   memberLifecycleLocked,
   edit,
   inheritEmail,
+  canEdit,
 }: MemberAccountAccessGroupProps) {
   const roleOptions = useAccessRoleOptions();
   const loginBadge = getLoginBadge(member.canLogin);
@@ -481,9 +486,13 @@ export function MemberAccountAccessGroup({
           <Button variant="outline" onClick={edit.cancelEdit} disabled={saving}>
             Cancel
           </Button>
-          <Button onClick={() => void edit.save()} disabled={saving}>
+          <ViewOnlyActionButton
+            canEdit={canEdit}
+            onClick={() => void edit.save()}
+            disabled={saving}
+          >
             {saving ? "Saving..." : "Save Changes"}
-          </Button>
+          </ViewOnlyActionButton>
         </div>
       </div>
     );
@@ -492,10 +501,10 @@ export function MemberAccountAccessGroup({
   return (
     <div className="space-y-3">
       <div className="flex justify-end">
-        <Button variant="outline" size="sm" onClick={edit.startEdit}>
+        <ViewOnlyActionButton canEdit={canEdit} variant="outline" size="sm" onClick={edit.startEdit}>
           <Pencil className="h-4 w-4 mr-1" />
           Edit
-        </Button>
+        </ViewOnlyActionButton>
       </div>
       <dl className="grid grid-cols-1 gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
         <div>

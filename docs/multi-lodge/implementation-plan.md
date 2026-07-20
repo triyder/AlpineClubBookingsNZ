@@ -99,10 +99,12 @@ approval required.**
 **Progress:** delivered on `feature/multi-lodge-support` (2026-07-02).
 Notable implementation decisions beyond the plan text:
 
-- Capacity fallback: the club-config bed total and the `LodgeSettings`
-  capacity override apply to the default lodge only; an additional lodge
-  with no configured beds resolves to capacity 0 (`unconfigured_lodge`)
-  so it can never be overbooked before setup.
+- Capacity fallback: since #1982 capacity is DB-only — the club-config bed
+  total is no longer a runtime fallback (the default lodge's
+  `LodgeSettings.capacity` is backfilled from it by the boot self-heal). Any
+  lodge, default or additional, with no configured beds and no capacity
+  override resolves to capacity 0 (`unconfigured_lodge`) so it can never be
+  overbooked before setup.
 - Overlap queries tolerate null `lodgeId` rows (written by a draining old
   colour during the expand deploy) by counting them against every lodge —
   exact while one lodge exists, conservative afterwards, dead once the

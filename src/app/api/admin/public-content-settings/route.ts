@@ -11,6 +11,8 @@ const settingsSchema = z.object({
   hutFees: z.boolean(),
   bookingPolicySummary: z.boolean(),
   cancellationPolicy: z.boolean(),
+  // Dedicated {{annual-fees}} double-opt-in gate (#1933, E7).
+  annualFees: z.boolean(),
   // Configurable public Book Now button (E3 #1929).
   showBookNow: z.boolean(),
   bookNowTarget: z.enum(["BOOKING_FLOW", "PAGE"]),
@@ -23,6 +25,7 @@ type Settings = {
   hutFees: boolean;
   bookingPolicySummary: boolean;
   cancellationPolicy: boolean;
+  annualFees: boolean;
   showBookNow: boolean;
   bookNowTarget: "BOOKING_FLOW" | "PAGE";
   bookNowPageId: string | null;
@@ -34,6 +37,7 @@ const defaults: Settings = {
   hutFees: false,
   bookingPolicySummary: false,
   cancellationPolicy: false,
+  annualFees: false,
   showBookNow: true,
   bookNowTarget: "BOOKING_FLOW",
   bookNowPageId: null,
@@ -45,6 +49,7 @@ const settingsSelect = {
   hutFees: true,
   bookingPolicySummary: true,
   cancellationPolicy: true,
+  annualFees: true,
   showBookNow: true,
   bookNowTarget: true,
   bookNowPageId: true,
@@ -57,6 +62,7 @@ function serializeSettings(row: Settings): Settings {
     hutFees: row.hutFees,
     bookingPolicySummary: row.bookingPolicySummary,
     cancellationPolicy: row.cancellationPolicy,
+    annualFees: row.annualFees,
     showBookNow: row.showBookNow,
     bookNowTarget: row.bookNowTarget,
     bookNowPageId: row.bookNowPageId,

@@ -4,6 +4,7 @@ import { NextRequest } from "next/server";
 // Mock modules before imports
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    seasonalMembershipAssignment: { findUnique: vi.fn().mockResolvedValue(null) },
     familyGroup: {
       findMany: vi.fn(),
       findUnique: vi.fn(),
@@ -1614,6 +1615,9 @@ describe("Admin Family Group Join Requests", () => {
           $executeRaw: vi.fn().mockResolvedValue(undefined),
           familyGroupMember: { deleteMany: txDeleteMany },
           familyGroupJoinRequest: { update: txUpdate },
+          // #1932 E6 billing-family removal sweep NULLs the removed member's
+          // selection in the same transaction.
+          member: { updateMany: vi.fn().mockResolvedValue({ count: 0 }) },
         })
       );
 

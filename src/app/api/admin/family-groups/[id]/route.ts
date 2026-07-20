@@ -151,6 +151,13 @@ export async function PUT(
         await tx.familyGroupMember.deleteMany({
           where: { familyGroupId: id, memberId: { in: toRemove } },
         });
+        // Billing-family removal sweep (#1932, E6): a removed member who had
+        // chosen THIS group as their billing family loses that selection in the
+        // same transaction, so it can never point at a family they left.
+        await tx.member.updateMany({
+          where: { id: { in: toRemove }, billingFamilyGroupId: id },
+          data: { billingFamilyGroupId: null },
+        });
       }
       if (toAdd.length > 0) {
         await tx.familyGroupMember.createMany({
@@ -214,6 +221,14 @@ export async function DELETE(
   await prisma.$transaction(async (tx) => {
     // Delete join table rows (cascade would also handle this, but be explicit)
     await tx.familyGroupMember.deleteMany({ where: { familyGroupId: id } });
+    // Billing-family removal sweep (#1932, E6): clear any selection pointing at
+    // this group in-transaction. The onDelete:SetNull FK would also cover this
+    // on the delete below, but we NULL explicitly so the sweep is visible and
+    // does not depend solely on the FK.
+    await tx.member.updateMany({
+      where: { billingFamilyGroupId: id },
+      data: { billingFamilyGroupId: null },
+    });
     // Delete the group (cascades to join requests)
     await tx.familyGroup.delete({ where: { id } });
   });

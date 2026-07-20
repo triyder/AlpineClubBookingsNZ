@@ -19,6 +19,7 @@ import "@/lib/config-transfer/categories/lodge-config";
 import "@/lib/config-transfer/categories/lodge-ops";
 import "@/lib/config-transfer/categories/committee";
 import "@/lib/config-transfer/categories/induction";
+import "@/lib/config-transfer/categories/membership-fees";
 import "@/lib/config-transfer/categories/xero-config";
 
 function descriptor(overrides: Partial<EntityDescriptor> = {}): EntityDescriptor {
@@ -134,6 +135,9 @@ describe("config-transfer registry — registered descriptors", () => {
         "chore-template",
         "committee-role",
         "induction-template",
+        "joining-fee",
+        "annual-fee",
+        "annual-fee-component",
         "xero-account-mapping",
         "xero-item-code-mapping",
       ]),

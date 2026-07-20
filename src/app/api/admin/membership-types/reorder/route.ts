@@ -34,7 +34,7 @@ const membershipTypeSelect = {
   xeroContactGroupRules: {
     select: {
       id: true,
-      ageTier: true,
+      ageTiers: true,
       mode: true,
       groupId: true,
       groupName: true,
@@ -53,7 +53,9 @@ const reorderSchema = z
   .strict();
 
 export async function POST(request: Request) {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "membership", level: "edit" },
+  });
   if (!guard.ok) {
     return guard.response;
   }

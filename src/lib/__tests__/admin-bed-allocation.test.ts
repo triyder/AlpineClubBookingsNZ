@@ -11,14 +11,14 @@ vi.mock("@/lib/prisma", () => ({
 vi.mock("@/lib/lodge-capacity", () => ({
   getLodgeCapacityStatus: vi.fn().mockResolvedValue({
     capacity: 29,
-    source: "club_config",
+    source: "capacity_override",
     bedAllocationEnabled: false,
     activeBedCount: 0,
     fallbackCapacity: 29,
   }),
   getLodgePartnerSharedCapacityStatus: vi.fn().mockResolvedValue({
     capacity: 29,
-    source: "club_config",
+    source: "capacity_override",
     bedAllocationEnabled: false,
     activeBedCount: 0,
     fallbackCapacity: 29,

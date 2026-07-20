@@ -17,7 +17,9 @@ export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "membership", level: "view" },
+  });
   if (!guard.ok) return guard.response;
 
   const { id: memberId } = await params;
@@ -41,7 +43,9 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "membership", level: "edit" },
+  });
   if (!guard.ok) return guard.response;
 
   let body: unknown;
@@ -86,7 +90,9 @@ export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "membership", level: "edit" },
+  });
   if (!guard.ok) return guard.response;
 
   const linkId = req.nextUrl.searchParams.get("id")?.trim();

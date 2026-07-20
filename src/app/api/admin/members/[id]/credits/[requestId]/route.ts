@@ -26,7 +26,9 @@ export async function PATCH(
   }
 ) {
   try {
-    const guard = await requireAdmin();
+    const guard = await requireAdmin({
+      permission: { area: "finance", level: "edit" },
+    });
     if (!guard.ok) return guard.response;
     const session = guard.session;
     const { id, requestId } = await params;

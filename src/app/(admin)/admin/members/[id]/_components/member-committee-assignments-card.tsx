@@ -4,6 +4,11 @@ import { useEffect, useMemo, useState } from "react";
 import { Eye, EyeOff, Pencil, Plus, Save, Trash2, UsersRound, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  AdminViewOnlyNotice,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action";
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -78,6 +83,10 @@ export function MemberCommitteeAssignmentsCard({
   onSaved,
   className,
 }: MemberCommitteeAssignmentsCardProps) {
+  // Add/edit/remove write /api/admin/committee/assignments (membership area); a
+  // view-only membership admin sees the assignments but cannot change them
+  // (#1997).
+  const canEdit = useAdminAreaEditAccess("membership");
   const assignments = member.committeeAssignments ?? [];
   const [roles, setRoles] = useState<CommitteeRoleSummary[]>([]);
   const [rolesLoading, setRolesLoading] = useState(true);
@@ -334,12 +343,18 @@ export function MemberCommitteeAssignmentsCard({
             membership type.
           </p>
         </div>
-        <Button onClick={openAddForm} disabled={rolesLoading || activeRoles.length === 0}>
+        <ViewOnlyActionButton canEdit={canEdit} onClick={openAddForm} disabled={rolesLoading || activeRoles.length === 0}>
           <Plus className="mr-2 h-4 w-4" />
           Add Assignment
-        </Button>
+        </ViewOnlyActionButton>
       </CardHeader>
       <CardContent className="space-y-4">
+        {!canEdit ? (
+          <AdminViewOnlyNotice canEdit={canEdit}>
+            Your admin role can view committee assignments but cannot add, edit,
+            or remove them.
+          </AdminViewOnlyNotice>
+        ) : null}
         {error ? (
           <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
             {error}
@@ -503,10 +518,10 @@ export function MemberCommitteeAssignmentsCard({
               </div>
             ) : null}
             <div className="mt-4 flex gap-2">
-              <Button type="submit" disabled={saving}>
+              <ViewOnlyActionButton canEdit={canEdit} type="submit" disabled={saving}>
                 <Save className="mr-2 h-4 w-4" />
                 Save Assignment
-              </Button>
+              </ViewOnlyActionButton>
               <Button type="button" variant="outline" onClick={closeForm}>
                 Cancel
               </Button>
@@ -567,21 +582,25 @@ export function MemberCommitteeAssignmentsCard({
                     </div>
                   </div>
                   <div className="flex gap-1">
-                    <Button
+                    <ViewOnlyActionButton
+                      canEdit={canEdit}
                       variant="ghost"
                       size="sm"
+                      aria-label="Edit assignment"
                       onClick={() => openEditForm(assignment)}
                     >
                       <Pencil className="h-4 w-4" />
-                    </Button>
-                    <Button
+                    </ViewOnlyActionButton>
+                    <ViewOnlyActionButton
+                      canEdit={canEdit}
                       variant="ghost"
                       size="sm"
+                      aria-label="Remove assignment"
                       className="text-red-600 hover:bg-red-50 hover:text-red-700"
                       onClick={() => handleDeactivate(assignment)}
                     >
                       <Trash2 className="h-4 w-4" />
-                    </Button>
+                    </ViewOnlyActionButton>
                   </div>
                 </div>
               </div>

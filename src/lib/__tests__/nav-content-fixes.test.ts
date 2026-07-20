@@ -50,49 +50,46 @@ describe("Issue 9: Nav Bar Branding Link", () => {
   });
 });
 
-// ─── Issue 15: KPI Card hrefs ────────────────────────────────────────────────
+// ─── Admin dashboard key-card hrefs (#2091) ──────────────────────────────────
+// The dashboard KPI row was re-targeted to the four bookings-officer surfaces
+// (primary row) plus a slim Members + Revenue secondary row. These fixtures
+// document the intended card→href contract.
 
-describe("Issue 15: KPI Card hrefs", () => {
-  const kpiCards = [
+describe("Admin dashboard key-card hrefs (#2091)", () => {
+  const officerCards = [
+    { label: "Bookings", href: "/admin/bookings?upcoming=7" },
+    { label: "Hut Leader Assignment", href: "/admin/hut-leaders" },
+    { label: "Roster Assignment", href: "/admin/roster" },
+    { label: "Bed Allocation", href: "/admin/bed-allocation" },
+  ];
+  const secondaryCards = [
     { label: "Members", href: "/admin/members" },
-    { label: "Total Bookings", href: "/admin/bookings" },
-    { label: "Active Bookings", href: "/admin/bookings?status=PAYMENT_PENDING,CONFIRMED,PAID,PENDING" },
     { label: "Revenue This Month", href: "/admin/payments" },
-    { label: "Upcoming Check-ins", href: "/admin/bookings?upcoming=7" },
   ];
 
-  it("should define all 5 KPI cards with correct hrefs", () => {
-    expect(kpiCards).toHaveLength(5);
+  it("defines the four officer cards linking their target surfaces", () => {
+    expect(officerCards).toHaveLength(4);
+    expect(officerCards.find((c) => c.label === "Bookings")?.href).toContain(
+      "upcoming=7",
+    );
+    expect(
+      officerCards.find((c) => c.label === "Hut Leader Assignment")?.href,
+    ).toBe("/admin/hut-leaders");
+    expect(officerCards.find((c) => c.label === "Roster Assignment")?.href).toBe(
+      "/admin/roster",
+    );
+    expect(officerCards.find((c) => c.label === "Bed Allocation")?.href).toBe(
+      "/admin/bed-allocation",
+    );
   });
 
-  it("Members links to /admin/members", () => {
-    const card = kpiCards.find((c) => c.label === "Members");
-    expect(card?.href).toBe("/admin/members");
-  });
-
-  it("Total Bookings links to /admin/bookings", () => {
-    const card = kpiCards.find((c) => c.label === "Total Bookings");
-    expect(card?.href).toBe("/admin/bookings");
-  });
-
-  it("Active Bookings links to /admin/bookings with active status filter", () => {
-    const card = kpiCards.find((c) => c.label === "Active Bookings");
-    expect(card?.href).toContain("/admin/bookings");
-    expect(card?.href).toContain("PAYMENT_PENDING");
-    expect(card?.href).toContain("CONFIRMED");
-    expect(card?.href).toContain("PAID");
-    expect(card?.href).toContain("PENDING");
-  });
-
-  it("Revenue This Month links to /admin/payments", () => {
-    const card = kpiCards.find((c) => c.label === "Revenue This Month");
-    expect(card?.href).toBe("/admin/payments");
-  });
-
-  it("Upcoming Check-ins links to /admin/bookings with upcoming=7", () => {
-    const card = kpiCards.find((c) => c.label === "Upcoming Check-ins");
-    expect(card?.href).toContain("/admin/bookings");
-    expect(card?.href).toContain("upcoming=7");
+  it("keeps Members and Revenue in the slim secondary row", () => {
+    expect(secondaryCards.find((c) => c.label === "Members")?.href).toBe(
+      "/admin/members",
+    );
+    expect(
+      secondaryCards.find((c) => c.label === "Revenue This Month")?.href,
+    ).toBe("/admin/payments");
   });
 });
 

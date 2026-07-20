@@ -11,6 +11,7 @@ import type {
   ParentLinkSummary,
 } from "@/lib/admin-member-detail-helpers";
 import type { MemberAddressValues } from "@/lib/member-address";
+import type { MembershipTypeAgeExemption } from "@/lib/membership-types";
 import type { AppRole } from "@/lib/member-roles";
 
 export interface MemberDeleteEligibilityBlocker {
@@ -219,7 +220,14 @@ export interface MemberDetail {
     email: string;
   } | null;
   familyGroups: { id: string; name: string | null }[];
+  // Per-member billing family selection + club billing mode (#1932, E6).
+  billingFamilyGroupId: string | null;
+  familyBillingMode: "BILL_FAMILY_VIA_BILLING_MEMBER" | "BILL_MEMBERS_INDIVIDUALLY";
   currentSeasonYear: number;
+  // #2106: age-exemption of the member's current-season membership type —
+  // FORCED (N/A only), ALLOWED (N/A hand-pickable), or DISALLOWED (no N/A);
+  // null when the member has no current-season assignment (treat as DISALLOWED).
+  currentSeasonAgeExemption: MembershipTypeAgeExemption | null;
   seasonalMembershipAssignments: SeasonalMembershipAssignmentSummary[];
   committeeAssignments: CommitteeAssignmentSummary[];
   subscriptions: Array<{

@@ -3,7 +3,9 @@ import {
   bookingRequestApprovedTemplate,
   bookingRequestQuoteTemplate,
   bookingRequestDeclinedTemplate,
+  bookingRequestPaymentExpiredTemplate,
   schoolAttendeeConfirmationTemplate,
+  splitGuestPaymentLinkTemplate,
 } from "../email-templates";
 import { CLUB_NAME } from "@/config/club-identity";
 import {
@@ -103,6 +105,57 @@ export async function sendBookingRequestApprovedEmail(params: {
   });
 }
 
+/**
+ * Split-booking guest-portion payment link (#1967). Emails the member a secure
+ * `/pay/<token>` link so they can settle their non-member guests' portion when
+ * the split child reached its hold deadline with no card on file. Returns the
+ * send outcome so callers can distinguish a delivered email from a suppressed
+ * one (F25, #1885).
+ */
+export async function sendSplitGuestPaymentLinkEmail(params: {
+  email: string;
+  firstName: string;
+  token: string;
+  checkIn: Date;
+  checkOut: Date;
+  guestCount: number;
+  priceCents: number;
+  bookingReference: string;
+  expiresAt: Date;
+  lodgeId?: string | null;
+}): Promise<EmailSendOutcome> {
+  const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
+  const payUrl = `${baseUrl}/pay/${params.token}`;
+
+  return sendEmail({
+    to: params.email,
+    lodgeId: params.lodgeId,
+    subject: `Pay for your guests to confirm their place — ${CLUB_NAME}`,
+    html: splitGuestPaymentLinkTemplate({
+      firstName: params.firstName,
+      payUrl,
+      checkIn: params.checkIn,
+      checkOut: params.checkOut,
+      guestCount: params.guestCount,
+      priceCents: params.priceCents,
+      expiresAt: params.expiresAt,
+    }),
+    templateName: "split-guest-payment-link",
+    templateData: {
+      firstName: params.firstName,
+      token: params.token,
+      payUrl,
+      checkIn: formatNZDate(params.checkIn),
+      checkOut: formatNZDate(params.checkOut),
+      guestCount: params.guestCount,
+      priceCents: params.priceCents,
+      price: formatMoneyCents(params.priceCents),
+      bookingReference: params.bookingReference,
+      expiresAt: formatNZDateTime(params.expiresAt),
+    },
+  });
+}
+
 export async function sendBookingRequestQuoteEmail(params: {
   email: string;
   firstName: string;
@@ -185,6 +238,41 @@ export async function sendBookingRequestDeclinedEmail(params: {
       checkIn: formatNZDate(params.checkIn),
       checkOut: formatNZDate(params.checkOut),
       reason: params.reason ?? "",
+    },
+  });
+}
+
+/**
+ * #2012 — member-facing terminal notice that the booking created from their
+ * approved public booking request (#707) was released because it stayed unpaid
+ * up to the check-in day. Distinct from sendBookingRequestDeclinedEmail (which
+ * says the club could not accommodate the request): the request WAS approved
+ * and priced, so this only reports the lapsed payment window and reassures
+ * nothing was charged.
+ */
+export async function sendBookingRequestPaymentExpiredEmail(params: {
+  email: string;
+  firstName: string;
+  checkIn: Date;
+  checkOut: Date;
+  // Lodge the request is for (multi-lodge): overlays that lodge's
+  // identity via prepareEmailMessage; null keeps club-wide identity.
+  lodgeId?: string | null;
+}) {
+  await sendEmail({
+    to: params.email,
+    lodgeId: params.lodgeId,
+    subject: `Your booking was released — payment not received — ${CLUB_NAME}`,
+    html: bookingRequestPaymentExpiredTemplate({
+      firstName: params.firstName,
+      checkIn: params.checkIn,
+      checkOut: params.checkOut,
+    }),
+    templateName: "booking-request-payment-expired",
+    templateData: {
+      firstName: params.firstName,
+      checkIn: formatNZDate(params.checkIn),
+      checkOut: formatNZDate(params.checkOut),
     },
   });
 }

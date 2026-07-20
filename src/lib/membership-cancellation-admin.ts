@@ -561,6 +561,9 @@ export async function reviewMembershipCancellationParticipant({
           cancelledReason: participant.request.reason,
           cancelledViaRequestId: participant.requestId,
           familyGroupId: null,
+          // Billing-family removal sweep (#1932, E6): the member is leaving all
+          // families in this transaction, so clear any billing-family selection.
+          billingFamilyGroupId: null,
           parentMemberId: null,
           secondaryParentId: null,
           inheritEmailFromId: null,

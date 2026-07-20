@@ -23,7 +23,10 @@ import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "@/lib/cap
 import { bookingHasCapacityOverride } from "@/lib/booking-status";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { endOfDateOnlyForTimeZone, formatDateOnly } from "@/lib/date-only";
-import { sendBookingRequestApprovedEmail } from "@/lib/email";
+import {
+  sendBookingRequestApprovedEmail,
+  sendSplitGuestPaymentLinkEmail,
+} from "@/lib/email";
 import logger from "@/lib/logger";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
@@ -80,6 +83,7 @@ type ResolvedPaymentLink = Prisma.PaymentLinkGetPayload<{
         member: true;
         guests: true;
         payment: true;
+        groupBookingJoin: { select: { id: true } };
       };
     };
   };
@@ -107,6 +111,9 @@ async function loadPaymentLinkRecord(token: string): Promise<ResolvedPaymentLink
           member: true,
           guests: true,
           payment: true,
+          // #1967: lets link flows tell a genuine split child (#738) apart
+          // from a #796 group joiner (which always has a join row).
+          groupBookingJoin: { select: { id: true } },
         },
       },
     },
@@ -303,6 +310,12 @@ export async function reissuePaymentLinkForToken(
   const { token: freshToken, tokenHash } = issueActionToken();
 
   await prisma.$transaction(async (tx) => {
+    // Serialise with every other mint path (#1967): the settlement cron and
+    // the on-demand split-guest flow both mint under the per-lodge advisory
+    // lock, so taking it here too makes revoke-then-create atomic across all
+    // three writers — at most one live token can exist for the booking.
+    const bookingLodgeId = booking.lodgeId ?? (await getDefaultLodgeId(tx));
+    await acquireLodgeCapacityLock(tx, bookingLodgeId);
     await tx.paymentLink.updateMany({
       where: { bookingId: booking.id, revokedAt: null, usedAt: null },
       data: { revokedAt: new Date() },
@@ -317,7 +330,17 @@ export async function reissuePaymentLinkForToken(
     });
   });
 
-  const emailOutcome = await sendBookingRequestApprovedEmail({
+  // #1967 (FIX): a split non-member child's expired link must be re-issued
+  // with the split-guest wording, not the request-origin "booking request
+  // approved" template — the member never made a booking request. Group
+  // joiners (#796, also parent-linked but always carrying a join row) keep
+  // their pre-existing behaviour.
+  const isSplitGuestLink =
+    booking.parentBookingId != null &&
+    !booking.groupBookingJoin &&
+    !link.bookingRequestId;
+
+  const emailParams = {
     email: booking.member.email,
     firstName: booking.member.firstName,
     lodgeId: booking.lodgeId ?? null,
@@ -328,7 +351,10 @@ export async function reissuePaymentLinkForToken(
     priceCents: booking.finalPriceCents,
     bookingReference: booking.id,
     expiresAt,
-  });
+  };
+  const emailOutcome = isSplitGuestLink
+    ? await sendSplitGuestPaymentLinkEmail(emailParams)
+    : await sendBookingRequestApprovedEmail(emailParams);
 
   if (emailOutcome.status === "suppressed") {
     // sendEmail delivered nothing (recipient is SES-suppressed after a prior
@@ -465,6 +491,19 @@ export async function createPaymentIntentForPaymentLink(
       throw new PaymentLinkError(NOT_PAYABLE_MESSAGE, 410);
     }
 
+    // Re-read the link under the same lock (#1967 FIX-6): the auto-charge cron
+    // revokes a booking's links inside its claim transaction (also under this
+    // lodge lock) before charging the saved card, so a /pay request that
+    // resolved the link just before that claim must not go on to mint an
+    // intent — the saved-card charge now owns settlement.
+    const freshLink = await tx.paymentLink.findUnique({
+      where: { id: link.id },
+      select: { revokedAt: true },
+    });
+    if (!freshLink || freshLink.revokedAt) {
+      throw new PaymentLinkError(REVOKED_LINK_MESSAGE, 410);
+    }
+
     const capacity = await checkCapacityForGuestRanges(
       bookingLodgeId,
       freshBooking.checkIn,
@@ -541,6 +580,284 @@ export async function createPaymentIntentForPaymentLink(
     clientSecret: paymentIntent.client_secret,
     paymentIntentId: paymentIntent.id,
   };
+}
+
+/** A freshly minted split-guest link: the raw token (emailable exactly once)
+ * plus the row id so a caller whose email fails can revoke THIS link — and
+ * only this link — without touching a newer one minted concurrently. */
+export type MintedSplitGuestPaymentLink = {
+  token: string;
+  paymentLinkId: string;
+};
+
+/**
+ * The on-demand "re-send" affordance treats an active link minted within this
+ * window as just-sent and refuses to replace it, so a double-click (or two
+ * racing POSTs) cannot fan out two emails. Older active links ARE replaced —
+ * revoke-and-remint is the only way to re-send, because raw tokens are never
+ * stored at rest.
+ */
+const SPLIT_LINK_RESEND_COOLDOWN_MS = 60 * 1000;
+
+/**
+ * Revoke every unused, unrevoked link for the booking and mint a fresh one.
+ * MUST be called inside a transaction holding the booking's per-lodge advisory
+ * lock — the revoke-then-create pair is what preserves the at-most-one-live-
+ * token invariant across the cron, the on-demand button, and /pay reissue.
+ */
+async function mintFreshSplitGuestPaymentLink(
+  tx: Prisma.TransactionClient,
+  bookingId: string,
+  expiresAt: Date,
+  now: Date
+): Promise<MintedSplitGuestPaymentLink> {
+  await tx.paymentLink.updateMany({
+    where: { bookingId, revokedAt: null, usedAt: null },
+    data: { revokedAt: now },
+  });
+  const { token, tokenHash } = issueActionToken();
+  const created = await tx.paymentLink.create({
+    data: { bookingId, tokenHash, expiresAt },
+  });
+  return { token, paymentLinkId: created.id };
+}
+
+/**
+ * Mint a tokenised PaymentLink for a split non-member child booking (#1967) IF
+ * it has no active (un-revoked, un-used, un-expired) link yet, returning the
+ * raw token + row id so the caller can email it and, if that email fails,
+ * revoke it. Returns null when an active link already exists — that
+ * absence/presence is the idempotency sentinel that stops the settlement cron
+ * re-emailing the member on every extension run (only the raw token minted
+ * here can be emailed; a pre-existing link's token is unrecoverable by
+ * design). An EXPIRED link is deliberately NOT active (#707's expired_payable
+ * convention): it is revoked and replaced, so a booking whose dates were
+ * pushed out after its link lapsed gets a fresh, working link. Returns null
+ * without minting when the check-in day has already ended — a link that would
+ * be born expired must never be emailed.
+ *
+ * DB-only and safe to call inside a capacity-lock transaction; the email MUST
+ * be sent by the caller OUTSIDE the transaction. The link expires at the end of
+ * the check-in day in NZT, matching the #707/#740 request-origin convention.
+ */
+export async function mintSplitGuestPaymentLinkIfAbsent(
+  tx: Prisma.TransactionClient,
+  booking: { id: string; checkIn: Date }
+): Promise<MintedSplitGuestPaymentLink | null> {
+  const now = new Date();
+  const expiresAt = endOfDateOnlyForTimeZone(formatDateOnly(booking.checkIn));
+  if (expiresAt.getTime() <= now.getTime()) {
+    return null;
+  }
+
+  const existing = await tx.paymentLink.findFirst({
+    where: {
+      bookingId: booking.id,
+      revokedAt: null,
+      usedAt: null,
+      expiresAt: { gt: now },
+    },
+    select: { id: true },
+  });
+  if (existing) return null;
+
+  return mintFreshSplitGuestPaymentLink(tx, booking.id, expiresAt, now);
+}
+
+/**
+ * Revoke one specific payment link (by row id) if it is still unused and
+ * unrevoked. Used by the mint-and-email flows when the post-commit email
+ * fails or is suppressed: the raw token is unrecoverable, so the stale
+ * sentinel must be cleared for the next run to re-mint and re-send. Scoped to
+ * the id — never the whole booking — so a newer link minted concurrently by
+ * another flow survives.
+ */
+export async function revokePaymentLinkById(
+  paymentLinkId: string,
+  db: Pick<typeof prisma, "paymentLink"> = prisma
+) {
+  const revoked = await db.paymentLink.updateMany({
+    where: { id: paymentLinkId, revokedAt: null, usedAt: null },
+    data: { revokedAt: new Date() },
+  });
+  return revoked.count;
+}
+
+export type IssueSplitGuestPaymentLinkResult =
+  | { outcome: "sent" }
+  | { outcome: "just_sent" }
+  | { outcome: "suppressed" }
+  | { outcome: "not_payable" };
+
+/**
+ * On-demand sibling of the settlement-cron path (#1967): mint and email a
+ * split non-member child's guest-portion payment link. Backs the
+ * booking-detail affordance a member uses when paying their own place by
+ * Internet Banking (no card on file for the later guest charge).
+ *
+ * This is a true send/RE-SEND: because a stored link's raw token is
+ * unrecoverable, an existing active link is revoked and replaced with a fresh
+ * one (revocation + mint atomically under the per-lodge advisory lock, so two
+ * live tokens can never coexist). The only exception is an active link minted
+ * within the last minute, which is treated as just-sent — that sentinel plus
+ * the lock is the double-click guard. If the email is suppressed or the send
+ * throws, the just-minted link is revoked again so no unreachable token stays
+ * active. Refuses (`not_payable`) for anything that is not a genuine PENDING
+ * split child (#738) — #796 group joiners are excluded by their join row — and
+ * whenever a saved card exists on the child or its parent, because the
+ * settlement cron will auto-charge that card and a parallel link would open a
+ * second live settlement path.
+ */
+export async function issueSplitGuestPaymentLink(
+  childBookingId: string
+): Promise<IssueSplitGuestPaymentLinkResult> {
+  const booking = await prisma.booking.findUnique({
+    where: { id: childBookingId },
+    include: {
+      member: true,
+      guests: { select: { id: true } },
+      payment: true,
+      parentBooking: { include: { payment: true } },
+      groupBookingJoin: { select: { id: true } },
+    },
+  });
+
+  if (
+    !booking ||
+    booking.deletedAt ||
+    booking.status !== BookingStatus.PENDING ||
+    !booking.parentBookingId ||
+    // #796 group joiners share parentBookingId but always carry a join row;
+    // they settle via their own join-time link or organiser settlement, never
+    // via the split-guest flow.
+    booking.groupBookingJoin ||
+    !booking.hasNonMembers ||
+    booking.finalPriceCents <= 0
+  ) {
+    return { outcome: "not_payable" };
+  }
+
+  // #1967 FIX-5: a saved card (its own, or inherited from the parent payment)
+  // means the settlement cron will auto-charge this child — issuing a manual
+  // pay link alongside would create a second live settlement path.
+  const hasSavedCard = Boolean(
+    (booking.payment?.stripeCustomerId &&
+      booking.payment.stripePaymentMethodId) ||
+      (booking.parentBooking?.payment?.stripeCustomerId &&
+        booking.parentBooking.payment.stripePaymentMethodId)
+  );
+  if (hasSavedCard) {
+    return { outcome: "not_payable" };
+  }
+
+  const minted = await prisma.$transaction(
+    async (
+      tx
+    ): Promise<
+      | { kind: "not_payable" }
+      | { kind: "just_sent" }
+      | ({ kind: "minted" } & MintedSplitGuestPaymentLink)
+    > => {
+      const bookingLodgeId = booking.lodgeId ?? (await getDefaultLodgeId(tx));
+      await acquireLodgeCapacityLock(tx, bookingLodgeId);
+      // Re-read status under the lock; a concurrent settle/cancel is only
+      // visible here. Never mint a link for a booking that has left PENDING.
+      const locked = await tx.booking.findUnique({
+        where: { id: booking.id },
+        select: { status: true },
+      });
+      if (!locked || locked.status !== BookingStatus.PENDING) {
+        return { kind: "not_payable" };
+      }
+
+      const now = new Date();
+      const expiresAt = endOfDateOnlyForTimeZone(
+        formatDateOnly(booking.checkIn)
+      );
+      if (expiresAt.getTime() <= now.getTime()) {
+        // The check-in day has ended; a fresh link would be born expired.
+        return { kind: "not_payable" };
+      }
+
+      const active = await tx.paymentLink.findFirst({
+        where: {
+          bookingId: booking.id,
+          revokedAt: null,
+          usedAt: null,
+          expiresAt: { gt: now },
+        },
+        select: { id: true, createdAt: true },
+      });
+      if (
+        active &&
+        now.getTime() - active.createdAt.getTime() <
+          SPLIT_LINK_RESEND_COOLDOWN_MS
+      ) {
+        // Just minted (double-click, or a race with the settlement cron):
+        // an email carrying this link is already on its way.
+        return { kind: "just_sent" };
+      }
+
+      // Revoke-and-remint: the active link's raw token is unrecoverable at
+      // rest, so re-sending means replacing it. Atomic under the lodge lock.
+      return {
+        kind: "minted",
+        ...(await mintFreshSplitGuestPaymentLink(
+          tx,
+          booking.id,
+          expiresAt,
+          now
+        )),
+      };
+    }
+  );
+
+  if (minted.kind === "not_payable") return { outcome: "not_payable" };
+  if (minted.kind === "just_sent") return { outcome: "just_sent" };
+
+  let emailOutcome;
+  try {
+    emailOutcome = await sendSplitGuestPaymentLinkEmail({
+      email: booking.member.email,
+      firstName: booking.member.firstName,
+      token: minted.token,
+      checkIn: booking.checkIn,
+      checkOut: booking.checkOut,
+      guestCount: booking.guests.length,
+      priceCents: booking.finalPriceCents,
+      bookingReference: booking.id,
+      expiresAt: endOfDateOnlyForTimeZone(formatDateOnly(booking.checkIn)),
+      lodgeId: booking.lodgeId ?? null,
+    });
+  } catch (err) {
+    // The raw token dies with this request; clear the sentinel so a retry
+    // (button or cron) re-mints instead of pointing at an unreachable link.
+    await revokePaymentLinkById(minted.paymentLinkId).catch((revokeErr) =>
+      logger.error(
+        { err: revokeErr, bookingId: booking.id, paymentLinkId: minted.paymentLinkId },
+        "Failed to revoke split guest payment link after email send error"
+      )
+    );
+    throw err;
+  }
+
+  if (emailOutcome.status !== "sent") {
+    // Suppressed (or placeholder) recipient: nothing was delivered, so the
+    // link must not stay active suppressing every future send (F25, #1885).
+    await revokePaymentLinkById(minted.paymentLinkId).catch((revokeErr) =>
+      logger.error(
+        { err: revokeErr, bookingId: booking.id, paymentLinkId: minted.paymentLinkId },
+        "Failed to revoke split guest payment link after suppressed email"
+      )
+    );
+    logger.warn(
+      { bookingId: booking.id, emailStatus: emailOutcome.status },
+      "Split guest payment link email not delivered; link revoked so a later attempt re-mints"
+    );
+    return { outcome: "suppressed" };
+  }
+
+  return { outcome: "sent" };
 }
 
 /** Revoke all active payment links for a booking (e.g. when it is bumped). */

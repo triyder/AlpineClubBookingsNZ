@@ -13,6 +13,7 @@ import {
   countActiveGuestsForNight,
   type GuestNightInput,
 } from "@/lib/booking-guest-stay-ranges";
+import { priceBookingGuestsWithMembershipTypePolicy } from "@/lib/membership-type-policy";
 import {
   calculateAppliedCreditRestore,
   calculateDualRefundAmounts,
@@ -113,6 +114,55 @@ export function priceBookingGuests(input: {
     input.seasons,
     input.groupDiscount
   );
+}
+
+/**
+ * Price the deferred non-member "guest portion" (#2003) — the SINGLE server
+ * function both the booking quote and booking-create use for the split child.
+ *
+ * A split party (#738) charges the member places up front and defers the
+ * non-member guests to a provisional linked child; that child's
+ * `finalPriceCents` is booking-create pricing the NON-MEMBER SUBSET ALONE. This
+ * function reproduces exactly that: filter to the non-members, then price them
+ * with `priceBookingGuestsWithMembershipTypePolicy` in the same call shape
+ * booking-create uses (no `ownerMemberId`; the same `groupDiscount`).
+ *
+ * Why the subset — not the whole party — is the source of truth: the group
+ * discount only substitutes a cheaper rate when ENOUGH ACTIVE GUESTS share a
+ * night (`isGroupDiscountApplicable` / `countActiveGuestsForNight`). The
+ * non-member subset can fall UNDER `minGroupSize` even when the whole party
+ * meets it, so the whole party's non-member rows can be group-discounted while
+ * the subset the child is actually charged is not. Summing the whole-party
+ * non-member rows for the review banner therefore UNDER-QUOTES the deferred
+ * charge under group discounts (the surprise direction). Pricing the subset
+ * here — the same input booking-create charges — is what makes the review
+ * banner equal the real charge.
+ *
+ * Returns null when the party has no non-member guests (nothing is deferred);
+ * otherwise the subset's server `PriceBreakdown` (money in integer cents). This
+ * is a pure pricing read — it performs no writes.
+ */
+export async function priceDeferredNonMemberPortion(
+  db: unknown,
+  input: {
+    checkIn: Date;
+    checkOut: Date;
+    guests: readonly GuestPricingSource[];
+    seasons: SeasonRateData[];
+    groupDiscount?: GroupDiscountConfig;
+  }
+): Promise<PriceBreakdown | null> {
+  const nonMemberGuests = input.guests.filter((guest) => !guest.isMember);
+  if (nonMemberGuests.length === 0) {
+    return null;
+  }
+  return priceBookingGuestsWithMembershipTypePolicy(db, {
+    checkIn: input.checkIn,
+    checkOut: input.checkOut,
+    guests: toGuestPricingInputs(nonMemberGuests),
+    seasons: input.seasons,
+    groupDiscount: input.groupDiscount,
+  });
 }
 
 export function isGroupDiscountAppliedToBooking(input: {

@@ -24,6 +24,7 @@ import { queueSupersededPrimaryIntentCancellations } from "@/lib/booking-payment
 import { queueXeroInvoiceForPaidBooking } from "@/lib/xero-booking-invoice-queue";
 import { hasAdminAccess } from "@/lib/access-roles";
 import { deriveBookingAppliedCreditCents } from "@/lib/member-credit";
+import { getProvisionalNonMemberChildSummary } from "@/lib/booking-split-summary";
 
 class PaymentIntentCapacityError extends Error {
   constructor() {
@@ -148,6 +149,25 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // #1976 — a split parent (member/non-member party, #738) is priced on the
+    // member subset only; its non-member guests live on a provisional child
+    // booking that is charged closer to the stay, NOT today. So the intent
+    // amount (effectivePriceCents) is the member portion, and the member must
+    // see THAT figure at the pay step, not the full party total the wizard
+    // computed. Surface the split shape and the deferred guest portion (the
+    // child's own server-priced finalPriceCents) so the client renders "charged
+    // today" from the server intent rather than client arithmetic. Read-only
+    // describe: returns null for a non-split booking (single, all-member, or the
+    // flagged whole-party hold), which leaves the response non-split-shaped.
+    const provisionalChild = await getProvisionalNonMemberChildSummary({
+      id: booking.id,
+      memberId: booking.memberId,
+    });
+    const splitPaymentMeta = {
+      isSplit: provisionalChild !== null,
+      deferredGuestAmountCents: provisionalChild?.deferredAmountCents ?? null,
+    };
+
     // Reuse or reconcile an existing PaymentIntent before creating a new one.
     // #1765 — set to the refunded intent's id when the pointed-to intent turns
     // out to be refund history; the block then falls through to mint a fresh
@@ -255,6 +275,12 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({
           clientSecret: existingIntent.client_secret,
           paymentIntentId: existingIntent.id,
+          // #1976 — the amount actually charged today is the reused intent's
+          // own amount (server-authoritative, equal to effectivePriceCents on
+          // this reuse branch). Render "charged today" from this, not client
+          // arithmetic.
+          chargedAmountCents: existingIntent.amount,
+          ...splitPaymentMeta,
         });
       }
     }
@@ -380,6 +406,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       clientSecret: paymentIntent.client_secret,
       paymentIntentId: paymentIntent.id,
+      // #1976 — the freshly minted intent charges the credit-reduced member
+      // portion (effectivePriceCents). Return it so the pay step displays the
+      // real charge from the server, plus the deferred guest portion for a
+      // split so the member reads a coherent "charged today / charged later"
+      // story instead of the full party total.
+      chargedAmountCents: effectivePriceCents,
+      ...splitPaymentMeta,
     });
   } catch (error) {
     logger.error({ err: error }, "Error creating payment intent");

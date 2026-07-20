@@ -1,6 +1,7 @@
 import { Check, Search, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -30,6 +31,9 @@ export interface FamilyGroupRequestReviewCardProps {
   requestError?: string;
   searching: boolean;
   submitting: boolean;
+  /** Whether the actor may act on the request (membership edit, #1997). */
+  // Tri-state (#2065): `undefined` while the session resolves (neutral disabled).
+  canEdit: boolean | undefined;
   showSearchGuidance?: boolean;
   showRemovalDetails?: boolean;
   onSelectMember: (memberId: string) => void;
@@ -54,6 +58,7 @@ export function FamilyGroupRequestReviewCard({
   requestError,
   searching,
   submitting,
+  canEdit,
   showSearchGuidance = false,
   showRemovalDetails = false,
   onSelectMember,
@@ -387,7 +392,8 @@ export function FamilyGroupRequestReviewCard({
       {requestError && <p className="mt-4 text-sm text-red-600">{requestError}</p>}
 
       <div className="mt-4 flex flex-wrap items-center gap-2">
-        <Button
+        <ViewOnlyActionButton
+          canEdit={canEdit}
           type="button"
           onClick={onApprove}
           disabled={submitting || (requiresMemberChoice && !requestSelection)}
@@ -406,8 +412,9 @@ export function FamilyGroupRequestReviewCard({
                 : request.type === "REMOVAL_REQUEST"
                   ? "Approve Removal"
                   : "Approve Request"}
-        </Button>
-        <Button
+        </ViewOnlyActionButton>
+        <ViewOnlyActionButton
+          canEdit={canEdit}
           type="button"
           variant="outline"
           onClick={onReject}
@@ -415,7 +422,7 @@ export function FamilyGroupRequestReviewCard({
         >
           <X className="mr-2 h-4 w-4" />
           {submitting ? "Saving..." : "Reject Request"}
-        </Button>
+        </ViewOnlyActionButton>
       </div>
     </div>
   );

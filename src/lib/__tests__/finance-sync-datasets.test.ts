@@ -447,12 +447,18 @@ describe("finance-sync-datasets", () => {
                 invoiceId: "inv-1",
                 invoiceDate: "2026-04-01",
                 dueDate: "2026-04-10",
+                // #2105: a Date-backed dueDate now drives the aging bucket /
+                // days-overdue (was silently null → "current" before the fix).
+                bucket: "days1To30",
+                daysOverdue: 10,
               },
               {
                 invoiceId: "inv-2",
                 invoiceDate: "2026-04-02",
                 dueDate: "2026-04-18",
                 expectedPaymentDate: "2026-04-22",
+                bucket: "days1To30",
+                daysOverdue: 2,
               },
             ],
           },

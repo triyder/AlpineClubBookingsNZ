@@ -10,6 +10,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader } from "@/co
 import { WebsiteLogo } from "@/components/website-logo";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { MagicLinkRequestForm } from "./magic-link-request-form";
 
 // The login query params (verified / verifyError / emailChanged / callbackUrl)
 // are read on the server and passed in as props. Reading them here via
@@ -18,18 +19,47 @@ import { Label } from "@/components/ui/label";
 // (#email briefly resolving to two nodes — the E2E flake tracked in #1207/#1140).
 // Server-resolved props keep the render deterministic. redirectTo is the
 // already-sanitised post-login destination (resolvePostLoginPath ran server-side).
+// Friendly copy for OAuth (Google) refusals redirected here as ?error=… by the
+// signIn callback (#2035). Unlisted values fall through to the generic branch.
+function oauthErrorMessage(error: string): string {
+  switch (error) {
+    case "google_unlinked":
+      return "That Google account isn't linked to a member here. Sign in with your password first, then connect Google from your profile.";
+    case "google_password_change":
+      return "Please sign in with your password — a password update is required before you can use Google sign-in.";
+    case "google_disabled":
+      return "Google sign-in is currently turned off. Please sign in with your password.";
+    case "google_refused":
+      return "We couldn't sign you in with Google. Please sign in with your password or contact the club.";
+    default:
+      return "Could not sign in with Google. Please try again or use your password.";
+  }
+}
+
 export function LoginForm({
   verified,
   verifyError,
   emailChanged,
   redirectTo,
+  explicitCallbackUrl,
   authBounceRef,
+  magicLinkEnabled = false,
+  googleLoginEnabled = false,
+  oauthError,
 }: {
   verified: boolean;
   verifyError?: string;
   emailChanged: boolean;
   redirectTo: string;
+  // A genuinely user/deep-link-supplied callbackUrl (#2090). When set it wins
+  // over the landing preference (D-D4); when absent the post-auth resolver
+  // falls back to the member's preference / admin role default. Undefined is
+  // NOT a flow-materialised default — the server only forwards a real one.
+  explicitCallbackUrl?: string;
   authBounceRef?: string;
+  magicLinkEnabled?: boolean;
+  googleLoginEnabled?: boolean;
+  oauthError?: string;
 }) {
   const club = useClubIdentity();
   const [email, setEmail] = useState("");
@@ -40,6 +70,46 @@ export function LoginForm({
   const [resendLoading, setResendLoading] = useState(false);
   const [resendSuccess, setResendSuccess] = useState(false);
 
+  // Post-auth landing (#2090): the credential form resolves the destination
+  // AFTER sign-in — once the session cookie exists — because it depends on the
+  // member's landing preference and admin role default, neither known at render
+  // time. An explicit deep-link callbackUrl (if any) is forwarded so it can win
+  // per D-D4. Any failure falls back to the pre-auth-sanitised redirectTo.
+  async function resolvePostAuthLanding(): Promise<string> {
+    // A hung resolver must never strand the user on a spinner: abort after a
+    // short timeout and fall back to the pre-auth-sanitised redirectTo (the same
+    // fallback the catch below uses for any network failure).
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    try {
+      const params = new URLSearchParams();
+      if (explicitCallbackUrl) {
+        params.set("callbackUrl", explicitCallbackUrl);
+      }
+      const query = params.toString();
+      const response = await fetch(
+        `/api/auth/post-login-landing${query ? `?${query}` : ""}`,
+        { credentials: "same-origin", signal: controller.signal },
+      );
+      if (!response.ok) return redirectTo;
+      const body = (await response.json()) as { path?: string };
+      return typeof body.path === "string" && body.path ? body.path : redirectTo;
+    } catch {
+      return redirectTo;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  // Build the 2FA detour URL (verify/enroll) when the challenge is still open,
+  // else null. Determinism note (#2090): the detour's callbackUrl carries ONLY a
+  // genuinely explicit deep link — never the resolved default landing. The
+  // default (preference / admin role default) is re-resolved server-side at the
+  // /login/enroll and /login/verify pages from the fully-authed session, so it
+  // no longer depends on a post-signIn resolver fetch that could race or fail and
+  // silently bake the wrong /dashboard default into the detour (the alice/bob
+  // asymmetry). A flow-materialised default is thus never written here, so it can
+  // never be re-read as an explicit choice (D-D4).
   async function resolveTwoFactorPath() {
     const response = await fetch("/api/auth/2fa/status", {
       credentials: "same-origin",
@@ -60,10 +130,15 @@ export function LoginForm({
       return null;
     }
 
-    const params = new URLSearchParams({ callbackUrl: redirectTo });
+    const params = new URLSearchParams();
+    if (explicitCallbackUrl) {
+      params.set("callbackUrl", explicitCallbackUrl);
+    }
+    const query = params.toString();
+    const suffix = query ? `?${query}` : "";
     return status.enrolled
-      ? `/login/verify?${params.toString()}`
-      : `/login/enroll?${params.toString()}`;
+      ? `/login/verify${suffix}`
+      : `/login/enroll${suffix}`;
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -97,7 +172,18 @@ export function LoginForm({
         // A hard load always sends the fresh session cookie and starts the
         // authenticated app from a clean router state. `loading` stays true
         // so the button cannot be re-submitted while the page unloads.
-        window.location.assign((await resolveTwoFactorPath()) ?? redirectTo);
+        //
+        // Check the 2FA gate FIRST (#2090). When a challenge is open we hand off
+        // to /login/enroll or /login/verify, which re-resolve the default landing
+        // server-side from the fully-authed session — so we skip the client
+        // landing resolver on the detour path entirely, removing the race that
+        // could bake a stale /dashboard default into the detour. Only when no
+        // detour is needed do we resolve the landing here and navigate straight
+        // to it.
+        const twoFactorPath = await resolveTwoFactorPath();
+        window.location.assign(
+          twoFactorPath ?? (await resolvePostAuthLanding()),
+        );
       }
     } catch {
       setError("Something went wrong. Please try again.");
@@ -160,6 +246,10 @@ export function LoginForm({
                 ? "Invalid verification link."
                 : "An error occurred during email verification."}
             </Alert>
+          )}
+
+          {oauthError && (
+            <Alert variant="error">{oauthErrorMessage(oauthError)}</Alert>
           )}
 
           {error && (
@@ -279,6 +369,40 @@ export function LoginForm({
           </p>
         </CardFooter>
       </form>
+
+      {googleLoginEnabled && (
+        <CardContent>
+          <div className="mt-2 border-t pt-4">
+            <p className="mb-3 text-sm text-muted-foreground">
+              Linked your Google account? Sign in with it below.
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full"
+              onClick={() =>
+                // Google resolves the destination server-side: with an explicit
+                // deep link the provider returns straight to it; otherwise it
+                // returns to /login, whose authenticated self-heal resolves the
+                // landing preference / admin role default (#2090). There is no
+                // client post-auth seam on the OAuth round-trip, so /login is
+                // that seam.
+                void signIn("google", {
+                  callbackUrl: explicitCallbackUrl ?? "/login",
+                })
+              }
+            >
+              Continue with Google
+            </Button>
+          </div>
+        </CardContent>
+      )}
+
+      {magicLinkEnabled && (
+        <CardContent>
+          <MagicLinkRequestForm />
+        </CardContent>
+      )}
     </Card>
   );
 }

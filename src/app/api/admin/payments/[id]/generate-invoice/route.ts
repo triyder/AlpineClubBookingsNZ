@@ -20,6 +20,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const guard = await requireAdmin({
+    permission: { area: "finance", level: "edit" },
     unauthenticatedResponse: forbiddenResponse,
     forbiddenResponse,
   });

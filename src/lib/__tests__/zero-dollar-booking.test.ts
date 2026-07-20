@@ -29,6 +29,10 @@ const mockPrismaTransaction = vi.fn();
 const mockMemberCount = vi.fn();
 const mockMemberFindUnique = vi.fn();
 const mockBookingFindUnique = vi.fn();
+// Split-parent describe helper (getProvisionalNonMemberChildSummary) reads the
+// provisional non-member child via prisma.booking.findFirst; default null =
+// not a split parent.
+const mockBookingFindFirst = vi.fn().mockResolvedValue(null);
 const mockTxBookingFindMany = vi.fn().mockResolvedValue([]);
 const mockTxSeasonFindMany = vi.fn().mockResolvedValue([]);
 const mockTxBookingCreate = vi.fn();
@@ -59,6 +63,7 @@ const mockTx = {
   payment: { create: mockTxPaymentCreate, upsert: mockPaymentUpsert },
   promoRedemption: { findUnique: vi.fn().mockResolvedValue(null) },
   lodge: { findFirst: mockTxLodgeFindFirst },
+  lodgeSettings: { findUnique: async () => ({ capacity: 100 }) },
   memberLodgeAccess: { findMany: mockTxMemberLodgeAccessFindMany },
   // Rate resolver (#1930, E4): pricing is mocked, so the resolver only needs to
   // find the NON_MEMBER type id without throwing.
@@ -76,6 +81,7 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     $transaction: (fn: (tx: unknown) => Promise<unknown>) => mockPrismaTransaction(fn),
     lodge: { findFirst: mockTxLodgeFindFirst },
+    lodgeSettings: { findUnique: async () => ({ capacity: 100 }) },
     member: {
       count: (...args: unknown[]) => mockMemberCount(...args),
       findUnique: (...args: unknown[]) => mockMemberFindUnique(...args),
@@ -85,6 +91,7 @@ vi.mock("@/lib/prisma", () => ({
     familyGroupMember: { findMany: vi.fn().mockResolvedValue([]) },
     booking: {
       findUnique: (...args: unknown[]) => mockBookingFindUnique(...args),
+      findFirst: (...args: unknown[]) => mockBookingFindFirst(...args),
       findMany: (...args: unknown[]) => mockBookingFindMany(...args),
       update: (...args: unknown[]) => mockBookingUpdate(...args),
       updateMany: (...args: unknown[]) => mockBookingUpdateMany(...args),
@@ -361,6 +368,38 @@ describe("Booking Creation Route: zero-dollar handling", () => {
       expect.any(Number),
       0,
       expect.objectContaining({ discountCents: 10000 })
+    );
+  });
+
+  it("threads the provisional non-member child into the $0 split-parent confirmation email (#1942 FIX 4c)", async () => {
+    setupStandardMocks();
+    setupZeroDollarConfirmedBooking();
+    // This $0 parent is a split parent: describe its provisional non-member
+    // child so the confirmation email carries the provisional section.
+    const holdUntil = new Date(dayAfterTomorrow);
+    mockBookingFindFirst.mockResolvedValue({
+      nonMemberHoldUntil: holdUntil,
+      _count: { guests: 2 },
+    });
+
+    const req = makeRequest({
+      checkIn: tomorrow,
+      checkOut: dayAfterTomorrow,
+      guests: [{ firstName: "Alice", lastName: "Smith", ageTier: "ADULT", isMember: true }],
+    });
+
+    await POST(req);
+
+    expect(sendBookingConfirmedEmail).toHaveBeenCalledWith(
+      "alice@example.com",
+      "Alice",
+      expect.any(Date),
+      expect.any(Date),
+      expect.any(Number),
+      0,
+      expect.objectContaining({
+        provisionalGuests: { guestCount: 2, holdUntil },
+      }),
     );
   });
 

@@ -12,6 +12,7 @@ type Settings = {
   hutFees: boolean;
   bookingPolicySummary: boolean;
   cancellationPolicy: boolean;
+  annualFees: boolean;
   showBookNow: boolean;
   bookNowTarget: "BOOKING_FLOW" | "PAGE";
   bookNowPageId: string | null;
@@ -19,9 +20,14 @@ type Settings = {
 
 type PublishedPage = { id: string; title: string; path: string };
 
+// annualFees is a dedicated double-opt-in for the {{annual-fees}} embed (#1933,
+// E7); {{membership-types}} is now its deprecated alias and renders through the
+// same annualFees gate, so the legacy membershipTypes flag is orphaned and no
+// longer surfaced. Joining fees ({{joining-fees}}/{{entrance-fees}}) stay on
+// the existing entranceFees gate.
 const labels: Array<[keyof Settings, string]> = [
-  ["membershipTypes", "Membership types"],
   ["entranceFees", "Joining fees"],
+  ["annualFees", "Annual membership fees"],
   ["hutFees", "Hut fees"],
   ["bookingPolicySummary", "Booking policy summaries"],
   ["cancellationPolicy", "Cancellation policies"],
@@ -59,7 +65,7 @@ export function PublicContentSettingsPanel() {
     } catch { toast.error("Could not update public content visibility."); }
     finally { setSaving(false); }
   }
-  return <div className="space-y-4"><p className="text-sm text-muted-foreground">A token renders no authoritative fee or policy data until its family is enabled here. Membership types must also be individually marked for public listing.</p>{!canEdit ? <div id={viewOnlyReasonId}><AdminViewOnlyNotice>Content view access can inspect public visibility. Content edit access is required to change it.</AdminViewOnlyNotice></div> : null}<div className="grid gap-3 sm:grid-cols-2">{labels.map(([key, label]) => <label key={key} className="flex items-center gap-3 rounded-md border p-3"><input type="checkbox" checked={settings[key] as boolean} disabled={!canEdit} aria-describedby={!canEdit ? viewOnlyReasonId : undefined} onChange={(event) => setSettings({ ...settings, [key]: event.target.checked })} /><span>{label}</span></label>)}</div>
+  return <div className="space-y-4"><p className="text-sm text-muted-foreground">A token renders no authoritative fee or policy data until its family is enabled here. Membership types must also be individually marked for public listing.</p>{!canEdit ? <div id={viewOnlyReasonId}><AdminViewOnlyNotice canEdit={canEdit}>Content view access can inspect public visibility. Content edit access is required to change it.</AdminViewOnlyNotice></div> : null}<div className="grid gap-3 sm:grid-cols-2">{labels.map(([key, label]) => <label key={key} className="flex items-center gap-3 rounded-md border p-3"><input type="checkbox" checked={settings[key] as boolean} disabled={!canEdit} aria-describedby={!canEdit ? viewOnlyReasonId : undefined} onChange={(event) => setSettings({ ...settings, [key]: event.target.checked })} /><span>{label}</span></label>)}</div>
     <div className="space-y-3 rounded-md border p-4">
       <div>
         <p className="text-sm font-medium">Book Now button</p>

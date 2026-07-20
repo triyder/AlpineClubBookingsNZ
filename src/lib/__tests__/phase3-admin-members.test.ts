@@ -36,7 +36,9 @@ vi.mock("@/lib/prisma", () => ({
     adminCreditAdjustmentRequest: { count: vi.fn().mockResolvedValue(0) },
     refundRequest: { count: vi.fn().mockResolvedValue(0) },
     memberSubscription: { count: vi.fn().mockResolvedValue(0) },
+    seasonalMembershipAssignment: { findUnique: vi.fn().mockResolvedValue(null) },
     membershipSubscriptionCharge: { count: vi.fn().mockResolvedValue(0) },
+    membershipSubscriptionBillingSettings: { findUnique: vi.fn().mockResolvedValue(null) },
     auditLog: { create: vi.fn().mockResolvedValue({}), findMany: vi.fn() },
     promoCodeAssignment: { count: vi.fn().mockResolvedValue(0), findMany: vi.fn() },
     promoRedemption: { count: vi.fn().mockResolvedValue(0) },
@@ -387,16 +389,23 @@ describe("Phase 3: Admin Member Management", () => {
         new NextRequest("http://localhost/api/admin/members?subscription=NONE")
       );
       const call = vi.mocked(prisma.member.findMany).mock.calls[0][0]!;
-      // NON_MEMBER and SCHOOL records never owe a subscription. They are excluded
-      // from the "no subscription" filter via the NOT { OR: notRequired } clause,
-      // whose role allowlist carries both non-member roles.
+      // #2149: role carries no exemption of its own. Operational/non-member
+      // accounts are exempt only via the role→default-type fallback, expressed as
+      // "no season assignment AND role in the NOT_REQUIRED-default set". This
+      // assignment-guarded clause is what keeps a fee-paying admin (REQUIRED
+      // assignment) in the owing set.
       const andConditions = call.where?.AND as Array<Record<string, unknown>>;
       const notCondition = andConditions.find((c) => "NOT" in c) as
         | { NOT: { OR: Array<Record<string, unknown>> } }
         | undefined;
       expect(notCondition?.NOT.OR).toEqual(
         expect.arrayContaining([
-          { role: { in: ["ADMIN", "LODGE", "NON_MEMBER", "SCHOOL"] } },
+          {
+            AND: [
+              { seasonalMembershipAssignments: { none: { seasonYear: 2026 } } },
+              { role: { in: ["ADMIN", "LODGE", "NON_MEMBER", "SCHOOL"] } },
+            ],
+          },
         ])
       );
     });
@@ -585,10 +594,15 @@ describe("Phase 3: Admin Member Management", () => {
 
       await getMembers(new NextRequest("http://localhost/api/admin/members?subscription=NONE"));
       const call = vi.mocked(prisma.member.findMany).mock.calls[0][0]!;
+      // #2149: the blanket `role notIn OPERATIONAL` exclusion is gone — the
+      // NOT { OR: notRequired } clause now handles operational exemption via the
+      // assignment-aware fallback, so a fee-paying admin still surfaces in NONE.
       expect(call.where?.AND).toEqual(expect.arrayContaining([
-        { role: { notIn: ["ADMIN", "LODGE"] } },
         { subscriptions: { none: { seasonYear: 2026 } } },
       ]));
+      expect(call.where?.AND).not.toContainEqual({
+        role: { notIn: ["ADMIN", "LODGE"] },
+      });
     });
 
     it("filters by family group presence", async () => {
@@ -679,14 +693,69 @@ describe("Phase 3: Admin Member Management", () => {
 
       await getMembers(new NextRequest("http://localhost/api/admin/members?subscription=NOT_REQUIRED"));
       const call = vi.mocked(prisma.member.findMany).mock.calls[0][0]!;
+      // #2149: the role clause is now assignment-guarded (fallback semantics).
       expect(call.where?.AND).toEqual(expect.arrayContaining([
         {
           OR: expect.arrayContaining([
-            { role: { in: ["ADMIN", "LODGE", "NON_MEMBER", "SCHOOL"] } },
+            {
+              AND: [
+                { seasonalMembershipAssignments: { none: { seasonYear: 2026 } } },
+                { role: { in: ["ADMIN", "LODGE", "NON_MEMBER", "SCHOOL"] } },
+              ],
+            },
             { ageTier: { in: expect.arrayContaining(["INFANT", "CHILD"]) } },
           ]),
         },
       ]));
+    });
+
+    // #2041/#2149: the mid-season tier-promotion shape — a BASED_ON_AGE_TIER
+    // assignment with a NOT_REQUIRED current-season row on a subscription-liable
+    // age tier — is badged NOT_REQUIRED by the displayed flag (row dominance).
+    // The list SQL must carry the matching fourth OR clause so the filter cannot
+    // disagree with the flag.
+    const tierPromotionExemptClause = {
+      seasonalMembershipAssignments: {
+        some: {
+          seasonYear: 2026,
+          membershipType: { subscriptionBehavior: "BASED_ON_AGE_TIER" },
+        },
+      },
+      subscriptions: {
+        some: { seasonYear: 2026, status: "NOT_REQUIRED" },
+      },
+    };
+
+    it("NOT_REQUIRED filter includes the BASED_ON_AGE_TIER + NOT_REQUIRED-row (tier promotion) clause", async () => {
+      mockedAuth.mockResolvedValue(adminSession);
+      vi.mocked(prisma.member.findMany).mockResolvedValue([]);
+      mockSessionAndMemberListCounts(0);
+
+      await getMembers(new NextRequest("http://localhost/api/admin/members?subscription=NOT_REQUIRED"));
+      const call = vi.mocked(prisma.member.findMany).mock.calls[0][0]!;
+      expect(call.where?.AND).toEqual(expect.arrayContaining([
+        { OR: expect.arrayContaining([tierPromotionExemptClause]) },
+      ]));
+    });
+
+    it("owing filters (NONE, UNPAID) exclude the tier-promotion clause via NOT, so it cannot appear in both sets", async () => {
+      mockedAuth.mockResolvedValue(adminSession);
+      for (const filter of ["NONE", "UNPAID"]) {
+        vi.mocked(prisma.member.findMany).mockClear();
+        vi.mocked(prisma.member.findMany).mockResolvedValue([]);
+        mockSessionAndMemberListCounts(0);
+        await getMembers(
+          new NextRequest(`http://localhost/api/admin/members?subscription=${filter}`),
+        );
+        const call = vi.mocked(prisma.member.findMany).mock.calls[0][0]!;
+        const andConditions = call.where?.AND as Array<Record<string, unknown>>;
+        const notCondition = andConditions.find((c) => "NOT" in c) as
+          | { NOT: { OR: Array<Record<string, unknown>> } }
+          | undefined;
+        expect(notCondition?.NOT.OR).toEqual(
+          expect.arrayContaining([tierPromotionExemptClause]),
+        );
+      }
     });
 
     it("returns admin users with subscription not required", async () => {
@@ -736,6 +805,65 @@ describe("Phase 3: Admin Member Management", () => {
       const body = await res.json();
       expect(body.members[0].subscriptionStatus).toBe("NOT_REQUIRED");
       expect(body.members[0].subscriptionXeroInvoiceId).toBe("inv-1");
+    });
+
+    describe("BASED_ON_AGE_TIER subscription flag (#2041)", () => {
+      function ageTierMember(opts: {
+        subscriptionBehavior: string;
+        ageTier: string;
+        subscriptionStatus: string;
+      }) {
+        return {
+          id: "at-1", firstName: "Age", lastName: "Tier", email: "at@test.com",
+          phoneCountryCode: null, phoneAreaCode: null, phoneNumber: null,
+          dateOfBirth: null, role: "USER", financeAccessLevel: "NONE",
+          ageTier: opts.ageTier, active: true, canLogin: true, xeroContactId: null,
+          joinedDate: null, createdAt: new Date("2025-01-01"), forcePasswordChange: false,
+          passwordChangedAt: null, lastLoginAt: null,
+          streetAddressLine1: null, streetAddressLine2: null, streetCity: null,
+          streetRegion: null, streetPostalCode: null, streetCountry: null,
+          postalAddressLine1: null, postalAddressLine2: null, postalCity: null,
+          postalRegion: null, postalPostalCode: null, postalCountry: null,
+          familyGroupMemberships: [],
+          subscriptions: [{ status: opts.subscriptionStatus, seasonYear: 2026, xeroInvoiceId: null }],
+          seasonalMembershipAssignments: [{
+            membershipType: {
+              id: "type-1", key: "FULL", name: "Full", isActive: true,
+              subscriptionBehavior: opts.subscriptionBehavior,
+            },
+          }],
+          passwordResetTokens: [],
+        };
+      }
+
+      async function statusFor(member: unknown) {
+        mockedAuth.mockResolvedValue(adminSession);
+        vi.mocked(prisma.member.findMany).mockResolvedValue([member] as any);
+        mockSessionAndMemberListCounts(1);
+        const res = await getMembers(new NextRequest("http://localhost/api/admin/members"));
+        const body = await res.json();
+        return body.members[0].subscriptionStatus;
+      }
+
+      it("a NOT_REQUIRED row dominates a subscription-requiring stored tier (mid-season promotion)", async () => {
+        // Youth requires a subscription, but the exempt-at-season-start member
+        // carries a NOT_REQUIRED row — the list must agree with the booking gate.
+        expect(await statusFor(ageTierMember({
+          subscriptionBehavior: "BASED_ON_AGE_TIER", ageTier: "YOUTH", subscriptionStatus: "NOT_REQUIRED",
+        }))).toBe("NOT_REQUIRED");
+      });
+
+      it("defers to the age-tier flag when there is no NOT_REQUIRED row", async () => {
+        expect(await statusFor(ageTierMember({
+          subscriptionBehavior: "BASED_ON_AGE_TIER", ageTier: "YOUTH", subscriptionStatus: "NOT_INVOICED",
+        }))).toBe("NOT_INVOICED");
+      });
+
+      it("REQUIRED types are byte-unchanged (dominance branch never fires)", async () => {
+        expect(await statusFor(ageTierMember({
+          subscriptionBehavior: "REQUIRED", ageTier: "YOUTH", subscriptionStatus: "NOT_INVOICED",
+        }))).toBe("NOT_INVOICED");
+      });
     });
 
   });
@@ -870,9 +998,44 @@ describe("Phase 3: Admin Member Management", () => {
         { lastLoginAt: null },
         { passwordResetTokens: { some: { used: false, expiresAt: { gt: expect.any(Date) } } } },
         {
+          // #2149: role clause is assignment-guarded (fallback semantics),
+          // matching the members-list filter.
           OR: expect.arrayContaining([
-            { role: { in: ["ADMIN", "LODGE", "NON_MEMBER", "SCHOOL"] } },
+            {
+              AND: [
+                { seasonalMembershipAssignments: { none: { seasonYear: 2026 } } },
+                { role: { in: ["ADMIN", "LODGE", "NON_MEMBER", "SCHOOL"] } },
+              ],
+            },
             { ageTier: { in: expect.arrayContaining(["INFANT", "CHILD"]) } },
+          ]),
+        },
+      ]));
+    });
+
+    it("export NOT_REQUIRED filter mirrors the list — includes the tier-promotion clause", async () => {
+      // #2041/#2149: the export SQL must carry the same BASED_ON_AGE_TIER +
+      // NOT_REQUIRED-row exempt clause as the members list so the CSV roster
+      // cannot disagree with the on-screen NOT_REQUIRED badge.
+      mockedAuth.mockResolvedValue(adminSession);
+      vi.mocked(prisma.member.findMany).mockResolvedValue([]);
+
+      await exportMembers(new NextRequest("http://localhost/api/admin/members/export?subscription=NOT_REQUIRED"));
+      const call = vi.mocked(prisma.member.findMany).mock.calls[0][0]!;
+      expect(call.where?.AND).toEqual(expect.arrayContaining([
+        {
+          OR: expect.arrayContaining([
+            {
+              seasonalMembershipAssignments: {
+                some: {
+                  seasonYear: 2026,
+                  membershipType: { subscriptionBehavior: "BASED_ON_AGE_TIER" },
+                },
+              },
+              subscriptions: {
+                some: { seasonYear: 2026, status: "NOT_REQUIRED" },
+              },
+            },
           ]),
         },
       ]));

@@ -88,7 +88,9 @@ describe("evaluateAuditSnapshots", () => {
       metrics: {
         acceptedAgeTierGroups: 2,
         familyGroupMemberRows: 2,
-        managedAgeTierSettings: 2,
+        // managedAgeTierSettings removed with its check (#2130) — it counted
+        // AgeTierSetting."xeroContactGroupId", dropped by the follow-on
+        // contract migration.
         nonMemberFullAssignments: 1,
         schoolFullAssignments: 2,
         schoolLoginMembers: 1,
@@ -122,7 +124,8 @@ describe("evaluateAuditSnapshots", () => {
         NON_MEMBER: 1,
       },
       xeroRulesByMode: {
-        MANAGED: 2,
+        // MANAGED intentionally absent: #2130 removed the "Managed Xero
+        // age-tier rules backfilled" check, so no check consumes it any more.
         ACCEPTED: 2,
       },
       familyGroupRoles: {
@@ -141,6 +144,11 @@ describe("evaluateAuditSnapshots", () => {
 
     const evaluation = evaluateAuditSnapshots(before, after);
 
+    // Pin the count as well as the pass/fail: `every(...)` is vacuously true
+    // over a shrinking list, so without this a future deletion of a
+    // conservation check (as #2130 did to "Managed Xero age-tier rules
+    // backfilled") would silently keep this test green.
+    expect(evaluation.checks).toHaveLength(24);
     expect(evaluation.checks.every((check) => check.ok)).toBe(true);
     expect(evaluation.warnings).toEqual([
       expect.stringContaining("Both RESERVE and ASSOCIATE"),

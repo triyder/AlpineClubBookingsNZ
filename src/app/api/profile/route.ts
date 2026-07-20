@@ -25,7 +25,15 @@ import {
 } from "@/lib/audit";
 import { nameField } from "@/lib/zod-helpers";
 import { loadMemberFieldsFlags } from "@/lib/member-fields-settings";
-import { hasAccessRole } from "@/lib/access-roles";
+import {
+  hasAccessRole,
+  isOrganisationMember,
+  resolveAccessRoleTokens,
+} from "@/lib/access-roles";
+import {
+  loadMemberCurrentSeasonTypeExemption,
+  resolveEnforcedAgeTier,
+} from "@/lib/age-tier-enforcement";
 
 const maxStr = (len: number) => z.string().max(len).optional().nullable();
 
@@ -199,8 +207,11 @@ export async function PUT(req: NextRequest) {
     }
   }
 
-  // Date of birth
+  // Date of birth. The age tier is resolved after loading the member below so
+  // enforcement (org / FORCED-type force, and preserving an ALLOWED-type manual
+  // N/A) is applied and a DOB recompute can never silently un-force N/A (#2106).
   const { dateOfBirth } = data;
+  let dobProvided = false;
   if (dateOfBirth && dateOfBirth !== "") {
     const dob = parseDateOnly(dateOfBirth);
     if (isNaN(dob.getTime())) {
@@ -216,7 +227,7 @@ export async function PUT(req: NextRequest) {
       );
     }
     updateData.dateOfBirth = dob;
-    updateData.ageTier = await computeAgeTier(dob, getSeasonStartDate(getSeasonYear()));
+    dobProvided = true;
   } else if (dateOfBirth === "" || dateOfBirth === null) {
     updateData.dateOfBirth = null;
   }
@@ -227,6 +238,34 @@ export async function PUT(req: NextRequest) {
   });
   if (!existing) {
     return NextResponse.json({ error: "Member not found" }, { status: 404 });
+  }
+
+  // #2106: apply age-tier enforcement to a DOB change. Only touch the tier when
+  // the member supplied a DOB (self-service edits never submit a tier directly).
+  if (dobProvided) {
+    const dobDerivedTier = await computeAgeTier(
+      updateData.dateOfBirth as Date,
+      getSeasonStartDate(getSeasonYear())
+    );
+    const typeExemption = await loadMemberCurrentSeasonTypeExemption(
+      prisma,
+      session.user.id,
+      getSeasonYear()
+    );
+    const resolved = resolveEnforcedAgeTier({
+      isOrganisation: isOrganisationMember({
+        accessRoleTokens: resolveAccessRoleTokens(existing),
+        legacyRole: existing.role,
+      }),
+      typeExemption,
+      currentAgeTier: existing.ageTier,
+      restorePersonTier: dobDerivedTier,
+    });
+    // resolveEnforcedAgeTier only errors on an explicit manual N/A request,
+    // which self-service never sends, so this is always ok.
+    if (resolved.ok) {
+      updateData.ageTier = resolved.ageTier;
+    }
   }
 
   // Occupation: adult-only and gated behind the admin showOccupation flag.

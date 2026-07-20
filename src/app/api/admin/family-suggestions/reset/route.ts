@@ -9,7 +9,9 @@ import logger from "@/lib/logger";
  * Clears all globally hidden family suggestions.
  */
 export async function POST() {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "membership", level: "edit" },
+  });
   if (!guard.ok) return guard.response;
 
   try {

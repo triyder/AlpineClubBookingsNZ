@@ -19,7 +19,12 @@ const previewSchema = z
   .strict();
 
 export async function POST(request: NextRequest) {
-  const guard = await requireAdmin();
+  // Preview only renders a message with sample data (no mutation), so a
+  // support:view admin may use it (issue #1940). Explicit view keeps it usable
+  // for viewers even though the method is POST (which would infer edit).
+  const guard = await requireAdmin({
+    permission: { area: "support", level: "view" },
+  });
   if (!guard.ok) return guard.response;
 
   let body: unknown;

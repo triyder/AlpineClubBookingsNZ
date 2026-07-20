@@ -1,5 +1,5 @@
 import type {
-  EntranceFeeCategory,
+  AgeTier,
   FamilyBillingMode,
   MembershipFeeBillingBasis,
   MembershipFeeProrationRule,
@@ -42,13 +42,6 @@ export const MEMBERSHIP_FEE_PRORATION_RULES = [
   "REMAINING_MONTHS_INCLUSIVE",
 ] as const satisfies readonly MembershipFeeProrationRule[];
 
-export const ENTRANCE_FEE_CATEGORIES = [
-  "ADULT",
-  "YOUTH",
-  "CHILD",
-  "FAMILY",
-] as const satisfies readonly EntranceFeeCategory[];
-
 export class FeeScheduleValidationError extends Error {
   constructor(message: string, public readonly status = 422) {
     super(message);
@@ -83,6 +76,51 @@ export function validateFeeScheduleInput(input: {
   };
 }
 
+export type FeeComponentInput = {
+  label: string;
+  amountCents: number;
+  prorate: boolean;
+  xeroAccountCode?: string | null;
+  xeroItemCode?: string | null;
+  sortOrder: number;
+};
+
+// The component lifecycle invariant (#1932, E6): a NO_INVOICE fee is a zero total
+// with NO components; every invoiceable fee has >=1 component whose amounts sum
+// EXACTLY to the fee total, so the fee total stays authoritative and the invoice
+// builder never meets a fee with zero components. Enforced server-side in the one
+// transaction that writes the fee + its components.
+export function validateFeeComponents(input: {
+  components: FeeComponentInput[];
+  amountCents: number;
+  billingBasis: MembershipFeeBillingBasis;
+}) {
+  const { components, amountCents, billingBasis } = input;
+  if (billingBasis === "NO_INVOICE") {
+    if (components.length > 0) {
+      throw new FeeScheduleValidationError("A no-invoice fee cannot have components.");
+    }
+    return;
+  }
+  if (components.length === 0) {
+    throw new FeeScheduleValidationError("An invoiceable membership fee must have at least one component.");
+  }
+  for (const component of components) {
+    if (!component.label.trim()) {
+      throw new FeeScheduleValidationError("Each fee component must have a label.");
+    }
+    if (!Number.isSafeInteger(component.amountCents) || component.amountCents < 0 || component.amountCents > 2_147_483_647) {
+      throw new FeeScheduleValidationError("Each fee component amount must be a non-negative integer number of cents.");
+    }
+  }
+  const sum = components.reduce((total, component) => total + component.amountCents, 0);
+  if (sum !== amountCents) {
+    throw new FeeScheduleValidationError(
+      `Fee components must sum to the fee amount (${amountCents} cents); the supplied components sum to ${sum} cents.`,
+    );
+  }
+}
+
 export function scheduleOverlapWhere(input: {
   effectiveFrom: Date;
   effectiveTo: Date | null;
@@ -110,58 +148,110 @@ export function serializeFeeSchedule<T extends {
   };
 }
 
-export async function getEffectiveEntranceFee(
-  category: EntranceFeeCategory,
-  asOf: Date = getTodayDateOnly(),
-): Promise<{ amountCents: number | null; source: "SCHEDULE" | "LEGACY_MAPPING" | "NONE" }> {
-  const schedule = await prisma.entranceFee.findFirst({
-    where: {
-      category,
-      effectiveFrom: { lte: asOf },
-      OR: [{ effectiveTo: null }, { effectiveTo: { gte: asOf } }],
-    },
-    orderBy: { effectiveFrom: "desc" },
-    select: { amountCents: true },
-  });
-  if (schedule) return { amountCents: schedule.amountCents, source: "SCHEDULE" };
+export type JoiningFeeScheduleSource = "SCHEDULE" | "NONE";
 
-  // One-release compatibility fallback. Item/account codes remain Xero
-  // configuration; only these deprecated amount fields are consulted here.
-  const granular = await prisma.xeroItemCodeMapping.findFirst({
-    where: { category: "ENTRANCE_FEE", entranceFeeCategory: category },
-    select: { amountCents: true },
-  });
-  if (granular?.amountCents != null && Number.isSafeInteger(granular.amountCents) && granular.amountCents >= 0) {
-    return { amountCents: granular.amountCents, source: "LEGACY_MAPPING" };
-  }
-  const legacy = await prisma.xeroAccountMapping.findUnique({
-    where: { key: "entranceFeeAmountCents" },
-    select: { code: true },
-  });
-  const parsed = legacy?.code && /^\d+$/.test(legacy.code) ? Number(legacy.code) : null;
-  return parsed != null && Number.isSafeInteger(parsed) && parsed >= 0 && parsed <= 2_147_483_647
-    ? { amountCents: parsed, source: "LEGACY_MAPPING" }
-    : { amountCents: null, source: "NONE" };
+export interface EffectiveJoiningFee {
+  amountCents: number | null;
+  effectiveFrom: string | null;
+  source: JoiningFeeScheduleSource;
 }
 
+/**
+ * Resolve the effective joining-fee amount for a membership type x age tier
+ * (#1931, E5). Prefers the exact age-tier row, then the type's flat NULL-tier
+ * row (the built-in Family type is flat-only, so a Family member of any age
+ * resolves the flat family fee). The legacy category-keyed EntranceFee table
+ * and the deprecated mapping-amount fallback are gone — the migration
+ * materialised every legacy amount into JoiningFee, so this reads JoiningFee
+ * only. Accepts an optional transaction client (#1886 contract) so approval can
+ * resolve fees for rows created inside the still-open transaction.
+ */
+export async function getEffectiveJoiningFee(
+  params: { membershipTypeId: string; ageTier: AgeTier | null },
+  asOf: Date = getTodayDateOnly(),
+  store: Prisma.TransactionClient | typeof prisma = prisma,
+): Promise<EffectiveJoiningFee> {
+  const activeWindow = {
+    effectiveFrom: { lte: asOf },
+    OR: [{ effectiveTo: null }, { effectiveTo: { gte: asOf } }],
+  };
+
+  if (params.ageTier) {
+    const tierRow = await store.joiningFee.findFirst({
+      where: { membershipTypeId: params.membershipTypeId, ageTier: params.ageTier, ...activeWindow },
+      orderBy: { effectiveFrom: "desc" },
+      select: { amountCents: true, effectiveFrom: true },
+    });
+    if (tierRow) {
+      return {
+        amountCents: tierRow.amountCents,
+        effectiveFrom: formatDateOnly(tierRow.effectiveFrom),
+        source: "SCHEDULE",
+      };
+    }
+  }
+
+  const flatRow = await store.joiningFee.findFirst({
+    where: { membershipTypeId: params.membershipTypeId, ageTier: null, ...activeWindow },
+    orderBy: { effectiveFrom: "desc" },
+    select: { amountCents: true, effectiveFrom: true },
+  });
+  if (flatRow) {
+    return {
+      amountCents: flatRow.amountCents,
+      effectiveFrom: formatDateOnly(flatRow.effectiveFrom),
+      source: "SCHEDULE",
+    };
+  }
+
+  return { amountCents: null, effectiveFrom: null, source: "NONE" };
+}
+
+/**
+ * Resolve the effective annual membership fee for a membership type x age tier
+ * (#2067), mirroring getEffectiveJoiningFee's Flat-vs-per-tier precedence: the
+ * exact-tier row wins, else the type's flat NULL-tier row (a member of any tier
+ * resolves the flat fee when the type has no per-tier row). NOT_APPLICABLE
+ * (organisations/schools) short-circuits to the flat lookup — no per-tier rows
+ * are offered for it. Passing a null ageTier reads the flat row directly, which
+ * is byte-identical to the pre-#2067 behaviour for every all-flat config.
+ * Components are always included so the returned row carries its invoice lines.
+ */
 export async function getEffectiveMembershipAnnualFee(
-  membershipTypeId: string,
+  params: { membershipTypeId: string; ageTier: AgeTier | null },
   asOf: Date = getTodayDateOnly(),
   store: Prisma.TransactionClient | typeof prisma = prisma,
 ) {
+  const activeWindow = {
+    effectiveFrom: { lte: asOf },
+    OR: [{ effectiveTo: null }, { effectiveTo: { gte: asOf } }],
+  };
+  // Components are the invoice lines (#1932, E6). Order is stable so the
+  // preview digest, the frozen charge-component snapshot, and the Xero line
+  // array all agree byte-for-byte on line order.
+  const include = { components: { orderBy: [{ sortOrder: "asc" as const }, { id: "asc" as const }] } };
+
+  // Exact-tier row first (NOT_APPLICABLE has no per-tier rows — decision 5).
+  if (params.ageTier && params.ageTier !== "NOT_APPLICABLE") {
+    const tierRow = await store.membershipAnnualFee.findFirst({
+      where: { membershipTypeId: params.membershipTypeId, ageTier: params.ageTier, ...activeWindow },
+      orderBy: { effectiveFrom: "desc" },
+      include,
+    });
+    if (tierRow) return tierRow;
+  }
+
+  // Flat NULL-tier fallback (also the sole lookup for a null/NOT_APPLICABLE tier).
   return store.membershipAnnualFee.findFirst({
-    where: {
-      membershipTypeId,
-      effectiveFrom: { lte: asOf },
-      OR: [{ effectiveTo: null }, { effectiveTo: { gte: asOf } }],
-    },
+    where: { membershipTypeId: params.membershipTypeId, ageTier: null, ...activeWindow },
     orderBy: { effectiveFrom: "desc" },
+    include,
   });
 }
 
 export async function lockFeeSchedule(
   tx: Prisma.TransactionClient,
-  domain: "membership" | "entrance",
+  domain: "membership" | "entrance" | "joining",
   key: string,
 ) {
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`fee-schedule:${domain}:${key}`}))`;

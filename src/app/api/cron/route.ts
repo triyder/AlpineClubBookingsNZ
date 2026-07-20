@@ -20,6 +20,7 @@ export async function POST(request: NextRequest) {
       success: true,
       confirmed: result.confirmPending?.confirmedBookingIds ?? [],
       bumped: result.confirmPending?.bumpedBookingIds ?? [],
+      cancelled: result.confirmPending?.cancelledBookingIds ?? [],
       partialBumped: result.confirmPending?.partialBumpedBookingIds ?? [],
       failed: result.confirmPending?.failedBookingIds ?? [],
       preArrivalReminders: result.preArrivalReminders,

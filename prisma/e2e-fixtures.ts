@@ -9,6 +9,134 @@ const DEMO_DOMAIN = "demo.alpineclub.test";
 
 const demoEmail = (local: string) => `${local}@${DEMO_DOMAIN}`;
 
+// ---------------------------------------------------------------------------
+// Relative date engine (issue #2117)
+// ---------------------------------------------------------------------------
+// Every date-based fixture below is computed as an OFFSET from "today" so
+// seeded bookings, seasons, and the windows the specs assert on NEVER EXPIRE.
+// A fixed calendar date silently rotted CI red the day wall-clock reached it:
+// a seeded PAYMENT_PENDING booking dated 2026-07-20 crossed the NZ
+// in-progress boundary at NZ midnight and modify-quote began refusing it, so
+// double-bed-sharing S3 failed on every overnight-NZ run.
+//
+// "Today" is the New Zealand civil date (APP_TIME_ZONE = Pacific/Auckland) —
+// the SAME clock the app's date-only booking-edit policy uses — so a seeded
+// "future" booking reads as future to the app on every run date. This mirrors
+// src/lib/date-only.ts (todayDateOnlyForTimeZone / addDaysDateOnly) but is
+// re-implemented inline to keep this a dependency-free constants module: it is
+// imported by the demo seed inside the Docker image build, where the `@/…`
+// path alias and the e2e/ directory are unavailable.
+const NZ_TIME_ZONE = "Pacific/Auckland";
+
+// en-CA renders YYYY-MM-DD; formatting `new Date()` in the NZ zone yields the
+// NZ civil date regardless of the CI runner's own clock/timezone.
+function todayDateOnlyNz(): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: NZ_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+}
+
+// Pure YYYY-MM-DD ± whole days (UTC-anchored, so no DST edge can shift it).
+function shiftDateOnly(dateOnly: string, days: number): string {
+  const dt = new Date(`${dateOnly}T00:00:00.000Z`);
+  dt.setUTCDate(dt.getUTCDate() + days);
+  return dt.toISOString().slice(0, 10);
+}
+
+// Frozen at module load: one "today" per process. The demo seed and the
+// Playwright specs run minutes apart in the same CI job, so they resolve the
+// same NZ date; a run straddling NZ midnight would differ by a day, which the
+// generous >=30-day future / <=-25-day past margins below absorb without
+// changing any fixture's meaning (future stays future, past stays past).
+export const E2E_TODAY_NZ = todayDateOnlyNz();
+
+// A date `offsetDays` from today (negative = past), as YYYY-MM-DD.
+export function relDateOnly(offsetDays: number): string {
+  return shiftDateOnly(E2E_TODAY_NZ, offsetDays);
+}
+
+// A stay window `nights` nights long starting `offsetDays` from today.
+function relWindow(
+  offsetDays: number,
+  nights: number,
+): { checkIn: string; checkOut: string; nights: string[] } {
+  const checkIn = relDateOnly(offsetDays);
+  const nightList = Array.from({ length: nights }, (_, i) =>
+    shiftDateOnly(checkIn, i),
+  );
+  return {
+    checkIn,
+    checkOut: shiftDateOnly(checkIn, nights),
+    nights: nightList,
+  };
+}
+
+// The Monday on or after `minOffsetDays` from today, as a 2-night Mon–Wed
+// window. The capacity-filling / reserved fixtures (IB, waitlist) MUST stay
+// Monday-aligned: e2e/helpers/stay-dates.ts reserves their check-in Mondays so
+// the weekly-drifting stayWindow() booking windows never collide with them.
+function relMondayWindow(minOffsetDays: number): {
+  checkIn: string;
+  checkOut: string;
+  nights: string[];
+} {
+  const seed = relDateOnly(minOffsetDays);
+  // getUTCDay(): Sunday=0 … Monday=1. Advance to the next Monday (0 hops if
+  // already Monday).
+  const dow = new Date(`${seed}T00:00:00.000Z`).getUTCDay();
+  const checkIn = shiftDateOnly(seed, (8 - dow) % 7);
+  return {
+    checkIn,
+    checkOut: shiftDateOnly(checkIn, 2),
+    nights: [checkIn, shiftDateOnly(checkIn, 1)],
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Seeded booking seasons (issue #2117) — relative so they always bracket the
+// fixtures and the specs' booking horizon. ONE definition, consumed by BOTH
+// e2e/setup/relativize-seasons.ts (which re-dates the base seed's Season rows on
+// the E2E database) and e2e/helpers/stay-dates.ts (which classifies a window's
+// winter/summer rate column), so the DB seasons and the specs' season math can
+// never drift. The production first-run seed (prisma/seed.ts) keeps its fixed
+// real-world season dates — only the demo/E2E DB is relativized. Winter is a
+// broad band covering every past+future fixture and the stayWindow() /
+// deriveHoldingWindows() horizon; a ~30-day gap then Summer preserves the
+// two-season structure that e2e/book-on-behalf-nonmember.spec.ts asserts
+// winter-vs-summer rates against. ISO YYYY-MM-DD sorts lexicographically, so
+// plain string comparison is a correct date compare.
+export const SEEDED_SEASONS = [
+  { key: "winter", start: relDateOnly(-90), end: relDateOnly(239) },
+  { key: "summer", start: relDateOnly(270), end: relDateOnly(599) },
+] as const;
+
+// ---------------------------------------------------------------------------
+// Demo-seed single-lodge booking windows (issue #2117). Every seeded booking's
+// nights are relative so none ever crosses the NZ in-progress/past boundary.
+// PAST-tense bookings (COMPLETED, settled, expired DRAFT) sit >=25 days back —
+// deliberately DEEPER than the -7..-15 past window
+// e2e/admin-retroactive-booking.spec.ts sweeps, so that spec never collides.
+// FUTURE-tense bookings sit >=30 days out so no edit policy reads them as
+// in-progress. Windows a spec reads by owner/date (Carol, Heidi, Ken, Alice's
+// draft) are named so the spec imports the SAME window the seed wrote.
+export const DEMO_BOOKING_WINDOWS = {
+  aliceDraft: relWindow(-25, 2), // DRAFT, expiry already passed
+  bobPending: relWindow(30, 2), // PENDING
+  carolPaymentPending: relWindow(35, 3), // PAYMENT_PENDING (double-bed-sharing S1/S3)
+  daveConfirmed: relWindow(-40, 3), // CONFIRMED (+ allocations, chores, modification, hut-leader)
+  erinPaid: relWindow(-34, 3), // PAID
+  frankBumped: relWindow(-31, 2), // BUMPED
+  graceCancelled: relWindow(-28, 3), // CANCELLED
+  heidiCompleted: relWindow(-45, 3), // COMPLETED (double-bed-sharing S3)
+  waitlist: relWindow(40, 2), // WAITLISTED + WAITLIST_OFFERED (shared window)
+  kenReview: relWindow(45, 2), // AWAITING_REVIEW (bed-allocation.spec)
+  larsFailed: relWindow(33, 2), // PENDING (failed payment)
+  mallorySplit: relWindow(-37, 2), // CONFIRMED split parent/child
+} as const;
+
 // --- Role-boundary personas (e2e/admin-roles.spec.ts) --------------------
 // Each holds exactly one bundled access role (plus the baseline USER) so the
 // admin-permission matrix (src/lib/admin-permissions.ts) governs which areas
@@ -110,13 +238,11 @@ export const WAITLISTER = {
 } as const;
 
 // --- Waitlist fixtures (e2e/waitlist.spec.ts) ----------------------------
-// September 2026 (winter season) windows that no other spec touches. The
-// booking/stripe specs book Mon–Wed windows only ~3–5 weeks out (late Jul/Aug).
-export const WAITLIST_FULL_WINDOW = {
-  checkIn: "2026-09-14",
-  checkOut: "2026-09-16",
-  nights: ["2026-09-14", "2026-09-15"],
-};
+// Monday–Wednesday windows ~9–11 weeks out (issue #2117: relative so they never
+// expire), in the winter season, that no other spec touches. Monday-aligned so
+// stayWindow() reserves and dodges their check-ins (RESERVED_WINDOW_CHECKINS in
+// e2e/helpers/stay-dates.ts). Consecutive Mondays keep them mutually disjoint.
+export const WAITLIST_FULL_WINDOW = relMondayWindow(63);
 // Guests on the fill booking. Lodge capacity is 20 (config/club.example.json);
 // 22 guarantees zero availability even against a modest capacity override.
 export const WAITLIST_FILL_GUEST_COUNT = 22;
@@ -124,22 +250,16 @@ export const WAITLIST_FILL_GUEST_COUNT = 22;
 // A ready-to-accept offer owned by alice on an empty window (capacity is free,
 // so accepting confirms). Future expiry so it is not auto-reverted.
 export const WAITLIST_OFFER_BOOKING_ID = "e2e-waitlist-offer";
-export const WAITLIST_OFFER_WINDOW = {
-  checkIn: "2026-09-21",
-  checkOut: "2026-09-23",
-  nights: ["2026-09-21", "2026-09-22"],
-};
+export const WAITLIST_OFFER_WINDOW = relMondayWindow(70);
 
 // --- Internet Banking fixture (e2e/internet-banking.spec.ts) -------------
 // A card (Stripe) PAYMENT_PENDING booking owned by alice, far enough out to
 // clear the internet-banking lead-time cutoff, so the spec can switch it to
-// Internet Banking without needing Stripe.
+// Internet Banking without needing Stripe. Monday-aligned + reserved, one
+// Monday ahead of the waitlist windows (issue #2117: relative so it never
+// expires).
 export const IB_BOOKING_ID = "e2e-ib-pending";
-export const IB_WINDOW = {
-  checkIn: "2026-09-07",
-  checkOut: "2026-09-09",
-  nights: ["2026-09-07", "2026-09-08"],
-};
+export const IB_WINDOW = relMondayWindow(56);
 
 // --- Cancellation-with-refund fixture (e2e/booking-cancel-refund.spec.ts) --
 // A future-dated PAID booking owned by Nadia (NOMINATOR_TWO) on a December
@@ -153,12 +273,11 @@ export const IB_WINDOW = {
 // bookings or account credit (she only drives a nomination in
 // membership-application.spec), so crediting her account cannot perturb the
 // serial suite.
+// Deep in the Summer season (issue #2117: relative so it never expires), well
+// past every winter fixture and the stayWindow() horizon, so no other spec or
+// seeded booking touches its window.
 export const PAID_CANCEL_BOOKING_ID = "e2e-paid-cancel";
-export const PAID_CANCEL_WINDOW = {
-  checkIn: "2026-12-15",
-  checkOut: "2026-12-17",
-  nights: ["2026-12-15", "2026-12-16"],
-};
+export const PAID_CANCEL_WINDOW = relWindow(300, 2);
 
 // --- Membership application fixture (e2e/membership-application.spec.ts) --
 // A PENDING_NOMINATORS application whose two nomination tokens have KNOWN raw
@@ -221,10 +340,7 @@ export const SECOND_LODGE_BED_COUNT = 8;
 // Roster-isolation fixture (scenario c): one CONFIRMED arrival at EACH lodge on
 // the same night. A kiosk bound to lodge B must see lodge B's guest and never
 // lodge A's. Distinct guest names so the assertion is unambiguous.
-export const ROSTER_ISOLATION_WINDOW = {
-  checkIn: "2026-08-10",
-  checkOut: "2026-08-12",
-};
+export const ROSTER_ISOLATION_WINDOW = relWindow(90, 2);
 export const ROSTER_GUEST_LODGE_A = {
   firstName: "Alpharoster",
   lastName: "Lodgea",
@@ -238,11 +354,7 @@ export const ROSTER_GUEST_LODGE_B = {
 // booking at lodge B. Lodge B's availability drops by its guest count on these
 // nights while lodge A stays at zero occupancy for the same window — proving no
 // cross-lodge summation.
-export const CAPACITY_ISOLATION_WINDOW = {
-  checkIn: "2026-08-17",
-  checkOut: "2026-08-19",
-  nights: ["2026-08-17", "2026-08-18"],
-};
+export const CAPACITY_ISOLATION_WINDOW = relWindow(97, 2);
 export const CAPACITY_ISOLATION_GUEST_COUNT = 3;
 
 // Cross-lodge waitlist offer (scenario d, ADR-004): Wanda (WAITLISTER) holds a
@@ -252,25 +364,17 @@ export const CAPACITY_ISOLATION_GUEST_COUNT = 3;
 // lodge B's own rates (quoteWaitlistEntryAtLodge) so the confirm-time re-quote
 // matches and never trips OFFER_PRICE_CHANGED.
 export const CROSS_LODGE_OFFER_BOOKING_ID = "e2e-cross-lodge-offer";
-export const CROSS_LODGE_OFFER_WINDOW = {
-  checkIn: "2026-08-24",
-  checkOut: "2026-08-26",
-  nights: ["2026-08-24", "2026-08-25"],
-};
+export const CROSS_LODGE_OFFER_WINDOW = relWindow(104, 2);
 
 // #1628/#1609 regression (scenario e): the same cross-lodge offer shape but
 // with the guest row member-linked (Wanda herself). The Phase-2 member-night
 // guard now excludes the entry being replaced, so this confirm must succeed
 // exactly like (d). The window must be disjoint from EVERY booking that lists
 // Wanda as a member-linked guest — the guard is cross-lodge and per-member by
-// design. (The old tripwire sat on 2026-09-07..09, which exactly collided
-// with Wanda's IB_WINDOW booking: the expected-fail spec was double-blocked
-// and could never flip green on the guard fix alone.) Late September is
-// in-season (Winter 2026 ends 09-30) and untouched by any other fixture.
+// design. (A past tripwire collided with Wanda's IB_WINDOW booking, double-
+// blocking the expected-fail spec.) Issue #2117: relative, ~16 weeks out, well
+// clear of the reserved IB/waitlist Mondays (~8–10 weeks) and inside the winter
+// season, so it stays disjoint from every other fixture on any run date.
 export const CROSS_LODGE_OFFER_MEMBER_GUEST_BOOKING_ID =
   "e2e-cross-lodge-offer-member-guest";
-export const CROSS_LODGE_OFFER_MEMBER_GUEST_WINDOW = {
-  checkIn: "2026-09-28",
-  checkOut: "2026-09-30",
-  nights: ["2026-09-28", "2026-09-29"],
-};
+export const CROSS_LODGE_OFFER_MEMBER_GUEST_WINDOW = relWindow(111, 2);

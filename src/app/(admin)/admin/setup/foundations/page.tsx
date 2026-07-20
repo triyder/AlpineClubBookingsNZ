@@ -1,4 +1,4 @@
-import { Activity, Building2, ListChecks, Puzzle } from "lucide-react";
+import { Activity, BadgeInfo, Building2, ListChecks, Puzzle } from "lucide-react";
 import {
   AdminHubPage,
   type AdminHubSection,
@@ -13,6 +13,18 @@ const sections: AdminHubSection[] = [
     description:
       "Review readiness KPIs, blockers, provider tests, and setup progress.",
     icon: ListChecks,
+  },
+  {
+    // Cross-link to the content-gated identity cards under Admin > Appearance
+    // (E3 follow-up #1966): admins who followed the "Setup" wording find the
+    // club name / short name / hut-leader label overrides here. The href gates
+    // on the content area via canViewAdminHrefWithMatrix, matching the
+    // /api/admin/club-identity content:view/edit guard.
+    href: "/admin/appearance/identity",
+    title: "Club Identity",
+    description:
+      "Override the club name, short name, hut-leader label, and your lodge's public details shown across the site and emails.",
+    icon: BadgeInfo,
   },
   {
     href: "/admin/modules",

@@ -1,8 +1,35 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
+
+// #1940: the page reads the session permission matrix for view-only gating;
+// provide an edit-level admin session so the delete/merge cases keep working.
+vi.mock("next-auth/react", () => ({
+  useSession: () => ({
+    data: {
+      user: {
+        id: "admin-1",
+        adminPermissionMatrix: {
+          overview: "edit",
+          bookings: "edit",
+          membership: "edit",
+          finance: "edit",
+          lodge: "edit",
+          content: "edit",
+          support: "edit",
+        },
+      },
+    },
+  }),
+}));
 
 // The membership-types editor and merge dialogs use the Radix Select, which
 // jsdom cannot drive through its pointer-capture flow. Following the repo
@@ -60,7 +87,7 @@ function customType(overrides: Record<string, unknown> = {}) {
     xeroContactGroupRules: [
       {
         id: "rule-social",
-        ageTier: "ADULT",
+        ageTiers: ["ADULT"],
         mode: "MANAGED",
         groupId: "group-social",
         groupName: "Social members",
@@ -102,7 +129,7 @@ const membershipTypes = [
     xeroContactGroupRules: [
       {
         id: "rule-associate",
-        ageTier: "ADULT",
+        ageTiers: ["ADULT"],
         mode: "ACCEPTED",
         groupId: "group-associate",
         groupName: "Associate members",
@@ -229,5 +256,146 @@ describe("AdminMembershipTypesPage delete + merge", () => {
         ),
       ).not.toBeNull(),
     );
+  });
+
+  it("cancels the merge dialog from the header close (X) when idle and resets the target", async () => {
+    await renderPage();
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete Social" }));
+    const dialog = await screen.findByRole("dialog", { name: "Delete Social" });
+
+    // Pick a target so a non-empty selection exists.
+    fireEvent.change(within(dialog).getByRole("combobox"), {
+      target: { value: "type-associate" },
+    });
+    expect(
+      within(dialog)
+        .getByRole("button", { name: "Merge and delete" })
+        .hasAttribute("disabled"),
+    ).toBe(false);
+
+    // The header X closes the dialog when idle without posting a merge (#2045 F3).
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Delete Social" })).toBeNull(),
+    );
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      "/api/admin/membership-types/type-social/merge",
+      expect.anything(),
+    );
+
+    // Reopening starts with no target selected again (Merge stays disabled),
+    // confirming the cancel reset the selection.
+    fireEvent.click(screen.getByRole("button", { name: "Delete Social" }));
+    const reopened = await screen.findByRole("dialog", {
+      name: "Delete Social",
+    });
+    expect(
+      within(reopened)
+        .getByRole("button", { name: "Merge and delete" })
+        .hasAttribute("disabled"),
+    ).toBe(true);
+  });
+
+  it("hides the merge dialog X while a merge is in flight", async () => {
+    let resolveMerge: (value?: unknown) => void = () => {};
+    const mergePromise = new Promise((resolve) => {
+      resolveMerge = resolve;
+    });
+    fetchMock.mockImplementation(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (
+          url === "/api/admin/membership-types/type-social/merge" &&
+          method === "POST"
+        ) {
+          await mergePromise;
+          return jsonResponse({ ok: true, reassignedCount: 4 });
+        }
+        if (url === "/api/admin/membership-types") {
+          return jsonResponse({ membershipTypes });
+        }
+        if (url.startsWith("/api/admin/xero/contact-groups")) {
+          return jsonResponse({ groups: [] });
+        }
+        throw new Error(`Unexpected fetch: ${method} ${url}`);
+      },
+    );
+
+    await renderPage();
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete Social" }));
+    const dialog = await screen.findByRole("dialog", { name: "Delete Social" });
+    fireEvent.change(within(dialog).getByRole("combobox"), {
+      target: { value: "type-associate" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Merge and delete" }));
+
+    // Mid-merge the header X is hidden (mirrors the disabled Cancel) so it is not
+    // a silent no-op (#2045 F3); the dialog stays open until the merge resolves.
+    await waitFor(() =>
+      expect(
+        within(dialog).queryByRole("button", { name: "Close" }),
+      ).toBeNull(),
+    );
+    expect(
+      within(dialog)
+        .getByRole("button", { name: "Cancel" })
+        .hasAttribute("disabled"),
+    ).toBe(true);
+    expect(screen.getByRole("dialog", { name: "Delete Social" })).not.toBeNull();
+
+    resolveMerge(undefined);
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Delete Social" })).toBeNull(),
+    );
+  });
+
+  it("keeps the merge dialog open and shows the server error inside it when the merge fails", async () => {
+    fetchMock.mockImplementation(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (
+          url === "/api/admin/membership-types/type-social/merge" &&
+          method === "POST"
+        ) {
+          return jsonResponse({ error: "Target type is archived." }, false);
+        }
+        if (url === "/api/admin/membership-types") {
+          return jsonResponse({ membershipTypes });
+        }
+        if (url.startsWith("/api/admin/xero/contact-groups")) {
+          return jsonResponse({ groups: [] });
+        }
+        throw new Error(`Unexpected fetch: ${method} ${url}`);
+      },
+    );
+
+    await renderPage();
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete Social" }));
+    const dialog = await screen.findByRole("dialog", { name: "Delete Social" });
+    fireEvent.change(within(dialog).getByRole("combobox"), {
+      target: { value: "type-associate" },
+    });
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Merge and delete" }),
+    );
+
+    // A failed merge keeps the dialog open and surfaces the reason on the
+    // modal itself (the page banner is occluded by the overlay).
+    await waitFor(() =>
+      expect(
+        within(dialog).queryByText("Target type is archived."),
+      ).not.toBeNull(),
+    );
+    expect(screen.getByRole("dialog", { name: "Delete Social" })).not.toBeNull();
+    expect(
+      within(dialog)
+        .getByRole("button", { name: "Merge and delete" })
+        .hasAttribute("disabled"),
+    ).toBe(false);
   });
 });

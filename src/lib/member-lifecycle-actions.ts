@@ -292,7 +292,9 @@ function meaningfulMemberSubscriptionWhere(
       { paidAt: { not: null } },
       // Even a zero-cent NO_INVOICE subscription is immutable charge coverage
       // and must block hard deletion rather than surfacing a late FK failure.
-      { chargeCoverage: { isNot: null } },
+      // #2147: chargeCoverage is now a list — ANY coverage row (active or a
+      // retained released one) is durable history that blocks deletion.
+      { chargeCoverage: { some: {} } },
     ],
   };
 }
@@ -850,6 +852,12 @@ async function cleanupArchivedMemberLinks(
   const inheritance = await tx.member.updateMany({
     where: { inheritEmailFromId: memberId },
     data: { inheritEmailFromId: null },
+  });
+  // Billing-family removal sweep (#1932, E6): the archived member is leaving all
+  // families in this transaction, so clear any billing-family selection they hold.
+  await tx.member.updateMany({
+    where: { id: memberId, billingFamilyGroupId: { not: null } },
+    data: { billingFamilyGroupId: null },
   });
 
   return {

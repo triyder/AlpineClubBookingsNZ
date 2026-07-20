@@ -3,10 +3,17 @@ import path from "path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   BUILT_IN_MEMBERSHIP_TYPES,
+  DEFAULT_MEMBERSHIP_TYPE_AGE_TIERS,
+  MEMBERSHIP_TYPE_AGE_TIERS,
   backfillCurrentSeasonMembershipAssignments,
   canonicalMembershipTypeKey,
   defaultMembershipTypeKeyForRole,
+  effectiveSubscriptionBehavior,
   ensureBuiltInMembershipTypes,
+  isSubscriptionNotRequiredForMembershipType,
+  membershipTypeAgeExemption,
+  membershipTypeForcedEditOffendingTiers,
+  normalizeMembershipTypeAgeTiers,
   normalizeMembershipTypeKey,
   validateMembershipTypeRuleConfiguration,
 } from "@/lib/membership-types";
@@ -29,6 +36,8 @@ function makeDb() {
         { id: "type-school", key: "SCHOOL" },
         { id: "type-non-member", key: "NON_MEMBER" },
         { id: "type-family", key: "FAMILY" },
+        { id: "type-admin", key: "ADMIN" },
+        { id: "type-lodge", key: "LODGE" },
       ]),
     },
     membershipTypeAgeTier: {
@@ -131,6 +140,10 @@ describe("built-in membership type seed helpers", () => {
       "SCHOOL",
       "NON_MEMBER",
       "FAMILY",
+      // #2149: operational fallback types so the dropped role-based subscription
+      // exemption has DB-backed NOT_REQUIRED types for bare ADMIN/LODGE accounts.
+      "ADMIN",
+      "LODGE",
     ]);
     expect(BUILT_IN_MEMBERSHIP_TYPES.map((type) => type.key)).not.toContain(
       "RESERVE",
@@ -147,8 +160,10 @@ describe("built-in membership type seed helpers", () => {
     expect(db.seasonalMembershipAssignment.createMany).toHaveBeenCalledWith({
       data: [
         { memberId: "member-1", seasonYear: 2026, membershipTypeId: "type-full" },
-        { memberId: "admin-1", seasonYear: 2026, membershipTypeId: "type-full" },
-        { memberId: "lodge-1", seasonYear: 2026, membershipTypeId: "type-full" },
+        // #2149: bare ADMIN/LODGE accounts now default to their own operational
+        // NOT_REQUIRED types rather than the billable FULL type.
+        { memberId: "admin-1", seasonYear: 2026, membershipTypeId: "type-admin" },
+        { memberId: "lodge-1", seasonYear: 2026, membershipTypeId: "type-lodge" },
         {
           memberId: "associate-1",
           seasonYear: 2026,
@@ -173,14 +188,85 @@ describe("built-in membership type seed helpers", () => {
   it("keeps role-to-type defaults separate from access role semantics", () => {
     expect(defaultMembershipTypeKeyForRole("USER")).toBe("FULL");
     expect(defaultMembershipTypeKeyForRole("MEMBER")).toBe("FULL");
-    expect(defaultMembershipTypeKeyForRole("ADMIN")).toBe("FULL");
-    expect(defaultMembershipTypeKeyForRole("LODGE")).toBe("FULL");
+    // #2149: operational roles fall back to their own NOT_REQUIRED types.
+    expect(defaultMembershipTypeKeyForRole("ADMIN")).toBe("ADMIN");
+    expect(defaultMembershipTypeKeyForRole("LODGE")).toBe("LODGE");
     expect(defaultMembershipTypeKeyForRole("ASSOCIATE")).toBe("ASSOCIATE");
     expect(defaultMembershipTypeKeyForRole("RESERVE")).toBe("ASSOCIATE");
     expect(defaultMembershipTypeKeyForRole("LIFE")).toBe("LIFE");
     expect(defaultMembershipTypeKeyForRole("SCHOOL")).toBe("SCHOOL");
     expect(defaultMembershipTypeKeyForRole("NON_MEMBER")).toBe("NON_MEMBER");
     expect(canonicalMembershipTypeKey("RESERVE")).toBe("ASSOCIATE");
+  });
+
+  describe("shared subscription-required derivation (#2149)", () => {
+    const noExemptTiers = new Set<string>();
+
+    it("resolves the effective behaviour from the assignment, else the role default", () => {
+      // Assignment wins.
+      expect(effectiveSubscriptionBehavior("REQUIRED", "ADMIN")).toBe("REQUIRED");
+      // No assignment: operational roles fall back to their NOT_REQUIRED types.
+      expect(effectiveSubscriptionBehavior(null, "ADMIN")).toBe("NOT_REQUIRED");
+      expect(effectiveSubscriptionBehavior(undefined, "LODGE")).toBe("NOT_REQUIRED");
+      expect(effectiveSubscriptionBehavior(null, "SCHOOL")).toBe("NOT_REQUIRED");
+      expect(effectiveSubscriptionBehavior(null, "NON_MEMBER")).toBe("NOT_REQUIRED");
+      // Ordinary members fall back to FULL (billable).
+      expect(effectiveSubscriptionBehavior(null, "USER")).toBe("REQUIRED");
+    });
+
+    it("treats a fee-paying admin (REQUIRED assignment) as owing", () => {
+      expect(
+        isSubscriptionNotRequiredForMembershipType({
+          subscriptionBehavior: effectiveSubscriptionBehavior("REQUIRED", "ADMIN"),
+          ageTier: "ADULT",
+          notRequiredAgeTiers: noExemptTiers,
+          hasNotRequiredSeasonRow: false,
+        }),
+      ).toBe(false);
+    });
+
+    it("treats a bare ADMIN/LODGE account (no assignment) as not required", () => {
+      for (const role of ["ADMIN", "LODGE"] as const) {
+        expect(
+          isSubscriptionNotRequiredForMembershipType({
+            subscriptionBehavior: effectiveSubscriptionBehavior(null, role),
+            ageTier: "ADULT",
+            notRequiredAgeTiers: noExemptTiers,
+            hasNotRequiredSeasonRow: false,
+          }),
+        ).toBe(true);
+      }
+    });
+
+    it("exempts an age-tier-exempt member regardless of type, and honours a BASED_ON_AGE_TIER NOT_REQUIRED row", () => {
+      // Age-tier exemption applies even to a REQUIRED type.
+      expect(
+        isSubscriptionNotRequiredForMembershipType({
+          subscriptionBehavior: "REQUIRED",
+          ageTier: "CHILD",
+          notRequiredAgeTiers: new Set(["CHILD"]),
+          hasNotRequiredSeasonRow: false,
+        }),
+      ).toBe(true);
+      // BASED_ON_AGE_TIER + NOT_REQUIRED row dominates a promoted stored tier.
+      expect(
+        isSubscriptionNotRequiredForMembershipType({
+          subscriptionBehavior: "BASED_ON_AGE_TIER",
+          ageTier: "YOUTH",
+          notRequiredAgeTiers: noExemptTiers,
+          hasNotRequiredSeasonRow: true,
+        }),
+      ).toBe(true);
+      // BASED_ON_AGE_TIER without a row defers to the tier (here liable).
+      expect(
+        isSubscriptionNotRequiredForMembershipType({
+          subscriptionBehavior: "BASED_ON_AGE_TIER",
+          ageTier: "YOUTH",
+          notRequiredAgeTiers: noExemptTiers,
+          hasNotRequiredSeasonRow: false,
+        }),
+      ).toBe(false);
+    });
   });
 
   it("derives stable custom keys without relying on display words for policy", () => {
@@ -196,5 +282,174 @@ describe("built-in membership type seed helpers", () => {
     expect(
       validateMembershipTypeRuleConfiguration({ allowedAgeTiers: ["YOUTH", "ADULT"] }),
     ).toBeNull();
+  });
+
+  it("offers N/A (no age) as a selectable tier but keeps it out of the new-type default (#2069)", () => {
+    // N/A is selectable and sorts last...
+    expect(MEMBERSHIP_TYPE_AGE_TIERS).toEqual([
+      "INFANT",
+      "CHILD",
+      "YOUTH",
+      "ADULT",
+      "NOT_APPLICABLE",
+    ]);
+    // ...but the omitted-input default is the four real age tiers only.
+    expect(DEFAULT_MEMBERSHIP_TYPE_AGE_TIERS).toEqual([
+      "INFANT",
+      "CHILD",
+      "YOUTH",
+      "ADULT",
+    ]);
+  });
+
+  it("normalizes an N/A-only selection and treats it as a valid configuration (#2069)", () => {
+    expect(normalizeMembershipTypeAgeTiers(["NOT_APPLICABLE"])).toEqual([
+      "NOT_APPLICABLE",
+    ]);
+    // N/A sorts after real tiers regardless of input order.
+    expect(
+      normalizeMembershipTypeAgeTiers(["NOT_APPLICABLE", "ADULT"]),
+    ).toEqual(["ADULT", "NOT_APPLICABLE"]);
+    expect(
+      validateMembershipTypeRuleConfiguration({
+        allowedAgeTiers: ["NOT_APPLICABLE"],
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("#2106 — membershipTypeAgeExemption classification", () => {
+  it("classifies an N/A-only set as FORCED", () => {
+    expect(membershipTypeAgeExemption(["NOT_APPLICABLE"])).toBe("FORCED");
+  });
+
+  it("classifies N/A alongside person tiers as ALLOWED", () => {
+    expect(membershipTypeAgeExemption(["ADULT", "NOT_APPLICABLE"])).toBe(
+      "ALLOWED",
+    );
+    expect(
+      membershipTypeAgeExemption(["INFANT", "CHILD", "YOUTH", "ADULT", "NOT_APPLICABLE"]),
+    ).toBe("ALLOWED");
+  });
+
+  it("classifies a person-only set (or an empty/undefined set) as DISALLOWED", () => {
+    expect(membershipTypeAgeExemption(["INFANT", "CHILD", "YOUTH", "ADULT"])).toBe(
+      "DISALLOWED",
+    );
+    expect(membershipTypeAgeExemption([])).toBe("DISALLOWED");
+    expect(membershipTypeAgeExemption(undefined)).toBe("DISALLOWED");
+  });
+});
+
+describe("#2106 — subscription-behaviour restriction on age-exempt config", () => {
+  it("rejects N/A in the allowed tiers when subscription behaviour is not NOT_REQUIRED", () => {
+    expect(
+      validateMembershipTypeRuleConfiguration({
+        allowedAgeTiers: ["NOT_APPLICABLE"],
+        subscriptionBehavior: "REQUIRED",
+      }),
+    ).toMatch(/not required/i);
+    expect(
+      validateMembershipTypeRuleConfiguration({
+        allowedAgeTiers: ["ADULT", "NOT_APPLICABLE"],
+        subscriptionBehavior: "BASED_ON_AGE_TIER",
+      }),
+    ).toMatch(/not required/i);
+  });
+
+  it("accepts N/A when subscription behaviour is NOT_REQUIRED", () => {
+    expect(
+      validateMembershipTypeRuleConfiguration({
+        allowedAgeTiers: ["NOT_APPLICABLE"],
+        subscriptionBehavior: "NOT_REQUIRED",
+      }),
+    ).toBeNull();
+  });
+
+  it("does not gate person-only sets on subscription behaviour", () => {
+    expect(
+      validateMembershipTypeRuleConfiguration({
+        allowedAgeTiers: ["ADULT"],
+        subscriptionBehavior: "REQUIRED",
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("#2106 — allowed-tiers edit stranding guard", () => {
+  it("blocks becoming FORCED while a person-tier member is assigned", () => {
+    const offending = membershipTypeForcedEditOffendingTiers({
+      previousAllowedAgeTiers: ["ADULT", "NOT_APPLICABLE"],
+      nextAllowedAgeTiers: ["NOT_APPLICABLE"],
+      affectedMembers: [
+        { ageTier: "ADULT", isOrganisation: false },
+        { ageTier: "NOT_APPLICABLE", isOrganisation: false },
+      ],
+    });
+    expect(offending).toEqual(["ADULT"]);
+  });
+
+  it("blocks leaving FORCED (dropping N/A) while a non-org N/A member is assigned", () => {
+    const offending = membershipTypeForcedEditOffendingTiers({
+      previousAllowedAgeTiers: ["NOT_APPLICABLE"],
+      nextAllowedAgeTiers: ["ADULT"],
+      affectedMembers: [{ ageTier: "NOT_APPLICABLE", isOrganisation: false }],
+    });
+    expect(offending).toEqual(["NOT_APPLICABLE"]);
+  });
+
+  it("allows a FORCED transition when every affected member is covered", () => {
+    expect(
+      membershipTypeForcedEditOffendingTiers({
+        previousAllowedAgeTiers: ["ADULT", "NOT_APPLICABLE"],
+        nextAllowedAgeTiers: ["NOT_APPLICABLE"],
+        affectedMembers: [{ ageTier: "NOT_APPLICABLE", isOrganisation: false }],
+      }),
+    ).toEqual([]);
+  });
+
+  it("allows FORCED -> ALLOWED (N/A retained), stranding nobody", () => {
+    expect(
+      membershipTypeForcedEditOffendingTiers({
+        previousAllowedAgeTiers: ["NOT_APPLICABLE"],
+        nextAllowedAgeTiers: ["ADULT", "NOT_APPLICABLE"],
+        affectedMembers: [{ ageTier: "NOT_APPLICABLE", isOrganisation: false }],
+      }),
+    ).toEqual([]);
+  });
+
+  // MAJOR-1(b): ALLOWED -> DISALLOWED (removing N/A) now strands non-org N/A
+  // holders — this guard is no longer limited to FORCED transitions.
+  it("blocks ALLOWED -> DISALLOWED while a non-org N/A member is assigned", () => {
+    expect(
+      membershipTypeForcedEditOffendingTiers({
+        previousAllowedAgeTiers: ["ADULT", "NOT_APPLICABLE"],
+        nextAllowedAgeTiers: ["ADULT"],
+        affectedMembers: [{ ageTier: "NOT_APPLICABLE", isOrganisation: false }],
+      }),
+    ).toEqual(["NOT_APPLICABLE"]);
+  });
+
+  it("exempts org members from the N/A-removal block (global org force keeps them N/A)", () => {
+    expect(
+      membershipTypeForcedEditOffendingTiers({
+        previousAllowedAgeTiers: ["ADULT", "NOT_APPLICABLE"],
+        nextAllowedAgeTiers: ["ADULT"],
+        affectedMembers: [
+          { ageTier: "NOT_APPLICABLE", isOrganisation: true },
+          { ageTier: "ADULT", isOrganisation: false },
+        ],
+      }),
+    ).toEqual([]);
+  });
+
+  it("ignores an ordinary person-tier narrowing that neither creates FORCED nor removes N/A", () => {
+    expect(
+      membershipTypeForcedEditOffendingTiers({
+        previousAllowedAgeTiers: ["YOUTH", "ADULT"],
+        nextAllowedAgeTiers: ["ADULT"],
+        affectedMembers: [{ ageTier: "YOUTH", isOrganisation: false }],
+      }),
+    ).toEqual([]);
   });
 });

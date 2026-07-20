@@ -10,17 +10,37 @@ import { prisma } from "@/lib/prisma";
 import { invalidatePublicClubIdentity } from "@/lib/public-layout-cache";
 import { requireAdmin } from "@/lib/session-guards";
 
-// DB-first club identity admin API (E3 #1929). Cloned from the content-gated
-// public-content-settings route: content:view to read, content:edit to write,
-// audited, and it invalidates the tagged identity cache + primes the sync
-// accessor on write. All three fields are nullable — clearing one restores the
-// club.json / hard-default fallback for that field.
+// DB-first club identity admin API (E3 #1929; facebookUrl added C5 #1984).
+// Cloned from the content-gated public-content-settings route: content:view to
+// read, content:edit to write, audited, and it invalidates the tagged identity
+// cache + primes the sync accessor on write. Every field is nullable — clearing
+// one (empty string) restores the club.json / hard-default fallback for that
+// field. facebookUrl additionally requires an http(s) URL shape when non-blank.
+
+/** True for a non-blank http(s) URL — the facebookUrl shape (mirrors publicUrl). */
+function isHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
 
 const settingsSchema = z
   .object({
     name: z.string().trim().max(200).nullable(),
     shortName: z.string().trim().max(200).nullable(),
     hutLeaderLabel: z.string().trim().max(200).nullable(),
+    facebookUrl: z
+      .string()
+      .trim()
+      .max(500)
+      // Blank clears (restores the fallback); a value must be a valid http(s) URL.
+      .refine((v) => v === "" || isHttpUrl(v), {
+        message: "facebookUrl must be a valid http(s) URL",
+      })
+      .nullable(),
   })
   .strict();
 
@@ -28,18 +48,21 @@ type PersistedIdentity = {
   name: string | null;
   shortName: string | null;
   hutLeaderLabel: string | null;
+  facebookUrl: string | null;
 };
 
 const defaults: PersistedIdentity = {
   name: null,
   shortName: null,
   hutLeaderLabel: null,
+  facebookUrl: null,
 };
 
 const settingsSelect = {
   name: true,
   shortName: true,
   hutLeaderLabel: true,
+  facebookUrl: true,
 } as const;
 
 function serialize(row: PersistedIdentity): PersistedIdentity {
@@ -47,6 +70,7 @@ function serialize(row: PersistedIdentity): PersistedIdentity {
     name: row.name,
     shortName: row.shortName,
     hutLeaderLabel: row.hutLeaderLabel,
+    facebookUrl: row.facebookUrl,
   };
 }
 
@@ -91,6 +115,7 @@ export async function PUT(request: Request) {
     name: emptyToNull(parsed.data.name),
     shortName: emptyToNull(parsed.data.shortName),
     hutLeaderLabel: emptyToNull(parsed.data.hutLeaderLabel),
+    facebookUrl: emptyToNull(parsed.data.facebookUrl),
   };
 
   const settings = await prisma.$transaction(async (tx) => {

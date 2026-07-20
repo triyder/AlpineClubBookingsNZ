@@ -1,5 +1,7 @@
 # Configuration Export & Import (config transfer)
 
+> Part of the [documentation hub](../README.md).
+
 A full-admin tool that exports a club's configuration, site content, and lodge
 setup as a single portable zip bundle, and imports such a bundle into another
 (or the same) instance through a plan → resolve → apply flow.
@@ -7,6 +9,11 @@ setup as a single portable zip bundle, and imports such a bundle into another
 Feature issue: hoppers99/AlpineClubBookingsNZ#22 (fork). Available to full
 admins at **Admin → Setup & Configuration → Export & Import**
 (`/admin/config-transfer`).
+
+For the task-focused operator walkthrough (export categories, the
+plan → resolve → apply import flow, write modes, and reseal), see the
+[Export & Import operator guide](../guides/config-transfer.md). This page is the
+deeper reference for what each category contains and the import safety model.
 
 ## Using it
 
@@ -99,11 +106,14 @@ admins at **Admin → Setup & Configuration → Export & Import**
   `season-rates.csv` is keyed by membership type (#1930, E4):
   `seasonName, membershipTypeKey, ageTier, pricePerNightCents` — a blank
   `ageTier` is a flat type's single all-ages rate. Only rate-bearing types are
-  emitted (every `MEMBER_RATE` type plus `NON_MEMBER`). **OLD bundles** carrying
-  the legacy `seasonName, ageTier, isMember, pricePerNightCents` shape are still
-  accepted on import: `isMember=true` maps to the `FULL` type and `false` to
-  `NON_MEMBER` (documented lossy compat — a legacy bundle populates only those
-  two types). Instructions
+  emitted (every `MEMBER_RATE` type plus `NON_MEMBER`). The old-bundle import
+  compat for the legacy `seasonName, ageTier, isMember, pricePerNightCents`
+  shape **closed one release after the E13 contraction (#2131)**: such a bundle
+  is now **rejected** on import with a clear validation error (re-export it from
+  an install running the current release, or hand-fix it with the
+  [conversion recipe](../guides/config-transfer.md#converting-a-legacy-bundle-by-hand)).
+  **v0.12.2 was the last release that could import the
+  legacy `isMember` shape.** Instructions
   are two-level: the top-level `lodge-config/instructions.csv` holds the
   **club-wide base** shown for every lodge, while a lodge folder's
   `instructions.csv` holds that lodge's **overrides** of the same keys.
@@ -114,13 +124,77 @@ admins at **Admin → Setup & Configuration → Export & Import**
   they reference real members.
 - **induction** — induction checklist templates with their nested sections and
   items (as JSON documents; member-specific results excluded).
+- **membership-fees** — the membership **fee schedules** (#1941): joining fees
+  (`JoiningFee`, #1931/E5) and annual membership fees with their invoice-line
+  components (`MembershipAnnualFee` + `MembershipAnnualFeeComponent`, #1932/E6).
+  Three CSVs, each keyed by an explicit natural key (never a database id) and
+  exported in a deterministic, install-independent order so
+  export→import→export is byte-stable; money stays in integer cents throughout:
+  - `membership-fees/joining-fees.csv` —
+    `membershipTypeKey, ageTier, effectiveFrom, effectiveTo, amountCents`;
+    natural key `membershipTypeKey × ageTier × effectiveFrom` (a blank `ageTier`
+    is a flat-fee type's single NULL-tier window, e.g. the built-in Family type).
+  - `membership-fees/annual-fees.csv` —
+    `membershipTypeKey, ageTier, effectiveFrom, effectiveTo, amountCents,
+    billingBasis, prorationRule`; natural key
+    `membershipTypeKey × ageTier × effectiveFrom` (#2067; a blank `ageTier` is
+    the flat, whole-type fee, and a blank `prorationRule` defaults to `NONE`). A
+    `PER_FAMILY` fee must be flat — a per-family row with a non-blank `ageTier`
+    is a blocking row error. A pre-#2067 bundle without the column imports every
+    row as flat.
+  - `membership-fees/annual-fee-components.csv` —
+    `membershipTypeKey, ageTier, effectiveFrom, label, amountCents, prorate,
+    xeroAccountCode, xeroItemCode, sortOrder`; natural key
+    `(parent fee = membershipTypeKey × ageTier × effectiveFrom) × label`. Each
+    row is one Xero invoice line.
+
+  Referenced membership types must already exist on the target (matched by
+  `key`) — membership types themselves are not transferred (they are managed on
+  the Membership Types page); an unknown key is a blocking row error, exactly
+  like the season-rates and item-code categories. The **#1932 component
+  invariant** is enforced at plan time against the bundle's own amounts: a
+  `NO_INVOICE` fee is a zero total with **no** components; every invoiceable fee
+  carries ≥1 component whose amounts sum **exactly** to the fee total. An
+  annual-fee row must therefore always travel with its full component set (as
+  the export always emits), and components whose parent fee is absent from the
+  bundle are a clean error. Apply is **upsert-only** (like every category):
+  joining fees and annual fees upsert by their natural key; components upsert by
+  `(parent fee, label)`. A component the bundle drops on an existing install is
+  **not** deleted (config transfer never deletes) — remove a component from a
+  fee on the Fees page, not by re-import.
+
+  **Precedence over the #1931 item-code path:** when a bundle carries
+  `membership-fees/joining-fees.csv`, its joining-fee schedule is authoritative,
+  so the **xero-config item-code-amount joining-fee materialisation is
+  suppressed** (it would otherwise invent/duplicate `JoiningFee` windows from
+  the item-code `amountCents` column). A bundle without `joining-fees.csv`, or
+  one imported with membership-fees deselected, keeps the item-code fan-out so
+  its joining fees are not silently dropped.
 - **xero-config** — Xero account mappings and item-code mappings. HUT_FEE item
   codes are keyed by membership type (#1930, E4): `item-code-mappings.csv` is
   `category, membershipTypeKey, ageTier, seasonType, entranceFeeCategory,
   itemCode, amountCents` (membershipTypeKey is HUT_FEE-only; blank for
-  ENTRANCE_FEE). Frozen legacy `isMember`-keyed HUT_FEE rows are not exported;
-  **OLD bundles** with the legacy `isMember` column are still accepted on import
-  (true→FULL, false→NON_MEMBER). The source Xero org id is recorded in a
+  JOINING_FEE). Frozen legacy `isMember`-keyed HUT_FEE rows are not exported.
+  The old-bundle import compat **closed one release after the E13 contraction
+  (#2131)**: a bundle carrying the legacy `isMember` HUT_FEE column, or the
+  pre-#1931 `ENTRANCE_FEE` category name, is now **rejected** on import with a
+  clear validation error rather than silently mapped/normalised — **v0.12.2 was
+  the last release that could import that shape** (re-export from an install
+  running the current release, or hand-fix it with the
+  [conversion recipe](../guides/config-transfer.md#converting-a-legacy-bundle-by-hand)).
+  Relatedly, a `HUT_FEE` row with a **blank `membershipTypeKey`** is now a
+  blocking row error too: the export always emits the key, and writing a keyless
+  row would create a frozen-legacy-shaped mapping the runtime never reads (and
+  which would re-create on every import). Because the runtime no longer reads item-code-mapping `amountCents`
+  for joining fees, any imported `JOINING_FEE` amount whose category has **no
+  covering `JoiningFee` window** on the target is **materialised into open
+  JoiningFee windows** using the migration's D-R1 fan-out (per-tier to every
+  liable membership type; FAMILY as the Family type's flat fee), bounded to the
+  day before any future window. Categories with a covering window are left
+  alone. A bundle carrying the first-class **membership-fees** category's
+  `joining-fees.csv` (#1941) supersedes this fan-out — the schedule there is
+  authoritative, so the item-code fan-out is skipped to avoid duplicating/skewing
+  it. The source Xero org id is recorded in a
   category-local `xero-config/source.json` (sealed with the rest of the category,
   not the manifest); the plan warns on an org mismatch so codes are verified
   before applying.
@@ -141,7 +215,8 @@ Intentionally excluded / deferred:
 - **Is:** a portable, human-editable, database-id-free interchange for
   *configuration, content, and lodge setup* — pages, settings, lodges, rooms,
   beds, seasons, rates, policies, instructions, chore templates, committee
-  roles, induction templates, Xero configuration mappings.
+  roles, induction templates, membership fee schedules (joining fees, annual
+  fees and their invoice-line components), Xero configuration mappings.
 - **Is not:** a database backup. The `pg_dump` subsystem (`src/lib/backup.ts`)
   remains the whole-database disaster-recovery tool. Import here **never
   deletes** — restoring a bundle will not remove things added after it was
@@ -154,7 +229,7 @@ Intentionally excluded / deferred:
 
 - [ADR-001 — Interchange format and identity strategy](decisions/ADR-001-interchange-format-and-identity-strategy.md)
 - [ADR-002 — Import semantics and safety model](decisions/ADR-002-import-semantics-and-safety.md)
-- [ADR-003 — Install-time bootstrap integration](decisions/ADR-003-install-seed-integration.md) (deferred)
+- [ADR-003 — Install-time bootstrap integration](decisions/ADR-003-install-seed-integration.md) (implemented, #1988)
 
 ## Implementation notes
 
@@ -166,6 +241,57 @@ Intentionally excluded / deferred:
 - Single-flight import lock: `pg_advisory_xact_lock(hashtext('config-transfer-import'))`
   (see `docs/CONCURRENCY_AND_LOCKING.md`).
 
-## Deferred
+## Boot-time bootstrap auto-import (DR / clone, ADR-003, #1988)
 
-- Install-time bootstrap hook per ADR-003.
+For disaster recovery or seeding a replacement instance, a bundle can be applied
+**non-interactively at boot** instead of through the admin UI. Set
+`CONFIG_BUNDLE_IMPORT_PATH` to a readable bundle file: on the next Node boot —
+after migrations, base seed, and the C2 self-heal — the app applies that bundle
+**iff the database is empty of non-seed configuration**, through this same
+validated pipeline (`src/lib/config-transfer/bootstrap-import.ts`).
+
+- **Empty-target only, fail closed.** "Empty of non-seed configuration" means
+  the pristine post-seed state with **no operator footprint** — six signals,
+  ALL of which must be absent: no prior config import (interactive or
+  bootstrap), no bookings, no non-system members, the setup wizard never
+  finished, the setup wizard never even driven (no completed/skipped steps),
+  and no audit-log row with a member actor (which catches direct-admin-editor
+  configuration). Any of those present → the import is **refused** and nothing
+  is written. A malformed/tampered/oversized bundle, an unreadable path, a
+  probe error, or any apply failure also refuses; boot always continues. This
+  includes a **legacy bundle** (#2131): it fails plan-time validation, so the
+  bootstrap refuses (`refused-invalid`), writes nothing, and the replacement
+  install comes up **unconfigured** — the only signal is the boot log line
+  naming the first validation error, so keep the bundle at
+  `CONFIG_BUNDLE_IMPORT_PATH` in the current export shape. (A
+  plain "the plan has no updates" check is deliberately NOT used — the base
+  seed pre-creates the config rows the bundle touches, so a legitimate
+  bootstrap always shows updates; see ADR-003 "Empty-target definition".)
+- **Race-safe.** The emptiness probe is re-run INSIDE the apply advisory lock
+  before anything is written, and the idempotence marker commits in the same
+  transaction as the config writes — so concurrent replica boots apply exactly
+  once (the losers log a calm INFO refusal; see `DEPLOYMENT.md` "Expected
+  logs").
+- **Rename abort (reachable).** The seed creates key-weak defaults (induction
+  template, example chore templates); a bundle whose source renamed them
+  produces rename candidates that need a human, so the bootstrap aborts
+  (`refused-invalid`, nothing written) and enumerates the entities in the log.
+  Fallback: import the bundle interactively via Admin → Setup & Configuration →
+  Export & Import and resolve the renames there.
+- **Not gated on config provenance.** The bundle is the config source in a DR
+  restore where `config/club.json` may be absent, so — unlike the self-heal —
+  this import runs regardless of `clubConfigSource`.
+- **Pre-apply backup waived (only here, type-enforced).** An empty database has
+  nothing to protect; the waiver requires a branded proof object only the
+  positive empty-target probe can mint, so no other caller compiles. Every
+  other ADR-002 safeguard (validation, allowlist, DMMF type-checks,
+  single-flight lock, fingerprint drift refusal, atomic upsert-only
+  transaction, audit) still applies.
+- **Audited + idempotent.** A success writes a `configuration.bootstrap_imported`
+  audit row in the apply transaction (system/deploy actor, bundle sha256,
+  outcome; shown as "System" in the admin audit log); a second boot with the
+  same variable set sees that marker and refuses calmly without touching the
+  bundle file.
+
+Operator runbook and expected logs: `DEPLOYMENT.md` → "Config Bundle Auto-Import
+On Boot (DR / clone)".

@@ -33,7 +33,7 @@ type PolicyType = {
   isActive: boolean;
   isBuiltIn: boolean;
   bookingBehavior: "MEMBER_RATE" | "NON_MEMBER_RATE" | "BLOCK_BOOKING";
-  subscriptionBehavior: "REQUIRED" | "NOT_REQUIRED";
+  subscriptionBehavior: "REQUIRED" | "NOT_REQUIRED" | "BASED_ON_AGE_TIER";
 };
 
 const fullType: PolicyType = {
@@ -326,6 +326,170 @@ describe("membership type booking and subscription policy", () => {
         ageTier: "ADULT",
       }),
     ).resolves.toBe(false);
+  });
+
+  describe("role carries no subscription exemption (#2149)", () => {
+    // ADMIN/LODGE built-in fallback types (seeded by migration; resolved from DB
+    // via defaultMembershipTypeKeyForRole when a member has no season assignment).
+    const adminType: PolicyType = {
+      id: "type-admin",
+      key: "ADMIN",
+      name: "Admin",
+      isActive: true,
+      isBuiltIn: true,
+      bookingBehavior: "BLOCK_BOOKING",
+      subscriptionBehavior: "NOT_REQUIRED",
+    };
+    const lodgeType: PolicyType = {
+      id: "type-lodge",
+      key: "LODGE",
+      name: "Lodge",
+      isActive: true,
+      isBuiltIn: true,
+      bookingBehavior: "MEMBER_RATE",
+      subscriptionBehavior: "NOT_REQUIRED",
+    };
+
+    it("a fee-paying member holding the ADMIN role with a REQUIRED assignment now owes a subscription", async () => {
+      // The bug: the role short-circuit exempted them before the type was read.
+      const db = makePolicyDb({
+        members: [makeMember({ role: "ADMIN" })],
+        assignments: [
+          { memberId: "member-1", seasonYear: 2026, membershipType: fullType },
+        ],
+      });
+
+      await expect(
+        requiresPaidSubscriptionForMemberForBooking(db, {
+          memberId: "member-1",
+          seasonYear: 2026,
+          ageTier: "ADULT",
+        }),
+      ).resolves.toBe(true);
+    });
+
+    it("a bare ADMIN account (no assignment) falls back to its NOT_REQUIRED built-in type", async () => {
+      const db = makePolicyDb({
+        members: [makeMember({ role: "ADMIN" })],
+        assignments: [],
+        membershipTypes: [adminType],
+      });
+
+      await expect(
+        requiresPaidSubscriptionForMemberForBooking(db, {
+          memberId: "member-1",
+          seasonYear: 2026,
+          ageTier: "ADULT",
+        }),
+      ).resolves.toBe(false);
+    });
+
+    it("a bare LODGE kiosk account is not required across a season boundary (rollover with no assignment)", async () => {
+      // A LODGE-role kiosk, a season later, with no assignment, must resolve
+      // NOT_REQUIRED via the LODGE fallback type so it is never blocked from
+      // booking on behalf of members. makeMember's role type does not include
+      // LODGE, so build the member row inline.
+      const seasonBoundaryDb = {
+        member: {
+          findMany: vi.fn(async () => [
+            {
+              id: "lodge-1",
+              firstName: "Lodge",
+              lastName: "Kiosk",
+              email: "lodge@example.test",
+              role: "LODGE",
+              ageTier: "ADULT",
+            },
+          ]),
+        },
+        seasonalMembershipAssignment: { findMany: vi.fn(async () => []) },
+        membershipType: {
+          findMany: vi.fn(async (args: { where: { key: { in: string[] } } }) =>
+            [lodgeType].filter((type) => args.where.key.in.includes(type.key)),
+          ),
+        },
+      };
+
+      await expect(
+        requiresPaidSubscriptionForMemberForBooking(seasonBoundaryDb, {
+          memberId: "lodge-1",
+          seasonYear: 2027,
+          ageTier: "ADULT",
+        }),
+      ).resolves.toBe(false);
+    });
+  });
+
+  describe("BASED_ON_AGE_TIER booking gate (#2041)", () => {
+    const ageTierType: PolicyType = {
+      id: "type-full",
+      key: "FULL",
+      name: "Full",
+      isActive: true,
+      isBuiltIn: true,
+      bookingBehavior: "MEMBER_RATE",
+      subscriptionBehavior: "BASED_ON_AGE_TIER",
+    };
+
+    // requiresPaidSubscriptionForBooking is mocked to always return true, so a
+    // BASED_ON_AGE_TIER member with no NOT_REQUIRED row defers to it (required).
+    function makeDbWithSubscription(notRequiredRow: { id: string } | null) {
+      const findFirst = vi.fn(async () => notRequiredRow);
+      const db = {
+        ...makePolicyDb({
+          members: [makeMember()],
+          assignments: [
+            { memberId: "member-1", seasonYear: 2026, membershipType: ageTierType },
+          ],
+        }),
+        memberSubscription: { findFirst },
+      };
+      return { db, findFirst };
+    }
+
+    it("defers to the per-age-tier flag when no NOT_REQUIRED row exists", async () => {
+      const { db, findFirst } = makeDbWithSubscription(null);
+      await expect(
+        requiresPaidSubscriptionForMemberForBooking(db, {
+          memberId: "member-1",
+          seasonYear: 2026,
+          ageTier: "YOUTH",
+        }),
+      ).resolves.toBe(true);
+      expect(findFirst).toHaveBeenCalledTimes(1);
+    });
+
+    it("a NOT_REQUIRED season row dominates even when the stored tier would require one (mid-season age-up)", async () => {
+      const { db } = makeDbWithSubscription({ id: "sub-1" });
+      await expect(
+        requiresPaidSubscriptionForMemberForBooking(db, {
+          memberId: "member-1",
+          seasonYear: 2026,
+          ageTier: "YOUTH",
+        }),
+      ).resolves.toBe(false);
+    });
+
+    it("REQUIRED types never query the subscription row (byte-unchanged path)", async () => {
+      const findFirst = vi.fn(async () => null);
+      const db = {
+        ...makePolicyDb({
+          members: [makeMember()],
+          assignments: [
+            { memberId: "member-1", seasonYear: 2026, membershipType: fullType },
+          ],
+        }),
+        memberSubscription: { findFirst },
+      };
+      await expect(
+        requiresPaidSubscriptionForMemberForBooking(db, {
+          memberId: "member-1",
+          seasonYear: 2026,
+          ageTier: "ADULT",
+        }),
+      ).resolves.toBe(true);
+      expect(findFirst).not.toHaveBeenCalled();
+    });
   });
 });
 

@@ -19,7 +19,10 @@ const adminGuardOptions = {
  * List pending family group change requests.
  */
 export async function GET() {
-  const guard = await requireAdmin(adminGuardOptions);
+  const guard = await requireAdmin({
+    ...adminGuardOptions,
+    permission: { area: "membership", level: "view" },
+  });
   if (!guard.ok) return guard.response;
 
   const result = await listAdminFamilyGroupRequests();
@@ -31,7 +34,10 @@ export async function GET() {
  * Approve or reject a family group change request.
  */
 export async function PUT(req: NextRequest) {
-  const guard = await requireAdmin(adminGuardOptions);
+  const guard = await requireAdmin({
+    ...adminGuardOptions,
+    permission: { area: "membership", level: "edit" },
+  });
   if (!guard.ok) return guard.response;
 
   let body: unknown;

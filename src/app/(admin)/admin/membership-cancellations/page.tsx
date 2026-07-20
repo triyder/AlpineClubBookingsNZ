@@ -7,6 +7,11 @@ import { Archive, AlertTriangle, CheckCircle2, RefreshCw, XCircle } from "lucide
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
+  AdminViewOnlyNotice,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action";
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import {
   Card,
   CardContent,
   CardDescription,
@@ -227,6 +232,9 @@ function canReject(participant: CancellationParticipant) {
 export default function MembershipCancellationsPage() {
   const { data: session } = useSession();
   const currentAdminId = session?.user?.id;
+  // Participant/archive review writes membership-area routes; a view-only
+  // membership admin browses the queues but cannot act (#1997).
+  const canEditMembership = useAdminAreaEditAccess("membership");
   const [filter, setFilter] = useState<RequestFilter>("REQUESTED");
   const [data, setData] = useState<CancellationResponse | null>(null);
   const [archiveData, setArchiveData] = useState<ArchiveResponse | null>(null);
@@ -464,6 +472,12 @@ export default function MembershipCancellationsPage() {
             Membership Cancellations
           </h1>
           <p className="mt-1 text-sm text-slate-500">{pendingSummary}</p>
+          {!canEditMembership && (
+            <AdminViewOnlyNotice canEdit={canEditMembership} className="mt-3">
+              Your admin role can view membership cancellations but cannot
+              approve or reject them.
+            </AdminViewOnlyNotice>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <Select
@@ -621,7 +635,8 @@ export default function MembershipCancellationsPage() {
                           />
                         </div>
                         <div className="flex flex-wrap gap-2">
-                          <Button
+                          <ViewOnlyActionButton
+                            canEdit={canEditMembership}
                             variant="outline"
                             className="border-red-200 text-red-700 hover:bg-red-50"
                             disabled={Boolean(isSubmitting)}
@@ -629,8 +644,9 @@ export default function MembershipCancellationsPage() {
                           >
                             <XCircle className="h-4 w-4" />
                             Reject
-                          </Button>
-                          <Button
+                          </ViewOnlyActionButton>
+                          <ViewOnlyActionButton
+                            canEdit={canEditMembership}
                             variant="destructive"
                             disabled={Boolean(isSubmitting)}
                             onClick={() =>
@@ -639,7 +655,7 @@ export default function MembershipCancellationsPage() {
                           >
                             <CheckCircle2 className="h-4 w-4" />
                             Approve Archive
-                          </Button>
+                          </ViewOnlyActionButton>
                         </div>
                       </div>
                     )}
@@ -829,7 +845,8 @@ export default function MembershipCancellationsPage() {
                                 cleared with an allocated Xero credit note.
                               </div>
                               <div className="flex flex-wrap gap-2">
-                                <Button
+                                <ViewOnlyActionButton
+                                  canEdit={canEditMembership}
                                   variant="outline"
                                   className="border-red-200 text-red-700 hover:bg-red-50"
                                   disabled={rejectDisabled}
@@ -843,8 +860,9 @@ export default function MembershipCancellationsPage() {
                                 >
                                   <XCircle className="h-4 w-4" />
                                   Reject
-                                </Button>
-                                <Button
+                                </ViewOnlyActionButton>
+                                <ViewOnlyActionButton
+                                  canEdit={canEditMembership}
                                   disabled={approveDisabled}
                                   onClick={() =>
                                     openNotifyChoice(
@@ -856,7 +874,7 @@ export default function MembershipCancellationsPage() {
                                 >
                                   <CheckCircle2 className="h-4 w-4" />
                                   Approve
-                                </Button>
+                                </ViewOnlyActionButton>
                               </div>
                               {!participant.confirmedAt &&
                                 participant.status === "PENDING_CONFIRMATION" && (

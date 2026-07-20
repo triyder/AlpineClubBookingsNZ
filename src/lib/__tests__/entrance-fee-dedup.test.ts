@@ -199,6 +199,199 @@ describe("createXeroEntranceFeeInvoice double-mint guard (F21)", () => {
     );
   });
 
+  it("adopts a PRE-RENAME minted invoice by its frozen reference, never re-minting (#1931)", async () => {
+    // The joining-fee rename (E5) keeps the Xero reference format frozen at
+    // `Entrance fee (<Label>) - <memberId>`. A member invoiced BEFORE the rename
+    // holds an AUTHORISED invoice under exactly that reference. After the
+    // rename, if the durable link is missing (crash window), the worker must
+    // look the frozen reference up and adopt that pre-rename invoice rather than
+    // mint a second one.
+    vi.mocked(prisma.xeroObjectLink.findFirst).mockResolvedValue(null);
+    mockFindOrCreateXeroContact.mockResolvedValue("contact-1");
+
+    const preRenameInvoice = providerInvoice({ invoiceID: "inv-pre-rename", invoiceNumber: "INV-PRE" });
+    const getInvoices = vi.fn().mockResolvedValue({ body: { invoices: [preRenameInvoice] } });
+    const createInvoices = vi.fn();
+    mockGetAuthenticatedXeroClient.mockResolvedValue({
+      xero: { accountingApi: { getInvoices, createInvoices } },
+      tenantId: "tenant-1",
+    });
+
+    const result = await createXeroEntranceFeeInvoice("member-1", {
+      syncOperationId: "op-post-rename",
+      precomputedEntranceFee: ADULT_FEE,
+    });
+
+    expect(result).toBe("inv-pre-rename");
+    // Looked up the FROZEN reference format (unchanged by the rename).
+    expect(getInvoices).toHaveBeenCalledWith(
+      "tenant-1", undefined, 'Reference=="Entrance fee (Adult) - member-1"',
+      undefined, undefined, undefined, undefined, undefined, 1, false,
+    );
+    // Adopted, not re-minted.
+    expect(mockRetryXeroWriteWithContactRepair).not.toHaveBeenCalled();
+    expect(createInvoices).not.toHaveBeenCalled();
+    expect(mockCompleteXeroSyncOperation).toHaveBeenCalledWith(
+      "op-post-rename",
+      expect.objectContaining({ xeroObjectId: "inv-pre-rename" }),
+    );
+  });
+
+  it("adopts a pre-rename FAMILY-labelled invoice when the member now classifies as ADULT (label-flip dual-read, #1931)", async () => {
+    // E5 deliberately flips the category label for composition-family adults:
+    // the OLD classifier billed them as FAMILY, the NEW type-driven classifier
+    // says ADULT. The frozen reference embeds the label, so the new-label
+    // lookup misses the pre-rename mint; if the durable link is also missing,
+    // only the legacy-label dual-read stands between this member and a second
+    // invoice. The worker must query BOTH references and adopt the pre-rename
+    // FAMILY-labelled invoice.
+    vi.mocked(prisma.xeroObjectLink.findFirst).mockResolvedValue(null);
+    mockFindOrCreateXeroContact.mockResolvedValue("contact-1");
+    // member-1 is an ADULT in a family group with >=2 adults and a dependent —
+    // exactly the cohort the OLD composition heuristic classified as FAMILY.
+    vi.mocked(prisma.familyGroupMember.findMany).mockImplementation(
+      (async (args: { where?: { memberId?: string; familyGroupId?: string } }) => {
+        if (args?.where?.memberId) return [{ familyGroupId: "fg-1" }];
+        return [
+          { member: { ageTier: "ADULT" } },
+          { member: { ageTier: "ADULT" } },
+          { member: { ageTier: "CHILD" } },
+        ];
+      }) as never,
+    );
+
+    const preRenameFamilyInvoice = providerInvoice({
+      invoiceID: "inv-family-pre-rename",
+      invoiceNumber: "INV-FAM",
+    });
+    const getInvoices = vi.fn(
+      async (_tenantId: string, _ifModified: unknown, whereFilter: string) => {
+        if (whereFilter === 'Reference=="Entrance fee (Family) - member-1"') {
+          return { body: { invoices: [preRenameFamilyInvoice] } };
+        }
+        return { body: { invoices: [] } };
+      },
+    );
+    const createInvoices = vi.fn();
+    mockGetAuthenticatedXeroClient.mockResolvedValue({
+      xero: { accountingApi: { getInvoices, createInvoices } },
+      tenantId: "tenant-1",
+    });
+
+    const result = await createXeroEntranceFeeInvoice("member-1", {
+      syncOperationId: "op-post-rename",
+      precomputedEntranceFee: ADULT_FEE, // new classifier: ADULT, 10000c
+    });
+
+    expect(result).toBe("inv-family-pre-rename");
+    // Both the frozen NEW-label reference and the legacy-label reference were
+    // consulted; the pre-rename invoice was ADOPTED, not re-minted.
+    expect(getInvoices).toHaveBeenCalledTimes(2);
+    expect(getInvoices).toHaveBeenCalledWith(
+      "tenant-1", undefined, 'Reference=="Entrance fee (Adult) - member-1"',
+      undefined, undefined, undefined, undefined, undefined, 1, false,
+    );
+    expect(getInvoices).toHaveBeenCalledWith(
+      "tenant-1", undefined, 'Reference=="Entrance fee (Family) - member-1"',
+      undefined, undefined, undefined, undefined, undefined, 1, false,
+    );
+    expect(mockRetryXeroWriteWithContactRepair).not.toHaveBeenCalled();
+    expect(createInvoices).not.toHaveBeenCalled();
+    expect(mockCompleteXeroSyncOperation).toHaveBeenCalledWith(
+      "op-post-rename",
+      expect.objectContaining({
+        xeroObjectId: "inv-family-pre-rename",
+        extraLinks: expect.arrayContaining([
+          expect.objectContaining({
+            role: "ENTRANCE_FEE_INVOICE",
+            xeroObjectId: "inv-family-pre-rename",
+            localId: "member-1",
+          }),
+        ]),
+      }),
+    );
+  });
+
+  it("does not run the legacy-label lookup when old and new labels agree (single reference query)", async () => {
+    // A plain adult with no qualifying family composition classifies ADULT
+    // under BOTH classifiers — the dual-read must not add a second Xero query.
+    vi.mocked(prisma.xeroObjectLink.findFirst).mockResolvedValue(null);
+    mockFindOrCreateXeroContact.mockResolvedValue("contact-1");
+
+    const getInvoices = vi.fn().mockResolvedValue({ body: { invoices: [] } });
+    mockGetAuthenticatedXeroClient.mockResolvedValue({
+      xero: { accountingApi: { getInvoices, createInvoices: vi.fn() } },
+      tenantId: "tenant-1",
+    });
+    mockRetryXeroWriteWithContactRepair.mockResolvedValue({
+      body: { invoices: [{ invoiceID: "inv-new", invoiceNumber: "INV-NEW" }] },
+    });
+
+    await createXeroEntranceFeeInvoice("member-1", {
+      syncOperationId: "op-first",
+      precomputedEntranceFee: ADULT_FEE,
+    });
+
+    expect(getInvoices).toHaveBeenCalledTimes(1);
+    expect(getInvoices).toHaveBeenCalledWith(
+      "tenant-1", undefined, 'Reference=="Entrance fee (Adult) - member-1"',
+      undefined, undefined, undefined, undefined, undefined, 1, false,
+    );
+  });
+
+  it("hard-stops (PROVIDER_MISMATCH) on a legacy-label invoice whose amount differs, minting nothing", async () => {
+    // The pre-rename FAMILY invoice exists but at a different amount than the
+    // member's new ADULT fee. Ambiguous money: never silently adopt a
+    // wrong-amount invoice and never mint a second — surface the conflict.
+    vi.mocked(prisma.xeroObjectLink.findFirst).mockResolvedValue(null);
+    mockFindOrCreateXeroContact.mockResolvedValue("contact-1");
+    vi.mocked(prisma.familyGroupMember.findMany).mockImplementation(
+      (async (args: { where?: { memberId?: string; familyGroupId?: string } }) => {
+        if (args?.where?.memberId) return [{ familyGroupId: "fg-1" }];
+        return [
+          { member: { ageTier: "ADULT" } },
+          { member: { ageTier: "ADULT" } },
+          { member: { ageTier: "YOUTH" } },
+        ];
+      }) as never,
+    );
+
+    const getInvoices = vi.fn(
+      async (_tenantId: string, _ifModified: unknown, whereFilter: string) => {
+        if (whereFilter === 'Reference=="Entrance fee (Family) - member-1"') {
+          // 20000 cents ≠ the expected 10000c ADULT fee.
+          return { body: { invoices: [providerInvoice({ total: 200 })] } };
+        }
+        return { body: { invoices: [] } };
+      },
+    );
+    mockGetAuthenticatedXeroClient.mockResolvedValue({
+      xero: { accountingApi: { getInvoices, createInvoices: vi.fn() } },
+      tenantId: "tenant-1",
+    });
+
+    const result = await createXeroEntranceFeeInvoice("member-1", {
+      syncOperationId: "op-post-rename",
+      precomputedEntranceFee: ADULT_FEE,
+    });
+
+    expect(result).toBeNull();
+    expect(mockRetryXeroWriteWithContactRepair).not.toHaveBeenCalled();
+    expect(mockCompleteXeroSyncOperation).toHaveBeenCalledWith(
+      "op-post-rename",
+      expect.objectContaining({
+        status: "SUCCEEDED",
+        responsePayload: expect.objectContaining({
+          conflict: "PROVIDER_MISMATCH",
+          expectedAmountCents: 10000,
+        }),
+      }),
+    );
+    expect(mockNotifyXeroSyncError).toHaveBeenCalledWith(
+      expect.objectContaining({ errorType: "entrance-fee-provider-mismatch" }),
+    );
+  });
+
   it("mints exactly once when no link and no prior Xero invoice exist", async () => {
     // Baseline: the guards must not block the legitimate first mint.
     vi.mocked(prisma.xeroObjectLink.findFirst).mockResolvedValue(null);

@@ -43,8 +43,8 @@ import {
 } from "../../../prisma/seed-data";
 import { starterPageContent } from "../../../prisma/starter-page-content";
 import {
-  ensureNotRequiredSubscriptionForRole,
-  roleNeverRequiresSubscription,
+  ensureDefaultSeasonSubscriptionForNewMember,
+  reconcileSeasonSubscriptionForAssignment,
 } from "@/lib/member-subscription-defaults";
 import { ensureMemberAccessRolesFromCompatibilityFields } from "@/lib/member-access-role-writes";
 import {
@@ -269,14 +269,14 @@ describe("starterPageContent location scrub (#1945)", () => {
 
 // ── Subscription defaults for operational roles ──────────────────────────────
 
-describe("ensureNotRequiredSubscriptionForRole", () => {
+describe("ensureDefaultSeasonSubscriptionForNewMember", () => {
   function makeDb() {
     return { memberSubscription: { upsert: vi.fn().mockResolvedValue({}) } };
   }
 
   it("creates a NOT_REQUIRED subscription for ADMIN without overwriting", async () => {
     const db = makeDb();
-    await ensureNotRequiredSubscriptionForRole(db, { id: "m1", role: "ADMIN" }, 2026);
+    await ensureDefaultSeasonSubscriptionForNewMember(db, { id: "m1", role: "ADMIN" }, 2026);
 
     expect(db.memberSubscription.upsert).toHaveBeenCalledWith({
       where: { memberId_seasonYear: { memberId: "m1", seasonYear: 2026 } },
@@ -287,22 +287,155 @@ describe("ensureNotRequiredSubscriptionForRole", () => {
 
   it("creates a NOT_REQUIRED subscription for LODGE", async () => {
     const db = makeDb();
-    await ensureNotRequiredSubscriptionForRole(db, { id: "m2", role: "LODGE" }, 2026);
+    await ensureDefaultSeasonSubscriptionForNewMember(db, { id: "m2", role: "LODGE" }, 2026);
 
     expect(db.memberSubscription.upsert).toHaveBeenCalledTimes(1);
   });
 
-  it("does nothing for ordinary members", async () => {
+  it("creates a NOT_REQUIRED subscription for NON_MEMBER and SCHOOL", async () => {
+    for (const role of ["NON_MEMBER", "SCHOOL"] as const) {
+      const db = makeDb();
+      await ensureDefaultSeasonSubscriptionForNewMember(db, { id: role, role }, 2026);
+      expect(db.memberSubscription.upsert).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it("does nothing for ordinary members (USER → FULL/REQUIRED)", async () => {
     const db = makeDb();
-    await ensureNotRequiredSubscriptionForRole(db, { id: "m3", role: "USER" }, 2026);
+    await ensureDefaultSeasonSubscriptionForNewMember(db, { id: "m3", role: "USER" }, 2026);
 
     expect(db.memberSubscription.upsert).not.toHaveBeenCalled();
   });
+});
 
-  it("classifies only ADMIN and LODGE as never owing a subscription", () => {
-    expect(roleNeverRequiresSubscription("ADMIN")).toBe(true);
-    expect(roleNeverRequiresSubscription("LODGE")).toBe(true);
-    expect(roleNeverRequiresSubscription("USER")).toBe(false);
+describe("reconcileSeasonSubscriptionForAssignment", () => {
+  function makeReconcileDb(
+    existing: {
+      status: string;
+      xeroInvoiceId: string | null;
+      manuallyMarkedPaidAt: Date | null;
+      chargeCoverage: { id: string } | null;
+    } | null,
+    updateCount = 1,
+  ) {
+    return {
+      memberSubscription: {
+        findUnique: vi.fn().mockResolvedValue(existing),
+        updateMany: vi.fn().mockResolvedValue({ count: updateCount }),
+      },
+    };
+  }
+
+  const untouchedSeedRow = {
+    status: "NOT_REQUIRED",
+    xeroInvoiceId: null,
+    manuallyMarkedPaidAt: null,
+    chargeCoverage: null,
+  };
+
+  it("flips a stale NOT_REQUIRED seed row to NOT_INVOICED for a REQUIRED type", async () => {
+    const db = makeReconcileDb(untouchedSeedRow);
+    const result = await reconcileSeasonSubscriptionForAssignment(db as never, {
+      memberId: "m1",
+      seasonYear: 2026,
+      subscriptionBehavior: "REQUIRED",
+    });
+
+    expect(result).toEqual({ reconciled: true });
+    expect(db.memberSubscription.updateMany).toHaveBeenCalledWith({
+      where: {
+        memberId: "m1",
+        seasonYear: 2026,
+        status: "NOT_REQUIRED",
+        xeroInvoiceId: null,
+        manuallyMarkedPaidAt: null,
+      },
+      data: { status: "NOT_INVOICED" },
+    });
+  });
+
+  it("leaves BASED_ON_AGE_TIER rows untouched (#2041 dominance)", async () => {
+    const db = makeReconcileDb(untouchedSeedRow);
+    const result = await reconcileSeasonSubscriptionForAssignment(db as never, {
+      memberId: "m1",
+      seasonYear: 2026,
+      subscriptionBehavior: "BASED_ON_AGE_TIER",
+    });
+
+    expect(result).toEqual({ reconciled: false });
+    expect(db.memberSubscription.findUnique).not.toHaveBeenCalled();
+    expect(db.memberSubscription.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("leaves NOT_REQUIRED types untouched", async () => {
+    const db = makeReconcileDb(untouchedSeedRow);
+    const result = await reconcileSeasonSubscriptionForAssignment(db as never, {
+      memberId: "m1",
+      seasonYear: 2026,
+      subscriptionBehavior: "NOT_REQUIRED",
+    });
+
+    expect(result).toEqual({ reconciled: false });
+    expect(db.memberSubscription.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("never touches a row with a live Xero invoice", async () => {
+    const db = makeReconcileDb({
+      ...untouchedSeedRow,
+      xeroInvoiceId: "INV-123",
+    });
+    const result = await reconcileSeasonSubscriptionForAssignment(db as never, {
+      memberId: "m1",
+      seasonYear: 2026,
+      subscriptionBehavior: "REQUIRED",
+    });
+
+    expect(result).toEqual({ reconciled: false });
+    expect(db.memberSubscription.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("never touches a manually marked-paid or charge-covered row", async () => {
+    for (const guarded of [
+      { ...untouchedSeedRow, manuallyMarkedPaidAt: new Date() },
+      { ...untouchedSeedRow, chargeCoverage: { id: "cov-1" } },
+      { ...untouchedSeedRow, status: "PAID" },
+    ]) {
+      const db = makeReconcileDb(guarded);
+      const result = await reconcileSeasonSubscriptionForAssignment(db as never, {
+        memberId: "m1",
+        seasonYear: 2026,
+        subscriptionBehavior: "REQUIRED",
+      });
+      expect(result).toEqual({ reconciled: false });
+      expect(db.memberSubscription.updateMany).not.toHaveBeenCalled();
+    }
+  });
+
+  it("is a no-op when there is no row, and idempotent on re-run", async () => {
+    const noRow = makeReconcileDb(null);
+    expect(
+      await reconcileSeasonSubscriptionForAssignment(noRow as never, {
+        memberId: "m1",
+        seasonYear: 2026,
+        subscriptionBehavior: "REQUIRED",
+      }),
+    ).toEqual({ reconciled: false });
+    expect(noRow.memberSubscription.updateMany).not.toHaveBeenCalled();
+
+    // Second run after the row is already NOT_INVOICED: the guard excludes it,
+    // so nothing changes.
+    const alreadyReconciled = makeReconcileDb(
+      { ...untouchedSeedRow, status: "NOT_INVOICED" },
+      0,
+    );
+    expect(
+      await reconcileSeasonSubscriptionForAssignment(alreadyReconciled as never, {
+        memberId: "m1",
+        seasonYear: 2026,
+        subscriptionBehavior: "REQUIRED",
+      }),
+    ).toEqual({ reconciled: false });
+    expect(alreadyReconciled.memberSubscription.updateMany).not.toHaveBeenCalled();
   });
 });
 

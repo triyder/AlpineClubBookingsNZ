@@ -36,7 +36,7 @@ export async function GET(
 
   const season = await prisma.season.findUnique({
     where: { id },
-    include: { rates: true, membershipTypeRates: true },
+    include: { membershipTypeRates: true },
   })
 
   if (!season) {
@@ -127,14 +127,14 @@ export async function PUT(
     })
 
     // Update membership-type rates if provided; the frozen legacy SeasonRate
-    // table is deliberately left untouched (#1930, E4 — E13 drops it).
+    // table is deliberately left untouched (#1930, E4 — #2129 step 2 drops it).
     if (membershipTypeRates) {
       await replaceMembershipTypeSeasonRates(tx, id, membershipTypeRates)
     }
 
     return tx.season.findUnique({
       where: { id },
-      include: { rates: true, membershipTypeRates: true },
+      include: { membershipTypeRates: true },
     })
   })
 

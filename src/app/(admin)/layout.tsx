@@ -5,6 +5,7 @@ import { AppProviders } from "@/components/app-providers";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { AdminSidebar } from "@/components/admin-sidebar";
+import { AdminCommandPalette } from "@/components/admin-command-palette";
 import { ContextualHelpButton } from "@/components/contextual-help-button";
 import { NavBar } from "@/components/nav-bar";
 import { MemberOnboardingWizard } from "@/components/member-onboarding-wizard";
@@ -20,6 +21,7 @@ import {
   hasAdminAreaAccess,
   hasAdminPortalAccess,
   hasFinanceViewerAccess,
+  isConsolidatedFeesPath,
 } from "@/lib/admin-permissions";
 import { CSP_NONCE_HEADER } from "@/lib/csp";
 import { getWebsiteThemeRenderState } from "@/lib/club-theme";
@@ -87,13 +89,22 @@ export default async function AdminLayout({
     );
   }
 
+  const requestedForGuard = requestedPath ?? "/admin/dashboard";
   const adminRequirement =
-    getAdminRouteRequirement(requestedPath ?? "/admin/dashboard", "GET") ?? {
+    getAdminRouteRequirement(requestedForGuard, "GET") ?? {
       area: "overview" as const,
       level: "view" as const,
     };
 
-  if (!hasAdminAreaAccess(member, adminRequirement)) {
+  // /admin/fees admits on view of EITHER bookings or finance (#1933, E7); its
+  // prefix resolves to bookings for the single-area drift guard, so the generic
+  // check would wrongly lock out a finance-only editor. Short-circuit here.
+  const admitted = isConsolidatedFeesPath(requestedForGuard)
+    ? hasAdminAreaAccess(member, { area: "bookings", level: "view" }) ||
+      hasAdminAreaAccess(member, { area: "finance", level: "view" })
+    : hasAdminAreaAccess(member, adminRequirement);
+
+  if (!admitted) {
     redirect(getFirstAccessibleAdminHref(member) ?? "/dashboard");
   }
 
@@ -143,6 +154,12 @@ export default async function AdminLayout({
         <NavBar user={user} features={effectiveModules} />
         <div className="flex flex-1 flex-col md:flex-row">
           <AdminSidebar
+            features={effectiveModules}
+            permissionMatrix={permissionMatrix}
+            isFullAdmin={actorIsFullAdmin}
+            hutLeaderLabel={liveClubIdentity.hutLeaderLabel}
+          />
+          <AdminCommandPalette
             features={effectiveModules}
             permissionMatrix={permissionMatrix}
             isFullAdmin={actorIsFullAdmin}

@@ -26,9 +26,13 @@ export const EMAIL_AUDIT_DEFAULTS = {
     "defaultSubject": "Email change requested — {{CLUB_BOOKINGS_NAME}}",
     "defaultBody": "Email Change Requested\n\nSomeone requested to change the email address on your {{CLUB_NAME}} account to {{newEmail}}.\n\nIf this wasn't you, please contact the club immediately.\n\nIf you made this request, you can safely ignore this email. The change will only take effect after verification."
   },
+  "magic-link-login": {
+    "defaultSubject": "Your {{CLUB_NAME}} sign-in link",
+    "defaultBody": "Sign In to {{CLUB_NAME}}\n\nYou asked to sign in to your {{CLUB_NAME}} booking account with an email link.\n\nClick the button below to sign in. This link can be used once and expires shortly.\n\nSign In: {{BASE_URL}}/login/magic?token={{token}}\n\nIf you didn't request this, you can safely ignore this email — your account stays secure and you can still sign in with your password."
+  },
   "booking-confirmed": {
     "defaultSubject": "Booking Confirmed - {{CLUB_LODGE_NAME}}",
-    "defaultBody": "Booking Confirmed\n\nHi {{firstName}}, your lodge booking has been confirmed!\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\nSubtotal: {{subtotal}}                  [only when discountCents > 0]\nDiscount ({{promoCode}}): -{{discount}} [only when promoCode exists]\nDiscount: -{{discount}}                 [only when discount exists without promoCode]\nTotal Paid: {{totalPaid}}\n\nPayment has been processed successfully.\n\nHow to get to the lodge\n\n{{CLUB_LODGE_TRAVEL_NOTE}}\n\nDoor code: {{doorCode}} [only when a door code is set]\n\nYou can view your booking details and manage your stay from your account.\n\nView Booking: {{BASE_URL}}/bookings"
+    "defaultBody": "Booking Confirmed\n\nHi {{firstName}}, your lodge booking has been confirmed!\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\nSubtotal: {{subtotal}}                  [only when discountCents > 0]\nDiscount ({{promoCode}}): -{{discount}} [only when promoCode exists]\nDiscount: -{{discount}}                 [only when discount exists without promoCode]\nTotal Paid: {{totalPaid}}\n\nPayment has been processed successfully.\n\n{{provisionalGuestsNote}} [only when non-member guests are held provisionally as a split linked booking]\n\nHow to get to the lodge\n\n{{CLUB_LODGE_TRAVEL_NOTE}}\n\nDoor code: {{doorCode}} [only when a door code is set]\n\nYou can view your booking details and manage your stay from your account.\n\nView Booking: {{BASE_URL}}/bookings"
   },
   "booking-pending": {
     "defaultSubject": "Booking Pending - {{CLUB_LODGE_NAME}}",
@@ -246,6 +250,10 @@ export const EMAIL_AUDIT_DEFAULTS = {
     "defaultSubject": "Payment Failed — {{CLUB_BOOKINGS_NAME}}",
     "defaultBody": "Payment Failed\n\nA payment has failed and may require manual attention.\n\nMember: {{memberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nAmount: {{amount}}\nError: {{errorMessage}}\nStripe PI: {{paymentIntentId}}\n\nView Payments: {{BASE_URL}}/admin/payments"
   },
+  "admin-duplicate-capture-refund": {
+    "defaultSubject": "Duplicate capture auto-refunded: {{memberName}}",
+    "defaultBody": "Duplicate Card Capture Auto-Refunded\n\nA second, distinct card capture arrived on a booking that was already paid (settled by another capture), so the duplicate charge was automatically refunded in full — the member has not been double-charged and no action is needed unless the member reports otherwise. [when the automatic refund could not complete inline: the refund could not complete and a durable recovery operation is queued — the payment recovery cron will retry it with backoff; watch the recovery queue and confirm the refund lands. Failure detail: {{errorMessage}}]\n\nMember: {{memberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nAmount refunded: {{amount}}\nDuplicate Stripe PI: {{paymentIntentId}}\nRecovery operation: {{operation}}\n\nThe booking's own settlement is untouched.\n\nView Payments: {{reviewUrl}}"
+  },
   "admin-pending-deadline": {
     "defaultSubject": "{{count}} Pending Booking{{s}} Approaching Deadline",
     "defaultBody": "Pending Bookings Approaching Deadline\n\n{{count}} pending booking(s) will reach their hold deadline within 48 hours.\n\nMember | Dates | Guests | Deadline | Remaining\n{{memberName}} | {{checkIn}} – {{checkOut}} | {{guestCount}} | {{deadline}} | {{hoursRemaining}}h\n...\n\nView Bookings: {{BASE_URL}}/admin/bookings"
@@ -314,6 +322,10 @@ export const EMAIL_AUDIT_DEFAULTS = {
     "defaultSubject": "Your booking request has been approved — {{CLUB_NAME}}",
     "defaultBody": "Booking Request Approved\n\nHi {{firstName}}, great news — your booking request has been approved!\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\nTotal: {{price}}\nBooking reference: {{bookingReference}}\n\nPlease complete payment to confirm your booking.\n\nPay Now: {{BASE_URL}}/pay/{{token}}\n\nThis payment link expires on {{expiresAt}}. If it expires before you pay, please contact the club to request a new link."
   },
+  "split-guest-payment-link": {
+    "defaultSubject": "Pay for your guests to confirm their place — {{CLUB_NAME}}",
+    "defaultBody": "Pay for Your Guests to Confirm Their Place\n\nHi {{firstName}}, your own place is confirmed, but your non-member guests still need to be paid for before we can hold beds for them. There is no card on file for this part of your booking, so please use the secure link below to pay for your guests.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\nAmount due: {{price}}\n\nPay for My Guests: {{BASE_URL}}/pay/{{token}}\n\nUntil payment is received, no beds are held for your guests and their place may be bumped if the lodge fills for these dates.\n\nThis payment link expires on {{expiresAt}}. If you have any questions, just reply to this email or contact the club."
+  },
   "booking-request-quote": {
     "defaultSubject": "Your booking quote is ready — {{CLUB_NAME}}",
     "defaultBody": "Booking Quote Ready\n\nHi {{firstName}}, the club has prepared a quote for your lodge request.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\n\n{{quoteOptions}}\n\nRespond to Quote: {{BASE_URL}}/booking-requests/respond/{{token}}\n\nThis quote link expires on {{expiresAt}}. You can use it to accept, cancel, request changes, or send a question."
@@ -322,13 +334,33 @@ export const EMAIL_AUDIT_DEFAULTS = {
     "defaultSubject": "Update on your booking request — {{CLUB_NAME}}",
     "defaultBody": "Booking Request Update\n\nHi {{firstName}}, thank you for your interest in staying with {{CLUB_NAME}}.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\n\nUnfortunately we're unable to accommodate this request.\n\nNote: {{reason}} [only when reason exists]\n\nIf you have any questions, please contact the club at {{SUPPORT_EMAIL}}."
   },
+  "booking-request-payment-expired": {
+    "defaultSubject": "Your booking was released — payment not received — {{CLUB_NAME}}",
+    "defaultBody": "Your Booking Was Released — Payment Not Received\n\nHi {{firstName}}, the booking we approved from your request stayed unpaid up to the check-in day, so it has now been released. Nothing was ever charged.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\n\nIf you still want to stay, you are welcome to submit a new booking request for these or other dates.\n\nIf you have any questions, contact the club at {{SUPPORT_EMAIL}}."
+  },
   "admin-booking-request-pending": {
     "defaultSubject": "Booking request ready for review: {{requesterName}}",
     "defaultBody": "Booking Request Ready for Review\n\n{{requesterName}} has verified their email and the request is ready for pricing.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\n\nReview Request: {{reviewUrl}}"
   },
   "admin-booking-request-hold-expired": {
     "defaultSubject": "Request booking unpaid at hold expiry: {{requesterName}}",
-    "defaultBody": "Request Booking Unpaid at Hold Expiry\n\n{{requesterName}}'s request-origin booking has reached its hold deadline without payment.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\nTotal due: {{total}}\nHold until: {{holdUntil}}\n\nReview Bookings: {{reviewUrl}}"
+    "defaultBody": "Request Booking Unpaid at Hold Expiry\n\n{{requesterName}}'s request-origin booking has reached its hold deadline without payment.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\nTotal due: {{total}}\nHold until: {{holdUntil}}\n\nThis alert repeats on a capped cadence (the first three hold extensions, then every seventh) while the request booking stays unpaid. A terminal cancellation past the check-in day ends the series with a separate final notice.\n\nReview Bookings: {{reviewUrl}}"
+  },
+  "admin-booking-request-hold-cancelled": {
+    "defaultSubject": "Request booking auto-cancelled — unpaid past check-in: {{requesterName}}",
+    "defaultBody": "Request Booking Auto-Cancelled — Unpaid Past Check-in\n\n{{requesterName}}'s booking from a public booking request was still unpaid at the end of its check-in day, with no saved card to charge, so it was automatically cancelled and the beds it was holding have been released. No payment was taken. The requester has been notified.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\nAmount (unpaid): {{total}}\n\nNo further action is required. If the requester still intends to come and pay, ask them to submit a new booking request.\n\nThis is a one-off notice — it ends the capped hold-extension alert series for this request booking.\n\nView Bookings: {{reviewUrl}}"
+  },
+  "admin-split-settlement-unpaid": {
+    "defaultSubject": "Split booking guest portion unpaid — no card on file: {{memberName}}",
+    "defaultBody": "Split Booking Guest Portion Unpaid — No Card on File\n\nA split booking reached its hold deadline for the non-member guest portion, but there is no saved card to charge — the member paid their own place by internet banking. A secure payment link has been emailed to the member so they can pay for their guests, and the hold has been extended. [when the member's own linked booking is also unpaid: no payment link is sent and a human must chase payment for the whole booking, because the guest portion must not settle ahead of the member's own place]\n\nMember: {{memberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\nAmount due: {{total}}\nHold extended to: {{holdUntil}}\n\nNo beds are held for these guests until payment is received. Follow up with the member or cancel the guest portion if payment is not expected.\n\nThis alert repeats on a capped cadence (the first three hold extensions, then every seventh) while the guest portion stays unpaid. A terminal cancellation past the check-in day ends the series with a separate final notice.\n\nView Bookings: {{reviewUrl}}"
+  },
+  "admin-split-settlement-cancelled": {
+    "defaultSubject": "Split booking guest portion auto-cancelled — unpaid past check-in: {{memberName}}",
+    "defaultBody": "Split Booking Guest Portion Auto-Cancelled — Unpaid Past Check-in\n\nA split booking's non-member guest portion was still unpaid at the end of its check-in day, with no saved card to charge (the member had paid their own place by internet banking). The provisional guest booking has now been automatically cancelled. No payment was taken and no beds were held. The member has been notified; the member's own linked booking is settled and is unaffected. [when the member's own linked booking is not settled: the member's own linked booking is not settled either (it may be unpaid or already cancelled), so review the whole booking]\n\nMember: {{memberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\nAmount (unpaid): {{total}}\n\nNo further action is required for the guest portion. If these guests are in fact coming and the member intends to pay, create a new booking for them.\n\nThis is a one-off notice — it ends the capped hold-extension alert series for this guest portion.\n\nView Bookings: {{reviewUrl}}"
+  },
+  "split-guest-portion-cancelled": {
+    "defaultSubject": "Your guests' provisional place was cancelled — {{CLUB_NAME}}",
+    "defaultBody": "Your Guests' Provisional Place Was Cancelled\n\nHi {{firstName}}, the provisional place we were holding for your non-member guests stayed unpaid up to the check-in day, so it has now been automatically cancelled. Nothing was ever charged for it, and no beds were held.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nYour booking reference: {{bookingReference}} [only when your own linked booking reference is available]\n\nThis only affects your guests' provisional place — your own booking is unaffected and remains confirmed. [when your own linked booking is not settled: your own linked booking has not been changed by this cancellation]\n\nIf your guests are still coming, you can make a new booking for them at any time.\n\nMake a New Booking: {{BASE_URL}}/book"
   },
   "booking-review-approved": {
     "defaultSubject": "Your booking has been approved - {{CLUB_LODGE_NAME}}",

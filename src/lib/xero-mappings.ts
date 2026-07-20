@@ -6,10 +6,14 @@
  * idempotency keys for entrance-fee invoices.
  */
 
-import { EntranceFeeCategory, type Prisma } from "@prisma/client";
+import { EntranceFeeCategory, type AgeTier, type Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import { buildXeroIdempotencyKey } from "@/lib/xero-sync";
-import { getEffectiveEntranceFee } from "@/lib/authoritative-fees";
+import { getEffectiveJoiningFee } from "@/lib/authoritative-fees";
+import {
+  JOINING_FEE_EXEMPT_MESSAGE,
+  resolveMemberJoiningFeeClassification,
+} from "@/lib/joining-fee";
 
 export interface EntranceFeeContext {
   category: EntranceFeeCategory;
@@ -20,15 +24,23 @@ export interface EntranceFeeContext {
   description?: string | null;
   /**
    * Organisations/schools (the NOT_APPLICABLE age tier) are exempt from
-   * entrance fees — owner decision, 2026-07-07 (#1440 follow-up). Both
+   * joining fees — owner decision, 2026-07-07 (#1440 follow-up). Both
    * invoice paths skip (never bill) when this is set, even when an explicit
    * amount override is supplied.
    */
   exempt?: boolean;
+  /**
+   * The resolved membership type x age tier the amount was keyed by (#1931,
+   * E5). Carried for correlation-key derivation and diagnostics; absent on the
+   * exempt/unresolved paths.
+   */
+  membershipTypeId?: string | null;
+  ageTier?: AgeTier | null;
 }
 
-export const ENTRANCE_FEE_EXEMPT_MESSAGE =
-  "Organisations and schools (N/A age tier) are exempt from entrance fees.";
+// Re-exported under the legacy name for importers not yet swept to the new
+// symbol; the message copy now says "joining fees".
+export const ENTRANCE_FEE_EXEMPT_MESSAGE = JOINING_FEE_EXEMPT_MESSAGE;
 
 /** Default fallbacks if no DB record exists or code is null */
 const ACCOUNT_MAPPING_DEFAULTS: Record<string, string | null> = {
@@ -87,6 +99,95 @@ async function getItemCodeMapping(key: string): Promise<string | null> {
   return mapping.itemCode;
 }
 
+/**
+ * The full set of Xero item codes that mark an invoice line as a membership
+ * subscription when fee-schedule look-through is enabled (#2109). It is the
+ * distinct non-null `MembershipAnnualFeeComponent.xeroItemCode` values (every
+ * historical fee row contributes — prior seasons were billed under retired fee
+ * rows) UNION the single configured `subscriptionIncome.itemCode`, sorted for a
+ * stable preview. Closed-loop invariant: because billing stamps exactly those
+ * component codes onto each invoice line, this detection set is a superset of
+ * every code the billing pipeline can stamp.
+ *
+ * The single `subscriptionIncome.itemCode` is always folded in so the flat
+ * "fallback item code" stays in the matching set even when no fee row carries
+ * an item code. Safe-fallback error style mirrors `getResolvedAccountMapping`:
+ * a read failure degrades to whatever the mapping lookup could still resolve
+ * rather than throwing into the caller's Xero round-trip.
+ */
+export async function getSubscriptionItemCodes(
+  store: Prisma.TransactionClient | typeof prisma = prisma,
+): Promise<string[]> {
+  const codes = new Set<string>();
+  try {
+    const rows = await store.membershipAnnualFeeComponent.findMany({
+      where: { xeroItemCode: { not: null } },
+      select: { xeroItemCode: true },
+      distinct: ["xeroItemCode"],
+    });
+    for (const row of rows) {
+      if (row.xeroItemCode) codes.add(row.xeroItemCode);
+    }
+  } catch {
+    // Fee-schedule read failed: fall back to whatever the single mapping resolves
+    // below so the flat item code still participates in matching.
+  }
+  const mapping = await getResolvedAccountMapping("subscriptionIncome", store);
+  if (mapping.itemCode) codes.add(mapping.itemCode);
+  return Array.from(codes).sort();
+}
+
+/**
+ * The distinct non-null Xero item codes configured for NON-subscription fees —
+ * hut-fee income, hut fees, joining fees, and promo codes (#2109). Used by the
+ * settings preview
+ * to warn when a fee-schedule subscription code also identifies one of these,
+ * which would let an unpaid hut/promo invoice masquerade as a subscription in
+ * the widened (union) detection set. Best-effort: a read failure yields an empty
+ * set (no warning) rather than blocking the settings read.
+ */
+export async function getNonSubscriptionFeeItemCodes(
+  store: Prisma.TransactionClient | typeof prisma = prisma,
+): Promise<string[]> {
+  const codes = new Set<string>();
+  try {
+    const [itemCodeRows, accountMappingRows, promoRows] = await Promise.all([
+      store.xeroItemCodeMapping.findMany({
+        where: { itemCode: { not: null } },
+        select: { itemCode: true },
+        distinct: ["itemCode"],
+      }),
+      store.xeroAccountMapping.findMany({
+        where: {
+          key: {
+            in: [
+              "hutFeeItem",
+              "hutFeeRefundItem",
+              "entranceFeeItem",
+              "hutFeesIncome",
+            ],
+          },
+          itemCode: { not: null },
+        },
+        select: { itemCode: true },
+      }),
+      store.promoCode.findMany({
+        where: { xeroItemCode: { not: null } },
+        select: { xeroItemCode: true },
+        distinct: ["xeroItemCode"],
+      }),
+    ]);
+    for (const row of itemCodeRows) if (row.itemCode) codes.add(row.itemCode);
+    for (const row of accountMappingRows)
+      if (row.itemCode) codes.add(row.itemCode);
+    for (const row of promoRows)
+      if (row.xeroItemCode) codes.add(row.xeroItemCode);
+  } catch {
+    // Best-effort overlap detection only; degrade to no warning on read failure.
+  }
+  return Array.from(codes).sort();
+}
+
 // Resolver for hut-fee Xero item codes keyed by membership type (#1930, E4).
 // `byKey` is `${membershipTypeId}_${seasonType}_${ageTier|"FLAT"}` ->
 // itemCode. A guest's code is resolved from its BookingGuest.rateMembershipType
@@ -121,7 +222,19 @@ export async function getHutFeeItemCodeMap(): Promise<HutFeeItemCodeResolver> {
   const byKey = new Map<string, string>();
 
   const [rows, builtInTypes, legacyItemCode] = await Promise.all([
-    prisma.xeroItemCodeMapping.findMany({ where: { category: "HUT_FEE" } }),
+    // Blue/green runtime-prep (#2130): name ONLY the columns this mapper reads
+    // so the deployed client stops SELECTing XeroItemCodeMapping.isMember before
+    // the #2130 contract migration drops that legacy key column. The loop below
+    // consumes exactly these four fields, so return values are unchanged.
+    prisma.xeroItemCodeMapping.findMany({
+      where: { category: "HUT_FEE" },
+      select: {
+        membershipTypeId: true,
+        seasonType: true,
+        ageTier: true,
+        itemCode: true,
+      },
+    }),
     prisma.membershipType.findMany({
       where: { key: { in: ["FULL", "NON_MEMBER"] } },
       select: { id: true, key: true },
@@ -199,99 +312,40 @@ export function resolveHutFeeItemCode(
 }
 
 /**
- * Get the Xero item code and authoritative entrance amount for a category.
- * Amounts resolve schedule-first, with deprecated mapping fallback retained
- * for one compatibility release. Provider item codes remain Xero mappings.
+ * Get the Xero item code for a joining-fee category. The item code still keys
+ * on the (retained) entranceFeeCategory column — the migration re-keyed those
+ * rows to category "JOINING_FEE" and carried the item codes forward
+ * byte-identically. Amounts no longer come from here; they resolve from the
+ * JoiningFee schedule (see getJoiningFeeContext).
  */
-async function getEntranceFeeMapping(
+async function getJoiningFeeItemCode(
   category: EntranceFeeCategory
-): Promise<{ itemCode: string | null; amountCents: number | null }> {
+): Promise<string | null> {
   const row = await prisma.xeroItemCodeMapping.findFirst({
-    where: { category: "ENTRANCE_FEE", entranceFeeCategory: category },
+    where: { category: "JOINING_FEE", entranceFeeCategory: category },
+    select: { itemCode: true },
   });
-
-  const [legacyItemCode, effectiveFee] = await Promise.all([
-    row?.itemCode ? Promise.resolve(row.itemCode) : getItemCodeMapping("entranceFeeItem"),
-    getEffectiveEntranceFee(category),
-  ]);
-  return {
-    itemCode: row?.itemCode ?? legacyItemCode,
-    amountCents: effectiveFee.amountCents,
-  };
+  if (row?.itemCode) return row.itemCode;
+  return getItemCodeMapping("entranceFeeItem");
 }
 
 /**
- * Determine the entrance fee category for a member based on their age tier
- * and family group membership.
- *
- * - FAMILY: adult in a family group that has ≥2 adults AND ≥1 child/youth/infant
- * - ADULT: adult member (standalone or no qualifying family group)
- * - YOUTH: youth-tier member
- * - CHILD: child or infant-tier member
+ * Resolve the joining-fee context for a member (#1931, E5): the display
+ * category (Adult | Family | Youth | Child, type-driven for Family), the
+ * authoritative amount from the JoiningFee schedule keyed by the member's
+ * membership type x age tier, and the Xero item code. Organisations/schools
+ * (N/A age tier) are exempt before any type/amount lookup. A type with no fee
+ * rows resolves a null amount, which both invoice paths turn into a graceful
+ * "no joining fee configured" skip. Accepts an optional transaction client
+ * (#1886) so approval resolves fees for rows created inside the open tx.
  */
-export async function determineEntranceFeeCategory(
-  memberId: string,
-  // Optional transaction client (#1886): the membership-approval flow calls
-  // this for a member (and family group) created inside a still-open
-  // transaction, so those rows are only visible through that same client.
-  store: Prisma.TransactionClient | typeof prisma = prisma
-): Promise<EntranceFeeCategory> {
-  const member = await store.member.findUnique({
-    where: { id: memberId },
-    select: { ageTier: true },
-  });
-
-  if (!member) return "ADULT";
-
-  if (member.ageTier === "YOUTH") return "YOUTH";
-  if (member.ageTier === "CHILD" || member.ageTier === "INFANT") return "CHILD";
-  // NOT_APPLICABLE (organisations/schools, #1440) nominally falls through to
-  // ADULT so this stays a total function over the enum, but such members are
-  // exempt from entrance fees entirely — getEntranceFeeContext flags them
-  // and both invoice paths skip before any amount is considered (owner
-  // decision, 2026-07-07).
-
-  // ADULT tier — check if they qualify for FAMILY rate
-  const familyMemberships = await store.familyGroupMember.findMany({
-    where: { memberId },
-    select: { familyGroupId: true },
-  });
-
-  for (const fm of familyMemberships) {
-    const groupMembers = await store.familyGroupMember.findMany({
-      where: { familyGroupId: fm.familyGroupId },
-      include: { member: { select: { ageTier: true } } },
-    });
-
-    const adults = groupMembers.filter((gm) =>
-      gm.member.ageTier === "ADULT"
-    );
-    const dependents = groupMembers.filter((gm) =>
-      gm.member.ageTier === "CHILD" || gm.member.ageTier === "YOUTH" || gm.member.ageTier === "INFANT"
-    );
-
-    if (adults.length >= 2 && dependents.length >= 1) {
-      return "FAMILY";
-    }
-  }
-
-  return "ADULT";
-}
-
 export async function getEntranceFeeContext(
   memberId: string,
-  // Optional transaction client (#1886) — see determineEntranceFeeCategory.
-  // Only the member/family reads go through it; the fee-mapping lookups below
-  // read committed configuration tables the caller's transaction never
-  // touches, so they intentionally stay on the global client.
   store: Prisma.TransactionClient | typeof prisma = prisma
 ): Promise<EntranceFeeContext> {
-  const member = await store.member.findUnique({
-    where: { id: memberId },
-    select: { ageTier: true },
-  });
+  const classification = await resolveMemberJoiningFeeClassification(memberId, store);
 
-  if (member?.ageTier === "NOT_APPLICABLE") {
+  if (classification.exempt) {
     // Exempt: no fee mapping is looked up and callers must not bill, even
     // with an explicit amount override.
     return {
@@ -301,12 +355,32 @@ export async function getEntranceFeeContext(
     };
   }
 
-  const category = await determineEntranceFeeCategory(memberId, store);
-  const feeMapping = await getEntranceFeeMapping(category);
+  const category = classification.category;
+  const amountCents = classification.membershipTypeId
+    ? (
+        await getEffectiveJoiningFee(
+          { membershipTypeId: classification.membershipTypeId, ageTier: classification.ageTier },
+          undefined,
+          store,
+        )
+      ).amountCents
+    : null;
+  const itemCode = await getJoiningFeeItemCode(category);
 
-  return { category, feeMapping };
+  return {
+    category,
+    feeMapping: { itemCode, amountCents },
+    membershipTypeId: classification.membershipTypeId,
+    ageTier: classification.ageTier,
+  };
 }
 
+// Outbox correlation/dedupe key (#1931, E5): moves to v2 for the re-keyed
+// joining-fee model. Keyed by member + derived category + amount — within a
+// member the category+amount uniquely identifies the charge, and cross-member
+// collisions are impossible (memberId is in the key). Kept DISTINCT from the
+// member-scoped mint key below, which is the true anti-double-mint guard and
+// stays at v1 so it keeps matching pre-rename mints.
 export function buildEntranceFeeInvoiceIdempotencyKey(
   memberId: string,
   category: EntranceFeeCategory,
@@ -315,10 +389,10 @@ export function buildEntranceFeeInvoiceIdempotencyKey(
   return buildXeroIdempotencyKey(
     "member",
     memberId,
-    "entrance-fee-invoice",
+    "joining-fee-invoice",
     category,
     amountCents,
-    "v1"
+    "v2"
   );
 }
 

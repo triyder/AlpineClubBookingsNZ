@@ -2,6 +2,11 @@
 
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
+import {
+  AdminViewOnlyNotice,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action";
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog,
@@ -128,6 +133,9 @@ function replacementKey(applicationId: string, slot: NominatorSlot) {
 }
 
 export default function MemberApplicationsPage() {
+  // Approve/decline/refresh/replace all write membership-area routes; a
+  // view-only membership admin browses applications but cannot act (#1997).
+  const canEditMembership = useAdminAreaEditAccess("membership");
   const [filter, setFilter] = useState("PENDING_ADMIN");
   const [applications, setApplications] = useState<ApplicationRecord[]>([]);
   const [pendingCount, setPendingCount] = useState(0);
@@ -465,14 +473,15 @@ export default function MemberApplicationsPage() {
                       </p>
                       <p className="text-xs text-slate-600">{member.email}</p>
                     </div>
-                    <Button
+                    <ViewOnlyActionButton
+                      canEdit={canEditMembership}
                       type="button"
                       size="sm"
                       disabled={submittingId === application.id}
                       onClick={() => replaceNominator(application.id, slot, member)}
                     >
                       Use
-                    </Button>
+                    </ViewOnlyActionButton>
                   </div>
                 ))}
               </div>
@@ -511,6 +520,13 @@ export default function MemberApplicationsPage() {
           ))}
         </div>
       </div>
+
+      {!canEditMembership && (
+        <AdminViewOnlyNotice canEdit={canEditMembership}>
+          Your admin role can view member applications but cannot approve,
+          decline, or otherwise act on them.
+        </AdminViewOnlyNotice>
+      )}
 
       {message && (
         <div className="rounded-md border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
@@ -657,6 +673,7 @@ export default function MemberApplicationsPage() {
                   <ApprovalMappingPanel
                     application={application}
                     submitting={submittingId === application.id}
+                    canEdit={canEditMembership}
                     onError={setError}
                     onRequestReview={(payload) =>
                       requestReview(application.id, payload)
@@ -673,7 +690,8 @@ export default function MemberApplicationsPage() {
                       nominator above.
                     </p>
                     <div className="flex flex-wrap gap-3">
-                      <Button
+                      <ViewOnlyActionButton
+                        canEdit={canEditMembership}
                         type="button"
                         disabled={submittingId === application.id}
                         onClick={() => refreshNominations(application.id)}
@@ -681,8 +699,9 @@ export default function MemberApplicationsPage() {
                         {submittingId === application.id
                           ? "Working..."
                           : "Refresh nomination workflow"}
-                      </Button>
-                      <Button
+                      </ViewOnlyActionButton>
+                      <ViewOnlyActionButton
+                        canEdit={canEditMembership}
                         type="button"
                         variant="outline"
                         disabled={submittingId === application.id}
@@ -696,7 +715,7 @@ export default function MemberApplicationsPage() {
                         }
                       >
                         Reject application
-                      </Button>
+                      </ViewOnlyActionButton>
                     </div>
                   </div>
                 )}

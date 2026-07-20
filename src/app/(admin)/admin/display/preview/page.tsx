@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { BackLink } from "@/components/admin/back-link";
 
 // Sandboxed template preview host (LTV-036, ADR-003 §5). Previews now render
 // AUTHORED admin HTML/CSS, so they must NOT run in an admin's authenticated
@@ -103,7 +104,8 @@ export default function AdminDisplayPreviewPage() {
   return (
     <div className="space-y-4 p-6">
       <div>
-        <h1 className="text-2xl font-bold">Template preview</h1>
+        <BackLink href="/admin/display/templates" label="Display Templates" />
+        <h1 className="mt-2 text-2xl font-bold">Template preview</h1>
         <p className="text-muted-foreground text-sm">
           {templateName ? (
             <>

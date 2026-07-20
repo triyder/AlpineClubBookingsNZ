@@ -60,6 +60,7 @@ describe("general cron runner", () => {
           bumpedBookingIds: [],
           partialBumpedBookingIds: [],
           failedBookingIds: [],
+          cancelledBookingIds: [],
         })),
         reapStaleGroupSettlements: vi.fn(async () => ({
           scanned: 1,

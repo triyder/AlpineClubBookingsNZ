@@ -26,6 +26,7 @@ import {
 } from "@/lib/payment-transactions";
 import { attachPaymentIntentToWaitingSupplementaryInvoiceOperations } from "@/lib/xero-operation-outbox";
 import { sendAdminPaymentFailureAlert } from "@/lib/email";
+import { recordDuplicateCaptureRefundEvent } from "@/lib/booking-events";
 import logger from "@/lib/logger";
 import { MAX_PAYMENT_RECOVERY_ATTEMPTS } from "@/lib/payment-recovery-constants";
 import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
@@ -352,6 +353,9 @@ import {
   buildBookingModificationRefundMetadata,
   buildCapacityClaimFailedRefundRecoveryIdempotencyKey,
   buildCapacityClaimFailedRefundStripeKeyPrefix,
+  buildDuplicateCaptureRefundRecoveryIdempotencyKey,
+  buildDuplicateCaptureRefundRecoveryKeyPrefixForBooking,
+  buildDuplicateCaptureRefundStripeKeyPrefix,
   buildRefundRequestRefundMetadata,
   bookingModificationRefundReasonForKeyPrefix,
 } from "./payment-recovery-keys";
@@ -553,6 +557,156 @@ export async function recordCapacityClaimFailedRefundRecoveryInlineError({
   return store.paymentRecoveryOperation.updateMany({
     where: {
       idempotencyKey: buildCapacityClaimFailedRefundRecoveryIdempotencyKey(
+        bookingId,
+        paymentIntentId,
+      ),
+      status: PaymentRecoveryOperationStatus.PENDING,
+    },
+    data: {
+      lastError: message,
+    },
+  });
+}
+
+/**
+ * Durable recovery for the duplicate-capture auto-refund (#1992): a SECOND,
+ * distinct Stripe capture arrived on an already-PAID booking — the residual
+ * #1967 split-child window where an in-flight /pay link PaymentIntent (client
+ * secret already in the member's browser) and the settlement cron's saved-card
+ * charge both capture. Enqueued INSIDE the reconciliation transaction (under
+ * lock(1), with the refund allocation pinned to exactly the duplicate
+ * transaction's captured amount, BEFORE any Stripe call — the #1349
+ * enqueue-then-execute pattern), so a transient inline refund failure or a
+ * process death after the commit leaves a PENDING operation the recovery cron
+ * replays with backoff. The processor replays the frozen plan under the stored
+ * inline Stripe key prefix (`duplicate_capture_refund_<bookingId>_<pi>`), so a
+ * refund that succeeded on Stripe but was never recorded is replayed, never
+ * repeated. One operation per (booking, duplicate intent); the per-booking key
+ * prefix is also the adjudication marker that keeps the refund direction
+ * stable when BOTH captures' webhooks replay (see
+ * findOtherDuplicateCaptureRefundOperation).
+ */
+export async function enqueueDuplicateCaptureRefundRecovery({
+  bookingId,
+  paymentId,
+  paymentIntentId,
+  amountCents,
+  allocationPlan,
+  store = prisma,
+}: {
+  bookingId: string;
+  paymentIntentId: string;
+  paymentId: string;
+  amountCents: number;
+  /** The single slice pinned to the duplicate capture's own transaction. */
+  allocationPlan: RefundAllocationSlice[];
+  store?: PaymentRecoveryStore;
+}) {
+  return enqueueLedgerRefundRecovery({
+    bookingId,
+    paymentId,
+    amountCents,
+    idempotencyKey: buildDuplicateCaptureRefundRecoveryIdempotencyKey(
+      bookingId,
+      paymentIntentId,
+    ),
+    stripeKeyPrefix: buildDuplicateCaptureRefundStripeKeyPrefix(
+      bookingId,
+      paymentIntentId,
+    ),
+    allocationPlan,
+    store,
+  });
+}
+
+/**
+ * The duplicate-capture adjudication lookup (#1992): returns the existing
+ * duplicate-capture refund operation for this booking that targets a DIFFERENT
+ * intent, or null. Callers run this under lock(1) BEFORE enqueueing a new
+ * duplicate-capture refund: if some other intent's duplicate refund was already
+ * adjudicated for the booking, the arriving intent is the SETTLEMENT side of
+ * that pair and must not be refunded — otherwise interleaved webhook replays of
+ * the two captures would refund both sides and settle the booking at zero net
+ * cash.
+ */
+export async function findOtherDuplicateCaptureRefundOperation({
+  bookingId,
+  paymentIntentId,
+  store = prisma,
+}: {
+  bookingId: string;
+  paymentIntentId: string;
+  store?: PaymentRecoveryStore;
+}) {
+  return store.paymentRecoveryOperation.findFirst({
+    where: {
+      idempotencyKey: {
+        startsWith:
+          buildDuplicateCaptureRefundRecoveryKeyPrefixForBooking(bookingId),
+        not: buildDuplicateCaptureRefundRecoveryIdempotencyKey(
+          bookingId,
+          paymentIntentId,
+        ),
+      },
+    },
+  });
+}
+
+/**
+ * Happy-path close of the duplicate-capture refund recovery operation after
+ * the inline refund completed (#1992). Best-effort (mirrors #1349): a lost
+ * close leaves a PENDING operation whose replay re-requests the identical
+ * frozen slice under the identical Stripe keys — Stripe answers with the
+ * original refund and the ledger dedupes on refund id.
+ */
+export async function markDuplicateCaptureRefundRecoverySucceeded({
+  bookingId,
+  paymentIntentId,
+  store = prisma,
+}: {
+  bookingId: string;
+  paymentIntentId: string;
+  store?: PaymentRecoveryStore;
+}) {
+  return store.paymentRecoveryOperation.updateMany({
+    where: {
+      idempotencyKey: buildDuplicateCaptureRefundRecoveryIdempotencyKey(
+        bookingId,
+        paymentIntentId,
+      ),
+      status: { not: PaymentRecoveryOperationStatus.SUCCEEDED },
+    },
+    data: {
+      status: PaymentRecoveryOperationStatus.SUCCEEDED,
+      nextRetryAt: null,
+      lastError: null,
+      processingStartedAt: null,
+      succeededAt: new Date(),
+    },
+  });
+}
+
+/**
+ * Record why the inline duplicate-capture refund failed on the
+ * already-persisted recovery operation (#1992), for operator visibility on the
+ * health surfaces. Only touches a PENDING row (mirrors the #1349 recorder):
+ * once the cron has claimed or resolved the operation, its own lifecycle owns
+ * lastError.
+ */
+export async function recordDuplicateCaptureRefundRecoveryInlineError({
+  bookingId,
+  paymentIntentId,
+  message,
+  store = prisma,
+}: {
+  bookingId: string;
+  paymentIntentId: string;
+  message: string;
+  store?: PaymentRecoveryStore;
+}) {
+  return store.paymentRecoveryOperation.updateMany({
+    where: {
+      idempotencyKey: buildDuplicateCaptureRefundRecoveryIdempotencyKey(
         bookingId,
         paymentIntentId,
       ),
@@ -1275,6 +1429,49 @@ async function processBookingModificationRefundOperation(
     metadata,
     idempotencyKeyPrefix,
   });
+
+  // #2008 — the #1992 duplicate-capture auto-refund replays through this generic
+  // modification-refund executor (its durable operation is a
+  // REFUND_BOOKING_MODIFICATION carrying a `duplicate_capture_<bookingId>_<pi>`
+  // idempotency key). On this recovery-replay path record the admin-only
+  // history event, gated on the terminal SUCCEEDED transition actually flipping
+  // the operation (count > 0) so it lands EXACTLY ONCE across the inline and
+  // cron paths: if the inline refund already closed the operation and recorded
+  // the event, this replay sees count 0 and records nothing. The guarded
+  // updateMany sets the identical terminal fields completePaymentRecoveryOperation
+  // would.
+  const duplicateCapturePrefix =
+    buildDuplicateCaptureRefundRecoveryKeyPrefixForBooking(operation.bookingId);
+  if (operation.idempotencyKey.startsWith(duplicateCapturePrefix)) {
+    const transition = await prisma.paymentRecoveryOperation.updateMany({
+      where: {
+        id: operation.id,
+        status: { not: PaymentRecoveryOperationStatus.SUCCEEDED },
+      },
+      data: {
+        status: PaymentRecoveryOperationStatus.SUCCEEDED,
+        nextRetryAt: null,
+        lastError: null,
+        processingStartedAt: null,
+        succeededAt: new Date(),
+      },
+    });
+    if (transition.count > 0) {
+      await recordDuplicateCaptureRefundEvent({
+        bookingId: operation.bookingId,
+        amountCents: operation.amountCents,
+        // The duplicate intent id is the suffix of the operation's per-booking
+        // idempotency key. The settling intent is not persisted on the
+        // operation, so the replay records it as null (the inline path, which
+        // owns the common case, carries the settling intent).
+        duplicatePaymentIntentId: operation.idempotencyKey.slice(
+          duplicateCapturePrefix.length,
+        ),
+        settledPaymentIntentId: null,
+      });
+    }
+    return;
+  }
 
   await completePaymentRecoveryOperation(operation.id);
 }

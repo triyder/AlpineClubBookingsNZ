@@ -69,6 +69,9 @@ vi.mock("@/lib/capacity", () => ({
 vi.mock("@/lib/lodge-capacity", () => ({
   getLodgeCapacity: vi.fn().mockResolvedValue(40),
   getDefaultLodgeCapacity: vi.fn().mockResolvedValue(40),
+  // club-identity.ts (in this suite's module graph since #1985's bootstrap
+  // rewiring) reads this display-only constant at module init.
+  FALLBACK_LODGE_CAPACITY: 20,
 }));
 
 vi.mock("@/lib/lodge-pin-session", () => ({

@@ -1,4 +1,5 @@
 import type { FinanceAccessLevel, Gender, Title } from "@prisma/client"
+import type { MembershipTypeAgeExemption } from "@/lib/membership-types"
 import { legacyRoleFromAccessRoles } from "@/lib/access-roles"
 import { financeAccessLevelFromMatrix } from "@/lib/admin-permissions"
 import {
@@ -141,7 +142,10 @@ export function buildAccountEditForm(
   }
 }
 
-export function buildContactPayload(form: MemberContactEditForm) {
+export function buildContactPayload(
+  form: MemberContactEditForm,
+  options?: { ageExemption?: MembershipTypeAgeExemption | null }
+) {
   return {
     title: form.title || null,
     firstName: form.firstName,
@@ -155,10 +159,18 @@ export function buildContactPayload(form: MemberContactEditForm) {
     joinedDate: form.joinedDate || null,
     occupation: form.occupation || null,
     comments: form.comments || null,
-    // NOT_APPLICABLE is server-managed (#1440): organisations get it forced
-    // on every write, and a member reclassified away from Organisation needs
-    // the server to restore a DOB-derived tier — so it is never submitted.
-    ...(form.ageTier === "NOT_APPLICABLE" ? {} : { ageTier: form.ageTier }),
+    // Age tier: a real person tier is always sent. NOT_APPLICABLE is normally
+    // server-managed (#1440) — organisations get it forced, and a member
+    // reclassified away from Organisation needs the server to restore a
+    // DOB-derived tier — so it is omitted by default. The ONE case we submit
+    // N/A is an ALLOWED-type manual pick (#2106): the type offers N/A alongside
+    // person tiers, so an admin's hand-picked N/A must reach the server. This
+    // is always an edit context (no create), so there is no create-mode guard.
+    ...(form.ageTier === "NOT_APPLICABLE"
+      ? options?.ageExemption === "ALLOWED"
+        ? { ageTier: "NOT_APPLICABLE" }
+        : {}
+      : { ageTier: form.ageTier }),
     streetAddressLine1: form.streetAddressLine1 || null,
     streetAddressLine2: form.streetAddressLine2 || null,
     streetCity: form.streetCity || null,

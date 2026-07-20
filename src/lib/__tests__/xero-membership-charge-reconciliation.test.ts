@@ -11,9 +11,13 @@ const mocks = vi.hoisted(() => ({
   subscriptionUpdateMany: vi.fn(),
   subscriptionCreateMany: vi.fn(),
   subscriptionDeleteMany: vi.fn(),
+  subscriptionUpdate: vi.fn(),
   objectLinkUpdateMany: vi.fn(),
   transaction: vi.fn(),
   coverageFindMany: vi.fn(),
+  coverageFindFirst: vi.fn(),
+  coverageUpdateMany: vi.fn(),
+  chargeUpdateMany: vi.fn(),
   getInvoice: vi.fn(),
   getInvoices: vi.fn(),
   getOnlineInvoice: vi.fn(),
@@ -29,12 +33,18 @@ vi.mock("@/lib/prisma", () => ({
       findFirst: mocks.subscriptionFindFirst,
       findMany: mocks.subscriptionFindMany,
       upsert: mocks.subscriptionUpsert,
+      update: mocks.subscriptionUpdate,
       updateMany: mocks.subscriptionUpdateMany,
       createMany: mocks.subscriptionCreateMany,
       deleteMany: mocks.subscriptionDeleteMany,
     },
     xeroObjectLink: { updateMany: mocks.objectLinkUpdateMany },
-    membershipSubscriptionChargeCoverage: { findMany: mocks.coverageFindMany },
+    membershipSubscriptionChargeCoverage: {
+      findMany: mocks.coverageFindMany,
+      findFirst: mocks.coverageFindFirst,
+      updateMany: mocks.coverageUpdateMany,
+    },
+    membershipSubscriptionCharge: { updateMany: mocks.chargeUpdateMany },
     $transaction: mocks.transaction,
   },
 }));
@@ -97,9 +107,9 @@ describe("membership charge reconciliation", () => {
       xeroInvoiceNumber: "INV-42",
       xeroOnlineInvoiceUrl: "https://in.xero.com/invoice-family",
       paidAt: null,
-      chargeCoverage: {
-        charge: { xeroInvoiceId: "invoice-family" },
-      },
+      chargeCoverage: [
+        { charge: { xeroInvoiceId: "invoice-family" } },
+      ],
     });
     mocks.startOperation.mockResolvedValue({ id: "operation-1" });
     mocks.subscriptionUpsert.mockResolvedValue({ id: "subscription-2" });
@@ -110,6 +120,18 @@ describe("membership charge reconciliation", () => {
       xeroOnlineInvoiceUrl: "https://in.xero.com/invoice-family",
     });
     mocks.coverageFindMany.mockResolvedValue([]);
+    mocks.coverageFindFirst.mockResolvedValue(null);
+    mocks.coverageUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.chargeUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.subscriptionUpdate.mockResolvedValue({ id: "subscription-2", voidGeneration: 1 });
+    // #2147: releaseVoidedSubscriptionInvoice runs inside prisma.$transaction —
+    // pass a tx client exposing the delegates it writes.
+    mocks.transaction.mockImplementation(async (callback: (tx: unknown) => unknown) => callback({
+      membershipSubscriptionChargeCoverage: { findFirst: mocks.coverageFindFirst, updateMany: mocks.coverageUpdateMany },
+      membershipSubscriptionCharge: { updateMany: mocks.chargeUpdateMany },
+      memberSubscription: { update: mocks.subscriptionUpdate, updateMany: mocks.subscriptionUpdateMany },
+      xeroObjectLink: { updateMany: mocks.objectLinkUpdateMany },
+    }));
     mocks.memberFindMany.mockResolvedValue([]);
     mocks.getOnlineInvoice.mockResolvedValue({ body: { onlineInvoices: [{ onlineInvoiceUrl: "https://in.xero.com/invoice-family" }] } });
     mocks.getInvoice.mockResolvedValue({
@@ -139,7 +161,7 @@ describe("membership charge reconciliation", () => {
       xeroInvoiceNumber: null,
       xeroOnlineInvoiceUrl: null,
       paidAt: new Date("2026-05-01T00:00:00.000Z"),
-      chargeCoverage: null,
+      chargeCoverage: [],
     });
 
     const result = await checkMembershipStatus("family-member-2", 2026);
@@ -149,6 +171,62 @@ describe("membership charge reconciliation", () => {
     expect(mocks.getInvoice).not.toHaveBeenCalled();
     expect(mocks.getInvoices).not.toHaveBeenCalled();
     expect(mocks.startOperation).not.toHaveBeenCalled();
+  });
+
+  it("releases a voided invoice: nulls the link, marks the charge VOIDED, bumps voidGeneration (#2147)", async () => {
+    // The member's covering invoice is voided in Xero. checkMembershipStatus
+    // must set NOT_INVOICED (no longer locked out), release the active coverage
+    // claim, mark the covering charge VOIDED, and bump voidGeneration.
+    mocks.subscriptionFindUnique.mockResolvedValue({
+      id: "sub-void",
+      status: "UNPAID",
+      xeroInvoiceId: "invoice-void",
+      xeroInvoiceNumber: "INV-V",
+      xeroOnlineInvoiceUrl: "https://in.xero.com/invoice-void",
+      paidAt: null,
+      chargeCoverage: [{ charge: { xeroInvoiceId: "invoice-void" } }],
+    });
+    mocks.coverageFindFirst.mockResolvedValue({ id: "cov-void", chargeId: "charge-void" });
+    mocks.getInvoice.mockResolvedValue({
+      body: { invoices: [{
+        invoiceID: "invoice-void",
+        invoiceNumber: "INV-V",
+        type: Invoice.TypeEnum.ACCREC,
+        status: Invoice.StatusEnum.VOIDED,
+      }] },
+    });
+
+    const result = await checkMembershipStatus("family-member-2", 2026);
+
+    expect(result.status).toBe("NOT_INVOICED");
+    // Coverage claim released, not deleted.
+    expect(mocks.coverageUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "cov-void", releasedAt: null },
+      data: { releasedAt: expect.any(Date) },
+    }));
+    // Charge marked VOIDED (kept for audit).
+    expect(mocks.chargeUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "charge-void", status: { not: "VOIDED" } },
+      data: expect.objectContaining({ status: "VOIDED" }),
+    }));
+    // voidGeneration bumped so a re-bill mints a new charge.
+    expect(mocks.subscriptionUpdate).toHaveBeenCalledWith({
+      where: { id: "sub-void" },
+      data: { voidGeneration: { increment: 1 } },
+    });
+    // Subscription invoice link nulled, guarded on the voided invoice id.
+    expect(mocks.subscriptionUpdateMany).toHaveBeenCalledWith({
+      where: { memberId: "family-member-2", seasonYear: 2026, xeroInvoiceId: "invoice-void" },
+      data: {
+        status: "NOT_INVOICED",
+        xeroInvoiceId: null,
+        xeroInvoiceNumber: null,
+        xeroOnlineInvoiceUrl: null,
+        paidAt: null,
+      },
+    });
+    // No blind PAID/UNPAID write of the voided invoice back onto the row.
+    expect(mocks.subscriptionUpsert).not.toHaveBeenCalled();
   });
 
   it("refreshes a non-recipient family subscription by its immutable charge invoice", async () => {
@@ -195,7 +273,7 @@ describe("membership charge reconciliation", () => {
         xeroInvoiceNumber: null,
         xeroOnlineInvoiceUrl: null,
         paidAt: null,
-        chargeCoverage: { charge: { xeroInvoiceId: "invoice-family" } },
+        chargeCoverage: [{ charge: { xeroInvoiceId: "invoice-family" } }],
       })
       // …after the write fence skips the row, the surviving read shows the
       // manual PAID that a treasurer recorded during the Xero round-trips.
@@ -267,7 +345,7 @@ describe("membership charge reconciliation", () => {
       xeroInvoiceNumber: "INV-42",
       xeroOnlineInvoiceUrl: "https://in.xero.com/invoice-family",
       paidAt: null,
-      chargeCoverage: { charge: { xeroInvoiceId: "invoice-family" } },
+      chargeCoverage: [{ charge: { xeroInvoiceId: "invoice-family" } }],
     });
     mocks.getInvoice.mockResolvedValue({
       body: { invoices: [{
@@ -316,9 +394,9 @@ describe("flushMemberSubscriptionHistory (#1944)", () => {
     // billing sweep would re-invoice the member who already paid — the exact
     // mid-season Xero-adoption scenario this feature exists for.
     mocks.subscriptionFindMany.mockResolvedValue([
-      { id: "sub-derived", seasonYear: 2026, manuallyMarkedPaidAt: null, chargeCoverage: null },
-      { id: "sub-manual", seasonYear: 2026, manuallyMarkedPaidAt: new Date("2026-07-01T00:00:00.000Z"), chargeCoverage: null },
-      { id: "sub-covered", seasonYear: 2025, manuallyMarkedPaidAt: null, chargeCoverage: { id: "coverage-1" } },
+      { id: "sub-derived", seasonYear: 2026, manuallyMarkedPaidAt: null, chargeCoverage: [] },
+      { id: "sub-manual", seasonYear: 2026, manuallyMarkedPaidAt: new Date("2026-07-01T00:00:00.000Z"), chargeCoverage: [] },
+      { id: "sub-covered", seasonYear: 2025, manuallyMarkedPaidAt: null, chargeCoverage: [{ id: "coverage-1" }] },
     ]);
 
     const result = await flushMemberSubscriptionHistory("member-1");
@@ -338,8 +416,8 @@ describe("flushMemberSubscriptionHistory (#1944)", () => {
 
   it("deletes nothing when every row is manual-PAID or charge-covered", async () => {
     mocks.subscriptionFindMany.mockResolvedValue([
-      { id: "sub-manual", seasonYear: 2026, manuallyMarkedPaidAt: new Date("2026-07-01T00:00:00.000Z"), chargeCoverage: null },
-      { id: "sub-covered", seasonYear: 2025, manuallyMarkedPaidAt: null, chargeCoverage: { id: "coverage-1" } },
+      { id: "sub-manual", seasonYear: 2026, manuallyMarkedPaidAt: new Date("2026-07-01T00:00:00.000Z"), chargeCoverage: [] },
+      { id: "sub-covered", seasonYear: 2025, manuallyMarkedPaidAt: null, chargeCoverage: [{ id: "coverage-1" }] },
     ]);
 
     const result = await flushMemberSubscriptionHistory("member-1");

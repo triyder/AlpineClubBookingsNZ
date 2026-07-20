@@ -36,8 +36,9 @@ export function buildUnpaidFinishedStaysHref(todayKey: string): string {
  * delta without being PAYMENT_PENDING (which the primary predicate above
  * already counts — keeping the sets disjoint means the two queue counts can
  * be summed without double-counting a booking). COMPLETED matters most: the
- * completion cron advances PAID bookings once check-in passes, so a finished
- * paid stay has usually already left PAID by the time its delta lingers.
+ * completion cron advances PAID bookings once their check-out day has passed
+ * (#2029), so a finished paid stay has usually already left PAID by the time
+ * its delta lingers.
  */
 const ADDITIONAL_OWED_BOOKING_STATUSES = [
   "CONFIRMED",

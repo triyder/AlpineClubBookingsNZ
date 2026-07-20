@@ -1,5 +1,6 @@
 import {
   adminPaymentFailureTemplate,
+  adminDuplicateCaptureRefundTemplate,
   adminXeroSyncErrorTemplate,
   adminXeroRepeatedFailureTemplate,
   adminXeroReconciliationReportTemplate,
@@ -29,6 +30,61 @@ export async function sendAdminPaymentFailureAlert(data: {
       checkIn: formatNZDate(data.checkIn),
       checkOut: formatNZDate(data.checkOut),
       amount: formatMoneyCents(data.amountCents),
+    },
+    preferenceKey: "adminPaymentFailure",
+  });
+}
+
+// #1992 / #2007: Admin alert — duplicate-capture auto-refund. A second, distinct
+// Stripe capture landed on a booking already settled by another intent, so the
+// duplicate charge is auto-refunded. A DEDICATED template (not the generic
+// payment-anomaly alert) so the copy states the real situation on each outcome.
+// `refundFailed` selects the wording (one-template-with-boolean precedent, like
+// adminSplitSettlementUnpaidTemplate's parentUnpaid). Gated by the same
+// adminPaymentFailure preference as its siblings; NOT delivery-locked (the
+// #1994 adjudication: no direct money loss from muting — the refund already
+// happened or is durably queued for the recovery cron).
+export async function sendAdminDuplicateCaptureRefundAlert(data: {
+  memberName: string;
+  checkIn: Date;
+  checkOut: Date;
+  amountCents: number;
+  paymentIntentId: string;
+  settledPaymentIntentId: string | null;
+  operationReference: string;
+  errorMessage?: string | null;
+  refundFailed: boolean;
+}) {
+  const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
+  const reviewUrl = `${baseUrl}/admin/payments`;
+
+  await sendToAdmins({
+    subject: data.refundFailed
+      ? `Duplicate capture auto-refund failed — retry queued: ${data.memberName}`
+      : `Duplicate capture auto-refunded: ${data.memberName}`,
+    html: adminDuplicateCaptureRefundTemplate({
+      memberName: data.memberName,
+      checkIn: data.checkIn,
+      checkOut: data.checkOut,
+      amountCents: data.amountCents,
+      paymentIntentId: data.paymentIntentId,
+      settledPaymentIntentId: data.settledPaymentIntentId,
+      operationReference: data.operationReference,
+      errorMessage: data.errorMessage ?? null,
+      reviewUrl,
+      refundFailed: data.refundFailed,
+    }),
+    templateName: "admin-duplicate-capture-refund",
+    templateData: {
+      memberName: data.memberName,
+      checkIn: formatNZDate(data.checkIn),
+      checkOut: formatNZDate(data.checkOut),
+      amount: formatMoneyCents(data.amountCents),
+      paymentIntentId: data.paymentIntentId,
+      operation: data.operationReference,
+      errorMessage: data.errorMessage ?? "",
+      reviewUrl,
+      refundFailed: data.refundFailed,
     },
     preferenceKey: "adminPaymentFailure",
   });

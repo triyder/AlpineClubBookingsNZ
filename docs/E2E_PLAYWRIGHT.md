@@ -18,6 +18,7 @@ the demo seed (`prisma/demo-seed.ts`).
 | `e2e/waitlist.spec.ts` | Waitlist / force-confirm / offer (High) | Member is refused a seeded-full night and joins the waitlist (WAITLISTED); admin force-confirms it off the waitlist (overbook branch) through `/admin/waitlist`; member accepts a seeded, non-expired offer through the offer card; the admin waitlist surfaces offer + expiry state |
 | `e2e/internet-banking.spec.ts` | Internet Banking settlement (Critical) | With Xero **absent**, a card PAYMENT_PENDING booking is switched to Internet Banking; the detail page shows the Internet Banking card with a `BOOKING-…` reference and does not crash (the Xero invoice is queued but never sent while disconnected). Toggles the Xero + Internet Banking modules on for its run and restores them |
 | `e2e/membership-application.spec.ts` | Membership application (High) | Public application submit; both nominators agree through the real `/nominations/<token>` pages; admin approves; the applicant then exists as a member |
+| `e2e/print-dark-mode.spec.ts` | No matrix row — regression guard for #2146 (Medium) | Renders `/admin/reports` and `/finance` as the Full Admin with the app in **dark** mode, then flips the page to print media (`emulateMedia({ media: "print", colorScheme: "dark" })`) and asserts the computed ink is dark on a light surface — the blank-looking export in #2146 was near-white text on a forced-white card. Also asserts dark mode really is applied on screen first (so the check cannot pass vacuously), that `.dark` is still on `<html>` while printing (print wins *despite* the theme, not by switching it off), and that the printed colours are identical with and without the theme class. The only browser coverage of print/theme interaction; every other guard is a source-text parser |
 
 Not covered by browser tests (by design):
 
@@ -155,9 +156,16 @@ providers, and `scripts/e2e-stack.sh` refuses to run if it sees `sk_live`/
   start of each run; the email-code persona needs no stored secret because its
   code is read live from mailpit each time.
 - Stay dates are computed relative to today (Monday–Wednesday windows at least
-  three weeks out). The base seed's seasons cover Jun–Sep 2026 and Nov
-  2026–Mar 2027; a run whose windows fall in a season gap fails loudly at the
-  season assertion — extend the seeded seasons if that happens.
+  three weeks out). Since #2117 the E2E DB's booking **seasons are also
+  relative**: `e2e/setup/relativize-seasons.ts` (run by `scripts/e2e-stack.sh`
+  after the base seed) re-dates them to the broad Winter/Summer bands defined in
+  `SEEDED_SEASONS` (`prisma/e2e-fixtures.ts`), which always bracket the seeded
+  fixtures and the stay-window horizon. Likewise **every seeded booking date is
+  relative** (`DEMO_BOOKING_WINDOWS` / the window fixtures in
+  `prisma/e2e-fixtures.ts`), so nothing rots red as wall-clock advances and the
+  seasons never need manual extension. The production first-run seed
+  (`prisma/seed.ts`) keeps its fixed real-world season dates — only the demo/E2E
+  database is relativized.
 
 ## Seeded fixtures and personas
 

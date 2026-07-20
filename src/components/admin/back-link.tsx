@@ -8,6 +8,21 @@ import Link from "next/link";
  * important on kiosk/touch where there may be no history to go back to). Pass
  * the parent hub's route as `href` and its human name as `label`; the component
  * prepends the ← affordance and the shared underline styling.
+ *
+ * RULE (enforced): every admin drill-down leaf page must render `BackLink` to
+ * its parent, and be covered by an enforcement suite. Statically renderable
+ * leaves live in `src/lib/__tests__/admin-leaf-back-links.test.tsx`; the
+ * client-gated leaves that fetch on mount live in the companion RTL suite
+ * `src/lib/__tests__/admin-drilldown-back-links-client.test.tsx`. When you add a
+ * leaf under an admin hub, add its BackLink here AND extend whichever suite fits
+ * its render model — the frozen contract fails if a covered leaf loses its link.
+ *
+ * Dynamic-parent variant: a few drill-downs sit under a parent that is itself
+ * dynamic (an `[id]` record page, or a caller-provided `returnTo`) rather than a
+ * fixed hub. `BackLink` already accepts an arbitrary `href`/`label`, so those
+ * pages need no new component — resolve the parent route (e.g.
+ * `/admin/lodges/${id}`) and pass it as `href`. The static-hub case is the
+ * common one; the dynamic-parent case is the documented exception.
  */
 export function BackLink({ href, label }: { href: string; label: string }) {
   return (

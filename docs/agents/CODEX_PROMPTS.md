@@ -3,6 +3,10 @@
 These prompts are copy-paste-ready starting points. Replace bracketed values
 before use. Keep secrets and production data out of prompts.
 
+The "repo-local skills" these prompts refer to are documented in
+[`codex/skills/README.md`](codex/skills/README.md) (the source folders and the
+dry-run installer).
+
 ## Bootstrap Setup
 
 ```text

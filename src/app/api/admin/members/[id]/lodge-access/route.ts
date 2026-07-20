@@ -31,7 +31,9 @@ export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "membership", level: "view" },
+  });
   if (!guard.ok) return guard.response;
   const { id: memberId } = await params;
 
@@ -61,7 +63,9 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "membership", level: "edit" },
+  });
   if (!guard.ok) return guard.response;
   const session = guard.session;
   const { id: memberId } = await params;

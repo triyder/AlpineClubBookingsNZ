@@ -10,6 +10,7 @@ vi.mock("@/lib/prisma", () => ({
       findFirst: vi.fn(),
       create: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
       upsert: vi.fn(),
       deleteMany: vi.fn(),
     },
@@ -44,6 +45,7 @@ const mockPrisma = prisma as unknown as {
     findFirst: ReturnType<typeof vi.fn>;
     create: ReturnType<typeof vi.fn>;
     update: ReturnType<typeof vi.fn>;
+    updateMany: ReturnType<typeof vi.fn>;
     upsert: ReturnType<typeof vi.fn>;
     deleteMany: ReturnType<typeof vi.fn>;
   };
@@ -105,6 +107,7 @@ describe("Xero item-code mappings route", () => {
     mockPrisma.xeroItemCodeMapping.findFirst.mockResolvedValue(null);
     mockPrisma.xeroItemCodeMapping.create.mockResolvedValue({});
     mockPrisma.xeroItemCodeMapping.update.mockResolvedValue({});
+    mockPrisma.xeroItemCodeMapping.updateMany.mockResolvedValue({ count: 1 });
     mockPrisma.xeroItemCodeMapping.deleteMany.mockResolvedValue({ count: 1 });
     mockPrisma.xeroItemCodeMapping.findMany.mockResolvedValue([]);
   });
@@ -112,7 +115,7 @@ describe("Xero item-code mappings route", () => {
   it("returns entrance fee mappings with null item codes", async () => {
     mockPrisma.xeroItemCodeMapping.findMany.mockResolvedValue([
       {
-        category: "ENTRANCE_FEE",
+        category: "JOINING_FEE",
         entranceFeeCategory: "ADULT",
         itemCode: null,
         amountCents: 5000,
@@ -126,10 +129,92 @@ describe("Xero item-code mappings route", () => {
     expect(data.entranceFees.ADULT).toEqual({ itemCode: null, amountCents: 5000 });
   });
 
+  it("GET selects ONLY the consumed columns, never the doomed isMember column (#2130 runtime-prep)", async () => {
+    // Blue/green safety pin: the deployed client must stop naming
+    // XeroItemCodeMapping.isMember in generated SQL one release BEFORE the
+    // #2130 contract migration drops it. Guards against reintroducing a
+    // no-select findMany that names every column.
+    mockPrisma.xeroItemCodeMapping.findMany.mockResolvedValue([]);
+
+    await getItemCodeMappings();
+
+    expect(mockPrisma.xeroItemCodeMapping.findMany).toHaveBeenCalledWith({
+      select: {
+        category: true,
+        ageTier: true,
+        seasonType: true,
+        membershipTypeId: true,
+        entranceFeeCategory: true,
+        itemCode: true,
+        amountCents: true,
+      },
+    });
+    const args = mockPrisma.xeroItemCodeMapping.findMany.mock.calls[0][0] as {
+      select?: Record<string, unknown>;
+    };
+    expect(args.select).not.toHaveProperty("isMember");
+  });
+
+  it("PUT narrows every mutation's RETURNING, never naming the doomed isMember column (#2130 runtime-prep)", async () => {
+    // Blue/green safety pin, WRITE half. Prisma emits an implicit RETURNING
+    // over every scalar column of a create/update/upsert unless a `select`
+    // narrows it, so an unnarrowed mutation still names
+    // XeroItemCodeMapping.isMember even after the reads were narrowed — a
+    // draining old colour would keep issuing that SQL once the contract
+    // migration drops the column. Exercises all four mutation sites in one
+    // request: tiered upsert, FLAT create, and the JOINING_FEE upsert.
+    mockPrisma.xeroItemCodeMapping.findFirst.mockResolvedValue(null);
+
+    const res = await putItemCodeMappings(
+      makePutRequest({
+        hutFees: {
+          [`${FULL_TYPE.id}_WINTER_ADULT`]: { itemCode: "HUTFEE-001" },
+          [`${SCHOOL_FLAT_TYPE.id}_SUMMER_FLAT`]: { itemCode: "HUTFEE-FLAT" },
+        },
+        entranceFees: { ADULT: { itemCode: "ENTFEE-001" } },
+      })
+    );
+    expect(res.status).toBe(200);
+
+    const mutationCalls = [
+      ...mockPrisma.xeroItemCodeMapping.upsert.mock.calls,
+      ...mockPrisma.xeroItemCodeMapping.create.mock.calls,
+      ...mockPrisma.xeroItemCodeMapping.update.mock.calls,
+    ];
+    // 2 upserts (tiered hut fee + joining fee) and 1 create (FLAT hut fee).
+    expect(mutationCalls).toHaveLength(3);
+    for (const [args] of mutationCalls) {
+      const select = (args as { select?: Record<string, unknown> }).select;
+      expect(select).toEqual({ id: true });
+      expect(select).not.toHaveProperty("isMember");
+    }
+  });
+
+  it("PUT updates an existing FLAT hut fee row with a narrowed RETURNING (#2130 runtime-prep)", async () => {
+    // The find-then-update branch is the one mutation the pin above cannot
+    // reach (it needs an existing row), so cover it separately.
+    mockPrisma.xeroItemCodeMapping.findFirst.mockResolvedValue({ id: "row-1" });
+
+    const res = await putItemCodeMappings(
+      makePutRequest({
+        hutFees: {
+          [`${SCHOOL_FLAT_TYPE.id}_SUMMER_FLAT`]: { itemCode: "HUTFEE-FLAT-2" },
+        },
+      })
+    );
+    expect(res.status).toBe(200);
+
+    const [args] = mockPrisma.xeroItemCodeMapping.update.mock.calls[0] as [
+      { select?: Record<string, unknown> },
+    ];
+    expect(args.select).toEqual({ id: true });
+    expect(args.select).not.toHaveProperty("isMember");
+  });
+
   it("accepts entrance fee updates with a null item code", async () => {
     mockPrisma.xeroItemCodeMapping.findMany.mockResolvedValue([
       {
-        category: "ENTRANCE_FEE",
+        category: "JOINING_FEE",
         entranceFeeCategory: "ADULT",
         itemCode: null,
         amountCents: 5000,
@@ -149,13 +234,61 @@ describe("Xero item-code mappings route", () => {
       expect.objectContaining({
         where: {
           category_entranceFeeCategory: {
-            category: "ENTRANCE_FEE",
+            category: "JOINING_FEE",
             entranceFeeCategory: "ADULT",
           },
         },
         update: { itemCode: null, amountCents: 5000 },
       })
     );
+  });
+
+  it("PUT with an item-code-only entry never writes amountCents (#1931 — amounts live in JoiningFee)", async () => {
+    const res = await putItemCodeMappings(
+      makePutRequest({
+        entranceFees: {
+          ADULT: { itemCode: "ENTFEE-001" },
+        },
+      })
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockPrisma.xeroItemCodeMapping.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          category_entranceFeeCategory: {
+            category: "JOINING_FEE",
+            entranceFeeCategory: "ADULT",
+          },
+        },
+        // No amountCents key at all: an omitted amount must leave the stored
+        // (frozen, config-transfer-exported) value untouched.
+        update: { itemCode: "ENTFEE-001" },
+        create: {
+          category: "JOINING_FEE",
+          entranceFeeCategory: "ADULT",
+          itemCode: "ENTFEE-001",
+        },
+      })
+    );
+  });
+
+  it("PUT with a null item code and no amount blanks the code but keeps the row", async () => {
+    const res = await putItemCodeMappings(
+      makePutRequest({
+        entranceFees: {
+          ADULT: { itemCode: null },
+        },
+      })
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockPrisma.xeroItemCodeMapping.updateMany).toHaveBeenCalledWith({
+      where: { category: "JOINING_FEE", entranceFeeCategory: "ADULT" },
+      data: { itemCode: null },
+    });
+    expect(mockPrisma.xeroItemCodeMapping.deleteMany).not.toHaveBeenCalled();
+    expect(mockPrisma.xeroItemCodeMapping.upsert).not.toHaveBeenCalled();
   });
 
   it("deletes an entrance fee row when both item code and amount are cleared", async () => {
@@ -169,7 +302,7 @@ describe("Xero item-code mappings route", () => {
 
     expect(res.status).toBe(200);
     expect(mockPrisma.xeroItemCodeMapping.deleteMany).toHaveBeenCalledWith({
-      where: { category: "ENTRANCE_FEE", entranceFeeCategory: "ADULT" },
+      where: { category: "JOINING_FEE", entranceFeeCategory: "ADULT" },
     });
     expect(mockPrisma.xeroItemCodeMapping.upsert).not.toHaveBeenCalled();
   });
@@ -248,6 +381,7 @@ describe("Xero item-code mappings route", () => {
         ageTier: "ADULT",
         itemCode: "HUTFEE-001",
       },
+      select: { id: true },
     });
   });
 
@@ -278,6 +412,7 @@ describe("Xero item-code mappings route", () => {
         ageTier: null,
         itemCode: "HUTFEE-FLAT",
       },
+      select: { id: true },
     });
     expect(mockPrisma.xeroItemCodeMapping.upsert).not.toHaveBeenCalled();
   });
@@ -297,6 +432,7 @@ describe("Xero item-code mappings route", () => {
     expect(mockPrisma.xeroItemCodeMapping.update).toHaveBeenCalledWith({
       where: { id: "row-1" },
       data: { itemCode: "HUTFEE-FLAT-2" },
+      select: { id: true },
     });
     expect(mockPrisma.xeroItemCodeMapping.create).not.toHaveBeenCalled();
   });

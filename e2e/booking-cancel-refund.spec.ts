@@ -4,6 +4,7 @@ import {
   E2E_ADMIN,
   NOMINATOR_TWO,
   PAID_CANCEL_BOOKING_ID,
+  relDateOnly,
 } from "./helpers/fixtures";
 
 // Critical row (docs/END_TO_END_TEST_MATRIX.md): cancel a paid booking and
@@ -111,13 +112,14 @@ test("member cancels a paid booking for account credit and the money outcome is 
   // end-of-day in the club timezone (NZ). On a UTC runner, everything that
   // happens after NZ midnight (the ~12h window each day) falls outside the
   // default window and the list renders empty — which is why this assertion
-  // passed in an afternoon-UTC PR run and failed after NZ midnight. Pin an
-  // explicit far-future bound so the assertion is time-of-day independent.
+  // passed in an afternoon-UTC PR run and failed after NZ midnight. Pin a
+  // RELATIVE far-future To-bound (issue #2117: a fixed 2030 bound would itself
+  // rot red once wall-clock reached it) so the assertion is time-independent.
   await adminPage.goto(
     `/admin/payments?${new URLSearchParams({
       search: NOMINATOR_TWO.email,
-      lastUpdatedFrom: "2026-01-01",
-      lastUpdatedTo: "2030-01-01",
+      lastUpdatedFrom: relDateOnly(-3650),
+      lastUpdatedTo: relDateOnly(3650),
       settlement: "accountCredit",
     })}`,
   );

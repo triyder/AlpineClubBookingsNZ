@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, use } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft } from "lucide-react";
+import { BackLink } from "@/components/admin/back-link";
 import { FamilyGroupEditorDialog } from "@/components/admin/family-group-editor-dialog";
 import {
   formatMemberAccountPreview,
@@ -25,6 +25,7 @@ import { resolveInternalReturnPath } from "@/lib/internal-return-path";
 import { hasAccessRole, isFullAdmin } from "@/lib/access-roles";
 import { toast } from "sonner";
 import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { useXeroStatus } from "@/hooks/use-xero-status";
 import { Accordion } from "@/components/ui/accordion";
 import { subscriptionStatusLabel } from "@/lib/status-colors";
@@ -39,6 +40,7 @@ import { MemberHistoryGroup } from "./_components/member-history-group";
 import { MemberDeletionCard } from "./_components/member-deletion-card";
 import { MemberLifecycleCard } from "./_components/member-lifecycle-card";
 import { MemberParentLinksCard } from "./_components/member-parent-links-card";
+import { MemberBillingFamilyCard } from "./_components/member-billing-family-card";
 import { MemberPartnerLinkCard } from "./_components/member-partner-link-card";
 import { MemberLodgeAccessCard } from "./_components/member-lodge-access-card";
 import { MemberPromoCodesCard } from "./_components/member-promo-codes-card";
@@ -88,6 +90,14 @@ export default function MemberDetailPage({
   const router = useRouter();
   const searchParams = useSearchParams();
   const { data: session } = useSession();
+  // Member-detail actions are gated view-only (#1997). Membership-area cards
+  // (contact/account editors, links, seasonal, committee, lifecycle, deletion)
+  // key on membership edit; the credit and billing-family cards write
+  // finance-area routes (members/[id]/credits and fee-configuration), so they
+  // key on finance edit. The credit card reads finance access itself; the
+  // billing-family card takes it as a prop.
+  const canEditMembership = useAdminAreaEditAccess("membership");
+  const canEditFinance = useAdminAreaEditAccess("finance");
 
   const [member, setMember] = useState<MemberDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -273,7 +283,12 @@ export default function MemberDetailPage({
   const contactEdit = useMemberGroupEdit<MemberContactEditForm>({
     memberId: id,
     buildForm: () => (member ? buildContactEditForm(member) : null),
-    buildPayload: buildContactPayload,
+    // #2106: thread the current-season age-exemption so an ALLOWED-type manual
+    // N/A pick is actually submitted (buildContactPayload omits N/A otherwise).
+    buildPayload: (form) =>
+      buildContactPayload(form, {
+        ageExemption: member?.currentSeasonAgeExemption ?? null,
+      }),
     successMessage: "Member updated successfully",
     onSaved: refreshMemberAfterSave,
   });
@@ -427,10 +442,7 @@ export default function MemberDetailPage({
   if (pageError || !member) {
     return (
       <div className="space-y-4">
-        <Button variant="outline" onClick={() => router.push(backHref)}>
-          <ArrowLeft className="h-4 w-4 mr-2" />
-          {backLabel}
-        </Button>
+        <BackLink href={backHref} label={backLabel} />
         <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-md text-sm">
           {pageError || "Member not found"}
         </div>
@@ -537,6 +549,8 @@ export default function MemberDetailPage({
         xeroConnected={xeroConnected}
         xeroPushing={xeroPushing}
         xeroUnlinking={xeroUnlinking}
+        canEditMembership={canEditMembership}
+        canEditFinance={canEditFinance}
         onOpenDependentDialog={openDependentDialog}
         onOpenLinkXero={openLinkXero}
         onOpenCreateXero={openCreateXero}
@@ -590,6 +604,7 @@ export default function MemberDetailPage({
             isSelf={isSelf}
             actorIsFullAdmin={actorIsFullAdmin}
             edit={contactEdit}
+            canEdit={canEditMembership}
           />
         </MemberGroupCard>
 
@@ -605,6 +620,7 @@ export default function MemberDetailPage({
             memberLifecycleLocked={memberLifecycleLocked}
             edit={accountEdit}
             inheritEmail={inheritEmail}
+            canEdit={canEditMembership}
           />
           <MemberLodgeAccessCard memberId={id} />
         </MemberGroupCard>
@@ -639,6 +655,19 @@ export default function MemberDetailPage({
                 )}
               </div>
             </div>
+            {member.familyGroups && member.familyGroups.length > 0 && (
+              <MemberBillingFamilyCard
+                memberId={member.id}
+                billingFamilyGroupId={member.billingFamilyGroupId}
+                familyGroups={member.familyGroups}
+                familyBillingMode={member.familyBillingMode}
+                canEdit={canEditFinance}
+                disabled={memberIsArchived}
+                onChange={(billingFamilyGroupId) =>
+                  setMember((prev) => (prev ? { ...prev, billingFamilyGroupId } : prev))
+                }
+              />
+            )}
             <MemberParentLinksCard
               className={embeddedCardClassName}
               member={member}
@@ -647,6 +676,7 @@ export default function MemberDetailPage({
               unlinkingDependentId={unlinkingDependentId}
               onOpenParentLinkDialog={openParentLinkDialog}
               onUnlinkParent={handleUnlinkDependent}
+              canEdit={canEditMembership}
             />
             <MemberPartnerLinkCard
               className={embeddedCardClassName}
@@ -664,6 +694,7 @@ export default function MemberDetailPage({
               unlinkingDependentId={unlinkingDependentId}
               onOpenDependentDialog={openDependentDialog}
               onUnlinkDependent={handleUnlinkDependent}
+              canEdit={canEditMembership}
             />
           </div>
         </MemberGroupCard>
@@ -772,6 +803,7 @@ export default function MemberDetailPage({
           <div className="divide-y">
             <MemberLifecycleCard
               className={embeddedCardClassName}
+              canEdit={canEditMembership}
               member={member}
               pendingArchiveRequest={pendingArchiveRequest}
               reviewedArchiveRequests={reviewedArchiveRequests}
@@ -800,6 +832,7 @@ export default function MemberDetailPage({
             />
             <MemberDeletionCard
               className={embeddedCardClassName}
+              canEdit={canEditMembership}
               deleteEligibility={member.deleteEligibility}
               deleteRequests={deleteRequests}
               pendingDeleteRequest={pendingDeleteRequest}
@@ -852,6 +885,7 @@ export default function MemberDetailPage({
           setLoading(true);
           void fetchMember();
         }}
+        canEdit={canEditMembership}
       />
 
       <MemberXeroLinkDialog

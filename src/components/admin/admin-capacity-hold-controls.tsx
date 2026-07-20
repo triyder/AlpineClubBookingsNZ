@@ -3,8 +3,9 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
 import { useConfirm } from "@/components/confirm-dialog";
+import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 
 interface AdminCapacityHoldControlsProps {
   bookingId: string;
@@ -39,6 +40,9 @@ export function AdminCapacityHoldControls({
   canPlaceHold,
 }: AdminCapacityHoldControlsProps) {
   const router = useRouter();
+  // Hold/release write /api/admin/bookings/[id]/capacity-hold (bookings area).
+  // A view-only bookings admin sees the controls disabled (#1997).
+  const canEdit = useAdminAreaEditAccess("bookings");
   const { confirm, confirmDialog } = useConfirm();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -168,14 +172,24 @@ export function AdminCapacityHoldControls({
         </div>
       )}
       {!hasAdminCapacityHold && canPlaceHold && (
-        <Button variant="outline" onClick={handleHold} disabled={busy}>
+        <ViewOnlyActionButton
+          canEdit={canEdit}
+          variant="outline"
+          onClick={handleHold}
+          disabled={busy}
+        >
           {busy ? "Holding..." : "Hold capacity"}
-        </Button>
+        </ViewOnlyActionButton>
       )}
       {hasAdminCapacityHold && !holdsCapacityNaturally && (
-        <Button variant="outline" onClick={handleRelease} disabled={busy}>
+        <ViewOnlyActionButton
+          canEdit={canEdit}
+          variant="outline"
+          onClick={handleRelease}
+          disabled={busy}
+        >
           {busy ? "Releasing..." : "Release hold"}
-        </Button>
+        </ViewOnlyActionButton>
       )}
     </div>
   );

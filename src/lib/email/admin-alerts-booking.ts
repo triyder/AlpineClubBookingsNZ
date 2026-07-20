@@ -11,6 +11,9 @@ import {
   adminBookingRequestPendingTemplate,
   adminSchoolManualInvoiceTemplate,
   adminBookingRequestHoldExpiredTemplate,
+  adminBookingRequestHoldCancelledTemplate,
+  adminSplitSettlementUnpaidTemplate,
+  adminSplitSettlementCancelledTemplate,
 } from "../email-templates";
 import {
   formatNZDate,
@@ -361,6 +364,142 @@ export async function sendAdminBookingRequestHoldExpiredEmail(data: {
       reviewUrl,
     },
     preferenceKey: "adminBookingRequest",
+  });
+}
+
+// #2012: terminal one-off admin notice — a booking created from an approved
+// public booking request (#707) was still unpaid (no saved card) at the end of
+// its check-in day, so it was automatically cancelled and its held beds were
+// released. A DEDICATED registered template (`admin-booking-request-hold-cancelled`),
+// not a variant of the recurring adminBookingRequestHoldExpired alert, so an
+// admin override of the recurring alert cannot rewrite this terminal notice and
+// muting the recurring one does not mute this. Same admin-alert plumbing and
+// adminBookingRequest gating as the recurring alert. Symmetric twin of
+// sendAdminSplitSettlementCancelledAlert.
+export async function sendAdminBookingRequestHoldCancelledEmail(data: {
+  requesterName: string;
+  checkIn: Date;
+  checkOut: Date;
+  guestCount: number;
+  totalCents: number;
+}) {
+  const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
+  const reviewUrl = `${baseUrl}/admin/bookings`;
+
+  await sendToAdmins({
+    subject: `Request booking auto-cancelled — unpaid past check-in: ${data.requesterName}`,
+    html: adminBookingRequestHoldCancelledTemplate({
+      requesterName: data.requesterName,
+      checkIn: data.checkIn,
+      checkOut: data.checkOut,
+      guestCount: data.guestCount,
+      totalCents: data.totalCents,
+      reviewUrl,
+    }),
+    templateName: "admin-booking-request-hold-cancelled",
+    templateData: {
+      requesterName: data.requesterName,
+      checkIn: formatNZDate(data.checkIn),
+      checkOut: formatNZDate(data.checkOut),
+      guestCount: data.guestCount,
+      total: formatMoneyCents(data.totalCents),
+      reviewUrl,
+    },
+    preferenceKey: "adminBookingRequest",
+  });
+}
+
+// #1967: Admin alert — a split booking's non-member guest portion reached its
+// hold deadline with no saved card to charge. Fired while the child remains
+// unsettled, on the #1993 Part B capped cadence (hold extension windows 1, 2, 3,
+// then every 7th; the extension claim is the dedupe across the 15-minute cron
+// cadence). `parentUnpaid` selects the wording: false = the member paid their
+// own place by Internet Banking and a payment link has been emailed to them;
+// true = the member's own parent booking is unpaid too, so NO link was sent and
+// a human must chase the whole booking. Routed to the existing payment-failure
+// audience so a rare event needs no new NotificationPreference column (#1422
+// precedent). The terminal auto-cancel past check-in is a SEPARATE template —
+// see sendAdminSplitSettlementCancelledAlert.
+export async function sendAdminSplitSettlementUnpaidAlert(data: {
+  memberName: string;
+  checkIn: Date;
+  checkOut: Date;
+  guestCount: number;
+  totalCents: number;
+  holdUntil: Date;
+  parentUnpaid: boolean;
+}) {
+  const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
+  const reviewUrl = `${baseUrl}/admin/bookings`;
+
+  await sendToAdmins({
+    subject: `Split booking guest portion unpaid — no card on file: ${data.memberName}`,
+    html: adminSplitSettlementUnpaidTemplate({
+      memberName: data.memberName,
+      checkIn: data.checkIn,
+      checkOut: data.checkOut,
+      guestCount: data.guestCount,
+      totalCents: data.totalCents,
+      holdUntil: data.holdUntil,
+      reviewUrl,
+      parentUnpaid: data.parentUnpaid,
+    }),
+    templateName: "admin-split-settlement-unpaid",
+    templateData: {
+      memberName: data.memberName,
+      checkIn: formatNZDate(data.checkIn),
+      checkOut: formatNZDate(data.checkOut),
+      guestCount: data.guestCount,
+      total: formatMoneyCents(data.totalCents),
+      holdUntil: formatNZDateTime(data.holdUntil),
+      reviewUrl,
+      parentUnpaid: data.parentUnpaid,
+    },
+    preferenceKey: "adminPaymentFailure",
+  });
+}
+
+// #1993 Part A: terminal one-off admin notice — a split booking's non-member
+// guest portion was still unpaid (no saved card) at the end of its check-in day,
+// so the provisional guest booking was automatically cancelled. A DEDICATED
+// registered template (`admin-split-settlement-cancelled`), not a variant of the
+// recurring alert, so an admin override of the noisy recurring alert cannot
+// rewrite this terminal notice and muting the recurring one does not mute this.
+// Same admin-alert plumbing and adminPaymentFailure gating as the recurring
+// alert. `parentUnpaid` only selects wording (see the template).
+export async function sendAdminSplitSettlementCancelledAlert(data: {
+  memberName: string;
+  checkIn: Date;
+  checkOut: Date;
+  guestCount: number;
+  totalCents: number;
+  parentUnpaid: boolean;
+}) {
+  const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
+  const reviewUrl = `${baseUrl}/admin/bookings`;
+
+  await sendToAdmins({
+    subject: `Split booking guest portion auto-cancelled — unpaid past check-in: ${data.memberName}`,
+    html: adminSplitSettlementCancelledTemplate({
+      memberName: data.memberName,
+      checkIn: data.checkIn,
+      checkOut: data.checkOut,
+      guestCount: data.guestCount,
+      totalCents: data.totalCents,
+      reviewUrl,
+      parentUnpaid: data.parentUnpaid,
+    }),
+    templateName: "admin-split-settlement-cancelled",
+    templateData: {
+      memberName: data.memberName,
+      checkIn: formatNZDate(data.checkIn),
+      checkOut: formatNZDate(data.checkOut),
+      guestCount: data.guestCount,
+      total: formatMoneyCents(data.totalCents),
+      reviewUrl,
+      parentUnpaid: data.parentUnpaid,
+    },
+    preferenceKey: "adminPaymentFailure",
   });
 }
 

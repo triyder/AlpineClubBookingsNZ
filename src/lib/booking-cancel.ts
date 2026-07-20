@@ -50,6 +50,7 @@ import { settleGroupBookingOnOrganiserCancel } from "@/lib/group-cancel";
 import { repairLegacyAppliedCreditNoteAllocationsForBooking } from "@/lib/xero-applied-credit-allocation-repair";
 import { findUnconvergedAppliedCreditDeallocation } from "@/lib/xero-applied-credit-operation-serialization";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
+import { bookingStayHasStarted } from "@/lib/booking-edit-policy";
 
 // Statuses a booking may be cancelled from. Shared by the outer validation
 // guard and the tx1 single-flight re-check so the two can never drift (#1160).
@@ -170,6 +171,11 @@ export async function cancelBooking(
     hasBookingsEditAccess?: boolean;
     requireRequestHold?: boolean;
     notifyMember?: boolean;
+    // #2029: when true, block self-service (non-Full-Admin) cancellation of a
+    // stay whose NZ check-in is on or before today. Only the member-facing
+    // cancel route opts in; every internal/admin caller leaves it false, so
+    // their behaviour is unchanged. See the guard in performBookingCancellation.
+    enforceStartedStayBlock?: boolean;
   } = {}
 ): Promise<CancelBookingResponse> {
   // Issue #1705: resolve the honoured email choice once, so the main cancel and
@@ -188,7 +194,8 @@ export async function cancelBooking(
     options.suppressCustomerNotification ?? false,
     options.hasBookingsEditAccess ?? false,
     options.requireRequestHold ?? false,
-    notifyMember
+    notifyMember,
+    options.enforceStartedStayBlock ?? false
   );
 
   if (result.status === 200) {
@@ -367,7 +374,10 @@ async function performBookingCancellation(
   requireRequestHold = false,
   // Issue #1705: already resolved by cancelBooking (forced true for non-admin
   // actors), so every branch below can honour it directly.
-  notifyMember = true
+  notifyMember = true,
+  // #2029: self-service started-stay block (see the guard below). Default false
+  // so every internal/admin caller is unaffected.
+  enforceStartedStayBlock = false
 ): Promise<CancelBookingResponse> {
   // Issue #1705 (#1698 pattern): a suppressed admin cancel records the choice in
   // the audit metadata — notifyMember is false only when an authorized admin
@@ -395,6 +405,35 @@ async function performBookingCancellation(
     !hasBookingsEditAccess
   ) {
     return { status: 403, error: "Forbidden" };
+  }
+
+  // ── #2029: self-service started-stay cancellation block ──────────────────
+  //
+  // Before #2029 the completion cron flipped a PAID booking to COMPLETED on its
+  // first stay day (checkIn <= today), and COMPLETED is NOT in
+  // CANCELLABLE_BOOKING_STATUSES — so a started stay was implicitly
+  // non-self-cancellable. #2029 correctly widened the PAID window to run through
+  // the whole check-out day, which silently removed that implicit guard: a
+  // member (or Booking Officer) could otherwise irreversibly cancel an
+  // in-progress, checkout-day, or finished-but-not-yet-swept stay — releasing
+  // beds while guests are present, sending a cancellation email, and dropping
+  // the stay from roster / stay-night / nomination counts. Restore the invariant
+  // for self-service actors only: a Full Admin (sessionUserRole === "ADMIN")
+  // keeps full cancellation capability, and a member who needs to leave early
+  // shrinks their remaining future nights via the (policy-retained) edit path.
+  // Gated behind enforceStartedStayBlock so ONLY the member-facing cancel route
+  // opts in; every internal/admin caller (decline, release-hold, review-reject,
+  // account-deletion) is byte-for-byte unaffected.
+  if (
+    enforceStartedStayBlock &&
+    sessionUserRole !== "ADMIN" &&
+    bookingStayHasStarted(booking.checkIn)
+  ) {
+    return {
+      status: 400,
+      error:
+        "This stay has already started, so it can no longer be cancelled online. To leave early, edit the booking to shorten your remaining nights, or contact the club for help.",
+    };
   }
 
   if (!CANCELLABLE_BOOKING_STATUSES.includes(booking.status)) {

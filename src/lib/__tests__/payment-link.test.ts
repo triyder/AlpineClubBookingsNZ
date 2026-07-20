@@ -5,6 +5,7 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     paymentLink: {
       findUnique: vi.fn(),
+      findFirst: vi.fn(),
       update: vi.fn(),
       updateMany: vi.fn(),
       create: vi.fn(),
@@ -36,6 +37,9 @@ vi.mock("@/lib/email", () => ({
   sendBookingRequestApprovedEmail: vi
     .fn()
     .mockResolvedValue({ status: "sent", emailLogId: "log-1", messageId: null }),
+  sendSplitGuestPaymentLinkEmail: vi
+    .fn()
+    .mockResolvedValue({ status: "sent", emailLogId: "log-2", messageId: null }),
 }));
 
 vi.mock("@/lib/payment-reconciliation", () => ({
@@ -80,12 +84,18 @@ import { createPaymentIntent, findOrCreateCustomer, getPaymentIntent } from "@/l
 import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
 import { checkCapacityForGuestRanges } from "@/lib/capacity";
 import { hashActionToken, issueActionToken } from "@/lib/action-tokens";
-import { sendBookingRequestApprovedEmail } from "@/lib/email";
+import {
+  sendBookingRequestApprovedEmail,
+  sendSplitGuestPaymentLinkEmail,
+} from "@/lib/email";
 import {
   createPaymentIntentForPaymentLink,
   getPaymentLinkContext,
+  issueSplitGuestPaymentLink,
+  mintSplitGuestPaymentLinkIfAbsent,
   reissuePaymentLinkForToken,
   resolvePaymentLink,
+  revokePaymentLinkById,
   revokePaymentLinksForBooking,
 } from "@/lib/payment-link";
 
@@ -129,6 +139,8 @@ function baseBooking(overrides: Partial<Record<string, unknown>> = {}) {
     member: { id: "member-1", email: "tara@example.com", firstName: "Tara", lastName: "Tester" },
     guests: [{ id: "guest-1" }],
     payment: null,
+    parentBookingId: null,
+    groupBookingJoin: null,
     ...overrides,
   };
 }
@@ -380,6 +392,48 @@ describe("reissuePaymentLinkForToken", () => {
       status: 410,
     });
     expect(sendBookingRequestApprovedEmail).not.toHaveBeenCalled();
+  });
+
+  it("re-issues a split child's expired link with the split-guest template, never the booking-request one (#1967 FIX-7)", async () => {
+    mockedFindUnique.mockResolvedValue(
+      baseLink({
+        // A split-child link has no originating booking request...
+        bookingRequestId: null,
+        expiresAt: new Date("2000-01-01T00:00:00.000Z"),
+        booking: baseBooking({
+          // ...and its booking is a genuine split child (parent-linked, no
+          // #796 group-join row).
+          parentBookingId: "parent-1",
+          groupBookingJoin: null,
+        }),
+      }) as never
+    );
+
+    const result = await reissuePaymentLinkForToken(RAW_TOKEN);
+
+    expect(result.emailed).toBe(true);
+    expect(sendSplitGuestPaymentLinkEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ email: "tara@example.com", bookingReference: "booking-1" })
+    );
+    expect(sendBookingRequestApprovedEmail).not.toHaveBeenCalled();
+  });
+
+  it("keeps the booking-request template for a #796 group joiner's link (pre-existing behaviour)", async () => {
+    mockedFindUnique.mockResolvedValue(
+      baseLink({
+        bookingRequestId: null,
+        expiresAt: new Date("2000-01-01T00:00:00.000Z"),
+        booking: baseBooking({
+          parentBookingId: "organiser-1",
+          groupBookingJoin: { id: "join-1" },
+        }),
+      }) as never
+    );
+
+    await reissuePaymentLinkForToken(RAW_TOKEN);
+
+    expect(sendBookingRequestApprovedEmail).toHaveBeenCalled();
+    expect(sendSplitGuestPaymentLinkEmail).not.toHaveBeenCalled();
   });
 });
 
@@ -660,5 +714,435 @@ describe("createPaymentIntentForPaymentLink", () => {
     vi.mocked(prisma.payment.upsert).mockResolvedValue({ id: "pay-1" } as never);
 
     await expect(createPaymentIntentForPaymentLink(RAW_TOKEN)).rejects.toMatchObject({ status: 500 });
+  });
+
+  it("refuses with 410 when the link was revoked between resolution and the under-lock re-read (#1967 FIX-6)", async () => {
+    // The cron's auto-charge claim revokes links under the lodge lock just
+    // before charging a saved card; a /pay request that resolved the link a
+    // moment earlier must see the revocation in its own locked re-read and
+    // never mint a competing PaymentIntent.
+    mockedFindUnique.mockImplementation((async ({
+      where,
+    }: {
+      where: { tokenHash?: string; id?: string };
+    }) =>
+      where.tokenHash
+        ? baseLink() // initial token resolution: still active
+        : { revokedAt: new Date() }) as never); // under-lock re-read: revoked
+    vi.mocked(prisma.booking.findUnique).mockResolvedValue(
+      baseBooking({ guests: [{ id: "guest-1" }] }) as never
+    );
+
+    await expect(createPaymentIntentForPaymentLink(RAW_TOKEN)).rejects.toMatchObject({
+      status: 410,
+    });
+    expect(mockedFindOrCreateCustomer).not.toHaveBeenCalled();
+    expect(mockedCreatePaymentIntent).not.toHaveBeenCalled();
+  });
+});
+
+describe("issueSplitGuestPaymentLink (#1967)", () => {
+  const mockedBookingFindUnique = vi.mocked(prisma.booking.findUnique);
+  const mockedPaymentLinkFindFirst = vi.mocked(prisma.paymentLink.findFirst);
+  const mockedPaymentLinkCreate = vi.mocked(prisma.paymentLink.create);
+
+  function splitChild(overrides: Record<string, unknown> = {}) {
+    return {
+      id: "child-1",
+      memberId: "member-1",
+      status: BookingStatus.PENDING,
+      checkIn: new Date("2026-08-01T00:00:00.000Z"),
+      checkOut: new Date("2026-08-03T00:00:00.000Z"),
+      finalPriceCents: 12000,
+      deletedAt: null,
+      parentBookingId: "parent-1",
+      hasNonMembers: true,
+      lodgeId: "lodge-1",
+      member: {
+        id: "member-1",
+        email: "tara@example.com",
+        firstName: "Tara",
+        lastName: "Tester",
+      },
+      guests: [{ id: "g1" }, { id: "g2" }],
+      // No saved card anywhere (FIX-5) and not a #796 group joiner (FIX-2).
+      payment: null,
+      parentBooking: { id: "parent-1", payment: null },
+      groupBookingJoin: null,
+      ...overrides,
+    };
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // The helper mints under the shared booking advisory lock: invoke the
+    // transaction callback with a tx exposing only what it touches.
+    mockedTransaction.mockImplementation(async (arg: unknown) => {
+      if (typeof arg === "function") {
+        return (arg as (tx: unknown) => unknown)({
+          booking: { findUnique: mockedBookingFindUnique },
+          paymentLink: {
+            findFirst: mockedPaymentLinkFindFirst,
+            create: mockedPaymentLinkCreate,
+            updateMany: mockedUpdateMany,
+          },
+        });
+      }
+      return arg;
+    });
+    mockedUpdateMany.mockResolvedValue({ count: 0 } as never);
+  });
+
+  it("returns not_payable for a non-child booking without minting or emailing", async () => {
+    mockedBookingFindUnique.mockResolvedValue(
+      splitChild({ parentBookingId: null }) as never
+    );
+
+    const result = await issueSplitGuestPaymentLink("child-1");
+
+    expect(result).toEqual({ outcome: "not_payable" });
+    expect(mockedPaymentLinkCreate).not.toHaveBeenCalled();
+    expect(sendSplitGuestPaymentLinkEmail).not.toHaveBeenCalled();
+  });
+
+  it("returns not_payable for a #796 group joiner, which must never enter the split-guest flow (#1967 FIX-2)", async () => {
+    mockedBookingFindUnique.mockResolvedValue(
+      splitChild({ groupBookingJoin: { id: "join-1" } }) as never
+    );
+
+    const result = await issueSplitGuestPaymentLink("child-1");
+
+    expect(result).toEqual({ outcome: "not_payable" });
+    expect(mockedPaymentLinkCreate).not.toHaveBeenCalled();
+    expect(sendSplitGuestPaymentLinkEmail).not.toHaveBeenCalled();
+  });
+
+  it("returns not_payable when the parent payment carries a saved card — the cron will auto-charge (#1967 FIX-5)", async () => {
+    mockedBookingFindUnique.mockResolvedValue(
+      splitChild({
+        parentBooking: {
+          id: "parent-1",
+          payment: {
+            id: "pay-parent",
+            stripeCustomerId: "cus_parent",
+            stripePaymentMethodId: "pm_parent",
+          },
+        },
+      }) as never
+    );
+
+    const result = await issueSplitGuestPaymentLink("child-1");
+
+    expect(result).toEqual({ outcome: "not_payable" });
+    expect(mockedPaymentLinkCreate).not.toHaveBeenCalled();
+    expect(sendSplitGuestPaymentLinkEmail).not.toHaveBeenCalled();
+  });
+
+  it("returns not_payable when the child's own payment carries a saved card (#1967 FIX-5)", async () => {
+    mockedBookingFindUnique.mockResolvedValue(
+      splitChild({
+        payment: {
+          id: "pay-child",
+          stripeCustomerId: "cus_child",
+          stripePaymentMethodId: "pm_child",
+        },
+      }) as never
+    );
+
+    const result = await issueSplitGuestPaymentLink("child-1");
+
+    expect(result).toEqual({ outcome: "not_payable" });
+    expect(mockedPaymentLinkCreate).not.toHaveBeenCalled();
+    expect(sendSplitGuestPaymentLinkEmail).not.toHaveBeenCalled();
+  });
+
+  it("returns not_payable when the under-lock re-read finds the booking has left PENDING (#1967)", async () => {
+    mockedBookingFindUnique
+      .mockResolvedValueOnce(splitChild() as never) // outer load
+      .mockResolvedValueOnce({ status: BookingStatus.CANCELLED } as never); // under-lock re-read
+
+    const result = await issueSplitGuestPaymentLink("child-1");
+
+    expect(result).toEqual({ outcome: "not_payable" });
+    expect(mockedPaymentLinkFindFirst).not.toHaveBeenCalled();
+    expect(mockedPaymentLinkCreate).not.toHaveBeenCalled();
+    expect(sendSplitGuestPaymentLinkEmail).not.toHaveBeenCalled();
+  });
+
+  it("mints a link and emails the member's guest portion on the first request", async () => {
+    mockedBookingFindUnique
+      .mockResolvedValueOnce(splitChild() as never) // outer load
+      .mockResolvedValueOnce({ status: BookingStatus.PENDING } as never); // under-lock re-read
+    mockedPaymentLinkFindFirst.mockResolvedValue(null);
+    mockedPaymentLinkCreate.mockResolvedValue({ id: "pl-1" } as never);
+
+    const result = await issueSplitGuestPaymentLink("child-1");
+
+    expect(result).toEqual({ outcome: "sent" });
+    expect(mockedPaymentLinkCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ bookingId: "child-1" }),
+      })
+    );
+    expect(sendSplitGuestPaymentLinkEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        email: "tara@example.com",
+        priceCents: 12000,
+        guestCount: 2,
+        bookingReference: "child-1",
+      })
+    );
+  });
+
+  it("short-circuits to just_sent when an active link was minted moments ago (double-click guard)", async () => {
+    mockedBookingFindUnique
+      .mockResolvedValueOnce(splitChild() as never)
+      .mockResolvedValueOnce({ status: BookingStatus.PENDING } as never);
+    mockedPaymentLinkFindFirst.mockResolvedValue({
+      id: "pl-existing",
+      createdAt: new Date(Date.now() - 10_000), // 10s old — inside cooldown
+    } as never);
+
+    const result = await issueSplitGuestPaymentLink("child-1");
+
+    expect(result).toEqual({ outcome: "just_sent" });
+    expect(mockedPaymentLinkCreate).not.toHaveBeenCalled();
+    expect(mockedUpdateMany).not.toHaveBeenCalled();
+    expect(sendSplitGuestPaymentLinkEmail).not.toHaveBeenCalled();
+  });
+
+  it("revokes and re-mints past the cooldown: a true re-send replaces the unrecoverable token (#1967 FIX-3b)", async () => {
+    mockedBookingFindUnique
+      .mockResolvedValueOnce(splitChild() as never)
+      .mockResolvedValueOnce({ status: BookingStatus.PENDING } as never);
+    mockedPaymentLinkFindFirst.mockResolvedValue({
+      id: "pl-existing",
+      createdAt: new Date(Date.now() - 10 * 60_000), // 10 min old
+    } as never);
+    mockedPaymentLinkCreate.mockResolvedValue({ id: "pl-fresh" } as never);
+
+    const result = await issueSplitGuestPaymentLink("child-1");
+
+    expect(result).toEqual({ outcome: "sent" });
+    // Revocation and mint are one atomic step under the lodge lock:
+    // exactly-one-active-link is preserved.
+    expect(mockedUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          bookingId: "child-1",
+          revokedAt: null,
+          usedAt: null,
+        }),
+        data: expect.objectContaining({ revokedAt: expect.any(Date) }),
+      })
+    );
+    expect(mockedPaymentLinkCreate).toHaveBeenCalled();
+    expect(sendSplitGuestPaymentLinkEmail).toHaveBeenCalled();
+  });
+
+  it("revokes the just-minted link when the email is suppressed, so nothing unreachable stays active (#1967 FIX-3)", async () => {
+    mockedBookingFindUnique
+      .mockResolvedValueOnce(splitChild() as never)
+      .mockResolvedValueOnce({ status: BookingStatus.PENDING } as never);
+    mockedPaymentLinkFindFirst.mockResolvedValue(null);
+    mockedPaymentLinkCreate.mockResolvedValue({ id: "pl-fresh" } as never);
+    vi.mocked(sendSplitGuestPaymentLinkEmail).mockResolvedValueOnce({
+      status: "suppressed",
+      emailLogId: null,
+      emailSuppressionId: "sup-1",
+      reason: "BOUNCE",
+    } as never);
+
+    const result = await issueSplitGuestPaymentLink("child-1");
+
+    expect(result).toEqual({ outcome: "suppressed" });
+    // Post-commit revocation targets exactly the minted row by id.
+    expect(mockedUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: "pl-fresh",
+          revokedAt: null,
+          usedAt: null,
+        }),
+      })
+    );
+  });
+
+  it("revokes the just-minted link and rethrows when the email send throws (#1967 FIX-3)", async () => {
+    mockedBookingFindUnique
+      .mockResolvedValueOnce(splitChild() as never)
+      .mockResolvedValueOnce({ status: BookingStatus.PENDING } as never);
+    mockedPaymentLinkFindFirst.mockResolvedValue(null);
+    mockedPaymentLinkCreate.mockResolvedValue({ id: "pl-fresh" } as never);
+    vi.mocked(sendSplitGuestPaymentLinkEmail).mockRejectedValueOnce(
+      new Error("SES unavailable")
+    );
+
+    await expect(issueSplitGuestPaymentLink("child-1")).rejects.toThrow(
+      "SES unavailable"
+    );
+    expect(mockedUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: "pl-fresh" }),
+      })
+    );
+  });
+});
+
+describe("mintSplitGuestPaymentLinkIfAbsent (#1967) — real helper against a stateful store", () => {
+  type StoredLink = {
+    id: string;
+    bookingId: string;
+    tokenHash: string;
+    expiresAt: Date;
+    usedAt: Date | null;
+    revokedAt: Date | null;
+  };
+
+  // A minimal in-memory PaymentLink table honouring exactly the query shapes
+  // the helper issues, so consecutive calls exercise the REAL cross-run
+  // idempotency sentinel rather than a mocked return value.
+  function makeStatefulTx(seed: StoredLink[] = []) {
+    const links: StoredLink[] = [...seed];
+    let nextId = seed.length + 1;
+    const tx = {
+      paymentLink: {
+        findFirst: async ({
+          where,
+        }: {
+          where: { bookingId: string; expiresAt: { gt: Date } };
+        }) =>
+          links.find(
+            (l) =>
+              l.bookingId === where.bookingId &&
+              l.revokedAt === null &&
+              l.usedAt === null &&
+              l.expiresAt.getTime() > where.expiresAt.gt.getTime()
+          ) ?? null,
+        updateMany: async ({
+          where,
+          data,
+        }: {
+          where: { bookingId: string };
+          data: { revokedAt: Date };
+        }) => {
+          let count = 0;
+          for (const l of links) {
+            if (
+              l.bookingId === where.bookingId &&
+              l.revokedAt === null &&
+              l.usedAt === null
+            ) {
+              l.revokedAt = data.revokedAt;
+              count += 1;
+            }
+          }
+          return { count };
+        },
+        create: async ({
+          data,
+        }: {
+          data: { bookingId: string; tokenHash: string; expiresAt: Date };
+        }) => {
+          const row: StoredLink = {
+            id: `pl-${nextId++}`,
+            usedAt: null,
+            revokedAt: null,
+            ...data,
+          };
+          links.push(row);
+          return row;
+        },
+      },
+    };
+    return { tx: tx as never, links };
+  }
+
+  const FUTURE_CHECK_IN = new Date("2026-08-01T00:00:00.000Z");
+
+  it("mints on the first run and returns null on every later run while the link stays active (real cross-run idempotency)", async () => {
+    const { tx, links } = makeStatefulTx();
+
+    const first = await mintSplitGuestPaymentLinkIfAbsent(tx, {
+      id: "child-1",
+      checkIn: FUTURE_CHECK_IN,
+    });
+    const second = await mintSplitGuestPaymentLinkIfAbsent(tx, {
+      id: "child-1",
+      checkIn: FUTURE_CHECK_IN,
+    });
+    const third = await mintSplitGuestPaymentLinkIfAbsent(tx, {
+      id: "child-1",
+      checkIn: FUTURE_CHECK_IN,
+    });
+
+    expect(first).toEqual({
+      token: expect.any(String),
+      paymentLinkId: "pl-1",
+    });
+    expect(second).toBeNull();
+    expect(third).toBeNull();
+    // Exactly one live link exists.
+    expect(links.filter((l) => l.revokedAt === null)).toHaveLength(1);
+  });
+
+  it("treats an expired unused link as NOT active: revokes it and mints a fresh one (#1967 FIX-3c)", async () => {
+    // e.g. the booking's dates were pushed out after the first link lapsed.
+    const { tx, links } = makeStatefulTx([
+      {
+        id: "pl-stale",
+        bookingId: "child-1",
+        tokenHash: "stale-hash",
+        expiresAt: new Date("2026-01-01T00:00:00.000Z"), // long past
+        usedAt: null,
+        revokedAt: null,
+      },
+    ]);
+
+    const minted = await mintSplitGuestPaymentLinkIfAbsent(tx, {
+      id: "child-1",
+      checkIn: FUTURE_CHECK_IN,
+    });
+
+    expect(minted).toEqual({
+      token: expect.any(String),
+      paymentLinkId: expect.any(String),
+    });
+    // The stale link was revoked in the same locked step, so at most one
+    // usable token exists.
+    expect(links.find((l) => l.id === "pl-stale")?.revokedAt).toBeInstanceOf(
+      Date
+    );
+    expect(links.filter((l) => l.revokedAt === null)).toHaveLength(1);
+  });
+
+  it("never mints a link that would be born expired (check-in day already over)", async () => {
+    const { tx, links } = makeStatefulTx();
+
+    const minted = await mintSplitGuestPaymentLinkIfAbsent(tx, {
+      id: "child-1",
+      checkIn: new Date("2020-01-01T00:00:00.000Z"),
+    });
+
+    expect(minted).toBeNull();
+    expect(links).toHaveLength(0);
+  });
+});
+
+describe("revokePaymentLinkById (#1967)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("revokes exactly the given link, only while unused and unrevoked", async () => {
+    mockedUpdateMany.mockResolvedValue({ count: 1 } as never);
+
+    const count = await revokePaymentLinkById("pl-1");
+
+    expect(count).toBe(1);
+    expect(mockedUpdateMany).toHaveBeenCalledWith({
+      where: { id: "pl-1", revokedAt: null, usedAt: null },
+      data: { revokedAt: expect.any(Date) },
+    });
   });
 });

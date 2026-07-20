@@ -10,9 +10,15 @@ export interface CompleteBookingsResult {
 }
 
 /**
- * Transition PAID bookings to COMPLETED once their check-in date has passed.
- * Runs daily. A booking is considered "completed" (i.e. the stay has started
- * and it's too late to amend) once checkIn <= today.
+ * Transition PAID bookings to COMPLETED once their check-out date has fully
+ * passed (issue #2029). Runs daily. A booking stays PAID — and therefore
+ * editable/extendable — through the ENTIRE check-out day (NZ time): guests may
+ * still be at the lodge on their check-out morning and must be able to extend
+ * their stay. The stay is only "completed" once the NZ calendar date is
+ * strictly AFTER `checkOut` (`checkOut < today`), i.e. from the first cron run
+ * after 11:59pm NZ on the check-out date. `checkOut` is the departure date
+ * (exclusive of the last night), so `checkOut < today` means every booked
+ * night, and the whole check-out day, is behind us.
  */
 export async function completeBookings(): Promise<CompleteBookingsResult> {
   const today = getTodayDateOnly();
@@ -20,7 +26,7 @@ export async function completeBookings(): Promise<CompleteBookingsResult> {
   const bookingsToComplete = await prisma.booking.findMany({
     where: {
       status: BookingStatus.PAID,
-      checkIn: { lte: today },
+      checkOut: { lt: today },
     },
     select: { id: true, checkIn: true, checkOut: true },
   });

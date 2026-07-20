@@ -34,8 +34,18 @@ export type AccentHue =
 /** Every tone a chip can render. */
 export type ChipTone = SemanticTone | AccentHue;
 
-/** Tone -> `bg-*-muted text-*` utility classes. Neutral uses `--foreground` on
- *  `--muted` (not `--muted-foreground`, which fails AA on `--muted` in light). */
+/** Tone -> `bg-*-muted text-*` utility classes.
+ *
+ *  Neutral pairs `--foreground` with `--muted` rather than `--muted-foreground`.
+ *  The original reason was that `--muted-foreground` failed AA on `--muted`;
+ *  inside `app-theme-scope` that is no longer true, because #2145 replaced the
+ *  inert `--muted-foreground` (an alias of `--foreground`) with a derived tone
+ *  that is CLAMPED to clear AA on `--muted` in both modes. The pairing stays on
+ *  `--foreground` for a different and still-valid reason: a status chip carries
+ *  MEANING, so it reads at full text weight like its four coloured siblings —
+ *  each of which uses its own accent, not a de-emphasised one. It also keeps the
+ *  chip readable in the default (non-club-themed) shadcn scope, where
+ *  `--muted-foreground` is a mid-grey this project does not gate. */
 export const CHIP_TONE_CLASSES: Record<ChipTone, string> = {
   neutral: "bg-muted text-foreground",
   info: "bg-info-muted text-info",

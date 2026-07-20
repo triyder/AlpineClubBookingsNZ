@@ -1,7 +1,8 @@
 "use client"
 
 import { useSession } from "next-auth/react"
-import { Button } from "@/components/ui/button"
+import { ViewOnlyActionButton } from "@/components/admin/view-only-action"
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -57,6 +58,9 @@ export function MemberCreditCard({
 }: MemberCreditCardProps) {
   const { data: session } = useSession()
   const currentAdminId = session?.user?.id
+  // Credit adjustments write the finance-remapped members/[id]/credits route; a
+  // view-only finance admin sees the balance but cannot request/approve (#1997).
+  const canEditFinance = useAdminAreaEditAccess("finance")
 
   return (
     <Card id="account-credit" className={className}>
@@ -68,9 +72,9 @@ export function MemberCreditCard({
               creditBalance > 0 ? "text-green-700" : creditBalance < 0 ? "text-red-700" : "text-slate-700"
             }`}
           >{`$${(creditBalance / 100).toFixed(2)}`}</span>
-          <Button size="sm" variant="outline" onClick={onToggleAdjustmentForm}>
+          <ViewOnlyActionButton canEdit={canEditFinance} size="sm" variant="outline" onClick={onToggleAdjustmentForm}>
             {showAdjustmentForm ? "Cancel" : "Request Adjustment"}
-          </Button>
+          </ViewOnlyActionButton>
         </div>
       </CardHeader>
       <CardContent>
@@ -106,9 +110,9 @@ export function MemberCreditCard({
             <p className="text-xs text-slate-500">
               A different admin must approve this request before the member&apos;s credit balance changes.
             </p>
-            <Button size="sm" onClick={onSubmitAdjustment} disabled={adjustmentSaving}>
+            <ViewOnlyActionButton canEdit={canEditFinance} size="sm" onClick={onSubmitAdjustment} disabled={adjustmentSaving}>
               {adjustmentSaving ? "Saving..." : "Submit for Approval"}
-            </Button>
+            </ViewOnlyActionButton>
           </div>
         )}
         {creditLoading ? (
@@ -154,22 +158,24 @@ export function MemberCreditCard({
                               <span className="text-xs text-amber-700">Needs another admin</span>
                             ) : (
                               <div className="flex items-center justify-end gap-2">
-                                <Button
+                                <ViewOnlyActionButton
+                                  canEdit={canEditFinance}
                                   size="sm"
                                   variant="outline"
                                   disabled={isReviewing}
                                   onClick={() => onReviewAdjustment(item.id, "APPROVE")}
                                 >
                                   {isReviewing ? "Working..." : "Approve"}
-                                </Button>
-                                <Button
+                                </ViewOnlyActionButton>
+                                <ViewOnlyActionButton
+                                  canEdit={canEditFinance}
                                   size="sm"
                                   variant="ghost"
                                   disabled={isReviewing}
                                   onClick={() => onReviewAdjustment(item.id, "REJECT")}
                                 >
                                   Reject
-                                </Button>
+                                </ViewOnlyActionButton>
                               </div>
                             )}
                           </TableCell>

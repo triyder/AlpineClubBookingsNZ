@@ -15,7 +15,7 @@ import {
 import type { XeroSearchResult } from "@/components/admin/xero-suggested-contact-card"
 import type { UseXeroEntranceFeeDecisionResult } from "@/lib/admin-xero-entrance-fee"
 import type { Member, MemberForm, XeroChoice } from "../_types"
-import { getMissingFieldsForXeroCreate } from "../_utils"
+import { getBlankOptionalXeroFields, getMissingFieldsForXeroCreate } from "../_utils"
 import { MemberXeroEntranceFeeFields } from "./member-xero-entrance-fee-fields"
 
 interface MemberXeroControlsProps {
@@ -140,6 +140,7 @@ export function MemberXeroControls({
   if (xeroConnected !== true) return null
 
   const missingFields = getMissingFieldsForXeroCreate(form)
+  const blankOptionalFields = getBlankOptionalXeroFields(form)
 
   return (
     <fieldset className="space-y-3 pt-2 border-t">
@@ -269,16 +270,22 @@ export function MemberXeroControls({
 
           {xeroChoice === "create" && (
             <div className="space-y-3">
-              <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-                Creating a new Xero contact requires First Name, Last Name, Email, Phone,
-                Postal Address, Physical Address, Date of Birth, and Joined Date. Save
-                changes first, then create. We&apos;ll check for similar Xero contacts before
-                a brand-new contact is created.
+              <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
+                Creating a new Xero contact needs only a first name, last name, and email.
+                Save changes first, then create. We&apos;ll check for similar Xero contacts
+                before a brand-new contact is created.
               </div>
+              {blankOptionalFields.length > 0 && (
+                <div className="rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">
+                  Profile incomplete: {blankOptionalFields.join(", ")} — missing details will
+                  simply be left off the Xero contact.
+                </div>
+              )}
               <MemberXeroEntranceFeeFields
                 idPrefix="edit-xero"
                 decision={entranceFeeDecision}
                 onClearError={onClearFormError}
+                memberId={editingMember.id}
               />
               <Button
                 type="button"
@@ -289,7 +296,9 @@ export function MemberXeroControls({
                 Create Xero Contact
               </Button>
               {missingFields.length > 0 && (
-                <p className="text-xs text-red-600">Missing: {missingFields.join(", ")}</p>
+                <p className="text-xs text-red-600">
+                  Complete these fields first: {missingFields.join(", ")}
+                </p>
               )}
             </div>
           )}
@@ -329,12 +338,18 @@ export function MemberXeroControls({
           )}
 
           {xeroChoice === "create" && (
-            <div className="space-y-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+            <div className="space-y-3 rounded-md border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
               <p>
-                Creating a new Xero contact requires First Name, Last Name, Email, Phone,
-                Postal Address, Physical Address, Date of Birth, and Joined Date. We&apos;ll
-                check for similar Xero contacts before a brand-new contact is created.
+                Creating a new Xero contact needs only a first name, last name, and email.
+                We&apos;ll check for similar Xero contacts before a brand-new contact is
+                created.
               </p>
+              {blankOptionalFields.length > 0 && (
+                <p className="rounded-md border border-blue-200 bg-blue-50 p-2 text-blue-800">
+                  Profile incomplete: {blankOptionalFields.join(", ")} — missing details will
+                  simply be left off the Xero contact.
+                </p>
+              )}
               <div className="text-slate-900">
                 <MemberXeroEntranceFeeFields
                   idPrefix="create-xero"

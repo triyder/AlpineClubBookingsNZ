@@ -15,6 +15,7 @@ import { NextRequest } from "next/server";
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    seasonalMembershipAssignment: { findUnique: vi.fn().mockResolvedValue(null) },
     accessRoleDefinition: {
       // Empty definitions: resolution falls back to legacy bundles.
       findMany: vi.fn().mockResolvedValue([]),
@@ -37,6 +38,7 @@ vi.mock("@/lib/prisma", () => ({
     refundRequest: { count: vi.fn().mockResolvedValue(0) },
     memberSubscription: { count: vi.fn().mockResolvedValue(0) },
     membershipSubscriptionCharge: { count: vi.fn().mockResolvedValue(0) },
+    membershipSubscriptionBillingSettings: { findUnique: vi.fn().mockResolvedValue(null) },
     auditLog: {
       create: vi.fn().mockResolvedValue({}),
       findMany: vi.fn().mockResolvedValue([]),

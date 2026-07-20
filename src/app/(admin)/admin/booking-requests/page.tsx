@@ -102,7 +102,7 @@ export default function BookingRequestsPage() {
       </div>
 
       {!canEditBookings ? (
-        <AdminViewOnlyNotice>
+        <AdminViewOnlyNotice canEdit={canEditBookings}>
           Your admin role can view booking requests but cannot approve, reject,
           price, hold, or convert them.
         </AdminViewOnlyNotice>
@@ -125,7 +125,7 @@ export default function BookingRequestsPage() {
           </TabsTrigger>
         </TabsList>
         <TabsContent value="approvals" className="mt-6">
-          {activeTab === "approvals" ? (
+          {activeTab === "approvals" && canEditBookings !== undefined ? (
             <BookingApprovalsPanel
               fixedSearchParams={APPROVALS_SEARCH_PARAMS}
               showHeading={false}
@@ -134,7 +134,7 @@ export default function BookingRequestsPage() {
           ) : null}
         </TabsContent>
         <TabsContent value="changes" className="mt-6">
-          {activeTab === "changes" ? (
+          {activeTab === "changes" && canEditBookings !== undefined ? (
             <BookingChangeRequestsPanel
               fixedSearchParams={CHANGES_SEARCH_PARAMS}
               showHeading={false}
@@ -153,11 +153,13 @@ export default function BookingRequestsPage() {
                 this tab, not under Approvals, the Bookings list, or the
                 Waitlist.
               </p>
-              <PublicBookingRequestsPanel
-                fixedSearchParams={PUBLIC_SEARCH_PARAMS}
-                showHeading={false}
-                canEdit={canEditBookings}
-              />
+              {canEditBookings !== undefined ? (
+                <PublicBookingRequestsPanel
+                  fixedSearchParams={PUBLIC_SEARCH_PARAMS}
+                  showHeading={false}
+                  canEdit={canEditBookings}
+                />
+              ) : null}
             </div>
           ) : null}
         </TabsContent>

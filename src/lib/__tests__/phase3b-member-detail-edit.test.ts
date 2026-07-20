@@ -15,7 +15,12 @@ vi.mock("@/lib/prisma", () => ({
       count: vi.fn(),
     },
     booking: { count: vi.fn().mockResolvedValue(0), findMany: vi.fn(), aggregate: vi.fn() },
-    bookingGuest: { count: vi.fn().mockResolvedValue(0) },
+    bookingGuest: {
+      count: vi.fn().mockResolvedValue(0),
+      // #2106: the N/A-flip linked-guest block queries future linked-guest
+      // bookings; default to none.
+      findMany: vi.fn().mockResolvedValue([]),
+    },
     payment: { count: vi.fn().mockResolvedValue(0) },
     paymentRefund: { count: vi.fn().mockResolvedValue(0) },
     paymentRecoveryOperation: { count: vi.fn().mockResolvedValue(0) },
@@ -23,7 +28,9 @@ vi.mock("@/lib/prisma", () => ({
     adminCreditAdjustmentRequest: { count: vi.fn().mockResolvedValue(0) },
     refundRequest: { count: vi.fn().mockResolvedValue(0) },
     memberSubscription: { count: vi.fn().mockResolvedValue(0) },
+    seasonalMembershipAssignment: { findUnique: vi.fn().mockResolvedValue(null) },
     membershipSubscriptionCharge: { count: vi.fn().mockResolvedValue(0) },
+    membershipSubscriptionBillingSettings: { findUnique: vi.fn().mockResolvedValue(null) },
     auditLog: { create: vi.fn().mockResolvedValue({}), findMany: vi.fn() },
     promoCodeAssignment: { count: vi.fn().mockResolvedValue(0), findMany: vi.fn().mockResolvedValue([]) },
     promoRedemption: { count: vi.fn().mockResolvedValue(0) },
@@ -119,6 +126,9 @@ function makePutRequest(id: string, body: Record<string, unknown>) {
 describe("Phase 3b: Member Detail Edit — PUT /api/admin/members/[id]", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // #2106: reset the N/A-flip linked-guest query default so a per-test
+    // override never leaks into a later test (clearAllMocks keeps implementations).
+    vi.mocked(prisma.bookingGuest.findMany).mockResolvedValue([] as never);
     vi.mocked(prisma.$transaction).mockImplementation(async (operation: any) => {
       if (Array.isArray(operation)) {
         return Promise.all(operation);
@@ -496,6 +506,58 @@ describe("Phase 3b: Member Detail Edit — PUT /api/admin/members/[id]", () => {
     }));
   });
 
+  it("honours an explicit age-tier pick even when a DOB change rides along (#2106 MINOR-6)", async () => {
+    // computeAgeTier is mocked to ADULT; before MINOR-6 the DOB-derived ADULT
+    // silently overrode the explicit YOUTH pick. Now the explicit pick wins and
+    // the DOB-derived tier is only the fallback.
+    mockedAuth.mockResolvedValue(adminSession);
+    vi.mocked(prisma.member.findUnique).mockResolvedValue(baseMember as any);
+    vi.mocked(prisma.member.update).mockResolvedValue({ ...baseMember, ageTier: "YOUTH", xeroContactId: null } as any);
+
+    await updateMember(
+      makePutRequest("m1", { dateOfBirth: "2010-06-15", ageTier: "YOUTH" }),
+      { params: Promise.resolve({ id: "m1" }) },
+    );
+
+    expect(prisma.member.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        dateOfBirth: new Date("2010-06-15"),
+        ageTier: "YOUTH",
+      }),
+    }));
+  });
+
+  it("blocks flipping a member to N/A (org grant) while they hold future linked-guest bookings (#2106 MAJOR-5a)", async () => {
+    mockedAuth.mockResolvedValue(adminSession);
+    vi.mocked(prisma.member.findUnique).mockResolvedValue(baseMember as any);
+    vi.mocked(prisma.bookingGuest.findMany).mockResolvedValue([
+      {
+        id: "bg1",
+        bookingId: "b1",
+        stayStart: new Date("2026-08-01"),
+        stayEnd: new Date("2026-08-05"),
+        booking: {
+          id: "b1",
+          memberId: "owner-2",
+          checkIn: new Date("2026-08-01"),
+          checkOut: new Date("2026-08-05"),
+        },
+      },
+    ] as any);
+
+    // USER -> SCHOOL is an org grant, which forces the member to N/A.
+    const res = await updateMember(makePutRequest("m1", { role: "SCHOOL" }), {
+      params: Promise.resolve({ id: "m1" }),
+    });
+
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.error).toMatch(/linked guest/i);
+    expect(body.linkedGuestBookings.count).toBe(1);
+    // Blocked before the write transaction — the member row is never updated.
+    expect(prisma.member.update).not.toHaveBeenCalled();
+  });
+
   it("trims whitespace from firstName and lastName", async () => {
     mockedAuth.mockResolvedValue(adminSession);
     vi.mocked(prisma.member.findUnique).mockResolvedValue(baseMember as any);
@@ -618,11 +680,13 @@ describe("Phase 3b: Member Detail Edit — PUT /api/admin/members/[id]", () => {
     vi.mocked(prisma.member.findUnique).mockResolvedValue({ ...baseMember, xeroContactId: "xc1" } as any);
     vi.mocked(prisma.member.update).mockResolvedValue({
       ...baseMember,
-      role: "ADMIN",
+      forcePasswordChange: true,
       xeroContactId: "xc1",
     } as any);
 
-    await updateMember(makePutRequest("m1", { role: "ADMIN" }), { params: Promise.resolve({ id: "m1" }) });
+    // forcePasswordChange is a purely local field: it is neither a Xero contact
+    // field nor grouping-relevant, so it must not touch Xero at all.
+    await updateMember(makePutRequest("m1", { forcePasswordChange: true }), { params: Promise.resolve({ id: "m1" }) });
 
     expect(isXeroConnected).not.toHaveBeenCalled();
     expect(updateXeroContact).not.toHaveBeenCalled();
@@ -700,10 +764,18 @@ describe("Phase 3b: Member Detail Edit — PUT /api/admin/members/[id]", () => {
     });
   });
 
-  it("does not sync contact groups when a role change keeps the same role-default type and Xero is untouched", async () => {
+  it("does not sync contact groups when a role change leaves an explicitly-assigned member's effective type unchanged", async () => {
     const { syncManagedXeroContactGroupForMember } = await import("@/lib/xero");
 
     mockedAuth.mockResolvedValue(adminSession);
+    // #2149: membership type resolved assignment-first is the sole grouping
+    // authority. This member has an explicit current-season assignment, so the
+    // role default is NOT their effective type. A USER->ADMIN role change (which
+    // would flip the role-default type FULL->ADMIN for an unassigned member)
+    // therefore re-groups nothing and must not trigger a contact-group sync.
+    vi.mocked(prisma.seasonalMembershipAssignment.findUnique).mockResolvedValueOnce({
+      membershipType: { allowedAgeTiers: [{ ageTier: "ADULT" }] },
+    } as any);
     vi.mocked(prisma.member.findUnique).mockResolvedValue({ ...baseMember, xeroContactId: "xc1", role: "USER" } as any);
     vi.mocked(prisma.member.update).mockResolvedValue({
       ...baseMember,
@@ -711,8 +783,6 @@ describe("Phase 3b: Member Detail Edit — PUT /api/admin/members/[id]", () => {
       xeroContactId: "xc1",
     } as any);
 
-    // USER and ADMIN both map to the FULL role-default membership type, so
-    // this role change is not grouping-relevant.
     await updateMember(makePutRequest("m1", { role: "ADMIN" }), { params: Promise.resolve({ id: "m1" }) });
 
     expect(syncManagedXeroContactGroupForMember).not.toHaveBeenCalled();

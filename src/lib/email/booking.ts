@@ -10,7 +10,9 @@ import {
   bookingModifiedTemplate,
   setupIntentFailedTemplate,
   preArrivalReminderTemplate,
+  splitGuestPortionCancelledTemplate,
 } from "../email-templates";
+import { CLUB_NAME } from "@/config/club-identity";
 import { EMAIL_DEFAULT_LODGE_NAME } from "@/lib/email-message-settings";
 import {
   formatNZDate,
@@ -36,6 +38,15 @@ export async function sendBookingConfirmedEmail(
     // default lodge — including its real door code, so always thread the
     // booking's own lodgeId.
     lodgeId?: string | null;
+    // Split-booking parent (#738): describes the provisional non-member child
+    // whose places are charged separately around the hold deadline. Present
+    // only when this confirmation is a split parent (see
+    // getProvisionalNonMemberChildSummary). Read-only email content — it never
+    // changes the hold/settlement decision.
+    provisionalGuests?: {
+      guestCount: number;
+      holdUntil: Date;
+    };
   },
 ) {
   const settings = await loadEmailMessageSettingsForLodge(options?.lodgeId);
@@ -45,6 +56,20 @@ export async function sendBookingConfirmedEmail(
       ? -options.discountCents
       : 0);
   const promoAdjustmentPrefix = promoAdjustmentCents > 0 ? "+" : "-";
+  const provisionalGuests = options?.provisionalGuests;
+  // Composed sentence for the {{provisionalGuestsNote}} token — the same story
+  // the FILE template renders, so an operator override keeps parity. Empty when
+  // this is not a split parent so the token renders nothing.
+  const provisionalGuestsNote =
+    provisionalGuests && provisionalGuests.guestCount > 0
+      ? `Your ${provisionalGuests.guestCount} non-member guest${
+          provisionalGuests.guestCount === 1 ? "" : "s"
+        } ${
+          provisionalGuests.guestCount === 1 ? "is" : "are"
+        } held provisionally as a linked booking — no bed is reserved for them yet, and the payment above covers only your member places. If beds remain around ${formatNZDateTime(
+          provisionalGuests.holdUntil,
+        )}, we'll automatically take that guest portion from your saved payment method and your guests are confirmed. If we can't take payment, we'll contact you to arrange it. If the lodge fills with member bookings first, that portion is not charged and those guests are bumped.`
+      : "";
   await sendEmail({
     to: email,
     subject: `Booking Confirmed - ${EMAIL_DEFAULT_LODGE_NAME}`,
@@ -58,6 +83,7 @@ export async function sendBookingConfirmedEmail(
         ...options,
         lodgeTravelNote: settings.lodgeTravelNote,
         doorCode: settings.doorCode,
+        provisionalGuests,
       },
     ),
     templateName: "booking-confirmed",
@@ -66,6 +92,7 @@ export async function sendBookingConfirmedEmail(
       checkIn: formatNZDate(checkIn),
       checkOut: formatNZDate(checkOut),
       guestCount,
+      provisionalGuestsNote,
       subtotal:
         promoAdjustmentCents !== 0
           ? formatMoneyCents(totalCents - promoAdjustmentCents)
@@ -209,6 +236,45 @@ export async function sendBookingCancelledEmail(
           : "",
     },
     lodgeId,
+  });
+}
+
+/**
+ * #1993 Part A: member notice that the provisional non-member guest portion of
+ * their stay was auto-cancelled because it stayed unpaid up to the check-in day.
+ * Replaces the misleading generic booking-cancelled email on the terminal path:
+ * nothing was ever charged for the guest portion, and their own linked booking
+ * is untouched. `parentConfirmed` selects the reassurance wording (see the
+ * template); `parentBookingReference` is shown when cheaply available.
+ */
+export async function sendSplitGuestPortionCancelledEmail(params: {
+  email: string;
+  firstName: string;
+  checkIn: Date;
+  checkOut: Date;
+  parentConfirmed: boolean;
+  parentBookingReference?: string | null;
+  // Booking's lodge (multi-lodge phase 8): see sendBookingConfirmedEmail.
+  lodgeId?: string | null;
+}) {
+  await sendEmail({
+    to: params.email,
+    subject: `Your guests' provisional place was cancelled — ${CLUB_NAME}`,
+    html: splitGuestPortionCancelledTemplate({
+      firstName: params.firstName,
+      checkIn: params.checkIn,
+      checkOut: params.checkOut,
+      parentConfirmed: params.parentConfirmed,
+      parentBookingReference: params.parentBookingReference ?? null,
+    }),
+    templateName: "split-guest-portion-cancelled",
+    templateData: {
+      firstName: params.firstName,
+      checkIn: formatNZDate(params.checkIn),
+      checkOut: formatNZDate(params.checkOut),
+      bookingReference: params.parentBookingReference ?? "",
+    },
+    lodgeId: params.lodgeId,
   });
 }
 

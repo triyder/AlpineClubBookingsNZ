@@ -29,6 +29,13 @@ const ADMIN_SYSTEM_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
   "admin-partner-share-swept",
   "admin-new-booking",
   "admin-payment-failure",
+  // #1992/#2007: duplicate-capture auto-refund alert. Ships via sendToAdmins, so
+  // it classifies as an admin alert. Deliberately NOT delivery-locked — the
+  // #1994 adjudication: muting causes no direct money loss because the refund
+  // already happened inline or is durably queued for the recovery cron. Still
+  // gated by the adminPaymentFailure notification preference at send time, like
+  // its siblings.
+  "admin-duplicate-capture-refund",
   "admin-pending-deadline",
   "admin-booking-bumped",
   "admin-capacity-warning",
@@ -51,7 +58,28 @@ const ADMIN_SYSTEM_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
   "website-contact",
   "admin-booking-request-pending",
   "admin-booking-request-hold-expired",
+  // #2012: terminal one-off notice when a request-origin booking is
+  // auto-cancelled past check-in (its held beds released). Its own registry
+  // entry (not a variant of the recurring hold-expired alert) so an admin
+  // override of the recurring alert cannot rewrite this terminal notice, and
+  // muting the recurring alert does not mute this one. Same admin-alert
+  // plumbing: sendToAdmins, adminBookingRequest gating, NOT delivery-locked.
+  "admin-booking-request-hold-cancelled",
   "admin-school-manual-invoice",
+  // #1967/#1994: split non-member guest portion unpaid at hold expiry (no card
+  // on file). Ships via sendToAdmins, so it classifies as an admin alert.
+  // Deliberately NOT in LOCKED_DELIVERY_TEMPLATE_NAMES — it is an operational
+  // nudge (the member already has their payment link; no money is lost if an
+  // admin mutes it), so admins keep full delivery-mode control. Still gated by
+  // the adminPaymentFailure notification preference at send time (#1422).
+  "admin-split-settlement-unpaid",
+  // #1993 Part A: terminal one-off notice when that guest portion is
+  // auto-cancelled past check-in. Its own registry entry (not a variant of the
+  // recurring alert) so an admin override of the noisy recurring alert cannot
+  // rewrite this terminal notice, and muting the recurring alert does not mute
+  // this one. Same admin-alert plumbing: sendToAdmins, adminPaymentFailure
+  // gating, NOT delivery-locked.
+  "admin-split-settlement-cancelled",
 ]);
 
 // Admin/system templates whose delivery mode admins must NOT be able to change.
@@ -84,6 +112,9 @@ const GLOBAL_EMAIL_TEMPLATE_TOKENS = [
 const EXTRA_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>> = {
   // Lodge the warning is about; empty for single-lodge clubs (ADR-002).
   "admin-capacity-warning": ["lodgeName"],
+  // Split-booking parent (#738): a pre-composed sentence describing the
+  // provisional non-member portion; empty for a non-split confirmation.
+  "booking-confirmed": ["provisionalGuestsNote"],
   "booking-modified": [
     "additionalPaymentMethod",
     "paymentReference",
@@ -92,6 +123,7 @@ const EXTRA_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>> =
   "password-reset": ["resetUrl"],
   "admin-password-reset": ["resetUrl"],
   "member-setup-invite": ["resetUrl"],
+  "magic-link-login": ["loginUrl"],
   "email-verification": ["verifyUrl"],
   "email-change-verification": ["verifyUrl"],
   "nomination-request": ["reviewUrl"],
@@ -140,6 +172,10 @@ const EXTRA_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>> =
   "age-up-parent-email-handoff": ["targetAgeTier", "targetAgeTierMinAge"],
   "booking-request-verification": ["verifyUrl"],
   "booking-request-approved": ["payUrl"],
+  // #1967/#1994: the send passes a pre-built {{payUrl}} alongside the raw
+  // {{token}}, so allow admins to reference it in an override (mirrors
+  // booking-request-approved).
+  "split-guest-payment-link": ["payUrl"],
   "booking-request-quote": ["respondUrl"],
 };
 
@@ -149,6 +185,11 @@ const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>
   "password-reset": ["token"],
   "admin-password-reset": ["token"],
   "member-setup-invite": ["token"],
+  // #2034: the tokenised /login/magic?token=<token> link is the essential body
+  // content — the required "token" blocks an override that drops the sign-in
+  // link. Sensitive-log redaction is driven separately by
+  // SENSITIVE_EMAIL_LOG_TEMPLATES in src/lib/email/internal.ts.
+  "magic-link-login": ["token"],
   "email-verification": ["token"],
   "email-change-verification": ["newEmail", "token"],
   "email-change-notification": ["newEmail"],
@@ -209,9 +250,30 @@ const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>
   "bulk-communication": ["adminEnteredBody"],
   "booking-request-verification": ["token"],
   "booking-request-approved": ["token"],
+  // #1967/#1994: the tokenised /pay/<token> bearer link is the essential body
+  // content — the required "token" blocks an override that drops the pay link.
+  // Sensitive-log redaction is driven separately by SENSITIVE_EMAIL_LOG_TEMPLATES
+  // in src/lib/email/internal.ts, which already contains this template.
+  "split-guest-payment-link": ["token"],
   "booking-request-quote": ["token"],
   "admin-booking-request-pending": ["requesterName", "reviewUrl"],
   "admin-booking-request-hold-expired": ["requesterName", "reviewUrl"],
+  // #2012: terminal notice — requesterName identifies the requester and
+  // reviewUrl is the admin action link, mirroring the recurring alert.
+  "admin-booking-request-hold-cancelled": ["requesterName", "reviewUrl"],
+  // #2012: member-facing terminal notice. No bearer token (so NOT
+  // sensitive-log); firstName + the stay dates are the load-bearing content.
+  "booking-request-payment-expired": ["firstName", "checkIn", "checkOut"],
+  // #1992/#2007: memberName identifies the affected member and reviewUrl is the
+  // admin action link (the payments board), mirroring the other admin alerts.
+  "admin-duplicate-capture-refund": ["memberName", "reviewUrl"],
+  "admin-split-settlement-unpaid": ["memberName", "reviewUrl"],
+  // #1993 Part A: terminal notice — memberName identifies the member and
+  // reviewUrl is the admin action link, mirroring the recurring alert.
+  "admin-split-settlement-cancelled": ["memberName", "reviewUrl"],
+  // #1993 Part A: member-facing terminal notice. No bearer token (so NOT
+  // sensitive-log); firstName + the stay dates are the load-bearing content.
+  "split-guest-portion-cancelled": ["firstName", "checkIn", "checkOut"],
   "admin-partner-share-swept": ["memberName", "partnerName", "reason"],
   "booking-review-approved": ["bookingId"],
   "induction-sign-off-request": ["inductionUrl"],
@@ -237,6 +299,12 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
   "admin-booking-change-request": {
     triggerSummary: "Locked booking change request submitted",
     frequency: "Per member/admin request submission",
+  },
+  "admin-duplicate-capture-refund": {
+    triggerSummary:
+      "A second, distinct Stripe capture arrived on an already-settled booking, so the duplicate charge was auto-refunded (inline in full, or a durable retry queued when the inline refund could not complete)",
+    frequency:
+      "On duplicate-capture adjudication — rare; once per distinct duplicate capture that is auto-refunded",
   },
   "admin-minors-review": {
     triggerSummary:
@@ -356,7 +424,42 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
   },
   "admin-booking-request-hold-expired": {
     triggerSummary: "Request-origin booking unpaid at hold expiry",
-    frequency: "Per hold-expiry check on an unpaid request booking",
+    frequency:
+      "On a capped cadence while the request booking stays unpaid: the first three hold extensions, then every seventh. A terminal cancellation past the check-in day ends the series and sends the separate 'admin-booking-request-hold-cancelled' notice instead",
+  },
+  "admin-booking-request-hold-cancelled": {
+    triggerSummary:
+      "A booking created from a public booking request was still unpaid with no card on file at the end of its check-in day, so it was automatically cancelled and its held beds released",
+    frequency:
+      "Once per request booking, when it is auto-cancelled past check-in; ends the recurring 'admin-booking-request-hold-expired' alert series",
+  },
+  "booking-request-payment-expired": {
+    triggerSummary:
+      "The booking created from the member's approved public booking request was released because it stayed unpaid up to the check-in day (nothing was ever charged)",
+    frequency: "Once per request booking auto-cancelled past check-in",
+  },
+  "admin-split-settlement-unpaid": {
+    triggerSummary:
+      "Split booking's non-member guest portion reached its hold deadline with no card on file (member paid their own place by internet banking, or their own place is also unpaid)",
+    frequency:
+      "On a capped cadence while the guest portion stays unpaid: the first three hold extensions, then every seventh. A terminal cancellation past the check-in day ends the series and sends the separate 'admin-split-settlement-cancelled' notice instead",
+  },
+  "admin-split-settlement-cancelled": {
+    triggerSummary:
+      "Split booking's non-member guest portion was still unpaid with no card on file at the end of its check-in day, so the provisional guest booking was automatically cancelled",
+    frequency:
+      "Once per split guest portion, when it is auto-cancelled past check-in; ends the recurring 'admin-split-settlement-unpaid' alert series",
+  },
+  "split-guest-portion-cancelled": {
+    triggerSummary:
+      "The member's provisional non-member guest portion was auto-cancelled because it stayed unpaid up to the check-in day (nothing was ever charged)",
+    frequency: "Once per split guest portion auto-cancelled past check-in",
+  },
+  "split-guest-payment-link": {
+    triggerSummary:
+      "Split booking's guest portion needs settling with no saved card, so the member is emailed a secure /pay/<token> link",
+    frequency:
+      "Once per fresh payment-link mint (idempotent across cron re-runs); also on the on-demand booking-detail issue action",
   },
   "booking-review-approved": {
     triggerSummary:
@@ -604,6 +707,7 @@ const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   "latestErrorMessage",
   "localId",
   "localModel",
+  "loginUrl",
   "lookbackHours",
   "memberEmail",
   "memberName",
@@ -642,6 +746,7 @@ const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   "pin",
   "position",
   "promoCode",
+  "provisionalGuestsNote",
   "quoteOptions",
   "reason",
   "recipientLabel",
@@ -704,6 +809,7 @@ const SENSITIVE_EMAIL_SUBJECT_TOKENS = [
   "confirmUrl",
   "confirmationUrl",
   "doorCode",
+  "loginUrl",
   "payUrl",
   "pin",
   "resetUrl",

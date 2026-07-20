@@ -23,7 +23,9 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const guard = await requireAdmin();
+    const guard = await requireAdmin({
+      permission: { area: "finance", level: "view" },
+    });
     if (!guard.ok) return guard.response;
     const { id } = await params;
 
@@ -58,7 +60,9 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const guard = await requireAdmin();
+    const guard = await requireAdmin({
+      permission: { area: "finance", level: "edit" },
+    });
     if (!guard.ok) return guard.response;
     const session = guard.session;
     const { id } = await params;

@@ -73,6 +73,36 @@ export interface SetupDatabaseSnapshot {
   // for that type on some (or all) of those dates hard-throws at pricing, so
   // the Seasons And Rates step drops to a warning.
   membershipTypeRateGaps?: string[];
+  // Public {{hut-fees}} embed readiness (#2129). The embed renders one nightly
+  // -rate column per publicly-listed active membership type that carries rates
+  // for the season (identically-priced types share one collapsed column). This
+  // lists "Lodge — Season" entries that would render FEWER THAN TWO columns, so
+  // a published rate table cannot silently collapse to a single column (for
+  // example when only one membership type is flagged publicly listed, or none
+  // at all). Computed only while the hut-fees public-content toggle is ON AND
+  // the token actually appears on a published page; empty or undefined (toggle
+  // off, token never placed, older callers, no DB) raises no warning.
+  publicHutFeeSingleColumnSeasons?: string[];
+  // Misconfig soft-check (#2041): names of ACTIVE membership types set to
+  // "subscription required based on age tier" while NO configured age tier
+  // actually requires a subscription — such a type can never invoice or lock
+  // anyone, so the Age And Membership Rules step drops to a warning. Empty (or
+  // undefined for older callers / no DB) means no misconfig.
+  basedOnAgeTierTypesWithoutSubscribingTier?: string[];
+  // DB-first club-config gate (#1987, C8): the club's persisted identity name
+  // (ClubIdentitySettings.name, else EmailMessageSetting.clubName), and the
+  // admin-set default-lodge capacity (LodgeSettings.capacity). A truthy
+  // clubIdentityName means the club is configured in the DB, so an absent
+  // config/club.json is normal — the file is only an optional seed now.
+  clubIdentityName?: string | null;
+  configuredCapacity?: number | null;
+  // Resolved booking capacity of the club's DEFAULT lodge
+  // (getDefaultLodgeCapacity). Since #1982 the club-config check warns when this
+  // is 0 — a default lodge with no active beds AND no capacity override accepts
+  // no bookings, the never-overbook signal for a fork whose boot self-heal was
+  // skipped. Undefined when the snapshot omits it (older callers / no DB) → no
+  // capacity warning is raised.
+  defaultLodgeCapacity?: number | null;
 }
 
 // One membership type × season pair for the rate-gap check (#1930, E4).
@@ -182,6 +212,10 @@ type Env = Record<string, string | undefined>;
 interface ClubConfigReadResult {
   sourcePath: string;
   exists: boolean;
+  // Whether the PRIMARY config/club.json (not the example) exists on disk. The
+  // DB-first gate treats only a valid primary as a real committed config; the
+  // committed club.example.json placeholder never satisfies readiness (#1987).
+  primaryExists: boolean;
   config: ClubConfig | null;
   issues: string[];
 }
@@ -317,15 +351,28 @@ export function normalizeSetupProgress(
   };
 }
 
+/**
+ * Setup-readiness view of the club config, kept in lockstep with the runtime
+ * loader `loadClubConfig` (`src/config/club.ts`) under owner decision D3
+ * (epic #1943, child C1):
+ * - When `club.json` exists it is the source (even if malformed) — a malformed
+ *   PRIMARY is reported *blocked* and NEVER falls through to `club.example.json`,
+ *   so the app never boots on the example's identity while readiness is blocked.
+ * - Only an ABSENT primary falls back to `club.example.json`.
+ * The runtime loader mirrors this (malformed primary → SAFE_DEFAULT_CONFIG;
+ * absent primary → valid example, else SAFE_DEFAULT_CONFIG) so the two agree.
+ */
 function readClubConfig(configDir: string): ClubConfigReadResult {
   const primaryPath = path.join(configDir, "club.json");
   const examplePath = path.join(configDir, "club.example.json");
-  const sourcePath = fs.existsSync(primaryPath) ? primaryPath : examplePath;
+  const primaryExists = fs.existsSync(primaryPath);
+  const sourcePath = primaryExists ? primaryPath : examplePath;
 
   if (!fs.existsSync(sourcePath)) {
     return {
       sourcePath,
       exists: false,
+      primaryExists,
       config: null,
       issues: [`No club config found at ${primaryPath} or ${examplePath}`],
     };
@@ -338,6 +385,7 @@ function readClubConfig(configDir: string): ClubConfigReadResult {
       return {
         sourcePath,
         exists: true,
+        primaryExists,
         config: null,
         issues: result.error.issues.map((issue) => {
           const fieldPath =
@@ -350,6 +398,7 @@ function readClubConfig(configDir: string): ClubConfigReadResult {
     return {
       sourcePath,
       exists: true,
+      primaryExists,
       config: result.data,
       issues: [],
     };
@@ -357,6 +406,7 @@ function readClubConfig(configDir: string): ClubConfigReadResult {
     return {
       sourcePath,
       exists: true,
+      primaryExists,
       config: null,
       issues: [
         error instanceof Error
@@ -396,33 +446,136 @@ function unresolvedStatuses(checks: SetupStepCheck[]): SetupStatus[] {
     .map((check) => check.status);
 }
 
+/**
+ * Club-config gate, DB-first (#1987, C8). Configuration lives in the database;
+ * `config/club.json` is only an optional seed. Resolution order:
+ *
+ * 1. A MALFORMED primary `club.json` (present but invalid JSON/schema) is still
+ *    reported *blocked* and loudly, regardless of DB state — the C1/D3 rule so a
+ *    broken primary is never silently masked (mirrors the runtime loader).
+ * 2. The club is "configured" when the DB holds a persisted identity name OR a
+ *    valid PRIMARY `config/club.json` is committed (an adopter's real config,
+ *    which the runtime resolves through). The committed `club.example.json`
+ *    placeholder never counts — it is only a seed.
+ * 3. When a database snapshot is available and the club is not configured, the
+ *    step is *blocked* (not configured yet). With no snapshot (e.g. setup:check
+ *    before the DB is reachable) and no primary config, it is a *warning*
+ *    ("configure via /admin/setup") — an absent file is no longer a hard block.
+ */
 function buildClubConfigCheck(
   club: ClubConfigReadResult,
+  db: SetupDatabaseSnapshot | undefined,
   progress: SetupProgressState,
 ): SetupStepCheck {
-  const capacity =
-    club.config?.beds.reduce((total, bed) => total + bed.capacity, 0) ?? 0;
-  const details = club.config
-    ? [
-        `Source: ${club.sourcePath}`,
-        `Club: ${club.config.name}`,
-        `Configured capacity: ${capacity} beds`,
-      ]
-    : [`Source: ${club.sourcePath}`, ...club.issues];
+  const base = {
+    id: "club-config" as const,
+    title: "Club Config",
+    description:
+      "Club identity, contact details, bed capacity, age tiers, and default rates.",
+    required: true,
+    href: "/admin/setup",
+  };
 
+  // 1. A malformed primary always blocks loudly (C1/D3), whatever the DB holds.
+  if (club.primaryExists && !club.config) {
+    return applyProgress(
+      {
+        ...base,
+        status: "blocked",
+        message:
+          "config/club.json is present but invalid; fix or remove it (configuration otherwise lives in the database).",
+        details: [`Source: ${club.sourcePath}`, ...club.issues],
+      },
+      progress,
+    );
+  }
+
+  const dbClubName = db?.clubIdentityName?.trim() || null;
+  const hasPrimaryConfig = club.primaryExists && Boolean(club.config);
+  // #1982 never-overbook signal: the RESOLVED default-lodge capacity is 0, so
+  // the club is configured but accepts no bookings until beds/capacity are set
+  // (e.g. a fork whose boot self-heal was skipped). Undefined → not checked.
+  const capacityUnconfigured =
+    db?.defaultLodgeCapacity != null && db.defaultLodgeCapacity <= 0;
+  const capacityWarningDetail =
+    "Resolved default-lodge capacity is 0 — configure beds or a capacity override before taking bookings.";
+
+  // 2. Configured via the DB identity.
+  if (dbClubName) {
+    const capacity = db?.configuredCapacity ?? null;
+    return applyProgress(
+      {
+        ...base,
+        status: capacityUnconfigured ? "warning" : "complete",
+        message: capacityUnconfigured
+          ? `${dbClubName} is configured, but its default lodge has no bookable capacity yet.`
+          : capacity != null
+            ? `${dbClubName} is configured with ${capacity} total beds.`
+            : `${dbClubName} is configured. Set the default-lodge capacity in /admin/setup if it is not yet defined.`,
+        details: [
+          "Source: database (ClubIdentitySettings / EmailMessageSetting)",
+          `Club: ${dbClubName}`,
+          capacity != null
+            ? `Configured capacity: ${capacity} beds`
+            : "Configured capacity: not set (falls back to lodge beds)",
+          ...(capacityUnconfigured ? [capacityWarningDetail] : []),
+        ],
+      },
+      progress,
+    );
+  }
+
+  // 2b. Configured via a committed PRIMARY club.json (adopter's real config).
+  if (hasPrimaryConfig && club.config) {
+    const capacity = club.config.beds.reduce(
+      (total, bed) => total + bed.capacity,
+      0,
+    );
+    return applyProgress(
+      {
+        ...base,
+        status: capacityUnconfigured ? "warning" : "complete",
+        message: capacityUnconfigured
+          ? `${club.config.name} is configured, but its default lodge has no bookable capacity yet.`
+          : `${club.config.name} is configured with ${capacity} total beds.`,
+        details: [
+          `Source: ${club.sourcePath}`,
+          `Club: ${club.config.name}`,
+          `Configured capacity: ${capacity} beds`,
+          "Admin edits in /admin/setup override these seed values in the database.",
+          ...(capacityUnconfigured ? [capacityWarningDetail] : []),
+        ],
+      },
+      progress,
+    );
+  }
+
+  // 3. Not configured. Blocked when the DB was checked; a warning otherwise.
+  if (db) {
+    return applyProgress(
+      {
+        ...base,
+        status: "blocked",
+        message:
+          "Club identity is not configured yet. Run npm run setup:wizard or open /admin/setup to enter the club name, capacity, and age tiers.",
+        details: [
+          "Source: database (ClubIdentitySettings / EmailMessageSetting)",
+          "No persisted club identity found, and no primary config/club.json is committed.",
+        ],
+      },
+      progress,
+    );
+  }
   return applyProgress(
     {
-      id: "club-config",
-      title: "Club Config",
-      description:
-        "Club identity, contact details, bed capacity, age tiers, and default rates.",
-      status: club.config ? "complete" : "blocked",
-      required: true,
-      message: club.config
-        ? `${club.config.name} is configured with ${capacity} total beds.`
-        : "A valid config/club.json or config/club.example.json is required.",
-      details,
-      href: "/admin/setup",
+      ...base,
+      status: "warning",
+      message:
+        "Club identity is not configured on disk and the database was not checked. Configuration lives in the database — run npm run setup:wizard or verify /admin/setup after migrations.",
+      details: [
+        "Source: none (config/club.json is an optional seed; club.example.json does not count)",
+        "Database state was not checked.",
+      ],
     },
     progress,
   );
@@ -679,7 +832,7 @@ function buildAgeTierCheck(
         id: "age-tiers",
         title: "Age And Membership Rules",
         description:
-          "Age boundaries and whether each age tier needs a subscription to book.",
+          "Age boundaries and whether each age tier needs a subscription (which gates both booking and annual-fee invoicing for membership types set to require a subscription based on age tier).",
         status: "warning",
         required: true,
         message: "Database age-tier settings were not checked.",
@@ -692,23 +845,50 @@ function buildAgeTierCheck(
     );
   }
 
-  const expected = club.config?.ageTiers.length ?? 0;
+  // The DB is the sole runtime source of age tiers (#1983), the readiness gate
+  // is DB-first (#1987, C8), and the admin save route (#2009) guarantees any
+  // persisted set is a complete, valid tiling of 0 → ∞ with ADULT as the
+  // terminal tier — including a deliberate SUBSET (e.g. CHILD + ADULT). So
+  // "configured" is simply "≥1 row exists": once the club has saved its tiers,
+  // whatever count it chose is complete by construction, and we must NOT nag a
+  // valid 2-tier club for having fewer rows than the 4-tier default. Pre-config
+  // (no rows yet) the fixed slot count (INFANT/CHILD/YOUTH/ADULT —
+  // NOT_APPLICABLE never gets a row) is the "expected" hint for the operator;
+  // a primary config, when present, refines that hint for forks that seed a
+  // non-default number of tiers.
   const actual = db?.ageTierSettingCount ?? 0;
-  const complete = expected > 0 && actual >= expected;
+  const configured = actual >= 1;
+  const configExpected =
+    club.config?.ageTiers.length ?? bookableAgeTierEnum.options.length;
+  const expected = configured ? actual : configExpected;
+  // #2041 misconfig: a membership type set to "required based on age tier"
+  // while no configured tier requires a subscription can never invoice or lock
+  // anyone. Soft warning (does not block setup) naming the offending types so an
+  // operator can fix either a tier flag or the type behavior.
+  const misconfiguredTypes = db?.basedOnAgeTierTypesWithoutSubscribingTier ?? [];
+  const hasMisconfig = misconfiguredTypes.length > 0;
+  const complete = configured && !hasMisconfig;
   return applyProgress(
     {
       id: "age-tiers",
       title: "Age And Membership Rules",
       description:
-        "Age boundaries and whether each age tier needs a subscription to book.",
+        "Age boundaries and whether each age tier needs a subscription (which gates both booking and annual-fee invoicing for membership types set to require a subscription based on age tier).",
       status: complete ? "complete" : "warning",
       required: true,
-      message: complete
-        ? "Database age-tier settings are populated."
-        : "Seed or review age-tier settings before member imports.",
+      message: !configured
+        ? "Seed or review age-tier settings before member imports."
+        : hasMisconfig
+          ? `${misconfiguredTypes.join(", ")} require a subscription based on age tier, but no age tier requires one — no member of ${misconfiguredTypes.length === 1 ? "this type" : "these types"} would be invoiced or locked out.`
+          : "Database age-tier settings are populated.",
       details: [
-        `Config age tiers: ${expected || "unknown"}`,
+        `Expected age tiers: ${expected || "unknown"}`,
         `Database age-tier settings: ${actual}`,
+        ...(hasMisconfig
+          ? [
+              `Age-tier subscription types with no subscribing tier: ${misconfiguredTypes.join(", ")}`,
+            ]
+          : []),
       ],
       href: "/admin/age-tier-settings",
     },
@@ -742,8 +922,14 @@ function buildSeasonRateCheck(
   const seasonCount = db?.seasonCount ?? 0;
   const rateGaps = db?.membershipTypeRateGaps ?? [];
   const hasGaps = rateGaps.length > 0;
+  const singleColumnSeasons = db?.publicHutFeeSingleColumnSeasons ?? [];
+  const hasSingleColumnSeasons = singleColumnSeasons.length > 0;
   const status: SetupStatus =
-    seasonCount === 0 ? "blocked" : hasGaps ? "warning" : "complete";
+    seasonCount === 0
+      ? "blocked"
+      : hasGaps || hasSingleColumnSeasons
+        ? "warning"
+        : "complete";
   const MAX_LISTED_GAPS = 8;
   const gapDetails = hasGaps
     ? [
@@ -754,6 +940,21 @@ function buildSeasonRateCheck(
         ...(rateGaps.length > MAX_LISTED_GAPS
           ? [`…and ${rateGaps.length - MAX_LISTED_GAPS} more`]
           : []),
+      ]
+    : [];
+  // #2129: the public {{hut-fees}} embed shows one column per publicly-listed
+  // membership type that carries rates. Fewer than two columns means the
+  // published table collapses to a single rate with nothing to compare against.
+  const embedDetails = hasSingleColumnSeasons
+    ? [
+        `Public hut-fee seasons showing fewer than two rate columns: ${singleColumnSeasons.length}`,
+        ...singleColumnSeasons
+          .slice(0, MAX_LISTED_GAPS)
+          .map((season) => `Single-column public rate table: ${season}`),
+        ...(singleColumnSeasons.length > MAX_LISTED_GAPS
+          ? [`…and ${singleColumnSeasons.length - MAX_LISTED_GAPS} more`]
+          : []),
+        "Flag more membership types as publicly listed under Admin > Membership Types, or add their season rates, so the published table compares at least two rates.",
       ]
     : [];
   return applyProgress(
@@ -769,8 +970,14 @@ function buildSeasonRateCheck(
           ? "At least one active season with rates is needed before bookings can price correctly."
           : hasGaps
             ? "Some membership types have no hut rates for an active or future season; bookings for them will fail at pricing until rates are set."
-            : `${seasonCount} season${seasonCount === 1 ? "" : "s"} configured.`,
-      details: [`Configured seasons: ${seasonCount}`, ...gapDetails],
+            : hasSingleColumnSeasons
+              // "Fewer than two", not "only one": the gate is `< 2`, and the
+              // likelier misconfiguration is ZERO publicly-listed priced types
+              // (the operator never ticked publiclyListed), which the old
+              // wording told the operator was one.
+              ? "The public hut-fees page block would show fewer than two nightly-rate columns for some seasons; publish at least two membership types' rates so visitors can compare them."
+              : `${seasonCount} season${seasonCount === 1 ? "" : "s"} configured.`,
+      details: [`Configured seasons: ${seasonCount}`, ...gapDetails, ...embedDetails],
       href: "/admin/seasons",
     },
     progress,
@@ -1129,7 +1336,7 @@ export function buildSetupReadiness(
 
   const checksByCategory: Record<SetupCategoryId, SetupStepCheck[]> = {
     foundation: [
-      buildClubConfigCheck(club, progress),
+      buildClubConfigCheck(club, input.database, progress),
       buildRuntimeEnvCheck(env, progress),
       buildSeedAdminCheck(input.database, progress),
       buildFeatureFlagCheck(input.database, progress),

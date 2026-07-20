@@ -7,17 +7,31 @@ Future reviews and issues should cite this file when proposing changes.
 
 - Fee/policy PageContent blocks are explicitly enabled and server-rendered; a
   token alone publishes nothing.
-- Public fees use current effective-dated schedules. Entrance fees never use
-  legacy Xero mapping fallbacks.
+- Public fees use current effective-dated schedules. Joining fees resolve from
+  the `JoiningFee` schedule (membership type × age tier) only — no legacy Xero
+  mapping-amount fallback.
 - Named lodge tokens resolve exactly one active lodge or no data, never the
   default lodge. Public view models exclude ids, provider codes, and secrets.
 
 ## Money
 
 - Store and calculate money as integer cents.
-- Annual membership and entrance fee authorities store non-negative integer
-  cents in inclusive, non-overlapping effective-date ranges. `NO_INVOICE`
-  annual rows are zero cents. Fee changes affect future resolution only.
+- Annual membership and joining fee authorities store non-negative integer
+  cents in inclusive, non-overlapping effective-date ranges. Both annual fees
+  (`MembershipAnnualFee`, #2067) and joining fees (`JoiningFee`, #1931) key on
+  membership type × **optional** age tier: a per-tier row wins at resolution,
+  else the flat NULL-tier row is the fallback (a member of any tier, and every
+  `NOT_APPLICABLE` member, resolves the flat row when no per-tier row matches).
+  "Non-overlapping" is per (type, tier): different tiers may share a window, but
+  two windows of the same tier — or two flat windows — may not overlap.
+  `PER_FAMILY` annual fees stay **flat-only** (a per-family fee bills the family
+  once regardless of age): a per-tier per-family row is rejected at the API
+  (409), by a DB CHECK, and at config-transfer plan time, and a flat per-family
+  window may not overlap per-tier per-member windows for the same type.
+  `NO_INVOICE` annual rows are zero cents. The joining fee is strictly
+  type-driven — the Family fee applies only to members assigned the Family type
+  (the composition heuristic is removed). Fee changes affect future resolution
+  only.
 - Do not introduce floating point money arithmetic.
 - Refunds, credits, discounts, Stripe amounts, Xero invoice amounts, and
   membership fees must reconcile back to cent-based ledger records.
@@ -25,8 +39,18 @@ Future reviews and issues should cite this file when proposing changes.
 - A confirmed `MembershipSubscriptionCharge` is an immutable snapshot: fee and
   membership type, billing basis, annual/charged cents, proration, dates/months,
   covered subscriptions, family, recipient name/email, due days, frozen
-  `subscriptionIncome` account/item identifiers, and reference never change.
-  Only delivery/status/Xero metadata may advance.
+  `subscriptionIncome` account/item identifiers, reference, **and its frozen
+  `MembershipSubscriptionChargeComponent` rows** (one per Xero invoice line —
+  label, description, annual/charged cents, prorated flag, account/item, order)
+  never change. Only delivery/status/Xero metadata may advance.
+- An annual fee has ≥1 `MembershipAnnualFeeComponent` at all times unless it is
+  `NO_INVOICE` (zero total, no components); the components' `amountCents` sum
+  exactly to the fee total (validated in the one transaction that writes the
+  fee), a charge's `chargedAmountCents` is Σ its components, and the invoice
+  carries one line per component. A single-component fee is byte-identical to the
+  pre-component single-line behaviour; a multi-component prorated fee may diverge
+  by up to (n−1) cents by design because the charge total is authoritative as Σ
+  components.
 - Every `MemberSubscription` can be covered by at most one charge. A
   season-scoped advisory lock plus the unique coverage constraint makes annual
   confirmation, approval replay, and concurrent operators idempotent.
@@ -47,22 +71,75 @@ Future reviews and issues should cite this file when proposing changes.
   family-resolution branches (including `MISSING_FAMILY` / `AMBIGUOUS_FAMILY` /
   `MISSING_FAMILY_RECIPIENT` / `INVALID_FAMILY_RECIPIENT`) unreachable in
   individual mode by construction.
+- A member in more than one family is billed for a `PER_FAMILY` fee only via
+  their admin-chosen `Member.billingFamilyGroupId` (consulted solely in
+  `BILL_FAMILY_VIA_BILLING_MEMBER` mode, through the same recipient checks as an
+  unambiguous family): valid selection bills that family, a stale selection
+  raises `INVALID_BILLING_FAMILY_SELECTION`, and an unset selection raises
+  `AMBIGUOUS_FAMILY`. The selection is NULLed in the same transaction as any
+  removal of the member from that family across all six removal paths, so a stale
+  pointer can only ever degrade to that visible exception — never silent
+  misbilling.
 - One family/membership-type/membership-year tuple can have at most one durable
   charge. A later family member produces a visible exception; neither coverage
   mutation nor a second invoice is allowed.
 - Membership approval remains authoritative when billing setup is incomplete:
   billing records a visible post-approval exception/warning and never rolls the
   member transaction back.
-- **Paid-up semantics (three sources, one meaning).** A member counts as
-  paid-up when EITHER their membership-type policy `subscriptionBehavior` is
-  `NOT_REQUIRED` (Life/honorary/operational — no subscription row needed) OR
-  their current-season `MemberSubscription.status` is `PAID`. Booking
-  (`findUnpaidMemberGuests`), nomination eligibility (`verifyNominator`), and the
-  member-facing `/api/member/subscription-status` all resolve paid-up from these
-  same two facts. Nomination deliberately honours ONLY the membership-type
+- **Membership type is the sole subscription authority; role carries no
+  exemption (#2149).** Whether a member owes a subscription is decided ONLY by
+  their effective membership type (`subscriptionBehavior`, plus the per-age-tier
+  flag where the type is `BASED_ON_AGE_TIER`). Access **role is a pure permission
+  concept** and grants no exemption of its own — the retired
+  `roleNeverRequiresSubscription` short-circuit is gone from every derivation
+  (booking gate, profile, subscriptions list, admin members list + its SQL
+  filters, CSV export, member-guest booking block, and the Xero sync). Operational
+  and non-member accounts are exempt only because they resolve to a `NOT_REQUIRED`
+  membership type: a member with no explicit season assignment falls back through
+  `defaultMembershipTypeKeyForRole`, which maps `ADMIN`→built-in `ADMIN`
+  (BLOCK_BOOKING, NOT_REQUIRED), `LODGE`→built-in `LODGE` (MEMBER_RATE,
+  NOT_REQUIRED — so the kiosk still books, including across a season rollover),
+  and `SCHOOL`/`NON_MEMBER` to their NOT_REQUIRED built-ins; `USER` falls back to
+  `FULL` (REQUIRED). A real fee-paying human who holds the admin permission is
+  assigned a normal REQUIRED/BASED_ON_AGE_TIER type and owes a subscription like
+  anyone else — showing their real Paid/Unpaid status on every surface. Those
+  two built-in operational types are DB-seeded by a real idempotent migration
+  because the annual-billing preview resolves fallback types from the database.
+  `Member.lifeMemberDate` is **informational only** and is never read by any
+  subscription derivation — the Life exemption is the `LIFE` membership type
+  (subscriptionBehavior `NOT_REQUIRED`).
+- **Paid-up semantics (one meaning, three facts).** A member counts as paid-up
+  (not owing a subscription) when ANY of: their membership-type policy
+  `subscriptionBehavior` is `NOT_REQUIRED` (Life/honorary/operational — no
+  subscription row needed); their current-season `MemberSubscription.status` is
+  `PAID`; OR their type is `BASED_ON_AGE_TIER` and their age tier does not
+  require a subscription — which, once the annual-fee sweep has run, is recorded
+  as a NOT_REQUIRED current-season `MemberSubscription` row that is thereafter
+  authoritative (the third fact, #2041). Booking (`findUnpaidMemberGuests`),
+  nomination eligibility (`verifyNominator`), the member-facing
+  `/api/member/subscription-status`, the admin members-list flag
+  (`admin-members-service`), and the Xero sync (`checkMembershipStatus`) all
+  resolve paid-up from these same facts. Before the sweep writes the row there is
+  a pre-sweep window in which a `BASED_ON_AGE_TIER` exempt member has no row yet;
+  every surface still reads exempt because the tier-flag check is the same fallback
+  the sweep uses, and once the row exists the members-list and Xero-sync surfaces
+  consult it so a manual mid-season tier promotion can never make them disagree
+  with the booking gate. Nomination deliberately honours ONLY the membership-type
   `NOT_REQUIRED` rule, NOT the booking side's junior age-tier subscription
   exemption (`requiresPaidSubscriptionForAgeTier`): nominating is an adult-member
   act and widening it to un-subscribed junior tiers is an owner policy decision.
+  A third `subscriptionBehavior`, `BASED_ON_AGE_TIER` (#2041), defers the
+  subscription-required answer to the per-age-tier
+  `AgeTierSetting.subscriptionRequiredForBooking` flag — the SAME flag that gates
+  booking-lockout — so it is the single source of truth for both booking-lockout
+  and annual-fee invoice minting. Under it, the billing sweep skips a member
+  whose age tier AT THE START OF THE SEASON (the club financial year, derived
+  from DOB; stored tier as the fail-closed fallback when DOB is unknown) does not
+  require a subscription, and writes that member a NOT_REQUIRED
+  `MemberSubscription` row for the season. That NOT_REQUIRED status row is then
+  authoritative and dominates in the booking resolvers: it keeps booking status
+  consistent with billing even if the member's stored age tier is later promoted
+  mid-season. `REQUIRED` and `NOT_REQUIRED` type behavior is byte-unchanged.
 - **Manual mark-paid provenance (non-Xero clubs / cash).** `status = "PAID"` can
   be set outside the Xero pipeline by an audited finance:edit action, recorded by
   `manuallyMarkedPaidAt` / `manuallyMarkedPaidByMemberId` / `manualPaymentNote`.
@@ -87,12 +164,48 @@ Future reviews and issues should cite this file when proposing changes.
   (finance:edit) restores `NOT_INVOICED` (or `UNPAID` on a legacy row with an
   invoice link) and clears the provenance columns; both directions are audited
   with the acting admin, including the previous status.
+- **Closed-loop item-code detection (#2109).** When the opt-in
+  `MembershipLockoutSettings.useFeeScheduleItemCodes` look-through is on, paid
+  detection matches ANY item code stamped on the fee schedule — the resolver
+  `getSubscriptionItemCodes()` returns the distinct non-null
+  `MembershipAnnualFeeComponent.xeroItemCode` values (every historical fee row
+  contributes; prior seasons were billed under retired rows) UNION the single
+  `subscriptionIncome.itemCode`. Because billing stamps exactly those component
+  codes onto invoice lines, the detection set is always a **superset** of the
+  codes the billing pipeline can stamp: a member billed under the fee schedule is
+  always detectable by item code. Default off reproduces single-item-code
+  detection byte-for-byte. Detection is UNION (never per-member) so family
+  invoices and the member-less inbound reconciler resolve the same set.
+- **Strong-first subscription-invoice selection (#2109).** Widening the item-code
+  set means several season invoices can match (e.g. a paid subscription plus an
+  earlier unpaid hut-fee invoice sharing a code), so — WHEN look-through is on —
+  `findSubscriptionInvoice` never returns the first match over the widened set.
+  It collects ALL matches and selects preferring (1) a STRONG match (the account
+  code, the flat fallback item code, or the text fallback) over a union-only
+  fee-schedule match, then (2) a PAID/settled invoice over UNPAID/OVERDUE, then
+  (3) earliest/stable order. Strong-first is deliberate: a PAID union-only match
+  must never outrank an UNPAID strong match, or the lockout would unlock exactly
+  the member it should hold. In the motivating scenario the paid subscription is
+  itself strong, so it still wins and a genuinely paid member is never marked
+  unpaid — the `matchedInvoiceId` upsert picks the paid subscription invoice, so
+  manual mark-paid provenance survives — even when an overlapping code exists.
+  With look-through OFF (a single-code set) selection is skipped and the legacy
+  first-match-in-list-order invoice is returned, byte-for-byte. The member-less
+  inbound reconciler sees one invoice at a time and treats it as a subscription
+  ONLY on a strong match (never a union-only fee-schedule code), so a shared-code
+  fee invoice writes no subscription audit links and triggers no per-member
+  refresh there; per-member detection still sees such invoices when a member's
+  full set is evaluated. The settings overlap warning still steers admins to give
+  subscriptions dedicated item codes.
 - Xero invoice identity is persisted before Xero email. Email retries reuse it.
   Existing invoices are adopted only on an exact `AUTHORISED` snapshot match;
   conflicts are visible and never trigger a silent provider rewrite. Xero
   delivery resolves the snapshotted recipient member's current contact/email;
   frozen name/email remain audit evidence rather than a stale delivery target.
-- A member has at most one entrance-fee invoice (#1886, F21). The worker mints
+- A member has at most one joining-fee invoice (#1886, F21; formerly
+  "entrance-fee" — the Xero reference `` `Entrance fee (<Label>) - <memberId>` ``,
+  the `ENTRANCE_FEE_INVOICE` link role, and the member-scoped v1 mint key stay
+  frozen so the rename never re-invoices, #1931). The worker mints
   only after re-checking the durable `ENTRANCE_FEE_INVOICE` link and, failing
   that, looking the member-unique invoice reference (full member id, not a
   truncated prefix) up in Xero. A found invoice is adopted only when it is THIS
@@ -131,6 +244,16 @@ Future reviews and issues should cite this file when proposing changes.
   (`setHours(0,0,0,0)`) instant: under the `TZ=Pacific/Auckland` server pin the
   latter resolves to `(D-1)T12:00Z` and shifts the boundary by a day for the
   first ~13h of each NZ day (F8/F32, #1888).
+- Two check-out boundaries coexist by design (#2029). The completion cron flips
+  PAID → COMPLETED only once `checkOut < todayNZ` — the entire NZ check-out day
+  stays PAID and self-editable/extendable — whereas the admin "finished stay"
+  attention queues (`unpaid-finished-stays.ts`) intentionally use
+  `checkOut <= todayNZ`. The difference is deliberate and the two operate over
+  DISJOINT status sets: the queues surface still-unsettled stays
+  (`PAYMENT_PENDING`, or a settled status carrying an unpaid additional delta) on
+  the check-out day itself for payment chasing, while completion is a next-day
+  transition of PAID bookings. A booking is therefore never both counted as a
+  finished-stay-needing-payment AND still PAID-completable under the same rule.
 - Capacity is per lodge. A booking belongs to exactly one lodge
   (`Booking.lodgeId`); capacity is "beds available on date D at lodge L", and
   no code path may sum beds across lodges into a single club-wide number. Two
@@ -156,13 +279,16 @@ Future reviews and issues should cite this file when proposing changes.
   ceiling**: the effective capacity is the lower of the two, so a lodge may
   have more beds installed than it is allowed to sleep (`capped_beds`). No
   capacity set — or one at/above the bed count — leaves the bed count as the
-  figure (`configured_beds`); only an explicit capacity caps it, never the
-  club-config fallback. When the module is off, or on with no active beds, the
-  capacity is the per-lodge `LodgeSettings.capacity`, else the club-config bed
-  total for the default lodge only. An additional lodge with neither configured
-  beds nor a capacity resolves to capacity 0 (`unconfigured_lodge`), so a
-  freshly created lodge is unbookable rather than overbookable until it is set
-  up.
+  figure (`configured_beds`); only an explicit capacity caps it, never an
+  unconfigured fallback. When the module is off, or on with no active beds, the
+  capacity is the per-lodge `LodgeSettings.capacity`; if that is unset the lodge
+  resolves to capacity 0 (`unconfigured_lodge`). Since #1982 the DB is the sole
+  runtime source — `club.json` is no longer a runtime capacity fallback; the
+  default lodge's `LodgeSettings.capacity` is backfilled from the config bed
+  total by the boot-time self-heal, and any lodge (default or additional) with
+  neither configured beds nor a capacity is unbookable rather than overbookable
+  until it is set up (the setup-readiness Club Config check warns on a
+  default lodge left at 0).
 - A booking consumes beds when it is capacity-holding. The implementation
   source of truth is `capacityHoldingBookingFilter()` in
   `src/lib/booking-status.ts`, which every occupancy/availability query uses
@@ -178,6 +304,48 @@ Future reviews and issues should cite this file when proposing changes.
   cancelled. Because #737's member-priority bumping only ever touched
   non-holding PENDING rows, an accepted-but-unpaid quote can no longer be bumped
   by a later member booking — this is the intended capacity-priority change.
+- Split-booking guest portion always settles or is notified, never silently
+  stranded (#1967). A split non-member child (#738) is auto-charged at its hold
+  deadline to the member's card inherited from the parent payment. When the
+  parent is genuinely settled without a saved card (Internet Banking, or already
+  CONFIRMED/PAID/COMPLETED), `cron-confirm-pending.ts` instead mints a tokenised
+  `/pay/<token>` PaymentLink (the #707 machinery) and emails it to the member —
+  once per mint, deduped on the absence of an active (unexpired) PaymentLink for
+  the child (`mintSplitGuestPaymentLinkIfAbsent`) — and fires an admin alert on
+  **every** hold-extension run until the child settles. If the parent itself is
+  unpaid (abandoned card), no link is minted or emailed (the guest portion never
+  settles ahead of the member's own place) and the alert fires with
+  parent-unpaid wording instead. Only genuine split children qualify: a #796
+  group joiner also carries `parentBookingId` but always has a
+  `GroupBookingJoin` row, which excludes it everywhere (cron, page, send route).
+  At most one live token exists per booking (every mint revokes-then-creates
+  under the per-lodge advisory lock; undelivered emails revoke their minted link
+  by id so the next run re-mints), and the tokenised link and the saved-card
+  auto-charge never both settle durably (the charge claim revokes links; the
+  /pay intent path re-reads the link under the same lock; the on-demand path
+  refuses when a saved card exists — though a link PaymentIntent minted just
+  before the claim can still transiently coexist with the charge in flight).
+  That residual in-flight window is narrowed and backstopped (#1992): a link
+  PaymentIntent minted BEFORE the claim (client secret already
+  in the member's browser) is best-effort cancelled on Stripe by the charge
+  claim before it charges the saved card, and if the member's confirm still
+  wins that race, `markBookingPaymentSucceeded` auto-refunds whichever DISTINCT
+  capture arrives second on the already-PAID booking — durably
+  (enqueue-then-execute, exactly the duplicate's captured amount, pinned to the
+  duplicate's own transaction) with a loud admin alert — while a SAME-intent
+  replay keeps its byte-identical `already_paid` outcome and at most one side
+  of the pair can ever be refunded (adjudication under `lock(1)`). A capture
+  whose money is already owned by the superseded-intent recovery machinery (a
+  live `CANCEL_PAYMENT_INTENT` / `REFUND_SUPERSEDED_PAYMENT` operation, e.g.
+  the succeeded-superseded-intent handoff) is never mistaken for the
+  settlement side of such a pair: the real settlement's replay stays
+  `already_paid` and that machinery's cron refunds the superseded capture. Money still
+  stays integer cents and no beds are held for the child until it is actually
+  paid. The same machinery backs the
+  on-demand `POST /api/bookings/[id]/send-guest-payment-link` re-send
+  affordance. A child can end PAID while its parent is unpaid or later
+  cancelled — the parent-cancel sweep only cancels still-PENDING children — and
+  there is deliberately no auto-cancel past check-in (owner policy decision).
 - Bed-allocation eligibility (`BED_ALLOCATABLE_BOOKING_STATUSES`) is a status-
   only superset of capacity-holding; the `capacity-holding ⊆ bed-allocatable`
   invariant still holds because rule (b) only extends holding to PENDING, which
@@ -988,7 +1156,16 @@ it.
 Self-service edits obey a date-window edit policy (`getBookingEditPolicy`):
 future bookings edit freely, an in-progress stay (checked in, not yet checked
 out) may only extend its **future** nights with the check-in locked, and a
-fully-past stay is not self-editable at all. Issue #1668 adds an **admin-only
+fully-past stay is not self-editable at all. On an in-progress extension the
+minimum-stay policy is evaluated over the **whole contiguous stay**, not the
+added nights alone (#2124): because the original check-in is kept fixed, the
+modify-quote preview runs `validateMinimumStay` across `[checkIn, newCheckOut]`
+(the already-valid original plus the added nights), so a member can extend
+their check-out one night at a time even across a weekend minimum-stay rule —
+the added night alone would fail the minimum, but the whole stay satisfies it.
+A genuinely too-short whole stay is still reported. (The create path evaluates
+each new booking's own range, so a separate contiguous one-night booking is
+still subject to the minimum — deferred as scope B on #2124.) Issue #1668 adds an **admin-only
 override** (`adminOverride`, honoured solely when
 `bookingManagementAuthorizationRole(session.user) === "ADMIN"`, i.e. Full Admin
 or Booking Officer) that lifts those date-window locks so an admin can move the
@@ -1113,6 +1290,25 @@ effective lock date (409 `XERO_PERIOD_LOCKED`, with unlock instructions). The
 guard is **skipped when Xero is not connected** and **fails closed** (retryable
 503 `XERO_LOCK_DATE_CHECK_FAILED`) when the lock dates cannot be read; the Xero
 call is made outside any DB transaction and its result is cached ~5 minutes.
+The guard still fails closed for every cause, but now **classifies that cause**
+(#2105): the `XeroLockDateCheckFailedError` carries a `reason` of
+`reconnect_required` (the Xero connection needs re-authorising — a revoked or
+missing token/tenant, surfaced by the taxonomy's `XeroReconnectRequiredError`),
+`rate_limited` (Xero's daily API budget is exhausted — `XeroDailyLimitError`),
+or `transient` (a temporary outage or unclassified failure). The `reason` and
+the cause-specific admin copy are emitted **only for the admin audience**
+(`getXeroLockGuardErrorResponse` omits it for members) — member-facing bodies
+stay the generic wording so they disclose no Xero connection state. The code
+(`XERO_LOCK_DATE_CHECK_FAILED`) and status (503) are unchanged for both.
+Independently, admins can run a **click-only connection-health probe**
+(`GET /api/admin/xero/status?probe=1`): it refreshes the token and reuses the
+cached lock-date/org read, returning `tokenHealth` of
+`ok | reconnect_required | rate_limited | error`, and is cached server-side
+30–60s so repeated clicks make no extra Xero call. A daily-limit cooldown maps
+to `rate_limited` **without any API call** (the in-process gate throws before the
+network request), so the probe can never burn the shared daily budget; it never
+runs on page mount or a poll. The most recent recorded usage `errorMessage`
+(redacted) is surfaced alongside the health chip.
 The same guard protects the **booking modify paths**
 (`xero-period-lock-guard`), with two deliberately asymmetric scopes:
 - **Admin override** (#1697): a **recalculate** override can queue a
@@ -1275,6 +1471,18 @@ review to APPROVED makes it check-in-eligible again. When the flag newly trips o
 a paid booking a best-effort admin email fires (template `admin-minors-review`,
 gated by its own `adminBookingReviewRequired` notification preference #1422),
 since nothing changes the booking's visible status to signal the block.
+
+The member **edit** panel collects this justification proactively (#2104): it
+mirrors the `requiresAdultSupervisionReview` predicate client-side (the same
+inlined check the create wizard uses) and renders a required reason field as soon
+as an in-progress edit would leave the post-edit party minors-only — unless the
+viewer is acting as an admin (admins auto-approve) or the booking is already
+flagged/reviewed (the server only demands a reason on the FIRST trip). As a
+belt-and-braces fallback for any client/server drift, the modify route returns
+the machine-readable `REVIEW_JUSTIFICATION_REQUIRED` code, on which the panel
+reveals the same field and re-surfaces the request. The server
+(`resolveModifyReviewUpdate`) remains the sole enforcer; the client field only
+saves the member a round-trip.
 
 A quote hold spans the whole quote lifecycle (issue #1254). Sending a quote
 places the hold automatically: the held booking (AWAITING_REVIEW, a
@@ -1743,9 +1951,12 @@ Built-in membership types can never be deleted or merged. A custom type may be
 deleted only when it has zero `SeasonalMembershipAssignment` rows; a custom type
 that still has assignments must be merged into another type first. A merge
 requires an active (non-archived) target that is not the source and whose
-allowed age tiers cover every affected member's current age tier
-(`NOT_APPLICABLE`/organisation members are exempt because they are excluded from
-all age-tier policy); it reassigns every source assignment to the target and
+allowed age tiers cover every affected member's current age tier. A member on
+`NOT_APPLICABLE` merges cleanly only when the target type also allows N/A
+(`membershipTypeAgeExemption` FORCED or ALLOWED); the sole exception is
+organisation members, whose N/A is a global org force independent of the type's
+tiers, so they merge onto any target (#2106). It reassigns every source
+assignment to the target and
 deletes the source in one transaction, writing both a `MEMBERSHIP_TYPE_MERGED`
 and a `MEMBERSHIP_TYPE_DELETED` audit record. Because reassigning an
 assignment's membership type never changes its `(memberId, seasonYear)`, the
@@ -1754,20 +1965,101 @@ other seasonal assignment change) do not synchronously resync Xero contact
 groups; reassigned members reconcile through the existing periodic/mismatch Xero
 tooling, and the admin is warned before confirming when the source and target
 Xero rules differ.
-Organisation-type members (the `ORG` access role or the legacy `SCHOOL` role)
-always carry the `NOT_APPLICABLE` age tier, and no other member may hold it —
-the server forces it on every org create/update, rejects it for people, and
-restores a DOB-derived tier when a member is reclassified away from
-Organisation. `NOT_APPLICABLE` never has an `AgeTierSetting` row: it has no
-age range, is displayed as "N/A", and is excluded from every age-based
-automation — the season age-up cron, age-tier Xero contact-group sync (orgs
-are never added to a managed age group; a leftover membership is surfaced as
-a mismatch instead), and age-based subscription requirements. Organisations
-are also exempt from membership entrance fees: both Xero entrance-fee
-invoice paths (direct and outbox) skip N/A members before any amount —
-including an explicit override — is considered. Booking guests
-are always people: `NOT_APPLICABLE` is not a bookable tier, and organisation
-accounts cannot be linked as booking guests.
+The `NOT_APPLICABLE` age tier is the single "no age" classification, driven by
+two independent forces resolved by one shared helper
+(`resolveEnforcedAgeTier`, `src/lib/age-tier-enforcement.ts`) applied at each of
+the enumerated `Member.ageTier` write sites: admin member edit, self-service
+profile, delegated family details, seasonal-assignment save, roll-forward into
+the current season, and bulk set-role. (The Xero member-import is a separate
+write path (#2108): for NEWLY-created members it sets the tier directly — a
+FORCED type forces N/A, else the explicit mapped tier, else the DOB-derived
+tier, else ADULT — and for matched-EXISTING members it routes through the
+seasonal-assignment save above, so this same helper applies.) Precedence,
+highest first:
+
+1. **Org force.** Organisation-type members (the `ORG` access role or the legacy
+   `SCHOOL` role) always carry `NOT_APPLICABLE`, on every create/update.
+2. **Type force.** A member's CURRENT-season membership type is age-exempt when
+   its configured `allowedAgeTiers` (`MembershipTypeAgeTier`, #2069) classify as
+   `membershipTypeAgeExemption(...)`: **FORCED** = the set is exactly
+   `{NOT_APPLICABLE}` — every member on the type is N/A, like an org; **ALLOWED**
+   = N/A appears alongside real person tiers, so an admin may hand-pick N/A per
+   member while others keep a real tier; **DISALLOWED** = N/A is absent and no
+   member on the type may hold it. `ageGroupsApply` (a pricing-shape flag) is
+   deliberately NOT consulted.
+3. **Manual N/A.** Only accepted when the type is ALLOWED; a previously
+   hand-picked N/A is preserved when a later edit submits no tier. A manual N/A
+   is rejected for any other member.
+4. **DOB-derived restore.** Otherwise the member holds a real person tier: the
+   DOB-derived tier via `computeAgeTier` when a DOB exists, else `ADULT`. This is
+   what un-forces a member reclassified away from org, or moved onto a
+   DISALLOWED type.
+
+Configuration and lifecycle guards:
+
+- Age-exempt config (any `allowedAgeTiers` containing `NOT_APPLICABLE`, FORCED or
+  ALLOWED) is valid ONLY on types whose subscription behaviour is
+  `NOT_REQUIRED`, so N/A can never bypass the subscription lockout on a paying
+  type. Enforced on type create/edit.
+- A type allowed-tiers edit is blocked while it would strand a
+  current/future-season assignee: either becoming FORCED while a person-tier
+  member is assigned, or removing `NOT_APPLICABLE` while a NON-ORG member is
+  still on N/A (org members are exempt — the global org force keeps them N/A
+  regardless of the type). This mirrors the merge coverage rule; the admin
+  reassigns/reclassifies those members first. The offending-assignee check is
+  repeated inside the config-write transaction so a concurrent change cannot slip
+  a stranded member past the guard (#2106).
+- A change that flips a member TO N/A is blocked while they are still a linked
+  guest on someone else's future booking. This block is uniform across every
+  N/A-flip site: the seasonal-assignment save (the change preview lists those
+  bookings for removal first), the admin member edit (manual N/A pick and org
+  grant), and the bulk set-role ORG grant (blocked members are reported as
+  per-member failures — like not-found ids — so the rest of the batch still
+  applies). A FORCED/org flip that leaves `ADULT` sweeps the member's future
+  shared-double placements (#1756). The seasonal-assignment save surfaces the
+  old/new age tier in its critical audit record, and binds the resulting tier
+  into the preview's HMAC token so a tier-relevant drift is stale-detected. The
+  same seasonal-assignment save also backs the members-page BULK membership-type
+  change (#2107, `bulkSaveSeasonalMembershipAssignments`): each member is
+  previewed and saved individually with its own HMAC token and its own critical
+  per-member audit row (the run adds one important-severity summary audit), a
+  stale token or a linked-guest block isolates that member as a per-member
+  outcome without aborting the rest, and the up-to-100 per-member Xero
+  contact-group syncs are suppressed in favour of one deferred batched reconcile
+  of the changed members after the loop.
+- Roll-forward into the current season reconciles each copied member's age tier
+  AFTER the copy commits, in bounded chunks (one transaction per chunk, each
+  re-reading member + type state) so no single transaction spans the whole
+  membership; a failed chunk is logged and skipped (the enforcement sites
+  self-heal). The reconcile phase writes one critical summary audit row with the
+  reconciled/swept counts and a bounded per-member before/after sample (#2106).
+- The Xero member-import (#2108) only ever CREATES current-season assignments,
+  never modifies an existing one. That never-overwrite invariant is enforced by a
+  PRE-READ skip, not by the save path: when a mapped group carries a
+  `membershipTypeId`, a matched-EXISTING member who already holds a current-season
+  assignment is filtered out and reported before any write (remediation is the
+  bulk-assign tool). A matched-existing member WITHOUT a current-season assignment
+  is routed through `saveSeasonalMembershipAssignment` (`source` `IMPORT`;
+  existence check, age-exemption force, shared-double sweep, per-member audit; the
+  preview-token staleness 409 is a race backstop). The newly-created members'
+  `createMany` batch — never the save path — is what is exempt from the
+  change-preview gate; it writes an `IMPORT`-source assignment with
+  `skipDuplicates`. A membership-type mapping additionally requires
+  `membership:edit` on top of the route's inferred `finance:edit` — a
+  finance-only admin cannot open the assignment write path. The import writes
+  one `important` summary audit row and never triggers a synchronous whole-group
+  Xero resync.
+
+`NOT_APPLICABLE` never has an `AgeTierSetting` row: it has no age range, is
+displayed as "N/A", and is excluded from every age-based automation — the season
+age-up cron, age-tier Xero contact-group sync (N/A members are never added to a
+managed age group; a leftover membership is surfaced as a mismatch instead), and
+age-based subscription requirements. N/A members are also exempt from membership
+entrance fees: both Xero entrance-fee invoice paths (direct and outbox) skip them
+before any amount — including an explicit override — is considered. Booking
+guests are always people with a real age tier: `NOT_APPLICABLE` is not a bookable
+tier, and an N/A account (organisation or age-exempt human) cannot be linked as a
+booking guest.
 Committee assignment controls public committee/contact presentation
 only. Do not add committee positions to access roles or `Member.role`.
 `CommitteeRole` master records and `CommitteeAssignment` member links can be
@@ -2019,8 +2311,18 @@ and is hard-deleted at the end. The merge is **additive and master-wins**:
   Xero groups not referenced by any active rule are never touched.
 - `NONE` mode is a total no-op — the per-member sync short-circuits before any
   Xero call, and the cancellation path performs no managed removals.
+- A rule targets a **set** of age tiers (`ageTiers`, #2093): the EMPTY set is
+  the "all age tiers" wildcard (the migrated null "Any age"); a non-empty set
+  matches a member whose tier is IN the set. Sets are stored canonical-sorted and
+  a full-tier selection collapses to the empty set, so each shape has exactly one
+  canonical form and the DB partial unique index dedupes reordered sets. In
+  `MEMBERSHIP_TYPE` mode a non-empty tier set makes the rule inert.
 - Resolution is pure and mode-driven (`resolveMemberGrouping`): most-specific
-  MANAGED match wins (type+tier > type-only > tier-only); ACCEPTED is the union
+  MANAGED match wins on the ladder `type + tiers` > `type-only` > `tiers-only`;
+  among tiered rules **fewer tiers is more specific**, and an all-tiers (`[]`)
+  rule is the LEAST specific in the tier dimension (a naive ascending
+  tier-count comparator would wrongly invert this). Exact ties break
+  deterministically by `sortOrder` then group id. ACCEPTED is the union
   of matching accepted rules plus the matched managed group. The effective
   membership type is resolved by the ONE shared policy helper
   (`resolveMembershipTypePolicyForMember`) at the CURRENT season year — pricing

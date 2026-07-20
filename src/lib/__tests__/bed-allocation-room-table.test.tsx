@@ -7,6 +7,8 @@ import { RoomTable } from "@/app/(admin)/admin/bed-allocation/_components/room-t
 import {
   BED_ALLOCATION_COLUMN_WIDTH_CLASS,
   BED_ALLOCATION_COLUMN_WIDTH_REM,
+  BED_ALLOCATION_LABEL_COLUMN_WIDTH_CLASS,
+  BED_ALLOCATION_LABEL_COLUMN_WIDTH_REM,
 } from "@/app/(admin)/admin/bed-allocation/_components/board-cell";
 import type {
   DashboardAllocation,
@@ -58,6 +60,7 @@ describe("RoomTable active drag lane rendering", () => {
     const nights = ["2026-07-01", "2026-07-02"];
     const { container } = render(
       <RoomTable
+        canEdit={true}
         room={buildRoom()}
         nights={nights}
         allocationByBedAndDate={new Map()}
@@ -72,13 +75,17 @@ describe("RoomTable active drag lane rendering", () => {
 
     const table = container.querySelector("table");
     expect(table).toHaveStyle({
-      width: `${(nights.length + 1) * BED_ALLOCATION_COLUMN_WIDTH_REM}rem`,
+      width: `${BED_ALLOCATION_LABEL_COLUMN_WIDTH_REM + nights.length * BED_ALLOCATION_COLUMN_WIDTH_REM}rem`,
     });
 
     const cols = container.querySelectorAll("col");
     expect(cols).toHaveLength(nights.length + 1);
+    const labelWidthClasses = BED_ALLOCATION_LABEL_COLUMN_WIDTH_CLASS.split(" ");
     const columnWidthClasses = BED_ALLOCATION_COLUMN_WIDTH_CLASS.split(" ");
-    for (const col of cols) {
+    // The first (label) column is wider than the date columns; every
+    // remaining column shares the fixed date-column width (#2150).
+    expect(cols[0]).toHaveClass(...labelWidthClasses);
+    for (const col of Array.from(cols).slice(1)) {
       expect(col).toHaveClass(...columnWidthClasses);
     }
 
@@ -97,7 +104,12 @@ describe("RoomTable active drag lane rendering", () => {
     const fixedCells = Array.from(container.querySelectorAll("th, td")).filter(
       (cell) => columnWidthClasses.every((className) => cell.classList.contains(className)),
     );
-    expect(fixedCells).toHaveLength(nights.length * 2 + 2);
+    expect(fixedCells).toHaveLength(nights.length * 2);
+
+    const labelCells = Array.from(container.querySelectorAll("th, td")).filter(
+      (cell) => labelWidthClasses.every((className) => cell.classList.contains(className)),
+    );
+    expect(labelCells).toHaveLength(2);
   });
 
   it("marks a focused booking cell with text, an icon, and a dashed border", () => {
@@ -121,6 +133,7 @@ describe("RoomTable active drag lane rendering", () => {
     };
     const { container } = render(
       <RoomTable
+        canEdit={true}
         room={buildRoom()}
         nights={["2026-07-01"]}
         allocationByBedAndDate={new Map([["bed-1:2026-07-01", [allocation]]])}
@@ -143,6 +156,7 @@ describe("RoomTable bed-type icon (#1675)", () => {
   function renderRoom(room: DashboardRoom) {
     return render(
       <RoomTable
+        canEdit={true}
         room={room}
         nights={["2026-07-01"]}
         allocationByBedAndDate={new Map()}
@@ -269,6 +283,7 @@ describe("RoomTable double-bed sharing (#1701)", () => {
 
     render(
       <RoomTable
+        canEdit={true}
         room={room}
         nights={["2026-07-01"]}
         allocationByBedAndDate={map}

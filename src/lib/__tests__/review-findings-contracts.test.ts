@@ -1929,6 +1929,157 @@ describe("review finding source/schema contracts", () => {
     }
   );
 
+  it(
+    "treats a dollar-quoted body with internal semicolons as one statement so its CURRENT_TIMESTAMP is still caught (#2038)",
+    { timeout: 20000 },
+    () => {
+      // #2038: a $cms$...$cms$ payload whose HTML entities embed literal ";"
+      // (e.g. &mdash;) must not fragment before the session-clock gate. The whole
+      // UPDATE — including "updatedAt" = CURRENT_TIMESTAMP after the closing $cms$
+      // — is one statement, so the clock is seen and the gate blocks
+      // non-overridably. Before the fix the &mdash; semicolon split the payload
+      // and the CURRENT_TIMESTAMP tail lost its leading UPDATE keyword, escaping
+      // the check.
+      const fixture = createTempMigration(
+        [
+          'UPDATE "PageContent"',
+          'SET "contentHtml" = $cms$<p>We do not store card numbers &mdash; Stripe does; see the policy.</p>$cms$,',
+          '    "updatedAt" = CURRENT_TIMESTAMP',
+          "WHERE \"slug\" = 'privacy';",
+          "",
+        ].join("\n"),
+        `${LEDGER_HEADER}\n`
+      );
+
+      try {
+        const blocked = runMigrationSafetyValidator(
+          fixture.migrationPath,
+          fixture.ledgerPath
+        );
+        const stillBlocked = runMigrationSafetyValidator(
+          fixture.migrationPath,
+          fixture.ledgerPath,
+          {
+            ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS: "1",
+            BLUE_GREEN_MIGRATION_OVERRIDE_REASON:
+              "session-clock DML stays non-overridable through dollar quotes",
+          }
+        );
+
+        expect(blocked.status, blocked.stderr).not.toBe(0);
+        expect(blocked.stderr).toContain("Session-clock CURRENT_TIMESTAMP/now()");
+        expect(blocked.stderr).toMatch(/UPDATE "PageContent"/);
+        expect(stillBlocked.status, stillBlocked.stderr).not.toBe(0);
+      } finally {
+        rmSync(fixture.tempDir, { recursive: true, force: true });
+      }
+    }
+  );
+
+  it(
+    "still splits multi-statement files at real semicolons after a dollar-quoted body (#2038)",
+    { timeout: 20000 },
+    () => {
+      // The dollar-quote awareness must not swallow the real statement separator:
+      // a benign explicit-UTC UPDATE with a $cms$ body (internal ";" included)
+      // followed by a SEPARATE CURRENT_TIMESTAMP UPDATE must split into two
+      // statements. Only the second is flagged, and the benign body must NOT
+      // appear in the flagged statement (proof the two were not merged into one).
+      const fixture = createTempMigration(
+        [
+          'UPDATE "PageContent"',
+          'SET "contentHtml" = $cms$<p>First &mdash; benignmarker; body.</p>$cms$,',
+          "    \"updatedAt\" = timezone('UTC', statement_timestamp())",
+          "WHERE \"slug\" = 'faq';",
+          'UPDATE "OtherCold" SET "updatedAt" = CURRENT_TIMESTAMP WHERE "id" = \'z\';',
+          "",
+        ].join("\n"),
+        `${LEDGER_HEADER}\n`
+      );
+
+      try {
+        const result = runMigrationSafetyValidator(
+          fixture.migrationPath,
+          fixture.ledgerPath
+        );
+
+        expect(result.status, result.stderr).not.toBe(0);
+        expect(result.stderr).toContain("Session-clock CURRENT_TIMESTAMP/now()");
+        expect(result.stderr).toMatch(/UPDATE "OtherCold"/);
+        // Split cleanly at the real ";": the benign explicit-UTC statement is not
+        // part of the flagged output.
+        expect(result.stderr).not.toMatch(/UPDATE "PageContent"/);
+        expect(result.stderr).not.toContain("benignmarker");
+      } finally {
+        rmSync(fixture.tempDir, { recursive: true, force: true });
+      }
+    }
+  );
+
+  it(
+    "fails loudly on an unterminated dollar-quoted string instead of silently passing (#2038)",
+    { timeout: 20000 },
+    () => {
+      // An opening $cms$ with no closing $cms$ before EOF must not let the file
+      // slip through unparsed: the splitter reports the unterminated body and the
+      // gate records a hard failure rather than silently passing a file it could
+      // not tokenise.
+      const fixture = createTempMigration(
+        [
+          'UPDATE "PageContent"',
+          'SET "contentHtml" = $cms$<p>Never closed &mdash; oops; and CURRENT_TIMESTAMP hides here</p>,',
+          '    "updatedAt" = CURRENT_TIMESTAMP',
+          "WHERE \"slug\" = 'privacy';",
+          "",
+        ].join("\n"),
+        `${LEDGER_HEADER}\n`
+      );
+
+      try {
+        const result = runMigrationSafetyValidator(
+          fixture.migrationPath,
+          fixture.ledgerPath
+        );
+
+        expect(result.status, result.stderr).not.toBe(0);
+        expect(result.stderr).toContain("Unterminated dollar-quoted string");
+      } finally {
+        rmSync(fixture.tempDir, { recursive: true, force: true });
+      }
+    }
+  );
+
+  it(
+    "acknowledges the committed 20260717180000 cold-table cosmetic session-clock UPDATE against the real ledger (#2038)",
+    { timeout: 20000 },
+    () => {
+      // End-to-end: the dollar-quote-aware splitter now SEES the CURRENT_TIMESTAMP
+      // in the committed starter-copy UPDATEs (previously hidden by &mdash;
+      // fragmentation), and the SESSION_CLOCK_DML_ACKNOWLEDGED allowlist records
+      // the reviewed benign disposition (cold PageContent, cosmetic updatedAt), so
+      // the REAL file passes override-free while the waiver stays visible in
+      // stderr. Run the real file on disk, never a copy.
+      const realMigrationPath = path.resolve(
+        process.cwd(),
+        "prisma/migrations/20260717180000_genericise_starter_lodge_copy/migration.sql"
+      );
+      const realLedgerPath = path.resolve(
+        process.cwd(),
+        "docs/BLUE_GREEN_MIGRATION_SAFETY.tsv"
+      );
+
+      const result = runMigrationSafetyValidator(
+        realMigrationPath,
+        realLedgerPath
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stderr).toContain("Acknowledged benign session-clock DML");
+      // Not the hard-failure header.
+      expect(result.stderr).not.toContain("write an explicit UTC value instead");
+    }
+  );
+
   it("flags hot-table trigger operations in the blue/green validator", () => {
     // #1359 (finding F8): 20260704100000 ran DROP TRIGGER / CREATE CONSTRAINT
     // TRIGGER on hot tables Booking/BookingGuest, but the validator's hot-table

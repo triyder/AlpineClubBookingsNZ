@@ -798,6 +798,13 @@ export async function reviewAdminFamilyGroupRequest(params: {
               memberId: affectedMemberId,
             },
           });
+          // Billing-family removal sweep (#1932, E6): if the removed member had
+          // chosen this group as their billing family, clear it in the same
+          // transaction so it never points at a family they left.
+          await tx.member.updateMany({
+            where: { id: affectedMemberId, billingFamilyGroupId: request.familyGroupId },
+            data: { billingFamilyGroupId: null },
+          });
         } else {
           await tx.familyGroupMember.upsert({
             where: {

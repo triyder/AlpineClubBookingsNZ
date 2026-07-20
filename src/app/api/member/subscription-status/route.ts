@@ -3,7 +3,6 @@ import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { getSeasonYear } from "@/lib/utils";
-import { roleNeverRequiresSubscription } from "@/lib/member-subscription-defaults";
 import {
   requiresPaidSubscriptionForMemberForBooking,
   resolveMembershipTypePolicyForMember,
@@ -59,10 +58,19 @@ export async function GET() {
   const effectiveStatus = subscriptionRequired ? status : "NOT_REQUIRED";
   const effectiveStatusReason = subscriptionRequired
     ? "REQUIRED"
-    : roleNeverRequiresSubscription(member?.role ?? "USER")
-      ? "ROLE_NOT_REQUIRED"
-      : membershipTypePolicy?.subscriptionBehavior === "NOT_REQUIRED"
-        ? "MEMBERSHIP_TYPE_NOT_REQUIRED"
+    : // #2149: role carries no subscription exemption. A bare ADMIN/LODGE account
+      // resolves (via the role→default-type fallback) to its own NOT_REQUIRED
+      // built-in membership type, so it reports MEMBERSHIP_TYPE_NOT_REQUIRED like
+      // any other opted-out type — role is no longer a distinct reason.
+      membershipTypePolicy?.subscriptionBehavior === "NOT_REQUIRED"
+      ? "MEMBERSHIP_TYPE_NOT_REQUIRED"
+      : // BASED_ON_AGE_TIER (issue #2041): the type defers to the per-age-tier
+        // flag; when the member's tier does not require a subscription (or a
+        // NOT_REQUIRED season row dominates), report the age-tier reason so the
+        // member sees "not required for your age tier" rather than the generic
+        // lockout-disabled bucket.
+        membershipTypePolicy?.subscriptionBehavior === "BASED_ON_AGE_TIER"
+        ? "MEMBERSHIP_TYPE_AGE_TIER_NOT_REQUIRED"
         : "LOCKOUT_DISABLED_OR_AGE_TIER_NOT_REQUIRED";
 
   return NextResponse.json({

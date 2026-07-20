@@ -124,7 +124,7 @@ export async function enqueueXeroEntranceFeeInvoiceOperation(
 ) {
   // Optional transaction client (#1886, F22) so membership approval can write
   // this outbox row inside the same transaction that creates the member and
-  // approves the application — the entrance fee then commits atomically with
+  // approves the application — the joining fee then commits atomically with
   // the approval instead of riding a post-commit crash window that silently
   // lost the invoice. Every internal read/write goes through the same client
   // (mirroring enqueueXeroRefundCreditNoteOperation, #1357) so the member and
@@ -149,13 +149,13 @@ export async function enqueueXeroEntranceFeeInvoiceOperation(
   if (existingLink) {
     return {
       queueOperationId: null,
-      message: "Xero entrance fee invoice already linked for this member.",
+      message: "Xero joining fee invoice already linked for this member.",
     };
   }
 
   const entranceFee = await getEntranceFeeContext(memberId, db);
 
-  // Organisations/schools are exempt from entrance fees (owner decision,
+  // Organisations/schools are exempt from joining fees (owner decision,
   // 2026-07-07) — checked before the amount override so an explicitly
   // entered amount can never bill an organisation.
   if (entranceFee.exempt) {
@@ -172,7 +172,7 @@ export async function enqueueXeroEntranceFeeInvoiceOperation(
   if (!feeAmountCents || feeAmountCents <= 0) {
     return {
       queueOperationId: null,
-      message: "No entrance fee is configured for this member category.",
+      message: "No joining fee is configured for this membership type.",
     };
   }
 
@@ -202,7 +202,7 @@ export async function enqueueXeroEntranceFeeInvoiceOperation(
   if (existingQueuedOperation) {
     return {
       queueOperationId: existingQueuedOperation.id,
-      message: "Xero entrance fee invoice is already queued for background processing.",
+      message: "Xero joining fee invoice is already queued for background processing.",
     };
   }
 
@@ -228,7 +228,7 @@ export async function enqueueXeroEntranceFeeInvoiceOperation(
 
   return {
     queueOperationId: queuedOperation.id,
-    message: "Xero entrance fee invoice queued for background processing.",
+    message: "Xero joining fee invoice queued for background processing.",
   };
 }
 
@@ -2204,18 +2204,22 @@ export async function processQueuedXeroOutboxOperations(options?: {
       if (payload?.queueType === XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE) {
         const currentCharge = await prisma.membershipSubscriptionCharge.findUnique({
           where: { id: payload.chargeId },
-          select: { xeroInvoiceId: true },
+          select: { xeroInvoiceId: true, status: true },
         }).catch(() => null);
-        await prisma.membershipSubscriptionCharge.update({
-          where: { id: payload.chargeId },
-          data: {
-            status: currentCharge?.xeroInvoiceId ? "EMAIL_FAILED" : "QUEUED",
-            lastErrorCode: currentCharge?.xeroInvoiceId ? "EMAIL_FAILED" : "XERO_FAILED",
-            lastErrorMessage: error instanceof Error ? error.message : String(error),
-          },
-        }).catch((chargeError) => {
-          logger.error({ err: chargeError, chargeId: payload.chargeId }, "Failed to expose subscription charge outbox error");
-        });
+        // #2147: never resurrect a VOIDED charge (its invoice was voided and its
+        // coverage released) back to a retryable QUEUED/EMAIL_FAILED state.
+        if (currentCharge && currentCharge.status !== "VOIDED") {
+          await prisma.membershipSubscriptionCharge.update({
+            where: { id: payload.chargeId },
+            data: {
+              status: currentCharge.xeroInvoiceId ? "EMAIL_FAILED" : "QUEUED",
+              lastErrorCode: currentCharge.xeroInvoiceId ? "EMAIL_FAILED" : "XERO_FAILED",
+              lastErrorMessage: error instanceof Error ? error.message : String(error),
+            },
+          }).catch((chargeError) => {
+            logger.error({ err: chargeError, chargeId: payload.chargeId }, "Failed to expose subscription charge outbox error");
+          });
+        }
       }
       // F4 (#1354): fail the operation for EVERY queue type, not just the two
       // membership-cancellation types and payload-shape errors. An operation

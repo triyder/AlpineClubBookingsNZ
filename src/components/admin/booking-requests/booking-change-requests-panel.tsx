@@ -387,7 +387,7 @@ export function BookingChangeRequestsPanel({
                           id={`admin-notes-${request.id}`}
                           value={reviewingId === request.id ? adminNotes : ""}
                           disabled={!canEdit}
-                          title={!canEdit ? ADMIN_VIEW_ONLY_ACTION_REASON : undefined}
+                          title={canEdit === false ? ADMIN_VIEW_ONLY_ACTION_REASON : undefined}
                           onChange={(event) => {
                             setReviewingId(request.id);
                             setAdminNotes(event.target.value);
@@ -407,7 +407,7 @@ export function BookingChangeRequestsPanel({
                               : ""
                           }
                           disabled={!canEdit}
-                          title={!canEdit ? ADMIN_VIEW_ONLY_ACTION_REASON : undefined}
+                          title={canEdit === false ? ADMIN_VIEW_ONLY_ACTION_REASON : undefined}
                           onChange={(event) => {
                             setReviewingId(request.id);
                             setLinkedModificationIdInput(event.target.value);

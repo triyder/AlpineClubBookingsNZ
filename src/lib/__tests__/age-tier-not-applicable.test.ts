@@ -28,6 +28,13 @@ vi.mock("@/lib/prisma", () => ({
       deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
     auditLog: { create: vi.fn().mockResolvedValue({}), findMany: vi.fn() },
+    // #2106: the N/A-flip linked-guest block queries future linked-guest
+    // bookings; default to none.
+    bookingGuest: { findMany: vi.fn().mockResolvedValue([]) },
+    // #2106: the update path resolves the member's current-season type exemption.
+    seasonalMembershipAssignment: {
+      findUnique: vi.fn().mockResolvedValue(null),
+    },
     familyGroupMember: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
     memberFieldsSettings: { findUnique: vi.fn().mockResolvedValue(null) },
     passwordResetToken: { create: vi.fn() },
@@ -77,6 +84,10 @@ import {
   getAgeTierLabel,
 } from "@/lib/use-age-tier-options";
 import { resolveLinkedBookingMembers } from "@/lib/booking-guests";
+import {
+  NOT_APPLICABLE_TYPE_REJECTION_MESSAGE,
+  resolveEnforcedAgeTier,
+} from "@/lib/age-tier-enforcement";
 
 const fullAdminGuard = {
   ok: true,
@@ -356,7 +367,7 @@ describe("#1440 — organisations cannot be linked as booking guests", () => {
       resolveLinkedBookingMembers(db, "booker1", ["org1"], {
         skipAuthorization: true,
       }),
-    ).rejects.toThrow(/Organisation accounts cannot be added/);
+    ).rejects.toThrow(/age-exempt \(N\/A\) and cannot be added/);
   });
 
   it("resolveLinkedBookingMembers still resolves person members", async () => {
@@ -374,5 +385,91 @@ describe("#1440 — organisations cannot be linked as booking guests", () => {
     });
 
     expect(resolved.get("m1")).toMatchObject({ ageTier: "ADULT" });
+  });
+});
+
+describe("#2106 — resolveEnforcedAgeTier precedence matrix", () => {
+  const base = {
+    isOrganisation: false,
+    typeExemption: "DISALLOWED" as const,
+    currentAgeTier: "ADULT" as const,
+    restorePersonTier: "ADULT" as const,
+  };
+
+  it("org force outranks everything (even an ALLOWED type and a person pick)", () => {
+    expect(
+      resolveEnforcedAgeTier({
+        ...base,
+        isOrganisation: true,
+        typeExemption: "ALLOWED",
+        requestedAgeTier: "YOUTH",
+      }),
+    ).toEqual({ ok: true, ageTier: "NOT_APPLICABLE" });
+  });
+
+  it("a FORCED type forces N/A when the member is not an org", () => {
+    expect(
+      resolveEnforcedAgeTier({ ...base, typeExemption: "FORCED" }),
+    ).toEqual({ ok: true, ageTier: "NOT_APPLICABLE" });
+  });
+
+  it("accepts an explicit manual N/A only on an ALLOWED type", () => {
+    expect(
+      resolveEnforcedAgeTier({
+        ...base,
+        typeExemption: "ALLOWED",
+        requestedAgeTier: "NOT_APPLICABLE",
+      }),
+    ).toEqual({ ok: true, ageTier: "NOT_APPLICABLE" });
+  });
+
+  it("rejects an explicit manual N/A on a DISALLOWED type (and with no type)", () => {
+    expect(
+      resolveEnforcedAgeTier({
+        ...base,
+        typeExemption: "DISALLOWED",
+        requestedAgeTier: "NOT_APPLICABLE",
+      }),
+    ).toEqual({ ok: false, error: NOT_APPLICABLE_TYPE_REJECTION_MESSAGE });
+    expect(
+      resolveEnforcedAgeTier({
+        ...base,
+        typeExemption: null,
+        requestedAgeTier: "NOT_APPLICABLE",
+      }),
+    ).toEqual({ ok: false, error: NOT_APPLICABLE_TYPE_REJECTION_MESSAGE });
+  });
+
+  it("preserves a hand-picked N/A on an ALLOWED type when no tier is submitted", () => {
+    expect(
+      resolveEnforcedAgeTier({
+        ...base,
+        typeExemption: "ALLOWED",
+        currentAgeTier: "NOT_APPLICABLE",
+        restorePersonTier: "ADULT",
+      }),
+    ).toEqual({ ok: true, ageTier: "NOT_APPLICABLE" });
+  });
+
+  it("restores the person tier when un-forcing an N/A member onto a DISALLOWED type", () => {
+    expect(
+      resolveEnforcedAgeTier({
+        ...base,
+        typeExemption: "DISALLOWED",
+        currentAgeTier: "NOT_APPLICABLE",
+        restorePersonTier: "YOUTH",
+      }),
+    ).toEqual({ ok: true, ageTier: "YOUTH" });
+  });
+
+  it("an explicit person tier wins over the restore fallback", () => {
+    expect(
+      resolveEnforcedAgeTier({
+        ...base,
+        typeExemption: "ALLOWED",
+        requestedAgeTier: "CHILD",
+        restorePersonTier: "ADULT",
+      }),
+    ).toEqual({ ok: true, ageTier: "CHILD" });
   });
 });

@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { ViewOnlyActionButton } from "@/components/admin/view-only-action"
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import {
   Dialog,
@@ -52,6 +54,9 @@ export function MemberPartnerLinkCard({
   className,
 }: MemberPartnerLinkCardProps) {
   const router = useRouter()
+  // Assign/remove write /api/admin/members/[id]/partner-link (membership area);
+  // a view-only membership admin sees the link but cannot change it (#1997).
+  const canEdit = useAdminAreaEditAccess("membership")
   const [state, setState] = useState<SerializedPartnerLinkState | null>(null)
   const [assignOpen, setAssignOpen] = useState(false)
   const [search, setSearch] = useState("")
@@ -231,7 +236,8 @@ export function MemberPartnerLinkCard({
             View Partner
           </Button>
           {!memberIsArchived && (
-            <Button
+            <ViewOnlyActionButton
+              canEdit={canEdit}
               variant="outline"
               size="sm"
               onClick={() => handleRemove(link.id, confirmed)}
@@ -239,7 +245,7 @@ export function MemberPartnerLinkCard({
             >
               <Trash2 className="h-4 w-4 mr-1" />
               {removingId === link.id ? "Removing..." : "Remove"}
-            </Button>
+            </ViewOnlyActionButton>
           )}
         </div>
       </div>
@@ -255,10 +261,10 @@ export function MemberPartnerLinkCard({
             Archived
           </Badge>
         ) : !state?.confirmed && isAdultMember ? (
-          <Button variant="outline" size="sm" onClick={() => setAssignOpen((open) => !open)}>
+          <ViewOnlyActionButton canEdit={canEdit} variant="outline" size="sm" onClick={() => setAssignOpen((open) => !open)}>
             <HeartHandshake className="h-4 w-4 mr-1" />
             Assign Partner
-          </Button>
+          </ViewOnlyActionButton>
         ) : null}
       </CardHeader>
       <CardContent>
@@ -306,7 +312,8 @@ export function MemberPartnerLinkCard({
                         </p>
                         <p className="break-all text-xs text-muted-foreground">{candidate.email}</p>
                       </div>
-                      <Button
+                      <ViewOnlyActionButton
+                        canEdit={canEdit}
                         size="sm"
                         className="w-full sm:w-auto"
                         disabled={saving}
@@ -318,7 +325,7 @@ export function MemberPartnerLinkCard({
                         }
                       >
                         {saving ? "Assigning..." : "Assign"}
-                      </Button>
+                      </ViewOnlyActionButton>
                     </div>
                   ))}
                 </div>

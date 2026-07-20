@@ -124,7 +124,9 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const admin = await requireAdmin();
+  const admin = await requireAdmin({
+    permission: { area: "support", level: "view" },
+  });
   if (!admin.ok) {
     return admin.response;
   }
@@ -155,7 +157,9 @@ export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const admin = await requireAdmin();
+  const admin = await requireAdmin({
+    permission: { area: "support", level: "edit" },
+  });
   if (!admin.ok) {
     return admin.response;
   }

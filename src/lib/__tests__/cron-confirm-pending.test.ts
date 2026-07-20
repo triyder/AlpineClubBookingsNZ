@@ -4,6 +4,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 vi.stubEnv("STRIPE_SECRET_KEY", "sk_test_fake");
 
 const mockChargePaymentMethod = vi.fn();
+// #1992: the auto-charge claim sweeps and cancels in-flight /pay link intents
+// before charging the saved card (best-effort, outside any transaction).
+const mockCancelPaymentIntentIfCancellable = vi.fn();
 const mockMarkBookingPaymentSucceeded = vi.fn();
 const mockUpsertPaymentIntentTransaction = vi.fn();
 const mockEnqueueXeroBookingInvoiceOperation = vi.fn().mockResolvedValue({
@@ -19,6 +22,8 @@ const mockKickQueuedXeroOutboxOperationsIfConnected = vi.fn().mockResolvedValue(
 });
 vi.mock("../stripe", () => ({
   chargePaymentMethod: (...args: unknown[]) => mockChargePaymentMethod(...args),
+  cancelPaymentIntentIfCancellable: (...args: unknown[]) =>
+    mockCancelPaymentIntentIfCancellable(...args),
 }));
 vi.mock("../xero-operation-outbox", () => ({
   enqueueXeroBookingInvoiceOperation: (...args: unknown[]) =>
@@ -37,8 +42,23 @@ vi.mock("../payment-transactions", () => ({
     mockUpsertPaymentIntentTransaction(...args),
 }));
 
+const mockProcessWaitlistForDates = vi.fn().mockResolvedValue(undefined);
 vi.mock("../waitlist", () => ({
-  processWaitlistForDates: vi.fn().mockResolvedValue(undefined),
+  processWaitlistForDates: (...args: unknown[]) =>
+    mockProcessWaitlistForDates(...args),
+}));
+
+// #2012: the request-hold terminal cancel RELEASES held capacity via the bed
+// reconcile (unlike the split child, which holds none). Mock it as an
+// observable no-op so tests can assert the release fires (or does not, on the
+// lost-CAS path). Fire-and-forget side effect on beds; the reconcile logic
+// itself is covered in bed-allocation-lifecycle.test.ts.
+const mockReconcileBedAllocationsForBooking = vi
+  .fn()
+  .mockResolvedValue(undefined);
+vi.mock("@/lib/bed-allocation-lifecycle", () => ({
+  reconcileBedAllocationsForBooking: (...args: unknown[]) =>
+    mockReconcileBedAllocationsForBooking(...args),
 }));
 
 // Mock email
@@ -48,22 +68,79 @@ const mockSendGuestsRemovedEmail = vi.fn();
 const mockSendGuestsCancelledEmail = vi.fn();
 const mockSendAdminPaymentFailureAlert = vi.fn().mockResolvedValue(undefined);
 const mockSendAdminHoldExpiredAlert = vi.fn().mockResolvedValue(undefined);
+const mockSendSplitGuestPaymentLinkEmail = vi.fn().mockResolvedValue({
+  status: "sent",
+});
+const mockSendAdminSplitSettlementUnpaidAlert = vi
+  .fn()
+  .mockResolvedValue(undefined);
+// #1993 Part A: dedicated terminal admin notice for an auto-cancelled split
+// child (its own registered template, not a finalNotice variant).
+const mockSendAdminSplitSettlementCancelledAlert = vi
+  .fn()
+  .mockResolvedValue(undefined);
+// #1993 Part A: dedicated member notice for an auto-cancelled split child's
+// guest portion (replaces the misleading generic booking-cancelled email).
+const mockSendSplitGuestPortionCancelledEmail = vi
+  .fn()
+  .mockResolvedValue(undefined);
+// #2012: dedicated terminal notices for an auto-cancelled request-origin
+// booking (its own registered templates, symmetric with #1993).
+const mockSendAdminBookingRequestHoldCancelledEmail = vi
+  .fn()
+  .mockResolvedValue(undefined);
+const mockSendBookingRequestPaymentExpiredEmail = vi
+  .fn()
+  .mockResolvedValue(undefined);
 vi.mock("../email", () => ({
   sendBookingConfirmedEmail: (...args: unknown[]) => mockSendConfirmedEmail(...args),
   sendBookingBumpedEmail: (...args: unknown[]) => mockSendBumpedEmail(...args),
   sendBookingGuestsRemovedEmail: (...args: unknown[]) => mockSendGuestsRemovedEmail(...args),
   sendBookingGuestsCancelledEmail: (...args: unknown[]) => mockSendGuestsCancelledEmail(...args),
+  sendSplitGuestPortionCancelledEmail: (...args: unknown[]) =>
+    mockSendSplitGuestPortionCancelledEmail(...args),
   sendAdminPaymentFailureAlert: (...args: unknown[]) => mockSendAdminPaymentFailureAlert(...args),
   sendAdminBookingRequestHoldExpiredEmail: (...args: unknown[]) =>
     mockSendAdminHoldExpiredAlert(...args),
+  sendAdminBookingRequestHoldCancelledEmail: (...args: unknown[]) =>
+    mockSendAdminBookingRequestHoldCancelledEmail(...args),
+  sendBookingRequestPaymentExpiredEmail: (...args: unknown[]) =>
+    mockSendBookingRequestPaymentExpiredEmail(...args),
+  sendSplitGuestPaymentLinkEmail: (...args: unknown[]) =>
+    mockSendSplitGuestPaymentLinkEmail(...args),
+  sendAdminSplitSettlementUnpaidAlert: (...args: unknown[]) =>
+    mockSendAdminSplitSettlementUnpaidAlert(...args),
+  sendAdminSplitSettlementCancelledAlert: (...args: unknown[]) =>
+    mockSendAdminSplitSettlementCancelledAlert(...args),
+}));
+
+// #1993 Part B: the derived alert cadence anchors on the hold's original expiry,
+// read back from the non-member hold policy. Default 7 days matches the standard
+// split-child hold window; individual tests override it to exercise the cadence.
+const mockGetNonMemberHoldDays = vi.fn().mockResolvedValue(7);
+vi.mock("../cancellation", () => ({
+  getNonMemberHoldDays: (...args: unknown[]) =>
+    mockGetNonMemberHoldDays(...args),
 }));
 
 // The confirm-pending cron revokes payment links for bumped bookings
 // (issue #707); the behaviour itself is covered in payment-link.test.ts.
 const mockRevokePaymentLinksForBooking = vi.fn().mockResolvedValue(0);
+// #1967: the settlement cron mints a guest-portion payment link for a split
+// child with no card on file (default: first transition — returns a fresh
+// link), and revokes a just-minted link by id when the member email fails.
+const mockMintSplitGuestPaymentLinkIfAbsent = vi.fn().mockResolvedValue({
+  token: "tok_split_1",
+  paymentLinkId: "pl_split_1",
+});
+const mockRevokePaymentLinkById = vi.fn().mockResolvedValue(1);
 vi.mock("@/lib/payment-link", () => ({
   revokePaymentLinksForBooking: (...args: unknown[]) =>
     mockRevokePaymentLinksForBooking(...args),
+  mintSplitGuestPaymentLinkIfAbsent: (...args: unknown[]) =>
+    mockMintSplitGuestPaymentLinkIfAbsent(...args),
+  revokePaymentLinkById: (...args: unknown[]) =>
+    mockRevokePaymentLinkById(...args),
 }));
 
 // Mock promo cleanup used by the whole-bump path.
@@ -96,7 +173,11 @@ const mockBookingUpdate = vi.fn();
 const mockBookingUpdateMany = vi.fn();
 const mockPaymentUpdate = vi.fn();
 const mockPaymentUpsert = vi.fn();
+// #1992: the pre-charge sweep reads in-flight PRIMARY intents off the ledger.
+const mockPaymentTransactionFindMany = vi.fn();
 const mockPromoRedemptionFindUnique = vi.fn();
+// #1993 Part A: the terminal branch records a CANCELLED booking event in-tx.
+const mockBookingEventCreate = vi.fn().mockResolvedValue({ id: "evt_1" });
 const mockPrismaTransaction = vi.fn();
 const mockExecuteRaw = vi.fn();
 
@@ -112,14 +193,27 @@ vi.mock("../prisma", () => ({
       update: (...args: unknown[]) => mockPaymentUpdate(...args),
       upsert: (...args: unknown[]) => mockPaymentUpsert(...args),
     },
+    paymentTransaction: {
+      findMany: (...args: unknown[]) => mockPaymentTransactionFindMany(...args),
+    },
     promoRedemption: {
       findUnique: (...args: unknown[]) => mockPromoRedemptionFindUnique(...args),
+    },
+    // #1993 Part A: the CANCELLED narrative event is now recorded POST-COMMIT
+    // on the base client (recordBookingEvent's documented contract), not inside
+    // the lock transaction.
+    bookingEvent: {
+      create: (...args: unknown[]) => mockBookingEventCreate(...args),
     },
     $transaction: (...args: unknown[]) => mockPrismaTransaction(...args),
   },
 }));
 
-const { confirmPendingBookings } = await import("../cron-confirm-pending");
+const {
+  confirmPendingBookings,
+  splitSettlementExtensionNumber,
+  shouldAlertOnSplitSettlementExtension,
+} = await import("../cron-confirm-pending");
 
 function makePendingBooking(
   id: string,
@@ -136,6 +230,22 @@ function makePendingBooking(
       stripePaymentMethodId: string;
       stripeCustomerId: string;
     } | null;
+    // Full parent snapshot (#1967): lets tests model the parent's lifecycle
+    // status and payment source (IB-settled vs abandoned card). Takes
+    // precedence over the parentPayment shorthand when provided.
+    parentBooking?: {
+      id?: string;
+      status?: string;
+      deletedAt?: Date | null;
+      payment?: {
+        id: string;
+        source?: string;
+        stripeCustomerId?: string | null;
+        stripePaymentMethodId?: string | null;
+      } | null;
+    } | null;
+    // #1967: a #796 group joiner's booking always carries a join row.
+    groupBookingJoin?: { id: string } | null;
     originBookingRequest?: { id: string } | null;
   } = {}
 ) {
@@ -148,10 +258,31 @@ function makePendingBooking(
     finalPriceCents = 10000,
     parentBookingId = null,
     parentPayment = null,
+    parentBooking,
+    groupBookingJoin = null,
     originBookingRequest = null,
   } = opts;
   const stayStart = new Date(checkIn);
   const stayEnd = new Date(checkOut);
+
+  const resolvedParentBooking =
+    parentBooking !== undefined
+      ? parentBooking === null
+        ? null
+        : {
+            id: parentBooking.id ?? parentBookingId ?? `parent_${id}`,
+            status: parentBooking.status ?? "CONFIRMED",
+            deletedAt: parentBooking.deletedAt ?? null,
+            payment: parentBooking.payment ?? null,
+          }
+      : parentPayment
+        ? {
+            id: parentBookingId ?? `parent_${id}`,
+            status: "PAYMENT_PENDING",
+            deletedAt: null,
+            payment: { source: "STRIPE", ...parentPayment },
+          }
+        : null;
 
   return {
     id,
@@ -166,12 +297,8 @@ function makePendingBooking(
     hasNonMembers: true,
     cancelIfGuestsBumped: false,
     parentBookingId,
-    parentBooking: parentPayment
-      ? {
-          id: parentBookingId ?? `parent_${id}`,
-          payment: parentPayment,
-        }
-      : null,
+    parentBooking: resolvedParentBooking,
+    groupBookingJoin,
     originBookingRequest,
     promoRedemption: null,
     createdAt: new Date("2026-03-01"),
@@ -243,9 +370,26 @@ describe("Cron: Confirm Pending Bookings", () => {
         id: create?.id ?? `pay_${where.bookingId}`,
       })
     );
+    mockPaymentTransactionFindMany.mockResolvedValue([]);
+    mockCancelPaymentIntentIfCancellable.mockResolvedValue(null);
     mockPromoRedemptionFindUnique.mockResolvedValue(null);
     mockDeletePromoRedemption.mockResolvedValue(undefined);
     mockRevokePaymentLinksForBooking.mockResolvedValue(0);
+    mockMintSplitGuestPaymentLinkIfAbsent.mockResolvedValue({
+      token: "tok_split_1",
+      paymentLinkId: "pl_split_1",
+    });
+    mockRevokePaymentLinkById.mockResolvedValue(1);
+    mockSendSplitGuestPaymentLinkEmail.mockResolvedValue({ status: "sent" });
+    mockSendAdminSplitSettlementUnpaidAlert.mockResolvedValue(undefined);
+    mockSendAdminSplitSettlementCancelledAlert.mockResolvedValue(undefined);
+    mockSendSplitGuestPortionCancelledEmail.mockResolvedValue(undefined);
+    mockSendAdminBookingRequestHoldCancelledEmail.mockResolvedValue(undefined);
+    mockSendBookingRequestPaymentExpiredEmail.mockResolvedValue(undefined);
+    mockProcessWaitlistForDates.mockResolvedValue(undefined);
+    mockReconcileBedAllocationsForBooking.mockResolvedValue(undefined);
+    mockGetNonMemberHoldDays.mockResolvedValue(7);
+    mockBookingEventCreate.mockResolvedValue({ id: "evt_1" });
     mockPrismaTransaction.mockImplementation(async (arg: unknown) => {
       if (typeof arg === "function") {
         return arg({
@@ -264,6 +408,11 @@ describe("Cron: Confirm Pending Bookings", () => {
           promoRedemption: {
             findUnique: (...args: unknown[]) =>
               mockPromoRedemptionFindUnique(...args),
+          },
+          // #1993 Part A: the terminal branch records the CANCELLED event
+          // inside the lock transaction.
+          bookingEvent: {
+            create: (...args: unknown[]) => mockBookingEventCreate(...args),
           },
         });
       }
@@ -437,6 +586,13 @@ describe("Cron: Confirm Pending Bookings", () => {
       })
     );
     expect(mockEnqueueXeroBookingInvoiceOperation).toHaveBeenCalledWith("child_1");
+    // #1967 FIX-6: the auto-charge claim revokes any outstanding /pay link
+    // inside the claim transaction, so a link minted while no card was on
+    // file can never race the saved-card charge into a double payment.
+    expect(mockRevokePaymentLinksForBooking).toHaveBeenCalledWith(
+      "child_1",
+      expect.anything()
+    );
   });
 
   it("cancels a split non-member child without charge or invoice when capacity is gone", async () => {
@@ -937,5 +1093,1124 @@ describe("Cron: Confirm Pending Bookings", () => {
     );
     expect(mockChargePaymentMethod).not.toHaveBeenCalled();
     expect(mockEnqueueXeroBookingInvoiceOperation).not.toHaveBeenCalled();
+  });
+
+  // #2012 — the symmetric twin of #1993 Part A for request-origin bookings
+  // (#707). Two behaviours: (1) a terminal auto-cancel once the check-in day has
+  // ended that RELEASES the booking's held capacity (unlike the split child,
+  // which holds none), and (2) the #1993 Part B capped alert cadence applied to
+  // the previously-every-run pre-check-in hold-expired admin alert.
+  describe("#2012 request-hold terminal auto-cancel + capped cadence", () => {
+    it("cancels a past-check-in unpaid request booking: guarded CAS, in-tx link revoke + capacity release, POST-COMMIT event, requester email + dedicated final admin notice, waitlist wake, no charge, no Xero", async () => {
+      const booking = makePendingBooking("b1", {
+        checkIn: "2026-07-01",
+        checkOut: "2026-07-03",
+        hasPaymentMethod: false,
+        originBookingRequest: { id: "req_1" },
+        finalPriceCents: 14000,
+        guestCount: 2,
+      });
+      mockPendingBookings([booking]);
+      mockCheckCapacityForGuestRanges.mockResolvedValue({
+        available: true,
+        minAvailable: 5,
+        nightDetails: [],
+      });
+
+      const result = await confirmPendingBookings();
+
+      // Terminal cancel bucket; never confirmed/bumped/failed.
+      expect(result.cancelledBookingIds).toEqual(["b1"]);
+      expect(result.confirmedBookingIds).toEqual([]);
+      expect(result.bumpedBookingIds).toEqual([]);
+      expect(result.failedBookingIds).toEqual([]);
+
+      // Guarded PENDING -> CANCELLED CAS.
+      expect(mockBookingUpdateMany).toHaveBeenCalledWith({
+        where: { id: "b1", status: "PENDING" },
+        data: { status: "CANCELLED", nonMemberHoldUntil: null },
+      });
+
+      // Capacity released (bed reconcile) and link revoked IN the transaction;
+      // CANCELLED narrative event recorded POST-COMMIT on the base client.
+      expect(mockReconcileBedAllocationsForBooking).toHaveBeenCalledWith(
+        expect.objectContaining({ bookingId: "b1" })
+      );
+      expect(mockRevokePaymentLinksForBooking).toHaveBeenCalledWith(
+        "b1",
+        expect.anything()
+      );
+      expect(mockBookingEventCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            bookingId: "b1",
+            type: "CANCELLED",
+          }),
+        })
+      );
+
+      // Never charged, never touched Xero, never extended the hold, and the
+      // recurring hold-expired alert did NOT fire on the terminal run.
+      expect(mockChargePaymentMethod).not.toHaveBeenCalled();
+      expect(mockEnqueueXeroBookingInvoiceOperation).not.toHaveBeenCalled();
+      expect(mockBookingUpdateMany).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: { nonMemberHoldUntil: expect.any(Date) },
+        })
+      );
+      expect(mockSendAdminHoldExpiredAlert).not.toHaveBeenCalled();
+
+      // Post-commit: dedicated requester payment-expired email + ONE dedicated
+      // terminal admin notice + waitlist wake for the freed beds.
+      expect(mockSendBookingRequestPaymentExpiredEmail).toHaveBeenCalledTimes(1);
+      expect(mockSendBookingRequestPaymentExpiredEmail).toHaveBeenCalledWith(
+        expect.objectContaining({
+          email: "b1@example.com",
+          firstName: "Test",
+          checkIn: booking.checkIn,
+          checkOut: booking.checkOut,
+        })
+      );
+      expect(
+        mockSendAdminBookingRequestHoldCancelledEmail
+      ).toHaveBeenCalledTimes(1);
+      expect(
+        mockSendAdminBookingRequestHoldCancelledEmail
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({
+          requesterName: "Test User",
+          totalCents: 14000,
+          guestCount: 2,
+        })
+      );
+      expect(mockProcessWaitlistForDates).toHaveBeenCalledWith(
+        expect.objectContaining({
+          checkIn: booking.checkIn,
+          checkOut: booking.checkOut,
+        })
+      );
+    });
+
+    it("records the CANCELLED event post-commit so a bookingEvent write failure never blocks the cancel", async () => {
+      const booking = makePendingBooking("b1", {
+        checkIn: "2026-07-01",
+        checkOut: "2026-07-03",
+        hasPaymentMethod: false,
+        originBookingRequest: { id: "req_1" },
+      });
+      mockPendingBookings([booking]);
+      mockCheckCapacityForGuestRanges.mockResolvedValue({
+        available: true,
+        minAvailable: 5,
+        nightDetails: [],
+      });
+      mockBookingEventCreate.mockRejectedValueOnce(
+        new Error("event insert failed")
+      );
+
+      const result = await confirmPendingBookings();
+
+      expect(result.cancelledBookingIds).toEqual(["b1"]);
+      expect(result.failedBookingIds).toEqual([]);
+      expect(mockBookingUpdateMany).toHaveBeenCalledWith({
+        where: { id: "b1", status: "PENDING" },
+        data: { status: "CANCELLED", nonMemberHoldUntil: null },
+      });
+      // Notices still went out despite the swallowed event failure.
+      expect(mockSendBookingRequestPaymentExpiredEmail).toHaveBeenCalledTimes(1);
+      expect(
+        mockSendAdminBookingRequestHoldCancelledEmail
+      ).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not cancel when a payment won the lock first (CAS count 0): already_processed, zero side effects — also the idempotent-rerun guard", async () => {
+      const booking = makePendingBooking("b1", {
+        checkIn: "2026-07-01",
+        checkOut: "2026-07-03",
+        hasPaymentMethod: false,
+        originBookingRequest: { id: "req_1" },
+      });
+      mockPendingBookings([booking]);
+      mockCheckCapacityForGuestRanges.mockResolvedValue({
+        available: true,
+        minAvailable: 5,
+        nightDetails: [],
+      });
+      // The guarded PENDING -> CANCELLED CAS finds no PENDING row: a /pay
+      // settlement (or a prior cron pass) resolved it seconds earlier. A second
+      // cron pass on an already-cancelled booking takes this same branch.
+      mockBookingUpdateMany.mockResolvedValue({ count: 0 });
+
+      const result = await confirmPendingBookings();
+
+      expect(result.cancelledBookingIds).toEqual([]);
+      expect(result.confirmedBookingIds).toEqual([]);
+      expect(result.failedBookingIds).toEqual([]);
+      // Zero side effects on the lost claim: no capacity release, no revoke, no
+      // event, no requester email, no admin notice, no waitlist.
+      expect(mockReconcileBedAllocationsForBooking).not.toHaveBeenCalled();
+      expect(mockRevokePaymentLinksForBooking).not.toHaveBeenCalled();
+      expect(mockBookingEventCreate).not.toHaveBeenCalled();
+      expect(mockSendBookingRequestPaymentExpiredEmail).not.toHaveBeenCalled();
+      expect(
+        mockSendAdminBookingRequestHoldCancelledEmail
+      ).not.toHaveBeenCalled();
+      expect(mockProcessWaitlistForDates).not.toHaveBeenCalled();
+    });
+
+    it("still auto-charges a past-check-in request booking that DOES have a saved card (terminal cancel is only for the no-card path)", async () => {
+      const booking = makePendingBooking("b1", {
+        checkIn: "2026-07-01",
+        checkOut: "2026-07-03",
+        hasPaymentMethod: true,
+        originBookingRequest: { id: "req_1" },
+        finalPriceCents: 14000,
+        guestCount: 1,
+      });
+      mockPendingBookings([booking]);
+      mockCheckCapacityForGuestRanges.mockResolvedValue({
+        available: true,
+        minAvailable: 3,
+        nightDetails: [],
+      });
+      mockChargePaymentMethod.mockResolvedValue({
+        id: "pi_req_charge",
+        status: "succeeded",
+        amount: 14000,
+        payment_method: "pm_b1",
+      });
+
+      const result = await confirmPendingBookings();
+
+      // The saved-card path settles it; the terminal cancel never runs.
+      expect(result.cancelledBookingIds).toEqual([]);
+      expect(result.confirmedBookingIds).toEqual(["b1"]);
+      expect(mockChargePaymentMethod).toHaveBeenCalled();
+      expect(mockSendBookingRequestPaymentExpiredEmail).not.toHaveBeenCalled();
+      expect(
+        mockSendAdminBookingRequestHoldCancelledEmail
+      ).not.toHaveBeenCalled();
+    });
+
+    it("before the check-in day, still extends the hold and alerts admins on window 1 (no terminal cancel)", async () => {
+      // Default dates: checkIn 2026-07-15 (future), origin = checkIn - 7d =
+      // 2026-07-08; now 2026-07-09 => window 1 => alert.
+      const booking = makePendingBooking("b1", {
+        hasPaymentMethod: false,
+        originBookingRequest: { id: "req_1" },
+      });
+      mockPendingBookings([booking]);
+      mockCheckCapacityForGuestRanges.mockResolvedValue({
+        available: true,
+        minAvailable: 5,
+        nightDetails: [],
+      });
+
+      const result = await confirmPendingBookings();
+
+      expect(result.cancelledBookingIds).toEqual([]);
+      // Hold extended (low-churn continues), not cancelled.
+      expect(mockBookingUpdateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ id: "b1", status: "PENDING" }),
+          data: { nonMemberHoldUntil: expect.any(Date) },
+        })
+      );
+      expect(mockSendAdminHoldExpiredAlert).toHaveBeenCalledTimes(1);
+      expect(
+        mockSendAdminBookingRequestHoldCancelledEmail
+      ).not.toHaveBeenCalled();
+    });
+
+    it("caps the pre-check-in admin alert: stays silent on a capped window (4) while still extending the hold", async () => {
+      // Anchor the origin at 2026-07-02 (now - 7d => window 4, silent) via a
+      // 40-day hold and a check-in far enough ahead that the terminal branch
+      // does not fire.
+      mockGetNonMemberHoldDays.mockResolvedValue(40);
+      const booking = makePendingBooking("b1", {
+        checkIn: "2026-08-11",
+        checkOut: "2026-08-13",
+        hasPaymentMethod: false,
+        originBookingRequest: { id: "req_1" },
+      });
+      booking.createdAt = new Date("2026-03-01T00:00:00.000Z");
+      mockPendingBookings([booking]);
+      mockCheckCapacityForGuestRanges.mockResolvedValue({
+        available: true,
+        minAvailable: 5,
+        nightDetails: [],
+      });
+
+      const result = await confirmPendingBookings();
+
+      // Hold still extended, but no admin alert this window, and not cancelled.
+      expect(mockBookingUpdateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ id: "b1", status: "PENDING" }),
+          data: { nonMemberHoldUntil: expect.any(Date) },
+        })
+      );
+      expect(mockSendAdminHoldExpiredAlert).not.toHaveBeenCalled();
+      expect(result.cancelledBookingIds).toEqual([]);
+      expect(result.failedBookingIds).toEqual([]);
+    });
+  });
+
+  // A genuinely Internet-Banking-settled parent: switch-at-pay flips the
+  // parent to CONFIRMED with an IB-source payment carrying no card ids.
+  const IB_SETTLED_PARENT = {
+    status: "CONFIRMED",
+    payment: {
+      id: "pay_parent_1",
+      source: "INTERNET_BANKING",
+      stripeCustomerId: null,
+      stripePaymentMethodId: null,
+    },
+  };
+
+  it("emails a payment link and alerts admins for a split child whose parent paid by internet banking, never charging it (#1967)", async () => {
+    const booking = makePendingBooking("child_1", {
+      hasPaymentMethod: false,
+      parentBookingId: "parent_1",
+      parentBooking: IB_SETTLED_PARENT,
+      finalPriceCents: 12000,
+      guestCount: 2,
+    });
+    mockPendingBookings([booking]);
+    mockCheckCapacityForGuestRanges.mockResolvedValue({
+      available: true,
+      minAvailable: 5,
+      nightDetails: [],
+    });
+
+    const result = await confirmPendingBookings();
+
+    // Never charged (no saved card), never marked failed, never confirmed.
+    expect(mockChargePaymentMethod).not.toHaveBeenCalled();
+    expect(result.failedBookingIds).toEqual([]);
+    expect(result.confirmedBookingIds).toEqual([]);
+
+    // A guest-portion payment link was minted (first transition) and the hold
+    // extended via the status-guarded claim.
+    expect(mockMintSplitGuestPaymentLinkIfAbsent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ id: "child_1", checkIn: booking.checkIn })
+    );
+    expect(mockBookingUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: "child_1", status: "PENDING" }),
+        data: { nonMemberHoldUntil: expect.any(Date) },
+      })
+    );
+
+    // Member emailed the link; admins alerted with parent-settled wording.
+    expect(mockSendSplitGuestPaymentLinkEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        email: "child_1@example.com",
+        token: "tok_split_1",
+        priceCents: 12000,
+        guestCount: 2,
+        bookingReference: "child_1",
+      })
+    );
+    expect(mockSendAdminSplitSettlementUnpaidAlert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        memberName: "Test User",
+        totalCents: 12000,
+        guestCount: 2,
+        holdUntil: expect.any(Date),
+        parentUnpaid: false,
+      })
+    );
+    // Nothing failed, so the just-minted link is never revoked.
+    expect(mockRevokePaymentLinkById).not.toHaveBeenCalled();
+  });
+
+  it("does not re-send the member link on a later run when a link is already active, but still re-alerts admins each extension run (#1967 FIX-4)", async () => {
+    const booking = makePendingBooking("child_1", {
+      hasPaymentMethod: false,
+      parentBookingId: "parent_1",
+      parentBooking: IB_SETTLED_PARENT,
+      finalPriceCents: 12000,
+      guestCount: 2,
+    });
+    mockPendingBookings([booking]);
+    mockCheckCapacityForGuestRanges.mockResolvedValue({
+      available: true,
+      minAvailable: 5,
+      nightDetails: [],
+    });
+    // An active link already exists from a prior run: mint returns null.
+    mockMintSplitGuestPaymentLinkIfAbsent.mockResolvedValue(null);
+
+    const result = await confirmPendingBookings();
+
+    // Hold still re-extended (low-churn) and no duplicate member email, but
+    // the admin alert repeats every extension run while unsettled.
+    expect(mockBookingUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: "child_1", status: "PENDING" }),
+        data: { nonMemberHoldUntil: expect.any(Date) },
+      })
+    );
+    expect(mockSendSplitGuestPaymentLinkEmail).not.toHaveBeenCalled();
+    expect(mockSendAdminSplitSettlementUnpaidAlert).toHaveBeenCalledWith(
+      expect.objectContaining({ parentUnpaid: false })
+    );
+    expect(mockChargePaymentMethod).not.toHaveBeenCalled();
+    expect(result.failedBookingIds).toEqual([]);
+  });
+
+  it("never mints or emails a link for a split child whose parent abandoned a card payment; alerts admins with parent-unpaid wording (#1967 FIX-1)", async () => {
+    // Realistic abandoned-card parent: PAYMENT_PENDING with a Stripe-source
+    // payment that never captured a card. savedPaymentMethodForBooking is
+    // null for it — exactly like an IB parent — so only the settled-parent
+    // gate keeps this child out of the payment-link branch.
+    const booking = makePendingBooking("child_1", {
+      hasPaymentMethod: false,
+      parentBookingId: "parent_1",
+      parentBooking: {
+        status: "PAYMENT_PENDING",
+        payment: {
+          id: "pay_parent_1",
+          source: "STRIPE",
+          stripeCustomerId: null,
+          stripePaymentMethodId: null,
+        },
+      },
+      finalPriceCents: 12000,
+      guestCount: 2,
+    });
+    mockPendingBookings([booking]);
+    mockCheckCapacityForGuestRanges.mockResolvedValue({
+      available: true,
+      minAvailable: 5,
+      nightDetails: [],
+    });
+
+    const result = await confirmPendingBookings();
+
+    // The guest portion must not become settleable while the member's own
+    // place is unpaid: no link minted, no member email asserting false facts.
+    expect(mockMintSplitGuestPaymentLinkIfAbsent).not.toHaveBeenCalled();
+    expect(mockSendSplitGuestPaymentLinkEmail).not.toHaveBeenCalled();
+    expect(mockChargePaymentMethod).not.toHaveBeenCalled();
+
+    // Hold extended (the alert-cadence claim) and the dedicated admin alert
+    // fired with parent-unpaid wording; still surfaced as failed.
+    expect(mockBookingUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: "child_1", status: "PENDING" }),
+        data: { nonMemberHoldUntil: expect.any(Date) },
+      })
+    );
+    expect(mockSendAdminSplitSettlementUnpaidAlert).toHaveBeenCalledWith(
+      expect.objectContaining({ parentUnpaid: true, totalCents: 12000 })
+    );
+    expect(result.failedBookingIds).toEqual(["child_1"]);
+  });
+
+  it("keeps a card-less #796 group joiner on the legacy missing_payment_method path, never the split-guest branch (#1967 FIX-2)", async () => {
+    const booking = makePendingBooking("joiner_1", {
+      hasPaymentMethod: false,
+      parentBookingId: "organiser_1",
+      // The organiser's booking is fully settled — without the join-row
+      // discriminator this joiner would sail into the split-guest branch.
+      parentBooking: { status: "PAID", payment: null },
+      groupBookingJoin: { id: "join_1" },
+      finalPriceCents: 8000,
+      guestCount: 1,
+    });
+    mockPendingBookings([booking]);
+    mockCheckCapacityForGuestRanges.mockResolvedValue({
+      available: true,
+      minAvailable: 5,
+      nightDetails: [],
+    });
+
+    const result = await confirmPendingBookings();
+
+    // Pre-existing behaviour, exactly: error-logged failure, no mint, no
+    // emails, no alert, no hold extension.
+    expect(mockMintSplitGuestPaymentLinkIfAbsent).not.toHaveBeenCalled();
+    expect(mockSendSplitGuestPaymentLinkEmail).not.toHaveBeenCalled();
+    expect(mockSendAdminSplitSettlementUnpaidAlert).not.toHaveBeenCalled();
+    expect(mockChargePaymentMethod).not.toHaveBeenCalled();
+    expect(mockBookingUpdateMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: { nonMemberHoldUntil: expect.any(Date) },
+      })
+    );
+    expect(result.failedBookingIds).toEqual(["joiner_1"]);
+  });
+
+  it("revokes the just-minted link when the member email throws, so the next run re-mints and re-sends (#1967 FIX-3a)", async () => {
+    const booking = makePendingBooking("child_1", {
+      hasPaymentMethod: false,
+      parentBookingId: "parent_1",
+      parentBooking: IB_SETTLED_PARENT,
+      finalPriceCents: 12000,
+      guestCount: 2,
+    });
+    mockPendingBookings([booking]);
+    mockCheckCapacityForGuestRanges.mockResolvedValue({
+      available: true,
+      minAvailable: 5,
+      nightDetails: [],
+    });
+    mockSendSplitGuestPaymentLinkEmail.mockRejectedValue(
+      new Error("SES unavailable")
+    );
+
+    const result = await confirmPendingBookings();
+
+    // The unreachable token's link is revoked BY ID (a newer concurrent link
+    // must survive), clearing the sentinel for the next extension run.
+    expect(mockRevokePaymentLinkById).toHaveBeenCalledWith("pl_split_1");
+    // The admin alert is independent of the member email outcome.
+    expect(mockSendAdminSplitSettlementUnpaidAlert).toHaveBeenCalledWith(
+      expect.objectContaining({ parentUnpaid: false })
+    );
+    expect(result.failedBookingIds).toEqual([]);
+  });
+
+  it("revokes the just-minted link when the member email is suppressed (#1967 FIX-3a)", async () => {
+    const booking = makePendingBooking("child_1", {
+      hasPaymentMethod: false,
+      parentBookingId: "parent_1",
+      parentBooking: IB_SETTLED_PARENT,
+      finalPriceCents: 12000,
+      guestCount: 2,
+    });
+    mockPendingBookings([booking]);
+    mockCheckCapacityForGuestRanges.mockResolvedValue({
+      available: true,
+      minAvailable: 5,
+      nightDetails: [],
+    });
+    mockSendSplitGuestPaymentLinkEmail.mockResolvedValue({
+      status: "suppressed",
+      emailLogId: null,
+      emailSuppressionId: "sup_1",
+      reason: "bounce",
+    });
+
+    await confirmPendingBookings();
+
+    expect(mockRevokePaymentLinkById).toHaveBeenCalledWith("pl_split_1");
+    expect(mockSendAdminSplitSettlementUnpaidAlert).toHaveBeenCalled();
+  });
+
+  it("is idempotent across consecutive cron runs: one member email, one link, an admin alert per run (#1967 cross-run)", async () => {
+    // Stateful sentinel mirroring the real mint helper's contract (the real
+    // helper's own cross-run behaviour is pinned against a stateful store in
+    // payment-link.test.ts): the first run mints, every later run sees the
+    // active link and returns null. Exercises two REAL consecutive
+    // confirmPendingBookings() invocations rather than asserting on a single
+    // mocked return value.
+    const activeLinks = new Set<string>();
+    let mintCounter = 0;
+    mockMintSplitGuestPaymentLinkIfAbsent.mockImplementation(
+      async (_tx: unknown, target: { id: string }) => {
+        if (activeLinks.has(target.id)) return null;
+        activeLinks.add(target.id);
+        mintCounter += 1;
+        return {
+          token: `tok_${mintCounter}`,
+          paymentLinkId: `pl_${mintCounter}`,
+        };
+      }
+    );
+    const booking = makePendingBooking("child_1", {
+      hasPaymentMethod: false,
+      parentBookingId: "parent_1",
+      parentBooking: IB_SETTLED_PARENT,
+      finalPriceCents: 12000,
+      guestCount: 2,
+    });
+    mockPendingBookings([booking]);
+    mockCheckCapacityForGuestRanges.mockResolvedValue({
+      available: true,
+      minAvailable: 5,
+      nightDetails: [],
+    });
+
+    await confirmPendingBookings();
+    // Second run: in production the extended hold keeps this child out of the
+    // candidate query for ~2 days; even if it is re-processed (extension
+    // elapsed, or the claim raced), the active link suppresses a second email.
+    await confirmPendingBookings();
+
+    expect(mockSendSplitGuestPaymentLinkEmail).toHaveBeenCalledTimes(1);
+    expect(mockSendSplitGuestPaymentLinkEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ token: "tok_1" })
+    );
+    // The admin alert repeats per extension run (FIX-4).
+    expect(mockSendAdminSplitSettlementUnpaidAlert).toHaveBeenCalledTimes(2);
+    expect(mockRevokePaymentLinkById).not.toHaveBeenCalled();
+  });
+
+  // #1993 Part A — terminal state: a split non-member child still PENDING
+  // (unsettled, no saved card) once its check-in day has ended is auto-cancelled
+  // under the lodge lock (Option 1). now is 2026-07-09; a check-in of 2026-07-01
+  // has an ended check-in day, so these children are past check-in.
+  describe("#1993 terminal auto-cancel at end of check-in day", () => {
+    it("cancels a past-check-in unsettled split child: guarded CAS, in-tx link revoke, POST-COMMIT CANCELLED event, member email + dedicated final admin notice, no charge, no Xero", async () => {
+      const booking = makePendingBooking("child_1", {
+        checkIn: "2026-07-01",
+        checkOut: "2026-07-03",
+        hasPaymentMethod: false,
+        parentBookingId: "parent_1",
+        parentBooking: IB_SETTLED_PARENT,
+        finalPriceCents: 12000,
+        guestCount: 2,
+      });
+      mockPendingBookings([booking]);
+      mockCheckCapacityForGuestRanges.mockResolvedValue({
+        available: true,
+        minAvailable: 5,
+        nightDetails: [],
+      });
+
+      const result = await confirmPendingBookings();
+
+      // Terminal cancel bucket; never confirmed/bumped/failed.
+      expect(result.cancelledBookingIds).toEqual(["child_1"]);
+      expect(result.confirmedBookingIds).toEqual([]);
+      expect(result.bumpedBookingIds).toEqual([]);
+      expect(result.failedBookingIds).toEqual([]);
+
+      // Guarded PENDING -> CANCELLED CAS.
+      expect(mockBookingUpdateMany).toHaveBeenCalledWith({
+        where: { id: "child_1", status: "PENDING" },
+        data: { status: "CANCELLED", nonMemberHoldUntil: null },
+      });
+
+      // Link revocation happens IN the transaction (revoke receives the tx
+      // client); the CANCELLED narrative event is recorded POST-COMMIT on the
+      // base client per booking-events.ts (L1 fix — never in-tx).
+      expect(mockRevokePaymentLinksForBooking).toHaveBeenCalledWith(
+        "child_1",
+        expect.anything()
+      );
+      expect(mockBookingEventCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            bookingId: "child_1",
+            type: "CANCELLED",
+          }),
+        })
+      );
+
+      // Never re-minted a link, never charged, never touched Xero (an unsettled
+      // child has no invoice), never extended the hold.
+      expect(mockMintSplitGuestPaymentLinkIfAbsent).not.toHaveBeenCalled();
+      expect(mockChargePaymentMethod).not.toHaveBeenCalled();
+      expect(mockEnqueueXeroBookingInvoiceOperation).not.toHaveBeenCalled();
+      expect(mockBookingUpdateMany).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: { nonMemberHoldUntil: expect.any(Date) },
+        })
+      );
+
+      // Post-commit: dedicated member guest-portion-cancelled email (parent
+      // settled => "own booking remains confirmed") + ONE dedicated terminal
+      // admin notice (its own template, no finalNotice flag on the recurring
+      // alert, which is never called on the terminal path).
+      expect(mockSendSplitGuestPortionCancelledEmail).toHaveBeenCalledTimes(1);
+      expect(mockSendSplitGuestPortionCancelledEmail).toHaveBeenCalledWith(
+        expect.objectContaining({
+          email: "child_1@example.com",
+          firstName: "Test",
+          checkIn: booking.checkIn,
+          checkOut: booking.checkOut,
+          parentConfirmed: true,
+          parentBookingReference: "parent_1",
+        })
+      );
+      expect(mockSendAdminSplitSettlementUnpaidAlert).not.toHaveBeenCalled();
+      expect(mockSendAdminSplitSettlementCancelledAlert).toHaveBeenCalledTimes(1);
+      expect(mockSendAdminSplitSettlementCancelledAlert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          parentUnpaid: false,
+          totalCents: 12000,
+        })
+      );
+      // The dedicated terminal notice has no finalNotice flag (it is its own
+      // registered template, not a variant of the recurring alert).
+      expect(
+        mockSendAdminSplitSettlementCancelledAlert.mock.calls[0][0]
+      ).not.toHaveProperty("finalNotice");
+    });
+
+    it("records the CANCELLED event post-commit so a bookingEvent write failure never blocks the cancel (L1)", async () => {
+      const booking = makePendingBooking("child_1", {
+        checkIn: "2026-07-01",
+        checkOut: "2026-07-03",
+        hasPaymentMethod: false,
+        parentBookingId: "parent_1",
+        parentBooking: IB_SETTLED_PARENT,
+        finalPriceCents: 12000,
+        guestCount: 2,
+      });
+      mockPendingBookings([booking]);
+      mockCheckCapacityForGuestRanges.mockResolvedValue({
+        available: true,
+        minAvailable: 5,
+        nightDetails: [],
+      });
+      // The narrative INSERT rejects. Because it runs post-commit on the base
+      // client (recordBookingEvent swallows its own failure), the cancel — which
+      // already committed under the lock — must still stand, and the member +
+      // admin notices must still fire.
+      mockBookingEventCreate.mockRejectedValueOnce(new Error("event insert failed"));
+
+      const result = await confirmPendingBookings();
+
+      expect(result.cancelledBookingIds).toEqual(["child_1"]);
+      expect(result.failedBookingIds).toEqual([]);
+      // The CAS still committed the cancel.
+      expect(mockBookingUpdateMany).toHaveBeenCalledWith({
+        where: { id: "child_1", status: "PENDING" },
+        data: { status: "CANCELLED", nonMemberHoldUntil: null },
+      });
+      // Notifications still went out despite the swallowed event failure.
+      expect(mockSendSplitGuestPortionCancelledEmail).toHaveBeenCalledTimes(1);
+      expect(mockSendAdminSplitSettlementCancelledAlert).toHaveBeenCalledTimes(1);
+    });
+
+    it("uses not-settled member wording and parent-unpaid admin wording when the parent's own place is also unpaid", async () => {
+      const booking = makePendingBooking("child_1", {
+        checkIn: "2026-07-01",
+        checkOut: "2026-07-03",
+        hasPaymentMethod: false,
+        parentBookingId: "parent_1",
+        parentBooking: {
+          status: "PAYMENT_PENDING",
+          payment: {
+            id: "pay_parent_1",
+            source: "STRIPE",
+            stripeCustomerId: null,
+            stripePaymentMethodId: null,
+          },
+        },
+        finalPriceCents: 12000,
+        guestCount: 2,
+      });
+      mockPendingBookings([booking]);
+      mockCheckCapacityForGuestRanges.mockResolvedValue({
+        available: true,
+        minAvailable: 5,
+        nightDetails: [],
+      });
+
+      const result = await confirmPendingBookings();
+
+      expect(result.cancelledBookingIds).toEqual(["child_1"]);
+      // Member email must NOT promise "own booking remains confirmed" when the
+      // parent is itself unsettled.
+      expect(mockSendSplitGuestPortionCancelledEmail).toHaveBeenCalledWith(
+        expect.objectContaining({ parentConfirmed: false })
+      );
+      expect(mockSendAdminSplitSettlementCancelledAlert).toHaveBeenCalledWith(
+        expect.objectContaining({ parentUnpaid: true })
+      );
+    });
+
+    it("does not cancel when a payment won the lock first (CAS count 0): already_processed, no member email, no admin notice", async () => {
+      const booking = makePendingBooking("child_1", {
+        checkIn: "2026-07-01",
+        checkOut: "2026-07-03",
+        hasPaymentMethod: false,
+        parentBookingId: "parent_1",
+        parentBooking: IB_SETTLED_PARENT,
+        finalPriceCents: 12000,
+        guestCount: 2,
+      });
+      mockPendingBookings([booking]);
+      mockCheckCapacityForGuestRanges.mockResolvedValue({
+        available: true,
+        minAvailable: 5,
+        nightDetails: [],
+      });
+      // The guarded PENDING -> CANCELLED CAS finds no PENDING row: a payment
+      // (or a prior run) resolved it seconds earlier. This is also the
+      // idempotent-rerun guard — a second cron pass takes the same branch.
+      mockBookingUpdateMany.mockResolvedValue({ count: 0 });
+
+      const result = await confirmPendingBookings();
+
+      expect(result.cancelledBookingIds).toEqual([]);
+      expect(result.confirmedBookingIds).toEqual([]);
+      expect(result.failedBookingIds).toEqual([]);
+      expect(mockRevokePaymentLinksForBooking).not.toHaveBeenCalled();
+      expect(mockBookingEventCreate).not.toHaveBeenCalled();
+      expect(mockSendSplitGuestPortionCancelledEmail).not.toHaveBeenCalled();
+      expect(mockSendAdminSplitSettlementCancelledAlert).not.toHaveBeenCalled();
+    });
+
+    it("still auto-charges a past-check-in split child that DOES have a saved card (terminal cancel is only for the no-card path)", async () => {
+      const booking = makePendingBooking("child_1", {
+        checkIn: "2026-07-01",
+        checkOut: "2026-07-03",
+        hasPaymentMethod: false,
+        parentBookingId: "parent_1",
+        parentPayment: {
+          id: "pay_parent_1",
+          stripeCustomerId: "cus_parent_1",
+          stripePaymentMethodId: "pm_parent_1",
+        },
+        finalPriceCents: 12000,
+        guestCount: 1,
+      });
+      mockPendingBookings([booking]);
+      mockCheckCapacityForGuestRanges.mockResolvedValue({
+        available: true,
+        minAvailable: 3,
+        nightDetails: [],
+      });
+      mockChargePaymentMethod.mockResolvedValue({
+        id: "pi_child_charge",
+        status: "succeeded",
+        amount: 12000,
+        payment_method: "pm_parent_1",
+      });
+
+      const result = await confirmPendingBookings();
+
+      // The saved-card path settles it; the terminal cancel never runs.
+      expect(result.cancelledBookingIds).toEqual([]);
+      expect(result.confirmedBookingIds).toEqual(["child_1"]);
+      expect(mockChargePaymentMethod).toHaveBeenCalled();
+      expect(mockSendSplitGuestPortionCancelledEmail).not.toHaveBeenCalled();
+    });
+  });
+
+  // #1993 Part B — derived alert cadence: a pure function of elapsed time, no
+  // schema, no counter. Alert on extension windows 1, 2, 3, then every 7th.
+  describe("#1993 derived admin-alert cadence", () => {
+    it("computes the 1-based extension window from the original hold expiry", () => {
+      const origin = new Date("2026-07-01T00:00:00.000Z");
+      const ext = 2 * 24 * 60 * 60 * 1000;
+      // Before/at the origin is window 1 (clamped, never 0 or negative).
+      expect(splitSettlementExtensionNumber(origin, origin)).toBe(1);
+      expect(
+        splitSettlementExtensionNumber(origin, new Date(origin.getTime() - 1000))
+      ).toBe(1);
+      expect(
+        splitSettlementExtensionNumber(origin, new Date(origin.getTime() + ext))
+      ).toBe(2);
+      expect(
+        splitSettlementExtensionNumber(
+          origin,
+          new Date(origin.getTime() + 6 * ext)
+        )
+      ).toBe(7);
+    });
+
+    it("alerts on windows 1, 2, 3, is silent on 4-6, alerts again on 7 and 14", () => {
+      expect(shouldAlertOnSplitSettlementExtension(1)).toBe(true);
+      expect(shouldAlertOnSplitSettlementExtension(2)).toBe(true);
+      expect(shouldAlertOnSplitSettlementExtension(3)).toBe(true);
+      expect(shouldAlertOnSplitSettlementExtension(4)).toBe(false);
+      expect(shouldAlertOnSplitSettlementExtension(5)).toBe(false);
+      expect(shouldAlertOnSplitSettlementExtension(6)).toBe(false);
+      expect(shouldAlertOnSplitSettlementExtension(7)).toBe(true);
+      expect(shouldAlertOnSplitSettlementExtension(8)).toBe(false);
+      expect(shouldAlertOnSplitSettlementExtension(14)).toBe(true);
+    });
+
+    it("fires the admin alert on the first extension window (payment-link branch)", async () => {
+      // Default dates: origin = checkIn(2026-07-15) - 7d = 2026-07-08; now
+      // 2026-07-09 => window 1 => alert.
+      const booking = makePendingBooking("child_1", {
+        hasPaymentMethod: false,
+        parentBookingId: "parent_1",
+        parentBooking: IB_SETTLED_PARENT,
+        finalPriceCents: 12000,
+      });
+      mockPendingBookings([booking]);
+      mockCheckCapacityForGuestRanges.mockResolvedValue({
+        available: true,
+        minAvailable: 5,
+        nightDetails: [],
+      });
+
+      await confirmPendingBookings();
+
+      expect(mockSendAdminSplitSettlementUnpaidAlert).toHaveBeenCalledTimes(1);
+    });
+
+    it("stays silent on a capped extension window (4) while still extending the hold and re-minting", async () => {
+      // Anchor the origin at 2026-07-02 (now - 7d => window 4, silent) by making
+      // the hold-days-derived first expiry land there and check-in far enough in
+      // the future that the terminal branch does not fire.
+      mockGetNonMemberHoldDays.mockResolvedValue(40);
+      const booking = makePendingBooking("child_1", {
+        checkIn: "2026-08-11",
+        checkOut: "2026-08-13",
+        hasPaymentMethod: false,
+        parentBookingId: "parent_1",
+        parentBooking: IB_SETTLED_PARENT,
+        finalPriceCents: 12000,
+      });
+      // Origin = max(checkIn - 40d, createdAt) = max(2026-07-02, 2026-03-01).
+      booking.createdAt = new Date("2026-03-01T00:00:00.000Z");
+      mockPendingBookings([booking]);
+      mockCheckCapacityForGuestRanges.mockResolvedValue({
+        available: true,
+        minAvailable: 5,
+        nightDetails: [],
+      });
+
+      const result = await confirmPendingBookings();
+
+      // Hold still extended (low-churn continues) but no admin alert this window.
+      expect(mockBookingUpdateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ id: "child_1", status: "PENDING" }),
+          data: { nonMemberHoldUntil: expect.any(Date) },
+        })
+      );
+      expect(mockSendAdminSplitSettlementUnpaidAlert).not.toHaveBeenCalled();
+      expect(result.failedBookingIds).toEqual([]);
+    });
+  });
+
+  // #1992 (Option 1) — the auto-charge claim closes the residual #1967 window:
+  // an in-flight /pay link PaymentIntent (client secret already handed to the
+  // member's browser before the claim revoked the links) is best-effort
+  // cancelled on Stripe BEFORE the saved-card charge. A cancel that loses to
+  // the member's confirm is expected and tolerated: the #1992 duplicate-capture
+  // auto-refund in markBookingPaymentSucceeded is the backstop.
+  describe("#1992 superseded link-intent cancellation before the auto-charge", () => {
+    function primeChargeableSplitChild() {
+      const booking = makePendingBooking("child_1", {
+        hasPaymentMethod: false,
+        parentBookingId: "parent_1",
+        parentPayment: {
+          id: "pay_parent_1",
+          stripeCustomerId: "cus_parent_1",
+          stripePaymentMethodId: "pm_parent_1",
+        },
+        finalPriceCents: 12000,
+        guestCount: 1,
+      });
+      mockPendingBookings([booking]);
+      mockCheckCapacityForGuestRanges.mockResolvedValue({
+        available: true,
+        minAvailable: 3,
+        nightDetails: [],
+      });
+      mockChargePaymentMethod.mockResolvedValue({
+        id: "pi_child_charge",
+        status: "succeeded",
+        amount: 12000,
+        payment_method: "pm_parent_1",
+      });
+      return booking;
+    }
+
+    it("cancels the in-flight link intent AND charges the saved card, cancel strictly before the charge", async () => {
+      primeChargeableSplitChild();
+      mockPaymentTransactionFindMany.mockResolvedValue([
+        { id: "txn_link", stripePaymentIntentId: "pi_link_inflight" },
+      ]);
+      mockCancelPaymentIntentIfCancellable.mockResolvedValue({
+        id: "pi_link_inflight",
+        status: "canceled",
+      });
+
+      const result = await confirmPendingBookings();
+
+      expect(result.confirmedBookingIds).toEqual(["child_1"]);
+      expect(mockCancelPaymentIntentIfCancellable).toHaveBeenCalledTimes(1);
+      expect(mockCancelPaymentIntentIfCancellable).toHaveBeenCalledWith(
+        "pi_link_inflight"
+      );
+      expect(mockChargePaymentMethod).toHaveBeenCalledTimes(1);
+      // Ordering: the cancel narrows the window BEFORE the charge creates the
+      // second instrument.
+      expect(
+        mockCancelPaymentIntentIfCancellable.mock.invocationCallOrder[0]
+      ).toBeLessThan(mockChargePaymentMethod.mock.invocationCallOrder[0]);
+    });
+
+    it("scopes the sweep to in-flight PRIMARY Stripe intents on the claim's payment and EXCLUDES every pending_charge_-keyed charge (the cron's own prior auto-charge AND charge-saved-method's 3DS-pending charge)", async () => {
+      primeChargeableSplitChild();
+
+      await confirmPendingBookings();
+
+      expect(mockPaymentTransactionFindMany).toHaveBeenCalledWith({
+        where: {
+          paymentId: "pay_child_1",
+          kind: "PRIMARY",
+          source: "STRIPE",
+          status: { in: ["PENDING", "PROCESSING"] },
+          stripePaymentIntentId: { not: null },
+          amountCents: { gt: 0 },
+          // Both reasons mint under the shared `pending_charge_<bookingId>`
+          // Stripe idempotency key this run's charge replays — cancelling
+          // either row would make Stripe answer this run's charge with the
+          // cancelled intent (settlement stalls until the key expires). NULL
+          // reasons stay in scope.
+          OR: [
+            { reason: null },
+            {
+              reason: {
+                notIn: [
+                  "pending_hold_auto_charge",
+                  "pending_saved_method_charge",
+                ],
+              },
+            },
+          ],
+        },
+        select: { id: true, stripePaymentIntentId: true },
+      });
+    });
+
+    it("never sweeps charge-saved-method's 3DS-pending intent (reason pending_saved_method_charge shares the pending_charge_ key), while a link intent alongside it is still cancelled", async () => {
+      primeChargeableSplitChild();
+      // Exercise the REAL OR-filter semantics against a mixed ledger: a
+      // 3DS-pending saved-method charge row (must be excluded) and an
+      // in-flight link intent with a NULL reason (must stay in scope).
+      const rows = [
+        {
+          id: "txn_saved_method_3ds",
+          stripePaymentIntentId: "pi_saved_method_3ds",
+          reason: "pending_saved_method_charge",
+        },
+        {
+          id: "txn_link",
+          stripePaymentIntentId: "pi_link_inflight",
+          reason: null,
+        },
+      ];
+      mockPaymentTransactionFindMany.mockImplementation(
+        async (args: {
+          where: {
+            OR: [
+              { reason: null },
+              { reason: { notIn: string[] } },
+            ];
+          };
+        }) => {
+          const excluded = args.where.OR[1].reason.notIn;
+          return rows
+            .filter(
+              (row) => row.reason === null || !excluded.includes(row.reason)
+            )
+            .map(({ id, stripePaymentIntentId }) => ({
+              id,
+              stripePaymentIntentId,
+            }));
+        }
+      );
+      mockCancelPaymentIntentIfCancellable.mockResolvedValue({
+        id: "pi_link_inflight",
+        status: "canceled",
+      });
+
+      const result = await confirmPendingBookings();
+
+      expect(result.confirmedBookingIds).toEqual(["child_1"]);
+      expect(mockCancelPaymentIntentIfCancellable).toHaveBeenCalledTimes(1);
+      expect(mockCancelPaymentIntentIfCancellable).toHaveBeenCalledWith(
+        "pi_link_inflight"
+      );
+      expect(mockCancelPaymentIntentIfCancellable).not.toHaveBeenCalledWith(
+        "pi_saved_method_3ds"
+      );
+    });
+
+    it("makes no cancel call when no in-flight link intent exists", async () => {
+      primeChargeableSplitChild();
+      mockPaymentTransactionFindMany.mockResolvedValue([]);
+
+      const result = await confirmPendingBookings();
+
+      expect(result.confirmedBookingIds).toEqual(["child_1"]);
+      expect(mockCancelPaymentIntentIfCancellable).not.toHaveBeenCalled();
+      expect(mockChargePaymentMethod).toHaveBeenCalledTimes(1);
+    });
+
+    it("tolerates losing the cancel race (intent already succeeded → not cancellable): the charge still proceeds and the duplicate lands in the #1992 reconcile backstop", async () => {
+      primeChargeableSplitChild();
+      mockPaymentTransactionFindMany.mockResolvedValue([
+        { id: "txn_link", stripePaymentIntentId: "pi_link_inflight" },
+      ]);
+      // cancelPaymentIntentIfCancellable returns null when the intent is in a
+      // non-cancellable state (e.g. it already succeeded).
+      mockCancelPaymentIntentIfCancellable.mockResolvedValue(null);
+      mockMarkBookingPaymentSucceeded.mockResolvedValue({
+        outcome: "duplicate_capture_refunded",
+        bookingId: "child_1",
+        bumpedBookingIds: [],
+      });
+
+      const result = await confirmPendingBookings();
+
+      // Charge recorded, no crash; the booking counts as settled.
+      expect(mockChargePaymentMethod).toHaveBeenCalledTimes(1);
+      expect(result.confirmedBookingIds).toEqual(["child_1"]);
+      expect(result.failedBookingIds).toHaveLength(0);
+      // The settling link path already sent the confirmation email and queued
+      // the Xero invoice — the duplicate outcome must not repeat either.
+      expect(mockSendConfirmedEmail).not.toHaveBeenCalled();
+      expect(mockEnqueueXeroBookingInvoiceOperation).not.toHaveBeenCalled();
+    });
+
+    it("tolerates a cancel API error (best-effort): logged, charge proceeds, booking confirms", async () => {
+      primeChargeableSplitChild();
+      mockPaymentTransactionFindMany.mockResolvedValue([
+        { id: "txn_link", stripePaymentIntentId: "pi_link_inflight" },
+      ]);
+      mockCancelPaymentIntentIfCancellable.mockRejectedValue(
+        new Error("Stripe cancel raced a parallel confirm")
+      );
+
+      const result = await confirmPendingBookings();
+
+      expect(result.confirmedBookingIds).toEqual(["child_1"]);
+      expect(result.failedBookingIds).toHaveLength(0);
+      expect(mockChargePaymentMethod).toHaveBeenCalledTimes(1);
+    });
+
+    it("tolerates the sweep lookup itself failing (best-effort): the charge is never blocked", async () => {
+      primeChargeableSplitChild();
+      mockPaymentTransactionFindMany.mockRejectedValue(
+        new Error("ledger read failed")
+      );
+
+      const result = await confirmPendingBookings();
+
+      expect(result.confirmedBookingIds).toEqual(["child_1"]);
+      expect(mockCancelPaymentIntentIfCancellable).not.toHaveBeenCalled();
+      expect(mockChargePaymentMethod).toHaveBeenCalledTimes(1);
+    });
+
+    it("cancels multiple in-flight intents independently: one cancel failing does not skip the next", async () => {
+      primeChargeableSplitChild();
+      mockPaymentTransactionFindMany.mockResolvedValue([
+        { id: "txn_link_1", stripePaymentIntentId: "pi_link_1" },
+        { id: "txn_link_2", stripePaymentIntentId: "pi_link_2" },
+      ]);
+      mockCancelPaymentIntentIfCancellable
+        .mockRejectedValueOnce(new Error("boom"))
+        .mockResolvedValueOnce({ id: "pi_link_2", status: "canceled" });
+
+      const result = await confirmPendingBookings();
+
+      expect(mockCancelPaymentIntentIfCancellable).toHaveBeenNthCalledWith(
+        1,
+        "pi_link_1"
+      );
+      expect(mockCancelPaymentIntentIfCancellable).toHaveBeenNthCalledWith(
+        2,
+        "pi_link_2"
+      );
+      expect(result.confirmedBookingIds).toEqual(["child_1"]);
+    });
   });
 });

@@ -17,6 +17,16 @@ npm run quality:report
 git diff --check
 ```
 
+`npm test` includes property-based tests (fast-check) for the pure money math —
+pricing, promo discounts, refund tiers, change fees, member credit, and the
+Xero booking-edit settlement classifier — in
+`src/lib/policies/__tests__/*.property.test.ts` and
+`src/lib/__tests__/xero-settlement.property.test.ts`. They enforce the
+`DOMAIN_INVARIANTS.md` "Money" rules as universally-quantified properties
+(integer cents, refund + retained = paid, deterministic repricing, no negative
+charge or refund totals — booking-edit components stay signed and sum to the
+net, #1356).
+
 Migration/schema parity is enforced by a dedicated check. The committed
 migrations in `prisma/migrations` must reproduce `prisma/schema.prisma` exactly,
 or the blue/green deploy migration-safety gate aborts. Run it locally against a

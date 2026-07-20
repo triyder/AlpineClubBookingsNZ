@@ -42,7 +42,7 @@ export function MixPieChart({
 
   if (positive.length === 0) {
     return (
-      <p className="py-8 text-center text-sm text-slate-500">{emptyMessage}</p>
+      <p className="py-8 text-center text-sm text-muted-foreground">{emptyMessage}</p>
     );
   }
 
@@ -66,9 +66,9 @@ export function MixPieChart({
     const value = Number(entry.value ?? 0);
     const share = total > 0 ? value / total : 0;
     return (
-      <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs shadow-sm">
-        <p className="font-semibold text-slate-900">{entry.name}</p>
-        <p className="text-slate-600">
+      <div className="rounded-lg border border-border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-sm">
+        <p className="font-semibold text-popover-foreground">{entry.name}</p>
+        <p className="text-muted-foreground">
           {formatFinanceValue(value, valueType)} (
           {(share * 100).toFixed(0)}%)
         </p>
@@ -105,7 +105,7 @@ export function MixPieChart({
         </ResponsiveContainer>
       </div>
       {omittedCount > 0 ? (
-        <p className="mt-2 text-center text-xs text-slate-500">
+        <p className="mt-2 text-center text-xs text-muted-foreground">
           {omittedCount} line{omittedCount === 1 ? "" : "s"} with a zero or
           negative amount {omittedCount === 1 ? "is" : "are"} not shown; use
           CSV export for the full breakdown.

@@ -7,7 +7,7 @@ import {
   isMemberLevelRole,
   isOperationalRole,
 } from "@/lib/member-roles";
-import { roleNeverRequiresSubscription } from "@/lib/member-subscription-defaults";
+import { effectiveSubscriptionBehavior } from "@/lib/membership-types";
 
 function onboardingProfile(role: string): MemberOnboardingProfile {
   const accessRoles = ["USER", "ADMIN", "LODGE"].includes(role)
@@ -60,11 +60,12 @@ describe("member role categories", () => {
     expect(OPERATIONAL_ROLE_VALUES).toEqual(["ADMIN", "LODGE"]);
     expect(isOperationalRole("ADMIN")).toBe(true);
     expect(isOperationalRole("LODGE")).toBe(true);
-    expect(roleNeverRequiresSubscription("ADMIN")).toBe(true);
-    expect(roleNeverRequiresSubscription("LODGE")).toBe(true);
-    expect(roleNeverRequiresSubscription("USER")).toBe(false);
-    expect(roleNeverRequiresSubscription("ASSOCIATE")).toBe(false);
-    expect(roleNeverRequiresSubscription("LIFE")).toBe(false);
+    // #2149: role carries no exemption of its own — operational accounts are
+    // exempt only because they resolve to a NOT_REQUIRED built-in type, while
+    // USER resolves to FULL (REQUIRED).
+    expect(effectiveSubscriptionBehavior(null, "ADMIN")).toBe("NOT_REQUIRED");
+    expect(effectiveSubscriptionBehavior(null, "LODGE")).toBe("NOT_REQUIRED");
+    expect(effectiveSubscriptionBehavior(null, "USER")).toBe("REQUIRED");
   });
 
   it("runs onboarding for users but not membership type category strings", () => {
@@ -87,8 +88,12 @@ describe("non-member booking-request roles", () => {
     }
   });
 
-  it("exempts them from membership subscriptions", () => {
-    expect(roleNeverRequiresSubscription("NON_MEMBER")).toBe(true);
-    expect(roleNeverRequiresSubscription("SCHOOL")).toBe(true);
+  it("exempts them from membership subscriptions via their default type", () => {
+    // #2149: exemption flows from the NON_MEMBER/SCHOOL built-in NOT_REQUIRED
+    // types, not from the login role.
+    expect(effectiveSubscriptionBehavior(null, "NON_MEMBER")).toBe(
+      "NOT_REQUIRED",
+    );
+    expect(effectiveSubscriptionBehavior(null, "SCHOOL")).toBe("NOT_REQUIRED");
   });
 });

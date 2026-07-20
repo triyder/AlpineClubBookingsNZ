@@ -7,6 +7,20 @@ export interface XeroStatus {
   tokenExpiresAt: string | null
 }
 
+/** Live connection-health probe result (#2105), returned by `/status?probe=1`. */
+export type XeroTokenHealth =
+  | "ok"
+  | "reconnect_required"
+  | "rate_limited"
+  | "error"
+
+export interface XeroConnectionProbe {
+  tokenHealth: XeroTokenHealth
+  checkedAt: string
+  lastErrorMessage: string | null
+  cached: boolean
+}
+
 export interface XeroReferenceCacheMeta {
   source: "memory" | "database" | "xero"
   lastRefreshedAt: string
@@ -68,6 +82,34 @@ export interface SyncResult {
     xeroContactId: string
     group: string
   }>
+  // #2108: membership-type import results.
+  assignmentsCreated?: number
+  keptExistingAssignments?: Array<{
+    memberId: string
+    name: string
+    group: string
+    existingMembershipTypeId: string
+    attemptedMembershipTypeId: string
+    existingMembershipTypeName: string | null
+    attemptedMembershipTypeName: string | null
+    sameType: boolean
+  }>
+  droppedDuplicates?: Array<{
+    name: string
+    xeroContactId: string
+    group: string
+    keptGroup: string
+  }>
+  // #2108 (L3): two different Xero contacts linking to the same member with
+  // conflicting type mappings — the loser is reported here, not silently dropped.
+  memberCollisions?: Array<{
+    memberId: string
+    name: string
+    keptGroup: string
+    keptMembershipTypeId: string | null
+    droppedGroup: string
+    droppedMembershipTypeId: string | null
+  }>
   skippedExisting?: number
   skippedNoEmail?: number
   skippedNoEmailDetails?: Array<{ name: string; xeroContactId: string }>
@@ -107,10 +149,26 @@ export interface ContactGroup {
   contactCount: number
 }
 
+// Import mode (#2108): mirrors the member-grouping vocabulary. "ageTiers" is
+// today's behaviour (map each group to an age tier); "membershipTypes" maps to a
+// membership type; "both" maps to a type and a bookable tier.
+export type ImportMode = "ageTiers" | "membershipTypes" | "both"
+
 export interface GroupMapping {
   groupId: string
   groupName: string
   ageTier: AgeTier | "SKIP"
+  // #2108: set in "membershipTypes" / "both" modes.
+  membershipTypeId?: string
+}
+
+// A single active membership type, as returned by GET /api/admin/membership-types
+// (the subset the import UI needs).
+export interface ImportMembershipTypeOption {
+  id: string
+  name: string
+  isActive: boolean
+  allowedAgeTiers: AgeTier[]
 }
 
 interface DuplicateContact {
@@ -397,11 +455,12 @@ export type AccountMappings = {
   hutFeeItem: MappingValue
   hutFeeRefundItem: MappingValue
   entranceFeeItem: MappingValue
-  entranceFeeAmountCents: MappingValue
 }
 
 export type HutFeeMap = Record<string, { itemCode: string }>
-export type EntranceFeeMap = Record<string, { itemCode: string | null; amountCents: number | null }>
+// Item-code-only since #1931 (E5): joining-fee amounts live in the JoiningFee
+// schedule (fee-configuration page), not on Xero item-code mapping rows.
+export type EntranceFeeMap = Record<string, { itemCode: string | null }>
 
 export type AccountMappingKey =
   | "hutFeesIncome"

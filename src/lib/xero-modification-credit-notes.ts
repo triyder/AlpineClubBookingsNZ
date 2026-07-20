@@ -285,18 +285,3 @@ export async function createXeroCreditNoteForModification(params: {
     throw error;
   }
 }
-
-// ---------------------------------------------------------------------------
-// Entrance Fee Invoice
-// ---------------------------------------------------------------------------
-
-/**
- * Create a Xero invoice for a membership entrance fee.
- * Called when an admin creates a new member (if Xero is connected and entrance fee is configured).
- *
- * Uses the granular per-category entrance fee mappings (XeroItemCodeMapping) when available,
- * falling back to the legacy flat entranceFeeAmountCents/entranceFeeItem from XeroAccountMapping.
- *
- * @param memberId - The member to invoice
- * @returns The Xero invoice ID, or null if entrance fee is not configured or Xero is not connected
- */

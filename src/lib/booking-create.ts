@@ -33,6 +33,7 @@ import {
 import { prisma } from "@/lib/prisma";
 import {
   calculateBookingCreditApplication,
+  priceDeferredNonMemberPortion,
   toGuestPricingInputs,
   toSeasonRateData,
 } from "@/lib/policies/booking-route-decisions";
@@ -59,6 +60,7 @@ import {
   sendBookingPendingEmail,
   sendWaitlistConfirmationEmail,
 } from "@/lib/email";
+import { getProvisionalNonMemberChildSummary } from "@/lib/booking-split-summary";
 import {
   enqueueXeroAppliedCreditAllocationOperation,
   enqueueXeroBookingInvoiceOperation,
@@ -1016,14 +1018,24 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
       // bumped at the hold window in R3). It carries no promo/credit; those stay
       // with the member booking that is charged up front.
       if (splitBooking) {
-        const childGuestInputs = toGuestPricingInputs(nonMemberGuests);
-        const childPrice = await priceBookingGuestsWithMembershipTypePolicy(tx, {
+        // The provisional child is charged the non-member SUBSET priced on its
+        // own (group discount qualifies only when the subset itself meets
+        // minGroupSize). This is the charge authority; the booking quote calls
+        // the SAME `priceDeferredNonMemberPortion` so the review banner's
+        // "about $X" equals what is charged here (#2003). splitBooking implies
+        // non-member guests, so the portion is always priced (never null).
+        const childPrice = await priceDeferredNonMemberPortion(tx, {
           checkIn,
           checkOut,
-          guests: childGuestInputs,
+          guests,
           seasons: seasonData,
           groupDiscount,
         });
+        if (!childPrice) {
+          throw new Error(
+            "Split booking child pricing requires non-member guests",
+          );
+        }
         const childHoldUntil = new Date(
           checkIn.getTime() - holdDays * 24 * 60 * 60 * 1000
         );
@@ -1258,6 +1270,15 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
         // The member confirmation email is suppressed when an admin on-behalf
         // create opts out (#1695); the Xero invoice below is still queued.
         if (notifyMember) {
+          // Split-booking parent (#738/#1942): a zero-dollar/credit-covered
+          // parent can still carry a provisional non-member child. Describe it
+          // so the confirmation explains the separate later charge. Read-only;
+          // null on non-split bookings. (Only the email call site is touched
+          // here — the split engine above is untouched.)
+          const provisionalGuests = await getProvisionalNonMemberChildSummary({
+            id: fullBooking.id,
+            memberId: fullBooking.memberId,
+          });
           sendBookingConfirmedEmail(
             fullBooking.member.email,
             fullBooking.member.firstName,
@@ -1267,6 +1288,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
             fullBooking.finalPriceCents,
             {
               lodgeId: fullBooking.lodgeId,
+              ...(provisionalGuests ? { provisionalGuests } : {}),
               ...(fullBooking.promoRedemption?.promoCode
                 ? {
                     discountCents: fullBooking.discountCents,

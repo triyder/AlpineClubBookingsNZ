@@ -38,9 +38,11 @@ export async function GET(req: NextRequest) {
   const lodgeId = req.nextUrl.searchParams.get("lodgeId")
   const seasons = await prisma.season.findMany({
     where: lodgeId ? lodgeNullTolerantScope(lodgeId) : undefined,
-    // Legacy `rates` retained for the frozen public embed; membershipTypeRates
-    // is the authoritative pricing table the editor writes (#1930, E4).
-    include: { rates: true, membershipTypeRates: true },
+    // membershipTypeRates is the authoritative pricing table the editor
+    // reads and writes (#1930, E4). The legacy `rates` relation is no longer
+    // selected by any read path (#2129); consumers of this response — including
+    // the lodge-setup copy-seasons flow — read `membershipTypeRates`.
+    include: { membershipTypeRates: true },
     orderBy: { startDate: "desc" },
   })
 
@@ -126,7 +128,7 @@ export async function POST(req: NextRequest) {
     })
     return tx.season.findUnique({
       where: { id: created.id },
-      include: { rates: true, membershipTypeRates: true },
+      include: { membershipTypeRates: true },
     })
   })
 

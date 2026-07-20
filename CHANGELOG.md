@@ -4,6 +4,892 @@ All notable public reference-release changes should be recorded here.
 
 ## Unreleased
 
+- **"Show indicative pricing" no longer changes the public site the moment you
+  click it (#2162).** On **Booking Policies → Public Booking Requests**, the
+  **Show indicative pricing on the request form** checkbox used to save the
+  instant it was ticked — one stray click and the public request form switched
+  between "Request to Book" (with a price) and "Request for Price" (without
+  one), with an audit entry to match. It now works like every other setting in
+  the area: click **Edit** on the Indicative Pricing card, tick or untick the
+  box, then **Save indicative pricing**, with **Cancel** to put it back. Save
+  stays greyed out until you have actually changed something, so an
+  open-and-close cannot record a change that never happened. **This is a visible
+  change for admins:** a one-click toggle is now three clicks, deliberately, to
+  match the rest of Booking Policies. Three related fixes ride along. All three
+  cards in the section now re-read the stored settings immediately before they
+  write, so saving any one of them will not quietly overwrite what another
+  admin changed in another card while your page was open — or what you typed
+  into a card below but have not saved yet. (Two admins who hit Save in the same
+  instant still resolve last-one-wins, as they always have; what is fixed is the
+  page that has been sitting open.) If a re-read brings back a value you
+  had not touched, the box showing it is refreshed too, so a **Save** never
+  lights up on its own beside a stale number (anything you had typed is left
+  exactly as you left it). And the save now sends the school-attendee timings
+  back to the browser as well as the pricing and quote ones; previously they
+  came back missing, which blanked both attendee boxes after any save and then
+  made the next quote-timing save fail outright. No schema, permission, or audit
+  change. The only API change is additive and has one caller: the settings PUT
+  now returns the two school-attendee fields it was already storing, alongside
+  the three it already returned. If that re-read itself fails, the message now
+  says your change was not saved, instead of reporting a settings-load failure
+  for a save you had just clicked. See `docs/guides/booking-policies.md` and
+  `docs/ARCHITECTURE.md`.
+
+- **Markdown is pinned to LF line endings (#2162).** `.gitattributes` already
+  pinned `prisma/schema.prisma` and `scripts/*.mjs` after a Windows editor
+  silently rewrote the schema to CRLF and turned a 14-line change into a
+  ~9,400-line conflict at the next port (#2129). The same thing then happened to
+  `AGENTS.md` and `docs/ARCHITECTURE.md` — two of the most-ported files in the
+  repo — turning a 28-line edit into an 848-line diff, destroying blame, and
+  making `git diff --check` flag every line. `*.md text eol=lf` now covers the
+  whole set; all 186 tracked markdown files were already LF, so nothing else
+  moves. Developer tooling only, with no runtime effect.
+
+- **Secondary text in the member and admin app now actually looks secondary
+  (#2145).** Small labels, hints, and footnotes are meant to sit a step below
+  normal text, but inside the themed app they rendered in exactly the same
+  colour as normal text — the "muted" role was set to the same brand colour as
+  the main text colour, so it did nothing. That role is now worked out from your
+  saved brand neutrals as a genuinely softer tone, in both light and dark mode.
+  **This is a visible change:** every muted label across the member, admin, and
+  finance screens gets lighter. **Dark mode changes noticeably more than light
+  mode**, and that is expected: about half the affected places reach this
+  colour through the dark-only neutral remap that already rewrites literal
+  `slate`/`gray` text onto the muted role, so in dark mode those labels move
+  from full body strength to the new softer tone, while in light mode they are
+  untouched. It is not a new colour picker — the tone is
+  derived from the **Deep**, **Snow**, **Mist**, and **Charcoal** colours you
+  already choose in **Site Style**. Before it ships, the derived tone is checked
+  in both modes against each background secondary text actually appears on — the
+  page and card background, the tinted-row background, and the four built-in
+  notice panels (warning, information, success, danger) — and pulled back
+  toward the main text colour if it would otherwise drop below the WCAG AA 4.5:1
+  minimum on any of them. It is meant to be softer than normal text — that is
+  what makes it read as secondary — but never softer than that minimum; and
+  where your own main text colour already falls short on one of the notice
+  panels, the secondary tone is held to no worse than it. Dividers and hairlines
+  are deliberately outside that check: text
+  is not meant to sit on a divider, and the one badge that did has been moved
+  onto the tinted-row background instead. A
+  palette whose neutrals sit very close together has no room to soften at all,
+  and secondary text stays identical to normal text, exactly as it was before;
+  that is the accessible outcome rather than a failure. Printing and PDF export
+  are unaffected: the role keeps its light/dark pairing, so paper keeps the light
+  tone (the #2146 guarantee below). No schema, API, or data change. See
+  `docs/guides/site-style.md` and `docs/ARCHITECTURE.md`.
+
+- **Printing or exporting a report in dark mode no longer produces a blank page
+  (#2146).** A finance manager or admin browsing in dark mode who used **Download
+  PDF**, or the browser print dialog, on `/finance` or `/admin/reports` got a
+  page that looked empty: the print stylesheet forced a white background but the
+  card text stayed on the dark theme's near-white colour. Print and PDF now always
+  render the light colour scheme regardless of the theme you are browsing in, so
+  no theme switch is needed before exporting. The same fix covers every other
+  printable surface — the chore roster sheet, the induction sign-off sheet, and
+  the lodge instructions. The public hut-leader instructions page was swept too
+  and needed no change: it renders on the website theme, which never goes dark.
+  Structurally, each rule that installs the dark palette is now excluded from
+  print media rather than being fought with additional `!important` overrides,
+  and the `html2canvas` PDF capture renders its clone in the light palette. No
+  behaviour change on screen. A browser test now prints both report surfaces in
+  dark mode and checks the ink really is dark on a light page. See
+  `docs/guides/reports.md`, `docs/finance-dashboard/README.md`, and
+  `docs/ARCHITECTURE.md`.
+
+- **Config transfer: old-bundle entrance-fee/season-rate import compat dropped
+  (#2131).** One release after the E13 contraction, the importer no longer
+  accepts the legacy boolean-keyed bundle shapes: the `isMember` column on
+  `season-rates.csv` and on the Xero `item-code-mappings.csv` HUT_FEE rows, and
+  the pre-#1931 `ENTRANCE_FEE` item-code category name. A bundle carrying any of
+  these is now **rejected at dry-run** with a clear, row-named validation error
+  that disables Apply and points to re-exporting from an install running the
+  current release (**v0.12.2 was the last release that could import the legacy
+  shape**) — never a silent partial import. A bundle whose source install is
+  gone can still be hand-converted: see "Converting a legacy bundle by hand" in
+  `docs/guides/config-transfer.md`. Relatedly, a `HUT_FEE` item-code row with a
+  **blank `membershipTypeKey`** is now a blocking row error rather than a
+  silently-written keyless mapping the runtime never reads — this only affects
+  hand-authored bundles, as the exporter always emits the key. New-bundle
+  export/import is byte-identical, and the #1931 item-code-amount joining-fee
+  materialisation (for current `JOINING_FEE` rows) is unchanged. No schema
+  change. Operator actions: `docs/UPGRADING.md` → Unreleased. See
+  `docs/config-transfer/README.md`.
+
+- **Public `{{hut-fees}}` embed now reads the authoritative per-membership-type
+  rates (#2129, step 1).** The embed was the last reader of the frozen
+  member/non-member `SeasonRate` table, and it presented a definition list of
+  "Age tier — Member/Non-member" rows. It now reads
+  `MembershipTypeSeasonRate` — the same rows that actually price a booking — and
+  renders a **real table** per lodge × season: age tiers down the side,
+  membership-type rate columns across the top. A membership type earns a column
+  only when it is active, **publicly listed**, and carries rates for that
+  season; types priced identically collapse into one shared column headed by
+  their names (for example "Full Member, Life, Family"), and split back out
+  automatically the moment one of them is repriced. Where a column is shared,
+  the table says so in one line, so a multi-name heading does not read as a
+  rendering glitch. Wide tables scroll inside their own container so the page
+  never scrolls sideways; that scroller is keyboard-focusable and named, each
+  table is named from its own heading, and a cell with no rate is announced as
+  "No rate" rather than as a silent em dash.
+
+  Token semantics changed with it: `type=` now genuinely **filters** to one
+  membership type's column (it previously only validated that the key existed),
+  `group-by=type` splits a season into one table per rate column (it previously
+  split into Member and Non-member groups), and `group-by=age` **orients** the
+  table so membership types are the rows and age tiers the columns (it
+  previously did nothing). Note that `group-by=age` here *orients* one table,
+  whereas `{{joining-fees}}`'s `by-age` *groups* into one block per tier — the
+  two are deliberately different, and `docs/PUBLIC_PAGE_CONTENT_TOKENS.md` says
+  why. Unknown lodge slugs and unknown or unlisted `type=` values still fail
+  closed to the no-information state. The setup-readiness **Seasons And Rates**
+  step now warns when the embed is switched on, its token is on a published
+  page, and a season would publish fewer than two rate columns.
+
+  Also fixed along the way: the lodge-setup **copy seasons** action had been
+  posting the legacy `rates` key, which the season API stopped accepting at the
+  E4 re-key, so every copy silently failed validation. It now posts
+  `membershipTypeRates` and works again.
+
+  No schema change: `SeasonRate` is untouched, and this step removed its last
+  **application-runtime** reader (the embed; the admin season routes and the
+  lodge-setup copy flow also stopped selecting it). The table is **not**
+  unreferenced, though — **one reader and two writers remain**, all in seed code
+  outside `src/`:
+
+  - `e2e/setup/seed-second-lodge.ts:202` — READ, `include: { rates: true }`
+  - `e2e/setup/seed-second-lodge.ts:218-224` — WRITE, `rates: { create: … }`
+  - `prisma/seed.ts:208-227` — WRITE, `createMissingSeasonRates` →
+    `prisma.seasonRate.upsert`
+
+  So #2129 step 2 (Release B) must, **in the same PR as the DROP migration**,
+  strip both the `rates` include and the `rates: { create: … }` block from
+  `e2e/setup/seed-second-lodge.ts` **and** delete `createMissingSeasonRates`
+  from `prisma/seed.ts`. Skipping either breaks the build twice over:
+  `e2e/**` sits inside `tsconfig.json`'s `**/*.ts` include and is not excluded,
+  so `npm run typecheck` fails on both seeder lines; and
+  `scripts/e2e-stack.sh:92` runs that seeder under `E2E_MULTI_LODGE=1`, so the
+  required **E2E multi-lodge** branch-protection check fails at seed time.
+
+- **Blue/green runtime-prep for the legacy Xero column drops, write half
+  (#2130).** `v0.12.2` narrowed the two READ paths (`getHutFeeItemCodeMap`,
+  `getAgeTierSettings`) with an explicit `select` so the deployed Prisma client
+  stopped naming `XeroItemCodeMapping.isMember` and
+  `AgeTierSetting.xeroContactGroupId`/`xeroContactGroupName`. That was
+  incomplete: Prisma also emits an implicit `RETURNING` over **every** scalar
+  column of a `create`/`update`/`upsert` unless a `select` narrows it, so the
+  unnarrowed WRITE paths still named the doomed columns and a draining old
+  colour would keep issuing that SQL. Every mutation on those two models is now
+  narrowed — the admin item-code-mappings route, the admin age-tier-settings
+  route, config-transfer's Xero import, the setup wizard, and the seed — each to
+  the minimal projection its (discarded) result needs. Regression pins assert
+  the `select` on each mutation, and a static source-scan guard (modelled on the
+  existing `ClubModuleSettings` select guard) fails CI on any future call site
+  on either model that forgets its `select` — across `src/`, `prisma/seed.ts`
+  and `scripts/` — so the narrowing cannot silently regress before the drop.
+  As defensive cleanup, the already-retired raw-SQL audit script
+  `audit-access-role-membership-cleanup.ts` also stopped naming the age-tier
+  Xero-group columns (its `managedAgeTierSettings` metric and paired "Managed
+  Xero age-tier rules backfilled" check were removed). That script never
+  executes — it returns early now that the `20260720120000` contraction
+  migration exists — so no live audit coverage was lost and it was never part of
+  the blue/green gap. **No schema change and no migration in this release**: it
+  is runtime-prep only. Only **after this release has itself deployed** are
+  `isMember` (with its old `@@unique`) and the two `xeroContactGroup*` columns
+  drop-eligible, by a *later* release's contract migration — never the same
+  release as this prep.
+
+- **Shared `useSectionEditState` hook for admin settings sections (#2136).**
+  The canonical settings-section pattern (`AGENTS.md`) — load read-only,
+  per-section Edit reveals Save/Cancel, nothing auto-persists on toggle, Cancel
+  reverts to the saved snapshot, Save persists once — had every card
+  re-deriving the same draft/snapshot bookkeeping by hand. `useSectionEditState`
+  (`src/hooks/use-section-edit-state.ts`) now owns it, centralising the two
+  details that are easiest to get subtly wrong: Cancel restores *every* field
+  from the snapshot, and Save re-seeds both the draft and the snapshot from what
+  the card's save callback returns rather than from the submitted draft — so a
+  card that returns the parsed server response (the group discount and password
+  policy cards) never leaves a clamped or normalised value misreported in the
+  form. The guarantee is only as good as what that callback returns: the email
+  sign-in link and Google sign-in cards return locally-computed values because
+  neither route echoes the stored row back, which is safe only because those
+  routes reject out-of-range input rather than clamping it. Adopted by the group
+  discount, password policy, email sign-in link, and Google sign-in
+  sections. Transport stays in each card's own save callback, so the security
+  cards' GET-fresh-settings-then-merge step — which stops one card clobbering a
+  module another card changed since page load — and their multi-endpoint saves
+  are unchanged. Refactor only: no admin-visible behaviour change, and every
+  existing card test passes unmodified. Also removes a redundant `!canEdit`
+  wrapper around `AdminViewOnlyNotice` in three sections; the notice already
+  gates on `canEdit === false` internally (#2065), a strictly stronger condition
+  than the wrapper's, so the wrapper was a no-op in all three tri-states.
+
+- **Theming follow-ups: categorical teal on tokens, and a themed /finance body
+  (#2137).** Three related cleanups to the theme-token system. First, the
+  categorical teal that was still written as literal Tailwind utilities now
+  reaches its hue through the `--hue-*` tokens via `CHIP_TONE_CLASSES.teal`: the
+  waitlist-offered booking chip, the audit-log `family` category badge, and the
+  family-group `GROUP_CREATE` badge. Each of those was already written on the
+  Tailwind -100/-800 pairing the `--hue-*` tokens encode, so the migration is
+  value-identical — no visible change. The admin dashboard Chore Roster tile was
+  deliberately left on `bg-teal-50`/`text-teal-600` and allowlisted instead: it
+  uses the -50/-600 tile convention and is one of five identically-built
+  quick-link tiles, so moving it alone would have made the row non-uniform.
+  The audit category badge map was duplicated verbatim between the member
+  timeline and the admin audit-log page and is now a single shared module
+  (`src/lib/audit-category-badges.ts`), so the two surfaces can no longer drift.
+  The brand-colour contract test's allowlist shrinks from six files to two: the
+  admin booking calendar keeps `bg-teal-500`, because it is a solid status
+  swatch with no muted-background / accent-text pairing and the `--hue-*` system
+  is defined only as such a pair; the dashboard tile keeps its -50/-600 pair for
+  the row-uniformity reason above. The calendar-colour regression pin in
+  `phase1-bug-fixes.test.ts` previously asserted against a LOCAL FIXTURE COPY of
+  the colour map, so it constrained nothing; it now imports the real exported
+  map. Second, `FINANCE_MIX_COLORS` is confirmed as a deliberate KEEP — the
+  literal hex palette stays, per the #1801 carve-out — and its doc comment is
+  corrected: it had claimed chart neutrals were tokenised in `trend-chart.tsx`,
+  when that file still passes literal strokes as SVG presentation attributes
+  (where `var()` cannot resolve) and the real theming happens in `globals.css`
+  via the `.finance-trend-chart .recharts-*` selectors. Third, the `/finance`
+  dashboard was themed at the chrome level only, so its BODY rendered raw
+  slate/white inside `app-theme-scope`. Dark mode was NOT broken by this — the
+  existing `.dark .app-theme-scope` neutral remap in `globals.css` (#1263) had
+  those utilities covered — but that shim is dark-only, so in LIGHT mode the
+  body did not follow a strongly non-default club theme; the dashboard, ratio
+  explorer, KPI cards,
+  and pie-chart tooltip now use the semantic surface tokens (`bg-card`,
+  `text-card-foreground`, `bg-popover`, `text-muted-foreground`, `bg-muted`,
+  `border-border`), with no layout, spacing, or value-rendering changes. A new
+  contract test keeps the finance tree free of raw neutral Tailwind utilities
+  (the whole slate/gray/zinc/neutral/stone family, plus `bg-white` and
+  `bg`/`text-black`, matching how the dark shim groups them); it is deliberately
+  scoped to that tree rather than repo-wide, because the admin tree still
+  carries raw slate in roughly 111 files and must be migrated before the check
+  can be widened. Chart hex colours are unaffected — they remain the documented
+  #1801 SVG-presentation-attribute carve-out.
+
+- **Booking-policies Save buttons: unified view-only gating, and no more no-op
+  group-discount saves (#2142, #2143).** Two carry-forwards from #2136. First,
+  every Save/Create button across the five **Booking Policies** sections — group
+  discount, booking periods, minimum night stay, default cancellation policy,
+  and public booking requests — now goes through `ViewOnlyActionButton`, the same
+  wrapper the security cards and these sections' own Edit buttons already used.
+  The behaviour change is narrow but real: `useAdminAreaEditAccess` is tri-state
+  and can narrow **after** the form was opened (a session refetch reducing the
+  actor's permissions mid-edit), and in that window Save previously stayed
+  clickable and the admin walked into a 403 mapped to the "not saved" notice.
+  It now disables immediately. While access is still *resolving* (`undefined`)
+  the button is disabled **neutrally**, with no reason shown, so an admin who
+  turns out to be edit-capable never sees a "view only" message flash.
+  No security consequence either way — Save only ever rendered behind the
+  already-gated Edit, and each write route enforces `bookings:edit`
+  independently. The two public-booking-request Saves were also raw `<button>`
+  elements styled with brand utilities; they now use the shared themed `Button`
+  like the other four sections, so they follow the club theme.
+
+  **The explanation for a view-only disabled state now lives at the section
+  level, not on each button.** A `disabled` button is out of the tab order, so
+  the reason it used to carry was attached to an element a keyboard user never
+  lands on — precisely the people it was for. (A screen reader *can* still
+  traverse a disabled button in browse mode, so "unreachable" overstates it; but
+  the `title` tooltip genuinely never appeared, because the shared button styles
+  set `disabled:pointer-events-none`, so a disabled button fires no hover event
+  at all.) Each of the five sections now renders a single banner at the top —
+  "You have view-only access to this area", plus what that section specifically
+  cannot be changed — in the normal reading order and in a polite live region,
+  so it is announced when the session resolves and met *before* the dead
+  controls rather than never. The live region itself is mounted from the first
+  paint, ahead of each section's "Loading…" state, and only its *content*
+  appears when access resolves: a live region injected already-populated is
+  silently dropped by some screen reader and browser combinations. The buttons
+  stay disabled exactly as before; only the explanation moved. This is scoped to
+  Booking Policies: every other admin surface keeps the per-button reason
+  unchanged, and widening the pattern is tracked in #2160.
+
+  Second, the group discount card's Save is no longer clickable while the form
+  is unchanged. Opening **Edit** and clicking **Save** without touching a field
+  used to re-PUT, and the route writes its `group-discount.update` audit entry
+  and busts the public-page cache unconditionally — so the audit trail collected
+  entries asserting policy changes that never happened. There is one deliberate
+  exception, because the GET **synthesises** the default values when no row has
+  ever been saved: on such a club the form can never differ from its snapshot,
+  so gating on that comparison alone would have made creating the row
+  unreachable and left the setup checklist reporting "Group discount: using
+  defaults" forever. The GET now reports whether a row is actually persisted,
+  and the card treats "no row yet" as savable — a first save is a genuine
+  creation, so its audit entry is accurate. A **failed** load deliberately does
+  not get that exception: the fallback shown in the form is the same defaults
+  object, and treating it as "no row yet" would let one click overwrite a real
+  configured policy. No pricing behaviour changed — a missing row and a disabled
+  row were already equivalent to every pricing reader.
+
+  **The same no-op protection now covers the other three sections**, which were
+  hand-rolled create/edit forms with no draft/snapshot pair at all. Booking
+  periods, minimum night stay, and the default cancellation policy now track
+  real dirtiness through the shared `useSectionEditState` hook, so **Update
+  Period**, **Update Policy**, and **Save Default Policy** stay greyed out until
+  the form actually differs from what is stored — and light up again the moment
+  it does, or go back to grey if you undo the change by hand. That closes two
+  more audit-erosion paths of exactly the kind #2143 describes: the cancellation
+  write route logs `cancellation-policy.update` unconditionally, and the
+  per-period write route logs a `booking-period.update` entry carrying a
+  `before`/`after` pair *even when the two halves are identical*. Neither is
+  reachable from the UI any more, and both are fixed at the form layer rather
+  than by bolting an ad-hoc comparison onto the routes. Because these sections
+  edit rows rather than one config object, each **open editor** gets its own
+  draft/snapshot pair keyed on the row being edited; the list around it stays
+  ordinary state, and the row-level Activate/Deactivate/Delete buttons stay
+  DIRECT actions rather than becoming draft-and-Save ones — they still write on
+  the click, they just write once (see the single-shot guard below). The
+  first-save exception carries over where it
+  applies: creating a period or a minimum-stay policy is always savable (there
+  is no stored row to be unchanged from), as is the first cancellation policy on
+  a partition that has none — the club-wide rules on a club that never saved
+  them, or a lodge override being created — but, as with the group discount, a
+  **failed** load never gets that exception, so a load error can never turn into
+  a one-click overwrite of a real policy. Comparisons are semantic rather than
+  literal: a re-ordered but otherwise identical set of refund rules is not a
+  change (the routes sort before storing), and neither is ticking a trigger day
+  and unticking it again.
+
+  For multi-lodge clubs, the same "a failed load must not become a write" rule
+  now also covers the **scope switch**. If you pick a lodge and its policy fails
+  to load, the section says so and shows nothing else: previously the club-wide
+  policy left on screen would have been relabelled as that lodge's override,
+  offering a **Remove override** that wrote an audit entry while deleting
+  nothing, and a Save that would have created an override out of rules you never
+  chose for that lodge. Three smaller editor fixes ship alongside: clicking
+  **Edit** again on the row you already have open now resets the form instead of
+  keeping the abandoned draft, **Cancel** clears the error the editor raised, and
+  if the server's reply to a *create* cannot be read the form still closes — so
+  the obvious retry cannot quietly create a second period or policy.
+
+  **A failed load now stops the section everywhere, not just on a scope
+  switch.** Three related holes closed. If the cancellation policy fails to load
+  on ARRIVAL — not after switching lodge, just an ordinary failed page load — the
+  section used to render the full **Default Policy** editor over its own
+  hard-coded starting rules, indistinguishable on screen from the club's real
+  refund schedule. A pristine Save was already blocked, but the realistic path
+  was not: click **Edit**, change one field, **Save**, and the write replaced the
+  club-wide rules wholesale with values nobody had ever configured. It now shows
+  the same "Could not load…" card a failed lodge switch shows, with no editor at
+  all. **Date-Specific Periods** and **Minimum Night Stay** got the same
+  treatment, which they had been missing entirely: a failed switch there left the
+  previous scope's rows on screen under the new scope's heading, with **Edit**,
+  **Delete**, and **Activate/Deactivate** all live over them — so a click acted
+  on the partition the admin thought they had left. Both now list nothing and say
+  so, and switching scope closes any editor that was open. Two smaller
+  scope-timing fixes ship with it: **Create override** can no longer land on the
+  lodge you switched TO while its seed was still loading, and the "Override saved
+  for …" confirmation now names the lodge that was actually written rather than
+  whichever one is selected when the reply arrives.
+
+  **Activate/Deactivate is now single-shot, and it is announced.** Those row
+  buttons are one-click writes, never covered by the Save dirty gate, and they
+  read the row's current state from a list that only refreshes afterwards — so a
+  quick double-click sent the same value twice and recorded the second as an
+  update whose "before" and "after" were identical, the exact #2143 harm from a
+  different direction. Each button is now disabled for the round trip and
+  guarded against the repeat click. Separately, the box that reports the outcome
+  of every booking-policy save had no live region at all, so neither a success
+  nor a failure — including the "This change was not saved" message for a
+  permissions change mid-edit — was announced to a screen reader. Failures are
+  now assertive (they contradict what you believe just happened) and
+  confirmations polite, both in regions registered before the message lands. And
+  an active minimum-stay row no longer shows two different buttons both labelled
+  **Deactivate**: the reversible pause keeps that name, and the destructive one
+  is now **Delete**, which is what it is. (**Delete** is a soft delete: the row
+  is taken out of use and a `delete` audit entry is recorded, but it stays
+  listed as inactive and **Activate** brings it back. The guide previously said
+  it removed the policy "for good", which was never what the code did.)
+
+  **The section frame no longer disappears while a scope loads.** All three
+  scoped sections — cancellation policy, Date-Specific Periods, Minimum Night
+  Stay — now keep the view-only banner, the message area, and the **Rules for**
+  select on screen in every state, and swap only the cards below them. Two
+  things were broken by rendering the loading state above all that. A keyboard
+  or screen-reader admin who changed scope from the **Rules for** select had
+  that select removed from the page for the whole round trip, dropping their
+  focus and forcing a full re-traverse to change scope again; and the message
+  area was mounted already carrying an error whenever the FIRST load failed,
+  which is the one thing a live region must never do if the message is to be
+  announced reliably. Finally, the "Could not load…" card now offers **Try
+  again**, so recovering from a failed load is one click instead of a page
+  reload.
+
+## 0.12.2 - 2026-07-20
+
+- Release classification: patch public reference release. As with `v0.12.1`, the
+  version is a deliberate patch bump chosen by the owner even though the range
+  carries feature work — most additions are opt-in and flagged off by default.
+  Unlike `v0.12.1`, however, this release is **not** purely additive: it lands
+  the first **destructive contract migration** since the expand/migrate/contract
+  series began (legacy-structure contraction E13, the blue/green-safe subset of
+  #1939) plus a second breaking column-drop migration (member-grouping
+  multi-select age tiers), and it changes one default behaviour (admin
+  post-login landing). Both breaking migrations are old-colour compatible under
+  a prompt cutover but require the `ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS=1`
+  operator acknowledgement. Read `docs/releases/v0.12.2.md` and the
+  `v0.12.1 -> v0.12.2` section of `docs/UPGRADING.md` before deployment.
+
+- **Production Xero lock-date 503 fix and Xero reliability (#2101/#2110,
+  #2105/#2116, #2089/#2096).** The urgent fix: retroactive (past-dated) booking
+  creation returned a 503 "Could not verify the Xero lock dates" whenever the
+  connected Xero organisation actually **has** lock dates set — the exact case
+  the guard exists for. Root cause (confirmed from production logs): xero-node's
+  `ObjectSerializer` deserialises an MS-JSON `/Date(...)/` payload into a JS
+  `Date`, so `parseXeroLockDate`'s `value.slice(0,10)` threw and the guard failed
+  closed; reconnecting could never fix it. The parser now accepts `string |
+  Date`. On top of the fix, a **lock-date error taxonomy** classifies the guard's
+  503 as `reconnect_required | rate_limited | transient` with cause-specific,
+  admin-only reason copy (member bodies byte-identical), plus a click-only live
+  **connection-health probe** (`GET /api/admin/xero/status?probe=1`) replacing
+  the token-row-presence "Connected" chip, and a finance-sync
+  `parseOptionalDateOnly` made `Date`-aware (SDK-coerced due-dates no longer
+  drift into the no-due-date aging bucket). Separately, the Xero contact-create
+  gate is shrunk to require only first name + last name + email — phone, DOB,
+  joined date, and addresses become optional, with an informational
+  "profile incomplete" note and cleaner sparse-member payloads (no empty phone
+  block).
+
+- **Membership-type lifecycle: age-exempt types, bulk assignment, Xero import,
+  and item-code paid-detection (#2106/#2118, #2107/#2126, #2108/#2127,
+  #2109/#2123).** Membership types whose allowed-age-tiers list "N/A (no age)"
+  become the single source for genuinely age-exempt members: a type allowing
+  only N/A **forces** every current-season holder to `NOT_APPLICABLE`, a type
+  listing N/A among person tiers lets admins hand-pick it per member, and the
+  rule is enforced through one shared helper at every ageTier write site
+  (assignment, admin edit, self-serve profile, family confirmation, set-role
+  grant/revoke, season roll-forward). Admins can **bulk-assign** membership type
+  to up to 100 selected members from the members page (aggregate preview →
+  required reason → per-member outcomes, HMAC preview-token gated, per-member
+  audits, per-member Xero group syncs suppressed in favour of one batched
+  reconcile). Xero **Setup import** gains a mapping mode — age tiers (default),
+  membership types, or both — mapping contact groups onto active types, never
+  overwriting an existing current-season assignment and fully reporting what it
+  skipped, with `membership:edit` gating on type-mapping imports. And an opt-in
+  **"use membership fee item codes"** mode lets subscription paid-detection look
+  through to the per-type+tier item codes the fee schedule already stamps on
+  invoices (default off = today's single-code behaviour byte-for-byte;
+  strong-match-first selection; overlap warnings).
+
+- **Xero member-grouping multi-select age tiers (#2093/#2111).** A grouping rule
+  can now target any subset of age tiers (`XeroContactGroupRule.ageTier` →
+  `ageTiers AgeTier[]`, empty = all tiers) with specificity-based overlap
+  resolution and a fingerprint serializer proven byte-identical to the old one
+  for the migrated cases (no spurious full regroup on the first post-deploy
+  resync), plus a "Refresh from Xero" button and a "Last synced" header. Its
+  migration (`20260719170000_xero_grouping_age_tiers_multiselect`) backfills
+  `X → [X]` / `null → []` and then **drops** the old scalar `ageTier` column — a
+  breaking column-drop that needs the blue/green acknowledgement (see notes
+  below).
+
+- **Post-login landing for admins + per-member preference (#2090/#2098).** After
+  sign-in, a member with admin access and no set preference now lands on their
+  admin area (`getFirstAccessibleAdminHref(matrix) ?? /dashboard`) instead of the
+  member dashboard — applied entirely by the application redirect resolver, so
+  every existing admin lands on their admin area on the first login after
+  upgrade. This includes read-only admins and finance-only viewers (e.g. a
+  finance-only viewer lands on `/admin/payments`). A new typed, nullable
+  `Member.postLoginLanding` enum column (`MEMBER_DASHBOARD | ADMIN_DASHBOARD`,
+  null = role default) backs a profile **Account Information** toggle shown only
+  to members with an accessible admin page; there is no free-text path and no
+  open-redirect surface. A genuinely deep-linked `callbackUrl` still wins; a
+  value the login flow itself materialised (the 2FA detour, a provider return
+  URL) never counts as explicit. A member with no admin area — including a
+  demoted admin holding a stale preference — still lands safely on `/dashboard`,
+  never a 403 loop.
+
+- **Admin and booking UX (#2092/#2112, #2091/#2099, #2088/#2097, #2102/#2113,
+  #2103/#2114, #2104/#2115, #2124/#2128).** A Ctrl/Cmd-K admin **feature search**
+  palette plus a sidebar Search button, derived from the visible-nav single
+  source so it can never reveal an inaccessible page. The admin **dashboard**
+  key-card row re-targets the four bookings-officer surfaces (Bookings, Hut
+  Leader, Roster, Bed Allocation) with actionable "work to do" counts. The admin
+  **booking calendar** no longer overflows into the next week's row
+  (auto-expanding rows capped at six lanes, a per-day "+N more" chip, greyed
+  finished days). The `/finance` and `/lodge` shells now inherit the club theme
+  (they were rendering the default teal), guarded by a brand-colour source
+  contract test. `/admin/security` now follows the settings-page Edit→Save
+  convention, makes the magic-link TTL persistable, and fixes a stale-clobber
+  that silently reverted other module toggles. The member booking-edit panel
+  finally **renders the required justification field** for a minors-without-adult
+  edit (previously the 400 surfaced as bare red text), with a machine-readable
+  `REVIEW_JUSTIFICATION_REQUIRED` code. And an in-progress stay's **minimum-stay
+  rule is now evaluated against the whole contiguous stay** — a one-night
+  extension of an already-valid stay is no longer wrongly rejected — surfaced as
+  an advisory warning on the quote.
+
+- **Legacy schema contraction E13 — destructive, safe subset of #1939 (#2132).**
+  The first contract migration of this release removes two provably-dead legacy
+  structures — the `EntranceFee` table (superseded by JoiningFee in E5 #1931) and
+  the `AgeTierXeroAcceptedContactGroup` table (converged into
+  `XeroContactGroupRule` in E8 #1934) — plus the orphaned `entranceFeeAmountCents`
+  account-mapping row. An independent drop-proof review re-verified zero readers
+  against the `v0.12.1` tag (the colour draining during the deploy). The
+  `EntranceFeeCategory` enum, `SeasonRate` (the live public `{{hut-fees}}` embed
+  reader), `MembershipTypeAgeTier`, and the `XeroItemCodeMapping.isMember` /
+  `AgeTierSetting.xeroContactGroup*` columns are all deliberately **kept or
+  deferred** to follow-ups #2129/#2130/#2131. The destructive `DROP TABLE`s
+  require the blue/green acknowledgement (see notes). The #2130 **runtime-prep**
+  also ships in this release (#2133): the three remaining no-`select` queries on
+  `XeroItemCodeMapping`/`AgeTierSetting` now name only their consumed columns, so
+  the deferred column drops become blue/green-legal next release.
+
+- **Docs, CI, and tests (#2083/#2085, #2117/#2125).** The member-facing user
+  guide (`docs/user-guide/`) is now mirrored one-way to the GitHub wiki by a
+  push-triggered workflow plus `npm run docs:wiki-sync`. The E2E seed fixtures
+  were made relative and never-expiring so the suite stops going stale at date
+  boundaries.
+
+- **Migration/deployment notes:** **take a fresh, restore-tested backup before
+  deploying — this release contains destructive schema changes.** Four migrations
+  apply. Two are expand/additive: `20260719150000_add_post_login_landing` (a new
+  `PostLoginLanding` enum + a nullable `Member` column with no default; ledgered
+  `old_code_compatible=yes`) and `20260719180000_add_use_fee_schedule_item_codes`
+  (a single flagged-off boolean on the cold single-row `MembershipLockoutSettings`
+  table — additive with a constant default, so ledger-exempt under the same
+  policy as v0.12.1's `add_login_security_setting`). **Two are breaking `contract`
+  migrations that each require `ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS=1`:**
+  `20260719170000_xero_grouping_age_tiers_multiselect` backfills then **drops** the
+  scalar `ageTier` column (window-bounded, admin-only — between migrate and
+  cutover the old colour's grouping/membership-admin reads error with
+  column-does-not-exist; the live grouping sync fails closed and retries
+  post-cutover, so deploy with that admin traffic idle and cut over promptly),
+  and `20260720120000_contract_drop_entrance_fee_and_agetier_xero_group` drops the
+  two dead tables (old-colour compatible — no deployed SQL names them — but a
+  `DROP` is breaking by class). Both carry `old_code_compatible=yes` ledger rows
+  and name their `previous_expand_release`. No migration makes a Xero, Stripe, or
+  SES call, and no member is re-grouped in Xero by any migration. See
+  `docs/UPGRADING.md` for the complete operator checklist.
+
+## 0.12.1 - 2026-07-19
+
+- Release classification: patch public reference release. The version is a
+  deliberate patch bump chosen by the owner even though the range carries
+  feature work, because every addition is additive and flagged off by default:
+  it brings all changes landed after `v0.12.0` into one supported tag, with
+  five migrations (all expand/additive, no contract). It adds optional sign-in
+  methods (per-club password-complexity policy, email magic-link, Google
+  OAuth — the last two default off), per-age-tier membership billing (annual
+  fees and subscription requirement), Lobby Display template/builder polish, a
+  full operator and member documentation library, and a screenshot-forward
+  README, alongside a CI safety-gate hardening. Read
+  `docs/releases/v0.12.1.md` and the `v0.12.0 -> v0.12.1` section of
+  `docs/UPGRADING.md` before deployment.
+
+- **Optional sign-in methods (epic #2030: #2033/#2037, #2034/#2040 —
+  superseding #2039, #2035/#2043).** A new admin **Login & Security** page
+  (`/admin/security`) adds a per-club password-complexity policy — minimum
+  length 8–64 (default 12), four character-class toggles (default off), a
+  fixed 128 maximum — enforced only at password-set time through one shared
+  validator, with live policy hints on the reset/change forms via a public
+  `GET /api/auth/password-policy`. An un-configured club is byte-identical to
+  today (absent `LoginSecuritySetting` row falls through to the code default
+  `min(12)`), and existing passwords are never re-validated
+  (`forcePasswordChange` is the adoption lever). Two optional sign-in methods,
+  both **module-flagged off by default**, join password login without
+  replacing it: **email magic-link** (`ClubModuleSettings.magicLink`) issues a
+  single-use hashed token whose TTL the club sets on the security page
+  (default 15 min, clamp 5–60); and **Google OAuth**
+  (`ClubModuleSettings.googleLogin`) works by profile-initiated linking only —
+  a signed-in member links their verified Google account from their profile,
+  sign-in then resolves solely by the pinned Google subject id
+  (`Member.googleSub @unique`), never by email match and never auto-provisioning,
+  with the same `canLogin`/`active`/`emailVerified`/2FA gates as password
+  login and per-club `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` credentials
+  (runbook in `CONFIGURATION.md`). Google sub is deliberately excluded from
+  member-merge field-fill so a login identity is never inherited.
+
+- **Per-age-tier membership billing (#2041/#2051, #2067/#2072, #2069/#2071,
+  #2068/#2073).** Membership types gain a third subscription behaviour,
+  **Required based on age tier** (`BASED_ON_AGE_TIER`), that defers the
+  subscription-required answer to the existing per-tier
+  `AgeTierSetting.subscriptionRequiredForBooking` flag, so one type can bill
+  older tiers while exempting younger ones; billing liability is fixed by age
+  at the start of the club financial year, exempt members get an authoritative
+  `NOT_REQUIRED` season row, and `REQUIRED`/`NOT_REQUIRED` types are
+  byte-unchanged. Annual membership fees gain the same **flat (all ages) vs
+  per-tier** shape the joining fee already carried: a nullable
+  `MembershipAnnualFee.ageTier` (existing rows are the flat fallback — no
+  backfill), tier-first resolution, and per-family fees held flat-only
+  (enforced at the API, a DB `CHECK`, and config-transfer). The membership-type
+  editor adds an explicit **"N/A (no age)"** (`NOT_APPLICABLE`) allowed-tier
+  option (sorted last, opt-in, excluded from the API default). The annual-fee
+  editor replaces free-text Xero Account/Item inputs with searchable pickers
+  (ACTIVE revenue accounts / sales-capable items) fed by the existing
+  admin-gated proxy endpoints — falling back to manual entry on Xero
+  disconnection, never hard-blocking — surfaces the resolved default account,
+  and shows the fee-level proration rule (no billing-math change).
+
+- **Lobby Display template pack, guided builder, and night-columns fix
+  (#2047/#2055, #2048/#2058, #2056/#2062).** A six-board template pack ships
+  four refresh-on-reseed built-ins (*Room by room*, *Week ahead*, *Lodge
+  operations*, *Welcome kiosk*) plus two extras in an import bundle, so every
+  display module is exercised by at least one built-in. A guided visual
+  **builder** at `/admin/display/builder` (ADR-004) composes skeletons, a
+  module palette, per-zone settings, and a sandboxed live draft preview through
+  the unchanged save contract, with the existing textarea editors retained as
+  Advanced mode and no schema change; the privacy floor stays enforced
+  structurally. Night-columns is rescoped as an honest permanent 3-night board
+  (`NIGHT_COLUMNS_MAX_DAYS` 5 → 3) matching the device data window. The Lobby
+  Display module remains off by default.
+
+- **Documentation foundation, operator and member guide library (#2049/#2054,
+  #2050 via #2057/#2060/#2061/#2064/#2063).** A docs foundation lands a
+  `docs/STYLE_GUIDE.md`, an audience-first `docs/README.md` hub, five curated
+  `docs/ARCHITECTURE.md` mermaid diagrams, a `docs/COVERAGE_MATRIX.md` mapping
+  every admin route area to coverage, an advisory `docs-link-check` CI workflow
+  with a matching local `npm run docs:linkcheck`, and a Playwright screenshot
+  harness (`npm run docs:screenshots`). On top of it, **65 operator guides**
+  in `docs/guides/` (four batches: bookings & capacity, membership &
+  applications, lodge operations & lobby display, and comms/content/support
+  platform) plus a fifth batch of **member-facing journey guides** in
+  `docs/user-guide/`, each written against the running seeded app with
+  seeded-data screenshots, closing the coverage matrix to zero gaps.
+
+- **Screenshot-forward README (#2076/#2077).** The root `README.md` is
+  rewritten as a marketing front page — reproducible hero art, badges, a
+  benefit-led feature grid, a screenshot gallery, a native mermaid
+  architecture diagram, and a condensed quickstart — with two reproducible
+  dev-only asset harnesses (`npm run docs:readme-art`, `npm run docs:demo-gif`)
+  and its former deep operational content relocated into the docs it
+  duplicated. No runtime app code changes.
+
+- **Fixes, CI, and dependencies (#2045/#2052, #2046/#2053, #2038/#2042,
+  #2070).** The membership-types editor closes on a successful edit save and
+  regains a dirty-guarded header X; `/admin/display` drill-down leaves regain
+  the shared `BackLink` (with a repo-wide back-affordance normalisation); the
+  blue/green migration validator's session-clock gate is no longer blinded by
+  dollar-quoted SQL (the splitter is now dollar-quote-aware for arbitrary
+  Postgres tags and fails loudly on an unterminated quote — one benign,
+  already-deployed case recorded in an exact-name-keyed allowlist); and
+  `github/codeql-action` is bumped to 4.37.0.
+
+- **Migration/deployment notes:** deploy in a normal window after a tested
+  backup — **no contract migration** this release. Five expand/additive
+  migrations apply. Four have ledger rows in
+  `docs/BLUE_GREEN_MIGRATION_SAFETY.tsv`, all `old_code_compatible=yes`:
+  `20260718130000_add_magic_link` and `20260719120000_add_google_oauth`
+  (flagged-off boolean(s) + a new/nullable column; the `add_google_oauth`
+  unique index builds over an all-NULL `Member.googleSub`, briefly blocking
+  `Member` writes — use `CREATE UNIQUE INDEX CONCURRENTLY` if `Member` is very
+  large), `20260719130000_add_based_on_age_tier_subscription_behavior` (a pure
+  additive `ALTER TYPE ... ADD VALUE`), and `20260719140000_annual_fee_age_tier`
+  (a nullable catalog-only `ADD COLUMN` plus index/constraint reshaping on the
+  cold `MembershipAnnualFee` table). The fifth, `20260718120000_add_login_security_setting`,
+  is a single additive cold config table with no FK and needs no ledger row
+  (same policy as v0.12.0's ledger-exempt additive migrations). Two flagged-off
+  sign-in modules mean nothing changes at cutover until an admin enables them.
+  **One operator caveat:** because the old colour's fee resolver does not
+  filter by age tier, do **not** create per-age-tier annual-fee rows until the
+  cutover completes — a per-tier row is not invisible to the old resolver and
+  could be selected for a member of any tier and mis-price them (over-resolve).
+  No migration makes a Xero, Stripe, or SES call. See `docs/UPGRADING.md` for
+  the complete operator checklist.
+
+## 0.12.0 - 2026-07-18
+
+- Release classification: minor public reference release. This is a large
+  feature, configuration, and correctness release over `0.11.0`, with 25
+  migrations (24 expand/additive, one contract). It adds the flagged-off Lobby
+  Display module, exclusive whole-lodge holds, un-flagged core multi-lodge
+  operation, database-first club identity and configuration with boot-time
+  self-heal, authoritative fee schedules with subscription and joining-fee
+  billing, and rule-based Xero member grouping, alongside broad
+  booking-settlement, payment, and Xero/finance hardening. Read
+  `docs/releases/v0.12.0.md` and the `v0.11.0 -> v0.12.0` section of
+  `docs/UPGRADING.md` before deployment.
+
+- **Lobby Display module (#1911, upstreaming fork PRs #109–#187).** A new
+  flagged-off module renders per-lodge lobby screens: admin-authored layouts
+  and templates (room cards, night columns, status board), a per-lodge notice,
+  a name-granularity control over how guests appear, and registered display
+  devices, managed from a single Lobby Display admin hub. The module flag
+  (`ClubModuleSettings.lobbyDisplay`) defaults off, so nothing changes until a
+  club enables it; the schema lands as the single consolidated
+  `add_lobby_display` migration. Guest phone numbers appear on screens only
+  under a two-sided opt-in (#133–#136, #151): the member must opt in **and**
+  the lodge must enable it, enforced in the serialisers, with both flags
+  defaulting off — and only ever for adult members; youth and child phone
+  numbers are never shown. Documentation lives under `docs/lobby-display/`.
+
+- **Exclusive whole-lodge holds (#144–#148, #166, #180, #181, #183, #185,
+  #187; ADR-001 in `docs/exclusive-booking/`).** A school/group booking
+  request can now ask for sole occupancy of the lodge
+  (`exclusivityRequested`), and an admin approving it — or acting directly —
+  can place a whole-lodge hold on the resulting booking. While the hold
+  stands, capacity enforcement blocks every other booking for those nights,
+  the hold is visible on availability and admin surfaces, and bed allocation
+  respects it. Hold placement, lifecycle, and
+  confirm-pending conversion are guarded by status checks and advisory locks
+  so concurrent bookings cannot slip past a hold. All new fields default off
+  in `add_exclusive_hold_fields`.
+
+- **Multi-lodge is now core, not a module (#138, #140–#143).** The `multiLodge`
+  module flag is removed and lodge routes are un-gated: every installation is
+  a multi-lodge installation with at least one (default) lodge. The vestigial
+  `ClubModuleSettings.multiLodge` column is retired but not yet dropped — the
+  drop is deferred to a future contract migration (fork #129), reads are
+  already drop-safe (fork #150), and ADR-005 records the decision (#140) —
+  navigation is lodge-aware (#141), the admin home becomes a lodge hub
+  (#142), and backwards compatibility for existing single-lodge installs is
+  preserved (#143) — a single-lodge club sees no operational change.
+
+- **Authoritative fee schedules and membership billing (#1855/#1858,
+  #1857/#1861, #1870/#1879, #1930/#1958, #1931/#1968, #1932/#1973,
+  #1933/#1974, #1936/#1954, #1941/#1989, #1944/#1959, #1896).** Booking,
+  joining, and annual membership fees now live in database fee schedules that
+  admins edit and save (`docs/AUTHORITATIVE_FEES.md`): season rates are keyed
+  by membership type rather than a member/non-member boolean, joining fees are
+  modelled per membership type and age tier, and annual fees break into
+  invoice-line components. Durable subscription-billing workflow tables drive
+  membership invoicing, families can choose a billing mode and billing member,
+  manual mark-paid actions record provenance and paid-up semantics are
+  clarified, membership application approval maps applicants onto the new
+  model, fee presentation reaches the public pages behind a double-opt-in
+  `{{annual-fees}}` embed, and configuration transfer carries fee
+  configuration. Day-one amounts are backfilled from the existing
+  configuration; the legacy tables are retained (not dropped) so the old
+  colour prices season and annual fees identically during cutover
+  (entrance/joining fees carry a window-bounded old-colour caveat — see the
+  Migration/deployment notes).
+
+- **Database-first club identity and configuration, with boot-time self-heal
+  and DR auto-import (#1929/#1957, #1980/#1991, #1981/#1999, #1982/#2013,
+  #1983/#2005, #1984/#2004, #1985/#2014, #1986/#2015, #1987/#2019,
+  #1988/#2028).** Club name/short name/hut-leader label/Facebook URL, lodge
+  address, capacity, age tiers, and email settings now resolve database-first
+  with config-file fallback; sync consumers and the setup wizard read and
+  write the database, legacy email environment variables are retired, and a
+  boot-time config self-heal backfills missing DB values from the effective
+  configuration without ever overwriting an admin edit. A bootstrap-safe
+  loader keeps boot resilient when the database is unreachable. For disaster
+  recovery and cloning, `CONFIG_BUNDLE_IMPORT_PATH` auto-imports a
+  configuration bundle at boot — only when the database holds no non-seed
+  configuration, so it can never clobber a live install. Applying an
+  interactive configuration import now refuses to proceed when backups are
+  enabled but the pre-apply backup was not durably uploaded to S3 (#1910),
+  retired email environment variables log a boot warning when still set
+  (#2021/#2022), and age tiers are now editable as a contiguous subset,
+  letting clubs run fewer than four tiers (#2009/#2027).
+
+- **Xero and finance hardening, plus rule-based Xero member grouping
+  (#1893, #1897, #1900/#1916, #1902, #1908, #1909, #1917, #1922,
+  #1934/#1953, #1961/#1972).** Group-settlement application retries safely,
+  Xero write durability and credit deallocation are hardened, season billing
+  runs transactionally, entrance-fee enqueueing is deduplicated (with a
+  partial unique index guaranteeing at most one active entrance-fee invoice
+  link per member), a membership lifecycle review race is closed, phantom
+  Xero payments on supplementary-invoice retries are prevented, and
+  capacity-refund recovery is durable. Xero contact-group membership is now
+  driven by admin-editable grouping rules with a server-persisted dry-run
+  that must be fresh before a bulk re-sync (`docs/XERO_MEMBER_GROUPING_RUNBOOK.md`).
+  Webhook dedup gains a processing lease so redelivered events reprocess
+  safely instead of being dropped.
+
+- **Booking settlement, lifecycle, and date correctness (#1878/#1892,
+  #1881/#1919/#1921, #1883/#1899, the #1888 cluster
+  (#1894/#1895/#1898/#1906/#1914/#1918), #1992/#2006, #1993/#2010,
+  #2003/#2018, #2012/#2024, #2029/#2032).** NZ date-only handling is enforced
+  end to end, lock topology is corrected and the split-child cancel race is
+  closed, group-settlement readmission works, cron isolation and date-only
+  guards are tightened and an error-message leak is fixed, a double-charge
+  window is closed, terminal booking-request and hold states are made truly
+  terminal, deferred-payment state has a single source of truth, and bookings
+  now complete at the end of the checkout day (NZ) — enabling priced,
+  capacity-checked, cancel-guarded checkout-day extensions. Payment-link email
+  reliability is improved (#1885/#1904).
+
+- **Split-booking settlement and payment UX (#1967/#1995, #1942/#1977,
+  #1976/#1996, #1975/#2001, #1994/#2000, #2002/#2017).** Internet Banking
+  settlement of split bookings is correct, the split flow's UX is clearer,
+  the pay step shows the right amount, admin bookings render split children
+  as nested subrows, the register-split notifications become admin-editable
+  email templates, and joiners are labelled accurately.
+
+- **View-only admin access is enforced across admin surfaces (#1927/#1949,
+  #1940/#1998, #1997/#2031).** Admin content editors, route permissions, and
+  action buttons across bookings, membership queues, member detail
+  (lifecycle, deletion, credit, family), finance, support, and communications
+  are gated for view-only access roles: a role without write permission sees
+  the data but cannot mutate it, at both the UI and the route level.
+
+- **Member deletion requests, merge, and duplicate-capture recovery
+  (#1938/#1948/#1960, #1937/#1963, #2007/#2023, #2008/#2025, #1935/#1956).**
+  Admin-initiated member deletion requests are surfaced with a dedicated,
+  separately-mutable notification preference; duplicate members can be merged;
+  duplicate-capture auto-refunds get a dedicated admin-editable email template
+  and a narrative-safe booking-history event; and admins can book on behalf
+  of a non-member.
+
+- **Member CSV import can create already-cancelled members (#1946/#1990).**
+  The member import gains an optional **Cancelled Date** column. A row with a
+  cancelled date is created in the cancelled end-state — inactive, non-login,
+  with `cancelledAt` set to the given NZ date-only value — matching what the
+  normal admin cancellation flow produces, minus notifications: the import
+  sends no cancellation email and performs no Xero/Stripe work (a freshly
+  imported member has no Xero contact). A cancelled row never claims the
+  login for a shared email, and the cancelled date may not be in the future.
+  The import still only creates members, so a row matching an existing member
+  is skipped unchanged — cancelling an existing member remains an admin
+  cancellation-flow action.
+
+- **Public content, generic starter copy, and committee CRUD retirement
+  (#1856/#1862, #1864/#1866, #1928/#1950, #1945/#1964, #1947/#1969).** Public
+  page content gains token embeds behind explicit visibility gates
+  (`docs/PUBLIC_PAGE_CONTENT_TOKENS.md`), starter privacy/terms/FAQ copy is
+  genericised (admin-edited pages are left untouched), copy quick-wins and a
+  content scrub remove club-specific wording, and logo alt text is fixed. The
+  legacy standalone committee directory and its admin CRUD are removed — the
+  member-linked committee roles/assignments system from v0.11.0 is now the
+  only committee source, and the `drop_committee_member` **contract
+  migration** drops the retired table (see Migration/deployment notes).
+  Saved theme colours now also apply to outbound emails (#1912/#1915).
+
+- **Performance, load, and accessibility (#1884/#1903/#1905/#1907/#1920,
+  #1889/#1891/#1901, #1869/#1890).** Admin bookings are paginated, the
+  database pool is sized for the deployment, a k6 load harness and
+  load-stability fixes land, form errors and UI states meet accessibility
+  expectations, and admin UI polish rounds out the sweep.
+
+- **CI, security, dependencies, and docs (#1865, #1867/#1868, #1871/#1872,
+  #1873, #1874, #1876/#1877, #1926/#1955, #1962/#1971, #1966/#1970, #1979,
+  fork #169/#170, #15/#1863/#1913).** Semgrep static analysis joins CI
+  (#1865) and its findings are remediated (#1867/#1868), GitHub Actions
+  dependencies are updated, Xero error
+  shapes are corrected, a production-hardening review lands, ops docs are
+  corrected, the agent orchestration workflow is documented, non-member and
+  identity-smoke E2E suites are added, a migration timestamp collision is
+  repaired, the attack surface is documented
+  (`docs/SECURITY-ATTACK-SURFACE.md`), and the design fork is synced.
+
+- **Migration/deployment notes:** deploy in a quiet, low-write window after a
+  tested backup. One **contract migration**,
+  `20260714140000_drop_committee_member`, removes the legacy standalone
+  committee directory table: its member-linked replacement shipped and was
+  backfilled in v0.11.0, so the drop loses no data beyond the retired
+  directory itself — no assignment or contact data lives only in the dropped
+  table — but the old colour's admin committee CRUD routes error between
+  migrate and cutover. Idle or drain old-colour admin traffic, cut over
+  promptly, and supply the documented
+  `ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS=1` override together with a
+  non-empty `BLUE_GREEN_MIGRATION_OVERRIDE_REASON` acknowledgement. The
+  `joining_fee_model` and `xero_member_grouping` expand migrations carry
+  window-bounded old-colour caveats described in
+  `docs/BLUE_GREEN_MIGRATION_SAFETY.tsv`: once `joining_fee_model` re-keys
+  the entrance-fee Xero item-code mappings, the old colour resolves both the
+  item code and the amount of a new entrance-fee invoice from the legacy
+  flat mappings — it can mint a wrong per-category amount, or silently skip
+  the invoice as SUCCEEDED when the flat amount is unset — so membership
+  approvals and entrance-fee minting must be fully idle on the old colour
+  from migrate until cutover (operations queued before the window carry
+  frozen amount/item payloads and replay safely); and `xero_member_grouping`
+  converges grouping rules, so avoid grouping-rule saves on the draining old
+  colour. No migration makes a Xero call, and no member is re-grouped until
+  the admin-run dry-run and bulk re-sync in
+  `docs/XERO_MEMBER_GROUPING_RUNBOOK.md`. See `docs/UPGRADING.md` for the
+  complete operator checklist.
+
 ## 0.11.0 - 2026-07-13
 
 - Release classification: minor public reference release. This is a large

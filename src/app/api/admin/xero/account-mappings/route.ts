@@ -5,9 +5,14 @@ import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
 
+// entranceFeeAmountCents is intentionally absent (#1931, E5): the legacy flat
+// joining-fee amount is no longer read at runtime (amounts are authoritative
+// in the JoiningFee schedule, migrated on upgrade), so exposing it as a
+// writable mapping would accept edits that silently have no effect. The
+// stored row (if any) is retained untouched for provenance until E13.
 const VALID_KEYS = [
   "hutFeesIncome", "hutFeeRefunds", "stripeBankAccount", "stripeFees", "subscriptionIncome",
-  "membershipCancellationCredit", "hutFeeItem", "hutFeeRefundItem", "entranceFeeItem", "entranceFeeAmountCents",
+  "membershipCancellationCredit", "hutFeeItem", "hutFeeRefundItem", "entranceFeeItem",
 ] as const;
 
 /**
@@ -15,7 +20,9 @@ const VALID_KEYS = [
  * Returns all Xero account code and item code mappings.
  */
 export async function GET() {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "finance", level: "view" },
+  });
   if (!guard.ok) return guard.response;
   try {
     const mappings = await prisma.xeroAccountMapping.findMany({
@@ -53,7 +60,6 @@ const UpdateMappingsSchema = z.object({
   hutFeeItem: MappingValueSchema.optional(),
   hutFeeRefundItem: MappingValueSchema.optional(),
   entranceFeeItem: MappingValueSchema.optional(),
-  entranceFeeAmountCents: MappingValueSchema.optional(),
 });
 
 /**
@@ -61,7 +67,9 @@ const UpdateMappingsSchema = z.object({
  * Updates Xero account code and item code mappings. Accepts partial updates.
  */
 export async function PUT(request: NextRequest) {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "finance", level: "edit" },
+  });
   if (!guard.ok) return guard.response;
   const session = guard.session;
   let body: unknown;

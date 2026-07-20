@@ -2,6 +2,27 @@
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+// #1940: the page reads the session permission matrix for view-only gating;
+// provide an edit-level admin session so the built-in guard cases keep working.
+vi.mock("next-auth/react", () => ({
+  useSession: () => ({
+    data: {
+      user: {
+        id: "admin-1",
+        adminPermissionMatrix: {
+          overview: "edit",
+          bookings: "edit",
+          membership: "edit",
+          finance: "edit",
+          lodge: "edit",
+          content: "edit",
+          support: "edit",
+        },
+      },
+    },
+  }),
+}));
+
 import AdminDisplayTemplatesPage from "./page";
 
 // Fork issue #156: editing a built-in Template (`everyday-board` etc.) in place
@@ -68,7 +89,7 @@ function json(body: unknown) {
 
 async function openBuiltIn() {
   render(<AdminDisplayTemplatesPage />);
-  const editButton = await screen.findByRole("button", { name: "Edit" });
+  const editButton = await screen.findByRole("button", { name: "Edit (Advanced)" });
   fireEvent.click(editButton);
   await screen.findByText("This is a built-in template.");
 }
@@ -104,44 +125,56 @@ describe("AdminDisplayTemplatesPage — built-in guard", () => {
     expect(screen.getByRole("button", { name: "Create template" })).toBeDefined();
   });
 
-  it("requires confirmation before saving an in-place built-in edit; cancel blocks the PUT", async () => {
+  // #2048 D: built-in templates are read-only server-side (PUT 409s), so Save
+  // never fires a doomed in-place PUT. It offers ONLY the duplicate-to-customise
+  // fork. These assert the REAL contract (no PUT for a built-in), not a mocked
+  // PUT that would mask the mismatch.
+  it("Save on a built-in never fires the doomed PUT; Cancel leaves it open", async () => {
     const { calls } = installFetch();
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
     render(<AdminDisplayTemplatesPage />);
-    const editButton = await screen.findByRole("button", { name: "Edit" });
+    const editButton = await screen.findByRole("button", { name: "Edit (Advanced)" });
     fireEvent.click(editButton);
     await screen.findByText("This is a built-in template.");
 
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
+    // The prompt offers to duplicate (read-only), not to "save anyway".
     expect(confirmSpy).toHaveBeenCalledTimes(1);
-    expect(confirmSpy.mock.calls[0][0]).toMatch(/not upgrade-safe/i);
+    expect(confirmSpy.mock.calls[0][0]).toMatch(/read-only/i);
+    expect(confirmSpy.mock.calls[0][0]).toMatch(/duplicate/i);
+    // Cancelled → no PUT, and still the built-in (no fork).
     await waitFor(() => expect(confirmSpy).toHaveBeenCalled());
     expect(
       calls.some(
         (c) => c.method === "PUT" && c.url.includes("/api/admin/display/templates/")
       )
     ).toBe(false);
+    expect(screen.getByText("This is a built-in template.")).toBeDefined();
   });
 
-  it("confirming the built-in save sends the PUT", async () => {
+  it("confirming the built-in Save forks to a duplicate — still no PUT", async () => {
     const { calls } = installFetch();
     vi.spyOn(window, "confirm").mockReturnValue(true);
     render(<AdminDisplayTemplatesPage />);
-    const editButton = await screen.findByRole("button", { name: "Edit" });
+    const editButton = await screen.findByRole("button", { name: "Edit (Advanced)" });
     fireEvent.click(editButton);
     await screen.findByText("This is a built-in template.");
 
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
+    // Confirming duplicates rather than saving: the draft becomes a new custom
+    // template (key suffixed, Create action), and no PUT is ever sent.
     await waitFor(() =>
-      expect(
-        calls.some(
-          (c) =>
-            c.method === "PUT" &&
-            c.url === `/api/admin/display/templates/${BUILT_IN_ROW.id}`
-        )
-      ).toBe(true)
+      expect(screen.queryByText("This is a built-in template.")).toBeNull()
     );
+    const keyInput = screen.getByLabelText("Key") as HTMLInputElement;
+    expect(keyInput.value).toBe("everyday-board-copy");
+    expect(screen.getByRole("button", { name: "Create template" })).toBeDefined();
+    expect(
+      calls.some(
+        (c) => c.method === "PUT" && c.url.includes("/api/admin/display/templates/")
+      )
+    ).toBe(false);
   });
 });

@@ -31,12 +31,54 @@ type BillingData = {
       prorationRule: string;
       chargedAmountCents: number;
       coveredMonths: number;
+      // #2161 (D2): present on a PER_FAMILY entry; identifies the family group an
+      // operator can mark as already invoiced.
+      familyGroupId: string | null;
       xeroAccountCode: string | null;
       xeroItemCode: string | null;
       recipient: { name: string };
       coveredMembers: Array<{ id: string; name: string }>;
     }>;
     exceptions: Array<{ fingerprint: string; message: string }>;
+    // #2148 (D1): members exempt from a subscription by their age tier (no fee
+    // required by design). Shown in a collapsed informational "Exempt" section,
+    // never raised as MISSING_FEE_SCHEDULE. Optional so an older cached response
+    // without the field still renders.
+    exemptMembers?: Array<{
+      memberId: string;
+      memberName: string;
+      ageTier: string | null;
+    }>;
+    // #2147 (D3): members suppressed from the preview because their season
+    // subscription already holds a live Xero invoice. Shown in a collapsed
+    // "Already invoiced" section with their invoice number, never re-billed.
+    alreadyInvoiced: Array<{
+      memberId: string;
+      memberName: string;
+      xeroInvoiceNumber: string | null;
+      status: string;
+    }>;
+    // #2147 FINDING 1: family groups suppressed from a second PER_FAMILY charge
+    // because a group member already holds a live season invoice or an active
+    // coverage claim. Shown in the same "Already invoiced" section, labelled as
+    // covering the whole family group, never re-billed.
+    alreadyInvoicedFamilies?: Array<{
+      familyGroupId: string;
+      holderMemberId: string | null;
+      holderName: string | null;
+      xeroInvoiceNumber: string | null;
+      status: string | null;
+      membersCovered: number;
+      // #2161 FINDING 1: true when the auto-detected holder suppressed the family
+      // via the fail-closed path (its own billing basis could not be resolved).
+      holderBasisUnresolvable?: boolean;
+      // #2161 (D2): true when an operator marker suppresses the family. The marker
+      // fields describe who marked it and any note.
+      operatorMarked?: boolean;
+      markerNote?: string | null;
+      markedByName?: string | null;
+      markedAt?: string | null;
+    }>;
   };
   charges: Array<{
     id: string;
@@ -61,6 +103,10 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
   const [familyBillingMode, setFamilyBillingMode] = useState<FamilyBillingMode>("BILL_FAMILY_VIA_BILLING_MEMBER");
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
+  // #2161 (D2): the family entry whose "mark as already invoiced" note editor is
+  // open, and the draft note. null = no editor open.
+  const [markingFamilyGroupId, setMarkingFamilyGroupId] = useState<string | null>(null);
+  const [markNote, setMarkNote] = useState("");
   const [loadFeedback, setLoadFeedback] = useState<{ kind: "error"; text: string } | null>(null);
   const [mutationFeedback, setMutationFeedback] = useState<{ kind: "success" | "error"; text: string } | null>(null);
   const loadGeneration = useRef(0);
@@ -121,6 +167,38 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
     }
   }
 
+  // #2148 (D2): the Refresh button reconciles stale persisted exceptions for a
+  // finance-EDIT user via the edit-gated POST action, and stays a plain
+  // read-only reload for a finance-VIEW user. Mount-time and post-action reloads
+  // always go through the read-only GET (load), so the view never mutates.
+  async function refreshPreview() {
+    if (canEditFinance) {
+      await post({ action: "REFRESH_PREVIEW", seasonYear, decisionDate });
+    } else {
+      await load();
+    }
+  }
+
+  // #2161 (D2): mark a family as already invoiced (suppresses its PER_FAMILY
+  // charge). The inline note editor IS the confirm step; the optional note is
+  // sent only when non-empty.
+  async function markFamily(familyGroupId: string) {
+    const note = markNote.trim();
+    setMarkingFamilyGroupId(null);
+    setMarkNote("");
+    await post({ action: "MARK_FAMILY_INVOICED", seasonYear, familyGroupId, ...(note ? { note } : {}) });
+  }
+
+  async function unmarkFamily(familyGroupId: string) {
+    const accepted = await confirm({
+      title: "Unmark this family?",
+      description: "The family will be billed again in the next preview. Only do this if the family was not actually invoiced for this season.",
+      confirmLabel: "Unmark family",
+    });
+    if (!accepted) return;
+    await post({ action: "UNMARK_FAMILY_INVOICED", seasonYear, familyGroupId });
+  }
+
   async function confirmBatch() {
     if (!data || data.preview.seasonYear !== seasonYear || data.preview.decisionDate !== decisionDate) return;
     const accepted = await confirm({
@@ -150,7 +228,7 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
         </p>
         <div className="flex flex-wrap items-end gap-3">
           <div className="space-y-1"><Label htmlFor="subscription-decision-date">Decision date</Label><Input id="subscription-decision-date" type="date" value={decisionDate} onChange={(event) => { setData(null); setDecisionDate(event.target.value); }} /></div>
-          <Button type="button" variant="outline" onClick={() => void load()} disabled={loading || working}><RefreshCw className="mr-1 h-4 w-4" /> Refresh preview</Button>
+          <Button type="button" variant="outline" onClick={() => void refreshPreview()} disabled={loading || working}><RefreshCw className="mr-1 h-4 w-4" /> Refresh preview</Button>
           <div className="space-y-1"><Label htmlFor="subscription-due-days">Invoice due days</Label><Input id="subscription-due-days" className="w-28" type="number" min={1} max={365} value={dueDays} disabled={!canEditFinance} onChange={(event) => setDueDays(event.target.value)} /></div>
           <ViewOnlyActionButton canEdit={canEditFinance} type="button" variant="outline" disabled={working || Number(dueDays) < 1 || Number(dueDays) > 365} onClick={() => void post({ action: "UPDATE_SETTINGS", invoiceDueDays: Number(dueDays) })}>Save due days</ViewOnlyActionButton>
         </div>
@@ -178,7 +256,7 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
               : "Every member is invoiced directly. The family billing members card is hidden, no billing-member exceptions are raised, and per-family fee schedules are disabled."}
           </p>
         </div>
-        {!canEditFinance ? <AdminViewOnlyNotice>Finance view access can inspect previews and charge history. Finance edit access is required to change settings, confirm billing, or retry Xero delivery.</AdminViewOnlyNotice> : null}
+        {!canEditFinance ? <AdminViewOnlyNotice canEdit={canEditFinance}>Finance view access can inspect previews and charge history. Finance edit access is required to change settings, confirm billing, or retry Xero delivery.</AdminViewOnlyNotice> : null}
         {mutationFeedback ? <Alert variant={mutationFeedback.kind === "success" ? "success" : "error"}>{mutationFeedback.text}</Alert> : null}
         {loadFeedback ? <Alert variant="error">{loadFeedback.text}</Alert> : null}
         {loading ? <Spinner label="Building subscription billing preview…" /> : data ? (
@@ -195,11 +273,104 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
                   <div key={entry.key} className="rounded-md border p-3 text-sm">
                     <div className="flex flex-wrap items-center justify-between gap-2"><span className="font-medium">{entry.membershipTypeName} · {entry.recipient.name}</span><span className="tabular-nums">{formatCents(entry.chargedAmountCents)}</span></div>
                     <p className="text-muted-foreground">{entry.billingBasis.replaceAll("_", " ")} · {entry.coveredMonths}/12 months · covers {entry.coveredMembers.map((member) => member.name).join(", ")}{entry.xeroAccountCode ? ` · Xero ${entry.xeroAccountCode}${entry.xeroItemCode ? ` / ${entry.xeroItemCode}` : ""}` : ""}</p>
+                    {/* #2161 (D2): a PER_FAMILY charge can be marked as already
+                        invoiced when the operator knows an ambiguous legacy
+                        invoice already covered the family. */}
+                    {entry.billingBasis === "PER_FAMILY" && entry.familyGroupId ? (
+                      markingFamilyGroupId === entry.familyGroupId ? (
+                        <div className="mt-2 space-y-2 rounded-md border border-dashed p-2">
+                          <Label htmlFor={`mark-note-${entry.familyGroupId}`}>Note (optional) — e.g. the covering invoice number</Label>
+                          <Input id={`mark-note-${entry.familyGroupId}`} value={markNote} onChange={(event) => setMarkNote(event.target.value)} placeholder="INV-…" maxLength={500} />
+                          <div className="flex flex-wrap gap-2">
+                            <Button type="button" size="sm" disabled={working} onClick={() => void markFamily(entry.familyGroupId!)}>Confirm — mark as already invoiced</Button>
+                            <Button type="button" size="sm" variant="outline" disabled={working} onClick={() => { setMarkingFamilyGroupId(null); setMarkNote(""); }}>Cancel</Button>
+                          </div>
+                        </div>
+                      ) : (
+                        <ViewOnlyActionButton canEdit={canEditFinance} type="button" size="sm" variant="outline" className="mt-2" disabled={working} onClick={() => { setMarkingFamilyGroupId(entry.familyGroupId); setMarkNote(""); }}>Mark family as already invoiced</ViewOnlyActionButton>
+                      )
+                    ) : null}
                   </div>
                 ))}
                 <ViewOnlyActionButton canEdit={canEditFinance} type="button" onClick={() => void confirmBatch()} disabled={working}>Confirm and queue annual batch</ViewOnlyActionButton>
               </div>
             ) : <Alert variant="info">No new charges are available for this preview. Existing immutable coverage is not regenerated.</Alert>}
+            {(data.preview.exemptMembers ?? []).length > 0 ? (
+              <details className="rounded-md border p-3 text-sm">
+                <summary className="cursor-pointer font-medium">
+                  Exempt ({(data.preview.exemptMembers ?? []).length}) — no subscription required by age tier
+                </summary>
+                <p className="mt-1 text-muted-foreground">
+                  These members are in an age tier that does not require a paid subscription, so no annual fee is charged and no MISSING_FEE_SCHEDULE exception is raised. Confirming the batch records a NOT_REQUIRED subscription for the season.
+                </p>
+                <ul className="mt-2 space-y-1">
+                  {(data.preview.exemptMembers ?? []).map((row) => (
+                    <li key={row.memberId} className="flex flex-wrap items-center justify-between gap-2">
+                      <span>{row.memberName}</span>
+                      <span className="tabular-nums text-muted-foreground">
+                        {row.ageTier ? row.ageTier.replaceAll("_", " ") : "No age tier"}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            ) : null}
+            {((data.preview.alreadyInvoiced ?? []).length + (data.preview.alreadyInvoicedFamilies ?? []).length) > 0 ? (
+              <details className="rounded-md border p-3 text-sm">
+                <summary className="cursor-pointer font-medium">
+                  Already invoiced ({(data.preview.alreadyInvoiced ?? []).length + (data.preview.alreadyInvoicedFamilies ?? []).length}) — suppressed to avoid double-billing
+                </summary>
+                <p className="mt-1 text-muted-foreground">
+                  These members already have a Xero invoice for this season, so they are not re-billed. Record payment against the existing invoice in Xero (or void it there to re-bill).
+                </p>
+                {(data.preview.alreadyInvoiced ?? []).length > 0 ? (
+                  <ul className="mt-2 space-y-1">
+                    {(data.preview.alreadyInvoiced ?? []).map((row) => (
+                      <li key={row.memberId} className="flex flex-wrap items-center justify-between gap-2">
+                        <span>{row.memberName}</span>
+                        <span className="tabular-nums text-muted-foreground">
+                          {row.xeroInvoiceNumber ?? "No Xero number"} · {row.status.replaceAll("_", " ")}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+                {(data.preview.alreadyInvoicedFamilies ?? []).length > 0 ? (
+                  <ul className="mt-2 space-y-2">
+                    {(data.preview.alreadyInvoicedFamilies ?? []).map((row) => (
+                      <li key={row.familyGroupId} className="flex flex-wrap items-center justify-between gap-2">
+                        <span>
+                          {row.holderName ? `${row.holderName}’s family` : "Family"} — covers the whole family group ({row.membersCovered} {row.membersCovered === 1 ? "member" : "members"})
+                          {row.operatorMarked ? (
+                            <>
+                              {" "}
+                              <Badge variant="secondary">Operator marked</Badge>
+                              {row.markerNote ? <span className="text-muted-foreground"> · {row.markerNote}</span> : null}
+                            </>
+                          ) : null}
+                          {!row.operatorMarked && row.holderBasisUnresolvable ? (
+                            <>
+                              {" "}
+                              <Badge variant="outline" title="The invoice holder's own membership fee basis could not be resolved, so the family is suppressed conservatively. Resolve the holder's type/fee or void the invoice to re-bill.">Unresolved basis</Badge>
+                            </>
+                          ) : null}
+                        </span>
+                        <span className="flex items-center gap-2">
+                          <span className="tabular-nums text-muted-foreground">
+                            {row.operatorMarked && !row.xeroInvoiceNumber
+                              ? "Marked by operator"
+                              : `${row.xeroInvoiceNumber ?? "No Xero number"}${row.status ? ` · ${row.status.replaceAll("_", " ")}` : ""}`}
+                          </span>
+                          {row.operatorMarked ? (
+                            <ViewOnlyActionButton canEdit={canEditFinance} type="button" size="sm" variant="outline" disabled={working} onClick={() => void unmarkFamily(row.familyGroupId)}>Unmark</ViewOnlyActionButton>
+                          ) : null}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </details>
+            ) : null}
             {visibleExceptions.length > 0 ? (
               <Alert variant="warning"><div className="space-y-1"><p className="font-medium">Billing exceptions — no invoice created</p>{visibleExceptions.map((item) => <p key={item.fingerprint}>{item.message}</p>)}</div></Alert>
             ) : null}

@@ -1,7 +1,14 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { contrastRatio } from "@/lib/club-theme-schema";
+import {
+  APP_MUTED_FOREGROUND_DARK_SURFACE_TOKENS,
+  APP_MUTED_FOREGROUND_EXCLUDED_SURFACES,
+  APP_MUTED_FOREGROUND_LIGHT_SURFACE_TOKENS,
+  DEFAULT_CLUB_THEME_VALUES,
+  contrastRatio,
+  deriveAppMutedForeground,
+} from "@/lib/club-theme-schema";
 
 function readRepoFile(path: string) {
   return readFileSync(join(process.cwd(), path), "utf8");
@@ -18,11 +25,66 @@ function listSourceFiles(path: string): string[] {
   });
 }
 
+/** Every quoted string literal in a source file, unescaped body only. */
+const STRING_LITERAL = /(["'`])((?:\\.|(?!\1)[^\\])*)\1/g;
+
+/**
+ * The source text of every `cn(…)` call, paren-balanced.
+ *
+ * A naive depth count, so a literal paren inside a string can over-extend a
+ * region. That errs toward a LARGER context, i.e. toward a false positive that
+ * a human then triages — never toward silently missing a pairing.
+ */
+function cnCallRegions(source: string): string[] {
+  const regions: string[] = [];
+
+  for (const match of source.matchAll(/\bcn\(/g)) {
+    const start = match.index + match[0].length - 1;
+    let depth = 0;
+    let index = start;
+    for (; index < source.length; index += 1) {
+      if (source[index] === "(") {
+        depth += 1;
+      } else if (source[index] === ")") {
+        depth -= 1;
+        if (depth === 0) {
+          break;
+        }
+      }
+    }
+    regions.push(source.slice(start, index + 1));
+  }
+
+  return regions;
+}
+
+/**
+ * Every CLASS-STRING CONTEXT in a source file: each string literal on its own,
+ * plus the concatenation of all literals inside each `cn(…)` call.
+ *
+ * Anchoring on `className=` — the obvious approach — misses the house idiom
+ * `cn("…", cond && "…")` entirely, including the case where both classes sit in
+ * a single literal that happens to be a `cn()` argument. Scanning literals and
+ * `cn()` argument lists instead sees both shapes. Pinned by the probe test
+ * beside the neutral-200 scan that uses it.
+ */
+function classStringContexts(source: string): string[] {
+  const literals = (text: string) =>
+    [...text.matchAll(STRING_LITERAL)].map((match) => match[2]);
+
+  return [
+    ...literals(source),
+    ...cnCallRegions(source).map((region) => literals(region).join(" ")),
+  ];
+}
+
 describe("database theme app-shell contract", () => {
   it.each([
     ["src/app/(public)/layout.tsx", "getCachedWebsiteThemeRenderState()"],
     ["src/app/(authenticated)/layout.tsx", "getWebsiteThemeRenderState()"],
     ["src/app/(admin)/layout.tsx", "getWebsiteThemeRenderState()"],
+    ["src/app/(finance)/finance/layout.tsx", "getWebsiteThemeRenderState()"],
+    ["src/app/(lodge)/layout.tsx", "getWebsiteThemeRenderState()"],
   ])(
     "injects the sanitized ClubTheme CSS in %s",
     (path, themeLoader) => {
@@ -41,6 +103,17 @@ describe("database theme app-shell contract", () => {
 
     expect(layout).toContain("clubThemeFontVariableClassName");
     expect(layout).not.toContain('from "next/font/google"');
+  });
+
+  it.each([
+    "src/app/(authenticated)/layout.tsx",
+    "src/app/(admin)/layout.tsx",
+    "src/app/(finance)/finance/layout.tsx",
+    "src/app/(lodge)/layout.tsx",
+  ])("applies the configured font-variable class to the app shell in %s", (path) => {
+    const layout = readRepoFile(path);
+
+    expect(layout).toContain("clubThemeFontVariableClassName");
   });
 
   it("passes the configured public logo to public utility shell chrome", () => {
@@ -94,11 +167,17 @@ describe("database theme app-shell contract", () => {
       "card-foreground",
       "popover-foreground",
       "secondary-foreground",
-      "muted-foreground",
       "accent-foreground",
     ]) {
       expect(lightRules).toContain(`--${token}: var(--brand-deep)`);
     }
+    // `--muted-foreground` is deliberately NOT in that list (#2145): it is a
+    // semantic role, so it must resolve to a DERIVED tone rather than alias
+    // `--foreground`/`--brand-deep`.
+    expect(lightRules).toContain(
+      "--muted-foreground: var(--app-muted-foreground,",
+    );
+    expect(lightRules).not.toContain("--muted-foreground: var(--brand-deep)");
     expect(lightRules).toContain("--sidebar: var(--brand-charcoal)");
     expect(lightRules).toContain("--sidebar-accent: var(--brand-deep)");
     expect(lightRules).toContain("--sidebar-foreground: var(--brand-snow)");
@@ -121,13 +200,16 @@ describe("database theme app-shell contract", () => {
       "card-foreground",
       "popover-foreground",
       "secondary-foreground",
-      "muted-foreground",
       "accent-foreground",
       "sidebar-foreground",
       "sidebar-accent-foreground",
     ]) {
       expect(darkRules).toContain(`--${token}: var(--brand-snow)`);
     }
+    expect(darkRules).toContain(
+      "--muted-foreground: var(--app-muted-foreground-dark,",
+    );
+    expect(darkRules).not.toContain("--muted-foreground: var(--brand-snow)");
     expect(darkRules).toContain("--sidebar-accent: var(--brand-deep)");
     expect(darkRules).toContain("--ring: var(--brand-snow)");
     expect(darkRules).toContain("--sidebar-ring: var(--brand-snow)");
@@ -149,6 +231,292 @@ describe("database theme app-shell contract", () => {
     expect(appThemeRules).not.toMatch(
       /--(?:success|warning|info|danger)(?:-|:)/,
     );
+  });
+
+  // #2145 — the CSS half of the derived muted role. The value itself is derived
+  // and gated in `club-theme-schema.test.ts`; this pins the wiring in
+  // `globals.css` that makes the derived value reach the token, and the static
+  // fallback that stands in when no ClubTheme stylesheet has been injected.
+  it("wires the derived app muted role to the injected tokens", () => {
+    const globals = readRepoFile("src/app/globals.css");
+    const start = globals.indexOf(".app-theme-scope {");
+    const end = globals.indexOf("/* App headings pick up", start);
+    const appThemeRules = globals.slice(start, end);
+    const darkStart = appThemeRules.indexOf(".dark .app-theme-scope {");
+    const lightRules = appThemeRules.slice(0, darkStart);
+    const darkRules = appThemeRules.slice(darkStart);
+    const fallback = deriveAppMutedForeground(DEFAULT_CLUB_THEME_VALUES);
+
+    // The literal fallbacks are the derivation of the shipped default palette.
+    // Hardcoding them in CSS is unavoidable (the static sheet cannot run the
+    // derivation), so this is the pin that stops the two drifting apart.
+    expect(lightRules).toContain(
+      `--muted-foreground: var(--app-muted-foreground, ${fallback.light});`,
+    );
+    expect(darkRules).toContain(
+      `--muted-foreground: var(--app-muted-foreground-dark, ${fallback.dark});`,
+    );
+
+    // The fallback must be a solid colour, not a color-mix: a mix is
+    // unmeasurable from the contrast gate, which is the same reason every other
+    // app text token in this block stays a solid brand endpoint.
+    expect(fallback.light).toMatch(/^#[0-9a-f]{6}$/);
+    expect(fallback.dark).toMatch(/^#[0-9a-f]{6}$/);
+
+    // #2146 print pairing: BOTH blocks must declare `--muted-foreground`, so
+    // excluding the dark block from print media leaves the light derived tone
+    // standing on paper. `print-light-palette-contract.test.ts` derives its
+    // healed-token set from exactly this pairing.
+    expect(lightRules).toContain("--muted-foreground:");
+    expect(darkRules).toContain("--muted-foreground:");
+  });
+
+  // The fallback above is only ever used when NO ClubTheme sheet is injected —
+  // and in that case the surrounding surfaces come from the `:root`/`.dark`
+  // literals, not from `DEFAULT_CLUB_THEME_VALUES`. Deriving the fallback from
+  // the default palette is therefore only correct because those two agree.
+  // Nothing asserted that until now, so a `:root` retune would have left the
+  // un-themed app pairing a tone derived from one palette against surfaces from
+  // another, with every existing test still green.
+  it("keeps the un-themed :root surfaces byte-identical to the default palette", () => {
+    const globals = readRepoFile("src/app/globals.css");
+    const rootRules = globals.slice(
+      globals.indexOf(":root {"),
+      globals.indexOf("@media not print {"),
+    );
+
+    expect(rootRules).toContain(":root {");
+
+    for (const [variable, value] of [
+      ["--brand-gold", DEFAULT_CLUB_THEME_VALUES.brandGold],
+      ["--brand-charcoal", DEFAULT_CLUB_THEME_VALUES.brandCharcoal],
+      ["--brand-deep", DEFAULT_CLUB_THEME_VALUES.brandDeep],
+      ["--brand-ridge", DEFAULT_CLUB_THEME_VALUES.brandRidge],
+      ["--brand-mist", DEFAULT_CLUB_THEME_VALUES.brandMist],
+      ["--brand-snow", DEFAULT_CLUB_THEME_VALUES.brandSnow],
+      ["--brand-safety", DEFAULT_CLUB_THEME_VALUES.brandSafety],
+    ] as const) {
+      expect(rootRules).toContain(`${variable}: ${value};`);
+    }
+  });
+
+  // #2145 — the clamp checks the curated semantic `*-muted` panel fills, which
+  // #1808 deliberately leaves OUT of `app-theme-scope`. That means the values
+  // live in `globals.css` and are copied into `club-theme-schema.ts`, so this
+  // is the pin that stops a retune of one silently invalidating the other.
+  it("keeps the semantic muted surfaces the clamp checks in step with globals.css", () => {
+    const globals = readRepoFile("src/app/globals.css");
+    const schema = readRepoFile("src/lib/club-theme-schema.ts");
+    const darkStart = globals.indexOf("@media not print {");
+    const rootRules = globals.slice(globals.indexOf(":root {"), darkStart);
+    const darkRules = globals.slice(
+      darkStart,
+      globals.indexOf(".website-theme {", darkStart),
+    );
+
+    expect(darkStart).toBeGreaterThan(0);
+
+    for (const token of ["warning", "info", "success", "danger"] as const) {
+      const light = new RegExp(`--${token}-muted:\\s*(#[0-9a-f]{6});`).exec(
+        rootRules,
+      );
+      const dark = new RegExp(`--${token}-muted:\\s*(oklch\\([^)]*\\));`).exec(
+        darkRules,
+      );
+
+      expect(light, `light --${token}-muted in globals.css`).not.toBeNull();
+      expect(dark, `dark --${token}-muted in globals.css`).not.toBeNull();
+      expect(schema).toContain(`"${light![1]}", // --${token}-muted`);
+      expect(schema).toContain(`"${dark![1]}", // --${token}-muted`);
+    }
+  });
+
+  // #2145 — `--border` is deliberately NOT in the clamp set, on the grounds
+  // that a hairline colour is not a text background. Dark mode remaps
+  // `bg-{neutral}-200` onto `--border`, so that reasoning only holds while no
+  // `bg-{neutral}-200` element carries de-emphasised text. It did: a
+  // `bg-slate-200 text-slate-500` badge in `page-content-panel.tsx` resolved to
+  // muted-on-border at 3.74:1 (default) and 3.54:1 (Tokoroa) in dark mode. It
+  // now uses `bg-muted text-muted-foreground`. This keeps the exclusion honest.
+  //
+  // The scan deliberately does NOT anchor on `className=`. The house idiom is
+  // `cn("…", cond && "…")`, so an anchored scan skips exactly the files this
+  // issue had to fix (`allocation-chip.tsx`, `bucket-board.tsx`) and would not
+  // have caught the original `page-content-panel.tsx` offender had it been
+  // written the house way. Instead every quoted string literal is a context in
+  // its own right, and every `cn(…)` argument list is a context too — so a pair
+  // split across two arguments of one `cn()` call is still seen as one class
+  // set.
+  it("keeps de-emphasised text off the neutral-200 surfaces that remap to --border", () => {
+    const hasBorderSurface = (classes: string) =>
+      /(?:^|\s)bg-(?:slate|gray|zinc|neutral|stone)-200(?:\s|$)/.test(classes);
+    const hasMutedText = (classes: string) =>
+      /(?:^|\s)text-(?:muted-foreground|(?:slate|gray|zinc|neutral|stone)-(?:300|400|500|600|700))(?:\s|$)/.test(
+        classes,
+      );
+
+    const offenders = listSourceFiles("src")
+      // `.ts` as well as `.tsx`: class strings live in plain modules too
+      // (`chip-tones.ts` is a whole file of them). Test files are excluded —
+      // they render nothing, and the probe test below deliberately contains
+      // offending strings.
+      .filter((path) => /\.tsx?$/.test(path) && !path.includes("__tests__"))
+      .flatMap((path) =>
+        classStringContexts(readRepoFile(path))
+          .filter(
+            (classes) => hasBorderSurface(classes) && hasMutedText(classes),
+          )
+          .map((classes) => `${path}: ${classes}`),
+      );
+
+    expect(offenders).toEqual([]);
+  });
+
+  // The widened scan above is only worth anything if it actually sees the house
+  // idiom, so its reach is pinned directly rather than assumed. The three probes
+  // are the shapes the previous `className=`-anchored regex missed: the second
+  // and third both come straight from files this PR touches.
+  it("sees neutral-200 pairings through cn(), not just className=", () => {
+    const probes = [
+      '<span className="bg-slate-200 px-1 text-slate-500" />',
+      '<span className={cn("rounded bg-slate-200 px-1", "text-slate-500")} />',
+      '<span className={cn("rounded bg-slate-200 px-1 text-slate-500", x && "z")} />',
+    ];
+
+    for (const probe of probes) {
+      const contexts = classStringContexts(probe);
+      expect(
+        contexts.some(
+          (classes) =>
+            /(?:^|\s)bg-slate-200(?:\s|$)/.test(classes) &&
+            /(?:^|\s)text-slate-500(?:\s|$)/.test(classes),
+        ),
+        `the neutral-200 scan cannot see: ${probe}`,
+      ).toBe(true);
+    }
+
+    // …and it must not fire on a pairing that is split across two SEPARATE
+    // elements, which is not a pairing at all.
+    expect(
+      classStringContexts(
+        '<span className="bg-slate-200" /><span className="text-slate-500" />',
+      ).some(
+        (classes) =>
+          /bg-slate-200/.test(classes) && /text-slate-500/.test(classes),
+      ),
+    ).toBe(false);
+  });
+
+  // #2145 — the prose in ARCHITECTURE.md previously claimed the derived tone was
+  // guaranteed "on any app surface", which was never true: the guarantee is
+  // over a finite, named list. Docs overclaiming what the code delivers has been
+  // the recurring defect across this branch family, so the list is pinned rather
+  // than trusted. Every checked surface must be NAMED in the doc section, and
+  // every excluded one must be named as excluded.
+  it("keeps the documented clamp surfaces in step with the ones the code checks", () => {
+    const architecture = readRepoFile("docs/ARCHITECTURE.md");
+    const start = architecture.indexOf(
+      "**`--muted-foreground` is a DERIVED tone",
+    );
+    const section = architecture.slice(
+      start,
+      architecture.indexOf("Two contract tests in", start),
+    );
+
+    expect(start).toBeGreaterThan(0);
+    expect(section).not.toHaveLength(0);
+
+    for (const token of [
+      ...APP_MUTED_FOREGROUND_LIGHT_SURFACE_TOKENS,
+      ...APP_MUTED_FOREGROUND_DARK_SURFACE_TOKENS,
+    ]) {
+      expect(section, `${token} is checked but never named in the docs`).toContain(
+        `\`${token}\``,
+      );
+    }
+
+    const excluded = section.slice(section.indexOf("Deliberately **not** in"));
+    for (const token of APP_MUTED_FOREGROUND_EXCLUDED_SURFACES) {
+      expect(
+        excluded,
+        `${token} is excluded but the docs never say so`,
+      ).toContain(`\`${token}\``);
+      expect(
+        APP_MUTED_FOREGROUND_LIGHT_SURFACE_TOKENS as readonly string[],
+      ).not.toContain(token);
+      expect(
+        APP_MUTED_FOREGROUND_DARK_SURFACE_TOKENS as readonly string[],
+      ).not.toContain(token);
+    }
+
+    // Whitespace-normalised, so a claim that happens to wrap across lines is
+    // still caught. The un-normalised `toContain` this replaced would have
+    // missed a wrapped occurrence of its own two banned phrases.
+    const flat = section.replace(/\s+/g, " ");
+
+    // The doc must not restate a claim the code does not deliver. The first two
+    // are the absolute claims this section originally made. The rest are PARITY
+    // claims, which are false BY CONSTRUCTION: the derived tone carries 0.41-0.59
+    // of `--foreground`'s ratio on the shipped palettes, and being less readable
+    // than `--foreground` is the entire point of the role. Re-wording an
+    // overclaim rather than repeating one is what got past the first version of
+    // this pin, so the positive shape assertions below matter more than this
+    // list.
+    for (const claim of [
+      /on any app surface/i,
+      /every background it can appear on/i,
+      /never less readable than/i,
+      /no less readable than/i,
+      /at least as readable as/i,
+      /as readable as `--foreground`/i,
+      /never worse than `--foreground` on any surface/i,
+    ]) {
+      expect(flat, `docs restate an overclaim matching ${claim}`).not.toMatch(
+        claim,
+      );
+    }
+
+    // …and it must state the guarantee in its actual TWO-BRANCH shape, plus the
+    // fact that the tone is deliberately weaker than `--foreground`. A future
+    // edit that deletes the qualifications and leaves a bare claim fails here
+    // even if it invents wording no ban above anticipates.
+    expect(flat, "the AA branch of the guarantee is not stated").toMatch(
+      /where `--foreground` itself clears 4\.5:1/i,
+    );
+    expect(flat, "the inherited-failure branch is not stated").toMatch(
+      /where `--foreground` itself fails AA/i,
+    );
+    expect(flat, "the surfaces the guarantee covers are not bounded").toMatch(
+      /in the table above/i,
+    );
+    expect(
+      flat,
+      "the docs do not say the tone is deliberately less readable than --foreground",
+    ).toMatch(/deliberately LESS readable than `--foreground`/);
+  });
+
+  // #2145 — the site-style wizard preview overlays inline `--brand-*` values on
+  // `app-theme-scope`. `--muted-foreground` does NOT resolve from those: it
+  // resolves from the injected `--app-muted-foreground*` pair, so without these
+  // two the preview paints the STATIC fallback (the DEFAULT palette's tone)
+  // regardless of the palette being edited — on the one screen where an admin
+  // evaluates the feature.
+  it("feeds the derived muted tones into the site-style wizard preview", () => {
+    const wizard = readRepoFile(
+      "src/app/(admin)/admin/site-style/site-style-wizard.tsx",
+    );
+    const preview = wizard.slice(
+      wizard.indexOf("function previewStyle("),
+      wizard.indexOf("export function SiteStyleWizard"),
+    );
+
+    expect(preview).toContain("deriveAppMutedForeground(values)");
+    expect(preview).toContain('"--app-muted-foreground": muted.light');
+    expect(preview).toContain('"--app-muted-foreground-dark": muted.dark');
+    // The preview is applied to the element whose sample label is muted, so the
+    // two must not drift apart.
+    expect(wizard).toContain("previewStyle(values)");
+    expect(wizard).toContain("text-muted-foreground");
   });
 
   it("keeps app brand utilities on solid gated text/background pairs", () => {
@@ -213,13 +581,24 @@ describe("database theme app-shell contract", () => {
     );
     expect(wizard).not.toContain("bg-brand-gold/20 text-brand-charcoal");
 
+    // This section's two Save buttons used to be raw <button> elements painted
+    // with `bg-brand-charcoal text-brand-snow`, and the pin here existed to keep
+    // the foreground on `text-brand-snow` rather than raw `text-white`. #2142
+    // moved them onto the shared `ViewOnlyActionButton`/`Button`, whose default
+    // variant is `bg-primary text-primary-foreground` — semantic tokens that
+    // follow the club theme, which is strictly what the old pin was reaching
+    // for. The pin is therefore restated as the stronger property: no raw brand
+    // fill is hand-painted onto a control in this file at all.
     const publicRequests = readRepoFile(
       "src/components/admin/booking-policies/public-booking-requests-section.tsx",
     );
-    expect(publicRequests.match(/bg-brand-charcoal[^"\n]*text-brand-snow/g)).toHaveLength(
-      2,
-    );
-    expect(publicRequests).not.toMatch(/bg-brand-charcoal[^"\n]*text-white/);
+    expect(publicRequests).not.toMatch(/bg-brand-charcoal/);
+    expect(publicRequests).not.toMatch(/text-white/);
+    // Deliberately NOT a count of `<ViewOnlyActionButton`: how many gated
+    // controls this section happens to have is not a theme contract, and pinning
+    // it here would fail the day a third one is legitimately added. The
+    // behaviour — that every Save in this section is gated — is covered where it
+    // belongs, in `save-view-only-gating.test.tsx` (#2142 review).
   });
 
   it("keeps text-bearing calendar states off interpolated brand fills", () => {

@@ -37,7 +37,9 @@ const saveSchema = z.object({
 });
 
 async function requireFinanceSetupWriteAccess() {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "finance", level: "edit" },
+  });
   if (!guard.ok) {
     return guard;
   }
@@ -61,7 +63,9 @@ async function requireFinanceSetupWriteAccess() {
 }
 
 export async function GET() {
-  const guard = await requireAdmin();
+  const guard = await requireAdmin({
+    permission: { area: "finance", level: "view" },
+  });
   if (!guard.ok) {
     return guard.response;
   }

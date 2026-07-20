@@ -4,7 +4,7 @@ import { AnalyticsConsent } from "@/components/analytics-consent";
 import { SiteBanners } from "@/components/site-banners";
 import { WebsiteHeader } from "@/components/website-header";
 import { WebsiteFooter } from "@/components/website-footer";
-import { CLUB_CONTACT_EMAIL } from "@/config/club-identity";
+import { loadEmailMessageSettings } from "@/lib/email-message-settings";
 import { getWebsiteThemeRenderState } from "@/lib/club-theme";
 import { clubThemeFontVariableClassName } from "@/lib/club-theme-fonts";
 import { CSP_NONCE_HEADER } from "@/lib/csp";
@@ -40,6 +40,11 @@ export default async function WebsiteLayout({
   );
 
   if (!theme.isComplete) {
+    // DB-first contact address (C6 #1985): resolved only when the pre-setup
+    // fallback screen actually renders, so the hot website layout adds no extra
+    // query on the normal path. Reads EmailMessageSetting.contactEmail with the
+    // config default as fallback — never a synchronous club.json read.
+    const { contactEmail } = await loadEmailMessageSettings();
     return (
       <div
         className={`${clubThemeFontVariableClassName} website-theme min-h-screen bg-background text-foreground`}
@@ -58,10 +63,10 @@ export default async function WebsiteLayout({
             <p className="mt-6 text-sm text-brand-ridge">
               Contact{" "}
               <a
-                href={`mailto:${CLUB_CONTACT_EMAIL}`}
+                href={`mailto:${contactEmail}`}
                 className="font-medium text-brand-charcoal underline decoration-brand-gold/70 decoration-2 underline-offset-4"
               >
-                {CLUB_CONTACT_EMAIL}
+                {contactEmail}
               </a>
             </p>
           </section>

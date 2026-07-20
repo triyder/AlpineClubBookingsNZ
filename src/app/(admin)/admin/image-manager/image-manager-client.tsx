@@ -347,7 +347,7 @@ export function ImageManagerClient() {
       </div>
 
       {!canEdit ? (
-        <AdminViewOnlyNotice>
+        <AdminViewOnlyNotice canEdit={canEdit}>
           Your admin role can view images but cannot upload, delete, or change
           folders.
         </AdminViewOnlyNotice>
@@ -477,7 +477,12 @@ export function ImageManagerClient() {
                 dragging ? "text-blue-400" : "text-slate-400",
               )}
             />
-            {!canEdit ? (
+            {canEdit === undefined ? (
+              // Neutral while permissions resolve (#2065): the zone is inert and
+              // greyed, but we don't yet know whether this admin can upload, so
+              // don't invite a drag/drop that would be rejected.
+              <p className="text-sm font-medium">Checking your access…</p>
+            ) : canEdit === false ? (
               <p className="text-sm font-medium">
                 Uploading is disabled for your role.
               </p>

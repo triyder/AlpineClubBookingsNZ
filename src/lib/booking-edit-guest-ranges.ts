@@ -42,6 +42,13 @@ interface ProposedExistingGuestRange {
   newFuturePriceCents: number;
   futureDeltaCents: number;
   removedFromFuture: boolean;
+  // #2029: the earliest night this edit newly prices/occupies for the guest —
+  // `maxDate(stayStart, minDate(editableFrom, originalStayEnd))`. Equals
+  // editableFrom for the mid-stay/last-night cases, but drops back to the
+  // guest's own (original) stay end for a check-out-day extension so the
+  // genuinely-new [stayEnd, editableFrom) night is both charged and
+  // capacity-checked. Both the pricing delta and the capacity range key off it.
+  futureStart: Date;
 }
 
 interface ProposedAddedGuestRange {
@@ -70,6 +77,12 @@ export interface BookingEditGuestRangePlan {
     // flagged sharer's range from the ordinary ones; null for non-members.
     memberId?: string | null;
   }>;
+  // #2029: the earliest night the capacity check must cover for this edit — the
+  // minimum `futureStart` across the included ranges, never later than
+  // editableFrom. The capacity call sites use this (not editableFrom) as the
+  // window start so a check-out-day extension's new night is inside the checked
+  // window; for mid-stay/last-night edits it equals editableFrom (unchanged).
+  capacityRangeStart: Date;
 }
 
 export interface BuildInProgressGuestRangePlanInput {
@@ -125,10 +138,6 @@ function priceGuestRangeCents(
   ).totalPriceCents;
 }
 
-function hasFutureOverlap(stayStart: Date, stayEnd: Date, editableFrom: Date) {
-  return maxDate(stayStart, editableFrom) < stayEnd;
-}
-
 export function buildInProgressGuestRangePlan(
   input: BuildInProgressGuestRangePlanInput
 ): BookingEditGuestRangePlan {
@@ -163,7 +172,19 @@ export function buildInProgressGuestRangePlan(
     const proposedStayEnd = removedFromFuture
       ? minDate(stayEnd, editableFrom)
       : newCheckOut;
-    const newFutureStart = maxDate(stayStart, editableFrom);
+    // #2029: the check-out-day extension the widened edit window opened adds
+    // genuinely-new nights in [stayEnd, editableFrom) — a slice that sits INSIDE
+    // the locked window (editableFrom = NZ tomorrow, but the guest's old stay
+    // ended today). Anchoring the new-price window at editableFrom (as the
+    // old-price window correctly does — nothing of the old stay is left to
+    // reprice there) would drop that slice and hand those nights out free.
+    // Start the new-price window at the guest's own stay end whenever it
+    // precedes editableFrom, so futureDelta always equals exactly the added
+    // nights [stayEnd, newCheckOut) per guest. `maxDate(stayStart, …)` keeps a
+    // future-dated partial-range guest (#713) from being charged before they
+    // arrive; whenever editableFrom <= stayEnd this is byte-identical to the
+    // prior `maxDate(stayStart, editableFrom)` (the mid-stay / last-night case).
+    const newFutureStart = maxDate(stayStart, minDate(editableFrom, stayEnd));
     const newFuturePriceCents = removedFromFuture
       ? 0
       : priceGuestRangeCents(newFutureStart, proposedStayEnd, guest, input.seasons);
@@ -178,6 +199,7 @@ export function buildInProgressGuestRangePlan(
       newFuturePriceCents,
       futureDeltaCents,
       removedFromFuture,
+      futureStart: newFutureStart,
     };
   });
 
@@ -188,11 +210,15 @@ export function buildInProgressGuestRangePlan(
     priceCents: priceGuestRangeCents(editableFrom, newCheckOut, guest, input.seasons),
   }));
 
+  // #2029: a guest is "active in the future window" when its corrected future
+  // window [futureStart, proposedStayEnd) is non-empty. Using futureStart (not
+  // editableFrom) folds in the check-out-day extension night, which the old
+  // `maxDate(stayStart, editableFrom) < stayEnd` test dropped (proposedStayEnd
+  // could equal editableFrom on a +1 extension). Byte-identical for mid-stay /
+  // last-night edits, where futureStart === editableFrom.
   const futureActiveGuestCount =
     proposedExistingGuests.filter(
-      (entry) =>
-        !entry.removedFromFuture &&
-        hasFutureOverlap(entry.stayStart, entry.stayEnd, editableFrom)
+      (entry) => !entry.removedFromFuture && entry.futureStart < entry.stayEnd
     ).length + proposedAddedGuests.length;
 
   if (newCheckOut > editableFrom && futureActiveGuestCount === 0) {
@@ -213,12 +239,14 @@ export function buildInProgressGuestRangePlan(
   const capacityGuestRanges = [
     ...proposedExistingGuests
       .filter(
-        (entry) =>
-          !entry.removedFromFuture &&
-          hasFutureOverlap(entry.stayStart, entry.stayEnd, editableFrom)
+        (entry) => !entry.removedFromFuture && entry.futureStart < entry.stayEnd
       )
       .map((entry) => ({
-        stayStart: maxDate(entry.stayStart, editableFrom),
+        // #2029: anchor the checked range at the guest's corrected futureStart,
+        // not editableFrom, so the genuinely-new check-out-day night is inside
+        // the window the capacity resolver iterates (it would otherwise be
+        // invisible and overbookable). Unchanged for mid-stay / last-night.
+        stayStart: entry.futureStart,
         stayEnd: entry.stayEnd,
         memberId: entry.guest.memberId ?? null,
       })),
@@ -228,6 +256,15 @@ export function buildInProgressGuestRangePlan(
       memberId: entry.guest.memberId ?? null,
     })),
   ];
+
+  // #2029: the capacity window must start no later than the earliest checked
+  // night. Seed at editableFrom (so it is never pushed later than today+1) and
+  // pull it back to the earliest range start — which drops to the check-out-day
+  // night for such an extension, and stays editableFrom for every mid-stay edit.
+  const capacityRangeStart = capacityGuestRanges.reduce(
+    (earliest, range) => (range.stayStart < earliest ? range.stayStart : earliest),
+    editableFrom
+  );
 
   return {
     proposedExistingGuests,
@@ -242,5 +279,6 @@ export function buildInProgressGuestRangePlan(
     futureExistingDeltaCents,
     futureActiveGuestCount,
     capacityGuestRanges,
+    capacityRangeStart,
   };
 }

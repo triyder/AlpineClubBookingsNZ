@@ -104,6 +104,11 @@ export async function POST(
         // Absent means notify; the service additionally forces notify for any
         // non-admin actor (defence in depth behind the 403 gate above).
         notifyMember: parsed.data.notifyMember,
+        // #2029: this is the self-service (member / Booking Officer) cancel
+        // surface, so enforce the started-stay block. A Full Admin acting
+        // through the same route is exempted inside the service; every
+        // internal/admin caller leaves this false.
+        enforceStartedStayBlock: true,
       }
     );
 

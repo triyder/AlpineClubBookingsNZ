@@ -2,6 +2,7 @@ import "server-only";
 
 import sanitizeHtml from "sanitize-html";
 import { prisma } from "@/lib/prisma";
+import { deriveAltFromImageSrc } from "@/lib/image-alt";
 import type { EditablePageRecord } from "@/lib/page-content";
 
 // Hardcoded literal regexes (not a dynamic `new RegExp`) so the pattern can
@@ -150,6 +151,21 @@ const SANITIZE_OPTIONS: sanitizeHtml.IOptions = {
       }
       if (height && !nextAttribs.height) {
         nextAttribs.height = height;
+      }
+
+      // Alt-text backfill (#1947). This covers every <img> that reaches the DOM
+      // through sanitised page content — the standalone-<img> html parts
+      // (dangerouslySetInnerHTML) and page.headerText — not just images pulled
+      // into a {{photo-gallery}} token. A present alt (even alt="") is the
+      // author's explicit decision and is left untouched. A wholly missing alt
+      // is backfilled: a derived filename label when there is one, else an
+      // explicit alt="" — because a missing alt makes screen readers announce
+      // the src (e.g. a base64 blob), whereas alt="" marks the image decorative
+      // and silences it. We never invent a fake descriptive label for an
+      // unlabelled standalone image. `src` is read pre-scheme-filtering here, so
+      // a data: URI (stripped later in the CMS default) still derives "".
+      if (nextAttribs.alt === undefined) {
+        nextAttribs.alt = deriveAltFromImageSrc(nextAttribs.src ?? "");
       }
 
       delete nextAttribs.style;

@@ -77,7 +77,12 @@ const SCOPED_ADVISORY_LOCK_INVENTORY: Record<string, number> = {
   // member (same dual-lock pattern as member-lifecycle-actions.ts).
   "src/lib/member-merge.ts": 2,
   "src/lib/member-partner-link.ts": 1,
-  "src/lib/membership-subscription-billing.ts": 1,
+  // #2148: reconcileSubscriptionBillingExceptions takes the SAME
+  // membership-subscription-billing:{seasonYear} key as
+  // confirmSubscriptionBillingPreview (no new key), so refresh-reconciliation
+  // and confirm serialise; counterpart analysis in
+  // docs/CONCURRENCY_AND_LOCKING.md, compatibility evidence in PR #2158.
+  "src/lib/membership-subscription-billing.ts": 2,
   // #1936: 2 pre-existing membership-application locks (application id +
   // applicant email) plus the approval-mapping transaction's sorted
   // member-lifecycle:{targetId} loop — the approval composes

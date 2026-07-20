@@ -7,7 +7,6 @@ import {
   imagePublicUrl,
   resolveInImagesRoot,
 } from "@/lib/image-storage";
-import { CLUB_FACEBOOK_URL, CLUB_PUBLIC_URL } from "@/config/club-identity";
 import { getClubIdentity } from "@/lib/club-identity-settings";
 import { APP_CURRENCY } from "@/config/operational";
 import {
@@ -15,6 +14,7 @@ import {
   getLodgeCapacity,
 } from "@/lib/lodge-capacity";
 import logger from "@/lib/logger";
+import { deriveAltFromImageSrc } from "@/lib/image-alt";
 import { extractImageDimensions } from "@/lib/media-image";
 import {
   embedTokenNames,
@@ -23,17 +23,17 @@ import {
   plainTextTokenNames,
 } from "@/lib/token-catalogue";
 import {
+  loadPublicAnnualFees,
   loadPublicBookingPolicy,
   loadPublicCancellationPolicy,
-  loadPublicEntranceFees,
   loadPublicHutFees,
-  loadPublicMembershipTypes,
+  loadPublicJoiningFees,
   type PublicBookingPolicy,
   type PublicCancellationPolicy,
-  type PublicEntranceFee,
-  type PublicHutFeeLodge,
-  type PublicMembershipType,
+  type PublicFeeGroup,
+  type PublicFeeTable,
 } from "@/lib/public-page-content-tokens";
+import { resolveFeeTokenParameters } from "@/lib/token-parameters";
 
 export type PhotoGalleryImage = {
   src: string;
@@ -51,9 +51,14 @@ export type EmbeddedBodyPart =
   | { type: "skifield-whakapapa" }
   | { type: "photo-gallery"; images: PhotoGalleryImage[] }
   | { type: "photo-slideshow"; images: PhotoGalleryImage[] }
-  | { type: "membership-types"; items: PublicMembershipType[] }
-  | { type: "entrance-fees"; items: PublicEntranceFee[] }
-  | { type: "hut-fees"; lodges: PublicHutFeeLodge[] }
+  // Three fee embeds (#1933, E7). {{membership-types}} is a deprecated alias of
+  // {{annual-fees}} and {{entrance-fees}} of {{joining-fees}} — the aliases
+  // resolve to the same part/renderer. Joining and annual fees share the
+  // grouped definition-list view model; hut fees carry the tabular
+  // membership-type x age-tier view model instead (#2129).
+  | { type: "hut-fees"; tables: PublicFeeTable[] }
+  | { type: "joining-fees"; groups: PublicFeeGroup[] }
+  | { type: "annual-fees"; groups: PublicFeeGroup[] }
   | { type: "booking-policy-summary"; policy: PublicBookingPolicy | null }
   | { type: "cancellation-policy"; policy: PublicCancellationPolicy | null };
 
@@ -188,7 +193,13 @@ const warnedUnsafeTokenUrls = new Set<string>();
 // sanitisation the sanitiser's scheme allowlist never sees the resolved
 // value. HTML-escaping does not neutralise a dangerous URL scheme, so
 // enforce the same http/https/mailto allowlist here before injection.
-function safeTokenUrl(token: string, value: string): string {
+//
+// `fallbackUrl` (C6 #1985): when a token value carries a disallowed scheme we
+// substitute a safe URL. The caller passes the DB-first resolved public URL
+// (getClubIdentity().publicUrl, itself the NEXTAUTH_URL/safe-default bootstrap
+// origin) rather than a static config constant, so the fallback tracks the
+// resolved identity; "#" is the last resort if even that is unsafe.
+function safeTokenUrl(token: string, value: string, fallbackUrl: string): string {
   if (isSafeTokenUrl(value)) {
     return value;
   }
@@ -199,7 +210,7 @@ function safeTokenUrl(token: string, value: string): string {
       "Blocked text-token config value with a disallowed URL scheme; only http, https, and mailto URLs are rendered.",
     );
   }
-  return isSafeTokenUrl(CLUB_PUBLIC_URL) ? CLUB_PUBLIC_URL : "#";
+  return isSafeTokenUrl(fallbackUrl) ? fallbackUrl : "#";
 }
 
 // Exported for reuse by other sanitised HTML surfaces (lodge instructions).
@@ -287,7 +298,16 @@ export async function resolveTextTokens(contentHtml: string): Promise<string> {
           // content, but not as an href target: a javascript: scheme survives
           // HTML-escaping, so safeTokenUrl vets the scheme first.
           return escapeHtmlText(
-            safeTokenUrl("facebook-url", CLUB_FACEBOOK_URL ?? CLUB_PUBLIC_URL),
+            safeTokenUrl(
+              "facebook-url",
+              // DB-first (C5 #1984): the admin-editable facebookUrl resolved via
+              // getClubIdentity() wins over the static config constant, matching
+              // {{club-name}}/{{hut-leader}} above. Falls back to the resolved
+              // public URL (C6 #1985 — the bootstrap origin, never club.json)
+              // when no link is configured.
+              clubIdentity.socialLinks?.facebook ?? clubIdentity.publicUrl,
+              clubIdentity.publicUrl,
+            ),
           );
         default:
           return "";
@@ -303,6 +323,11 @@ function parseTokenMatch(match: RegExpMatchArray): ParsedEmbedToken {
   };
 }
 
+// deriveAltFromImageSrc lives in @/lib/image-alt (a pure, dependency-free
+// module) so the HTML sanitiser can share it without importing this module's
+// server-only graph. Re-exported here for existing importers/tests.
+export { deriveAltFromImageSrc };
+
 function extractInlinePhotoGalleryImages(contentHtml: string): {
   cleanedHtml: string;
   images: PhotoGalleryImage[];
@@ -314,9 +339,19 @@ function extractInlinePhotoGalleryImages(contentHtml: string): {
       const altMatch = match.match(/alt=["']([^"']*)["']/i);
       const widthMatch = match.match(/width=["']?(\d+)["']?/i);
       const heightMatch = match.match(/height=["']?(\d+)["']?/i);
+      // Data layer: preserve a present-but-empty alt="" as the author's
+      // explicit decorative marker, and backfill only a wholly missing alt
+      // from the filename (#1947). NOTE: for gallery/slideshow images the
+      // render layer (photo-gallery-token.tsx) deliberately does NOT honour an
+      // empty alt as decorative — each image there is a link's only content, so
+      // an empty alt would be an unnamed link (WCAG 2.4.4/4.1.2). It replaces
+      // the empty string with a positional accessible name. The two layers are
+      // reconciled on purpose: the data layer stays faithful to author intent;
+      // the render layer enforces the stricter linked-image accessible-name rule.
+      const alt = altMatch ? altMatch[1] : deriveAltFromImageSrc(src);
       images.push({
         src,
-        alt: altMatch?.[1] ?? "",
+        alt,
         width: widthMatch ? Number.parseInt(widthMatch[1], 10) : null,
         height: heightMatch ? Number.parseInt(heightMatch[1], 10) : null,
       });
@@ -465,12 +500,17 @@ export async function buildEmbeddedBody(contentHtml: string) {
           hasInlineGalleryToken,
         ),
       });
-    } else if (parsed.token === "membership-types") {
-      parts.push({ type: "membership-types", items: await loadPublicMembershipTypes() });
-    } else if (parsed.token === "entrance-fees") {
-      parts.push({ type: "entrance-fees", items: await loadPublicEntranceFees() });
+    } else if (parsed.token === "annual-fees" || parsed.token === "membership-types") {
+      // {{membership-types}} is a deprecated alias of {{annual-fees}}.
+      const feeParams = resolveFeeTokenParameters(parsed.parameter);
+      parts.push({ type: "annual-fees", groups: await loadPublicAnnualFees({ typeKey: feeParams.type, components: feeParams.components }) });
+    } else if (parsed.token === "joining-fees" || parsed.token === "entrance-fees") {
+      // {{entrance-fees}} is a deprecated alias of {{joining-fees}}.
+      const feeParams = resolveFeeTokenParameters(parsed.parameter);
+      parts.push({ type: "joining-fees", groups: await loadPublicJoiningFees({ typeKey: feeParams.type, byAge: feeParams.groupBy.has("age") }) });
     } else if (parsed.token === "hut-fees") {
-      parts.push({ type: "hut-fees", lodges: await loadPublicHutFees(parsed.parameter) });
+      const feeParams = resolveFeeTokenParameters(parsed.parameter);
+      parts.push({ type: "hut-fees", tables: await loadPublicHutFees(feeParams.lodge, { typeKey: feeParams.type, groupBy: feeParams.groupBy }) });
     } else if (parsed.token === "booking-policy-summary") {
       parts.push({ type: "booking-policy-summary", policy: await loadPublicBookingPolicy(parsed.parameter) });
     } else if (parsed.token === "cancellation-policy") {

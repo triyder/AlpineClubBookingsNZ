@@ -14,7 +14,10 @@ import {
   NON_MEMBER_ROLE_VALUES,
   OPERATIONAL_ROLE_VALUES,
 } from "@/lib/member-roles";
-import { roleNeverRequiresSubscription } from "@/lib/member-subscription-defaults";
+import {
+  effectiveSubscriptionBehavior,
+  isSubscriptionNotRequiredForMembershipType,
+} from "@/lib/membership-types";
 
 const subscriptionStatuses = [
   "PAID",
@@ -82,16 +85,22 @@ function isNotRequiredMember(
       membershipType: { subscriptionBehavior: string };
     }>;
   },
-  notRequiredAgeTiers: Set<string>
+  notRequiredAgeTiers: Set<string>,
+  seasonSubscriptionStatus?: string
 ) {
-  return (
-    roleNeverRequiresSubscription(member.role) ||
-    notRequiredAgeTiers.has(member.ageTier) ||
-    member.seasonalMembershipAssignments?.some(
-      (assignment) =>
-        assignment.membershipType.subscriptionBehavior === "NOT_REQUIRED"
-    ) === true
-  );
+  // #2149: membership type is the sole authority (role carries no exemption).
+  // Uses the shared derivation so this admin list agrees with the members list,
+  // export, profile, and the booking gate.
+  return isSubscriptionNotRequiredForMembershipType({
+    subscriptionBehavior: effectiveSubscriptionBehavior(
+      member.seasonalMembershipAssignments?.[0]?.membershipType
+        .subscriptionBehavior as never,
+      member.role
+    ),
+    ageTier: member.ageTier,
+    notRequiredAgeTiers,
+    hasNotRequiredSeasonRow: seasonSubscriptionStatus === "NOT_REQUIRED",
+  });
 }
 
 function compareValues(left: string | number | Date | null, right: string | number | Date | null) {
@@ -196,10 +205,23 @@ export async function GET(request: NextRequest) {
       summaryWhere.member = memberWhere;
     }
 
+    // #2149: membership type is the authority — exempt when the assigned season
+    // type is NOT_REQUIRED, or (no assignment) the role's default built-in type
+    // is NOT_REQUIRED. Guarding the role clause on "no assignment" keeps a
+    // fee-paying admin (REQUIRED assignment) out of this not-required set.
     const notRequiredWhere: Prisma.MemberWhereInput = {
       ...memberWhere,
       OR: [
-        { role: { in: [...OPERATIONAL_ROLE_VALUES, ...NON_MEMBER_ROLE_VALUES] } },
+        {
+          AND: [
+            { seasonalMembershipAssignments: { none: { seasonYear } } },
+            {
+              role: {
+                in: [...OPERATIONAL_ROLE_VALUES, ...NON_MEMBER_ROLE_VALUES],
+              },
+            },
+          ],
+        },
         {
           seasonalMembershipAssignments: {
             some: {
@@ -264,7 +286,11 @@ export async function GET(request: NextRequest) {
 
     const candidatesByMemberId = new Map<string, SubscriptionCandidate>();
     for (const subscription of subscriptions) {
-      const displayStatus = isNotRequiredMember(subscription.member, notRequiredAgeTiers)
+      const displayStatus = isNotRequiredMember(
+        subscription.member,
+        notRequiredAgeTiers,
+        subscription.status
+      )
         ? "NOT_REQUIRED"
         : subscription.status;
       candidatesByMemberId.set(subscription.memberId, {

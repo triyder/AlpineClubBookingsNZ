@@ -68,4 +68,11 @@ export const ARRIVALS_BOARD_NAME_STYLES = ["names", "lead-count"] as const;
 export const OCCUPANCY_GRID_VARIANTS = ["auto", "board", "statement"] as const;
 
 export const NIGHT_COLUMNS_DEFAULT_DAYS = 3;
-export const NIGHT_COLUMNS_MAX_DAYS = 5;
+// The board is a permanent 3-night look-ahead. This ceiling matches the fixed
+// display-device data window (`clampDisplayWindowDays(null)` →
+// DISPLAY_WINDOW_DEFAULT_DAYS = 3): bookings beyond that window are never
+// fetched, so a higher ceiling would silently render fewer columns than it
+// promises. A wider board therefore requires widening the device window first —
+// decided against in issue #2056 (Option C: keep the 3-day window, make the
+// module honest at 3 nights).
+export const NIGHT_COLUMNS_MAX_DAYS = 3;

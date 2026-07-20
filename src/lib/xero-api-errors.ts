@@ -53,6 +53,8 @@ export function getXeroApiErrorInfo(
     (statusCode === 429 && rateLimitProblem === "day");
   const isTransientOutage =
     error instanceof Error && error.name === "XeroTransientOutageError";
+  const isReconnectRequired =
+    error instanceof Error && error.name === "XeroReconnectRequiredError";
   const diagnosticMessage = getFallbackMessage(error, fallbackMessage);
 
   if (isDailyLimit) {
@@ -60,6 +62,17 @@ export function getXeroApiErrorInfo(
       handled: true,
       status: 429,
       clientMessage: "Xero daily API limit reached. Please try again tomorrow.",
+      diagnosticMessage,
+    };
+  }
+
+  // A token/tenant failure that only an admin re-authorisation can fix maps to
+  // the same 401-style reconnect guidance a live 401/403 produces.
+  if (isReconnectRequired) {
+    return {
+      handled: true,
+      status: 401,
+      clientMessage: "Xero connection expired. Please reconnect Xero from the admin panel.",
       diagnosticMessage,
     };
   }
