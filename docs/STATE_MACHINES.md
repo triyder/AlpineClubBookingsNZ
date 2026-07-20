@@ -810,6 +810,7 @@ existing invoices are adopted; amount/contact/account mismatch becomes visible
 (no row) -> NOT_INVOICED            billing sweep creates a billable-but-uninvoiced row
 NOT_INVOICED -> UNPAID              Xero subscription invoice created (xero-subscription-invoices)
 UNPAID/OVERDUE <-> PAID             Xero discovery/webhook reflects the invoice's real payment state
+UNPAID/OVERDUE/PAID -> NOT_INVOICED Xero invoice observed VOIDED/DELETED (#2147): invoice link nulled, member re-billable — deliberately reads NOT locked out (was UNPAID/locked out pre-#2147)
 NOT_INVOICED -> PAID (manual)       manual mark-paid (finance:edit) — sets manuallyMarkedPaidAt/By/Note, never calls Xero
 PAID (manual) -> NOT_INVOICED      manual reversal when no Xero invoice link exists (clears provenance)
 PAID (manual) -> UNPAID            manual reversal on a legacy row that somehow carries an invoice link (clears provenance)
@@ -831,10 +832,21 @@ never downgrades a manually marked-paid row that carries no Xero invoice link
 `flushMemberSubscriptionHistory` never deletes a manual-PAID row on contact
 link/push/unlink. Every manual transition is audited with the acting admin.
 
+The annual sweep (#2147) skips a member who is already `PAID` **OR** holds a LIVE
+Xero invoice link (any of UNPAID/OVERDUE/PAID) — an additive dedup guard so an
+invoiced-but-unpaid member is never double-billed, while a manually marked-paid
+member (PAID, null invoice link) is still skipped. On a void/delete the sync
+marks the covering `MembershipSubscriptionCharge` `VOIDED` (kept for audit, never
+re-enqueued), releases its coverage claim (`releasedAt` set — row kept), and
+bumps `MemberSubscription.voidGeneration` so a re-bill mints a NEW charge with a
+fresh idempotency key.
+
 To verify: manual mark-paid sets PAID + provenance and never calls Xero; the
-sweep skips a manual-PAID member; a Xero force-sync leaves a manual-PAID row
-untouched; a contact link/unlink resync leaves a manual-PAID row in place;
-reversal restores UNPAID vs NOT_INVOICED by invoice-link presence.
+sweep skips a manual-PAID member and an invoiced-but-unpaid member; a Xero
+force-sync leaves a manual-PAID row untouched; a contact link/unlink resync
+leaves a manual-PAID row in place; reversal restores UNPAID vs NOT_INVOICED by
+invoice-link presence; a voided invoice makes the member NOT_INVOICED and
+re-billable with a new charge.
 
 ## Committee Assignment Lifecycle
 

@@ -54,6 +54,25 @@ configurable — see [Subscription lockout](subscription-lockout.md)).
 3. In the **Durable charge queue**, use **Retry** on any charge that failed,
    conflicted, or is still queued.
 
+**Members are never double-billed.** The preview skips any member whose season
+subscription is already **paid** *or* already carries a **live Xero invoice**
+(status Unpaid, Overdue, or Paid — including invoices raised by the older Xero
+sync path that pre-date the durable charge queue). A manually marked-paid member
+(cash, no Xero invoice) is skipped too. Skipped members with a live invoice are
+listed — with their invoice number — under the collapsed **Already invoiced**
+panel below the preview, so you can see exactly who was suppressed and why, and
+they are never included in a confirmed batch.
+
+**Voided/deleted invoices re-open billing.** If you **void or delete** a
+member's subscription invoice in Xero, the next paid-status refresh clears the
+local invoice link, marks the underlying durable charge **Voided** (kept for
+audit, never retried), and releases its coverage so the member becomes
+**re-billable**. A fresh preview then lists them again, and confirming produces a
+**new** charge and invoice. A voided invoice no longer counts as an outstanding
+"Unpaid" subscription, so it also stops [locking the member out of
+bookings](subscription-lockout.md) — void an invoice only when you intend to
+re-bill or clear the obligation.
+
 ### Mark a member paid manually
 
 1. On a member's row (finance edit), **Mark as paid (manual)** records a payment
@@ -83,6 +102,8 @@ configurable — see [Subscription lockout](subscription-lockout.md)).
 | A member stays "Not Invoiced" | They have no Xero contact link | Link or create a Xero contact in [Members](members.md), then run a refresh |
 | A sync fails | Xero is disconnected or errored | Check the Xero connection in the [Xero Sync guide](xero.md) |
 | **Mark as paid (manual)** isn't offered | The row already has a Xero invoice, is already paid, or is not required | Record the payment against the invoice in Xero instead |
+| A member is missing from the preview | They are already paid, or already hold a live Xero invoice for the season | Check the collapsed **Already invoiced** panel; record payment against the existing invoice in Xero, or void it there to re-bill |
+| A voided-invoice member still won't re-bill | The paid-status refresh has not run since you voided the invoice in Xero | Run **Incremental Sync** (or the daily refresh), then refresh the preview — the member reappears with a new charge |
 | A per-family fee raised an exception | The club bills individually but the schedule is per-family | Re-base the schedule to per-member/no-invoice in [Fees](fees.md), or switch the family billing mode here |
 
 ## Related links

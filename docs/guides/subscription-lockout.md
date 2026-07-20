@@ -83,6 +83,14 @@ over a match on a shared fee-schedule code only — so a member who has genuinel
 paid is never marked unpaid by an overlapping code, and a manual "mark paid"
 stays intact.
 
+A **voided or deleted** subscription invoice no longer counts as an outstanding
+subscription. When the paid-status refresh sees a member's subscription invoice
+voided/deleted in Xero, the member reads as **Not Invoiced** (not locked out)
+rather than the pre-void **Unpaid** (locked out), and becomes re-billable in the
+[annual billing batch](subscriptions.md#run-the-annual-billing-batch). Void an
+invoice only when you intend to re-bill or clear the obligation — the member can
+book again until a new invoice is raised.
+
 ### Review the age-tier rule
 
 1. The **Age tiers** card shows which age tiers require a paid subscription and
