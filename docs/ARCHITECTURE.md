@@ -322,6 +322,29 @@ acknowledged divergents that this rule does not retrofit on its own: the
 settings forms. Reference:
 `src/components/admin/booking-policies/group-discount-section.tsx`.
 
+The draft/snapshot half of that pattern lives in the shared
+`useSectionEditState` hook (`src/hooks/use-section-edit-state.ts`), which new
+sections should use instead of hand-rolling the state: it holds the draft and
+the saved snapshot together, so Cancel restores every field at once, and it
+re-seeds both from whatever the card's `save` callback returns rather than from
+the submitted draft. That re-seed is only as authoritative as the callback makes
+it. A callback should return the parsed SERVER response wherever the write
+echoes the stored row back — the group discount and password policy cards do —
+so a value the route clamps or normalises is never left misreported in the form.
+Returning locally-computed values instead (as the email sign-in link and Google
+sign-in cards do, because neither route returns the stored row) is safe only
+while those routes cannot normalise what they store: they reject out-of-range
+input rather than clamping it, so the client value always matches storage. The
+same shortcut against a normalising route would silently diverge. Each card
+keeps its own `save` callback — the
+GET-fresh-then-merge step above, multi-endpoint writes, and per-endpoint failure
+copy all stay local — and throws the hook's `ForbiddenSaveError` for a 403 so it
+maps to the shared `ADMIN_FORBIDDEN_SAVE_REASON` copy. Feedback rendering stays
+in the component, because booking-policy sections use `PolicyFeedback` while the
+security cards use `Alert`. Sections whose snapshot is a list edited row by row
+(age tiers, notification settings) are a different shape and stay outside the
+hook.
+
 The `/admin/xero` and `/admin/members` routes are route shells with local
 `_components` and `_hooks` folders; the member `/book` wizard follows the same
 shape, keeping its wizard-step views in `src/app/(authenticated)/book/_components`

@@ -79,6 +79,25 @@ before changing Next.js APIs or conventions.
   retrofitted by this rule alone: the `/admin/modules` grid (bulk toggles) and
   the staged-but-ungated legacy settings forms. Reference implementation:
   `src/components/admin/booking-policies/group-discount-section.tsx`.
+  When you write a new section, or change an existing section's draft/snapshot
+  logic, implement that half of the pattern with the shared
+  `useSectionEditState` hook (`src/hooks/use-section-edit-state.ts`, #2136)
+  rather than hand-rolling it: it guarantees Cancel restores every field, and
+  that Save re-seeds both the draft and the snapshot from whatever the `save`
+  callback returns. That re-seed is only ever as authoritative as the callback
+  makes it: return the parsed SERVER response, never the submitted draft,
+  wherever the write echoes the stored row back (as the group discount and
+  password policy cards do). Returning locally-computed values is safe only
+  when the route returns no body AND cannot normalise what it stores — the
+  email sign-in link and Google sign-in cards, whose routes reject
+  out-of-range input rather than clamping it. Copy that shortcut onto a route
+  that DOES normalise and the form silently disagrees with storage. Keep the
+  transport in your own `save` callback (throw the hook's `ForbiddenSaveError`
+  for a 403) and keep the section's feedback rendering in the component. A
+  section whose snapshot is a LIST with per-row edits is a different shape and
+  is out of the hook's scope — such a section still follows the canonical
+  pattern by hand. `default-cancellation-policy-section` is a not-yet-adopted
+  holdover that still hand-rolls its draft/snapshot state.
 - Security, payment, booking, membership lifecycle, Xero, Stripe, and
   data-integrity work requires high or xhigh reasoning effort and human review
   before merge.
