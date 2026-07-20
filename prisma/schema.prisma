@@ -182,6 +182,16 @@ enum MembershipBillingExceptionStatus {
   RESOLVED
 }
 
+// #2148 (D2): how an OPEN billing exception reached RESOLVED. CONFIRM =
+// resolved by a confirm run superseding it; PREVIEW_RECONCILE = auto-resolved
+// by an edit-gated preview refresh whose fresh preview no longer regenerated
+// it. Null on legacy rows resolved before this field existed and on every
+// still-OPEN row.
+enum MembershipBillingExceptionResolution {
+  CONFIRM
+  PREVIEW_RECONCILE
+}
+
 enum FamilyBillingMode {
   BILL_FAMILY_VIA_BILLING_MEMBER
   BILL_MEMBERS_INDIVIDUALLY
@@ -1079,6 +1089,9 @@ model MembershipBillingException {
   firstSeenAt    DateTime                         @default(now())
   lastSeenAt     DateTime                         @default(now())
   resolvedAt     DateTime?
+  // #2148 (D2): resolution provenance — CONFIRM vs PREVIEW_RECONCILE. Null while
+  // OPEN and on rows resolved before this column existed.
+  resolvedVia    MembershipBillingExceptionResolution?
   createdAt      DateTime                         @default(now())
   updatedAt      DateTime                         @updatedAt
 
