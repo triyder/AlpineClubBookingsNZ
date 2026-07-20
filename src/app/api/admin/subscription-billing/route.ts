@@ -45,6 +45,20 @@ const mutationSchema = z.discriminatedUnion("action", [
     // when present it switches the club-level family billing model.
     familyBillingMode: z.enum(FAMILY_BILLING_MODES).optional(),
   }).strict(),
+  // #2161 (D2): operator "already invoiced" family marker. MARK creates an active
+  // marker; UNMARK sets releasedAt (row retained for audit). Both finance:edit
+  // gated (the POST guard) and idempotent.
+  z.object({
+    action: z.literal("MARK_FAMILY_INVOICED"),
+    seasonYear: z.number().int().min(2020).max(2040),
+    familyGroupId: z.string().min(1),
+    note: z.string().max(500).optional(),
+  }).strict(),
+  z.object({
+    action: z.literal("UNMARK_FAMILY_INVOICED"),
+    seasonYear: z.number().int().min(2020).max(2040),
+    familyGroupId: z.string().min(1),
+  }).strict(),
 ]);
 
 function invalidate() {
@@ -163,6 +177,69 @@ export async function POST(request: Request) {
       });
       invalidate();
       return NextResponse.json({ success: true, ...result });
+    }
+    if (parsed.data.action === "MARK_FAMILY_INVOICED") {
+      // #2161 (D2): mark a family as already invoiced for the season, suppressing
+      // its PER_FAMILY charge regardless of the D1 auto-detection. Idempotent: a
+      // second mark on an already-active family is a no-op success (no audit row),
+      // and a concurrent double-mark is caught by the partial unique index.
+      const { seasonYear, familyGroupId, note } = parsed.data;
+      const family = await prisma.familyGroup.findUnique({ where: { id: familyGroupId }, select: { id: true } });
+      if (!family) return NextResponse.json({ error: "Family group not found." }, { status: 404 });
+      const trimmedNote = note?.trim() ? note.trim() : null;
+      let created = false;
+      try {
+        await prisma.$transaction(async (tx) => {
+          const existing = await tx.familyGroupSeasonInvoiceMarker.findFirst({
+            where: { familyGroupId, seasonYear, releasedAt: null },
+            select: { id: true },
+          });
+          if (existing) return;
+          await tx.familyGroupSeasonInvoiceMarker.create({
+            data: { familyGroupId, seasonYear, note: trimmedNote, markedByMemberId: guard.session.user.id },
+          });
+          created = true;
+        });
+      } catch (error) {
+        // A concurrent mark lost the race to the partial unique index — the family
+        // is now marked either way, so the action is idempotently satisfied.
+        if (!(error && typeof error === "object" && "code" in error && error.code === "P2002")) throw error;
+      }
+      if (created) {
+        await createAuditLog({
+          action: "membership-subscription-billing.mark-family",
+          memberId: guard.session.user.id,
+          targetId: familyGroupId,
+          details: JSON.stringify({ seasonYear, note: trimmedNote }),
+        });
+      }
+      invalidate();
+      return NextResponse.json({
+        success: true,
+        message: created ? "Family marked as already invoiced for this season." : "Family is already marked as invoiced.",
+      });
+    }
+    if (parsed.data.action === "UNMARK_FAMILY_INVOICED") {
+      // #2161 (D2): release the active marker (row retained for audit). Idempotent:
+      // releasing a family with no active marker is a no-op success (no audit row).
+      const { seasonYear, familyGroupId } = parsed.data;
+      const released = await prisma.familyGroupSeasonInvoiceMarker.updateMany({
+        where: { familyGroupId, seasonYear, releasedAt: null },
+        data: { releasedAt: new Date(), releasedByMemberId: guard.session.user.id },
+      });
+      if (released.count > 0) {
+        await createAuditLog({
+          action: "membership-subscription-billing.unmark-family",
+          memberId: guard.session.user.id,
+          targetId: familyGroupId,
+          details: JSON.stringify({ seasonYear, released: released.count }),
+        });
+      }
+      invalidate();
+      return NextResponse.json({
+        success: true,
+        message: released.count > 0 ? "Family marker removed; it can be billed again." : "Family was not marked as invoiced.",
+      });
     }
     if (parsed.data.action === "REFRESH_PREVIEW") {
       if (!isDateOnlyString(parsed.data.decisionDate)) {
