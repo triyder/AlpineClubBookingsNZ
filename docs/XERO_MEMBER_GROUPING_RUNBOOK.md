@@ -202,11 +202,15 @@ Rules and guarantees:
 - The legacy `AgeTierXeroAcceptedContactGroup` table was **dropped** by the E13
   contract migration `20260720120000` (#1939) — no deployed code queried or
   joined it after E8. The `AgeTierSetting.xeroContactGroupId/Name` columns are
-  still **present but now drop-eligible**. E13 deferred them because the
-  deployed runtime still SELECTed them; the #2130 runtime-prep release closed
-  that gap in two steps — first narrowing the reads (`getAgeTierSettings`), then
-  the writes (the age-tier settings route, setup wizard, config self-heal and
-  seed upserts), since Prisma emits an implicit `RETURNING` over every scalar
-  column of an unnarrowed `create`/`update`/`upsert`. No deployed runtime names
-  the columns in SQL any more, so the follow-up contract migration can drop them
-  in the next release.
+  still **present, and become drop-eligible only once the #2130 runtime-prep
+  release has itself deployed**. E13 deferred them because the deployed runtime
+  still SELECTed them; the #2130 runtime-prep release (CHANGELOG `Unreleased`,
+  the release that follows `v0.12.2`) closed that gap in two steps — first
+  narrowing the reads (`getAgeTierSettings`), then the writes (the age-tier
+  settings route, setup wizard, config self-heal and seed upserts), since Prisma
+  emits an implicit `RETURNING` over every scalar column of an unnarrowed
+  `create`/`update`/`upsert`. **Do not drop the columns in the same release as
+  that runtime-prep.** Until the runtime-prep release is itself the
+  deployed/draining colour in production, the live `v0.12.2` colour still names
+  these columns in SQL, so the follow-up contract migration is only safe in a
+  *later* release, once the runtime-prep release has shipped and soaked.
