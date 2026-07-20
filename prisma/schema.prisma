@@ -1422,10 +1422,13 @@ model Season {
   updatedAt DateTime   @updatedAt
 
   // Relations
-  // `rates` is the legacy member/non-member boolean-keyed rate table. It is
-  // retained (frozen, read only by the public {{hut-fees}} embed) after the
-  // E4 re-key (#1930); the authoritative pricing rows now live in
-  // `membershipTypeRates`. E13 drops `rates` after a release soak.
+  // `rates` is the legacy member/non-member boolean-keyed rate table, frozen
+  // since the E4 re-key (#1930); the authoritative pricing rows live in
+  // `membershipTypeRates`. Its LAST READER is gone: #2129 step 1 re-sourced the
+  // public {{hut-fees}} embed onto `membershipTypeRates` and dropped the
+  // admin season routes' unused `rates` include. Nothing reads or writes this
+  // relation now, so it is drop-eligible in the NEXT release (#2129 step 2,
+  // Release B) — that PR carries the migration; this one has no schema change.
   rates              SeasonRate[]
   membershipTypeRates MembershipTypeSeasonRate[]
   lodge Lodge        @relation(fields: [lodgeId], references: [id], onDelete: Restrict)
@@ -1434,6 +1437,9 @@ model Season {
   @@index([lodgeId])
 }
 
+// Frozen legacy hut-rate table (member/non-member boolean key). Retained with
+// zero readers since #2129 step 1 and scheduled for removal by #2129 step 2
+// (Release B). Do not add new readers or writers.
 model SeasonRate {
   id                 String  @id @default(cuid())
   seasonId           String

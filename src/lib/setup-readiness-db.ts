@@ -4,6 +4,7 @@ import {
   computeMembershipTypeRateGaps,
   type SetupDatabaseSnapshot,
 } from "@/lib/setup-readiness";
+import { collapseHutFeeColumns } from "@/lib/public-hut-fee-columns";
 
 /**
  * Build the database half of the setup-readiness snapshot (C8 #1987).
@@ -33,6 +34,7 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
     clubIdentity,
     emailSettings,
     lodgeSettings,
+    publicContentSettings,
   ] = await Promise.all([
     prisma.member.count({ where: { role: "ADMIN", active: true } }),
     prisma.clubModuleSettings.findUnique({
@@ -108,6 +110,12 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
       where: { id: "default" },
       select: { capacity: true },
     }),
+    // Public {{hut-fees}} embed opt-in (#2129). Only when this is ON does the
+    // single-rate-column readiness warning below apply.
+    prisma.publicContentSettings.findUnique({
+      where: { id: "default" },
+      select: { hutFees: true },
+    }),
   ]);
 
   // Missing-rate readiness (#1930, E4): every ACTIVE MEMBER_RATE membership
@@ -171,6 +179,64 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
       bookableAgeTiers.length > 0 ? bookableAgeTiers : undefined,
   });
 
+  // Public {{hut-fees}} readiness (#2129): the embed renders one nightly-rate
+  // column per publicly-listed active membership type that carries rate rows
+  // for the season, with identically-priced types collapsed into one shared
+  // column (collapseHutFeeColumns — the same helper the embed itself uses, so
+  // the warning can never disagree with what visitors see). A season resolving
+  // to fewer than two columns publishes a table with nothing to compare, so it
+  // is surfaced on the Seasons And Rates step. Skipped entirely when the embed
+  // is switched off.
+  const publicHutFeeSingleColumnSeasons: string[] = [];
+  if (publicContentSettings?.hutFees === true) {
+    const publicSeasons = await prisma.season.findMany({
+      where: { active: true },
+      orderBy: [{ startDate: "asc" }, { name: "asc" }],
+      select: {
+        name: true,
+        lodge: { select: { name: true } },
+        membershipTypeRates: {
+          where: { membershipType: { isActive: true, publiclyListed: true } },
+          select: {
+            ageTier: true,
+            pricePerNightCents: true,
+            membershipType: {
+              select: { id: true, name: true, sortOrder: true, ageGroupsApply: true },
+            },
+          },
+        },
+      },
+    });
+    for (const season of publicSeasons) {
+      const byType = new Map<
+        string,
+        {
+          id: string;
+          name: string;
+          sortOrder: number;
+          ageGroupsApply: boolean;
+          rates: Array<{ ageTier: string | null; pricePerNightCents: number }>;
+        }
+      >();
+      for (const rate of season.membershipTypeRates) {
+        const entry = byType.get(rate.membershipType.id) ?? {
+          ...rate.membershipType,
+          rates: [],
+        };
+        entry.rates.push({
+          ageTier: rate.ageTier,
+          pricePerNightCents: rate.pricePerNightCents,
+        });
+        byType.set(rate.membershipType.id, entry);
+      }
+      if (collapseHutFeeColumns([...byType.values()]).length < 2) {
+        publicHutFeeSingleColumnSeasons.push(
+          `${season.lodge.name} — ${season.name}`,
+        );
+      }
+    }
+  }
+
   const clubIdentityName =
     clubIdentity?.name?.trim() || emailSettings?.clubName?.trim() || null;
 
@@ -210,6 +276,7 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
     xeroHutFeeItemMappingCount,
     xeroEntranceFeeMappingCount,
     membershipTypeRateGaps,
+    publicHutFeeSingleColumnSeasons,
     basedOnAgeTierTypesWithoutSubscribingTier,
     defaultLodgeCapacity,
     clubIdentityName,

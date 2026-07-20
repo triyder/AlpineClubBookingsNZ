@@ -31,6 +31,7 @@ import {
   type PublicBookingPolicy,
   type PublicCancellationPolicy,
   type PublicFeeGroup,
+  type PublicFeeTable,
 } from "@/lib/public-page-content-tokens";
 import { resolveFeeTokenParameters } from "@/lib/token-parameters";
 
@@ -50,10 +51,12 @@ export type EmbeddedBodyPart =
   | { type: "skifield-whakapapa" }
   | { type: "photo-gallery"; images: PhotoGalleryImage[] }
   | { type: "photo-slideshow"; images: PhotoGalleryImage[] }
-  // Three fee embeds, one grouped view model (#1933, E7). {{membership-types}}
-  // is a deprecated alias of {{annual-fees}} and {{entrance-fees}} of
-  // {{joining-fees}} — the aliases resolve to the same part/renderer.
-  | { type: "hut-fees"; groups: PublicFeeGroup[] }
+  // Three fee embeds (#1933, E7). {{membership-types}} is a deprecated alias of
+  // {{annual-fees}} and {{entrance-fees}} of {{joining-fees}} — the aliases
+  // resolve to the same part/renderer. Joining and annual fees share the
+  // grouped definition-list view model; hut fees carry the tabular
+  // membership-type x age-tier view model instead (#2129).
+  | { type: "hut-fees"; tables: PublicFeeTable[] }
   | { type: "joining-fees"; groups: PublicFeeGroup[] }
   | { type: "annual-fees"; groups: PublicFeeGroup[] }
   | { type: "booking-policy-summary"; policy: PublicBookingPolicy | null }
@@ -507,7 +510,7 @@ export async function buildEmbeddedBody(contentHtml: string) {
       parts.push({ type: "joining-fees", groups: await loadPublicJoiningFees({ typeKey: feeParams.type, byAge: feeParams.groupBy.has("age") }) });
     } else if (parsed.token === "hut-fees") {
       const feeParams = resolveFeeTokenParameters(parsed.parameter);
-      parts.push({ type: "hut-fees", groups: await loadPublicHutFees(feeParams.lodge, { typeKey: feeParams.type, groupBy: feeParams.groupBy }) });
+      parts.push({ type: "hut-fees", tables: await loadPublicHutFees(feeParams.lodge, { typeKey: feeParams.type, groupBy: feeParams.groupBy }) });
     } else if (parsed.token === "booking-policy-summary") {
       parts.push({ type: "booking-policy-summary", policy: await loadPublicBookingPolicy(parsed.parameter) });
     } else if (parsed.token === "cancellation-policy") {
