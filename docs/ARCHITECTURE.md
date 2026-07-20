@@ -97,6 +97,41 @@ injects the admin-configured theme via `getWebsiteThemeRenderState()` inside an
 site colours apply in light and dark, and use the `--hue-*` tokens for
 categorical status hues that must stay fixed across themes.
 
+The same rule applies to raw NEUTRALS. Inside `app-theme-scope`, a literal
+`slate-*` or `bg-white` ignores the theme and reads wrong in dark mode, so use
+the semantic surface tokens instead: `bg-card` / `text-card-foreground` for card
+surfaces, `bg-popover` / `text-popover-foreground` for floating panels such as
+chart tooltips, `text-muted-foreground` for secondary labels and footnotes,
+`bg-muted` for tinted rows, and `border-border` for rules.
+
+Two contract tests in `src/lib/__tests__/brand-color-source-contract.test.ts`
+enforce this:
+
+- **Brand accent.** No literal Tailwind `teal-*` utility anywhere under `src/`.
+  The single allowlisted exception is
+  `src/components/admin-booking-calendar.tsx`, whose `STATUS_COLORS` paints each
+  booking status as a SOLID swatch (`bg-teal-500`); the `--hue-*` system is
+  defined only as a muted-background / accent-text PAIR, so it has no equivalent
+  for a standalone solid fill. Every other categorical teal (the
+  waitlist-offered chip, the audit `family` badge, the family-group
+  `GROUP_CREATE` badge, the dashboard Chore Roster tile) reaches its hue through
+  `CHIP_TONE_CLASSES.teal` in `src/lib/chip-tones.ts`, the single source of
+  truth for chip tone classes.
+- **Themed neutrals.** No raw `slate-*` or `bg-white` under `src/app/(finance)`
+  or `src/components/finance`, with an empty allowlist. This check is
+  deliberately scoped to the finance tree rather than repo-wide: the admin tree
+  still carries raw slate in many files and would have to be migrated before the
+  check could be widened.
+
+Chart colours are a documented carve-out. `FINANCE_MIX_COLORS` in
+`src/components/finance/charts/finance-chart-theme.ts` stays a literal hex
+palette (#1801, re-affirmed in #2137): the values feed Recharts `fill`/`stroke`
+SVG presentation attributes, where `var()` does not resolve, and they are
+categorical tones chosen to stay distinguishable independent of the club theme.
+Chart neutrals (grid, axis, ticks) are themed in `globals.css` through the
+`.finance-trend-chart .recharts-*` selectors, which override the light-mode
+literal fallbacks that `trend-chart.tsx` passes as attributes.
+
 ## Module Boundaries
 
 This application is intentionally still a single Next.js monolith. The
