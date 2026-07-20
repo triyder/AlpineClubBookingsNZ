@@ -121,7 +121,7 @@ relation:
 
 ### 9. Migration — expand-only
 
-One expand-only migration (`20260717190000_add_member_photos`): `CREATE TYPE`
+One expand-only migration (`20260721110000_add_member_photos`): `CREATE TYPE`
 for the enum, three nullable `ADD COLUMN`s on `Member` (no default), one `NOT
 NULL DEFAULT 'CONTENT'` column on `MediaImage` (constant default →
 metadata-only, no rewrite), two plain btree indexes, and one nullable FK

@@ -13,7 +13,7 @@ const schemaText = readFileSync(
   "utf8",
 );
 
-const MIGRATION_DIR = "20260717190000_add_member_photos";
+const MIGRATION_DIR = "20260721110000_add_member_photos";
 const migrationSql = readFileSync(
   join(process.cwd(), "prisma", "migrations", MIGRATION_DIR, "migration.sql"),
   "utf8",
