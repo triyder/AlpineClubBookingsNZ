@@ -163,6 +163,16 @@ re-creatable.
   belt-and-braces, so captures show the fully-resolved state. If you add a new
   kind of late-settling UI, extend the harness settle logic generically — never
   paper over it per-capture.
+- **Describing view-only access in prose:** since #2160 a view-only admin meets
+  ONE section banner — "You have view-only access to this area" — at the top of
+  the section, and the buttons below it are simply disabled and carry no
+  explanation of their own. Write guides to match: point the reader at the
+  banner, and do NOT tell them to hover a greyed-out button for a tooltip. That
+  tooltip never appears (disabled buttons receive no pointer events), and gated
+  controls also stay out of the keyboard tab order, so "tab to the button to
+  hear why" is wrong too. The exceptions are controls inside a dialog, popover,
+  or dropdown, and a few leaf toolbars, which still carry their own screen-reader
+  reason — see `docs/ARCHITECTURE.md` for which shapes those are.
 
 ## Guide opening line (canonical)
 

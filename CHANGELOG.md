@@ -4,6 +4,35 @@ All notable public reference-release changes should be recorded here.
 
 ## Unreleased
 
+- **Every admin area now explains view-only access once, at the top, instead of
+  on each greyed-out button (#2160).** If your admin role can look at an area
+  but not change it, you now meet a single short banner when you arrive — "You
+  have view-only access to this area", followed by what specifically you cannot
+  change there and which permission would let you. The greyed-out buttons below
+  it no longer each carry their own hidden copy of that explanation. This is the
+  pattern Booking Policies adopted in #2142 (above), now applied across the
+  whole admin tree. **Nothing about who can do what has changed** — the same
+  people can edit the same things, every button is gated exactly as it was, and
+  no write path, price, or permission moved.
+
+  The reason for the change is that the old per-button explanation reached
+  almost nobody. A greyed-out button is skipped by the keyboard, so it was
+  attached to something most people never land on, and its hover tooltip never
+  appeared at all because greyed-out buttons do not respond to the mouse. Saying
+  it once, at the top, in the normal reading order, means a screen-reader user
+  hears it on arrival and a sighted user simply reads it.
+
+  **One honest limitation.** Greyed-out buttons are still skipped by the
+  keyboard — the banner tells you why the area is read-only, but you still
+  cannot tab onto a disabled button to ask it. Making those buttons focusable
+  was considered and deliberately not done: it would turn every gated control
+  into a clickable one that has to be individually stopped from saving, and the
+  risk of getting that wrong on a money or membership screen outweighed the
+  benefit. A few controls are also unchanged because no banner can cover them —
+  those inside a pop-up dialog or dropdown menu, and a handful of small toolbars
+  that are dropped into other pages — and they keep their own per-button
+  explanation. See `docs/ARCHITECTURE.md` and `docs/STYLE_GUIDE.md`.
+
 - **Secondary text in the member and admin app now actually looks secondary
   (#2145).** Small labels, hints, and footnotes are meant to sit a step below
   normal text, but inside the themed app they rendered in exactly the same
@@ -260,9 +289,9 @@ All notable public reference-release changes should be recorded here.
   paint, ahead of each section's "Loading…" state, and only its *content*
   appears when access resolves: a live region injected already-populated is
   silently dropped by some screen reader and browser combinations. The buttons
-  stay disabled exactly as before; only the explanation moved. This is scoped to
-  Booking Policies: every other admin surface keeps the per-button reason
-  unchanged, and widening the pattern is tracked in #2160.
+  stay disabled exactly as before; only the explanation moved. This was scoped
+  to Booking Policies; it has since been rolled across the whole admin tree
+  (#2160, below).
 
   Second, the group discount card's Save is no longer clickable while the form
   is unchanged. Opening **Edit** and clicking **Save** without touching a field

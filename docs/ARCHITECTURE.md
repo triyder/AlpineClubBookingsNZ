@@ -530,10 +530,10 @@ happened (#2143). That gate belongs at the FORM layer, through the hook's
 `isDirty` — routes deliberately keep no ad-hoc no-op comparison, so a direct API
 caller holding `area:edit` can still write an unchanged body. Edit affordances
 gate on the tri-state `useAdminAreaEditAccess(area)` through
-`ViewOnlyActionButton` / `AdminViewOnlyNotice` (so the resolving `undefined`
-window stays neutral), and the backing write route enforces the matching
-`area:edit` permission. Where a section renders an
-`AdminViewOnlySectionBanner` instead, its buttons pass `describeReason={false}`:
+`ViewOnlyActionButton` / `AdminViewOnlySectionBanner` (so the resolving
+`undefined` window stays neutral), and the backing write route enforces the
+matching `area:edit` permission. The section renders an
+`AdminViewOnlySectionBanner` and its buttons pass `describeReason={false}`:
 the view-only reason is then stated once, at the top of the section, in a
 permanently-mounted `role="status"` region, rather than on disabled buttons that
 are out of the tab order and whose `title` never fires at all (the shared
@@ -546,10 +546,40 @@ early return above that frame re-creates both defects it exists to prevent: a
 failed FIRST load mounts the section together with an already-populated alert in
 one commit, and because a scope change is itself a load it unmounts the
 `PolicyScopeSelect` the admin just operated, dropping keyboard focus to `<body>`
-for the duration of the round trip. That banner shape is
-adopted by the five Booking Policies sections only (#2142); the rest of the
-admin tree keeps `AdminViewOnlyNotice` plus the per-button reason, which stays
-the default. Module
+for the duration of the round trip. That banner shape started in the five
+Booking Policies sections (#2142) and is now the **house pattern across the
+whole admin tree** (#2160): every admin section that can host a banner renders
+one and opts its own controls out of the per-button reason.
+
+Two shapes are deliberately NOT converted, and they keep
+`ViewOnlyActionButton`'s default per-button reason (`describeReason` left at
+`true`) because no banner can cover them:
+
+- **Controls inside a dialog, sheet, popover, or dropdown menu.** These live in
+  a separate accessibility container — focus is trapped and the page behind is
+  commonly inert — so a banner rendered in the page body does not reach them.
+- **Leaf components with no section of their own**, which a parent drops into
+  someone else's layout (for example the member detail header's action toolbar,
+  and the booking capacity/exclusive hold controls). Nothing local proves an
+  ancestor renders a banner above them, so the reason stays on the control.
+
+The invariant that makes this safe is enforced mechanically by
+`src/components/admin/__tests__/view-only-banner-contract.test.ts`: a file may
+only use `describeReason={false}` if it also renders an
+`AdminViewOnlySectionBanner`. Coverage is asserted per FILE, because that is the
+only scope in which a reader — and the test — can see that the banner really
+does render above the control.
+
+**Known limitation, accepted by the owner as Decision 1 on #2160.** Gated
+controls keep the `disabled` attribute rather than moving to
+`aria-disabled="true"`, so they remain **out of the keyboard tab order**. The
+banner puts the reason in the reading order ahead of the controls; it does NOT
+make those controls focusable, and a keyboard user still cannot tab to a gated
+button to discover it. That was weighed against the cost of making every gated
+control clickable-but-neutralised (each call site's click path would need
+auditing so no write slips through) and the banner was judged the better trade.
+Revisiting it is a fresh owner decision, not a silent edit — the contract test
+asserts `disabled` is still what ships. Module
 toggles that share the strict `PUT /api/admin/modules` object (for example the
 magic-link and Google cards on `/admin/security`) must GET the fresh settings and
 merge only their own key before writing, so a sibling card's change is never
@@ -568,10 +598,11 @@ Edit → Save. That is deliberate for now — the owner decision on whether to s
 it lives in **#2162** — but under "binds new or modified sections" it is a real
 divergence, not an exemption, and it stays listed here until #2162 resolves.
 Reference:
-`src/components/admin/booking-policies/group-discount-section.tsx` — note that
-it now carries the section banner, so for the default per-button
-`AdminViewOnlyNotice` treatment look at any admin surface outside Booking
-Policies instead.
+`src/components/admin/booking-policies/group-discount-section.tsx` — it carries
+the section banner, which since #2160 is what every banner-hostable admin
+surface does. For the surviving per-button treatment, look at a control inside a
+dialog (`src/app/(admin)/admin/issue-reports/page.tsx`) or a leaf toolbar
+component (`src/components/admin/admin-capacity-hold-controls.tsx`).
 
 The draft/snapshot half of that pattern lives in the shared
 `useSectionEditState` hook (`src/hooks/use-section-edit-state.ts`), which new
