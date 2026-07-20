@@ -55,6 +55,20 @@ type ItemCodeMappingRow = {
   amountCents: number | null;
 };
 
+// Blue/green runtime-prep (#2130): name ONLY the columns buildResponseBody
+// reads so the deployed client stops SELECTing XeroItemCodeMapping.isMember
+// before the #2130 contract migration drops that legacy key column. Matches
+// ItemCodeMappingRow field-for-field, so the serialised response is unchanged.
+const ITEM_CODE_MAPPING_SELECT = {
+  category: true,
+  ageTier: true,
+  seasonType: true,
+  membershipTypeId: true,
+  entranceFeeCategory: true,
+  itemCode: true,
+  amountCents: true,
+} as const;
+
 /**
  * Serialise DB rows into the response shape. Hut fees are keyed by membership
  * type (#1930, E4); the frozen legacy isMember-keyed HUT_FEE rows are hidden
@@ -93,7 +107,9 @@ export async function GET() {
   });
   if (!guard.ok) return guard.response;
   try {
-    const rows = await prisma.xeroItemCodeMapping.findMany();
+    const rows = await prisma.xeroItemCodeMapping.findMany({
+      select: ITEM_CODE_MAPPING_SELECT,
+    });
     return NextResponse.json(buildResponseBody(rows));
   } catch (error) {
     logger.error({ err: error }, "Failed to fetch item code mappings");
@@ -329,7 +345,9 @@ export async function PUT(request: NextRequest) {
     });
 
     // Return the full updated set (reuse GET logic)
-    const rows = await prisma.xeroItemCodeMapping.findMany();
+    const rows = await prisma.xeroItemCodeMapping.findMany({
+      select: ITEM_CODE_MAPPING_SELECT,
+    });
     return NextResponse.json(buildResponseBody(rows));
   } catch (error) {
     if (

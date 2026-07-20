@@ -129,6 +129,32 @@ describe("Xero item-code mappings route", () => {
     expect(data.entranceFees.ADULT).toEqual({ itemCode: null, amountCents: 5000 });
   });
 
+  it("GET selects ONLY the consumed columns, never the doomed isMember column (#2130 runtime-prep)", async () => {
+    // Blue/green safety pin: the deployed client must stop naming
+    // XeroItemCodeMapping.isMember in generated SQL one release BEFORE the
+    // #2130 contract migration drops it. Guards against reintroducing a
+    // no-select findMany that names every column.
+    mockPrisma.xeroItemCodeMapping.findMany.mockResolvedValue([]);
+
+    await getItemCodeMappings();
+
+    expect(mockPrisma.xeroItemCodeMapping.findMany).toHaveBeenCalledWith({
+      select: {
+        category: true,
+        ageTier: true,
+        seasonType: true,
+        membershipTypeId: true,
+        entranceFeeCategory: true,
+        itemCode: true,
+        amountCents: true,
+      },
+    });
+    const args = mockPrisma.xeroItemCodeMapping.findMany.mock.calls[0][0] as {
+      select?: Record<string, unknown>;
+    };
+    expect(args.select).not.toHaveProperty("isMember");
+  });
+
   it("accepts entrance fee updates with a null item code", async () => {
     mockPrisma.xeroItemCodeMapping.findMany.mockResolvedValue([
       {
