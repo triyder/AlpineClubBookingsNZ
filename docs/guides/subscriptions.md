@@ -55,6 +55,14 @@ configurable — see [Subscription lockout](subscription-lockout.md)).
 > immediately agree with the booking gate. Rows that carry a real Xero invoice, a
 > charge/family coverage, or a manual mark-paid are never changed.
 >
+> The reconcile runs in the REQUIRED direction only: if you later reassign that
+> member back to a Not Required type before any invoice exists, the row keeps
+> showing *Not Invoiced* in the raw subscription history until the next Xero
+> membership sync re-derives it. All status badges, list filters, exports, and
+> the booking gate derive from the membership type and stay correct throughout —
+> the stale value is visible only in the history ledger and can never cause a
+> charge.
+>
 > **Before deploying #2149:** because membership type (not login role) now decides
 > liability, audit for any operational-role accounts (Admin/Lodge) that hold a
 > REQUIRED-type season assignment. The next Xero membership sync will begin
