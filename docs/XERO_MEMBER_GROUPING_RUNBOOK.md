@@ -202,7 +202,11 @@ Rules and guarantees:
 - The legacy `AgeTierXeroAcceptedContactGroup` table was **dropped** by the E13
   contract migration `20260720120000` (#1939) — no deployed code queried or
   joined it after E8. The `AgeTierSetting.xeroContactGroupId/Name` columns are
-  still **retained**: E13 deferred them because the currently-deployed runtime
-  still SELECTs them (`getAgeTierSettings` does a no-`select` `findMany`), so
-  dropping the columns is not blue/green safe until a runtime-prep release stops
-  selecting them; a follow-up contract step drops them then.
+  still **present but now drop-eligible**. E13 deferred them because the
+  deployed runtime still SELECTed them; the #2130 runtime-prep release closed
+  that gap in two steps — first narrowing the reads (`getAgeTierSettings`), then
+  the writes (the age-tier settings route, setup wizard, config self-heal and
+  seed upserts), since Prisma emits an implicit `RETURNING` over every scalar
+  column of an unnarrowed `create`/`update`/`upsert`. No deployed runtime names
+  the columns in SQL any more, so the follow-up contract migration can drop them
+  in the next release.

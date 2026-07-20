@@ -4,6 +4,29 @@ All notable public reference-release changes should be recorded here.
 
 ## Unreleased
 
+- **Blue/green runtime-prep for the legacy Xero column drops, write half
+  (#2130).** `v0.12.2` narrowed the two READ paths (`getHutFeeItemCodeMap`,
+  `getAgeTierSettings`) with an explicit `select` so the deployed Prisma client
+  stopped naming `XeroItemCodeMapping.isMember` and
+  `AgeTierSetting.xeroContactGroupId`/`xeroContactGroupName`. That was
+  incomplete: Prisma also emits an implicit `RETURNING` over **every** scalar
+  column of a `create`/`update`/`upsert` unless a `select` narrows it, so the
+  unnarrowed WRITE paths still named the doomed columns and a draining old
+  colour would keep issuing that SQL. Every mutation on those two models is now
+  narrowed — the admin item-code-mappings route, the admin age-tier-settings
+  route, config-transfer's Xero import, the setup wizard, and the seed — each to
+  the minimal projection its (discarded) result needs. Regression pins assert
+  the `select` on each mutation. The raw-SQL audit script
+  `audit-access-role-membership-cleanup.ts` also stopped naming the age-tier
+  Xero-group columns; its `managedAgeTierSettings` metric and paired
+  "Managed Xero age-tier rules backfilled" check were removed, because the
+  expected value came from the very column being dropped (it was the backfill's
+  own input, so it cannot be re-sourced from `XeroContactGroupRule` — the
+  "before" snapshot predates that table). **No schema change and no migration in
+  this release**: it is runtime-prep only. After it deploys, `isMember` (with its
+  old `@@unique`) and the two `xeroContactGroup*` columns are fully drop-eligible
+  by the next release's contract migration.
+
 ## 0.12.2 - 2026-07-20
 
 - Release classification: patch public reference release. As with `v0.12.1`, the
