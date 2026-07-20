@@ -387,11 +387,20 @@ menu.
   **Hut fees** toggle, joining fees the **Joining fees** toggle, and annual fees
   their own dedicated **Annual membership fees** double-opt-in (which also
   governs the `{{membership-types}}` alias); annual fees additionally require
-  each type's public-listing flag. The fee embeds accept comma-separated
-  parameters after a colon (`lodge=`, `type=`, `group-by=`, plus a bare lodge
-  slug for `{{hut-fees}}` back-compat; `by-age` ≡ `group-by=age`;
+  each type's public-listing flag. `{{hut-fees}}` renders a **table** per lodge
+  × season — age tiers down the side, one nightly-rate column per publicly
+  listed membership type that carries rates for that season, with
+  identically-priced types collapsed into a single shared column headed by their
+  names (#2129). Publicly listing at least two membership types is what makes
+  the table worth publishing; the setup-readiness **Seasons And Rates** step
+  warns when a season would show fewer than two columns. The fee embeds accept
+  comma-separated parameters after a colon (`lodge=`, `type=`, `group-by=`, plus
+  a bare lodge slug for `{{hut-fees}}` back-compat; `by-age` ≡ `group-by=age`;
   `{{annual-fees:components}}` shows the per-line breakdown); the policy embeds
-  accept `:lodge-slug`. An unknown key, unlisted `type=`, or inactive lodge slug
+  accept `:lodge-slug`. For `{{hut-fees}}`, `type=` filters the table to that
+  one membership type's column, `group-by=type` splits a season into one table
+  per column, and `group-by=age` transposes the table so membership types are
+  the rows. An unknown key, unlisted `type=`, or inactive lodge slug
   renders no data rather than another group's or lodge's fallback. See
   `docs/PUBLIC_PAGE_CONTENT_TOKENS.md` for the full grammar. Legal and help-copy pages can also use text
   tokens `{{club-name}}`, `{{currency}}`, `{{lodge-capacity}}`,

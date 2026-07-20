@@ -87,10 +87,12 @@ as a red flag and check the release notes before deploying.
 ## Unreleased
 
 The unreleased range **closes the config-transfer import compatibility window
-for old bundles** (#2131). There is **no migration and no schema change**, so
-the deploy itself needs no special window: any deploy window is fine, and the
-old colour is unaffected. The operator impact is entirely about **archived
-configuration bundles**.
+for old bundles** (#2131) and **re-sources the public `{{hut-fees}}` embed onto
+the authoritative per-membership-type rate table** (#2129 step 1). There is
+**no migration and no schema change**, so the deploy itself needs no special
+window: any deploy window is fine, and the old colour is unaffected. The
+operator impact is about **archived configuration bundles** and, if you publish
+hut fees, about which membership types are flagged **Publicly listed**.
 
 ### Before deployment
 
@@ -124,10 +126,23 @@ configuration bundles**.
    `membershipTypeKey` is now a blocking row error instead of writing a keyless
    mapping the runtime never reads. Fill in the column (the exporter always
    does) before re-importing a hand-edited bundle.
+3. **Check your public hut-fee table if you use the `{{hut-fees}}` embed
+   (#2129).** The embed now reads the authoritative per-membership-type rate
+   table instead of the frozen legacy member/non-member one, and it renders
+   **one column per publicly-listed membership type** (types priced identically
+   share a column). Which columns appear is now controlled entirely by the
+   **Publicly listed** flag on each membership type — the same flag the joining-
+   fee and annual-fee embeds already use. If you have not set that flag on the
+   types you advertise, the table can collapse to a single column and quietly
+   stop showing non-member pricing. Set **Admin → Membership Types → Publicly
+   listed** on every type you want on the public rate card *before* upgrading,
+   then check the page. Setup readiness also warns on **Seasons And Rates** when
+   the embed is enabled but fewer than two types would produce a column.
 
 **Rollback boundary.** No schema change, so there is nothing to roll back at the
 database level: reverting to the previous colour simply restores the old
-importer, which still accepts legacy bundles.
+importer, which still accepts legacy bundles, and the previous `{{hut-fees}}`
+rendering.
 
 ---
 
@@ -180,6 +195,13 @@ changelog section before starting.
      `{{hut-fees}}` embed), `MembershipTypeAgeTier`, and the
      `XeroItemCodeMapping.isMember` / `AgeTierSetting.xeroContactGroup*` columns
      — follow-ups #2129/#2130/#2131.
+     *(Superseded after this release: #2129 step 1 re-sourced the public
+     `{{hut-fees}}` embed onto `MembershipTypeSeasonRate`, removing the last
+     **application-runtime** `SeasonRate` reader — see the following release's
+     entry. One reader and two writers still remain in seed code
+     (`e2e/setup/seed-second-lodge.ts:202` and `:218-224`, `prisma/seed.ts:208-227`)
+     and must be removed in the same PR as the DROP migration. The sentence above
+     describes the position as at v0.12.2.)*
 3. **The two additive migrations need no special handling.**
    `20260719150000_add_post_login_landing` adds a `PostLoginLanding` enum plus a
    nullable `Member.postLoginLanding` column with no default (metadata-only

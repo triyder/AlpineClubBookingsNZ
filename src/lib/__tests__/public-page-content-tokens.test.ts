@@ -195,35 +195,292 @@ describe("public PageContent token view models", () => {
     ]);
   });
 
-  it("groups public hut fees per season with member/non-member rows in age order (#1933)", async () => {
-    mocks.lodges.mockResolvedValue([{ id: "l1", name: "River Lodge", slug: "river" }]);
-    mocks.seasons.mockResolvedValue([{ lodgeId: "l1", name: "Winter", startDate: new Date("2026-06-01"), endDate: new Date("2026-10-01"), rates: [
-      { ageTier: "ADULT", isMember: true, pricePerNightCents: 4000 },
-      { ageTier: "CHILD", isMember: true, pricePerNightCents: 2000 },
-    ] }]);
-    mocks.ageTiers.mockResolvedValue([
-      { tier: "CHILD", label: "Child (5–12)", sortOrder: 1 },
-      { tier: "ADULT", label: "Adult (18+)", sortOrder: 2 },
-    ]);
-    const groups = await loadPublicHutFees();
-    expect(groups).toHaveLength(1);
-    expect(groups[0]?.heading).toContain("River Lodge — Winter");
-    expect(groups[0]?.heading).toContain("nightly rates");
-    expect(groups[0]?.rows.map((row) => row.label)).toEqual(["Child (5–12)", "Adult (18+)"]);
-    expect(groups[0]?.rows.every((row) => row.audience === "Member")).toBe(true);
+  // ---------------------------------------------------------------------
+  // Hut fees (#2129): sourced from MembershipTypeSeasonRate, rendered as a
+  // real table of age tiers x collapsed membership-type rate columns.
+  // ---------------------------------------------------------------------
+
+  const hutType = (
+    id: string,
+    name: string,
+    sortOrder: number,
+    ageGroupsApply = true,
+  ) => ({ id, name, sortOrder, ageGroupsApply });
+
+  const hutSeason = (
+    rates: Array<{ ageTier: string | null; pricePerNightCents: number; membershipType: ReturnType<typeof hutType> }>,
+    overrides: Record<string, unknown> = {},
+  ) => ({
+    lodgeId: "l1",
+    name: "Winter",
+    startDate: new Date("2026-06-01"),
+    endDate: new Date("2026-10-01"),
+    membershipTypeRates: rates,
+    ...overrides,
   });
 
-  it("splits hut-fee seasons by audience when group-by=type (#1933)", async () => {
+  const twoAgeTiers = [
+    { tier: "CHILD", label: "Child (5–12)", sortOrder: 1 },
+    { tier: "ADULT", label: "Adult (18+)", sortOrder: 2 },
+  ];
+
+  it("tabulates public hut fees per season as age tiers x membership-type columns (#2129)", async () => {
+    const full = hutType("t-full", "Full Member", 1);
+    const nonMember = hutType("t-non", "Non-member", 9);
     mocks.lodges.mockResolvedValue([{ id: "l1", name: "River Lodge", slug: "river" }]);
-    mocks.seasons.mockResolvedValue([{ lodgeId: "l1", name: "Winter", startDate: new Date("2026-06-01"), endDate: new Date("2026-10-01"), rates: [
-      { ageTier: "ADULT", isMember: true, pricePerNightCents: 4000 },
-      { ageTier: "ADULT", isMember: false, pricePerNightCents: 6000 },
-    ] }]);
-    mocks.ageTiers.mockResolvedValue([{ tier: "ADULT", label: "Adult", sortOrder: 2 }]);
-    const groups = await loadPublicHutFees(undefined, { groupBy: new Set(["type"]) });
-    expect(groups.map((group) => group.heading.endsWith("Member"))).toContain(true);
-    expect(groups.map((group) => group.heading.endsWith("Non-member"))).toContain(true);
-    expect(groups.every((group) => group.rows.every((row) => row.audience === undefined))).toBe(true);
+    mocks.seasons.mockResolvedValue([hutSeason([
+      { ageTier: "ADULT", pricePerNightCents: 4000, membershipType: full },
+      { ageTier: "CHILD", pricePerNightCents: 2000, membershipType: full },
+      { ageTier: "ADULT", pricePerNightCents: 6000, membershipType: nonMember },
+      { ageTier: "CHILD", pricePerNightCents: 3000, membershipType: nonMember },
+    ])]);
+    mocks.ageTiers.mockResolvedValue(twoAgeTiers);
+    const tables = await loadPublicHutFees();
+    expect(tables).toHaveLength(1);
+    expect(tables[0]?.heading).toContain("River Lodge — Winter");
+    expect(tables[0]?.heading).toContain("nightly rates");
+    expect(tables[0]?.rowHeading).toBe("Age");
+    expect(tables[0]?.columns).toEqual(["Full Member", "Non-member"]);
+    expect(tables[0]?.rows).toEqual([
+      { label: "Child (5–12)", cells: [
+        { amountCents: 2000, label: "$20.00" },
+        { amountCents: 3000, label: "$30.00" },
+      ] },
+      { label: "Adult (18+)", cells: [
+        { amountCents: 4000, label: "$40.00" },
+        { amountCents: 6000, label: "$60.00" },
+      ] },
+    ]);
+    // Only publicly-listed active types may earn a column.
+    expect(mocks.seasons).toHaveBeenCalledWith(expect.objectContaining({
+      select: expect.objectContaining({
+        membershipTypeRates: expect.objectContaining({
+          where: { membershipType: { isActive: true, publiclyListed: true } },
+        }),
+      }),
+    }));
+  });
+
+  it("never leaks a non-publicly-listed type's name or price into the table (#2129)", async () => {
+    // The entire exposure story for this embed rests on ONE nested relation
+    // filter. Rather than assert the filter object's shape (which passes even
+    // if the filter is semantically wrong), drive the mock with a dataset that
+    // contains a private type and have it APPLY the where-clause the loader
+    // actually sent. If the loader ever stops filtering, or filters on the
+    // wrong field, the private rows flow through and this fails.
+    const listed = { id: "t-full", name: "Full Member", sortOrder: 1, ageGroupsApply: true };
+    const secret = { id: "t-staff", name: "Staff Comp Rate", sortOrder: 2, ageGroupsApply: true };
+    const publiclyListedById: Record<string, boolean> = { "t-full": true, "t-staff": false };
+    const allRates = [
+      { ageTier: "ADULT", pricePerNightCents: 4000, membershipType: listed },
+      { ageTier: "ADULT", pricePerNightCents: 111, membershipType: secret },
+      { ageTier: "CHILD", pricePerNightCents: 2000, membershipType: listed },
+      { ageTier: "CHILD", pricePerNightCents: 222, membershipType: secret },
+    ];
+    mocks.lodges.mockResolvedValue([{ id: "l1", name: "River Lodge", slug: "river" }]);
+    mocks.seasons.mockImplementation(({ select }: { select: Record<string, { where?: { membershipType?: { isActive?: boolean; publiclyListed?: boolean } } }> }) => {
+      const where = select.membershipTypeRates?.where?.membershipType ?? {};
+      return Promise.resolve([
+        hutSeason(
+          allRates.filter((rate) =>
+            where.publiclyListed === true
+              ? publiclyListedById[rate.membershipType.id] === true
+              : true,
+          ),
+        ),
+      ]);
+    });
+    mocks.ageTiers.mockResolvedValue(twoAgeTiers);
+    const tables = await loadPublicHutFees();
+
+    expect(tables[0]?.columns).toEqual(["Full Member"]);
+    const serialised = JSON.stringify(tables);
+    expect(serialised).not.toContain("Staff Comp Rate");
+    expect(serialised).not.toContain("t-staff");
+    // The prices themselves must not surface anywhere either — not as a stray
+    // cell, not folded into another type's column.
+    expect(serialised).not.toContain("111");
+    expect(serialised).not.toContain("222");
+    expect(serialised).not.toContain("$1.11");
+    expect(serialised).not.toContain("$2.22");
+  });
+
+  it("renders a genuinely free $0.00 rate and an absent rate differently (#2129)", async () => {
+    // Zero is a real price; absent is not. Both live in the SAME row here, so a
+    // regression that conflated them (for example flattening cells to
+    // Array<number | null>, making 0 falsy) turns a free infant night into "no
+    // rate" and cannot hide behind a passing sibling assertion.
+    const full = hutType("t-full", "Full Member", 1);
+    const nonMember = hutType("t-non", "Non-member", 9);
+    mocks.lodges.mockResolvedValue([{ id: "l1", name: "River Lodge", slug: "river" }]);
+    mocks.seasons.mockResolvedValue([hutSeason([
+      { ageTier: "CHILD", pricePerNightCents: 0, membershipType: full },
+      // Non-member carries no CHILD row at all -> that cell must be null.
+      { ageTier: "ADULT", pricePerNightCents: 4000, membershipType: full },
+      { ageTier: "ADULT", pricePerNightCents: 6000, membershipType: nonMember },
+    ])]);
+    mocks.ageTiers.mockResolvedValue(twoAgeTiers);
+    const tables = await loadPublicHutFees();
+    expect(tables[0]?.rows).toEqual([
+      { label: "Child (5–12)", cells: [{ amountCents: 0, label: "$0.00" }, null] },
+      { label: "Adult (18+)", cells: [
+        { amountCents: 4000, label: "$40.00" },
+        { amountCents: 6000, label: "$60.00" },
+      ] },
+    ]);
+  });
+
+  it("collapses identically-priced membership types into one shared column (#2129)", async () => {
+    const full = hutType("t-full", "Full Member", 1);
+    const life = hutType("t-life", "Life", 2);
+    const family = hutType("t-family", "Family", 3);
+    const nonMember = hutType("t-non", "Non-member", 9);
+    mocks.lodges.mockResolvedValue([{ id: "l1", name: "River Lodge", slug: "river" }]);
+    mocks.seasons.mockResolvedValue([hutSeason([
+      { ageTier: "ADULT", pricePerNightCents: 4000, membershipType: full },
+      { ageTier: "ADULT", pricePerNightCents: 4000, membershipType: life },
+      { ageTier: "ADULT", pricePerNightCents: 4000, membershipType: family },
+      { ageTier: "ADULT", pricePerNightCents: 6000, membershipType: nonMember },
+    ])]);
+    mocks.ageTiers.mockResolvedValue(twoAgeTiers);
+    const tables = await loadPublicHutFees();
+    expect(tables[0]?.columns).toEqual(["Full Member, Life, Family", "Non-member"]);
+    expect(tables[0]?.rows).toEqual([
+      { label: "Adult (18+)", cells: [
+        { amountCents: 4000, label: "$40.00" },
+        { amountCents: 6000, label: "$60.00" },
+      ] },
+    ]);
+  });
+
+  it("splits a repriced type out of its collapsed column with no code change (#2129)", async () => {
+    const full = hutType("t-full", "Full Member", 1);
+    const life = hutType("t-life", "Life", 2);
+    const family = hutType("t-family", "Family", 3);
+    mocks.lodges.mockResolvedValue([{ id: "l1", name: "River Lodge", slug: "river" }]);
+    mocks.seasons.mockResolvedValue([hutSeason([
+      { ageTier: "ADULT", pricePerNightCents: 4000, membershipType: full },
+      // Life has been repriced; Full and Family still match each other.
+      { ageTier: "ADULT", pricePerNightCents: 4500, membershipType: life },
+      { ageTier: "ADULT", pricePerNightCents: 4000, membershipType: family },
+    ])]);
+    mocks.ageTiers.mockResolvedValue(twoAgeTiers);
+    const tables = await loadPublicHutFees();
+    expect(tables[0]?.columns).toEqual(["Full Member, Family", "Life"]);
+    expect(tables[0]?.rows[0]?.cells).toEqual([
+      { amountCents: 4000, label: "$40.00" },
+      { amountCents: 4500, label: "$45.00" },
+    ]);
+  });
+
+  it("orders columns by the lowest sortOrder of the types sharing them (#2129)", async () => {
+    mocks.lodges.mockResolvedValue([{ id: "l1", name: "River Lodge", slug: "river" }]);
+    mocks.seasons.mockResolvedValue([hutSeason([
+      { ageTier: "ADULT", pricePerNightCents: 6000, membershipType: hutType("t-non", "Non-member", 9) },
+      { ageTier: "ADULT", pricePerNightCents: 5000, membershipType: hutType("t-assoc", "Associate", 5) },
+      // Collapses with Associate but carries the lower sortOrder, so the
+      // shared column sorts first and is headed "Full Member, Associate".
+      { ageTier: "ADULT", pricePerNightCents: 5000, membershipType: hutType("t-full", "Full Member", 1) },
+    ])]);
+    mocks.ageTiers.mockResolvedValue(twoAgeTiers);
+    const tables = await loadPublicHutFees();
+    expect(tables[0]?.columns).toEqual(["Full Member, Associate", "Non-member"]);
+  });
+
+  it("renders a flat (NULL age tier) type as a single All ages row and dashes missing cells (#2129)", async () => {
+    mocks.lodges.mockResolvedValue([{ id: "l1", name: "River Lodge", slug: "river" }]);
+    mocks.seasons.mockResolvedValue([hutSeason([
+      { ageTier: "ADULT", pricePerNightCents: 4000, membershipType: hutType("t-full", "Full Member", 1) },
+      { ageTier: null, pricePerNightCents: 9000, membershipType: hutType("t-school", "School Group", 4, false) },
+    ])]);
+    mocks.ageTiers.mockResolvedValue(twoAgeTiers);
+    const tables = await loadPublicHutFees();
+    expect(tables[0]?.columns).toEqual(["Full Member", "School Group"]);
+    expect(tables[0]?.rows).toEqual([
+      { label: "Adult (18+)", cells: [{ amountCents: 4000, label: "$40.00" }, null] },
+      { label: "All ages", cells: [null, { amountCents: 9000, label: "$90.00" }] },
+    ]);
+  });
+
+  it("folds stray per-tier rows onto one flat rate when ageGroupsApply is false (#2129)", async () => {
+    mocks.lodges.mockResolvedValue([{ id: "l1", name: "River Lodge", slug: "river" }]);
+    mocks.seasons.mockResolvedValue([hutSeason([
+      { ageTier: "ADULT", pricePerNightCents: 9000, membershipType: hutType("t-school", "School Group", 4, false) },
+      { ageTier: "CHILD", pricePerNightCents: 1000, membershipType: hutType("t-school", "School Group", 4, false) },
+    ])]);
+    mocks.ageTiers.mockResolvedValue(twoAgeTiers);
+    const tables = await loadPublicHutFees();
+    expect(tables[0]?.rows).toEqual([
+      { label: "All ages", cells: [{ amountCents: 9000, label: "$90.00" }] },
+    ]);
+  });
+
+  it("filters hut fees to one membership type's column when type= is given (#2129)", async () => {
+    mocks.lodges.mockResolvedValue([{ id: "l1", name: "River Lodge", slug: "river" }]);
+    mocks.membershipTypeFindFirst.mockResolvedValue({ id: "t-full" });
+    mocks.seasons.mockResolvedValue([hutSeason([
+      { ageTier: "ADULT", pricePerNightCents: 4000, membershipType: hutType("t-full", "Full Member", 1) },
+    ])]);
+    mocks.ageTiers.mockResolvedValue(twoAgeTiers);
+    const tables = await loadPublicHutFees(undefined, { typeKey: "full" });
+    expect(tables[0]?.columns).toEqual(["Full Member"]);
+    // The resolved type id is pushed into the rate query — type= now genuinely
+    // filters rather than only validating (the #2129 semantic change).
+    expect(mocks.seasons).toHaveBeenCalledWith(expect.objectContaining({
+      select: expect.objectContaining({
+        membershipTypeRates: expect.objectContaining({
+          where: expect.objectContaining({ membershipTypeId: "t-full" }),
+        }),
+      }),
+    }));
+  });
+
+  it("fails closed for an unknown or unlisted hut-fee type key (#2129)", async () => {
+    mocks.lodges.mockResolvedValue([{ id: "l1", name: "River Lodge", slug: "river" }]);
+    mocks.membershipTypeFindFirst.mockResolvedValue(null);
+    await expect(loadPublicHutFees(undefined, { typeKey: "NOT_LISTED" })).resolves.toEqual([]);
+    expect(mocks.seasons).not.toHaveBeenCalled();
+  });
+
+  it("splits a hut-fee season into one table per membership-type column when group-by=type (#2129)", async () => {
+    mocks.lodges.mockResolvedValue([{ id: "l1", name: "River Lodge", slug: "river" }]);
+    mocks.seasons.mockResolvedValue([hutSeason([
+      { ageTier: "ADULT", pricePerNightCents: 4000, membershipType: hutType("t-full", "Full Member", 1) },
+      { ageTier: "ADULT", pricePerNightCents: 6000, membershipType: hutType("t-non", "Non-member", 9) },
+    ])]);
+    mocks.ageTiers.mockResolvedValue(twoAgeTiers);
+    const tables = await loadPublicHutFees(undefined, { groupBy: new Set(["type"]) });
+    expect(tables).toHaveLength(2);
+    expect(tables[0]?.heading.endsWith("· Full Member")).toBe(true);
+    expect(tables[1]?.heading.endsWith("· Non-member")).toBe(true);
+    expect(tables.map((table) => table.columns)).toEqual([["Full Member"], ["Non-member"]]);
+  });
+
+  it("transposes the hut-fee table when group-by=age (#2129)", async () => {
+    mocks.lodges.mockResolvedValue([{ id: "l1", name: "River Lodge", slug: "river" }]);
+    mocks.seasons.mockResolvedValue([hutSeason([
+      { ageTier: "ADULT", pricePerNightCents: 4000, membershipType: hutType("t-full", "Full Member", 1) },
+      { ageTier: "CHILD", pricePerNightCents: 2000, membershipType: hutType("t-full", "Full Member", 1) },
+      { ageTier: "ADULT", pricePerNightCents: 6000, membershipType: hutType("t-non", "Non-member", 9) },
+    ])]);
+    mocks.ageTiers.mockResolvedValue(twoAgeTiers);
+    const tables = await loadPublicHutFees(undefined, { groupBy: new Set(["age"]) });
+    expect(tables[0]?.rowHeading).toBe("Membership type");
+    expect(tables[0]?.columns).toEqual(["Child (5–12)", "Adult (18+)"]);
+    expect(tables[0]?.rows).toEqual([
+      { label: "Full Member", cells: [
+        { amountCents: 2000, label: "$20.00" },
+        { amountCents: 4000, label: "$40.00" },
+      ] },
+      { label: "Non-member", cells: [null, { amountCents: 6000, label: "$60.00" }] },
+    ]);
+  });
+
+  it("omits a season whose publicly-listed types carry no rates (#2129)", async () => {
+    mocks.lodges.mockResolvedValue([{ id: "l1", name: "River Lodge", slug: "river" }]);
+    mocks.seasons.mockResolvedValue([hutSeason([])]);
+    mocks.ageTiers.mockResolvedValue(twoAgeTiers);
+    await expect(loadPublicHutFees()).resolves.toEqual([]);
   });
 
   it("summarizes only customer-facing booking policy fields", async () => {

@@ -23,6 +23,61 @@ All notable public reference-release changes should be recorded here.
   change. Operator actions: `docs/UPGRADING.md` → Unreleased. See
   `docs/config-transfer/README.md`.
 
+- **Public `{{hut-fees}}` embed now reads the authoritative per-membership-type
+  rates (#2129, step 1).** The embed was the last reader of the frozen
+  member/non-member `SeasonRate` table, and it presented a definition list of
+  "Age tier — Member/Non-member" rows. It now reads
+  `MembershipTypeSeasonRate` — the same rows that actually price a booking — and
+  renders a **real table** per lodge × season: age tiers down the side,
+  membership-type rate columns across the top. A membership type earns a column
+  only when it is active, **publicly listed**, and carries rates for that
+  season; types priced identically collapse into one shared column headed by
+  their names (for example "Full Member, Life, Family"), and split back out
+  automatically the moment one of them is repriced. Where a column is shared,
+  the table says so in one line, so a multi-name heading does not read as a
+  rendering glitch. Wide tables scroll inside their own container so the page
+  never scrolls sideways; that scroller is keyboard-focusable and named, each
+  table is named from its own heading, and a cell with no rate is announced as
+  "No rate" rather than as a silent em dash.
+
+  Token semantics changed with it: `type=` now genuinely **filters** to one
+  membership type's column (it previously only validated that the key existed),
+  `group-by=type` splits a season into one table per rate column (it previously
+  split into Member and Non-member groups), and `group-by=age` **orients** the
+  table so membership types are the rows and age tiers the columns (it
+  previously did nothing). Note that `group-by=age` here *orients* one table,
+  whereas `{{joining-fees}}`'s `by-age` *groups* into one block per tier — the
+  two are deliberately different, and `docs/PUBLIC_PAGE_CONTENT_TOKENS.md` says
+  why. Unknown lodge slugs and unknown or unlisted `type=` values still fail
+  closed to the no-information state. The setup-readiness **Seasons And Rates**
+  step now warns when the embed is switched on, its token is on a published
+  page, and a season would publish fewer than two rate columns.
+
+  Also fixed along the way: the lodge-setup **copy seasons** action had been
+  posting the legacy `rates` key, which the season API stopped accepting at the
+  E4 re-key, so every copy silently failed validation. It now posts
+  `membershipTypeRates` and works again.
+
+  No schema change: `SeasonRate` is untouched, and this step removed its last
+  **application-runtime** reader (the embed; the admin season routes and the
+  lodge-setup copy flow also stopped selecting it). The table is **not**
+  unreferenced, though — **one reader and two writers remain**, all in seed code
+  outside `src/`:
+
+  - `e2e/setup/seed-second-lodge.ts:202` — READ, `include: { rates: true }`
+  - `e2e/setup/seed-second-lodge.ts:218-224` — WRITE, `rates: { create: … }`
+  - `prisma/seed.ts:208-227` — WRITE, `createMissingSeasonRates` →
+    `prisma.seasonRate.upsert`
+
+  So #2129 step 2 (Release B) must, **in the same PR as the DROP migration**,
+  strip both the `rates` include and the `rates: { create: … }` block from
+  `e2e/setup/seed-second-lodge.ts` **and** delete `createMissingSeasonRates`
+  from `prisma/seed.ts`. Skipping either breaks the build twice over:
+  `e2e/**` sits inside `tsconfig.json`'s `**/*.ts` include and is not excluded,
+  so `npm run typecheck` fails on both seeder lines; and
+  `scripts/e2e-stack.sh:92` runs that seeder under `E2E_MULTI_LODGE=1`, so the
+  required **E2E multi-lodge** branch-protection check fails at seed time.
+
 - **Theming follow-ups: categorical teal on tokens, and a themed /finance body
   (#2137).** Three related cleanups to the theme-token system. First, the
   categorical teal that was still written as literal Tailwind utilities now
