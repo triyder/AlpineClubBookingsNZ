@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   buildMockXeroConsentUrl,
   getXeroMockApiOrigin,
@@ -12,7 +12,6 @@ import {
 describe("xero-mock-endpoint production inertness", () => {
   const originalOrigin = process.env.XERO_MOCK_API_ORIGIN;
   const originalNextAuth = process.env.NEXTAUTH_URL;
-  const originalNodeEnv = process.env.NODE_ENV;
   const originalRuntimeRole = process.env.APP_RUNTIME_ROLE;
 
   beforeEach(() => {
@@ -24,8 +23,7 @@ describe("xero-mock-endpoint production inertness", () => {
     else process.env.XERO_MOCK_API_ORIGIN = originalOrigin;
     if (originalNextAuth === undefined) delete process.env.NEXTAUTH_URL;
     else process.env.NEXTAUTH_URL = originalNextAuth;
-    if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
-    else process.env.NODE_ENV = originalNodeEnv;
+    vi.unstubAllEnvs();
     if (originalRuntimeRole === undefined) delete process.env.APP_RUNTIME_ROLE;
     else process.env.APP_RUNTIME_ROLE = originalRuntimeRole;
   });
@@ -61,7 +59,7 @@ describe("xero-mock-endpoint production inertness", () => {
   // production build whose runtime role is NOT the E2E staging harness.
   it("stays inert in a real production runtime even with the origin set", () => {
     process.env.XERO_MOCK_API_ORIGIN = "http://localhost:3000";
-    process.env.NODE_ENV = "production";
+    vi.stubEnv("NODE_ENV", "production");
     process.env.APP_RUNTIME_ROLE = "web-blue";
 
     expect(isRealProductionRuntime()).toBe(true);
@@ -71,7 +69,7 @@ describe("xero-mock-endpoint production inertness", () => {
 
   it("stays inert in a production build with no runtime role set", () => {
     process.env.XERO_MOCK_API_ORIGIN = "http://localhost:3000";
-    process.env.NODE_ENV = "production";
+    vi.stubEnv("NODE_ENV", "production");
     delete process.env.APP_RUNTIME_ROLE;
 
     expect(getXeroMockApiOrigin()).toBeUndefined();
@@ -82,7 +80,7 @@ describe("xero-mock-endpoint production inertness", () => {
     // The E2E stack legitimately runs the production build with the mock on;
     // APP_RUNTIME_ROLE=staging distinguishes it from a real deployment.
     process.env.XERO_MOCK_API_ORIGIN = "http://localhost:3000";
-    process.env.NODE_ENV = "production";
+    vi.stubEnv("NODE_ENV", "production");
     process.env.APP_RUNTIME_ROLE = "staging";
 
     expect(isRealProductionRuntime()).toBe(false);
@@ -92,7 +90,7 @@ describe("xero-mock-endpoint production inertness", () => {
 
   it("is active for a non-production runtime with the origin set", () => {
     process.env.XERO_MOCK_API_ORIGIN = "http://localhost:3000";
-    process.env.NODE_ENV = "test";
+    vi.stubEnv("NODE_ENV", "test");
     delete process.env.APP_RUNTIME_ROLE;
 
     expect(isRealProductionRuntime()).toBe(false);
