@@ -361,6 +361,150 @@ function bannerRenderSites(ast: ts.SourceFile): ts.Node[] {
   return sites;
 }
 
+/**
+ * The banner's opening tag behind a render site: the tag itself, or the tag
+ * inside the initializer of the hoisted const the site names. Used to read the
+ * vouching banner's own `canEdit`, which the render site alone does not show.
+ */
+function bannerTagOf(ast: ts.SourceFile, site: ts.Node): JsxTag | null {
+  if (isJsxTag(site)) return site;
+  if (
+    !ts.isJsxExpression(site) ||
+    !site.expression ||
+    !ts.isIdentifier(site.expression)
+  ) {
+    return null;
+  }
+  const name = site.expression.text;
+  let found: JsxTag | null = null;
+  eachNode(ast, (node) => {
+    if (found) return;
+    if (!ts.isVariableDeclaration(node) || !node.initializer) return;
+    if (!ts.isIdentifier(node.name) || node.name.text !== name) return;
+    const init = unwrapParens(node.initializer);
+    if (ts.isJsxElement(init) && tagName(init.openingElement) === BANNER) {
+      found = init.openingElement;
+    } else if (ts.isJsxSelfClosingElement(init) && tagName(init) === BANNER) {
+      found = init;
+    }
+  });
+  return found;
+}
+
+/**
+ * Every place `ast` MOUNTS the banner, for the live-region check below.
+ *
+ * Deliberately more permissive than `bannerRenderSites`, and the difference is
+ * the point. That helper answers "does this parent provably RENDER a banner
+ * above the child it vouches for", so it insists on a bare banner element and
+ * refuses a conditional const. This one answers a different question — "is the
+ * same wrapper mounted in every branch this component can return" — and for
+ * that:
+ *
+ *   - a const that wraps the banner in a layout element
+ *     (`const b = <div id={…}><AdminViewOnlySectionBanner …/></div>`) counts.
+ *     Four panels use that form to hang `aria-describedby` off the wrapper;
+ *     refusing it would flag the files that get this right.
+ *   - a const whose initializer is conditional
+ *     (`renderViewOnlyBanner ? <Banner …/> : null`) counts too. If it resolves
+ *     to null, NO branch shows a banner, which is consistent — the defect this
+ *     guards is a banner that appears in some branches and not others.
+ *
+ * Neither relaxation touches the vouching checks, which keep the strict helper.
+ */
+function bannerMountSites(ast: ts.SourceFile): ts.Node[] {
+  const hoisted = new Set<string>();
+  eachNode(ast, (node) => {
+    if (!ts.isVariableDeclaration(node) || !node.initializer) return;
+    if (!ts.isIdentifier(node.name)) return;
+    let wrapsBanner = false;
+    eachNode(node.initializer, (inner) => {
+      if (isJsxTag(inner) && tagName(inner) === BANNER) wrapsBanner = true;
+    });
+    if (wrapsBanner) hoisted.add(node.name.text);
+  });
+
+  const sites: ts.Node[] = [];
+  eachNode(ast, (node) => {
+    if (isJsxTag(node) && tagName(node) === BANNER) {
+      sites.push(node);
+      return;
+    }
+    if (
+      ts.isJsxExpression(node) &&
+      node.expression &&
+      ts.isIdentifier(node.expression) &&
+      hoisted.has(node.expression.text)
+    ) {
+      sites.push(node);
+    }
+  });
+  return sites;
+}
+
+/** The nearest enclosing function of any kind, or null at the file top level. */
+function enclosingFunction(node: ts.Node): ts.Node | null {
+  let cur: ts.Node | undefined = node.parent;
+  while (cur) {
+    if (
+      ts.isFunctionDeclaration(cur) ||
+      ts.isFunctionExpression(cur) ||
+      ts.isArrowFunction(cur)
+    ) {
+      return cur;
+    }
+    cur = cur.parent;
+  }
+  return null;
+}
+
+function containsJsx(node: ts.Node): boolean {
+  let found = false;
+  eachNode(node, (inner) => {
+    if (
+      ts.isJsxElement(inner) ||
+      ts.isJsxSelfClosingElement(inner) ||
+      ts.isJsxFragment(inner)
+    ) {
+      found = true;
+    }
+  });
+  return found;
+}
+
+/**
+ * The `return`s that make up `fn`'s own rendered output, in source order: those
+ * that return JSX and belong to `fn` DIRECTLY, not to a callback inside it.
+ *
+ * Both filters carry weight. Returning JSX excludes the handler and effect
+ * preconditions (`if (loading || !member) return;`) that a text search cannot
+ * tell from a render early-return — that confusion is exactly what made the
+ * previous version of the guard below vacuous. Ownership by `fn` excludes the
+ * `items.map((x) => <Row …/>)` callbacks, which render rows, not branches.
+ */
+function renderReturns(fn: ts.Node): ts.ReturnStatement[] {
+  const out: ts.ReturnStatement[] = [];
+  eachNode(fn, (node) => {
+    if (!ts.isReturnStatement(node) || !node.expression) return;
+    if (enclosingFunction(node) !== fn) return;
+    if (!containsJsx(node.expression)) return;
+    out.push(node);
+  });
+  return out.sort((a, b) => a.getStart() - b.getStart());
+}
+
+/** The `if (…)` condition guarding `ret` inside `fn`, if it has one. */
+function guardCondition(ret: ts.Node, fn: ts.Node): ts.Expression | null {
+  let cur: ts.Node = ret;
+  while (cur.parent && cur.parent !== fn) {
+    if (ts.isIfStatement(cur.parent) && cur.parent.thenStatement === cur) {
+      return cur.parent.expression;
+    }
+    cur = cur.parent;
+  }
+  return null;
+}
+
 /** `describeReason` forms, classified. */
 type OptOutKind = "explicit-true" | "static" | "vouched" | "unrecognised";
 
@@ -777,12 +921,42 @@ describe("view-only section banner coverage (#2160)", () => {
           appears in some states does not cover a child that appears in all of
           them.
 
-      Note what this does NOT claim: it proves the banner element renders, and
-      that it precedes the child in source order it does not check — reading
-      order is a review concern. It also says nothing about which PERMISSION the
-      banner names; a parent vouching with a banner for a different area is a
-      real defect this cannot see, which is why the page-level comment and the
-      docs carry that reasoning explicitly.
+      Note what this does NOT claim. It proves the banner ELEMENT renders. It
+      does not prove the banner ever DISPLAYS anything, and the gap between
+      those two is where the remaining limits live:
+
+        - WHICH PERMISSION the banner names is unchecked. A parent vouching
+          with a banner for a different permission area is a real defect this
+          cannot see, which is why the page-level comment and the docs carry
+          that reasoning explicitly (`member-credit-card.tsx` is the live case:
+          gated on FINANCE under a MEMBERSHIP banner, so it is deliberately not
+          vouched for).
+        - SOURCE ORDER is unchecked: that the banner precedes the child in the
+          returned tree is a review concern, not a mechanical one.
+        - `canEdit` is only checked for the literal `true` (just below). The
+          normal form is an expression, and whether that expression can ever be
+          false is a runtime question. A banner whose `canEdit` is never false
+          renders an empty live region and leaves every control it vouches for
+          with no explanation at all — the exact hazard this mechanism exists
+          to prevent, invisible to a static check.
+        - CHILDREN are unchecked. A vouching banner with no `children` still
+          passes everything here; at runtime its page-specific sentence just
+          silently degrades to the generic shared heading, so the opt-outs are
+          covered by a vaguer explanation than the author intended.
+
+      Two scope limits apply to every check in this file, not just this one:
+
+        - only paths containing `"admin"` are scanned (see `adminSourceFiles`).
+          A vouching parent or a vouched child outside an admin path would be
+          invisible to all of it. Zero such files exist today — the banner and
+          `ViewOnlyActionButton` are admin-only components — but a tree move
+          could change that silently.
+        - the vouched-child rule below reads `!ancestorRendersViewOnlyBanner`
+          on any component's `describeReason`, not only on
+          `ViewOnlyActionButton`. That is not exploitable in practice: no other
+          component declares the prop, so a planted use fails to compile with
+          TS2322 before this suite ever runs. It is a precision note, not a
+          hole.
     */
     const vouchChildren = new Map<string, Set<string>>(); // file -> exports
     for (const f of astFiles) {
@@ -836,6 +1010,30 @@ describe("view-only section banner coverage (#2160)", () => {
           );
           continue;
         }
+
+        // The one display-side property that IS cheap to prove statically.
+        // `AdminViewOnlySectionBanner` emits its sentence only when
+        // `canEdit === false`, so a covering banner whose `canEdit` is the
+        // literal `true` (or a bare `canEdit`, which JSX reads as true) can
+        // never say anything — and every control it vouches for has silently
+        // lost its own explanation. Only a literal is rejected: an expression
+        // is the normal, correct form and is not statically decidable.
+        const alwaysEditable = covering.some((site) => {
+          const bannerTag = bannerTagOf(parent.ast, site);
+          if (!bannerTag) return false;
+          const canEdit = attr(bannerTag, "canEdit");
+          if (!canEdit) return false;
+          const value = attrExpression(canEdit);
+          return value === null || value.kind === ts.SyntaxKind.TrueKeyword;
+        });
+        if (alwaysEditable) {
+          offenders.push(
+            `${at} vouches for <${name}> under a <${BANNER}> hardcoded to ` +
+              `canEdit={true}, which never renders its sentence`,
+          );
+          continue;
+        }
+
         vouchedSomewhere.add(`${target}#${name}`);
       }
     }
@@ -980,57 +1178,115 @@ describe("view-only section banner coverage (#2160)", () => {
     ).toEqual([]);
   });
 
-  it("keeps every banner's live region mounted above the loading early-return", () => {
+  it("keeps every banner's live region mounted across a component's branches", () => {
     /*
       The banner only announces if its `role="status"` wrapper is registered in
       the accessibility tree BEFORE its content appears. A section that renders
       the banner solely in its loaded branch mounts it already-populated, which
       some screen-reader/browser pairings drop silently (VoiceOver + Safari).
+      The house idiom is to hoist the banner into a `const …Banner = (…)` above
+      the early-returns and render that const in EVERY branch.
 
-      Statically, the tell is the shared idiom: sections with a loading
-      early-return hoist the banner into a `const ...Banner = (...)` and render
-      that const in BOTH branches. So a file that has an early return AND names
-      the banner inline exactly once is the shape that fails.
+      This check runs over the AST, per component, rather than over file text.
+      The text version it replaces was vacuous on the very page #2168 adds:
+      deleting the banner from BOTH of `/admin/members/[id]`'s early-return
+      branches left the suite green. Two independent reasons, and both are
+      structural rather than a matter of a better pattern:
 
-      The guard is deliberately broader than the literal lower-case word
-      `loading`. This defect has recurred repeatedly across the banner work,
-      and the early return that causes it gets spelled several ways:
-      `isLoading`, `isPending`, `isFetching`, `status === "loading"`. Matching
-      case-insensitively and naming those identifiers keeps the guard ahead of
-      the idiom rather than pinned to one spelling of it. (It is deliberately
-      NOT widened to every `if (!x) return` data guard: those are overwhelmingly
-      handler preconditions rather than render early-returns, and including
-      them flags four compliant files.)
+        - it counted render sites with `/\{\s*\w*[Bb]anner\s*\}/`, which also
+          matched the named IMPORT `{ AdminViewOnlySectionBanner }`. The page
+          imports the banner as a sole specifier, so its count read one higher
+          than it rendered, and the "at least two render sites" floor was met
+          by one real render plus the import line.
+        - it located the early return with `source.search(…)`, which finds the
+          FIRST match in the file. On that page the first match is a `useEffect`
+          precondition — `if (loading || !member || …) return;` — hundreds of
+          lines above the render early-return, so the positional half compared
+          against the wrong statement entirely.
 
-      Two things make a file compliant, and both are checked. The banner must
-      be rendered in at least TWO places — the hoisted-const-in-both-branches
-      idiom — and its definition must sit ABOVE the early return. The second is
-      what makes the proxy positional rather than presence-only: a file that
-      defines the banner after the early return cannot possibly render it in
-      the loading branch, however many times it renders it below.
+      Against the AST neither is expressible. An import is an import, not a JSX
+      expression; a `return` with no value is not a render branch; and each
+      branch is checked in its own right instead of a whole file being scored
+      by a count. Two rules run over every component that mounts a banner:
+
+        A. a LOADING-guarded render branch must mount the banner. This is the
+           original defect — the fetch-settles-then-banner-appears shape — and
+           the condition is read from the `if` that actually guards that branch.
+           The spellings stay broad (`loading`, `isLoading`, `isPending`,
+           `isFetching`, `status === "loading"`) because the defect has recurred
+           under all of them.
+        B. once a component mounts the banner in one branch, every LATER branch
+           must mount it too. This is what makes deleting the banner from a
+           non-loading early-return (an error branch, say) fail, which rule A
+           alone cannot see.
+
+      Rule B is anchored at the FIRST mounting branch rather than at the top of
+      the component, and that asymmetry is deliberate. Several panels return
+      early for terminal states that are not "still loading" and carry no banner
+      on purpose — `lodge-details-panel`'s `accessDenied` and `multiLodge`
+      returns say the section is unavailable in their own words, and a
+      view-only banner above them would explain a control set that is not
+      there. Those all sit ABOVE the first mounting branch. What is not
+      defensible is mounting the banner and then dropping it lower down, which
+      is precisely the shape a copy-paste edit produces.
+
+      What this does NOT claim: that the banner ever displays anything. See the
+      stated limits on the vouching test above — `AdminViewOnlySectionBanner`
+      emits content only when `canEdit === false`, and nothing here reads
+      `canEdit`.
     */
-    const earlyReturn =
-      /if\s*\([^)]*(\bloading\b|\bis(Loading|Pending|Fetching)\b|status\s*===\s*["']loading["'])[^)]*\)\s*(\{[\s\S]{0,80}?)?return/i;
-    const offenders = files
-      .filter((f) => f.source.includes("<AdminViewOnlySectionBanner"))
-      .filter((f) => earlyReturn.test(f.source))
-      .filter((f) => {
-        const renders = f.source.match(/\{\s*\w*[Bb]anner\s*\}/g)?.length ?? 0;
-        // Hoisted-and-reused (>= 2 render sites) is the compliant shape.
-        if (renders < 2) return true;
-        // …and the hoisted const has to precede the early return it survives.
-        return (
-          f.source.search(/<AdminViewOnlySectionBanner/) >
-          f.source.search(earlyReturn)
+    const LOADING_GUARD =
+      /\b(loading|isLoading|isPending|isFetching)\b|status\s*===\s*["']loading["']/i;
+
+    const offenders: string[] = [];
+    for (const f of astFiles) {
+      const sites = bannerMountSites(f.ast);
+      if (sites.length === 0) continue;
+
+      const components = new Set(
+        sites
+          .map((site) => enclosingFunction(site))
+          .filter((fn): fn is ts.Node => fn !== null),
+      );
+
+      for (const fn of components) {
+        const branches = renderReturns(fn);
+        const mounts = branches.map((ret) =>
+          sites.some(
+            (site) =>
+              site.getStart() >= ret.getStart() && site.getEnd() <= ret.getEnd(),
+          ),
         );
-      })
-      .map((f) => f.rel);
+        const firstMount = mounts.indexOf(true);
+
+        branches.forEach((ret, i) => {
+          if (mounts[i]) return;
+          const at = `${f.rel}:${f.ast.getLineAndCharacterOfPosition(ret.getStart()).line + 1}`;
+          const guard = guardCondition(ret, fn);
+
+          if (guard && LOADING_GUARD.test(guard.getText(f.ast))) {
+            offenders.push(
+              `${at} returns early on \`${guard.getText(f.ast)}\` without ` +
+                `mounting the banner`,
+            );
+            return;
+          }
+          if (firstMount !== -1 && i > firstMount) {
+            offenders.push(
+              `${at} drops the banner from a branch below one that mounts it`,
+            );
+          }
+        });
+      }
+    }
 
     expect(
       offenders,
-      `These files have a loading early-return but do not render the hoisted ` +
-        `banner const in both branches, so the live region is not registered ` +
-        `until the section's fetch settles.`,
+      `A component that mounts <${BANNER}> must mount it in its loading ` +
+        `branch and in every branch below the first one that mounts it — ` +
+        `hoist it into a const above the early-returns and render that const ` +
+        `in each. Otherwise the live region is only registered once the ` +
+        `section's fetch settles, and screen readers drop the announcement.`,
     ).toEqual([]);
   });
 });

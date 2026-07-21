@@ -650,13 +650,35 @@ The contract test then closes each way the vouch could be a lie:
   spot the nesting check still has is closed for this mechanism.
 - a child that declares the prop but is never vouched for anywhere fails too, so
   the plumbing cannot sit there implying coverage that never happens.
+- the covering banner's `canEdit` may not be the literal `true` (nor a bare
+  `canEdit`, which JSX reads as true). `AdminViewOnlySectionBanner` emits its
+  sentence only when `canEdit === false`, so a banner hardcoded editable renders
+  an empty live region and orphans every opt-out beneath it.
 
-What it does **not** prove, and reviewers must still check: **which permission
-area the parent's banner names**. A parent vouching with a banner for a
-different area is a real defect no static check here can see — it is exactly why
-`member-credit-card` is excluded above, and the reasoning is written at the
-render site as well as here. It also does not check source ORDER, so "the banner
-precedes the controls it explains" remains a review concern. The behavioural
+What it does **not** prove, and reviewers must still check. The checks establish
+that the banner ELEMENT renders; they say nothing about whether it ever
+DISPLAYS. The gap holds four things:
+
+- **which permission area the parent's banner names.** A parent vouching with a
+  banner for a different area is a real defect no static check here can see — it
+  is exactly why `member-credit-card` is excluded above, and the reasoning is
+  written at the render site as well as here.
+- **source ORDER**, so "the banner precedes the controls it explains" remains a
+  review concern.
+- **whether `canEdit`'s expression can ever be false.** Only the literal is
+  rejected; a non-literal expression that never resolves to false produces the
+  same orphaned opt-outs at runtime.
+- **whether the banner has `children`.** A vouching banner with none passes
+  everything, and its page-specific sentence silently degrades to the generic
+  shared heading.
+
+Two scope limits apply to the whole contract test, not only these checks: it
+scans **only paths containing `admin`**, so a vouching parent or vouched child
+moved outside one would become invisible to every check (zero such files exist
+today); and the vouched-child rule reads `describeReason={!prop}` on any
+component, not only `ViewOnlyActionButton` — not exploitable, since no other
+component declares the prop and a planted use fails to compile, but worth
+knowing when reading the check. The behavioural
 half — that an unvouched card really does keep its reason, and a vouched one
 really does drop it while staying disabled — is verified by rendering the real
 components in `src/lib/__tests__/admin-view-only-controls.test.tsx`, so a bug in
@@ -664,7 +686,13 @@ the static analysis cannot make the property vacuous.
 
 **Where the banner goes: first child, every branch.** The banner is the first
 child of a section's outermost wrapper, rendered identically in the loading,
-error and loaded branches. That position is load-bearing, not cosmetic: it is
+error and loaded branches. The "every branch" half is asserted mechanically, per
+component and over the AST: a loading-guarded branch must mount the banner, and
+so must every branch below the first one that mounts it. (Terminal branches
+ABOVE the first mount — `lodge-details-panel`'s `accessDenied` and `multiLodge`
+returns, say — carry no banner on purpose: they explain in their own words that
+the section is unavailable, and there are no controls there to gate.) That
+position is load-bearing, not cosmetic: it is
 what keeps the `role="status"` wrapper at the same place in the DOM when a fetch
 settles. Put a heading above the banner in the loaded branch only, and React
 reconciles child 0 from the live region into the heading and mounts a fresh,
