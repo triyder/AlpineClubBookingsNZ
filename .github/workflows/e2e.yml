@@ -92,6 +92,8 @@ jobs:
           EMAIL_SERVER_PASSWORD=e2e
           MAILPIT_HTTP_PORT=8025
           EMAIL_FROM=e2e@example.org
+          XERO_MOCK_API_ORIGIN=http://localhost:3001
+          XERO_MOCK_INTERNAL_ORIGIN=http://127.0.0.1:3000
           CRON_SECRET=e2e-ci-cron-secret
           CRON_ENABLED=false
           BACKUP_ENABLED=false
@@ -235,6 +237,8 @@ jobs:
           EMAIL_SERVER_PASSWORD=e2e
           MAILPIT_HTTP_PORT=8025
           EMAIL_FROM=e2e@example.org
+          XERO_MOCK_API_ORIGIN=http://localhost:3001
+          XERO_MOCK_INTERNAL_ORIGIN=http://127.0.0.1:3000
           CRON_SECRET=e2e-ci-cron-secret
           CRON_ENABLED=false
           BACKUP_ENABLED=false

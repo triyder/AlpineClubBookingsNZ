@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   buildMockXeroConsentUrl,
   getXeroMockApiOrigin,
+  getXeroMockInternalOrigin,
   isRealProductionRuntime,
   isXeroMockActive,
 } from "@/lib/xero-mock-endpoint";
@@ -95,5 +96,32 @@ describe("xero-mock-endpoint production inertness", () => {
 
     expect(isRealProductionRuntime()).toBe(false);
     expect(isXeroMockActive()).toBe(true);
+  });
+
+  it("internal origin follows the same gate and falls back to the public origin", () => {
+    vi.stubEnv("NODE_ENV", "test");
+    delete process.env.APP_RUNTIME_ROLE;
+    delete process.env.XERO_MOCK_INTERNAL_ORIGIN;
+
+    // Inert whenever the mock as a whole is inert — even with INTERNAL set.
+    delete process.env.XERO_MOCK_API_ORIGIN;
+    process.env.XERO_MOCK_INTERNAL_ORIGIN = "http://127.0.0.1:3000";
+    expect(getXeroMockInternalOrigin()).toBeUndefined();
+
+    // Falls back to the public origin when INTERNAL is unset.
+    process.env.XERO_MOCK_API_ORIGIN = "http://localhost:3001";
+    delete process.env.XERO_MOCK_INTERNAL_ORIGIN;
+    expect(getXeroMockInternalOrigin()).toBe("http://localhost:3001");
+
+    // Uses the dedicated in-container origin when both are set.
+    process.env.XERO_MOCK_INTERNAL_ORIGIN = "http://127.0.0.1:3000";
+    expect(getXeroMockInternalOrigin()).toBe("http://127.0.0.1:3000");
+
+    // And the real-production backstop kills it like everything else.
+    vi.stubEnv("NODE_ENV", "production");
+    process.env.APP_RUNTIME_ROLE = "web-green";
+    expect(getXeroMockInternalOrigin()).toBeUndefined();
+
+    delete process.env.XERO_MOCK_INTERNAL_ORIGIN;
   });
 });

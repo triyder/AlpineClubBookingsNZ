@@ -11,7 +11,7 @@ import logger from "@/lib/logger";
 import { parseDateOnly } from "@/lib/date-only";
 import {
   fetchMockXeroOrganisation,
-  getXeroMockApiOrigin,
+  getXeroMockInternalOrigin,
 } from "@/lib/xero-mock-endpoint";
 import { registerXeroOrganisationCacheInvalidator } from "@/lib/xero-organisation-cache-bus";
 import { callXeroApi, getAuthenticatedXeroClient } from "./xero-api-client";
@@ -103,7 +103,8 @@ export async function getXeroConnectedOrganisation(
     return orgSummaryCache.summary;
   }
 
-  const mockOrigin = getXeroMockApiOrigin();
+  // Server-side fetch — use the in-container origin (see getXeroMockInternalOrigin).
+  const mockOrigin = getXeroMockInternalOrigin();
   if (mockOrigin) {
     const summary = await fetchMockXeroOrganisation(mockOrigin);
     orgSummaryCache = { summary, fetchedAt: Date.now() };
