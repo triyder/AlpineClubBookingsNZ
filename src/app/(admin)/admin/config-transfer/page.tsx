@@ -49,7 +49,7 @@ type PlanItem = {
 const ACTION_BADGE: Record<PlanItem["action"], { label: string; badge: string }> = {
   create: { label: "New", badge: "bg-emerald-100 text-emerald-800" },
   update: { label: "Updated", badge: "bg-amber-100 text-amber-900" },
-  unchanged: { label: "Unchanged", badge: "bg-slate-100 text-slate-500" },
+  unchanged: { label: "Unchanged", badge: "bg-muted text-muted-foreground" },
 };
 type CategoryPlan = {
   category: ConfigTransferCategory;
@@ -107,7 +107,7 @@ export default function ConfigTransferPage() {
 
   if (session && !fullAdmin) {
     return (
-      <div className="rounded-md border bg-white p-6 text-sm text-muted-foreground">
+      <div className="rounded-md border bg-card p-6 text-sm text-muted-foreground">
         Configuration Export &amp; Import is available to full administrators only.
       </div>
     );
@@ -279,7 +279,7 @@ export default function ConfigTransferPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="flex items-center gap-2 text-2xl font-bold text-slate-900">
+        <h1 className="flex items-center gap-2 text-2xl font-bold text-foreground">
           <ArrowRightLeft className="h-6 w-6" />
           Configuration Export &amp; Import
         </h1>
@@ -546,7 +546,7 @@ export default function ConfigTransferPage() {
                       <li
                         key={`${item.entity}:${item.key}`}
                         className={`flex flex-wrap items-center gap-x-2 gap-y-1 ${
-                          changed ? "text-slate-900" : "text-muted-foreground opacity-70"
+                          changed ? "text-foreground" : "text-muted-foreground opacity-70"
                         }`}
                       >
                         <span

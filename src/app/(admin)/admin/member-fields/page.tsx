@@ -187,7 +187,7 @@ export default function AdminMemberFieldsPage() {
         <div className="space-y-6">
           <BackLink href="/admin/membership-setup" label="Membership & Members" />
           <div className="flex min-h-[320px] items-center justify-center">
-            <Loader2 className="h-6 w-6 animate-spin text-slate-500" />
+            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
           </div>
         </div>
       </div>
@@ -201,8 +201,8 @@ export default function AdminMemberFieldsPage() {
       <BackLink href="/admin/membership-setup" label="Membership & Members" />
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Member fields</h1>
-          <p className="mt-1 max-w-3xl text-sm text-slate-500">
+          <h1 className="text-2xl font-bold text-foreground">Member fields</h1>
+          <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
             Choose which optional member fields the club collects and displays.
             Turn a field off to avoid collecting data the club does not need.
           </p>
@@ -250,10 +250,10 @@ export default function AdminMemberFieldsPage() {
         </div>
       )}
 
-      <div className="rounded-md border border-slate-200 bg-white px-4 py-3">
+      <div className="rounded-md border border-border bg-card px-4 py-3">
         <div className="flex items-start gap-3">
-          <UserCog className="mt-0.5 h-5 w-5 shrink-0 text-slate-500" />
-          <p className="text-sm text-slate-600">
+          <UserCog className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
+          <p className="text-sm text-muted-foreground">
             When a field is off it is hidden from the member editor, member
             onboarding and profile, and is excluded from CSV import and export.
             Existing data already stored is not deleted.

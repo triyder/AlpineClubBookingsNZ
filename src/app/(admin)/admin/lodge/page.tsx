@@ -199,7 +199,7 @@ function AccountCard({
               value={firstName}
               onChange={(e) => setFirstName(e.target.value)}
               disabled={!editing}
-              className={!editing ? "bg-slate-50 text-slate-700" : ""}
+              className={!editing ? "bg-card text-muted-foreground" : ""}
             />
           </div>
           <div className="space-y-1">
@@ -209,7 +209,7 @@ function AccountCard({
               value={lastName}
               onChange={(e) => setLastName(e.target.value)}
               disabled={!editing}
-              className={!editing ? "bg-slate-50 text-slate-700" : ""}
+              className={!editing ? "bg-card text-muted-foreground" : ""}
             />
           </div>
         </div>
@@ -222,7 +222,7 @@ function AccountCard({
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             disabled={!editing}
-            className={!editing ? "bg-slate-50 text-slate-700" : ""}
+            className={!editing ? "bg-card text-muted-foreground" : ""}
           />
         </div>
 
@@ -234,7 +234,7 @@ function AccountCard({
               value={boundLodgeId}
               onChange={(e) => setBoundLodgeId(e.target.value)}
               disabled={!editing}
-              className={`w-full rounded-md border border-input px-3 py-2 text-sm ${!editing ? "bg-slate-50 text-slate-700" : "bg-background"}`}
+              className={`w-full rounded-md border border-input px-3 py-2 text-sm ${!editing ? "bg-card text-muted-foreground" : "bg-background"}`}
             >
               <option value="">Default lodge</option>
               {lodges.map((lodge) => (
@@ -243,7 +243,7 @@ function AccountCard({
                 </option>
               ))}
             </select>
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-muted-foreground">
               The kiosk signed in with this account shows this lodge&apos;s
               guests, roster, and instructions.
             </p>
@@ -260,11 +260,11 @@ function AccountCard({
               onChange={(e) => setPassword(e.target.value)}
               placeholder="Leave blank to keep current password"
             />
-            <p className="text-xs text-slate-500">Minimum 6 characters</p>
+            <p className="text-xs text-muted-foreground">Minimum 6 characters</p>
           </div>
         )}
 
-        <div className="text-xs text-slate-500">
+        <div className="text-xs text-muted-foreground">
           <p>Created: {new Date(account.createdAt).toLocaleString(APP_LOCALE, { timeZone: APP_TIME_ZONE })}</p>
           <p>Last updated: {new Date(account.updatedAt).toLocaleString(APP_LOCALE, { timeZone: APP_TIME_ZONE })}</p>
         </div>
@@ -391,8 +391,8 @@ export default function AdminLodgePage() {
     return (
       <div className="p-6">
         {viewOnlyBanner}
-        <h1 className="text-2xl font-bold text-slate-900 mb-6">Lodge Kiosk</h1>
-        <div className="animate-pulse h-64 bg-slate-100 rounded-lg" />
+        <h1 className="text-2xl font-bold text-foreground mb-6">Lodge Kiosk</h1>
+        <div className="animate-pulse h-64 bg-muted rounded-lg" />
       </div>
     );
   }
@@ -401,7 +401,7 @@ export default function AdminLodgePage() {
     return (
       <div className="p-6">
         {viewOnlyBanner}
-        <h1 className="text-2xl font-bold text-slate-900 mb-6">Lodge Kiosk</h1>
+        <h1 className="text-2xl font-bold text-foreground mb-6">Lodge Kiosk</h1>
         <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-red-700">
           {error || "Lodge account not found. Run the database seed to create it."}
         </div>
@@ -413,9 +413,9 @@ export default function AdminLodgePage() {
     <div className="p-6">
       {viewOnlyBanner}
       <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-slate-900">Lodge Kiosk</h1>
+      <h1 className="text-2xl font-bold text-foreground">Lodge Kiosk</h1>
 
-      <p className="max-w-3xl text-sm text-slate-600">
+      <p className="max-w-3xl text-sm text-muted-foreground">
         This is the shared sign-in used on the physical lodge kiosk screen — it is
         not a personal admin login. Guests and {hutLeaderLabel.toLowerCase()}s use
         it on the lodge device to check in and out and view lodge information. Set
@@ -469,7 +469,7 @@ export default function AdminLodgePage() {
                     value={newPassword}
                     onChange={(e) => setNewPassword(e.target.value)}
                   />
-                  <p className="text-xs text-slate-500">Minimum 6 characters</p>
+                  <p className="text-xs text-muted-foreground">Minimum 6 characters</p>
                 </div>
               </div>
               <div className="space-y-1 max-w-sm">

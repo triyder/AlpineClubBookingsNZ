@@ -119,7 +119,7 @@ export const AGE_TIER_COLORS: Record<string, string> = {
   INFANT: "bg-pink-100 text-pink-700 border-pink-200",
   CHILD: "bg-blue-100 text-blue-700 border-blue-200",
   YOUTH: "bg-purple-100 text-purple-700 border-purple-200",
-  ADULT: "bg-slate-100 text-slate-700 border-slate-200",
+  ADULT: "bg-muted text-muted-foreground border-border",
 };
 
 const CHILD_REQUEST_AGE_TIERS = new Set(["INFANT", "CHILD", "YOUTH"]);
