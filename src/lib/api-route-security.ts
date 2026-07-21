@@ -201,15 +201,30 @@ export const explicitPublicApiRoutes = {
     reason:
       "Mock-Xero OAuth consent endpoint for the E2E harness (#2080). Production-inert: returns 404 unless XERO_MOCK_API_ORIGIN is set AND the runtime is not real production (NODE_ENV=production with a non-staging APP_RUNTIME_ROLE); serves no real data and touches no member state.",
   },
+  "src/app/api/testing/xero-mock/chart-of-accounts/route.ts": {
+    boundary: "public",
+    reason:
+      "Mock-Xero chart-of-accounts endpoint for the E2E harness (#2081). Production-inert via the same XERO_MOCK_API_ORIGIN + runtime-role double gate; fixed fake payload only.",
+  },
   "src/app/api/testing/xero-mock/connections/route.ts": {
     boundary: "public",
     reason:
       "Mock-Xero connections endpoint for the E2E harness (#2080). Production-inert via the same XERO_MOCK_API_ORIGIN + runtime-role double gate; fixed fake payload only.",
   },
+  "src/app/api/testing/xero-mock/items/route.ts": {
+    boundary: "public",
+    reason:
+      "Mock-Xero items endpoint for the E2E harness (#2081). Production-inert via the same XERO_MOCK_API_ORIGIN + runtime-role double gate; fixed fake payload only.",
+  },
   "src/app/api/testing/xero-mock/organisation/route.ts": {
     boundary: "public",
     reason:
       "Mock-Xero organisation endpoint for the E2E harness (#2080). Production-inert via the same XERO_MOCK_API_ORIGIN + runtime-role double gate; fixed fake payload only.",
+  },
+  "src/app/api/testing/xero-mock/send-validation/route.ts": {
+    boundary: "public",
+    reason:
+      "Mock-Xero intent-to-receive trigger for the E2E harness (#2081): signs an empty-events body with the STORED webhook key and POSTs the real /api/webhooks/xero route (production-parity verify). Production-inert via the same XERO_MOCK_API_ORIGIN + runtime-role double gate.",
   },
   "src/app/api/testing/xero-mock/token/route.ts": {
     boundary: "public",
