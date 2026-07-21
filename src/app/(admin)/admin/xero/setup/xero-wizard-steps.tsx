@@ -45,9 +45,9 @@ export function CreateAppStep({ context }: { context: XeroWizardContext }) {
   return (
     <div className="space-y-4">
       <div>
-        <h3 className="text-base font-semibold text-foreground">
+        <h2 className="text-base font-semibold text-foreground">
           Create your Xero app
-        </h3>
+        </h2>
         <p className="mt-1 text-sm text-muted-foreground">
           In a new tab, open the{" "}
           <a
@@ -74,15 +74,14 @@ export function CreateAppStep({ context }: { context: XeroWizardContext }) {
       />
       <CopyField
         label="Company or application URL"
-        value={context.companyUrl || "Set NEXTAUTH_URL to your site URL"}
+        value={context.companyUrl}
+        emptyHint="Set NEXTAUTH_URL to your site URL to fill this in."
         description="Your booking site's address."
       />
       <CopyField
         label="OAuth 2.0 redirect URI"
-        value={
-          context.redirectUri ||
-          "Set NEXTAUTH_URL so the redirect URI can be derived"
-        }
+        value={context.redirectUri}
+        emptyHint="Set NEXTAUTH_URL so the redirect URI can be derived."
         description="Paste this EXACTLY into the Redirect URIs field. It must match what the app sends, or Xero rejects the connection."
       />
 
@@ -167,9 +166,9 @@ export function CredentialsStep({
   return (
     <div className="space-y-4">
       <div>
-        <h3 className="text-base font-semibold text-foreground">
+        <h2 className="text-base font-semibold text-foreground">
           Enter your Xero credentials
-        </h3>
+        </h2>
         <p className="mt-1 text-sm text-muted-foreground">
           Paste the Client id and generate a Client secret in your Xero app, then
           enter them here. They are encrypted at rest and never shown again —
@@ -249,22 +248,25 @@ export function CredentialsStep({
         />
       </div>
 
-      {error ? (
-        <div
-          role="alert"
-          className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800"
-        >
-          {error}
-        </div>
-      ) : null}
-      {success ? (
-        <div
-          role="status"
-          className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-800"
-        >
-          {success}
-        </div>
-      ) : null}
+      {/* Live regions stay PERMANENTLY mounted and only their content swaps, so
+          the message is announced when it appears (a region injected already
+          populated is dropped by some SR/browser pairings — AGENTS.md live-region
+          rule / PolicyFeedback convention). The styled box exists only when there
+          is a message, so the empty region takes no visible space. */}
+      <div role="alert">
+        {error ? (
+          <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+            {error}
+          </div>
+        ) : null}
+      </div>
+      <div role="status">
+        {success ? (
+          <div className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-800">
+            {success}
+          </div>
+        ) : null}
+      </div>
 
       <div className="flex items-center gap-3">
         <Button
@@ -319,9 +321,9 @@ export function ConnectStep({
   return (
     <div className="space-y-4">
       <div>
-        <h3 className="text-base font-semibold text-foreground">
+        <h2 className="text-base font-semibold text-foreground">
           Connect to Xero
-        </h3>
+        </h2>
         <p className="mt-1 text-sm text-muted-foreground">
           Authorise the app with Xero. You will be sent to Xero to choose the
           organisation, then returned here.
@@ -332,6 +334,11 @@ export function ConnectStep({
         status={status}
         onConnect={onConnect}
         onDisconnect={handleDisconnect}
+        // Connect / reconnect / disconnect mutate the finance integration, so
+        // gate them on finance edit access. The wizard shell renders the
+        // view-only banner above (same finance scope), so the disabled controls
+        // are explained without a per-button reason.
+        canEdit={helpers.canEdit}
       />
 
       {context.connected ? (

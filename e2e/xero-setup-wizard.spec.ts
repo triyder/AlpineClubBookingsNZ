@@ -83,7 +83,11 @@ test("operator reaches Connected to <Org> entirely in-app", async () => {
   await expect(
     page.getByText(new RegExp(`Connected to\\s+${MOCK_XERO_ORG_NAME}`, "i")),
   ).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByText(/Setup complete/i)).toBeVisible();
+  // Final state reads "connected, more to configure below" — never "the whole
+  // integration is done" (#2080 UX-F9): the mappings/import panels follow.
+  await expect(
+    page.getByText(/configure account mappings and run contact import below/i),
+  ).toBeVisible();
 
   await page.close();
 });

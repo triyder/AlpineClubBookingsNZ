@@ -77,6 +77,14 @@ export function XeroSetupWizard({
       onRefresh={refresh}
       canEdit={canEdit}
       initialStepId={initialStepId}
+      // The wizard connects Xero, but account/item mappings and contact import
+      // still follow below — so the final state must read as "connected, more to
+      // configure", never "the whole integration is done" (#2080 UX-F9).
+      completion={{
+        badgeLabel: "Connected",
+        message: "Connected",
+        hint: "Configure account mappings and run contact import below to finish setting up Xero.",
+      }}
       viewOnlyBanner={
         <>
           Your admin role can view Xero setup, but changing credentials and
