@@ -1081,7 +1081,9 @@ model matters for privacy.
   set / remove / see). Removal is always permitted.
 - **Committee roster display.** Whether the public committee roster
   (`{{committee-members-cards}}`) actually shows photos is a separate opt-in on
-  `PublicContentSettings.committeePhotoDisplay`, set from the Page Content admin:
+  `PublicContentSettings.committeePhotoDisplay`, set from either the Page Content
+  admin or the Committee admin page (both edit the same global setting, gated on
+  content edit):
   - `NONE` (default) — text-only roster; no photos are shown even for members
     who have one.
   - `CIRCLE` / `SQUARE` — show each published member's photo in that shape, with
