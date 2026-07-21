@@ -57,6 +57,28 @@ describe("config-transfer registry — forbidden field guard", () => {
     expect(isSensitiveOptInField("doorCode")).toBe(true);
     expect(isForbiddenField("doorCode")).toBe(false);
   });
+
+  // #2079: encrypted integration credentials must never be exportable.
+  it("flags integration-credential ciphertext/auth-tag fields as forbidden", () => {
+    expect(isForbiddenField("ciphertext")).toBe(true);
+    expect(isForbiddenField("authTag")).toBe(true);
+    // labelVersion / secretSource are metadata, but `secret`-containing names
+    // are caught by the generic secret pattern.
+    expect(isForbiddenField("secretSource")).toBe(true);
+  });
+
+  it("registers NO IntegrationCredential entity (excluded from config transfer)", () => {
+    const entities = getRegisteredEntities();
+    for (const descriptor of entities) {
+      expect(descriptor.entity).not.toMatch(/integration.?credential/i);
+      expect(descriptor.file).not.toMatch(/integration.?credential/i);
+      // Even the un-patternable `iv` field can never ride along, because the
+      // entity is simply never registered for export.
+      expect(descriptor.fields).not.toContain("iv");
+      expect(descriptor.fields).not.toContain("ciphertext");
+      expect(descriptor.fields).not.toContain("authTag");
+    }
+  });
 });
 
 describe("config-transfer registry — assertDescriptorValid", () => {

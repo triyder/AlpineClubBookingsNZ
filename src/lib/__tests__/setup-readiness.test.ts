@@ -13,7 +13,9 @@ import {
 const baseEnv = {
   DATABASE_URL: "postgresql://user:pass@localhost:5432/app",
   NEXTAUTH_URL: "https://club.example.org",
-  AUTH_SECRET: "auth-secret",
+  // Strong (>= 32 chars, non-placeholder) so the auth-secret strength check
+  // (#2079) stays green in the "complete setup" scenario.
+  AUTH_SECRET: "a".repeat(48),
   CRON_SECRET: "cron-secret",
   SEED_ADMIN_EMAIL: "admin@example.org",
   SEED_ADMIN_PASSWORD: "change-me",
@@ -30,11 +32,9 @@ const baseEnv = {
   NEXT_PUBLIC_SENTRY_DSN: "https://public@example.ingest.sentry.io/1",
   SENTRY_ORG: "example",
   SENTRY_PROJECT: "bookings",
-  XERO_CLIENT_ID: "xero-client",
-  XERO_CLIENT_SECRET: "xero-secret",
-  XERO_REDIRECT_URI: "https://club.example.org/api/admin/xero/callback",
-  XERO_ENCRYPTION_KEY: "a".repeat(64),
-  XERO_WEBHOOK_KEY: "webhook-key",
+  // Xero credentials are captured in-app now (#2079); legacy XERO_* env vars are
+  // intentionally absent here so the operational-Xero check does not raise the
+  // "remove the legacy vars" warning.
   ADDY_API_KEY: "addy-key",
   ADDY_API_SECRET: "addy-secret",
 };
