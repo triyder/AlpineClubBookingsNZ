@@ -196,6 +196,26 @@ export const explicitPublicApiRoutes = {
     reason:
       "Public cached Whakapapa mountain-condition payload used by public website embed tokens; fixed upstream source, rate limited, no member data.",
   },
+  "src/app/api/testing/xero-mock/authorize/route.ts": {
+    boundary: "public",
+    reason:
+      "Mock-Xero OAuth consent endpoint for the E2E harness (#2080). Production-inert: returns 404 unless XERO_MOCK_API_ORIGIN is set AND the runtime is not real production (NODE_ENV=production with a non-staging APP_RUNTIME_ROLE); serves no real data and touches no member state.",
+  },
+  "src/app/api/testing/xero-mock/connections/route.ts": {
+    boundary: "public",
+    reason:
+      "Mock-Xero connections endpoint for the E2E harness (#2080). Production-inert via the same XERO_MOCK_API_ORIGIN + runtime-role double gate; fixed fake payload only.",
+  },
+  "src/app/api/testing/xero-mock/organisation/route.ts": {
+    boundary: "public",
+    reason:
+      "Mock-Xero organisation endpoint for the E2E harness (#2080). Production-inert via the same XERO_MOCK_API_ORIGIN + runtime-role double gate; fixed fake payload only.",
+  },
+  "src/app/api/testing/xero-mock/token/route.ts": {
+    boundary: "public",
+    reason:
+      "Mock-Xero token-exchange endpoint for the E2E harness (#2080). Production-inert via the same XERO_MOCK_API_ORIGIN + runtime-role double gate; mints fake tokens consumed only by the gated mock OAuth branch.",
+  },
   "src/app/api/webhooks/ses-sns/route.ts": {
     boundary: "webhook",
     reason: "AWS SNS signed SES feedback webhook.",
