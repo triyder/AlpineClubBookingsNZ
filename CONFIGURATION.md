@@ -1601,8 +1601,11 @@ OAuth scopes:
 - `accounting.reports.banksummary.read`
 
 Before reconnecting, update the Xero developer app allowed scopes to include the
-exact app request, and verify that `XERO_REDIRECT_URI` matches the deployed
-`/api/admin/xero/callback` URL. Then reconnect Xero from `/admin/xero` so fresh
+exact app request. The redirect URI is **derived from `NEXTAUTH_URL`**
+(`{origin}/api/admin/xero/callback`) — there is no `XERO_REDIRECT_URI` env var
+any more (#2079) — so confirm `NEXTAUTH_URL` is the deployed origin and that the
+derived callback URL (shown in the in-app Xero setup) is listed in the Xero
+developer app's redirect URIs. Then reconnect Xero from `/admin/xero` so fresh
 tokens carry the current scope set. Access is controlled per member by
 `MemberAccessRole` rows. `FINANCE_USER` can read the finance dashboard and
 finance viewer APIs; `FINANCE_ADMIN` is the Treasurer bundle and can also run
