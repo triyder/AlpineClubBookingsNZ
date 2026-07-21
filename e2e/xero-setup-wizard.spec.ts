@@ -63,7 +63,11 @@ test("operator reaches Connected to <Org> entirely in-app", async () => {
   ).toBeVisible();
   await page.getByLabel("Client ID").fill("mock-client-id");
   await page.getByLabel("Client Secret").fill("mock-client-secret");
-  await page.getByRole("button", { name: /save credentials/i }).click();
+  // "Save credentials" on a fresh club; "Replace credentials" when the
+  // completion spec (which runs first) has already stored a pair.
+  await page
+    .getByRole("button", { name: /(save|replace) credentials/i })
+    .click();
 
   // Verified: both credentials now show "Set ✓" and Continue enables.
   await expect(page.getByText(/Both credentials stored/i)).toBeVisible();
