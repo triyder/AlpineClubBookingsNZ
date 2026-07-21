@@ -10,6 +10,7 @@ import { getOperationalXeroConfig } from "@/lib/xero-config";
 import {
   buildMockXeroConsentUrl,
   getXeroMockApiOrigin,
+  getXeroMockInternalOrigin,
   handleMockXeroCallback,
 } from "@/lib/xero-mock-endpoint";
 import {
@@ -44,9 +45,11 @@ export async function getXeroConsentUrl(state?: string): Promise<string> {
  */
 export async function handleXeroCallback(url: string, state?: string): Promise<void> {
   // Test-only mock-Xero harness (#2080). Inert in production (env unset).
-  const mockOrigin = getXeroMockApiOrigin();
-  if (mockOrigin) {
-    await handleMockXeroCallback(mockOrigin, url);
+  // Token exchange is a SERVER-side fetch, so it uses the in-container origin
+  // (the browser-facing origin may be a host-mapped port the container can't dial).
+  const mockInternalOrigin = getXeroMockInternalOrigin();
+  if (mockInternalOrigin) {
+    await handleMockXeroCallback(mockInternalOrigin, url);
     return;
   }
 

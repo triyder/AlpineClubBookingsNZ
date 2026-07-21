@@ -68,6 +68,26 @@ export function isXeroMockActive(): boolean {
   return getXeroMockApiOrigin() !== undefined;
 }
 
+/**
+ * The origin SERVER-SIDE mock consumers (token exchange, organisation fetch)
+ * should call, or undefined whenever the mock is inactive.
+ *
+ * `XERO_MOCK_API_ORIGIN` is the BROWSER-facing origin (the consent URL the
+ * operator's browser navigates to). In the CI E2E stack the app is exposed on
+ * the host as :3001 but listens in-container on :3000, so a server-side fetch
+ * of the browser origin would dial a port nothing listens on inside the
+ * container. `XERO_MOCK_INTERNAL_ORIGIN` carries the in-container self-origin
+ * for those calls; it defaults to the browser origin so single-port local
+ * setups need only one variable. Gated identically — inert unless the mock as
+ * a whole is active.
+ */
+export function getXeroMockInternalOrigin(): string | undefined {
+  const publicOrigin = getXeroMockApiOrigin();
+  if (!publicOrigin) return undefined;
+  const raw = process.env.XERO_MOCK_INTERNAL_ORIGIN?.trim();
+  return raw ? raw : publicOrigin;
+}
+
 function mockUrl(origin: string, path: string): string {
   return `${origin.replace(/\/$/, "")}${MOCK_BASE_PATH}${path}`;
 }
