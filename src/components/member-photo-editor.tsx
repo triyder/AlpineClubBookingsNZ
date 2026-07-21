@@ -97,7 +97,13 @@ export function MemberPhotoEditor({
   const router = useRouter();
   const zoomInputId = useId();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  // Callback ref (state, not useRef): the canvas lives inside the Radix Dialog,
+  // which mounts its content via an open animation, so the element appears a
+  // tick after `source` is set. Tracking it in state re-runs the draw effect the
+  // moment the canvas is actually in the DOM — otherwise the first frame draws
+  // to a not-yet-mounted canvas and the preview stays blank until the next
+  // dependency change (e.g. the zoom slider).
+  const [canvasEl, setCanvasEl] = useState<HTMLCanvasElement | null>(null);
   const dragRef = useRef<{ active: boolean; lastX: number; lastY: number }>({
     active: false,
     lastX: 0,
@@ -130,12 +136,10 @@ export function MemberPhotoEditor({
     };
   }, [source]);
 
-  // Redraw the preview whenever the framing changes.
+  // Redraw the preview whenever the framing changes OR the canvas mounts.
   useEffect(() => {
-    if (!source) return;
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
+    if (!source || !canvasEl) return;
+    const ctx = canvasEl.getContext("2d");
     if (!ctx) return;
     ctx.clearRect(0, 0, VIEWPORT, VIEWPORT);
     ctx.drawImage(
@@ -145,7 +149,7 @@ export function MemberPhotoEditor({
       source.natural.width * scale,
       source.natural.height * scale,
     );
-  }, [source, offset, scale]);
+  }, [canvasEl, source, offset, scale]);
 
   function openFilePicker() {
     if (!editable) return;
@@ -426,7 +430,7 @@ export function MemberPhotoEditor({
               style={{ width: VIEWPORT, height: VIEWPORT }}
             >
               <canvas
-                ref={canvasRef}
+                ref={setCanvasEl}
                 width={VIEWPORT}
                 height={VIEWPORT}
                 onPointerDown={handlePointerDown}
