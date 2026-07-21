@@ -30,11 +30,35 @@ export const MOCK_XERO_ORG_NAME = "Alpine Test Club Ltd";
 export const MOCK_XERO_ORG_FINANCIAL_YEAR_END_MONTH = 3;
 
 /**
+ * True in a REAL production runtime (never the E2E staging stack). Used as a
+ * hard backstop so the mock stays inert even if `XERO_MOCK_API_ORIGIN` ever
+ * leaked into a genuine deployment (#2080 review, CORRECTNESS-F2).
+ *
+ * NOTE: the E2E staging stack legitimately runs the PRODUCTION build
+ * (`NODE_ENV=production`, `node server.js`) with the mock enabled, so
+ * `NODE_ENV` alone cannot be the gate — it would disable the E2E happy-path.
+ * The staging stack is distinguished by `APP_RUNTIME_ROLE=staging`
+ * (docker-compose.staging.yml); real production roles are `web-blue` /
+ * `web-green` / `cron-leader`. So "real production" is a production build whose
+ * runtime role is NOT the staging harness.
+ */
+export function isRealProductionRuntime(): boolean {
+  return (
+    process.env.NODE_ENV === "production" &&
+    process.env.APP_RUNTIME_ROLE !== "staging"
+  );
+}
+
+/**
  * The mock Xero API origin, or undefined in every real deployment. When defined,
  * the OAuth/organisation code routes through the gated mock endpoints instead of
  * the live Xero servers.
+ *
+ * Two independent conditions must BOTH hold: `XERO_MOCK_API_ORIGIN` is set AND
+ * this is not a real production runtime. Either alone leaves the mock inert.
  */
 export function getXeroMockApiOrigin(): string | undefined {
+  if (isRealProductionRuntime()) return undefined;
   const raw = process.env.XERO_MOCK_API_ORIGIN?.trim();
   return raw ? raw : undefined;
 }
