@@ -2874,6 +2874,31 @@ model IntegrationCredential {
   @@index([updatedAt])
 }
 
+// Per-wizard cursor + acknowledged-step state for the reusable guided-provider
+// setup shell (#2080). ONE row per wizard id ("xero" here; "stripe"/"google"
+// later) — the shell is provider-agnostic, so this table is too. Deliberately
+// NOT the setup-readiness progress store (SETUP_STEP_IDS in setup-readiness.ts):
+// that tracks 15 fixed checklist steps with complete/skip flags and has no
+// per-wizard cursor. Each step's verified gate is re-derived from live server
+// state on load; this row is only the RESUME cursor + acknowledgement record so
+// a reload mid-flow returns to the right step, never a source of truth for
+// whether a step is actually verified.
+model IntegrationWizardProgress {
+  id               String   @id @default(cuid())
+  // Logical wizard namespace, matching a provider ("xero" | "stripe" | "google").
+  wizardId         String   @unique
+  // The step id the operator was last on (resume target).
+  currentStepId    String
+  // Step ids the operator has acknowledged / advanced past. Advisory only:
+  // verification is always re-derived from server truth on load.
+  completedStepIds String[]
+  updatedAt        DateTime @updatedAt
+  // Full Admin/area-admin member id that last advanced the wizard (provenance).
+  updatedByMemberId String?
+
+  @@index([updatedAt])
+}
+
 // ---------------------------------------------------------------------------
 // Finance Snapshot Storage
 // ---------------------------------------------------------------------------
