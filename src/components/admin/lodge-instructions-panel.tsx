@@ -22,7 +22,7 @@ import {
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import {
   AdminForbiddenSaveNotice,
-  AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 
@@ -245,22 +245,45 @@ export function LodgeInstructionsPanel() {
 
   const scopeIsLodge = scopeLodgeId !== null;
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the panel —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before
+    its content appears; a region injected already-populated is silently dropped
+    by some screen-reader/browser pairings. That is why it is hoisted above the
+    loading/error early-returns and rendered in every branch. It sits OUTSIDE
+    the `space-y-*` stack so the empty wrapper an edit-capable admin gets costs
+    no layout.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-6">
+      Your admin role can view lodge instructions but cannot change them.
+      The editors below are read-only.
+    </AdminViewOnlySectionBanner>
+  );
+
   if (loading) {
     return (
-      <div className="space-y-6">
+      <div>
+        {viewOnlyBanner}
+        <div className="space-y-6">
         <PolicyScopeSelect
           value={scopeLodgeId}
           onChange={setScopeLodgeId}
           id="lodge-instructions-scope"
         />
         <p className="text-sm text-slate-500">Loading lodge instructions...</p>
+        </div>
       </div>
     );
   }
 
   if (loadError) {
     return (
-      <div className="space-y-3">
+      <div>
+        {viewOnlyBanner}
+        <div className="space-y-3">
         <PolicyScopeSelect
           value={scopeLodgeId}
           onChange={setScopeLodgeId}
@@ -270,24 +293,21 @@ export function LodgeInstructionsPanel() {
         <Button type="button" variant="outline" onClick={loadDocuments}>
           Retry
         </Button>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
+    <div>
+      {viewOnlyBanner}
+      <div className="space-y-6">
       <PolicyScopeSelect
         value={scopeLodgeId}
         onChange={setScopeLodgeId}
         id="lodge-instructions-scope"
       />
 
-      {!canEdit ? (
-        <AdminViewOnlyNotice canEdit={canEdit}>
-          Your admin role can view lodge instructions but cannot change them.
-          The editors below are read-only.
-        </AdminViewOnlyNotice>
-      ) : null}
       {forbidden ? <AdminForbiddenSaveNotice /> : null}
 
       {DOCUMENTS.map((doc) => {
@@ -318,6 +338,7 @@ export function LodgeInstructionsPanel() {
                   </p>
                   <ViewOnlyActionButton
                     canEdit={canEdit}
+                    describeReason={false}
                     type="button"
                     variant="outline"
                     onClick={() => createOverride(doc.key, doc.title)}
@@ -362,6 +383,7 @@ export function LodgeInstructionsPanel() {
                     {scopeIsLodge && hasOverride[doc.key] ? (
                       <ViewOnlyActionButton
                         canEdit={canEdit}
+                        describeReason={false}
                         type="button"
                         variant="outline"
                         onClick={() => removeOverride(doc.key, doc.title)}
@@ -372,6 +394,7 @@ export function LodgeInstructionsPanel() {
                     ) : null}
                     <ViewOnlyActionButton
                       canEdit={canEdit}
+                      describeReason={false}
                       type="button"
                       onClick={() => saveDocument(doc.key, doc.title)}
                       disabled={savingKey !== null}
@@ -390,6 +413,7 @@ export function LodgeInstructionsPanel() {
           </Card>
         );
       })}
+      </div>
     </div>
   );
 }

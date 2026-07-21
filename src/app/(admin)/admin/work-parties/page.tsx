@@ -29,7 +29,7 @@ import { useLodgeOptions } from "@/components/lodge-select";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import {
   ADMIN_FORBIDDEN_SAVE_REASON,
-  AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import { APP_TIME_ZONE } from "@/config/operational";
@@ -279,24 +279,36 @@ export default function AdminWorkPartiesPage() {
     }
   }
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the section —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before its
+    content appears; a region injected already-populated is silently dropped by
+    some screen-reader/browser pairings. It sits OUTSIDE the `space-y-*` stack so
+    the empty wrapper an edit-capable admin gets costs no layout.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-6">
+      Your admin role can view work parties but cannot change them. Lodge
+      edit access is required.
+    </AdminViewOnlySectionBanner>
+  );
+
   return (
-    <div className="space-y-6">
+    <div>
+      {viewOnlyBanner}
+      <div className="space-y-6">
       <AdminPageHeader
         title="Work Parties"
         description="Working bee events with an automatic discount for attending bookings"
         actions={
-          <ViewOnlyActionButton canEdit={canEdit} onClick={startCreate}>
+          <ViewOnlyActionButton canEdit={canEdit} describeReason={false} onClick={startCreate}>
             New Event
           </ViewOnlyActionButton>
         }
       />
 
-      {!canEdit && (
-        <AdminViewOnlyNotice canEdit={canEdit}>
-          Your admin role can view work parties but cannot change them. Lodge
-          edit access is required.
-        </AdminViewOnlyNotice>
-      )}
 
       {error && (
         <div className="rounded-md border border-danger/20 bg-danger-muted p-3 text-sm text-danger">{error}</div>
@@ -391,7 +403,7 @@ export default function AdminWorkPartiesPage() {
               Active (members can select this event when booking)
             </label>
             <div className="flex gap-2">
-              <ViewOnlyActionButton canEdit={canEdit} onClick={handleSave} disabled={saving}>
+              <ViewOnlyActionButton canEdit={canEdit} describeReason={false} onClick={handleSave} disabled={saving}>
                 {saving ? "Saving..." : editingId ? "Save Changes" : "Create Event"}
               </ViewOnlyActionButton>
               <Button
@@ -446,14 +458,14 @@ export default function AdminWorkPartiesPage() {
                     </CardDescription>
                   </div>
                   <div className="flex gap-2">
-                    <ViewOnlyActionButton canEdit={canEdit} variant="outline" size="sm" onClick={() => startEdit(event)}>
+                    <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="outline" size="sm" onClick={() => startEdit(event)}>
                       Edit
                     </ViewOnlyActionButton>
-                    <ViewOnlyActionButton canEdit={canEdit} variant="outline" size="sm" onClick={() => toggleActive(event)}>
+                    <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="outline" size="sm" onClick={() => toggleActive(event)}>
                       {event.active ? "Deactivate" : "Activate"}
                     </ViewOnlyActionButton>
                     {event.bookingCount === 0 && (
-                      <ViewOnlyActionButton canEdit={canEdit} variant="outline" size="sm" onClick={() => handleDelete(event)}>
+                      <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="outline" size="sm" onClick={() => handleDelete(event)}>
                         Delete
                       </ViewOnlyActionButton>
                     )}
@@ -516,6 +528,7 @@ export default function AdminWorkPartiesPage() {
           ))}
         </div>
       )}
+      </div>
     </div>
   );
 }

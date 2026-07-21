@@ -12,7 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { useConfirm } from "@/components/confirm-dialog";
-import { AdminViewOnlyNotice, ViewOnlyActionButton } from "@/components/admin/view-only-action";
+import { AdminViewOnlySectionBanner, ViewOnlyActionButton } from "@/components/admin/view-only-action";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { formatCents } from "@/lib/utils";
 import { todayDateOnlyForTimeZone } from "@/lib/date-only";
@@ -216,13 +216,30 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
     });
   }
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the section —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before its
+    content appears; a region injected already-populated is silently dropped by
+    some screen-reader/browser pairings. It sits OUTSIDE the `space-y-*` stack so
+    the empty wrapper an edit-capable admin gets costs no layout.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEditFinance} className="mb-4">
+      Finance view access can inspect previews and charge history. Finance edit access is required to change settings, confirm billing, or retry Xero delivery.
+    </AdminViewOnlySectionBanner>
+  );
+
   return (
     <Card>
       {confirmDialog}
       <CardHeader>
         <CardTitle className="flex items-center gap-2"><ReceiptText className="h-5 w-5" /> Annual Membership Fee billing</CardTitle>
       </CardHeader>
-      <CardContent className="space-y-4">
+      <CardContent>
+        {viewOnlyBanner}
+        <div className="space-y-4">
         <p className="text-sm text-muted-foreground">
           Preview first, then explicitly confirm. Confirmation freezes fee, proration, recipient, family coverage, due days, and amount before Xero work is queued.
         </p>
@@ -230,7 +247,7 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
           <div className="space-y-1"><Label htmlFor="subscription-decision-date">Decision date</Label><Input id="subscription-decision-date" type="date" value={decisionDate} onChange={(event) => { setData(null); setDecisionDate(event.target.value); }} /></div>
           <Button type="button" variant="outline" onClick={() => void refreshPreview()} disabled={loading || working}><RefreshCw className="mr-1 h-4 w-4" /> Refresh preview</Button>
           <div className="space-y-1"><Label htmlFor="subscription-due-days">Invoice due days</Label><Input id="subscription-due-days" className="w-28" type="number" min={1} max={365} value={dueDays} disabled={!canEditFinance} onChange={(event) => setDueDays(event.target.value)} /></div>
-          <ViewOnlyActionButton canEdit={canEditFinance} type="button" variant="outline" disabled={working || Number(dueDays) < 1 || Number(dueDays) > 365} onClick={() => void post({ action: "UPDATE_SETTINGS", invoiceDueDays: Number(dueDays) })}>Save due days</ViewOnlyActionButton>
+          <ViewOnlyActionButton canEdit={canEditFinance} describeReason={false} type="button" variant="outline" disabled={working || Number(dueDays) < 1 || Number(dueDays) > 365} onClick={() => void post({ action: "UPDATE_SETTINGS", invoiceDueDays: Number(dueDays) })}>Save due days</ViewOnlyActionButton>
         </div>
         <div className="space-y-2 rounded-md border p-3">
           <div className="flex flex-wrap items-end gap-3">
@@ -248,7 +265,7 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
                 possibly-dirty input, so switching the mode never silently
                 persists an unsaved due-days edit. Due days are changed only via
                 the separate "Save due days" button above. */}
-            <ViewOnlyActionButton canEdit={canEditFinance} type="button" variant="outline" disabled={working || !data} onClick={() => { if (!data) return; void post({ action: "UPDATE_SETTINGS", invoiceDueDays: data.settings.invoiceDueDays, familyBillingMode }); }}>Save billing mode</ViewOnlyActionButton>
+            <ViewOnlyActionButton canEdit={canEditFinance} describeReason={false} type="button" variant="outline" disabled={working || !data} onClick={() => { if (!data) return; void post({ action: "UPDATE_SETTINGS", invoiceDueDays: data.settings.invoiceDueDays, familyBillingMode }); }}>Save billing mode</ViewOnlyActionButton>
           </div>
           <p className="text-sm text-muted-foreground">
             {familyBillingMode === "BILL_FAMILY_VIA_BILLING_MEMBER"
@@ -256,7 +273,6 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
               : "Every member is invoiced directly. The family billing members card is hidden, no billing-member exceptions are raised, and per-family fee schedules are disabled."}
           </p>
         </div>
-        {!canEditFinance ? <AdminViewOnlyNotice canEdit={canEditFinance}>Finance view access can inspect previews and charge history. Finance edit access is required to change settings, confirm billing, or retry Xero delivery.</AdminViewOnlyNotice> : null}
         {mutationFeedback ? <Alert variant={mutationFeedback.kind === "success" ? "success" : "error"}>{mutationFeedback.text}</Alert> : null}
         {loadFeedback ? <Alert variant="error">{loadFeedback.text}</Alert> : null}
         {loading ? <Spinner label="Building subscription billing preview…" /> : data ? (
@@ -287,12 +303,12 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
                           </div>
                         </div>
                       ) : (
-                        <ViewOnlyActionButton canEdit={canEditFinance} type="button" size="sm" variant="outline" className="mt-2" disabled={working} onClick={() => { setMarkingFamilyGroupId(entry.familyGroupId); setMarkNote(""); }}>Mark family as already invoiced</ViewOnlyActionButton>
+                        <ViewOnlyActionButton canEdit={canEditFinance} describeReason={false} type="button" size="sm" variant="outline" className="mt-2" disabled={working} onClick={() => { setMarkingFamilyGroupId(entry.familyGroupId); setMarkNote(""); }}>Mark family as already invoiced</ViewOnlyActionButton>
                       )
                     ) : null}
                   </div>
                 ))}
-                <ViewOnlyActionButton canEdit={canEditFinance} type="button" onClick={() => void confirmBatch()} disabled={working}>Confirm and queue annual batch</ViewOnlyActionButton>
+                <ViewOnlyActionButton canEdit={canEditFinance} describeReason={false} type="button" onClick={() => void confirmBatch()} disabled={working}>Confirm and queue annual batch</ViewOnlyActionButton>
               </div>
             ) : <Alert variant="info">No new charges are available for this preview. Existing immutable coverage is not regenerated.</Alert>}
             {(data.preview.exemptMembers ?? []).length > 0 ? (
@@ -362,7 +378,7 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
                               : `${row.xeroInvoiceNumber ?? "No Xero number"}${row.status ? ` · ${row.status.replaceAll("_", " ")}` : ""}`}
                           </span>
                           {row.operatorMarked ? (
-                            <ViewOnlyActionButton canEdit={canEditFinance} type="button" size="sm" variant="outline" disabled={working} onClick={() => void unmarkFamily(row.familyGroupId)}>Unmark</ViewOnlyActionButton>
+                            <ViewOnlyActionButton canEdit={canEditFinance} describeReason={false} type="button" size="sm" variant="outline" disabled={working} onClick={() => void unmarkFamily(row.familyGroupId)}>Unmark</ViewOnlyActionButton>
                           ) : null}
                         </span>
                       </li>
@@ -382,7 +398,7 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
                     <div><p className="font-medium">{charge.membershipTypeName} · {charge.recipientName} · {formatCents(charge.chargedAmountCents)}</p><p className="text-muted-foreground">{charge.coverage.map((row) => row.memberName).join(", ")} · {charge.xeroInvoiceNumber ?? "No Xero number yet"}</p>{charge.lastErrorMessage ? <p className="text-danger">{charge.lastErrorMessage}</p> : null}</div>
                     <div className="flex items-center gap-2">
                       <Badge variant="secondary">{charge.status.replaceAll("_", " ")}</Badge>
-                      {charge.status === "EMAIL_FAILED" || charge.status === "CONFLICT" || charge.status === "QUEUED" || charge.status === "INVOICE_CREATED" ? <ViewOnlyActionButton canEdit={canEditFinance} size="sm" variant="outline" disabled={working} onClick={() => void post({ action: "RETRY_CHARGE", chargeId: charge.id })}>{charge.status === "EMAIL_FAILED" ? <MailWarning className="mr-1 h-4 w-4" /> : charge.status === "CONFLICT" ? <AlertTriangle className="mr-1 h-4 w-4" /> : <CheckCircle2 className="mr-1 h-4 w-4" />} Retry</ViewOnlyActionButton> : null}
+                      {charge.status === "EMAIL_FAILED" || charge.status === "CONFLICT" || charge.status === "QUEUED" || charge.status === "INVOICE_CREATED" ? <ViewOnlyActionButton canEdit={canEditFinance} describeReason={false} size="sm" variant="outline" disabled={working} onClick={() => void post({ action: "RETRY_CHARGE", chargeId: charge.id })}>{charge.status === "EMAIL_FAILED" ? <MailWarning className="mr-1 h-4 w-4" /> : charge.status === "CONFLICT" ? <AlertTriangle className="mr-1 h-4 w-4" /> : <CheckCircle2 className="mr-1 h-4 w-4" />} Retry</ViewOnlyActionButton> : null}
                     </div>
                   </div>
                 ))}
@@ -390,6 +406,7 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
             ) : null}
           </>
         ) : null}
+        </div>
       </CardContent>
     </Card>
   );

@@ -8,7 +8,7 @@ import { AdminDataTable } from "@/components/admin/admin-data-table";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import {
   ADMIN_FORBIDDEN_SAVE_REASON,
-  AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import {
@@ -212,8 +212,26 @@ export default function AgeTierSettingsPage() {
     setSuccess(false);
   }
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the section —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before its
+    content appears; a region injected already-populated is silently dropped by
+    some screen-reader/browser pairings. It sits OUTSIDE the `space-y-*` stack so
+    the empty wrapper an edit-capable admin gets costs no layout.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-6">
+      Your admin role can view the age tier settings but cannot change
+      them. Bookings edit access is required.
+    </AdminViewOnlySectionBanner>
+  );
+
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-6">
+      {viewOnlyBanner}
+      <div className="space-y-6">
       <AdminPageHeader
         title="Age Group Settings"
         description={
@@ -231,6 +249,7 @@ export default function AgeTierSettingsPage() {
           {!editing && (
             <ViewOnlyActionButton
               canEdit={canEdit}
+              describeReason={false}
               variant="outline"
               size="sm"
               onClick={() => {
@@ -246,13 +265,6 @@ export default function AgeTierSettingsPage() {
           {loading ? (
             <p className="text-sm text-muted-foreground">Loading settings...</p>
           ) : null}
-
-          {!canEdit && (
-            <AdminViewOnlyNotice canEdit={canEdit}>
-              Your admin role can view the age tier settings but cannot change
-              them. Bookings edit access is required.
-            </AdminViewOnlyNotice>
-          )}
 
           {sorted.map((setting) => {
             const isLastTier = lastTier && setting.tier === lastTier.tier;
@@ -474,6 +486,7 @@ export default function AgeTierSettingsPage() {
       </Card>
 
       {confirmDialog}
+      </div>
     </div>
   );
 }

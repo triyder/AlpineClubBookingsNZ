@@ -9,7 +9,7 @@ import { useConfirm } from "@/components/confirm-dialog"
 import { AdminPageHeader } from "@/components/admin/admin-page-header"
 import { AdminDataTable } from "@/components/admin/admin-data-table"
 import {
-  AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action"
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
@@ -169,8 +169,26 @@ export default function FamilySuggestionsPage() {
       !hidden.has(suggestion.signature)
   ) ?? []
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the section —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before its
+    content appears; a region injected already-populated is silently dropped by
+    some screen-reader/browser pairings. It sits OUTSIDE the `space-y-*` stack so
+    the empty wrapper an edit-capable admin gets costs no layout.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-6">
+      Your admin role can view family group suggestions but cannot create,
+      hide, or reset them.
+    </AdminViewOnlySectionBanner>
+  )
+
   return (
-    <div className="space-y-6">
+    <div>
+      {viewOnlyBanner}
+      <div className="space-y-6">
       {confirmDialog}
       <AdminPageHeader
         title="Family Group Suggestions"
@@ -179,6 +197,7 @@ export default function FamilySuggestionsPage() {
           <>
             <ViewOnlyActionButton
               canEdit={canEdit}
+              describeReason={false}
               onClick={handleResetHidden}
               disabled={loading || resetting || !data?.hiddenCount}
               variant="outline"
@@ -191,13 +210,6 @@ export default function FamilySuggestionsPage() {
           </>
         }
       />
-
-      {!canEdit && (
-        <AdminViewOnlyNotice canEdit={canEdit}>
-          Your admin role can view family group suggestions but cannot create,
-          hide, or reset them.
-        </AdminViewOnlyNotice>
-      )}
 
       {error && (
         <div className="rounded-md border border-danger/20 bg-danger-muted p-3 text-sm text-danger">
@@ -288,6 +300,7 @@ export default function FamilySuggestionsPage() {
                   </Button>
                   <ViewOnlyActionButton
                     canEdit={canEdit}
+                    describeReason={false}
                     size="sm"
                     variant="outline"
                     onClick={() => handleHide(suggestion)}
@@ -297,6 +310,7 @@ export default function FamilySuggestionsPage() {
                   </ViewOnlyActionButton>
                   <ViewOnlyActionButton
                     canEdit={canEdit}
+                    describeReason={false}
                     size="sm"
                     onClick={() => handleCreate(suggestion)}
                     disabled={creating !== null}
@@ -344,6 +358,7 @@ export default function FamilySuggestionsPage() {
           </Card>
         )
       })}
+      </div>
     </div>
   )
 }

@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AdminPermissionMatrix } from "@/lib/admin-permissions";
 import {
   ADMIN_FORBIDDEN_SAVE_REASON,
+  ADMIN_VIEW_ONLY_SECTION_HEADING,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import { ADMIN_VIEW_ONLY_ACTION_REASON } from "@/hooks/use-admin-area-edit-access";
@@ -409,10 +410,15 @@ describe("MountainConditionsPanel view-only gating (#1927)", () => {
     expect(
       screen.getByRole("button", { name: /Save visibility/i }),
     ).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
-    expect(
-      screen.getByText(/can view mountain conditions but cannot change them/i),
-    ).toBeInTheDocument();
+    const mcSave = screen.getByRole("button", { name: "Save" });
+    expect(mcSave).toBeDisabled();
+    // #2160 (content area): reason in the banner, not on the control.
+    const mcBanner = screen.getByTestId("admin-view-only-banner");
+    expect(mcBanner).toHaveTextContent(ADMIN_VIEW_ONLY_SECTION_HEADING);
+    expect(mcBanner).toHaveTextContent(
+      /can view mountain conditions but cannot change them/i,
+    );
+    expect(mcSave).not.toHaveAttribute("title");
   });
 
   it("enables Save, Save visibility, and upstream refresh for a content:edit admin", async () => {
@@ -562,9 +568,15 @@ describe("LodgeInstructionsPanel area wiring (#1927)", () => {
     expect(
       screen.getAllByText(/View only — your admin role cannot edit/i),
     ).toHaveLength(3);
-    expect(
-      screen.getByText(/can view lodge instructions but cannot change them/i),
-    ).toBeInTheDocument();
+    // #2160 (lodge area): reason in the banner, not on each of the three Saves.
+    const liBanner = screen.getByTestId("admin-view-only-banner");
+    expect(liBanner).toHaveTextContent(ADMIN_VIEW_ONLY_SECTION_HEADING);
+    expect(liBanner).toHaveTextContent(
+      /can view lodge instructions but cannot change them/i,
+    );
+    for (const button of saveButtons) {
+      expect(button).not.toHaveAttribute("title");
+    }
   });
 
   it("renders editable for a lodge:edit admin even with content:view", async () => {
@@ -613,12 +625,16 @@ describe("InductionSettingsPanel view-only gating (#1940, membership)", () => {
     sessionMatrix = matrix("view", { membership: "view" });
     render(<InductionSettingsPanel />);
 
-    expect(
-      await screen.findByRole("button", { name: /Save settings/i }),
-    ).toBeDisabled();
-    expect(
-      screen.getByText(/can view the nomination gate settings but cannot change/i),
-    ).toBeInTheDocument();
+    const save = await screen.findByRole("button", { name: /Save settings/i });
+    expect(save).toBeDisabled();
+    // #2160 (membership area): the reason is stated once by the section banner…
+    const banner = screen.getByTestId("admin-view-only-banner");
+    expect(banner).toHaveTextContent(ADMIN_VIEW_ONLY_SECTION_HEADING);
+    expect(banner).toHaveTextContent(
+      /can view the nomination gate settings but cannot change/i,
+    );
+    // …and no longer on the control itself.
+    expect(save).not.toHaveAttribute("title");
   });
 
   it("enables Save for a membership:edit admin", async () => {
@@ -628,6 +644,9 @@ describe("InductionSettingsPanel view-only gating (#1940, membership)", () => {
     expect(
       await screen.findByRole("button", { name: /Save settings/i }),
     ).toBeEnabled();
+    // #2160: the live region stays mounted for an edit-capable admin, but
+    // empty — that is what lets it announce when access resolves to view-only.
+    expect(screen.getByTestId("admin-view-only-banner")).toHaveTextContent("");
   });
 
   it("surfaces a visible error when a save is rejected with 403", async () => {
@@ -984,9 +1003,15 @@ describe("BookingMessagesPanel view-only gating (#1940, support)", () => {
     ).toBeDisabled();
     // Preview is a pure read and stays enabled for a viewer.
     expect(screen.getByRole("button", { name: /Preview/i })).toBeEnabled();
+    // #2160 (support area): reason in the banner, not on the control.
+    const bmBanner = screen.getByTestId("admin-view-only-banner");
+    expect(bmBanner).toHaveTextContent(ADMIN_VIEW_ONLY_SECTION_HEADING);
+    expect(bmBanner).toHaveTextContent(
+      /can view booking messages but cannot change/i,
+    );
     expect(
-      screen.getByText(/can view booking messages but cannot change/i),
-    ).toBeInTheDocument();
+      screen.getByRole("button", { name: /Save Message/i }),
+    ).not.toHaveAttribute("title");
   });
 
   it("enables Save Message and Restore Default for a support:edit admin", async () => {
@@ -1032,9 +1057,15 @@ describe("FinanceReportMappingsPanel view-only gating (#1940, finance)", () => {
     expect(
       screen.getByRole("button", { name: /Backfill History/i }),
     ).toBeDisabled();
-    expect(
-      screen.getByText(/can view the finance report mappings but cannot change/i),
-    ).toBeInTheDocument();
+    // #2160 (finance area): reason in the banner, not on the control.
+    const frBanner = screen.getByTestId("admin-view-only-banner");
+    expect(frBanner).toHaveTextContent(ADMIN_VIEW_ONLY_SECTION_HEADING);
+    expect(frBanner).toHaveTextContent(
+      /can view the finance report mappings but cannot change/i,
+    );
+    expect(screen.getByRole("button", { name: /^Save$/i })).not.toHaveAttribute(
+      "title",
+    );
   });
 
   it("enables Save and Backfill for a finance:edit admin", async () => {
@@ -2884,14 +2915,19 @@ describe("FamilyGroupEditor view-only gating (#2065, membership)", () => {
 
     const del = await screen.findByRole("button", { name: /^Delete$/ });
     expect(del).toBeDisabled();
-    expect(del).toHaveAttribute("title", ADMIN_VIEW_ONLY_ACTION_REASON);
+    // #2160: the reason no longer rides on each button — it is stated once in
+    // the section banner. Gating is unchanged (still `disabled`); only the
+    // explanation moved, so the per-button `title` is deliberately gone.
+    expect(del).not.toHaveAttribute("title");
     expect(
       screen.getByRole("button", { name: /Update Group/i }),
     ).toBeDisabled();
     expect(screen.getByLabelText("Group Name")).toBeDisabled();
-    expect(
-      screen.getByText(/can view this family group but cannot change/i),
-    ).toBeInTheDocument();
+    const banner = screen.getByTestId("admin-view-only-banner");
+    expect(banner).toHaveTextContent(ADMIN_VIEW_ONLY_SECTION_HEADING);
+    expect(banner).toHaveTextContent(
+      /can view this family group but cannot change/i,
+    );
   });
 
   it("keeps controls disabled but shows no read-only reason while the session is resolving", async () => {
@@ -2965,10 +3001,15 @@ describe("FamilyGroupsPage row-action view-only gating (#2065, membership)", () 
 
     const del = await screen.findByRole("button", { name: /Delete Kea Family/i });
     expect(del).toBeDisabled();
-    expect(del).toHaveAttribute("title", ADMIN_VIEW_ONLY_ACTION_REASON);
     const newGroup = screen.getByRole("button", { name: /New Group/i });
     expect(newGroup).toBeDisabled();
-    expect(newGroup).toHaveAttribute("title", ADMIN_VIEW_ONLY_ACTION_REASON);
+    // #2160: both controls are still gated exactly as before, but the reason is
+    // now stated once by the page's section banner instead of on each button.
+    expect(del).not.toHaveAttribute("title");
+    expect(newGroup).not.toHaveAttribute("title");
+    expect(screen.getByTestId("admin-view-only-banner")).toHaveTextContent(
+      ADMIN_VIEW_ONLY_SECTION_HEADING,
+    );
     // Edit opens the (internally edit-gated) editor, so it stays available for
     // read-only browsing — mirroring the members/[id] open-editor trigger.
     expect(

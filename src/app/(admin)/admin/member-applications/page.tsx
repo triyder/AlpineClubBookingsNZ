@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
-  AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
@@ -475,6 +475,7 @@ export default function MemberApplicationsPage() {
                     </div>
                     <ViewOnlyActionButton
                       canEdit={canEditMembership}
+                      describeReason={false}
                       type="button"
                       size="sm"
                       disabled={submittingId === application.id}
@@ -492,8 +493,26 @@ export default function MemberApplicationsPage() {
     );
   }
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the page —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before
+    its content appears; a region injected already-populated is silently dropped
+    by some screen-reader/browser pairings. It sits OUTSIDE the `space-y-6`
+    stack so the empty wrapper an edit-capable admin gets costs no layout.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEditMembership} className="mb-6">
+      Your admin role can view member applications but cannot approve,
+      decline, or otherwise act on them.
+    </AdminViewOnlySectionBanner>
+  );
+
   return (
-    <div className="space-y-6">
+    <div>
+      {viewOnlyBanner}
+      <div className="space-y-6">
       <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
         <div>
           <p className="text-sm font-semibold uppercase tracking-[0.22em] text-slate-500">
@@ -520,13 +539,6 @@ export default function MemberApplicationsPage() {
           ))}
         </div>
       </div>
-
-      {!canEditMembership && (
-        <AdminViewOnlyNotice canEdit={canEditMembership}>
-          Your admin role can view member applications but cannot approve,
-          decline, or otherwise act on them.
-        </AdminViewOnlyNotice>
-      )}
 
       {message && (
         <div className="rounded-md border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
@@ -692,6 +704,7 @@ export default function MemberApplicationsPage() {
                     <div className="flex flex-wrap gap-3">
                       <ViewOnlyActionButton
                         canEdit={canEditMembership}
+                        describeReason={false}
                         type="button"
                         disabled={submittingId === application.id}
                         onClick={() => refreshNominations(application.id)}
@@ -702,6 +715,7 @@ export default function MemberApplicationsPage() {
                       </ViewOnlyActionButton>
                       <ViewOnlyActionButton
                         canEdit={canEditMembership}
+                        describeReason={false}
                         type="button"
                         variant="outline"
                         disabled={submittingId === application.id}
@@ -770,6 +784,7 @@ export default function MemberApplicationsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      </div>
     </div>
   );
 }

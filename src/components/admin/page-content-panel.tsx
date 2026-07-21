@@ -74,7 +74,7 @@ import {
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import {
   AdminForbiddenSaveNotice,
-  AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 
@@ -1686,18 +1686,43 @@ export function PageContentPanel() {
     }
   }
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the section —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before its
+    content appears; a region injected already-populated is silently dropped by
+    some screen-reader/browser pairings. It is rendered in the loading branch too
+    so the region exists from the first paint rather than from whenever the page
+    list settles.
+
+    This panel lays out with per-child `mb-4` rather than a `space-y-*` stack, so
+    the banner keeps its own `mb-4` and stays a direct child of the fragment —
+    there is no spacing stack here to sit outside of.
+
+    The Create Page and Save buttons inside the two dialogs are NOT opted out:
+    dialog contents are a separate accessibility container this banner does not
+    reach, so they keep their own per-button reason.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-4">
+      Your admin role can view page content but cannot change it. Pages open
+      read-only and no save control is available.
+    </AdminViewOnlySectionBanner>
+  );
+
   if (loading) {
-    return <p className="text-sm text-slate-500">Loading editable pages...</p>;
+    return (
+      <>
+        {viewOnlyBanner}
+        <p className="text-sm text-slate-500">Loading editable pages...</p>
+      </>
+    );
   }
 
   return (
     <>
-      {!canEdit ? (
-        <AdminViewOnlyNotice canEdit={canEdit} className="mb-4">
-          Your admin role can view page content but cannot change it. Pages open
-          read-only and no save control is available.
-        </AdminViewOnlyNotice>
-      ) : null}
+      {viewOnlyBanner}
       {forbidden ? <AdminForbiddenSaveNotice className="mb-4" /> : null}
       <div className="mb-4 flex items-center justify-end gap-2">
         <Button
@@ -1712,6 +1737,7 @@ export function PageContentPanel() {
         </Button>
         <ViewOnlyActionButton
           canEdit={canEdit}
+          describeReason={false}
           type="button"
           onClick={() => setAddDialogOpen(true)}
         >
@@ -1867,6 +1893,7 @@ export function PageContentPanel() {
                   {canHide && (
                     <ViewOnlyActionButton
                       canEdit={canEdit}
+                      describeReason={false}
                       type="button"
                       variant="outline"
                       onClick={() => togglePublished(page)}

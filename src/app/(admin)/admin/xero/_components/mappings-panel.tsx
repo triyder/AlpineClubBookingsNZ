@@ -9,7 +9,7 @@ import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback"
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
 import {
   ADMIN_FORBIDDEN_SAVE_REASON,
-  AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action"
 import { fetchJson } from "./api"
@@ -221,7 +221,27 @@ export function MappingsPanel({
     setError("")
   }
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the section —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before its
+    content appears; a region injected already-populated is silently dropped by
+    some screen-reader/browser pairings. It sits OUTSIDE the `SectionCard` — and
+    so outside both the `space-y-*` stack and the card's collapsed/expanded
+    gate — because `SectionCard` renders its children only while it is open,
+    which would otherwise mount the region already-populated.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-6">
+      Your admin role can view the Xero account mappings but cannot change
+      them. Finance edit access is required.
+    </AdminViewOnlySectionBanner>
+  )
+
   return (
+    <div>
+      {viewOnlyBanner}
     <SectionCard
       id="xero-section-mappings"
       title="Account Mappings"
@@ -244,12 +264,6 @@ export function MappingsPanel({
             </p>
           ) : null}
           {saved ? <p className="text-sm text-success">Account mappings saved.</p> : null}
-          {!canEdit ? (
-            <AdminViewOnlyNotice canEdit={canEdit}>
-              Your admin role can view the Xero account mappings but cannot change
-              them. Finance edit access is required.
-            </AdminViewOnlyNotice>
-          ) : null}
           <div className="flex flex-col gap-2 rounded-md border border-border bg-muted p-3 text-xs text-muted-foreground md:flex-row md:items-center md:justify-between">
             <div className="space-y-1">
               <p>{formatReferenceCacheLabel("Accounts", accountCacheMeta)}</p>
@@ -294,12 +308,13 @@ export function MappingsPanel({
                 <Button variant="outline" onClick={cancelEditing} disabled={saving}>Cancel</Button>
               </>
             ) : (
-              <ViewOnlyActionButton canEdit={canEdit} variant="outline" onClick={() => setEditing(true)}>Edit Mappings</ViewOnlyActionButton>
+              <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="outline" onClick={() => setEditing(true)}>Edit Mappings</ViewOnlyActionButton>
             )}
           </div>
         </div>
       )}
     </SectionCard>
+    </div>
   )
 }
 

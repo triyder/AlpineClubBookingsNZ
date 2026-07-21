@@ -14,7 +14,10 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useConfirm } from "@/components/confirm-dialog";
-import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
+import {
+  AdminViewOnlySectionBanner,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { formatCents } from "@/lib/utils";
 
@@ -116,8 +119,26 @@ export function ConfirmPendingGuestsButton({
     }
   }
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the section —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before its
+    content appears; a region injected already-populated is silently dropped by
+    some screen-reader/browser pairings. It sits OUTSIDE the card so the empty
+    wrapper an edit-capable admin gets costs no layout.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-4">
+      Your admin role can view this booking but cannot confirm its pending
+      guests. Bookings edit access is required.
+    </AdminViewOnlySectionBanner>
+  );
+
   return (
-    <Card>
+    <div>
+      {viewOnlyBanner}
+      <Card>
       {confirmDialog}
       <CardHeader>
         <CardTitle>Confirm pending guests now</CardTitle>
@@ -139,6 +160,7 @@ export function ConfirmPendingGuestsButton({
         )}
         <ViewOnlyActionButton
           canEdit={canEdit}
+          describeReason={false}
           onClick={handleConfirm}
           disabled={confirming}
         >
@@ -182,6 +204,7 @@ export function ConfirmPendingGuestsButton({
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </Card>
+      </Card>
+    </div>
   );
 }

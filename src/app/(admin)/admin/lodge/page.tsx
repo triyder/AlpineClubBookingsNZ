@@ -10,7 +10,7 @@ import { useClubIdentity } from "@/components/club-identity-provider";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import {
   ADMIN_FORBIDDEN_SAVE_REASON,
-  AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
@@ -144,6 +144,7 @@ function AccountCard({
           {!editing && (
             <ViewOnlyActionButton
               canEdit={canEdit}
+              describeReason={false}
               variant="outline"
               size="sm"
               onClick={() => {
@@ -282,7 +283,7 @@ function AccountCard({
 
         {editing && (
           <div className="flex gap-3">
-            <ViewOnlyActionButton canEdit={canEdit} onClick={handleSave} disabled={saving}>
+            <ViewOnlyActionButton canEdit={canEdit} describeReason={false} onClick={handleSave} disabled={saving}>
               {saving ? "Saving..." : "Save Changes"}
             </ViewOnlyActionButton>
             <Button variant="outline" onClick={handleCancel} disabled={saving}>
@@ -368,9 +369,28 @@ export default function AdminLodgePage() {
     }
   }
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the page —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before
+    its content appears; a region injected already-populated is silently dropped
+    by some screen-reader/browser pairings. That is why it is hoisted above the
+    loading/error early-returns and rendered in every branch. It sits OUTSIDE
+    the `space-y-6` stack so the empty wrapper an edit-capable admin gets costs
+    no layout.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-6">
+      Your admin role can view the lodge kiosk accounts but cannot change them.
+      Lodge edit access is required.
+    </AdminViewOnlySectionBanner>
+  );
+
   if (loading) {
     return (
       <div className="p-6">
+        {viewOnlyBanner}
         <h1 className="text-2xl font-bold text-slate-900 mb-6">Lodge Kiosk</h1>
         <div className="animate-pulse h-64 bg-slate-100 rounded-lg" />
       </div>
@@ -380,6 +400,7 @@ export default function AdminLodgePage() {
   if (error || accounts.length === 0) {
     return (
       <div className="p-6">
+        {viewOnlyBanner}
         <h1 className="text-2xl font-bold text-slate-900 mb-6">Lodge Kiosk</h1>
         <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-red-700">
           {error || "Lodge account not found. Run the database seed to create it."}
@@ -389,7 +410,9 @@ export default function AdminLodgePage() {
   }
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-6">
+      {viewOnlyBanner}
+      <div className="space-y-6">
       <h1 className="text-2xl font-bold text-slate-900">Lodge Kiosk</h1>
 
       <p className="max-w-3xl text-sm text-slate-600">
@@ -403,13 +426,6 @@ export default function AdminLodgePage() {
         {showLodgeControls &&
           " With more than one lodge, create one kiosk account per lodge and bind each to the lodge its device lives at."}
       </p>
-
-      {!canEdit && (
-        <AdminViewOnlyNotice canEdit={canEdit}>
-          Your admin role can view the lodge kiosk accounts but cannot change
-          them. Lodge edit access is required.
-        </AdminViewOnlyNotice>
-      )}
 
       {accounts.map((account) => (
         <AccountCard
@@ -428,7 +444,7 @@ export default function AdminLodgePage() {
           <CardHeader className="flex flex-row items-center justify-between">
             <CardTitle>Add a kiosk account</CardTitle>
             {!adding && (
-              <ViewOnlyActionButton canEdit={canEdit} variant="outline" size="sm" onClick={() => setAdding(true)}>
+              <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="outline" size="sm" onClick={() => setAdding(true)}>
                 Add account
               </ViewOnlyActionButton>
             )}
@@ -486,6 +502,7 @@ export default function AdminLodgePage() {
               <div className="flex gap-3">
                 <ViewOnlyActionButton
                   canEdit={canEdit}
+                  describeReason={false}
                   onClick={handleCreate}
                   disabled={creating || !newEmail || newPassword.length < 6}
                 >
@@ -513,6 +530,7 @@ export default function AdminLodgePage() {
           )}
         </Card>
       )}
+    </div>
     </div>
   );
 }

@@ -31,7 +31,16 @@ describe("PublicContentSettingsPanel", () => {
     // "Annual membership fees" is the new dedicated {{annual-fees}} opt-in (#1933, E7).
     const checkbox = screen.getByRole("checkbox", { name: "Annual membership fees" });
     expect((checkbox as HTMLInputElement).disabled).toBe(true);
-    expect(checkbox.getAttribute("aria-describedby")).toBe(notice.parentElement?.id);
+    // #2160: the reason moved into `AdminViewOnlySectionBanner`, so the notice
+    // text now sits several levels below the id-carrying wrapper (banner box →
+    // role="status" → wrapper) rather than directly inside it. The association
+    // that matters is unchanged and is asserted directly: the element the
+    // checkbox points at is the one that CONTAINS the explanation.
+    const describedBy = checkbox.getAttribute("aria-describedby");
+    expect(describedBy).toBeTruthy();
+    const reasonRegion = document.getElementById(String(describedBy));
+    expect(reasonRegion).not.toBeNull();
+    expect(reasonRegion?.contains(notice)).toBe(true);
     expect((screen.getByRole("button", { name: "Save visibility" }) as HTMLButtonElement).disabled).toBe(true);
   });
 });

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import {
-  AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action"
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
@@ -200,6 +200,21 @@ export function InboundEventsPanel({
     }
   }
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the section —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before
+    its content appears; a region injected already-populated is silently dropped
+    by some screen-reader/browser pairings. It sits OUTSIDE the `space-y-4`
+    stack so the empty wrapper an edit-capable admin gets costs no layout.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-4">
+      Your admin role can view Xero inbound events but cannot replay them.
+    </AdminViewOnlySectionBanner>
+  )
+
   return (
     <SectionCard
       id="xero-section-inbound"
@@ -209,12 +224,8 @@ export function InboundEventsPanel({
       onToggle={(nextOpen) => onToggle("inbound", nextOpen)}
       actions={<Button variant="outline" size="sm" onClick={() => void fetchEvents()} disabled={loading}>{loading ? "Refreshing..." : "Refresh"}</Button>}
     >
+      {viewOnlyBanner}
       <div className="space-y-4">
-        {!canEdit ? (
-          <AdminViewOnlyNotice canEdit={canEdit}>
-            Your admin role can view Xero inbound events but cannot replay them.
-          </AdminViewOnlyNotice>
-        ) : null}
         {error ? <p className="text-sm text-danger">{error}</p> : null}
         <details className="rounded-md border bg-muted p-3 text-xs text-muted-foreground">
           <summary className="cursor-pointer font-medium text-foreground">What do these statuses mean?</summary>
@@ -280,7 +291,7 @@ export function InboundEventsPanel({
                 </div>
                 {event.errorMessage ? <p className="text-sm text-danger">{event.errorMessage}</p> : null}
                 <div className="flex flex-wrap items-center gap-2">
-                  <ViewOnlyActionButton canEdit={canEdit} variant="outline" size="sm" onClick={() => void replay(event.id)} disabled={!event.canReplay || replayingEventId === event.id}>
+                  <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="outline" size="sm" onClick={() => void replay(event.id)} disabled={!event.canReplay || replayingEventId === event.id}>
                     {replayingEventId === event.id ? "Replaying..." : inboundEventActionLabel(event.status)}
                   </ViewOnlyActionButton>
                   {!event.canReplay ? <p className="text-xs text-muted-foreground">This event is currently being processed.</p> : null}

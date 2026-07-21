@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Alert } from "@/components/ui/alert"
 import { AdminPageHeader } from "@/components/admin/admin-page-header"
-import { AdminViewOnlyNotice, ViewOnlyActionButton } from "@/components/admin/view-only-action"
+import { AdminViewOnlySectionBanner, ViewOnlyActionButton } from "@/components/admin/view-only-action"
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
 import {
   LodgeSelect,
@@ -154,18 +154,30 @@ export default function SeasonsPage() {
     }
   }
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the page —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted (the component renders it whatever `canEdit` is) so the live region
+    is registered in the accessibility tree before its content appears; a region
+    injected already-populated is silently dropped by some screen-reader/browser
+    pairings. It sits OUTSIDE the `space-y-6` stack so the empty wrapper an
+    edit-capable admin gets costs no layout — the spacing lives on the inner box.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-6">
+      Bookings view access can inspect season windows. Bookings edit access is required to change them.
+    </AdminViewOnlySectionBanner>
+  )
+
   return (
-    <div className="space-y-6">
+    <div>
+      {viewOnlyBanner}
+      <div className="space-y-6">
       <AdminPageHeader
         title="Seasons"
         description="Season windows (name, type, dates, and active state) per lodge. Set nightly rates and add new seasons in Fees → Hut Fees."
       />
-
-      {!canEdit && (
-        <AdminViewOnlyNotice canEdit={canEdit}>
-          Bookings view access can inspect season windows. Bookings edit access is required to change them.
-        </AdminViewOnlyNotice>
-      )}
 
       <Alert>
         <span>
@@ -257,13 +269,13 @@ export default function SeasonsPage() {
                   </div>
                   {canEdit && (
                     <div className="flex space-x-2">
-                      <ViewOnlyActionButton canEdit={canEdit} variant="outline" size="sm" onClick={() => handleToggleActive(season)}>
+                      <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="outline" size="sm" onClick={() => handleToggleActive(season)}>
                         {season.active ? "Deactivate" : "Activate"}
                       </ViewOnlyActionButton>
-                      <ViewOnlyActionButton canEdit={canEdit} variant="outline" size="sm" onClick={() => startEdit(season)}>
+                      <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="outline" size="sm" onClick={() => startEdit(season)}>
                         Edit window
                       </ViewOnlyActionButton>
-                      <ViewOnlyActionButton canEdit={canEdit} variant="destructive" size="sm" onClick={() => handleDelete(season.id)}>
+                      <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="destructive" size="sm" onClick={() => handleDelete(season.id)}>
                         Delete
                       </ViewOnlyActionButton>
                     </div>
@@ -278,6 +290,7 @@ export default function SeasonsPage() {
           ))}
         </div>
       )}
+      </div>
     </div>
   )
 }

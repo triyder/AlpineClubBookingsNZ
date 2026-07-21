@@ -16,7 +16,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
-  AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import { Input } from "@/components/ui/input";
@@ -899,8 +899,27 @@ export function PublicBookingRequestsPanel({
     }
   }
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the section —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below (and instead of repeating it inside every request
+    card). The `role="status"` wrapper is permanently mounted so the live region
+    is registered in the accessibility tree before its content appears; a region
+    injected already-populated is silently dropped by some
+    screen-reader/browser pairings. It sits OUTSIDE the `space-y-*` stack so the
+    empty wrapper an edit-capable admin gets costs no layout.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-6">
+      Your admin role can view booking requests but cannot price,
+      hold, approve, decline, or change their linked contact.
+    </AdminViewOnlySectionBanner>
+  );
+
   return (
-    <div className="space-y-6">
+    <div>
+      {viewOnlyBanner}
+      <div className="space-y-6">
       {showHeading ? (
         <div>
           <h1 className="text-3xl font-bold">Public booking requests</h1>
@@ -1497,12 +1516,7 @@ export function PublicBookingRequestsPanel({
                         </p>
                       ) : null}
                     </div>
-                    ) : (
-                      <AdminViewOnlyNotice canEdit={canEdit}>
-                        Your admin role can view this request but cannot price,
-                        hold, approve, decline, or change its linked contact.
-                      </AdminViewOnlyNotice>
-                    )
+                    ) : null
                   ) : null}
 
                   {request.status === "DECLINED" ? (
@@ -1543,6 +1557,7 @@ export function PublicBookingRequestsPanel({
                           <div className="mt-2">
                             <ViewOnlyActionButton
                               canEdit={canEdit}
+                              describeReason={false}
                               variant="outline"
                               size="sm"
                               disabled={actioningId === request.id}
@@ -1605,6 +1620,7 @@ export function PublicBookingRequestsPanel({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      </div>
     </div>
   );
 }

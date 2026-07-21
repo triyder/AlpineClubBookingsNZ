@@ -17,7 +17,7 @@ import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import {
   ADMIN_FORBIDDEN_SAVE_REASON,
-  AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 
@@ -184,6 +184,24 @@ export function LodgeCapacityCard() {
     }
   }
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the section —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before its
+    content appears; a region injected already-populated is silently dropped by
+    some screen-reader/browser pairings. It sits OUTSIDE the `space-y-*` stack so
+    the empty wrapper an edit-capable admin gets costs no layout.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-4">
+      Your admin role can view the lodge capacity settings but cannot
+      change them. Lodge edit access is required.
+    </AdminViewOnlySectionBanner>
+  );
+
+  // A cross-area 403 hides the whole card, banner included — there is no
+  // section left here for the banner to explain.
   if (forbidden) return null;
 
   return (
@@ -195,19 +213,15 @@ export function LodgeCapacityCard() {
           coverage is checked for dashboard and Needs Attention warnings.
         </CardDescription>
       </CardHeader>
-      <CardContent className="space-y-4">
+      <CardContent>
+        {viewOnlyBanner}
+        <div className="space-y-4">
         <LodgeSelect
           lodges={lodges}
           value={lodgeId}
           onChange={setLodgeId}
           loading={lodgesLoading}
         />
-        {!canEdit ? (
-          <AdminViewOnlyNotice canEdit={canEdit}>
-            Your admin role can view the lodge capacity settings but cannot
-            change them. Lodge edit access is required.
-          </AdminViewOnlyNotice>
-        ) : null}
         {(error || savedMessage) && (
           <div
             ref={feedbackRef}
@@ -290,6 +304,7 @@ export function LodgeCapacityCard() {
           </div>
           <ViewOnlyActionButton
             canEdit={canEdit}
+            describeReason={false}
             type="button"
             onClick={() => void save()}
             disabled={loading || saving}
@@ -309,6 +324,7 @@ export function LodgeCapacityCard() {
           leader warnings include unassigned dates from today through the
           configured lookahead.
         </p>
+        </div>
       </CardContent>
     </Card>
   );

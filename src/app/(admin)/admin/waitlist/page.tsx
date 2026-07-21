@@ -12,7 +12,7 @@ import { Label } from "@/components/ui/label";
 import { AdminPageHeader } from "@/components/admin/admin-page-header";
 import { AdminDataTable } from "@/components/admin/admin-data-table";
 import {
-  AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
@@ -410,23 +410,41 @@ export default function AdminWaitlistPage() {
     setForceConfirming(null);
   }
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the section —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before its
+    content appears; a region injected already-populated is silently dropped by
+    some screen-reader/browser pairings. It is rendered in the loading branch too
+    so the region exists from the first paint rather than from whenever the
+    waitlist fetch settles, and it sits OUTSIDE the `space-y-*` stack so the
+    empty wrapper an edit-capable admin gets costs no layout.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEditBookings} className="mb-6">
+      Your admin role can view the waitlist but cannot force-confirm
+      bookings.
+    </AdminViewOnlySectionBanner>
+  );
+
   if (loading) {
-    return <div className="p-6">Loading waitlist...</div>;
+    return (
+      <div className="p-6">
+        {viewOnlyBanner}
+        <div>Loading waitlist...</div>
+      </div>
+    );
   }
 
   return (
-    <div className="space-y-6">
+    <div>
+      {viewOnlyBanner}
+      <div className="space-y-6">
       <AdminPageHeader
         title="Waitlist"
         actions={<Badge variant="secondary">{pagination.total} total</Badge>}
       />
-
-      {!canEditBookings && (
-        <AdminViewOnlyNotice canEdit={canEditBookings}>
-          Your admin role can view the waitlist but cannot force-confirm
-          bookings.
-        </AdminViewOnlyNotice>
-      )}
 
       {error && (
         <div className="rounded-md border border-danger/20 bg-danger-muted p-3 text-sm text-danger">{error}</div>
@@ -730,6 +748,7 @@ export default function AdminWaitlistPage() {
                   <TableCell>
                     <ViewOnlyActionButton
                       canEdit={canEditBookings}
+                      describeReason={false}
                       size="sm"
                       variant="outline"
                       onClick={() =>
@@ -783,6 +802,7 @@ export default function AdminWaitlistPage() {
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }

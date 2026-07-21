@@ -530,10 +530,10 @@ happened (#2143). That gate belongs at the FORM layer, through the hook's
 `isDirty` — routes deliberately keep no ad-hoc no-op comparison, so a direct API
 caller holding `area:edit` can still write an unchanged body. Edit affordances
 gate on the tri-state `useAdminAreaEditAccess(area)` through
-`ViewOnlyActionButton` / `AdminViewOnlyNotice` (so the resolving `undefined`
-window stays neutral), and the backing write route enforces the matching
-`area:edit` permission. Where a section renders an
-`AdminViewOnlySectionBanner` instead, its buttons pass `describeReason={false}`:
+`ViewOnlyActionButton` / `AdminViewOnlySectionBanner` (so the resolving
+`undefined` window stays neutral), and the backing write route enforces the
+matching `area:edit` permission. The section renders an
+`AdminViewOnlySectionBanner` and its buttons pass `describeReason={false}`:
 the view-only reason is then stated once, at the top of the section, in a
 permanently-mounted `role="status"` region, rather than on disabled buttons that
 are out of the tab order and whose `title` never fires at all (the shared
@@ -546,10 +546,130 @@ early return above that frame re-creates both defects it exists to prevent: a
 failed FIRST load mounts the section together with an already-populated alert in
 one commit, and because a scope change is itself a load it unmounts the
 `PolicyScopeSelect` the admin just operated, dropping keyboard focus to `<body>`
-for the duration of the round trip. That banner shape is
-adopted by the five Booking Policies sections only (#2142); the rest of the
-admin tree keeps `AdminViewOnlyNotice` plus the per-button reason, which stays
-the default. Any card
+for the duration of the round trip. That banner shape started in the five
+Booking Policies sections (#2142) and is now the **default across the admin
+tree** (#2160) — not a claim that nothing is left. Measured on the branch that
+rolled it out: **72 components render a banner, and 205 of the 258
+`ViewOnlyActionButton` call sites opt out** of the per-button reason because a
+banner in the same file covers them. The remaining **53 controls across 23 files
+deliberately keep the per-button default** (`describeReason` left at `true`), in
+three shapes:
+
+- **Controls inside a dialog, sheet, popover, or dropdown menu.** These live in
+  a separate accessibility container — focus is trapped and the page behind is
+  commonly inert — so a banner rendered in the page body does not reach them.
+  (9 controls across 4 files, which the test enumerates by name; three further
+  controls of this shape live in files counted under the next bucket, see
+  there.)
+- **Leaf components with no section of their own**, which a parent drops into
+  someone else's layout (for example the member detail header's action toolbar,
+  the booking capacity/exclusive hold controls, the family-group login-holder
+  and request-review sub-sections, and the non-member contact form). Nothing
+  local proves an ancestor renders a banner above them, so the reason stays on
+  the control. (19 controls across 10 files.) Read that bucket as the
+  REMAINDER — everything that is neither a member detail card nor one of the
+  four dialog-only files — rather than as a claim that all 19 are leaves. Eight
+  of the ten files are (16 controls); the other two, `page-content-panel.tsx`
+  and `site-banners-panel.tsx`, are full banner-bearing panels whose last 3
+  controls sit inside their own edit/create `Dialog`, so those 3 are really the
+  first shape occurring inside a file that also has the third. Nothing is
+  mis-gated either way — the point is only that the bucket boundary is where the
+  test can draw one mechanically, not a clean taxonomy.
+- **The member detail per-record cards** in
+  `src/app/(admin)/admin/members/[id]/_components/` — `member-credit-card`,
+  `member-lifecycle-card`, `member-committee-assignments-card`,
+  `member-partner-link-card`, `member-deletion-card`, `member-dependents-card`,
+  `member-parent-links-card`, `member-lodge-access-card`, and
+  `member-seasonal-membership-card`. (25 controls across 9 files — the single
+  largest block of unconverted controls, on one of the admin tree's densest
+  screens.) These are NOT the two shapes above: they are real `Card`/
+  `CardHeader` sections, several call `useAdminAreaEditAccess` themselves, and
+  they are structurally identical to panels that were converted, so a banner
+  *could* cover them. They were deferred for a different reason — one member
+  detail page renders all nine at once, so converting them stacks nine copies of
+  the same banner down a single page, and the right answer is probably one
+  page-level banner rather than nine section-level ones. That is a design
+  decision with a visible-UI consequence, so it is **owner decision #2168**, not
+  a silent to-do. Do not convert them under #2160.
+
+Every figure in this section is asserted mechanically by
+`src/components/admin/__tests__/view-only-banner-contract.test.ts` — the totals
+and all three buckets — so they can not drift out of step with the tree. The
+test strips comments with TypeScript's own scanner before counting, because
+counting raw text conflates a call site with prose *about* a call site (both
+`view-only-action.tsx`'s JSDoc and `public-booking-requests-section.tsx`'s JSX
+commentary quote `describeReason={false}` while explaining it, and each was
+miscounted as an opt-out once). If you add or convert a gated control, that test
+fails and the numbers here, in `AGENTS.md`, in `docs/STYLE_GUIDE.md`, in
+`CHANGELOG.md` and in the `ViewOnlyActionButton` JSDoc all need updating
+together.
+
+**Where the banner goes: first child, every branch.** The banner is the first
+child of a section's outermost wrapper, rendered identically in the loading,
+error and loaded branches. That position is load-bearing, not cosmetic: it is
+what keeps the `role="status"` wrapper at the same place in the DOM when a fetch
+settles. Put a heading above the banner in the loaded branch only, and React
+reconciles child 0 from the live region into the heading and mounts a fresh,
+already-populated region below it — the exact defect the mount-order rule exists
+to prevent. Two pages, `/admin/book` and `/admin/roster`, put their page heading
+above the banner instead, so a screen-reader user hears which area they are on
+before hearing that it is view-only; both render in a single branch, so the
+reorder costs nothing there. That is a local exception with a comment at each
+site, **not** a rule to spread: other single-branch sections have deliberately
+been left alone rather than make the banner's position depend on whether a
+section happens to have a loading branch, which is not visible at the render
+site. Making heading-before-banner uniform would mean moving the announcement
+out of the sections entirely (for example, one banner in the admin shell below
+the page title) — a design change with a visible-UI consequence, and a fresh
+owner decision rather than something to retrofit page by page.
+
+Two further invariants are enforced by the same test. First,
+coverage: a file may only use `describeReason={false}` if it also renders an
+`AdminViewOnlySectionBanner`. That is asserted per FILE, because that is the
+only scope in which a reader — and the test — can see that the banner really
+does render above the control. Second, and because the coverage rule is by
+construction blind to it, **nesting**: a component that renders a banner may not
+also render a child component that renders one, or a view-only admin meets the
+same sentence twice in two `role="status"` regions. Where a child is legitimately
+reused in a container no ancestor banner reaches (a dialog), it keeps its own
+banner by default and the covering parent passes `renderViewOnlyBanner={false}`
+at the render site — `FamilyGroupEditor` is the worked example: banner-bearing
+inside the member-detail dialog, suppressed on `/admin/family-groups`, which
+already banners the whole page. The check reads EVERY render site of the child,
+not just the first, so a second copy added below a compliant one can not ride on
+it. It follows the house import style (a named import rendered as `<Child …>`)
+and would not see a component reached by an aliased or default import, a barrel
+re-export, or `next/dynamic`; none are used for banner-bearing admin components
+today, but a refactor to one of those forms would quietly take the pair out of
+the test's view rather than fail it.
+
+**Once per section, NOT once per screen.** The nesting rule is about parent and
+child — one banner covering the same controls as another — and that is all it
+is. It does not, and structurally can not, say anything about SIBLINGS. Several
+banner-bearing sections sitting side by side on one page each render their own,
+so a view-only admin meets the sentence once per section: `/admin/security`
+(`password-policy-card`, `magic-link-security-card`, `google-security-card`) and
+`/admin/booking-requests` (approvals, change requests, public requests) show it
+three times each, and `/admin/appearance/identity`,
+`/admin/induction/settings` and `/admin/page-content` twice. That is inherited
+from the #2142 shape rather than introduced by the rollout, and nothing in the
+contract test flags it. Whether stacked sibling banners should collapse into one
+page-level banner is an open design question with a visible-UI consequence — it
+is the same question **#2168** is deciding for the member detail page, where the
+count would be nine, and it should be answered there for the whole tree rather
+than page by page. Until it is, do not dedupe siblings ad hoc, and do not write
+docs that promise one banner per screen.
+
+**Known limitation, accepted by the owner as Decision 1 on #2160.** Gated
+controls keep the `disabled` attribute rather than moving to
+`aria-disabled="true"`, so they remain **out of the keyboard tab order**. The
+banner puts the reason in the reading order ahead of the controls; it does NOT
+make those controls focusable, and a keyboard user still cannot tab to a gated
+button to discover it. That was weighed against the cost of making every gated
+control clickable-but-neutralised (each call site's click path would need
+auditing so no write slips through) and the banner was judged the better trade.
+Revisiting it is a fresh owner decision, not a silent edit — the contract test
+asserts `disabled` is still what ships. Any card
 that shares a strict whole-object PUT with a sibling card must GET the fresh
 settings and merge only the fields the admin actually CHANGED before writing, so
 a save cannot overwrite a change made while the page was open. Merging its own
@@ -657,10 +777,11 @@ same fix: #2142 changed the VISIBLE text, whereas here only the accessible name
 differs and a sighted admin still sees three buttons reading "Edit". That is
 accepted, because each sits in its own card header beside a distinct title.
 Reference:
-`src/components/admin/booking-policies/group-discount-section.tsx` — note that
-it now carries the section banner, so for the default per-button
-`AdminViewOnlyNotice` treatment look at any admin surface outside Booking
-Policies instead.
+`src/components/admin/booking-policies/group-discount-section.tsx` — it carries
+the section banner, which since #2160 is what every banner-hostable admin
+surface does. For the surviving per-button treatment, look at a control inside a
+dialog (`src/app/(admin)/admin/issue-reports/page.tsx`) or a leaf toolbar
+component (`src/components/admin/admin-capacity-hold-controls.tsx`).
 
 The draft/snapshot half of that pattern lives in the shared
 `useSectionEditState` hook (`src/hooks/use-section-edit-state.ts`), which new

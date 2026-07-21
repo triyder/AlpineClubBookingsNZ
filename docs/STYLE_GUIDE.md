@@ -163,6 +163,28 @@ re-creatable.
   belt-and-braces, so captures show the fully-resolved state. If you add a new
   kind of late-settling UI, extend the harness settle logic generically — never
   paper over it per-capture.
+- **Describing view-only access in prose:** since #2160 a view-only admin
+  usually meets ONE section banner — "You have view-only access to this area" —
+  at the top of the section, and the buttons below it are simply disabled and
+  carry no explanation of their own. Write guides to match: point the reader at
+  the banner, and do NOT tell them to hover a greyed-out button for a tooltip.
+  That tooltip never appears (disabled buttons receive no pointer events), and
+  gated controls also stay out of the keyboard tab order, so "tab to the button
+  to hear why" is wrong too. **Check the screen before you write "the banner
+  says why":** 53 controls still carry their own per-button reason instead —
+  controls inside a dialog, popover, or dropdown; leaf toolbars dropped into
+  another page's layout; and, most of all, the **member detail per-record cards**
+  (`/admin/members/[id]`), which are unconverted pending owner decision #2168.
+  See `docs/ARCHITECTURE.md` for the full list of shapes and counts. And note
+  the banner is stated once per **section**, not once per screen: a page built
+  from several banner-bearing sections repeats it once per section, so
+  `/admin/security` and `/admin/booking-requests` each show it three times. What
+  is ruled out is *nesting* — a banner-bearing component never renders another
+  one, so no admin meets the sentence twice over the same controls. So on a
+  multi-section page, write "each section says so at the top", not "the page
+  says so once at the top". Whether stacked sibling banners should collapse into
+  a single page-level one is an open design question, and is exactly what owner
+  decision #2168 is deciding for the member detail page.
 
 ## Guide opening line (canonical)
 

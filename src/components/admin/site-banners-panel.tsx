@@ -42,7 +42,7 @@ import {
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import {
   AdminForbiddenSaveNotice,
-  AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 
@@ -312,35 +312,59 @@ export function SiteBannersPanel() {
     }
   }
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the section —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before its
+    content appears; a region injected already-populated is silently dropped by
+    some screen-reader/browser pairings. It is rendered in EVERY return branch,
+    including the loading one, and sits OUTSIDE the `space-y-*` stack so the
+    empty wrapper an edit-capable admin gets costs no layout. The Save button
+    inside the add/edit Dialog keeps its own per-button reason: a dialog is a
+    separate accessibility container this banner does not cover.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-6">
+      Your admin role can view site banners but cannot change them.
+    </AdminViewOnlySectionBanner>
+  );
+
   if (loading) {
-    return <p className="text-sm text-slate-500">Loading site banners...</p>;
+    return (
+      <div>
+        {viewOnlyBanner}
+        <p className="text-sm text-slate-500">Loading site banners...</p>
+      </div>
+    );
   }
 
   if (loadError || !groups) {
     return (
-      <div className="space-y-3">
-        <p className="text-sm text-red-600">
-          {loadError ?? "Failed to load site banners. Please try again."}
-        </p>
-        <Button type="button" variant="outline" onClick={loadBanners}>
-          Retry
-        </Button>
+      <div>
+        {viewOnlyBanner}
+        <div className="space-y-3">
+          <p className="text-sm text-red-600">
+            {loadError ?? "Failed to load site banners. Please try again."}
+          </p>
+          <Button type="button" variant="outline" onClick={loadBanners}>
+            Retry
+          </Button>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
+    <div>
+      {viewOnlyBanner}
+      <div className="space-y-6">
       {confirmDialog}
-      {!canEdit ? (
-        <AdminViewOnlyNotice canEdit={canEdit}>
-          Your admin role can view site banners but cannot change them.
-        </AdminViewOnlyNotice>
-      ) : null}
       {forbidden ? <AdminForbiddenSaveNotice /> : null}
       <div className="flex justify-end">
         <ViewOnlyActionButton
           canEdit={canEdit}
+          describeReason={false}
           type="button"
           onClick={openCreateDialog}
         >
@@ -394,6 +418,7 @@ export function SiteBannersPanel() {
                       <div className="flex shrink-0 items-center gap-2">
                         <ViewOnlyActionButton
                           canEdit={canEdit}
+                          describeReason={false}
                           type="button"
                           variant="outline"
                           size="sm"
@@ -414,6 +439,7 @@ export function SiteBannersPanel() {
                         </Button>
                         <ViewOnlyActionButton
                           canEdit={canEdit}
+                          describeReason={false}
                           type="button"
                           variant="outline"
                           size="sm"
@@ -562,6 +588,7 @@ export function SiteBannersPanel() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      </div>
     </div>
   );
 }

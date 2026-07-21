@@ -4,7 +4,7 @@ import { useEffect, useId, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
-import { AdminViewOnlyNotice, ViewOnlyActionButton } from "@/components/admin/view-only-action";
+import { AdminViewOnlySectionBanner, ViewOnlyActionButton } from "@/components/admin/view-only-action";
 
 type Settings = {
   membershipTypes: boolean;
@@ -53,8 +53,27 @@ export function PublicContentSettingsPanel() {
     load();
     // Load once on mount; retry is explicit after an error.
   }, []);
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the section —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before its
+    content appears; a region injected already-populated is silently dropped by
+    some screen-reader/browser pairings. It sits OUTSIDE the `space-y-*` stack so
+    the empty wrapper an edit-capable admin gets costs no layout. The `id`
+    wrapper is retained because the disabled checkboxes below (which are not
+    ViewOnlyActionButtons and keep their own description) point their
+    `aria-describedby` at it.
+  */
+  const viewOnlyBanner = (
+    <div id={viewOnlyReasonId}>
+      <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-4">
+        Content view access can inspect public visibility. Content edit access is required to change it.
+      </AdminViewOnlySectionBanner>
+    </div>
+  );
   if (loadFailed) return <div className="space-y-3"><p className="text-sm text-danger">Could not load public content settings.</p><Button variant="outline" onClick={load}>Retry</Button></div>;
-  if (!settings) return <p className="text-sm text-muted-foreground">Loading visibility settings…</p>;
+  if (!settings) return <div>{viewOnlyBanner}<p className="text-sm text-muted-foreground">Loading visibility settings…</p></div>;
   async function save() {
     setSaving(true);
     try {
@@ -65,7 +84,7 @@ export function PublicContentSettingsPanel() {
     } catch { toast.error("Could not update public content visibility."); }
     finally { setSaving(false); }
   }
-  return <div className="space-y-4"><p className="text-sm text-muted-foreground">A token renders no authoritative fee or policy data until its family is enabled here. Membership types must also be individually marked for public listing.</p>{!canEdit ? <div id={viewOnlyReasonId}><AdminViewOnlyNotice canEdit={canEdit}>Content view access can inspect public visibility. Content edit access is required to change it.</AdminViewOnlyNotice></div> : null}<div className="grid gap-3 sm:grid-cols-2">{labels.map(([key, label]) => <label key={key} className="flex items-center gap-3 rounded-md border p-3"><input type="checkbox" checked={settings[key] as boolean} disabled={!canEdit} aria-describedby={!canEdit ? viewOnlyReasonId : undefined} onChange={(event) => setSettings({ ...settings, [key]: event.target.checked })} /><span>{label}</span></label>)}</div>
+  return <div>{viewOnlyBanner}<div className="space-y-4"><p className="text-sm text-muted-foreground">A token renders no authoritative fee or policy data until its family is enabled here. Membership types must also be individually marked for public listing.</p><div className="grid gap-3 sm:grid-cols-2">{labels.map(([key, label]) => <label key={key} className="flex items-center gap-3 rounded-md border p-3"><input type="checkbox" checked={settings[key] as boolean} disabled={!canEdit} aria-describedby={!canEdit ? viewOnlyReasonId : undefined} onChange={(event) => setSettings({ ...settings, [key]: event.target.checked })} /><span>{label}</span></label>)}</div>
     <div className="space-y-3 rounded-md border p-4">
       <div>
         <p className="text-sm font-medium">Book Now button</p>
@@ -78,5 +97,5 @@ export function PublicContentSettingsPanel() {
         {settings.bookNowTarget === "PAGE" ? <select className="w-full rounded-md border p-2 text-sm" value={settings.bookNowPageId ?? ""} disabled={!canEdit} onChange={(event) => setSettings({ ...settings, bookNowPageId: event.target.value || null })}><option value="">Select a published page…</option>{pages.map((page) => <option key={page.id} value={page.id}>{page.title} ({page.path})</option>)}</select> : null}
       </div> : null}
     </div>
-    <ViewOnlyActionButton canEdit={canEdit} disabled={saving} onClick={save}>{saving ? "Saving…" : "Save visibility"}</ViewOnlyActionButton></div>;
+    <ViewOnlyActionButton canEdit={canEdit} describeReason={false} disabled={saving} onClick={save}>{saving ? "Saving…" : "Save visibility"}</ViewOnlyActionButton></div></div>;
 }

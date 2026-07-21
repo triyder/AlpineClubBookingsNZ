@@ -19,7 +19,7 @@ import {
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import {
   ADMIN_FORBIDDEN_SAVE_REASON,
-  AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import { cn } from "@/lib/utils";
@@ -147,6 +147,7 @@ function OperationItem({
             {operation.supported ? (
               <ViewOnlyActionButton
                 canEdit={canEdit}
+                describeReason={false}
                 variant="outline"
                 size="sm"
                 onClick={() => void onRetry(operation.id)}
@@ -299,8 +300,28 @@ export function XeroRecordActivityPanel({
   const visibleOperations = compact ? data?.operations.slice(0, 5) ?? [] : data?.operations ?? []
   const visibleLinks = compact ? data?.links.filter((link) => link.active).slice(0, 4) ?? [] : data?.links ?? []
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the section —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before its
+    content appears; a region injected already-populated is silently dropped by
+    some screen-reader/browser pairings. It sits OUTSIDE the `space-y-*` stack so
+    the empty wrapper an edit-capable admin gets costs no layout. The compact and
+    full layouts below are two renderings of the SAME section, so they share one
+    banner rather than declaring one each.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-4">
+      Your admin role can view Xero activity but cannot retry or replay
+      operations. Finance edit access is required.
+    </AdminViewOnlySectionBanner>
+  )
+
   if (compact) {
     return (
+      <div>
+        {viewOnlyBanner}
       <Card className={className}>
         <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
           <div className="space-y-1">
@@ -321,12 +342,6 @@ export function XeroRecordActivityPanel({
             <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
               {error}
             </div>
-          )}
-          {!canEdit && (
-            <AdminViewOnlyNotice canEdit={canEdit}>
-              Your admin role can view Xero activity but cannot retry or replay
-              operations. Finance edit access is required.
-            </AdminViewOnlyNotice>
           )}
           {loading ? (
             <p className="text-sm text-slate-500">Loading Xero activity...</p>
@@ -402,11 +417,14 @@ export function XeroRecordActivityPanel({
           )}
         </CardContent>
       </Card>
+      </div>
     )
   }
 
   return (
-    <div className={cn("space-y-6", className)}>
+    <div>
+      {viewOnlyBanner}
+      <div className={cn("space-y-6", className)}>
       <Card>
         <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
           <div className="space-y-1">
@@ -430,12 +448,6 @@ export function XeroRecordActivityPanel({
             <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
               {error}
             </div>
-          )}
-          {!canEdit && (
-            <AdminViewOnlyNotice canEdit={canEdit}>
-              Your admin role can view Xero activity but cannot retry or replay
-              operations. Finance edit access is required.
-            </AdminViewOnlyNotice>
           )}
           {loading ? (
             <p className="text-sm text-slate-500">Loading Xero activity...</p>
@@ -660,6 +672,7 @@ export function XeroRecordActivityPanel({
                   <div className="flex flex-wrap items-center gap-2">
                     <ViewOnlyActionButton
                       canEdit={canEdit}
+                      describeReason={false}
                       variant="outline"
                       size="sm"
                       onClick={() => void handleReplayInboundEvent(event.id)}
@@ -692,6 +705,7 @@ export function XeroRecordActivityPanel({
           )}
         </CardContent>
       </Card>
+      </div>
     </div>
   )
 }

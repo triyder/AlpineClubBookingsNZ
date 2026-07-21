@@ -24,7 +24,7 @@ import { Label } from "@/components/ui/label";
 import { XeroAccountMultiSelect } from "@/components/admin/xero-account-multi-select";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import {
-  AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import type { XeroAccount } from "@/lib/xero-admin-cache";
@@ -408,9 +408,32 @@ export function FinanceReportMappingsPanel() {
     }
   }
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the section —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before its
+    content appears; a region injected already-populated is silently dropped by
+    some screen-reader/browser pairings. It sits OUTSIDE the card, not in the
+    `space-y-5` CardContent stack, because two of the controls it explains
+    (Backfill History and Save) are in the CardHeader — a banner inside the
+    content would come after them in the reading order. The empty wrapper an
+    edit-capable admin gets costs no layout.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-4">
+      Your admin role can view the finance report mappings but cannot change
+      them. Finance edit access is required.
+    </AdminViewOnlySectionBanner>
+  );
+
+  // A cross-area 403 hides the whole panel, banner included — there is no
+  // section left here for the banner to explain.
   if (forbidden) return null;
 
   return (
+    <div>
+      {viewOnlyBanner}
     <Card>
       <CardHeader>
         <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -437,6 +460,7 @@ export function FinanceReportMappingsPanel() {
             </Button>
             <ViewOnlyActionButton
               canEdit={canEdit}
+              describeReason={false}
               type="button"
               variant="outline"
               onClick={runBackfill}
@@ -451,6 +475,7 @@ export function FinanceReportMappingsPanel() {
             </ViewOnlyActionButton>
             <ViewOnlyActionButton
               canEdit={canEdit}
+              describeReason={false}
               type="button"
               onClick={saveMappings}
               disabled={saving || loading || !state}
@@ -466,12 +491,6 @@ export function FinanceReportMappingsPanel() {
         </div>
       </CardHeader>
       <CardContent className="space-y-5">
-        {!canEdit ? (
-          <AdminViewOnlyNotice canEdit={canEdit}>
-            Your admin role can view the finance report mappings but cannot change
-            them. Finance edit access is required.
-          </AdminViewOnlyNotice>
-        ) : null}
         {error ? (
           <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
             {error}
@@ -521,6 +540,7 @@ export function FinanceReportMappingsPanel() {
                     </div>
                     <ViewOnlyActionButton
                       canEdit={canEdit}
+                      describeReason={false}
                       type="button"
                       variant="outline"
                       size="sm"
@@ -542,6 +562,7 @@ export function FinanceReportMappingsPanel() {
                         </h4>
                         <ViewOnlyActionButton
                           canEdit={canEdit}
+                          describeReason={false}
                           type="button"
                           variant="ghost"
                           size="sm"
@@ -616,6 +637,7 @@ export function FinanceReportMappingsPanel() {
                               </label>
                               <ViewOnlyActionButton
                                 canEdit={canEdit}
+                                describeReason={false}
                                 type="button"
                                 variant="ghost"
                                 size="icon"
@@ -707,5 +729,6 @@ export function FinanceReportMappingsPanel() {
         ) : null}
       </CardContent>
     </Card>
+    </div>
   );
 }

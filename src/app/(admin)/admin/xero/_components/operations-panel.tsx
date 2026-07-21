@@ -6,7 +6,7 @@ import { CheckCircle2 } from "lucide-react"
 import { useConfirm } from "@/components/confirm-dialog"
 import { Button } from "@/components/ui/button"
 import {
-  AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action"
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
@@ -302,7 +302,27 @@ export function OperationsPanel({
     }
   }
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the section —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before its
+    content appears; a region injected already-populated is silently dropped by
+    some screen-reader/browser pairings. It sits OUTSIDE the `space-y-*` stack —
+    and outside `SectionCard`, whose children are unmounted while the section is
+    collapsed but whose `actions` buttons stay on screen — so the empty wrapper
+    an edit-capable admin gets costs no layout.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-4">
+      Your admin role can view Xero operations but cannot retry, reset, or
+      resolve them.
+    </AdminViewOnlySectionBanner>
+  )
+
   return (
+    <div>
+      {viewOnlyBanner}
     <SectionCard
       id="xero-section-operations"
       title="Xero Operations"
@@ -311,10 +331,10 @@ export function OperationsPanel({
       onToggle={(nextOpen) => onToggle("operations", nextOpen)}
       actions={
         <>
-          <ViewOnlyActionButton canEdit={canEdit} size="sm" onClick={() => void retryAllFailed()} disabled={retryingAllFailed}>
+          <ViewOnlyActionButton canEdit={canEdit} describeReason={false} size="sm" onClick={() => void retryAllFailed()} disabled={retryingAllFailed}>
             {retryingAllFailed ? "Queueing..." : "Retry Active Failed"}
           </ViewOnlyActionButton>
-          <ViewOnlyActionButton canEdit={canEdit} variant="outline" size="sm" onClick={() => void resetStaleRunning()} disabled={resettingStale}>
+          <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="outline" size="sm" onClick={() => void resetStaleRunning()} disabled={resettingStale}>
             {resettingStale ? "Resetting..." : "Reset stale running"}
           </ViewOnlyActionButton>
           <Button variant="outline" size="sm" onClick={() => void fetchOperations()} disabled={loading}>
@@ -325,12 +345,6 @@ export function OperationsPanel({
     >
       <div className="space-y-4">
         {confirmDialog}
-        {!canEdit ? (
-          <AdminViewOnlyNotice canEdit={canEdit}>
-            Your admin role can view Xero operations but cannot retry, reset, or
-            resolve them.
-          </AdminViewOnlyNotice>
-        ) : null}
         {error ? <p className="text-sm text-danger">{error}</p> : null}
         <details className="rounded-md border bg-muted p-3 text-xs text-muted-foreground">
           <summary className="cursor-pointer font-medium text-foreground">What do these statuses mean?</summary>
@@ -405,6 +419,7 @@ export function OperationsPanel({
         ) : null}
       </div>
     </SectionCard>
+    </div>
   )
 }
 
@@ -490,19 +505,19 @@ export function OperationItem({
       ) : (
         <div className="flex flex-wrap items-center gap-2">
           {operation.supported && operation.failureState !== "REPAIRED" && operation.failureState !== "SUPERSEDED" ? (
-            <ViewOnlyActionButton canEdit={canEdit} variant="outline" size="sm" onClick={onRetry} disabled={retrying}>
+            <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="outline" size="sm" onClick={onRetry} disabled={retrying}>
               {retrying ? "Queueing..." : "Retry in background"}
             </ViewOnlyActionButton>
           ) : operation.reason && isFailedOrPartial ? (
             <p className="text-xs text-muted-foreground">{operation.reason}</p>
           ) : null}
           {operation.replayable && isFailedOrPartial ? (
-            <ViewOnlyActionButton canEdit={canEdit} variant="outline" size="sm" onClick={onMarkNonReplayable} disabled={markingNonReplayable}>
+            <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="outline" size="sm" onClick={onMarkNonReplayable} disabled={markingNonReplayable}>
               {markingNonReplayable ? "Archiving..." : "Mark non-replayable"}
             </ViewOnlyActionButton>
           ) : null}
           {isFailedOrPartial ? (
-            <ViewOnlyActionButton canEdit={canEdit} variant="outline" size="sm" onClick={onResolve} disabled={resolving}>
+            <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="outline" size="sm" onClick={onResolve} disabled={resolving}>
               {resolving ? "Resolving..." : "Resolve (fixed in Xero)"}
             </ViewOnlyActionButton>
           ) : null}

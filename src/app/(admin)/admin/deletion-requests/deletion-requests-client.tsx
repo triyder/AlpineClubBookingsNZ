@@ -28,7 +28,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import {
@@ -188,8 +188,26 @@ export default function DeletionRequestsClient({
     );
   };
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the section —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before its
+    content appears; a region injected already-populated is silently dropped by
+    some screen-reader/browser pairings. It sits OUTSIDE the `space-y-*` stack so
+    the empty wrapper an edit-capable admin gets costs no layout.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-6">
+      Your admin role can view deletion requests but cannot approve or reject
+      them.
+    </AdminViewOnlySectionBanner>
+  );
+
   return (
-    <div className="space-y-6">
+    <div>
+      {viewOnlyBanner}
+      <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-slate-900">Deletion Requests</h1>
         <p className="mt-1 text-sm text-slate-500">
@@ -199,13 +217,6 @@ export default function DeletionRequestsClient({
           admin to approve.
         </p>
       </div>
-
-      {!canEdit && (
-        <AdminViewOnlyNotice canEdit={canEdit}>
-          Your admin role can view deletion requests but cannot approve or reject
-          them.
-        </AdminViewOnlyNotice>
-      )}
 
       <Card>
         <CardHeader>
@@ -293,6 +304,7 @@ export default function DeletionRequestsClient({
                       <div className="flex gap-2 shrink-0">
                         <ViewOnlyActionButton
                           canEdit={canEdit}
+                          describeReason={false}
                           size="sm"
                           variant="outline"
                           className="text-red-600 border-red-200 hover:bg-red-50"
@@ -304,6 +316,7 @@ export default function DeletionRequestsClient({
                         </ViewOnlyActionButton>
                         <ViewOnlyActionButton
                           canEdit={canEdit}
+                          describeReason={false}
                           size="sm"
                           variant="destructive"
                           onClick={() =>
@@ -459,6 +472,7 @@ export default function DeletionRequestsClient({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      </div>
     </div>
   );
 }

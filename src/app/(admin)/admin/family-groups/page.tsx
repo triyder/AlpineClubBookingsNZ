@@ -11,7 +11,7 @@ import { Trash2, Plus, Users, X, Edit2, Search } from "lucide-react";
 import { FamilyGroupEditor } from "@/components/admin/family-group-editor";
 import { AgeTierBadge } from "@/components/admin/family-groups/age-tier-badge";
 import { FamilyGroupRequestReviewSection } from "@/components/admin/family-groups/request-review-section";
-import { AdminViewOnlyNotice, ViewOnlyActionButton } from "@/components/admin/view-only-action";
+import { AdminViewOnlySectionBanner, ViewOnlyActionButton } from "@/components/admin/view-only-action";
 import {
   ADMIN_VIEW_ONLY_ACTION_REASON,
   useAdminAreaEditAccess,
@@ -316,8 +316,26 @@ export default function FamilyGroupsPage() {
     }
   }
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the section —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before its
+    content appears; a region injected already-populated is silently dropped by
+    some screen-reader/browser pairings. It sits OUTSIDE the `space-y-*` stack so
+    the empty wrapper an edit-capable admin gets costs no layout.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEditMembership} className="mb-6">
+      Your admin role can view family group requests but cannot
+      approve or reject them.
+    </AdminViewOnlySectionBanner>
+  );
+
   return (
-    <div className="space-y-6">
+    <div>
+      {viewOnlyBanner}
+      <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Family Groups</h1>
@@ -325,7 +343,7 @@ export default function FamilyGroupsPage() {
             Link primary members together so they appear in each other&apos;s booking quick-add lists
           </p>
         </div>
-        <ViewOnlyActionButton canEdit={canEditMembership} onClick={openCreateForm}>
+        <ViewOnlyActionButton canEdit={canEditMembership} describeReason={false} onClick={openCreateForm}>
           <Plus className="h-4 w-4 mr-2" />
           New Group
         </ViewOnlyActionButton>
@@ -415,12 +433,6 @@ export default function FamilyGroupsPage() {
             </div>
           ) : (
             <>
-              {!canEditMembership && (
-                <AdminViewOnlyNotice canEdit={canEditMembership} className="mb-4">
-                  Your admin role can view family group requests but cannot
-                  approve or reject them.
-                </AdminViewOnlyNotice>
-              )}
               <FamilyGroupRequestReviewSection
                 requests={requests}
                 onReviewed={async () => {
@@ -518,6 +530,12 @@ export default function FamilyGroupsPage() {
               void fetchData();
             }}
             canEdit={canEditMembership}
+            // #2160: the page banner above is unconditional and covers this
+            // whole membership surface, including the editor rendered inline
+            // here, so the editor must not repeat it. The dialog mount on
+            // /admin/members/[id] keeps its own banner — a dialog is a separate
+            // accessibility container that no ancestor banner reaches.
+            renderViewOnlyBanner={false}
           />
         ) : (
           <Card>
@@ -603,6 +621,7 @@ export default function FamilyGroupsPage() {
                 <div className="flex gap-2">
                   <ViewOnlyActionButton
                     canEdit={canEditMembership}
+                    describeReason={false}
                     type="submit"
                     disabled={submitting || selectedMembers.length < 1}
                   >
@@ -701,6 +720,7 @@ export default function FamilyGroupsPage() {
                           </Button>
                           <ViewOnlyActionButton
                             canEdit={canEditMembership}
+                            describeReason={false}
                             variant="ghost"
                             size="sm"
                             onClick={() => handleDelete(g.id)}
@@ -719,6 +739,7 @@ export default function FamilyGroupsPage() {
           )}
         </CardContent>
       </Card>
+      </div>
     </div>
   );
 }
