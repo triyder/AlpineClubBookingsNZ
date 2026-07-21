@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   setIntegrationCredential: vi.fn(),
   createAuditLog: vi.fn(),
   deleteXeroTokens: vi.fn(),
+  clearStripeWebhookVerified: vi.fn(),
   loggerError: vi.fn(),
   findMany: vi.fn(),
 }));
@@ -19,6 +20,15 @@ vi.mock("@/lib/prisma", () => ({
 }));
 vi.mock("@/lib/integration-credentials", () => ({
   setIntegrationCredential: mocks.setIntegrationCredential,
+}));
+vi.mock("@/lib/stripe-config", () => ({
+  STRIPE_PROVIDER: "stripe",
+  STRIPE_WRITABLE_CREDENTIAL_KEYS: [
+    "secret_key",
+    "publishable_key",
+    "webhook_secret",
+  ],
+  clearStripeWebhookVerified: mocks.clearStripeWebhookVerified,
 }));
 vi.mock("@/lib/audit", () => ({
   createAuditLog: mocks.createAuditLog,
@@ -123,6 +133,49 @@ describe("POST /api/admin/integrations/credentials", () => {
     });
     await POST(makeRequest({ provider: "xero", key: "webhook_key", value: "hook" }));
     expect(mocks.deleteXeroTokens).not.toHaveBeenCalled();
+  });
+
+  it("applies Stripe verify-reset (drops the webhook-verified marker) on any Stripe write", async () => {
+    asFullAdmin();
+    mocks.setIntegrationCredential.mockResolvedValue({
+      provider: "stripe",
+      key: "webhook_secret",
+      secretSource: "AUTH_SECRET",
+      labelVersion: "integration-credential:v1",
+      updatedAt: new Date("2026-07-21T10:00:00.000Z"),
+    });
+    const res = await POST(
+      makeRequest({ provider: "stripe", key: "webhook_secret", value: "whsec_x" }),
+    );
+    expect(res.status).toBe(200);
+    expect(mocks.clearStripeWebhookVerified).toHaveBeenCalledTimes(1);
+    // Cross-provider isolation: a Stripe write never touches Xero tokens.
+    expect(mocks.deleteXeroTokens).not.toHaveBeenCalled();
+  });
+
+  it("accepts the Stripe secret key via the extended allowlist", async () => {
+    asFullAdmin();
+    mocks.setIntegrationCredential.mockResolvedValue({
+      provider: "stripe",
+      key: "secret_key",
+      secretSource: "AUTH_SECRET",
+      labelVersion: "integration-credential:v1",
+      updatedAt: new Date("2026-07-21T10:00:00.000Z"),
+    });
+    const res = await POST(
+      makeRequest({ provider: "stripe", key: "secret_key", value: "sk_test_x" }),
+    );
+    expect(res.status).toBe(200);
+    expect(mocks.setIntegrationCredential).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects the internal webhook_verified marker key (not writable via the API)", async () => {
+    asFullAdmin();
+    const res = await POST(
+      makeRequest({ provider: "stripe", key: "webhook_verified", value: "x" }),
+    );
+    expect(res.status).toBe(400);
+    expect(mocks.setIntegrationCredential).not.toHaveBeenCalled();
   });
 
   it("rejects an unknown provider/key with 400", async () => {
