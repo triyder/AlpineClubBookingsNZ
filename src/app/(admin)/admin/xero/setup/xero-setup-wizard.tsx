@@ -118,9 +118,9 @@ export function XeroSetupWizard({
       // still follow below — so the final state must read as "connected, more to
       // configure", never "the whole integration is done" (#2080 UX-F9).
       completion={{
-        badgeLabel: "Connected",
-        message: "Connected",
-        hint: "Configure account mappings and run contact import below to finish setting up Xero.",
+        badgeLabel: "Complete",
+        message: "Setup complete",
+        hint: "Day-to-day syncing, operations, and usage live on the Xero Sync page.",
       }}
       viewOnlyBanner={
         <>

@@ -83,11 +83,15 @@ test("operator reaches Connected to <Org> entirely in-app", async () => {
   await expect(
     page.getByText(new RegExp(`Connected to\\s+${MOCK_XERO_ORG_NAME}`, "i")),
   ).toBeVisible({ timeout: 30_000 });
-  // Final state reads "connected, more to configure below" — never "the whole
-  // integration is done" (#2080 UX-F9): the mappings/import panels follow.
+  // Connect is verified but the wizard is NOT complete (#2081 extends it with
+  // webhooks/mapping/import) — the next step is reachable, and no completion
+  // banner shows yet (never "the whole integration is done" mid-flow, #2080
+  // UX-F9; the six-step completion state is covered by the completion spec).
+  await page.getByRole("button", { name: "Continue" }).click();
   await expect(
-    page.getByText(/configure account mappings and run contact import below/i),
+    page.getByRole("heading", { name: /webhooks \(optional\)/i }),
   ).toBeVisible();
+  await expect(page.getByText(/Setup complete/i)).toHaveCount(0);
 
   await page.close();
 });
