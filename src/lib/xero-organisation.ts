@@ -140,11 +140,6 @@ export async function getXeroConnectedOrganisation(
   }
 }
 
-// test seam
-export function resetXeroOrgSummaryCacheForTests(): void {
-  orgSummaryCache = null;
-}
-
 // ---------------------------------------------------------------------------
 // Xero lock dates (#1695): the accounting period lock date and end-of-year
 // lock date. A retroactive booking whose check-in (its Xero invoice issue date)

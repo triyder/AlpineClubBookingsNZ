@@ -169,7 +169,7 @@ export function IntegrationWizard<Ctx>({
                     className={cn(
                       "flex min-h-11 w-full items-center gap-2 rounded-md border px-3 py-2 text-left text-sm transition-colors",
                       active
-                        ? "border-primary bg-primary/10 text-foreground"
+                        ? "border-primary bg-accent text-foreground"
                         : reachable
                           ? "border-border text-foreground hover:bg-accent"
                           : "cursor-not-allowed border-dashed border-border text-muted-foreground",

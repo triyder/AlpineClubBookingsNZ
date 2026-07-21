@@ -14,11 +14,7 @@ import {
   SyncResultsPanel,
 } from "./panels"
 import { Message } from "./message"
-import {
-  SECTION_DEFAULTS,
-  type SectionKey,
-  type SyncResult,
-} from "./types"
+import type { SyncResult } from "./types"
 import { useXeroConnection } from "../_hooks/use-xero-connection"
 
 /**

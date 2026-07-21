@@ -558,7 +558,10 @@ describe("database theme app-shell contract", () => {
       "src/app/(admin)/admin/setup/setup-page-client.tsx",
       "src/app/(admin)/admin/site-style/page.tsx",
       "src/app/(admin)/admin/xero/page.tsx",
-      "src/app/(admin)/admin/xero/setup/page.tsx",
+      // The Xero setup surface's markup moved to the client body when its page
+      // became a thin server wrapper for the guided wizard (#2080); the semantic
+      // text-role contract follows the markup.
+      "src/app/(admin)/admin/xero/_components/xero-setup-page-client.tsx",
       "src/components/admin-hub-page.tsx",
       "src/components/admin/back-link.tsx",
     ];

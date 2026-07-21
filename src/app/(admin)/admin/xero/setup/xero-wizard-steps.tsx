@@ -86,7 +86,7 @@ export function CreateAppStep({ context }: { context: XeroWizardContext }) {
         description="Paste this EXACTLY into the Redirect URIs field. It must match what the app sends, or Xero rejects the connection."
       />
 
-      <div className="rounded-md border bg-muted/40 p-3 text-sm text-muted-foreground">
+      <div className="rounded-md border bg-muted p-3 text-sm text-muted-foreground">
         <p className="font-medium text-foreground">Which scopes / sections?</p>
         <p className="mt-1">
           One app covers everything this integration needs — contacts, invoices,
