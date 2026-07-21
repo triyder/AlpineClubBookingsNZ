@@ -63,8 +63,8 @@ jobs:
           NEXTAUTH_URL=http://localhost:3001
           AUTH_TRUST_HOST=true
           DB_PASSWORD=e2e-ci-db-password
-          AUTH_SECRET=e2e-ci-auth-secret
-          NEXTAUTH_SECRET=e2e-ci-auth-secret
+          AUTH_SECRET=e2e-ci-auth-secret-0123456789abcdef0123456789abcdef
+          NEXTAUTH_SECRET=e2e-ci-auth-secret-0123456789abcdef0123456789abcdef
           SEED_ADMIN_EMAIL=e2e-admin@example.org
           SEED_ADMIN_PASSWORD=e2e-ci-seed-password
           SEED_LODGE_PASSWORD=e2e-ci-lodge-password
@@ -209,8 +209,8 @@ jobs:
           NEXTAUTH_URL=http://localhost:3001
           AUTH_TRUST_HOST=true
           DB_PASSWORD=e2e-ci-db-password
-          AUTH_SECRET=e2e-ci-auth-secret
-          NEXTAUTH_SECRET=e2e-ci-auth-secret
+          AUTH_SECRET=e2e-ci-auth-secret-0123456789abcdef0123456789abcdef
+          NEXTAUTH_SECRET=e2e-ci-auth-secret-0123456789abcdef0123456789abcdef
           SEED_ADMIN_EMAIL=e2e-admin@example.org
           SEED_ADMIN_PASSWORD=e2e-ci-seed-password
           SEED_LODGE_PASSWORD=e2e-ci-lodge-password
