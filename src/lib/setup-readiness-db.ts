@@ -6,6 +6,7 @@ import {
 } from "@/lib/setup-readiness";
 import { collapseHutFeeColumns } from "@/lib/public-hut-fee-columns";
 import { getXeroTokenReadability } from "@/lib/xero-token-store";
+import { getStripeSetupState } from "@/lib/stripe-config";
 
 /**
  * Build the database half of the setup-readiness snapshot (C8 #1987).
@@ -293,6 +294,27 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
     }
   }
 
+  // DB-only Stripe credential state (#2082): metadata-only set-flags plus GCM
+  // readability. A crypto/DB hiccup here must not sink the whole snapshot, so it
+  // fails soft to "unknown" (all false) — the Stripe check then reports the keys
+  // as not set rather than crashing readiness.
+  let stripeSecretKeySet = false;
+  let stripePublishableKeySet = false;
+  let stripeWebhookSecretSet = false;
+  let stripeNeedsReentry = false;
+  try {
+    const stripeState = await getStripeSetupState();
+    stripeSecretKeySet = stripeState.secretKeySet;
+    stripePublishableKeySet = stripeState.publishableKeySet;
+    stripeWebhookSecretSet = stripeState.webhookSecretSet;
+    stripeNeedsReentry = stripeState.needsReentry;
+  } catch {
+    stripeSecretKeySet = false;
+    stripePublishableKeySet = false;
+    stripeWebhookSecretSet = false;
+    stripeNeedsReentry = false;
+  }
+
   return {
     adminCount,
     adminModuleSettings,
@@ -317,6 +339,10 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
     operationalXeroNeedsReentry,
     operationalXeroTokenExpiresAt:
       operationalXeroToken?.expiresAt.toISOString() ?? null,
+    stripeSecretKeySet,
+    stripePublishableKeySet,
+    stripeWebhookSecretSet,
+    stripeNeedsReentry,
     xeroAccountMappingCount,
     xeroHutFeeItemMappingCount,
     xeroEntranceFeeMappingCount,
