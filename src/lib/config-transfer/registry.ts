@@ -55,6 +55,13 @@ export const FORBIDDEN_FIELD_PATTERNS: RegExp[] = [
   /token/i,
   /(^|[^a-z])api[_-]?key/i,
   /passwordhash/i,
+  // Encrypted-integration-credential material (#2079). The IntegrationCredential
+  // entity is deliberately NOT registered for export, so it can never leave via
+  // a bundle; these patterns are defence-in-depth so no future descriptor can
+  // ever allowlist a ciphertext/auth-tag field. (`iv` is too generic to pattern
+  // safely — the entity-exclusion is what protects it, asserted by a test.)
+  /ciphertext/i,
+  /auth.?tag/i,
   // 2FA/OTP *secrets* — but not the plain `twoFactor` module toggle (config).
   /two.?factor.*(secret|code|hash|token)/i,
   /totp/i,

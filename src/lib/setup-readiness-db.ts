@@ -5,6 +5,7 @@ import {
   type SetupDatabaseSnapshot,
 } from "@/lib/setup-readiness";
 import { collapseHutFeeColumns } from "@/lib/public-hut-fee-columns";
+import { getXeroTokenReadability } from "@/lib/xero-token-store";
 
 /**
  * Build the database half of the setup-readiness snapshot (C8 #1987).
@@ -79,7 +80,7 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
     }),
     prisma.xeroToken.findFirst({
       orderBy: { updatedAt: "desc" },
-      select: { expiresAt: true },
+      select: { expiresAt: true, accessToken: true },
     }),
     prisma.xeroAccountMapping.count({
       where: {
@@ -274,6 +275,24 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
     defaultLodgeCapacity = null;
   }
 
+  // Truthful Xero connection state (#2079): a token row that no longer decrypts
+  // (env→DB upgrade or an auth-secret change) must read as "needs reconnect",
+  // not "connected". The readability probe is side-effect-free (peeks the key,
+  // never generates one) and never exposes the token value; a DB/crypto hiccup
+  // there must not sink the whole readiness snapshot, so it fails soft to
+  // "not needing re-entry" (the connect/expiry checks still gate "connected").
+  let operationalXeroNeedsReentry = false;
+  if (operationalXeroToken) {
+    try {
+      operationalXeroNeedsReentry =
+        (await getXeroTokenReadability({
+          accessToken: operationalXeroToken.accessToken,
+        })) === "unreadable";
+    } catch {
+      operationalXeroNeedsReentry = false;
+    }
+  }
+
   return {
     adminCount,
     adminModuleSettings,
@@ -291,8 +310,11 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
       membershipCancellationSettings?.xeroArchiveContactsOnCancellation,
     ),
     operationalXeroConnected: Boolean(
-      operationalXeroToken && operationalXeroToken.expiresAt > now,
+      operationalXeroToken &&
+        operationalXeroToken.expiresAt > now &&
+        !operationalXeroNeedsReentry,
     ),
+    operationalXeroNeedsReentry,
     operationalXeroTokenExpiresAt:
       operationalXeroToken?.expiresAt.toISOString() ?? null,
     xeroAccountMappingCount,

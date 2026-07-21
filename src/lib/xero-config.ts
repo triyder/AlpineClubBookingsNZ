@@ -1,7 +1,36 @@
+/**
+ * Operational Xero configuration — DB-only resolution (#2079).
+ *
+ * Xero client id/secret, the webhook key, and the wrapped token-encryption key
+ * all live ONLY in the encrypted IntegrationCredential store. The legacy
+ * `XERO_*` credential env vars are no longer read for operation — they are
+ * detected and flagged for removal (see detectLegacyProviderEnv). The OAuth
+ * redirect URI derives from NEXTAUTH_URL (no localhost fallback).
+ *
+ * Resolution is async (a DB fetch, cache-backed by integration-credentials.ts);
+ * key derivation itself stays synchronous.
+ */
+
+import { randomBytes } from "crypto";
+import {
+  ensureGeneratedCredential,
+  getIntegrationCredentialValue,
+  resolveIntegrationCredential,
+} from "@/lib/integration-credentials";
+import { XERO_TOKEN_KEY_LABEL } from "@/lib/integration-crypto";
+
 function readEnv(name: string): string | undefined {
   const value = process.env[name]?.trim();
   return value ? value : undefined;
 }
+
+export const XERO_PROVIDER = "xero";
+export const XERO_CREDENTIAL_KEYS = {
+  clientId: "client_id",
+  clientSecret: "client_secret",
+  webhookKey: "webhook_key",
+  tokenKey: "token_key",
+} as const;
 
 export const XERO_REPORT_OAUTH_SCOPES = {
   profitAndLoss: "accounting.reports.profitandloss.read",
@@ -28,8 +57,7 @@ const OPERATIONAL_XERO_OAUTH_SCOPES = [
   "offline_access",
 ] as const;
 
-const DEFAULT_OPERATIONAL_XERO_REDIRECT_URI =
-  "http://localhost:3000/api/admin/xero/callback";
+const XERO_CALLBACK_PATH = "/api/admin/xero/callback";
 
 // xero-node defaults its OAuth-layer HTTP timeout (identity.xero.com
 // discovery and token requests) to 3500ms, which is tight enough that a
@@ -37,6 +65,7 @@ const DEFAULT_OPERATIONAL_XERO_REDIRECT_URI =
 const DEFAULT_XERO_HTTP_TIMEOUT_MS = 10_000;
 
 function getXeroHttpTimeoutMs(): number {
+  // Operational tuning, not a credential — stays an env var.
   const raw = readEnv("XERO_HTTP_TIMEOUT_MS");
   if (raw) {
     const parsed = Number.parseInt(raw, 10);
@@ -47,40 +76,154 @@ function getXeroHttpTimeoutMs(): number {
   return DEFAULT_XERO_HTTP_TIMEOUT_MS;
 }
 
-interface XeroClientConfigOptions {
-  clientIdEnv: string;
-  clientSecretEnv: string;
-  redirectUriEnv: string;
-  defaultRedirectUri: string;
-  scopes: readonly string[];
+/**
+ * Derive the Xero OAuth redirect URI from NEXTAUTH_URL: `{origin}{callback}`.
+ * Returns "" when NEXTAUTH_URL is absent/invalid (the config is then plainly
+ * unconfigured — never a silent localhost fallback that would break a real
+ * deployment).
+ */
+export function getOperationalXeroRedirectUri(): string {
+  const nextAuthUrl = readEnv("NEXTAUTH_URL");
+  if (!nextAuthUrl) return "";
+  try {
+    return `${new URL(nextAuthUrl).origin}${XERO_CALLBACK_PATH}`;
+  } catch {
+    return "";
+  }
 }
 
-function buildXeroClientConfig({
-  clientIdEnv,
-  clientSecretEnv,
-  redirectUriEnv,
-  defaultRedirectUri,
-  scopes,
-}: XeroClientConfigOptions) {
+export interface OperationalXeroConfig {
+  clientId: string;
+  clientSecret: string;
+  redirectUris: string[];
+  scopes: string[];
+  httpTimeout: number;
+}
+
+/**
+ * Operational Xero client config, resolved from the DB. Missing credentials
+ * resolve to "" (an unconfigured client that constructs but cannot connect),
+ * mirroring the previous env-absent behaviour.
+ */
+export async function getOperationalXeroConfig(): Promise<OperationalXeroConfig> {
+  const [clientId, clientSecret] = await Promise.all([
+    getIntegrationCredentialValue(XERO_PROVIDER, XERO_CREDENTIAL_KEYS.clientId),
+    getIntegrationCredentialValue(
+      XERO_PROVIDER,
+      XERO_CREDENTIAL_KEYS.clientSecret,
+    ),
+  ]);
   return {
-    clientId: readEnv(clientIdEnv) ?? "",
-    clientSecret: readEnv(clientSecretEnv) ?? "",
-    redirectUris: [readEnv(redirectUriEnv) ?? defaultRedirectUri],
-    scopes: [...scopes],
+    clientId: clientId ?? "",
+    clientSecret: clientSecret ?? "",
+    redirectUris: [getOperationalXeroRedirectUri()],
+    scopes: [...OPERATIONAL_XERO_OAUTH_SCOPES],
     httpTimeout: getXeroHttpTimeoutMs(),
   };
 }
 
-export function getOperationalXeroConfig() {
-  return buildXeroClientConfig({
-    clientIdEnv: "XERO_CLIENT_ID",
-    clientSecretEnv: "XERO_CLIENT_SECRET",
-    redirectUriEnv: "XERO_REDIRECT_URI",
-    defaultRedirectUri: DEFAULT_OPERATIONAL_XERO_REDIRECT_URI,
-    scopes: OPERATIONAL_XERO_OAUTH_SCOPES,
+/**
+ * The operational Xero token-encryption key (64-hex / 32 bytes) used by
+ * xero-token-store to encrypt OAuth tokens at rest. It is a random 32-byte key
+ * WRAPPED under the HKDF-derived `xero-token-key:v1` key and stored in the
+ * credential table — so `XERO_ENCRYPTION_KEY` no longer exists.
+ *
+ * Auto-generates on first use when the strength gate permits (the very act of
+ * encrypting/decrypting Xero tokens means Xero is in use); returns `undefined`
+ * when the gate blocks — token-key generation NO-OPS, it never throws. When the
+ * key is unreadable after an auth-secret change it is replaced with a fresh one
+ * so a reconnect can proceed (the tokens it protected are already unrecoverable
+ * by design — no silent import of the dropped env key).
+ */
+export async function getOperationalXeroEncryptionKey(): Promise<
+  string | undefined
+> {
+  const value = await ensureGeneratedCredential({
+    provider: XERO_PROVIDER,
+    key: XERO_CREDENTIAL_KEYS.tokenKey,
+    label: XERO_TOKEN_KEY_LABEL,
+    generate: () => randomBytes(32).toString("hex"),
   });
+  return value ?? undefined;
 }
 
-export function getOperationalXeroEncryptionKey(): string | undefined {
-  return readEnv("XERO_ENCRYPTION_KEY");
+/**
+ * Read the stored Xero token-encryption key WITHOUT ever generating one. For
+ * side-effect-free status/readiness checks (a status read must never mutate the
+ * DB, unlike getOperationalXeroEncryptionKey which regenerates a dead key).
+ * Returns `undefined` when the key is missing OR unreadable (auth secret
+ * changed) — the caller then reports the tokens as needing re-entry. The value
+ * is only ever used server-side to test-decrypt a token row; it is never
+ * returned to a client.
+ */
+export async function peekOperationalXeroEncryptionKey(): Promise<
+  string | undefined
+> {
+  const resolution = await resolveIntegrationCredential(
+    XERO_PROVIDER,
+    XERO_CREDENTIAL_KEYS.tokenKey,
+  );
+  return resolution.status === "configured" ? resolution.value : undefined;
+}
+
+/**
+ * Dedicated resolver for the Xero webhook HMAC key. Async DB fetch; returns
+ * `undefined` when unconfigured. The webhook route stays FAIL-CLOSED on a
+ * missing key (no key ⇒ reject, never accept).
+ */
+export async function getOperationalXeroWebhookKey(): Promise<
+  string | undefined
+> {
+  return (
+    (await getIntegrationCredentialValue(
+      XERO_PROVIDER,
+      XERO_CREDENTIAL_KEYS.webhookKey,
+    )) ?? undefined
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Legacy provider env detection (extensible — C4/C5/C6 add their names)
+// ---------------------------------------------------------------------------
+
+/**
+ * Provider credential env vars that are NO LONGER honoured. Detected so a loud
+ * readiness warning can name the exact vars ("configured in-app now — re-enter
+ * there, then remove these from the environment"). Never read for operation.
+ * NOTE: bootstrap-class vars (AUTH_SECRET, DATABASE_URL, NEXTAUTH_URL, SMTP/SES)
+ * are out of scope and must never appear here.
+ */
+export const LEGACY_PROVIDER_ENV_VARS: Record<string, readonly string[]> = {
+  xero: [
+    "XERO_CLIENT_ID",
+    "XERO_CLIENT_SECRET",
+    "XERO_ENCRYPTION_KEY",
+    "XERO_WEBHOOK_KEY",
+    "XERO_REDIRECT_URI",
+  ],
+  // stripe / google / backup credential env names are added by C4 / C5 / C6.
+};
+
+export interface LegacyProviderEnvFinding {
+  provider: string;
+  vars: string[];
+}
+
+/**
+ * Which providers still have legacy credential env vars set, and exactly which
+ * vars. Pure — reads from the supplied env (defaults to process.env). Empty
+ * when nothing legacy is present.
+ */
+export function detectLegacyProviderEnv(
+  env: Record<string, string | undefined> = process.env,
+): LegacyProviderEnvFinding[] {
+  const findings: LegacyProviderEnvFinding[] = [];
+  for (const [provider, names] of Object.entries(LEGACY_PROVIDER_ENV_VARS)) {
+    const present = names.filter((name) => {
+      const value = env[name]?.trim();
+      return Boolean(value);
+    });
+    if (present.length > 0) findings.push({ provider, vars: present });
+  }
+  return findings;
 }

@@ -82,6 +82,16 @@ describe("probeXeroConnectionHealth (#2105)", () => {
     expect(result.lastErrorMessage).not.toContain("admin@example.com");
   });
 
+  it("maps an undecryptable stored token (XeroTokenDecryptError) to reconnect_required", async () => {
+    // #2079: loadXeroTokens now throws XeroTokenDecryptError when a stored token
+    // no longer decrypts; the probe must classify it as reconnect, not error.
+    h.getAuthenticatedXeroClient.mockRejectedValue(named("XeroTokenDecryptError"));
+
+    const result = await probeXeroConnectionHealth(1000);
+
+    expect(result.tokenHealth).toBe("reconnect_required");
+  });
+
   it("maps an unclassified failure to error", async () => {
     h.getAuthenticatedXeroClient.mockRejectedValue(new Error("boom"));
 

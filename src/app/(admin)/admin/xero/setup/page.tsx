@@ -13,6 +13,7 @@ import {
   SyncResultsPanel,
 } from "../_components/panels"
 import { Message } from "../_components/message"
+import { XeroCredentialsSection } from "../_components/xero-credentials-section"
 import {
   SECTION_DEFAULTS,
   type SectionKey,
@@ -83,6 +84,11 @@ export default function XeroSetupPage() {
       {connectSuccess && <Message tone="success" message="Xero connected successfully!" onDismiss={() => setConnectSuccess(false)} />}
 
       <ConnectionStatusPanel status={status} onConnect={handleConnect} onDisconnect={handleDisconnect} />
+
+      {/* Interim in-app credential entry (#2079, C1). Always available — a
+          C1-only deployment enters/re-enters credentials here (the wizard, C2,
+          will supersede it). */}
+      <XeroCredentialsSection />
 
       {connected && (
         <>

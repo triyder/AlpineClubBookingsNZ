@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {
   const tx = {
@@ -176,6 +176,28 @@ vi.mock("@/lib/xero-applied-credit-allocation", () => ({
   allocateAppliedCreditForBooking: mocks.allocateAppliedCreditForBooking,
 }));
 
+// DB-only Xero resolution (#2079): supply the operational config and the
+// token-encryption key from a stub so the token round-trips below need no
+// integration-credential DB rows.
+vi.mock("@/lib/xero-config", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/xero-config")>();
+  return {
+    ...actual,
+    getOperationalXeroConfig: vi.fn().mockResolvedValue({
+      clientId: "test-client",
+      clientSecret: "test-secret",
+      redirectUris: ["https://example.com/api/admin/xero/callback"],
+      scopes: [...actual.XERO_REQUIRED_REPORT_OAUTH_SCOPES],
+      httpTimeout: 10_000,
+    }),
+    getOperationalXeroEncryptionKey: vi
+      .fn()
+      .mockResolvedValue(
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      ),
+  };
+});
+
 import {
   createXeroCreditNoteForModification,
   createXeroCreditNote,
@@ -186,8 +208,18 @@ import {
   updateXeroBookingInvoiceForBooking,
 } from "@/lib/xero";
 
+// encryptToken is async (#2079); precompute the fixture ciphertexts once so the
+// synchronous mock-setup blocks below need no await. The stubbed token key
+// (getOperationalXeroEncryptionKey mock above) makes these deterministic.
+let encryptedAccess: string;
+let encryptedRefresh: string;
+beforeAll(async () => {
+  encryptedAccess = await encryptToken("access");
+  encryptedRefresh = await encryptToken("refresh");
+});
+
 describe("createXeroInvoiceForBooking", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
     resetXeroRateLimitStateForTests();
     vi.stubEnv(
@@ -240,8 +272,8 @@ describe("createXeroInvoiceForBooking", () => {
     mocks.prisma.xeroObjectLink.findFirst.mockResolvedValue(null);
     mocks.prisma.xeroToken.findFirst.mockResolvedValue({
       id: "token_1",
-      accessToken: encryptToken("access"),
-      refreshToken: encryptToken("refresh"),
+      accessToken: encryptedAccess,
+      refreshToken: encryptedRefresh,
       expiresAt: new Date(Date.now() + 60 * 60 * 1000),
       tenantId: "tenant_1",
     });
@@ -959,8 +991,8 @@ describe("createXeroCreditNoteForModification", () => {
     });
     mocks.prisma.xeroToken.findFirst.mockResolvedValue({
       id: "token_1",
-      accessToken: encryptToken("access"),
-      refreshToken: encryptToken("refresh"),
+      accessToken: encryptedAccess,
+      refreshToken: encryptedRefresh,
       expiresAt: new Date(Date.now() + 60 * 60 * 1000),
       tenantId: "tenant_1",
     });
@@ -1026,8 +1058,8 @@ describe("createXeroRefundPaymentForInvoice", () => {
 
     mocks.prisma.xeroToken.findFirst.mockResolvedValue({
       id: "token_1",
-      accessToken: encryptToken("access"),
-      refreshToken: encryptToken("refresh"),
+      accessToken: encryptedAccess,
+      refreshToken: encryptedRefresh,
       expiresAt: new Date(Date.now() + 60 * 60 * 1000),
       tenantId: "tenant_1",
     });
@@ -1207,8 +1239,8 @@ describe("createXeroCreditNote", () => {
     });
     mocks.prisma.xeroToken.findFirst.mockResolvedValue({
       id: "token_1",
-      accessToken: encryptToken("access"),
-      refreshToken: encryptToken("refresh"),
+      accessToken: encryptedAccess,
+      refreshToken: encryptedRefresh,
       expiresAt: new Date(Date.now() + 60 * 60 * 1000),
       tenantId: "tenant_1",
     });
@@ -1271,8 +1303,8 @@ describe("createXeroCreditNote", () => {
       });
       mocks.prisma.xeroToken.findFirst.mockResolvedValue({
         id: "token_1",
-        accessToken: encryptToken("access"),
-        refreshToken: encryptToken("refresh"),
+        accessToken: encryptedAccess,
+        refreshToken: encryptedRefresh,
         expiresAt: new Date(Date.now() + 60 * 60 * 1000),
         tenantId: "tenant_1",
       });

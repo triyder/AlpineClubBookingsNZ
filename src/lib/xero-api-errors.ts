@@ -54,7 +54,11 @@ export function getXeroApiErrorInfo(
   const isTransientOutage =
     error instanceof Error && error.name === "XeroTransientOutageError";
   const isReconnectRequired =
-    error instanceof Error && error.name === "XeroReconnectRequiredError";
+    error instanceof Error &&
+    // XeroTokenDecryptError (a stored token that no longer decrypts after the
+    // env→DB upgrade / an auth-secret change) is a reconnect signal too (#2079).
+    (error.name === "XeroReconnectRequiredError" ||
+      error.name === "XeroTokenDecryptError");
   const diagnosticMessage = getFallbackMessage(error, fallbackMessage);
 
   if (isDailyLimit) {

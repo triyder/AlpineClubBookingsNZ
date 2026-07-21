@@ -127,7 +127,7 @@ the row, not open work. Open findings now live in labelled GitHub issues
 | `/api/cron`, `/api/cron/payments`, `/api/cron/xero`, `/api/cron/issue-reports` | Shared `x-cron-secret` header matching `CRON_SECRET`. | External scheduler or operator with cron secret. | Pending booking confirmation, payment recovery, Xero outbox/retry/inbound reconciliation, issue-report digest, cron run rows. | Stripe through payment recovery, Xero through operational sync, email alerts/digests. | Constant-time compare in each route, task allowlists, module-state gating for Xero tasks. | Logger; `CronJobRun` records for payment recovery; provider/service logs. | Cron guard is centralised in `requireCronSecret()` and covered by missing/wrong/different-length secret tests (#613/#614 closed). |
 | `/api/deploy/runtime-status` | Shared `x-cron-secret` header matching `CRON_SECRET`. | Blue/green deploy script or operator with cron secret. | Runtime role and cron-enabled flag only. | None. | Shared `requireCronSecret()` helper (constant-time compare). | None. | Resolved under #613 (closed): now uses the shared cron/deploy guard helper rather than a duplicated local compare. |
 | `/api/webhooks/stripe` | Stripe signature. No session auth by design. | Stripe. | Stripe event payload, payment intent/setup intent state through service. | Stripe webhook verification and downstream payment handling. | Requires `STRIPE_WEBHOOK_SECRET` and `stripe-signature`; bounded raw body read before signature verification. | Logger for signature/body-limit errors; service-level records. | Do not add session auth. Event idempotency is handled by `ProcessedWebhookEvent`; keep Stripe event coverage under payment-integrity review. |
-| `/api/webhooks/xero` | Xero HMAC signature. No session auth by design. | Xero. | Xero inbound event records, webhook logs, reconciliation queue. | Xero reconciliation cycle after response. | Requires `XERO_WEBHOOK_KEY`, `x-xero-signature`, bounded body read, HMAC with `timingSafeEqual`, object payload, array `events`, and max-event cap; invalid signatures return 401. | `recordWebhookLog()`, Xero inbound event records, logger. | Do not add session auth. Replay/idempotency relies on Xero inbound correlation keys and async reconciliation. |
+| `/api/webhooks/xero` | Xero HMAC signature. No session auth by design. | Xero. | Xero inbound event records, webhook logs, reconciliation queue. | Xero reconciliation cycle after response. | Resolves the webhook signing key from the encrypted `IntegrationCredential` store via the shared resolver (`getOperationalXeroWebhookKey`), **fail-closed**: no key ⇒ reject (never accept unsigned) — #2079, the legacy `XERO_WEBHOOK_KEY` env var is no longer read. Requires `x-xero-signature`, bounded body read, HMAC with `timingSafeEqual`, object payload, array `events`, and max-event cap; invalid or unverifiable signatures return 401. | `recordWebhookLog()`, Xero inbound event records, logger. | Do not add session auth. Replay/idempotency relies on Xero inbound correlation keys and async reconciliation. |
 | `/api/webhooks/ses-sns` | AWS SNS signature verification. No session auth by design. | AWS SNS for SES feedback. | Processed webhook ids, email suppression/failure records, webhook logs. | SNS certificate verification, SES feedback ingestion. | Bounded JSON envelope validation, SNS signature verification, and `SES_SNS_TOPIC_ARN` allowlisting unless a non-production unsafe override is set. | `recordWebhookLog()`, logger; duplicate event ids are idempotent. | `SES_SNS_TOPIC_ARN` must stay configured for deployed environments; unsafe missing-topic override is local-only. |
 | GitHub Actions, Dockerfile, Compose, deployment scripts | CI/deployment boundary, not app-session auth. | Maintainer, GitHub Actions, deploy operator. | Repository, package lock, Docker images, GHCR packages, environment variables, migrations. | npm, Docker, GHCR, Semgrep, gitleaks, Trivy, CodeQL if enabled by repo settings. | CI gates: audit, lint, tests, production build in CI only, Semgrep, gitleaks, Docker image security. Compose uses read-only app container, tmpfs cache, no-new-privileges, resource limits. | GitHub logs and deploy logs. | #619 should review workflow permissions, package publishing, secret scopes, image provenance, and deploy env contracts. |
 
@@ -301,6 +301,38 @@ Admin route subfamilies are:
 | Email/SNS data | Contact, application, admin communications, email templates, SES/SNS webhook. | Rate limits for public senders, template escaping, SNS signature verification, email suppression records. | #616 for SES/SNS topic allowlist and outbound email abuse. |
 | Audit, webhook, cron, and provider logs | `AuditLog`, `WebhookLog`, `CronJobRun`, Xero operation/inbound records. | Structured logging with redaction helpers for known sensitive URL tokens; webhook logs redact error text. | #615/#616 for callback URL and token redaction review; compromised log reader threat below. |
 | CI/deploy secrets | GitHub Actions secrets/vars, `.env`, Compose, GHCR tokens, Sentry token. | CI permission scoping, gitleaks, deployment docs warn not to commit secrets. | #619 for workflow permissions, provenance, and secret-scope review. |
+| Encrypted integration credentials (#2079) | `IntegrationCredential` (Xero client id/secret/webhook key, wrapped Xero token key; Stripe/Google/Backup later). | AES-256-GCM under an HKDF-SHA256 key derived from `AUTH_SECRET`/`NEXTAUTH_SECRET`, per-write random IV, AAD context-binding to `(provider,key,labelVersion)`; write-only Full-Admin API; values never returned/logged/exported; excluded from config-transfer. | See "Credentials at rest" below. |
+
+## Credentials at rest (#2079)
+
+Provider credentials are stored encrypted in `IntegrationCredential` and
+decrypted with a key derived from the app auth secret
+(`AUTH_SECRET`/`NEXTAUTH_SECRET`) via HKDF-SHA256. This concentrates trust in
+that single secret:
+
+- **A database backup + the auth secret decrypts everything.** Anyone who holds
+  both a DB dump (or replica) and the auth-secret value can recover every stored
+  provider credential. Treat the auth secret with the same care as the database
+  itself.
+- **Production and staging/clones must NEVER share an auth secret.** A restored
+  clone (or staging seeded from prod) is **expected** to fail GCM decryption of
+  every credential and enter the "needs re-entry (encryption key changed)"
+  state — that is the correct, safe outcome, not a bug. If a clone shared prod's
+  secret it would silently hold live, decryptable credentials.
+- **Rotation blast radius.** Rotating the auth secret strands all stored
+  credentials (and the wrapped Xero token key), on top of dropping sessions and
+  all 2FA enrolments/recovery codes. See the auth-secret rotation runbook in
+  `DEPLOYMENT.md`.
+- **Decrypt-before-verify on webhook paths.** The Xero webhook route resolves the
+  HMAC key from the encrypted store (a decrypt) before verifying the request
+  signature, and stays **fail-closed**: a missing or unreadable key rejects every
+  delivery (HTTP 500), it never accepts. A DB/decrypt failure therefore degrades
+  to rejection, never to acceptance.
+- **Exposure contract.** No plaintext or ciphertext/iv/authTag ever appears in an
+  API response, server-component prop, client bundle, log line, Sentry event,
+  audit row, or config-transfer export; the credential entity is deliberately not
+  registered for export, and the `ciphertext`/`authTag` field names are also in
+  the config-transfer forbidden-field patterns as defence in depth.
 
 ## Threat Model By Actor
 

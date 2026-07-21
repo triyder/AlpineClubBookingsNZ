@@ -146,6 +146,7 @@ const ROUTE_AREA_PREFIXES: Array<{
       "/admin/reports",
       "/admin/subscriptions",
       "/admin/fee-configuration",
+      "/api/admin/integrations",
       "/api/admin/xero",
       "/api/admin/payments",
       "/api/admin/internet-banking-settings",

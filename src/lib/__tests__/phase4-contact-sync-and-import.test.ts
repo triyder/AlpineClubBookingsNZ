@@ -157,6 +157,28 @@ vi.mock("xero-node", () => ({
   Address: { AddressTypeEnum: { STREET: "STREET", POBOX: "POBOX" } },
 }));
 
+// DB-only Xero resolution (#2079): the token key must equal TEST_KEY so the
+// encryptForTest fixtures round-trip, and the operational config must resolve
+// without integration-credential DB rows.
+vi.mock("@/lib/xero-config", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/xero-config")>();
+  return {
+    ...actual,
+    getOperationalXeroConfig: vi.fn().mockResolvedValue({
+      clientId: "test-client",
+      clientSecret: "test-secret",
+      redirectUris: ["https://example.com/api/admin/xero/callback"],
+      scopes: [...actual.XERO_REQUIRED_REPORT_OAUTH_SCOPES],
+      httpTimeout: 10_000,
+    }),
+    getOperationalXeroEncryptionKey: vi
+      .fn()
+      .mockResolvedValue(
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      ),
+  };
+});
+
 import {
   findPotentialXeroContactsForMember,
   importMembersFromXeroGroups,

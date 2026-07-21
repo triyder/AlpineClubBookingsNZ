@@ -7,11 +7,18 @@ const {
   mockRecordXeroInboundEvent,
   mockRunXeroInboundReconciliationCycle,
   mockIsXeroConnected,
+  mockGetWebhookKey,
 } = vi.hoisted(() => ({
   mockRecordWebhookLog: vi.fn().mockResolvedValue(undefined),
   mockRecordXeroInboundEvent: vi.fn().mockResolvedValue(undefined),
   mockRunXeroInboundReconciliationCycle: vi.fn().mockResolvedValue(undefined),
   mockIsXeroConnected: vi.fn().mockResolvedValue(false),
+  // DB-only resolution (#2079): the route resolves the webhook key here, not env.
+  mockGetWebhookKey: vi.fn(),
+}));
+
+vi.mock("@/lib/xero-config", () => ({
+  getOperationalXeroWebhookKey: (...args: unknown[]) => mockGetWebhookKey(...args),
 }));
 
 vi.mock("@/lib/webhook-log", () => ({
@@ -62,7 +69,27 @@ function signedRequest(payload: unknown, signatureOverride?: string) {
 describe("Xero webhook route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.stubEnv("XERO_WEBHOOK_KEY", "xero-webhook-key");
+    mockGetWebhookKey.mockResolvedValue("xero-webhook-key");
+  });
+
+  it("fails closed with 500 when no webhook key is configured (never accepts)", async () => {
+    mockGetWebhookKey.mockResolvedValue(undefined);
+    const { POST } = await import("@/app/api/webhooks/xero/route");
+
+    const response = await POST(signedRequest({ events: [] }));
+
+    expect(response.status).toBe(500);
+    expect(mockRecordXeroInboundEvent).not.toHaveBeenCalled();
+  });
+
+  it("fails closed with 500 when the key resolver errors (never accepts)", async () => {
+    mockGetWebhookKey.mockRejectedValue(new Error("db down"));
+    const { POST } = await import("@/app/api/webhooks/xero/route");
+
+    const response = await POST(signedRequest({ events: [] }));
+
+    expect(response.status).toBe(500);
+    expect(mockRecordXeroInboundEvent).not.toHaveBeenCalled();
   });
 
   it("rejects invalid signatures before parsing the payload", async () => {
