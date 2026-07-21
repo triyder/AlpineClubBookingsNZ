@@ -33,14 +33,21 @@ function steps(): WizardStepConfig<Ctx>[] {
   ];
 }
 
+// Per-test persisted cursor; null = fresh run (no saved progress).
+let mockedProgress: {
+  currentStepId?: string;
+  completedStepIds?: string[];
+} | null = null;
+
 beforeEach(() => {
-  // Cursor GET returns no persisted progress; POST is a no-op success.
+  mockedProgress = null;
+  // Cursor GET returns the configured persisted progress; POST is a no-op success.
   global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const method = init?.method ?? "GET";
     if (method === "GET") {
       return {
         ok: true,
-        json: async () => ({ wizardId: "test", progress: null }),
+        json: async () => ({ wizardId: "test", progress: mockedProgress }),
       } as Response;
     }
     return { ok: true, json: async () => ({ ok: true }) } as Response;
@@ -67,11 +74,30 @@ function renderWizard(context: Ctx) {
 }
 
 describe("IntegrationWizard gating (#2080)", () => {
-  it("resumes at the first unverified step and blocks Continue until it verifies", async () => {
+  it("starts a FIRST run at step one even when it verifies trivially", async () => {
+    // Step A is an always-verified instructions step; without a persisted
+    // cursor the wizard must still open on it, not auto-advance past the
+    // guide (the #2080 E2E caught exactly this).
+    renderWizard({ bReady: false, cReady: false });
+    await waitFor(() => {
+      expect(screen.getByText("Step A body")).toBeTruthy();
+    });
+  });
+
+  it("resumes at the persisted cursor, clamped to the reachable range", async () => {
+    mockedProgress = { currentStepId: "b" };
+    renderWizard({ bReady: false, cReady: false });
+    await waitFor(() => {
+      expect(screen.getByText("Step B body")).toBeTruthy();
+    });
+  });
+
+  it("gates Continue on the current step verifying", async () => {
     const { rerender } = renderWizard({ bReady: false, cReady: false });
 
-    // Step A is verified (instructions), so the furthest reachable step is B —
-    // the wizard resumes there, and Continue is blocked because B is unverified.
+    // Fresh run opens on A; B is reachable (A verified) — walk forward to it.
+    await waitFor(() => screen.getByText("Step A body"));
+    fireEvent.click(screen.getByRole("button", { name: /Step B/ }));
     await waitFor(() => {
       expect(screen.getByText("Step B body")).toBeTruthy();
     });
@@ -183,9 +209,11 @@ describe("IntegrationWizard optional-step skip (#2080 UX-F1)", () => {
   it("skips an optional unverified step, which advances past the gate", async () => {
     renderOptional({ bVerified: false });
 
-    // Resumes on the optional step B (the first unpassed step), which is
-    // gated (Continue is not offered on an unpassed non-last step) but offers
+    // Fresh run opens on A; walk to the optional step B, which is gated
+    // (Continue is not offered on an unpassed non-last step) but offers
     // the shell's provider-labelled skip action.
+    await waitFor(() => screen.getByText("Step A body"));
+    fireEvent.click(screen.getByRole("button", { name: /Step B/ }));
     await waitFor(() => {
       expect(screen.getByText("Step B body")).toBeTruthy();
     });
@@ -204,6 +232,8 @@ describe("IntegrationWizard optional-step skip (#2080 UX-F1)", () => {
 
   it("clears the skipped (amber) state once the step later verifies", async () => {
     const { rerender } = renderOptional({ bVerified: false });
+    await waitFor(() => screen.getByText("Step A body"));
+    fireEvent.click(screen.getByRole("button", { name: /Step B/ }));
     await waitFor(() => screen.getByText("Step B body"));
     fireEvent.click(screen.getByRole("button", { name: "Skip B for now" }));
     await waitFor(() => expect(screen.getByText(/Skipped for now/i)).toBeTruthy());
@@ -229,6 +259,8 @@ describe("IntegrationWizard optional-step skip (#2080 UX-F1)", () => {
   it("never offers a skip action for a required unverified step", async () => {
     // Reuse the standard steps() where B is required + unverified.
     renderWizard({ bReady: false, cReady: false });
+    await waitFor(() => screen.getByText("Step A body"));
+    fireEvent.click(screen.getByRole("button", { name: /Step B/ }));
     await waitFor(() => screen.getByText("Step B body"));
     expect(screen.queryByRole("button", { name: /skip/i })).toBeNull();
   });
@@ -236,6 +268,7 @@ describe("IntegrationWizard optional-step skip (#2080 UX-F1)", () => {
 
 describe("IntegrationWizard focus management (#2080 UX-F3)", () => {
   it("does not steal focus on the initial resume render", async () => {
+    mockedProgress = { currentStepId: "c" };
     renderOptional({ bVerified: true });
     await waitFor(() => screen.getByText("Step C body"));
     // Focus was not yanked to the step container on mount.
@@ -246,6 +279,7 @@ describe("IntegrationWizard focus management (#2080 UX-F3)", () => {
   });
 
   it("moves focus to the new step container on a step change", async () => {
+    mockedProgress = { currentStepId: "c" };
     renderOptional({ bVerified: true });
     await waitFor(() => screen.getByText("Step C body"));
 

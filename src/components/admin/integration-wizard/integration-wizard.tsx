@@ -95,10 +95,18 @@ export function IntegrationWizard<Ctx>({
     if (initialisedRef.current) return;
     if (contextLoading || !cursor.loaded) return;
     const target = initialStepId ?? cursor.persistedStepId;
+    // First-run default is the FIRST step, not the furthest reachable one: an
+    // informational step 1 verifies trivially, and auto-advancing past it would
+    // land a first-time operator on "enter credentials" without ever seeing the
+    // portal guide (caught by the #2080 wizard E2E). A fully-passed wizard opens
+    // on the last step instead so the completion summary is what greets a
+    // returning operator. A persisted cursor or ?step= deep-link still resumes,
+    // clamped to the reachable range.
+    const fallback = allPassed ? steps.length - 1 : 0;
     const desired =
-      target != null ? steps.findIndex((s) => s.id === target) : maxReachable;
+      target != null ? steps.findIndex((s) => s.id === target) : fallback;
     const start = Math.min(
-      Math.max(desired === -1 ? maxReachable : desired, 0),
+      Math.max(desired === -1 ? fallback : desired, 0),
       maxReachable,
     );
     setIndex(start);
