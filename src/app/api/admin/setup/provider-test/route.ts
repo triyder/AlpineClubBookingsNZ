@@ -5,6 +5,7 @@ import { logAudit } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 import { getStripe } from "@/lib/stripe";
+import { getOperationalStripeSecretKey } from "@/lib/stripe-config";
 import { resolveEmailDeliveryConfig } from "@/lib/email-delivery";
 
 const providerTestSchema = z.object({
@@ -33,11 +34,13 @@ function readEnv(name: string): string | undefined {
 }
 
 async function testStripe() {
-  if (!readEnv("STRIPE_SECRET_KEY")) {
-    throw new Error("STRIPE_SECRET_KEY is not configured");
+  // DB-only (#2082): the secret key is captured in-app, not from the env.
+  if (!(await getOperationalStripeSecretKey())) {
+    throw new Error("Stripe secret key is not configured");
   }
 
-  await withTimeout("Stripe balance check", getStripe().balance.retrieve());
+  const stripe = await getStripe();
+  await withTimeout("Stripe balance check", stripe.balance.retrieve());
   return "Stripe responded to a balance read using the configured key.";
 }
 

@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
 import logger from "@/lib/logger";
 import { constructWebhookEvent } from "@/lib/stripe";
+import {
+  getOperationalStripeWebhookSecret,
+  recordStripeWebhookVerified,
+} from "@/lib/stripe-config";
 import { processStripeWebhookEvent } from "@/lib/stripe-webhook-service";
 import {
   isWebhookBodyInvalidContentLengthError,
@@ -18,9 +22,23 @@ const STRIPE_WEBHOOK_MAX_BODY_BYTES = 1024 * 1024;
  * IMPORTANT: Always verify webhook signature before processing.
  */
 export async function POST(request: NextRequest) {
-  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+  // DB-only, FAIL-CLOSED (#2082): the signing secret comes from the dedicated
+  // C1-style resolver. No secret (or a resolver error) ⇒ reject; never accept.
+  let webhookSecret: string | undefined;
+  try {
+    webhookSecret = await getOperationalStripeWebhookSecret();
+  } catch (err) {
+    logger.error(
+      { err: err instanceof Error ? err.name : "unknown" },
+      "Stripe webhook secret resolver failed"
+    );
+    return NextResponse.json(
+      { error: "Webhook secret not configured" },
+      { status: 500 }
+    );
+  }
   if (!webhookSecret) {
-    logger.error("STRIPE_WEBHOOK_SECRET is not set");
+    logger.error("Stripe webhook signing secret is not configured");
     return NextResponse.json(
       { error: "Webhook secret not configured" },
       { status: 500 }
@@ -42,7 +60,7 @@ export async function POST(request: NextRequest) {
       request,
       STRIPE_WEBHOOK_MAX_BODY_BYTES
     );
-    event = constructWebhookEvent(body, signature, webhookSecret);
+    event = await constructWebhookEvent(body, signature, webhookSecret);
   } catch (err) {
     if (isWebhookBodyTooLargeError(err)) {
       logger.warn(
@@ -72,6 +90,16 @@ export async function POST(request: NextRequest) {
       { error: "Webhook signature verification failed" },
       { status: 400 }
     );
+  }
+
+  // Freshness-scoped webhook-verified marker (#2082): a signature-verified
+  // TEST-MODE event proves the wizard's endpoint + signing secret are wired
+  // through the exact production resolver/HMAC path. Only test-mode events set
+  // it (live traffic never marks setup "verified"); it is best-effort and never
+  // affects the webhook response, and verify-reset drops it on any credential
+  // change so a green badge cannot survive a signing-secret swap.
+  if (event.livemode === false) {
+    await recordStripeWebhookVerified();
   }
 
   const result = await processStripeWebhookEvent(event);
