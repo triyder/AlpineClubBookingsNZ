@@ -66,12 +66,12 @@
     },
     "byFamily": {
       "amber": 491,
-      "red": 445,
+      "red": 442,
       "green": 229,
       "blue": 169,
       "emerald": 110,
+      "sky": 53,
       "rose": 50,
-      "sky": 50,
       "purple": 39,
       "yellow": 39,
       "indigo": 31,
@@ -732,7 +732,7 @@
         "count": 3,
         "anchors": [
           "src/app/(admin)/admin/book/page.tsx:860",
-          "src/app/(admin)/admin/site-style/site-style-wizard.tsx:723",
+          "src/app/(admin)/admin/site-style/site-style-wizard.tsx:779",
           "src/components/guest-night-grid.tsx:112"
         ]
       },
@@ -1164,7 +1164,7 @@
       },
       "bg-red-50": {
         "family": "red",
-        "count": 103,
+        "count": 102,
         "anchors": [
           "src/app/(admin)/admin/access-roles/_components/access-role-manager.tsx:218",
           "src/app/(admin)/admin/access-roles/_components/access-role-manager.tsx:353",
@@ -1200,7 +1200,7 @@
       },
       "text-red-800": {
         "family": "red",
-        "count": 41,
+        "count": 40,
         "anchors": [
           "src/app/(admin)/admin/communications/page.tsx:215",
           "src/app/(admin)/admin/dashboard/page.tsx:431",
@@ -1225,15 +1225,6 @@
           "src/app/(authenticated)/profile/account-credit-section.tsx:95"
         ]
       },
-      "border-red-300": {
-        "family": "red",
-        "count": 5,
-        "anchors": [
-          "src/app/(admin)/admin/members/[id]/merge/page.tsx:333",
-          "src/app/(admin)/admin/site-style/site-style-wizard.tsx:685",
-          "src/app/(admin)/admin/site-style/site-style-wizard.tsx:718"
-        ]
-      },
       "bg-red-900": {
         "family": "red",
         "count": 4,
@@ -1241,6 +1232,15 @@
           "src/app/(lodge)/lodge/kiosk/page.tsx:497",
           "src/app/(lodge)/lodge/kiosk/page.tsx:619",
           "src/app/(lodge)/lodge/kiosk/page.tsx:785"
+        ]
+      },
+      "border-red-300": {
+        "family": "red",
+        "count": 4,
+        "anchors": [
+          "src/app/(admin)/admin/members/[id]/merge/page.tsx:333",
+          "src/app/(admin)/admin/site-style/site-style-wizard.tsx:774",
+          "src/components/admin/view-only-action.tsx:166"
         ]
       },
       "text-red-200": {
@@ -1424,20 +1424,20 @@
       },
       "bg-sky-50": {
         "family": "sky",
-        "count": 9,
+        "count": 10,
         "anchors": [
           "src/app/(admin)/admin/members/_components/member-import-dialog.tsx:662",
-          "src/app/(authenticated)/bookings/[id]/page.tsx:103",
-          "src/app/(authenticated)/bookings/[id]/page.tsx:1001"
+          "src/app/(admin)/admin/site-style/site-style-wizard.tsx:718",
+          "src/app/(authenticated)/bookings/[id]/page.tsx:103"
         ]
       },
       "text-sky-900": {
         "family": "sky",
-        "count": 8,
+        "count": 9,
         "anchors": [
+          "src/app/(admin)/admin/site-style/site-style-wizard.tsx:718",
           "src/app/(authenticated)/bookings/[id]/page.tsx:103",
-          "src/app/(authenticated)/bookings/[id]/page.tsx:1001",
-          "src/app/(authenticated)/bookings/[id]/page.tsx:1026"
+          "src/app/(authenticated)/bookings/[id]/page.tsx:1001"
         ]
       },
       "text-sky-700": {
@@ -1486,8 +1486,9 @@
       },
       "border-sky-300": {
         "family": "sky",
-        "count": 1,
+        "count": 2,
         "anchors": [
+          "src/app/(admin)/admin/site-style/site-style-wizard.tsx:718",
           "src/components/admin/admin-capacity-hold-controls.tsx:155"
         ]
       },
