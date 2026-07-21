@@ -4,6 +4,8 @@ All notable public reference-release changes should be recorded here.
 
 ## Unreleased
 
+## 0.13.0 - 2026-07-21
+
 - **The two quote-timing cards now open with Edit, like everything else in
   Booking Policies (#2166).** On **Booking Policies → Public Booking Requests**,
   the **Quote Response Window & Reminders** and **School Attendee Confirmation**
