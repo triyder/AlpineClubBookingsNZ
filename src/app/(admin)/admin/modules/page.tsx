@@ -355,7 +355,7 @@ export default function AdminModulesPage() {
                 </div>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="flex items-start gap-2 rounded-md border border-border bg-card px-3 py-2 text-sm text-muted-foreground">
+                <div className="flex items-start gap-2 rounded-md border border-border bg-muted px-3 py-2 text-sm text-muted-foreground">
                   {statusIcon}
                   <div>
                     <Badge

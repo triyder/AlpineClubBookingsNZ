@@ -387,7 +387,7 @@ export function MemberAccountAccessGroup({
               member&apos;s notifications. Leave it blank to use this
               member&apos;s own email address instead.
             </p>
-            <div className="rounded-lg border border-border bg-card p-3 text-sm">
+            <div className="rounded-lg border border-border bg-muted p-3 text-sm">
               {inheritEmail.selected ? (
                 <div className="space-y-2">
                   <div className="font-medium text-foreground">

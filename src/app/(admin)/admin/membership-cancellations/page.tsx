@@ -199,7 +199,7 @@ function statusBadge(status: string) {
           ? "border-green-200 bg-green-50 text-green-800"
           : status === "DECLINED" || status === "REJECTED"
             ? "border-red-200 bg-red-50 text-red-800"
-            : "border-border bg-card text-muted-foreground";
+            : "border-border bg-muted text-muted-foreground";
 
   return (
     <Badge variant="outline" className={classes}>

@@ -98,7 +98,7 @@ export function FamilyGroupRequestReviewCard({
             {getFamilyGroupRequestSummary(request)}
           </p>
         </div>
-        <div className="rounded-lg bg-card px-3 py-2 text-sm">
+        <div className="rounded-lg bg-muted px-3 py-2 text-sm">
           <p className="font-medium text-foreground">Requester</p>
           <p className="text-muted-foreground">{getMemberName(request.requester)}</p>
           <p className="text-xs text-muted-foreground">{request.requester.email}</p>
@@ -106,7 +106,7 @@ export function FamilyGroupRequestReviewCard({
       </div>
 
       {request.type === "GROUP_CREATE" ? (
-        <div className="mt-4 space-y-1 rounded-lg bg-card p-3 text-sm text-muted-foreground">
+        <div className="mt-4 space-y-1 rounded-lg bg-muted p-3 text-sm text-muted-foreground">
           <p>
             Proposed group name:{" "}
             <span className="font-medium text-foreground">
@@ -134,7 +134,7 @@ export function FamilyGroupRequestReviewCard({
         </div>
       ) : requiresMemberChoice ? (
         <div className="mt-4 space-y-3">
-          <div className="rounded-lg bg-card p-3 text-sm text-muted-foreground">
+          <div className="rounded-lg bg-muted p-3 text-sm text-muted-foreground">
             <p>
               Requested {request.type === "ADULT_REQUEST" ? "adult" : "member"}:{" "}
               <span className="font-medium text-foreground">
@@ -284,7 +284,7 @@ export function FamilyGroupRequestReviewCard({
       )}
 
       {showRemovalDetails && request.type === "REMOVAL_REQUEST" && (
-        <div className="mt-4 rounded-lg bg-card p-3 text-sm text-muted-foreground">
+        <div className="mt-4 rounded-lg bg-muted p-3 text-sm text-muted-foreground">
           <p>
             Remove member:{" "}
             <span className="font-medium text-foreground">

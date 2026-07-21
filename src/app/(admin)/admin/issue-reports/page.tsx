@@ -346,7 +346,7 @@ export default function AdminIssueReportsPage() {
                 <DialogTitle>{selectedReport.pageTitle || "Issue report"}</DialogTitle>
               </DialogHeader>
               <div className="space-y-5">
-                <div className="grid gap-3 rounded-md border border-border bg-card p-3 text-sm sm:grid-cols-2">
+                <div className="grid gap-3 rounded-md border border-border bg-muted p-3 text-sm sm:grid-cols-2">
                   <div>
                     <p className="text-xs font-medium uppercase text-muted-foreground">Member</p>
                     <p className="mt-1 text-foreground">
@@ -414,7 +414,7 @@ export default function AdminIssueReportsPage() {
                       />
                     </div>
                   ) : (
-                    <div className="rounded-md border border-dashed border-border bg-card p-4 text-sm text-muted-foreground">
+                    <div className="rounded-md border border-dashed border-border bg-muted p-4 text-sm text-muted-foreground">
                       Screenshot is not retained for this report.
                     </div>
                   )}

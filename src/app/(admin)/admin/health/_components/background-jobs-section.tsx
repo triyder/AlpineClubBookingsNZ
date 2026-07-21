@@ -36,7 +36,7 @@ export function BackgroundJobsSection({
 
             return (
               <div key={job.jobName} className="bg-card border rounded-lg">
-                <div className="p-4 border-b bg-card">
+                <div className="p-4 border-b bg-muted">
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                     <div>
                       <div className="flex flex-wrap items-center gap-2">
@@ -113,7 +113,7 @@ export function BackgroundJobsSection({
           }) ??
             Object.entries(cronJobs).map(([jobName, runs]) => (
               <div key={jobName} className="bg-card border rounded-lg">
-                <div className="p-4 border-b bg-card">
+                <div className="p-4 border-b bg-muted">
                   <h3 className="font-medium text-foreground">{jobName}</h3>
                 </div>
                 <div className="divide-y">

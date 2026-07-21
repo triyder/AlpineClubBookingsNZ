@@ -548,7 +548,7 @@ export default function ApprovalMappingPanel({
   }
 
   return (
-    <div className="space-y-4 rounded-md border border-border bg-card p-4">
+    <div className="space-y-4 rounded-md border border-border bg-muted p-4">
       <div>
         <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
           Approve: map to existing members

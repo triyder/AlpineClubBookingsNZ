@@ -148,7 +148,7 @@ export function AdminNotificationSettings({
     return (
       <div>
         {viewOnlyBanner}
-        <div className="rounded-lg border border-dashed border-border bg-card px-4 py-6 text-sm text-muted-foreground">
+        <div className="rounded-lg border border-dashed border-border bg-muted px-4 py-6 text-sm text-muted-foreground">
           No active admin users found.
         </div>
       </div>

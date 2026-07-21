@@ -345,7 +345,7 @@ export function BookingApprovalsPanel({
                     </div>
                   </div>
 
-                  <div className="rounded-md border bg-card p-3 text-sm">
+                  <div className="rounded-md border bg-muted p-3 text-sm">
                     <p className="font-medium text-foreground">Guests on this booking</p>
                     <ul className="mt-2 space-y-1 text-muted-foreground">
                       {booking.guests.map((guest) => (
@@ -369,7 +369,7 @@ export function BookingApprovalsPanel({
                   )}
 
                   {decided ? (
-                    <div className="rounded-md border bg-card p-3 text-sm">
+                    <div className="rounded-md border bg-muted p-3 text-sm">
                       <p className="font-medium text-foreground">
                         Decision: {booking.adminReviewStatus}
                         {booking.adminReviewedBy

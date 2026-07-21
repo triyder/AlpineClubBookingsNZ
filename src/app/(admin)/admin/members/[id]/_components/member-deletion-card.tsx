@@ -113,7 +113,7 @@ export function MemberDeletionCard({
             This member has no delete blockers. A reason and second-admin approval are still required.
           </div>
         ) : (
-          <div className="rounded-md border border-border bg-card p-3 text-sm text-muted-foreground">
+          <div className="rounded-md border border-border bg-muted p-3 text-sm text-muted-foreground">
             <div className="font-medium text-foreground">Deletion is blocked</div>
             <ul className="mt-2 list-disc space-y-1 pl-5">
               {deleteBlockers.map((blocker) => (

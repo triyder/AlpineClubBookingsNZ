@@ -798,7 +798,7 @@ export const WysiwygEditor = forwardRef<
       }`}
     >
       {confirmDialog}
-      <div className="sticky top-0 z-30 rounded-md border border-border bg-card px-3 py-2 shadow-sm backdrop-blur">
+      <div className="sticky top-0 z-30 rounded-md border border-border bg-muted px-3 py-2 shadow-sm backdrop-blur">
         <p className="text-sm text-muted-foreground">
           {readOnly
             ? resolvingAccess
@@ -1157,7 +1157,7 @@ export const WysiwygEditor = forwardRef<
             </div>
 
             {/* Thumbnail grid */}
-            <div className="min-h-0 flex-1 overflow-y-auto rounded-md border border-border bg-card p-2">
+            <div className="min-h-0 flex-1 overflow-y-auto rounded-md border border-border bg-muted p-2">
               {loadingSiteImages ||
               loadingUploadedImages ||
               loadingFilesystemImages ? (
@@ -1264,7 +1264,7 @@ export const WysiwygEditor = forwardRef<
 
             {/* Selected path strip + resize inputs */}
             {selectedImagePath ? (
-              <div className="shrink-0 space-y-2 rounded-md border border-border bg-card px-3 py-2">
+              <div className="shrink-0 space-y-2 rounded-md border border-border bg-muted px-3 py-2">
                 <div className="flex items-center gap-2">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
@@ -1877,7 +1877,7 @@ export function PageContentPanel() {
                 <p className="text-xs text-muted-foreground">
                   Menu order: {page.sortOrder}
                 </p>
-                <p className="min-h-10 rounded-md border border-border bg-card p-2 text-xs text-muted-foreground">
+                <p className="min-h-10 rounded-md border border-border bg-muted p-2 text-xs text-muted-foreground">
                   {hasContent
                     ? `${textPreview.slice(0, 180)}${textPreview.length > 180 ? "..." : ""}`
                     : "No content saved yet."}
@@ -2024,7 +2024,7 @@ export function PageContentPanel() {
 
           {selectedPage ? (
             <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pr-1">
-              <div className="grid gap-3 rounded-md border border-border bg-card p-3 md:grid-cols-2">
+              <div className="grid gap-3 rounded-md border border-border bg-muted p-3 md:grid-cols-2">
                 <label className="space-y-1">
                   <span className="text-xs font-medium text-muted-foreground">
                     Slug
@@ -2145,7 +2145,7 @@ export function PageContentPanel() {
                 resolvingAccess={canEdit === undefined}
               />
 
-              <div className="rounded-md border border-border bg-card p-3 text-xs text-muted-foreground">
+              <div className="rounded-md border border-border bg-muted p-3 text-xs text-muted-foreground">
                 <p className="font-medium text-muted-foreground">Embed Tokens</p>
                 <p className="mt-1">
                   Insert these in page body content using {"{{token}}"}. Legacy

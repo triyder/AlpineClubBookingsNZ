@@ -14,7 +14,7 @@ const LEVEL_LABELS: Record<AdminPermissionLevel, string> = {
 };
 
 const LEVEL_CLASSES: Record<AdminPermissionLevel, string> = {
-  none: "border-border bg-card text-muted-foreground",
+  none: "border-border bg-muted text-muted-foreground",
   view: "border-blue-200 bg-blue-50 text-blue-700",
   edit: "border-emerald-200 bg-emerald-50 text-emerald-700",
 };
@@ -44,7 +44,7 @@ export function AdminPermissionMatrixTable({
 }) {
   return (
     <div className="rounded-md border border-border">
-      <div className="grid grid-cols-[1fr_auto] gap-2 border-b border-border bg-card px-3 py-2 text-xs font-semibold uppercase text-muted-foreground">
+      <div className="grid grid-cols-[1fr_auto] gap-2 border-b border-border bg-muted px-3 py-2 text-xs font-semibold uppercase text-muted-foreground">
         <span>Admin Area</span>
         <span>Access</span>
       </div>

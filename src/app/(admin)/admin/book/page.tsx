@@ -620,7 +620,7 @@ export default function AdminBookPage() {
                 loading={lodgesLoading}
               />
             </div>
-            <div className="rounded-md border border-border bg-card p-3">
+            <div className="rounded-md border border-border bg-muted p-3">
               <label className="flex items-start gap-2 text-sm text-foreground cursor-pointer">
                 <input
                   type="checkbox"
@@ -936,7 +936,7 @@ export default function AdminBookPage() {
                     className={`flex min-h-16 items-start gap-3 rounded-md border p-3 text-left text-sm ${
                       paymentMethod === "stripe"
                         ? "border-blue-500 bg-blue-50 text-blue-950"
-                        : "border-border bg-card text-muted-foreground hover:border-border"
+                        : "border-border bg-card text-muted-foreground hover:border-muted-foreground"
                     }`}
                   >
                     <CreditCard className="mt-0.5 h-4 w-4 shrink-0" />
@@ -953,7 +953,7 @@ export default function AdminBookPage() {
                     className={`flex min-h-16 items-start gap-3 rounded-md border p-3 text-left text-sm ${
                       paymentMethod === "internet_banking"
                         ? "border-blue-500 bg-blue-50 text-blue-950"
-                        : "border-border bg-card text-muted-foreground hover:border-border"
+                        : "border-border bg-card text-muted-foreground hover:border-muted-foreground"
                     }`}
                   >
                     <Landmark className="mt-0.5 h-4 w-4 shrink-0" />
@@ -970,7 +970,7 @@ export default function AdminBookPage() {
           )}
 
           {isRetroactive && (
-            <div className="rounded-md bg-card border border-border p-3 text-sm text-muted-foreground">
+            <div className="rounded-md bg-muted border border-border p-3 text-sm text-muted-foreground">
               Recording a past stay ({checkIn!.toLocaleDateString("en-NZ")}). The
               member email is optional (you choose on confirm); drafts are not
               available for retroactive bookings.

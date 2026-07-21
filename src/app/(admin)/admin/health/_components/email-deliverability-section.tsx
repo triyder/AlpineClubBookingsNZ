@@ -164,7 +164,7 @@ export function EmailDeliverabilitySection({
         ) : (
           <div className="bg-card border rounded-lg overflow-x-auto">
             <div className="min-w-[760px]">
-              <div className="grid grid-cols-[minmax(0,1.7fr)_100px_90px_140px_88px] gap-3 px-4 py-2 text-xs font-medium text-muted-foreground bg-card border-b">
+              <div className="grid grid-cols-[minmax(0,1.7fr)_100px_90px_140px_88px] gap-3 px-4 py-2 text-xs font-medium text-muted-foreground bg-muted border-b">
                 <span>Recipient</span>
                 <span>Reason</span>
                 <span>Events</span>
@@ -240,7 +240,7 @@ export function EmailDeliverabilitySection({
         ) : (
           <div className="bg-card border rounded-lg overflow-x-auto">
             <div className="min-w-[980px]">
-              <div className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1.2fr)_140px_100px_140px_88px] gap-3 px-4 py-2 text-xs font-medium text-muted-foreground bg-card border-b">
+              <div className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1.2fr)_140px_100px_140px_88px] gap-3 px-4 py-2 text-xs font-medium text-muted-foreground bg-muted border-b">
                 <span>Recipient</span>
                 <span>Subject</span>
                 <span>Template</span>
@@ -324,7 +324,7 @@ export function EmailDeliverabilitySection({
         ) : (
           <div className="bg-card border rounded-lg overflow-x-auto">
             <div className="min-w-[900px]">
-              <div className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1.5fr)_140px_90px_140px_88px] gap-3 px-4 py-2 text-xs font-medium text-muted-foreground bg-card border-b">
+              <div className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1.5fr)_140px_90px_140px_88px] gap-3 px-4 py-2 text-xs font-medium text-muted-foreground bg-muted border-b">
                 <span>Recipient</span>
                 <span>Subject</span>
                 <span>Template</span>
@@ -396,7 +396,7 @@ export function EmailDeliverabilitySection({
         ) : (
           <div className="bg-card border rounded-lg overflow-x-auto">
             <div className="min-w-[780px]">
-              <div className="grid grid-cols-[minmax(0,1.4fr)_120px_120px_120px_150px] gap-3 px-4 py-2 text-xs font-medium text-muted-foreground bg-card border-b">
+              <div className="grid grid-cols-[minmax(0,1.4fr)_120px_120px_120px_150px] gap-3 px-4 py-2 text-xs font-medium text-muted-foreground bg-muted border-b">
                 <span>Template</span>
                 <span>Attempted</span>
                 <span>Suppressed</span>

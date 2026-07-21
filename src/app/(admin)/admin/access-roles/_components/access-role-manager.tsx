@@ -320,7 +320,7 @@ export function AccessRoleManager({
           {PROTECTED_ROLES.map((role) => (
             <div
               key={role.role}
-              className="rounded-md border border-border bg-card p-3"
+              className="rounded-md border border-border bg-muted p-3"
             >
               <p className="text-sm font-semibold">{role.label}</p>
               <p className="text-xs text-muted-foreground">

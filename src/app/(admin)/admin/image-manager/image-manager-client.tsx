@@ -454,7 +454,7 @@ export function ImageManagerClient() {
               "flex cursor-pointer flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed p-10 text-center transition-colors",
               dragging
                 ? "border-blue-400 bg-blue-50 text-blue-700"
-                : "border-border bg-card text-muted-foreground hover:border-border hover:bg-accent",
+                : "border-border bg-muted text-muted-foreground hover:border-muted-foreground hover:bg-accent",
               (uploading || !canEdit) && "pointer-events-none opacity-60",
             )}
             onDragEnter={handleDragEnter}
@@ -545,7 +545,7 @@ export function ImageManagerClient() {
                   className="group relative overflow-hidden rounded-lg border border-border bg-card shadow-sm transition-shadow hover:shadow-md"
                 >
                   {/* Thumbnail */}
-                  <div className="relative aspect-square overflow-hidden bg-card">
+                  <div className="relative aspect-square overflow-hidden bg-muted">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
                       src={img.url}

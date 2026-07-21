@@ -475,7 +475,7 @@ export default function RefundRequestsPage() {
                           </p>
                         )}
 
-                        <div className="bg-card rounded-md p-3">
+                        <div className="bg-muted rounded-md p-3">
                           <p className="text-sm font-medium mb-1">Reason:</p>
                           <p className="text-sm whitespace-pre-wrap">{req.reason}</p>
                         </div>
@@ -679,7 +679,7 @@ export default function RefundRequestsPage() {
                           </div>
                         </div>
 
-                        <div className="bg-card rounded-md p-3">
+                        <div className="bg-muted rounded-md p-3">
                           <p className="text-sm font-medium mb-1">Reason:</p>
                           <p className="text-sm whitespace-pre-wrap">
                             {request.description}

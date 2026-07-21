@@ -127,7 +127,7 @@ export function MemberDependentDialog({
           </TabsList>
           <TabsContent value="create" className="mt-4">
             <div className="grid gap-4 py-2">
-              <div className="rounded-md border border-border bg-card p-3 text-sm text-muted-foreground">
+              <div className="rounded-md border border-border bg-muted p-3 text-sm text-muted-foreground">
                 This dependent will be created as a non-login member and inherit
                 notifications from the parent email.
               </div>

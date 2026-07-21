@@ -199,7 +199,7 @@ function AccountCard({
               value={firstName}
               onChange={(e) => setFirstName(e.target.value)}
               disabled={!editing}
-              className={!editing ? "bg-card text-muted-foreground" : ""}
+              className={!editing ? "bg-muted text-muted-foreground" : ""}
             />
           </div>
           <div className="space-y-1">
@@ -209,7 +209,7 @@ function AccountCard({
               value={lastName}
               onChange={(e) => setLastName(e.target.value)}
               disabled={!editing}
-              className={!editing ? "bg-card text-muted-foreground" : ""}
+              className={!editing ? "bg-muted text-muted-foreground" : ""}
             />
           </div>
         </div>
@@ -222,7 +222,7 @@ function AccountCard({
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             disabled={!editing}
-            className={!editing ? "bg-card text-muted-foreground" : ""}
+            className={!editing ? "bg-muted text-muted-foreground" : ""}
           />
         </div>
 
@@ -234,7 +234,7 @@ function AccountCard({
               value={boundLodgeId}
               onChange={(e) => setBoundLodgeId(e.target.value)}
               disabled={!editing}
-              className={`w-full rounded-md border border-input px-3 py-2 text-sm ${!editing ? "bg-card text-muted-foreground" : "bg-background"}`}
+              className={`w-full rounded-md border border-input px-3 py-2 text-sm ${!editing ? "bg-muted text-muted-foreground" : "bg-background"}`}
             >
               <option value="">Default lodge</option>
               {lodges.map((lodge) => (

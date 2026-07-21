@@ -1056,7 +1056,7 @@ export function PublicBookingRequestsPanel({
                   </div>
 
                   {request.message ? (
-                    <div className="rounded-md border bg-card p-3 text-sm text-muted-foreground">
+                    <div className="rounded-md border bg-muted p-3 text-sm text-muted-foreground">
                       {request.message}
                     </div>
                   ) : null}
@@ -1068,7 +1068,7 @@ export function PublicBookingRequestsPanel({
                   ) : null}
 
                   {request.latestQuote ? (
-                    <div className="rounded-md border bg-card p-3 text-sm text-muted-foreground">
+                    <div className="rounded-md border bg-muted p-3 text-sm text-muted-foreground">
                       <p className="font-medium">
                         Quote v{request.latestQuote.version} · {request.latestQuote.status}
                       </p>
@@ -1520,7 +1520,7 @@ export function PublicBookingRequestsPanel({
                   ) : null}
 
                   {request.status === "DECLINED" ? (
-                    <div className="rounded-md bg-card p-3 text-sm text-muted-foreground">
+                    <div className="rounded-md bg-muted p-3 text-sm text-muted-foreground">
                       Declined
                       {formatDateTime(request.reviewedAt) ? ` on ${formatDateTime(request.reviewedAt)}` : ""}
                       {request.reviewedByMemberName ? ` by ${request.reviewedByMemberName}` : ""}
@@ -1529,7 +1529,7 @@ export function PublicBookingRequestsPanel({
                   ) : null}
 
                   {(request.status === "APPROVED" || request.status === "CONVERTED") ? (
-                    <div className="rounded-md bg-card p-3 text-sm text-muted-foreground">
+                    <div className="rounded-md bg-muted p-3 text-sm text-muted-foreground">
                       Approved
                       {formatDateTime(request.reviewedAt) ? ` on ${formatDateTime(request.reviewedAt)}` : ""}
                       {request.reviewedByMemberName ? ` by ${request.reviewedByMemberName}` : ""}

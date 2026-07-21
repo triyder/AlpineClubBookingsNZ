@@ -410,7 +410,7 @@ export default function MemberApplicationsPage() {
       application.status === "PENDING_NOMINATORS" && confirmedAt === null;
 
     return (
-      <div className="rounded-lg border border-border bg-card p-3">
+      <div className="rounded-lg border border-border bg-muted p-3">
         <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
           {label}
         </p>
@@ -675,7 +675,7 @@ export default function MemberApplicationsPage() {
                 </div>
 
                 {application.reviewedAt && (
-                  <div className="rounded-md border border-border bg-card px-4 py-3 text-sm text-muted-foreground">
+                  <div className="rounded-md border border-border bg-muted px-4 py-3 text-sm text-muted-foreground">
                     Reviewed by {application.reviewerName || "an administrator"} on{" "}
                     {formatDate(application.reviewedAt)}
                   </div>
@@ -694,7 +694,7 @@ export default function MemberApplicationsPage() {
                 )}
 
                 {application.status === "PENDING_NOMINATORS" && (
-                  <div className="space-y-3 rounded-md border border-border bg-card p-4 text-sm">
+                  <div className="space-y-3 rounded-md border border-border bg-muted p-4 text-sm">
                     <p className="text-muted-foreground">
                       This application is still waiting on its nominators and cannot
                       be approved until both have confirmed. Refresh the workflow to

@@ -59,7 +59,7 @@ export function FamilyGroupLoginHolderSection({
           const adultMembers = cluster.members.filter((member) => member.ageTier === "ADULT");
           const currentHolder = cluster.members.find((member) => member.canLogin);
           return (
-            <div key={cluster.email} className="space-y-3 rounded-md border border-border bg-card p-3">
+            <div key={cluster.email} className="space-y-3 rounded-md border border-border bg-muted p-3">
               <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
                 <p className="text-sm font-medium text-foreground">{cluster.email}</p>
                 {currentHolder && (

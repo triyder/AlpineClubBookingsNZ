@@ -773,7 +773,7 @@ export default function AuditLogPage() {
                       </TableRow>
                       {expanded ? (
                         <TableRow>
-                          <TableCell colSpan={7} className="bg-card p-4">
+                          <TableCell colSpan={7} className="bg-muted p-4">
                             <div className="grid gap-4 text-xs md:grid-cols-[220px_1fr]">
                               <div className="space-y-1 text-muted-foreground">
                                 <p>

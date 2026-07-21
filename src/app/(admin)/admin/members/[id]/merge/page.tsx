@@ -387,7 +387,7 @@ export default function MemberMergePage({
               <h2 className="text-sm font-semibold text-foreground">History moved</h2>
               <div className="mt-1 flex flex-wrap gap-2">
                 {preview.relationMoves.map((m) => (
-                  <span key={m.model} className="rounded border bg-card px-2 py-1 text-xs">
+                  <span key={m.model} className="rounded border bg-muted px-2 py-1 text-xs">
                     {m.model}: {m.count}
                   </span>
                 ))}

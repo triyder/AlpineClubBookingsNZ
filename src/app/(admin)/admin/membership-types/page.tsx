@@ -796,7 +796,7 @@ function MembershipTypeMergeDialog({
           </div>
 
           {target && (
-            <div className="rounded-md border border-border bg-card px-3 py-2 text-sm text-muted-foreground">
+            <div className="rounded-md border border-border bg-muted px-3 py-2 text-sm text-muted-foreground">
               Move {assignmentCount} assignment
               {assignmentCount === 1 ? "" : "s"} from{" "}
               <span className="font-medium">{source?.name}</span> to{" "}
@@ -1726,7 +1726,7 @@ export default function AdminMembershipTypesPage() {
         </div>
 
         {rollForwardResult && (
-          <div className="mt-4 space-y-3 rounded-md border border-border bg-card p-3">
+          <div className="mt-4 space-y-3 rounded-md border border-border bg-muted p-3">
             <div className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-5">
               <div>
                 <div className="text-xs font-medium uppercase text-muted-foreground">

@@ -351,7 +351,7 @@ export function BookingChangeRequestsPanel({
                     </div>
                   </div>
 
-                  <div className="rounded-md border bg-card p-3 text-sm">
+                  <div className="rounded-md border bg-muted p-3 text-sm">
                     <p className="font-medium text-foreground">{summary}</p>
                     {request.reason ? (
                       <p className="mt-2 text-muted-foreground">{request.reason}</p>
@@ -459,7 +459,7 @@ export function BookingChangeRequestsPanel({
                       </div>
                     </div>
                   ) : (
-                    <div className="rounded-md bg-card p-3 text-sm text-muted-foreground">
+                    <div className="rounded-md bg-muted p-3 text-sm text-muted-foreground">
                       {request.status === "APPROVED" ? "Approved" : "Rejected"}
                       {reviewedAt ? ` on ${reviewedAt}` : ""}
                       {request.reviewedBy

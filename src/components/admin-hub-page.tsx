@@ -89,7 +89,7 @@ export function AdminHubPage({
           ))}
         </div>
       ) : (
-        <div className="rounded-md border bg-card px-4 py-3 text-sm text-muted-foreground">
+        <div className="rounded-md border bg-muted px-4 py-3 text-sm text-muted-foreground">
           No setup pages are available for your current permissions.
         </div>
       )}

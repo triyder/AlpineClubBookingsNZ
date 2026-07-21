@@ -285,7 +285,7 @@ export function BookingMessagesPanel() {
       </div>
 
       {previewText ? (
-        <div className="rounded-md border border-border bg-card p-4">
+        <div className="rounded-md border border-border bg-muted p-4">
           <p className="whitespace-pre-wrap text-sm text-foreground">{previewText}</p>
         </div>
       ) : null}

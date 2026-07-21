@@ -459,7 +459,7 @@ export function MemberCommitteeAssignmentsCard({
               ))}
             </div>
             {form.contactable ? (
-              <div className="mt-4 space-y-2 rounded-md border border-border bg-card p-3">
+              <div className="mt-4 space-y-2 rounded-md border border-border bg-muted p-3">
                 <Label htmlFor="committeeContactEmailMode">Contact email</Label>
                 <p className="text-xs text-muted-foreground">
                   Choose where the public contact form delivers messages for this

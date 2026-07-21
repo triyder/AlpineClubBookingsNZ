@@ -160,7 +160,7 @@ function OperationItem({
             ) : null}
           </div>
 
-          <details className="rounded-md bg-card p-2">
+          <details className="rounded-md bg-muted p-2">
             <summary className="cursor-pointer text-xs font-medium text-muted-foreground">
               View request / response payloads
             </summary>
@@ -350,23 +350,23 @@ export function XeroRecordActivityPanel({
           ) : (
             <>
               <div className="grid gap-3 sm:grid-cols-5">
-                <div className="rounded-lg border bg-card p-3">
+                <div className="rounded-lg border bg-muted p-3">
                   <p className="text-xs uppercase tracking-wide text-muted-foreground">Operations</p>
                   <p className="text-lg font-semibold text-foreground">{data.summary.totalOperations}</p>
                 </div>
-                <div className="rounded-lg border bg-card p-3">
+                <div className="rounded-lg border bg-muted p-3">
                   <p className="text-xs uppercase tracking-wide text-muted-foreground">Failed</p>
                   <p className="text-lg font-semibold text-red-700">{data.summary.failedOperations}</p>
                 </div>
-                <div className="rounded-lg border bg-card p-3">
+                <div className="rounded-lg border bg-muted p-3">
                   <p className="text-xs uppercase tracking-wide text-muted-foreground">Partial</p>
                   <p className="text-lg font-semibold text-amber-700">{data.summary.partialOperations}</p>
                 </div>
-                <div className="rounded-lg border bg-card p-3">
+                <div className="rounded-lg border bg-muted p-3">
                   <p className="text-xs uppercase tracking-wide text-muted-foreground">Pending / Running</p>
                   <p className="text-lg font-semibold text-foreground">{data.summary.pendingOperations}</p>
                 </div>
-                <div className="rounded-lg border bg-card p-3">
+                <div className="rounded-lg border bg-muted p-3">
                   <p className="text-xs uppercase tracking-wide text-muted-foreground">Active Links</p>
                   <p className="text-lg font-semibold text-foreground">{data.summary.activeLinks}</p>
                 </div>
@@ -456,23 +456,23 @@ export function XeroRecordActivityPanel({
           ) : (
             <>
               <div className="grid gap-3 sm:grid-cols-5">
-                <div className="rounded-lg border bg-card p-4">
+                <div className="rounded-lg border bg-muted p-4">
                   <p className="text-xs uppercase tracking-wide text-muted-foreground">Total Operations</p>
                   <p className="mt-1 text-2xl font-semibold text-foreground">{data.summary.totalOperations}</p>
                 </div>
-                <div className="rounded-lg border bg-card p-4">
+                <div className="rounded-lg border bg-muted p-4">
                   <p className="text-xs uppercase tracking-wide text-muted-foreground">Failed</p>
                   <p className="mt-1 text-2xl font-semibold text-red-700">{data.summary.failedOperations}</p>
                 </div>
-                <div className="rounded-lg border bg-card p-4">
+                <div className="rounded-lg border bg-muted p-4">
                   <p className="text-xs uppercase tracking-wide text-muted-foreground">Partial</p>
                   <p className="mt-1 text-2xl font-semibold text-amber-700">{data.summary.partialOperations}</p>
                 </div>
-                <div className="rounded-lg border bg-card p-4">
+                <div className="rounded-lg border bg-muted p-4">
                   <p className="text-xs uppercase tracking-wide text-muted-foreground">Pending / Running</p>
                   <p className="mt-1 text-2xl font-semibold text-foreground">{data.summary.pendingOperations}</p>
                 </div>
-                <div className="rounded-lg border bg-card p-4">
+                <div className="rounded-lg border bg-muted p-4">
                   <p className="text-xs uppercase tracking-wide text-muted-foreground">Active Links</p>
                   <p className="mt-1 text-2xl font-semibold text-foreground">{data.summary.activeLinks}</p>
                 </div>
@@ -689,7 +689,7 @@ export function XeroRecordActivityPanel({
                     )}
                   </div>
 
-                  <details className="rounded-md bg-card p-2">
+                  <details className="rounded-md bg-muted p-2">
                     <summary className="cursor-pointer text-xs font-medium text-muted-foreground">
                       View stored payload
                     </summary>

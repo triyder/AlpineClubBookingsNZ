@@ -247,7 +247,7 @@ export default function AdminHealthPage() {
         {/* Recent Webhook Logs */}
         {recentWebhooks.length > 0 && (
           <div className="bg-card border rounded-lg">
-            <div className="p-4 border-b bg-card">
+            <div className="p-4 border-b bg-muted">
               <h3 className="font-medium text-foreground">Recent Webhook Events</h3>
             </div>
             <div className="divide-y">

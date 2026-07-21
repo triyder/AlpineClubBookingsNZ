@@ -479,7 +479,7 @@ export default function FamilyGroupsPage() {
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b bg-card">
+                  <tr className="border-b bg-muted">
                     <th className="text-left px-4 py-2 font-medium text-muted-foreground">Invited email</th>
                     <th className="text-left px-4 py-2 font-medium text-muted-foreground">Group</th>
                     <th className="text-left px-4 py-2 font-medium text-muted-foreground">Invited by</th>
@@ -652,7 +652,7 @@ export default function FamilyGroupsPage() {
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b bg-card">
+                  <tr className="border-b bg-muted">
                     <th className="text-left px-4 py-3 font-medium text-muted-foreground">Group Name</th>
                     <th className="text-left px-4 py-3 font-medium text-muted-foreground">Members</th>
                     <th className="text-left px-4 py-3 font-medium text-muted-foreground">Created</th>

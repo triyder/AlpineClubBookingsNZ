@@ -82,7 +82,7 @@ export function MemberCreditCard({
           <div className="mb-4 p-2 bg-red-50 border border-red-200 text-red-700 rounded text-sm">{adjustmentError}</div>
         )}
         {showAdjustmentForm && (
-          <div className="mb-4 p-4 border border-border rounded-md bg-card space-y-3">
+          <div className="mb-4 p-4 border border-border rounded-md bg-muted space-y-3">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-1">
                 <Label htmlFor="adj-amount">Amount ($)</Label>
