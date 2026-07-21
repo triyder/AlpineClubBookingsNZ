@@ -1,7 +1,7 @@
 import { createHmac, randomBytes } from "crypto";
 import { NextResponse } from "next/server";
 import { getOperationalXeroWebhookKey } from "@/lib/xero-config";
-import { getXeroMockApiOrigin } from "@/lib/xero-mock-endpoint";
+import { getXeroMockInternalOrigin } from "@/lib/xero-mock-endpoint";
 import { mockDisabledResponse } from "../_guard";
 
 // Mock Xero intent-to-receive (ITR) validation ping (#2081). Simulates Xero's
@@ -17,7 +17,10 @@ export async function POST() {
   const disabled = mockDisabledResponse();
   if (disabled) return disabled;
 
-  const origin = getXeroMockApiOrigin();
+  // Server-side POST to our own webhook route — use the in-container origin
+  // (the browser-facing origin may be a host-mapped port the container can't
+  // dial; see getXeroMockInternalOrigin).
+  const origin = getXeroMockInternalOrigin();
   if (!origin) {
     return NextResponse.json({ error: "mock origin unset" }, { status: 400 });
   }
