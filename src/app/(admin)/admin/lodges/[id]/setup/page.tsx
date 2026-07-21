@@ -505,14 +505,14 @@ export default function LodgeSetupWizardPage() {
       <ol className="flex flex-wrap items-center gap-2 text-sm">
         {steps.map((entry, index) => (
           <li key={entry.key} className="flex items-center gap-2">
-            {index > 0 && <span className="text-gray-300">&rarr;</span>}
+            {index > 0 && <span className="text-muted-foreground">&rarr;</span>}
             <span
               className={
                 entry.key === step
                   ? "app-step-active font-medium"
                   : index < stepIndex
                     ? "text-green-700"
-                    : "text-gray-400"
+                    : "text-muted-foreground"
               }
             >
               {index < stepIndex ? (

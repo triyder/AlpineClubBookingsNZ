@@ -105,7 +105,7 @@ export function ConnectionStatusPanel({
             {/* Live connection-health check. The green "Connected" chip above
                 reflects token-row presence only; this button actually exercises
                 the refresh + a cheap org read (#2105). */}
-            <div className="space-y-2 rounded-md border border-slate-200 bg-slate-50 p-3">
+            <div className="space-y-2 rounded-md border border-border bg-card p-3">
               <div className="flex flex-wrap items-center gap-2">
                 <Button
                   type="button"

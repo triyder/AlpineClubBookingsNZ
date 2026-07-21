@@ -33,8 +33,8 @@ export default async function AdminSecurityPage() {
   return (
     <div className="space-y-8">
       <div>
-        <h1 className="text-2xl font-bold text-slate-900">Login &amp; Security</h1>
-        <p className="mt-1 max-w-3xl text-sm text-slate-500">
+        <h1 className="text-2xl font-bold text-foreground">Login &amp; Security</h1>
+        <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
           Control how members sign in and how strong their passwords must be.
           These settings apply across the club.
         </p>
