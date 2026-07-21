@@ -346,7 +346,7 @@ export function FamilyGroupEditor({
       <div>
         {viewOnlyBanner}
         <Card>
-          <CardContent className="p-6 text-sm text-slate-500">Loading family group...</CardContent>
+          <CardContent className="p-6 text-sm text-muted-foreground">Loading family group...</CardContent>
         </Card>
       </div>
     );
@@ -376,7 +376,7 @@ export function FamilyGroupEditor({
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <CardTitle className="text-lg">Edit Family Group</CardTitle>
-            <p className="mt-1 text-sm text-slate-500">
+            <p className="mt-1 text-sm text-muted-foreground">
               Rename the group, manage linked members, review pending requests, or swap a shared-email login holder.
             </p>
           </div>
@@ -458,28 +458,28 @@ export function FamilyGroupEditor({
                 disabled={canEdit !== true}
               />
               {searching && (
-                <div className="absolute right-3 top-2.5 text-xs text-slate-400">
+                <div className="absolute right-3 top-2.5 text-xs text-muted-foreground">
                   Searching...
                 </div>
               )}
               {searchResults.length > 0 && (
-                <div className="absolute z-10 mt-1 max-h-48 w-full overflow-y-auto rounded-md border bg-white shadow-lg">
+                <div className="absolute z-10 mt-1 max-h-48 w-full overflow-y-auto rounded-md border bg-card shadow-lg">
                   {searchResults.map((member) => (
                     <button
                       key={member.id}
                       type="button"
                       onClick={() => addMember(member)}
                       disabled={canEdit !== true}
-                      className="w-full px-3 py-2 text-left text-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                      className="w-full px-3 py-2 text-left text-sm hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       <span className="font-medium">{getMemberName(member)}</span>
-                      <span className="ml-2 text-slate-500">{member.email}</span>
+                      <span className="ml-2 text-muted-foreground">{member.email}</span>
                     </button>
                   ))}
                 </div>
               )}
             </div>
-            <p className="mt-1 text-xs text-slate-500">
+            <p className="mt-1 text-xs text-muted-foreground">
               Add adults, youth, or children to this family group
             </p>
           </div>
@@ -518,15 +518,15 @@ export function FamilyGroupEditor({
           onSendPasswordSetupInvite={sendPasswordSetupInvite}
         />
 
-        <section className="space-y-3 rounded-lg border border-slate-200 p-4">
+        <section className="space-y-3 rounded-lg border border-border p-4">
           <div>
-            <h3 className="text-sm font-semibold text-slate-900">Pending family changes</h3>
-            <p className="mt-1 text-sm text-slate-500">
+            <h3 className="text-sm font-semibold text-foreground">Pending family changes</h3>
+            <p className="mt-1 text-sm text-muted-foreground">
               Review requests that target this family group.
             </p>
           </div>
           {requests.length === 0 ? (
-            <p className="rounded-md border border-dashed border-slate-200 p-3 text-sm text-slate-500">
+            <p className="rounded-md border border-dashed border-border p-3 text-sm text-muted-foreground">
               No pending requests for this group.
             </p>
           ) : (

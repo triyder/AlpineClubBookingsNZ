@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { DEFAULT_INTERNET_BANKING_PAYMENT_SETTINGS } from "@/config/club-settings-defaults";
 import { parseDateOnly } from "@/lib/date-only";
 import {
-  DEFAULT_INTERNET_BANKING_PAYMENT_SETTINGS,
   buildInternetBankingHoldPolicySummary,
   checkInternetBankingLeadTime,
   normalizeInternetBankingPaymentSettings,

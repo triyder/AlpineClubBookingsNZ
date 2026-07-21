@@ -1,3 +1,4 @@
+import { DEFAULT_MEMBERSHIP_NOMINATION_SETTINGS } from "@/config/club-settings-defaults";
 import { prisma } from "@/lib/prisma";
 
 // Admin-configurable settings for the membership nomination eligibility gate and
@@ -35,13 +36,7 @@ export interface PersistedMembershipNominationSettings {
 
 // test seam
 export function getDefaultMembershipNominationSettings(): MembershipNominationSettings {
-  return {
-    gateEnabled: false,
-    minimumMembershipMonths: 12,
-    minimumNights: 6,
-    requiredSignOffs: 2,
-    gateEffectiveFrom: null,
-  };
+  return { ...DEFAULT_MEMBERSHIP_NOMINATION_SETTINGS };
 }
 
 function coerceCount(

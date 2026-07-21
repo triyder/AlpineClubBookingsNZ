@@ -216,8 +216,8 @@ export default function MemberMergePage({
         <BackLink href={`/admin/members/${masterId}`} label="Member" />
       </div>
 
-      <h1 className="text-xl font-semibold text-gray-900">Merge duplicate member</h1>
-      <p className="mt-1 text-sm text-gray-500">
+      <h1 className="text-xl font-semibold text-foreground">Merge duplicate member</h1>
+      <p className="mt-1 text-sm text-muted-foreground">
         The master record below survives and keeps its login, security and Xero
         identity. The duplicate&apos;s history is moved onto the master and the
         duplicate is permanently deleted.
@@ -227,10 +227,10 @@ export default function MemberMergePage({
       <div className="mt-6 grid gap-4 sm:grid-cols-2">
         <div className="rounded-lg border border-blue-200 bg-blue-50 p-4">
           <p className="text-xs font-semibold uppercase text-blue-700">Master (kept)</p>
-          <p className="mt-1 font-medium text-slate-900">
+          <p className="mt-1 font-medium text-foreground">
             {master ? `${master.firstName} ${master.lastName}` : "Loading…"}
           </p>
-          <p className="text-xs text-slate-500">{master?.email}</p>
+          <p className="text-xs text-muted-foreground">{master?.email}</p>
           {master && (master.active === false || master.archivedAt) && (
             <p className="mt-2 text-xs font-medium text-red-600">
               This member is inactive or archived and cannot be a merge master.
@@ -243,10 +243,10 @@ export default function MemberMergePage({
           </p>
           {loser ? (
             <>
-              <p className="mt-1 font-medium text-slate-900">
+              <p className="mt-1 font-medium text-foreground">
                 {loser.firstName} {loser.lastName}
               </p>
-              <p className="text-xs text-slate-500">{loser.email}</p>
+              <p className="text-xs text-muted-foreground">{loser.email}</p>
               <div className="mt-2 flex gap-2">
                 <Button variant="outline" size="sm" onClick={swap}>
                   <ArrowLeftRight className="mr-1 h-3 w-3" /> Swap
@@ -264,7 +264,7 @@ export default function MemberMergePage({
               </div>
             </>
           ) : (
-            <p className="mt-1 text-sm text-slate-500">No duplicate selected.</p>
+            <p className="mt-1 text-sm text-muted-foreground">No duplicate selected.</p>
           )}
         </div>
       </div>
@@ -286,7 +286,7 @@ export default function MemberMergePage({
           />
           {suggestions.length > 0 && (
             <div>
-              <p className="text-xs font-medium text-gray-600">
+              <p className="text-xs font-medium text-muted-foreground">
                 Possible duplicates (same last name)
               </p>
               <div className="mt-1 flex flex-wrap gap-2">
@@ -347,9 +347,9 @@ export default function MemberMergePage({
 
           {/* Field diff */}
           <div>
-            <h2 className="text-sm font-semibold text-gray-900">Field merge</h2>
+            <h2 className="text-sm font-semibold text-foreground">Field merge</h2>
             {changedFields.length === 0 ? (
-              <p className="mt-1 text-xs text-gray-500">
+              <p className="mt-1 text-xs text-muted-foreground">
                 No blank master fields will be filled — the master keeps all its
                 own values.
               </p>
@@ -357,7 +357,7 @@ export default function MemberMergePage({
               <div className="mt-2 overflow-x-auto">
                 <table className="w-full text-xs">
                   <thead>
-                    <tr className="text-left text-gray-500">
+                    <tr className="text-left text-muted-foreground">
                       <th className="py-1 pr-3">Field</th>
                       <th className="py-1 pr-3">Master</th>
                       <th className="py-1 pr-3">Duplicate</th>
@@ -368,10 +368,10 @@ export default function MemberMergePage({
                     {changedFields.map((r) => (
                       <tr key={r.field} className="border-t">
                         <td className="py-1 pr-3 font-medium">{r.field}</td>
-                        <td className="py-1 pr-3 text-gray-500">{display(r.master)}</td>
-                        <td className="py-1 pr-3 text-gray-500">{display(r.loser)}</td>
+                        <td className="py-1 pr-3 text-muted-foreground">{display(r.master)}</td>
+                        <td className="py-1 pr-3 text-muted-foreground">{display(r.loser)}</td>
                         <td className="py-1 pr-3 font-medium text-green-700">
-                          {display(r.result)} <span className="text-gray-400">({r.source})</span>
+                          {display(r.result)} <span className="text-muted-foreground">({r.source})</span>
                         </td>
                       </tr>
                     ))}
@@ -384,10 +384,10 @@ export default function MemberMergePage({
           {/* Relation moves */}
           {preview.relationMoves.length > 0 && (
             <div>
-              <h2 className="text-sm font-semibold text-gray-900">History moved</h2>
+              <h2 className="text-sm font-semibold text-foreground">History moved</h2>
               <div className="mt-1 flex flex-wrap gap-2">
                 {preview.relationMoves.map((m) => (
-                  <span key={m.model} className="rounded border bg-gray-50 px-2 py-1 text-xs">
+                  <span key={m.model} className="rounded border bg-muted px-2 py-1 text-xs">
                     {m.model}: {m.count}
                   </span>
                 ))}
@@ -398,10 +398,10 @@ export default function MemberMergePage({
           {/* Collisions */}
           {preview.collisions.length > 0 && (
             <div>
-              <h2 className="text-sm font-semibold text-gray-900">
+              <h2 className="text-sm font-semibold text-foreground">
                 Duplicate rows resolved
               </h2>
-              <ul className="mt-1 list-disc pl-5 text-xs text-gray-600">
+              <ul className="mt-1 list-disc pl-5 text-xs text-muted-foreground">
                 {preview.collisions.map((c) => (
                   <li key={c.model}>
                     {c.model} — {c.resolution}
@@ -431,7 +431,7 @@ export default function MemberMergePage({
               <p className="mt-1 text-xs text-red-700">
                 The duplicate <strong>{preview.loserName}</strong> will be
                 permanently deleted. Type{" "}
-                <code className="rounded bg-white px-1">{preview.confirmationPhrase}</code>{" "}
+                <code className="rounded bg-card px-1">{preview.confirmationPhrase}</code>{" "}
                 to confirm.
               </p>
               <Input

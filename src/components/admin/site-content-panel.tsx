@@ -183,7 +183,7 @@ export function SiteContentPanel() {
     return (
       <div>
         {viewOnlyBanner}
-        <p className="text-sm text-slate-500">Loading site content...</p>
+        <p className="text-sm text-muted-foreground">Loading site content...</p>
       </div>
     );
   }

@@ -255,7 +255,7 @@ export function AccessRoleManager({
             roles.map((role) => (
               <div
                 key={role.id}
-                className="flex flex-wrap items-start justify-between gap-3 rounded-md border border-slate-200 p-3"
+                className="flex flex-wrap items-start justify-between gap-3 rounded-md border border-border p-3"
               >
                 <div className="min-w-0 flex-1 space-y-1">
                   <div className="flex flex-wrap items-center gap-2">
@@ -320,7 +320,7 @@ export function AccessRoleManager({
           {PROTECTED_ROLES.map((role) => (
             <div
               key={role.role}
-              className="rounded-md border border-slate-200 bg-slate-50 p-3"
+              className="rounded-md border border-border bg-muted p-3"
             >
               <p className="text-sm font-semibold">{role.label}</p>
               <p className="text-xs text-muted-foreground">
@@ -391,7 +391,7 @@ export function AccessRoleManager({
                 {ADMIN_PERMISSION_AREAS.map((area) => (
                   <div
                     key={area.key}
-                    className="flex items-center justify-between gap-3 rounded-md border border-slate-200 p-2"
+                    className="flex items-center justify-between gap-3 rounded-md border border-border p-2"
                   >
                     <div className="min-w-0">
                       <p className="text-sm font-medium">{area.label}</p>

@@ -23,9 +23,9 @@ export function StatusBadge({ status }: { status: string }) {
     failed: "bg-red-100 text-red-800",
     BOUNCE: "bg-red-100 text-red-800",
     COMPLAINT: "bg-red-100 text-red-800",
-    disabled: "bg-slate-100 text-slate-700",
-    untracked: "bg-slate-100 text-slate-700",
-    unknown: "bg-gray-100 text-gray-800",
+    disabled: "bg-muted text-muted-foreground",
+    untracked: "bg-muted text-muted-foreground",
+    unknown: "bg-muted text-foreground",
   };
 
   return (
@@ -100,7 +100,7 @@ export function CronResultSummary({ summary }: { summary: Record<string, unknown
 
   if (healthSignal || sizeBytes !== null) {
     return (
-      <span className="text-xs text-slate-500">
+      <span className="text-xs text-muted-foreground">
         {healthSignal ? `${healthSignal}` : "backup"}{" "}
         {sizeBytes !== null ? `${sizeBytes} bytes` : ""}
         {minSizeBytes !== null ? ` / min ${minSizeBytes}` : ""}
@@ -109,7 +109,7 @@ export function CronResultSummary({ summary }: { summary: Record<string, unknown
   }
 
   if (reason) {
-    return <span className="text-xs text-slate-500">{reason}</span>;
+    return <span className="text-xs text-muted-foreground">{reason}</span>;
   }
 
   return null;

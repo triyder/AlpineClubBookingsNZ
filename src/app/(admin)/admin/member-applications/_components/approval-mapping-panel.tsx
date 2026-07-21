@@ -377,9 +377,9 @@ export default function ApprovalMappingPanel({
     const results = searchResults[key] || [];
     const suggestions = outcome?.suggestions ?? [];
     return (
-      <div key={key} className="rounded-lg border border-slate-200 bg-white p-3">
+      <div key={key} className="rounded-lg border border-border bg-card p-3">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <p className="font-medium text-slate-900">{label}</p>
+          <p className="font-medium text-foreground">{label}</p>
           <div className="flex gap-2 text-sm">
             <label className="flex items-center gap-1">
               <input
@@ -408,7 +408,7 @@ export default function ApprovalMappingPanel({
               <div className="flex items-center justify-between rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm">
                 <span>
                   Mapped to <strong>{candidateLabel(sel.member)}</strong>{" "}
-                  <span className="text-slate-600">({sel.member.email})</span>
+                  <span className="text-muted-foreground">({sel.member.email})</span>
                 </span>
                 <Button
                   type="button"
@@ -434,7 +434,7 @@ export default function ApprovalMappingPanel({
                     className={`rounded-full border px-3 py-1 text-xs ${
                       sel.member?.id === candidate.id
                         ? "border-emerald-400 bg-emerald-100 text-emerald-900"
-                        : "border-slate-300 bg-slate-50 text-slate-700 hover:bg-slate-100"
+                        : "border-border bg-card text-muted-foreground hover:bg-accent"
                     }`}
                     onClick={() => chooseMember(candidate)}
                   >
@@ -447,7 +447,7 @@ export default function ApprovalMappingPanel({
 
             <div className="flex gap-2">
               <input
-                className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                className="w-full rounded-md border border-border px-3 py-2 text-sm"
                 value={searchQueries[key] || ""}
                 onChange={(event) =>
                   setSearchQueries((prev) => ({ ...prev, [key]: event.target.value }))
@@ -469,11 +469,11 @@ export default function ApprovalMappingPanel({
                 {results.map((candidate) => (
                   <div
                     key={candidate.id}
-                    className="flex items-center justify-between rounded-md border border-slate-200 px-3 py-2 text-sm"
+                    className="flex items-center justify-between rounded-md border border-border px-3 py-2 text-sm"
                   >
                     <span>
                       {candidateLabel(candidate)}{" "}
-                      <span className="text-slate-500">{candidate.email}</span>
+                      <span className="text-muted-foreground">{candidate.email}</span>
                     </span>
                     <Button
                       type="button"
@@ -511,7 +511,7 @@ export default function ApprovalMappingPanel({
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs">
                   <thead>
-                    <tr className="text-slate-500">
+                    <tr className="text-muted-foreground">
                       <th className="py-1 pr-3">Field</th>
                       <th className="py-1 pr-3">Current</th>
                       <th className="py-1">Application</th>
@@ -522,13 +522,13 @@ export default function ApprovalMappingPanel({
                       .filter((diff) => diff.willChange)
                       .map((diff) => (
                         <tr key={diff.field} className="bg-amber-50/60">
-                          <td className="py-1 pr-3 font-medium text-slate-700">
+                          <td className="py-1 pr-3 font-medium text-muted-foreground">
                             {diff.label}
                           </td>
-                          <td className="py-1 pr-3 text-slate-500 line-through">
+                          <td className="py-1 pr-3 text-muted-foreground line-through">
                             {diff.current ?? "—"}
                           </td>
-                          <td className="py-1 font-medium text-slate-900">
+                          <td className="py-1 font-medium text-foreground">
                             {diff.incoming ?? "—"}
                           </td>
                         </tr>
@@ -537,7 +537,7 @@ export default function ApprovalMappingPanel({
                 </table>
               </div>
             ) : (
-              <p className="text-xs text-slate-500">
+              <p className="text-xs text-muted-foreground">
                 No field changes — the application matches this member.
               </p>
             )}
@@ -548,12 +548,12 @@ export default function ApprovalMappingPanel({
   }
 
   return (
-    <div className="space-y-4 rounded-md border border-slate-200 bg-slate-50 p-4">
+    <div className="space-y-4 rounded-md border border-border bg-muted p-4">
       <div>
-        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
           Approve: map to existing members
         </p>
-        <p className="mt-1 text-sm text-slate-600">
+        <p className="mt-1 text-sm text-muted-foreground">
           For each person choose Create new (default) or Map to an existing
           member. Mapping overwrites the member&apos;s details from the
           application — preview the changes before approving.
@@ -632,7 +632,7 @@ export default function ApprovalMappingPanel({
           </p>
         </div>
         <select
-          className="w-full rounded-md border border-amber-300 bg-white px-3 py-2 text-sm text-slate-900"
+          className="w-full rounded-md border border-amber-300 bg-card px-3 py-2 text-sm text-foreground"
           value={effectiveFee.action}
           onChange={(event) => {
             setFeeTouched(true);
@@ -645,7 +645,7 @@ export default function ApprovalMappingPanel({
         {effectiveFee.action === "CREATE" ? (
           <div className="grid gap-3 md:grid-cols-2">
             <label className="space-y-1">
-              <span className="text-xs font-medium text-slate-700">Amount override ($)</span>
+              <span className="text-xs font-medium text-muted-foreground">Amount override ($)</span>
               <input
                 className="w-full rounded-md border border-amber-300 px-3 py-2 text-sm"
                 inputMode="decimal"
@@ -658,7 +658,7 @@ export default function ApprovalMappingPanel({
               />
             </label>
             <label className="space-y-1">
-              <span className="text-xs font-medium text-slate-700">Narration override</span>
+              <span className="text-xs font-medium text-muted-foreground">Narration override</span>
               <input
                 className="w-full rounded-md border border-amber-300 px-3 py-2 text-sm"
                 placeholder="Use default narration"
@@ -675,7 +675,7 @@ export default function ApprovalMappingPanel({
           </div>
         ) : (
           <label className="space-y-1">
-            <span className="text-xs font-medium text-slate-700">
+            <span className="text-xs font-medium text-muted-foreground">
               Reason for not raising invoice
             </span>
             <textarea

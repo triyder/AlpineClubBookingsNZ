@@ -128,12 +128,12 @@ function StatCard({
   return (
     <Card className="reports-print-card print:border-slate-300 print:shadow-none">
       <CardHeader className="flex flex-row items-center justify-between pb-2">
-        <CardTitle className="text-sm font-medium text-slate-500">{title}</CardTitle>
-        <Icon className="h-4 w-4 text-slate-400" />
+        <CardTitle className="text-sm font-medium text-muted-foreground">{title}</CardTitle>
+        <Icon className="h-4 w-4 text-muted-foreground" />
       </CardHeader>
       <CardContent>
-        <div className="text-2xl font-bold text-slate-900">{value}</div>
-        {subtitle ? <p className="mt-1 text-xs text-slate-500">{subtitle}</p> : null}
+        <div className="text-2xl font-bold text-foreground">{value}</div>
+        {subtitle ? <p className="mt-1 text-xs text-muted-foreground">{subtitle}</p> : null}
       </CardContent>
     </Card>
   );
@@ -325,8 +325,8 @@ export default function ReportsPage() {
     <div className="space-y-6 print:space-y-4">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end print:hidden">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Reports</h1>
-          <p className="mt-1 text-sm text-slate-500">
+          <h1 className="text-2xl font-bold text-foreground">Reports</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
             Occupancy, revenue, booking, and member analytics
           </p>
         </div>
@@ -340,7 +340,7 @@ export default function ReportsPage() {
           />
           {lodges.length > 1 ? (
             <div className="space-y-1">
-              <label className="text-xs font-medium text-gray-500">Lodge</label>
+              <label className="text-xs font-medium text-muted-foreground">Lodge</label>
               <select
                 value={lodgeId}
                 onChange={(event) => setLodgeId(event.target.value)}
@@ -356,7 +356,7 @@ export default function ReportsPage() {
             </div>
           ) : null}
           <div className="space-y-1">
-            <label className="text-xs font-medium text-gray-500">Deleted</label>
+            <label className="text-xs font-medium text-muted-foreground">Deleted</label>
             <select
               value={deleted}
               onChange={(event) => setDeleted(event.target.value)}
@@ -395,12 +395,12 @@ export default function ReportsPage() {
       {data ? (
         <div ref={reportRef} className="reports-print-root space-y-6 print:space-y-4">
           <div className="hidden print:block">
-            <h1 className="text-2xl font-bold text-slate-900">Reports</h1>
-            <p className="mt-1 text-sm text-slate-500">
+            <h1 className="text-2xl font-bold text-foreground">Reports</h1>
+            <p className="mt-1 text-sm text-muted-foreground">
               Date range: {format(new Date(from + "T00:00:00"), "d MMM yyyy")} to{" "}
               {format(new Date(to + "T00:00:00"), "d MMM yyyy")}
             </p>
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-muted-foreground">
               Member subscription cards use current season data ({data.memberStats.currentSeasonLabel}
               ).
             </p>
@@ -484,7 +484,7 @@ export default function ReportsPage() {
                     <OccupancyAreaChart data={sampledOccupancy} />
                   </div>
                 ) : (
-                  <p className="py-8 text-center text-slate-500">No occupancy data for this period</p>
+                  <p className="py-8 text-center text-muted-foreground">No occupancy data for this period</p>
                 )}
               </CardContent>
             </Card>
@@ -497,7 +497,7 @@ export default function ReportsPage() {
                   <DollarSign className="h-5 w-5" />
                   {`Revenue by ${getRevenueGranularityLabel(data.revenueGranularity)}`}
                 </CardTitle>
-                <p className="text-sm text-slate-500">
+                <p className="text-sm text-muted-foreground">
                   {getRevenueDescription(data.revenueGranularity)}
                 </p>
               </CardHeader>
@@ -510,7 +510,7 @@ export default function ReportsPage() {
                     />
                   </div>
                 ) : (
-                  <p className="py-8 text-center text-slate-500">No revenue data for this period</p>
+                  <p className="py-8 text-center text-muted-foreground">No revenue data for this period</p>
                 )}
               </CardContent>
             </Card>
@@ -528,7 +528,7 @@ export default function ReportsPage() {
                     <TrendsLineChart data={data.trends} />
                   </div>
                 ) : (
-                  <p className="py-8 text-center text-slate-500">No trend data for this period</p>
+                  <p className="py-8 text-center text-muted-foreground">No trend data for this period</p>
                 )}
               </CardContent>
             </Card>
@@ -546,7 +546,7 @@ export default function ReportsPage() {
                       <MemberSplitPieChart data={memberPieData} />
                     </div>
                   ) : (
-                    <p className="py-8 text-center text-slate-500">No guest data</p>
+                    <p className="py-8 text-center text-muted-foreground">No guest data</p>
                   )}
                 </CardContent>
               </Card>
@@ -561,7 +561,7 @@ export default function ReportsPage() {
                       <StatusPieChart data={statusPieData} />
                     </div>
                   ) : (
-                    <p className="py-8 text-center text-slate-500">No booking data</p>
+                    <p className="py-8 text-center text-muted-foreground">No booking data</p>
                   )}
                 </CardContent>
               </Card>

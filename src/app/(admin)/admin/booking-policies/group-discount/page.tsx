@@ -6,10 +6,10 @@ export default function GroupDiscountPage() {
     <div className="space-y-6">
       <div>
         <BackLink href="/admin/booking-policies" label="Booking Policies" />
-        <h1 className="mt-2 text-2xl font-bold text-slate-900">
+        <h1 className="mt-2 text-2xl font-bold text-foreground">
           Group Discount
         </h1>
-        <p className="mt-1 text-sm text-slate-500">
+        <p className="mt-1 text-sm text-muted-foreground">
           Charge all guests at member rates once a booking reaches a minimum
           group size.
         </p>

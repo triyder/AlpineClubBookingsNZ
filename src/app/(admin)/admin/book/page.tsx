@@ -591,15 +591,15 @@ export default function AdminBookPage() {
       {/* Step indicator — only show after member selected */}
       {selectedMember && (
         <div className="flex items-center gap-2 text-sm">
-          <span className={step === "dates" ? "app-step-active" : "text-gray-400"}>
+          <span className={step === "dates" ? "app-step-active" : "text-muted-foreground"}>
             1. Select Dates
           </span>
-          <span className="text-gray-300">&rarr;</span>
-          <span className={step === "guests" ? "app-step-active" : "text-gray-400"}>
+          <span className="text-muted-foreground">&rarr;</span>
+          <span className={step === "guests" ? "app-step-active" : "text-muted-foreground"}>
             2. Add Guests
           </span>
-          <span className="text-gray-300">&rarr;</span>
-          <span className={step === "review" ? "app-step-active" : "text-gray-400"}>
+          <span className="text-muted-foreground">&rarr;</span>
+          <span className={step === "review" ? "app-step-active" : "text-muted-foreground"}>
             3. Review & Confirm
           </span>
         </div>
@@ -620,8 +620,8 @@ export default function AdminBookPage() {
                 loading={lodgesLoading}
               />
             </div>
-            <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
-              <label className="flex items-start gap-2 text-sm text-slate-800 cursor-pointer">
+            <div className="rounded-md border border-border bg-muted p-3">
+              <label className="flex items-start gap-2 text-sm text-foreground cursor-pointer">
                 <input
                   type="checkbox"
                   checked={allowPastDates}
@@ -635,13 +635,13 @@ export default function AdminBookPage() {
                       setCheckOut(null);
                     }
                   }}
-                  className="mt-0.5 rounded border-slate-300"
+                  className="mt-0.5 rounded border-border"
                 />
                 <span>
                   <span className="font-medium">
                     Record a past stay (retroactive booking)
                   </span>
-                  <span className="block text-xs text-slate-600">
+                  <span className="block text-xs text-muted-foreground">
                     Someone already stayed — record the booking after the fact.
                     Allowed up to 365 days back.
                   </span>
@@ -667,7 +667,7 @@ export default function AdminBookPage() {
             <CardTitle>
               Add Guests
               {checkIn && checkOut && (
-                <span className="ml-2 text-sm font-normal text-gray-500">
+                <span className="ml-2 text-sm font-normal text-muted-foreground">
                   {checkIn.toLocaleDateString("en-NZ")} -{" "}
                   {checkOut.toLocaleDateString("en-NZ")} ({nights} night
                   {nights !== 1 ? "s" : ""})
@@ -751,7 +751,7 @@ export default function AdminBookPage() {
             <CardContent className="space-y-4">
               <div className="grid grid-cols-2 gap-4 text-sm">
                 <div>
-                  <span className="text-gray-500">Check-in:</span>{" "}
+                  <span className="text-muted-foreground">Check-in:</span>{" "}
                   <span className="font-medium">
                     {checkIn!.toLocaleDateString("en-NZ", {
                       weekday: "short",
@@ -762,7 +762,7 @@ export default function AdminBookPage() {
                   </span>
                 </div>
                 <div>
-                  <span className="text-gray-500">Check-out:</span>{" "}
+                  <span className="text-muted-foreground">Check-out:</span>{" "}
                   <span className="font-medium">
                     {checkOut!.toLocaleDateString("en-NZ", {
                       weekday: "short",
@@ -773,11 +773,11 @@ export default function AdminBookPage() {
                   </span>
                 </div>
                 <div>
-                  <span className="text-gray-500">Nights:</span>{" "}
+                  <span className="text-muted-foreground">Nights:</span>{" "}
                   <span className="font-medium">{nights}</span>
                 </div>
                 <div>
-                  <span className="text-gray-500">Guests:</span>{" "}
+                  <span className="text-muted-foreground">Guests:</span>{" "}
                   <span className="font-medium">{guests.length}</span>
                 </div>
               </div>
@@ -928,7 +928,7 @@ export default function AdminBookPage() {
           {showPaymentMethodChoice && (
             <Card>
               <CardContent className="space-y-3 pt-6">
-                <p className="text-sm font-medium text-slate-900">Payment method</p>
+                <p className="text-sm font-medium text-foreground">Payment method</p>
                 <div className="grid gap-2 sm:grid-cols-2">
                   <button
                     type="button"
@@ -936,7 +936,7 @@ export default function AdminBookPage() {
                     className={`flex min-h-16 items-start gap-3 rounded-md border p-3 text-left text-sm ${
                       paymentMethod === "stripe"
                         ? "border-blue-500 bg-blue-50 text-blue-950"
-                        : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                        : "border-border bg-card text-muted-foreground hover:border-muted-foreground"
                     }`}
                   >
                     <CreditCard className="mt-0.5 h-4 w-4 shrink-0" />
@@ -953,7 +953,7 @@ export default function AdminBookPage() {
                     className={`flex min-h-16 items-start gap-3 rounded-md border p-3 text-left text-sm ${
                       paymentMethod === "internet_banking"
                         ? "border-blue-500 bg-blue-50 text-blue-950"
-                        : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                        : "border-border bg-card text-muted-foreground hover:border-muted-foreground"
                     }`}
                   >
                     <Landmark className="mt-0.5 h-4 w-4 shrink-0" />
@@ -970,7 +970,7 @@ export default function AdminBookPage() {
           )}
 
           {isRetroactive && (
-            <div className="rounded-md bg-slate-50 border border-slate-200 p-3 text-sm text-slate-700">
+            <div className="rounded-md bg-muted border border-border p-3 text-sm text-muted-foreground">
               Recording a past stay ({checkIn!.toLocaleDateString("en-NZ")}). The
               member email is optional (you choose on confirm); drafts are not
               available for retroactive bookings.

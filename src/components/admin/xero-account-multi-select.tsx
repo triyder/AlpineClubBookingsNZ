@@ -115,7 +115,7 @@ export function XeroAccountMultiSelect({
     <div className="space-y-2" ref={containerRef}>
       <div className="flex flex-wrap gap-1.5">
         {selectedCodes.length === 0 ? (
-          <span className="text-sm text-slate-500">No accounts selected.</span>
+          <span className="text-sm text-muted-foreground">No accounts selected.</span>
         ) : (
           selectedCodes.map((code) => {
             const normalized = normalizeCode(code);
@@ -123,7 +123,7 @@ export function XeroAccountMultiSelect({
             return (
               <span
                 key={normalized}
-                className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-slate-50 px-2 py-1 text-xs font-medium text-slate-800"
+                className="inline-flex items-center gap-1.5 rounded-md border border-border bg-muted px-2 py-1 text-xs font-medium text-foreground"
               >
                 <span>
                   {normalized}
@@ -133,7 +133,7 @@ export function XeroAccountMultiSelect({
                   type="button"
                   disabled={disabled}
                   onClick={() => toggleCode(normalized)}
-                  className="rounded-sm text-slate-500 hover:text-slate-900 disabled:opacity-50"
+                  className="rounded-sm text-muted-foreground hover:text-accent-foreground disabled:opacity-50"
                   aria-label={`Remove account ${normalized}`}
                 >
                   <X className="h-3.5 w-3.5" />
@@ -158,8 +158,8 @@ export function XeroAccountMultiSelect({
         </Button>
 
         {open ? (
-          <div className="absolute z-20 mt-1 w-full max-w-md rounded-md border border-slate-200 bg-white shadow-lg">
-            <div className="border-b border-slate-100 p-2">
+          <div className="absolute z-20 mt-1 w-full max-w-md rounded-md border border-border bg-card shadow-lg">
+            <div className="border-b border-border p-2">
               <Input
                 autoFocus
                 value={query}
@@ -167,7 +167,7 @@ export function XeroAccountMultiSelect({
                 placeholder="Search code or name…"
               />
               {classFilter ? (
-                <label className="mt-2 flex items-center gap-2 text-xs text-slate-600">
+                <label className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
                   <input
                     type="checkbox"
                     checked={showAll}
@@ -179,7 +179,7 @@ export function XeroAccountMultiSelect({
             </div>
             <div className="max-h-64 overflow-y-auto py-1">
               {options.length === 0 ? (
-                <p className="px-3 py-2 text-sm text-slate-500">
+                <p className="px-3 py-2 text-sm text-muted-foreground">
                   {accounts.length === 0
                     ? "No Xero accounts available."
                     : "No accounts match your search."}
@@ -194,11 +194,11 @@ export function XeroAccountMultiSelect({
                       key={normalized}
                       onClick={() => toggleCode(normalized)}
                       className={cn(
-                        "flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-sm hover:bg-slate-50",
-                        checked && "bg-slate-50",
+                        "flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent",
+                        checked && "bg-accent",
                       )}
                     >
-                      <span className="text-slate-800">
+                      <span className="text-foreground">
                         <span className="font-medium">{account.code}</span> —{" "}
                         {account.name}
                       </span>
@@ -216,7 +216,7 @@ export function XeroAccountMultiSelect({
                     toggleCode(manualQueryCode);
                     setQuery("");
                   }}
-                  className="flex w-full items-center gap-2 border-t border-slate-100 px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
+                  className="flex w-full items-center gap-2 border-t border-border px-3 py-2 text-left text-sm text-muted-foreground hover:bg-accent"
                 >
                   <Plus className="h-4 w-4" />
                   Add code “{manualQueryCode}”

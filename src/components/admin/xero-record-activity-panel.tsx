@@ -160,20 +160,20 @@ function OperationItem({
             ) : null}
           </div>
 
-          <details className="rounded-md bg-slate-50 p-2">
-            <summary className="cursor-pointer text-xs font-medium text-slate-700">
+          <details className="rounded-md bg-muted p-2">
+            <summary className="cursor-pointer text-xs font-medium text-muted-foreground">
               View request / response payloads
             </summary>
             <div className="mt-2 grid gap-3 lg:grid-cols-2">
               <div>
-                <p className="mb-1 text-xs font-medium text-slate-700">Request</p>
-                <pre className="max-h-64 overflow-auto rounded border bg-white p-2 text-[11px]">
+                <p className="mb-1 text-xs font-medium text-muted-foreground">Request</p>
+                <pre className="max-h-64 overflow-auto rounded border bg-card p-2 text-[11px]">
                   {formatJson(operation.requestPayload)}
                 </pre>
               </div>
               <div>
-                <p className="mb-1 text-xs font-medium text-slate-700">Response</p>
-                <pre className="max-h-64 overflow-auto rounded border bg-white p-2 text-[11px]">
+                <p className="mb-1 text-xs font-medium text-muted-foreground">Response</p>
+                <pre className="max-h-64 overflow-auto rounded border bg-card p-2 text-[11px]">
                   {formatJson(operation.responsePayload)}
                 </pre>
               </div>
@@ -344,37 +344,37 @@ export function XeroRecordActivityPanel({
             </div>
           )}
           {loading ? (
-            <p className="text-sm text-slate-500">Loading Xero activity...</p>
+            <p className="text-sm text-muted-foreground">Loading Xero activity...</p>
           ) : !data ? (
-            <p className="text-sm text-slate-500">No Xero activity recorded for this member yet.</p>
+            <p className="text-sm text-muted-foreground">No Xero activity recorded for this member yet.</p>
           ) : (
             <>
               <div className="grid gap-3 sm:grid-cols-5">
-                <div className="rounded-lg border bg-slate-50 p-3">
-                  <p className="text-xs uppercase tracking-wide text-slate-500">Operations</p>
-                  <p className="text-lg font-semibold text-slate-900">{data.summary.totalOperations}</p>
+                <div className="rounded-lg border bg-muted p-3">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Operations</p>
+                  <p className="text-lg font-semibold text-foreground">{data.summary.totalOperations}</p>
                 </div>
-                <div className="rounded-lg border bg-slate-50 p-3">
-                  <p className="text-xs uppercase tracking-wide text-slate-500">Failed</p>
+                <div className="rounded-lg border bg-muted p-3">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Failed</p>
                   <p className="text-lg font-semibold text-red-700">{data.summary.failedOperations}</p>
                 </div>
-                <div className="rounded-lg border bg-slate-50 p-3">
-                  <p className="text-xs uppercase tracking-wide text-slate-500">Partial</p>
+                <div className="rounded-lg border bg-muted p-3">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Partial</p>
                   <p className="text-lg font-semibold text-amber-700">{data.summary.partialOperations}</p>
                 </div>
-                <div className="rounded-lg border bg-slate-50 p-3">
-                  <p className="text-xs uppercase tracking-wide text-slate-500">Pending / Running</p>
-                  <p className="text-lg font-semibold text-slate-900">{data.summary.pendingOperations}</p>
+                <div className="rounded-lg border bg-muted p-3">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Pending / Running</p>
+                  <p className="text-lg font-semibold text-foreground">{data.summary.pendingOperations}</p>
                 </div>
-                <div className="rounded-lg border bg-slate-50 p-3">
-                  <p className="text-xs uppercase tracking-wide text-slate-500">Active Links</p>
-                  <p className="text-lg font-semibold text-slate-900">{data.summary.activeLinks}</p>
+                <div className="rounded-lg border bg-muted p-3">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Active Links</p>
+                  <p className="text-lg font-semibold text-foreground">{data.summary.activeLinks}</p>
                 </div>
               </div>
 
               {visibleLinks.length > 0 && (
                 <div className="space-y-2">
-                  <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Current Xero Links</p>
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Current Xero Links</p>
                   <div className="flex flex-wrap gap-2">
                     {visibleLinks.map((link) => (
                       <a
@@ -385,7 +385,7 @@ export function XeroRecordActivityPanel({
                         className="inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs text-blue-700 hover:bg-blue-50"
                       >
                         {link.role}
-                        <span className="text-slate-500">•</span>
+                        <span className="text-muted-foreground">•</span>
                         {link.xeroObjectNumber || shortId(link.xeroObjectId)}
                         <ExternalLink className="h-3 w-3" />
                       </a>
@@ -395,9 +395,9 @@ export function XeroRecordActivityPanel({
               )}
 
               <div className="space-y-2">
-                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Recent Operations</p>
+                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Recent Operations</p>
                 {visibleOperations.length === 0 ? (
-                  <p className="text-sm text-slate-500">No Xero operations recorded yet.</p>
+                  <p className="text-sm text-muted-foreground">No Xero operations recorded yet.</p>
                 ) : (
                   <div className="space-y-2">
                     {visibleOperations.map((operation) => (
@@ -450,36 +450,36 @@ export function XeroRecordActivityPanel({
             </div>
           )}
           {loading ? (
-            <p className="text-sm text-slate-500">Loading Xero activity...</p>
+            <p className="text-sm text-muted-foreground">Loading Xero activity...</p>
           ) : !data ? (
-            <p className="text-sm text-slate-500">No Xero activity recorded for this record yet.</p>
+            <p className="text-sm text-muted-foreground">No Xero activity recorded for this record yet.</p>
           ) : (
             <>
               <div className="grid gap-3 sm:grid-cols-5">
-                <div className="rounded-lg border bg-slate-50 p-4">
-                  <p className="text-xs uppercase tracking-wide text-slate-500">Total Operations</p>
-                  <p className="mt-1 text-2xl font-semibold text-slate-900">{data.summary.totalOperations}</p>
+                <div className="rounded-lg border bg-muted p-4">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Total Operations</p>
+                  <p className="mt-1 text-2xl font-semibold text-foreground">{data.summary.totalOperations}</p>
                 </div>
-                <div className="rounded-lg border bg-slate-50 p-4">
-                  <p className="text-xs uppercase tracking-wide text-slate-500">Failed</p>
+                <div className="rounded-lg border bg-muted p-4">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Failed</p>
                   <p className="mt-1 text-2xl font-semibold text-red-700">{data.summary.failedOperations}</p>
                 </div>
-                <div className="rounded-lg border bg-slate-50 p-4">
-                  <p className="text-xs uppercase tracking-wide text-slate-500">Partial</p>
+                <div className="rounded-lg border bg-muted p-4">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Partial</p>
                   <p className="mt-1 text-2xl font-semibold text-amber-700">{data.summary.partialOperations}</p>
                 </div>
-                <div className="rounded-lg border bg-slate-50 p-4">
-                  <p className="text-xs uppercase tracking-wide text-slate-500">Pending / Running</p>
-                  <p className="mt-1 text-2xl font-semibold text-slate-900">{data.summary.pendingOperations}</p>
+                <div className="rounded-lg border bg-muted p-4">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Pending / Running</p>
+                  <p className="mt-1 text-2xl font-semibold text-foreground">{data.summary.pendingOperations}</p>
                 </div>
-                <div className="rounded-lg border bg-slate-50 p-4">
-                  <p className="text-xs uppercase tracking-wide text-slate-500">Active Links</p>
-                  <p className="mt-1 text-2xl font-semibold text-slate-900">{data.summary.activeLinks}</p>
+                <div className="rounded-lg border bg-muted p-4">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Active Links</p>
+                  <p className="mt-1 text-2xl font-semibold text-foreground">{data.summary.activeLinks}</p>
                 </div>
               </div>
 
               <div className="space-y-2">
-                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Scope</p>
+                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Scope</p>
                 <div className="flex flex-wrap gap-2">
                   {data.scopeRecords.map((record) => (
                     <Link
@@ -489,7 +489,7 @@ export function XeroRecordActivityPanel({
                         "rounded-full border px-3 py-1 text-xs",
                         record.localModel === localModel && record.localId === localId
                           ? "border-slate-900 bg-slate-900 text-white"
-                          : "text-slate-700 hover:bg-slate-50"
+                          : "text-muted-foreground hover:bg-accent"
                       )}
                     >
                       {record.relation}: {record.label}
@@ -500,13 +500,13 @@ export function XeroRecordActivityPanel({
 
               {data.relatedRecords.length > 0 && (
                 <div className="space-y-2">
-                  <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Related Records</p>
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Related Records</p>
                   <div className="flex flex-wrap gap-2">
                     {data.relatedRecords.map((record) => (
                       <Link
                         key={`${record.localModel}:${record.localId}`}
                         href={record.url ?? buildXeroRecordActivityUrl(record.localModel, record.localId)}
-                        className="rounded-full border px-3 py-1 text-xs text-slate-700 hover:bg-slate-50"
+                        className="rounded-full border px-3 py-1 text-xs text-muted-foreground hover:bg-accent"
                       >
                         {record.relation}: {record.label}
                       </Link>
@@ -528,9 +528,9 @@ export function XeroRecordActivityPanel({
         </CardHeader>
         <CardContent>
           {loading ? (
-            <p className="text-sm text-slate-500">Loading Xero links...</p>
+            <p className="text-sm text-muted-foreground">Loading Xero links...</p>
           ) : !data || data.links.length === 0 ? (
-            <p className="text-sm text-slate-500">No Xero object links recorded for this scope yet.</p>
+            <p className="text-sm text-muted-foreground">No Xero object links recorded for this scope yet.</p>
           ) : (
             <div className="space-y-3">
               {data.links.map((link) => (
@@ -540,12 +540,12 @@ export function XeroRecordActivityPanel({
                     <Badge variant="outline">{link.xeroObjectType}</Badge>
                     <Badge
                       variant="secondary"
-                      className={link.active ? "bg-green-100 text-green-800 border-green-200" : "bg-slate-100 text-slate-700"}
+                      className={link.active ? "bg-green-100 text-green-800 border-green-200" : "bg-muted text-muted-foreground"}
                     >
                       {link.active ? "Active" : "Inactive"}
                     </Badge>
                   </div>
-                  <div className="mt-2 flex flex-wrap gap-4 text-sm text-slate-600">
+                  <div className="mt-2 flex flex-wrap gap-4 text-sm text-muted-foreground">
                     <span>
                       Local:{" "}
                       {link.localUrl ? (
@@ -592,9 +592,9 @@ export function XeroRecordActivityPanel({
         </CardHeader>
         <CardContent>
           {loading ? (
-            <p className="text-sm text-slate-500">Loading Xero operations...</p>
+            <p className="text-sm text-muted-foreground">Loading Xero operations...</p>
           ) : !data || data.operations.length === 0 ? (
-            <p className="text-sm text-slate-500">No Xero operations recorded for this scope yet.</p>
+            <p className="text-sm text-muted-foreground">No Xero operations recorded for this scope yet.</p>
           ) : (
             <div className="space-y-3">
               {data.operations.map((operation) => (
@@ -622,9 +622,9 @@ export function XeroRecordActivityPanel({
         </CardHeader>
         <CardContent>
           {loading ? (
-            <p className="text-sm text-slate-500">Loading stored inbound events...</p>
+            <p className="text-sm text-muted-foreground">Loading stored inbound events...</p>
           ) : !data || data.inboundEvents.length === 0 ? (
-            <p className="text-sm text-slate-500">No stored inbound events matched this scope yet.</p>
+            <p className="text-sm text-muted-foreground">No stored inbound events matched this scope yet.</p>
           ) : (
             <div className="space-y-3">
               {data.inboundEvents.map((event) => (
@@ -689,12 +689,12 @@ export function XeroRecordActivityPanel({
                     )}
                   </div>
 
-                  <details className="rounded-md bg-slate-50 p-2">
-                    <summary className="cursor-pointer text-xs font-medium text-slate-700">
+                  <details className="rounded-md bg-muted p-2">
+                    <summary className="cursor-pointer text-xs font-medium text-muted-foreground">
                       View stored payload
                     </summary>
                     <div className="mt-2">
-                      <pre className="max-h-64 overflow-auto rounded border bg-white p-2 text-[11px]">
+                      <pre className="max-h-64 overflow-auto rounded border bg-card p-2 text-[11px]">
                         {formatJson(event.payload)}
                       </pre>
                     </div>

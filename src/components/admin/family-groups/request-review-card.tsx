@@ -83,33 +83,33 @@ export function FamilyGroupRequestReviewCard({
     request.canCreateMemberFromRequest === true;
 
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-4">
+    <div className="rounded-lg border border-border bg-card p-4">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div className="space-y-2">
           <div className="flex flex-wrap items-center gap-2">
             <Badge className={getFamilyGroupRequestBadgeClass(request)}>
               {getFamilyGroupRequestTypeLabel(request)}
             </Badge>
-            <span className="text-xs text-slate-500">
+            <span className="text-xs text-muted-foreground">
               Requested {formatFamilyGroupDate(request.createdAt)}
             </span>
           </div>
-          <p className="text-sm font-semibold text-slate-900">
+          <p className="text-sm font-semibold text-foreground">
             {getFamilyGroupRequestSummary(request)}
           </p>
         </div>
-        <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm">
-          <p className="font-medium text-slate-900">Requester</p>
-          <p className="text-slate-700">{getMemberName(request.requester)}</p>
-          <p className="text-xs text-slate-500">{request.requester.email}</p>
+        <div className="rounded-lg bg-muted px-3 py-2 text-sm">
+          <p className="font-medium text-foreground">Requester</p>
+          <p className="text-muted-foreground">{getMemberName(request.requester)}</p>
+          <p className="text-xs text-muted-foreground">{request.requester.email}</p>
         </div>
       </div>
 
       {request.type === "GROUP_CREATE" ? (
-        <div className="mt-4 space-y-1 rounded-lg bg-slate-50 p-3 text-sm text-slate-600">
+        <div className="mt-4 space-y-1 rounded-lg bg-muted p-3 text-sm text-muted-foreground">
           <p>
             Proposed group name:{" "}
-            <span className="font-medium text-slate-800">
+            <span className="font-medium text-foreground">
               {request.familyGroup.name || "Unnamed Group"}
             </span>
           </p>
@@ -119,7 +119,7 @@ export function FamilyGroupRequestReviewCard({
           {request.invitedMember ? (
             <p>
               Partner to invite on approval:{" "}
-              <span className="font-medium text-slate-800">
+              <span className="font-medium text-foreground">
                 {getMemberName(request.invitedMember)}
               </span>{" "}
               ({request.invitedMember.email})
@@ -127,17 +127,17 @@ export function FamilyGroupRequestReviewCard({
           ) : (
             <p>No partner invitation requested.</p>
           )}
-          <p className="text-xs text-slate-500">
+          <p className="text-xs text-muted-foreground">
             Bundled infant/child/youth requests appear as separate cards for this
             group — approve this group creation first.
           </p>
         </div>
       ) : requiresMemberChoice ? (
         <div className="mt-4 space-y-3">
-          <div className="rounded-lg bg-slate-50 p-3 text-sm text-slate-600">
+          <div className="rounded-lg bg-muted p-3 text-sm text-muted-foreground">
             <p>
               Requested {request.type === "ADULT_REQUEST" ? "adult" : "member"}:{" "}
-              <span className="font-medium text-slate-800">
+              <span className="font-medium text-foreground">
                 {getFamilyGroupRequestSubjectName(request)}
               </span>
             </p>
@@ -156,7 +156,7 @@ export function FamilyGroupRequestReviewCard({
               request.requestedAgeTier ? (
                 <p>
                   Requested age tier:{" "}
-                  <span className="font-medium text-slate-800">
+                  <span className="font-medium text-foreground">
                     {request.requestedAgeTierLabel ?? request.requestedAgeTier}
                   </span>
                 </p>
@@ -181,7 +181,7 @@ export function FamilyGroupRequestReviewCard({
                 onClearRequestFeedback();
                 onSelectMember(event.target.value);
               }}
-              className="mt-2 flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
+              className="mt-2 flex h-10 w-full rounded-md border border-border bg-card px-3 py-2 text-sm text-foreground"
             >
               <option value="">Select a member record</option>
               {request.type === "ADULT_REQUEST" && (
@@ -224,7 +224,7 @@ export function FamilyGroupRequestReviewCard({
           </div>
 
           {showSearchGuidance && (
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-muted-foreground">
               {request.type === "ADULT_REQUEST"
                 ? "Same-email adult approvals can link an existing non-login adult or create a new non-login adult."
                 : canCreateChildMember
@@ -236,11 +236,11 @@ export function FamilyGroupRequestReviewCard({
           )}
 
           {requestSearchMessage && (
-            <p className="text-xs font-medium text-slate-700">{requestSearchMessage}</p>
+            <p className="text-xs font-medium text-muted-foreground">{requestSearchMessage}</p>
           )}
 
           {searchedMembers.length > 0 && (
-            <div className="space-y-2 rounded-md border border-slate-200 bg-white p-2">
+            <div className="space-y-2 rounded-md border border-border bg-card p-2">
               {searchedMembers.map((candidate) => (
                 <button
                   key={candidate.id}
@@ -252,10 +252,10 @@ export function FamilyGroupRequestReviewCard({
                   className={`w-full rounded-md border px-3 py-2 text-left text-sm transition ${
                     requestSelection === candidate.id
                       ? "border-amber-300 bg-amber-50"
-                      : "border-slate-200 bg-white hover:bg-slate-50"
+                      : "border-border bg-card hover:bg-accent"
                   }`}
                 >
-                  <span className="flex flex-wrap items-center gap-2 font-medium text-slate-900">
+                  <span className="flex flex-wrap items-center gap-2 font-medium text-foreground">
                     {getMemberName(candidate)}
                     <AgeTierBadge tier={candidate.ageTier} />
                     {requestSelection === candidate.id && (
@@ -264,7 +264,7 @@ export function FamilyGroupRequestReviewCard({
                       </Badge>
                     )}
                   </span>
-                  <span className="mt-1 block text-xs text-slate-500">
+                  <span className="mt-1 block text-xs text-muted-foreground">
                     {candidate.email}
                     {candidate.dateOfBirth ? ` - DOB ${formatFamilyGroupDate(candidate.dateOfBirth)}` : ""}
                     {candidate.canLogin ? " - has login" : " - no login"}
@@ -276,7 +276,7 @@ export function FamilyGroupRequestReviewCard({
           )}
         </div>
       ) : (
-        <p className="mt-2 text-sm text-slate-600">
+        <p className="mt-2 text-sm text-muted-foreground">
           {request.type === "REMOVAL_REQUEST"
             ? "Approving removes the selected member from this family group only. Rejection leaves membership unchanged."
             : "Rejecting leaves the family group unchanged. Approving adds the requester to this group immediately."}
@@ -284,10 +284,10 @@ export function FamilyGroupRequestReviewCard({
       )}
 
       {showRemovalDetails && request.type === "REMOVAL_REQUEST" && (
-        <div className="mt-4 rounded-lg bg-slate-50 p-3 text-sm text-slate-600">
+        <div className="mt-4 rounded-lg bg-muted p-3 text-sm text-muted-foreground">
           <p>
             Remove member:{" "}
-            <span className="font-medium text-slate-800">
+            <span className="font-medium text-foreground">
               {request.subjectMember ? getMemberName(request.subjectMember) : "Unknown member"}
             </span>
           </p>
@@ -302,11 +302,11 @@ export function FamilyGroupRequestReviewCard({
 
       {requiresMemberChoice && selectedCandidate && (
         <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50/60 p-3">
-          <p className="text-sm font-medium text-slate-900">Selected member record</p>
-          <p className="mt-1 text-sm text-slate-700">
+          <p className="text-sm font-medium text-foreground">Selected member record</p>
+          <p className="mt-1 text-sm text-muted-foreground">
             {getMemberName(selectedCandidate)}
           </p>
-          <p className="text-xs text-slate-500">
+          <p className="text-xs text-muted-foreground">
             {selectedCandidate.email}
             {" - "}
             {selectedCandidate.ageTier}
@@ -324,7 +324,7 @@ export function FamilyGroupRequestReviewCard({
                 id={`${idPrefix}request-notification-${request.id}`}
                 value={requestNotificationParentId ?? request.requester.id}
                 onChange={(event) => onNotificationParentChange(event.target.value)}
-                className="flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
+                className="flex h-10 w-full rounded-md border border-border bg-card px-3 py-2 text-sm text-foreground"
               >
                 <option value="">Use child&apos;s own email</option>
                 {dedupeParentOptions([
@@ -346,13 +346,13 @@ export function FamilyGroupRequestReviewCard({
 
       {request.type === "ADULT_REQUEST" && selectedCreateNew && (
         <div className="mt-4 rounded-lg border border-violet-200 bg-violet-50/60 p-3">
-          <p className="text-sm font-medium text-slate-900">
+          <p className="text-sm font-medium text-foreground">
             New non-login adult will be created
           </p>
-          <p className="mt-1 text-sm text-slate-700">
+          <p className="mt-1 text-sm text-muted-foreground">
             {getFamilyGroupRequestSubjectName(request)}
           </p>
-          <p className="text-xs text-slate-500">
+          <p className="text-xs text-muted-foreground">
             {request.requestedEmail || request.requester.email}
             {request.requestedDateOfBirth
               ? ` - DOB ${formatFamilyGroupDate(request.requestedDateOfBirth)}`
@@ -363,13 +363,13 @@ export function FamilyGroupRequestReviewCard({
 
       {request.type === "CHILD_REQUEST" && selectedCreateNew && (
         <div className="mt-4 rounded-lg border border-blue-200 bg-blue-50/60 p-3">
-          <p className="text-sm font-medium text-slate-900">
+          <p className="text-sm font-medium text-foreground">
             New non-login dependant will be created
           </p>
-          <p className="mt-1 text-sm text-slate-700">
+          <p className="mt-1 text-sm text-muted-foreground">
             {getFamilyGroupRequestSubjectName(request)}
           </p>
-          <p className="text-xs text-slate-500">
+          <p className="text-xs text-muted-foreground">
             {request.childDateOfBirth
               ? `DOB ${formatFamilyGroupDate(request.childDateOfBirth)}`
               : "DOB not provided"}

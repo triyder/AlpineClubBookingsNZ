@@ -340,7 +340,7 @@ export function MemberCommitteeAssignmentsCard({
             <UsersRound className="h-5 w-5" />
             Committee Assignments
           </CardTitle>
-          <p className="mt-1 text-sm text-slate-500">
+          <p className="mt-1 text-sm text-muted-foreground">
             Committee status is separate from access role and seasonal
             membership type.
           </p>
@@ -378,10 +378,10 @@ export function MemberCommitteeAssignmentsCard({
         {showForm ? (
           <form
             onSubmit={handleSubmit}
-            className="rounded-md border border-slate-200 p-4"
+            className="rounded-md border border-border p-4"
           >
             <div className="mb-4 flex items-center justify-between">
-              <h3 className="font-medium text-slate-900">
+              <h3 className="font-medium text-foreground">
                 {editingAssignmentId ? "Edit Assignment" : "Add Assignment"}
               </h3>
               <Button type="button" variant="ghost" size="icon" onClick={closeForm}>
@@ -452,16 +452,16 @@ export function MemberCommitteeAssignmentsCard({
                     onChange={(event) =>
                       setForm({ ...form, [key]: event.target.checked })
                     }
-                    className="h-4 w-4 rounded border-slate-300"
+                    className="h-4 w-4 rounded border-border"
                   />
                   {label}
                 </label>
               ))}
             </div>
             {form.contactable ? (
-              <div className="mt-4 space-y-2 rounded-md border border-slate-200 bg-slate-50 p-3">
+              <div className="mt-4 space-y-2 rounded-md border border-border bg-muted p-3">
                 <Label htmlFor="committeeContactEmailMode">Contact email</Label>
-                <p className="text-xs text-slate-500">
+                <p className="text-xs text-muted-foreground">
                   Choose where the public contact form delivers messages for this
                   committee role. The default is the committee role email — not this
                   member&apos;s own inbox.
@@ -489,7 +489,7 @@ export function MemberCommitteeAssignmentsCard({
                   </SelectContent>
                 </Select>
                 {!selectedRoleEmail ? (
-                  <p className="text-xs text-slate-500">
+                  <p className="text-xs text-muted-foreground">
                     This role has no email — set one under Admin → Committee, or
                     choose another option.
                   </p>
@@ -539,7 +539,7 @@ export function MemberCommitteeAssignmentsCard({
         ) : null}
 
         {assignments.length === 0 ? (
-          <div className="rounded-md border border-dashed border-slate-200 p-6 text-sm text-slate-500">
+          <div className="rounded-md border border-dashed border-border p-6 text-sm text-muted-foreground">
             No committee assignments are linked to this member.
           </div>
         ) : (
@@ -547,14 +547,14 @@ export function MemberCommitteeAssignmentsCard({
             {assignments.map((assignment) => (
               <div
                 key={assignment.id}
-                className={`rounded-md border border-slate-200 p-4 ${
+                className={`rounded-md border border-border p-4 ${
                   assignment.isActive ? "" : "opacity-60"
                 }`}
               >
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div>
                     <div className="flex flex-wrap items-center gap-2">
-                      <h3 className="font-medium text-slate-900">
+                      <h3 className="font-medium text-foreground">
                         {assignment.committeeRole.name}
                       </h3>
                       <VisibilityBadge visible={assignment.published} />
@@ -567,11 +567,11 @@ export function MemberCommitteeAssignmentsCard({
                       )}
                     </div>
                     {assignment.blurb ? (
-                      <p className="mt-2 text-sm text-slate-600">
+                      <p className="mt-2 text-sm text-muted-foreground">
                         {assignment.blurb}
                       </p>
                     ) : null}
-                    <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500">
+                    <div className="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground">
                       <span>Sort {assignment.sortOrder}</span>
                       <span>
                         {assignment.showPhone ? "Phone allowed" : "Phone hidden"}

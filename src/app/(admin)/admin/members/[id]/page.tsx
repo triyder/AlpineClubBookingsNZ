@@ -471,7 +471,7 @@ export default function MemberDetailPage({
       <div>
         {viewOnlyBanner}
         <div className="py-12 text-center">
-          <p className="text-sm text-slate-500">Loading member details...</p>
+          <p className="text-sm text-muted-foreground">Loading member details...</p>
         </div>
       </div>
     );
@@ -675,7 +675,7 @@ export default function MemberDetailPage({
         >
           <div className="divide-y">
             <div className="px-6 pb-6 text-sm">
-              <p className="text-slate-500">Family Groups</p>
+              <p className="text-muted-foreground">Family Groups</p>
               <div className="mt-1 font-medium">
                 {member.familyGroups && member.familyGroups.length > 0 ? (
                   <div className="flex flex-wrap gap-1">
@@ -693,7 +693,7 @@ export default function MemberDetailPage({
                     ))}
                   </div>
                 ) : (
-                  <span className="text-xs text-slate-500">None</span>
+                  <span className="text-xs text-muted-foreground">None</span>
                 )}
               </div>
             </div>
@@ -753,7 +753,7 @@ export default function MemberDetailPage({
           <div className="divide-y">
             {member.lifeMemberDate && (
               <div className="p-6 text-sm">
-                <span className="text-slate-500">Life member since </span>
+                <span className="text-muted-foreground">Life member since </span>
                 <span className="font-medium">
                   {formatMemberDateNz(member.lifeMemberDate)}
                 </span>
@@ -900,10 +900,10 @@ export default function MemberDetailPage({
             />
             {actorIsFullAdmin && !isSelf && (
               <div className="rounded-none border-0 shadow-none px-1 pt-2">
-                <h3 className="text-sm font-semibold text-gray-900">
+                <h3 className="text-sm font-semibold text-foreground">
                   Merge a duplicate profile
                 </h3>
-                <p className="mt-1 text-xs text-gray-500">
+                <p className="mt-1 text-xs text-muted-foreground">
                   Combine another duplicate member record into this one. This
                   record stays the master — it keeps its login, security and
                   Xero identity — and the duplicate is permanently deleted.

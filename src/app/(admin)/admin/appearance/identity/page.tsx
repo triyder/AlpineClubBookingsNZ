@@ -14,10 +14,10 @@ export default function ClubIdentityAdminPage() {
     <div className="space-y-6">
       <div>
         <BackLink href="/admin/appearance" label="Site Appearance & Content" />
-        <h1 className="mt-2 text-2xl font-bold text-slate-900">
+        <h1 className="mt-2 text-2xl font-bold text-foreground">
           Club Identity
         </h1>
-        <p className="mt-1 text-sm text-slate-500">
+        <p className="mt-1 text-sm text-muted-foreground">
           Set the club name, short name, and hut-leader label used across the
           site and emails, plus your lodge&apos;s public details.
         </p>

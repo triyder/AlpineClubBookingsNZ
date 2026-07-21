@@ -195,7 +195,7 @@ function StatusIcon({ status }: { status: SetupStatus }) {
   if (status === "warning") {
     return <CircleAlert className="h-4 w-4 text-amber-700" />;
   }
-  return <CircleDashed className="h-4 w-4 text-slate-500" />;
+  return <CircleDashed className="h-4 w-4 text-muted-foreground" />;
 }
 
 function progressLabel(progress: ProgressStatus) {
@@ -241,8 +241,8 @@ function SetupHubCards({
   return (
     <section id="setup-hubs" className="space-y-3">
       <div>
-        <h2 className="text-xl font-semibold text-slate-900">Setup hubs</h2>
-        <p className="text-sm text-slate-600">
+        <h2 className="text-xl font-semibold text-foreground">Setup hubs</h2>
+        <p className="text-sm text-muted-foreground">
           Open the relevant drill-down before editing lower-frequency
           configuration.
         </p>
@@ -421,7 +421,7 @@ export function SetupPageClient({
 
   if (loading && !readiness) {
     return (
-      <div className="flex min-h-[320px] items-center justify-center gap-2 text-sm text-slate-600">
+      <div className="flex min-h-[320px] items-center justify-center gap-2 text-sm text-muted-foreground">
         <Loader2 className="h-4 w-4 animate-spin" />
         Loading setup readiness
       </div>
@@ -432,8 +432,8 @@ export function SetupPageClient({
     <div className="space-y-6">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-slate-900">Setup Wizard</h1>
-          <p className="mt-1 max-w-3xl text-sm text-slate-600">
+          <h1 className="text-3xl font-bold text-foreground">Setup Wizard</h1>
+          <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
             Finish first-install readiness for club configuration, booking rules,
             provider connections, and finance mappings.
           </p>
@@ -474,30 +474,30 @@ export function SetupPageClient({
       {readiness ? (
         <>
           <div className="grid gap-3 md:grid-cols-4">
-            <div className="rounded-md border bg-white p-4">
+            <div className="rounded-md border bg-card p-4">
               <div className="flex items-center gap-2">
                 <StatusIcon status={overallStatus} />
-                <p className="text-sm font-medium text-slate-700">Overall</p>
+                <p className="text-sm font-medium text-muted-foreground">Overall</p>
               </div>
-              <p className="mt-2 text-2xl font-semibold capitalize text-slate-900">
+              <p className="mt-2 text-2xl font-semibold capitalize text-foreground">
                 {overallStatus.replace("_", " ")}
               </p>
             </div>
-            <div className="rounded-md border bg-white p-4">
-              <p className="text-sm font-medium text-slate-700">Progress</p>
-              <p className="mt-2 text-2xl font-semibold text-slate-900">
+            <div className="rounded-md border bg-card p-4">
+              <p className="text-sm font-medium text-muted-foreground">Progress</p>
+              <p className="mt-2 text-2xl font-semibold text-foreground">
                 {completionPercent}%
               </p>
             </div>
-            <div className="rounded-md border bg-white p-4">
-              <p className="text-sm font-medium text-slate-700">Blocked</p>
-              <p className="mt-2 text-2xl font-semibold text-slate-900">
+            <div className="rounded-md border bg-card p-4">
+              <p className="text-sm font-medium text-muted-foreground">Blocked</p>
+              <p className="mt-2 text-2xl font-semibold text-foreground">
                 {readiness.summary.blocked}
               </p>
             </div>
-            <div className="rounded-md border bg-white p-4">
-              <p className="text-sm font-medium text-slate-700">Skipped</p>
-              <p className="mt-2 text-2xl font-semibold text-slate-900">
+            <div className="rounded-md border bg-card p-4">
+              <p className="text-sm font-medium text-muted-foreground">Skipped</p>
+              <p className="mt-2 text-2xl font-semibold text-foreground">
                 {readiness.summary.skipped}
               </p>
             </div>
@@ -521,10 +521,10 @@ export function SetupPageClient({
 
           <section id="setup-checks" className="space-y-6">
             <div>
-              <h2 className="text-xl font-semibold text-slate-900">
+              <h2 className="text-xl font-semibold text-foreground">
                 Readiness checks
               </h2>
-              <p className="text-sm text-slate-600">
+              <p className="text-sm text-muted-foreground">
                 Work through the live checks after choosing the matching setup
                 hub.
               </p>
@@ -533,10 +533,10 @@ export function SetupPageClient({
               <section key={category.id} className="space-y-3">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                   <div>
-                    <h2 className="text-xl font-semibold text-slate-900">
+                    <h2 className="text-xl font-semibold text-foreground">
                       {category.title}
                     </h2>
-                    <p className="text-sm text-slate-600">{category.description}</p>
+                    <p className="text-sm text-muted-foreground">{category.description}</p>
                   </div>
                   <Badge variant={statusVariant(category.status)} className="w-fit capitalize">
                     {category.status.replace("_", " ")}
@@ -577,9 +577,9 @@ export function SetupPageClient({
                           </div>
                         </CardHeader>
                         <CardContent className="space-y-4">
-                          <p className="text-sm text-slate-700">{check.message}</p>
+                          <p className="text-sm text-muted-foreground">{check.message}</p>
                           {check.details.length > 0 ? (
-                            <ul className="space-y-1 text-sm text-slate-600">
+                            <ul className="space-y-1 text-sm text-muted-foreground">
                               {check.details.map((detail) => (
                                 <li key={detail}>{detail}</li>
                               ))}

@@ -385,7 +385,7 @@ export default function XeroMemberGroupingPage() {
                       <span className="font-medium">{rule.groupName ?? groupName(rule.groupId)}</span>
                       <span className="rounded bg-muted px-1.5 py-0.5 text-xs">{rule.mode}</span>
                       {!rule.isActive ? (
-                        <span className="rounded bg-slate-200 px-1.5 py-0.5 text-xs">inactive</span>
+                        <span className="rounded bg-border px-1.5 py-0.5 text-xs">inactive</span>
                       ) : null}
                     </div>
                     <div className="text-xs text-muted-foreground">

@@ -55,8 +55,8 @@ export default function BookingPoliciesHubPage() {
   return (
     <div className="space-y-8">
       <div>
-        <h1 className="text-2xl font-bold text-slate-900">Booking Policies</h1>
-        <p className="mt-1 text-sm text-slate-500">
+        <h1 className="text-2xl font-bold text-foreground">Booking Policies</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
           Configure cancellation refund rules, date-specific overrides, group
           discounts, minimum-stay requirements, and public request settings.
         </p>

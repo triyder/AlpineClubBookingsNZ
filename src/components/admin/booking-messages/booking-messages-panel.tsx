@@ -197,7 +197,7 @@ export function BookingMessagesPanel() {
     return (
       <div>
         {viewOnlyBanner}
-        <p className="text-sm text-slate-500">Loading booking messages</p>
+        <p className="text-sm text-muted-foreground">Loading booking messages</p>
       </div>
     );
   }
@@ -223,7 +223,7 @@ export function BookingMessagesPanel() {
           </Select>
         </div>
         {currentMessage ? (
-          <div className="space-y-2 text-sm text-slate-600">
+          <div className="space-y-2 text-sm text-muted-foreground">
             <div className="flex flex-wrap gap-2">
               <Badge variant="secondary">{currentMessage.section}</Badge>
               <Badge variant="outline">{currentMessage.key}</Badge>
@@ -285,8 +285,8 @@ export function BookingMessagesPanel() {
       </div>
 
       {previewText ? (
-        <div className="rounded-md border border-slate-200 bg-slate-50 p-4">
-          <p className="whitespace-pre-wrap text-sm text-slate-900">{previewText}</p>
+        <div className="rounded-md border border-border bg-muted p-4">
+          <p className="whitespace-pre-wrap text-sm text-foreground">{previewText}</p>
         </div>
       ) : null}
       </div>

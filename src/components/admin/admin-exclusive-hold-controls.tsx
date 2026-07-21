@@ -234,7 +234,7 @@ export function AdminExclusiveHoldControls({
           <Button variant="outline" onClick={handleSet} disabled>
             Set exclusive hold
           </Button>
-          <p className="text-sm text-slate-600">
+          <p className="text-sm text-muted-foreground">
             This booking does not hold lodge capacity, so an exclusive hold
             would block nothing. Apply an admin capacity hold first, then set the
             exclusive hold.

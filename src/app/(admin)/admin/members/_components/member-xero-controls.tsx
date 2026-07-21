@@ -123,7 +123,7 @@ export function MemberXeroControls({
 }: MemberXeroControlsProps) {
   if (!editingMember && xeroConnected === false) {
     return (
-      <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
+      <div className="rounded-md border border-border bg-muted p-3 text-sm text-muted-foreground">
         Xero is not connected right now. This member will be created locally only.
       </div>
     )
@@ -131,7 +131,7 @@ export function MemberXeroControls({
 
   if (!editingMember && xeroConnected === null) {
     return (
-      <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
+      <div className="rounded-md border border-border bg-muted p-3 text-sm text-muted-foreground">
         Checking Xero connection status...
       </div>
     )
@@ -196,7 +196,7 @@ export function MemberXeroControls({
             </div>
           )}
           {!editingMember.xeroContactGroupsLoaded && (
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-muted-foreground">
               Cached contact groups have not been refreshed yet.
             </p>
           )}
@@ -232,7 +232,7 @@ export function MemberXeroControls({
 
       {editingMember && !editingMember.xeroContactId && (
         <div className="space-y-3">
-          <p className="text-sm text-slate-600">This member is not linked to a Xero contact.</p>
+          <p className="text-sm text-muted-foreground">This member is not linked to a Xero contact.</p>
           <Select value={xeroChoice || undefined} onValueChange={(value) => onChangeXeroChoice(value as "link" | "create")}>
             <SelectTrigger>
               <SelectValue placeholder="Link or create a Xero contact..." />
@@ -270,7 +270,7 @@ export function MemberXeroControls({
 
           {xeroChoice === "create" && (
             <div className="space-y-3">
-              <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
+              <div className="rounded-md border border-border bg-muted p-3 text-sm text-muted-foreground">
                 Creating a new Xero contact needs only a first name, last name, and email.
                 Save changes first, then create. We&apos;ll check for similar Xero contacts
                 before a brand-new contact is created.
@@ -338,7 +338,7 @@ export function MemberXeroControls({
           )}
 
           {xeroChoice === "create" && (
-            <div className="space-y-3 rounded-md border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
+            <div className="space-y-3 rounded-md border border-border bg-muted p-3 text-sm text-muted-foreground">
               <p>
                 Creating a new Xero contact needs only a first name, last name, and email.
                 We&apos;ll check for similar Xero contacts before a brand-new contact is
@@ -350,7 +350,7 @@ export function MemberXeroControls({
                   simply be left off the Xero contact.
                 </p>
               )}
-              <div className="text-slate-900">
+              <div className="text-foreground">
                 <MemberXeroEntranceFeeFields
                   idPrefix="create-xero"
                   decision={entranceFeeDecision}

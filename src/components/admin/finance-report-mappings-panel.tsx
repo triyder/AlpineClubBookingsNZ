@@ -510,7 +510,7 @@ export function FinanceReportMappingsPanel() {
         ) : null}
 
         {loading && !state ? (
-          <div className="flex items-center gap-2 text-sm text-slate-600">
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" />
             Loading finance mappings
           </div>
@@ -518,7 +518,7 @@ export function FinanceReportMappingsPanel() {
 
         {state ? (
           <>
-            <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+            <div className="rounded-md border border-border bg-muted px-3 py-2 text-sm text-muted-foreground">
               Latest inspected P&L snapshot:{" "}
               {state.snapshotCoverage.latestProfitAndLossSnapshot ?? "none"} ·{" "}
               {state.snapshotCoverage.inspectedSnapshotCount} snapshots checked.
@@ -530,10 +530,10 @@ export function FinanceReportMappingsPanel() {
                 <section key={kind} className="space-y-3">
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <h3 className="text-lg font-semibold text-slate-900">
+                      <h3 className="text-lg font-semibold text-foreground">
                         {categoryTitle(kind)}
                       </h3>
-                      <p className="text-sm text-slate-600">
+                      <p className="text-sm text-muted-foreground">
                         Groups are shown under their subtype sub-headings, the
                         same way they appear on the finance dashboard.
                       </p>
@@ -556,8 +556,8 @@ export function FinanceReportMappingsPanel() {
                       key={`${kind}:${section.subtype ?? "__ungrouped__"}`}
                       className="space-y-3"
                     >
-                      <div className="flex items-center justify-between gap-2 border-b border-slate-200 pb-1">
-                        <h4 className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+                      <div className="flex items-center justify-between gap-2 border-b border-border pb-1">
+                        <h4 className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
                           {section.subtype ?? "Ungrouped"}
                         </h4>
                         <ViewOnlyActionButton
@@ -576,7 +576,7 @@ export function FinanceReportMappingsPanel() {
                       {section.items.map((category) => (
                         <div
                           key={category.key}
-                          className="rounded-md border border-slate-200 bg-white p-3"
+                          className="rounded-md border border-border bg-card p-3"
                         >
                           <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_6rem_auto]">
                             <div className="space-y-1.5">
@@ -622,7 +622,7 @@ export function FinanceReportMappingsPanel() {
                               />
                             </div>
                             <div className="flex items-end justify-end gap-3">
-                              <label className="flex items-center gap-2 text-sm text-slate-700">
+                              <label className="flex items-center gap-2 text-sm text-muted-foreground">
                                 <input
                                   type="checkbox"
                                   checked={category.archived}
@@ -687,7 +687,7 @@ export function FinanceReportMappingsPanel() {
             <section className="space-y-3">
               <div className="flex items-center gap-2">
                 <SearchX className="h-4 w-4 text-amber-700" />
-                <h3 className="text-lg font-semibold text-slate-900">
+                <h3 className="text-lg font-semibold text-foreground">
                   Unmapped Lines
                 </h3>
                 <Badge variant={state.unmappedLines.length ? "warning" : "success"}>
@@ -695,7 +695,7 @@ export function FinanceReportMappingsPanel() {
                 </Badge>
               </div>
               {state.unmappedLines.length === 0 ? (
-                <p className="text-sm text-slate-600">
+                <p className="text-sm text-muted-foreground">
                   No unmapped revenue or expense lines were found in inspected
                   snapshots.
                 </p>

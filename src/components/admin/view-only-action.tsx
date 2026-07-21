@@ -277,7 +277,7 @@ export function AdminViewOnlySectionBanner({
       {canEdit === false ? (
         <div
           className={cn(
-            "rounded-md border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-700",
+            "rounded-md border border-border bg-muted px-3 py-2 text-sm text-muted-foreground",
             className,
           )}
         >
@@ -314,7 +314,7 @@ export function AdminViewOnlyNotice({
   return (
     <p
       className={cn(
-        "rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600",
+        "rounded-md border border-border bg-muted px-3 py-2 text-sm text-muted-foreground",
         className,
       )}
     >

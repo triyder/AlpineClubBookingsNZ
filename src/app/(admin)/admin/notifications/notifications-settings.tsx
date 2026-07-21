@@ -148,7 +148,7 @@ export function AdminNotificationSettings({
     return (
       <div>
         {viewOnlyBanner}
-        <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500">
+        <div className="rounded-lg border border-dashed border-border bg-muted px-4 py-6 text-sm text-muted-foreground">
           No active admin users found.
         </div>
       </div>
@@ -185,7 +185,7 @@ export function AdminNotificationSettings({
 
       <div className="grid gap-4 xl:grid-cols-2">
         {admins.map((admin) => (
-          <Card key={admin.id} className="border-slate-200 shadow-sm">
+          <Card key={admin.id} className="border-border shadow-sm">
             <CardHeader className="pb-4">
               <CardTitle className="text-base">{admin.name}</CardTitle>
               <CardDescription>
@@ -200,7 +200,7 @@ export function AdminNotificationSettings({
                 return (
                   <div
                     key={key}
-                    className="flex items-start gap-3 rounded-lg border border-slate-200 p-3"
+                    className="flex items-start gap-3 rounded-lg border border-border p-3"
                   >
                     <Checkbox
                       id={controlId}

@@ -228,7 +228,7 @@ function formatDateTime(value: string | null) {
 }
 
 function statusBadgeClass(status: PublicBookingRequestData["status"]) {
-  if (status === "NEW") return "border-slate-200 bg-slate-100 text-slate-700";
+  if (status === "NEW") return "border-border bg-muted text-muted-foreground";
   if (
     status === "VERIFIED" ||
     status === "PRICED" ||
@@ -238,7 +238,7 @@ function statusBadgeClass(status: PublicBookingRequestData["status"]) {
     status === "MODIFICATION_REQUESTED"
   ) return "border-amber-200 bg-amber-50 text-amber-800";
   if (status === "APPROVED" || status === "CONVERTED") return "border-emerald-200 bg-emerald-50 text-emerald-800";
-  return "border-slate-200 bg-slate-100 text-slate-700";
+  return "border-border bg-muted text-muted-foreground";
 }
 
 interface PublicBookingRequestsPanelProps {
@@ -1056,7 +1056,7 @@ export function PublicBookingRequestsPanel({
                   </div>
 
                   {request.message ? (
-                    <div className="rounded-md border bg-slate-50 p-3 text-sm text-slate-700">
+                    <div className="rounded-md border bg-muted p-3 text-sm text-muted-foreground">
                       {request.message}
                     </div>
                   ) : null}
@@ -1068,7 +1068,7 @@ export function PublicBookingRequestsPanel({
                   ) : null}
 
                   {request.latestQuote ? (
-                    <div className="rounded-md border bg-slate-50 p-3 text-sm text-slate-700">
+                    <div className="rounded-md border bg-muted p-3 text-sm text-muted-foreground">
                       <p className="font-medium">
                         Quote v{request.latestQuote.version} · {request.latestQuote.status}
                       </p>
@@ -1107,7 +1107,7 @@ export function PublicBookingRequestsPanel({
 
                   {LINKING_EDITOR_STATUSES.has(request.status) ? (
                     canEdit ? (
-                    <div className="space-y-3 rounded-md border border-slate-200 p-3">
+                    <div className="space-y-3 rounded-md border border-border p-3">
                       {request.heldBookingId ? (
                         <div className="space-y-2 rounded-md border bg-muted p-3 text-sm text-muted-foreground">
                           <p>
@@ -1244,7 +1244,7 @@ export function PublicBookingRequestsPanel({
 
                         <div className="space-y-2">
                           {quoteOptionIds(request).map((optionId) => (
-                            <div key={optionId} className="rounded-md border bg-white p-3">
+                            <div key={optionId} className="rounded-md border bg-card p-3">
                               <p className="text-sm font-medium">{optionLabel(optionId)}</p>
                               {(pricingModes[request.id] ?? "OVERALL_TOTAL") === "OVERALL_TOTAL" ? (
                                 <div className="mt-2 flex flex-wrap items-end gap-3">
@@ -1352,7 +1352,7 @@ export function PublicBookingRequestsPanel({
                             return (
                               <div
                                 key={key}
-                                className="grid gap-2 rounded-md border bg-white p-2 md:grid-cols-[1fr_220px_auto]"
+                                className="grid gap-2 rounded-md border bg-card p-2 md:grid-cols-[1fr_220px_auto]"
                               >
                                 <div className="text-sm">
                                   <p className="font-medium">
@@ -1520,7 +1520,7 @@ export function PublicBookingRequestsPanel({
                   ) : null}
 
                   {request.status === "DECLINED" ? (
-                    <div className="rounded-md bg-slate-50 p-3 text-sm text-slate-700">
+                    <div className="rounded-md bg-muted p-3 text-sm text-muted-foreground">
                       Declined
                       {formatDateTime(request.reviewedAt) ? ` on ${formatDateTime(request.reviewedAt)}` : ""}
                       {request.reviewedByMemberName ? ` by ${request.reviewedByMemberName}` : ""}
@@ -1529,7 +1529,7 @@ export function PublicBookingRequestsPanel({
                   ) : null}
 
                   {(request.status === "APPROVED" || request.status === "CONVERTED") ? (
-                    <div className="rounded-md bg-slate-50 p-3 text-sm text-slate-700">
+                    <div className="rounded-md bg-muted p-3 text-sm text-muted-foreground">
                       Approved
                       {formatDateTime(request.reviewedAt) ? ` on ${formatDateTime(request.reviewedAt)}` : ""}
                       {request.reviewedByMemberName ? ` by ${request.reviewedByMemberName}` : ""}
@@ -1567,7 +1567,7 @@ export function PublicBookingRequestsPanel({
                                 ? "Sending…"
                                 : "Re-send attendee confirmation link"}
                             </ViewOnlyActionButton>
-                            <p className="mt-1 text-xs text-slate-500">
+                            <p className="mt-1 text-xs text-muted-foreground">
                               Rotates the secure link and emails it to the school
                               contact now, outside the reminder cadence.
                             </p>

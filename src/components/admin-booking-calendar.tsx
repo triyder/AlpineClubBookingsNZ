@@ -370,7 +370,7 @@ export function AdminBookingCalendar() {
   ];
 
   return (
-    <div className="rounded-lg border bg-white shadow-sm">
+    <div className="rounded-lg border bg-card shadow-sm">
       {/* Header */}
       <div className="flex items-center justify-between p-3 border-b">
         <div className="flex items-center gap-2">
@@ -387,7 +387,7 @@ export function AdminBookingCalendar() {
             Today
           </Button>
         </div>
-        {loading && <span className="text-xs text-slate-400">Loading...</span>}
+        {loading && <span className="text-xs text-muted-foreground">Loading...</span>}
       </div>
 
       {/* Status toggle filters */}
@@ -403,7 +403,7 @@ export function AdminBookingCalendar() {
               className={`rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors border ${
                 isOn
                   ? `${STATUS_COLORS[status]} text-white border-transparent`
-                  : "bg-white text-slate-500 border-slate-300"
+                  : "bg-card text-muted-foreground border-border"
               }`}
             >
               {bookingStatusLabel(status)}
@@ -415,7 +415,7 @@ export function AdminBookingCalendar() {
       {/* Day headers */}
       <div className="grid grid-cols-7 border-b">
         {DAY_LABELS.map((d) => (
-          <div key={d} className="text-center text-xs font-medium text-slate-500 py-1.5 border-r last:border-r-0">
+          <div key={d} className="text-center text-xs font-medium text-muted-foreground py-1.5 border-r last:border-r-0">
             {d}
           </div>
         ))}
@@ -435,7 +435,7 @@ export function AdminBookingCalendar() {
             const isPast = isValidDay && dayStr < todayStr;
             const beds = isValidDay ? availability[dayStr] : undefined;
             const bedsBg = beds === undefined ? "" : beds === 0 ? "bg-red-50" : beds <= 5 ? "bg-red-50/50" : beds <= 15 ? "bg-amber-50/50" : "";
-            const cellBg = !isValidDay ? "bg-slate-50" : isPast ? "bg-slate-100" : bedsBg;
+            const cellBg = !isValidDay ? "bg-card" : isPast ? "bg-muted" : bedsBg;
             return (
               <div
                 key={i}
@@ -451,8 +451,8 @@ export function AdminBookingCalendar() {
                         isToday
                           ? "font-bold text-blue-600 bg-blue-100 rounded-full px-1.5 py-0.5"
                           : isPast
-                            ? "text-slate-400"
-                            : "text-slate-500"
+                            ? "text-muted-foreground"
+                            : "text-muted-foreground"
                       }`}
                     >
                       {dayNum}
@@ -538,7 +538,7 @@ export function AdminBookingCalendar() {
                 key={`more-${cellIdx}`}
                 type="button"
                 data-more-day={dayStr}
-                className={`absolute pointer-events-auto flex items-center justify-center rounded border border-slate-300 bg-white text-[11px] font-medium text-slate-600 hover:bg-slate-50 ${
+                className={`absolute pointer-events-auto flex items-center justify-center rounded border border-border bg-card text-[11px] font-medium text-muted-foreground hover:bg-accent ${
                   isPastCell ? "opacity-60" : ""
                 }`}
                 style={{
@@ -586,7 +586,7 @@ export function AdminBookingCalendar() {
                     buildHrefWithReturnTo(`/bookings/${b.id}`, currentBookingsPath)
                   );
                 }}
-                className="flex w-full items-center justify-between gap-2 px-1 py-2 text-left text-sm hover:bg-slate-50"
+                className="flex w-full items-center justify-between gap-2 px-1 py-2 text-left text-sm hover:bg-accent"
               >
                 <span className="flex min-w-0 items-center gap-2">
                   <span
@@ -596,7 +596,7 @@ export function AdminBookingCalendar() {
                   />
                   <span className="truncate font-medium">{b.memberName}</span>
                 </span>
-                <span className="shrink-0 text-xs text-slate-500">
+                <span className="shrink-0 text-xs text-muted-foreground">
                   {bookingStatusLabel(b.status)} · {b.guestCount}g
                 </span>
               </button>
@@ -610,7 +610,7 @@ export function AdminBookingCalendar() {
         {Object.entries(STATUS_COLORS).map(([status, color]) => (
           <div key={status} className={`flex items-center gap-1.5 ${enabledStatuses.has(status) ? "" : "opacity-30"}`}>
             <div className={`w-3.5 h-2.5 rounded-sm ${color}`} />
-            <span className="text-slate-600">{bookingStatusLabel(status)}</span>
+            <span className="text-muted-foreground">{bookingStatusLabel(status)}</span>
           </div>
         ))}
       </div>

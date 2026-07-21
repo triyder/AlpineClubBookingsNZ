@@ -13,10 +13,10 @@ export default function MountainConditionsAdminPage() {
     <div className="space-y-6">
       <div>
         <BackLink href="/admin/appearance" label="Site Appearance & Content" />
-        <h1 className="mt-2 text-2xl font-bold text-slate-900">
+        <h1 className="mt-2 text-2xl font-bold text-foreground">
           Mountain Conditions
         </h1>
-        <p className="mt-1 text-sm text-slate-500">
+        <p className="mt-1 text-sm text-muted-foreground">
           Review and edit the cached Whakapapa mountain conditions JSON payload.
         </p>
       </div>

@@ -1,3 +1,4 @@
+import { DEFAULT_MEMBERSHIP_CANCELLATION_SETTINGS } from "@/config/club-settings-defaults";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 
@@ -5,11 +6,11 @@ export const MEMBERSHIP_CANCELLATION_SETTINGS_ID = "default";
 
 // test seam
 export const DEFAULT_MEMBERSHIP_CANCELLATION_WARNING_TEXT =
-  "Cancelling membership removes member booking access once approved. Existing bookings, credits, refunds, and unpaid invoices still need separate committee review.";
+  DEFAULT_MEMBERSHIP_CANCELLATION_SETTINGS.warningText;
 
 // test seam
 export const DEFAULT_MEMBERSHIP_REJOIN_PROCESS_TEXT =
-  "Former members can reapply through the normal membership process. The committee will confirm any outstanding balances and restore access only after the rejoin process is approved.";
+  DEFAULT_MEMBERSHIP_CANCELLATION_SETTINGS.rejoinProcessText;
 
 export interface MembershipCancellationXeroContactGroupSetting {
   groupId: string;
@@ -66,7 +67,8 @@ function getDefaultMembershipCancellationSettings(): MembershipCancellationSetti
   return {
     warningText: DEFAULT_MEMBERSHIP_CANCELLATION_WARNING_TEXT,
     rejoinProcessText: DEFAULT_MEMBERSHIP_REJOIN_PROCESS_TEXT,
-    xeroArchiveContactsOnCancellation: false,
+    xeroArchiveContactsOnCancellation:
+      DEFAULT_MEMBERSHIP_CANCELLATION_SETTINGS.xeroArchiveContactsOnCancellation,
     xeroContactGroups: [],
   };
 }

@@ -218,7 +218,7 @@ export function GroupDiscountSection() {
                   onChange={(e) =>
                     section.setDraft({ minGroupSize: parseInt(e.target.value) || 5 })
                   }
-                  className={`w-20 ${!editing ? "bg-slate-50 text-slate-700" : ""}`}
+                  className={`w-20 ${!editing ? "bg-muted text-muted-foreground" : ""}`}
                   disabled={!editing}
                 />
                 <span className="text-sm text-muted-foreground">guests</span>
