@@ -126,45 +126,45 @@ export function EmailDeliverabilitySection({
       )}
       {/* Email Deliverability */}
       <div>
-        <h2 className="text-lg font-semibold text-slate-900 mb-3 flex items-center gap-2">
+        <h2 className="text-lg font-semibold text-foreground mb-3 flex items-center gap-2">
           <Mail className="h-5 w-5" />
           Email Deliverability
         </h2>
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
-          <div className="bg-white border rounded-lg p-4">
-            <p className="text-sm text-slate-500">Active suppressions</p>
-            <p className="text-2xl font-bold text-slate-900">
+          <div className="bg-card border rounded-lg p-4">
+            <p className="text-sm text-muted-foreground">Active suppressions</p>
+            <p className="text-2xl font-bold text-foreground">
               {emailDeliverability.summary.activeCount}
             </p>
           </div>
-          <div className="bg-white border rounded-lg p-4">
-            <p className="text-sm text-slate-500">Bounces</p>
+          <div className="bg-card border rounded-lg p-4">
+            <p className="text-sm text-muted-foreground">Bounces</p>
             <p className="text-2xl font-bold text-red-600">
               {emailDeliverability.summary.bounceCount}
             </p>
           </div>
-          <div className="bg-white border rounded-lg p-4">
-            <p className="text-sm text-slate-500">Complaints</p>
+          <div className="bg-card border rounded-lg p-4">
+            <p className="text-sm text-muted-foreground">Complaints</p>
             <p className="text-2xl font-bold text-red-600">
               {emailDeliverability.summary.complaintCount}
             </p>
           </div>
-          <div className="bg-white border rounded-lg p-4">
-            <p className="text-sm text-slate-500">Events 24h</p>
-            <p className="text-2xl font-bold text-slate-900">
+          <div className="bg-card border rounded-lg p-4">
+            <p className="text-sm text-muted-foreground">Events 24h</p>
+            <p className="text-2xl font-bold text-foreground">
               {emailDeliverability.summary.eventsLast24h}
             </p>
           </div>
         </div>
 
         {emailDeliverability.suppressions.length === 0 ? (
-          <div className="bg-white border rounded-lg p-4 text-slate-500">
+          <div className="bg-card border rounded-lg p-4 text-muted-foreground">
             No active recipient suppressions.
           </div>
         ) : (
-          <div className="bg-white border rounded-lg overflow-x-auto">
+          <div className="bg-card border rounded-lg overflow-x-auto">
             <div className="min-w-[760px]">
-              <div className="grid grid-cols-[minmax(0,1.7fr)_100px_90px_140px_88px] gap-3 px-4 py-2 text-xs font-medium text-slate-500 bg-slate-50 border-b">
+              <div className="grid grid-cols-[minmax(0,1.7fr)_100px_90px_140px_88px] gap-3 px-4 py-2 text-xs font-medium text-muted-foreground bg-card border-b">
                 <span>Recipient</span>
                 <span>Reason</span>
                 <span>Events</span>
@@ -177,12 +177,12 @@ export function EmailDeliverabilitySection({
                     key={suppression.id}
                     className="grid grid-cols-[minmax(0,1.7fr)_100px_90px_140px_88px] gap-3 px-4 py-3 text-sm items-center"
                   >
-                    <span className="font-medium text-slate-900 truncate">
+                    <span className="font-medium text-foreground truncate">
                       {suppression.email}
                     </span>
                     <StatusBadge status={suppression.reason} />
-                    <span className="text-slate-600">{suppression.eventCount}</span>
-                    <span className="text-slate-500">
+                    <span className="text-muted-foreground">{suppression.eventCount}</span>
+                    <span className="text-muted-foreground">
                       {formatDate(suppression.lastEventAt)}
                     </span>
                     <button
@@ -193,7 +193,7 @@ export function EmailDeliverabilitySection({
                         clearingSuppressionId === suppression.id || !canEdit
                       }
                       title={canEdit === false ? ADMIN_VIEW_ONLY_ACTION_REASON : undefined}
-                      className="inline-flex justify-self-end items-center gap-1.5 px-2.5 py-1.5 text-xs bg-slate-100 hover:bg-slate-200 rounded-md transition-colors disabled:opacity-50"
+                      className="inline-flex justify-self-end items-center gap-1.5 px-2.5 py-1.5 text-xs bg-muted hover:bg-accent rounded-md transition-colors disabled:opacity-50"
                     >
                       <CheckCircle className="h-3.5 w-3.5" />
                       Clear
@@ -208,39 +208,39 @@ export function EmailDeliverabilitySection({
 
       {/* Token Email Recovery */}
       <div>
-        <h2 className="text-lg font-semibold text-slate-900 mb-3 flex items-center gap-2">
+        <h2 className="text-lg font-semibold text-foreground mb-3 flex items-center gap-2">
           <Mail className="h-5 w-5" />
           Token Email Recovery
         </h2>
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
-          <div className="bg-white border rounded-lg p-4">
-            <p className="text-sm text-slate-500">Active failures</p>
+          <div className="bg-card border rounded-lg p-4">
+            <p className="text-sm text-muted-foreground">Active failures</p>
             <p className="text-2xl font-bold text-red-600">
               {tokenEmailRecovery.summary.activeCount}
             </p>
           </div>
-          <div className="bg-white border rounded-lg p-4">
-            <p className="text-sm text-slate-500">Reissued</p>
-            <p className="text-2xl font-bold text-slate-900">
+          <div className="bg-card border rounded-lg p-4">
+            <p className="text-sm text-muted-foreground">Reissued</p>
+            <p className="text-2xl font-bold text-foreground">
               {tokenEmailRecovery.summary.reissuedCount}
             </p>
           </div>
-          <div className="bg-white border rounded-lg p-4">
-            <p className="text-sm text-slate-500">Scanned</p>
-            <p className="text-2xl font-bold text-slate-900">
+          <div className="bg-card border rounded-lg p-4">
+            <p className="text-sm text-muted-foreground">Scanned</p>
+            <p className="text-2xl font-bold text-foreground">
               {tokenEmailRecovery.summary.scannedCount}
             </p>
           </div>
         </div>
 
         {tokenEmailRecovery.failures.length === 0 ? (
-          <div className="bg-white border rounded-lg p-4 text-slate-500">
+          <div className="bg-card border rounded-lg p-4 text-muted-foreground">
             No active failed token-bearing lifecycle emails.
           </div>
         ) : (
-          <div className="bg-white border rounded-lg overflow-x-auto">
+          <div className="bg-card border rounded-lg overflow-x-auto">
             <div className="min-w-[980px]">
-              <div className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1.2fr)_140px_100px_140px_88px] gap-3 px-4 py-2 text-xs font-medium text-slate-500 bg-slate-50 border-b">
+              <div className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1.2fr)_140px_100px_140px_88px] gap-3 px-4 py-2 text-xs font-medium text-muted-foreground bg-card border-b">
                 <span>Recipient</span>
                 <span>Subject</span>
                 <span>Template</span>
@@ -254,24 +254,24 @@ export function EmailDeliverabilitySection({
                     key={failure.id}
                     className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1.2fr)_140px_100px_140px_88px] gap-3 px-4 py-3 text-sm items-center"
                   >
-                    <span className="font-medium text-slate-900 truncate">
+                    <span className="font-medium text-foreground truncate">
                       {failure.to}
                     </span>
-                    <span className="text-slate-700 truncate" title={failure.subject}>
+                    <span className="text-muted-foreground truncate" title={failure.subject}>
                       {failure.subject}
                     </span>
-                    <span className="text-slate-600 truncate">
+                    <span className="text-muted-foreground truncate">
                       {failure.templateName}
                     </span>
                     <StatusBadge status={failure.status} />
-                    <span className="text-slate-500">
+                    <span className="text-muted-foreground">
                       {formatDate(failure.lastAttemptAt)}
                     </span>
                     <button
                       onClick={() => reissueTokenEmail(failure.id, failure.to)}
                       disabled={reissuingTokenEmailId === failure.id || !canEdit}
                       title={canEdit === false ? ADMIN_VIEW_ONLY_ACTION_REASON : undefined}
-                      className="inline-flex justify-self-end items-center gap-1.5 px-2.5 py-1.5 text-xs bg-slate-100 hover:bg-slate-200 rounded-md transition-colors disabled:opacity-50"
+                      className="inline-flex justify-self-end items-center gap-1.5 px-2.5 py-1.5 text-xs bg-muted hover:bg-accent rounded-md transition-colors disabled:opacity-50"
                     >
                       <Mail className="h-3.5 w-3.5" />
                       Reissue
@@ -286,45 +286,45 @@ export function EmailDeliverabilitySection({
 
       {/* Exhausted Email Failures */}
       <div>
-        <h2 className="text-lg font-semibold text-slate-900 mb-3 flex items-center gap-2">
+        <h2 className="text-lg font-semibold text-foreground mb-3 flex items-center gap-2">
           <Mail className="h-5 w-5" />
           Exhausted Email Failures
         </h2>
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
-          <div className="bg-white border rounded-lg p-4">
-            <p className="text-sm text-slate-500">Active failures</p>
+          <div className="bg-card border rounded-lg p-4">
+            <p className="text-sm text-muted-foreground">Active failures</p>
             <p className="text-2xl font-bold text-red-600">
               {emailFailures.summary.activeCount}
             </p>
           </div>
-          <div className="bg-white border rounded-lg p-4">
-            <p className="text-sm text-slate-500">Archived</p>
-            <p className="text-2xl font-bold text-slate-900">
+          <div className="bg-card border rounded-lg p-4">
+            <p className="text-sm text-muted-foreground">Archived</p>
+            <p className="text-2xl font-bold text-foreground">
               {emailFailures.summary.reviewedCount}
             </p>
           </div>
-          <div className="bg-white border rounded-lg p-4">
-            <p className="text-sm text-slate-500">Retry limit</p>
-            <p className="text-2xl font-bold text-slate-900">
+          <div className="bg-card border rounded-lg p-4">
+            <p className="text-sm text-muted-foreground">Retry limit</p>
+            <p className="text-2xl font-bold text-foreground">
               {emailFailures.summary.maxAttempts}
             </p>
           </div>
-          <div className="bg-white border rounded-lg p-4">
-            <p className="text-sm text-slate-500">Scanned</p>
-            <p className="text-2xl font-bold text-slate-900">
+          <div className="bg-card border rounded-lg p-4">
+            <p className="text-sm text-muted-foreground">Scanned</p>
+            <p className="text-2xl font-bold text-foreground">
               {emailFailures.summary.scannedCount}
             </p>
           </div>
         </div>
 
         {emailFailures.failures.length === 0 ? (
-          <div className="bg-white border rounded-lg p-4 text-slate-500">
+          <div className="bg-card border rounded-lg p-4 text-muted-foreground">
             No active exhausted email failures.
           </div>
         ) : (
-          <div className="bg-white border rounded-lg overflow-x-auto">
+          <div className="bg-card border rounded-lg overflow-x-auto">
             <div className="min-w-[900px]">
-              <div className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1.5fr)_140px_90px_140px_88px] gap-3 px-4 py-2 text-xs font-medium text-slate-500 bg-slate-50 border-b">
+              <div className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1.5fr)_140px_90px_140px_88px] gap-3 px-4 py-2 text-xs font-medium text-muted-foreground bg-card border-b">
                 <span>Recipient</span>
                 <span>Subject</span>
                 <span>Template</span>
@@ -338,24 +338,24 @@ export function EmailDeliverabilitySection({
                     key={failure.id}
                     className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1.5fr)_140px_90px_140px_88px] gap-3 px-4 py-3 text-sm items-center"
                   >
-                    <span className="font-medium text-slate-900 truncate">
+                    <span className="font-medium text-foreground truncate">
                       {failure.to}
                     </span>
-                    <span className="text-slate-700 truncate" title={failure.subject}>
+                    <span className="text-muted-foreground truncate" title={failure.subject}>
                       {failure.subject}
                     </span>
-                    <span className="text-slate-600 truncate">
+                    <span className="text-muted-foreground truncate">
                       {failure.templateName}
                     </span>
-                    <span className="text-slate-600">{failure.attempts}</span>
-                    <span className="text-slate-500">
+                    <span className="text-muted-foreground">{failure.attempts}</span>
+                    <span className="text-muted-foreground">
                       {formatDate(failure.lastAttemptAt)}
                     </span>
                     <button
                       onClick={() => archiveEmailFailure(failure.id, failure.to)}
                       disabled={reviewingEmailFailureId === failure.id || !canEdit}
                       title={canEdit === false ? ADMIN_VIEW_ONLY_ACTION_REASON : undefined}
-                      className="inline-flex justify-self-end items-center gap-1.5 px-2.5 py-1.5 text-xs bg-slate-100 hover:bg-slate-200 rounded-md transition-colors disabled:opacity-50"
+                      className="inline-flex justify-self-end items-center gap-1.5 px-2.5 py-1.5 text-xs bg-muted hover:bg-accent rounded-md transition-colors disabled:opacity-50"
                     >
                       <CheckCircle className="h-3.5 w-3.5" />
                       Archive
@@ -370,33 +370,33 @@ export function EmailDeliverabilitySection({
 
       {/* Admin Alert Delivery Escalations */}
       <div>
-        <h2 className="text-lg font-semibold text-slate-900 mb-3 flex items-center gap-2">
+        <h2 className="text-lg font-semibold text-foreground mb-3 flex items-center gap-2">
           <Mail className="h-5 w-5" />
           Admin Alert Delivery
         </h2>
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
-          <div className="bg-white border rounded-lg p-4">
-            <p className="text-sm text-slate-500">Undelivered alerts</p>
+          <div className="bg-card border rounded-lg p-4">
+            <p className="text-sm text-muted-foreground">Undelivered alerts</p>
             <p className="text-2xl font-bold text-red-600">
               {adminAlertDelivery.summary.recentCount}
             </p>
           </div>
-          <div className="bg-white border rounded-lg p-4">
-            <p className="text-sm text-slate-500">Lookback</p>
-            <p className="text-2xl font-bold text-slate-900">
+          <div className="bg-card border rounded-lg p-4">
+            <p className="text-sm text-muted-foreground">Lookback</p>
+            <p className="text-2xl font-bold text-foreground">
               {adminAlertDelivery.summary.lookbackDays}d
             </p>
           </div>
         </div>
 
         {adminAlertDelivery.escalations.length === 0 ? (
-          <div className="bg-white border rounded-lg p-4 text-slate-500">
+          <div className="bg-card border rounded-lg p-4 text-muted-foreground">
             No recent admin alerts failed for every recipient.
           </div>
         ) : (
-          <div className="bg-white border rounded-lg overflow-x-auto">
+          <div className="bg-card border rounded-lg overflow-x-auto">
             <div className="min-w-[780px]">
-              <div className="grid grid-cols-[minmax(0,1.4fr)_120px_120px_120px_150px] gap-3 px-4 py-2 text-xs font-medium text-slate-500 bg-slate-50 border-b">
+              <div className="grid grid-cols-[minmax(0,1.4fr)_120px_120px_120px_150px] gap-3 px-4 py-2 text-xs font-medium text-muted-foreground bg-card border-b">
                 <span>Template</span>
                 <span>Attempted</span>
                 <span>Suppressed</span>
@@ -409,19 +409,19 @@ export function EmailDeliverabilitySection({
                     key={escalation.id}
                     className="grid grid-cols-[minmax(0,1.4fr)_120px_120px_120px_150px] gap-3 px-4 py-3 text-sm items-center"
                   >
-                    <span className="font-medium text-slate-900 truncate">
+                    <span className="font-medium text-foreground truncate">
                       {escalation.templateName}
                     </span>
-                    <span className="text-slate-600">
+                    <span className="text-muted-foreground">
                       {escalation.attemptedRecipientCount}
                     </span>
-                    <span className="text-slate-600">
+                    <span className="text-muted-foreground">
                       {escalation.suppressedRecipientCount}
                     </span>
-                    <span className="text-slate-600">
+                    <span className="text-muted-foreground">
                       {escalation.failedRecipientCount}
                     </span>
-                    <span className="text-slate-500">
+                    <span className="text-muted-foreground">
                       {formatDate(escalation.createdAt)}
                     </span>
                   </div>
