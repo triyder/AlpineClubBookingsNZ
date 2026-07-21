@@ -2836,6 +2836,45 @@ model XeroToken {
 }
 
 // ---------------------------------------------------------------------------
+// Encrypted integration credentials (guided provider setup — #2079)
+// ---------------------------------------------------------------------------
+//
+// Provider credentials (Xero client id/secret/webhook key here; Stripe/Google/
+// Backup in later epic lanes) encrypted at rest with AES-256-GCM under a key
+// derived from the app auth secret via HKDF-SHA256. The database is the ONLY
+// credential source — legacy provider env vars are detected and flagged, never
+// honoured. Standalone table (no FK coupling) so the migration is a pure
+// blue/green EXPAND. See src/lib/integration-crypto.ts and
+// src/lib/integration-credentials.ts.
+model IntegrationCredential {
+  id           String   @id @default(cuid())
+  // Logical provider namespace, e.g. "xero", "stripe", "google", "backup".
+  provider     String
+  // Credential slot within the provider, e.g. "client_id", "client_secret",
+  // "webhook_key", "token_key". Disjoint from two-factor's label namespace.
+  key          String
+  ciphertext   String
+  iv           String
+  authTag      String
+  // Which auth-secret env var the wrapping key was derived from at write time
+  // (AUTH_SECRET | NEXTAUTH_SECRET) — a silent fallback flip stays diagnosable
+  // without ever exposing the value.
+  secretSource String
+  // HKDF info-label version used to derive the wrapping key, e.g.
+  // "integration-credential:v1" / "xero-token-key:v1".
+  labelVersion String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  // Full Admin member id that last wrote this credential (audit provenance).
+  // Plain string, not an FK, to keep the table standalone/expand-safe.
+  updatedByUserId String?
+
+  @@unique([provider, key])
+  @@index([provider])
+  @@index([updatedAt])
+}
+
+// ---------------------------------------------------------------------------
 // Finance Snapshot Storage
 // ---------------------------------------------------------------------------
 
