@@ -44,7 +44,7 @@ export function useXeroConnection() {
     try {
       const res = await fetch("/api/admin/xero/disconnect", { method: "POST" })
       if (!res.ok) throw new Error("Failed to disconnect")
-      setStatus({ connected: false, tenantId: null, tokenExpiresAt: null })
+      setStatus({ connected: false, needsReentry: false, tenantId: null, tokenExpiresAt: null })
     } catch {
       setError("Failed to disconnect Xero")
     }

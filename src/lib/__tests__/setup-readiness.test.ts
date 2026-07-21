@@ -450,6 +450,28 @@ describe("setup-readiness", () => {
     expect(report).not.toContain("env capability");
   });
 
+  it("shows reconnect-required (not connected) when stored Xero tokens no longer decrypt (#2079)", () => {
+    const readiness = buildSetupReadiness({
+      env: baseEnv,
+      configDir: makeConfigDir(),
+      database: {
+        ...completeDatabase,
+        // A token row exists but is unreadable after an auth-secret change.
+        operationalXeroConnected: false,
+        operationalXeroNeedsReentry: true,
+      },
+    });
+
+    const report = renderSetupCheckReport(readiness);
+
+    expect(report).toContain(
+      "reconnect Xero from the in-app setup (Admin > Integrations)",
+    );
+    expect(report).toContain("Stored Xero tokens no longer decrypt");
+    // Must NOT read as connected/complete over dead tokens.
+    expect(report).not.toContain("Operational Xero is connected.");
+  });
+
   it("distinguishes address autocomplete disabled, missing credentials, and ready states", () => {
     const disabled = buildSetupReadiness({
       env: {},

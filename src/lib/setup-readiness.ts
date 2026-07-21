@@ -68,6 +68,12 @@ export interface SetupDatabaseSnapshot {
   membershipCancellationXeroGroupCount: number;
   membershipCancellationArchiveContacts: boolean;
   operationalXeroConnected: boolean;
+  // A Xero token row exists but no longer decrypts (env→DB upgrade or an
+  // auth-secret change, #2079): the connection needs re-entry/reconnect, not
+  // "connected". Distinguishes "needs reconnect" from "never connected" so the
+  // Operational Xero step shows the right guidance. Optional/undefined for older
+  // callers or when no DB snapshot was taken.
+  operationalXeroNeedsReentry?: boolean;
   operationalXeroTokenExpiresAt: string | null;
   xeroAccountMappingCount: number;
   xeroHutFeeItemMappingCount: number;
@@ -1163,6 +1169,9 @@ function buildOperationalXeroCheck(
   const moduleState = buildModuleLayerState(db, "xeroIntegration");
   const enabled = moduleState.effectiveEnabled;
   const connected = Boolean(db?.operationalXeroConnected);
+  // Tokens exist but no longer decrypt (env→DB upgrade / auth-secret change,
+  // #2079): reconnect-required, not "connected" and not "never connected".
+  const needsReentry = Boolean(db?.operationalXeroNeedsReentry);
   // DB-only credentials (#2079): Xero client id/secret, webhook key and the
   // token key live in the encrypted store and are captured in-app — no XERO_*
   // env vars are read for operation. Any legacy vars still present are flagged.
@@ -1185,21 +1194,25 @@ function buildOperationalXeroCheck(
         ? "warning"
         : !db
           ? "warning"
-          : legacyXeroVars.length > 0
+          : needsReentry
             ? "warning"
-            : connected
-              ? "complete"
-              : "not_started",
+            : legacyXeroVars.length > 0
+              ? "warning"
+              : connected
+                ? "complete"
+                : "not_started",
       required: enabled,
       message: !enabled
         ? "Operational Xero is disabled in Admin Modules."
         : !db
           ? "Operational Xero credentials are captured in-app; connection state was not checked."
-          : legacyXeroVars.length > 0
-            ? "Remove the legacy XERO_* env vars — Xero is configured in-app now."
-            : connected
-              ? "Operational Xero is connected."
-              : "Connect Xero from the in-app setup (Admin > Integrations).",
+          : needsReentry
+            ? "Xero tokens can no longer be read (the auth secret changed) — reconnect Xero from the in-app setup (Admin > Integrations)."
+            : legacyXeroVars.length > 0
+              ? "Remove the legacy XERO_* env vars — Xero is configured in-app now."
+              : connected
+                ? "Operational Xero is connected."
+                : "Connect Xero from the in-app setup (Admin > Integrations).",
       details: [
         formatModuleActivationDetail(db, moduleState.adminEnabled),
         `Effective state: ${enabled ? "enabled" : "disabled"}`,
@@ -1207,9 +1220,11 @@ function buildOperationalXeroCheck(
         ...legacyDetails,
         !db
           ? "Database connection state not checked."
-          : connected
-            ? `Token expires: ${db?.operationalXeroTokenExpiresAt ?? "unknown"}`
-            : "No active operational Xero token found.",
+          : needsReentry
+            ? "Stored Xero tokens no longer decrypt; reconnect to re-authorise."
+            : connected
+              ? `Token expires: ${db?.operationalXeroTokenExpiresAt ?? "unknown"}`
+              : "No active operational Xero token found.",
       ],
       href: "/admin/integrations",
       action: {

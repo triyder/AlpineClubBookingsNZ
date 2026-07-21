@@ -15,6 +15,7 @@ import { randomBytes } from "crypto";
 import {
   ensureGeneratedCredential,
   getIntegrationCredentialValue,
+  resolveIntegrationCredential,
 } from "@/lib/integration-credentials";
 import { XERO_TOKEN_KEY_LABEL } from "@/lib/integration-crypto";
 
@@ -144,6 +145,25 @@ export async function getOperationalXeroEncryptionKey(): Promise<
     generate: () => randomBytes(32).toString("hex"),
   });
   return value ?? undefined;
+}
+
+/**
+ * Read the stored Xero token-encryption key WITHOUT ever generating one. For
+ * side-effect-free status/readiness checks (a status read must never mutate the
+ * DB, unlike getOperationalXeroEncryptionKey which regenerates a dead key).
+ * Returns `undefined` when the key is missing OR unreadable (auth secret
+ * changed) — the caller then reports the tokens as needing re-entry. The value
+ * is only ever used server-side to test-decrypt a token row; it is never
+ * returned to a client.
+ */
+export async function peekOperationalXeroEncryptionKey(): Promise<
+  string | undefined
+> {
+  const resolution = await resolveIntegrationCredential(
+    XERO_PROVIDER,
+    XERO_CREDENTIAL_KEYS.tokenKey,
+  );
+  return resolution.status === "configured" ? resolution.value : undefined;
 }
 
 /**

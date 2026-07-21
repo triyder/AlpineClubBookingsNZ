@@ -7,11 +7,36 @@
 
 import { createCipheriv, createDecipheriv, randomBytes } from "crypto";
 import { prisma } from "./prisma";
-import { getOperationalXeroEncryptionKey } from "@/lib/xero-config";
+import {
+  getOperationalXeroEncryptionKey,
+  peekOperationalXeroEncryptionKey,
+} from "@/lib/xero-config";
 
 const ENCRYPTION_ALGORITHM = "aes-256-gcm";
 const IV_LENGTH = 16;
 const AUTH_TAG_LENGTH = 16;
+
+/**
+ * Thrown when a stored Xero OAuth token cannot be decrypted — the GCM tag fails
+ * (the token was encrypted under a key the current auth secret no longer
+ * derives) or the stored row is malformed. Both are unrecoverable and only an
+ * admin RECONNECT fixes them, so this is a typed reconnect signal rather than an
+ * opaque crypto error. It stays fail-closed (it still throws — never returns a
+ * bogus token).
+ *
+ * `getXeroApiErrorInfo` and the connection probe's `classifyProbeError` map this
+ * class (name-keyed, like XeroReconnectRequiredError) to the reconnect state, so
+ * a token row left undecryptable by the env→DB upgrade (#2079) or an auth-secret
+ * change surfaces the clean "reconnect Xero" prompt instead of an opaque 500.
+ * Defined here (not extended from XeroReconnectRequiredError) to avoid a cycle
+ * with xero-api-client, which imports this module.
+ */
+export class XeroTokenDecryptError extends Error {
+  constructor(message = "Stored Xero token could not be decrypted") {
+    super(message);
+    this.name = "XeroTokenDecryptError";
+  }
+}
 
 // The token-encryption key is the DB-backed, auto-generated, HKDF-wrapped Xero
 // token key (#2079). `XERO_ENCRYPTION_KEY` no longer exists. Resolution is async
@@ -45,9 +70,11 @@ export async function encryptToken(plaintext: string): Promise<string> {
   return `${iv.toString("hex")}:${authTag.toString("hex")}:${encrypted}`;
 }
 
-// test seam
-export async function decryptToken(encrypted: string): Promise<string> {
-  const key = await getEncryptionKey();
+/**
+ * Pure decrypt with an explicit key. Throws on a malformed row or a GCM tag
+ * failure. Callers wrap this to attach the right typed error / policy.
+ */
+function decryptWithKey(encrypted: string, key: Buffer): string {
   const parts = encrypted.split(":");
   if (parts.length !== 3) {
     throw new Error("Invalid encrypted token format");
@@ -65,6 +92,21 @@ export async function decryptToken(encrypted: string): Promise<string> {
   let decrypted = decipher.update(ciphertext, "hex", "utf8");
   decrypted += decipher.final("utf8");
   return decrypted;
+}
+
+// test seam
+export async function decryptToken(encrypted: string): Promise<string> {
+  // Key resolution failures (key not yet available) keep their own error; only
+  // an actual decrypt failure of an existing row is the reconnect signal.
+  const key = await getEncryptionKey();
+  try {
+    return decryptWithKey(encrypted, key);
+  } catch {
+    // A GCM tag failure (key rotated) or a malformed row: unrecoverable, and
+    // only a reconnect fixes it. Typed so the API/probe surfaces reconnect,
+    // fail-closed (still throws — never returns a token).
+    throw new XeroTokenDecryptError();
+  }
 }
 
 export interface TokenData {
@@ -201,9 +243,51 @@ export async function loadXeroTokens(): Promise<XeroTokenRecord | null> {
   return deserializeTokenRecord(record);
 }
 
-// Note: getXeroConnectionStatus / isXeroConnected below deliberately do NOT
-// decrypt (they only read tenantId presence), so they never depend on the
-// token-encryption key and never throw for a rotated/absent key.
+// Note: isXeroConnected below deliberately does NOT decrypt (it only reads
+// tenantId presence), so it never depends on the token-encryption key and never
+// throws for a rotated/absent key. getXeroConnectionStatus DOES a single,
+// side-effect-free readability probe (see getXeroTokenReadability) so the admin
+// status page reports "reconnect required" rather than "connected" over tokens
+// that no longer decrypt (#2079 upgrade / auth-secret change).
+
+export type XeroTokenReadability = "no_tokens" | "readable" | "unreadable";
+
+/**
+ * Whether the stored Xero access token can be decrypted with the currently
+ * resolvable token key. SIDE-EFFECT-FREE: it PEEKS the token key (never
+ * generates one — a status read must not mutate the DB) and never exposes the
+ * decrypted value. Returns:
+ *   - "no_tokens"   — no token row stored;
+ *   - "unreadable"  — key missing/unreadable, or the token row fails GCM
+ *                     (auth secret changed) ⇒ the operator must reconnect;
+ *   - "readable"    — decrypts cleanly.
+ *
+ * A stored `record` may be passed to avoid a duplicate DB read.
+ */
+export async function getXeroTokenReadability(record?: {
+  accessToken: string;
+} | null): Promise<XeroTokenReadability> {
+  const row =
+    record === undefined
+      ? await prisma.xeroToken.findFirst({ select: { accessToken: true } })
+      : record;
+  if (!row) return "no_tokens";
+  const key = await peekOperationalXeroEncryptionKey();
+  if (!key) return "unreadable";
+  let keyBuf: Buffer;
+  try {
+    keyBuf = Buffer.from(key, "hex");
+    if (keyBuf.length !== 32) return "unreadable";
+  } catch {
+    return "unreadable";
+  }
+  try {
+    decryptWithKey(row.accessToken, keyBuf);
+    return "readable";
+  } catch {
+    return "unreadable";
+  }
+}
 
 export async function claimXeroTokenRefreshLease(options?: {
   now?: Date;
@@ -290,19 +374,33 @@ export async function isXeroConnected(): Promise<boolean> {
 }
 
 /**
- * Get connection status details for the admin page.
+ * Get connection status details for the admin page. Reports a truthful
+ * reconnect-required state when a token row exists but no longer decrypts
+ * (needsReentry) — the "Connected" chip must never sit over dead tokens
+ * (#2079). The readability probe is side-effect-free (peeks the key, never
+ * generates or mutates) and never exposes the token value.
  */
 export async function getXeroConnectionStatus(): Promise<{
   connected: boolean;
+  needsReentry: boolean;
   tenantId: string | null;
   tokenExpiresAt: Date | null;
 }> {
   const record = await prisma.xeroToken.findFirst();
   if (!record) {
-    return { connected: false, tenantId: null, tokenExpiresAt: null };
+    return {
+      connected: false,
+      needsReentry: false,
+      tenantId: null,
+      tokenExpiresAt: null,
+    };
   }
+  const readable =
+    (await getXeroTokenReadability({ accessToken: record.accessToken })) ===
+    "readable";
   return {
-    connected: true,
+    connected: readable,
+    needsReentry: !readable,
     tenantId: record.tenantId,
     tokenExpiresAt: record.expiresAt,
   };
