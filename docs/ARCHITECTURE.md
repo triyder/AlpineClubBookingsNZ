@@ -602,7 +602,7 @@ site with prose *about* a call site (both `view-only-action.tsx`'s JSDoc and
 `describeReason={false}` while explaining it, and each was miscounted as an
 opt-out). The strip runs TypeScript's own PARSER, not its scanner: a bare
 `ts.createScanner` cannot resume a template literal after a `${…}` substitution
-(that is the parser's job), so a `className={`…${…}`}` above a JSX comment
+(that is the parser's job), so a ``className={`…${…}`}`` above a JSX comment
 opened a bogus template that swallowed the comment's opening `/*` and let its
 quoted `describeReason={false}` count as real — which is exactly how
 `public-booking-requests-section.tsx` was miscounted a SECOND time, in #2166.
