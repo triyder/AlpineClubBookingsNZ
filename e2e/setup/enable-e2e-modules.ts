@@ -10,8 +10,11 @@
 //   - bedAllocation     → /admin/bed-allocation, /admin/rooms-beds (#1300)
 //
 // internetBankingPayments and xeroIntegration stay OFF here; the internet-
-// banking spec toggles them on itself and restores them, so the rest of the
-// suite keeps the default card-payment flow.
+// banking spec (e2e/internet-banking.spec.ts) and the Xero setup wizard spec
+// (e2e/xero-setup-wizard.spec.ts) each toggle xeroIntegration on for their own
+// run and restore it afterwards, so the rest of the suite keeps the default
+// card-payment flow. Both restore in afterAll, and workers=1 keeps them serial,
+// so the toggle-and-restore choreography never collides.
 import { PrismaClient } from "@prisma/client";
 import { createPrismaPgAdapter } from "../../src/lib/prisma-adapter";
 

@@ -62,6 +62,11 @@ x-app-environment: &app-environment
   SENTRY_ORG: ${SENTRY_ORG:-}
   SENTRY_PROJECT: ${SENTRY_PROJECT:-}
   SENTRY_AUTH_TOKEN: ${SENTRY_AUTH_TOKEN:-}
+  # TEST-ONLY mock-Xero E2E harness (#2080). Empty in every real deployment, so
+  # the mock endpoints 404 and the OAuth/org code path is unchanged. The E2E
+  # staging stack sets it to the app's container-internal origin so the app can
+  # drive its own gated /api/testing/xero-mock/* endpoints server-side.
+  XERO_MOCK_API_ORIGIN: ${XERO_MOCK_API_ORIGIN:-}
 
 x-app-service: &app-service
   image: ${APP_IMAGE:-${COMPOSE_PROJECT_NAME:-tacbookings}-app:local}
