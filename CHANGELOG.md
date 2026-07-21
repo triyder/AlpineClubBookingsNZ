@@ -4,6 +4,138 @@ All notable public reference-release changes should be recorded here.
 
 ## Unreleased
 
+## 0.13.0 - 2026-07-21
+
+- **Annual-subscription billing no longer double-bills, and a voided invoice can
+  be cleanly re-billed (#2147).** In production shapes where a season's charge and
+  coverage rows were empty but the `MemberSubscription` rows were present — the
+  exact configuration that triggered the incident — the billing preview and the
+  in-transaction confirm could raise a second annual membership charge for a
+  member Xero had already invoiced. The skip-set now treats a season
+  `MemberSubscription` as already billed when its `status` is `PAID` **or** it
+  carries a non-null `xeroInvoiceId`, and coverage-based dedup counts only
+  **active** (unreleased) claims. A member who was manually marked paid with no
+  invoice stays skipped exactly as before — the new invoice test is additive, not
+  a replacement. For `PER_FAMILY` billing a family group is suppressed when any
+  member holds a live season invoice or an active coverage claim, so a family
+  bills once. When the Xero sync sees a charge's invoice **voided or deleted** it
+  now atomically releases the coverage claim (`releasedAt` set, the row kept for
+  audit), marks the charge `VOIDED` (kept for audit), bumps
+  `MemberSubscription.voidGeneration`, and clears the subscription's invoice link
+  back to `NOT_INVOICED`, so the member becomes re-billable; a post-void confirm
+  derives a **new** idempotency key that folds in `voidGeneration`, and that key
+  stays byte-identical for any subscription that was never voided. `VOIDED`
+  charges are fenced out of every re-issue path — enqueue/RETRY_CHARGE, invoice
+  creation, the outbox failure handler, and the admin panel (no Retry button) — so
+  a retained voided row cannot cause a second Xero write. A collapsed-by-default
+  "Already invoiced" section on the subscriptions billing preview now lists the
+  count and each suppressed member's Xero invoice number and status. **One
+  deliberate semantics change:** a voided invoice previously read as `UNPAID` (a
+  booking lockout) and now reads as `NOT_INVOICED` (re-billable). Money stays in
+  integer cents and no amount changes; this only affects which subscriptions are
+  billed and when. The migration
+  `20260720130000_subscription_invoice_dedup_void_release` is an additive
+  expand — a new `VOIDED` enum value, a `voidGeneration` integer defaulting to 0,
+  a nullable coverage `releasedAt`, and a swap of the coverage `subscriptionId`
+  full UNIQUE for a partial UNIQUE over active claims — and is old-colour
+  compatible; see `docs/UPGRADING.md`, `docs/guides/subscriptions.md`, and
+  `docs/STATE_MACHINES.md`.
+
+- **Deliberately fee-less age tiers no longer generate billing-exception noise,
+  and stale exceptions clear on refresh — with provenance recorded (#2148).**
+  Clubs that leave CHILD or INFANT tiers without a fee schedule were seeing dozens
+  of `MISSING_FEE_SCHEDULE` exceptions (38 in the reported case) for members who
+  are simply not billable. The preview's age-tier exemption gate now runs
+  **before** the `MISSING_FEE_SCHEDULE` raise and no longer needs a resolved fee:
+  a `BASED_ON_AGE_TIER` member whose season-start tier is not subscription-liable
+  is treated as exempt when there is no fee for the tier or the resolved fee is
+  `PER_MEMBER`, and those members join a new collapsed "Exempt" section instead of
+  raising an exception — confirm still writes their `NOT_REQUIRED` season rows, as
+  it always did. A tier-exempt child under a resolved `PER_FAMILY` fee still falls
+  through to family billing, so families with exempt children keep billing exactly
+  once. Separately, a new `finance:edit`-gated **Refresh preview** action rebuilds
+  the preview under the same per-season advisory lock as confirm and auto-resolves
+  every open `MembershipBillingException` the fresh preview no longer regenerates,
+  while an exception that still reproduces is protected by an identity-based
+  fingerprint and is never falsely resolved. To tell those two resolution paths
+  apart, a new nullable `MembershipBillingException.resolvedVia` column (enum
+  `CONFIRM | PREVIEW_RECONCILE`) records how each exception reached `RESOLVED`;
+  existing and legacy resolved rows and every open row stay `NULL`, the documented
+  "resolved before this column existed / not yet resolved" state. **What did not
+  change:** no money moves, exceptions are never deleted (resolution only sets
+  `resolvedAt` plus provenance), and the `finance:view` GET is now a verified pure
+  read, so a view-only admin loading the page writes nothing. The migration
+  `20260720140000_billing_exception_resolution_provenance` is a metadata-only
+  expand (new enum, one nullable column, no backfill).
+
+- **Whether a member owes an annual subscription is now decided by their
+  membership type, not their admin role (#2149).** The old rule silently exempted
+  anyone holding `role=ADMIN` or `role=LODGE` from the annual membership fee. That
+  is removed from every derivation: a member's membership type
+  (`subscriptionBehavior`, plus age tier where the type is `BASED_ON_AGE_TIER`) is
+  now the sole authority on whether they owe a subscription, and the login `Role`
+  enum goes back to being a pure permission concept. A fee-paying member who
+  happens to hold an admin role now shows their **real** subscription status
+  (Paid/Unpaid/Overdue) everywhere it is displayed. Five previously divergent
+  copies of the derivation — the booking gate, the profile/subscription-status
+  API, the admin members list and its SQL filter variants, the subscriptions list,
+  the CSV export, and the Xero-sync status check — are consolidated onto two shared
+  helpers, so the filter and the displayed flag can no longer disagree. To give the
+  dropped exemption a database-backed fallback, the data-only migration
+  `20260720180000_seed_admin_lodge_membership_types` seeds two built-in types —
+  **ADMIN** (`subscriptionBehavior NOT_REQUIRED`, `bookingBehavior BLOCK_BOOKING`)
+  and **LODGE** (`NOT_REQUIRED`, `MEMBER_RATE`) — and `defaultMembershipTypeKeyForRole`
+  now maps ADMIN→ADMIN and LODGE→LODGE, where both previously fell through to the
+  billable FULL type. The seed is idempotent and self-healing: it creates the two
+  types if missing **and** reconciles the `isBuiltIn`/`isActive` and
+  behaviour columns of any hand-created ADMIN/LODGE row, while **preserving an
+  admin-edited name and description**. **The one behaviour change to watch:** a
+  bare admin service account can no longer book as itself (its fallback type is
+  `BLOCK_BOOKING`) — a real fee-paying human holding the admin permission is
+  assigned a real membership type and is unaffected — and a LODGE kiosk account
+  still books on behalf of members (`MEMBER_RATE`) and never owes a subscription.
+  Permission checks are untouched, no rows are deleted, and the seed's timestamps
+  use explicit UTC. See `docs/UPGRADING.md` and `docs/DOMAIN_INVARIANTS.md`.
+
+- **Family fee suppression is now keyed to the invoice holder's own billing basis,
+  with an operator "already invoiced" marker as the backstop (#2161, #2167).** A
+  live legacy invoice sitting on one family member used to suppress the whole
+  family's `PER_FAMILY` charge regardless of why that invoice existed. It now
+  suppresses the family charge only when that holder's **own** resolved billing
+  basis is `PER_FAMILY`; a `PER_MEMBER`-billed member's personal invoice no longer
+  blocks the family fee (that member simply stays skipped per-member), and
+  coverage-triggered suppression reads the basis directly from the covering charge
+  row. The refinement is deliberately fail-closed: suppression lifts **only** on a
+  proven `PER_MEMBER` holder basis — `PER_FAMILY`, no-invoice bases (Life/honorary
+  via a fee row), and unresolvable bases all keep the family suppressed, and an
+  unresolvable case carries an "Unresolved basis" badge in the audit panel — so
+  the conservative never-double-bill guarantee is preserved for every shape the
+  refinement did not explicitly open. To close the one ambiguous window that
+  refinement re-opens (a family invoice on a member whose current basis is
+  `PER_MEMBER`), a new `finance:edit`-gated **"already invoiced" marker** lets an
+  operator suppress a family for a season regardless of basis: a new
+  `FamilyGroupSeasonInvoiceMarker` table (migration
+  `20260721100000_family_season_invoice_marker`, an additive expand), MARK/UNMARK
+  actions on the existing billing route, an optional note and confirm step, a
+  marker indicator with unmark in the "Already invoiced" section, and a partial
+  unique index enforcing one active marker per `(familyGroupId, seasonYear)`. Both
+  suppression sources live in the shared preview/confirm builder that confirm
+  re-runs in-transaction under the per-season advisory lock, so preview and confirm
+  agree. **What did not change:** money stays in integer cents and no amounts
+  move — only which families are suppressed; markers are never deleted (unmark sets
+  `releasedAt` and keeps the row for audit); and member merges repoint mark/release
+  history to the surviving member.
+
+- **Long bed names on the bed-allocation board are no longer clipped (#2150).**
+  The allocation board's leftmost label column shared the 11rem width of the date
+  columns, so typical bed names were cut off. The label column now has its own
+  14rem width constant, bed names wrap to two lines with a `title` tooltip
+  fallback for anything that still clips, and the room-name header gains the same
+  tooltip fallback. The inline table-width formula and `colgroup` were updated to
+  emit one label column plus one column per night. This is a pure display change
+  on an existing admin-gated page: no data is read or written differently, and
+  there is no schema, config, or permission change.
+
 - **The two quote-timing cards now open with Edit, like everything else in
   Booking Policies (#2166).** On **Booking Policies → Public Booking Requests**,
   the **Quote Response Window & Reminders** and **School Attendee Confirmation**

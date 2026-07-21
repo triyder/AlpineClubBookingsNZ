@@ -86,51 +86,137 @@ as a red flag and check the release notes before deploying.
 
 ## Unreleased
 
-The unreleased range **closes the config-transfer import compatibility window
-for old bundles** (#2131) and **re-sources the public `{{hut-fees}}` embed onto
-the authoritative per-membership-type rate table** (#2129 step 1). There is
-**no migration and no schema change**, so the deploy itself needs no special
-window: any deploy window is fine, and the old colour is unaffected. The
-operator impact is about **archived configuration bundles** and, if you publish
-hut fees, about which membership types are flagged **Publicly listed**.
+_No schema or migration changes are staged for the next release yet._
+
+---
+
+## v0.12.2 → v0.13.0
+
+`v0.13.0` is a **minor** release. It lands the annual-subscription billing epic
+(#2151) — the double-billing fix with void/re-bill (#2147), billing-exception
+resolution provenance (#2148), the membership-type-derived subscription
+requirement that replaces the old role-based exemption (#2149), and the operator
+"already invoiced" family marker (#2161) — plus a week of admin UI, theming,
+config, and Xero-surface work. **This release changes money paths**: read the
+full inventory in `docs/releases/v0.13.0.md` and the `0.13.0` changelog section
+before starting.
+
+It carries **four migrations, all expand / metadata-only and all
+`old_code_compatible=yes`.** Unlike `v0.12.2` (which had two breaking `contract`
+migrations), **none of these is breaking**: the blue/green validator passes with
+**no `ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS` override**, and a normal deploy
+window is sufficient. **If the validator demands that override for this release,
+the checkout is wrong** — stop and re-check you are on `release/v0.13.0` at the
+intended commit before proceeding.
+
+Two operator concerns carried forward from the previous range still apply and are
+repeated below: the config-transfer legacy-bundle window (#2131) and the public
+`{{hut-fees}}` embed re-sourcing (#2129 step 1). Neither adds a migration.
 
 ### Before deployment
 
-1. **Re-export any archived config bundle you intend to keep, before you
-   upgrade.** From this release the importer rejects the legacy bundle shapes
+1. **Take and restore-test a fresh backup**, as always. This release adds tables,
+   columns, an enum value, and a data-only seed, but **drops nothing and rewrites
+   no table**, so a normal deploy window is sufficient.
+2. **Review the four pending migrations against the safety ledger. All four are
+   expand/metadata-only, old-colour compatible, and need no override.**
+   - `20260720130000_subscription_invoice_dedup_void_release` (#2147, **expand,
+     ledgered**) adds the `VOIDED` charge-status enum value, a
+     `MemberSubscription.voidGeneration` integer (constant default 0), a nullable
+     `MembershipSubscriptionChargeCoverage.releasedAt`, and swaps the coverage
+     `subscriptionId` full UNIQUE for a partial UNIQUE over active
+     (`releasedAt IS NULL`) claims. Metadata-only on cold membership-billing
+     tables. The draining old colour never reads the new columns and cannot
+     create a second coverage row per subscription (only the new void→re-bill
+     runtime does), so it never needs the dropped full-unique constraint. See the
+     forward-only note below.
+   - `20260720140000_billing_exception_resolution_provenance` (#2148, **expand,
+     ledgered**) creates the `MembershipBillingExceptionResolution` enum
+     (`CONFIRM | PREVIEW_RECONCILE`) and adds a nullable
+     `MembershipBillingException.resolvedVia` with no default. Metadata-only ADD
+     COLUMN on a cold table; existing/legacy resolved rows and every OPEN row stay
+     NULL — the documented "resolved before this column existed / not yet
+     resolved" state. The old colour never names the enum or the column.
+   - `20260720180000_seed_admin_lodge_membership_types` (#2149, **metadata-only
+     data seed, ledgered**) seeds the built-in ADMIN and LODGE membership types
+     (both `subscriptionBehavior = NOT_REQUIRED`). No DDL and no schema change on
+     the cold, admin-only `MembershipType` / `MembershipTypeAgeTier` config
+     tables; the old colour resolves ADMIN/LODGE via the old role exemption and
+     never reads these rows for a subscription decision. See the behaviour change
+     below.
+   - `20260721100000_family_season_invoice_marker` (#2161, **expand, ledgered**)
+     creates the new, empty `FamilyGroupSeasonInvoiceMarker` table with its
+     indexes, foreign keys, and one partial UNIQUE over active markers per
+     `(familyGroupId, seasonYear)`. Purely additive; the old colour has no model
+     for it and never reads or writes it. See the drain-window edge below.
+3. **Re-export any archived config bundle you intend to keep, before you
+   upgrade (#2131).** From v0.12.2 the importer rejects the legacy bundle shapes
    at dry-run — the `isMember` column on `season-rates.csv` and on the Xero
    `item-code-mappings.csv` HUT_FEE rows, and the pre-#1931 `ENTRANCE_FEE`
    item-code category name. Any bundle exported by **v0.12.2 or earlier** is
-   likely to carry them. Export a fresh bundle from your still-running v0.12.2
-   install (**Admin → Setup & Configuration → Export & Import**) and archive
-   that instead; a bundle exported after the upgrade is already in the current
-   shape.
-2. **If your source install is already gone**, the old zip is not lost — it can
-   be hand-fixed. Follow "Converting a legacy bundle by hand" in the
+   likely to carry them. Export a fresh bundle from your still-running install
+   (**Admin → Setup & Configuration → Export & Import**) and archive that
+   instead; a bundle exported after the upgrade is already in the current shape.
+   If your source install is already gone, the old zip can be hand-fixed —
+   follow "Converting a legacy bundle by hand" in the
    [Export & Import operator guide](guides/config-transfer.md#converting-a-legacy-bundle-by-hand),
-   then **Reseal edited bundle** and re-preview.
-3. **Check your bootstrap path.** If you set `CONFIG_BUNDLE_IMPORT_PATH` for
-   disaster-recovery or clone boots, make sure the bundle at that path is a
-   current-shape export. A legacy bundle there is refused at boot
-   (`refused-invalid`, nothing written) and the replacement install comes up
-   **unconfigured** — the cause is only visible in the boot logs.
+   then **Reseal edited bundle** and re-preview. If you set
+   `CONFIG_BUNDLE_IMPORT_PATH` for disaster-recovery or clone boots, make sure
+   the bundle at that path is a current-shape export: a legacy bundle there is
+   refused at boot (`refused-invalid`, nothing written) and the replacement
+   install comes up **unconfigured**, visible only in the boot logs.
 
 ### Post-upgrade actions
 
-1. **Nothing changes for current-shape bundles.** Export and import of bundles
-   produced by this release are byte-identical to before, and the #1931
-   item-code-amount joining-fee materialisation (from current `JOINING_FEE`
-   rows, e.g. when `membership-fees` is deselected) is unchanged.
-2. **Hand-authored Xero bundles now need a membership type on every HUT_FEE
-   row.** A `HUT_FEE` row in `item-code-mappings.csv` with a blank
-   `membershipTypeKey` is now a blocking row error instead of writing a keyless
-   mapping the runtime never reads. Fill in the column (the exporter always
-   does) before re-importing a hand-edited bundle.
-3. **Check your public hut-fee table if you use the `{{hut-fees}}` embed
+1. **#2149 behaviour change — the role-based subscription exemption is dropped.**
+   Membership type — `subscriptionBehavior`, plus age tier where the type is
+   `BASED_ON_AGE_TIER` — is now the **sole authority** on whether a member owes a
+   subscription; the login `Role` enum is a pure permission concept again. A
+   fee-paying member who happens to hold `role=ADMIN` now shows their **real**
+   subscription status (Paid/Unpaid/Overdue) everywhere, instead of being
+   silently exempt. The migration seeds two built-in types so the dropped
+   exemption has a DB-backed `NOT_REQUIRED` fallback: **ADMIN**
+   (`NOT_REQUIRED`, `BLOCK_BOOKING`) and **LODGE** (`NOT_REQUIRED`,
+   `MEMBER_RATE`), and `defaultMembershipTypeKeyForRole` now maps ADMIN→ADMIN and
+   LODGE→LODGE (previously both fell through to the billable FULL type). Two
+   consequences to expect: a **bare admin service account can no longer book as
+   itself** (its fallback type is `BLOCK_BOOKING`) — a real fee-paying human who
+   holds the admin permission is assigned a real membership type and is
+   unaffected; and a **LODGE kiosk account still books** on behalf of members
+   (`MEMBER_RATE`) and never owes a subscription. The seed is idempotent and
+   self-healing: it create-if-missing **and** reconciles the
+   `isBuiltIn`/`isActive` + `bookingBehavior`/`subscriptionBehavior` of any
+   pre-existing **hand-created** ADMIN/LODGE row, while **preserving an
+   admin-edited name and description**. After cutover, confirm a bare
+   ADMIN/LODGE account is excluded from the billing preview (no
+   `MISSING_MEMBERSHIP_ASSIGNMENT`) and that any real fee-paying admin shows their
+   true subscription status.
+2. **#2147 is a forward-only expand — recovery is roll-forward, not down.** The
+   coverage `subscriptionId` UNIQUE is reshaped to a partial UNIQUE over active
+   claims so a retained released claim can coexist with a fresh active one. Once
+   any subscription accrues a **released + active coverage pair** after a
+   void→re-bill, re-creating the old full `subscriptionId` UNIQUE (the pre-#2147
+   shape) **fails on the duplicate `subscriptionId`**. There is no automated
+   down-migration for this; if you must recover, roll the application forward
+   (fix and redeploy the new colour) rather than attempting to restore the old
+   constraint. A voided invoice now reads as `NOT_INVOICED` (re-billable) where it
+   previously read as `UNPAID` (booking lockout) — an intended, documented
+   semantics change.
+3. **#2161 marker drain-window edge — use the standard confirm quiet window.**
+   During the brief old/new overlap the new colour can create active family
+   markers, and for the marker's documented use case (a real invoice or coverage
+   already covers the family) the old colour's #2147 suppression predicate is a
+   superset that already suppresses the same family, so no old-colour confirm
+   mints a second charge. The one residual edge is a **purely manual marker with
+   no DB-detectable invoice or coverage anywhere in the group**: an old-colour
+   admin confirm during drain would not see that marker and could bill the
+   family. Mitigate it the standard way — run the annual-billing **confirm in a
+   quiet admin window** across the brief overlap and cut over promptly.
+4. **Check your public hut-fee table if you use the `{{hut-fees}}` embed
    (#2129).** The embed now reads the authoritative per-membership-type rate
    table instead of the frozen legacy member/non-member one, and it renders
    **one column per publicly-listed membership type** (types priced identically
-   share a column). Which columns appear is now controlled entirely by the
+   share a column). Which columns appear is controlled entirely by the
    **Publicly listed** flag on each membership type — the same flag the joining-
    fee and annual-fee embeds already use. If you have not set that flag on the
    types you advertise, the table can collapse to a single column and quietly
@@ -138,11 +224,21 @@ hut fees, about which membership types are flagged **Publicly listed**.
    listed** on every type you want on the public rate card *before* upgrading,
    then check the page. Setup readiness also warns on **Seasons And Rates** when
    the embed is enabled but fewer than two types would produce a column.
+   Hand-authored Xero bundles still need a membership type on every `HUT_FEE` row
+   (a blank `membershipTypeKey` is a blocking row error), and export/import of
+   current-shape bundles is byte-identical to before.
 
-**Rollback boundary.** No schema change, so there is nothing to roll back at the
-database level: reverting to the previous colour simply restores the old
-importer, which still accepts legacy bundles, and the previous `{{hut-fees}}`
-rendering.
+**Rollback boundary.** A validator or pre-migration failure aborts the deploy
+before any schema change: the old colour is untouched and keeps serving. A failed
+cutover auto-restores traffic to the old colour, which then runs against the
+migrated schema — **every migration this release is old-colour compatible** (all
+four are expand/metadata-only, and the two forward-only expands, the #2147
+coverage-unique reshape and the #2161 new table, add nothing the old colour
+reads), so the old colour keeps working. Roll forward (fix and redeploy the new
+colour — the preferred path) or restore the pre-upgrade backup, losing all writes
+since it was taken. **There is no down-migration**, and the #2147 coverage-unique
+reshape cannot be automatically reversed once a void→re-bill has created a
+released + active coverage pair (recovery is roll-forward).
 
 ---
 
