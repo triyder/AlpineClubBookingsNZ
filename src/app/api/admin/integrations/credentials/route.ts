@@ -11,6 +11,11 @@ import { setIntegrationCredential } from "@/lib/integration-credentials";
 import { WeakAuthSecretError } from "@/lib/integration-crypto";
 import { deleteXeroTokens } from "@/lib/xero-token-store";
 import { XERO_CREDENTIAL_KEYS, XERO_PROVIDER } from "@/lib/xero-config";
+import {
+  STRIPE_PROVIDER,
+  STRIPE_WRITABLE_CREDENTIAL_KEYS,
+  clearStripeWebhookVerified,
+} from "@/lib/stripe-config";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 
@@ -35,6 +40,7 @@ const WRITABLE_CREDENTIALS: Record<string, readonly string[]> = {
     XERO_CREDENTIAL_KEYS.clientSecret,
     XERO_CREDENTIAL_KEYS.webhookKey,
   ],
+  [STRIPE_PROVIDER]: [...STRIPE_WRITABLE_CREDENTIAL_KEYS],
 };
 
 // GET /api/admin/integrations/credentials?provider=xero — METADATA-ONLY status.
@@ -114,6 +120,13 @@ async function applyVerifyReset(provider: string, key: string): Promise<void> {
       key === XERO_CREDENTIAL_KEYS.clientSecret)
   ) {
     await deleteXeroTokens();
+  }
+  // Stripe (epic decision 6): writing ANY Stripe credential — secret,
+  // publishable, or the signing secret — drops the webhook-verified marker so a
+  // green webhook badge can never survive a credential swap. The connection
+  // check itself is live-derived (no persisted verified flag to reset).
+  if (provider === STRIPE_PROVIDER) {
+    await clearStripeWebhookVerified();
   }
 }
 
