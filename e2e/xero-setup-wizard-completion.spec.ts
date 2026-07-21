@@ -121,5 +121,23 @@ test("operator completes the whole Xero wizard including verified webhooks", asy
   // The whole wizard is now complete.
   await expect(page.getByText(/Setup complete/i)).toBeVisible();
 
+  // Restore a re-runnable state for the sibling wizard spec (this file sorts
+  // first, so it runs first): disconnect Xero and rewind the wizard cursor to
+  // step one. Credentials stay stored — the sibling spec re-enters them via
+  // the Replace flow, which is itself worth exercising.
+  const disconnectRes = await page.request.post("/api/admin/xero/disconnect");
+  expect(disconnectRes.ok()).toBeTruthy();
+  const rewindRes = await page.request.post(
+    "/api/admin/integrations/wizard-progress",
+    {
+      data: {
+        wizardId: "xero",
+        currentStepId: "create-app",
+        completedStepIds: [],
+      },
+    },
+  );
+  expect(rewindRes.ok()).toBeTruthy();
+
   await page.close();
 });
