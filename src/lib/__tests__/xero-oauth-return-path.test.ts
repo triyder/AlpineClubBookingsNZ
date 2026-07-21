@@ -37,4 +37,20 @@ describe("sanitizeXeroOAuthReturnPath", () => {
     expect(sanitizeXeroOAuthReturnPath(lf)).toBeNull();
     expect(sanitizeXeroOAuthReturnPath(tab)).toBeNull();
   });
+
+  it("rejects `..` path-traversal segments", () => {
+    expect(sanitizeXeroOAuthReturnPath("/admin/../login")).toBeNull();
+    expect(sanitizeXeroOAuthReturnPath("/admin/xero/../../login")).toBeNull();
+    expect(sanitizeXeroOAuthReturnPath("/admin/xero/..")).toBeNull();
+  });
+
+  it("still accepts admin paths (incl. a query) with no `..` segment", () => {
+    expect(sanitizeXeroOAuthReturnPath("/admin/xero/setup?step=connect")).toBe(
+      "/admin/xero/setup?step=connect",
+    );
+    // A dot-dot INSIDE a segment (not a full `..` segment) is not traversal.
+    expect(sanitizeXeroOAuthReturnPath("/admin/xero..setup")).toBe(
+      "/admin/xero..setup",
+    );
+  });
 });

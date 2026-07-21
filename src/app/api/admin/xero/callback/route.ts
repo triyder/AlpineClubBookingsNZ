@@ -42,6 +42,10 @@ export async function GET(request: NextRequest) {
     sanitizeXeroOAuthReturnPath(
       request.cookies.get(XERO_OAUTH_RETURN_COOKIE)?.value,
     ) ?? "/admin/xero";
+  // Append our own query params with the right separator: a sanitised return
+  // path may already carry a query (e.g. ?step=connect), so a bare "?" would
+  // produce a malformed "…?a=b?connected=true" (#2080 hardening).
+  const returnQuerySep = returnPath.includes("?") ? "&" : "?";
 
   // Browser-facing OAuth callback: send unauthenticated/non-admin users to
   // the login page instead of returning a JSON error.
@@ -73,7 +77,7 @@ export async function GET(request: NextRequest) {
     );
     await handleXeroCallback(publicCallbackUrl, requestState ?? undefined);
     const response = NextResponse.redirect(
-      new URL(`${returnPath}?connected=true`, baseUrl)
+      new URL(`${returnPath}${returnQuerySep}connected=true`, baseUrl)
     );
     response.cookies.set(
       XERO_OAUTH_STATE_COOKIE,
@@ -90,7 +94,10 @@ export async function GET(request: NextRequest) {
     logger.error({ err: error }, "Xero callback error");
     const message = getSafeXeroCallbackErrorMessage(error);
     const response = NextResponse.redirect(
-      new URL(`${returnPath}?error=${encodeURIComponent(message)}`, baseUrl)
+      new URL(
+        `${returnPath}${returnQuerySep}error=${encodeURIComponent(message)}`,
+        baseUrl,
+      )
     );
     response.cookies.set(
       XERO_OAUTH_STATE_COOKIE,

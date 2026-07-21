@@ -11,9 +11,10 @@ const XERO_OAUTH_STATE_PATH = "/api/admin/xero";
 /**
  * Sanitise a post-OAuth return path to a SAME-ORIGIN admin path, defeating an
  * open redirect: it must be an absolute `/admin/...` path, never a
- * protocol-relative `//host`, a full URL, a backslash path, or carry control
- * characters (CR/LF header-injection). Returns null when it fails any check, so
- * the caller falls back to the default admin Xero page.
+ * protocol-relative `//host`, a full URL, a backslash path, contain a `..`
+ * traversal segment, or carry control characters (CR/LF header-injection).
+ * Returns null when it fails any check, so the caller falls back to the default
+ * admin Xero page.
  */
 export function sanitizeXeroOAuthReturnPath(
   raw: string | null | undefined,
@@ -26,6 +27,11 @@ export function sanitizeXeroOAuthReturnPath(
   for (let i = 0; i < raw.length; i += 1) {
     if (raw.charCodeAt(i) < 0x20) return null;
   }
+  // Reject `..` path-traversal segments (defence in depth — a decoded `..` must
+  // not walk the path out of /admin, e.g. `/admin/../login`). Only the PATH is
+  // checked; a legitimate query value may contain `..`.
+  const pathOnly = raw.split(/[?#]/, 1)[0];
+  if (pathOnly.split("/").some((segment) => segment === "..")) return null;
   return raw;
 }
 
