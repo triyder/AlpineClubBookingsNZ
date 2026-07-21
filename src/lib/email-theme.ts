@@ -27,7 +27,11 @@
  */
 
 import { getWebsiteThemeRenderState } from "@/lib/club-theme";
-import { DEFAULT_CLUB_THEME_VALUES } from "@/lib/club-theme-schema";
+import {
+  DEFAULT_CLUB_THEME_VALUES,
+  deriveBrandShims,
+  type ClubThemeValues,
+} from "@/lib/club-theme-schema";
 
 export interface EmailPalette {
   gold: string;
@@ -38,37 +42,25 @@ export interface EmailPalette {
   ridge: string;
 }
 
-const HEX_COLOUR = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i;
-
-function isHexColour(value: string): boolean {
-  return HEX_COLOUR.test(value);
-}
-
-// Site Style accepts hex OR oklch() colours, but email clients cannot render
-// oklch. Use the theme value only when it is hex; otherwise fall back to the
-// site-default hex for that role so the palette is ALWAYS all-hex and emails
-// can never emit oklch(). This is a fallback, not an oklch->hex conversion.
-function hexOrDefault(value: string, fallback: string): string {
-  return isHexColour(value) ? value : fallback;
-}
-
-/** Map normalised club-theme values -> the email palette roles (hex-guarded). */
-function toEmailPalette(v: {
-  brandGold: string;
-  brandCharcoal: string;
-  brandDeep: string;
-  brandMist: string;
-  brandSnow: string;
-  brandRidge: string;
-}): EmailPalette {
-  const d = DEFAULT_CLUB_THEME_VALUES;
+/**
+ * Map normalised club-theme values -> the email palette roles (#2187 D7).
+ *
+ * Colours derive from the LIGHT-mode generated substrate via `deriveBrandShims`
+ * (email is always light): `gold`/`deep` are the accent/neutral seeds, and
+ * `charcoal`/`mist`/`snow`/`ridge` are the neutral-ramp light steps (12/3/1/8).
+ * The generator only ever emits hex, so the palette is ALWAYS all-hex and emails
+ * can never carry an oklch() an email client cannot render — no per-role hex
+ * guard is needed now that the seed schema is hex-only (D6).
+ */
+function toEmailPalette(v: ClubThemeValues): EmailPalette {
+  const s = deriveBrandShims(v);
   return {
-    gold: hexOrDefault(v.brandGold, d.brandGold),
-    charcoal: hexOrDefault(v.brandCharcoal, d.brandCharcoal),
-    deep: hexOrDefault(v.brandDeep, d.brandDeep),
-    mist: hexOrDefault(v.brandMist, d.brandMist),
-    snow: hexOrDefault(v.brandSnow, d.brandSnow),
-    ridge: hexOrDefault(v.brandRidge, d.brandRidge),
+    gold: s.gold,
+    charcoal: s.charcoal,
+    deep: s.deep,
+    mist: s.mist,
+    snow: s.snow,
+    ridge: s.ridge,
   };
 }
 
