@@ -20,7 +20,7 @@ import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { buildCopiedSeasonPayload } from "@/lib/season-rate-editor";
 import {
   ADMIN_FORBIDDEN_SAVE_REASON,
-  AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 
@@ -424,14 +424,40 @@ export default function LodgeSetupWizardPage() {
     }
   }
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the section —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before its
+    content appears; a region injected already-populated is silently dropped by
+    some screen-reader/browser pairings. It is rendered in the loading branch too
+    so the region exists from the first paint rather than from whenever the
+    lodge fetch settles, and it sits OUTSIDE the `space-y-*` stack so the empty
+    wrapper an edit-capable admin gets costs no layout.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-6">
+      Your admin role can view the lodge setup wizard but cannot change
+      anything. Lodge edit access is required.
+    </AdminViewOnlySectionBanner>
+  );
+
   if (loading) {
-    return <div className="py-12 text-center text-muted-foreground">Loading...</div>;
+    return (
+      <div>
+        {viewOnlyBanner}
+        <div className="py-12 text-center text-muted-foreground">Loading...</div>
+      </div>
+    );
   }
   if (loadError || !lodge) {
     return (
-      <div className="space-y-4">
-        <p className="text-destructive">{loadError ?? "Lodge not found"}</p>
-        <BackLink href="/admin/lodges" label="Lodges" />
+      <div>
+        {viewOnlyBanner}
+        <div className="space-y-4">
+          <p className="text-destructive">{loadError ?? "Lodge not found"}</p>
+          <BackLink href="/admin/lodges" label="Lodges" />
+        </div>
       </div>
     );
   }
@@ -459,7 +485,9 @@ export default function LodgeSetupWizardPage() {
   }
 
   return (
-    <div className="space-y-6 max-w-3xl">
+    <div className="max-w-3xl">
+      {viewOnlyBanner}
+      <div className="space-y-6">
       <div>
         <BackLink
           href={`/admin/lodges/${encodeURIComponent(lodgeId)}`}
@@ -495,13 +523,6 @@ export default function LodgeSetupWizardPage() {
           </li>
         ))}
       </ol>
-
-      {!canEdit && (
-        <AdminViewOnlyNotice canEdit={canEdit}>
-          Your admin role can view the lodge setup wizard but cannot change
-          anything. Lodge edit access is required.
-        </AdminViewOnlyNotice>
-      )}
 
       {error && (
         <div className="bg-destructive/10 text-destructive px-4 py-3 rounded-md">
@@ -552,7 +573,7 @@ export default function LodgeSetupWizardPage() {
               />
             </div>
             <div className="flex gap-3">
-              <ViewOnlyActionButton canEdit={canEdit} onClick={saveIdentity} disabled={saving}>
+              <ViewOnlyActionButton canEdit={canEdit} describeReason={false} onClick={saveIdentity} disabled={saving}>
                 {saving ? "Saving..." : "Save and continue"}
               </ViewOnlyActionButton>
             </div>
@@ -620,7 +641,7 @@ export default function LodgeSetupWizardPage() {
               <Button variant="outline" onClick={goBack} disabled={saving}>
                 Back
               </Button>
-              <ViewOnlyActionButton canEdit={canEdit} onClick={seedRooms} disabled={saving || roomsSeeded !== null}>
+              <ViewOnlyActionButton canEdit={canEdit} describeReason={false} onClick={seedRooms} disabled={saving || roomsSeeded !== null}>
                 {saving ? "Creating..." : "Create rooms"}
               </ViewOnlyActionButton>
               <Button variant="ghost" onClick={goNext} disabled={saving}>
@@ -675,6 +696,7 @@ export default function LodgeSetupWizardPage() {
               </Button>
               <ViewOnlyActionButton
                 canEdit={canEdit}
+                describeReason={false}
                 onClick={seedLockers}
                 disabled={saving || lockersSeeded !== null}
               >
@@ -719,6 +741,7 @@ export default function LodgeSetupWizardPage() {
                   </select>
                   <ViewOnlyActionButton
                     canEdit={canEdit}
+                    describeReason={false}
                     onClick={copySeasons}
                     disabled={
                       saving ||
@@ -785,6 +808,7 @@ export default function LodgeSetupWizardPage() {
                   </select>
                   <ViewOnlyActionButton
                     canEdit={canEdit}
+                    describeReason={false}
                     onClick={copyChores}
                     disabled={
                       saving ||
@@ -871,6 +895,7 @@ export default function LodgeSetupWizardPage() {
           </CardContent>
         </Card>
       )}
+      </div>
     </div>
   );
 }

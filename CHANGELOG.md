@@ -4,6 +4,51 @@ All notable public reference-release changes should be recorded here.
 
 ## Unreleased
 
+- **Most admin areas now explain view-only access once, at the top, instead of
+  on each greyed-out button (#2160).** If your admin role can look at an area
+  but not change it, you now meet a short banner at the top of the section when
+  you arrive — "You have view-only access to this area", followed by what
+  specifically you cannot change there and which permission would let you. The
+  greyed-out buttons below it no longer each carry their own hidden copy of that
+  explanation. The banner belongs to a section rather than to a page, so a
+  screen built from several sections — Security, or Booking Requests — shows it
+  once per section, three times in those two cases. This is the
+  pattern Booking Policies adopted in #2142 (below), now applied across most of
+  the admin tree: about four out of five gated buttons (205 of 258) are now
+  explained by a banner instead of individually. **Nothing about who can do what
+  has changed** — the same
+  people can edit the same things, every button is gated exactly as it was, and
+  no write path, price, or permission moved.
+
+  The reason for the change is that the old per-button explanation reached
+  almost nobody. A greyed-out button is skipped by the keyboard, so it was
+  attached to something most people never land on, and its hover tooltip never
+  appeared at all because greyed-out buttons do not respond to the mouse. Saying
+  it once, at the top, in the normal reading order, means a screen-reader user
+  hears it on arrival and a sighted user simply reads it.
+
+  **One honest limitation.** Greyed-out buttons are still skipped by the
+  keyboard — the banner tells you why the area is read-only, but you still
+  cannot tab onto a disabled button to ask it. Making those buttons focusable
+  was considered and deliberately not done: it would turn every gated control
+  into a clickable one that has to be individually stopped from saving, and the
+  risk of getting that wrong on a money or membership screen outweighed the
+  benefit.
+
+  **What is not converted.** 53 controls still carry their own per-button
+  explanation. Most of that is one screen: **the member detail page**, where 25
+  buttons across nine per-record cards (credit, lifecycle, committee, partner
+  link, deletion, dependents, parent links, lodge access, seasonal membership)
+  are unchanged. Those cards *could* each show the banner, but one member page
+  shows all nine at once, so it would repeat the same sentence nine times down a
+  single screen — the same stacking that Security and Booking Requests already
+  do three times over, at a scale where it stops being acceptable. Whether that
+  collapses to one banner for the whole page, there and on the pages that
+  already stack, is a separate open decision (#2168). The rest — 28 controls — are places no banner
+  can reach: inside a pop-up dialog or dropdown menu, or in small toolbars
+  dropped into another page's layout. See `docs/ARCHITECTURE.md` and
+  `docs/STYLE_GUIDE.md`.
+
 - **Cleared four new dependency security advisories that were failing CI.**
   `npm audit` began reporting one moderate and three high-severity advisories
   against two transitive packages, which turned the required `verify` job red on
@@ -333,9 +378,9 @@ All notable public reference-release changes should be recorded here.
   paint, ahead of each section's "Loading…" state, and only its *content*
   appears when access resolves: a live region injected already-populated is
   silently dropped by some screen reader and browser combinations. The buttons
-  stay disabled exactly as before; only the explanation moved. This is scoped to
-  Booking Policies: every other admin surface keeps the per-button reason
-  unchanged, and widening the pattern is tracked in #2160.
+  stay disabled exactly as before; only the explanation moved. This was scoped
+  to Booking Policies; it has since been rolled across the whole admin tree
+  (#2160, below).
 
   Second, the group discount card's Save is no longer clickable while the form
   is unchanged. Opening **Edit** and clicking **Save** without touching a field

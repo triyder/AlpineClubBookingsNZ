@@ -24,7 +24,7 @@ import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import {
   ADMIN_FORBIDDEN_SAVE_REASON,
-  AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 
@@ -218,16 +218,37 @@ export default function AdminModulesPage() {
     }
   }
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the section —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before its
+    content appears; a region injected already-populated is silently dropped by
+    some screen-reader/browser pairings. It sits OUTSIDE the `space-y-*` stack so
+    the empty wrapper an edit-capable admin gets costs no layout.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-6">
+      Your admin role can view the module settings but cannot change them.
+      Support edit access is required.
+    </AdminViewOnlySectionBanner>
+  );
+
   if (loading && !payload) {
     return (
-      <div className="flex min-h-[320px] items-center justify-center">
-        <Loader2 className="h-6 w-6 animate-spin text-slate-500" />
+      <div>
+        {viewOnlyBanner}
+        <div className="flex min-h-[320px] items-center justify-center">
+          <Loader2 className="h-6 w-6 animate-spin text-slate-500" />
+        </div>
       </div>
     );
   }
 
   return (
-    <div ref={pageRef} className="space-y-8">
+    <div>
+      {viewOnlyBanner}
+      <div ref={pageRef} className="space-y-8">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Modules</h1>
@@ -249,6 +270,7 @@ export default function AdminModulesPage() {
           </Button>
           <ViewOnlyActionButton
             canEdit={canEdit}
+            describeReason={false}
             type="button"
             onClick={() => void saveModules()}
             disabled={!dirty || saving || draft === null}
@@ -262,13 +284,6 @@ export default function AdminModulesPage() {
           </ViewOnlyActionButton>
         </div>
       </div>
-
-      {!canEdit && (
-        <AdminViewOnlyNotice canEdit={canEdit}>
-          Your admin role can view the module settings but cannot change them.
-          Support edit access is required.
-        </AdminViewOnlyNotice>
-      )}
 
       {(error || savedMessage) && (
         <div
@@ -369,6 +384,7 @@ export default function AdminModulesPage() {
             </Card>
           );
         })}
+      </div>
       </div>
     </div>
   );

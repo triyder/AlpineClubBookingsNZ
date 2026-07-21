@@ -15,7 +15,7 @@ import { Label } from "@/components/ui/label";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import {
   ADMIN_FORBIDDEN_SAVE_REASON,
-  AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 
@@ -101,7 +101,25 @@ export function LodgeDisplaySettingsCard({ lodgeId }: { lodgeId: string }) {
     if (response.ok) await loadSettings();
   }
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the section —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before its
+    content appears; a region injected already-populated is silently dropped by
+    some screen-reader/browser pairings. It sits OUTSIDE the card's `space-y-*`
+    stack so the empty wrapper an edit-capable admin gets costs no layout.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-6">
+      Your admin role can view the lobby display settings but cannot change
+      them. Lodge edit access is required.
+    </AdminViewOnlySectionBanner>
+  );
+
   return (
+    <div>
+      {viewOnlyBanner}
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base">
@@ -115,12 +133,6 @@ export function LodgeDisplaySettingsCard({ lodgeId }: { lodgeId: string }) {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        {!canEdit ? (
-          <AdminViewOnlyNotice canEdit={canEdit}>
-            Your admin role can view the lobby display settings but cannot change
-            them. Lodge edit access is required.
-          </AdminViewOnlyNotice>
-        ) : null}
         <div className="space-y-1">
           <Label htmlFor="granularity">Guest name display</Label>
           <select
@@ -213,6 +225,7 @@ export function LodgeDisplaySettingsCard({ lodgeId }: { lodgeId: string }) {
               />
               <ViewOnlyActionButton
                 canEdit={canEdit}
+                describeReason={false}
                 variant="outline"
                 onClick={() =>
                   setConfig((current) => current.filter((_, i) => i !== index))
@@ -224,6 +237,7 @@ export function LodgeDisplaySettingsCard({ lodgeId }: { lodgeId: string }) {
           ))}
           <ViewOnlyActionButton
             canEdit={canEdit}
+            describeReason={false}
             variant="outline"
             onClick={() => setConfig((current) => [...current, { key: "", value: "" }])}
           >
@@ -233,10 +247,11 @@ export function LodgeDisplaySettingsCard({ lodgeId }: { lodgeId: string }) {
 
         {message && <p className="text-sm font-medium">{message}</p>}
 
-        <ViewOnlyActionButton canEdit={canEdit} onClick={() => void saveSettings()}>
+        <ViewOnlyActionButton canEdit={canEdit} describeReason={false} onClick={() => void saveSettings()}>
           Save display settings
         </ViewOnlyActionButton>
       </CardContent>
     </Card>
+    </div>
   );
 }

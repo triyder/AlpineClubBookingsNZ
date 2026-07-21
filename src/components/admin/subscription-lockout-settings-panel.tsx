@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/select";
 import {
   AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import type { AdminPermissionMatrix } from "@/lib/admin-permissions";
@@ -297,8 +298,36 @@ export function SubscriptionLockoutSettingsPanel({
     return null;
   }
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the section —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before its
+    content appears; a region injected already-populated is silently dropped by
+    some screen-reader/browser pairings. It is rendered in the loading branch too
+    so the region exists from the first paint rather than from whenever the
+    settings fetch settles, and it sits OUTSIDE the `space-y-*` stack so the
+    empty wrapper an edit-capable admin gets costs no layout.
+
+    The narrower finance-scoped `AdminViewOnlyNotice` further down stays put: it
+    covers only the subscription account and item codes inside that one card, and
+    a membership-edit admin can still change the other fields there, so it is not
+    the same statement as this section-level banner.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={membershipCanEdit} className="mb-6">
+      Your admin role can view the membership booking-lockout settings but
+      cannot change them.
+    </AdminViewOnlySectionBanner>
+  );
+
   if (loading || !settings) {
-    return <p className="text-sm text-muted-foreground">Loading settings…</p>;
+    return (
+      <div>
+        {viewOnlyBanner}
+        <p className="text-sm text-muted-foreground">Loading settings…</p>
+      </div>
+    );
   }
 
   const xeroConnected = accounts !== null;
@@ -316,13 +345,9 @@ export function SubscriptionLockoutSettingsPanel({
   );
 
   return (
-    <div className="space-y-6">
-      {!membershipCanEdit ? (
-        <AdminViewOnlyNotice canEdit={membershipCanEdit}>
-          Your admin role can view the membership booking-lockout settings but
-          cannot change them.
-        </AdminViewOnlyNotice>
-      ) : null}
+    <div>
+      {viewOnlyBanner}
+      <div className="space-y-6">
       <Card>
         <CardHeader>
           <CardTitle>Booking lockout</CardTitle>
@@ -693,9 +718,15 @@ export function SubscriptionLockoutSettingsPanel({
       </Card>
       ) : null}
 
-      <ViewOnlyActionButton canEdit={canSave} onClick={save} disabled={saving}>
+      {/*
+        `canSave` is `membershipCanEdit || financeCanEdit`, so whenever this
+        button is gated `membershipCanEdit` is false and the section banner above
+        is showing — the opt-out never leaves the control unexplained.
+      */}
+      <ViewOnlyActionButton canEdit={canSave} describeReason={false} onClick={save} disabled={saving}>
         {saving ? "Saving…" : "Save settings"}
       </ViewOnlyActionButton>
+      </div>
     </div>
   );
 }

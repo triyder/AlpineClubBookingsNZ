@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import {
-  AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 
@@ -48,20 +48,48 @@ export function ClubIdentityPanel() {
     load();
   }, []);
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the section —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before its
+    content appears; a region injected already-populated is silently dropped by
+    some screen-reader/browser pairings. It sits OUTSIDE the `space-y-*` stack so
+    the empty wrapper an edit-capable admin gets costs no layout. The hoisted
+    const is rendered in the failed/loading branches too, so the region exists
+    from the first paint rather than from whenever the fetch settles. The
+    `viewOnlyReasonId` wrapper is kept because the disabled inputs below still
+    point their `aria-describedby` at it.
+  */
+  const viewOnlyBanner = (
+    <div id={viewOnlyReasonId}>
+      <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-4">
+        Content view access can inspect club identity. Content edit access is
+        required to change it.
+      </AdminViewOnlySectionBanner>
+    </div>
+  );
+
   if (loadFailed)
     return (
-      <div className="space-y-3">
-        <p className="text-sm text-danger">
-          Could not load club identity settings.
-        </p>
-        <Button variant="outline" onClick={load}>
-          Retry
-        </Button>
+      <div>
+        {viewOnlyBanner}
+        <div className="space-y-3">
+          <p className="text-sm text-danger">
+            Could not load club identity settings.
+          </p>
+          <Button variant="outline" onClick={load}>
+            Retry
+          </Button>
+        </div>
       </div>
     );
   if (!settings)
     return (
-      <p className="text-sm text-muted-foreground">Loading club identity…</p>
+      <div>
+        {viewOnlyBanner}
+        <p className="text-sm text-muted-foreground">Loading club identity…</p>
+      </div>
     );
 
   async function save() {
@@ -89,20 +117,14 @@ export function ClubIdentityPanel() {
   }
 
   return (
-    <div className="space-y-4">
+    <div>
+      {viewOnlyBanner}
+      <div className="space-y-4">
       <p className="text-sm text-muted-foreground">
         These override the file configuration. Leave a field blank to fall back
         to the configured default. Changes appear across the site and in emails
         within a few seconds.
       </p>
-      {!canEdit ? (
-        <div id={viewOnlyReasonId}>
-          <AdminViewOnlyNotice canEdit={canEdit}>
-            Content view access can inspect club identity. Content edit access is
-            required to change it.
-          </AdminViewOnlyNotice>
-        </div>
-      ) : null}
       <div className="grid gap-4 sm:grid-cols-2">
         {fields.map(([key, label, placeholder]) => (
           <div key={key} className="space-y-1.5">
@@ -120,9 +142,10 @@ export function ClubIdentityPanel() {
           </div>
         ))}
       </div>
-      <ViewOnlyActionButton canEdit={canEdit} disabled={saving} onClick={save}>
+      <ViewOnlyActionButton canEdit={canEdit} describeReason={false} disabled={saving} onClick={save}>
         {saving ? "Saving…" : "Save club identity"}
       </ViewOnlyActionButton>
+      </div>
     </div>
   );
 }

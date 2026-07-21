@@ -30,7 +30,7 @@ import {
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import {
   AdminForbiddenSaveNotice,
-  AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 
@@ -238,19 +238,34 @@ export function MountainConditionsPanel() {
     frozenUntil && new Date(frozenUntil).getTime() > recordSyncedAt,
   );
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the panel —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before
+    its content appears; a region injected already-populated is silently dropped
+    by some screen-reader/browser pairings. That is why it is hoisted above the
+    loading early-return and rendered in both branches. The wrapper itself
+    renders no box and takes no layout, so an edit-capable admin pays nothing.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-4">
+      Your admin role can view mountain conditions but cannot change them.
+    </AdminViewOnlySectionBanner>
+  );
+
   if (loading) {
     return (
-      <p className="text-sm text-slate-500">Loading mountain conditions...</p>
+      <>
+        {viewOnlyBanner}
+        <p className="text-sm text-slate-500">Loading mountain conditions...</p>
+      </>
     );
   }
 
   return (
     <>
-      {!canEdit ? (
-        <AdminViewOnlyNotice canEdit={canEdit} className="mb-4">
-          Your admin role can view mountain conditions but cannot change them.
-        </AdminViewOnlyNotice>
-      ) : null}
+      {viewOnlyBanner}
       {forbidden ? <AdminForbiddenSaveNotice className="mb-4" /> : null}
       <div className="mb-4 flex items-center justify-end gap-2">
         <Button
@@ -265,6 +280,7 @@ export function MountainConditionsPanel() {
         </Button>
         <ViewOnlyActionButton
           canEdit={canEdit}
+          describeReason={false}
           type="button"
           variant="outline"
           onClick={refreshFromUpstream}
@@ -320,6 +336,7 @@ export function MountainConditionsPanel() {
           <div className="flex justify-end">
             <ViewOnlyActionButton
               canEdit={canEdit}
+              describeReason={false}
               type="button"
               onClick={saveVisibility}
               disabled={savingVisibility}
@@ -375,6 +392,7 @@ export function MountainConditionsPanel() {
             </div>
             <ViewOnlyActionButton
               canEdit={canEdit}
+              describeReason={false}
               type="button"
               onClick={saveRecord}
               disabled={saving || refreshing}

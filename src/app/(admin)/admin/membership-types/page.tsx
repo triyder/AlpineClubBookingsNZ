@@ -44,7 +44,7 @@ import { getSeasonYear } from "@/lib/utils";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import {
   ADMIN_FORBIDDEN_SAVE_REASON,
-  AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 
@@ -961,6 +961,7 @@ function MembershipTypeList({
               <div className="flex flex-wrap gap-2 xl:justify-end">
                 <ViewOnlyActionButton
                   canEdit={canEdit}
+                  describeReason={false}
                   type="button"
                   variant="outline"
                   onClick={() => onEdit(type)}
@@ -970,6 +971,7 @@ function MembershipTypeList({
                 </ViewOnlyActionButton>
                 <ViewOnlyActionButton
                   canEdit={canEdit}
+                  describeReason={false}
                   type="button"
                   variant="outline"
                   onClick={() => onSetActive(type, !type.isActive)}
@@ -987,6 +989,7 @@ function MembershipTypeList({
                 {!type.isBuiltIn && (
                   <ViewOnlyActionButton
                     canEdit={canEdit}
+                    describeReason={false}
                     type="button"
                     variant="outline"
                     onClick={() => onDelete(type)}
@@ -1511,12 +1514,39 @@ export default function AdminMembershipTypesPage() {
     }
   }
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the section —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before its
+    content appears; a region injected already-populated is silently dropped by
+    some screen-reader/browser pairings. It is rendered in the loading branch too
+    so the region exists from the first paint rather than from whenever the
+    membership-type fetch settles, and it sits OUTSIDE the `space-y-*` stack so
+    the empty wrapper an edit-capable admin gets costs no layout.
+
+    It covers `MembershipTypeList` as well — that component lives in this file
+    and is only ever rendered by this page, beneath this banner. The two DIALOGS
+    above are a different matter: their contents are a separate accessibility
+    container this banner does not reach, so their gated buttons keep their own
+    per-button reason.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-8">
+      Your admin role can view membership types but cannot change them.
+      Membership edit access is required.
+    </AdminViewOnlySectionBanner>
+  );
+
   if (loading && membershipTypes.length === 0) {
     return (
-      <div className="space-y-6">
-        <BackLink href="/admin/membership-setup" label="Membership & Members" />
-        <div className="flex min-h-[320px] items-center justify-center">
-          <Loader2 className="h-6 w-6 animate-spin text-slate-500" />
+      <div>
+        {viewOnlyBanner}
+        <div className="space-y-6">
+          <BackLink href="/admin/membership-setup" label="Membership & Members" />
+          <div className="flex min-h-[320px] items-center justify-center">
+            <Loader2 className="h-6 w-6 animate-spin text-slate-500" />
+          </div>
         </div>
       </div>
     );
@@ -1528,7 +1558,9 @@ export default function AdminMembershipTypesPage() {
       : Boolean(editingType && savingId === editingType.id);
 
   return (
-    <div ref={pageRef} className="space-y-8">
+    <div ref={pageRef}>
+      {viewOnlyBanner}
+      <div className="space-y-8">
       <BackLink href="/admin/membership-setup" label="Membership & Members" />
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
@@ -1553,6 +1585,7 @@ export default function AdminMembershipTypesPage() {
           </Button>
           <ViewOnlyActionButton
             canEdit={canEdit}
+            describeReason={false}
             type="button"
             onClick={openNewEditor}
           >
@@ -1561,13 +1594,6 @@ export default function AdminMembershipTypesPage() {
           </ViewOnlyActionButton>
         </div>
       </div>
-
-      {!canEdit ? (
-        <AdminViewOnlyNotice canEdit={canEdit}>
-          Your admin role can view membership types but cannot change them.
-          Membership edit access is required.
-        </AdminViewOnlyNotice>
-      ) : null}
 
       {(error || savedMessage) && (
         <div
@@ -1663,6 +1689,7 @@ export default function AdminMembershipTypesPage() {
             </div>
             <ViewOnlyActionButton
               canEdit={canEdit}
+              describeReason={false}
               type="button"
               variant="outline"
               onClick={() => void rollForwardAssignments(true)}
@@ -1680,6 +1707,7 @@ export default function AdminMembershipTypesPage() {
             </ViewOnlyActionButton>
             <ViewOnlyActionButton
               canEdit={canEdit}
+              describeReason={false}
               type="button"
               onClick={() => void rollForwardAssignments(false)}
               disabled={
@@ -1819,6 +1847,7 @@ export default function AdminMembershipTypesPage() {
       />
 
       {confirmDialog}
+      </div>
     </div>
   );
 }

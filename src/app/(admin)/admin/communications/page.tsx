@@ -9,7 +9,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import {
-  AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
@@ -119,21 +119,32 @@ export default function CommunicationsPage() {
     }
   }
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the section —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before its
+    content appears; a region injected already-populated is silently dropped by
+    some screen-reader/browser pairings. It sits OUTSIDE the `space-y-*` stack so
+    the empty wrapper an edit-capable admin gets costs no layout.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-6">
+      Your admin role can view communications but cannot send bulk emails to
+      members.
+    </AdminViewOnlySectionBanner>
+  );
+
   return (
-    <div className="space-y-6">
+    <div>
+      {viewOnlyBanner}
+      <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-slate-900">Communications</h1>
         <p className="text-sm text-slate-500">
           Send bulk emails to club members. Respects notification preferences.
         </p>
       </div>
-
-      {!canEdit && (
-        <AdminViewOnlyNotice canEdit={canEdit}>
-          Your admin role can view communications but cannot send bulk emails to
-          members.
-        </AdminViewOnlyNotice>
-      )}
 
       {/* Compose Form */}
       <Card>
@@ -210,6 +221,7 @@ export default function CommunicationsPage() {
 
             <ViewOnlyActionButton
               canEdit={canEdit}
+              describeReason={false}
               type="submit"
               disabled={sending || !subject || !body}
             >
@@ -270,6 +282,7 @@ export default function CommunicationsPage() {
           )}
         </CardContent>
       </Card>
+      </div>
     </div>
   );
 }

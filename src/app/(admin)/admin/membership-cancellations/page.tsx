@@ -7,7 +7,7 @@ import { Archive, AlertTriangle, CheckCircle2, RefreshCw, XCircle } from "lucide
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
-  AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
@@ -464,20 +464,32 @@ export default function MembershipCancellationsPage() {
     }
   }
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the section —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before its
+    content appears; a region injected already-populated is silently dropped by
+    some screen-reader/browser pairings. It sits OUTSIDE the `space-y-*` stack so
+    the empty wrapper an edit-capable admin gets costs no layout.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEditMembership} className="mb-6">
+      Your admin role can view membership cancellations but cannot
+      approve or reject them.
+    </AdminViewOnlySectionBanner>
+  );
+
   return (
-    <div className="space-y-6">
+    <div>
+      {viewOnlyBanner}
+      <div className="space-y-6">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">
             Membership Cancellations
           </h1>
           <p className="mt-1 text-sm text-slate-500">{pendingSummary}</p>
-          {!canEditMembership && (
-            <AdminViewOnlyNotice canEdit={canEditMembership} className="mt-3">
-              Your admin role can view membership cancellations but cannot
-              approve or reject them.
-            </AdminViewOnlyNotice>
-          )}
         </div>
         <div className="flex items-center gap-2">
           <Select
@@ -637,6 +649,7 @@ export default function MembershipCancellationsPage() {
                         <div className="flex flex-wrap gap-2">
                           <ViewOnlyActionButton
                             canEdit={canEditMembership}
+                            describeReason={false}
                             variant="outline"
                             className="border-red-200 text-red-700 hover:bg-red-50"
                             disabled={Boolean(isSubmitting)}
@@ -647,6 +660,7 @@ export default function MembershipCancellationsPage() {
                           </ViewOnlyActionButton>
                           <ViewOnlyActionButton
                             canEdit={canEditMembership}
+                            describeReason={false}
                             variant="destructive"
                             disabled={Boolean(isSubmitting)}
                             onClick={() =>
@@ -847,6 +861,7 @@ export default function MembershipCancellationsPage() {
                               <div className="flex flex-wrap gap-2">
                                 <ViewOnlyActionButton
                                   canEdit={canEditMembership}
+                                  describeReason={false}
                                   variant="outline"
                                   className="border-red-200 text-red-700 hover:bg-red-50"
                                   disabled={rejectDisabled}
@@ -863,6 +878,7 @@ export default function MembershipCancellationsPage() {
                                 </ViewOnlyActionButton>
                                 <ViewOnlyActionButton
                                   canEdit={canEditMembership}
+                                  describeReason={false}
                                   disabled={approveDisabled}
                                   onClick={() =>
                                     openNotifyChoice(
@@ -947,6 +963,7 @@ export default function MembershipCancellationsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      </div>
     </div>
   );
 }

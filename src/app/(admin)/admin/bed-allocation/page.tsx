@@ -28,7 +28,7 @@ import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Spinner } from "@/components/ui/spinner";
 import {
-  AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -948,8 +948,26 @@ export default function AdminBedAllocationPage() {
     !focusedBookingVisible &&
     payload.focusedBooking === null;
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the section —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before its
+    content appears; a region injected already-populated is silently dropped by
+    some screen-reader/browser pairings. It sits OUTSIDE the `space-y-*` stack so
+    the empty wrapper an edit-capable admin gets costs no layout.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEditBookings} className="mb-6">
+      Your admin role can view bed allocation but cannot move, allocate,
+      approve, or save assignments.
+    </AdminViewOnlySectionBanner>
+  );
+
   return (
-    <div className="space-y-6">
+    <div>
+      {viewOnlyBanner}
+      <div className="space-y-6">
       <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-foreground">Bed Allocation</h1>
@@ -1020,13 +1038,6 @@ export default function AdminBedAllocationPage() {
         The board shows up to {MAX_RANGE_NIGHTS} nights at a time.
       </p>
 
-      {!canEditBookings ? (
-        <AdminViewOnlyNotice canEdit={canEditBookings}>
-          Your admin role can view bed allocation but cannot move, allocate,
-          approve, or save assignments.
-        </AdminViewOnlyNotice>
-      ) : null}
-
       {showFocusedBookingUnavailable ? (
         <Alert variant="warning">
           Focused booking is not on the board — it may be cancelled or removed.
@@ -1063,6 +1074,7 @@ export default function AdminBedAllocationPage() {
           </div>
           <ViewOnlyActionButton
             canEdit={canEditBookings}
+            describeReason={false}
             onClick={() => void saveSettings()}
             disabled={saving === "settings"}
             className="gap-2 md:w-auto"
@@ -1123,6 +1135,7 @@ export default function AdminBedAllocationPage() {
               <div className="flex flex-wrap gap-3">
                 <ViewOnlyActionButton
                   canEdit={canEditBookings}
+                  describeReason={false}
                   onClick={() => void runAutoAllocation()}
                   disabled={
                     !payload.settings.autoAllocationEnabled ||
@@ -1136,6 +1149,7 @@ export default function AdminBedAllocationPage() {
                 </ViewOnlyActionButton>
                 <ViewOnlyActionButton
                   canEdit={canEditBookings}
+                  describeReason={false}
                   variant="outline"
                   onClick={() => void approveVisible()}
                   disabled={unapprovedCount === 0 || saving === "approve"}
@@ -1245,6 +1259,7 @@ export default function AdminBedAllocationPage() {
           </DragOverlay>
         </DndContext>
       ) : null}
+      </div>
     </div>
   );
 }

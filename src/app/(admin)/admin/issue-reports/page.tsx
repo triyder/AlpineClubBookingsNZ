@@ -13,7 +13,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
-  AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
@@ -200,21 +200,36 @@ export default function AdminIssueReportsPage() {
     }
   }
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the section —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before its
+    content appears; a region injected already-populated is silently dropped by
+    some screen-reader/browser pairings. It sits OUTSIDE the `space-y-*` stack so
+    the empty wrapper an edit-capable admin gets costs no layout.
+
+    The three gated controls on this page all live inside the report Dialog — a
+    separate accessibility container this page-level banner does not cover — so
+    they keep their own per-button reason (`describeReason` left at its default).
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-6">
+      Your admin role can view issue reports but cannot resolve, reopen, or
+      delete their screenshots.
+    </AdminViewOnlySectionBanner>
+  );
+
   return (
-    <div className="space-y-6">
+    <div>
+      {viewOnlyBanner}
+      <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-slate-900">Issue Reports</h1>
         <p className="mt-1 text-sm text-slate-500">
           Review member issue reports and manage retained screenshots.
         </p>
       </div>
-
-      {!canEdit && (
-        <AdminViewOnlyNotice canEdit={canEdit}>
-          Your admin role can view issue reports but cannot resolve, reopen, or
-          delete their screenshots.
-        </AdminViewOnlyNotice>
-      )}
 
       <Card>
         <CardHeader>
@@ -461,6 +476,7 @@ export default function AdminIssueReportsPage() {
           ) : null}
         </DialogContent>
       </Dialog>
+      </div>
     </div>
   );
 }

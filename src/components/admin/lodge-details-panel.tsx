@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import {
-  AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 
@@ -66,6 +66,27 @@ export function LodgeDetailsPanel() {
     load();
   }, []);
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the section —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before its
+    content appears; a region injected already-populated is silently dropped by
+    some screen-reader/browser pairings. It sits OUTSIDE the `space-y-*` stack so
+    the empty wrapper an edit-capable admin gets costs no layout. The `id`
+    wrapper is retained because the disabled text INPUTS below (which are not
+    ViewOnlyActionButtons and keep their own description) point their
+    `aria-describedby` at it.
+  */
+  const viewOnlyBanner = (
+    <div id={viewOnlyReasonId}>
+      <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-4">
+        Lodge view access can inspect lodge details. Lodge edit access is
+        required to change them.
+      </AdminViewOnlySectionBanner>
+    </div>
+  );
+
   if (accessDenied)
     return (
       <p className="text-sm text-muted-foreground">
@@ -91,7 +112,10 @@ export function LodgeDetailsPanel() {
     );
   if (!lodge)
     return (
-      <p className="text-sm text-muted-foreground">Loading lodge details…</p>
+      <div>
+        {viewOnlyBanner}
+        <p className="text-sm text-muted-foreground">Loading lodge details…</p>
+      </div>
     );
 
   async function save() {
@@ -119,20 +143,14 @@ export function LodgeDetailsPanel() {
   }
 
   return (
-    <div className="space-y-4">
+    <div>
+      {viewOnlyBanner}
+      <div className="space-y-4">
       <p className="text-sm text-muted-foreground">
         The lodge name and address appear on the public site (contact page and
         the {"{{lodge-name}}"} / {"{{lodge-address}}"} content tokens). The door
         code is only shared in confirmation emails.
       </p>
-      {!canEdit ? (
-        <div id={viewOnlyReasonId}>
-          <AdminViewOnlyNotice canEdit={canEdit}>
-            Lodge view access can inspect lodge details. Lodge edit access is
-            required to change them.
-          </AdminViewOnlyNotice>
-        </div>
-      ) : null}
       <div className="space-y-1.5">
         <Label htmlFor="lodge-details-name">Lodge name</Label>
         <Input
@@ -182,9 +200,10 @@ export function LodgeDetailsPanel() {
           }
         />
       </div>
-      <ViewOnlyActionButton canEdit={canEdit} disabled={saving} onClick={save}>
+      <ViewOnlyActionButton canEdit={canEdit} describeReason={false} disabled={saving} onClick={save}>
         {saving ? "Saving…" : "Save lodge details"}
       </ViewOnlyActionButton>
+      </div>
     </div>
   );
 }
