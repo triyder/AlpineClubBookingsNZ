@@ -278,7 +278,17 @@ describe("database theme app-shell contract", () => {
   // Nothing asserted that until now, so a `:root` retune would have left the
   // un-themed app pairing a tone derived from one palette against surfaces from
   // another, with every existing test still green.
-  it("keeps the un-themed :root surfaces byte-identical to the default palette", () => {
+  //
+  // #2187: the club theme contracted from seven stored brand columns to three
+  // seeds (`brandGold`/`brandDeep`/`brandSafety`). Those three are the only
+  // values `DEFAULT_CLUB_THEME_VALUES` still carries, and the globals.css `:root`
+  // comment requires them to stay in lockstep with it "so the static app chrome
+  // and the DB default agree for a fresh fork". The four former-column surfaces
+  // (charcoal/ridge/mist/snow) are no longer stored — they are derived at render
+  // time from the substrate neutral ramp (see `deriveBrandShims`) — so they are
+  // dropped from this byte-identity pin. Their static `:root` fallbacks are a
+  // separate globals.css concern, not a `DEFAULT_CLUB_THEME_VALUES` mirror.
+  it("keeps the un-themed :root seed surfaces byte-identical to the default palette", () => {
     const globals = readRepoFile("src/app/globals.css");
     const rootRules = globals.slice(
       globals.indexOf(":root {"),
@@ -289,11 +299,7 @@ describe("database theme app-shell contract", () => {
 
     for (const [variable, value] of [
       ["--brand-gold", DEFAULT_CLUB_THEME_VALUES.brandGold],
-      ["--brand-charcoal", DEFAULT_CLUB_THEME_VALUES.brandCharcoal],
       ["--brand-deep", DEFAULT_CLUB_THEME_VALUES.brandDeep],
-      ["--brand-ridge", DEFAULT_CLUB_THEME_VALUES.brandRidge],
-      ["--brand-mist", DEFAULT_CLUB_THEME_VALUES.brandMist],
-      ["--brand-snow", DEFAULT_CLUB_THEME_VALUES.brandSnow],
       ["--brand-safety", DEFAULT_CLUB_THEME_VALUES.brandSafety],
     ] as const) {
       expect(rootRules).toContain(`${variable}: ${value};`);

@@ -33,11 +33,7 @@ function stubDb(): ReadDb {
     clubTheme: {
       findUnique: vi.fn().mockResolvedValue({
         brandGold: "#e0a800",
-        brandCharcoal: "#222",
         brandDeep: "#111",
-        brandRidge: "#333",
-        brandMist: "#eee",
-        brandSnow: "#fff",
         brandSafety: "#f00",
         headingFontKey: "LEAGUE_SPARTAN",
         bodyFontKey: "INTER",

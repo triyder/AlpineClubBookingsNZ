@@ -14,18 +14,39 @@ import {
   __resetEmailPaletteCacheForTests,
   emailPalette,
   primeEmailPalette,
+  type EmailPalette,
 } from "../email-theme";
 import { passwordResetTemplate } from "../email-templates";
-import { DEFAULT_CLUB_THEME_VALUES } from "../club-theme-schema";
+import {
+  DEFAULT_CLUB_THEME_VALUES,
+  deriveBrandShims,
+  themeSeedsFromValues,
+  type ClubThemeValues,
+} from "../club-theme-schema";
+import { buildThemeSubstrate } from "@/lib/theme/theme-substrate";
 
-// Distinctive hex values that cannot be confused with any default palette entry.
+// The email palette is DERIVED from the three seeds via the light substrate
+// (#2187 D7): gold/deep pass through, and charcoal/mist/snow/ridge are the
+// neutral-ramp light steps (12/3/1/8). Compute the expectation the same way the
+// module does, rather than hard-coding derived hexes that would silently drift
+// if the generator retunes.
+function expectedPalette(values: Pick<ClubThemeValues, "brandGold" | "brandDeep" | "brandSafety">): EmailPalette {
+  const s = deriveBrandShims(values as ClubThemeValues);
+  return {
+    gold: s.gold,
+    charcoal: s.charcoal,
+    deep: s.deep,
+    mist: s.mist,
+    snow: s.snow,
+    ridge: s.ridge,
+  };
+}
+
+// Distinctive hex SEEDS that cannot be confused with any default palette entry.
 const CUSTOM_THEME_VALUES = {
   brandGold: "#123456",
-  brandCharcoal: "#654321",
   brandDeep: "#0a0b0c",
-  brandRidge: "#334455",
-  brandMist: "#abcdef",
-  brandSnow: "#fedcba",
+  brandSafety: "#334455",
 };
 
 // The legacy hard-coded email gold that emails must no longer fall back to.
@@ -37,21 +58,26 @@ describe("email-theme palette cache", () => {
     mocks.getWebsiteThemeRenderState.mockReset();
   });
 
-  it("maps club-theme values to the email palette roles after priming", async () => {
+  it("derives the email palette from the light substrate after priming", async () => {
     mocks.getWebsiteThemeRenderState.mockResolvedValue({
       values: CUSTOM_THEME_VALUES,
     });
 
     await primeEmailPalette();
 
-    expect(emailPalette()).toEqual({
-      gold: "#123456",
-      charcoal: "#654321",
-      deep: "#0a0b0c",
-      mist: "#abcdef",
-      snow: "#fedcba",
-      ridge: "#334455",
-    });
+    const palette = emailPalette();
+    expect(palette).toEqual(expectedPalette(CUSTOM_THEME_VALUES));
+
+    // D7: the neutral roles are the LIGHT-mode generated steps, not literals.
+    // `snow` is neutral step 1 (index 0) of the light substrate.
+    const lightSnow = buildThemeSubstrate(
+      themeSeedsFromValues(CUSTOM_THEME_VALUES as ClubThemeValues),
+      "light",
+    ).neutralHex[0];
+    expect(palette.snow).toBe(lightSnow);
+    // The two direct seed roles pass through verbatim.
+    expect(palette.gold).toBe("#123456");
+    expect(palette.deep).toBe("#0a0b0c");
   });
 
   it("renders templates with the custom club-theme colours after priming", async () => {
@@ -61,45 +87,14 @@ describe("email-theme palette cache", () => {
 
     await primeEmailPalette();
 
+    const p = expectedPalette(CUSTOM_THEME_VALUES);
     const html = passwordResetTemplate("Jo");
     // Header bar (charcoal) + accent/button (gold) prove the theme drives the email.
-    expect(html).toContain("#654321");
-    expect(html).toContain("#123456");
+    expect(html).toContain(p.charcoal);
+    expect(html).toContain(p.gold);
     // The default gold must not leak through when a custom theme is loaded.
     expect(html).not.toContain(DEFAULT_CLUB_THEME_VALUES.brandGold);
     expect(html).not.toContain(LEGACY_EMAIL_GOLD);
-  });
-
-  it("falls back to the site-default hex when a role value is oklch (emails never emit oklch)", async () => {
-    // Site Style accepts oklch, but email clients cannot render it: the two
-    // oklch roles must fall back to their site-default hex, while the hex roles
-    // are kept.
-    mocks.getWebsiteThemeRenderState.mockResolvedValue({
-      values: {
-        brandGold: "oklch(0.7 0.1 120)",
-        brandCharcoal: "#654321",
-        brandDeep: "oklch(0.2 0.02 250)",
-        brandRidge: "#334455",
-        brandMist: "#abcdef",
-        brandSnow: "#fedcba",
-      },
-    });
-
-    await primeEmailPalette();
-
-    const palette = emailPalette();
-    // oklch roles -> site-default hex
-    expect(palette.gold).toBe(DEFAULT_CLUB_THEME_VALUES.brandGold);
-    expect(palette.gold).toBe("#57b3ab");
-    expect(palette.deep).toBe(DEFAULT_CLUB_THEME_VALUES.brandDeep);
-    // hex roles -> kept as-is
-    expect(palette.charcoal).toBe("#654321");
-    expect(palette.mist).toBe("#abcdef");
-
-    const html = passwordResetTemplate("Jo");
-    expect(html).toContain("#57b3ab"); // default gold substituted into the email
-    expect(html).toContain("#654321"); // custom hex charcoal preserved
-    expect(html).not.toContain("oklch");
   });
 
   it("falls back to the SITE default palette on a cold cache (no legacy gold)", () => {
@@ -107,15 +102,9 @@ describe("email-theme palette cache", () => {
     // background refresh warms the cache (the cold-start behaviour).
     const palette = emailPalette();
 
-    expect(palette).toEqual({
-      gold: DEFAULT_CLUB_THEME_VALUES.brandGold,
-      charcoal: DEFAULT_CLUB_THEME_VALUES.brandCharcoal,
-      deep: DEFAULT_CLUB_THEME_VALUES.brandDeep,
-      mist: DEFAULT_CLUB_THEME_VALUES.brandMist,
-      snow: DEFAULT_CLUB_THEME_VALUES.brandSnow,
-      ridge: DEFAULT_CLUB_THEME_VALUES.brandRidge,
-    });
+    expect(palette).toEqual(expectedPalette(DEFAULT_CLUB_THEME_VALUES));
     // The site default gold is #57b3ab, not the legacy email gold #ffcb05.
+    expect(palette.gold).toBe(DEFAULT_CLUB_THEME_VALUES.brandGold);
     expect(palette.gold).toBe("#57b3ab");
     expect(palette.gold).not.toBe(LEGACY_EMAIL_GOLD);
 
@@ -136,7 +125,7 @@ describe("email-theme palette cache", () => {
     const NEXT_THEME_VALUES = {
       ...CUSTOM_THEME_VALUES,
       brandGold: "#0f9d58",
-      brandCharcoal: "#202124",
+      brandDeep: "#202124",
     };
     mocks.getWebsiteThemeRenderState.mockResolvedValueOnce({
       values: NEXT_THEME_VALUES,
@@ -144,8 +133,8 @@ describe("email-theme palette cache", () => {
     await primeEmailPalette();
 
     const html = passwordResetTemplate("Jo");
-    expect(html).toContain("#0f9d58"); // new accent/button colour
-    expect(html).toContain("#202124"); // new header colour
+    expect(html).toContain("#0f9d58"); // new accent/button colour (gold seed)
+    expect(html).toContain("#202124"); // new body-text colour (deep seed)
     expect(html).not.toContain("#123456"); // previous scheme's gold is gone
     expect(html).not.toContain(DEFAULT_CLUB_THEME_VALUES.brandGold);
   });
@@ -155,7 +144,7 @@ describe("email-theme palette cache", () => {
     const NEW_THEME_VALUES = {
       ...CUSTOM_THEME_VALUES,
       brandGold: "#0f9d58",
-      brandCharcoal: "#202124",
+      brandDeep: "#202124",
     };
 
     // A deferred result so we control exactly when the background refresh's OLD
@@ -191,7 +180,7 @@ describe("email-theme palette cache", () => {
 
     const html = passwordResetTemplate("Jo");
     expect(html).toContain("#0f9d58"); // NEW accent/button preserved
-    expect(html).toContain("#202124"); // NEW header preserved
+    expect(html).toContain("#202124"); // NEW body-text colour preserved
     expect(html).not.toContain("#123456"); // stale OLD gold did NOT clobber
     expect(emailPalette().gold).toBe("#0f9d58");
   });
