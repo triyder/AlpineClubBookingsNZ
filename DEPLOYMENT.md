@@ -669,11 +669,19 @@ now delivered at runtime from the store, and the webhook route is fail-closed
 until its signing secret is stored. Re-enter under **Admin > Integrations >
 Stripe**: (1) with a strong auth secret, open the wizard and paste the secret and
 publishable keys (test mode first if validating); (2) run **Verify connection** and
-confirm the Stripe account name shown is the right one; (3) add the webhook
-endpoint in Stripe using the URL the wizard shows, paste the signing secret back,
-and send a Stripe test event to turn the webhook badge green (this step is
-skippable — payments still process, but bookings only auto-reconcile once the
-webhook is verified). Replacing any Stripe key clears the verified webhook badge.
+confirm the Stripe account name shown is the right one; (3) **reuse the webhook
+endpoint your Stripe account already has** at this site's
+`/api/webhooks/stripe` URL — open it under Developers > Webhooks, reveal its
+current signing secret, and paste that back into the wizard. Only add a new
+endpoint if none exists yet (fresh installs); creating a second endpoint on an
+upgrade issues a *different* signing secret and orphans deliveries queued
+against the old one. Send a Stripe test event to turn the webhook badge green
+(this step is skippable — payments still process, but bookings only
+auto-reconcile once the webhook is verified). **Events that arrive during the
+re-entry gap are rejected fail-closed, and Stripe retries deliveries for about
+72 hours** — restore the *same* signing secret within that window and the
+queued events verify and replay on retry; duplicate deliveries are deduplicated
+automatically. Replacing any Stripe key clears the verified webhook badge.
 Then remove the legacy `STRIPE_*` env vars.
 
 **Expected downtime:** none at deploy. Xero-backed operations (sync, webhooks,

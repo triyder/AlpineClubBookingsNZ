@@ -406,18 +406,18 @@ export function WebhookStep({
             Developers → Webhooks
             <ExternalLink className="h-3.5 w-3.5" aria-hidden />
           </a>
-          , add an endpoint with the URL below, then paste back the signing
-          secret it gives you. This step is optional — you can skip it and set it
-          up later.
+          , add an endpoint with the URL below — or, if this site already has
+          one there (an upgrade from env-configured Stripe), reuse it and paste
+          back its existing signing secret rather than creating a second
+          endpoint. This step is optional — you can skip it and set it up
+          later.
         </p>
       </div>
 
       <CopyField
         label="Endpoint URL"
-        value={
-          context.webhookEndpointUrl ||
-          "Set NEXTAUTH_URL so the endpoint URL can be derived"
-        }
+        value={context.webhookEndpointUrl}
+        emptyHint="Set NEXTAUTH_URL so the endpoint URL can be derived."
         description="Paste this into the Stripe webhook endpoint URL field."
       />
 

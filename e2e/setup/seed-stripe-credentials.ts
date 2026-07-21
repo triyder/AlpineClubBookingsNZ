@@ -25,6 +25,18 @@ function looksLikeTestKey(value: string, prefix: string): boolean {
 }
 
 async function main() {
+  // Belt-and-braces alongside the live-key refusal below: this script exists
+  // only for the E2E staging stack and must never point at a real deployment
+  // (#2082 security review hardening).
+  if (
+    process.env.NODE_ENV === "production" &&
+    process.env.APP_RUNTIME_ROLE !== "staging"
+  ) {
+    throw new Error(
+      "Refusing to seed Stripe credentials in a real production runtime — E2E staging stack only.",
+    );
+  }
+
   const secretKey = readEnv("STRIPE_SECRET_KEY");
   const publishableKey = readEnv("NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY");
   const webhookSecret = readEnv("STRIPE_WEBHOOK_SECRET");
