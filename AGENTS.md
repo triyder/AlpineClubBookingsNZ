@@ -77,12 +77,18 @@ before changing Next.js APIs or conventions.
   the matching `area:edit` permission. This is binding for settings work touched
   from here on; two pre-existing surfaces are acknowledged divergents and are NOT
   retrofitted by this rule alone: the `/admin/modules` grid (bulk toggles) and
-  the staged-but-ungated legacy settings forms. One further divergent is named
-  because it does NOT qualify as untouched:
-  `src/components/admin/booking-policies/public-booking-requests-section.tsx`
-  was modified by #2142 and its **Show indicative pricing** checkbox still
-  auto-persists on toggle. Whether to stage it is an owner decision tracked in
-  **#2162**; until that lands it is a known divergence, not an exemption. See
+  the staged-but-ungated legacy settings forms. Booking Policies still has one
+  divergent, narrowed but not removed by #2162. No settings control in the area
+  persists on change any more (row-level Activate/Deactivate stay plain direct
+  writes, which the per-row shape sanctions) — the last one that did, the
+  **Show indicative pricing** checkbox in
+  `src/components/admin/booking-policies/public-booking-requests-section.tsx`,
+  was brought onto Edit → Save in #2162 — but the two timing cards in that same
+  file (quote window / reminder lead, and the school-attendee prompts) are
+  staged-but-ungated: always editable, with a dirty-gated Save and no Edit or
+  Cancel. That file HAS now been modified, so treat this as a live divergence
+  rather than an untouched one; whether to Edit-gate those two cards is an owner
+  decision tracked in #2166 and must not be retrofitted in passing. See
   `docs/ARCHITECTURE.md` → the same list. Reference implementation:
   `src/components/admin/booking-policies/group-discount-section.tsx`.
   When you write a new section, or change an existing section's draft/snapshot
@@ -135,6 +141,20 @@ before changing Next.js APIs or conventions.
   reloading the page over one failed GET. All three keyed booking-policy
   sections (default cancellation, booking periods, minimum night stay) carry
   this.
+- A card that shares a strict whole-object PUT with a sibling card must GET the
+  fresh row and merge only its OWN fields immediately before it writes, so a save
+  cannot overwrite a sibling's change made while the page was open. That narrows
+  the read-modify-write window to milliseconds rather than closing it — these
+  routes carry no ETag or `If-Match`, so simultaneous writes still resolve
+  last-writer-wins, exactly as `/api/admin/modules` does. Claim the narrowing,
+  not a guarantee. That
+  covers the module toggles sharing `PUT /api/admin/modules` and all three cards
+  sharing `PUT /api/admin/booking-requests/settings` (#2162). Because that read
+  can move a field the admin never touched, re-seed the editor draft of any such
+  field the admin had NOT edited along with the snapshot: leaving the two out of
+  step arms a dirty-gated Save that nobody armed, one click from reverting the
+  other admin. A draft the admin HAD typed into stays untouched — it is their
+  own in-progress input. `docs/ARCHITECTURE.md` carries the worked example.
 - Every gated section's Save must be dirty-gated, not just view-gated. Booking
   write routes log audit entries and revalidate public content unconditionally,
   so a pristine re-save writes an entry asserting a change that never happened
@@ -157,7 +177,7 @@ before changing Next.js APIs or conventions.
   itself a load, it unmounts the very `PolicyScopeSelect` the admin just used,
   dropping keyboard focus to `<body>` mid-interaction. Started in the five
   Booking Policies sections (#2142) and rolled across most of the admin tree
-  (#2160): 203 of 256 `ViewOnlyActionButton` call sites now opt out, and 53 keep
+  (#2160): 205 of 258 `ViewOnlyActionButton` call sites now opt out, and 53 keep
   the per-button reason — dialog/popover contents, leaf toolbars, and the member
   detail per-record cards, which are deferred to owner decision **#2168** and
   must not be converted opportunistically. The banner is stated once per

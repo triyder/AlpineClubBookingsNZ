@@ -227,8 +227,8 @@ describe("view-only section banner coverage (#2160)", () => {
         f.source.includes("<AdminViewOnlySectionBanner"),
       ).length,
     }).toEqual({
-      callSites: 256,
-      optOuts: 203,
+      callSites: 258,
+      optOuts: 205,
       exceptions: 53,
       exceptionFiles: 23,
       bannerComponents: 72,
