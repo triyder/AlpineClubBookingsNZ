@@ -798,8 +798,8 @@ export const WysiwygEditor = forwardRef<
       }`}
     >
       {confirmDialog}
-      <div className="sticky top-0 z-30 rounded-md border border-slate-200 bg-slate-50/95 px-3 py-2 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-slate-50/90">
-        <p className="text-sm text-slate-600">
+      <div className="sticky top-0 z-30 rounded-md border border-border bg-card px-3 py-2 shadow-sm backdrop-blur">
+        <p className="text-sm text-muted-foreground">
           {readOnly
             ? resolvingAccess
               ? // Neutral while permissions resolve (#2065): don't assert
@@ -1078,7 +1078,7 @@ export const WysiwygEditor = forwardRef<
           onBlur={readOnly ? undefined : captureSelection}
           onInput={readOnly ? undefined : onInput}
           onClick={readOnly ? undefined : handleEditorClick}
-          className={`${editorClassName} overflow-y-auto rounded-md border border-slate-300 bg-white p-3 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-400 [&_a]:text-blue-700 [&_a]:underline [&_a]:decoration-blue-400 [&_b]:font-bold [&_blockquote]:my-3 [&_blockquote]:border-l-4 [&_blockquote]:border-slate-300 [&_blockquote]:pl-3 [&_blockquote]:italic [&_code]:rounded [&_code]:bg-slate-100 [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_em]:italic [&_h1]:mt-4 [&_h1]:mb-2 [&_h1]:text-3xl [&_h1]:font-bold [&_h2]:mt-4 [&_h2]:mb-2 [&_h2]:text-2xl [&_h2]:font-bold [&_h3]:mt-3 [&_h3]:mb-2 [&_h3]:text-xl [&_h3]:font-semibold [&_hr]:my-4 [&_hr]:border-slate-300 [&_i]:italic [&_li]:my-1 [&_ol]:my-3 [&_ol]:list-decimal [&_ol]:pl-6 [&_p]:my-2 [&_pre]:my-3 [&_pre]:overflow-x-auto [&_pre]:rounded [&_pre]:bg-slate-100 [&_pre]:p-3 [&_pre]:font-mono [&_strong]:font-bold [&_table]:my-3 [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-slate-300 [&_td]:p-2 [&_th]:border [&_th]:border-slate-300 [&_th]:bg-slate-100 [&_th]:p-2 [&_u]:underline [&_ul]:my-3 [&_ul]:list-disc [&_ul]:pl-6`}
+          className={`${editorClassName} overflow-y-auto rounded-md border border-border bg-card p-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring [&_a]:text-blue-700 [&_a]:underline [&_a]:decoration-blue-400 [&_b]:font-bold [&_blockquote]:my-3 [&_blockquote]:border-l-4 [&_blockquote]:border-border [&_blockquote]:pl-3 [&_blockquote]:italic [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_em]:italic [&_h1]:mt-4 [&_h1]:mb-2 [&_h1]:text-3xl [&_h1]:font-bold [&_h2]:mt-4 [&_h2]:mb-2 [&_h2]:text-2xl [&_h2]:font-bold [&_h3]:mt-3 [&_h3]:mb-2 [&_h3]:text-xl [&_h3]:font-semibold [&_hr]:my-4 [&_hr]:border-border [&_i]:italic [&_li]:my-1 [&_ol]:my-3 [&_ol]:list-decimal [&_ol]:pl-6 [&_p]:my-2 [&_pre]:my-3 [&_pre]:overflow-x-auto [&_pre]:rounded [&_pre]:bg-muted [&_pre]:p-3 [&_pre]:font-mono [&_strong]:font-bold [&_table]:my-3 [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-border [&_td]:p-2 [&_th]:border [&_th]:border-border [&_th]:bg-muted [&_th]:p-2 [&_u]:underline [&_ul]:my-3 [&_ul]:list-disc [&_ul]:pl-6`}
         />
       )}
 
@@ -1096,7 +1096,7 @@ export const WysiwygEditor = forwardRef<
           <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
             {/* Directory selector */}
             <div className="flex shrink-0 items-center gap-2">
-              <Folder className="h-4 w-4 shrink-0 text-slate-400" />
+              <Folder className="h-4 w-4 shrink-0 text-muted-foreground" />
               <Select
                 value={pickerDir}
                 onValueChange={(val) => {
@@ -1157,13 +1157,13 @@ export const WysiwygEditor = forwardRef<
             </div>
 
             {/* Thumbnail grid */}
-            <div className="min-h-0 flex-1 overflow-y-auto rounded-md border border-slate-200 bg-slate-50 p-2">
+            <div className="min-h-0 flex-1 overflow-y-auto rounded-md border border-border bg-card p-2">
               {loadingSiteImages ||
               loadingUploadedImages ||
               loadingFilesystemImages ? (
-                <p className="p-3 text-sm text-slate-500">Loading images…</p>
+                <p className="p-3 text-sm text-muted-foreground">Loading images…</p>
               ) : filteredPickerImages.length === 0 ? (
-                <p className="p-3 text-sm text-slate-500">
+                <p className="p-3 text-sm text-muted-foreground">
                   No images found. Upload one to get started.
                 </p>
               ) : (
@@ -1176,10 +1176,10 @@ export const WysiwygEditor = forwardRef<
                     return (
                       <div
                         key={`${image.source}:${image.url}`}
-                        className={`group relative cursor-pointer overflow-hidden rounded-lg border-2 bg-white shadow-sm transition-all ${
+                        className={`group relative cursor-pointer overflow-hidden rounded-lg border-2 bg-card shadow-sm transition-all ${
                           isSelected
                             ? "border-blue-500 ring-2 ring-blue-200"
-                            : "border-slate-200 hover:border-slate-400 hover:shadow-md"
+                            : "border-border hover:border-muted-foreground hover:shadow-md"
                         }`}
                         onClick={() => {
                           setSelectedImagePath(image.url);
@@ -1200,7 +1200,7 @@ export const WysiwygEditor = forwardRef<
                         aria-label={shortLabel}
                       >
                         {/* Thumbnail */}
-                        <div className="relative aspect-square overflow-hidden bg-slate-100">
+                        <div className="relative aspect-square overflow-hidden bg-muted">
                           {/* eslint-disable-next-line @next/next/no-img-element */}
                           <img
                             src={image.url}
@@ -1223,7 +1223,7 @@ export const WysiwygEditor = forwardRef<
                                   void deleteUploadedImage(uploaded, event);
                                 }
                               }}
-                              className="absolute right-1 top-1 rounded-full bg-white/80 p-1 opacity-0 shadow-sm transition-opacity hover:bg-red-50 group-hover:opacity-100"
+                              className="absolute right-1 top-1 rounded-full bg-card p-1 opacity-0 shadow-sm transition-opacity hover:bg-red-50 group-hover:opacity-100"
                             >
                               <Trash2 className="h-3 w-3 text-red-500" />
                             </button>
@@ -1233,7 +1233,7 @@ export const WysiwygEditor = forwardRef<
                         {/* Label row */}
                         <div className="p-1.5">
                           <p
-                            className="truncate text-xs font-medium text-slate-800"
+                            className="truncate text-xs font-medium text-foreground"
                             title={image.label}
                           >
                             {shortLabel}
@@ -1264,27 +1264,27 @@ export const WysiwygEditor = forwardRef<
 
             {/* Selected path strip + resize inputs */}
             {selectedImagePath ? (
-              <div className="shrink-0 space-y-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
+              <div className="shrink-0 space-y-2 rounded-md border border-border bg-card px-3 py-2">
                 <div className="flex items-center gap-2">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={selectedImagePath}
                     alt="Selected"
-                    className="h-10 w-10 shrink-0 rounded border border-slate-200 object-cover"
+                    className="h-10 w-10 shrink-0 rounded border border-border object-cover"
                   />
-                  <p className="min-w-0 flex-1 truncate text-xs text-slate-600">
+                  <p className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
                     {selectedImagePath}
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className="shrink-0 text-xs text-slate-500">Size:</span>
+                  <span className="shrink-0 text-xs text-muted-foreground">Size:</span>
                   <Input
                     value={imageWidth}
                     onChange={(e) => setImageWidth(e.target.value)}
                     placeholder="Width (px, e.g. 300)"
                     className="h-7 flex-1 text-xs"
                   />
-                  <span className="shrink-0 text-xs text-slate-400">×</span>
+                  <span className="shrink-0 text-xs text-muted-foreground">×</span>
                   <Input
                     value={imageHeight}
                     onChange={(e) => setImageHeight(e.target.value)}
@@ -1292,7 +1292,7 @@ export const WysiwygEditor = forwardRef<
                     className="h-7 flex-1 text-xs"
                   />
                 </div>
-                <p className="text-[10px] text-slate-400">
+                <p className="text-[10px] text-muted-foreground">
                   Enter pixel values only. Leave blank for natural size.
                 </p>
               </div>
@@ -1715,7 +1715,7 @@ export function PageContentPanel() {
     return (
       <>
         {viewOnlyBanner}
-        <p className="text-sm text-slate-500">Loading editable pages...</p>
+        <p className="text-sm text-muted-foreground">Loading editable pages...</p>
       </>
     );
   }
@@ -1755,7 +1755,7 @@ export function PageContentPanel() {
               pages.
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-3 text-sm leading-6 text-slate-700">
+          <div className="space-y-3 text-sm leading-6 text-muted-foreground">
             <p>
               <i>
                 <b>Slug</b>
@@ -1811,7 +1811,7 @@ export function PageContentPanel() {
               If you want a background image in your header panel. Goto{" "}
               <b>Site Style</b> page and create the style for your page.
             </p>
-            <pre className="overflow-x-auto rounded-md bg-slate-900 p-3 text-xs text-slate-100">
+            <pre className="overflow-x-auto rounded-md bg-muted p-3 text-xs text-foreground">
               {`.dynamic-header[data-page-slug="home"] {
     background: url('/api/images/uploaded/zzz.jpg') center / cover no-repeat;
 }`}
@@ -1846,7 +1846,7 @@ export function PageContentPanel() {
                     {isSystem && (
                       <Badge
                         variant="outline"
-                        className="text-[10px] uppercase text-slate-500"
+                        className="text-[10px] uppercase text-muted-foreground"
                       >
                         System
                       </Badge>
@@ -1854,7 +1854,7 @@ export function PageContentPanel() {
                     {!hasMenuTitle && (
                       <Badge
                         variant="outline"
-                        className="text-[10px] uppercase text-slate-500"
+                        className="text-[10px] uppercase text-muted-foreground"
                       >
                         No menu
                       </Badge>
@@ -1874,15 +1874,15 @@ export function PageContentPanel() {
                 </div>
               </CardHeader>
               <CardContent className="space-y-3">
-                <p className="text-xs text-slate-500">
+                <p className="text-xs text-muted-foreground">
                   Menu order: {page.sortOrder}
                 </p>
-                <p className="min-h-10 rounded-md border border-slate-200 bg-slate-50 p-2 text-xs text-slate-600">
+                <p className="min-h-10 rounded-md border border-border bg-card p-2 text-xs text-muted-foreground">
                   {hasContent
                     ? `${textPreview.slice(0, 180)}${textPreview.length > 180 ? "..." : ""}`
                     : "No content saved yet."}
                 </p>
-                <p className="text-xs text-slate-500">
+                <p className="text-xs text-muted-foreground">
                   Updated: {formatUpdatedAt(page.updatedAt)}
                 </p>
                 <div className="flex flex-wrap gap-2">
@@ -1929,7 +1929,7 @@ export function PageContentPanel() {
           </DialogHeader>
           <div className="space-y-3">
             <div className="space-y-1">
-              <p className="text-sm font-medium text-slate-800">Slug</p>
+              <p className="text-sm font-medium text-foreground">Slug</p>
               <Input
                 value={newSlug}
                 onChange={(event) =>
@@ -1937,12 +1937,12 @@ export function PageContentPanel() {
                 }
                 placeholder="trip-reports"
               />
-              <p className="text-xs text-slate-500">
+              <p className="text-xs text-muted-foreground">
                 Path preview: /{newSlug || "your-page"}
               </p>
             </div>
             <div className="space-y-1">
-              <p className="text-sm font-medium text-slate-800">Menu order</p>
+              <p className="text-sm font-medium text-foreground">Menu order</p>
               <Input
                 type="number"
                 value={newSortOrder}
@@ -1955,7 +1955,7 @@ export function PageContentPanel() {
               />
             </div>
             <div className="space-y-1">
-              <p className="text-sm font-medium text-slate-800">Caption</p>
+              <p className="text-sm font-medium text-foreground">Caption</p>
               <Input
                 value={newCaption}
                 onChange={(event) => setNewCaption(event.target.value)}
@@ -1963,7 +1963,7 @@ export function PageContentPanel() {
               />
             </div>
             <div className="space-y-1">
-              <p className="text-sm font-medium text-slate-800">Menu title</p>
+              <p className="text-sm font-medium text-foreground">Menu title</p>
               <Input
                 value={newMenuTitle}
                 onChange={(event) => setNewMenuTitle(event.target.value)}
@@ -1971,7 +1971,7 @@ export function PageContentPanel() {
               />
             </div>
             <div className="space-y-1">
-              <p className="text-sm font-medium text-slate-800">Page title</p>
+              <p className="text-sm font-medium text-foreground">Page title</p>
               <Input
                 value={newTitle}
                 onChange={(event) => setNewTitle(event.target.value)}
@@ -1979,7 +1979,7 @@ export function PageContentPanel() {
               />
             </div>
             <div className="space-y-1">
-              <p className="text-sm font-medium text-slate-800">Header text</p>
+              <p className="text-sm font-medium text-foreground">Header text</p>
               <Textarea
                 value={newHeaderText}
                 onChange={(event) => setNewHeaderText(event.target.value)}
@@ -2024,9 +2024,9 @@ export function PageContentPanel() {
 
           {selectedPage ? (
             <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pr-1">
-              <div className="grid gap-3 rounded-md border border-slate-200 bg-slate-50 p-3 md:grid-cols-2">
+              <div className="grid gap-3 rounded-md border border-border bg-card p-3 md:grid-cols-2">
                 <label className="space-y-1">
-                  <span className="text-xs font-medium text-slate-700">
+                  <span className="text-xs font-medium text-muted-foreground">
                     Slug
                     {isSystemPageSlug(selectedPage.slug) && (
                       <span className="ml-2 rounded bg-muted px-1 py-0.5 text-[10px] font-normal text-muted-foreground">
@@ -2043,13 +2043,13 @@ export function PageContentPanel() {
                     readOnly={isSystemPageSlug(selectedPage.slug) || !canEdit}
                     className={
                       isSystemPageSlug(selectedPage.slug) || !canEdit
-                        ? "cursor-not-allowed bg-slate-100 opacity-70"
+                        ? "cursor-not-allowed bg-muted opacity-70"
                         : ""
                     }
                   />
                 </label>
                 <label className="space-y-1">
-                  <span className="text-xs font-medium text-slate-700">
+                  <span className="text-xs font-medium text-muted-foreground">
                     Menu order
                     {isSystemPageSlug(selectedPage.slug) && (
                       <span className="ml-2 rounded bg-muted px-1 py-0.5 text-[10px] font-normal text-muted-foreground">
@@ -2069,17 +2069,17 @@ export function PageContentPanel() {
                     readOnly={isSystemPageSlug(selectedPage.slug) || !canEdit}
                     className={
                       isSystemPageSlug(selectedPage.slug) || !canEdit
-                        ? "cursor-not-allowed bg-slate-100 opacity-70"
+                        ? "cursor-not-allowed bg-muted opacity-70"
                         : ""
                     }
                   />
                 </label>
-                <div className="md:col-span-2 text-xs text-slate-600">
+                <div className="md:col-span-2 text-xs text-muted-foreground">
                   Public path: /{draftSlug || "page-slug"}
                 </div>
                 <div className="md:col-span-2 grid grid-cols-3 gap-3">
                   <label className="space-y-1">
-                    <span className="text-xs font-medium text-slate-700">
+                    <span className="text-xs font-medium text-muted-foreground">
                       Caption
                     </span>
                     <Input
@@ -2090,7 +2090,7 @@ export function PageContentPanel() {
                     />
                   </label>
                   <label className="space-y-1">
-                    <span className="text-xs font-medium text-slate-700">
+                    <span className="text-xs font-medium text-muted-foreground">
                       Menu title
                     </span>
                     <Input
@@ -2103,7 +2103,7 @@ export function PageContentPanel() {
                     />
                   </label>
                   <label className="space-y-1">
-                    <span className="text-xs font-medium text-slate-700">
+                    <span className="text-xs font-medium text-muted-foreground">
                       Page title
                     </span>
                     <Input
@@ -2115,7 +2115,7 @@ export function PageContentPanel() {
                   </label>
                 </div>
                 <div className="space-y-1 md:col-span-2">
-                  <span className="text-xs font-medium text-slate-700">
+                  <span className="text-xs font-medium text-muted-foreground">
                     Header text
                   </span>
                   <WysiwygEditor
@@ -2145,8 +2145,8 @@ export function PageContentPanel() {
                 resolvingAccess={canEdit === undefined}
               />
 
-              <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
-                <p className="font-medium text-slate-700">Embed Tokens</p>
+              <div className="rounded-md border border-border bg-card p-3 text-xs text-muted-foreground">
+                <p className="font-medium text-muted-foreground">Embed Tokens</p>
                 <p className="mt-1">
                   Insert these in page body content using {"{{token}}"}. Legacy
                   single-brace {"{"}token{"}"} syntax remains accepted only for
@@ -2163,7 +2163,7 @@ export function PageContentPanel() {
                     )}
                   />
                 </div>
-                <p className="mt-2 text-[11px] text-slate-500">
+                <p className="mt-2 text-[11px] text-muted-foreground">
                   Optional hash override:
                   {" {{skifield-conditions:4297a04af31a54b9b4dc710057f5a492}}"}
                 </p>
