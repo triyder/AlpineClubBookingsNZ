@@ -4,6 +4,25 @@ All notable public reference-release changes should be recorded here.
 
 ## Unreleased
 
+- **Connecting Xero no longer involves `.env` files, terminals, or restarts
+  (#2079, #2080 — guided-setup epic #2078).** Xero credentials (client id,
+  client secret, webhook key) now live in the database, encrypted at rest
+  under a key derived from the app's auth secret — the `XERO_CLIENT_ID`,
+  `XERO_CLIENT_SECRET`, `XERO_REDIRECT_URI`, `XERO_ENCRYPTION_KEY`, and
+  `XERO_WEBHOOK_KEY` environment variables are **no longer read** (lingering
+  values are detected and flagged for removal, never silently used). A
+  step-by-step wizard on **Admin → Xero → Setup** walks a Full Admin from
+  "module switched on" to "connected to the right Xero organisation": exact
+  copy-paste values for the Xero developer portal (including the real OAuth
+  redirect URL, now derived from the deployment's own address), a write-only
+  credential form guarded by an auth-secret strength check, and an OAuth
+  connect step that confirms the connected organisation by name. Progress
+  survives page reloads, and every step gates on verified success. **Upgrading
+  an already-connected club:** previously stored Xero tokens become unreadable
+  by design (the old env-var encryption key is retired), so Xero shows a clean
+  "reconnect" state until credentials are re-entered in-app — the deployment
+  guide carries the exact upgrade and auth-secret-rotation runbooks, and the
+  blue/green deploy script no longer requires the removed variables.
 - **The admin area now follows the club's saved site colours in light mode
   (#2144).** Every admin screen previously carried hard-coded light-grey
   ("slate") Tailwind colours that ignored the club theme in light mode; a
