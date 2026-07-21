@@ -742,7 +742,7 @@ test/demo mode or disabled:
 | ----------------------- | ---------------------------------------------------------------- |
 | `DATABASE_URL`          | PostgreSQL connection string used by Prisma.                     |
 | `DB_PASSWORD`           | PostgreSQL password used by Docker Compose.                      |
-| `AUTH_SECRET`           | Auth.js session secret.                                          |
+| `AUTH_SECRET`           | Auth.js session secret. Also the root of 2FA-secret and in-app provider-credential encryption (#2079) — use a strong value (>= 32 chars); rotating it is a planned maintenance event (see `DEPLOYMENT.md`). |
 | `NEXTAUTH_SECRET`       | Legacy Auth.js secret fallback; keep aligned with `AUTH_SECRET`. |
 | `NEXTAUTH_URL`          | Exact app origin, for example `http://localhost:3000`.           |
 | `AUTH_TRUST_HOST`       | Set `true` behind trusted proxies/Compose.                       |
@@ -1496,11 +1496,15 @@ once.
 > recovery-code hashes are bound to key material derived from the secret,
 > rotating it **invalidates every member's enrolled authenticator and recovery
 > codes at once** — on their next sign-in each member is forced back through
-> two-factor enrollment. Schedule rotation as a maintenance action with advance
-> member communication and a support plan for anyone who cannot immediately
-> re-enroll (e.g. members who no longer have their authenticator device); never
-> rotate ad hoc. Short-lived email one-time codes are unaffected (re-issued per
-> attempt).
+> two-factor enrollment. Since #2079 the blast radius also includes **all stored
+> provider credentials** (Xero client id/secret/webhook key) **and the wrapped
+> Xero token-encryption key**: after rotation those fail decryption and must be
+> re-entered in-app, and Xero must be reconnected (re-OAuth). Schedule rotation
+> as a maintenance action with advance member communication and a support plan
+> for anyone who cannot immediately re-enroll (e.g. members who no longer have
+> their authenticator device); never rotate ad hoc. See the **auth-secret
+> rotation runbook** in `DEPLOYMENT.md`. Short-lived email one-time codes are
+> unaffected (re-issued per attempt).
 
 Invalid two-factor attempts are rate-limited and tracked per member. Five
 invalid app, email, or recovery-code attempts lock the two-factor challenge for
@@ -1517,18 +1521,32 @@ invalid app, email, or recovery-code attempts lock the two-factor challenge for
 
 ## Operational Xero
 
+**Xero credentials are DB-only (#2079).** The Xero OAuth client id/secret, the
+webhook signing key, and the token-encryption key live **only** in the encrypted
+`IntegrationCredential` store and are captured in-app under **Admin >
+Integrations** (Full Admin only). The redirect URI is **derived from
+`NEXTAUTH_URL`** (`{origin}/api/admin/xero/callback`). There are **no**
+`XERO_CLIENT_ID`, `XERO_CLIENT_SECRET`, `XERO_REDIRECT_URI`,
+`XERO_ENCRYPTION_KEY`, or `XERO_WEBHOOK_KEY` environment variables any more — if
+any are still present they are **ignored** and setup readiness raises a warning
+naming them for removal (never silently honoured). Credentials are encrypted at
+rest with AES-256-GCM under a key derived from `AUTH_SECRET`/`NEXTAUTH_SECRET`
+via HKDF-SHA256; the wrapped Xero token-encryption key is auto-generated on
+first use (a strong auth secret is required — see the auth-secret note above).
+
+Only these operational-tuning env vars remain (they are not credentials):
+
 | Variable                                   | Description                                                            |
 | ------------------------------------------ | ---------------------------------------------------------------------- |
-| `XERO_CLIENT_ID`                           | Operational Xero OAuth client id.                                      |
-| `XERO_CLIENT_SECRET`                       | Operational Xero OAuth client secret.                                  |
-| `XERO_REDIRECT_URI`                        | Must match the deployed `/api/admin/xero/callback` URL.                |
-| `XERO_ENCRYPTION_KEY`                      | 64-character hex key for encrypted token storage.                      |
-| `XERO_WEBHOOK_KEY`                         | Xero webhook signing key.                                              |
 | `XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH`     | Enables daily membership refresh behavior when operational Xero is on. |
 | `XERO_ENABLE_LIVE_MEMBER_GROUP_LOOKUPS`    | Enables live Xero member group lookups.                                |
 | `XERO_ENABLE_AUTOLOAD_XERO_CONTACT_GROUPS` | Enables automatic Xero contact-group loading.                          |
 | `XERO_INBOUND_FAILED_RETRY_BACKOFF_MS`     | Optional retry backoff for failed inbound Xero reconciliation.         |
 | `XERO_HTTP_TIMEOUT_MS`                     | Optional OAuth-layer HTTP timeout (identity discovery and token requests) in ms; default 10000, overriding xero-node's 3500ms. |
+
+Existing env-configured deployments upgrading past #2079 must re-enter Xero
+credentials in-app and reconnect Xero — see the **upgrade runbook** in
+`DEPLOYMENT.md`.
 
 ## Finance dashboard
 
