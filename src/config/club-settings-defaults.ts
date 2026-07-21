@@ -9,14 +9,23 @@
  * Kept here — a pure leaf with no imports — for two reasons:
  *
  * 1. One source of truth. Each value below used to be an inline `?? x` at its
- *    own read site, or a constant inside a prisma-importing module. The
+ *    own read site, or a constant inside a larger settings module. The
  *    config-transfer exporter now has to emit the same effective value for a
  *    club that never saved the row (#2171), and a second hand-written copy is
- *    exactly how the two would drift apart.
- * 2. Import graph. `src/lib/config-transfer/**` deliberately imports no prisma
- *    (the database is injected through the export/import context). Reading
- *    these from the getters' own modules would have pulled `@/lib/prisma` into
- *    that graph.
+ *    exactly how the two would drift apart. A test fails if a singleton spec
+ *    leaves an exported field without a declared default, which only works
+ *    while there is exactly one place to declare it.
+ * 2. It sits with its neighbours. `src/config/` is already where the
+ *    equivalent shared defaults live — `DEFAULT_MODULE_SETTINGS`
+ *    (`modules.ts`) and `DEFAULT_MEMBER_FIELDS_SETTINGS` (`member-fields.ts`),
+ *    both of which the same exporter reads — so a value-only leaf here needs no
+ *    new convention.
+ *
+ * What this is NOT is a prisma firewall: `src/lib/config-transfer/**` already
+ * reaches `@/lib/prisma` transitively (its site-content / lodge-ops categories
+ * import `@/lib/page-content-html`, which imports prisma), so moving these
+ * constants out of the getters' modules bought no import-graph purity. One
+ * source of truth is the whole reason.
  *
  * Two singletons are deliberately absent, and that absence is load-bearing:
  * `ClubIdentitySettings` and `EmailMessageSetting` are made entirely of

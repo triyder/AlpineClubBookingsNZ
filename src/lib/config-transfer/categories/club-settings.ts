@@ -205,6 +205,30 @@ function fileFor(entity: string): string {
   return `club-settings/${entity}.json`;
 }
 
+/**
+ * True when the incoming file carries no allowlisted value at all — every field
+ * present is `null` (or none is present). In practice this is only the
+ * `DEFAULTS_INTENTIONALLY_PARTIAL` pair exported from a club that never saved
+ * an override; every other singleton exports concrete defaults.
+ *
+ * Such a file must NOT create a row on a target that has none (#2171 review):
+ * `clubIdentitySelfHealStep.isPresent` (`src/lib/config-self-heal.ts`) keys
+ * purely on the `ClubIdentitySettings` row EXISTING, and the whole self-heal
+ * runner is skipped while `clubConfigSource !== "primary"` on the promise that
+ * it repairs itself on the next boot with a valid `config/club.json`. An import
+ * onto a SAFE_DEFAULT install would otherwise plant an all-null row that
+ * permanently satisfies that presence check, so identity would never be healed
+ * from the file — and `clubIdentityName` in the setup snapshot would stay null
+ * forever. Skipping restores the exact pre-#2171 behaviour for the no-row case
+ * at no cost: an all-null file carries nothing to write.
+ */
+function carriesNoValue(
+  spec: SingletonSpec,
+  incoming: Record<string, unknown>,
+): boolean {
+  return spec.fields.every((f) => !(f in incoming) || incoming[f] === null);
+}
+
 for (const s of SINGLETONS) {
   registerEntity({
     entity: s.entity,
@@ -314,9 +338,16 @@ export const clubSettingsExporter: CategoryExporter = {
       // The cost, accepted by the owner on #2171: a bundle no longer
       // distinguishes "saved these values" from "never saved anything", and
       // importing one MATERIALISES the row in the target. That is visible in
-      // the three setup-checklist signals that key on row existence
-      // (bookingDefaultsConfigured, groupDiscountConfigured,
-      // membershipCancellationSettingsConfigured) — see docs/config-transfer.
+      // the FOUR setup-checklist signals that key on row existence: three
+      // booleans in the snapshot (bookingDefaultsConfigured,
+      // groupDiscountConfigured, membershipCancellationSettingsConfigured,
+      // `src/lib/setup-readiness-db.ts`) plus the Module Controls step, which
+      // reads `Boolean(db.adminModuleSettings)` directly in
+      // `src/lib/setup-readiness.ts` (`required: false`, so it downgrades a
+      // warning rather than gating). See docs/config-transfer.
+      //
+      // The one exception is a file whose every value is null — see
+      // carriesNoValue: it creates no row, so it cannot flip any of them.
       const fields = exportFields(spec, ctx.includeDoorCodes);
       entries.push({
         path: fileFor(spec.entity),
@@ -356,11 +387,14 @@ async function planClubSettings(
     for (const f of spec.fields) if (f in incoming) data[f] = incoming[f];
     const writeData = updateDataForMode(ctx.mode, incoming, data);
     const changed = changedFields(writeData, current);
+    // Mirror apply's no-row/no-value skip so the dry-run cannot promise a
+    // "create" the apply will decline to make.
+    const noOp = !current && carriesNoValue(spec, incoming);
     items.push({
       entity: spec.entity,
       key: "default",
-      action: planActionFor(current, changed),
-      changedFields: changed.length ? changed : undefined,
+      action: noOp ? "unchanged" : planActionFor(current, changed),
+      changedFields: noOp || changed.length === 0 ? undefined : changed,
     });
   }
   return { items, warnings: [], errors, fingerprintParts };
@@ -387,6 +421,12 @@ async function applyClubSettings(
       select: spec.select,
     });
     if (!existing) {
+      // An all-null file plants nothing but a row, and that row would defeat
+      // the boot-time identity self-heal for good — see carriesNoValue.
+      if (carriesNoValue(spec, incoming)) {
+        result.unchanged += 1;
+        continue;
+      }
       await delegate.upsert({
         where: { id: "default" },
         create: { id: "default", ...data },

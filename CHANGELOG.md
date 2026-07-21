@@ -11,24 +11,36 @@ All notable public reference-release changes should be recorded here.
   quietly kept that club's own values instead of moving the source club's
   across, and a transfer could report success while the two clubs still behaved
   differently. The export now writes the built-in defaults in place of a setting
-  that was never saved, for **every** club-wide setting in the bundle — booking
-  defaults, group discount, booking requests, modules, member fields, bed
-  allocation, internet banking, membership nomination/lockout/cancellation.
+  that was never saved, for every club-wide settings record in the bundle —
+  booking defaults, group discount, booking requests, modules, member fields, bed
+  allocation, internet banking, membership nomination/lockout/cancellation. (A
+  handful of individual columns are still deliberately outside the transfer
+  allowlist and so do not travel; auditing those in both directions is tracked
+  as #2178.)
 
-  **Two things to know after importing such a bundle.** The settings record is
+  **Three things to know after importing such a bundle.** The settings record is
   created on the target club even though nobody configured it, so **Admin →
-  Setup** will start counting booking defaults, group discount, and membership
-  cancellation as configured — the values are the same defaults it was already
-  using, but the "has this been reviewed?" signal changes, so review those three
-  steps after an import. And because the value is now written down rather than
+  Setup** will start counting booking defaults, group discount, membership
+  cancellation, and module controls as configured or checked — the values are
+  the same defaults it was already using, but the "has this been reviewed?"
+  signal changes, so review those four steps after an import. On **Booking
+  Policies**, the group-discount card's **Save** is now greyed out until you
+  change something, where before an unsaved record left it enabled so you could
+  create the record. And because the value is now written down rather than
   worked out fresh each time, a later release that changes a built-in default no
   longer reaches that club.
 
-  **Club identity and email message settings are deliberately excluded from
-  this.** Every field there is an optional override on top of the install's own
-  configuration file, so "never saved" travels as "no override set" and a bundle
-  never carries one install's club name, support address, or public URL into
-  another.
+  **Club identity and email message settings behave differently, on purpose.**
+  Every field there — club name, short name, hut-leader label, support and
+  contact addresses, public URL — is an optional override on top of the
+  install's own configuration file. When the source club has set them they
+  export and import like any other setting, so a transfer does move the source's
+  identity across, which is the intended behaviour. It is only when the source
+  club has never set any override that "never saved" travels as "no override
+  set" rather than as the source install's own fallback identity — and in that
+  case importing leaves the target's identity alone entirely, creating no
+  identity record where there was none, so the install's own boot-time identity
+  repair keeps working.
 
   No schema, permission, or audit change, and no bundle format change: a bundle
   exported before this release still imports, leaving any setting it omits

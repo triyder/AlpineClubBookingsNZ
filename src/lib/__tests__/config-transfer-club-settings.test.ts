@@ -460,8 +460,11 @@ describe("club-settings exports effective defaults for an unsaved singleton (#21
     const result = await clubSettingsImporter.apply(applyCtx(tx, files, "merge"));
 
     // Effect on what the app reads: none. Effect on the database: the row is
-    // MATERIALISED — the cost the owner accepted on #2171.
-    expect(result.created).toBe(SINGLETONS.length);
+    // MATERIALISED — the cost the owner accepted on #2171. Except for the two
+    // all-null override-only singletons, which create nothing (test below).
+    expect(result.created).toBe(
+      SINGLETONS.length - DEFAULTS_INTENTIONALLY_PARTIAL.size,
+    );
     expect(delegates.bookingRequestSettings.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
         create: { id: "default", ...DEFAULT_BOOKING_REQUEST_SETTINGS },
@@ -470,6 +473,76 @@ describe("club-settings exports effective defaults for an unsaved singleton (#21
     expect(delegates.groupDiscountSetting.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
         create: { id: "default", ...DEFAULT_GROUP_DISCOUNT_SETTING },
+      }),
+    );
+  });
+
+  it.each(["merge", "overwrite"] as const)(
+    "creates NO row for an all-null override-only singleton (%s), so boot-time identity self-heal still fires",
+    async (mode) => {
+      // Regression guard. clubIdentitySelfHealStep.isPresent keys purely on the
+      // ClubIdentitySettings ROW existing, and the self-heal runner is skipped
+      // while clubConfigSource !== "primary". If an import planted an all-null
+      // row on such an install, that presence check would be satisfied forever
+      // and the identity would never be copied from config/club.json once it
+      // was fixed — clubIdentityName in the setup snapshot would stay null.
+      const { zip } = await exportFromUnsavedClub();
+      const { files } = readBundle(zip);
+      const { tx, delegates } = stubTx({});
+      await clubSettingsImporter.apply(applyCtx(tx, files, mode));
+
+      expect(delegates.clubIdentitySettings.upsert).not.toHaveBeenCalled();
+      expect(delegates.emailMessageSetting.upsert).not.toHaveBeenCalled();
+      // A singleton with real defaults is unaffected — it still materialises.
+      expect(delegates.groupDiscountSetting.upsert).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("previews that same no-op as Unchanged rather than promising a New row", async () => {
+    const { zip } = await exportFromUnsavedClub();
+    const plan = await buildImportPlan(stubDb({}), zip, { mode: "merge" });
+    const items = new Map(
+      plan.categories[0].items.map((i) => [i.entity, i]),
+    );
+    for (const entity of DEFAULTS_INTENTIONALLY_PARTIAL) {
+      expect(items.get(entity)?.action).toBe("unchanged");
+      expect(items.get(entity)?.changedFields).toBeUndefined();
+    }
+    expect(items.get("group-discount-setting")?.action).toBe("create");
+  });
+
+  it("still creates an identity row when the bundle carries a real override", async () => {
+    // The skip is about an EMPTY file, not about identity being untransferable:
+    // a source club that saved its identity moves it across as normal.
+    const zip = buildBundle({
+      entries: [
+        {
+          path: "club-settings/club-identity-settings.json",
+          category: "club-settings",
+          rowCount: 1,
+          bytes: strToU8(
+            JSON.stringify({
+              name: "Source Alpine Club",
+              shortName: null,
+              hutLeaderLabel: null,
+              facebookUrl: null,
+            }),
+          ),
+        },
+      ],
+      appVersion: "0.12.2",
+      prismaMigration: null,
+      includedCategories: ["club-settings"],
+      doorCodesIncluded: false,
+      generatedAt: "2026-07-08T00:00:00.000Z",
+    });
+    const { files } = readBundle(zip);
+    const { tx, delegates } = stubTx({});
+    const result = await clubSettingsImporter.apply(applyCtx(tx, files, "merge"));
+    expect(result.created).toBe(1);
+    expect(delegates.clubIdentitySettings.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ name: "Source Alpine Club" }),
       }),
     );
   });
@@ -512,6 +585,13 @@ describe("club-settings exports effective defaults for an unsaved singleton (#21
 
 describe("every singleton spec declares defaults for every field it exports", () => {
   it("covers each exported field, and only the two override-only singletons opt out", () => {
+    // Assert the MEMBERSHIP of the exemption set, not just its effect: without
+    // this, adding a third entity silently exempts a real singleton from the
+    // coverage check below and the test stays green.
+    expect([...DEFAULTS_INTENTIONALLY_PARTIAL].sort()).toEqual([
+      "club-identity-settings",
+      "email-message-setting",
+    ]);
     const problems: string[] = [];
     for (const spec of SINGLETONS) {
       const defaults = spec.defaults();

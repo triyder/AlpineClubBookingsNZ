@@ -345,8 +345,10 @@ export function PublicBookingRequestsSection() {
     // `booking-request-settings.json`. #2171 fixed that where it belonged, in
     // the exporter: a missing row is now exported as the effective defaults
     // (`src/config/club-settings-defaults.ts`, the same constants this GET
-    // reads through `getBookingRequestSettings`). Nothing now keys on the row
-    // existing, so there is still no reason for a first-save exception here.
+    // reads through `getBookingRequestSettings`). Nothing keys on the
+    // `BookingRequestSettings` row existing — other singletons' rows DO drive
+    // setup-readiness signals, but none of these cards' — so there is still no
+    // reason for a first-save exception here.
   })
 
   /*

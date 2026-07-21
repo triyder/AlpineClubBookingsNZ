@@ -865,8 +865,11 @@ club that had never saved these settings exported no
 set — the exporter now emits an entry for every singleton and fills a missing
 row with the same effective defaults the read sites synthesise, read from the
 shared constants in `src/config/club-settings-defaults.ts` rather than a second
-copy. Nothing outside config-transfer changed, and nothing here depends on the
-row existing.)
+copy. Nothing in THESE cards changed — the getters moved their inline `?? x`
+defaults to those shared constants and read them, which is value-identical, and
+nothing here depends on the row existing. Import-side there IS a consequence:
+materialising a singleton flips the setup-readiness signals that key on row
+existence — see `docs/config-transfer/README.md`.)
 Validation stays in each card's click
 handler rather than the hook's `isValid`, so an out-of-range or
 reminder-not-shorter-than-window draft gets an explanation instead of a greyed
