@@ -26,6 +26,14 @@ export interface WizardStepHelpers {
   refresh: () => void;
   /** Advance to the next step. No-op unless this step is verified/passed. */
   goNext: () => void;
+  /**
+   * Acknowledge (skip) the current step and advance. Only meaningful for an
+   * `optional` step: it records the step id in the acknowledged set so the shell
+   * treats it as passed for gating (e.g. skipping the webhook step in C3, which
+   * leaves the persistent amber badge until webhooks are later verified). A no-op
+   * for a required step.
+   */
+  acknowledge: () => void;
   /** Whether this step is currently verified (its gate is satisfied). */
   isVerified: boolean;
 }

@@ -14,6 +14,7 @@ import {
   SyncResultsPanel,
 } from "./panels"
 import { Message } from "./message"
+import { WebhookAmberBadge } from "./webhook-amber-badge"
 import type { SyncResult } from "./types"
 import { useXeroConnection } from "../_hooks/use-xero-connection"
 
@@ -59,6 +60,8 @@ export function XeroSetupPageClient({
       </p>
 
       {operationMessage && <Message tone="success" message={operationMessage} onDismiss={() => setOperationMessage("")} />}
+
+      <WebhookAmberBadge connected={connected} />
 
       <div className="mb-6">
         <XeroSetupWizard serverConfig={serverConfig} />

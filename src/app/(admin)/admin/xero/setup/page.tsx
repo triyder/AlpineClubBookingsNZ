@@ -14,9 +14,41 @@ export default function XeroSetupPage() {
   const legacyEnvVars =
     detectLegacyProviderEnv().find((f) => f.provider === "xero")?.vars ?? [];
 
+  // Webhook delivery URL + whether this deployment can validate webhooks at all.
+  // Xero only reaches a PUBLIC HTTPS origin; a localhost/plain-HTTP deployment
+  // (typical dev/self-host-behind-tunnel-not-yet) can store a key but can never
+  // receive the intent-to-receive ping, so the step there defaults to Skip.
+  const webhookDeliveryUrl = companyUrl ? `${companyUrl}/api/webhooks/xero` : "";
+  const webhooksVerifiable = isPublicHttpsOrigin(companyUrl);
+
   return (
     <XeroSetupPageClient
-      serverConfig={{ redirectUri, companyUrl, legacyEnvVars }}
+      serverConfig={{
+        redirectUri,
+        companyUrl,
+        legacyEnvVars,
+        webhookDeliveryUrl,
+        webhooksVerifiable,
+      }}
     />
   );
+}
+
+/** True only for an https:// origin whose host is not localhost/loopback. */
+function isPublicHttpsOrigin(origin: string): boolean {
+  if (!origin) return false;
+  try {
+    const url = new URL(origin);
+    if (url.protocol !== "https:") return false;
+    const host = url.hostname.toLowerCase();
+    return (
+      host !== "localhost" &&
+      host !== "127.0.0.1" &&
+      host !== "::1" &&
+      host !== "[::1]" &&
+      !host.endsWith(".localhost")
+    );
+  } catch {
+    return false;
+  }
 }

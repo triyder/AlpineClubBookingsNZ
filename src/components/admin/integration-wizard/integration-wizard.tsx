@@ -105,6 +105,21 @@ export function IntegrationWizard<Ctx>({
     cursor.persist(steps[clamped].id, cursor.acknowledged);
   }
 
+  // Acknowledge (skip) the active step and advance. Only an `optional` step can
+  // actually be skipped this way — acknowledging adds it to the passed set, so
+  // the next step becomes reachable. Persisting the enlarged acknowledged set
+  // both records the skip and drives the re-derived gating on the next render.
+  function acknowledgeActive() {
+    const active = steps[index];
+    if (active.optional !== true) return;
+    const nextAcknowledged = Array.from(
+      new Set([...cursor.acknowledged, active.id]),
+    );
+    const target = Math.min(index + 1, steps.length - 1);
+    setIndex(target);
+    cursor.persist(steps[target].id, nextAcknowledged);
+  }
+
   // Banner frame rendered in EVERY branch (the live-region-position rule,
   // AGENTS.md / #2160): only the card below swaps, the banner stays mounted.
   const viewOnlyBanner = (
@@ -129,6 +144,7 @@ export function IntegrationWizard<Ctx>({
     canEdit,
     refresh: onRefresh,
     goNext: () => goTo(index + 1),
+    acknowledge: acknowledgeActive,
     isVerified: verifiedFlags[index],
   };
   const isLast = index === steps.length - 1;

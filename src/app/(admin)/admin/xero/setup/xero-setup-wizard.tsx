@@ -11,6 +11,11 @@ import {
   type XeroWizardServerConfig,
 } from "./use-xero-wizard-context";
 import { CreateAppStep, CredentialsStep, ConnectStep } from "./xero-wizard-steps";
+import {
+  WebhooksStep,
+  MappingStep,
+  FinishStep,
+} from "./xero-completion-steps";
 
 /**
  * The Xero connection wizard (#2080) — a CONFIG of the reusable, provider-
@@ -56,6 +61,32 @@ export function XeroSetupWizard({
         summary: "Authorise the right organisation",
         isVerified: (ctx) => ctx.connected && !ctx.needsReentry,
         render: (ctx, helpers) => <ConnectStep context={ctx} helpers={helpers} />,
+      },
+      {
+        id: "webhooks",
+        title: "Webhooks",
+        summary: "Real-time updates (optional)",
+        // Optional/skippable (epic decision 5): passes when verified OR skipped;
+        // skipping leaves the persistent amber badge until later verification.
+        optional: true,
+        isVerified: (ctx) => ctx.webhookVerified,
+        render: (ctx, helpers) => <WebhooksStep context={ctx} helpers={helpers} />,
+      },
+      {
+        id: "mapping",
+        title: "Account mapping",
+        summary: "Map accounts & item codes",
+        // Configuration step — sensible defaults apply when left unset, so it
+        // never blocks finishing.
+        isVerified: () => true,
+        render: (ctx) => <MappingStep context={ctx} />,
+      },
+      {
+        id: "finish",
+        title: "Import & finish",
+        summary: "One-time import + summary",
+        isVerified: () => true,
+        render: (ctx) => <FinishStep context={ctx} />,
       },
     ],
     [],
