@@ -211,7 +211,16 @@ this (#1208). Shared JSON-guard micro-helpers (`asRecord`/`readString`/
 
 ### HTTP surface
 
-- `POST /api/webhooks/xero` — HMAC-verified event intake (Flow 2).
+- `POST /api/webhooks/xero` — HMAC-verified event intake (Flow 2). A
+  valid-signature **empty-events** POST is Xero's intent-to-receive (ITR)
+  validation ping: the route records a `WebhookValidationReceipt` marker
+  (receipt time + a non-reversible fingerprint of the resolved webhook key) so
+  the setup wizard can prove the round-trip, then returns 200 (#2081).
+- `GET /api/admin/xero/webhook/verify-status` — the wizard's webhook **Verify**
+  poll + amber-badge source. Freshness-scoped and key-bound: green only for an
+  ITR marker newer than a server-issued verify-start AND matching the currently
+  stored key's fingerprint (so a stale marker or one under a replaced key never
+  satisfies a new verify). Any admin may read; the key write is Full-Admin-only.
 - `POST /api/cron/xero?task=memberships|outbox|retries|inbound|backfill|link-cleanup|report|all`
   — `CRON_SECRET`-gated; `all` runs the tasks in that order; `backfill` also
   runs `link-cleanup` by default. Tasks needing a connection are skipped (and
@@ -232,6 +241,7 @@ this (#1208). Shared JSON-guard micro-helpers (`asRecord`/`readString`/
 | `XeroObjectLink` | Local record ⇄ Xero object links with a `role` (e.g. `PRIMARY_INVOICE`, `REFUND_CREDIT_NOTE`, `CONTACT`, `ENTRANCE_FEE_INVOICE`) and `active` flag; unique on (local, xero, role). Canonical single-active scopes are enforced on upsert. |
 | `XeroInboundEvent` | Stored webhook/admin events. **Status machine:** `RECEIVED → PROCESSING → PROCESSED | FAILED` (FAILED retried after a backoff; stale PROCESSING is operator-replayable). Unique `correlationKey` makes webhook delivery idempotent. |
 | `ProcessedWebhookEvent` | Provider-scoped processing dedupe (`source`+`eventId` unique); the inbound worker claims a row before reconciling and releases it on failure. |
+| `WebhookValidationReceipt` | One row per provider recording the last valid intent-to-receive (ITR) validation ping (#2081): `validatedAt` + a non-reversible SHA-256 `keyFingerprint` of the webhook key that signed it (never the key). Drives the wizard's freshness-scoped, key-bound webhook Verify and the persistent amber "webhooks not configured" badge. |
 | `XeroSyncCursor` | Incremental checkpoints per (`resourceType`, `scope`) for contact/membership/invoice reconciliation. |
 | `XeroContactCache`, `XeroContactGroupCache`, `XeroContactGroupMembershipCache` | Local snapshots of Xero contacts and group memberships (feed admin tooling, member import, group sync). |
 | `XeroApiUsageDaily`, `XeroApiUsageEvent` | Metered API usage vs. the daily budget; rate-limit hit tracking. |

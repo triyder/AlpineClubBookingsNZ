@@ -593,6 +593,22 @@ encrypted, and the `/api/webhooks/xero` route resolves it from there and stays
 **fail-closed** (a missing/unreadable key rejects every delivery, it never
 accepts).
 
+The guided setup wizard (**Admin → Xero → Setup**, step 4 "Webhooks", #2081)
+shows the exact delivery URL to paste into Xero, captures the webhook signing
+key (Full Admin only), and **Verify** waits for Xero's intent-to-receive
+validation ping to reach `/api/webhooks/xero` and pass HMAC before confirming.
+Verification is freshness-scoped and bound to the currently stored key
+(replacing the key re-arms it), so a green tick provably corresponds to a live
+round-trip on the same resolver/HMAC path production uses. Webhooks are
+optional: a deployment can invoice immediately and finish them later, in which
+case a persistent amber **"Webhooks not configured — payment updates rely on
+scheduled sync"** badge shows on the Xero pages until verified. A
+localhost/non-public-HTTPS deployment cannot receive the ping — verify only
+works once the site is reachable over public HTTPS. Because credential reads are
+cached across the blue/green web slots + cron-leader for up to ~45s (#2079), the
+wizard's verify polling window runs to 90s so a genuine ping still lands green
+after a key write.
+
 Subscribe the Stripe endpoint to these event types:
 
 - `payment_intent.succeeded`

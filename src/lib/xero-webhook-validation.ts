@@ -87,49 +87,19 @@ export async function recordXeroWebhookValidation(
 }
 
 /**
- * Persistent webhook verification state — drives the amber badge and the wizard
- * step's "already verified" display. `verified` means a marker exists whose
- * fingerprint matches the CURRENTLY stored webhook key (so replacing the key
- * flips this back to false = re-arm). Freshness-by-time is NOT applied here: the
- * badge reflects the standing subscription state, while the per-verify freshness
- * gate lives in {@link checkXeroWebhookFreshVerify}.
- */
-export interface XeroWebhookVerificationState {
-  /** A webhook key is stored (a precondition for verifying at all). */
-  webhookKeyConfigured: boolean;
-  /** A marker matches the current key — webhooks are verified; badge clears. */
-  verified: boolean;
-  /** When the matching marker was recorded, if verified. */
-  lastValidatedAt: string | null;
-}
-
-export async function getXeroWebhookVerificationState(): Promise<XeroWebhookVerificationState> {
-  const [webhookKey, receipt] = await Promise.all([
-    getOperationalXeroWebhookKey(),
-    prisma.webhookValidationReceipt.findUnique({
-      where: { provider: XERO_WEBHOOK_PROVIDER },
-    }),
-  ]);
-
-  if (!webhookKey) {
-    return { webhookKeyConfigured: false, verified: false, lastValidatedAt: null };
-  }
-
-  const fingerprint = computeWebhookKeyFingerprint(webhookKey);
-  const verified = Boolean(receipt) && receipt!.keyFingerprint === fingerprint;
-  return {
-    webhookKeyConfigured: true,
-    verified,
-    lastValidatedAt: verified ? receipt!.validatedAt.toISOString() : null,
-  };
-}
-
-/**
- * Freshness-scoped verify check for the wizard's Verify poll. Green ONLY when a
- * marker matches the current key AND was recorded strictly after `sinceMs` (the
- * server-issued verify-start instant). Also returns `serverNow` so the client
- * can obtain a trustworthy verify-start from the server clock rather than its
- * own, and `keyMatches`/`lastValidatedAt` for diagnostics.
+ * Freshness-scoped verify check — the single source for BOTH the wizard's Verify
+ * poll and the persistent amber badge (via one endpoint, one DB read).
+ *
+ *   - `verified` is the persistent badge state: a marker matches the CURRENTLY
+ *     stored key's fingerprint (replacing the key flips this to false = re-arm).
+ *     Freshness-by-time is NOT applied to it — the badge reflects the standing
+ *     subscription state.
+ *   - `freshVerified` is the per-verify gate: green ONLY when the key matches AND
+ *     the marker was recorded strictly after `sinceMs` (the server-issued
+ *     verify-start), so a stale marker can never satisfy a fresh verify.
+ *
+ * `serverNow` lets the client anchor verify-start to the server clock rather
+ * than its own; `keyMatches`/`lastValidatedAt` are for diagnostics.
  */
 export interface XeroWebhookFreshVerifyResult {
   webhookKeyConfigured: boolean;

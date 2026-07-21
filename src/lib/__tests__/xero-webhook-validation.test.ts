@@ -18,7 +18,6 @@ vi.mock("@/lib/xero-config", () => ({
 import {
   checkXeroWebhookFreshVerify,
   computeWebhookKeyFingerprint,
-  getXeroWebhookVerificationState,
   recordXeroWebhookValidation,
   WEBHOOK_VERIFY_WINDOW_MS,
   XERO_WEBHOOK_PROVIDER,
@@ -168,40 +167,18 @@ describe("xero-webhook-validation (ITR receipt sink + freshness)", () => {
     expect(WEBHOOK_VERIFY_WINDOW_MS).toBeGreaterThan(45_000);
   });
 
-  // --- Persistent badge state --------------------------------------------
+  // --- Persistent badge state (the `verified` field drives the amber badge) --
 
-  it("badge state is verified when a marker matches the current key", async () => {
+  it("badge state (verified) is true and dated when a marker matches the current key", async () => {
     mocks.prisma.webhookValidationReceipt.findUnique.mockResolvedValue(
       receiptRow(KEY, new Date("2026-07-22T09:00:00.000Z")),
     );
 
-    const state = await getXeroWebhookVerificationState();
+    // The amber badge reads `verified` (persistent match), NOT freshness.
+    const result = await checkXeroWebhookFreshVerify(null);
 
-    expect(state.webhookKeyConfigured).toBe(true);
-    expect(state.verified).toBe(true);
-    expect(state.lastValidatedAt).toBe("2026-07-22T09:00:00.000Z");
-  });
-
-  it("badge state re-arms (amber) after the webhook key is replaced", async () => {
-    // A marker from the previous key remains, but the current key no longer
-    // matches it → badge shows amber again until a fresh ITR under the new key.
-    mocks.prisma.webhookValidationReceipt.findUnique.mockResolvedValue(
-      receiptRow(OTHER_KEY, new Date("2026-07-22T09:00:00.000Z")),
-    );
-
-    const state = await getXeroWebhookVerificationState();
-
-    expect(state.verified).toBe(false);
-    expect(state.lastValidatedAt).toBeNull();
-  });
-
-  it("badge state is not-configured when no webhook key is stored", async () => {
-    mocks.getOperationalXeroWebhookKey.mockResolvedValue(undefined);
-    mocks.prisma.webhookValidationReceipt.findUnique.mockResolvedValue(null);
-
-    const state = await getXeroWebhookVerificationState();
-
-    expect(state.webhookKeyConfigured).toBe(false);
-    expect(state.verified).toBe(false);
+    expect(result.webhookKeyConfigured).toBe(true);
+    expect(result.verified).toBe(true);
+    expect(result.lastValidatedAt).toBe("2026-07-22T09:00:00.000Z");
   });
 });

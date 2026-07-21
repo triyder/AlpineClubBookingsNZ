@@ -23,6 +23,23 @@ All notable public reference-release changes should be recorded here.
   "reconnect" state until credentials are re-entered in-app — the deployment
   guide carries the exact upgrade and auth-secret-rotation runbooks, and the
   blue/green deploy script no longer requires the removed variables.
+- **The guided Xero setup now finishes the whole job: verified webhooks,
+  account mapping, one-time import, and a summary (#2081 — epic #2078).** After
+  connecting, the wizard adds an optional **Webhooks** step: it shows the exact
+  delivery URL to paste into Xero, captures Xero's webhook signing key (Full
+  Admin only, encrypted at rest), and **Verify** waits for Xero's real
+  intent-to-receive validation ping to arrive on `/api/webhooks/xero` and pass
+  HMAC before going green — so a green tick provably means the live round-trip
+  works. Verification is freshness-scoped and key-bound: only a validation
+  recorded *after* you press Verify and *matching the currently stored key*
+  counts, so replacing the key re-arms verification. Webhooks stay **skippable**
+  (a club can invoice from day one); skipping leaves a persistent amber
+  **"Webhooks not configured — payment updates rely on scheduled sync"** badge
+  on the Xero Setup and Xero Sync pages that a later verify clears everywhere,
+  and a localhost/non-public-HTTPS deployment explains why webhooks can't verify
+  there and defaults to Skip. The wizard then embeds the existing account/item
+  mapping and one-time contact-import tools as steps and ends on a finish
+  summary linking to day-to-day **Admin → Xero**.
 - **The admin area now follows the club's saved site colours in light mode
   (#2144).** Every admin screen previously carried hard-coded light-grey
   ("slate") Tailwind colours that ignored the club theme in light mode; a

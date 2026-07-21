@@ -1537,6 +1537,16 @@ rest with AES-256-GCM under a key derived from `AUTH_SECRET`/`NEXTAUTH_SECRET`
 via HKDF-SHA256; the wrapped Xero token-encryption key is auto-generated on
 first use (a strong auth secret is required — see the auth-secret note above).
 
+The wizard then finishes the connection (#2081): an optional **Webhooks** step
+shows the delivery URL (`{origin}/api/webhooks/xero`), captures Xero's webhook
+signing key, and verifies it against Xero's real intent-to-receive ping
+(freshness-scoped and key-bound; replacing the key re-arms verification);
+account/item **mapping** and the one-time contact **import** follow, ending on a
+summary. Webhooks are skippable — until verified, a persistent amber
+**"Webhooks not configured — payment updates rely on scheduled sync"** badge
+shows on the Xero pages, and a localhost/non-public-HTTPS deployment can't verify
+there (the scheduled sync still keeps payments current).
+
 Only these operational-tuning env vars remain (they are not credentials):
 
 | Variable                                   | Description                                                            |
