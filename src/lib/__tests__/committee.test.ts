@@ -905,12 +905,13 @@ describe("Committee Public API - GET /api/committee", () => {
         },
       })
     );
-    // No row cap: the roster must show every published/active member so it stays
-    // in lockstep with what /api/members/[id]/photo serves publicly.
+    // A pathological backstop (500) far above any real committee, so the roster
+    // stays in lockstep with what /api/members/[id]/photo serves publicly while
+    // still bounding an abusive unauthenticated query.
     const call = (prisma.committeeAssignment.findMany as unknown as {
       mock: { calls: Array<[{ take?: number }]> };
     }).mock.calls[0][0];
-    expect(call.take).toBeUndefined();
+    expect(call.take).toBe(500);
   });
 
   it("emits committee photo metadata only when the club opts the roster in (MP5)", async () => {

@@ -1229,8 +1229,12 @@ export async function reviewMemberDeleteRequest({
     // the merge reconcile. The shared helper spares blobs still referenced by
     // another surviving member (an ex-admin deleted here may have uploaded
     // photos on behalf of others). Runs before the delete while the member's
-    // pointer still exists.
-    await deleteOwnedMemberPhotoBlobs(tx, {
+    // pointer still exists. Lock order (deadlock-freedom): the `member.update`
+    // above already holds this member's row lock, so this MediaImage delete
+    // takes MediaImage AFTER Member — matching the photo upload writer's
+    // Member(FOR UPDATE)→MediaImage order. Do not move this above that update.
+    // See docs/CONCURRENCY_AND_LOCKING.md → "Member photo writer".
+    const photoReconcile = await deleteOwnedMemberPhotoBlobs(tx, {
       memberId: request.memberId,
       photoImageId: memberBeforeDelete.photoImageId,
     });
@@ -1255,6 +1259,7 @@ export async function reviewMemberDeleteRequest({
           action: MemberLifecycleAction.DELETE,
           requestReason: request.reason,
           snapshotStored: true,
+          memberPhotoBlobsDeleted: photoReconcile.deleted,
         },
         ipAddress,
       },

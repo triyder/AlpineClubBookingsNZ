@@ -21,11 +21,13 @@ export async function GET() {
         member: { active: true },
       },
       orderBy: committeeAssignmentOrderBy(),
-      // No row cap: the roster shows every published, active committee
-      // assignment — exactly the set whose photos /api/members/[id]/photo serves
-      // publicly. A cap here would silently hide members past it whose photos
-      // stayed publicly fetchable (visibility must stay in lockstep). Committee
-      // assignments are curated admin data, so the set is inherently small.
+      // A pathological backstop, not a display limit: 500 is far above any real
+      // committee (typically <30), so it never trims a genuine roster — the
+      // roster stays the exact set whose photos /api/members/[id]/photo serves
+      // publicly (visibility must stay in lockstep). It only bounds a
+      // misconfigured/hostile admin publishing an absurd number of assignments
+      // on this unauthenticated public endpoint.
+      take: 500,
       select: publicCommitteeAssignmentSelect,
     }),
     prisma.publicContentSettings.findUnique({

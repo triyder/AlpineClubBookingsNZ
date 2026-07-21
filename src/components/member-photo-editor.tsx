@@ -421,7 +421,8 @@ export function MemberPhotoEditor({
             </DialogTitle>
             <DialogDescription>
               Drag to reposition and use the zoom slider. The area inside the
-              circle is what others will see.
+              frame is saved as your photo; some pages show it as a circle and
+              others as a square, so the corners may be visible too.
             </DialogDescription>
           </DialogHeader>
           <div className="flex flex-col items-center gap-4">

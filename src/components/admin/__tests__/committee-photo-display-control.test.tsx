@@ -76,6 +76,40 @@ describe("CommitteePhotoDisplayControl", () => {
     await waitFor(() => expect(mocks.toastSuccess).toHaveBeenCalled());
   });
 
+  it("re-fetches before save and preserves a concurrent edit to another field (no lost update)", async () => {
+    let getCount = 0;
+    fetchMock.mockImplementation(async (_url, init?: RequestInit) => {
+      if (!init) {
+        getCount += 1;
+        // Mount GET returns the original; the pre-save GET reflects another admin
+        // having toggled showBookNow off in the meantime.
+        const settings =
+          getCount === 1
+            ? FULL_SETTINGS
+            : { ...FULL_SETTINGS, showBookNow: false };
+        return new Response(JSON.stringify({ settings }));
+      }
+      return new Response(JSON.stringify({ settings: FULL_SETTINGS }));
+    });
+
+    render(<CommitteePhotoDisplayControl />);
+
+    const select = (await screen.findByLabelText(
+      "Committee photo display",
+    )) as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: "SQUARE" } });
+    fireEvent.click(screen.getByRole("button", { name: /save photo display/i }));
+
+    await waitFor(() => {
+      const putCall = fetchMock.mock.calls.find((c) => c[1]?.method === "PUT");
+      expect(putCall).toBeTruthy();
+      const body = JSON.parse((putCall![1] as RequestInit).body as string);
+      // The concurrent showBookNow:false is preserved; only the display changed.
+      expect(body.showBookNow).toBe(false);
+      expect(body.committeePhotoDisplay).toBe("SQUARE");
+    });
+  });
+
   it("is read-only for a content-view admin (disabled + explanation, no save)", async () => {
     mocks.canEdit.mockReturnValue(false);
     fetchMock.mockResolvedValue(

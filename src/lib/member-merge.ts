@@ -1367,6 +1367,11 @@ export async function executeMemberMerge(params: {
     // its own when it had one, else the loser's absorbed one (in the patch). Any
     // OTHER loser MEMBER_PHOTO blob — the loser's discarded photo and anything it
     // uploaded — is hard-deleted so it cannot linger as a dangling public asset.
+    // Lock order (deadlock-freedom): the preceding merge steps (relation moves,
+    // loser Xero teardown, field merge) have already taken the master/loser
+    // `Member` row locks, so this MediaImage delete takes MediaImage AFTER
+    // Member — matching the photo upload writer's order. Keep this after those
+    // steps. See docs/CONCURRENCY_AND_LOCKING.md → "Member photo writer".
     const keepPhotoImageId =
       ((fieldOutcome.patch.photoImageId as string | null | undefined) ??
         (masterFull as unknown as { photoImageId: string | null }).photoImageId) ??

@@ -183,13 +183,23 @@ do not use unnamespaced `hashtext(<id>)` for new lock families.
   FROM "Member" WHERE "id" = $1 FOR UPDATE` before creating/repointing the blob,
   so two concurrent replace/remove requests for the same member serialise on the
   member row and can never leave a `MEMBER_PHOTO` blob orphaned. Member-id keyed;
-  no advisory lock; the only writer is `MediaImage` (`kind = MEMBER_PHOTO`) +
-  `Member.photoImageId`, disjoint from the booking/capacity/credit and money
-  lock clusters, so there is no cross-order to compose. Counterpart cleanup
-  writers (`deleteOwnedMemberPhotoBlobs`, run inside the member-merge and
-  account-deletion transactions) touch the same `MEMBER_PHOTO` rows but under the
-  merge/lifecycle locks, and never race a live upload because they run only when
-  the member is being merged away or deleted.
+  no advisory lock; disjoint from the booking/capacity/credit and money lock
+  clusters. The counterpart cleanup writer `deleteOwnedMemberPhotoBlobs` runs
+  inside the member-merge and account-deletion transactions and touches the same
+  `MEMBER_PHOTO` rows. A photo upload is **not** serialised by the
+  member-lifecycle advisory lock, so a live upload for a member *can* be
+  in-flight when a merge/account-deletion of that member begins — the member
+  stays an uploadable subject (self or admin-on-behalf) until the lifecycle
+  transaction commits. What makes that safe and **deadlock-free** is a single
+  shared acquisition order that every writer honours: **lock the `Member` row
+  first, then the `MediaImage` rows.** The upload takes `Member … FOR UPDATE`
+  then `MediaImage` create/deleteMany; the cleanup writers take the `Member` row
+  via `member.update` (lifecycle `xeroContactId` null at
+  `member-lifecycle-actions.ts`; merge field-merge/`teardownLoserXero` in
+  `member-merge.ts`) *before* calling `deleteOwnedMemberPhotoBlobs`. Because no
+  writer ever takes a `MediaImage` lock before the owning `Member` row, the two
+  cannot deadlock. Do not reorder a `deleteOwnedMemberPhotoBlobs` call ahead of
+  its transaction's `Member`-row write.
 
 Do not add or compose a row lock without updating this inventory and documenting
 its order against every advisory- and row-lock counterpart.

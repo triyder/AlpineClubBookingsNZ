@@ -62,10 +62,26 @@ export function CommitteePhotoDisplayControl() {
     if (!settings || !canEdit) return;
     setSaving(true);
     try {
+      // The endpoint takes a whole-object PUT, so this control must not write
+      // back its mount-time snapshot of the OTHER visibility fields — a
+      // concurrent edit to (say) showBookNow from the Page Content screen would
+      // be clobbered. Re-fetch immediately before saving and change only
+      // committeePhotoDisplay, so we preserve whatever else changed meanwhile.
+      const currentResponse = await fetch("/api/admin/public-content-settings");
+      if (!currentResponse.ok) {
+        throw new Error("Could not load the current settings to save.");
+      }
+      const currentData = (await currentResponse.json()) as {
+        settings: PublicContentSettings;
+      };
+      const body: PublicContentSettings = {
+        ...currentData.settings,
+        committeePhotoDisplay: settings.committeePhotoDisplay,
+      };
       const response = await fetch("/api/admin/public-content-settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(settings),
+        body: JSON.stringify(body),
       });
       if (!response.ok) {
         const data = (await response.json().catch(() => ({}))) as {

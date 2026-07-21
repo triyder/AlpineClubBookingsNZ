@@ -339,11 +339,13 @@ export function extractImageDimensions(
 }
 
 /**
- * Remove EXIF/XMP/comment metadata from a JPEG by copying every marker
- * segment except APP1 (EXIF + XMP, where camera GPS/location lives) and COM
- * comments, then the entropy-coded scan verbatim. Colour-relevant segments
- * (JFIF APP0, ICC APP2, Adobe APP14) are preserved. Returns the original bytes
- * unchanged if the structure is malformed, so stripping can never corrupt.
+ * Remove metadata from a JPEG by copying only the colour/rendering marker
+ * segments — JFIF (APP0), ICC (APP2), Adobe (APP14) — and the structural
+ * markers, dropping every other APPn (EXIF/XMP APP1, IPTC/Photoshop APP13,
+ * Ducky APP12, vendor blocks) and every COM comment, any of which can carry
+ * creator contact info, location or GPS. Then the entropy-coded scan is copied
+ * verbatim. Returns the original bytes unchanged if the structure is malformed,
+ * so stripping can never corrupt.
  */
 function stripJpegMetadata(bytes: Buffer): Buffer {
   if (bytes.length < 2 || bytes[0] !== 0xff || bytes[1] !== 0xd8) return bytes;
@@ -360,9 +362,18 @@ function stripJpegMetadata(bytes: Buffer): Buffer {
     const segLen = bytes.readUInt16BE(offset + 2);
     const segEnd = offset + 2 + segLen;
     if (segLen < 2 || segEnd > bytes.length) return bytes; // truncated/invalid
-    const isExifOrXmp = marker === 0xe1; // APP1
-    const isComment = marker === 0xfe; // COM
-    if (!isExifOrXmp && !isComment) {
+    // Allow-list, not deny-list: metadata lives across many APPn markers
+    // (APP1 EXIF/XMP, APP13 IPTC/Photoshop, APP12 Ducky, vendor APP3-APP11),
+    // any of which can carry creator contact info, location or GPS. Preserve
+    // ONLY the colour/rendering segments — APP0 (JFIF), APP2 (ICC), APP14
+    // (Adobe) — and drop every other APPn and every COM comment, so no
+    // metadata segment survives by omission. Structural markers (DQT, DHT,
+    // SOFn, DRI, …) are not APPn/COM and are always kept.
+    const isAppSegment = marker >= 0xe0 && marker <= 0xef;
+    const isColourApp =
+      marker === 0xe0 || marker === 0xe2 || marker === 0xee;
+    const drop = (isAppSegment && !isColourApp) || marker === 0xfe; // COM
+    if (!drop) {
       kept.push(bytes.subarray(offset, segEnd));
     }
     offset = segEnd;
@@ -416,8 +427,18 @@ function stripWebpMetadata(bytes: Buffer): Buffer {
     const fourCC = bytes.toString("ascii", offset, offset + 4);
     const size = bytes.readUInt32LE(offset + 4);
     const padded = size + (size % 2);
-    const chunkEnd = offset + 8 + padded;
-    if (chunkEnd > bytes.length) return bytes; // malformed
+    let chunkEnd = offset + 8 + padded;
+    if (chunkEnd > bytes.length) {
+      // A final odd-sized chunk may omit its RIFF pad byte. Accept that exact
+      // case (the unpadded end lands on EOF) so a trailing EXIF/XMP chunk is
+      // still stripped rather than the whole file being left untouched;
+      // anything else is genuinely malformed.
+      if (offset + 8 + size === bytes.length) {
+        chunkEnd = bytes.length;
+      } else {
+        return bytes;
+      }
+    }
     if (fourCC === "EXIF" || fourCC === "XMP ") {
       changed = true;
       offset = chunkEnd;

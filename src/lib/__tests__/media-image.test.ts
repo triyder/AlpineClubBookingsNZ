@@ -276,6 +276,25 @@ function webpChunk(fourCC: string, data: Buffer): Buffer {
   return Buffer.concat([header, data, pad]);
 }
 
+function jpegAppSegment(marker: number, payload: Buffer): Buffer {
+  const len = Buffer.alloc(2);
+  len.writeUInt16BE(payload.length + 2, 0);
+  return Buffer.concat([Buffer.from([0xff, marker]), len, payload]);
+}
+
+const JPEG_SOF0 = (() => {
+  const s = Buffer.alloc(11);
+  s.writeUInt8(0xff, 0);
+  s.writeUInt8(0xc0, 1);
+  s.writeUInt16BE(9, 2);
+  s.writeUInt8(8, 4);
+  s.writeUInt16BE(16, 5); // height
+  s.writeUInt16BE(16, 7); // width
+  s.writeUInt8(1, 9);
+  return s;
+})();
+const JPEG_SOS_EOI = Buffer.from([0xff, 0xda, 0x00, 0x02, 0x01, 0xff, 0xd9]);
+
 const SECRET = "GPS:-41.29,174.78";
 
 describe("stripImageMetadata", () => {
@@ -359,6 +378,70 @@ describe("stripImageMetadata", () => {
     expect(stripped.includes(Buffer.from("VP8L", "ascii"))).toBe(true);
     // RIFF size header is recomputed to match the shortened body.
     expect(stripped.readUInt32LE(4)).toBe(stripped.length - 8);
+  });
+
+  it("drops APP13 IPTC (and any non-colour APPn) while preserving JFIF/ICC (allow-list)", () => {
+    const iptcSecret = "IPTC-HOME-42-BAKER-ST";
+    const soi = Buffer.from([0xff, 0xd8]);
+    const app0Jfif = jpegAppSegment(
+      0xe0,
+      Buffer.from("JFIF\0\x01\x01\x00\x00\x01\x00\x01\x00\x00", "latin1"),
+    ); // colour/structural — must be kept
+    const app13Iptc = jpegAppSegment(
+      0xed,
+      Buffer.from(`Photoshop 3.0\0${iptcSecret}`, "latin1"),
+    ); // IPTC — must be dropped
+    const app2Icc = jpegAppSegment(0xe2, Buffer.from("ICC_PROFILE\0keep-colour")); // kept
+    const jpeg = Buffer.concat([
+      soi,
+      app0Jfif,
+      app13Iptc,
+      app2Icc,
+      JPEG_SOF0,
+      JPEG_SOS_EOI,
+    ]);
+
+    const stripped = stripImageMetadata(jpeg, "image/jpeg");
+
+    // IPTC PII gone; JFIF and ICC colour segments preserved; frame intact.
+    expect(stripped.includes(Buffer.from(iptcSecret, "latin1"))).toBe(false);
+    expect(stripped.includes(Buffer.from("JFIF", "latin1"))).toBe(true);
+    expect(stripped.includes(Buffer.from("ICC_PROFILE", "latin1"))).toBe(true);
+    expect(stripped.includes(Buffer.from("Photoshop", "latin1"))).toBe(false);
+    expect(extractImageDimensions(stripped, "image/jpeg")).toEqual({
+      width: 16,
+      height: 16,
+    });
+  });
+
+  it("strips a trailing WebP EXIF chunk even when it omits its RIFF pad byte", () => {
+    // Final EXIF chunk with an odd payload length and NO pad byte (built by hand
+    // — webpChunk would add the pad).
+    const exifData = Buffer.from(SECRET, "latin1"); // odd length
+    const exifHeader = Buffer.alloc(8);
+    exifHeader.write("EXIF", 0, "ascii");
+    exifHeader.writeUInt32LE(exifData.length, 4);
+    const exifNoPad = Buffer.concat([exifHeader, exifData]);
+    const body = Buffer.concat([
+      webpChunk("VP8L", Buffer.from([0x2f, 0x00, 0x00, 0x00])),
+      exifNoPad,
+    ]);
+    const webp = Buffer.concat([
+      Buffer.from("RIFF", "ascii"),
+      (() => {
+        const s = Buffer.alloc(4);
+        s.writeUInt32LE(4 + body.length, 0);
+        return s;
+      })(),
+      Buffer.from("WEBP", "ascii"),
+      body,
+    ]);
+
+    const stripped = stripImageMetadata(webp, "image/webp");
+
+    expect(stripped.includes(Buffer.from(SECRET, "latin1"))).toBe(false);
+    expect(stripped.toString("ascii", 8, 12)).toBe("WEBP");
+    expect(stripped.includes(Buffer.from("VP8L", "ascii"))).toBe(true);
   });
 
   it("returns the original bytes unchanged when the structure is malformed", () => {
