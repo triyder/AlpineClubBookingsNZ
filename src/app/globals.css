@@ -532,7 +532,7 @@
      derivation of DEFAULT_CLUB_THEME_VALUES and applies only when no ClubTheme
      stylesheet is injected; it is pinned in app-theme-layout-contract.test.ts
      so the two cannot drift. */
-  --muted-foreground: var(--app-muted-foreground, #555f59);
+  --muted-foreground: var(--app-muted-foreground, #5a635e);
   --accent: var(--brand-mist);
   --accent-foreground: var(--brand-deep);
   --app-accent-text: var(--brand-deep);
@@ -601,7 +601,7 @@
        The light block above restates `--muted-foreground`,
        so excluding this block from print leaves the LIGHT derived tone standing
        on paper — the #2146 pairing invariant is preserved. */
-    --muted-foreground: var(--app-muted-foreground-dark, #b2b8b5);
+    --muted-foreground: var(--app-muted-foreground-dark, #b3b8b5);
     --accent: var(--brand-charcoal);
     --accent-foreground: var(--brand-snow);
     --app-accent-text: var(--brand-snow);
