@@ -225,13 +225,19 @@ export async function setIntegrationCredential(params: {
  * returning its decrypted value — or `null` when the strength gate blocks
  * generation (NEVER throwing: this can fire from a mere module toggle).
  *
- *   - strong secret + no row      → generate, store (create-only, race-safe),
- *                                    return the new value;
- *   - strong secret + readable row → return the existing value;
+ *   - strong secret + no row      → CREATE-ONLY: `create` + catch P2002, so a
+ *                                    concurrent creator's value wins (never an
+ *                                    upsert / last-writer-wins across containers);
+ *   - strong secret + readable row → return the existing value (never overwrite);
  *   - strong secret + unreadable row (auth secret changed) → the wrapped key is
- *     useless and would block reconnect, so replace it with a fresh one and
- *     return that (the material it protected is already unrecoverable);
+ *     useless and would block reconnect, so replace the ALREADY-DEAD material
+ *     with a fresh one — under a status-guarded `updateMany` claim so a loser
+ *     re-reads the winner rather than clobbering it;
  *   - weak/placeholder secret     → no-op, return null.
+ *
+ * The generate path is genuinely create-only: there is no upsert here, so two
+ * cron/web containers generating at once converge on ONE stored value instead of
+ * silently overwriting each other (correctness F1 / ops F6 / security F3).
  */
 export async function ensureGeneratedCredential(params: {
   provider: string;
@@ -245,26 +251,153 @@ export async function ensureGeneratedCredential(params: {
   }
 
   const existing = await resolveIntegrationCredential(params.provider, params.key);
+  // A readable key is authoritative — never overwrite it.
   if (existing.status === "configured") return existing.value;
 
-  // not_configured or needs_reentry: generate a fresh value and persist it.
-  const value = params.generate();
-  try {
-    await setIntegrationCredential({
+  if (existing.status === "not_configured") {
+    return createGeneratedCredential({
       provider: params.provider,
       key: params.key,
-      value,
-      updatedByUserId: params.updatedByUserId ?? null,
       label: params.label,
+      value: params.generate(),
+      updatedByUserId: params.updatedByUserId ?? null,
     });
-    return value;
+  }
+
+  // needs_reentry: replace the dead row via a claim keyed on its exact stale
+  // ciphertext so only one process rewrites a given version.
+  const rows = await loadProviderRows(params.provider);
+  const staleRow = rows.get(params.key);
+  if (!staleRow) {
+    // The row vanished between resolve and here — treat as create-only.
+    return createGeneratedCredential({
+      provider: params.provider,
+      key: params.key,
+      label: params.label,
+      value: params.generate(),
+      updatedByUserId: params.updatedByUserId ?? null,
+    });
+  }
+  return replaceUnreadableCredential({
+    provider: params.provider,
+    key: params.key,
+    label: params.label,
+    value: params.generate(),
+    staleCiphertext: staleRow.ciphertext,
+    updatedByUserId: params.updatedByUserId ?? null,
+  });
+}
+
+/**
+ * True for a Prisma unique-constraint conflict (P2002). Detected structurally
+ * (by `code`) so a raced insert is tolerated regardless of how the driver
+ * surfaces it — same shape as `isUniqueConstraintError` in config-self-heal,
+ * inlined here to keep this module free of that boot module's imports.
+ */
+function isUniqueConstraintError(err: unknown): boolean {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    "code" in err &&
+    (err as { code?: unknown }).code === "P2002"
+  );
+}
+
+/**
+ * Encrypt `value` and persist it as a NEW row (create-only). Returns the winner's
+ * decrypted value: on a P2002 unique race the concurrent creator won, so we
+ * re-resolve and return whatever is now stored (both processes share the same
+ * strong auth secret, so the winner's row is readable). Never overwrites.
+ */
+async function createGeneratedCredential(params: {
+  provider: string;
+  key: string;
+  label: string;
+  value: string;
+  updatedByUserId?: string | null;
+}): Promise<string> {
+  const encrypted = encryptCredential({
+    provider: params.provider,
+    key: params.key,
+    plaintext: params.value,
+    label: params.label,
+  });
+  try {
+    await prisma.integrationCredential.create({
+      data: {
+        provider: params.provider,
+        key: params.key,
+        ciphertext: encrypted.ciphertext,
+        iv: encrypted.iv,
+        authTag: encrypted.authTag,
+        secretSource: encrypted.secretSource,
+        labelVersion: encrypted.labelVersion,
+        updatedByUserId: params.updatedByUserId ?? null,
+      },
+    });
+    invalidateProviderCredentialCache(params.provider);
+    return params.value;
   } catch (error) {
-    // A concurrent process may have created the row first (unique race). Fall
-    // back to whatever is now stored and readable.
-    const reread = await resolveIntegrationCredential(params.provider, params.key);
-    if (reread.status === "configured") return reread.value;
+    if (!isUniqueConstraintError(error)) throw error;
+    // Lost the create race — return the winner's value, not ours.
+    invalidateProviderCredentialCache(params.provider);
+    const winner = await resolveIntegrationCredential(params.provider, params.key);
+    if (winner.status === "configured") return winner.value;
+    // The winner exists but is unreadable (a different secret wrote it). The
+    // material is unrecoverable; surface the original conflict rather than
+    // silently returning a value nobody can use.
     throw error;
   }
+}
+
+/**
+ * Replace an UNREADABLE (needs_reentry) row with a fresh value under a
+ * create-or-lose discipline: a status-guarded `updateMany` claim keyed on the
+ * exact stale ciphertext we read, so only ONE process replaces a given dead row
+ * and every loser re-reads the winner's value instead of clobbering it. The
+ * stale material is already unrecoverable, so we never risk overwriting a live
+ * key here (that case returned above).
+ */
+async function replaceUnreadableCredential(params: {
+  provider: string;
+  key: string;
+  label: string;
+  value: string;
+  staleCiphertext: string;
+  updatedByUserId?: string | null;
+}): Promise<string> {
+  const encrypted = encryptCredential({
+    provider: params.provider,
+    key: params.key,
+    plaintext: params.value,
+    label: params.label,
+  });
+  const claimed = await prisma.integrationCredential.updateMany({
+    where: {
+      provider: params.provider,
+      key: params.key,
+      // Claim only the exact dead row we observed. Once any process replaces it
+      // the ciphertext changes, so a racing writer's claim matches zero rows.
+      ciphertext: params.staleCiphertext,
+    },
+    data: {
+      ciphertext: encrypted.ciphertext,
+      iv: encrypted.iv,
+      authTag: encrypted.authTag,
+      secretSource: encrypted.secretSource,
+      labelVersion: encrypted.labelVersion,
+      updatedByUserId: params.updatedByUserId ?? null,
+    },
+  });
+  invalidateProviderCredentialCache(params.provider);
+  if (claimed.count === 1) return params.value;
+
+  // Another process already replaced the dead row — adopt the winner's value.
+  const winner = await resolveIntegrationCredential(params.provider, params.key);
+  if (winner.status === "configured") return winner.value;
+  // Still unreadable (the row was deleted, or replaced under a changed secret):
+  // fall back to a create-only attempt so a missing row is (re)generated.
+  return createGeneratedCredential(params);
 }
 
 /** Delete a single credential row (used by disconnect flows). */
