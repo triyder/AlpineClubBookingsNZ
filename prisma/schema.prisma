@@ -1505,31 +1505,16 @@ model Season {
   updatedAt DateTime   @updatedAt
 
   // Relations
-  // `rates` is the legacy member/non-member boolean-keyed rate table, frozen
-  // since the E4 re-key (#1930); the authoritative pricing rows live in
-  // `membershipTypeRates`. Its last APPLICATION-RUNTIME reader is gone: #2129
-  // step 1 re-sourced the public {{hut-fees}} embed onto `membershipTypeRates`,
-  // dropped the admin season routes' unused `rates` include, and switched the
-  // lodge-setup copy-seasons flow onto `membershipTypeRates`.
-  // The relation is NOT unreferenced, though — the seeders still use it:
-  // ONE READER and TWO WRITERS survive, all outside `src/`. Note that none of
-  // them contains the string "SeasonRate" (they go through this `rates`
-  // relation), so a string grep for the model name will not find them.
-  //   READ   e2e/setup/seed-second-lodge.ts:202 — `include: { rates: true }`
-  //   WRITE  e2e/setup/seed-second-lodge.ts:218-224 — `rates: { create: ... }`
-  //   WRITE  prisma/seed.ts:208-227 — `createMissingSeasonRates` → `seasonRate.upsert`
-  // #2129 step 2 (Release B) must, IN THE SAME PR as the DROP migration:
-  //   1. strip the `rates` include AND the `rates: { create: ... }` block from
-  //      e2e/setup/seed-second-lodge.ts, and
-  //   2. delete `createMissingSeasonRates` (and its two call sites) from prisma/seed.ts.
-  // Both are load-bearing, not cosmetic: `e2e/**` is inside tsconfig.json's
-  // `include` (`**/*.ts`) and is NOT excluded (only node_modules and test/
-  // `__tests__` paths are), so dropping the model without editing the seeder
-  // fails `npm run typecheck` on both lines; and scripts/e2e-stack.sh:92 runs
-  // that seeder under E2E_MULTI_LODGE=1, so the REQUIRED `E2E multi-lodge`
-  // branch-protection check fails at seed time. Dropping without step 1 lands
-  // `main` red. This PR carries no schema change.
-  rates              SeasonRate[]
+  // `membershipTypeRates` holds the authoritative per-membership-type nightly
+  // rates (#1930, E4). The legacy member/non-member boolean-keyed `SeasonRate`
+  // table and its `rates` relation were DROPPED by the #2129 step 2 contract
+  // migration 20260721120000_contract_drop_season_rate (Release B), after
+  // #2129 step 1 re-sourced the public {{hut-fees}} embed onto
+  // `membershipTypeRates` and the same Release B PR removed the surviving seed
+  // reader/writers. Do not reintroduce a boolean member/non-member rate key.
+  // NOT YET DEPLOYED as of this branch: production still runs v0.12.2 and even
+  // the Release A runtime-prep is unshipped. Release B must not be cut into the
+  // same version tag as that runtime-prep — see CHANGELOG.md -> Unreleased.
   membershipTypeRates MembershipTypeSeasonRate[]
   lodge Lodge        @relation(fields: [lodgeId], references: [id], onDelete: Restrict)
 
@@ -1537,37 +1522,10 @@ model Season {
   @@index([lodgeId])
 }
 
-// Frozen legacy hut-rate table (member/non-member boolean key). #2129 step 1
-// removed the last APPLICATION-RUNTIME reader (the public {{hut-fees}} embed),
-// but the table is NOT unreferenced: one reader and two writers remain, all in
-// seed code outside `src/` —
-//   READ   e2e/setup/seed-second-lodge.ts:202 — `include: { rates: true }`
-//   WRITE  e2e/setup/seed-second-lodge.ts:218-224 — `rates: { create: ... }`
-//   WRITE  prisma/seed.ts:208-227 — `createMissingSeasonRates` → `seasonRate.upsert`
-// Scheduled for removal by #2129 step 2 (Release B), whose DROP migration MUST
-// ship in the same PR as: stripping the `rates` include and the
-// `rates: { create: ... }` block from e2e/setup/seed-second-lodge.ts, AND
-// deleting `createMissingSeasonRates` from prisma/seed.ts. Otherwise
-// `npm run typecheck` fails (e2e/** is inside tsconfig.json's `**/*.ts`
-// include and is not excluded) and the required `E2E multi-lodge` check fails
-// at seed time (scripts/e2e-stack.sh:92 runs the seeder under
-// E2E_MULTI_LODGE=1). Do not add new readers or writers.
-model SeasonRate {
-  id                 String  @id @default(cuid())
-  seasonId           String
-  ageTier            AgeTier
-  isMember           Boolean
-  pricePerNightCents Int
-
-  // Relations
-  season Season @relation(fields: [seasonId], references: [id], onDelete: Cascade)
-
-  @@unique([seasonId, ageTier, isMember])
-  @@index([seasonId])
-}
-
 // Hut nightly rate keyed by membership type (#1930, E4). Replaces the
-// member/non-member boolean key on SeasonRate: each MEMBER_RATE membership
+// member/non-member boolean key of the dropped legacy `SeasonRate` table
+// (removed by 20260721120000_contract_drop_season_rate, #2129 step 2): each
+// MEMBER_RATE membership
 // type carries its own rate rows, non-members price via the built-in
 // NON_MEMBER type, and NON_MEMBER_RATE/BLOCK_BOOKING types deliberately carry
 // zero own rows (D2 invariant). `ageTier` is nullable: a per-age-tier type
@@ -4232,19 +4190,17 @@ model XeroItemCodeMapping {
   category            String // "HUT_FEE" | "ENTRANCE_FEE"
   ageTier             AgeTier? // HUT_FEE only
   seasonType          SeasonType? // HUT_FEE only
-  // Legacy member/non-member key column (#1930, E4), superseded by
-  // membershipTypeId. DROP-ELIGIBLE ONLY AFTER THE #2130 RUNTIME-PREP RELEASE
-  // HAS DEPLOYED — not before. That release (CHANGELOG `Unreleased`, the
-  // release that follows v0.12.2) is STEP 1: it narrowed every read AND write
-  // path on this model with an explicit `select`, so its runtime names only
-  // the columns it selects (Prisma otherwise emits every scalar in a
-  // mutation's implicit RETURNING). Until that release is itself the
-  // deployed/draining colour in production, the live v0.12.2 colour still
-  // names this column in SQL, and dropping it would break the blue/green
-  // deploy this two-step exists to prevent. STEP 2 — the contract migration
-  // that drops this column and the @@unique below — is legal only in a LATER
-  // release, once STEP 1 has shipped and soaked in production.
-  isMember            Boolean? // HUT_FEE only (legacy key, drop-eligible)
+  // The legacy member/non-member `isMember` key column (#1930, E4) and its
+  // companion @@unique([category, ageTier, seasonType, isMember]) were DROPPED
+  // by the #2130 STEP 2 contract migration
+  // 20260721130000_contract_drop_ismember_and_agetier_xero_columns, after the
+  // STEP 1 / STEP 1.5 runtime-prep releases narrowed every read and write on
+  // this model to an explicit `select`. HUT_FEE item codes are keyed solely by
+  // membershipTypeId now; do not reintroduce a boolean member key.
+  // NOT YET DEPLOYED as of this branch: production still runs v0.12.2 and the
+  // STEP 1.5 runtime-prep (Release A) is itself unshipped. Release B must not be
+  // cut into the same version tag as that runtime-prep — see CHANGELOG.md ->
+  // Unreleased.
   // Membership-type key for HUT_FEE item codes (#1930, E4). Nullable ageTier
   // mirrors MembershipTypeSeasonRate: a per-tier type has one row per tier, a
   // flat type has a single NULL-ageTier row. A companion raw-SQL partial
@@ -4258,7 +4214,6 @@ model XeroItemCodeMapping {
   createdAt           DateTime             @default(now())
   updatedAt           DateTime             @updatedAt
 
-  @@unique([category, ageTier, seasonType, isMember])
   // Explicit map: the Prisma default constraint name (68 bytes) exceeds
   // Postgres's 63-byte identifier limit and would be silently truncated,
   // drifting from the migration SQL (#1930, E4). The client API name is
@@ -4281,23 +4236,20 @@ model AgeTierSetting {
   label                                 String // e.g. "Child (under 10)"
   subscriptionRequiredForBooking        Boolean                           @default(true)
   familyGroupRequestCreateMemberAllowed Boolean                           @default(false)
-  // xeroContactGroupId / xeroContactGroupName are legacy single-group columns
-  // superseded by XeroContactGroupRule (E8, #1934). DROP-ELIGIBLE ONLY AFTER
-  // THE #2130 RUNTIME-PREP RELEASE HAS DEPLOYED — not before. That release
-  // (CHANGELOG `Unreleased`, the release that follows v0.12.2) is STEP 1: it
-  // narrowed every read AND write path on this model with an explicit `select`
-  // (getAgeTierSettings and friends; the age-tier route, setup wizard,
-  // config self-heal and seed upserts), so its runtime names only the columns
-  // it selects — Prisma otherwise emits every scalar in a mutation's implicit
-  // RETURNING. Until that release is itself the deployed/draining colour in
-  // production, the live v0.12.2 colour still names these columns in SQL, and
-  // dropping them would break the blue/green deploy this two-step exists to
-  // prevent. STEP 2 — the contract migration that drops both columns — is
-  // legal only in a LATER release, once STEP 1 has shipped and soaked in
-  // production. The AgeTierXeroAcceptedContactGroup child table was already
-  // dropped in the E13 contract migration 20260720120000 (#1939).
-  xeroContactGroupId                    String?
-  xeroContactGroupName                  String?
+  // The legacy single-group xeroContactGroupId / xeroContactGroupName columns
+  // (superseded by XeroContactGroupRule, E8 #1934) were DROPPED by the #2130
+  // STEP 2 contract migration
+  // 20260721130000_contract_drop_ismember_and_agetier_xero_columns, after the
+  // STEP 1 / STEP 1.5 runtime-prep releases narrowed every read and write on
+  // this model to an explicit `select`. Their data was migrated into
+  // XeroContactGroupRule by 20260716140000_xero_member_grouping; the
+  // AgeTierXeroAcceptedContactGroup child table went in the E13 contract
+  // migration 20260720120000 (#1939). Xero member grouping is configured
+  // exclusively through XeroContactGroupRule now.
+  // NOT YET DEPLOYED as of this branch: production still runs v0.12.2 and the
+  // STEP 1.5 runtime-prep (Release A) is itself unshipped. Release B must not be
+  // cut into the same version tag as that runtime-prep — see CHANGELOG.md ->
+  // Unreleased.
   sortOrder                             Int                               @default(0)
   createdAt                             DateTime                          @default(now())
   updatedAt                             DateTime                          @updatedAt

@@ -251,7 +251,9 @@ silently lose the "held provisionally / charged later" explanation.
 > flat (one `NULL`-ageTier row). Xero hut-fee item codes
 > (`XeroItemCodeMapping.membershipTypeId`) re-key the same way so an invoice
 > line never disagrees with the rate that priced it. The legacy boolean-keyed
-> `SeasonRate` table is retained but frozen (public embed only) until E7/E13.
+> `SeasonRate` table was frozen after E4 and **dropped** by
+> `20260721120000_contract_drop_season_rate` (#2129 step 2), once the public
+> `{{hut-fees}}` embed had been re-sourced onto `MembershipTypeSeasonRate`.
 
 When the bed allocation module is effectively enabled and at least one active
 bed exists in Admin -> Configuration -> Rooms & Beds, booking capacity is the

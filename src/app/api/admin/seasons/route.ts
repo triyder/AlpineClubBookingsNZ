@@ -18,8 +18,8 @@ const dateOnlyString = z.string().refine(isDateOnlyString, {
   message: "Date must be YYYY-MM-DD",
 })
 
-// Rates are keyed by membership type (#1930, E4). The frozen legacy
-// boolean-keyed SeasonRate table is no longer written by this editor.
+// Rates are keyed by membership type (#1930, E4); the legacy boolean-keyed
+// SeasonRate table was dropped by #2129 step 2.
 const seasonSchema = z.object({
   name: z.string().min(1, "Name is required"),
   type: z.enum(["WINTER", "SUMMER"]),

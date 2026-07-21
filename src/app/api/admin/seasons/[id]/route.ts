@@ -16,7 +16,7 @@ const dateOnlyString = z.string().refine(isDateOnlyString, {
   message: "Date must be YYYY-MM-DD",
 })
 
-// Rates keyed by membership type (#1930, E4); frozen legacy SeasonRate untouched.
+// Rates keyed by membership type (#1930, E4); legacy SeasonRate is gone (#2129).
 const updateSeasonSchema = z.object({
   name: z.string().min(1).optional(),
   type: z.enum(["WINTER", "SUMMER"]).optional(),
@@ -126,8 +126,8 @@ export async function PUT(
       },
     })
 
-    // Update membership-type rates if provided; the frozen legacy SeasonRate
-    // table is deliberately left untouched (#1930, E4 — #2129 step 2 drops it).
+    // Update membership-type rates if provided — the only hut-rate table there
+    // is (#1930, E4; the legacy SeasonRate table was dropped by #2129 step 2).
     if (membershipTypeRates) {
       await replaceMembershipTypeSeasonRates(tx, id, membershipTypeRates)
     }

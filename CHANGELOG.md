@@ -4,6 +4,69 @@ All notable public reference-release changes should be recorded here.
 
 ## Unreleased
 
+### Release B (contract drops — deploy as its own release)
+
+> **⚠️ Precondition (now satisfied): Release A must be the deployed, drained
+> colour before this ships.** Release A shipped as **v0.13.0** and has been the
+> deployed, drained production colour since 2026-07-22 NZT. These migrations
+> drop a table and three columns that the **v0.12.2** colour still named in its
+> SQL — shipping them against a draining v0.12.2 (verified) causes anonymous
+> public **500s on every page carrying `{{hut-fees}}`** (`42P01 relation
+> "SeasonRate" does not exist`); admin seasons pages 500; Xero item-code saves
+> 500 (`42703 column "isMember" does not exist`); and age-tier saves plus the
+> boot-time config self-heal failing on **every blue container start** — none
+> of it recoverable by rolling the app back. The v0.13.0 colour names none of
+> them, which is what makes this drop legal now. Cut as its own tag; the deploy
+> still requires `ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS=1` with a
+> `BLUE_GREEN_MIGRATION_OVERRIDE_REASON` recording the v0.13.0 soak. See
+> `docs/UPGRADING.md` → Unreleased.
+
+- **Legacy contraction, Release B: `SeasonRate` and the doomed Xero columns are
+  dropped (#2129 step 2, #2130 STEP 2).** Two destructive contract migrations
+  finish the expand/migrate/contract series that E4 (#1930) and E8 (#1934)
+  began. `20260721120000_contract_drop_season_rate` drops the frozen
+  member/non-member boolean-keyed `SeasonRate` table; the same PR removes its
+  last references, which were seed-only and outside `src/` (the
+  `include: { rates: true }` read and the `rates: { create: … }` write in
+  `e2e/setup/seed-second-lodge.ts`, and `createMissingSeasonRates` plus its two
+  call sites in `prisma/seed.ts`). Nightly pricing, Xero hut-fee item codes and
+  the public `{{hut-fees}}` embed have all read `MembershipTypeSeasonRate` since
+  #2129 step 1, so nothing user-visible changes. Because the E4 fan-out that
+  copied those rows forward was **conditional** on the install having a
+  `MEMBER_RATE`-behaviour membership type and a `NON_MEMBER`-keyed type, the
+  migration opens with a **pre-drop coverage guard**: it counts `SeasonRate`
+  rows with no `MembershipTypeSeasonRate` counterpart for the same season and
+  age tier and raises, aborting the transaction before the `DROP TABLE`, if any
+  exist. A fork whose types never matched keeps its only copy of that pricing
+  instead of losing it. `docs/UPGRADING.md` publishes the same check as a
+  read-only operator pre-flight query; if it fires, reconcile the missing rates
+  rather than forcing past it.
+
+  `20260721130000_contract_drop_ismember_and_agetier_xero_columns` deletes the
+  orphaned legacy `HUT_FEE` item-code rows that carried no `membershipTypeId`
+  (not resolvable for pricing by the current runtime — both the resolver and the
+  admin editor require the key; the only paths that still touch them count or
+  collect item codes in aggregate and name no dropped column), then drops
+  `XeroItemCodeMapping.isMember` with its old
+  `(category, ageTier, seasonType, isMember)` unique, and drops
+  `AgeTierSetting.xeroContactGroupId`/`xeroContactGroupName` (their data moved
+  into `XeroContactGroupRule` at E8). The still-live partial index
+  `XeroItemCodeMapping_hutfee_flat_unique` is untouched.
+
+  **These migrations are legal only on top of the preceding runtime-prep
+  releases and must not be deployed until those have shipped to production and
+  soaked** — #2129 step 1 for `SeasonRate`, and #2133 (STEP 1, shipped in
+  `v0.12.2`) plus the #2130 STEP 1.5 write-narrowing release for the columns.
+  Dropping a column while an old colour still names it in a `SELECT` or an
+  implicit `RETURNING` is exactly the blue/green break the multi-step exists to
+  prevent. Deploying requires `ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS=1` and a
+  `BLUE_GREEN_MIGRATION_OVERRIDE_REASON` recording that soak; both migrations
+  carry full rationale rows in `docs/BLUE_GREEN_MIGRATION_SAFETY.tsv`. Operator
+  actions: `docs/UPGRADING.md` → Unreleased. The `#2130` select guard
+  (`doomed-column-select-guard.test.ts`) is **kept** even though its original
+  columns are gone — narrow selects remain the rule for both models and it is
+  the only repo-wide enforcement of it.
+
 - **The admin area now follows the club's saved site colours in light mode
   (#2144).** Every admin screen previously carried hard-coded light-grey
   ("slate") Tailwind colours that ignored the club theme in light mode; a
@@ -476,6 +539,36 @@ All notable public reference-release changes should be recorded here.
   change. Operator actions: `docs/UPGRADING.md` → Unreleased. See
   `docs/config-transfer/README.md`.
 
+- **Blue/green runtime-prep for the legacy Xero column drops, write half
+  (#2130).** `v0.12.2` narrowed the two READ paths (`getHutFeeItemCodeMap`,
+  `getAgeTierSettings`) with an explicit `select` so the deployed Prisma client
+  stopped naming `XeroItemCodeMapping.isMember` and
+  `AgeTierSetting.xeroContactGroupId`/`xeroContactGroupName`. That was
+  incomplete: Prisma also emits an implicit `RETURNING` over **every** scalar
+  column of a `create`/`update`/`upsert` unless a `select` narrows it, so the
+  unnarrowed WRITE paths still named the doomed columns and a draining old
+  colour would keep issuing that SQL. Every mutation on those two models is now
+  narrowed — the admin item-code-mappings route, the admin age-tier-settings
+  route, config-transfer's Xero import, the setup wizard, and the seed — each to
+  the minimal projection its (discarded) result needs. Regression pins assert
+  the `select` on each mutation, and a static source-scan guard (modelled on the
+  existing `ClubModuleSettings` select guard) fails CI on any future call site
+  on either model that forgets its `select` — across `src/`, `prisma/seed.ts`
+  and `scripts/` — so the narrowing cannot silently regress before the drop.
+  As defensive cleanup, the already-retired raw-SQL audit script
+  `audit-access-role-membership-cleanup.ts` also stopped naming the age-tier
+  Xero-group columns (its `managedAgeTierSettings` metric and paired "Managed
+  Xero age-tier rules backfilled" check were removed). That script never
+  executes — it returns early now that the `20260720120000` contraction
+  migration exists — so no live audit coverage was lost and it was never part of
+  the blue/green gap. **No schema change and no migration in this release**: it
+  is runtime-prep only. Only **after this release has itself deployed** are
+  `isMember` (with its old `@@unique`) and the two `xeroContactGroup*` columns
+  drop-eligible, by a *later* release's contract migration — never the same
+  release as this prep. That contract migration is
+  `20260721130000_contract_drop_ismember_and_agetier_xero_columns` (STEP 2 — see
+  the **Release B** section below, which must be its own, later version tag).
+
 - **Public `{{hut-fees}}` embed now reads the authoritative per-membership-type
   rates (#2129, step 1).** The embed was the last reader of the frozen
   member/non-member `SeasonRate` table, and it presented a definition list of
@@ -511,53 +604,18 @@ All notable public reference-release changes should be recorded here.
   E4 re-key, so every copy silently failed validation. It now posts
   `membershipTypeRates` and works again.
 
-  No schema change: `SeasonRate` is untouched, and this step removed its last
-  **application-runtime** reader (the embed; the admin season routes and the
-  lodge-setup copy flow also stopped selecting it). The table is **not**
-  unreferenced, though — **one reader and two writers remain**, all in seed code
-  outside `src/`:
-
-  - `e2e/setup/seed-second-lodge.ts:202` — READ, `include: { rates: true }`
-  - `e2e/setup/seed-second-lodge.ts:218-224` — WRITE, `rates: { create: … }`
-  - `prisma/seed.ts:208-227` — WRITE, `createMissingSeasonRates` →
-    `prisma.seasonRate.upsert`
-
-  So #2129 step 2 (Release B) must, **in the same PR as the DROP migration**,
-  strip both the `rates` include and the `rates: { create: … }` block from
-  `e2e/setup/seed-second-lodge.ts` **and** delete `createMissingSeasonRates`
-  from `prisma/seed.ts`. Skipping either breaks the build twice over:
-  `e2e/**` sits inside `tsconfig.json`'s `**/*.ts` include and is not excluded,
-  so `npm run typecheck` fails on both seeder lines; and
+  No schema change in this step: `SeasonRate` was untouched, and the step
+  removed its last **application-runtime** reader (the embed; the admin season
+  routes and the lodge-setup copy flow also stopped selecting it). The only
+  surviving references were seed-time and outside `src/` — the
+  `include: { rates: true }` read and the `rates: { create: … }` write in
+  `e2e/setup/seed-second-lodge.ts`, and `createMissingSeasonRates` in
+  `prisma/seed.ts` — and step 2 (Release B, below) removed all three in the same
+  PR as the DROP migration, which is what kept the build green: `e2e/**` sits
+  inside `tsconfig.json`'s `**/*.ts` include and is not excluded, so leaving the
+  seeder alone would have failed `npm run typecheck`; and
   `scripts/e2e-stack.sh:92` runs that seeder under `E2E_MULTI_LODGE=1`, so the
   required **E2E multi-lodge** branch-protection check fails at seed time.
-
-- **Blue/green runtime-prep for the legacy Xero column drops, write half
-  (#2130).** `v0.12.2` narrowed the two READ paths (`getHutFeeItemCodeMap`,
-  `getAgeTierSettings`) with an explicit `select` so the deployed Prisma client
-  stopped naming `XeroItemCodeMapping.isMember` and
-  `AgeTierSetting.xeroContactGroupId`/`xeroContactGroupName`. That was
-  incomplete: Prisma also emits an implicit `RETURNING` over **every** scalar
-  column of a `create`/`update`/`upsert` unless a `select` narrows it, so the
-  unnarrowed WRITE paths still named the doomed columns and a draining old
-  colour would keep issuing that SQL. Every mutation on those two models is now
-  narrowed — the admin item-code-mappings route, the admin age-tier-settings
-  route, config-transfer's Xero import, the setup wizard, and the seed — each to
-  the minimal projection its (discarded) result needs. Regression pins assert
-  the `select` on each mutation, and a static source-scan guard (modelled on the
-  existing `ClubModuleSettings` select guard) fails CI on any future call site
-  on either model that forgets its `select` — across `src/`, `prisma/seed.ts`
-  and `scripts/` — so the narrowing cannot silently regress before the drop.
-  As defensive cleanup, the already-retired raw-SQL audit script
-  `audit-access-role-membership-cleanup.ts` also stopped naming the age-tier
-  Xero-group columns (its `managedAgeTierSettings` metric and paired "Managed
-  Xero age-tier rules backfilled" check were removed). That script never
-  executes — it returns early now that the `20260720120000` contraction
-  migration exists — so no live audit coverage was lost and it was never part of
-  the blue/green gap. **No schema change and no migration in this release**: it
-  is runtime-prep only. Only **after this release has itself deployed** are
-  `isMember` (with its old `@@unique`) and the two `xeroContactGroup*` columns
-  drop-eligible, by a *later* release's contract migration — never the same
-  release as this prep.
 
 - **Shared `useSectionEditState` hook for admin settings sections (#2136).**
   The canonical settings-section pattern (`AGENTS.md`) — load read-only,

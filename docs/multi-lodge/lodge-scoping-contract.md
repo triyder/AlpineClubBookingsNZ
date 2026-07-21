@@ -17,7 +17,7 @@ sequencing):
 | `BedAllocation` | via room/booking | no direct FK |
 | `Locker` | direct `lodgeId` | `name` unique per lodge; lockers gain a lodge link for the first time |
 | `Season` | direct `lodgeId` | lodges may have different season windows |
-| `SeasonRate` | via `Season` | keeps `[seasonId, ageTier, isMember]` uniqueness |
+| `MembershipTypeSeasonRate` | via `Season` | keeps `[seasonId, membershipTypeId, ageTier]` uniqueness. Replaced the boolean-keyed `SeasonRate` at E4 (#1930); `SeasonRate` itself was dropped by `20260721120000_contract_drop_season_rate` (#2129 step 2) |
 | `Booking` | direct `lodgeId` | denormalised for capacity/availability query performance; always matches the room's lodge when a room is assigned. `waitlistOfferedLodgeId` (nullable) names the alternate lodge of a live cross-lodge waitlist offer (ADR-004) and never changes the entry's own lodge |
 | `BookingWaitlistAlternateLodge` | direct `lodgeId` junction | ADR-004 cross-lodge waitlist opt-in: lodges a waitlisted member would also accept; rows only widen what the processor may offer |
 | `BookingGuest` / `BookingGuestNight` | via `Booking` | no direct FK |

@@ -47,9 +47,10 @@ export async function getAgeTierSettings(): Promise<AgeTierSettingData[]> {
   try {
     // Dynamic import to avoid circular deps and allow test mocking
     const { prisma } = await import("./prisma");
-    // Blue/green runtime-prep (#2130): name ONLY the columns consumed below so
-    // the deployed client stops SELECTing AgeTierSetting.xeroContactGroupId /
-    // xeroContactGroupName before the #2130 contract migration drops them. The
+    // Blue/green runtime-prep (#2130): name ONLY the columns consumed below.
+    // This stopped the deployed client SELECTing AgeTierSetting.xeroContactGroupId
+    // / xeroContactGroupName one release BEFORE the #2130 STEP 2 contract
+    // migration dropped them; keep the select narrow regardless. The
     // returned AgeTierSettingData carries exactly these fields, so every
     // downstream consumer (computeAgeTier and the admin settings round-trip) is
     // unchanged.

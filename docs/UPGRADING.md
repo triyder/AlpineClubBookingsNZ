@@ -86,7 +86,123 @@ as a red flag and check the release notes before deploying.
 
 ## Unreleased
 
-_No schema or migration changes are staged for the next release yet._
+The unreleased range is **Release B of the #2129/#2130 contract series**: two
+destructive `contract` migrations that finish what the `v0.13.0` runtime-prep
+(Release A) made legal. They require the breaking-migration acknowledgement at
+deploy time and are only legal once `v0.13.0` is the deployed, drained colour.
+
+### Release B: the two contract migrations
+
+This is a **separate deploy on top of `v0.13.0`** (the runtime-prep "Release
+A", shipped and deployed). Do not start it until `v0.13.0` has been the live,
+drained colour in production long enough that you are confident it is staying
+(a normal soak — at minimum, past the point where you would have rolled back).
+
+Two destructive `contract` migrations, both `old_code_compatible=yes`, both
+fully justified in `docs/BLUE_GREEN_MIGRATION_SAFETY.tsv`:
+
+- **`20260721120000_contract_drop_season_rate`** — `DROP TABLE "SeasonRate"`,
+  the frozen member/non-member boolean-keyed nightly-rate table. Its rows were
+  copied forward to `MembershipTypeSeasonRate` by the E4 re-key
+  (`20260717140000_pricing_rekey_by_membership_type`) and nothing has priced
+  from them since. Release A (#2129 step 1) removed the last
+  application-runtime reader, the public `{{hut-fees}}` embed; the only other
+  references were seeders, removed in the same PR as this migration. The
+  migration opens with a **coverage guard** that aborts the whole deploy if any
+  `SeasonRate` row has no `MembershipTypeSeasonRate` counterpart — pre-flight it
+  with the query in step 3 below.
+- **`20260721130000_contract_drop_ismember_and_agetier_xero_columns`** —
+  deletes the orphaned legacy `HUT_FEE` item-code rows that carry no
+  `membershipTypeId` (not resolvable for pricing by the current runtime; a production install
+  typically has a handful — ours had 16), drops the old
+  `(category, ageTier, seasonType, isMember)` unique index, drops
+  `XeroItemCodeMapping.isMember`, and drops
+  `AgeTierSetting.xeroContactGroupId`/`xeroContactGroupName` (their data moved
+  into `XeroContactGroupRule` at E8, `20260716140000_xero_member_grouping`).
+  This one is legal **only** because `v0.12.2` narrowed the reads and Release A
+  (#2130 STEP 1.5) narrowed the writes on both models, so the draining colour
+  names none of these columns in a `SELECT` or an implicit `RETURNING`.
+
+**Before deploying Release B**
+
+1. **Take and restore-test a fresh backup — this deploy drops schema.** There is
+   no down-migration. A `DROP TABLE` and a `DROP COLUMN` cannot be undone by
+   rolling the app back; restore from backup is your only recovery for the
+   dropped data.
+2. **Confirm `v0.13.0` is actually the deployed colour.** Check the running
+   image/tag, not just what merged. If the live colour is `v0.12.2` or earlier,
+   **stop** — deploying Release B against it will break the drain.
+3. **Pre-flight the `SeasonRate` coverage check.** The `SeasonRate` drop is only
+   safe because the E4 re-key
+   (`20260717140000_pricing_rekey_by_membership_type`) copied every row forward
+   into `MembershipTypeSeasonRate` — but that copy was **conditional** on your
+   install having a `MEMBER_RATE`-behaviour membership type and a type keyed
+   `NON_MEMBER` at the time. On a fork whose types did not match, it copied
+   nothing and `SeasonRate` is still the only copy of that pricing. Run this
+   **read-only** query against your production database before you start:
+
+   ```sql
+   SELECT sr."seasonId", sr."ageTier", count(*) AS uncovered_rows
+   FROM "SeasonRate" sr
+   WHERE NOT EXISTS (
+     SELECT 1 FROM "MembershipTypeSeasonRate" m
+     WHERE m."seasonId" = sr."seasonId"
+       AND m."ageTier" IS NOT DISTINCT FROM sr."ageTier"
+   )
+   GROUP BY 1, 2;
+   ```
+
+   **Zero rows means you are clear.** Any rows returned name seasons and age
+   tiers whose rates exist *only* in the table about to be dropped, including
+   inactive and past seasons. Recreate those rates as per-membership-type rates
+   (**Admin → Seasons & Rates**) and re-run the query until it is empty. The
+   migration carries the same check as an aborting guard, so if you skip this
+   step the deploy fails safely instead of losing the rates — but it fails
+   mid-deploy, which is a worse place to discover it. If the guard does fire,
+   reconcile the rates; **do not** delete the orphaned rows or edit the guard
+   out.
+4. **Set the breaking-migration acknowledgement for this deploy only.** The
+   blue/green validator refuses a destructive migration without it:
+
+   ```bash
+   export ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS=1
+   export BLUE_GREEN_MIGRATION_OVERRIDE_REASON="Release B contract drops (#2129 step 2, #2130 STEP 2); Release A runtime-prep deployed and soaked since <date>; backup <id> restore-tested"
+   ```
+
+   Put the real soak date and backup identifier in the reason — it is the audit
+   record for why the drop was safe. Unset both afterwards so the next deploy
+   does not inherit the override.
+5. **No special traffic window is needed.** Both tables are cold admin-only
+   config tables: `DROP TABLE`, `DROP INDEX` and `DROP COLUMN` are
+   metadata-only catalog changes taking a brief `ACCESS EXCLUSIVE` lock each,
+   and the row delete touches a handful of rows. No hot table, no table
+   rewrite, no backfill. The normal deploy window is fine; let the deploy guard
+   stop on lock timeout.
+6. **No Xero call is made.** Neither migration contacts Xero — no contact,
+   contact group, item or invoice is touched.
+
+**Post-upgrade actions (Release B)**
+
+1. **Spot-check hut-fee pricing and one Xero hut-fee invoice line.** Quote a
+   member and a non-member booking and confirm the totals and item codes match
+   what you saw before the deploy. They should be identical — the migration
+   removes only structures nothing reads — but this is the cheapest possible
+   confirmation.
+2. **Check Xero member grouping still resolves.** Visit the member-grouping
+   admin page and run its dry-run. Grouping has been driven by
+   `XeroContactGroupRule` since E8; the dropped `AgeTierSetting` columns were
+   dead copies.
+3. **Nothing to reconfigure.** No setting, flag or mapping needs re-entering,
+   and no admin-visible screen changes.
+
+**Rollback boundary (Release B).** A validator or pre-migration failure aborts
+the deploy before any schema change and the old colour keeps serving untouched.
+Once the migrations have applied, a failed cutover auto-restores traffic to the
+Release A colour, which runs correctly against the contracted schema — that is
+precisely what the runtime-prep release bought. **Rolling back past `v0.13.0`
+(to `v0.12.2` or earlier) against the contracted schema will not work**: that
+colour still names the dropped column and table. Roll forward, or restore the
+pre-upgrade backup and lose the writes since it was taken.
 
 ---
 
@@ -291,13 +407,12 @@ changelog section before starting.
      `{{hut-fees}}` embed), `MembershipTypeAgeTier`, and the
      `XeroItemCodeMapping.isMember` / `AgeTierSetting.xeroContactGroup*` columns
      — follow-ups #2129/#2130/#2131.
-     *(Superseded after this release: #2129 step 1 re-sourced the public
-     `{{hut-fees}}` embed onto `MembershipTypeSeasonRate`, removing the last
-     **application-runtime** `SeasonRate` reader — see the following release's
-     entry. One reader and two writers still remain in seed code
-     (`e2e/setup/seed-second-lodge.ts:202` and `:218-224`, `prisma/seed.ts:208-227`)
-     and must be removed in the same PR as the DROP migration. The sentence above
-     describes the position as at v0.12.2.)*
+     *(Superseded after this release. The sentence above describes the position
+     as at v0.12.2. Release A then re-sourced the public `{{hut-fees}}` embed
+     onto `MembershipTypeSeasonRate` (#2129 step 1) and narrowed the remaining
+     writes on the two column-carrying models (#2130 STEP 1.5), and Release B
+     dropped `SeasonRate`, `XeroItemCodeMapping.isMember` and the
+     `AgeTierSetting.xeroContactGroup*` columns — see the Unreleased section.)*
 3. **The two additive migrations need no special handling.**
    `20260719150000_add_post_login_landing` adds a `PostLoginLanding` enum plus a
    nullable `Member.postLoginLanding` column with no default (metadata-only
