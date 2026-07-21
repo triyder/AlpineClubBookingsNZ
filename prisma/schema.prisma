@@ -503,9 +503,9 @@ model Member {
   photoUpdatedByMemberId String?
 
   // Structured phone (matches Xero's countryCode/areaCode/number format)
-  phoneCountryCode      String? // e.g. "64"
-  phoneAreaCode         String? // e.g. "27"
-  phoneNumber           String? // e.g. "4224115"
+  phoneCountryCode String? // e.g. "64"
+  phoneAreaCode    String? // e.g. "27"
+  phoneNumber      String? // e.g. "4224115"
   // Per-member opt-in to show this member's phone number on lodge screens
   // (kiosk + lobby display), default OFF (#37/#124). Only ever surfaced when the
   // lodge also enables it (Lodge.showGuestPhonesOnScreens) AND the member is an
@@ -609,12 +609,12 @@ model Member {
   twoFactorRecoveryCodes                     TwoFactorRecoveryCode[]
   twoFactorSessionChallenges                 TwoFactorSessionChallenge[]
   subscriptions                              MemberSubscription[]
-  memberSubscriptionsManuallyPaid            MemberSubscription[]                       @relation("MemberSubscriptionManualPaidBy")
-  membershipChargesReceived                  MembershipSubscriptionCharge[]             @relation("MembershipChargeRecipient")
-  membershipChargesConfirmed                 MembershipSubscriptionCharge[]             @relation("MembershipChargeConfirmer")
-  familyInvoiceMarkersMarked                 FamilyGroupSeasonInvoiceMarker[]           @relation("FamilyInvoiceMarkerMarkedBy")
-  familyInvoiceMarkersReleased               FamilyGroupSeasonInvoiceMarker[]           @relation("FamilyInvoiceMarkerReleasedBy")
-  membershipBillingExceptions                MembershipBillingException[]               @relation("MembershipBillingExceptionMember")
+  memberSubscriptionsManuallyPaid            MemberSubscription[]                    @relation("MemberSubscriptionManualPaidBy")
+  membershipChargesReceived                  MembershipSubscriptionCharge[]          @relation("MembershipChargeRecipient")
+  membershipChargesConfirmed                 MembershipSubscriptionCharge[]          @relation("MembershipChargeConfirmer")
+  familyInvoiceMarkersMarked                 FamilyGroupSeasonInvoiceMarker[]        @relation("FamilyInvoiceMarkerMarkedBy")
+  familyInvoiceMarkersReleased               FamilyGroupSeasonInvoiceMarker[]        @relation("FamilyInvoiceMarkerReleasedBy")
+  membershipBillingExceptions                MembershipBillingException[]            @relation("MembershipBillingExceptionMember")
   seasonalMembershipAssignments              SeasonalMembershipAssignment[]             @relation("SeasonalMembershipAssignmentMember")
   seasonalMembershipAssignmentsAssigned      SeasonalMembershipAssignment[]             @relation("SeasonalMembershipAssignmentAssignedBy")
   accessRoles                                MemberAccessRole[]                         @relation("MemberAccessRoleMember")
@@ -913,20 +913,20 @@ model NominationToken {
 // then claims this token to be auto-filed/accepted as an ADULT_INVITE into the
 // (approved) family group.
 model PartnerInviteToken {
-  id                String    @id @default(cuid())
-  tokenHash         String    @unique
-  familyGroupId     String
-  invitedEmail      String
-  createdById       String
-  expiresAt         DateTime
-  confirmedAt       DateTime?
-  reminderCount     Int       @default(0)
-  lastSentAt        DateTime?
-  createdAt         DateTime  @default(now())
+  id            String    @id @default(cuid())
+  tokenHash     String    @unique
+  familyGroupId String
+  invitedEmail  String
+  createdById   String
+  expiresAt     DateTime
+  confirmedAt   DateTime?
+  reminderCount Int       @default(0)
+  lastSentAt    DateTime?
+  createdAt     DateTime  @default(now())
   // Opt-in (#1742): when true, claiming this token also forms a CONFIRMED
   // MemberPartnerLink between createdBy and the claimer — the claim is the
   // partner's consent. Never set retroactively; the inviter opts in at mint.
-  createPartnerLink Boolean   @default(false)
+  createPartnerLink Boolean @default(false)
 
   familyGroup FamilyGroup @relation(fields: [familyGroupId], references: [id], onDelete: Cascade)
   createdBy   Member      @relation("PartnerInviteTokenCreatedBy", fields: [createdById], references: [id], onDelete: Cascade)
@@ -942,14 +942,14 @@ model PartnerInviteToken {
 // ---------------------------------------------------------------------------
 
 model MemberSubscription {
-  id                           String             @id @default(cuid())
-  memberId                     String
-  seasonYear                   Int
-  status                       SubscriptionStatus @default(NOT_INVOICED)
-  xeroInvoiceId                String?
-  xeroInvoiceNumber            String?
-  xeroOnlineInvoiceUrl         String?
-  paidAt                       DateTime?
+  id                   String             @id @default(cuid())
+  memberId             String
+  seasonYear           Int
+  status               SubscriptionStatus @default(NOT_INVOICED)
+  xeroInvoiceId        String?
+  xeroInvoiceNumber    String?
+  xeroOnlineInvoiceUrl String?
+  paidAt               DateTime?
   // E14 (#1944): manual mark-paid provenance for clubs that do not use Xero (or
   // one-off cash payments). Set together by the finance:edit manual-payment
   // endpoint when a subscription is marked PAID outside the Xero pipeline, and
@@ -958,26 +958,26 @@ model MemberSubscription {
   // a manual PAID is never silently downgraded.
   manuallyMarkedPaidAt         DateTime?
   manuallyMarkedPaidByMemberId String?
-  manualPaymentNote            String?            @db.VarChar(500)
+  manualPaymentNote            String?   @db.VarChar(500)
   // #2147: monotonic re-bill discriminator. Incremented each time the
   // membership sync observes this season's Xero invoice VOIDED/DELETED and
   // releases the coverage claim. The confirm step folds it into the charge
   // idempotencyKey so a post-void re-bill mints a NEW charge instead of
   // no-op-ing onto the released one. Stays 0 for a never-voided subscription,
   // which keeps the idempotencyKey byte-identical to the pre-#2147 shape.
-  voidGeneration               Int                @default(0)
-  createdAt                    DateTime           @default(now())
-  updatedAt                    DateTime           @updatedAt
+  voidGeneration       Int       @default(0)
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
 
   // Relations
-  member               Member                                 @relation(fields: [memberId], references: [id], onDelete: Cascade)
-  manuallyMarkedPaidBy Member?                                @relation("MemberSubscriptionManualPaidBy", fields: [manuallyMarkedPaidByMemberId], references: [id], onDelete: SetNull)
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  manuallyMarkedPaidBy Member? @relation("MemberSubscriptionManualPaidBy", fields: [manuallyMarkedPaidByMemberId], references: [id], onDelete: SetNull)
   // #2147: was a to-one relation while coverage.subscriptionId was @unique.
   // Now that a released claim is retained alongside a fresh active claim, a
   // subscription can accrue several coverage rows over its lifetime (at most
   // one ACTIVE — releasedAt IS NULL — at a time, enforced by the raw-SQL
   // partial unique index in prisma/partial-unique-indexes.tsv).
-  chargeCoverage       MembershipSubscriptionChargeCoverage[]
+  chargeCoverage MembershipSubscriptionChargeCoverage[]
 
   @@unique([memberId, seasonYear])
   @@index([memberId])
@@ -1030,15 +1030,15 @@ model MembershipSubscriptionCharge {
   createdAt             DateTime                           @default(now())
   updatedAt             DateTime                           @updatedAt
 
-  recipient   Member                                  @relation("MembershipChargeRecipient", fields: [recipientMemberId], references: [id], onDelete: Restrict)
-  confirmedBy Member?                                 @relation("MembershipChargeConfirmer", fields: [confirmedByMemberId], references: [id], onDelete: SetNull)
+  recipient   Member   @relation("MembershipChargeRecipient", fields: [recipientMemberId], references: [id], onDelete: Restrict)
+  confirmedBy Member?  @relation("MembershipChargeConfirmer", fields: [confirmedByMemberId], references: [id], onDelete: SetNull)
   coverage    MembershipSubscriptionChargeCoverage[]
   components  MembershipSubscriptionChargeComponent[]
 
-  @@unique([seasonYear, membershipTypeId, familyGroupId], map: "MembershipCharge_family_type_year_key")
   @@index([seasonYear, status, createdAt])
   @@index([recipientMemberId, seasonYear])
   @@index([familyGroupId, seasonYear])
+  @@unique([seasonYear, membershipTypeId, familyGroupId], map: "MembershipCharge_family_type_year_key")
 }
 
 // Frozen per-line snapshot of an annual-fee component at the moment the charge
@@ -1068,7 +1068,7 @@ model MembershipSubscriptionChargeComponent {
 }
 
 model MembershipSubscriptionChargeCoverage {
-  id             String    @id @default(cuid())
+  id             String   @id @default(cuid())
   chargeId       String
   subscriptionId String
   memberId       String
@@ -1083,10 +1083,10 @@ model MembershipSubscriptionChargeCoverage {
   // (prisma/partial-unique-indexes.tsv) — Prisma cannot express it, which is
   // why the plain subscriptionId @unique was dropped.
   releasedAt     DateTime?
-  createdAt      DateTime  @default(now())
+  createdAt      DateTime @default(now())
 
   charge       MembershipSubscriptionCharge @relation(fields: [chargeId], references: [id], onDelete: Restrict)
-  subscription MemberSubscription           @relation(fields: [subscriptionId], references: [id], onDelete: Restrict)
+  subscription MemberSubscription            @relation(fields: [subscriptionId], references: [id], onDelete: Restrict)
 
   @@unique([chargeId, subscriptionId], map: "MembershipChargeCoverage_charge_subscription_key")
   @@index([chargeId])
@@ -1135,25 +1135,25 @@ model FamilyGroupSeasonInvoiceMarker {
 }
 
 model MembershipBillingException {
-  id               String                                @id @default(cuid())
-  fingerprint      String                                @unique
-  seasonYear       Int
-  source           MembershipSubscriptionChargeSource
-  status           MembershipBillingExceptionStatus      @default(OPEN)
-  code             String
-  message          String
-  memberId         String?
-  familyGroupId    String?
+  id             String                           @id @default(cuid())
+  fingerprint    String                           @unique
+  seasonYear     Int
+  source         MembershipSubscriptionChargeSource
+  status         MembershipBillingExceptionStatus @default(OPEN)
+  code           String
+  message        String
+  memberId       String?
+  familyGroupId  String?
   membershipTypeId String?
-  context          Json?
-  firstSeenAt      DateTime                              @default(now())
-  lastSeenAt       DateTime                              @default(now())
-  resolvedAt       DateTime?
+  context        Json?
+  firstSeenAt    DateTime                         @default(now())
+  lastSeenAt     DateTime                         @default(now())
+  resolvedAt     DateTime?
   // #2148 (D2): resolution provenance — CONFIRM vs PREVIEW_RECONCILE. Null while
   // OPEN and on rows resolved before this column existed.
-  resolvedVia      MembershipBillingExceptionResolution?
-  createdAt        DateTime                              @default(now())
-  updatedAt        DateTime                              @updatedAt
+  resolvedVia    MembershipBillingExceptionResolution?
+  createdAt      DateTime                         @default(now())
+  updatedAt      DateTime                         @updatedAt
 
   member Member? @relation("MembershipBillingExceptionMember", fields: [memberId], references: [id], onDelete: SetNull)
 
@@ -1227,16 +1227,16 @@ model MembershipType {
 // tier) while letting flat-vs-tier and cross-tier windows coexist — all raw SQL,
 // not modelled here.
 model MembershipAnnualFee {
-  id               String                     @id @default(cuid())
+  id               String                       @id @default(cuid())
   membershipTypeId String
   ageTier          AgeTier?
   amountCents      Int
   billingBasis     MembershipFeeBillingBasis
-  prorationRule    MembershipFeeProrationRule @default(NONE)
-  effectiveFrom    DateTime                   @db.Date
-  effectiveTo      DateTime?                  @db.Date
-  createdAt        DateTime                   @default(now())
-  updatedAt        DateTime                   @updatedAt
+  prorationRule    MembershipFeeProrationRule   @default(NONE)
+  effectiveFrom    DateTime                     @db.Date
+  effectiveTo      DateTime?                    @db.Date
+  createdAt        DateTime                     @default(now())
+  updatedAt        DateTime                     @updatedAt
 
   membershipType MembershipType                 @relation(fields: [membershipTypeId], references: [id], onDelete: Restrict)
   components     MembershipAnnualFeeComponent[]
@@ -1335,6 +1335,10 @@ model XeroContactGroupRule {
   updatedAt        DateTime                 @updatedAt
 
   membershipType MembershipType? @relation(fields: [membershipTypeId], references: [id], onDelete: Cascade)
+
+  @@index([membershipTypeId])
+  @@index([mode, isActive, sortOrder])
+  @@index([groupId])
   // Dedupe of identical rule shapes is enforced by a raw-SQL partial unique
   // index (E8 #1934, multi-select #2093) — Prisma cannot express NULLS NOT
   // DISTINCT, so the index lives in the migration and is recorded in
@@ -1344,10 +1348,6 @@ model XeroContactGroupRule {
   // Canonical-sorted array storage makes [ADULT, YOUTH] == [YOUTH, ADULT] a
   // single stored shape, so btree array equality dedupes correctly.
   // App-side rule CRUD enforces the same dedupe for friendly errors.
-
-  @@index([membershipTypeId])
-  @@index([mode, isActive, sortOrder])
-  @@index([groupId])
 }
 
 // Single-row ("default") club setting selecting the Xero member-grouping mode
@@ -1547,9 +1547,9 @@ model Season {
   // that seeder under E2E_MULTI_LODGE=1, so the REQUIRED `E2E multi-lodge`
   // branch-protection check fails at seed time. Dropping without step 1 lands
   // `main` red. This PR carries no schema change.
-  rates               SeasonRate[]
+  rates              SeasonRate[]
   membershipTypeRates MembershipTypeSeasonRate[]
-  lodge               Lodge                      @relation(fields: [lodgeId], references: [id], onDelete: Restrict)
+  lodge Lodge        @relation(fields: [lodgeId], references: [id], onDelete: Restrict)
 
   @@index([startDate, endDate])
   @@index([lodgeId])
@@ -1616,63 +1616,63 @@ model MembershipTypeSeasonRate {
 // ---------------------------------------------------------------------------
 
 model Booking {
-  id                           String             @id @default(cuid())
-  memberId                     String
-  checkIn                      DateTime           @db.Date
-  checkOut                     DateTime           @db.Date
-  status                       BookingStatus      @default(PENDING)
-  totalPriceCents              Int
-  discountCents                Int                @default(0)
-  promoAdjustmentCents         Int                @default(0)
-  finalPriceCents              Int
-  hasNonMembers                Boolean            @default(false)
+  id                        String             @id @default(cuid())
+  memberId                  String
+  checkIn                   DateTime           @db.Date
+  checkOut                  DateTime           @db.Date
+  status                    BookingStatus      @default(PENDING)
+  totalPriceCents           Int
+  discountCents             Int                @default(0)
+  promoAdjustmentCents      Int                @default(0)
+  finalPriceCents           Int
+  hasNonMembers             Boolean            @default(false)
   // When true, the member asked us to cancel the whole booking if their
   // non-member guests cannot be accommodated, instead of the default partial
   // bump (drop the non-members, keep the members). Both happen pre-charge.
-  cancelIfGuestsBumped         Boolean            @default(false)
-  nonMemberHoldUntil           DateTime?
+  cancelIfGuestsBumped      Boolean            @default(false)
+  nonMemberHoldUntil        DateTime?
   // Split-booking group link (issue #738). A mixed member/non-member party is
   // stored as two bookings: a member booking that is paid up front and holds
   // capacity (the parent, parentBookingId = null) plus a provisional
   // non-member booking that holds nothing (the child, parentBookingId = the
   // member booking). Pure parties and the flagged "only book if my guests can
   // come" path stay a single booking with parentBookingId = null.
-  parentBookingId              String?
+  parentBookingId           String?
   // Group booking, ORGANISER_PAYS mode: a joiner's child booking carries its
   // real price but is settled by the organiser as part of one combined bill, so
   // the joiner is never billed for it. When true the joiner cannot pay this
   // booking themselves; the organiser-settlement flow collects the group total
   // and marks these PAID. Defaults false for every normal (each-pays) booking.
-  organiserSettled             Boolean            @default(false)
-  draftExpiresAt               DateTime?
-  notes                        String?            @db.VarChar(500)
-  expectedArrivalTime          String?            @db.VarChar(5)
-  requestedRoomId              String?
-  preArrivalReminderSentAt     DateTime?
-  createdById                  String? // Admin who created this booking on behalf of the member
-  requiresAdminReview          Boolean            @default(false)
-  adminReviewReason            String?            @db.VarChar(300)
-  memberReviewJustification    String?            @db.VarChar(1000)
-  adminReviewStatus            AdminReviewStatus?
-  adminReviewNotes             String?            @db.VarChar(2000)
-  adminReviewedById            String?
-  adminReviewedAt              DateTime?
-  waitlistPosition             Int?
-  waitlistOfferedAt            DateTime?
-  waitlistOfferExpiresAt       DateTime?
+  organiserSettled          Boolean            @default(false)
+  draftExpiresAt            DateTime?
+  notes                     String?            @db.VarChar(500)
+  expectedArrivalTime       String?            @db.VarChar(5)
+  requestedRoomId           String?
+  preArrivalReminderSentAt  DateTime?
+  createdById               String? // Admin who created this booking on behalf of the member
+  requiresAdminReview       Boolean            @default(false)
+  adminReviewReason         String?            @db.VarChar(300)
+  memberReviewJustification String?            @db.VarChar(1000)
+  adminReviewStatus         AdminReviewStatus?
+  adminReviewNotes          String?            @db.VarChar(2000)
+  adminReviewedById         String?
+  adminReviewedAt           DateTime?
+  waitlistPosition          Int?
+  waitlistOfferedAt         DateTime?
+  waitlistOfferExpiresAt    DateTime?
   // Cross-lodge waitlist offers (ADR-004): set only when the current offer
   // is for an alternate lodge the member opted into — the offered lodge and
   // the price quoted for it. Null for same-lodge offers, which behave
   // exactly as before ADR-004. Money in integer cents.
-  waitlistOfferedLodgeId       String?
-  waitlistOfferedPriceCents    Int?
-  deletedAt                    DateTime?
-  deletedById                  String?
-  deletedReason                String?            @db.VarChar(500)
+  waitlistOfferedLodgeId    String?
+  waitlistOfferedPriceCents Int?
+  deletedAt                 DateTime?
+  deletedById               String?
+  deletedReason             String?            @db.VarChar(500)
   // NOT NULL (migration 20260708001100): a default_lodge_id() column default
   // fills omitted-column writes so enforcement was outage-free. One booking
   // belongs to exactly one lodge (ADR-001 resolved question 1).
-  lodgeId                      String             @default(dbgenerated("default_lodge_id()"))
+  lodgeId                   String             @default(dbgenerated("default_lodge_id()"))
   // Admin capacity hold (#1764): while set AND the booking is PAYMENT_PENDING,
   // the booking consumes lodge capacity exactly as if it were in a naturally
   // capacity-holding status (see capacityHoldingBookingFilter). Orthogonal to
@@ -1680,8 +1680,8 @@ model Booking {
   // Admin Unhold and by every cancel path; left set-but-inert once the booking
   // reaches a naturally-holding status (the status disjunct then holds the
   // beds, so capacity is never double-counted).
-  adminCapacityHoldAt          DateTime?
-  adminCapacityHoldByMemberId  String?
+  adminCapacityHoldAt         DateTime?
+  adminCapacityHoldByMemberId String?
   // Persisted capacity override (#1771): set when this booking was deliberately
   // admitted ABOVE the lodge ceiling via an explicit admin over-capacity confirm
   // (#1668/#1695/#1767 create, date/batch modify, waitlist force-confirm, #1764
@@ -1707,8 +1707,8 @@ model Booking {
   wholeLodgeHold               Boolean            @default(false)
   wholeLodgeHoldAt             DateTime?
   wholeLodgeHoldByMemberId     String?
-  createdAt                    DateTime           @default(now())
-  updatedAt                    DateTime           @updatedAt
+  createdAt                 DateTime           @default(now())
+  updatedAt                 DateTime           @updatedAt
 
   member                      Member                          @relation(fields: [memberId], references: [id], onDelete: Restrict)
   lodge                       Lodge                           @relation(fields: [lodgeId], references: [id], onDelete: Restrict)
@@ -1813,16 +1813,16 @@ model BookingEvent {
 }
 
 model BookingGuest {
-  id                   String    @id @default(cuid())
-  bookingId            String
-  firstName            String
-  lastName             String
-  ageTier              AgeTier
-  isMember             Boolean   @default(false)
-  memberId             String?
-  stayStart            DateTime  @db.Date
-  stayEnd              DateTime  @db.Date
-  priceCents           Int
+  id         String    @id @default(cuid())
+  bookingId  String
+  firstName  String
+  lastName   String
+  ageTier    AgeTier
+  isMember   Boolean   @default(false)
+  memberId   String?
+  stayStart  DateTime  @db.Date
+  stayEnd    DateTime  @db.Date
+  priceCents Int
   // Snapshot of the membership type whose rate rows priced this guest (#1930,
   // E4). Persisted at pricing time by the rate resolver and read by Xero line
   // building to pick the item code. NOT write-once: modify/reprice flows
@@ -1832,9 +1832,9 @@ model BookingGuest {
   // forever. Deliberately a bare column (no FK): the snapshot must survive
   // even if a custom type is later deleted.
   rateMembershipTypeId String?
-  arrivedAt            DateTime?
-  departedAt           DateTime?
-  createdAt            DateTime  @default(now())
+  arrivedAt  DateTime?
+  departedAt DateTime?
+  createdAt  DateTime  @default(now())
 
   // Relations
   booking                     Booking                      @relation(fields: [bookingId], references: [id], onDelete: Cascade)
@@ -2013,7 +2013,7 @@ model BookingRequest {
   // set Booking.wholeLodgeHold on the resulting booking (the flag itself is the
   // admin capacity action). Booking-generic; "school" is just the wording.
   // Additive/expand-only; default false.
-  exclusivityRequested Boolean @default(false)
+  exclusivityRequested Boolean            @default(false)
 
   // SCHOOL variant only. The school is the invoiced party / Xero contact.
   schoolName         String?                   @db.VarChar(200)
@@ -2960,12 +2960,12 @@ model FinanceReportCategory {
 }
 
 model FinanceReportCategoryMapping {
-  id          String                @id @default(cuid())
-  categoryId  String
-  accountCode String?               @db.VarChar(40)
-  createdAt   DateTime              @default(now())
-  updatedAt   DateTime              @updatedAt
-  category    FinanceReportCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  id           String                @id @default(cuid())
+  categoryId   String
+  accountCode  String?               @db.VarChar(40)
+  createdAt    DateTime              @default(now())
+  updatedAt    DateTime              @updatedAt
+  category     FinanceReportCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
 
   @@index([categoryId])
   @@index([accountCode])
@@ -3267,7 +3267,7 @@ model ProcessedWebhookEvent {
   // new colour on redelivery rather than dropped; the migration backfills the
   // pre-existing historical rows to "COMPLETED". `processingStartedAt` defaults
   // to now() so old-colour inserts still carry a lease timestamp.
-  status              String   @default("PROCESSING")
+  status             String   @default("PROCESSING")
   processingStartedAt DateTime @default(now())
 
   // Idempotency is scoped per provider (issue #815): provider event IDs are only
@@ -3402,10 +3402,10 @@ model ClubModuleSettings {
 // it (ADR-002 presentation rule); the vestigial ClubModuleSettings.multiLodge
 // column is retired in a follow-up (#129).
 model Lodge {
-  id                       String                  @id @default(cuid())
-  name                     String
-  slug                     String                  @unique
-  active                   Boolean                 @default(true)
+  id         String   @id @default(cuid())
+  name       String
+  slug       String   @unique
+  active     Boolean  @default(true)
   // Durable default-lodge marker (#1656/#1627 option b): getDefaultLodgeId()
   // and the default_lodge_id() SQL function resolve the club default from this
   // flag instead of earliest-createdAt ordering (which inverts on TZ-skewed
@@ -3414,35 +3414,35 @@ model Lodge {
   // 20260709120000 — a raw partial index Prisma cannot express in-schema (same
   // pattern as XeroSyncOperation_active_correlationKey_unique). To change the
   // default, unset the current one and set the new one in a single transaction.
-  isDefault                Boolean                 @default(false)
-  doorCode                 String?                 @db.VarChar(80)
-  travelNote               String?
+  isDefault  Boolean  @default(false)
+  doorCode   String?  @db.VarChar(80)
+  travelNote String?
   // Postal / physical address of the lodge, admin-editable (E3 #1929). Feeds the
   // {{lodge-address}} content placeholder and the public contact page's lodge block.
   // Nullable: fresh installs seed no address (the seed-account-defaults guard
   // keeps geography out of seeds); the additive migration backfills only the
   // existing default lodge with the historical hardcoded string.
-  address                  String?                 @db.VarChar(300)
+  address    String?  @db.VarChar(300)
   // Per-lodge config glob for the lobby display's {{config:<key>}}
   // placeholders (docs/lobby-display/design.md §3, fork issue #26): free-form
   // string key/value pairs, validated at the admin edit surface. Null = none.
-  displayConfig            Json?
+  displayConfig Json?
   // Per-lodge override of the lobby display name granularity (fork issue
   // #28, design.md §10). Null = the club-wide code default
   // (FIRST_NAME_SURNAME_INITIAL). Enum defined with the lobby-display
   // models at the end of this file.
-  displayNameGranularity   DisplayNameGranularity?
+  displayNameGranularity DisplayNameGranularity?
   // Committee notice board for the lobby display (fork issue #36): the one
   // deliberately AUTHORED display surface — free text, admin-edited,
   // rendered as text nodes only ({{config:<key>}} placeholders resolve
   // inside it). Null = no notice.
-  displayNotice            String?                 @db.VarChar(2000)
+  displayNotice          String?  @db.VarChar(2000)
   // Per-lodge toggle: show guest phone numbers on this lodge's screens (kiosk +
   // lobby display), default OFF (#37/#124). Combined with the per-member opt-in
   // and an adults-only rule, enforced in the serving serialisers.
-  showGuestPhonesOnScreens Boolean                 @default(false)
-  createdAt                DateTime                @default(now())
-  updatedAt                DateTime                @updatedAt
+  showGuestPhonesOnScreens Boolean @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
   // lodgeId is nullable on these tables during the expand release
   // (docs/multi-lodge/implementation-plan.md phase 2); a contract release
@@ -3563,6 +3563,7 @@ model EmailTemplateOverride {
   @@index([updatedByMemberId])
 }
 
+
 model BookingMessageOverride {
   id                String   @id @default(cuid())
   messageKey        String   @unique
@@ -3602,15 +3603,12 @@ model PageContent {
   updatedAt         DateTime @updatedAt
 
   // Back-relation for the public Book Now target (E3 #1929). SetNull on delete.
-  bookNowSettings PublicContentSettings[] @relation("PublicContentBookNowPage")
+  bookNowSettings   PublicContentSettings[] @relation("PublicContentBookNowPage")
 
   @@index([sortOrder])
   @@index([updatedByMemberId])
 }
 
-// Uploaded images for the page-content image picker, stored in the database
-// (rather than the filesystem) so they survive Docker redeploys. Served
-// publicly via /api/images/[id].
 // Discriminates what an image blob is used for (MP1, epic #171). CONTENT is the
 // default and covers every pre-existing row plus admin page-content uploads,
 // which are the only kind the website media picker (/api/admin/image-library)
@@ -3623,8 +3621,11 @@ enum MediaImageKind {
   MEMBER_PHOTO
 }
 
+// Uploaded images for the page-content image picker, stored in the database
+// (rather than the filesystem) so they survive Docker redeploys. Served
+// publicly via /api/images/[id].
 model MediaImage {
-  id                 String         @id @default(cuid())
+  id                 String   @id @default(cuid())
   filename           String
   contentType        String
   byteSize           Int
@@ -3634,7 +3635,7 @@ model MediaImage {
   height             Int?
   uploadedByMemberId String?
   kind               MediaImageKind @default(CONTENT)
-  createdAt          DateTime       @default(now())
+  createdAt          DateTime @default(now())
 
   // Reverse side of Member.photoImage. A MEMBER_PHOTO blob is normally the photo
   // of exactly one member, but the FK is not unique so Prisma models this as a
@@ -4029,21 +4030,21 @@ model GuestChoreToken {
 // ---------------------------------------------------------------------------
 
 model FamilyGroup {
-  id                     String                           @id @default(cuid())
-  name                   String?
-  createdAt              DateTime                         @default(now())
-  updatedAt              DateTime                         @updatedAt
+  id            String                   @id @default(cuid())
+  name          String?
+  createdAt     DateTime                 @default(now())
+  updatedAt     DateTime                 @updatedAt
   // @deprecated — legacy single-group FK; use memberships (FamilyGroupMember) instead
-  legacyMembers          Member[]                         @relation("FamilyGroupLegacy")
-  memberships            FamilyGroupMember[]
+  legacyMembers Member[]                 @relation("FamilyGroupLegacy")
+  memberships   FamilyGroupMember[]
   // Members who have selected this group as their per-member billing family (#1932, E6).
-  billingSelectedMembers Member[]                         @relation("MemberBillingFamily")
-  joinRequests           FamilyGroupJoinRequest[]
-  partnerInviteTokens    PartnerInviteToken[]
+  billingSelectedMembers Member[]        @relation("MemberBillingFamily")
+  joinRequests  FamilyGroupJoinRequest[]
+  partnerInviteTokens PartnerInviteToken[]
   // #2161 (D2): operator "already invoiced" markers for this group, per season.
-  seasonInvoiceMarkers   FamilyGroupSeasonInvoiceMarker[]
-  billingMembershipId    String?                          @unique
-  billingMembership      FamilyGroupMember?               @relation("FamilyBillingMembership", fields: [billingMembershipId], references: [id], onDelete: SetNull)
+  seasonInvoiceMarkers FamilyGroupSeasonInvoiceMarker[]
+  billingMembershipId String?            @unique
+  billingMembership   FamilyGroupMember? @relation("FamilyBillingMembership", fields: [billingMembershipId], references: [id], onDelete: SetNull)
 }
 
 model FamilyGroupMember {
@@ -4053,8 +4054,8 @@ model FamilyGroupMember {
   role          String   @default("MEMBER") // ADMIN or MEMBER (group admin can manage the group)
   joinedAt      DateTime @default(now())
 
-  familyGroup       FamilyGroup  @relation(fields: [familyGroupId], references: [id], onDelete: Cascade)
-  member            Member       @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  familyGroup FamilyGroup @relation(fields: [familyGroupId], references: [id], onDelete: Cascade)
+  member      Member      @relation(fields: [memberId], references: [id], onDelete: Cascade)
   billedFamilyGroup FamilyGroup? @relation("FamilyBillingMembership")
 
   @@unique([familyGroupId, memberId])
@@ -4272,13 +4273,13 @@ model XeroItemCodeMapping {
 // ---------------------------------------------------------------------------
 
 model AgeTierSetting {
-  id                                    String   @id @default(cuid())
-  tier                                  AgeTier  @unique
+  id                                    String                            @id @default(cuid())
+  tier                                  AgeTier                           @unique
   minAge                                Int
   maxAge                                Int? // null for ADULT (no upper limit)
   label                                 String // e.g. "Child (under 10)"
-  subscriptionRequiredForBooking        Boolean  @default(true)
-  familyGroupRequestCreateMemberAllowed Boolean  @default(false)
+  subscriptionRequiredForBooking        Boolean                           @default(true)
+  familyGroupRequestCreateMemberAllowed Boolean                           @default(false)
   // xeroContactGroupId / xeroContactGroupName are legacy single-group columns
   // superseded by XeroContactGroupRule (E8, #1934). DROP-ELIGIBLE ONLY AFTER
   // THE #2130 RUNTIME-PREP RELEASE HAS DEPLOYED — not before. That release
@@ -4296,9 +4297,9 @@ model AgeTierSetting {
   // dropped in the E13 contract migration 20260720120000 (#1939).
   xeroContactGroupId                    String?
   xeroContactGroupName                  String?
-  sortOrder                             Int      @default(0)
-  createdAt                             DateTime @default(now())
-  updatedAt                             DateTime @updatedAt
+  sortOrder                             Int                               @default(0)
+  createdAt                             DateTime                          @default(now())
+  updatedAt                             DateTime                          @updatedAt
 
   @@index([sortOrder])
 }
@@ -4451,18 +4452,18 @@ model AdminCreditAdjustmentRequest {
 // ---------------------------------------------------------------------------
 
 model GroupDiscountSetting {
-  id                   String   @id @default("default")
-  minGroupSize         Int      @default(5)
-  summerOnly           Boolean  @default(true)
-  enabled              Boolean  @default(false)
+  id           String   @id @default("default")
+  minGroupSize Int      @default(5)
+  summerOnly   Boolean  @default(true)
+  enabled      Boolean  @default(false)
   // The membership type whose rate rows a qualifying group discount
   // substitutes for true non-members (rateSource = NON_MEMBER_DEFAULT). Seeded
   // to the built-in FULL type so a discounted non-member prices at the member
   // rate, exactly as the old boolean flip did. Members keep their own type's
   // rate and TYPE_POLICY_FORCED members are excluded (#1930, E4, D-note).
   rateMembershipTypeId String?
-  createdAt            DateTime @default(now())
-  updatedAt            DateTime @updatedAt
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 }
 
 // Public PageContent data blocks are opt-in. Inserting a token is not enough:
@@ -4487,31 +4488,31 @@ enum CommitteePhotoDisplay {
 }
 
 model PublicContentSettings {
-  id                    String                @id @default("default")
-  membershipTypes       Boolean               @default(false)
+  id                   String   @id @default("default")
+  membershipTypes      Boolean  @default(false)
   // Committee-roster photo display + shape (MP5, epic #171). See enum above.
   committeePhotoDisplay CommitteePhotoDisplay @default(NONE)
-  entranceFees          Boolean               @default(false)
-  hutFees               Boolean               @default(false)
-  bookingPolicySummary  Boolean               @default(false)
-  cancellationPolicy    Boolean               @default(false)
+  entranceFees         Boolean  @default(false)
+  hutFees              Boolean  @default(false)
+  bookingPolicySummary Boolean  @default(false)
+  cancellationPolicy   Boolean  @default(false)
   // Dedicated double-opt-in gate for the {{annual-fees}} embed (#1933, E7).
   // Annual membership fees are more sensitive than the entrance/joining headline
   // (D-R4), so they get their own visibility flag rather than reusing entranceFees.
-  annualFees            Boolean               @default(false)
+  annualFees           Boolean  @default(false)
   // Configurable public "Book Now" button (E3 #1929). Default preserves the
   // historical behaviour: shown, pointing at the booking flow. When target is
   // PAGE, bookNowPageId names a published PageContent; getBookNowConfig() fails
   // open to the booking flow if the page is missing/unpublished, so the button
   // is never dead. The FK is SetNull so deleting the target page reverts the
   // button to the booking flow rather than dangling.
-  showBookNow           Boolean               @default(true)
-  bookNowTarget         BookNowTarget         @default(BOOKING_FLOW)
-  bookNowPageId         String?
-  bookNowPage           PageContent?          @relation("PublicContentBookNowPage", fields: [bookNowPageId], references: [id], onDelete: SetNull)
-  updatedByMemberId     String?
-  createdAt             DateTime              @default(now())
-  updatedAt             DateTime              @updatedAt
+  showBookNow          Boolean       @default(true)
+  bookNowTarget        BookNowTarget @default(BOOKING_FLOW)
+  bookNowPageId        String?
+  bookNowPage          PageContent?  @relation("PublicContentBookNowPage", fields: [bookNowPageId], references: [id], onDelete: SetNull)
+  updatedByMemberId    String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
 
   @@index([bookNowPageId])
 }
@@ -4598,20 +4599,20 @@ enum ContactEmailMode {
 }
 
 model CommitteeAssignment {
-  id                   String           @id @default(cuid())
-  memberId             String
-  committeeRoleId      String
-  blurb                String?          @db.Text
-  sortOrder            Int              @default(0)
-  published            Boolean          @default(false)
-  showPhone            Boolean          @default(false)
-  contactable          Boolean          @default(false)
+  id                 String   @id @default(cuid())
+  memberId           String
+  committeeRoleId    String
+  blurb              String?  @db.Text
+  sortOrder          Int      @default(0)
+  published          Boolean  @default(false)
+  showPhone          Boolean  @default(false)
+  contactable        Boolean  @default(false)
   contactEmailMode     ContactEmailMode @default(ROLE)
   contactEmailOverride String?
-  isActive             Boolean          @default(true)
-  assignedByMemberId   String?
-  createdAt            DateTime         @default(now())
-  updatedAt            DateTime         @updatedAt
+  isActive           Boolean  @default(true)
+  assignedByMemberId String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 
   member        Member        @relation("CommitteeAssignmentMember", fields: [memberId], references: [id], onDelete: Cascade)
   committeeRole CommitteeRole @relation(fields: [committeeRoleId], references: [id], onDelete: Restrict)
@@ -4709,27 +4710,27 @@ model InductionChecklistItem {
   sortOrder             Int     @default(0)
   legacySourceText      String?
 
-  section InductionChecklistSection @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  section InductionChecklistSection   @relation(fields: [sectionId], references: [id], onDelete: Cascade)
 
   @@index([sectionId])
 }
 
 model MemberInduction {
-  id                String                     @id @default(cuid())
-  memberId          String
-  templateId        String
-  applicationId     String?                    @unique
-  kind              InductionKind              @default(NEW_MEMBER)
-  status            InductionStatus            @default(IN_PROGRESS)
-  requiredSignOffs  Int                        @default(2)
-  inductionDate     DateTime?
-  completedAt       DateTime?
-  completionSource  InductionCompletionSource?
-  finalComments     String?
-  voidedReason      String?
-  createdByMemberId String?
-  createdAt         DateTime                   @default(now())
-  updatedAt         DateTime                   @updatedAt
+  id                 String                     @id @default(cuid())
+  memberId           String
+  templateId         String
+  applicationId      String?                    @unique
+  kind               InductionKind              @default(NEW_MEMBER)
+  status             InductionStatus            @default(IN_PROGRESS)
+  requiredSignOffs   Int                        @default(2)
+  inductionDate      DateTime?
+  completedAt        DateTime?
+  completionSource   InductionCompletionSource?
+  finalComments      String?
+  voidedReason       String?
+  createdByMemberId  String?
+  createdAt          DateTime                   @default(now())
+  updatedAt          DateTime                   @updatedAt
 
   member          Member                          @relation("MemberInductions", fields: [memberId], references: [id], onDelete: Cascade)
   template        InductionChecklistTemplate      @relation(fields: [templateId], references: [id], onDelete: Restrict)
