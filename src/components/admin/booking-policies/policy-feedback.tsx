@@ -29,11 +29,16 @@
  * a loading state, and rendering this below an early return for it re-created
  * the very bug the unconditional wrappers exist to prevent — a failed FIRST
  * load mounted the section and its already-populated alert in one mutation.
- * MOUNT THIS ABOVE THE LOADING STATE, not inside the loaded branch: all three
- * booking-policy sections render the banner, this component, and the scope
- * select in every state, and swap only the cards below them. `AGENTS.md` and
- * `docs/ARCHITECTURE.md` state the rule; `save-view-only-gating.test.tsx` pins
- * it.
+ * MOUNT THIS ABOVE THE LOADING STATE, not inside the loaded branch: all five
+ * booking-policy sections render the banner, this component, and (where the
+ * fetch is scope-keyed) the scope select in every state, and swap only the
+ * cards below them. `AGENTS.md` and `docs/ARCHITECTURE.md` state the rule.
+ * `save-view-only-gating.test.tsx` pins it for every section, via the shared
+ * `SECTIONS` `it.each` that asserts BOTH regions exist and are empty mid-load.
+ * That assertion was added in the #2162 review, and it immediately caught the
+ * group discount card, which had been early-returning above this component
+ * since it adopted it: a failed first load there mounted the alert already
+ * carrying the error.
  *
  * Consequence for adopters: because these wrappers always exist, this component
  * sits OUTSIDE the section's `space-y-*` stack (next to the view-only banner,

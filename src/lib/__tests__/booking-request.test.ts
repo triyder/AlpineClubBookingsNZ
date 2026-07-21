@@ -300,6 +300,8 @@ describe("booking request settings", () => {
       showPricingToNonMembers: true,
       quoteResponseTtlDays: 10,
       quoteReminderLeadDays: 2,
+      attendeeConfirmationLeadDays: 21,
+      attendeeConfirmationReminderDays: 4,
     } as never);
 
     const result = await updateBookingRequestSettings({
@@ -311,10 +313,15 @@ describe("booking request settings", () => {
       adminMemberId: "admin-1",
     });
 
+    // #2162: the echo is the whole stored row, not just the three fields the
+    // audit metadata happens to carry — the admin form re-seeds its draft and
+    // snapshot from it.
     expect(result).toEqual({
       showPricingToNonMembers: true,
       quoteResponseTtlDays: 10,
       quoteReminderLeadDays: 2,
+      attendeeConfirmationLeadDays: 21,
+      attendeeConfirmationReminderDays: 4,
     });
     expect(mockedLogAudit).toHaveBeenCalledWith(
       expect.objectContaining({

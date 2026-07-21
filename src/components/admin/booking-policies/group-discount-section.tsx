@@ -138,11 +138,33 @@ export function GroupDiscountSection() {
     </AdminViewOnlySectionBanner>
   )
 
+  /*
+    #2162 review: the section FRAME — the banner AND `PolicyFeedback` — is
+    rendered in EVERY state, and only the cards below it are swapped. This early
+    return used to sit ABOVE `PolicyFeedback`, which re-created the exact defect
+    the unconditional live-region wrappers exist to prevent: a failed FIRST load
+    clears `loading`, so the section left this branch and mounted
+    `PolicyFeedback` already carrying the load error, in one commit — the
+    single-mutation injection that some screen-reader/browser pairings drop
+    silently.
+
+    `initial` IS supplied above, so `draft` is non-null throughout and clearing
+    `loading` is the only way this branch is left. The `!draft` term is kept as a
+    guard for a future edit that drops `initial`, and the placeholder is gated on
+    `loading` alone so that such an edit could not strand the section on
+    "Loading..." forever with its error invisible.
+  */
   if (section.loading || !draft) {
     return (
       <div>
         {viewOnlyBanner}
-        <div className="text-center py-8">Loading...</div>
+        <PolicyFeedback
+          error={error}
+          success={success}
+          onClearError={() => section.setError("")}
+          onClearSuccess={() => section.setSuccess("")}
+        />
+        {section.loading ? <div className="text-center py-8">Loading...</div> : null}
       </div>
     )
   }

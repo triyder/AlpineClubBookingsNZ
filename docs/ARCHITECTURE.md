@@ -548,15 +548,15 @@ one commit, and because a scope change is itself a load it unmounts the
 `PolicyScopeSelect` the admin just operated, dropping keyboard focus to `<body>`
 for the duration of the round trip. That banner shape started in the five
 Booking Policies sections (#2142) and is now the **default across the admin
-tree** (#2160) — not a claim that nothing is left. Measured after #2168:
-**73 components render a banner, and 224 of the 256 `ViewOnlyActionButton` call
-sites opt out** of the per-button reason. Those 224 split by WHICH rule covers
-them: **203** pass the literal `describeReason={false}` and are covered by a
-banner in the same file, and **21** pass
-`describeReason={!ancestorRendersViewOnlyBanner}` and are covered by a verified
-vouching parent (see *Vouching for a child's coverage* below). The remaining
-**32 controls across 15 files deliberately keep the per-button default**
-(`describeReason` left at `true`), in three shapes:
+tree** (#2160, extended by #2168) — not a claim that nothing is left. Measured
+after #2168: **73 components render a banner, and 226 of the 258
+`ViewOnlyActionButton` call sites opt out** of the per-button reason. Those 226
+split by WHICH rule covers them: **205** pass the literal
+`describeReason={false}` and are covered by a banner in the same file, and **21**
+pass `describeReason={!ancestorRendersViewOnlyBanner}` and are covered by a
+verified vouching parent (see *Vouching for a child's coverage* below). The
+remaining **32 controls across 15 files deliberately keep the per-button
+default** (`describeReason` left at `true`), in three shapes:
 
 - **Controls inside a dialog, sheet, popover, or dropdown menu.** These live in
   a separate accessibility container — focus is trapped and the page behind is
@@ -735,24 +735,54 @@ button to discover it. That was weighed against the cost of making every gated
 control clickable-but-neutralised (each call site's click path would need
 auditing so no write slips through) and the banner was judged the better trade.
 Revisiting it is a fresh owner decision, not a silent edit — the contract test
-asserts `disabled` is still what ships. Module
-toggles that share the strict `PUT /api/admin/modules` object (for example the
-magic-link and Google cards on `/admin/security`) must GET the fresh settings and
-merge only their own key before writing, so a sibling card's change is never
-clobbered by a stale render-time snapshot. The rule binds sections that are NEW
+asserts `disabled` is still what ships. Any card
+that shares a strict whole-object PUT with a sibling card must GET the fresh
+settings and merge only its OWN fields before writing, so a save cannot overwrite
+a sibling's change made while the page was open. This NARROWS the
+read-modify-write window to the milliseconds between that GET and the PUT; it
+does not close it. There is no ETag or `If-Match` on the route, so two genuinely
+simultaneous writes still resolve last-writer-wins — the same property the
+`/api/admin/modules` precedent has. Do not write it up as a guarantee. That
+covers the module toggles
+sharing `PUT /api/admin/modules` (for example the magic-link and Google cards on
+`/admin/security`) and all three cards sharing
+`PUT /api/admin/booking-requests/settings` (#2162). It also constrains what a
+save may re-seed: re-seeding the snapshot from a fresh read can move a field the
+admin never touched, so re-seed that field's editor draft with it. Leaving the
+two out of step arms a dirty-gated Save the admin never armed, one click from
+reverting the other admin's change — while a draft the admin HAD typed into
+stays untouched, because it is their own in-progress input. The rule binds sections that are NEW
 or MODIFIED, so several pre-existing surfaces are acknowledged divergents it does
 not retrofit on its own: the `/admin/modules` grid (deliberate bulk toggles), the
 older staged-but-ungated settings forms, and the age-tier and notification
 settings panels — the last two were previously written up as blanket exemptions
 "because they are list sections", which is no longer the reason: list sections
 are in scope (see the per-row shape below), those two simply have not been
-touched since. One divergent is NOT pre-existing-and-untouched and is called out
-by name for that reason: `public-booking-requests-section.tsx` was modified by
-#2142 (its Save buttons and view-only banner), yet its **Show indicative
-pricing** checkbox still auto-persists on toggle rather than staging behind
-Edit → Save. That is deliberate for now — the owner decision on whether to stage
-it lives in **#2162** — but under "binds new or modified sections" it is a real
-divergence, not an exemption, and it stays listed here until #2162 resolves.
+touched since. Booking Policies still has one divergent, narrowed but NOT
+removed by #2162: no settings control in the area persists on change any more
+(row-level Activate/Deactivate stay plain direct writes, which the per-row shape
+below sanctions) — the last one that did, the **Show indicative pricing** checkbox in
+`public-booking-requests-section.tsx`, was brought onto Edit → Save — but the
+two timing cards in that same file (quote window / reminder lead, and the
+school-attendee prompts) remain staged-but-ungated: always editable, with a
+dirty-gated Save and no Edit or Cancel. That file has now been modified, so this
+is a LIVE divergence, not an untouched one; whether to Edit-gate those two cards
+is an owner decision tracked in #2166 and is not to be retrofitted in passing.
+The pricing card is a worked example of the two rules that meet awkwardly here.
+All five public-booking-request settings live in ONE row behind ONE whole-object
+PUT, so a single hook instance for the section would match storage exactly — but
+the hook carries one `editing` flag and the two timing cards are deliberately
+always-editable, so fusing them would have forced an Edit step onto cards that
+were not in scope and pre-empted #2166. The card therefore takes its OWN
+instance and pays for the shared write object the documented way: it GETs the
+fresh settings and merges only its own key, exactly as the module-toggle cards
+below do, so it can never persist a sibling card's uncommitted draft or its own
+load-time snapshot of one. Both timing handlers were brought onto that same
+fresh read in the same change, so no card in the section can revert another's
+saved value. It carries NO first-save exception even though the
+read synthesises defaults on a miss, because its whole draft is a single boolean
+— "unchanged" and "already effectively stored" are the same state there, so the
+exception would only unlock a pristine, audit-writing no-op.
 Reference:
 `src/components/admin/booking-policies/group-discount-section.tsx` — it carries
 the section banner, which since #2160 is what every banner-hostable admin

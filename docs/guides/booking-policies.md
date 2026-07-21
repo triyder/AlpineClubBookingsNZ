@@ -126,12 +126,18 @@ rules — see
 
    ![Public Booking Requests: the indicative-pricing toggle plus quote-window and school-attendee timing cards](../images/admin/admin-booking-policies-public-requests.png)
 
-2. Toggle **Show indicative pricing on the request form** (this autosaves).
-   With it on, the public form is "Request to Book" and shows a price; with it
-   off, it is "Request for Price" and shows none until an officer reviews it.
-3. Set the **Quote response window** and **Reminder lead time**, then **Save
-   quote timing**. Set the **School Attendee Confirmation** prompts and **Save
-   attendee prompts**.
+2. To change **Show indicative pricing on the request form**, click **Edit** on
+   the Indicative Pricing card, tick or untick the box, then click **Save
+   indicative pricing**. **Cancel** puts it back the way it was. Nothing changes
+   on the public site until you save, so an accidental click on the box is
+   harmless. With it on, the public form is "Request to Book" and shows a price;
+   with it off, it is "Request for Price" and shows none until an officer
+   reviews it.
+3. The two timing cards below work differently, and deliberately so: they have
+   no **Edit** button, so you type straight into them. Set the **Quote response
+   window** and **Reminder lead time**, then **Save quote timing**. Set the
+   **School Attendee Confirmation** prompts and **Save attendee prompts**. As
+   everywhere else, nothing is saved until you click that card's **Save**.
 
 ## Settings reference
 
@@ -147,7 +153,7 @@ rules — see
 | Summer seasons only | Group Discount | Restrict the group discount to summer | on | — |
 | Minimum nights | Minimum Stay | Nights required when a trigger day is included | 2 | Minimum 2 |
 | Trigger days | Minimum Stay | Which weekdays activate the rule | Sat | At least one day |
-| Show indicative pricing | Public Requests | Price shown on the public request form | off | Autosaves |
+| Show indicative pricing | Public Requests | Price shown on the public request form | off | Edit → tick → Save |
 | Quote response window | Public Requests | Days a quote link stays valid | 14 | 1–60 days |
 | Reminder lead time | Public Requests | Days before expiry to remind the requester | 3 | 0–30, must be shorter than the window |
 | Attendee first prompt / reminder | Public Requests | School attendee-confirmation timing | 14 / 3 days | Prompt 0–90 (0 = off); reminder 1–30 |
@@ -164,6 +170,7 @@ rules — see
 | A period's rules are not applying | The booking's check-in is outside the period, or the period is inactive | Check the dates and the Active toggle on the period card |
 | Group discount never triggers | It is disabled, the group is under the minimum, or it is summer-only and the stay is in winter | Enable it, lower the minimum group size, or untick Summer seasons only |
 | Reminder lead time won't save | It is not shorter than the quote response window | Set a lead time shorter than the window |
+| A Public Booking Requests card says "Your change was not saved: the current settings could not be re-read" | Each of that section's three cards re-reads the stored settings just before it writes, so it cannot overwrite another card. That read failed, so nothing was written | Click **Save** again. Your typing is still in the box — nothing was lost and nothing was changed |
 
 ## Related links
 

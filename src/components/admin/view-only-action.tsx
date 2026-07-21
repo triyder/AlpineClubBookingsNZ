@@ -57,9 +57,9 @@ interface ViewOnlyActionButtonProps extends ButtonProps {
    *
    * Since #2160 the DEFAULT is no longer the usual case — it is the fallback.
    * Most admin sections render an {@link AdminViewOnlySectionBanner} and pass
-   * `describeReason={false}` here (203 of 256 call sites), and since #2168 a
+   * `describeReason={false}` here (205 of 258 call sites), and since #2168 a
    * further 21 pass `describeReason={!ancestorRendersViewOnlyBanner}` because a
-   * VOUCHING PARENT renders the banner instead — 224 opt-outs in total. The
+   * VOUCHING PARENT renders the banner instead — 226 opt-outs in total. The
    * default survives in three shapes:
    *
    *  - inside a dialog, sheet, popover, or dropdown menu, which is a separate

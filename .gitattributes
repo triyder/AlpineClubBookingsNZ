@@ -14,3 +14,28 @@ scripts/*.mjs text eol=lf
 # silently rewriting it to CRLF turns a 14-line change into a ~9,400-line diff
 # that conflicts on every line at the next port (#2129), so pin it to LF.
 prisma/schema.prisma text eol=lf
+
+# The hand-edited markdown carries the same hazard as the schema, and `AGENTS.md`
+# / `docs/ARCHITECTURE.md` / `CHANGELOG.md` are the files most often ported
+# between the public repo and its forks. A Windows editor rewriting one to CRLF
+# turned a 28-line change into an 848-line diff, destroyed blame, and made
+# `git diff --check` flag every line as trailing whitespace (#2162). Pin the
+# whole set to LF rather than waiting to relearn this per file.
+*.md text eol=lf
+
+# Source files carry the same hazard, and it has now bitten three times: the
+# schema (#2129), the markdown above (#2162), and two source files on the
+# #2160 branch — where a CRLF flip in a test file was independently read as
+# "harmless re-indentation" by three separate reviews, because `git diff -w`
+# ignores whitespace INCLUDING the carriage return and so reports clean on
+# exactly the churn that matters. Every tracked source file on `main` is
+# already LF, so pinning the set is zero-churn today and ends the class.
+*.ts text eol=lf
+*.tsx text eol=lf
+*.js text eol=lf
+*.mjs text eol=lf
+*.cjs text eol=lf
+*.json text eol=lf
+*.css text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf

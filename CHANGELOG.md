@@ -13,9 +13,9 @@ All notable public reference-release changes should be recorded here.
   explanation. The banner belongs to a section rather than to a page, so a
   screen built from several sections — Security, or Booking Requests — shows it
   once per section, three times in those two cases. This is the
-  pattern Booking Policies adopted in #2142 (above), now applied across most of
-  the admin tree: 203 of the 256 gated buttons were converted here, and #2168
-  below takes it to 224 — about seven out of eight now explained by a banner
+  pattern Booking Policies adopted in #2142 (below), now applied across most of
+  the admin tree: 205 of the 258 gated buttons were converted here, and #2168
+  below takes it to 226 — about seven out of eight now explained by a banner
   instead of individually. **Nothing about who can do what
   has changed** — the same
   people can edit the same things, every button is gated exactly as it was, and
@@ -67,6 +67,79 @@ All notable public reference-release changes should be recorded here.
   Sibling banners on other screens — Security and Booking Requests still show
   three each — are **not** changed here; whether they should collapse the same
   way remains an open decision.
+
+- **Cleared four new dependency security advisories that were failing CI.**
+  `npm audit` began reporting one moderate and three high-severity advisories
+  against two transitive packages, which turned the required `verify` job red on
+  `main` and on every open pull request. Both packages are pinned by exact
+  `overrides` entries in `package.json` — which is why `npm audit fix` reported
+  a fix was available but changed nothing — so the pins were bumped instead:
+  `axios` `1.16.1` → `1.18.1` and `brace-expansion` `5.0.6` → `5.0.7`. Nothing
+  else in the lockfile moved. `npm audit` is now clean.
+  - `axios` is reached only through the `xero-node` SDK, which requests
+    `^1.7.7`; `1.18.1` satisfies that range, so **`xero-node` itself did not
+    move** and stays on `18.0.0`. No application code changed.
+  - The advisories cleared are the `formDataToJSON` and deep `formToJSON`
+    recursion denial-of-service pair, prototype pollution via auth subfields and
+    via request-construction gadgets, `maxBodyLength` bypasses on the fetch and
+    HTTP/2 upload paths, a `NO_PROXY` bypass for local addresses, proxy
+    inheritance after interceptor config cloning, a form-serializer `maxDepth`
+    bypass, and the `brace-expansion` exponential-time expansion
+    denial-of-service.
+  - **Behaviour risk to the Xero money path is low but not nil.** The axios
+    releases in between harden redirect, proxy, and URL handling: sensitive
+    caller-supplied headers are now stripped on cross-origin redirects, Basic
+    auth is retained on same-origin redirects but stripped cross-origin, and
+    malformed `http:`/`https:` URLs without `//` are now rejected with
+    `ERR_INVALID_URL`. The two new `transitional` flags both default to their
+    backwards-compatible values (`advertiseZstdAcceptEncoding: false`, so
+    `Accept-Encoding` on the wire is unchanged, and
+    `validateStatusUndefinedResolves: true`, which leaves status handling as it
+    was). `xero-node` sends invoice, payment, credit-note, and contact bodies as
+    JSON with no `paramsSerializer`, `socketPath`, `maxBodyLength`, or FormData
+    configuration, so the hardened form-serialization and body-limit paths are
+    not on our call path at all.
+
+- **"Show indicative pricing" no longer changes the public site the moment you
+  click it (#2162).** On **Booking Policies → Public Booking Requests**, the
+  **Show indicative pricing on the request form** checkbox used to save the
+  instant it was ticked — one stray click and the public request form switched
+  between "Request to Book" (with a price) and "Request for Price" (without
+  one), with an audit entry to match. It now works like every other setting in
+  the area: click **Edit** on the Indicative Pricing card, tick or untick the
+  box, then **Save indicative pricing**, with **Cancel** to put it back. Save
+  stays greyed out until you have actually changed something, so an
+  open-and-close cannot record a change that never happened. **This is a visible
+  change for admins:** a one-click toggle is now three clicks, deliberately, to
+  match the rest of Booking Policies. Three related fixes ride along. All three
+  cards in the section now re-read the stored settings immediately before they
+  write, so saving any one of them will not quietly overwrite what another
+  admin changed in another card while your page was open — or what you typed
+  into a card below but have not saved yet. (Two admins who hit Save in the same
+  instant still resolve last-one-wins, as they always have; what is fixed is the
+  page that has been sitting open.) If a re-read brings back a value you
+  had not touched, the box showing it is refreshed too, so a **Save** never
+  lights up on its own beside a stale number (anything you had typed is left
+  exactly as you left it). And the save now sends the school-attendee timings
+  back to the browser as well as the pricing and quote ones; previously they
+  came back missing, which blanked both attendee boxes after any save and then
+  made the next quote-timing save fail outright. No schema, permission, or audit
+  change. The only API change is additive and has one caller: the settings PUT
+  now returns the two school-attendee fields it was already storing, alongside
+  the three it already returned. If that re-read itself fails, the message now
+  says your change was not saved, instead of reporting a settings-load failure
+  for a save you had just clicked. See `docs/guides/booking-policies.md` and
+  `docs/ARCHITECTURE.md`.
+
+- **Markdown is pinned to LF line endings (#2162).** `.gitattributes` already
+  pinned `prisma/schema.prisma` and `scripts/*.mjs` after a Windows editor
+  silently rewrote the schema to CRLF and turned a 14-line change into a
+  ~9,400-line conflict at the next port (#2129). The same thing then happened to
+  `AGENTS.md` and `docs/ARCHITECTURE.md` — two of the most-ported files in the
+  repo — turning a 28-line edit into an 848-line diff, destroying blame, and
+  making `git diff --check` flag every line. `*.md text eol=lf` now covers the
+  whole set; all 186 tracked markdown files were already LF, so nothing else
+  moves. Developer tooling only, with no runtime effect.
 
 - **Secondary text in the member and admin app now actually looks secondary
   (#2145).** Small labels, hints, and footnotes are meant to sit a step below
