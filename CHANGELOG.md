@@ -4,6 +4,38 @@ All notable public reference-release changes should be recorded here.
 
 ## Unreleased
 
+- **Cleared four new dependency security advisories that were failing CI.**
+  `npm audit` began reporting one moderate and three high-severity advisories
+  against two transitive packages, which turned the required `verify` job red on
+  `main` and on every open pull request. Both packages are pinned by exact
+  `overrides` entries in `package.json` — which is why `npm audit fix` reported
+  a fix was available but changed nothing — so the pins were bumped instead:
+  `axios` `1.16.1` → `1.18.1` and `brace-expansion` `5.0.6` → `5.0.7`. Nothing
+  else in the lockfile moved. `npm audit` is now clean.
+  - `axios` is reached only through the `xero-node` SDK, which requests
+    `^1.7.7`; `1.18.1` satisfies that range, so **`xero-node` itself did not
+    move** and stays on `18.0.0`. No application code changed.
+  - The advisories cleared are the `formDataToJSON` and deep `formToJSON`
+    recursion denial-of-service pair, prototype pollution via auth subfields and
+    via request-construction gadgets, `maxBodyLength` bypasses on the fetch and
+    HTTP/2 upload paths, a `NO_PROXY` bypass for local addresses, proxy
+    inheritance after interceptor config cloning, a form-serializer `maxDepth`
+    bypass, and the `brace-expansion` exponential-time expansion
+    denial-of-service.
+  - **Behaviour risk to the Xero money path is low but not nil.** The axios
+    releases in between harden redirect, proxy, and URL handling: sensitive
+    caller-supplied headers are now stripped on cross-origin redirects, Basic
+    auth is retained on same-origin redirects but stripped cross-origin, and
+    malformed `http:`/`https:` URLs without `//` are now rejected with
+    `ERR_INVALID_URL`. The two new `transitional` flags both default to their
+    backwards-compatible values (`advertiseZstdAcceptEncoding: false`, so
+    `Accept-Encoding` on the wire is unchanged, and
+    `validateStatusUndefinedResolves: true`, which leaves status handling as it
+    was). `xero-node` sends invoice, payment, credit-note, and contact bodies as
+    JSON with no `paramsSerializer`, `socketPath`, `maxBodyLength`, or FormData
+    configuration, so the hardened form-serialization and body-limit paths are
+    not on our call path at all.
+
 - **"Show indicative pricing" no longer changes the public site the moment you
   click it (#2162).** On **Booking Policies → Public Booking Requests**, the
   **Show indicative pricing on the request form** checkbox used to save the
