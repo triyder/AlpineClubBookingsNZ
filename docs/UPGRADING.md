@@ -86,10 +86,29 @@ as a red flag and check the release notes before deploying.
 
 ## Unreleased
 
-The unreleased range is **Release B of the #2129/#2130 contract series**: two
-destructive `contract` migrations that finish what the `v0.13.0` runtime-prep
-(Release A) made legal. They require the breaking-migration acknowledgement at
-deploy time and are only legal once `v0.13.0` is the deployed, drained colour.
+_No schema or migration changes are staged for the next release yet._
+
+---
+
+## v0.13.0 → v0.13.1
+
+`v0.13.1` is a **patch** release carrying **three migrations — two destructive
+`contract` migrations plus one additive/expand migration** — across two
+operator-relevant workstreams:
+
+- **Release B of the #2129/#2130 contract series** (the two `contract`
+  migrations): they finish what the `v0.13.0` runtime-prep (Release A) made legal,
+  require the breaking-migration acknowledgement at deploy time, and are only legal
+  once `v0.13.0` is the deployed, drained colour.
+- **Encrypted DB-only provider credentials (#2079)** (the one expand migration,
+  `20260721210000_add_integration_credential`): Xero credential resolution is hard-
+  cut from env `XERO_*` to an encrypted store, so an existing Xero-connected
+  install enters a documented "needs re-entry" state at cutover and **Xero work
+  pauses** until a Full Admin re-enters credentials in-app and reconnects. Its
+  operator subsection is below the Release B steps.
+
+Both workstreams ship in this one tag; complete the Release B steps **and** the
+#2079 re-entry.
 
 ### Release B: the two contract migrations
 
@@ -203,6 +222,68 @@ precisely what the runtime-prep release bought. **Rolling back past `v0.13.0`
 (to `v0.12.2` or earlier) against the contracted schema will not work**: that
 colour still names the dropped column and table. Roll forward, or restore the
 pre-upgrade backup and lose the writes since it was taken.
+
+### Encrypted DB-only provider credentials (#2079)
+
+The additive migration `20260721210000_add_integration_credential` adds one new
+standalone table and needs no override; it deploys alongside the Release B
+migrations above. The operator-visible part is the **hard cutover of Xero
+credential resolution** from env `XERO_*` to the encrypted store.
+
+**What stops working at cutover** for a previously env-configured, Xero-connected
+install:
+
+- The old `XERO_ENCRYPTION_KEY` is no longer read, so the previously stored Xero
+  OAuth tokens become **unreadable by design** (deliberately no silent key
+  import). Xero surfaces a clean **"reconnect Xero"** state — nothing crashes at
+  boot, cron, webhook, or page load.
+- `XERO_CLIENT_ID` / `XERO_CLIENT_SECRET` / `XERO_REDIRECT_URI` /
+  `XERO_WEBHOOK_KEY` are ignored; setup readiness raises a warning naming the exact
+  vars still present ("configured in-app now — re-enter there, then remove these").
+- **Xero sync, webhook verification, and invoice/payment automation are
+  fail-flagged and paused** — not crashing — until the credentials are re-entered
+  and Xero is reconnected. The Xero outbox marks each pending op FAILED (replayable
+  after reconnect); no money path changes.
+
+**Re-entry steps (Full Admin):**
+
+1. **Ensure `AUTH_SECRET` (or `NEXTAUTH_SECRET`) is strong** — at least 32
+   characters and not the `.env.example` placeholder. Credential capture is
+   **hard-blocked** on a weak secret; setup readiness shows a passive amber warning
+   before you start. There is no boot-time enforcement — the block is at the
+   capture form only.
+2. Deploy the release. Nothing fails at boot; readiness shows the legacy-env
+   warnings and the Xero "reconnect" prompt.
+3. Open **Admin → Xero → Setup** (the Integrations hub links here) and use the
+   **Xero Credentials** section to re-enter the client id, client secret, and
+   (optional) webhook key. Each write is Full-Admin only, encrypted at rest, and
+   audited (metadata only); values are never displayed back. The wrapped
+   token-encryption key auto-generates on first use.
+4. **Reconnect Xero (OAuth)** so fresh tokens are stored under the new key. A
+   client-credential write drops any stale stored tokens (verify-reset), so a
+   reconnect is required after re-entry.
+5. Remove the now-ignored `XERO_*` credential env vars from the environment; the
+   readiness warning clears. Because production runs blue/green web slots plus a
+   cron-leader, a wizard write in one web slot is observed by the cron-leader
+   within the credential cache TTL (about 45 s), no restart required.
+
+The full step-by-step, including the per-provider re-entry order, is the **DB-only
+provider credentials** upgrade runbook in `DEPLOYMENT.md`.
+
+**Credentials at rest.** Stored credentials are encrypted with AES-256-GCM under a
+key derived from the app auth secret, so **a database backup plus the auth secret
+decrypts everything** — treat the auth secret with the same care as the database,
+and **never share a production auth secret with staging or clones** (a restored
+clone is *expected* to fail decryption and enter the re-entry state, which is
+correct, not a bug). See `docs/SECURITY-ATTACK-SURFACE.md` → "Credentials at
+rest".
+
+**Rollback boundary (#2079).** The migration is purely additive, so the old colour
+is unaffected by it; the credential cutover is a runtime behaviour of the new
+colour, not a schema break. Rolling the app back to a build that still reads env
+`XERO_*` would restore the old resolution path, but the standard rollback boundary
+for this release is set by the Release B contract drops above, not by this
+migration.
 
 ---
 

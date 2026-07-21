@@ -4,7 +4,69 @@ All notable public reference-release changes should be recorded here.
 
 ## Unreleased
 
-### Release B (contract drops — deploy as its own release)
+## 0.13.1 - 2026-07-22
+
+- **Provider credentials now live in an encrypted database store, and Xero
+  resolves from it only — env `XERO_*` is no longer read at runtime (#2079).**
+  A new `IntegrationCredential` table (additive migration
+  `20260721210000_add_integration_credential`) holds AES-256-GCM ciphertext under
+  a key derived by real HKDF-SHA256 from the canonical `getAuthSecret()` resolver
+  (a fixed documented salt and versioned info labels), with a fresh random IV per
+  encrypt and GCM AAD (`provider:key:labelVersion`) binding every ciphertext to
+  its row. A `secretSource` field records which env name the auth secret resolved
+  from, so a silent `AUTH_SECRET`↔`NEXTAUTH_SECRET` flip is **diagnosable** (it
+  still decrypts, and is flagged); a changed secret *value* fails cleanly into a
+  "needs re-entry" state, never a crash. **This is a hard cutover of Xero
+  credential resolution:** `getOperationalXeroConfig()`,
+  `getOperationalXeroEncryptionKey()`, and the new
+  `getOperationalXeroWebhookKey()` resolve from the store, and env
+  `XERO_CLIENT_ID` / `XERO_CLIENT_SECRET` / `XERO_REDIRECT_URI` /
+  `XERO_ENCRYPTION_KEY` / `XERO_WEBHOOK_KEY` are **no longer read for operation** —
+  legacy values are **detected and flagged** in setup readiness ("configured
+  in-app now — re-enter there, then remove these"), never silently honoured and
+  never silently ignored. The webhook route resolves its HMAC key through the
+  shared resolver and stays **fail-closed** (a missing or unreadable key rejects
+  every delivery), and the OAuth redirect URI now derives from `NEXTAUTH_URL`
+  (`{origin}/api/admin/xero/callback`) instead of the old `localhost:3000`
+  fallback.
+
+  A cross-process credential cache (45 s TTL, invalidated in-process on write,
+  never caching a negative or a DB error beyond the TTL) lets the cron-leader
+  container observe a web-slot credential write within the TTL without a restart.
+  An **AUTH_SECRET strength gate** hard-blocks credential capture when the secret
+  is weak (< 32 chars, or a placeholder — a blocklist that catches the 41-char
+  `.env.example` literal a naive length check would pass), shows a passive amber
+  readiness warning from day one, and imposes **no boot-time enforcement**
+  anywhere (token-key auto-generation simply no-ops, never throws, while gated).
+  Writes go through a **write-only, Full-Admin-only** API
+  (`/api/admin/integrations/credentials`): values are never returned, audit rows
+  are metadata-only, and a metadata-only status GET keeps area admins' visibility.
+  **Verify-reset:** writing client credentials drops the stored OAuth tokens
+  (forcing a clean re-connect), while writing a webhook key re-arms webhook
+  verification without dropping tokens. An interim **Xero Credentials** entry
+  section on `/admin/xero/setup` makes the upgrade runbook followable now (the
+  guided setup wizard supersedes it in a later release).
+
+  For an existing env-configured install the previously stored Xero OAuth tokens
+  were wrapped under the dropped `XERO_ENCRYPTION_KEY`, so they become
+  **unreadable by design** (no silent key import): a typed `XeroTokenDecryptError`
+  is mapped to the **reconnect** state, and the admin status panel, setup
+  readiness, and the finance-report messaging all show "reconnect Xero" instead of
+  a false "Connected". Nothing crashes at boot, cron, webhook, or page load — Xero
+  sync, webhook verification, and invoice work are **fail-flagged and paused**
+  until a Full Admin re-enters credentials and reconnects. The credential entity is
+  **excluded from configuration export** (with `ciphertext`/`authTag` also in the
+  forbidden-field patterns as defence in depth), the blue/green deploy script no
+  longer hard-requires the dropped `XERO_*` vars (warn-only legacy sweep),
+  docker-compose no longer plumbs them, and `.env.example` /
+  `.env.staging.example` were rewritten. **Operator action is mandatory on
+  upgrade** — see `DEPLOYMENT.md` → "Provider credentials: DB-only upgrade" and
+  `docs/UPGRADING.md`. Trust now concentrates in the auth secret: a database
+  backup plus the auth secret decrypts every stored credential, so production and
+  clones must **never** share a secret (a restored clone is *expected* to enter
+  re-entry) — see `docs/SECURITY-ATTACK-SURFACE.md` → "Credentials at rest".
+
+### Release B (contract drops)
 
 > **⚠️ Precondition (now satisfied): Release A must be the deployed, drained
 > colour before this ships.** Release A shipped as **v0.13.0** and has been the
