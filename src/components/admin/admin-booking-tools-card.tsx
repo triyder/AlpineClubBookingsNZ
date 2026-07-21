@@ -85,9 +85,9 @@ export function AdminBookingToolsCard({
 
   return (
     <>
-      <Card className="border-slate-300 bg-slate-50">
+      <Card className="border-border bg-card">
         <CardHeader className="pb-3">
-          <CardTitle className="text-base text-slate-900">Admin tools</CardTitle>
+          <CardTitle className="text-base text-foreground">Admin tools</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
           {providerMismatches.length > 0 && (
@@ -137,21 +137,21 @@ export function AdminBookingToolsCard({
           )}
           <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
             <Link
-              className="text-slate-700 underline hover:text-slate-900"
+              className="text-muted-foreground underline hover:text-accent-foreground"
               href={buildHrefWithReturnTo(`/admin/members/${memberId}`, returnTo)}
             >
               Member: {memberName}
             </Link>
             {isFeatureHrefVisible(bedAllocationHref, features) ? (
               <Link
-                className="text-slate-700 underline hover:text-slate-900"
+                className="text-muted-foreground underline hover:text-accent-foreground"
                 href={bedAllocationHref}
               >
                 Bed allocation
               </Link>
             ) : null}
             <Link
-              className="text-slate-700 underline hover:text-slate-900"
+              className="text-muted-foreground underline hover:text-accent-foreground"
               href={buildXeroRecordActivityUrl(
                 paymentId ? "Payment" : "Booking",
                 paymentId ?? bookingId,
@@ -161,7 +161,7 @@ export function AdminBookingToolsCard({
               Xero activity
             </Link>
             <Link
-              className="text-slate-700 underline hover:text-slate-900"
+              className="text-muted-foreground underline hover:text-accent-foreground"
               href={`/admin/audit-log?q=${encodeURIComponent(bookingId)}`}
             >
               Audit log

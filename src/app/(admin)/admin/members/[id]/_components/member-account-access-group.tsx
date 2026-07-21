@@ -216,7 +216,7 @@ export function MemberAccountAccessGroup({
                 ),
               }))
             }
-            className="h-4 w-4 rounded border-gray-300"
+            className="h-4 w-4 rounded border-border"
             disabled={isSelf || memberLifecycleLocked}
           />
           <Label htmlFor="account-canLogin">Can Login</Label>
@@ -284,7 +284,7 @@ export function MemberAccountAccessGroup({
                 id="account-alsoClubMember"
                 checked={form.accessRoles.includes("USER")}
                 onChange={(e) => toggleAlsoClubMember(e.target.checked)}
-                className="h-4 w-4 rounded border-gray-300"
+                className="h-4 w-4 rounded border-border"
                 disabled={
                   isSelf || !form.canLogin || !actorIsFullAdmin
                 }
@@ -326,7 +326,7 @@ export function MemberAccountAccessGroup({
             onChange={(e) =>
               updateForm((f) => ({ ...f, active: e.target.checked }))
             }
-            className="h-4 w-4 rounded border-gray-300"
+            className="h-4 w-4 rounded border-border"
             disabled={isSelf || memberLifecycleLocked}
           />
           <Label htmlFor="account-active">Active</Label>
@@ -352,7 +352,7 @@ export function MemberAccountAccessGroup({
                 forcePasswordChange: e.target.checked,
               }))
             }
-            className="h-4 w-4 rounded border-gray-300"
+            className="h-4 w-4 rounded border-border"
           />
           <Label htmlFor="account-forcePasswordChange">
             Force Password Change on Next Login
@@ -369,7 +369,7 @@ export function MemberAccountAccessGroup({
                 requiresInduction: e.target.checked,
               }))
             }
-            className="h-4 w-4 rounded border-gray-300"
+            className="h-4 w-4 rounded border-border"
           />
           <Label htmlFor="account-requiresInduction">Requires Induction</Label>
           <p className="text-xs text-muted-foreground ml-2">
@@ -387,14 +387,14 @@ export function MemberAccountAccessGroup({
               member&apos;s notifications. Leave it blank to use this
               member&apos;s own email address instead.
             </p>
-            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
+            <div className="rounded-lg border border-border bg-muted p-3 text-sm">
               {inheritEmail.selected ? (
                 <div className="space-y-2">
-                  <div className="font-medium text-slate-900">
+                  <div className="font-medium text-foreground">
                     Sending notifications to {inheritEmail.selected.firstName}{" "}
                     {inheritEmail.selected.lastName}
                   </div>
-                  <div className="text-xs text-slate-600">
+                  <div className="text-xs text-muted-foreground">
                     {inheritEmail.selected.email} · Member ID{" "}
                     {inheritEmail.selected.id}
                     {inheritEmail.selected.active === false
@@ -415,10 +415,10 @@ export function MemberAccountAccessGroup({
                 </div>
               ) : (
                 <div className="space-y-1">
-                  <div className="font-medium text-slate-900">
+                  <div className="font-medium text-foreground">
                     Using this member&apos;s own email
                   </div>
-                  <div className="text-xs text-slate-600">
+                  <div className="text-xs text-muted-foreground">
                     {member.email || "No email set on this member"}
                   </div>
                 </div>
@@ -443,12 +443,12 @@ export function MemberAccountAccessGroup({
                 <p className="text-xs text-red-600">{inheritEmail.error}</p>
               ) : inheritEmail.search.trim().length >= 2 ? (
                 inheritEmail.results.length > 0 ? (
-                  <div className="max-h-48 space-y-2 overflow-auto rounded-md border border-slate-200 bg-white p-2">
+                  <div className="max-h-48 space-y-2 overflow-auto rounded-md border border-border bg-card p-2">
                     {inheritEmail.results.map((candidate) => (
                       <button
                         key={candidate.id}
                         type="button"
-                        className="w-full rounded-md border border-slate-200 px-3 py-2 text-left text-sm hover:bg-slate-50"
+                        className="w-full rounded-md border border-border px-3 py-2 text-left text-sm hover:bg-accent"
                         onClick={() => {
                           inheritEmail.select(candidate);
                           updateForm((f) => ({
@@ -457,10 +457,10 @@ export function MemberAccountAccessGroup({
                           }));
                         }}
                       >
-                        <div className="font-medium text-slate-900">
+                        <div className="font-medium text-foreground">
                           {candidate.firstName} {candidate.lastName}
                         </div>
-                        <div className="text-xs text-slate-600">
+                        <div className="text-xs text-muted-foreground">
                           {candidate.email} · Member ID {candidate.id}
                           {candidate.active === false ? " · Inactive" : ""}
                         </div>
@@ -508,13 +508,13 @@ export function MemberAccountAccessGroup({
       </div>
       <dl className="grid grid-cols-1 gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
         <div>
-          <dt className="text-slate-500">User Type</dt>
+          <dt className="text-muted-foreground">User Type</dt>
           <dd className="font-medium">
             {USER_TYPE_LABELS[deriveUserType(accessRoles, member.canLogin)]}
           </dd>
         </div>
         <div>
-          <dt className="text-slate-500">Login</dt>
+          <dt className="text-muted-foreground">Login</dt>
           <dd className="font-medium">
             <Badge variant="secondary" className={loginBadge.className}>
               {loginBadge.label}
@@ -522,7 +522,7 @@ export function MemberAccountAccessGroup({
           </dd>
         </div>
         <div>
-          <dt className="text-slate-500">Access Roles</dt>
+          <dt className="text-muted-foreground">Access Roles</dt>
           <dd className="flex flex-wrap gap-1 font-medium">
             {accessRoles.length > 0 ? (
               accessRoles.map((role) => (
@@ -539,36 +539,36 @@ export function MemberAccountAccessGroup({
           </dd>
         </div>
         <div>
-          <dt className="text-slate-500">Account Status</dt>
+          <dt className="text-muted-foreground">Account Status</dt>
           <dd className="font-medium">
             {member.active ? "Active" : "Inactive"}
           </dd>
         </div>
         <div>
-          <dt className="text-slate-500">Password Reset Required</dt>
+          <dt className="text-muted-foreground">Password Reset Required</dt>
           <dd className="font-medium">
             {member.forcePasswordChange ? "Yes" : "No"}
           </dd>
         </div>
         <div>
-          <dt className="text-slate-500">Requires Induction</dt>
+          <dt className="text-muted-foreground">Requires Induction</dt>
           <dd className="font-medium">
             {member.requiresInduction ? "Yes" : "No"}
           </dd>
         </div>
         <div>
-          <dt className="text-slate-500">Email Inheritance</dt>
+          <dt className="text-muted-foreground">Email Inheritance</dt>
           <dd className="font-medium">
             {member.inheritEmailFrom ? (
               <span className="text-xs">
                 {member.inheritEmailFrom.firstName}{" "}
                 {member.inheritEmailFrom.lastName}{" "}
-                <span className="text-slate-400">
+                <span className="text-muted-foreground">
                   ({member.inheritEmailFrom.email})
                 </span>
               </span>
             ) : (
-              <span className="text-xs text-slate-500">Own email</span>
+              <span className="text-xs text-muted-foreground">Own email</span>
             )}
           </dd>
         </div>

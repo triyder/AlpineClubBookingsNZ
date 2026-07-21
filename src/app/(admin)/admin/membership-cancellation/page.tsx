@@ -7,10 +7,10 @@ export default function MembershipCancellationPage() {
     <div className="space-y-8">
       <div>
         <BackLink href="/admin/notifications" label="Notifications & Email" />
-        <h1 className="mt-2 text-2xl font-bold text-slate-900">
+        <h1 className="mt-2 text-2xl font-bold text-foreground">
           Membership Cancellation
         </h1>
-        <p className="mt-1 text-sm text-slate-500">
+        <p className="mt-1 text-sm text-muted-foreground">
           Configure cancellation copy and Xero handling for member cancellation
           requests.
         </p>

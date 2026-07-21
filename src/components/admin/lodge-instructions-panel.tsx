@@ -273,7 +273,7 @@ export function LodgeInstructionsPanel() {
           onChange={setScopeLodgeId}
           id="lodge-instructions-scope"
         />
-        <p className="text-sm text-slate-500">Loading lodge instructions...</p>
+        <p className="text-sm text-muted-foreground">Loading lodge instructions...</p>
         </div>
       </div>
     );
@@ -331,7 +331,7 @@ export function LodgeInstructionsPanel() {
             <CardContent className="space-y-3">
               {!showEditor ? (
                 <>
-                  <p className="text-sm text-slate-600">
+                  <p className="text-sm text-muted-foreground">
                     {scopeLodgeName ?? "This lodge"} uses the club-wide{" "}
                     {doc.title.toLowerCase()} document. An override replaces it
                     entirely for this lodge.

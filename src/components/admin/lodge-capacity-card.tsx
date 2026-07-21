@@ -296,7 +296,7 @@ export function LodgeCapacityCard() {
               }}
               disabled={loading || saving || !canEdit}
             />
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-muted-foreground">
               School groups above this many beds are warned they need a club
               member to host. Blank uses the default. Warning only — the hard
               limit stays the capacity above.
@@ -318,7 +318,7 @@ export function LodgeCapacityCard() {
           </ViewOnlyActionButton>
         </div>
 
-        <p className="text-xs text-slate-500">
+        <p className="text-xs text-muted-foreground">
           Leave capacity blank to use the club default
           {clubConfigCapacity === null ? "" : ` (${clubConfigCapacity})`}. Hut
           leader warnings include unassigned dates from today through the

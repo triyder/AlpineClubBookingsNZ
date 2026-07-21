@@ -144,7 +144,7 @@ export function ConfirmPendingGuestsButton({
         <CardTitle>Confirm pending guests now</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        <p className="text-sm text-gray-600">
+        <p className="text-sm text-muted-foreground">
           This booking still has non-member guests on hold. Confirming now locks
           the guests in and clears the hold so the booking won&apos;t be bumped.
           {isZeroDollar

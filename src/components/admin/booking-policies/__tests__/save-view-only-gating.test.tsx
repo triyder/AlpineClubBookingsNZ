@@ -1916,16 +1916,25 @@ describe("PublicBookingRequestsSection timing cards stage behind Edit (#2166)", 
   // presentation entirely — so `disabled` on its own is invisible and a gated
   // box looks exactly like an editable one. The reference section
   // (`group-discount-section.tsx`) carries these same two classes for it.
+  //
+  // #2144: the pair moved from `bg-slate-50 text-slate-700` onto semantic
+  // tokens, but deliberately onto `bg-muted` rather than the `bg-card` the
+  // sweep's raw->token table gives for `bg-*-50`. `--card` and `--background`
+  // are the same colour in light mode (both `--brand-snow` inside
+  // `.app-theme-scope`), so `bg-card` here would have rendered the shading
+  // invisible in light mode and deleted the affordance this test exists to
+  // protect. `bg-muted` (`--brand-mist`) reads as shaded in both modes and is
+  // in the muted-foreground clamp set, so the pair stays AA.
   it.each(CARDS)("$name shades its boxes while they are read-only", async (card) => {
     stubSettings();
     await loadSection();
 
-    expect(input(card.field).className).toContain("bg-slate-50");
-    expect(input(card.field).className).toContain("text-slate-700");
+    expect(input(card.field).className).toContain("bg-muted");
+    expect(input(card.field).className).toContain("text-muted-foreground");
 
     fireEvent.click(button(card.edit));
-    expect(input(card.field).className).not.toContain("bg-slate-50");
-    expect(input(card.field).className).not.toContain("text-slate-700");
+    expect(input(card.field).className).not.toContain("bg-muted");
+    expect(input(card.field).className).not.toContain("text-muted-foreground");
   });
 
   // #2166 review: a validation failure returns BEFORE `save()`, and `save()` is

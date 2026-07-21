@@ -23,7 +23,7 @@ export function MemberSubscriptionHistoryTable({
   subscriptions: MemberDetail["subscriptions"]
 }) {
   if (subscriptions.length === 0) {
-    return <p className="text-sm text-slate-500">No subscription records</p>
+    return <p className="text-sm text-muted-foreground">No subscription records</p>
   }
   return (
     <Table>

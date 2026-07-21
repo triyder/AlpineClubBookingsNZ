@@ -161,7 +161,7 @@ export function PasswordPolicyCard() {
       <CardHeader>
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-start gap-3">
-            <KeyRound className="mt-0.5 h-5 w-5 shrink-0 text-slate-500" />
+            <KeyRound className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
             <div className="min-w-0 flex-1">
               <CardTitle className="text-base">Password policy</CardTitle>
               <CardDescription className="mt-1">
@@ -205,7 +205,7 @@ export function PasswordPolicyCard() {
 
         {loading && draft === null ? (
           <div className="flex min-h-[160px] items-center justify-center">
-            <Loader2 className="h-6 w-6 animate-spin text-slate-500" />
+            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
           </div>
         ) : draft ? (
           <>
@@ -223,7 +223,7 @@ export function PasswordPolicyCard() {
                 className="max-w-[8rem]"
                 aria-describedby="min-password-length-hint"
               />
-              <p id="min-password-length-hint" className="text-xs text-slate-500">
+              <p id="min-password-length-hint" className="text-xs text-muted-foreground">
                 Between {MIN_PASSWORD_LENGTH_FLOOR} and {MIN_PASSWORD_LENGTH_CEILING}{" "}
                 characters. A hard maximum of 128 characters always applies.
               </p>
@@ -236,7 +236,7 @@ export function PasswordPolicyCard() {
             </div>
 
             <fieldset className="space-y-3">
-              <legend className="text-sm font-medium text-slate-700">
+              <legend className="text-sm font-medium text-muted-foreground">
                 Required character types
               </legend>
               {CLASS_FIELDS.map(({ key, label }) => {

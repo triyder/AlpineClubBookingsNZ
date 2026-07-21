@@ -29,14 +29,14 @@ function SummaryItem({
 }) {
   return (
     <div className="flex items-center gap-3 bg-card px-4 py-3">
-      <Icon className="h-6 w-6 shrink-0 text-slate-400" />
+      <Icon className="h-6 w-6 shrink-0 text-muted-foreground" />
       <div className="min-w-0">
-        <p className="text-xs uppercase tracking-wide text-slate-500">
+        <p className="text-xs uppercase tracking-wide text-muted-foreground">
           {label}
         </p>
         <p className="truncate text-sm font-semibold">{value}</p>
         {detail ? (
-          <p className="truncate text-xs text-slate-400">{detail}</p>
+          <p className="truncate text-xs text-muted-foreground">{detail}</p>
         ) : null}
       </div>
     </div>

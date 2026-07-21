@@ -17,7 +17,7 @@ export function MemberPromoCodesCard({ promoCodes, className }: { promoCodes: Me
       </CardHeader>
       <CardContent>
         {promoCodes.length === 0 ? (
-          <p className="text-sm text-slate-500">No promo codes assigned to this member.</p>
+          <p className="text-sm text-muted-foreground">No promo codes assigned to this member.</p>
         ) : (
           <Table>
             <TableHeader>
@@ -38,7 +38,7 @@ export function MemberPromoCodesCard({ promoCodes, className }: { promoCodes: Me
                         {promo.code}
                       </Badge>
                       {promo.description && (
-                        <p className="max-w-xs text-xs text-slate-500">{promo.description}</p>
+                        <p className="max-w-xs text-xs text-muted-foreground">{promo.description}</p>
                       )}
                     </div>
                   </TableCell>
@@ -55,10 +55,10 @@ export function MemberPromoCodesCard({ promoCodes, className }: { promoCodes: Me
                       >
                         {promo.visibleToMember ? "Visible to member" : "Not currently usable"}
                       </Badge>
-                      <p className="text-xs text-slate-500">{promo.statusReason}</p>
+                      <p className="text-xs text-muted-foreground">{promo.statusReason}</p>
                     </div>
                   </TableCell>
-                  <TableCell className="text-xs text-slate-600">
+                  <TableCell className="text-xs text-muted-foreground">
                     <div className="space-y-1">
                       <p>Assigned {promo.assignedAt ? formatMemberDateNz(promo.assignedAt) : "unknown"}</p>
                       <p>
@@ -73,7 +73,7 @@ export function MemberPromoCodesCard({ promoCodes, className }: { promoCodes: Me
                       )}
                     </div>
                   </TableCell>
-                  <TableCell className="text-xs text-slate-600">
+                  <TableCell className="text-xs text-muted-foreground">
                     <div className="space-y-1">
                       <p>
                         {promo.currentRedemptions}

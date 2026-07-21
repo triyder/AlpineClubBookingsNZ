@@ -258,7 +258,9 @@ export function MountainConditionsPanel() {
     return (
       <>
         {viewOnlyBanner}
-        <p className="text-sm text-slate-500">Loading mountain conditions...</p>
+        <p className="text-sm text-muted-foreground">
+          Loading mountain conditions...
+        </p>
       </>
     );
   }
@@ -315,7 +317,7 @@ export function MountainConditionsPanel() {
               <label
                 key={section.key}
                 htmlFor={`visibility-${section.key}`}
-                className="flex items-center gap-3 rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-700"
+                className="flex items-center gap-3 rounded-md border border-border px-3 py-2 text-sm text-muted-foreground"
               >
                 <Checkbox
                   id={`visibility-${section.key}`}
@@ -385,7 +387,7 @@ export function MountainConditionsPanel() {
             readOnly={!canEdit}
           />
 
-          <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-slate-500">
+          <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground">
             <div className="space-y-1">
               <p>Frozen until: {formatDateTime(frozenUntil)}</p>
               <p>Last updated in DB: {formatDateTime(record?.updatedAt)}</p>
@@ -417,7 +419,7 @@ export function MountainConditionsPanel() {
               the public mountain conditions display.
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-3 text-sm leading-6 text-slate-700">
+          <div className="space-y-3 text-sm leading-6 text-muted-foreground">
             <p>
               <i>
                 <b>Save</b>

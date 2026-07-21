@@ -84,7 +84,7 @@ export function MemberXeroCreateDialog({
               id="member-detail-xero-create-invoice"
               checked={createEntranceFeeInvoice}
               onChange={(e) => onChangeCreateEntranceFeeInvoice(e.target.checked)}
-              className="mt-0.5 h-4 w-4 rounded border-gray-300"
+              className="mt-0.5 h-4 w-4 rounded border-border"
             />
             <div>
               <Label htmlFor="member-detail-xero-create-invoice">
@@ -128,7 +128,7 @@ export function MemberXeroCreateDialog({
               <Label htmlFor="member-detail-xero-entrance-skip-reason">Reason for not raising invoice</Label>
               <textarea
                 id="member-detail-xero-entrance-skip-reason"
-                className="min-h-20 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                className="min-h-20 w-full rounded-md border border-border px-3 py-2 text-sm"
                 value={entranceFeeSkipReason}
                 onChange={(e) => onChangeEntranceFeeSkipReason(e.target.value)}
               />

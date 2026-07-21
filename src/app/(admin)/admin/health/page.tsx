@@ -23,10 +23,10 @@ export default function AdminHealthPage() {
   if (loading) {
     return (
       <div className="p-6">
-        <h1 className="text-2xl font-bold text-slate-900 mb-6">System Health</h1>
+        <h1 className="text-2xl font-bold text-foreground mb-6">System Health</h1>
         <div className="animate-pulse space-y-4">
           {[1, 2, 3].map((i) => (
-            <div key={i} className="h-32 bg-slate-100 rounded-lg" />
+            <div key={i} className="h-32 bg-muted rounded-lg" />
           ))}
         </div>
       </div>
@@ -36,7 +36,7 @@ export default function AdminHealthPage() {
   if (error) {
     return (
       <div className="p-6">
-        <h1 className="text-2xl font-bold text-slate-900 mb-6">System Health</h1>
+        <h1 className="text-2xl font-bold text-foreground mb-6">System Health</h1>
         <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-red-700">
           Failed to load health data: {error}
         </div>
@@ -67,14 +67,14 @@ export default function AdminHealthPage() {
     <div className="p-6 space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-slate-900">System Health</h1>
+        <h1 className="text-2xl font-bold text-foreground">System Health</h1>
         <div className="flex items-center gap-3">
-          <span className="text-sm text-slate-500">
+          <span className="text-sm text-muted-foreground">
             Last refresh: {lastRefresh.toLocaleTimeString("en-NZ")}
           </span>
           <button
             onClick={refresh}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm bg-slate-100 hover:bg-slate-200 rounded-md transition-colors"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm bg-muted hover:bg-accent rounded-md transition-colors"
           >
             <RefreshCw className="h-3.5 w-3.5" />
             Refresh
@@ -83,13 +83,13 @@ export default function AdminHealthPage() {
       </div>
 
       {/* Overall Status */}
-      <div className="bg-white border rounded-lg p-4 flex items-center gap-4">
+      <div className="bg-card border rounded-lg p-4 flex items-center gap-4">
         <StatusIcon status={health.status} />
         <div>
-          <h2 className="text-lg font-semibold text-slate-900">
+          <h2 className="text-lg font-semibold text-foreground">
             System is {health.status}
           </h2>
-          <p className="text-sm text-slate-500">
+          <p className="text-sm text-muted-foreground">
             Version {systemInfo.version} &middot; Node {systemInfo.nodeVersion} &middot; Uptime {formatUptime(systemInfo.uptime)}
           </p>
         </div>
@@ -97,7 +97,7 @@ export default function AdminHealthPage() {
 
       {/* Service Checks */}
       <div>
-        <h2 className="text-lg font-semibold text-slate-900 mb-3 flex items-center gap-2">
+        <h2 className="text-lg font-semibold text-foreground mb-3 flex items-center gap-2">
           <Activity className="h-5 w-5" />
           Service Checks
         </h2>
@@ -105,17 +105,17 @@ export default function AdminHealthPage() {
           {checkEntries.map(([name, check]) => {
             const Icon = checkIcons[name] || Server;
             return (
-              <div key={name} className="bg-white border rounded-lg p-4">
+              <div key={name} className="bg-card border rounded-lg p-4">
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-2">
-                    <Icon className="h-4 w-4 text-slate-500" />
-                    <span className="font-medium text-slate-900 capitalize">
+                    <Icon className="h-4 w-4 text-muted-foreground" />
+                    <span className="font-medium text-foreground capitalize">
                       {checkLabels[name] ?? name}
                     </span>
                   </div>
                   <StatusBadge status={check.status} />
                 </div>
-                <p className="text-sm text-slate-500">
+                <p className="text-sm text-muted-foreground">
                   {check.status === "ok"
                     ? `${check.latencyMs}ms`
                     : check.error || "Error"}
@@ -130,62 +130,62 @@ export default function AdminHealthPage() {
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <Link
           href="/admin/email-deliverability"
-          className="bg-white border rounded-lg p-4 flex items-center justify-between hover:border-brand-gold/70 transition-colors"
+          className="bg-card border rounded-lg p-4 flex items-center justify-between hover:border-brand-gold/70 transition-colors"
         >
           <div className="flex items-center gap-3">
-            <Mail className="h-5 w-5 text-slate-500" />
+            <Mail className="h-5 w-5 text-muted-foreground" />
             <div>
-              <p className="font-medium text-slate-900">Email Deliverability</p>
-              <p className="text-sm text-slate-500">Suppressions &amp; exhausted failures</p>
+              <p className="font-medium text-foreground">Email Deliverability</p>
+              <p className="text-sm text-muted-foreground">Suppressions &amp; exhausted failures</p>
             </div>
           </div>
-          <ChevronRight className="h-4 w-4 text-slate-400" />
+          <ChevronRight className="h-4 w-4 text-muted-foreground" />
         </Link>
         <Link
           href="/admin/background-jobs"
-          className="bg-white border rounded-lg p-4 flex items-center justify-between hover:border-brand-gold/70 transition-colors"
+          className="bg-card border rounded-lg p-4 flex items-center justify-between hover:border-brand-gold/70 transition-colors"
         >
           <div className="flex items-center gap-3">
-            <Clock className="h-5 w-5 text-slate-500" />
+            <Clock className="h-5 w-5 text-muted-foreground" />
             <div>
-              <p className="font-medium text-slate-900">Background Jobs</p>
-              <p className="text-sm text-slate-500">Cron job health &amp; run history</p>
+              <p className="font-medium text-foreground">Background Jobs</p>
+              <p className="text-sm text-muted-foreground">Cron job health &amp; run history</p>
             </div>
           </div>
-          <ChevronRight className="h-4 w-4 text-slate-400" />
+          <ChevronRight className="h-4 w-4 text-muted-foreground" />
         </Link>
       </div>
 
       {/* System Info */}
       <div>
-        <h2 className="text-lg font-semibold text-slate-900 mb-3 flex items-center gap-2">
+        <h2 className="text-lg font-semibold text-foreground mb-3 flex items-center gap-2">
           <Server className="h-5 w-5" />
           System Info
         </h2>
-        <div className="bg-white border rounded-lg p-4">
+        <div className="bg-card border rounded-lg p-4">
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
             <div>
-              <p className="text-sm text-slate-500">Memory (RSS)</p>
+              <p className="text-sm text-muted-foreground">Memory (RSS)</p>
               <p className="text-lg font-medium">{systemInfo.memoryMb.rss} MB</p>
             </div>
             <div>
-              <p className="text-sm text-slate-500">Heap Used</p>
+              <p className="text-sm text-muted-foreground">Heap Used</p>
               <p className="text-lg font-medium">
                 {systemInfo.memoryMb.heapUsed} / {systemInfo.memoryMb.heapTotal} MB
               </p>
             </div>
             <div>
-              <p className="text-sm text-slate-500">Sentry</p>
+              <p className="text-sm text-muted-foreground">Sentry</p>
               <p className="text-lg font-medium">
                 {systemInfo.sentryConfigured ? (
                   <span className="text-green-600">Connected</span>
                 ) : (
-                  <span className="text-slate-400">Not configured</span>
+                  <span className="text-muted-foreground">Not configured</span>
                 )}
               </p>
             </div>
             <div>
-              <p className="text-sm text-slate-500">Uptime</p>
+              <p className="text-sm text-muted-foreground">Uptime</p>
               <p className="text-lg font-medium">{formatUptime(systemInfo.uptime)}</p>
             </div>
           </div>
@@ -212,31 +212,31 @@ export default function AdminHealthPage() {
 
       {/* Webhook Stats */}
       <div>
-        <h2 className="text-lg font-semibold text-slate-900 mb-3 flex items-center gap-2">
+        <h2 className="text-lg font-semibold text-foreground mb-3 flex items-center gap-2">
           <Webhook className="h-5 w-5" />
           Webhooks (Last 24h)
         </h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
           {Object.keys(webhookStats).length === 0 ? (
-            <div className="bg-white border rounded-lg p-4 text-slate-500 col-span-2">
+            <div className="bg-card border rounded-lg p-4 text-muted-foreground col-span-2">
               No webhook activity in the last 24 hours.
             </div>
           ) : (
             Object.entries(webhookStats).map(([source, stats]) => (
-              <div key={source} className="bg-white border rounded-lg p-4">
-                <h3 className="font-medium text-slate-900 capitalize mb-2">{source}</h3>
+              <div key={source} className="bg-card border rounded-lg p-4">
+                <h3 className="font-medium text-foreground capitalize mb-2">{source}</h3>
                 <div className="grid grid-cols-3 gap-2 text-center">
                   <div>
                     <p className="text-2xl font-bold text-green-600">{stats.success}</p>
-                    <p className="text-xs text-slate-500">Success</p>
+                    <p className="text-xs text-muted-foreground">Success</p>
                   </div>
                   <div>
                     <p className="text-2xl font-bold text-red-600">{stats.failure}</p>
-                    <p className="text-xs text-slate-500">Failed</p>
+                    <p className="text-xs text-muted-foreground">Failed</p>
                   </div>
                   <div>
-                    <p className="text-2xl font-bold text-slate-700">{stats.total}</p>
-                    <p className="text-xs text-slate-500">Total</p>
+                    <p className="text-2xl font-bold text-muted-foreground">{stats.total}</p>
+                    <p className="text-xs text-muted-foreground">Total</p>
                   </div>
                 </div>
               </div>
@@ -246,19 +246,19 @@ export default function AdminHealthPage() {
 
         {/* Recent Webhook Logs */}
         {recentWebhooks.length > 0 && (
-          <div className="bg-white border rounded-lg">
-            <div className="p-4 border-b bg-slate-50">
-              <h3 className="font-medium text-slate-900">Recent Webhook Events</h3>
+          <div className="bg-card border rounded-lg">
+            <div className="p-4 border-b bg-muted">
+              <h3 className="font-medium text-foreground">Recent Webhook Events</h3>
             </div>
             <div className="divide-y">
               {recentWebhooks.map((wh) => (
                 <div key={wh.id} className="p-3 flex items-center justify-between text-sm">
                   <div className="flex items-center gap-3">
                     <StatusBadge status={wh.status} />
-                    <span className="font-mono text-slate-600">{wh.source}</span>
-                    <span className="text-slate-500">{wh.eventType}</span>
+                    <span className="font-mono text-muted-foreground">{wh.source}</span>
+                    <span className="text-muted-foreground">{wh.eventType}</span>
                   </div>
-                  <div className="flex items-center gap-3 text-slate-500">
+                  <div className="flex items-center gap-3 text-muted-foreground">
                     <span>{wh.durationMs}ms</span>
                     <span>{formatDate(wh.createdAt)}</span>
                   </div>

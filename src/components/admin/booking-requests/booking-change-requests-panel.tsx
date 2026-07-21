@@ -107,7 +107,7 @@ function formatDateTime(value: string | null) {
 function statusBadgeClass(status: BookingChangeRequestData["status"]) {
   if (status === "REQUESTED") return "border-amber-200 bg-amber-50 text-amber-800";
   if (status === "APPROVED") return "border-emerald-200 bg-emerald-50 text-emerald-800";
-  return "border-slate-200 bg-slate-100 text-slate-700";
+  return "border-border bg-muted text-muted-foreground";
 }
 
 interface BookingChangeRequestsPanelProps {
@@ -351,10 +351,10 @@ export function BookingChangeRequestsPanel({
                     </div>
                   </div>
 
-                  <div className="rounded-md border bg-slate-50 p-3 text-sm">
-                    <p className="font-medium text-slate-900">{summary}</p>
+                  <div className="rounded-md border bg-muted p-3 text-sm">
+                    <p className="font-medium text-foreground">{summary}</p>
                     {request.reason ? (
-                      <p className="mt-2 text-slate-700">{request.reason}</p>
+                      <p className="mt-2 text-muted-foreground">{request.reason}</p>
                     ) : null}
                   </div>
 
@@ -388,8 +388,8 @@ export function BookingChangeRequestsPanel({
                   </div>
 
                   {request.status === "REQUESTED" ? (
-                    <div className="space-y-3 rounded-md border border-slate-200 p-3">
-                      <p className="text-xs text-slate-600">
+                    <div className="space-y-3 rounded-md border border-border p-3">
+                      <p className="text-xs text-muted-foreground">
                         Marking a request approved only acknowledges the review.
                         The booking is not edited automatically; open the
                         booking from the link above and apply the change there
@@ -459,17 +459,17 @@ export function BookingChangeRequestsPanel({
                       </div>
                     </div>
                   ) : (
-                    <div className="rounded-md bg-slate-50 p-3 text-sm text-slate-700">
+                    <div className="rounded-md bg-muted p-3 text-sm text-muted-foreground">
                       {request.status === "APPROVED" ? "Approved" : "Rejected"}
                       {reviewedAt ? ` on ${reviewedAt}` : ""}
                       {request.reviewedBy
                         ? ` by ${request.reviewedBy.firstName} ${request.reviewedBy.lastName}`
                         : ""}
                       {request.adminNotes ? (
-                        <p className="mt-2 text-slate-600">{request.adminNotes}</p>
+                        <p className="mt-2 text-muted-foreground">{request.adminNotes}</p>
                       ) : null}
                       {request.linkedModification ? (
-                        <p className="mt-2 text-slate-600">
+                        <p className="mt-2 text-muted-foreground">
                           Linked booking modification:{" "}
                           <span className="font-mono">
                             {request.linkedModification.id}

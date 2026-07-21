@@ -331,8 +331,8 @@ export default async function AdminDashboardPage() {
   return (
     <div className="space-y-8">
       <div>
-        <h1 className="text-2xl font-bold text-slate-900">Admin Dashboard</h1>
-        <p className="mt-1 text-sm text-slate-500">
+        <h1 className="text-2xl font-bold text-foreground">Admin Dashboard</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
           {CLUB_NAME} — Administration
         </p>
       </div>
@@ -582,14 +582,14 @@ export default async function AdminDashboardPage() {
         <div className="grid gap-4 sm:grid-cols-2">
           {canViewMembers && (
             <Link href="/admin/members" className="group">
-              <Card className="border-slate-200 bg-slate-50/60 hover:shadow-sm transition-shadow cursor-pointer">
+              <Card className="border-border bg-card hover:shadow-sm transition-shadow cursor-pointer">
                 <CardContent className="flex items-center justify-between gap-3 py-4">
-                  <div className="flex items-center gap-2 text-sm font-medium text-slate-600">
+                  <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
                     <Users className="h-4 w-4 text-muted-foreground" />
                     Members
                   </div>
                   <div className="text-right">
-                    <div className="text-xl font-semibold text-slate-900">
+                    <div className="text-xl font-semibold text-foreground">
                       {stats.activeMembers}
                     </div>
                     <p className="text-xs text-muted-foreground">
@@ -603,14 +603,14 @@ export default async function AdminDashboardPage() {
 
           {canViewPayments && (
             <Link href="/admin/payments" className="group">
-              <Card className="border-slate-200 bg-slate-50/60 hover:shadow-sm transition-shadow cursor-pointer">
+              <Card className="border-border bg-card hover:shadow-sm transition-shadow cursor-pointer">
                 <CardContent className="flex items-center justify-between gap-3 py-4">
-                  <div className="flex items-center gap-2 text-sm font-medium text-slate-600">
+                  <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
                     <DollarSign className="h-4 w-4 text-muted-foreground" />
                     Revenue This Month
                   </div>
                   <div className="text-right">
-                    <div className="text-xl font-semibold text-slate-900">
+                    <div className="text-xl font-semibold text-foreground">
                       {formatDollarsDisplay(stats.revenueThisMonth)}
                     </div>
                     <p className="text-xs text-muted-foreground">
@@ -627,7 +627,7 @@ export default async function AdminDashboardPage() {
       {/* Recent Bookings */}
       <div>
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-slate-900">
+          <h2 className="text-lg font-semibold text-foreground">
             Recent Bookings
           </h2>
           <Button variant="outline" size="sm" asChild>
@@ -638,8 +638,8 @@ export default async function AdminDashboardPage() {
           <CardContent className="pt-4">
             {stats.recentBookings.length === 0 ? (
               <div className="py-8 text-center">
-                <BookOpen className="mx-auto h-10 w-10 text-slate-300 mb-3" />
-                <p className="text-sm font-medium text-slate-500">
+                <BookOpen className="mx-auto h-10 w-10 text-muted-foreground mb-3" />
+                <p className="text-sm font-medium text-muted-foreground">
                   No bookings yet
                 </p>
               </div>
@@ -652,7 +652,7 @@ export default async function AdminDashboardPage() {
                       `/bookings/${booking.id}`,
                       "/admin/dashboard",
                     )}
-                    className="flex items-center justify-between py-3 hover:bg-slate-50 -mx-2 px-2 rounded"
+                    className="flex items-center justify-between py-3 hover:bg-accent -mx-2 px-2 rounded"
                   >
                     <div className="min-w-0">
                       <p className="font-medium text-sm truncate">
@@ -693,7 +693,7 @@ export default async function AdminDashboardPage() {
 
       {/* Quick links */}
       <div>
-        <h2 className="text-lg font-semibold text-slate-900 mb-4">
+        <h2 className="text-lg font-semibold text-foreground mb-4">
           Quick Actions
         </h2>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">

@@ -206,7 +206,7 @@ export function MembershipCancellationSettingsPanel() {
     return (
       <div>
         {viewOnlyBanner}
-        <p className="text-sm text-slate-500">Loading membership cancellation settings</p>
+        <p className="text-sm text-muted-foreground">Loading membership cancellation settings</p>
       </div>
     );
   }

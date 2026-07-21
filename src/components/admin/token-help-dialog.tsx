@@ -101,7 +101,7 @@ export function TokenCatalogueSections({
   );
 
   return (
-    <div className="space-y-3 text-sm leading-6 text-slate-700">
+    <div className="space-y-3 text-sm leading-6 text-muted-foreground">
       <p>
         Add a token by typing its name in double braces, for example{" "}
         <code>{tokens[0]?.example}</code>.
@@ -111,7 +111,7 @@ export function TokenCatalogueSections({
       </p>
       {embedTokens.length > 0 ? (
         <>
-          <p className="font-semibold text-slate-900">Embed tokens</p>
+          <p className="font-semibold text-foreground">Embed tokens</p>
           <p>
             Each embed token is replaced with a live component when the page
             renders.
@@ -123,7 +123,7 @@ export function TokenCatalogueSections({
       ) : null}
       {textTokens.length > 0 ? (
         <>
-          <p className="font-semibold text-slate-900">Text tokens</p>
+          <p className="font-semibold text-foreground">Text tokens</p>
           <p>
             Text tokens are replaced inline with the current value when the
             content is shown to readers.

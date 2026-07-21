@@ -48,10 +48,10 @@ export default function NotificationsHubPage() {
   return (
     <div className="space-y-8">
       <div>
-        <h1 className="text-2xl font-bold text-slate-900">
+        <h1 className="text-2xl font-bold text-foreground">
           Notifications &amp; Email
         </h1>
-        <p className="mt-1 text-sm text-slate-500">
+        <p className="mt-1 text-sm text-muted-foreground">
           Manage delivery rules, recipients, and the wording of automated
           emails.
         </p>

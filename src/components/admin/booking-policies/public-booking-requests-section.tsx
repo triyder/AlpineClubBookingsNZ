@@ -662,7 +662,7 @@ export function PublicBookingRequestsSection() {
                   quoteTiming.setDraft({ quoteResponseTtlDays: e.target.value })
                 }
                 className={`block w-28 rounded border border-input px-2 py-1 text-sm${
-                  !quoteTiming.editing ? " bg-slate-50 text-slate-700" : ""
+                  !quoteTiming.editing ? " bg-muted text-muted-foreground" : ""
                 }`}
                 disabled={!quoteTiming.editing || busy}
               />
@@ -684,7 +684,7 @@ export function PublicBookingRequestsSection() {
                   quoteTiming.setDraft({ quoteReminderLeadDays: e.target.value })
                 }
                 className={`block w-28 rounded border border-input px-2 py-1 text-sm${
-                  !quoteTiming.editing ? " bg-slate-50 text-slate-700" : ""
+                  !quoteTiming.editing ? " bg-muted text-muted-foreground" : ""
                 }`}
                 disabled={!quoteTiming.editing || busy}
               />
@@ -771,7 +771,7 @@ export function PublicBookingRequestsSection() {
                   })
                 }
                 className={`block w-28 rounded border border-input px-2 py-1 text-sm${
-                  !attendeeTiming.editing ? " bg-slate-50 text-slate-700" : ""
+                  !attendeeTiming.editing ? " bg-muted text-muted-foreground" : ""
                 }`}
                 disabled={!attendeeTiming.editing || busy}
               />
@@ -795,7 +795,7 @@ export function PublicBookingRequestsSection() {
                   })
                 }
                 className={`block w-28 rounded border border-input px-2 py-1 text-sm${
-                  !attendeeTiming.editing ? " bg-slate-50 text-slate-700" : ""
+                  !attendeeTiming.editing ? " bg-muted text-muted-foreground" : ""
                 }`}
                 disabled={!attendeeTiming.editing || busy}
               />

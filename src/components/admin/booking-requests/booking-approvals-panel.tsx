@@ -66,7 +66,7 @@ interface BookingReviewData {
 function statusBadgeClass(status: BookingReviewData["adminReviewStatus"]) {
   if (status === "PENDING") return "border-amber-200 bg-amber-50 text-amber-800";
   if (status === "APPROVED") return "border-emerald-200 bg-emerald-50 text-emerald-800";
-  return "border-slate-200 bg-slate-100 text-slate-700";
+  return "border-border bg-muted text-muted-foreground";
 }
 
 interface BookingApprovalsPanelProps {
@@ -345,9 +345,9 @@ export function BookingApprovalsPanel({
                     </div>
                   </div>
 
-                  <div className="rounded-md border bg-slate-50 p-3 text-sm">
-                    <p className="font-medium text-slate-900">Guests on this booking</p>
-                    <ul className="mt-2 space-y-1 text-slate-700">
+                  <div className="rounded-md border bg-muted p-3 text-sm">
+                    <p className="font-medium text-foreground">Guests on this booking</p>
+                    <ul className="mt-2 space-y-1 text-muted-foreground">
                       {booking.guests.map((guest) => (
                         <li key={guest.id}>
                           {guest.firstName} {guest.lastName} — {guest.ageTier}
@@ -369,8 +369,8 @@ export function BookingApprovalsPanel({
                   )}
 
                   {decided ? (
-                    <div className="rounded-md border bg-slate-50 p-3 text-sm">
-                      <p className="font-medium text-slate-900">
+                    <div className="rounded-md border bg-muted p-3 text-sm">
+                      <p className="font-medium text-foreground">
                         Decision: {booking.adminReviewStatus}
                         {booking.adminReviewedBy
                           ? ` by ${booking.adminReviewedBy.firstName} ${booking.adminReviewedBy.lastName}`
@@ -380,7 +380,7 @@ export function BookingApprovalsPanel({
                           : ""}
                       </p>
                       {booking.adminReviewNotes && (
-                        <p className="mt-2 whitespace-pre-wrap text-slate-700">
+                        <p className="mt-2 whitespace-pre-wrap text-muted-foreground">
                           {booking.adminReviewNotes}
                         </p>
                       )}

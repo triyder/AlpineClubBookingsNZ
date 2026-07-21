@@ -68,8 +68,8 @@ export function AdminHubPage({
             <BackLink href={backHref} label={backLabel} />
           </div>
         ) : null}
-        <h1 className="text-2xl font-bold text-slate-900">{title}</h1>
-        <p className="mt-1 text-sm text-slate-500">{description}</p>
+        <h1 className="text-2xl font-bold text-foreground">{title}</h1>
+        <p className="mt-1 text-sm text-muted-foreground">{description}</p>
       </div>
 
       {visibleSections.length > 0 ? (
@@ -89,7 +89,7 @@ export function AdminHubPage({
           ))}
         </div>
       ) : (
-        <div className="rounded-md border bg-slate-50 px-4 py-3 text-sm text-slate-600">
+        <div className="rounded-md border bg-muted px-4 py-3 text-sm text-muted-foreground">
           No setup pages are available for your current permissions.
         </div>
       )}

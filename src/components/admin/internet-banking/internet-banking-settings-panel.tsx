@@ -118,7 +118,7 @@ export function InternetBankingSettingsPanel() {
     return (
       <div>
         {viewOnlyBanner}
-        <p className="text-sm text-slate-500">Loading Internet Banking settings</p>
+        <p className="text-sm text-muted-foreground">Loading Internet Banking settings</p>
       </div>
     );
   }
@@ -140,8 +140,8 @@ export function InternetBankingSettingsPanel() {
             Internet Banking {moduleState.internetBankingPaymentsEnabled ? "on" : "off"}
           </Badge>
         </div>
-        <p className="text-sm text-slate-600">{xeroBehaviour}</p>
-        <p className="text-sm text-slate-600">{holdPolicySummary}</p>
+        <p className="text-sm text-muted-foreground">{xeroBehaviour}</p>
+        <p className="text-sm text-muted-foreground">{holdPolicySummary}</p>
       </div>
 
       <label className="flex items-start gap-3">
@@ -152,10 +152,10 @@ export function InternetBankingSettingsPanel() {
           onCheckedChange={(checked) => update({ holdBedSlots: checked === true })}
         />
         <span className="text-sm">
-          <span className="font-medium text-slate-900">
+          <span className="font-medium text-foreground">
             Hold beds while Internet Banking payment is pending
           </span>
-          <span className="block text-slate-600">
+          <span className="block text-muted-foreground">
             When on, bookings are confirmed immediately and released if Xero has
             not reconciled payment before the hold expires.
           </span>

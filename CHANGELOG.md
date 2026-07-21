@@ -4,6 +4,59 @@ All notable public reference-release changes should be recorded here.
 
 ## Unreleased
 
+- **The admin area now follows the club's saved site colours in light mode
+  (#2144).** Every admin screen previously carried hard-coded light-grey
+  ("slate") Tailwind colours that ignored the club theme in light mode; a
+  sweep of 1,410 class occurrences across the admin tree moved them
+  onto the same semantic theme tokens the finance dashboard has used since
+  #2137, so a club with a strongly non-default palette now sees it applied
+  consistently across admin. **Dark mode is visually unchanged for ~98% of
+  occurrences, via two distinct mechanisms:** 1,277 conversions (90.6%) land
+  on exactly the token the existing `.dark` neutral remap in `globals.css`
+  already assigned to the old class, so for those the conversion is a
+  provable dark-mode no-op; a further 103 (7.3%) — former
+  `bg-{neutral}-50`-tier fills the remap sent to `--card` but the sweep
+  classified as insets (`bg-muted`, 100) or selection states (`bg-accent`,
+  3) — land on a DIFFERENT token that renders identically today only because
+  `--card`, `--muted`, and `--accent` all resolve to `--brand-charcoal`
+  inside `.dark .app-theme-scope`. The remaining 30 occurrences (~2%)
+  genuinely change dark rendering: 26 are small deliberate dark-mode fixes on
+  admin surfaces the remap never covered (seven unremapped
+  `hover:bg-slate-200` fills, five unremapped `hover:` borders and text, a
+  `border-white`, a `focus:ring-slate-400`, the arbitrary-variant
+  table/code/quote fills in the page-content prose recipes, and the
+  inversion of a light-on-dark CSS snippet), and 4 sit on the public
+  hut-leader instructions page (next). **Two published member-facing surfaces
+  moved too**, because they share the admin prose-styling recipe: the
+  authenticated lodge-instructions page (inside `app-theme-scope`, where the
+  three arbitrary-variant table-band and border conversions are small
+  dark-mode fixes the remap never reached), and the public hut-leader
+  instructions page — which renders under `website-theme`, NOT
+  `app-theme-scope`, so its four converted occurrences resolve through the
+  website palette and its instruction-table bands, borders, and body ink
+  change subtly in BOTH modes. Two deliberate visual changes in light mode:
+  (1) all five grey text
+  tints collapse onto the single AA-clamped `text-muted-foreground` tone, so
+  the faintest icon/label tints get slightly **darker** — a flattening of the
+  old grey hierarchy accepted as an accessibility improvement; (2) recessed
+  panels (nested strips, zebra rows, table header bands, read-only field
+  fills) use the tinted `bg-muted` while cards and outer panels use
+  `bg-card`, following the finance precedent, so insets stay visibly recessed
+  under themes where the card and page colours coincide. One recorded
+  hover regression, kept by owner decision: seven converted toolbar/refresh
+  buttons (`bg-muted hover:bg-accent`) currently show no visible hover step
+  because `--muted` and `--accent` share a value in app scope — the
+  structural token split is #2181's scope, so these sites are deliberately
+  not bandaided here. Deliberate
+  exclusions keep their literal colours: the roster and induction print pages
+  (paper output), the reports page's print-only borders, the display
+  builder/preview signage letterboxes, the site-style code-preview panes,
+  solid-fill status chips and swatches, and the member-import wizard's solid
+  near-black active-step emphasis border. A widened source-contract test now
+  gates the whole admin tree (plus finance) against raw neutral classes so
+  they cannot creep back, with a nine-entry per-file allowlist covering
+  exactly those exclusions.
+
 - **Settings your club never saved now travel in a configuration export
   (#2171).** Every club-wide setting has a value even if nobody has ever opened
   and saved it — the built-in default the software runs on. Until now the export
@@ -47,6 +100,7 @@ All notable public reference-release changes should be recorded here.
   untouched. The built-in defaults themselves are unchanged — they simply moved
   to one shared place (`src/config/club-settings-defaults.ts`) so the export and
   the settings screens can never disagree about them.
+
 ## 0.13.0 - 2026-07-21
 
 - **Annual-subscription billing no longer double-bills, and a voided invoice can

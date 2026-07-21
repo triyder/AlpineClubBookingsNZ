@@ -334,7 +334,7 @@ export function SiteBannersPanel() {
     return (
       <div>
         {viewOnlyBanner}
-        <p className="text-sm text-slate-500">Loading site banners...</p>
+        <p className="text-sm text-muted-foreground">Loading site banners...</p>
       </div>
     );
   }
@@ -383,13 +383,13 @@ export function SiteBannersPanel() {
             </CardHeader>
             <CardContent>
               {banners.length === 0 ? (
-                <p className="text-sm text-slate-500">{group.emptyLabel}</p>
+                <p className="text-sm text-muted-foreground">{group.emptyLabel}</p>
               ) : (
                 <ul className="space-y-3">
                   {banners.map((banner) => (
                     <li
                       key={banner.id}
-                      className="flex flex-col gap-3 rounded-md border border-slate-200 p-3 sm:flex-row sm:items-center"
+                      className="flex flex-col gap-3 rounded-md border border-border p-3 sm:flex-row sm:items-center"
                     >
                       <div className="flex-1 space-y-1">
                         <div className="flex flex-wrap items-center gap-2">
@@ -402,16 +402,16 @@ export function SiteBannersPanel() {
                             {SITE_BANNER_PRIORITY_LABELS[banner.priority]}
                           </Badge>
                           {!banner.active && (
-                            <Badge variant="outline" className="text-slate-500">
+                            <Badge variant="outline" className="text-muted-foreground">
                               Inactive
                             </Badge>
                           )}
-                          <span className="text-xs text-slate-500">
+                          <span className="text-xs text-muted-foreground">
                             {formatDateOnly(banner.startDate)} -{" "}
                             {formatDateOnly(banner.endDate)}
                           </span>
                         </div>
-                        <p className="text-sm text-slate-900">
+                        <p className="text-sm text-foreground">
                           {excerpt(banner.message)}
                         </p>
                       </div>
@@ -483,7 +483,7 @@ export function SiteBannersPanel() {
                   setForm((prev) => ({ ...prev, message: event.target.value }))
                 }
               />
-              <p className="text-right text-xs text-slate-500">
+              <p className="text-right text-xs text-muted-foreground">
                 {form.message.length}/{SITE_BANNER_MESSAGE_MAX_LENGTH}
               </p>
             </div>

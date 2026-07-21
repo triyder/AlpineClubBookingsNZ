@@ -137,18 +137,18 @@ function BookingSummaryBlock({
   summary: PreviewBookingSummary;
 }) {
   return (
-    <div className="rounded-md border border-slate-200 p-3">
+    <div className="rounded-md border border-border p-3">
       <div className="flex items-center justify-between gap-3">
-        <h3 className="text-sm font-medium text-slate-900">{title}</h3>
+        <h3 className="text-sm font-medium text-foreground">{title}</h3>
         <Badge variant="secondary">{summary.count}</Badge>
       </div>
       {summary.count === 0 ? (
-        <p className="mt-2 text-xs text-slate-500">None</p>
+        <p className="mt-2 text-xs text-muted-foreground">None</p>
       ) : (
         <div className="mt-2 space-y-2">
           {summary.list.map((booking) => (
-            <div key={booking.id} className="text-xs text-slate-600">
-              <span className="font-medium text-slate-800">
+            <div key={booking.id} className="text-xs text-muted-foreground">
+              <span className="font-medium text-foreground">
                 {formatDate(booking.checkIn)} to {formatDate(booking.checkOut)}
               </span>{" "}
               - {booking.status} - {booking.guestCount} guest
@@ -160,7 +160,7 @@ function BookingSummaryBlock({
             </div>
           ))}
           {summary.truncatedCount > 0 && (
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-muted-foreground">
               {summary.truncatedCount} more not shown
             </p>
           )}
@@ -467,8 +467,8 @@ export function MemberSeasonalMembershipCard({
         </div>
 
         <div className="grid gap-3 md:grid-cols-2">
-          <div className="rounded-md border border-slate-200 p-3 text-sm">
-            <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
+          <div className="rounded-md border border-border p-3 text-sm">
+            <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
               Access role
             </div>
             <div className="mt-1 flex flex-wrap items-center gap-2">
@@ -478,11 +478,11 @@ export function MemberSeasonalMembershipCard({
             </div>
           </div>
 
-          <div className="rounded-md border border-slate-200 p-3 text-sm">
-            <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
+          <div className="rounded-md border border-border p-3 text-sm">
+            <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
               Current assignment
             </div>
-            <div className="mt-1 font-medium text-slate-900">
+            <div className="mt-1 font-medium text-foreground">
               {currentAssignment
                 ? `${currentAssignment.membershipType.name} for ${formatSeasonLabel(
                     currentAssignment.seasonYear,
@@ -490,7 +490,7 @@ export function MemberSeasonalMembershipCard({
                 : `No assignment for ${formatSeasonLabel(seasonYear)}`}
             </div>
             {currentAssignment?.applyFrom && (
-              <div className="mt-1 text-xs text-slate-500">
+              <div className="mt-1 text-xs text-muted-foreground">
                 Applies from {formatDate(currentAssignment.applyFrom)}
               </div>
             )}
@@ -499,19 +499,19 @@ export function MemberSeasonalMembershipCard({
 
         {selectedMembershipType && (
           <div className="grid gap-3 md:grid-cols-2">
-            <div className="rounded-md border border-slate-200 p-3 text-sm">
-              <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
+            <div className="rounded-md border border-border p-3 text-sm">
+              <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                 Resulting booking behavior
               </div>
-              <div className="mt-1 font-medium text-slate-900">
+              <div className="mt-1 font-medium text-foreground">
                 {bookingBehaviorLabels[selectedMembershipType.bookingBehavior]}
               </div>
             </div>
-            <div className="rounded-md border border-slate-200 p-3 text-sm">
-              <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
+            <div className="rounded-md border border-border p-3 text-sm">
+              <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                 Resulting subscription behavior
               </div>
-              <div className="mt-1 font-medium text-slate-900">
+              <div className="mt-1 font-medium text-foreground">
                 {
                   subscriptionBehaviorLabels[
                     selectedMembershipType.subscriptionBehavior
@@ -555,14 +555,14 @@ export function MemberSeasonalMembershipCard({
               />
             </div>
 
-            <div className="rounded-md border border-blue-200 bg-white p-3 text-sm">
-              <div className="font-medium text-slate-900">
+            <div className="rounded-md border border-blue-200 bg-card p-3 text-sm">
+              <div className="font-medium text-foreground">
                 Subscription summary
               </div>
-              <div className="mt-1 text-slate-600">
+              <div className="mt-1 text-muted-foreground">
                 Applies from {preview.applyFrom ? formatDate(preview.applyFrom) : "season start"}
               </div>
-              <div className="mt-1 text-slate-600">
+              <div className="mt-1 text-muted-foreground">
                 {formatSeasonLabel(preview.currentSeasonSubscription.seasonYear)}
                 : {preview.currentSeasonSubscription.status}
                 {preview.currentSeasonSubscription.xeroInvoiceNumber
@@ -573,7 +573,7 @@ export function MemberSeasonalMembershipCard({
                   : ""}
               </div>
               {preview.subscriptionHistory.recent.length > 0 && (
-                <div className="mt-2 text-xs text-slate-500">
+                <div className="mt-2 text-xs text-muted-foreground">
                   Recent seasons:{" "}
                   {preview.subscriptionHistory.recent
                     .map(

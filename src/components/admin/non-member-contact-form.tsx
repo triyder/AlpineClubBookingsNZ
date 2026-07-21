@@ -155,12 +155,12 @@ export function NonMemberContactForm({ onSelected }: Props) {
   }
 
   return (
-    <div className="space-y-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
+    <div className="space-y-4 rounded-lg border border-border bg-muted p-4">
       <div>
-        <p className="text-sm font-medium text-slate-900">
+        <p className="text-sm font-medium text-foreground">
           Non-member booking owner
         </p>
-        <p className="text-xs text-slate-600">
+        <p className="text-xs text-muted-foreground">
           Enter the guest&apos;s details. They cannot sign in and are billed at
           non-member rates — the same kind of record an approved public booking
           request creates.
@@ -208,16 +208,16 @@ export function NonMemberContactForm({ onSelected }: Props) {
         </div>
       </div>
 
-      <label className="flex items-start gap-2 text-sm text-slate-800 cursor-pointer">
+      <label className="flex items-start gap-2 text-sm text-foreground cursor-pointer">
         <input
           type="checkbox"
           checked={noEmail}
           onChange={(e) => setNoEmail(e.target.checked)}
-          className="mt-0.5 rounded border-slate-300"
+          className="mt-0.5 rounded border-border"
         />
         <span>
           <span className="font-medium">No email address</span>
-          <span className="block text-xs text-slate-600">
+          <span className="block text-xs text-muted-foreground">
             For phone/walk-in guests. No booking emails are sent to this owner
             and no address is shared with Xero.
           </span>
@@ -225,28 +225,28 @@ export function NonMemberContactForm({ onSelected }: Props) {
       </label>
 
       {searching && (
-        <p className="text-xs text-slate-400">Searching existing contacts…</p>
+        <p className="text-xs text-muted-foreground">Searching existing contacts…</p>
       )}
 
       {suggestions.length > 0 && (
         <div className="space-y-2">
-          <p className="text-xs font-medium text-slate-600">
+          <p className="text-xs font-medium text-muted-foreground">
             Existing contacts — reuse one instead of creating a duplicate:
           </p>
           <div className="space-y-1">
             {suggestions.map((s) => (
               <div
                 key={s.id}
-                className="flex items-center justify-between rounded-md border border-slate-200 bg-white px-3 py-2"
+                className="flex items-center justify-between rounded-md border border-border bg-card px-3 py-2"
               >
                 <div className="text-sm">
-                  <span className="font-medium text-slate-900">
+                  <span className="font-medium text-foreground">
                     {s.firstName} {s.lastName}
                   </span>
                   <Badge variant="outline" className="ml-2 text-[10px]">
                     {s.role}
                   </Badge>
-                  <span className="block text-xs text-slate-500">
+                  <span className="block text-xs text-muted-foreground">
                     {s.isPlaceholderEmail ? "(no email)" : s.email} ·{" "}
                     {s.bookingCount} booking{s.bookingCount === 1 ? "" : "s"}
                   </span>

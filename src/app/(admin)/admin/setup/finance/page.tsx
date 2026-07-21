@@ -59,8 +59,8 @@ export default async function FinanceSetupPage() {
         <div className="mb-2">
           <BackLink href="/admin/setup" label="Setup Wizard" />
         </div>
-        <h1 className="text-2xl font-bold text-slate-900">Finance</h1>
-        <p className="mt-1 text-sm text-slate-500">
+        <h1 className="text-2xl font-bold text-foreground">Finance</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
           Open finance reporting, Xero setup, sync mappings, and the finance
           report mapping editor.
         </p>
@@ -83,7 +83,7 @@ export default async function FinanceSetupPage() {
           ))}
         </div>
       ) : (
-        <div className="rounded-md border bg-slate-50 px-4 py-3 text-sm text-slate-600">
+        <div className="rounded-md border bg-muted px-4 py-3 text-sm text-muted-foreground">
           Finance setup pages are not available for your current permissions
           and enabled modules.
         </div>
@@ -92,10 +92,10 @@ export default async function FinanceSetupPage() {
       {showReportMappings ? (
         <section className="space-y-3">
           <div>
-            <h2 className="text-xl font-semibold text-slate-900">
+            <h2 className="text-xl font-semibold text-foreground">
               Report mappings
             </h2>
-            <p className="text-sm text-slate-600">
+            <p className="text-sm text-muted-foreground">
               Expand only when editing the report groups used by the finance
               dashboard.
             </p>

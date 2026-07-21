@@ -137,7 +137,7 @@ export function MemberLodgeAccessCard({
       </CardHeader>
       <CardContent>
         {loading ? (
-          <p className="text-sm text-slate-500">Loading lodge access...</p>
+          <p className="text-sm text-muted-foreground">Loading lodge access...</p>
         ) : (
           <div className="space-y-4">
             {/*
@@ -176,7 +176,7 @@ export function MemberLodgeAccessCard({
                 ))}
               </div>
               {bookingRestrictionLodgeIds.length === 0 ? (
-                <p className="text-xs text-slate-500">
+                <p className="text-xs text-muted-foreground">
                   No restriction — this member can book every lodge.
                 </p>
               ) : null}
@@ -199,7 +199,7 @@ export function MemberLodgeAccessCard({
                   </label>
                 ))}
               </div>
-              <p className="text-xs text-slate-500">
+              <p className="text-xs text-muted-foreground">
                 Only needed for lodge-operational (kiosk) accounts; it does not
                 affect booking access.
               </p>

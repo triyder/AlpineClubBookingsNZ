@@ -700,7 +700,7 @@ export function MemberEditorDialog({
                 id="canLogin"
                 checked={form.canLogin}
                 onChange={(event) => setCanLogin(event.target.checked)}
-                className="h-4 w-4 rounded border-gray-300"
+                className="h-4 w-4 rounded border-border"
               />
               <Label htmlFor="canLogin">Can Login</Label>
               <p className="text-xs text-muted-foreground ml-2">
@@ -1040,7 +1040,7 @@ export function MemberEditorDialog({
                       active: event.target.checked,
                     }))
                   }
-                  className="h-4 w-4 rounded border-gray-300"
+                  className="h-4 w-4 rounded border-border"
                 />
                 <Label htmlFor="active">Active</Label>
               </div>
@@ -1058,7 +1058,7 @@ export function MemberEditorDialog({
                       forcePasswordChange: event.target.checked,
                     }))
                   }
-                  className="h-4 w-4 rounded border-gray-300"
+                  className="h-4 w-4 rounded border-border"
                 />
                 <Label htmlFor="forcePasswordChange">
                   Force Password Change on Next Login
@@ -1078,7 +1078,7 @@ export function MemberEditorDialog({
                       sendInvite: event.target.checked,
                     }))
                   }
-                  className="h-4 w-4 rounded border-gray-300"
+                  className="h-4 w-4 rounded border-border"
                 />
                 <Label htmlFor="sendInvite">
                   Send account setup invite ({MEMBER_SETUP_INVITE_TTL_DAYS}-day

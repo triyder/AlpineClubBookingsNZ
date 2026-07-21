@@ -268,7 +268,7 @@ export function EmailMessageSettingsPanel() {
     return (
       <div>
         {viewOnlyBanner}
-        <p className="text-sm text-slate-500">Loading email settings</p>
+        <p className="text-sm text-muted-foreground">Loading email settings</p>
       </div>
     );
   }
@@ -321,7 +321,7 @@ export function EmailMessageSettingsPanel() {
             </div>
           ))}
         </div>
-        <p className="text-sm text-slate-500">
+        <p className="text-sm text-muted-foreground">
           Lodge name, travel note, and door code now come from each lodge&apos;s
           own settings (Admin → Lodges).
         </p>
@@ -354,7 +354,7 @@ export function EmailMessageSettingsPanel() {
             </Select>
           </div>
           {currentTemplate ? (
-            <div className="space-y-2 text-sm text-slate-600">
+            <div className="space-y-2 text-sm text-muted-foreground">
               <div className="flex flex-wrap gap-2">
                 <Badge variant="secondary">{currentTemplate.audience}</Badge>
                 <Badge variant="outline">{currentTemplate.key}</Badge>
@@ -431,13 +431,13 @@ export function EmailMessageSettingsPanel() {
         </div>
 
         {previewHtml ? (
-          <div className="space-y-3 rounded-md border border-slate-200 bg-white p-4">
-            <p className="text-sm font-medium text-slate-900">
+          <div className="space-y-3 rounded-md border border-border bg-card p-4">
+            <p className="text-sm font-medium text-foreground">
               Subject: {previewSubject}
             </p>
             <iframe
               title="Email preview"
-              className="h-[520px] w-full rounded-md border border-slate-200 bg-white"
+              className="h-[520px] w-full rounded-md border border-border bg-card"
               sandbox=""
               srcDoc={previewHtml}
             />

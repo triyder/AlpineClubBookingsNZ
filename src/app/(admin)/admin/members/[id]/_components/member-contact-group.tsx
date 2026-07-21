@@ -64,7 +64,7 @@ function addressLines(input: {
 
 function AddressBlock({ lines }: { lines: string[] }) {
   if (lines.length === 0) {
-    return <span className="text-xs text-slate-500">Not provided</span>;
+    return <span className="text-xs text-muted-foreground">Not provided</span>;
   }
   return (
     <span>
@@ -414,7 +414,7 @@ export function MemberContactGroup({
       <dl className="grid grid-cols-1 gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
         {showTitle && (
           <div>
-            <dt className="text-slate-500">Title</dt>
+            <dt className="text-muted-foreground">Title</dt>
             <dd className="font-medium">
               {formatTitleLabel(member.title) || "Not set"}
             </dd>
@@ -422,32 +422,32 @@ export function MemberContactGroup({
         )}
         {showGender && (
           <div>
-            <dt className="text-slate-500">Gender</dt>
+            <dt className="text-muted-foreground">Gender</dt>
             <dd className="font-medium">
               {formatGenderLabel(member.gender) || "Not set"}
             </dd>
           </div>
         )}
         <div>
-          <dt className="text-slate-500">First Name</dt>
+          <dt className="text-muted-foreground">First Name</dt>
           <dd className="font-medium">{member.firstName}</dd>
         </div>
         <div>
-          <dt className="text-slate-500">Last Name</dt>
+          <dt className="text-muted-foreground">Last Name</dt>
           <dd className="font-medium">{member.lastName}</dd>
         </div>
         <div>
-          <dt className="text-slate-500">Email</dt>
+          <dt className="text-muted-foreground">Email</dt>
           <dd className="font-medium break-all">{member.email}</dd>
         </div>
         <div>
-          <dt className="text-slate-500">Phone</dt>
+          <dt className="text-muted-foreground">Phone</dt>
           <dd className="font-medium">
             {formatMemberPhone(member) || "Not provided"}
           </dd>
         </div>
         <div>
-          <dt className="text-slate-500">Date of Birth</dt>
+          <dt className="text-muted-foreground">Date of Birth</dt>
           <dd className="font-medium">
             {member.dateOfBirth
               ? formatMemberDateNz(member.dateOfBirth)
@@ -455,38 +455,38 @@ export function MemberContactGroup({
           </dd>
         </div>
         <div>
-          <dt className="text-slate-500">Member Since</dt>
+          <dt className="text-muted-foreground">Member Since</dt>
           <dd className="font-medium">
             {formatMemberDateNz(member.joinedDate || member.createdAt)}
             {member.joinedDate && (
-              <span className="ml-1 text-xs text-slate-400">(from Xero)</span>
+              <span className="ml-1 text-xs text-muted-foreground">(from Xero)</span>
             )}
           </dd>
         </div>
         {showOccupation && (
           <div>
-            <dt className="text-slate-500">Occupation</dt>
+            <dt className="text-muted-foreground">Occupation</dt>
             <dd className="font-medium">{member.occupation || "Not set"}</dd>
           </div>
         )}
         <div>
-          <dt className="text-slate-500">Physical Address</dt>
+          <dt className="text-muted-foreground">Physical Address</dt>
           <dd className="font-medium">
             <AddressBlock lines={physicalLines} />
           </dd>
         </div>
         <div>
-          <dt className="text-slate-500">Postal Address</dt>
+          <dt className="text-muted-foreground">Postal Address</dt>
           <dd className="font-medium">
             {postalSameAsPhysical ? (
-              <span className="text-xs text-slate-500">Same as physical</span>
+              <span className="text-xs text-muted-foreground">Same as physical</span>
             ) : (
               <AddressBlock lines={postalLines} />
             )}
           </dd>
         </div>
         <div className="sm:col-span-2">
-          <dt className="text-slate-500">Comments</dt>
+          <dt className="text-muted-foreground">Comments</dt>
           <dd className="font-medium whitespace-pre-wrap">
             {member.comments || "None"}
           </dd>
