@@ -56,6 +56,14 @@
     "src/lib/school-booking-constants.ts": ["duplicates"],
     // WhakapapaChairlift type alias landed 2026-07-08 (snow-conditions refactor)
     // with zero refs; kept pending owner triage at the #1526 PR — see PR body.
-    "src/lib/whakapapa-report.ts": ["types"]
+    "src/lib/whakapapa-report.ts": ["types"],
+    // #2079 (epic #2078) foundation surface: the credential store is the shared
+    // contract the later lanes consume — deleteIntegrationCredential (C4/C5/C6
+    // credential resets), ProviderCredentialState (the canonical per-provider
+    // state model the issue body requires C1 to export for C2–C6), and the
+    // IntegrationLabelVersion union. Remove these carve-outs as the consuming
+    // lanes land.
+    "src/lib/integration-credentials.ts": ["exports", "types"],
+    "src/lib/integration-crypto.ts": ["types"]
   }
 }

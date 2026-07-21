@@ -340,15 +340,15 @@ export function PublicBookingRequestsSection() {
     // only unlock a pristine Save that writes an audit entry asserting a change
     // that never happened (#2143).
     //
-    // One thing DOES observe the row: config-transfer skips a singleton with no
-    // row (`src/lib/config-transfer/categories/club-settings.ts` — `if (!row)
-    // continue`), so a club that never saved these settings exports no
-    // `booking-request-settings.json`. That is not a reason for an exception
-    // here: every other singleton in that exporter, the group-discount
-    // reference included, has exactly the same property, the GET exposes no
-    // `configured` flag to key one off, and the workaround is to change a value
-    // and save. Fixing it belongs in config-transfer, not in this card — tracked
-    // as #2171.
+    // Config-transfer used to observe the row — it skipped a singleton with
+    // none, so a club that never saved these settings exported no
+    // `booking-request-settings.json`. #2171 fixed that where it belonged, in
+    // the exporter: a missing row is now exported as the effective defaults
+    // (`src/config/club-settings-defaults.ts`, the same constants this GET
+    // reads through `getBookingRequestSettings`). Nothing keys on the
+    // `BookingRequestSettings` row existing — other singletons' rows DO drive
+    // setup-readiness signals, but none of these cards' — so there is still no
+    // reason for a first-save exception here.
   })
 
   /*

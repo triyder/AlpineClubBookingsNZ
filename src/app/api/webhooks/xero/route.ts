@@ -6,6 +6,7 @@ import { reportWebhookError } from "@/lib/observability-bridge";
 import { buildXeroIdempotencyKey, recordXeroInboundEvent } from "@/lib/xero-sync";
 import { runXeroInboundReconciliationCycle } from "@/lib/xero-inbound-reconciliation";
 import { isXeroConnected } from "@/lib/xero";
+import { getOperationalXeroWebhookKey } from "@/lib/xero-config";
 import {
   isWebhookBodyInvalidContentLengthError,
   isWebhookBodyTooLargeError,
@@ -70,7 +71,18 @@ function scheduleAfterResponse(task: () => Promise<void>) {
  * 3. Then Xero starts sending actual event payloads
  */
 export async function POST(request: NextRequest) {
-  const webhookKey = process.env.XERO_WEBHOOK_KEY;
+  // DB-only resolution (#2079). Fail-closed: a missing key rejects the request,
+  // it is never treated as "accept". A DB error also rejects (never accept).
+  let webhookKey: string | undefined;
+  try {
+    webhookKey = await getOperationalXeroWebhookKey();
+  } catch (error) {
+    logger.error({ err: error }, "Failed to resolve Xero webhook key");
+    return NextResponse.json(
+      { error: "Xero webhook key not available" },
+      { status: 500 }
+    );
+  }
   if (!webhookKey) {
     return NextResponse.json(
       { error: "Xero webhook key not configured" },

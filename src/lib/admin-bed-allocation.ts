@@ -6,6 +6,7 @@ import {
   type LodgeRoom,
 } from "@prisma/client";
 import { clubConfig } from "@/config/club";
+import { DEFAULT_BED_ALLOCATION_SETTINGS } from "@/config/club-settings-defaults";
 import {
   addDaysDateOnly,
   eachDateOnlyInRange,
@@ -300,14 +301,16 @@ async function getBedAllocationSettings(
   });
   if (record && lodgeId && record.lodgeId && record.lodgeId !== lodgeId) {
     return {
-      autoAllocationEnabled: true,
+      autoAllocationEnabled: DEFAULT_BED_ALLOCATION_SETTINGS.autoAllocationEnabled,
       updatedByMemberId: null,
       updatedAt: null,
     };
   }
 
   return {
-    autoAllocationEnabled: record?.autoAllocationEnabled ?? true,
+    autoAllocationEnabled:
+      record?.autoAllocationEnabled ??
+      DEFAULT_BED_ALLOCATION_SETTINGS.autoAllocationEnabled,
     updatedByMemberId: record?.updatedByMemberId ?? null,
     updatedAt: record?.updatedAt.toISOString() ?? null,
   };

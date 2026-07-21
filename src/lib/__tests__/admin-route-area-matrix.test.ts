@@ -213,6 +213,7 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/induction-templates/[id]": "membership",
   "/api/admin/inductions": "membership",
   "/api/admin/inductions/[id]": "membership",
+  "/api/admin/integrations/credentials": "finance",
   "/api/admin/internet-banking-settings": "finance",
   "/api/admin/issue-reports": "support",
   "/api/admin/issue-reports/[id]": "support",

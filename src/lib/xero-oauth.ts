@@ -13,9 +13,9 @@ import {
   saveXeroTokens,
 } from "./xero-token-store";
 
-export function createXeroClient(state?: string): XeroClient {
+export async function createXeroClient(state?: string): Promise<XeroClient> {
   return new XeroClient({
-    ...getOperationalXeroConfig(),
+    ...(await getOperationalXeroConfig()),
     ...(state ? { state } : {}),
   });
 }
@@ -24,7 +24,7 @@ export function createXeroClient(state?: string): XeroClient {
  * Build the Xero OAuth2 consent URL for admin to connect.
  */
 export async function getXeroConsentUrl(state?: string): Promise<string> {
-  const xero = createXeroClient(state);
+  const xero = await createXeroClient(state);
   await xero.initialize();
   return xero.buildConsentUrl();
 }
@@ -34,7 +34,7 @@ export async function getXeroConsentUrl(state?: string): Promise<string> {
  * Exchanges the authorization code for tokens and stores them encrypted.
  */
 export async function handleXeroCallback(url: string, state?: string): Promise<void> {
-  const xero = createXeroClient(state);
+  const xero = await createXeroClient(state);
   await xero.initialize();
   const tokenSet = await xero.apiCallback(url);
   await xero.updateTenants();
@@ -62,7 +62,7 @@ export async function disconnectXero(): Promise<void> {
   const tokens = await loadXeroTokens();
   if (tokens) {
     try {
-      const xero = createXeroClient();
+      const xero = await createXeroClient();
       await xero.initialize();
       xero.setTokenSet({
         access_token: tokens.accessToken,

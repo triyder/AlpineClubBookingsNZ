@@ -1,3 +1,4 @@
+import { DEFAULT_BOOKING_DEFAULTS } from "@/config/club-settings-defaults";
 import { normalizeCancellationRule } from "./cancellation-rules";
 import { getDefaultLodgeId, resolvePolicyRowsForLodge } from "./lodges";
 import { prisma } from "./prisma";
@@ -71,8 +72,9 @@ export async function getNonMemberHoldPolicy(
   });
 
   return {
-    enabled: defaults?.nonMemberHoldEnabled ?? true,
-    holdDays: defaults?.nonMemberHoldDays ?? 7,
+    enabled:
+      defaults?.nonMemberHoldEnabled ?? DEFAULT_BOOKING_DEFAULTS.nonMemberHoldEnabled,
+    holdDays: defaults?.nonMemberHoldDays ?? DEFAULT_BOOKING_DEFAULTS.nonMemberHoldDays,
     source: "default",
   };
 }

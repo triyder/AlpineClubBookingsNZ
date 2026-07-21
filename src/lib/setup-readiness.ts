@@ -9,11 +9,16 @@ import {
   type AdminModuleSettingsSnapshot,
 } from "./admin-modules";
 import { resolveEmailDeliveryConfigFromEnv } from "@/lib/email-delivery";
-import { XERO_REQUIRED_REPORT_OAUTH_SCOPES } from "@/lib/xero-config";
+import {
+  XERO_REQUIRED_REPORT_OAUTH_SCOPES,
+  detectLegacyProviderEnv,
+} from "@/lib/xero-config";
+import { authSecretWeaknessReason } from "@/lib/integration-crypto";
 
 export const SETUP_STEP_IDS = [
   "club-config",
   "runtime-env",
+  "auth-secret-strength",
   "seed-admin",
   "feature-flags",
   "booking-policies",
@@ -63,6 +68,12 @@ export interface SetupDatabaseSnapshot {
   membershipCancellationXeroGroupCount: number;
   membershipCancellationArchiveContacts: boolean;
   operationalXeroConnected: boolean;
+  // A Xero token row exists but no longer decrypts (env→DB upgrade or an
+  // auth-secret change, #2079): the connection needs re-entry/reconnect, not
+  // "connected". Distinguishes "needs reconnect" from "never connected" so the
+  // Operational Xero step shows the right guidance. Optional/undefined for older
+  // callers or when no DB snapshot was taken.
+  operationalXeroNeedsReentry?: boolean;
   operationalXeroTokenExpiresAt: string | null;
   xeroAccountMappingCount: number;
   xeroHutFeeItemMappingCount: number;
@@ -308,9 +319,6 @@ function isLikelyStripePublishable(value: string | undefined): boolean {
   );
 }
 
-function isHexEncryptionKey(value: string | undefined): boolean {
-  return Boolean(value && /^[0-9a-fA-F]{64}$/.test(value));
-}
 
 function toStatusScore(status: SetupStatus): number {
   switch (status) {
@@ -620,6 +628,45 @@ function buildRuntimeEnvCheck(
                 : "NEXTAUTH_SECRET: set",
             ])
           : issues.map((issue) => `Fix ${issue}`),
+    },
+    progress,
+  );
+}
+
+/**
+ * Passive amber warning (#2079) on a weak/placeholder auth secret. NEVER blocks
+ * and NEVER runs at boot — it only surfaces in readiness so operators learn
+ * before they are mid-wizard that the secret credential encryption (and sign-in
+ * and 2FA) depends on is weak. The hard block lives at credential capture, not
+ * here. When AUTH_SECRET/NEXTAUTH_SECRET is entirely absent the runtime-env
+ * check already blocks, so this stays "complete" in that case to avoid a
+ * duplicate finding.
+ */
+function buildAuthSecretStrengthCheck(
+  env: Env,
+  progress: SetupProgressState,
+): SetupStepCheck {
+  const secret = readEnv(env, "AUTH_SECRET") ?? readEnv(env, "NEXTAUTH_SECRET");
+  const weakness = secret ? authSecretWeaknessReason(secret) : null;
+
+  return applyProgress(
+    {
+      id: "auth-secret-strength",
+      title: "Auth Secret Strength",
+      description:
+        "Sign-in, 2FA and credential encryption all derive from this secret.",
+      status: weakness ? "warning" : "complete",
+      required: false,
+      message: weakness
+        ? "The app auth secret is weak or a placeholder — credential capture will be blocked until it is strengthened."
+        : "The app auth secret meets the strength requirement.",
+      details: weakness
+        ? [
+            weakness,
+            "Generate a strong value, e.g. node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\", then restart.",
+          ]
+        : ["Secret is set and passes the length and placeholder checks."],
+      href: "/admin/health",
     },
     progress,
   );
@@ -1121,18 +1168,21 @@ function buildOperationalXeroCheck(
 ): SetupStepCheck {
   const moduleState = buildModuleLayerState(db, "xeroIntegration");
   const enabled = moduleState.effectiveEnabled;
-  const issues = [
-    !hasEnv(env, "XERO_CLIENT_ID") ? "XERO_CLIENT_ID is missing" : null,
-    !hasEnv(env, "XERO_CLIENT_SECRET") ? "XERO_CLIENT_SECRET is missing" : null,
-    !isHttpUrl(readEnv(env, "XERO_REDIRECT_URI"))
-      ? "XERO_REDIRECT_URI must be a valid http(s) URL"
-      : null,
-    !isHexEncryptionKey(readEnv(env, "XERO_ENCRYPTION_KEY"))
-      ? "XERO_ENCRYPTION_KEY must be a 64-character hex string"
-      : null,
-    !hasEnv(env, "XERO_WEBHOOK_KEY") ? "XERO_WEBHOOK_KEY is missing" : null,
-  ].filter((issue): issue is string => Boolean(issue));
   const connected = Boolean(db?.operationalXeroConnected);
+  // Tokens exist but no longer decrypt (env→DB upgrade / auth-secret change,
+  // #2079): reconnect-required, not "connected" and not "never connected".
+  const needsReentry = Boolean(db?.operationalXeroNeedsReentry);
+  // DB-only credentials (#2079): Xero client id/secret, webhook key and the
+  // token key live in the encrypted store and are captured in-app — no XERO_*
+  // env vars are read for operation. Any legacy vars still present are flagged.
+  const legacyXeroVars =
+    detectLegacyProviderEnv(env).find((f) => f.provider === "xero")?.vars ?? [];
+  const legacyDetails =
+    legacyXeroVars.length > 0
+      ? [
+          `Legacy env vars detected (no longer used): ${legacyXeroVars.join(", ")}. Re-enter these in-app, then remove them from the environment.`,
+        ]
+      : [];
 
   return applyProgress(
     {
@@ -1142,34 +1192,43 @@ function buildOperationalXeroCheck(
         "Member/contact sync, invoices, payments, credit notes, and Xero webhooks.",
       status: !enabled
         ? "warning"
-        : issues.length > 0
-          ? "blocked"
-          : !db
+        : !db
+          ? "warning"
+          : needsReentry
             ? "warning"
-            : connected
-              ? "complete"
-              : "not_started",
+            : legacyXeroVars.length > 0
+              ? "warning"
+              : connected
+                ? "complete"
+                : "not_started",
       required: enabled,
       message: !enabled
         ? "Operational Xero is disabled in Admin Modules."
         : !db
-          ? "Operational Xero env is ready; connection state was not checked."
-          : connected
-            ? "Operational Xero is connected."
-            : issues.length > 0
-              ? "Operational Xero env needs attention."
-              : "Operational Xero env is ready; connect the tenant from admin.",
+          ? "Operational Xero credentials are captured in-app; connection state was not checked."
+          : needsReentry
+            ? "Xero tokens can no longer be read (the auth secret changed) — reconnect Xero from the in-app setup (Admin > Xero > Setup)."
+            : legacyXeroVars.length > 0
+              ? "Remove the legacy XERO_* env vars — Xero is configured in-app now."
+              : connected
+                ? "Operational Xero is connected."
+                : "Connect Xero from the in-app setup (Admin > Xero > Setup).",
       details: [
         formatModuleActivationDetail(db, moduleState.adminEnabled),
         `Effective state: ${enabled ? "enabled" : "disabled"}`,
-        ...issues,
+        "Credentials are stored in-app (encrypted); no XERO_* env vars are used.",
+        ...legacyDetails,
         !db
           ? "Database connection state not checked."
-          : connected
-            ? `Token expires: ${db?.operationalXeroTokenExpiresAt ?? "unknown"}`
-            : "No active operational Xero token found.",
+          : needsReentry
+            ? "Stored Xero tokens no longer decrypt; reconnect to re-authorise."
+            : connected
+              ? `Token expires: ${db?.operationalXeroTokenExpiresAt ?? "unknown"}`
+              : "No active operational Xero token found.",
       ],
-      href: "/admin/xero",
+      // Land on the page where credentials can actually be entered (#2079); the
+      // Integrations hub also links here.
+      href: "/admin/xero/setup",
       action: {
         type: "provider-test",
         provider: "xero",
@@ -1338,6 +1397,7 @@ export function buildSetupReadiness(
     foundation: [
       buildClubConfigCheck(club, input.database, progress),
       buildRuntimeEnvCheck(env, progress),
+      buildAuthSecretStrengthCheck(env, progress),
       buildSeedAdminCheck(input.database, progress),
       buildFeatureFlagCheck(input.database, progress),
     ],
@@ -1446,10 +1506,7 @@ export function getSetupRequiredEnvNames(): string[] {
     "NEXT_PUBLIC_SENTRY_DSN",
     "SENTRY_ORG",
     "SENTRY_PROJECT",
-    "XERO_CLIENT_ID",
-    "XERO_CLIENT_SECRET",
-    "XERO_REDIRECT_URI",
-    "XERO_ENCRYPTION_KEY",
-    "XERO_WEBHOOK_KEY",
+    // Xero credentials (client id/secret, redirect, encryption key, webhook
+    // key) are captured in-app now (#2079) — they are no longer required env.
   ];
 }

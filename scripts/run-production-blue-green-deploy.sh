@@ -625,6 +625,20 @@ env_key_is_true() {
   [ "$value" = "true" ]
 }
 
+warn_legacy_xero_env() {
+  # Xero credentials moved to encrypted, DB-backed storage (#2079). The legacy
+  # XERO_* env vars are ignored by the app now; warn (never fail) so operators
+  # know to remove them from .env after re-entering credentials in-app.
+  local key
+  local value
+  for key in XERO_CLIENT_ID XERO_CLIENT_SECRET XERO_REDIRECT_URI XERO_ENCRYPTION_KEY XERO_WEBHOOK_KEY; do
+    value="$(trim_whitespace "$(get_env_file_value "$key")")"
+    if [ -n "$value" ]; then
+      warn "Legacy $key is set but no longer used — Xero credentials are configured in-app now (#2079). Remove it from .env."
+    fi
+  done
+}
+
 working_tree_is_clean() {
   [ -z "$(git status --short --untracked-files=normal)" ]
 }
@@ -703,10 +717,6 @@ validate_env_contract() {
   require_non_placeholder_env_key STRIPE_SECRET_KEY
   require_non_placeholder_env_key NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
   require_non_placeholder_env_key STRIPE_WEBHOOK_SECRET
-  require_non_placeholder_env_key XERO_CLIENT_ID
-  require_non_placeholder_env_key XERO_CLIENT_SECRET
-  require_http_url_env_key XERO_REDIRECT_URI
-  require_non_placeholder_env_key XERO_ENCRYPTION_KEY
   require_non_placeholder_env_key SMTP_HOST
   require_non_placeholder_env_key SMTP_PORT
   require_non_placeholder_env_key AWS_SES_ACCESS_KEY_ID
@@ -719,7 +729,8 @@ validate_env_contract() {
 
   domain="$(trim_whitespace "$(get_env_file_value DOMAIN)")"
   require_domain_matches_url NEXTAUTH_URL "$domain"
-  require_domain_matches_url XERO_REDIRECT_URI "$domain"
+
+  warn_legacy_xero_env
 
   if env_key_is_true BACKUP_ENABLED false; then
     require_env_key BACKUP_CRON_SCHEDULE

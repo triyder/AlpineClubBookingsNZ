@@ -140,7 +140,7 @@ this (#1208). Shared JSON-guard micro-helpers (`asRecord`/`readString`/
 
 | Module | Owns |
 | --- | --- |
-| `xero-config` | Reads/validates `XERO_CLIENT_ID`/`SECRET`/`REDIRECT_URI`/`ENCRYPTION_KEY` for the operational connection. |
+| `xero-config` | Resolves the operational connection **from the encrypted DB store** (#2079): client id/secret and webhook key via `IntegrationCredential`, the redirect URI from `NEXTAUTH_URL`, and the auto-generated wrapped token-encryption key. No `XERO_*` credential env vars are read; legacy vars are detected and flagged. |
 | `xero-oauth` | Consent URL, OAuth callback (`handleXeroCallback`), client construction, disconnect (revoke + clear tokens). |
 | `xero-oauth-state` | CSRF state cookie for the OAuth round-trip. |
 | `xero-token-store` | AES-encrypted token persistence (`XeroToken` row), connection status, and the **refresh lease** (`claimXeroTokenRefreshLease`) so concurrent serverless instances don't double-refresh; losers wait for the lease deadline and re-read. |
@@ -529,8 +529,9 @@ exact-cent lines and cannot drift, so they are out of scope by construction.
    cookie (`xero-oauth-state`).
 2. Xero redirects to `/api/admin/xero/callback` → `handleXeroCallback`
    validates state, exchanges the code, and `saveXeroTokens` encrypts
-   access/refresh tokens with `XERO_ENCRYPTION_KEY` into the single `XeroToken`
-   row (tenant id included).
+   access/refresh tokens with the auto-generated, HKDF-wrapped token key from the
+   encrypted credential store (#2079) into the single `XeroToken` row (tenant id
+   included).
 3. Every worker call goes through `getAuthenticatedXeroClient`: if the access
    token is near expiry it claims the refresh lease
    (`refreshInProgressUntil`); the winner refreshes and persists, losers wait

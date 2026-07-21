@@ -93,6 +93,78 @@ deeper reference for what each category contains and the import safety model.
   discount, membership nomination/lockout/cancellation). Applying the bundle
   refreshes the DB-first club-identity cache so imported identity takes effect
   immediately.
+
+  **A singleton the source club never saved is still exported (#2171).** Every
+  entry in `SINGLETONS` always produces its JSON file; where the `id = "default"`
+  row is absent the exporter emits the **effective defaults** — the values the
+  app's own read path synthesises on a miss — so the bundle carries what the
+  source club actually runs on and an import reproduces it instead of leaving
+  the target's existing row alone. Each spec declares those defaults by
+  importing the same constant its getter reads
+  (`src/config/club-settings-defaults.ts`, plus the long-standing
+  `DEFAULT_MODULE_SETTINGS` and `DEFAULT_MEMBER_FIELDS_SETTINGS`); a second
+  hand-written copy in the exporter is the failure mode that shape exists to
+  prevent, and a test fails if a spec leaves a field without a declared default.
+
+  Be precise about what this does and does not buy:
+
+  - `club-identity-settings` and `email-message-setting` deliberately export
+    **all-null** rather than a value. Every column on those two is a nullable
+    override resolved through the install's own `config/club.json`/environment
+    fallback chain, so "never saved" means "no override" (exactly what their
+    admin GETs synthesise) and the fallback identity belongs to the install, not
+    to the club's portable configuration. Exporting it would rename the target
+    club and repoint its public URL. `DEFAULTS_INTENTIONALLY_PARTIAL` names the
+    two and the coverage test allows only them. This is narrowly about the
+    NEVER-SAVED case only: whenever the source's row DOES exist its identity
+    fields are ordinary allowlisted fields and **travel normally** — which is
+    the intended behaviour, and why applying a bundle refreshes the DB-first
+    club-identity cache. On any booted install the row usually does exist:
+    `clubIdentitySelfHealStep` (`src/lib/config-self-heal.ts`) creates it at
+    boot from `config/club.json`.
+  - **An all-null file never creates a row.** `carriesNoValue` in
+    `club-settings.ts` skips the create branch (and the plan reports
+    `unchanged`) when every allowlisted value in the file is null, in BOTH
+    modes. Only the two singletons above can produce such a file. This is not a
+    tidiness rule: `clubIdentitySelfHealStep.isPresent` keys purely on the
+    `ClubIdentitySettings` ROW existing, and the self-heal runner is skipped
+    entirely while `clubConfigSource !== "primary"` on the documented promise
+    that it repairs itself on a later boot. An import onto a SAFE_DEFAULT
+    install would otherwise plant an all-null row that satisfies that presence
+    check forever, so identity would never be healed once `config/club.json`
+    was fixed.
+  - **Merge mode still ignores blank bundle values** (`updateDataForMode` /
+    `rawHasValue`), so those all-null identity entries only clear an EXISTING
+    target row's overrides in **overwrite** mode. Booleans and zeroes are
+    non-blank and do travel in both modes.
+  - **Row existence is no longer preserved.** Importing now MATERIALISES a
+    singleton the source never saved, and **four** setup-readiness signals key
+    on the row existing rather than on its values. Three are booleans in the
+    snapshot (`src/lib/setup-readiness-db.ts`): `bookingDefaultsConfigured`,
+    `groupDiscountConfigured`, `membershipCancellationSettingsConfigured`. The
+    fourth is in the consumer: the **Module Controls** step reads
+    `Boolean(db.adminModuleSettings)` directly (`src/lib/setup-readiness.ts`),
+    so an import flips it from *warning* to "Admin Modules activation was
+    checked." That step is `required: false`, so it downgrades a warning rather
+    than gating readiness. A target club's checklist can therefore report
+    booking policies, membership cancellation and module activation as
+    configured when nobody configured them. The effective settings are
+    unchanged; only the "has an admin been here?" signal is. This is the cost
+    the owner accepted on #2171 — bundles get larger and carry rows that were
+    never explicitly configured.
+  - **One admin-screen affordance disappears with it.** The group-discount card
+    treats an unsaved singleton as dirty (`group-discount-section.tsx`, #2142)
+    so an admin can create the row while happy with every default. Once an
+    import has materialised `GroupDiscountSetting` the GET returns
+    `configured: true`, so a pristine card's **Save** is disabled where it used
+    to be enabled. Benign — the affordance existed only to create the row, which
+    now exists — but it is a visible behaviour change, not purely a checklist one.
+  - **A materialised row stops tracking the code default.** Once written, a
+    later release that changes the built-in default does not reach that club.
+  - **No format-version bump.** `CONFIG_TRANSFER_FORMAT_VERSION` stays `1`: the
+    file shape is unchanged and only completeness improved. The importer is
+    files-first, so an older bundle that omits a singleton still imports and
+    leaves that singleton untouched — covered by a test.
 - **lodge-config** — lodges, rooms, beds, seasons, season rates, lodge
   instructions (content images bundled + remapped), and chore templates. Each
   lodge is a **self-contained folder**, `lodge-config/lodges/<slug>/` with a

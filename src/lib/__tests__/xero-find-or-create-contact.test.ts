@@ -122,6 +122,28 @@ vi.mock("@/lib/xero-sync", async (importOriginal) => {
   };
 });
 
+// DB-only Xero resolution (#2079): supply the operational config and the
+// token-encryption key from a stub so the token round-trip below needs no
+// integration-credential DB rows.
+vi.mock("@/lib/xero-config", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/xero-config")>();
+  return {
+    ...actual,
+    getOperationalXeroConfig: vi.fn().mockResolvedValue({
+      clientId: "test-client",
+      clientSecret: "test-secret",
+      redirectUris: ["https://example.com/api/admin/xero/callback"],
+      scopes: [...actual.XERO_REQUIRED_REPORT_OAUTH_SCOPES],
+      httpTimeout: 10_000,
+    }),
+    getOperationalXeroEncryptionKey: vi
+      .fn()
+      .mockResolvedValue(
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      ),
+  };
+});
+
 import {
   encryptToken,
   findOrCreateXeroContact,
@@ -178,8 +200,8 @@ describe("findOrCreateXeroContact", () => {
     });
     mocks.prisma.xeroToken.findFirst.mockResolvedValue({
       id: "token_1",
-      accessToken: encryptToken("access"),
-      refreshToken: encryptToken("refresh"),
+      accessToken: await encryptToken("access"),
+      refreshToken: await encryptToken("refresh"),
       expiresAt: new Date(Date.now() + 60 * 60 * 1000),
       tenantId: "tenant_1",
     });
@@ -227,8 +249,8 @@ describe("findOrCreateXeroContact", () => {
     });
     mocks.prisma.xeroToken.findFirst.mockResolvedValue({
       id: "token_1",
-      accessToken: encryptToken("access"),
-      refreshToken: encryptToken("refresh"),
+      accessToken: await encryptToken("access"),
+      refreshToken: await encryptToken("refresh"),
       expiresAt: new Date(Date.now() + 60 * 60 * 1000),
       tenantId: "tenant_1",
     });
@@ -273,8 +295,8 @@ describe("findOrCreateXeroContact", () => {
     });
     mocks.prisma.xeroToken.findFirst.mockResolvedValue({
       id: "token_1",
-      accessToken: encryptToken("access"),
-      refreshToken: encryptToken("refresh"),
+      accessToken: await encryptToken("access"),
+      refreshToken: await encryptToken("refresh"),
       expiresAt: new Date(Date.now() + 60 * 60 * 1000),
       tenantId: "tenant_1",
     });

@@ -15,6 +15,7 @@
  *   - external calls (email) run after the transaction commits
  */
 import { randomBytes } from "crypto";
+import { DEFAULT_BOOKING_REQUEST_SETTINGS } from "@/config/club-settings-defaults";
 import { hash } from "bcryptjs";
 import {
   AgeTier,
@@ -162,12 +163,21 @@ export async function getBookingRequestSettings(db: Pick<typeof prisma, "booking
     where: { id: "default" },
   });
   return {
-    showPricingToNonMembers: record?.showPricingToNonMembers ?? false,
-    quoteResponseTtlDays: record?.quoteResponseTtlDays ?? 14,
-    quoteReminderLeadDays: record?.quoteReminderLeadDays ?? 3,
-    attendeeConfirmationLeadDays: record?.attendeeConfirmationLeadDays ?? 14,
+    showPricingToNonMembers:
+      record?.showPricingToNonMembers ??
+      DEFAULT_BOOKING_REQUEST_SETTINGS.showPricingToNonMembers,
+    quoteResponseTtlDays:
+      record?.quoteResponseTtlDays ??
+      DEFAULT_BOOKING_REQUEST_SETTINGS.quoteResponseTtlDays,
+    quoteReminderLeadDays:
+      record?.quoteReminderLeadDays ??
+      DEFAULT_BOOKING_REQUEST_SETTINGS.quoteReminderLeadDays,
+    attendeeConfirmationLeadDays:
+      record?.attendeeConfirmationLeadDays ??
+      DEFAULT_BOOKING_REQUEST_SETTINGS.attendeeConfirmationLeadDays,
     attendeeConfirmationReminderDays:
-      record?.attendeeConfirmationReminderDays ?? 3,
+      record?.attendeeConfirmationReminderDays ??
+      DEFAULT_BOOKING_REQUEST_SETTINGS.attendeeConfirmationReminderDays,
   };
 }
 

@@ -57,7 +57,9 @@ export {
   // test seam
   encryptToken,
   getXeroConnectionStatus,
+  getXeroTokenReadability,
   isXeroConnected,
+  XeroTokenDecryptError,
 } from "./xero-token-store";
 
 // ---------------------------------------------------------------------------

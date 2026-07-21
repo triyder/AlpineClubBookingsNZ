@@ -148,7 +148,6 @@ jobs:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/tacbookings
       STRIPE_SECRET_KEY: sk_test_fake
       NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: pk_test_fake
-      XERO_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
       XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH: "false"
       XERO_ENABLE_LIVE_MEMBER_GROUP_LOOKUPS: "false"
       XERO_ENABLE_AUTOLOAD_XERO_CONTACT_GROUPS: "false"
