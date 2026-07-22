@@ -716,7 +716,7 @@ describe("#2146 no literal-palette dark: utility on a printable surface", () => 
             `@media not print wrappers there cannot exclude it — it prints ` +
             `exactly as written and reintroduces #2146. On a printable ` +
             `surface, either drop the dark: variant or move the colour onto a ` +
-            `semantic token (bg-card / text-muted-foreground / the --hue-* ` +
+            `semantic token (bg-card / text-muted-foreground / a ` +
             `pairs), which resolves light on paper. Offenders:\n` +
             `${offenders.join("\n")}`,
     ).toEqual([]);
@@ -815,7 +815,7 @@ describe("#2146 no literal-palette dark: utility on a printable surface", () => 
             `the default remedy:\n` +
             `  - It CAN render inside a print root (directly, or as a shared ` +
             `component used by one): drop the dark: variant or move the colour ` +
-            `onto a semantic token / the --hue-* pairs, and add its path to ` +
+            `onto a semantic or categorical scale token, and add its path to ` +
             `PRINTABLE_SURFACE_ROOTS so the stricter check covers it from now ` +
             `on.\n` +
             `  - It can NEVER render inside a print root: add it to ` +

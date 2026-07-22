@@ -14,7 +14,7 @@ interface BedTypeMeta {
   // or bottom of a stacked bunk.
   StackIcon?: BedTypeIcon;
   label: string;
-  // Per-bed-type accent tint (#156) drawn from the shared `--hue-*` tokens, so
+  // Per-bed-type accent tint (#156) drawn from the generated categorical scales (#2218), so
   // the icon reads its type at a glance in both light and dark. Applied to the
   // icon only; the label keeps its muted text colour.
   tint: string;

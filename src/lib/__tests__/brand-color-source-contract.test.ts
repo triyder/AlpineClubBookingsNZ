@@ -68,7 +68,7 @@ describe("brand accent source contract", () => {
         : `Hardcoded Tailwind teal-* utilities are the brand accent and must ` +
             `not be baked into source. Use semantic tokens (--primary, ` +
             `bg-primary/text-primary-foreground, border-primary/30, ...) so the ` +
-            `admin-configured site colours apply, or the --hue-* system for a ` +
+            `admin-configured site colours apply, or the cat1..cat6 scales for a ` +
             `categorical status hue. Offenders:\n${offenders.join("\n")}`,
     ).toEqual([]);
   });
@@ -80,7 +80,7 @@ describe("brand accent source contract", () => {
 // not appear as raw Tailwind utilities anywhere in source: every colored surface
 // now reaches its hue through the signed-off scale vocabulary — the semantic
 // `bg/text/border-<success|warning|info|danger>-<step>` scales, the categorical
-// `cat1..cat5` scales, or CHIP_TONE_CLASSES. Repo-wide, incl. the kiosk family (P3).
+// `cat1..cat6` scales, or CHIP_TONE_CLASSES. Repo-wide, incl. the kiosk family (P3).
 const COLORED_FAMILIES_16 = [
   "red", "orange", "amber", "yellow", "lime", "green", "emerald",
   "cyan", "sky", "blue", "indigo", "violet", "purple", "fuchsia", "pink",
@@ -116,7 +116,7 @@ describe("colored-family source contract (R5, 16 families, repo-wide)", () => {
 // text-bearing badge must use the ROLE token pair (`bg-warning
 // text-warning-foreground`), never `bg-<scale>-9` with a text utility. Step-9
 // stays only for DECORATIVE, text-free fills (e.g. booking strips). This flags
-// any class string combining `bg-(success|warning|info|danger|cat1..5)-9` with a
+// any class string combining `bg-(success|warning|info|danger|cat1..6)-9` with a
 // `text-` utility. A genuinely-decorative exception (text incidental, not on the
 // fill) needs an explicit DECORATIVE_SOLID_FILL_ALLOWLIST entry with a reason.
 const DECORATIVE_SOLID_FILL_ALLOWLIST = new Set<string>(
