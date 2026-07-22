@@ -11,7 +11,13 @@ import { HelpWidget } from "./help-widget";
  * type-only `match` matcher), so the authenticated bundle carries no public
  * corpus and resolves member pages entirely client-side.
  */
-export function HelpWidgetMember({ llmEnabled }: { llmEnabled: boolean }) {
+export function HelpWidgetMember({
+  llmEnabled,
+  chatEndpoint,
+}: {
+  llmEnabled: boolean;
+  chatEndpoint?: string;
+}) {
   const resolveHelp = useCallback(
     (pathname: string): HelpPageContent =>
       matchHelpEntry(pathname, memberHelpEntries, memberFallbackHelp),
@@ -24,6 +30,7 @@ export function HelpWidgetMember({ llmEnabled }: { llmEnabled: boolean }) {
       llmEnabled={llmEnabled}
       resolveHelp={resolveHelp}
       position="app"
+      chatEndpoint={chatEndpoint}
     />
   );
 }

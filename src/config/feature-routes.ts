@@ -144,7 +144,7 @@ export const FEATURE_ROUTE_RULES: FeatureRouteRule[] = [
     // the module is off (so a curated help panel still renders), rather than the
     // 404 this feature-route gate produces.
     flag: "aiAssistant",
-    prefixes: ["/api/admin/ai-assistant"],
+    prefixes: ["/admin/ai-assistant", "/api/admin/ai-assistant"],
   },
 ];
 

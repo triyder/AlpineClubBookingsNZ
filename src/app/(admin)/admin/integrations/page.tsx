@@ -1,4 +1,4 @@
-import { CreditCard, DatabaseBackup, KeyRound, Plug } from "lucide-react";
+import { Bot, CreditCard, DatabaseBackup, KeyRound, Plug } from "lucide-react";
 import {
   AdminHubPage,
   type AdminHubSection,
@@ -36,6 +36,13 @@ const sections: AdminHubSection[] = [
       "Configure the S3 backup destination and credentials, check backup status, and run a backup on demand.",
     icon: DatabaseBackup,
   },
+  {
+    href: "/admin/ai-assistant",
+    title: "AI help assistant",
+    description:
+      "Enter your Anthropic API key, set a monthly spend cap, and review AI usage. Hidden until the AI assistant module is enabled.",
+    icon: Bot,
+  },
 ];
 
 const BASE_DESCRIPTION =
@@ -43,7 +50,7 @@ const BASE_DESCRIPTION =
 
 // Providers whose encrypted credentials the hub watches for the shared re-entry
 // aggregate (#2079). C4/C5/C6 add "stripe" / "google" / "backup" here.
-const HUB_PROVIDERS = ["xero", "stripe", "google", "backup"] as const;
+const HUB_PROVIDERS = ["xero", "stripe", "google", "backup", "anthropic"] as const;
 
 export default async function IntegrationsHubPage() {
   const features = await loadEffectiveModuleFlags();

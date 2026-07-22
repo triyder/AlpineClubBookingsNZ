@@ -335,9 +335,31 @@ that single secret:
   which is dropped whenever any Stripe credential is rewritten (verify-reset).
 - **Exposure contract.** No plaintext or ciphertext/iv/authTag ever appears in an
   API response, server-component prop, client bundle, log line, Sentry event,
-  audit row, or config-transfer export; the credential entity is deliberately not
-  registered for export, and the `ciphertext`/`authTag` field names are also in
-  the config-transfer forbidden-field patterns as defence in depth.
+  audit row, or config-transfer export.
+- **Config transfer: never travels, in any form (permanent policy, #2205).** The
+  `IntegrationCredential` entity is **permanently excluded** from config transfer
+  — credential rows never ride in a bundle, neither the encrypted values nor any
+  per-field metadata about them. Two independent mechanisms enforce this at HEAD:
+  1. **Entity exclusion (primary).** No config-transfer category module registers
+     a descriptor for `IntegrationCredential`, so nothing on the row — including
+     the un-patternable `iv` column — can be exported. The
+     "registers NO IntegrationCredential entity" test in
+     `src/lib/__tests__/config-transfer-registry.test.ts` walks every registered
+     descriptor and fails if one names the entity, its file, or any
+     `iv`/`ciphertext`/`authTag` field.
+  2. **Forbidden-field sweep (defence in depth).** The `ciphertext` and
+     `auth.?tag` patterns are in `FORBIDDEN_FIELD_PATTERNS` in
+     `src/lib/config-transfer/registry.ts`; `assertDescriptorValid` (run at module
+     load and by the same test) throws if any future descriptor's allowlist ever
+     names one, so a mistaken re-registration fails the build.
+
+  A **presence-metadata export** (non-secret "which providers are configured"
+  booleans, never any value/ciphertext, so a clone could show honest "re-enter
+  credentials" affordances) was considered and **rejected** by the owner
+  (decision on #2205, 2026-07-23): the wholesale exclusion is the ratified
+  permanent policy and no presence metadata travels either. The config-transfer
+  reference documents the same contract — see
+  [Configuration Export & Import](config-transfer/README.md#implemented-categories).
 
 ## Backup S3 blast radius (#2095)
 

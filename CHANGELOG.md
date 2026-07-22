@@ -13,6 +13,7 @@ All notable public reference-release changes should be recorded here.
   that integration's own module and permissions allow, so the Xero card still
   disappears with Xero off while everything else stays reachable. No behaviour
   changes for the individual setup pages, which keep their existing gates.
+- **Docs: ratified that connected provider credentials (`IntegrationCredential`) are permanently excluded from config transfer — never travelling in any form, and no presence-metadata carve-out — in the config-transfer reference and the security attack-surface doc (owner decision, #2205).**
 - **The lodge kiosk / wall display now paints from a fixed, glare-proof colour
   set that never follows the club theme or the light/dark toggle (#2189).** The
   kiosk, its roster-setup wizard, and the lodge-instructions panel were the one

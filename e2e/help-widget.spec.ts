@@ -81,6 +81,23 @@ test.describe("admin help widget", () => {
       page.getByRole("button", { name: /^Open .+ help$/ }),
     ).toHaveCount(0);
   });
+
+  test("shows no free-text ask box or AI wording while the module is off", async ({
+    page,
+  }) => {
+    // The default seed leaves the aiAssistant module OFF, so llmEnabled is false
+    // on every surface: the paid free-text path (textarea + Anthropic
+    // disclaimer) must not render — only curated chips.
+    await page.goto("/admin/dashboard");
+    await launcher(page).click();
+    await expect(panel(page)).toBeVisible();
+
+    await expect(panel(page).getByRole("textbox")).toHaveCount(0);
+    await expect(
+      panel(page).getByText("Ask about this page…"),
+    ).toHaveCount(0);
+    await expect(panel(page).getByText(/sent to Anthropic/)).toHaveCount(0);
+  });
 });
 
 test.describe("member booking-detail help widget", () => {

@@ -13,9 +13,11 @@ import { HelpWidget } from "./help-widget";
 export function HelpWidgetAdmin({
   scope,
   llmEnabled,
+  chatEndpoint,
 }: {
   scope: "admin" | "finance";
   llmEnabled: boolean;
+  chatEndpoint?: string;
 }) {
   const resolveHelp = useCallback(
     (pathname: string): HelpPageContent => getContextualHelp(pathname, scope),
@@ -28,6 +30,7 @@ export function HelpWidgetAdmin({
       llmEnabled={llmEnabled}
       resolveHelp={resolveHelp}
       position="app"
+      chatEndpoint={chatEndpoint}
     />
   );
 }

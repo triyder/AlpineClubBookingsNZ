@@ -1582,19 +1582,34 @@ content: if the answer is not in that content it says it does not know and point
 to the page's help panel or to contacting the club — it never invents features,
 prices, dates, or policies, and it has no tools and no data access.
 
+**Where it appears (#2212).** Once the module is on **and** a key is stored, the
+help widget on every **authenticated** surface (member, admin, finance) grows a
+free-text ask box under the curated chips, with a persistent disclaimer that AI
+answers can be wrong and that the question is sent to Anthropic (US). The
+**public website** widget stays curated-only — it never gets the free-text path.
+Each conversation is capped to a few exchanges, then offers "Start new chat".
+The admin surface lives at **Admin → AI help assistant** (`/admin/ai-assistant`),
+reached from the **"AI help assistant"** card on **Admin → Integrations** or the
+sidebar item under *Monitoring & Support*. That page carries the write-only key
+field, the monthly spend-cap editor, and a usage panel (month spend vs cap, token
+totals, request/failed counts, per-surface breakdown, and recent failures — no
+question text is ever stored). The whole page 404s while the module is off.
+
 **Recommended setup sequence:**
 
-1. **Enter the key** on Admin → Integrations. We strongly recommend creating a
-   **dedicated Anthropic workspace** for this key and setting a **console spend
-   limit of about US$20–30/month** on it as a hard backstop that sits *outside*
-   the app — so even a misconfiguration or an app bug cannot spend beyond it.
+1. **Enter the key** on Admin → Integrations → **AI help assistant** (or Admin →
+   AI help assistant). We strongly recommend creating a **dedicated Anthropic
+   workspace** for this key and setting a **console spend limit of about
+   US$20–30/month** on it as a hard backstop that sits *outside* the app — so
+   even a misconfiguration or an app bug cannot spend beyond it.
 2. **Enable the module** on Admin → Modules ("AI help assistant"). Unlike Google
    sign-in there is **no verify-gate**: enabling with no key stored is harmless —
    the ask box degrades to a structured fallback and curated page help still
    works. This asymmetry is deliberate (an unconfigured assistant is invisible,
    not broken).
-3. **Adjust the budget** if needed on the AI assistant settings. The in-app
-   **monthly spend cap** (default **NZ$10**, `AiAssistantSettings.monthlyBudgetCents`,
+3. **Adjust the budget** if needed on **Admin → AI help assistant** (the
+   monthly spend-cap editor takes dollars-and-cents; support-edit access). The
+   in-app **monthly spend cap** (default **NZ$10**, `AiAssistantSettings.monthlyBudgetCents`,
    integer cents) is a **hard cutoff**: once the month's estimated spend would
    exceed it, the assistant returns a "budget exhausted" fallback for the rest of
    the calendar month (Pacific/Auckland) and no further paid calls are made. Cost
@@ -1606,6 +1621,21 @@ prices, dates, or policies, and it has no tools and no data access.
 
 Per-member, per-IP, and global daily rate limits throttle abuse, but the monthly
 budget cap is the real spend ceiling.
+
+**Privacy — update your privacy page before enabling.** When the assistant is on,
+a member's typed question (and any page context the widget attaches) is sent to
+**Anthropic PBC (United States)** to generate the answer; Anthropic acts as a
+data **processor** for the club. The question text is **not** stored by this app —
+only aggregate metering (token counts, cost, success/failure) is kept, never the
+question itself. The in-widget disclaimer already warns members not to include
+personal details, but the club's own **privacy statement is club-authored**
+(PageContent `/privacy`), so a club enabling this module should add Anthropic to
+its list of processors. Suggested wording:
+
+> _"If you use our in-app AI help assistant, the question you type is sent to
+> Anthropic PBC (United States), our AI processor, to generate a reply. We do not
+> store the text of your question. Please don't include personal or sensitive
+> details in AI help questions."_
 
 ## Operational Xero
 

@@ -14,6 +14,7 @@ import { HelpWidgetAdmin } from "@/components/help-widget/help-widget-admin";
 import { getCachedClubIdentity } from "@/lib/public-layout-config";
 import { clubThemeFontVariableClassName } from "@/lib/club-theme-fonts";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
+import { getAiAssistantAvailability } from "@/lib/ai-assistant-config";
 import { isFullAdmin } from "@/lib/access-roles";
 import {
   getAdminPermissionMatrix,
@@ -137,6 +138,12 @@ export default async function AdminLayout({
   const liveClubIdentity = { ...clubIdentity, lodgeCapacity };
   const nonce = requestHeaders.get(CSP_NONCE_HEADER) ?? undefined;
 
+  // Paid AI free-text path: module on AND a usable Anthropic key stored. Budget
+  // is deliberately not checked at render (runtime fallback handles it).
+  const llmEnabled =
+    effectiveModules.aiAssistant &&
+    (await getAiAssistantAvailability(effectiveModules));
+
   return (
     <AppProviders clubIdentity={liveClubIdentity} nonce={nonce}>
       <div
@@ -194,7 +201,11 @@ export default async function AdminLayout({
         </div>
         <MemberOnboardingWizard initialShouldShow={showOnboardingWizard} />
         <ReportIssueWidget avoidDesktopSidebar />
-        <HelpWidgetAdmin scope="admin" llmEnabled={false} />
+        <HelpWidgetAdmin
+          scope="admin"
+          llmEnabled={llmEnabled}
+          chatEndpoint="/api/help/chat"
+        />
         </HelpWidgetProvider>
       </div>
     </AppProviders>
