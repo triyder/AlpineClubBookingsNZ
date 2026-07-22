@@ -189,6 +189,15 @@ VoiceOver) walkthroughs remain a human task.
 Fixed in this pass (booking wizard, date picker, admin members, plus the
 configurable palette):
 
+> **Superseded (2026-07, theme epic #2181).** The blocking contrast gate
+> described in the first bullet below no longer exists. The theme moved to a
+> **3-seed generated substrate** whose cross-colour contrast is guaranteed by
+> construction, so a low-contrast pick is now **adjusted and disclosed**
+> (before → after) rather than rejected, and the wizard accepts **hex only** (the
+> oklch input path is gone). `getBlockingContrastWarnings` survives only as an
+> advisory helper and gates no save. The record below is kept as the point-in-time
+> state after #1149.
+
 - **Colour contrast is now enforced, not just warned.** `getBlockingContrastWarnings`
   drives both the `/admin/site-style` API (`400` on a measurable sub-AA pair) and
   the wizard's disabled Save/Finish buttons, so an admin can no longer save a

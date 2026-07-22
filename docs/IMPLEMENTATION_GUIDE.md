@@ -73,10 +73,13 @@ The public `*.example.*` files are placeholders for forks and documentation.
 
 For the Tokoroa transition, run the seed with
 `SEED_TOKOROA_THEME_COMPLETE=1` in the private deployment fork. It pre-populates
-the current Tokoroa palette (`#ffcb05`, `#4d4d46`, `#2f2f2b`, `#6a6a63`,
-`#d9d5c2`, `#f7f5ed`, `#ff7c12`), marks the wizard complete, and imports
-`public/branding/logo.png` into the theme when present and within the 900KB
-limit.
+that fork's three brand **seed** colours — an accent, an optional neutral
+character, and an optional support accent, the only colour fields a club stores
+under the #2181 3-seed model (the generator derives the full light/dark palette
+from them) — marks the wizard complete, and imports `public/branding/logo.png`
+into the theme when present and within the 900KB limit. The fork's actual seed
+values live in its own `ClubTheme` database row; per standing directive D15 they
+are not reproduced in this public repo's docs.
 
 ## 3. Configure Local Environment
 
