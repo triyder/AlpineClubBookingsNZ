@@ -2857,6 +2857,33 @@ model IntegrationWizardProgress {
   @@index([updatedAt])
 }
 
+// Intent-to-receive (ITR) receipt sink for a provider's inbound webhook
+// subscription (#2081, C3). Xero's ITR validation request carries an EMPTY
+// `events: []` array, so the per-event inbound-event recorder leaves no trace of
+// a successful validation. This row is the explicit marker the setup wizard
+// polls: one row per provider ("xero" here), stamped whenever a valid-signature
+// empty-events POST arrives on the real webhook route.
+//
+// FRESHNESS SCOPING (binding, #2081): the verify only goes green on a marker
+// whose `validatedAt` is newer than the operator's verify-start AND whose
+// `keyFingerprint` matches the CURRENTLY stored webhook key — a stale marker
+// from an earlier verification, or one recorded under a previous webhook key,
+// can never satisfy a new verify. `keyFingerprint` is a non-reversible SHA-256
+// of the webhook key (never the key itself), so replacing the key re-arms
+// verification (the fingerprint stops matching) without exposing any secret.
+model WebhookValidationReceipt {
+  id             String   @id @default(cuid())
+  // Logical provider namespace ("xero"; future providers reuse this table).
+  provider       String   @unique
+  // When the last valid ITR ping was received (server clock at receipt).
+  validatedAt    DateTime
+  // Non-reversible fingerprint (SHA-256 hex) of the webhook key that validated
+  // it — binds the marker to a key identity WITHOUT ever storing the key.
+  keyFingerprint String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
 // ---------------------------------------------------------------------------
 // Finance Snapshot Storage
 // ---------------------------------------------------------------------------

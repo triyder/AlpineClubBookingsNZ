@@ -83,8 +83,9 @@ export async function ensureDefaultSeasonSubscriptionForNewMember(
  * The write is a narrow, idempotent, status-guarded `updateMany` — the same
  * classification as the Xero sync's `writeXeroDerivedSubscriptionState`: no
  * advisory lock is required because the WHERE guard makes clobbering structurally
- * impossible (it never touches a paid, invoiced, charge/family-covered, or
- * manually-marked row) and a second run matches nothing. It performs NO provider
+ * impossible (it never touches a paid, invoiced, actively charge/family-covered
+ * — releasedAt IS NULL, the #2147 "already billed" rule — or manually-marked
+ * row) and a second run matches nothing. It performs NO provider
  * calls, so it is safe to run inside the caller's assignment transaction.
  */
 export async function reconcileSeasonSubscriptionForAssignment(
@@ -110,19 +111,31 @@ export async function reconcileSeasonSubscriptionForAssignment(
       status: true,
       xeroInvoiceId: true,
       manuallyMarkedPaidAt: true,
-      chargeCoverage: { select: { id: true } },
+      // #2147/#2179: chargeCoverage is a to-many list (a released claim is
+      // retained alongside any fresh active claim), so the real client always
+      // returns an array — never null. Only an ACTIVE claim (releasedAt IS
+      // NULL) means "already billed/covered": the same active-only rule as the
+      // billing sweep's dedup skip-set and the confirm coveredAlready check. A
+      // released claim's charge invoice was voided, which makes the member
+      // re-billable, so it must NOT block flipping the stale seed row to the
+      // sweep's canonical un-invoiced status.
+      chargeCoverage: {
+        where: { releasedAt: null },
+        take: 1,
+        select: { id: true },
+      },
     },
   });
 
   // Only the untouched creation/seed default is reconciled: a paid, invoiced,
-  // charge/family-covered, or manually-marked row is real billing state and is
-  // left alone.
+  // actively charge/family-covered, or manually-marked row is real billing
+  // state and is left alone.
   if (
     !existing ||
     existing.status !== "NOT_REQUIRED" ||
     existing.xeroInvoiceId !== null ||
     existing.manuallyMarkedPaidAt !== null ||
-    existing.chargeCoverage !== null
+    existing.chargeCoverage.length > 0
   ) {
     return { reconciled: false };
   }
@@ -131,11 +144,16 @@ export async function reconcileSeasonSubscriptionForAssignment(
     where: {
       memberId: params.memberId,
       seasonYear: params.seasonYear,
-      // Re-assert the scalar guard at write time so a concurrent writer that
+      // Re-assert the read guard at write time so a concurrent writer that
       // moved the row between the read above and here still cannot be clobbered.
       status: "NOT_REQUIRED",
       xeroInvoiceId: null,
       manuallyMarkedPaidAt: null,
+      // #2179: the coverage guard must be re-asserted relationally too — a
+      // NO_INVOICE billing confirm creates an ACTIVE coverage claim while
+      // leaving the row NOT_REQUIRED, so the scalar guards alone cannot
+      // exclude a claim that landed between the read above and this write.
+      chargeCoverage: { none: { releasedAt: null } },
     },
     data: { status: "NOT_INVOICED" },
   });

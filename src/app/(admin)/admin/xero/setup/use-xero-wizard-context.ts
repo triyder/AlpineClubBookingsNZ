@@ -16,6 +16,8 @@ export interface XeroCredentialFieldMeta {
   setAt: string | null;
 }
 
+export type XeroCredentialKey = "client_id" | "client_secret" | "webhook_key";
+
 export interface XeroWizardContext {
   /** Resolved OAuth redirect URI (from NEXTAUTH_URL, server-provided). */
   redirectUri: string;
@@ -24,7 +26,7 @@ export interface XeroWizardContext {
   /** Legacy XERO_* env vars still present (server-detected); empty when clean. */
   legacyEnvVars: string[];
   /** Metadata-only credential status (never a value). */
-  credentials: Record<"client_id" | "client_secret", XeroCredentialFieldMeta>;
+  credentials: Record<XeroCredentialKey, XeroCredentialFieldMeta>;
   /** Whether the viewer may write credentials (Full Admin only). */
   isFullAdmin: boolean;
   /** Xero OAuth connection state. */
@@ -33,11 +35,22 @@ export interface XeroWizardContext {
   needsReentry: boolean;
   /** Connected organisation name for the right-org confirmation, when known. */
   orgName: string | null;
+  /** Webhook delivery URL to paste into the Xero portal ({origin}/api/webhooks/xero). */
+  webhookDeliveryUrl: string;
+  /**
+   * Whether this deployment can actually verify webhooks: a public HTTPS origin
+   * (not localhost / not plain HTTP). When false the step explains why and
+   * defaults to Skip.
+   */
+  webhooksVerifiable: boolean;
+  /** Persistent webhook verification (marker matches the current key). */
+  webhookVerified: boolean;
 }
 
 const CREDENTIALS_ENDPOINT = "/api/admin/integrations/credentials?provider=xero";
 const STATUS_ENDPOINT = "/api/admin/xero/status";
 const ORG_ENDPOINT = "/api/admin/xero/organisation";
+const WEBHOOK_STATUS_ENDPOINT = "/api/admin/xero/webhook/verify-status";
 
 const EMPTY_META: XeroCredentialFieldMeta = { set: false, setAt: null };
 
@@ -51,11 +64,18 @@ interface StatusResponse {
 interface OrgResponse {
   name?: string | null;
 }
+interface WebhookStatusResponse {
+  verified?: boolean;
+}
 
 export interface XeroWizardServerConfig {
   redirectUri: string;
   companyUrl: string;
   legacyEnvVars: string[];
+  /** {origin}/api/webhooks/xero, or "" when no NEXTAUTH_URL origin is resolvable. */
+  webhookDeliveryUrl: string;
+  /** Public-HTTPS, non-localhost origin (webhooks can actually validate here). */
+  webhooksVerifiable: boolean;
 }
 
 export function useXeroWizardContext(serverConfig: XeroWizardServerConfig): {
@@ -70,17 +90,23 @@ export function useXeroWizardContext(serverConfig: XeroWizardServerConfig): {
 
   const [loading, setLoading] = useState(true);
   const [credentials, setCredentials] = useState<
-    Record<"client_id" | "client_secret", XeroCredentialFieldMeta>
-  >({ client_id: EMPTY_META, client_secret: EMPTY_META });
+    Record<XeroCredentialKey, XeroCredentialFieldMeta>
+  >({
+    client_id: EMPTY_META,
+    client_secret: EMPTY_META,
+    webhook_key: EMPTY_META,
+  });
   const [connected, setConnected] = useState(false);
   const [needsReentry, setNeedsReentry] = useState(false);
   const [orgName, setOrgName] = useState<string | null>(null);
+  const [webhookVerified, setWebhookVerified] = useState(false);
 
   const load = useCallback(async (forceOrgRefresh = false) => {
     try {
-      const [credRes, statusRes] = await Promise.all([
+      const [credRes, statusRes, webhookRes] = await Promise.all([
         fetch(CREDENTIALS_ENDPOINT, { credentials: "same-origin" }),
         fetch(STATUS_ENDPOINT, { credentials: "same-origin" }),
+        fetch(WEBHOOK_STATUS_ENDPOINT, { credentials: "same-origin" }),
       ]);
 
       if (credRes.ok) {
@@ -95,6 +121,10 @@ export function useXeroWizardContext(serverConfig: XeroWizardServerConfig): {
             set: Boolean(rows.client_secret?.set),
             setAt: rows.client_secret?.setAt ?? null,
           },
+          webhook_key: {
+            set: Boolean(rows.webhook_key?.set),
+            setAt: rows.webhook_key?.setAt ?? null,
+          },
         });
       }
 
@@ -104,6 +134,11 @@ export function useXeroWizardContext(serverConfig: XeroWizardServerConfig): {
         isConnected = Boolean(data.connected);
         setConnected(isConnected);
         setNeedsReentry(Boolean(data.needsReentry));
+      }
+
+      if (webhookRes.ok) {
+        const data = (await webhookRes.json()) as WebhookStatusResponse;
+        setWebhookVerified(Boolean(data.verified));
       }
 
       // Only read the org (a Xero API call) when actually connected. An explicit
@@ -149,6 +184,9 @@ export function useXeroWizardContext(serverConfig: XeroWizardServerConfig): {
     connected,
     needsReentry,
     orgName,
+    webhookDeliveryUrl: serverConfig.webhookDeliveryUrl,
+    webhooksVerifiable: serverConfig.webhooksVerifiable,
+    webhookVerified,
   };
 
   return { context, loading, refresh };

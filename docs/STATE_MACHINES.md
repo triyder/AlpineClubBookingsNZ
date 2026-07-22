@@ -837,7 +837,9 @@ never downgrades a manually marked-paid row that carries no Xero invoice link
 link/push/unlink. The assignment reconcile
 (`reconcileSeasonSubscriptionForAssignment`, #2149) only ever flips a row that is
 still the untouched creation-seeded `NOT_REQUIRED` default (null Xero invoice, no
-charge/family coverage, no manual mark-paid) and only when the newly-effective
+ACTIVE charge-coverage claim — `releasedAt IS NULL`, the #2147 "already billed"
+rule, so a released claim from a voided invoice does not block the re-billable
+member — and no manual mark-paid) and only when the newly-effective
 type is `REQUIRED`; it is a status-guarded, idempotent `updateMany` (no advisory
 lock, no provider call) that runs inside the assignment transaction, so it can
 never downgrade a paid/invoiced/covered/manual row and never fires for a

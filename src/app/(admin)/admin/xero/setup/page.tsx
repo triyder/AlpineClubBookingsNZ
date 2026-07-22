@@ -1,6 +1,7 @@
 import {
   detectLegacyProviderEnv,
   getOperationalXeroRedirectUri,
+  getXeroWebhooksVerifiable,
 } from "@/lib/xero-config";
 import { XeroSetupPageClient } from "../_components/xero-setup-page-client";
 
@@ -14,9 +15,24 @@ export default function XeroSetupPage() {
   const legacyEnvVars =
     detectLegacyProviderEnv().find((f) => f.provider === "xero")?.vars ?? [];
 
+  // Webhook delivery URL + whether this deployment can validate webhooks at all.
+  // Xero only reaches a PUBLIC HTTPS origin; a localhost/plain-HTTP deployment
+  // (typical dev/self-host-behind-tunnel-not-yet) can store a key but can never
+  // receive the intent-to-receive ping, so the step there defaults to Skip.
+  const webhookDeliveryUrl = companyUrl ? `${companyUrl}/api/webhooks/xero` : "";
+  // Shared derivation (src/lib/xero-config) so the wizard step, this page, and
+  // the verify-status route / amber badge all agree on verifiability.
+  const webhooksVerifiable = getXeroWebhooksVerifiable();
+
   return (
     <XeroSetupPageClient
-      serverConfig={{ redirectUri, companyUrl, legacyEnvVars }}
+      serverConfig={{
+        redirectUri,
+        companyUrl,
+        legacyEnvVars,
+        webhookDeliveryUrl,
+        webhooksVerifiable,
+      }}
     />
   );
 }

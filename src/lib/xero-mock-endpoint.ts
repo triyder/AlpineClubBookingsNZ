@@ -149,6 +149,62 @@ export async function handleMockXeroCallback(
   });
 }
 
+// Fixture chart of accounts + items the gated mock endpoints return, shared with
+// the mapping-step E2E so it can assert the wizard renders real-looking pickers.
+// Kept deliberately small — enough to cover the REVENUE/EXPENSE/BANK types the
+// account-mapping rows filter on, plus a couple of sold items.
+export const MOCK_XERO_ACCOUNTS = [
+  { code: "200", name: "Hut Fees Income", type: "REVENUE", class: "REVENUE" },
+  { code: "260", name: "Subscription Income", type: "REVENUE", class: "REVENUE" },
+  { code: "404", name: "Bank Fees", type: "EXPENSE", class: "EXPENSE" },
+  { code: "090", name: "Business Bank Account", type: "BANK", class: "ASSET" },
+] as const;
+
+export const MOCK_XERO_ITEMS = [
+  {
+    itemID: "item-hut-fee",
+    code: "HUT",
+    name: "Hut Fee",
+    description: "Overnight hut fee",
+  },
+  {
+    itemID: "item-joining",
+    code: "JOIN",
+    name: "Joining Fee",
+    description: "Membership joining fee",
+  },
+] as const;
+
+/** Mock chart-of-accounts read for the mapping step. */
+export async function fetchMockChartOfAccounts(
+  origin: string,
+): Promise<Array<{ code: string; name: string; type: string; class: string }>> {
+  const res = await fetch(mockUrl(origin, "/chart-of-accounts"));
+  if (!res.ok) return [];
+  return (await res.json()) as Array<{
+    code: string;
+    name: string;
+    type: string;
+    class: string;
+  }>;
+}
+
+/** Mock items read for the mapping step. */
+export async function fetchMockXeroItems(
+  origin: string,
+): Promise<
+  Array<{ itemID: string; code: string; name: string; description: string }>
+> {
+  const res = await fetch(mockUrl(origin, "/items"));
+  if (!res.ok) return [];
+  return (await res.json()) as Array<{
+    itemID: string;
+    code: string;
+    name: string;
+    description: string;
+  }>;
+}
+
 export interface MockXeroOrganisation {
   name: string | null;
   financialYearEndMonth: number | null;
