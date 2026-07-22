@@ -351,10 +351,12 @@ function channelToLinear(value: number) {
 
 const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
 
-// Linear sRGB for an oklch() colour. The value field on the site-style wizard
-// accepts any schema-valid colour (hex or oklch), so contrast enforcement has to
-// measure oklch too — otherwise an admin could paste a low-contrast oklch pair
-// straight through the gate. oklch -> oklab -> linear sRGB uses Björn Ottosson's
+// Linear sRGB for an oklch() colour. User INPUT is hex-only (#2187 D6:
+// `isValidThemeColour` is a hex regex; the oklch paste-in path is gone), so this
+// path never runs on an admin-entered value. It stays because the internal
+// derivation still MEASURES oklch literals — the curated dark `*-muted` surfaces
+// are authored in oklch (SEMANTIC_MUTED_SURFACES_DARK), and the muted-tone clamp
+// mixes/measures against them. oklch -> oklab -> linear sRGB uses Björn Ottosson's
 // matrices; the linear RGB it yields is exactly what the luminance sum needs (no
 // extra gamma step), clamped for out-of-gamut hues.
 function oklchToLinearRgb(
@@ -813,11 +815,15 @@ export function getContrastWarnings(
 }
 
 /**
- * The subset of contrast warnings that must block a save: pairs whose ratio is
- * measurable and below the WCAG AA 4.5:1 text minimum. Both accepted colour
- * formats (hex and oklch) are measured, so this covers every value an admin can
- * enter. The ratio === null guard is a defensive fallback for a value that
- * somehow parses to neither; such a pair stays advisory rather than blocking.
+ * The subset of contrast warnings whose ratio is measurable and below the WCAG
+ * AA 4.5:1 text minimum. #2187 removed the blocking save gate — the generated
+ * substrate guarantees contrast by construction, so a low-contrast seed is
+ * ADJUSTED and disclosed (before → after in the wizard), never rejected. This
+ * helper therefore gates NO save; it is retained as an advisory signal (the
+ * wizard's adjusted-colour disclosure) and pinned by club-theme-schema.test.ts as
+ * empty for the shipped palettes. Input is hex-only, so `contrastRatio` measures
+ * every value an admin can enter; the ratio === null guard is a defensive
+ * fallback for a value that parses to neither format.
  */
 export function getBlockingContrastWarnings(
   value: Partial<Record<keyof ClubThemeValues, unknown>>,
