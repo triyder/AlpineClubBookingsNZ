@@ -1,6 +1,7 @@
 "use client";
 
-import { Loader2, Save } from "lucide-react";
+import Link from "next/link";
+import { ArrowRight, Loader2, Save } from "lucide-react";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -41,7 +42,12 @@ import type { ModuleSettingsValues } from "@/config/modules";
  */
 export interface GoogleSecurityCardProps {
   moduleSettings: ModuleSettingsValues;
+  /** Both Google credentials are stored in the encrypted C1 store (#2087). */
   credentialsConfigured: boolean;
+  /** A real OAuth round-trip has verified the stored credentials (D2 gate). */
+  verified: boolean;
+  /** A stored Google credential can no longer be decrypted (auth secret changed). */
+  needsReentry?: boolean;
 }
 
 const TOGGLE_FAIL_MESSAGE = "Could not update the Google sign-in setting.";
@@ -53,8 +59,14 @@ interface GoogleDraft {
 export function GoogleSecurityCard({
   moduleSettings,
   credentialsConfigured,
+  verified,
+  needsReentry = false,
 }: GoogleSecurityCardProps) {
   const canEdit = useAdminAreaEditAccess("support");
+  // D2 hard gate: the module may only be turned ON once a real OAuth round-trip
+  // has verified readable credentials. This mirrors the authoritative server-side
+  // gate in PUT /api/admin/modules; the toggle here stays locked until then.
+  const canEnable = verified && !needsReentry;
 
   const section = useSectionEditState<GoogleDraft>({
     initial: { enabled: moduleSettings.googleLogin },
@@ -158,30 +170,57 @@ export function GoogleSecurityCard({
           </p>
         )}
 
-        {enabled && !credentialsConfigured && (
-          <Alert variant="warning" title="Google credentials not configured">
-            With Google sign-in enabled, the sign-in button will not appear
-            until <code>GOOGLE_CLIENT_ID</code> and{" "}
-            <code>GOOGLE_CLIENT_SECRET</code> are configured server-side (your
-            club&apos;s Google Cloud OAuth credentials).
+        {needsReentry && (
+          <Alert variant="warning" title="Google credentials need re-entering">
+            A stored Google credential can no longer be read (the app encryption
+            key changed). Re-enter your Client ID and Client secret and verify
+            again on the{" "}
+            <Link
+              href="/admin/google/setup"
+              className="font-medium underline underline-offset-4"
+            >
+              Google sign-in setup page
+            </Link>
+            .
+          </Alert>
+        )}
+
+        {!canEnable && !needsReentry && (
+          <Alert variant="warning" title="Finish setup before enabling">
+            Google sign-in is set up entirely in-app — no environment variables
+            or restart.{" "}
+            {credentialsConfigured
+              ? "Your credentials are stored but not yet verified — complete a verification round-trip"
+              : "Enter your Google Cloud OAuth credentials and complete a verification round-trip"}{" "}
+            on the{" "}
+            <Link
+              href="/admin/google/setup"
+              className="inline-flex items-center gap-1 font-medium underline underline-offset-4"
+            >
+              Google sign-in setup page
+              <ArrowRight className="h-3.5 w-3.5" aria-hidden />
+            </Link>{" "}
+            before turning it on here.
           </Alert>
         )}
 
         <label className="flex items-start gap-3">
           <Checkbox
             checked={enabled}
-            disabled={!editing || saving}
+            // Locked until verified (D2). An already-ON module can still be
+            // turned OFF (e.g. after a re-lock), so only block enabling.
+            disabled={!editing || saving || (!canEnable && !enabled)}
             onCheckedChange={(checked) =>
-              section.setDraft({ enabled: checked === true })
+              section.setDraft({ enabled: checked === true && canEnable })
             }
             aria-label="Enable Google sign-in"
           />
           <span className="text-sm">
             <span className="font-medium">Enable Google sign-in</span>
             <span className="block text-muted-foreground">
-              When on (and credentials are configured), the sign-in page shows a
-              &ldquo;Continue with Google&rdquo; button, and members can link their
-              Google account from their profile.
+              When on (and credentials are configured and verified in-app), the
+              sign-in page shows a &ldquo;Continue with Google&rdquo; button, and
+              members can link their Google account from their profile.
             </span>
           </span>
         </label>

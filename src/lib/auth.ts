@@ -10,6 +10,7 @@ import type { AppRole } from "./member-roles";
 import {
   hasAccessRole,
   isAccessRole,
+  isFullAdmin,
   type AppAccessRole,
 } from "./access-roles";
 import {
@@ -25,10 +26,12 @@ import { hashActionToken, isActionTokenFormat } from "./action-tokens";
 import {
   linkGoogleAccount,
   readGoogleLinkIntent,
+  readGoogleVerifyIntent,
   resolveGoogleProfile,
   type GoogleMemberUser,
   type GoogleProfileResult,
 } from "./google-oauth";
+import { getGoogleOAuthConfig, recordGoogleVerified } from "./google-config";
 
 class EmailNotVerifiedError extends CredentialsSignin {
   code = "EMAIL_NOT_VERIFIED";
@@ -142,6 +145,40 @@ function getTokenSessionIssuedAtMs(token: {
   }
 
   return Date.now();
+}
+
+/**
+ * Build the Google OAuth provider (#2035 semantics, frozen). JWT strategy, NO
+ * adapter. The provider `profile()` maps a Google identity to OUR member identity
+ * by `googleSub === profile.sub` ONLY (never email-match, never provision),
+ * returning the EXACT same user shape as the Credentials providers so the
+ * UNCHANGED jwt/session callbacks stamp role, the admin-permission matrix, and
+ * the 2FA claims identically. Every gate and the module kill-switch are finalised
+ * in the signIn callback. The same provider serves account-linking, disambiguated
+ * there by the short-lived link-intent cookie.
+ *
+ * Only the SOURCE of clientId/clientSecret changed in #2087: the runtime config
+ * resolves them from the encrypted C1 store and passes them here; the static
+ * test-seam config passes them unset (as when the env vars were unset).
+ */
+function buildGoogleProvider(credentials: {
+  clientId?: string;
+  clientSecret?: string;
+}) {
+  return Google({
+    clientId: credentials.clientId,
+    clientSecret: credentials.clientSecret,
+    // Never auto-link by matching email across identity providers — linking is
+    // profile-initiated only.
+    allowDangerousEmailAccountLinking: false,
+    async profile(profile) {
+      // Pure sub-only resolver (no writes). Returns the member user shape when
+      // eligible, else a sentinel carrying the refusal reason for signIn. The
+      // sentinel intentionally omits the augmented User fields (it can never
+      // mint a session — signIn refuses first), so cast past the User type.
+      return (await resolveGoogleProfile(profile)) as unknown as GoogleMemberUser;
+    },
+  });
 }
 
 // test seam
@@ -310,29 +347,14 @@ export const authConfig = {
         };
       },
     }),
-    // Google OAuth sign-in via profile-initiated linking (#2035). JWT strategy,
-    // NO adapter. The provider `profile()` maps a Google identity to OUR member
-    // identity by `googleSub === profile.sub` ONLY (never email-match, never
-    // provision), returning the EXACT same user shape as the Credentials
-    // providers so the UNCHANGED jwt/session callbacks stamp role, the
-    // admin-permission matrix, and the 2FA claims identically. Every gate and
-    // the module kill-switch are finalised in the signIn callback below. The
-    // same provider also serves account-linking, disambiguated there by the
-    // short-lived link-intent cookie.
-    Google({
-      clientId: process.env.GOOGLE_CLIENT_ID,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-      // Never auto-link by matching email across identity providers — linking is
-      // profile-initiated only.
-      allowDangerousEmailAccountLinking: false,
-      async profile(profile) {
-        // Pure sub-only resolver (no writes). Returns the member user shape when
-        // eligible, else a sentinel carrying the refusal reason for signIn. The
-        // sentinel intentionally omits the augmented User fields (it can never
-        // mint a session — signIn refuses first), so cast past the User type.
-        return (await resolveGoogleProfile(profile)) as unknown as GoogleMemberUser;
-      },
-    }),
+    // Google OAuth sign-in via profile-initiated linking (#2035, #2087). The
+    // client id/secret now come from the encrypted C1 store (DB-only), resolved
+    // per-request by the function-form config below — so this STATIC entry (the
+    // test seam) carries unset credentials, exactly as it did when the env vars
+    // were unset. At runtime the provider is registered ONLY when credentials
+    // resolve, and omitted otherwise (buildRequestAuthConfig). See
+    // buildGoogleProvider for the frozen #2035 profile()/link semantics.
+    buildGoogleProvider({}),
   ],
   callbacks: {
     // Gate + disambiguate every Google round-trip. Non-Google providers are
@@ -348,6 +370,32 @@ export const authConfig = {
 
       const sub =
         profile && typeof profile.sub === "string" ? profile.sub : null;
+
+      // SETUP-WIZARD VERIFY round-trip (#2087). Checked BEFORE the module
+      // kill-switch: verifying credentials must work even while googleLogin is
+      // still disabled (it is disabled until this very verify passes, D2). Being
+      // here at all means @auth/core already exchanged the authorization code
+      // with Google using the stored client id + secret — the exact production
+      // round-trip — so this IS the proof of success. We record verification and
+      // redirect WITHOUT minting a session or linking anything.
+      const verifyIntent = await readGoogleVerifyIntent();
+      if (verifyIntent) {
+        // Bind to the CURRENT session: only the Full Admin who started the verify
+        // may complete it (mirrors the link-flow shared-device guard). A stale
+        // verify cookie on a shared device can therefore never mark Google
+        // verified on someone else's OAuth round-trip. auth() here only decodes
+        // the session cookie (no recursion into this callback).
+        const session = await auth();
+        if (
+          session?.user?.id === verifyIntent.memberId &&
+          isFullAdmin({ accessRoles: session.user.accessRoles })
+        ) {
+          await recordGoogleVerified();
+          return "/admin/google/setup?googleVerified=1";
+        }
+        return "/admin/google/setup?googleVerifyError=1";
+      }
+
       // Read (and best-effort clear) the link-intent cookie set by the
       // authenticated profile "Connect Google" route. Present ⇒ link round-trip.
       const intent = await readGoogleLinkIntent();
@@ -586,7 +634,56 @@ export const authConfig = {
   },
 } satisfies NextAuthConfig;
 
-const nextAuth = NextAuth(authConfig);
+/**
+ * The always-present providers (password + magic-link Credentials). Derived from
+ * the static config by IDENTITY — every provider that is NOT the Google OAuth
+ * provider — so they are defined exactly once and a future provider inserted
+ * ahead of Google can never be silently dropped (a positional slice would).
+ * The function-form config below reuses these and decides whether to append a
+ * freshly-credentialled Google provider per request.
+ */
+const GOOGLE_PROVIDER_ID = "google";
+const baseProviders = authConfig.providers.filter(
+  (provider) => (provider as { id?: string }).id !== GOOGLE_PROVIDER_ID,
+);
+
+/**
+ * Request-scoped NextAuth config (#2087). The provider list is computed PER
+ * REQUEST from the DB credential state: Google is appended only when its
+ * credentials resolve, and OMITTED otherwise — no ghost "Continue with Google"
+ * button, no direct-URL provider error (observable at `/api/auth/providers`).
+ *
+ * FAIL-OPEN (epic decision 7): because this single config is shared by EVERY
+ * sign-in method, resolution must never throw. `getGoogleOAuthConfig` already
+ * fails open to `null`; the extra try/catch here is defence in depth so a DB or
+ * decrypt failure can only ever DROP Google, never break credentials/magic-link/
+ * 2FA sign-in. Exported for tests (the fail-open acceptance test asserts the
+ * base providers survive while the resolver throws).
+ */
+export async function buildRequestAuthConfig(): Promise<NextAuthConfig> {
+  let google: Awaited<ReturnType<typeof getGoogleOAuthConfig>> = null;
+  try {
+    google = await getGoogleOAuthConfig();
+  } catch (error) {
+    logger.error(
+      { err: error instanceof Error ? error.name : "unknown" },
+      "Google OAuth resolver threw — omitting the Google provider (fail-open)",
+    );
+    google = null;
+  }
+  return {
+    ...authConfig,
+    providers: google
+      ? [...baseProviders, buildGoogleProvider(google)]
+      : baseProviders,
+  };
+}
+
+// v5 request-scoped function form: the config (hence the provider list) is
+// recomputed per request from live DB credential state. next-auth@5.0.0-beta.31
+// supports `NextAuth((request) => Awaitable<NextAuthConfig>)`; the request arg is
+// unused (the only per-request input is the DB credential state).
+const nextAuth = NextAuth(buildRequestAuthConfig);
 
 export const { handlers, signIn, signOut, unstable_update: updateSession } =
   nextAuth;

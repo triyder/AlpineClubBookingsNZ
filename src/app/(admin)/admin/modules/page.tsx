@@ -85,6 +85,7 @@ function readinessLabel(status: ModuleReadinessStatus) {
 // (#2080). C4/C5 add their providers here as their wizards land.
 const MODULE_SETUP_HREFS: Partial<Record<ModuleKey, string>> = {
   xeroIntegration: "/admin/xero/setup",
+  googleLogin: "/admin/google/setup",
 };
 
 function getReadiness(

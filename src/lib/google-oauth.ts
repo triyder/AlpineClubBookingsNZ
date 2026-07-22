@@ -4,6 +4,7 @@ import type { AppRole } from "./member-roles";
 import { prisma } from "./prisma";
 import { getAuthSecret } from "./runtime-config";
 import logger from "./logger";
+import { getGoogleOAuthConfig } from "./google-config";
 import {
   buildStructuredAuditLogCreateArgs,
   type StructuredAuditEvent,
@@ -49,6 +50,18 @@ export const GOOGLE_LINK_INTENT_COOKIE = "acb.google_link_intent";
 // is treated as a link" UX window if best-effort clearing fails.
 export const GOOGLE_LINK_INTENT_TTL_SECONDS = 5 * 60;
 
+// Setup-wizard "Verify" round-trip (#2087). A Full Admin proves the stored
+// Google credentials work by clicking through Google consent as themselves: the
+// verify-intent cookie (set only by the authenticated Full-Admin verify-start
+// route) marks the ensuing OAuth callback as a verification rather than a login
+// or link. It is namespaced (`k: "verify"`) so a link cookie can never be
+// replayed as a verify or vice versa, HMAC-signed like the link cookie, and
+// bounded by the same short TTL. Reaching the signIn callback with this cookie
+// present is itself the proof of success — @auth/core only runs signIn AFTER it
+// has exchanged the authorization code with Google using the client id + secret.
+export const GOOGLE_VERIFY_INTENT_COOKIE = "acb.google_verify_intent";
+export const GOOGLE_VERIFY_INTENT_TTL_SECONDS = 5 * 60;
+
 /**
  * The user shape returned to next-auth on a successful Google LOGIN. Byte-for-byte
  * identical to the password + magic-link Credentials providers so the UNCHANGED
@@ -90,12 +103,15 @@ export type GoogleProfileResult =
       googleLoginStatus: Exclude<GoogleLoginStatus, "ok">;
     };
 
-/** True when both per-club Google OAuth secrets are configured server-side. */
-export function googleCredentialsConfigured(): boolean {
-  return Boolean(
-    process.env.GOOGLE_CLIENT_ID?.trim() &&
-      process.env.GOOGLE_CLIENT_SECRET?.trim(),
-  );
+/**
+ * True when both per-club Google OAuth credentials are configured — resolved
+ * from the encrypted C1 store (DB-only, #2087), NOT the environment. The legacy
+ * `GOOGLE_CLIENT_*` env vars are ignored (detected + warned about elsewhere).
+ * Async because the resolution is a cache-backed DB fetch; FAIL-OPEN (returns
+ * false, never throws) via `getGoogleOAuthConfig`.
+ */
+export async function googleCredentialsConfigured(): Promise<boolean> {
+  return Boolean(await getGoogleOAuthConfig());
 }
 
 function base64url(input: Buffer | string): string {
@@ -158,8 +174,17 @@ function verifyIntentValue(value: string | undefined): GoogleLinkIntent | null {
   try {
     const decoded = JSON.parse(
       Buffer.from(payload, "base64").toString("utf8"),
-    ) as { m?: unknown; e?: unknown };
-    if (typeof decoded.m !== "string" || typeof decoded.e !== "number") {
+    ) as { m?: unknown; e?: unknown; k?: unknown };
+    // Symmetric namespace guard (mirrors the `k: "verify"` check on the verify
+    // side): a genuine LINK cookie never carries a `k`, so any payload that DOES
+    // carry one — e.g. a validly-signed verify cookie — must be refused here.
+    // This keeps the two intents disjoint in BOTH directions even though they
+    // share the same HMAC key.
+    if (
+      decoded.k !== undefined ||
+      typeof decoded.m !== "string" ||
+      typeof decoded.e !== "number"
+    ) {
       return null;
     }
     if (decoded.e <= Date.now()) {
@@ -184,6 +209,94 @@ export async function readGoogleLinkIntent(): Promise<GoogleLinkIntent | null> {
   if (intent) {
     try {
       store.delete(GOOGLE_LINK_INTENT_COOKIE);
+    } catch {
+      // Best-effort; TTL bounds a surviving cookie.
+    }
+  }
+  return intent;
+}
+
+// ---------------------------------------------------------------------------
+// Setup-wizard "Verify" intent cookie (#2087)
+// ---------------------------------------------------------------------------
+
+export interface GoogleVerifyIntent {
+  memberId: string;
+}
+
+/**
+ * Build the signed value for the verify-intent cookie, binding the Full Admin's
+ * member id and an absolute expiry. Namespaced with `k: "verify"` so it can only
+ * ever be interpreted as a verification, never as a link (and vice versa).
+ * Format: `base64url(json).base64url(hmac)`.
+ */
+export function buildGoogleVerifyIntentValue(memberId: string): string {
+  const payload = base64url(
+    JSON.stringify({
+      m: memberId,
+      e: Date.now() + GOOGLE_VERIFY_INTENT_TTL_SECONDS * 1000,
+      k: "verify",
+    }),
+  );
+  return `${payload}.${sign(payload)}`;
+}
+
+function verifyVerifyIntentValue(
+  value: string | undefined,
+): GoogleVerifyIntent | null {
+  if (!value) return null;
+  const dot = value.lastIndexOf(".");
+  if (dot <= 0) return null;
+  const payload = value.slice(0, dot);
+  const sig = value.slice(dot + 1);
+
+  const expected = sign(payload);
+  const sigBuf = Buffer.from(sig);
+  const expectedBuf = Buffer.from(expected);
+  if (
+    sigBuf.length !== expectedBuf.length ||
+    !timingSafeEqual(sigBuf, expectedBuf)
+  ) {
+    return null;
+  }
+
+  try {
+    const decoded = JSON.parse(
+      Buffer.from(payload, "base64").toString("utf8"),
+    ) as { m?: unknown; e?: unknown; k?: unknown };
+    // The `k: "verify"` namespace guard: a link cookie (no `k`) can never be
+    // accepted here even if its HMAC checks out, so the two intents never cross.
+    if (
+      decoded.k !== "verify" ||
+      typeof decoded.m !== "string" ||
+      typeof decoded.e !== "number"
+    ) {
+      return null;
+    }
+    if (decoded.e <= Date.now()) {
+      return null;
+    }
+    return { memberId: decoded.m };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Read + verify the verify-intent cookie from the current request, then
+ * best-effort clear it. Returns the bound Full-Admin member id when a valid,
+ * unexpired verify intent is present, else null. The signIn callback binds the
+ * result to the CURRENT session before recording verification, so a stale cookie
+ * on a shared device can never mark Google verified on someone else's behalf.
+ */
+export async function readGoogleVerifyIntent(): Promise<GoogleVerifyIntent | null> {
+  const store = await cookies();
+  const intent = verifyVerifyIntentValue(
+    store.get(GOOGLE_VERIFY_INTENT_COOKIE)?.value,
+  );
+  if (intent) {
+    try {
+      store.delete(GOOGLE_VERIFY_INTENT_COOKIE);
     } catch {
       // Best-effort; TTL bounds a surviving cookie.
     }

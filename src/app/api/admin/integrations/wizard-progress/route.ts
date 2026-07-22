@@ -22,7 +22,7 @@ import {
 
 // Allowlist of wizard ids the shell may persist. Keeps arbitrary rows out and
 // mirrors the provider namespace. C4/C5 add "stripe" / "google".
-const ALLOWED_WIZARD_IDS = ["xero", "stripe"] as const;
+const ALLOWED_WIZARD_IDS = ["xero", "stripe", "google"] as const;
 type AllowedWizardId = (typeof ALLOWED_WIZARD_IDS)[number];
 
 function isAllowedWizardId(value: string): value is AllowedWizardId {

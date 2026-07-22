@@ -266,6 +266,9 @@ export const LEGACY_PROVIDER_ENV_VARS: Record<string, readonly string[]> = {
     "STRIPE_WEBHOOK_SECRET",
     "NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY",
   ],
+  // Google sign-in credentials are captured in-app now (#2087). The two legacy
+  // GOOGLE_CLIENT_* vars are detected-and-warned, never read for operation.
+  google: ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"],
   // Backup configuration moved to the encrypted store in-app (#2095, C6); every
   // BACKUP_* value is detected-and-warned, never read for operation. The ONE
   // exception is BACKUP_CRON_SCHEDULE (cron-leader timing, not club config),
@@ -279,7 +282,6 @@ export const LEGACY_PROVIDER_ENV_VARS: Record<string, readonly string[]> = {
     "BACKUP_RETENTION_DAYS",
     "BACKUP_RESTORE_VALIDATION_URL",
   ],
-  // google credential env names are added by C5.
 };
 
 export interface LegacyProviderEnvFinding {

@@ -141,6 +141,10 @@ const ROUTE_AREA_PREFIXES: Array<{
       "/admin/integrations",
       "/admin/xero",
       "/admin/stripe",
+      // Google sign-in setup lives on the Integrations hub (finance), like Xero
+      // and Stripe (#2087). NOT feature-gated by googleLogin — setup + verify
+      // must be reachable while the module is still off.
+      "/admin/google",
       "/admin/payments",
       "/admin/internet-banking",
       "/admin/refund-requests",

@@ -1301,7 +1301,7 @@ action; scoped admins cannot merge.
 | `TZ`, `NEXT_PUBLIC_TZ`             | Time zone; this app expects New Zealand date-only booking semantics unless a feature says otherwise. |
 | `LOCALE`, `NEXT_PUBLIC_LOCALE`     | Locale for formatting.                                                                               |
 | `NEXT_PUBLIC_GA_MEASUREMENT_ID`    | Optional GA4 measurement id. Google Analytics still requires the Admin Modules toggle and visitor consent before loading. |
-| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Optional per-club Google OAuth credentials for "Continue with Google" sign-in (bootstrap-class secrets, never stored in the DB). Google sign-in also requires the Admin Modules `Google sign-in` toggle AND each member linking their own Google account from their profile. Set up per club in the Google Cloud console (see runbook below). |
+| ~~`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`~~ | **Removed as configuration (#2087).** Google OAuth credentials now live **only** in the encrypted `IntegrationCredential` store, entered and verified in-app (Admin → Integrations → Google sign-in). Any legacy `GOOGLE_CLIENT_*` env vars are **detected, warned about, and ignored** — re-enter the credentials in the wizard, then remove the env vars. This reverses the earlier #2035 "bootstrap-class secret, never in the DB" posture by owner decision (epic #2078). See the Google sign-in section below. |
 | `LOG_LEVEL`                        | Pino log level such as `debug`, `info`, `warn`, `error`, or `fatal`.                                 |
 | `APP_RUNTIME_ROLE`                 | Runtime label used by health/status reporting, usually set by Compose.                               |
 | `NODE_ENV`                         | Runtime mode set by Node/Next.                                                                       |
@@ -1341,7 +1341,7 @@ cannot be read, optional modules fail closed.
 | Ski-field conditions | on | Live mountain/road status panel, public API routes, and admin cache controls. |
 | Two-factor authentication | off | Requires users to complete authenticator-app, email-code, or recovery-code verification after password login. |
 | Email sign-in link | off | Lets members request a single-use email link to sign in without their password (additive to password login, never a replacement). Only ever works for existing active members with a verified email; the `magic-link-login` link expiry defaults to 15 minutes (stored on the Login & Security settings, range 5–60) and is read by the sign-in request flow. |
-| Google sign-in | off | Lets members sign in with a Google account they have linked from their profile (additive to password login, never a replacement). Requires `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`; the "Continue with Google" button appears only when the module is on AND both secrets are configured. No account is ever created from Google, and an unlinked Google account is refused with a friendly message. See the Google sign-in section below. |
+| Google sign-in | off | Lets members sign in with a Google account they have linked from their profile (additive to password login, never a replacement). Credentials are entered and verified **in-app** on the Google sign-in setup page (Admin → Integrations → Google) — no env vars, no restart. The module cannot be turned on until a real Google OAuth round-trip verifies (hard gate), and replacing a credential re-locks it until re-verified. The "Continue with Google" button appears only when the module is on AND credentials resolve. No account is ever created from Google, and an unlinked Google account is refused with a friendly message. See the Google sign-in section below. |
 | Google Analytics | off | Consent-gated GA4 tracking on public website and public account pages. Requires `NEXT_PUBLIC_GA_MEASUREMENT_ID`; GA scripts load only after a visitor accepts the analytics banner. |
 
 Cron-backed optional module schedules are still registered when
@@ -1449,8 +1449,19 @@ so linking never switches the member's session identity. Unlinking
 (`POST /api/profile/google/unlink`) nulls `googleSub`, is audited, and is always
 allowed because every login-capable member keeps password login.
 
-**How sign-in works.** When the module is on and both secrets are configured,
-`/login` shows a "Continue with Google" button. The provider resolves the member
+**Where credentials live (#2087).** The per-club Google OAuth client id and
+secret are stored **only** in the encrypted `IntegrationCredential` store
+(AES-256-GCM, key derived from `AUTH_SECRET`), entered through the in-app setup
+wizard — never in the environment. The NextAuth config is **request-scoped**
+(`NextAuth((request) => config)`): the Google provider is resolved from the DB
+per request and is **omitted entirely** when unconfigured (no ghost button, no
+direct-URL provider error), and the resolver **fails open** — a DB or decrypt
+failure degrades Google to "unconfigured" and can never break
+credentials/magic-link/2FA sign-in. Any legacy `GOOGLE_CLIENT_*` env vars are
+ignored (detected + warned about); re-enter them in the wizard and remove them.
+
+**How sign-in works.** When the module is on and credentials resolve from the
+store, `/login` shows a "Continue with Google" button. The provider resolves the member
 by `googleSub === profile.sub` among login-capable members only — never by email,
 never provisioning — and applies the same gate as password login
 (`canLogin && active && emailVerified`) plus a forced-password-change refusal. An
@@ -1464,7 +1475,11 @@ the Google subject id (not the email), a member whose Google **or** club email
 later changes stays signed in; a member with a brand-new Google account unlinks
 then re-links.
 
-**Per-club Google Cloud console setup (runbook).**
+**Per-club Google Cloud console setup (guided, in-app — #2087).**
+
+Do it all from **Admin → Integrations → Google sign-in setup**, which walks a
+Full Admin through the wizard with exact copy-paste values. No env vars, no
+restart, no command line.
 
 1. In the [Google Cloud console](https://console.cloud.google.com/), create (or
    select) a project for the club.
@@ -1473,16 +1488,26 @@ then re-links.
    the club's public domain as an authorised domain.
 3. Under **APIs & Services → Credentials**, create an **OAuth client ID** of type
    **Web application**.
-4. Add the authorised redirect URI:
-   `https://<your-domain>/api/auth/callback/google` (and
-   `http://localhost:3000/api/auth/callback/google` for local development). The
-   requested scopes are the defaults `openid email profile`.
-5. Copy the generated client id and secret into `GOOGLE_CLIENT_ID` and
-   `GOOGLE_CLIENT_SECRET` on the server (never in the database). These are
-   bootstrap-class secrets.
-6. In Admin > Login & Security, turn on **Google sign-in**. The card warns if the
-   module is on but the credentials are not configured (`credentials_missing`
-   readiness). Members can then link their Google accounts from their profiles.
+4. Add the **authorised redirect URI** — copy it from the wizard's first step (it
+   shows the exact resolved value, `https://<your-domain>/api/auth/callback/google`,
+   derived from `NEXTAUTH_URL`). The requested scopes are the defaults
+   `openid email profile`.
+5. Paste the generated **Client ID** and **Client secret** into the wizard's
+   write-only credential fields (Full Admin only). They are encrypted at rest and
+   never shown again; entering a new value replaces the old one and re-locks the
+   module.
+6. On the wizard's **Verify** step, click **Verify with Google** and complete the
+   consent screen once as yourself. This is a real OAuth round-trip through the
+   production callback — it links nothing and mints no session; it only proves
+   Google accepts the client and redirects back.
+7. Once verified, turn on **Google sign-in** in Admin → Login & Security (the
+   toggle stays locked until verification passes). Members can then link their
+   Google accounts from their profiles.
+
+**Upgrading an env-configured deployment.** If this club previously set
+`GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` in the environment, those values are
+now **ignored** (a readiness warning flags them). Re-enter the same credentials
+in the wizard, verify, then delete the env vars.
 
 Users enroll either an authenticator app (TOTP) or an email one-time code. TOTP
 secrets are encrypted at rest using key material derived from `AUTH_SECRET` (or

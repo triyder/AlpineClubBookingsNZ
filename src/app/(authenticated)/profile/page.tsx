@@ -235,6 +235,12 @@ export default async function ProfilePage({
   // whenever the member already has an account linked (so they can disconnect it
   // even after the club turns the module off).
   const showGoogleAccountCard = modules.googleLogin || googleLinkedNow;
+  // DB-only Google credential resolution (#2087), only when the card shows.
+  // Fail-open to false (Connect stays unavailable) if the store is unreachable.
+  const googleConfigured =
+    showGoogleAccountCard && modules.googleLogin
+      ? await googleCredentialsConfigured()
+      : false;
   const profileFormMember = {
     id: member.id,
     firstName: member.firstName,
@@ -417,7 +423,7 @@ export default async function ProfilePage({
               <GoogleAccountCard
                 linked={googleLinkedNow}
                 moduleEnabled={modules.googleLogin}
-                credentialsConfigured={googleCredentialsConfigured()}
+                credentialsConfigured={googleConfigured}
               />
             ) : null}
           </CardContent>
