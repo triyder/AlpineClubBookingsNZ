@@ -26,16 +26,31 @@ function listSourceFiles(path: string): string[] {
   });
 }
 
-// #2188 P2 — the kiosk tree is authored in literal slate/colored tones and is
-// migrated onto `--kiosk-*` tokens in P3, so BOTH repo-wide contracts below
-// carry a TEMPORARY kiosk-tree exclusion (B8), removed in P3.
-const KIOSK_TREE = "src/app/(lodge)/lodge/kiosk";
+// #2188 P2 — the theme-aware-kiosk FAMILY is authored in literal slate/colored
+// tones and is migrated onto `--kiosk-*` tokens in P3, so BOTH repo-wide
+// contracts below carry a TEMPORARY kiosk-family exclusion (B8), removed in P3.
+// The family is the kiosk tree PLUS the two shared surfaces that also render
+// under `.theme-aware-kiosk` and couple to the `#1249` `html:not(.dark)`
+// light-mode override — migrating them in isolation from the kiosk would break
+// that coupling, so they stay untouched until #2189 P3.
+const KIOSK_FAMILY_TREE = "src/app/(lodge)/lodge/kiosk";
+const KIOSK_FAMILY_FILES = new Set(
+  [
+    // theme-aware-kiosk family — #2189 P3 scope
+    "src/app/(lodge)/lodge/roster/[date]/setup/page.tsx",
+    // theme-aware-kiosk family — #2189 P3 scope
+    "src/components/kiosk-lodge-instructions.tsx",
+  ].map((p) => p.replaceAll("\\", "/")),
+);
 
-/** Every TS/TSX source file under `src`, minus `__tests__` and the kiosk tree. */
+function isKioskFamily(path: string): boolean {
+  const p = path.replaceAll("\\", "/");
+  return p.startsWith(`${KIOSK_FAMILY_TREE}/`) || KIOSK_FAMILY_FILES.has(p);
+}
+
+/** Every TS/TSX source file under `src`, minus `__tests__` and the kiosk family. */
 function listRepoSourceFiles(): string[] {
-  return listSourceFiles("src").filter(
-    (path) => !path.replaceAll("\\", "/").startsWith(`${KIOSK_TREE}/`),
-  );
+  return listSourceFiles("src").filter((path) => !isKioskFamily(path));
 }
 
 // The two files where a literal Tailwind `teal-*` utility is still allowed
@@ -199,11 +214,12 @@ const THEMED_NEUTRAL_ALLOWLIST = new Set<string>(
     // fallback): standalone opaque fills with no tinted/accent pairing, the
     // same shape as this file's teal allowlist entry above.
     "src/components/admin-booking-calendar.tsx",
-    // #2188 P2 additions (repo-wide widening). Deliberate DARK surfaces authored
-    // in literal slate with white text — the same shape as the kiosk; a proper
-    // theme migration is a redesign (owner-visible), not a P2 class swap.
-    "src/app/(lodge)/lodge/roster/[date]/setup/page.tsx",
-    "src/components/kiosk-lodge-instructions.tsx",
+    // NOTE: the roster-setup page and kiosk-lodge-instructions are NOT here —
+    // they are theme-aware-kiosk FAMILY surfaces, covered by the kiosk-family
+    // EXCLUSION (isKioskFamily, B8, deleted in P3), not by this allowlist. The
+    // allowlist must never carry deferred work.
+    //
+    // #2188 P2 additions (repo-wide widening).
     // Un-themed system pages: React error/404 boundaries render OUTSIDE
     // app-theme-scope, so there is no club theme to follow — raw neutrals are
     // correct there.
