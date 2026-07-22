@@ -141,6 +141,10 @@ const ROUTE_AREA_PREFIXES: Array<{
       "/admin/integrations",
       "/admin/xero",
       "/admin/stripe",
+      // Google sign-in setup lives on the Integrations hub (finance), like Xero
+      // and Stripe (#2087). NOT feature-gated by googleLogin — setup + verify
+      // must be reachable while the module is still off.
+      "/admin/google",
       "/admin/payments",
       "/admin/internet-banking",
       "/admin/refund-requests",
@@ -302,6 +306,12 @@ const ROUTE_AREA_PREFIXES: Array<{
       "/admin/email-deliverability",
       "/admin/health",
       "/admin/background-jobs",
+      // Managed database backup: status, config, and run-now (#2095, C6).
+      // Registered under support so an unregistered path never falls back to
+      // the overview catch-all (layout.tsx). Support view = status; support
+      // edit = config/run-now; credential + destination WRITES remain Full
+      // Admin regardless of area level (enforced in the routes).
+      "/admin/backups",
       "/admin/stuck-states",
       "/admin/issue-reports",
       "/admin/audit-log",
@@ -321,6 +331,7 @@ const ROUTE_AREA_PREFIXES: Array<{
       "/api/admin/email-settings",
       "/api/admin/email-suppressions",
       "/api/admin/health",
+      "/api/admin/backups",
       "/api/admin/runtime-status",
       "/api/admin/stuck-states",
       "/api/admin/issue-reports",

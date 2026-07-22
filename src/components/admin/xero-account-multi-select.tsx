@@ -203,7 +203,7 @@ export function XeroAccountMultiSelect({
                         {account.name}
                       </span>
                       {checked ? (
-                        <Check className="h-4 w-4 shrink-0 text-green-700" />
+                        <Check className="h-4 w-4 shrink-0 text-success-11" />
                       ) : null}
                     </button>
                   );

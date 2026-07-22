@@ -165,11 +165,11 @@ export function AuditTimeline({
             </SelectContent>
           </Select>
           {loading ? (
-            <Loader2 className="h-4 w-4 animate-spin text-slate-500" />
+            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
           ) : null}
         </div>
 
-        <div className="flex items-center gap-2 text-sm text-slate-500">
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <span>{rangeLabel}</span>
           <Button
             type="button"
@@ -195,16 +195,16 @@ export function AuditTimeline({
       </div>
 
       {error ? (
-        <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">
+        <div className="rounded-md border border-danger-6 bg-danger-3 px-3 py-2 text-sm text-danger-11">
           {error}
         </div>
       ) : null}
 
       {!loading && entries.length === 0 && !error ? (
-        <p className="text-sm text-slate-500">No audit records</p>
+        <p className="text-sm text-muted-foreground">No audit records</p>
       ) : null}
 
-      <div className="divide-y divide-slate-100">
+      <div className="divide-y divide-border">
         {entries.map((entry) => {
           const entityHref = getEntityHref(entry, showAdminEntityLinks);
           const metadataVisible = showMetadata && hasMetadata(entry);
@@ -221,7 +221,7 @@ export function AuditTimeline({
                       {getCategoryLabel(entry.category)}
                     </Badge>
                     {entry.outcome ? (
-                      <span className="text-xs capitalize text-slate-500">
+                      <span className="text-xs capitalize text-muted-foreground">
                         {entry.outcome}
                       </span>
                     ) : null}
@@ -234,10 +234,10 @@ export function AuditTimeline({
                       </Button>
                     ) : null}
                   </div>
-                  <p className="text-sm font-medium text-slate-800">
+                  <p className="text-sm font-medium text-foreground">
                     {entry.summary}
                   </p>
-                  <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500">
+                  <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
                     {showActor ? <span>By {entry.actorDisplayName}</span> : null}
                     {entry.entityType && entry.entityId && !entityHref ? (
                       <span>
@@ -247,26 +247,26 @@ export function AuditTimeline({
                     {entry.requestId ? <span>Request {entry.requestId}</span> : null}
                   </div>
                   {entry.description ? (
-                    <p className="break-words text-xs text-slate-500">
+                    <p className="break-words text-xs text-muted-foreground">
                       {entry.description}
                     </p>
                   ) : entry.details ? (
-                    <p className="break-words text-xs text-slate-500">
+                    <p className="break-words text-xs text-muted-foreground">
                       {entry.details}
                     </p>
                   ) : null}
                   {metadataVisible ? (
-                    <details className="pt-1 text-xs text-slate-600">
-                      <summary className="cursor-pointer font-medium text-slate-700">
+                    <details className="pt-1 text-xs text-muted-foreground">
+                      <summary className="cursor-pointer font-medium text-muted-foreground">
                         Metadata
                       </summary>
-                      <pre className="mt-2 max-h-48 overflow-auto rounded-md bg-slate-50 p-3 text-xs leading-relaxed">
+                      <pre className="mt-2 max-h-48 overflow-auto rounded-md bg-card p-3 text-xs leading-relaxed">
                         {JSON.stringify(entry.metadata, null, 2)}
                       </pre>
                     </details>
                   ) : null}
                 </div>
-                <time className="whitespace-nowrap text-xs text-slate-400">
+                <time className="whitespace-nowrap text-xs text-muted-foreground">
                   {formatDateTime(entry.createdAt)}
                 </time>
               </div>

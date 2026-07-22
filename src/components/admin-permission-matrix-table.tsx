@@ -15,8 +15,8 @@ const LEVEL_LABELS: Record<AdminPermissionLevel, string> = {
 
 const LEVEL_CLASSES: Record<AdminPermissionLevel, string> = {
   none: "border-border bg-muted text-muted-foreground",
-  view: "border-blue-200 bg-blue-50 text-blue-700",
-  edit: "border-emerald-200 bg-emerald-50 text-emerald-700",
+  view: "border-info-6 bg-info-3 text-info-11",
+  edit: "border-success-6 bg-success-3 text-success-11",
 };
 
 function AdminPermissionLevelBadge({

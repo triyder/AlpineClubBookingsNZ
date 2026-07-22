@@ -185,17 +185,17 @@ export function PromoCodeInput({
     <div className="space-y-2">
       <Label htmlFor="promoCode">Promo Code (optional)</Label>
       {appliedPromo && !appliedPromo.workPartyEvent ? (
-        <div className="flex items-center justify-between rounded-md bg-green-50 p-3 text-sm">
+        <div className="flex items-center justify-between rounded-md bg-success-3 p-3 text-sm">
           <div>
-            <span className="font-medium text-green-700">
+            <span className="font-medium text-success-11">
               {appliedPromo.code}
             </span>
             {appliedPromo.description && (
-              <span className="text-green-600 ml-2">
+              <span className="text-success-11 ml-2">
                 - {appliedPromo.description}
               </span>
             )}
-            <span className="text-green-700 ml-2">
+            <span className="text-success-11 ml-2">
               ({formatSignedCents(appliedPromo.promoAdjustmentCents)})
             </span>
           </div>
@@ -204,7 +204,7 @@ export function PromoCodeInput({
             variant="ghost"
             size="sm"
             onClick={handleRemove}
-            className="text-green-700 hover:text-green-900"
+            className="text-success-11 hover:text-success-11"
           >
             Remove
           </Button>
@@ -250,7 +250,7 @@ export function PromoCodeInput({
           </div>
         </div>
       )}
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {error && <p className="text-sm text-danger-11">{error}</p>}
     </div>
   );
 }

@@ -622,7 +622,7 @@ export default function AuditLogPage() {
       </div>
 
       {error ? (
-        <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">
+        <div className="rounded-md border border-danger-6 bg-danger-3 px-3 py-2 text-sm text-danger-11">
           {error}
         </div>
       ) : null}
@@ -734,7 +734,7 @@ export default function AuditLogPage() {
                                 `/admin/members/${entry.subject.id}`,
                                 currentAuditPath
                               )}
-                              className="text-blue-600 hover:underline"
+                              className="text-info-11 hover:underline"
                               onClick={(event) => event.stopPropagation()}
                             >
                               {entry.subjectDisplayName}
@@ -799,7 +799,7 @@ export default function AuditLogPage() {
                                       <Link
                                         key={link.href}
                                         href={link.href}
-                                        className="block text-blue-600 hover:underline"
+                                        className="block text-info-11 hover:underline"
                                       >
                                         {link.label}
                                       </Link>

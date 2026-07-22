@@ -11,9 +11,9 @@ import {
 
 describe("admin-member-badges", () => {
   it("exposes a badge class for every finance access level", () => {
-    expect(financeAccessBadgeClass.NONE).toContain("slate");
-    expect(financeAccessBadgeClass.VIEWER).toContain("amber");
-    expect(financeAccessBadgeClass.MANAGER).toContain("emerald");
+    expect(financeAccessBadgeClass.NONE).toContain("muted");
+    expect(financeAccessBadgeClass.VIEWER).toContain("warning");
+    expect(financeAccessBadgeClass.MANAGER).toContain("success");
   });
 
   it("exposes both short and long finance access labels", () => {
@@ -31,7 +31,7 @@ describe("admin-member-badges", () => {
         archivedAt: new Date(),
       });
       expect(config.label).toBe("Archived");
-      expect(config.className).toContain("slate-200");
+      expect(config.className).toContain("bg-accent");
     });
 
     it("returns Cancelled when only cancelledAt is set", () => {
@@ -41,7 +41,7 @@ describe("admin-member-badges", () => {
         archivedAt: null,
       });
       expect(config.label).toBe("Cancelled");
-      expect(config.className).toContain("amber");
+      expect(config.className).toContain("warning");
     });
 
     it("returns Active for an active member with no lifecycle flags", () => {
@@ -51,7 +51,7 @@ describe("admin-member-badges", () => {
         archivedAt: null,
       });
       expect(config.label).toBe("Active");
-      expect(config.className).toContain("green");
+      expect(config.className).toContain("success");
     });
 
     it("returns Inactive when active is false and no lifecycle flags are set", () => {

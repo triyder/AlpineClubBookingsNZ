@@ -58,7 +58,7 @@ export function DataExportButton() {
         <Download className="h-4 w-4" />
         {loading ? "Generating..." : "Download My Data"}
       </Button>
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {error && <p className="text-sm text-danger-11">{error}</p>}
     </div>
   );
 }

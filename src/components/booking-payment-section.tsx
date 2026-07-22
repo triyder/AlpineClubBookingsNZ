@@ -30,7 +30,7 @@ export function BookingPaymentSection({
 
   if (!isOpen) {
     return (
-      <div className="space-y-4 rounded-md border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
+      <div className="space-y-4 rounded-md border border-info-6 bg-info-3 p-4 text-sm text-info-11">
         <p>
           {gateDescription ??
             "This booking is still a draft. Review the details above, then continue when you're ready to confirm and pay."}

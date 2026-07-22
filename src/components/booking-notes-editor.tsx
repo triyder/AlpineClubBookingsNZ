@@ -43,7 +43,7 @@ export function BookingNotesEditor({
   }
 
   if (!canEdit) {
-    return <p className="text-gray-600">{initialNotes || "No notes"}</p>;
+    return <p className="text-muted-foreground">{initialNotes || "No notes"}</p>;
   }
 
   return (
@@ -53,7 +53,7 @@ export function BookingNotesEditor({
         onChange={(e) => setNotes(e.target.value)}
         maxLength={500}
         rows={3}
-        className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+        className="w-full rounded-md border border-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-info-7 focus:border-transparent resize-none"
         placeholder="Add notes about this booking..."
       />
       <div className="flex items-center justify-between">
@@ -61,8 +61,8 @@ export function BookingNotesEditor({
           {notes.length}/500 characters
         </span>
         <div className="flex items-center gap-2">
-          {error && <span className="text-xs text-red-600">{error}</span>}
-          {saved && <span className="text-xs text-green-600">Saved</span>}
+          {error && <span className="text-xs text-danger-11">{error}</span>}
+          {saved && <span className="text-xs text-success-11">Saved</span>}
           <Button
             size="sm"
             onClick={handleSave}

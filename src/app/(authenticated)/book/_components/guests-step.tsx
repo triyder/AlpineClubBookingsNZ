@@ -165,7 +165,7 @@ export function GuestsStep({
                 return (
                   <div
                     key={fm.id}
-                    className={blocked ? "rounded-md border border-amber-200 bg-amber-50 p-3" : ""}
+                    className={blocked ? "rounded-md border border-warning-6 bg-warning-3 p-3" : ""}
                   >
                     <div className="flex flex-wrap items-center gap-2">
                       <Button
@@ -186,17 +186,17 @@ export function GuestsStep({
                             </Link>
                           </Button>
                         ) : (
-                          <span className="text-xs font-medium text-amber-800">
+                          <span className="text-xs font-medium text-warning-11">
                             {actionLabel}
                           </span>
                         )
                       )}
                     </div>
                     {blocked && blockMessage && (
-                      <p className="mt-2 text-sm text-amber-800">{blockMessage}</p>
+                      <p className="mt-2 text-sm text-warning-11">{blockMessage}</p>
                     )}
                     {blocked && fm.missingFields && fm.missingFields.length > 0 && (
-                      <p className="mt-1 text-xs text-amber-700">
+                      <p className="mt-1 text-xs text-warning-11">
                         Missing: {fm.missingFields.join(", ")}
                       </p>
                     )}
@@ -207,13 +207,13 @@ export function GuestsStep({
           </div>
         )}
         {(showInviteFamilyGroupMembersLink || familyMembers.length > 0) && (
-          <div className="rounded-lg border border-dashed border-indigo-200 bg-indigo-50/50 p-4 dark:border-indigo-800 dark:bg-indigo-950/30">
+          <div className="rounded-lg border border-dashed border-cat3-6 bg-cat3-3/50 p-4">
             <p className="text-sm text-muted-foreground dark:text-muted-foreground">
               Family member missing? Add or invite them in your User Profile &gt;
               Family Group, then return here to quick add them at member rates.{" "}
               <Link
                 href={PROFILE_FAMILY_GROUP_RETURN_TO_BOOK}
-                className="font-medium text-indigo-700 underline underline-offset-4 hover:text-indigo-800 dark:text-indigo-300 dark:hover:text-indigo-200"
+                className="font-medium text-cat3-11 underline underline-offset-4 hover:text-cat3-11"
               >
                 Open Family Group in your profile
               </Link>
@@ -241,14 +241,14 @@ export function GuestsStep({
           }}
         />
         {memberSwitchSuggestions.length > 0 && (
-          <div className="space-y-2 rounded-md border border-indigo-200 bg-indigo-50/60 p-4 dark:border-indigo-800 dark:bg-indigo-950/30">
-            <p className="text-sm font-medium text-indigo-900 dark:text-indigo-200">
+          <div className="space-y-2 rounded-md border border-cat3-6 bg-cat3-3/60 p-4">
+            <p className="text-sm font-medium text-cat3-11">
               Add these as member guests instead?
             </p>
             {memberSwitchSuggestions.map(({ index, match }) => (
               <div
                 key={`${match.id}-${index}`}
-                className="flex flex-col gap-2 text-sm text-indigo-900 dark:text-indigo-200 sm:flex-row sm:items-center sm:justify-between"
+                className="flex flex-col gap-2 text-sm text-cat3-11 sm:flex-row sm:items-center sm:justify-between"
               >
                 <span>
                   <strong>

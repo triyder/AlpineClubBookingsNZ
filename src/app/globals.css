@@ -69,6 +69,121 @@
   --color-hue-purple-muted: var(--hue-purple-muted);
   --color-hue-emerald: var(--hue-emerald);
   --color-hue-emerald-muted: var(--hue-emerald-muted);
+  /* #2188 P2 — generated 12-step SEMANTIC (success/warning/info/danger) and
+     CATEGORICAL (cat1..cat5) scales exposed as consumable utilities, completing
+     the plan-lock's "the numbered steps stay exposed for the tail" clause that
+     P1 shipped only for charts. Each maps to a `--<scale>-<step>` custom prop
+     resolved from the render-time `--gen-<scale>-<step>` substrate (see the
+     .app-theme-scope blocks below). Neutral steps are intentionally NOT exposed
+     — neutrals stay on the shadcn role tokens. */
+  --color-success-1: var(--success-1, #f5f9f6);
+  --color-success-2: var(--success-2, #eff5f0);
+  --color-success-3: var(--success-3, #dff0e3);
+  --color-success-4: var(--success-4, #cfead5);
+  --color-success-5: var(--success-5, #c0e6c9);
+  --color-success-6: var(--success-6, #ade1ba);
+  --color-success-7: var(--success-7, #94dba8);
+  --color-success-8: var(--success-8, #68cd88);
+  --color-success-9: var(--success-9, #1f9d55);
+  --color-success-10: var(--success-10, #009049);
+  --color-success-11: var(--success-11, #007130);
+  --color-success-12: var(--success-12, #042711);
+  --color-warning-1: var(--warning-1, #f9f7f5);
+  --color-warning-2: var(--warning-2, #fef2e0);
+  --color-warning-3: var(--warning-3, #fee9b2);
+  --color-warning-4: var(--warning-4, #ffdf92);
+  --color-warning-5: var(--warning-5, #ffd46e);
+  --color-warning-6: var(--warning-6, #ffc85c);
+  --color-warning-7: var(--warning-7, #f5bd55);
+  --color-warning-8: var(--warning-8, #e7a720);
+  --color-warning-9: var(--warning-9, #e5a50a);
+  --color-warning-10: var(--warning-10, #d99a00);
+  --color-warning-11: var(--warning-11, #815100);
+  --color-warning-12: var(--warning-12, #2d1c00);
+  --color-info-1: var(--info-1, #f7f8f9);
+  --color-info-2: var(--info-2, #f0f4fa);
+  --color-info-3: var(--info-3, #e4ebf8);
+  --color-info-4: var(--info-4, #d5e3fc);
+  --color-info-5: var(--info-5, #c7dbff);
+  --color-info-6: var(--info-6, #b7d3ff);
+  --color-info-7: var(--info-7, #a6c7ff);
+  --color-info-8: var(--info-8, #89b3ff);
+  --color-info-9: var(--info-9, #2563eb);
+  --color-info-10: var(--info-10, #2057d1);
+  --color-info-11: var(--info-11, #194fc9);
+  --color-info-12: var(--info-12, #041a4d);
+  --color-danger-1: var(--danger-1, #faf7f6);
+  --color-danger-2: var(--danger-2, #f9f1f0);
+  --color-danger-3: var(--danger-3, #f9e5e2);
+  --color-danger-4: var(--danger-4, #ffd7d1);
+  --color-danger-5: var(--danger-5, #ffcac2);
+  --color-danger-6: var(--danger-6, #ffbeb5);
+  --color-danger-7: var(--danger-7, #ffafa3);
+  --color-danger-8: var(--danger-8, #f99488);
+  --color-danger-9: var(--danger-9, #dc2626);
+  --color-danger-10: var(--danger-10, #cc0615);
+  --color-danger-11: var(--danger-11, #b70000);
+  --color-danger-12: var(--danger-12, #450000);
+  --color-cat1-1: var(--cat1-1, #f7f7fa);
+  --color-cat1-2: var(--cat1-2, #f3f3fb);
+  --color-cat1-3: var(--cat1-3, #e9e9fa);
+  --color-cat1-4: var(--cat1-4, #dfdfff);
+  --color-cat1-5: var(--cat1-5, #d7d5ff);
+  --color-cat1-6: var(--cat1-6, #cecbff);
+  --color-cat1-7: var(--cat1-7, #c1bcff);
+  --color-cat1-8: var(--cat1-8, #aea4ff);
+  --color-cat1-9: var(--cat1-9, #7c5cff);
+  --color-cat1-10: var(--cat1-10, #704df0);
+  --color-cat1-11: var(--cat1-11, #5b3ac8);
+  --color-cat1-12: var(--cat1-12, #1f0856);
+  --color-cat2-1: var(--cat2-1, #f5f8f9);
+  --color-cat2-2: var(--cat2-2, #eef5f8);
+  --color-cat2-3: var(--cat2-3, #d8eff5);
+  --color-cat2-4: var(--cat2-4, #c6eaf4);
+  --color-cat2-5: var(--cat2-5, #b4e3f1);
+  --color-cat2-6: var(--cat2-6, #a2dded);
+  --color-cat2-7: var(--cat2-7, #8ad4e8);
+  --color-cat2-8: var(--cat2-8, #59c5df);
+  --color-cat2-9: var(--cat2-9, #189ab4);
+  --color-cat2-10: var(--cat2-10, #008da7);
+  --color-cat2-11: var(--cat2-11, #006881);
+  --color-cat2-12: var(--cat2-12, #00252f);
+  --color-cat3-1: var(--cat3-1, #faf7f8);
+  --color-cat3-2: var(--cat3-2, #f9f1f5);
+  --color-cat3-3: var(--cat3-3, #f9e3ee);
+  --color-cat3-4: var(--cat3-4, #f9d7e8);
+  --color-cat3-5: var(--cat3-5, #f6cce2);
+  --color-cat3-6: var(--cat3-6, #f4c1db);
+  --color-cat3-7: var(--cat3-7, #f0b2d3);
+  --color-cat3-8: var(--cat3-8, #e698c2);
+  --color-cat3-9: var(--cat3-9, #d6409f);
+  --color-cat3-10: var(--cat3-10, #c73192);
+  --color-cat3-11: var(--cat3-11, #a40074);
+  --color-cat3-12: var(--cat3-12, #42002b);
+  --color-cat4-1: var(--cat4-1, #f8f7f6);
+  --color-cat4-2: var(--cat4-2, #fbf1eb);
+  --color-cat4-3: var(--cat4-3, #fee5d7);
+  --color-cat4-4: var(--cat4-4, #ffd8b8);
+  --color-cat4-5: var(--cat4-5, #ffcca2);
+  --color-cat4-6: var(--cat4-6, #ffc096);
+  --color-cat4-7: var(--cat4-7, #fcb589);
+  --color-cat4-8: var(--cat4-8, #f09d6a);
+  --color-cat4-9: var(--cat4-9, #e8730c);
+  --color-cat4-10: var(--cat4-10, #dc6600);
+  --color-cat4-11: var(--cat4-11, #a03300);
+  --color-cat4-12: var(--cat4-12, #351500);
+  --color-cat5-1: var(--cat5-1, #f7f8f4);
+  --color-cat5-2: var(--cat5-2, #f2f5ec);
+  --color-cat5-3: var(--cat5-3, #e6f0ce);
+  --color-cat5-4: var(--cat5-4, #daeab4);
+  --color-cat5-5: var(--cat5-5, #d0e49e);
+  --color-cat5-6: var(--cat5-6, #c7de8b);
+  --color-cat5-7: var(--cat5-7, #bbd472);
+  --color-cat5-8: var(--cat5-8, #a5c33f);
+  --color-cat5-9: var(--cat5-9, #8aa614);
+  --color-cat5-10: var(--cat5-10, #7f9a00);
+  --color-cat5-11: var(--cat5-11, #516600);
+  --color-cat5-12: var(--cat5-12, #1b2400);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -566,6 +681,118 @@
   --sidebar-accent-foreground: var(--gen-sidebar-accent-foreground, #1c211d);
   --sidebar-border: var(--gen-sidebar-border, #e0e3e1);
   --sidebar-ring: var(--gen-sidebar-ring, #767c78);
+  /* #2188 P2 — generated SEMANTIC + CATEGORICAL step scales (light). Each
+     consumes its render-time `--gen-<scale>-<step>` with the shipped default
+     seed's derived value as the no-stylesheet fallback (pinned against
+     buildAppThemeTokens in app-theme-layout-contract.test.ts). */
+  --success-1: var(--gen-success-1, #f5f9f6);
+  --success-2: var(--gen-success-2, #eff5f0);
+  --success-3: var(--gen-success-3, #dff0e3);
+  --success-4: var(--gen-success-4, #cfead5);
+  --success-5: var(--gen-success-5, #c0e6c9);
+  --success-6: var(--gen-success-6, #ade1ba);
+  --success-7: var(--gen-success-7, #94dba8);
+  --success-8: var(--gen-success-8, #68cd88);
+  --success-9: var(--gen-success-9, #1f9d55);
+  --success-10: var(--gen-success-10, #009049);
+  --success-11: var(--gen-success-11, #007130);
+  --success-12: var(--gen-success-12, #042711);
+  --warning-1: var(--gen-warning-1, #f9f7f5);
+  --warning-2: var(--gen-warning-2, #fef2e0);
+  --warning-3: var(--gen-warning-3, #fee9b2);
+  --warning-4: var(--gen-warning-4, #ffdf92);
+  --warning-5: var(--gen-warning-5, #ffd46e);
+  --warning-6: var(--gen-warning-6, #ffc85c);
+  --warning-7: var(--gen-warning-7, #f5bd55);
+  --warning-8: var(--gen-warning-8, #e7a720);
+  --warning-9: var(--gen-warning-9, #e5a50a);
+  --warning-10: var(--gen-warning-10, #d99a00);
+  --warning-11: var(--gen-warning-11, #815100);
+  --warning-12: var(--gen-warning-12, #2d1c00);
+  --info-1: var(--gen-info-1, #f7f8f9);
+  --info-2: var(--gen-info-2, #f0f4fa);
+  --info-3: var(--gen-info-3, #e4ebf8);
+  --info-4: var(--gen-info-4, #d5e3fc);
+  --info-5: var(--gen-info-5, #c7dbff);
+  --info-6: var(--gen-info-6, #b7d3ff);
+  --info-7: var(--gen-info-7, #a6c7ff);
+  --info-8: var(--gen-info-8, #89b3ff);
+  --info-9: var(--gen-info-9, #2563eb);
+  --info-10: var(--gen-info-10, #2057d1);
+  --info-11: var(--gen-info-11, #194fc9);
+  --info-12: var(--gen-info-12, #041a4d);
+  --danger-1: var(--gen-danger-1, #faf7f6);
+  --danger-2: var(--gen-danger-2, #f9f1f0);
+  --danger-3: var(--gen-danger-3, #f9e5e2);
+  --danger-4: var(--gen-danger-4, #ffd7d1);
+  --danger-5: var(--gen-danger-5, #ffcac2);
+  --danger-6: var(--gen-danger-6, #ffbeb5);
+  --danger-7: var(--gen-danger-7, #ffafa3);
+  --danger-8: var(--gen-danger-8, #f99488);
+  --danger-9: var(--gen-danger-9, #dc2626);
+  --danger-10: var(--gen-danger-10, #cc0615);
+  --danger-11: var(--gen-danger-11, #b70000);
+  --danger-12: var(--gen-danger-12, #450000);
+  --cat1-1: var(--gen-cat1-1, #f7f7fa);
+  --cat1-2: var(--gen-cat1-2, #f3f3fb);
+  --cat1-3: var(--gen-cat1-3, #e9e9fa);
+  --cat1-4: var(--gen-cat1-4, #dfdfff);
+  --cat1-5: var(--gen-cat1-5, #d7d5ff);
+  --cat1-6: var(--gen-cat1-6, #cecbff);
+  --cat1-7: var(--gen-cat1-7, #c1bcff);
+  --cat1-8: var(--gen-cat1-8, #aea4ff);
+  --cat1-9: var(--gen-cat1-9, #7c5cff);
+  --cat1-10: var(--gen-cat1-10, #704df0);
+  --cat1-11: var(--gen-cat1-11, #5b3ac8);
+  --cat1-12: var(--gen-cat1-12, #1f0856);
+  --cat2-1: var(--gen-cat2-1, #f5f8f9);
+  --cat2-2: var(--gen-cat2-2, #eef5f8);
+  --cat2-3: var(--gen-cat2-3, #d8eff5);
+  --cat2-4: var(--gen-cat2-4, #c6eaf4);
+  --cat2-5: var(--gen-cat2-5, #b4e3f1);
+  --cat2-6: var(--gen-cat2-6, #a2dded);
+  --cat2-7: var(--gen-cat2-7, #8ad4e8);
+  --cat2-8: var(--gen-cat2-8, #59c5df);
+  --cat2-9: var(--gen-cat2-9, #189ab4);
+  --cat2-10: var(--gen-cat2-10, #008da7);
+  --cat2-11: var(--gen-cat2-11, #006881);
+  --cat2-12: var(--gen-cat2-12, #00252f);
+  --cat3-1: var(--gen-cat3-1, #faf7f8);
+  --cat3-2: var(--gen-cat3-2, #f9f1f5);
+  --cat3-3: var(--gen-cat3-3, #f9e3ee);
+  --cat3-4: var(--gen-cat3-4, #f9d7e8);
+  --cat3-5: var(--gen-cat3-5, #f6cce2);
+  --cat3-6: var(--gen-cat3-6, #f4c1db);
+  --cat3-7: var(--gen-cat3-7, #f0b2d3);
+  --cat3-8: var(--gen-cat3-8, #e698c2);
+  --cat3-9: var(--gen-cat3-9, #d6409f);
+  --cat3-10: var(--gen-cat3-10, #c73192);
+  --cat3-11: var(--gen-cat3-11, #a40074);
+  --cat3-12: var(--gen-cat3-12, #42002b);
+  --cat4-1: var(--gen-cat4-1, #f8f7f6);
+  --cat4-2: var(--gen-cat4-2, #fbf1eb);
+  --cat4-3: var(--gen-cat4-3, #fee5d7);
+  --cat4-4: var(--gen-cat4-4, #ffd8b8);
+  --cat4-5: var(--gen-cat4-5, #ffcca2);
+  --cat4-6: var(--gen-cat4-6, #ffc096);
+  --cat4-7: var(--gen-cat4-7, #fcb589);
+  --cat4-8: var(--gen-cat4-8, #f09d6a);
+  --cat4-9: var(--gen-cat4-9, #e8730c);
+  --cat4-10: var(--gen-cat4-10, #dc6600);
+  --cat4-11: var(--gen-cat4-11, #a03300);
+  --cat4-12: var(--gen-cat4-12, #351500);
+  --cat5-1: var(--gen-cat5-1, #f7f8f4);
+  --cat5-2: var(--gen-cat5-2, #f2f5ec);
+  --cat5-3: var(--gen-cat5-3, #e6f0ce);
+  --cat5-4: var(--gen-cat5-4, #daeab4);
+  --cat5-5: var(--gen-cat5-5, #d0e49e);
+  --cat5-6: var(--gen-cat5-6, #c7de8b);
+  --cat5-7: var(--gen-cat5-7, #bbd472);
+  --cat5-8: var(--gen-cat5-8, #a5c33f);
+  --cat5-9: var(--gen-cat5-9, #8aa614);
+  --cat5-10: var(--gen-cat5-10, #7f9a00);
+  --cat5-11: var(--gen-cat5-11, #516600);
+  --cat5-12: var(--gen-cat5-12, #1b2400);
   --font-sans: var(
     --font-website-body,
     var(
@@ -635,6 +862,115 @@
     --sidebar-accent-foreground: var(--gen-sidebar-accent-foreground-dark, #eceeed);
     --sidebar-border: var(--gen-sidebar-border-dark, #292c2a);
     --sidebar-ring: var(--gen-sidebar-ring-dark, #757d76);
+    /* #2188 P2 — generated SEMANTIC + CATEGORICAL step scales (dark). */
+    --success-1: var(--gen-success-1-dark, #121813);
+    --success-2: var(--gen-success-2-dark, #171f19);
+    --success-3: var(--gen-success-3-dark, #142a1a);
+    --success-4: var(--gen-success-4-dark, #0d341b);
+    --success-5: var(--gen-success-5-dark, #0c3b1e);
+    --success-6: var(--gen-success-6-dark, #0e4624);
+    --success-7: var(--gen-success-7-dark, #14562e);
+    --success-8: var(--gen-success-8-dark, #247040);
+    --success-9: var(--gen-success-9-dark, #1f9d55);
+    --success-10: var(--gen-success-10-dark, #009049);
+    --success-11: var(--gen-success-11-dark, #5dce83);
+    --success-12: var(--gen-success-12-dark, #c0ffd0);
+    --warning-1: var(--gen-warning-1-dark, #191611);
+    --warning-2: var(--gen-warning-2-dark, #211c14);
+    --warning-3: var(--gen-warning-3-dark, #2e230e);
+    --warning-4: var(--gen-warning-4-dark, #3c2700);
+    --warning-5: var(--gen-warning-5-dark, #442c00);
+    --warning-6: var(--gen-warning-6-dark, #4d3502);
+    --warning-7: var(--gen-warning-7-dark, #5d430f);
+    --warning-8: var(--gen-warning-8-dark, #7a5917);
+    --warning-9: var(--gen-warning-9-dark, #e5a50a);
+    --warning-10: var(--gen-warning-10-dark, #d99a00);
+    --warning-11: var(--gen-warning-11-dark, #e1a83b);
+    --warning-12: var(--gen-warning-12-dark, #ffebc8);
+    --info-1: var(--gen-info-1-dark, #101623);
+    --info-2: var(--gen-info-2-dark, #141c2d);
+    --info-3: var(--gen-info-3-dark, #0f224a);
+    --info-4: var(--gen-info-4-dark, #0c275e);
+    --info-5: var(--gen-info-5-dark, #0e2c6c);
+    --info-6: var(--gen-info-6-dark, #14347a);
+    --info-7: var(--gen-info-7-dark, #1e428f);
+    --info-8: var(--gen-info-8-dark, #2e59b6);
+    --info-9: var(--gen-info-9-dark, #2563eb);
+    --info-10: var(--gen-info-10-dark, #315dba);
+    --info-11: var(--gen-info-11-dark, #87b4fe);
+    --info-12: var(--gen-info-12-dark, #ddefff);
+    --danger-1: var(--gen-danger-1-dark, #1d1413);
+    --danger-2: var(--gen-danger-2-dark, #261817);
+    --danger-3: var(--gen-danger-3-dark, #401511);
+    --danger-4: var(--gen-danger-4-dark, #530b0a);
+    --danger-5: var(--gen-danger-5-dark, #5f0c0a);
+    --danger-6: var(--gen-danger-6-dark, #6b1513);
+    --danger-7: var(--gen-danger-7-dark, #7f221d);
+    --danger-8: var(--gen-danger-8-dark, #a62e29);
+    --danger-9: var(--gen-danger-9-dark, #dc2626);
+    --danger-10: var(--gen-danger-10-dark, #b63d36);
+    --danger-11: var(--gen-danger-11-dark, #fe8f82);
+    --danger-12: var(--gen-danger-12-dark, #ffe2dc);
+    --cat1-1: var(--gen-cat1-1-dark, #151424);
+    --cat1-2: var(--gen-cat1-2-dark, #1b192f);
+    --cat1-3: var(--gen-cat1-3-dark, #231a4d);
+    --cat1-4: var(--gen-cat1-4-dark, #2b1667);
+    --cat1-5: var(--gen-cat1-5-dark, #301b73);
+    --cat1-6: var(--gen-cat1-6-dark, #392580);
+    --cat1-7: var(--gen-cat1-7-dark, #463196);
+    --cat1-8: var(--gen-cat1-8-dark, #5d45bf);
+    --cat1-9: var(--gen-cat1-9-dark, #7c5cff);
+    --cat1-10: var(--gen-cat1-10-dark, #704df0);
+    --cat1-11: var(--gen-cat1-11-dark, #aea6fe);
+    --cat1-12: var(--gen-cat1-12-dark, #ebeaff);
+    --cat2-1: var(--gen-cat2-1-dark, #0f181b);
+    --cat2-2: var(--gen-cat2-2-dark, #141f21);
+    --cat2-3: var(--gen-cat2-3-dark, #0a2931);
+    --cat2-4: var(--gen-cat2-4-dark, #00323d);
+    --cat2-5: var(--gen-cat2-5-dark, #003945);
+    --cat2-6: var(--gen-cat2-6-dark, #004250);
+    --cat2-7: var(--gen-cat2-7-dark, #005161);
+    --cat2-8: var(--gen-cat2-8-dark, #006b80);
+    --cat2-9: var(--gen-cat2-9-dark, #189ab4);
+    --cat2-10: var(--gen-cat2-10-dark, #338b9f);
+    --cat2-11: var(--gen-cat2-11-dark, #53c4de);
+    --cat2-12: var(--gen-cat2-12-dark, #c6f7ff);
+    --cat3-1: var(--gen-cat3-1-dark, #1c1318);
+    --cat3-2: var(--gen-cat3-2-dark, #271720);
+    --cat3-3: var(--gen-cat3-3-dark, #39172b);
+    --cat3-4: var(--gen-cat3-4-dark, #4a1035);
+    --cat3-5: var(--gen-cat3-5-dark, #54143d);
+    --cat3-6: var(--gen-cat3-6-dark, #5f1d46);
+    --cat3-7: var(--gen-cat3-7-dark, #722755);
+    --cat3-8: var(--gen-cat3-8-dark, #963571);
+    --cat3-9: var(--gen-cat3-9-dark, #d6409f);
+    --cat3-10: var(--gen-cat3-10-dark, #c73092);
+    --cat3-11: var(--gen-cat3-11-dark, #fc82d1);
+    --cat3-12: var(--gen-cat3-12-dark, #ffdff6);
+    --cat4-1: var(--gen-cat4-1-dark, #1b1512);
+    --cat4-2: var(--gen-cat4-2-dark, #231a15);
+    --cat4-3: var(--gen-cat4-3-dark, #341f11);
+    --cat4-4: var(--gen-cat4-4-dark, #461e02);
+    --cat4-5: var(--gen-cat4-5-dark, #4f2402);
+    --cat4-6: var(--gen-cat4-6-dark, #592d0c);
+    --cat4-7: var(--gen-cat4-7-dark, #6b3917);
+    --cat4-8: var(--gen-cat4-8-dark, #8d4c20);
+    --cat4-9: var(--gen-cat4-9-dark, #e8730c);
+    --cat4-10: var(--gen-cat4-10-dark, #db6700);
+    --cat4-11: var(--gen-cat4-11-dark, #f79957);
+    --cat4-12: var(--gen-cat4-12-dark, #ffe6d2);
+    --cat5-1: var(--gen-cat5-1-dark, #151810);
+    --cat5-2: var(--gen-cat5-2-dark, #1b1e16);
+    --cat5-3: var(--gen-cat5-3-dark, #222715);
+    --cat5-4: var(--gen-cat5-4-dark, #272f0c);
+    --cat5-5: var(--gen-cat5-5-dark, #2d3608);
+    --cat5-6: var(--gen-cat5-6-dark, #344006);
+    --cat5-7: var(--gen-cat5-7-dark, #414f08);
+    --cat5-8: var(--gen-cat5-8-dark, #576817);
+    --cat5-9: var(--gen-cat5-9-dark, #8aa614);
+    --cat5-10: var(--gen-cat5-10-dark, #7f9a00);
+    --cat5-11: var(--gen-cat5-11-dark, #a5c242);
+    --cat5-12: var(--gen-cat5-12-dark, #e5f7b8);
   }
 }
 
@@ -734,171 +1070,6 @@
   fill: var(--muted-foreground);
 }
 
-/* White + neutral -50/-100/-200 surfaces are remapped to dark tokens so they
-   stop reading as bright boxes in dark mode. The `[class*="bg-…/"]` entries
-   extend each tier to Tailwind's OPACITY variants (e.g. `bg-white/70`,
-   `bg-slate-50/90`, `supports-[backdrop-filter]:bg-slate-50/90`), which are
-   distinct class names the plain `.bg-white`/`.bg-slate-50` selectors miss.
-   Without this, T2 lightens colored + neutral text on those still-light
-   surfaces to a light-on-light unreadable state (#1263 follow-up). Matching the
-   solid rules, the translucency is intentionally dropped in favour of an opaque
-   dark token. NOTE: these apply the fill UNCONDITIONALLY, so they assume the
-   opacity class is an always-on surface fill — do NOT rely on this for a
-   conditional `hover:bg-white/…` or a deliberate `dark:bg-white/…` translucent
-   overlay (none exist today); such a class would be forced opaque here. */
-.dark
-  .app-theme-scope
-  :is(
-    .bg-white,
-    .bg-slate-50,
-    .bg-gray-50,
-    .bg-zinc-50,
-    .bg-neutral-50,
-    .bg-stone-50,
-    [class*="bg-white/"],
-    [class*="bg-slate-50/"],
-    [class*="bg-gray-50/"],
-    [class*="bg-zinc-50/"],
-    [class*="bg-neutral-50/"],
-    [class*="bg-stone-50/"]
-  ) {
-  background-color: var(--card);
-}
-
-.dark
-  .app-theme-scope
-  :is(
-    .bg-slate-100,
-    .bg-gray-100,
-    .bg-zinc-100,
-    .bg-neutral-100,
-    .bg-stone-100,
-    [class*="bg-slate-100/"],
-    [class*="bg-gray-100/"],
-    [class*="bg-zinc-100/"],
-    [class*="bg-neutral-100/"],
-    [class*="bg-stone-100/"]
-  ) {
-  background-color: var(--muted);
-}
-
-.dark
-  .app-theme-scope
-  :is(
-    .bg-slate-200,
-    .bg-gray-200,
-    .bg-zinc-200,
-    .bg-neutral-200,
-    .bg-stone-200,
-    [class*="bg-slate-200/"],
-    [class*="bg-gray-200/"],
-    [class*="bg-zinc-200/"],
-    [class*="bg-neutral-200/"],
-    [class*="bg-stone-200/"]
-  ) {
-  background-color: var(--border);
-}
-
-.dark
-  .app-theme-scope
-  :is(
-    .text-slate-950,
-    .text-slate-900,
-    .text-slate-800,
-    .text-gray-950,
-    .text-gray-900,
-    .text-gray-800,
-    .text-zinc-950,
-    .text-zinc-900,
-    .text-zinc-800,
-    .text-neutral-950,
-    .text-neutral-900,
-    .text-neutral-800,
-    .text-stone-950,
-    .text-stone-900,
-    .text-stone-800
-  ) {
-  color: var(--foreground);
-}
-
-.dark
-  .app-theme-scope
-  :is(
-    .text-slate-700,
-    .text-slate-600,
-    .text-slate-500,
-    .text-slate-400,
-    .text-slate-300,
-    .text-gray-700,
-    .text-gray-600,
-    .text-gray-500,
-    .text-gray-400,
-    .text-gray-300,
-    .text-zinc-700,
-    .text-zinc-600,
-    .text-zinc-500,
-    .text-neutral-700,
-    .text-neutral-600,
-    .text-neutral-500,
-    .text-stone-700,
-    .text-stone-600,
-    .text-stone-500
-  ) {
-  color: var(--muted-foreground);
-}
-
-.dark
-  .app-theme-scope
-  :is(
-    .border-slate-100,
-    .border-slate-200,
-    .border-slate-300,
-    .border-gray-100,
-    .border-gray-200,
-    .border-gray-300,
-    .border-zinc-100,
-    .border-zinc-200,
-    .border-neutral-100,
-    .border-neutral-200,
-    .border-stone-100,
-    .border-stone-200
-  ) {
-  border-color: var(--border);
-}
-
-.dark
-  .app-theme-scope
-  :is(.divide-slate-100, .divide-slate-200, .divide-gray-100, .divide-gray-200)
-  > :not(:last-child) {
-  border-color: var(--border);
-}
-
-.dark
-  .app-theme-scope
-  :is(
-    [class~="hover:bg-slate-50"],
-    [class~="hover:bg-slate-100"],
-    [class~="hover:bg-gray-50"],
-    [class~="hover:bg-gray-100"],
-    [class~="hover:bg-zinc-50"],
-    [class~="hover:bg-neutral-50"]
-  ):hover {
-  background-color: var(--accent);
-}
-
-.dark
-  .app-theme-scope
-  :is(
-    [class~="hover:text-slate-900"],
-    [class~="hover:text-slate-800"],
-    [class~="hover:text-slate-700"],
-    [class~="hover:text-gray-900"],
-    [class~="hover:text-gray-800"],
-    [class~="hover:text-gray-700"]
-  ):hover {
-  color: var(--accent-foreground);
-}
-
 /* A6 candidate-ii card treatment (#2187 J8): the shadcn Card surface — `bg-card`
    plus Tailwind's base `shadow` utility (see `src/components/ui/card.tsx`) —
    renders the pinned J8 elevation shadow, emitted per club as `--gen-card-shadow`
@@ -933,112 +1104,6 @@
   .dark .app-theme-scope .bg-card.shadow:not(.website-theme *) {
     box-shadow: var(--gen-card-shadow-dark, 0 1px 2px 0 #00000066, 0 1px 3px 0 #000000a6);
   }
-}
-
-/* Dark-mode colored-callout pass (#1248). Light colored surfaces
-   (bg-{family}-50/100/200) are re-tinted to hue-preserving DARK fills so they
-   read as tinted panels instead of bright white boxes, dark family text
-   (text-{family}-600..950) is lifted to a light tint, and light colored borders
-   are dropped to a mid tint. Family text on the lightest re-tinted fill stays
-   >= 5.8:1 (worst case), and the default near-white --foreground stays highly
-   readable on every fill. Only -50/-100/-200 fills and -600..950 text are
-   remapped, so the kiosk's literal slate-700/800/900 + green/red-800/900 dark
-   surfaces and light -200 text are untouched (its dark look is unchanged). Each
-   fill rule also matches Tailwind's OPACITY variants via `[class*="bg-{family}-
-   50/"]` / `-100/` / `-200/` (e.g. `bg-amber-50/60`, `bg-indigo-50/50`), which
-   are distinct class names the plain `.bg-{family}-50` selectors miss; without
-   this the lifted family/neutral text lands on a still-light colored surface and
-   fails contrast (#1263 follow-up, the colored counterpart to the neutral
-   opacity remap above). The trailing `/` guards against matching `-500/NN` etc.,
-   and the fill is applied UNCONDITIONALLY (translucency dropped for an opaque
-   tint), matching the solid rules — do NOT rely on it for a deliberate
-   `dark:bg-{family}-50/…` translucent overlay (none exist today). */
-/* Screen-only (#2146). Unlike the neutral remap above, these callout rules
-   carry LITERAL dark oklch values rather than tokens, so forcing the light
-   palette on the theme scopes cannot reach them. Excluding them from print
-   lets Tailwind's own light `-50/-100/-200` fills and `-600..950` text win
-   back on paper. */
-@media not print {
-  .dark .app-theme-scope :is(.bg-red-50, [class~="hover:bg-red-50"]:hover, [class*="bg-red-50/"]) { background-color: oklch(0.29 0.05 27); }
-  .dark .app-theme-scope :is(.bg-red-100, [class~="hover:bg-red-100"]:hover, [class*="bg-red-100/"]) { background-color: oklch(0.33 0.05 27); }
-  .dark .app-theme-scope :is(.bg-red-200, [class*="bg-red-200/"]) { background-color: oklch(0.38 0.05 27); }
-  .dark .app-theme-scope :is(.text-red-600, .text-red-700, .text-red-800, .text-red-900, .text-red-950) { color: oklch(0.84 0.11 27); }
-  .dark .app-theme-scope :is(.border-red-100, .border-red-200, .border-red-300) { border-color: oklch(0.5 0.08 27); }
-  .dark .app-theme-scope :is(.bg-orange-50, [class~="hover:bg-orange-50"]:hover, [class*="bg-orange-50/"]) { background-color: oklch(0.29 0.05 55); }
-  .dark .app-theme-scope :is(.bg-orange-100, [class~="hover:bg-orange-100"]:hover, [class*="bg-orange-100/"]) { background-color: oklch(0.33 0.05 55); }
-  .dark .app-theme-scope :is(.bg-orange-200, [class*="bg-orange-200/"]) { background-color: oklch(0.38 0.05 55); }
-  .dark .app-theme-scope :is(.text-orange-600, .text-orange-700, .text-orange-800, .text-orange-900, .text-orange-950) { color: oklch(0.84 0.11 55); }
-  .dark .app-theme-scope :is(.border-orange-100, .border-orange-200, .border-orange-300) { border-color: oklch(0.5 0.08 55); }
-  .dark .app-theme-scope :is(.bg-amber-50, [class~="hover:bg-amber-50"]:hover, [class*="bg-amber-50/"]) { background-color: oklch(0.29 0.05 75); }
-  .dark .app-theme-scope :is(.bg-amber-100, [class~="hover:bg-amber-100"]:hover, [class*="bg-amber-100/"]) { background-color: oklch(0.33 0.05 75); }
-  .dark .app-theme-scope :is(.bg-amber-200, [class*="bg-amber-200/"]) { background-color: oklch(0.38 0.05 75); }
-  .dark .app-theme-scope :is(.text-amber-600, .text-amber-700, .text-amber-800, .text-amber-900, .text-amber-950) { color: oklch(0.84 0.11 75); }
-  .dark .app-theme-scope :is(.border-amber-100, .border-amber-200, .border-amber-300) { border-color: oklch(0.5 0.08 75); }
-  .dark .app-theme-scope :is(.bg-yellow-50, [class~="hover:bg-yellow-50"]:hover, [class*="bg-yellow-50/"]) { background-color: oklch(0.29 0.05 100); }
-  .dark .app-theme-scope :is(.bg-yellow-100, [class~="hover:bg-yellow-100"]:hover, [class*="bg-yellow-100/"]) { background-color: oklch(0.33 0.05 100); }
-  .dark .app-theme-scope :is(.bg-yellow-200, [class*="bg-yellow-200/"]) { background-color: oklch(0.38 0.05 100); }
-  .dark .app-theme-scope :is(.text-yellow-600, .text-yellow-700, .text-yellow-800, .text-yellow-900, .text-yellow-950) { color: oklch(0.84 0.11 100); }
-  .dark .app-theme-scope :is(.border-yellow-100, .border-yellow-200, .border-yellow-300) { border-color: oklch(0.5 0.08 100); }
-  .dark .app-theme-scope :is(.bg-green-50, [class~="hover:bg-green-50"]:hover, [class*="bg-green-50/"]) { background-color: oklch(0.29 0.05 150); }
-  .dark .app-theme-scope :is(.bg-green-100, [class~="hover:bg-green-100"]:hover, [class*="bg-green-100/"]) { background-color: oklch(0.33 0.05 150); }
-  .dark .app-theme-scope :is(.bg-green-200, [class*="bg-green-200/"]) { background-color: oklch(0.38 0.05 150); }
-  .dark .app-theme-scope :is(.text-green-600, .text-green-700, .text-green-800, .text-green-900, .text-green-950) { color: oklch(0.84 0.11 150); }
-  .dark .app-theme-scope :is(.border-green-100, .border-green-200, .border-green-300) { border-color: oklch(0.5 0.08 150); }
-  .dark .app-theme-scope :is(.bg-emerald-50, [class~="hover:bg-emerald-50"]:hover, [class*="bg-emerald-50/"]) { background-color: oklch(0.29 0.05 165); }
-  .dark .app-theme-scope :is(.bg-emerald-100, [class~="hover:bg-emerald-100"]:hover, [class*="bg-emerald-100/"]) { background-color: oklch(0.33 0.05 165); }
-  .dark .app-theme-scope :is(.bg-emerald-200, [class*="bg-emerald-200/"]) { background-color: oklch(0.38 0.05 165); }
-  .dark .app-theme-scope :is(.text-emerald-600, .text-emerald-700, .text-emerald-800, .text-emerald-900, .text-emerald-950) { color: oklch(0.84 0.11 165); }
-  .dark .app-theme-scope :is(.border-emerald-100, .border-emerald-200, .border-emerald-300) { border-color: oklch(0.5 0.08 165); }
-  .dark .app-theme-scope :is(.bg-teal-50, [class~="hover:bg-teal-50"]:hover, [class*="bg-teal-50/"]) { background-color: oklch(0.29 0.05 185); }
-  .dark .app-theme-scope :is(.bg-teal-100, [class~="hover:bg-teal-100"]:hover, [class*="bg-teal-100/"]) { background-color: oklch(0.33 0.05 185); }
-  .dark .app-theme-scope :is(.bg-teal-200, [class*="bg-teal-200/"]) { background-color: oklch(0.38 0.05 185); }
-  .dark .app-theme-scope :is(.text-teal-600, .text-teal-700, .text-teal-800, .text-teal-900, .text-teal-950) { color: oklch(0.84 0.11 185); }
-  .dark .app-theme-scope :is(.border-teal-100, .border-teal-200, .border-teal-300) { border-color: oklch(0.5 0.08 185); }
-  .dark .app-theme-scope :is(.bg-cyan-50, [class~="hover:bg-cyan-50"]:hover, [class*="bg-cyan-50/"]) { background-color: oklch(0.29 0.05 210); }
-  .dark .app-theme-scope :is(.bg-cyan-100, [class~="hover:bg-cyan-100"]:hover, [class*="bg-cyan-100/"]) { background-color: oklch(0.33 0.05 210); }
-  .dark .app-theme-scope :is(.bg-cyan-200, [class*="bg-cyan-200/"]) { background-color: oklch(0.38 0.05 210); }
-  .dark .app-theme-scope :is(.text-cyan-600, .text-cyan-700, .text-cyan-800, .text-cyan-900, .text-cyan-950) { color: oklch(0.84 0.11 210); }
-  .dark .app-theme-scope :is(.border-cyan-100, .border-cyan-200, .border-cyan-300) { border-color: oklch(0.5 0.08 210); }
-  .dark .app-theme-scope :is(.bg-sky-50, [class~="hover:bg-sky-50"]:hover, [class*="bg-sky-50/"]) { background-color: oklch(0.29 0.05 240); }
-  .dark .app-theme-scope :is(.bg-sky-100, [class~="hover:bg-sky-100"]:hover, [class*="bg-sky-100/"]) { background-color: oklch(0.33 0.05 240); }
-  .dark .app-theme-scope :is(.bg-sky-200, [class*="bg-sky-200/"]) { background-color: oklch(0.38 0.05 240); }
-  .dark .app-theme-scope :is(.text-sky-600, .text-sky-700, .text-sky-800, .text-sky-900, .text-sky-950) { color: oklch(0.84 0.11 240); }
-  .dark .app-theme-scope :is(.border-sky-100, .border-sky-200, .border-sky-300) { border-color: oklch(0.5 0.08 240); }
-  .dark .app-theme-scope :is(.bg-blue-50, [class~="hover:bg-blue-50"]:hover, [class*="bg-blue-50/"]) { background-color: oklch(0.29 0.05 262); }
-  .dark .app-theme-scope :is(.bg-blue-100, [class~="hover:bg-blue-100"]:hover, [class*="bg-blue-100/"]) { background-color: oklch(0.33 0.05 262); }
-  .dark .app-theme-scope :is(.bg-blue-200, [class*="bg-blue-200/"]) { background-color: oklch(0.38 0.05 262); }
-  .dark .app-theme-scope :is(.text-blue-600, .text-blue-700, .text-blue-800, .text-blue-900, .text-blue-950) { color: oklch(0.84 0.11 262); }
-  .dark .app-theme-scope :is(.border-blue-100, .border-blue-200, .border-blue-300) { border-color: oklch(0.5 0.08 262); }
-  .dark .app-theme-scope :is(.bg-indigo-50, [class~="hover:bg-indigo-50"]:hover, [class*="bg-indigo-50/"]) { background-color: oklch(0.29 0.05 275); }
-  .dark .app-theme-scope :is(.bg-indigo-100, [class~="hover:bg-indigo-100"]:hover, [class*="bg-indigo-100/"]) { background-color: oklch(0.33 0.05 275); }
-  .dark .app-theme-scope :is(.bg-indigo-200, [class*="bg-indigo-200/"]) { background-color: oklch(0.38 0.05 275); }
-  .dark .app-theme-scope :is(.text-indigo-600, .text-indigo-700, .text-indigo-800, .text-indigo-900, .text-indigo-950) { color: oklch(0.84 0.11 275); }
-  .dark .app-theme-scope :is(.border-indigo-100, .border-indigo-200, .border-indigo-300) { border-color: oklch(0.5 0.08 275); }
-  .dark .app-theme-scope :is(.bg-violet-50, [class~="hover:bg-violet-50"]:hover, [class*="bg-violet-50/"]) { background-color: oklch(0.29 0.05 295); }
-  .dark .app-theme-scope :is(.bg-violet-100, [class~="hover:bg-violet-100"]:hover, [class*="bg-violet-100/"]) { background-color: oklch(0.33 0.05 295); }
-  .dark .app-theme-scope :is(.bg-violet-200, [class*="bg-violet-200/"]) { background-color: oklch(0.38 0.05 295); }
-  .dark .app-theme-scope :is(.text-violet-600, .text-violet-700, .text-violet-800, .text-violet-900, .text-violet-950) { color: oklch(0.84 0.11 295); }
-  .dark .app-theme-scope :is(.border-violet-100, .border-violet-200, .border-violet-300) { border-color: oklch(0.5 0.08 295); }
-  .dark .app-theme-scope :is(.bg-purple-50, [class~="hover:bg-purple-50"]:hover, [class*="bg-purple-50/"]) { background-color: oklch(0.29 0.05 315); }
-  .dark .app-theme-scope :is(.bg-purple-100, [class~="hover:bg-purple-100"]:hover, [class*="bg-purple-100/"]) { background-color: oklch(0.33 0.05 315); }
-  .dark .app-theme-scope :is(.bg-purple-200, [class*="bg-purple-200/"]) { background-color: oklch(0.38 0.05 315); }
-  .dark .app-theme-scope :is(.text-purple-600, .text-purple-700, .text-purple-800, .text-purple-900, .text-purple-950) { color: oklch(0.84 0.11 315); }
-  .dark .app-theme-scope :is(.border-purple-100, .border-purple-200, .border-purple-300) { border-color: oklch(0.5 0.08 315); }
-  .dark .app-theme-scope :is(.bg-fuchsia-50, [class~="hover:bg-fuchsia-50"]:hover, [class*="bg-fuchsia-50/"]) { background-color: oklch(0.29 0.05 330); }
-  .dark .app-theme-scope :is(.bg-fuchsia-100, [class~="hover:bg-fuchsia-100"]:hover, [class*="bg-fuchsia-100/"]) { background-color: oklch(0.33 0.05 330); }
-  .dark .app-theme-scope :is(.bg-fuchsia-200, [class*="bg-fuchsia-200/"]) { background-color: oklch(0.38 0.05 330); }
-  .dark .app-theme-scope :is(.text-fuchsia-600, .text-fuchsia-700, .text-fuchsia-800, .text-fuchsia-900, .text-fuchsia-950) { color: oklch(0.84 0.11 330); }
-  .dark .app-theme-scope :is(.border-fuchsia-100, .border-fuchsia-200, .border-fuchsia-300) { border-color: oklch(0.5 0.08 330); }
-  .dark .app-theme-scope :is(.bg-pink-50, [class~="hover:bg-pink-50"]:hover, [class*="bg-pink-50/"]) { background-color: oklch(0.29 0.05 350); }
-  .dark .app-theme-scope :is(.bg-pink-100, [class~="hover:bg-pink-100"]:hover, [class*="bg-pink-100/"]) { background-color: oklch(0.33 0.05 350); }
-  .dark .app-theme-scope :is(.bg-pink-200, [class*="bg-pink-200/"]) { background-color: oklch(0.38 0.05 350); }
-  .dark .app-theme-scope :is(.text-pink-600, .text-pink-700, .text-pink-800, .text-pink-900, .text-pink-950) { color: oklch(0.84 0.11 350); }
-  .dark .app-theme-scope :is(.border-pink-100, .border-pink-200, .border-pink-300) { border-color: oklch(0.5 0.08 350); }
-  .dark .app-theme-scope :is(.bg-rose-50, [class~="hover:bg-rose-50"]:hover, [class*="bg-rose-50/"]) { background-color: oklch(0.29 0.05 12); }
-  .dark .app-theme-scope :is(.bg-rose-100, [class~="hover:bg-rose-100"]:hover, [class*="bg-rose-100/"]) { background-color: oklch(0.33 0.05 12); }
-  .dark .app-theme-scope :is(.bg-rose-200, [class*="bg-rose-200/"]) { background-color: oklch(0.38 0.05 12); }
-  .dark .app-theme-scope :is(.text-rose-600, .text-rose-700, .text-rose-800, .text-rose-900, .text-rose-950) { color: oklch(0.84 0.11 12); }
-  .dark .app-theme-scope :is(.border-rose-100, .border-rose-200, .border-rose-300) { border-color: oklch(0.5 0.08 12); }
 }
 
 /* Kiosk light-mode readability (#1249). The kiosk is authored in dark tones

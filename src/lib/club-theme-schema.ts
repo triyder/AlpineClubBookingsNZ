@@ -3,7 +3,10 @@ import {
   type ThemeSeeds,
 } from "@/lib/theme/theme-substrate";
 import { ACCENT_NEUTRAL_STEP } from "@/lib/theme/aliases";
-import { serializeAppThemeTokens } from "@/lib/theme/app-tokens";
+import {
+  serializeAppThemeTokens,
+  serializeWebsiteStepTokens,
+} from "@/lib/theme/app-tokens";
 
 export const CLUB_THEME_ID = "default";
 export const MAX_LOGO_DATA_URL_BYTES = 900_000;
@@ -288,7 +291,17 @@ export function buildClubThemeCss(
 ): string {
   const theme = normaliseThemeValues(value);
   const base = `:root,.website-theme{${buildClubThemeDeclarations(theme)}}`;
-  return theme.rawCss ? `${base}\n${theme.rawCss}` : base;
+  // #2188 P2 — the website scope (`.website-theme`, light-only) consumes the
+  // semantic + categorical STEP utilities too (form callouts etc.), but sits
+  // outside `.app-theme-scope`, so it needs its own generated step vars. Emitted
+  // as a `.website-theme` block with the same generated club values as the app
+  // scope; globals.css's @theme step tokens carry a static default fallback so a
+  // no-sheet page never falls through to transparent.
+  const websiteSteps = `.website-theme{${serializeWebsiteStepTokens(
+    themeSeedsFromValues(theme),
+  )}}`;
+  const core = `${base}${websiteSteps}`;
+  return theme.rawCss ? `${core}\n${theme.rawCss}` : core;
 }
 
 /** Brand/font variables for app shells. Deliberately excludes rawCss so an
@@ -512,7 +525,7 @@ const MUTED_FOREGROUND_WEIGHT_STEP = 0.02;
  * therefore FIXED while the derived tone moves with the brand palette — the one
  * combination that can drift apart silently. Every other surface muted text
  * lands on is either a brand token the clamp already covers, or is remapped to
- * one in dark mode (`bg-white`/`bg-*-50` -> `--card`, `bg-*-100` -> `--muted`,
+ * one in dark mode (`bg-card`/`bg-*-50` -> `--card`, `bg-*-100` -> `--muted`,
  * `hover:bg-*-50` -> `--accent`).
  *
  * Pinned against `globals.css` by `app-theme-layout-contract.test.ts` so the two
@@ -575,7 +588,7 @@ export const APP_MUTED_FOREGROUND_DARK_SURFACE_TOKENS = [
  * Surfaces DELIBERATELY excluded from the clamp set.
  *
  * `--border`/`--input` are hairline tokens. Dark mode remaps `bg-*-200` onto
- * `--border`, so a `bg-slate-200` badge WOULD be a muted-text surface — but the
+ * `--border`, so a `bg-accent` badge WOULD be a muted-text surface — but the
  * only such badge (`page-content-panel.tsx`) was moved to
  * `bg-muted text-muted-foreground` instead, because a mid-luminance rule colour
  * is the wrong background for body text at any weight. A mid-luminance surface

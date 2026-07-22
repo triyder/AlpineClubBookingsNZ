@@ -22,7 +22,7 @@ type InstructionDocument = {
 
 // Shared typography for the sanitised instruction HTML.
 const INSTRUCTION_HTML_CLASSES =
-  "text-base leading-7 text-foreground [&_a]:text-blue-700 [&_a]:underline [&_h1]:mt-4 [&_h1]:mb-2 [&_h1]:text-2xl [&_h1]:font-bold [&_h2]:mt-4 [&_h2]:mb-2 [&_h2]:text-xl [&_h2]:font-semibold [&_h3]:mt-3 [&_h3]:mb-2 [&_h3]:text-lg [&_h3]:font-semibold [&_hr]:my-4 [&_li]:my-1 [&_ol]:my-3 [&_ol]:list-decimal [&_ol]:pl-6 [&_p]:my-2 [&_table]:my-3 [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-border [&_td]:p-2 [&_th]:border [&_th]:border-border [&_th]:bg-muted [&_th]:p-2 [&_ul]:my-3 [&_ul]:list-disc [&_ul]:pl-6";
+  "text-base leading-7 text-foreground [&_a]:text-info-11 [&_a]:underline [&_h1]:mt-4 [&_h1]:mb-2 [&_h1]:text-2xl [&_h1]:font-bold [&_h2]:mt-4 [&_h2]:mb-2 [&_h2]:text-xl [&_h2]:font-semibold [&_h3]:mt-3 [&_h3]:mb-2 [&_h3]:text-lg [&_h3]:font-semibold [&_hr]:my-4 [&_li]:my-1 [&_ol]:my-3 [&_ol]:list-decimal [&_ol]:pl-6 [&_p]:my-2 [&_table]:my-3 [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-border [&_td]:p-2 [&_th]:border [&_th]:border-border [&_th]:bg-muted [&_th]:p-2 [&_ul]:my-3 [&_ul]:list-disc [&_ul]:pl-6";
 
 function formatUpdatedAt(value: string | null): string | null {
   if (!value) {
@@ -89,7 +89,7 @@ export default function LodgeInstructionsPage() {
       <Card className="mx-auto max-w-2xl">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <ShieldAlert className="h-5 w-5 text-amber-600" />
+            <ShieldAlert className="h-5 w-5 text-warning-11" />
             Lodge Instructions
           </CardTitle>
           <CardDescription>
@@ -110,7 +110,7 @@ export default function LodgeInstructionsPage() {
 
   if (error || !documents) {
     return (
-      <p className="text-sm text-red-600">
+      <p className="text-sm text-danger-11">
         {error ?? "Failed to load the lodge instructions. Please try again."}
       </p>
     );

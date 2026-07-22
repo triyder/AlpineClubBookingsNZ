@@ -175,7 +175,7 @@ export default async function AdminLayout({
                 <ContextualHelpButton scope="admin" />
               </div>
               {!theme.isComplete && canManageContent && (
-                <div className="mb-6 rounded-md border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950 print:hidden">
+                <div className="mb-6 rounded-md border border-warning-6 bg-warning-3 p-4 text-sm text-warning-11 print:hidden">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <p className="font-medium">
                       Complete your site style before opening the public website.

@@ -130,7 +130,7 @@ export default function BookingPaymentWrapper({
   // Zero-dollar booking: no payment is required
   if (amountCents === 0) {
     return (
-      <div className="rounded-md bg-green-50 p-4 text-sm text-green-700">
+      <div className="rounded-md bg-success-3 p-4 text-sm text-success-11">
         <p className="font-medium">Booking Complete</p>
         <p className="mt-1">No payment is required for this booking.</p>
       </div>
@@ -140,15 +140,15 @@ export default function BookingPaymentWrapper({
   if (loading) {
     return (
       <div className="flex items-center justify-center p-8">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-600 border-t-transparent" />
-        <span className="ml-3 text-gray-600">Preparing payment...</span>
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-info-7 border-t-transparent" />
+        <span className="ml-3 text-muted-foreground">Preparing payment...</span>
       </div>
     );
   }
 
   if (initFailed) {
     return (
-      <div className="rounded-md bg-red-50 p-4 text-sm text-red-700">
+      <div className="rounded-md bg-danger-3 p-4 text-sm text-danger-11">
         <p className="font-medium">Payment Error</p>
         <p className="mt-1">
           We couldn&apos;t start the card payment. Your booking is saved — you can
@@ -160,7 +160,7 @@ export default function BookingPaymentWrapper({
 
   if (!clientSecret) {
     return (
-      <div className="rounded-md bg-yellow-50 p-4 text-sm text-yellow-700">
+      <div className="rounded-md bg-warning-3 p-4 text-sm text-warning-11">
         Unable to initialize payment. Please try again.
       </div>
     );

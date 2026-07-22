@@ -126,7 +126,7 @@ function MinStayForm({
   }
 
   return (
-    <Card className="border-blue-200 bg-blue-50/30">
+    <Card className="border-info-6 bg-info-3/30">
       <CardContent className="pt-6 space-y-4">
         <h3 className="font-semibold">
           {policyId ? "Edit Policy" : "New Minimum Stay Policy"}

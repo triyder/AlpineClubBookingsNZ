@@ -593,9 +593,38 @@ export async function register() {
       );
 
       try {
-        const { buildBackupCronOutcome, runDatabaseBackup } = await import("./lib/backup");
-        const result = await runDatabaseBackup();
-        const outcome = buildBackupCronOutcome(result);
+        const { buildBackupCronOutcome, applyLegacyBackupEnvGate } =
+          await import("./lib/backup");
+        const { runManagedBackup } = await import("./lib/backup-run");
+        const { detectLegacyProviderEnv } = await import("./lib/xero-config");
+        const { BACKUP_PROVIDER } = await import("./lib/backup-config");
+        // Claim through the DB-level cross-process lock the /admin/backups
+        // run-now action also honours: if another container already holds an
+        // active run, skip rather than start a second overlapping pg_dump.
+        const managed = await runManagedBackup({ trigger: "scheduled" });
+        if (!managed.claimed || !managed.result) {
+          logger.info(
+            { job: "backup" },
+            "Another process is already running a backup; skipping"
+          );
+          await recordCronRun("backup", startedAt, "SKIPPED", {
+            reason: "another process is already running a backup",
+          });
+          Sentry.captureCheckIn({ checkInId, monitorSlug: "database-backup", status: "ok" });
+          return;
+        }
+        const result = managed.result;
+        // A live install that still carries the legacy BACKUP_* env vars but has
+        // not migrated config into the DB store would otherwise record a green
+        // SKIPPED and stop backing up unnoticed (#2095 MAJOR-1). Upgrade that
+        // specific state to a loud FAILURE so the monitor alerts.
+        const legacyBackupEnvPresent = detectLegacyProviderEnv().some(
+          (finding) => finding.provider === BACKUP_PROVIDER,
+        );
+        const outcome = applyLegacyBackupEnvGate(
+          buildBackupCronOutcome(result),
+          { legacyEnvPresent: legacyBackupEnvPresent },
+        );
 
         if (outcome.status === "SUCCESS") {
           logger.info(
@@ -652,6 +681,7 @@ export async function register() {
       );
       try {
         const { pruneCronRuns } = await import("./lib/cron-job-run");
+        const { pruneBackupRuns } = await import("./lib/backup-run");
         const { pruneWebhookLogs } = await import("./lib/webhook-log");
         const { runAuditLogRetentionJob } = await import("./lib/audit-retention");
         const { expireStalePartnerInviteTokens } = await import(
@@ -681,6 +711,7 @@ export async function register() {
         };
 
         await runStep("prune-cron-runs", () => pruneCronRuns());
+        await runStep("prune-backup-runs", () => pruneBackupRuns());
         await runStep("prune-webhook-logs", () => pruneWebhookLogs());
         const auditRetention = await runStep("audit-retention", () =>
           runAuditLogRetentionJob(),

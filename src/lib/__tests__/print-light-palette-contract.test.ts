@@ -300,19 +300,20 @@ describe("#2146 print always renders the light palette", () => {
     );
   });
 
-  it("excludes the literal dark callout remap from print", () => {
-    // Unlike the neutral remap (which is token-driven and therefore self-heals
-    // once the scope tokens are light), these carry literal dark oklch values.
-    for (const rule of [
-      ".text-red-600",
-      ".text-blue-600",
-      ".bg-amber-50",
-      ".bg-yellow-50",
-    ]) {
-      expect(screenOnly).toContain(rule);
-    }
-    expect(screenOnly).toContain("oklch(0.84 0.11 27)");
-    expect(screenOnly).toContain("oklch(0.29 0.05 75)");
+  it("no longer carries the literal dark colored-callout remap (deleted in #2188 P2)", () => {
+    // The colored-callout remap was deleted in P2 once every colored surface
+    // migrated onto the scale vocabulary (bg/text/border-<scale>-<step>). Its
+    // literal dark oklch rules must be gone entirely — so there is nothing left
+    // for the print wrapper to exclude, and the #2146 concern it addressed is void.
+    // Match the callout-remap SELECTORS specifically — not the oklch values,
+    // which overlap with the curated `--danger`/`--warning` dark tokens that
+    // legitimately remain on `:root`/`.dark`.
+    expect(globals).not.toMatch(/\.dark \.app-theme-scope :is\(\.bg-red-50/);
+    expect(globals).not.toMatch(/\.dark \.app-theme-scope :is\(\.text-red-600/);
+    expect(globals).not.toMatch(/\.dark \.app-theme-scope :is\(\.bg-amber-50/);
+    // The remap-only tint (bg-{hue}-50 → oklch(0.29 …)) had no semantic-token
+    // twin, so its disappearance is a clean signal the block is gone.
+    expect(globals).not.toContain("oklch(0.29 0.05 75)");
   });
 
   it("leaves NO dark-gated rule reachable from print media", () => {
@@ -340,25 +341,19 @@ describe("#2146 print always renders the light palette", () => {
     ).toEqual([]);
   });
 
-  it("still allows the token-driven dark remaps to stay outside the wrapper", () => {
-    // Guards the widened filter against over-reach: the `.dark .app-theme-scope`
-    // neutral remap is intentionally NOT wrapped (it assigns `var(--card)` /
-    // `var(--foreground)` and self-heals), and must keep passing. If this ever
-    // reports zero, the check has stopped seeing those rules at all and the
-    // one above would be vacuously green.
-    const healed = lightHealedTokens(globals);
-    const tokenDriven = topLevelRules(stripNotPrintBlocks(globals))
-      .filter(({ selector }) => isDarkGated(selector))
-      .filter(({ body }) => nonTokenDeclarations(body, healed).length === 0);
-
-    expect(tokenDriven.length).toBeGreaterThan(0);
-    expect(
-      tokenDriven.some(({ selector }) =>
-        // Selectors in globals.css are wrapped over several lines by the
-        // formatter, so collapse whitespace before matching.
-        selector.replaceAll(/\s+/g, " ").includes(".dark .app-theme-scope"),
-      ),
-    ).toBe(true);
+  it("no longer carries the token-driven neutral remap outside the wrapper (deleted in #2188 P2)", () => {
+    // The unwrapped `.dark .app-theme-scope` neutral remap (bg-white/slate →
+    // --card/--muted/--foreground, self-healing) was deleted in P2 once every
+    // tree used the shadcn role tokens at source. The surviving `.dark
+    // .app-theme-scope` rules — P1's F1 core-token block and the A6 card shadow —
+    // are all wrapped in `@media not print`, so after `stripNotPrintBlocks` there
+    // are NO top-level dark-gated rules left. The sibling "leaves NO dark-gated
+    // rule reachable from print" test is the real, surviving invariant.
+    expect(globals).not.toMatch(/\.dark\s+\.app-theme-scope\s+:is\(\s*\.bg-white/);
+    const topLevelDark = topLevelRules(stripNotPrintBlocks(globals)).filter(
+      ({ selector }) => isDarkGated(selector),
+    );
+    expect(topLevelDark).toEqual([]);
   });
 
   it("pins color-scheme light in print so the UA cannot repaint it dark", () => {
@@ -690,17 +685,13 @@ const PRINTABLE_SURFACE_DARK_ALLOWLIST = new Set<string>([]);
 //
 // This list is a DRIFT GUARD, not permission: adding a file here is a claim that
 // the file can never render inside a print root, and must be justified.
+// #2188 P2 emptied this list: the colored surface migration dropped every
+// `dark:` colour compensator (the target scale/role tokens auto-adapt per mode),
+// so no source file carries a literal-palette `dark:` utility any more. The
+// enumeration guard below (`stale`) keeps it honest — a new carrier must be
+// justified and re-added.
 const NON_PRINTABLE_DARK_UTILITY_FILES = new Set(
-  [
-    "src/components/nav-bar.tsx",
-    "src/app/(admin)/admin/bed-allocation/_components/booking-accent.ts",
-    "src/app/(authenticated)/book/_components/guests-step.tsx",
-    "src/app/(admin)/admin/members/_components/member-bulk-membership-dialog.tsx",
-    "src/app/(admin)/admin/display/builder/page.tsx",
-    "src/app/(admin)/admin/display/builder/display-builder.tsx",
-    "src/app/(admin)/admin/display/templates/page.tsx",
-    "src/app/(admin)/admin/display/layouts/page.tsx",
-  ].map((path) => path.replaceAll("\\", "/")),
+  ([] as string[]).map((path) => path.replaceAll("\\", "/")),
 );
 
 describe("#2146 no literal-palette dark: utility on a printable surface", () => {

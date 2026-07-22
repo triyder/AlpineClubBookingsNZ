@@ -180,12 +180,16 @@ describe("#1819 final accessibility presentation contract", () => {
     // The tone -> class map is now the single shared source of truth (#156).
     // Assert the full semantic set lives there so dropping any pair — or
     // regressing one off its muted-bg + text token pairing — fails the contract.
+    // #2188 P2 — the semantic tones render on the generated step scales via the
+    // signed-off `bg-<scale>-3 text-<scale>-11` chip pattern (G2b-AA); neutral
+    // keeps the shadcn role tokens. The contract still pins the full set so
+    // dropping a pair — or regressing one off its step-3/step-11 pairing — fails.
     const chipTones = source("src/lib/chip-tones.ts");
     expect(chipTones).toContain('neutral: "bg-muted text-foreground"');
-    expect(chipTones).toContain('info: "bg-info-muted text-info"');
-    expect(chipTones).toContain('success: "bg-success-muted text-success"');
-    expect(chipTones).toContain('warning: "bg-warning-muted text-warning"');
-    expect(chipTones).toContain('danger: "bg-danger-muted text-danger"');
+    expect(chipTones).toContain('info: "bg-info-3 text-info-11"');
+    expect(chipTones).toContain('success: "bg-success-3 text-success-11"');
+    expect(chipTones).toContain('warning: "bg-warning-3 text-warning-11"');
+    expect(chipTones).toContain('danger: "bg-danger-3 text-danger-11"');
 
     // The icon + label chip primitives draw their tone from that shared map and
     // render an icon plus a text label — never colour alone. MiniChip backs the

@@ -424,7 +424,7 @@ function MembershipTypeEditorDialog({
         {error && (
           <div
             role="alert"
-            className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800"
+            className="rounded-md border border-danger-6 bg-danger-3 px-3 py-2 text-sm text-danger-11"
           >
             {error}
           </div>
@@ -433,7 +433,7 @@ function MembershipTypeEditorDialog({
         {validationError && dirty && (
           <div
             role="alert"
-            className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900"
+            className="rounded-md border border-warning-6 bg-warning-3 px-3 py-2 text-sm text-warning-11"
           >
             {validationError}
           </div>
@@ -761,7 +761,7 @@ function MembershipTypeMergeDialog({
         {error && (
           <div
             role="alert"
-            className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800"
+            className="rounded-md border border-danger-6 bg-danger-3 px-3 py-2 text-sm text-danger-11"
           >
             {error}
           </div>
@@ -788,7 +788,7 @@ function MembershipTypeMergeDialog({
               </SelectContent>
             </Select>
             {targetOptions.length === 0 && (
-              <p className="text-sm text-amber-800">
+              <p className="text-sm text-warning-11">
                 No active target type is available. Reactivate or create a type
                 to merge into.
               </p>
@@ -1602,8 +1602,8 @@ export default function AdminMembershipTypesPage() {
           tabIndex={error ? -1 : undefined}
           className={
             error
-              ? "scroll-mt-20 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 focus:outline-none"
-              : "rounded-md border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800"
+              ? "scroll-mt-20 rounded-md border border-danger-6 bg-danger-3 px-4 py-3 text-sm text-danger-11 focus:outline-none"
+              : "rounded-md border border-success-6 bg-success-3 px-4 py-3 text-sm text-success-11"
           }
         >
           {error || savedMessage}
@@ -1772,8 +1772,8 @@ export default function AdminMembershipTypesPage() {
             </div>
 
             {rollForwardResult.exceptionCount > 0 && (
-              <div className="rounded-md border border-amber-200 bg-amber-50 p-3">
-                <div className="text-sm font-medium text-amber-900">
+              <div className="rounded-md border border-warning-6 bg-warning-3 p-3">
+                <div className="text-sm font-medium text-warning-11">
                   Exceptions ({rollForwardResult.exceptionCount})
                 </div>
                 <div className="mt-2 space-y-1">
@@ -1782,7 +1782,7 @@ export default function AdminMembershipTypesPage() {
                     .map((exception) => (
                       <div
                         key={`${exception.code}-${exception.memberId}`}
-                        className="text-xs text-amber-900"
+                        className="text-xs text-warning-11"
                       >
                         {exception.memberName} ({exception.memberEmail}) -{" "}
                         {rollForwardExceptionLabel(exception)}
@@ -1790,7 +1790,7 @@ export default function AdminMembershipTypesPage() {
                     ))}
                 </div>
                 {rollForwardResult.exceptionCount > 10 && (
-                  <p className="mt-2 text-xs text-amber-800">
+                  <p className="mt-2 text-xs text-warning-11">
                     {rollForwardResult.exceptionCount - 10} more not shown.
                   </p>
                 )}

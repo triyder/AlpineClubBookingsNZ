@@ -119,9 +119,9 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
 
     // Season top-border indicator
     if (season?.type === "WINTER") {
-      classes += "border-t-2 border-blue-400 ";
+      classes += "border-t-2 border-info-7 ";
     } else if (season?.type === "SUMMER") {
-      classes += "border-t-2 border-amber-400 ";
+      classes += "border-t-2 border-warning-7 ";
     }
 
     // Availability heat, token-driven so it dark-adapts (epic #1800). The
@@ -338,7 +338,7 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
             <span key={s.name} className="flex items-center gap-1">
               <span
                 className={`h-3 w-3 rounded border-t-2 ${
-                  s.type === "WINTER" ? "border-blue-400" : "border-amber-400"
+                  s.type === "WINTER" ? "border-info-7" : "border-warning-7"
                 }`}
               />
               <span aria-hidden className="font-semibold">

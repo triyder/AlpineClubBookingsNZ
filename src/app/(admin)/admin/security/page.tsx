@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { GoogleSecurityCard } from "@/components/admin/google-security-card";
 import { MagicLinkSecurityCard } from "@/components/admin/magic-link-security-card";
 import { PasswordPolicyCard } from "@/components/admin/security/password-policy-card";
-import { googleCredentialsConfigured } from "@/lib/google-oauth";
+import { getGoogleSetupState } from "@/lib/google-config";
 import { loadLoginSecuritySettings } from "@/lib/login-security-settings";
 import { loadClubModuleSettings } from "@/lib/module-settings";
 
@@ -25,10 +25,20 @@ export const metadata: Metadata = {
 };
 
 export default async function AdminSecurityPage() {
-  const [{ settings: moduleSettings }, loginSecurity] = await Promise.all([
-    loadClubModuleSettings(),
-    loadLoginSecuritySettings(),
-  ]);
+  const [{ settings: moduleSettings }, loginSecurity, googleState] =
+    await Promise.all([
+      loadClubModuleSettings(),
+      loadLoginSecuritySettings(),
+      // Fail-open: a store error degrades to "not configured / not verified" so
+      // the card renders (and the enable gate shows) rather than the page 500ing.
+      getGoogleSetupState().catch(() => ({
+        clientIdSet: false,
+        clientSecretSet: false,
+        needsReentry: false,
+        verified: false,
+      })),
+    ]);
+  const googleConfigured = googleState.clientIdSet && googleState.clientSecretSet;
 
   return (
     <div className="space-y-8">
@@ -48,7 +58,9 @@ export default async function AdminSecurityPage() {
         />
         <GoogleSecurityCard
           moduleSettings={moduleSettings}
-          credentialsConfigured={googleCredentialsConfigured()}
+          credentialsConfigured={googleConfigured}
+          verified={googleState.verified}
+          needsReentry={googleState.needsReentry}
         />
       </div>
     </div>

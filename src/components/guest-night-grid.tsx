@@ -57,13 +57,13 @@ export function GuestNightGrid({
   return (
     <div className="space-y-2">
       {(arrivalLabel || departureLabel) && (
-        <p className="text-sm text-gray-600">
+        <p className="text-sm text-muted-foreground">
           Arrival <span className="font-medium">{arrivalLabel}</span>
           {" · "}
           Departure <span className="font-medium">{departureLabel}</span>
         </p>
       )}
-      <p className="text-sm text-gray-500">
+      <p className="text-sm text-muted-foreground">
         Tap a night to switch it off for a guest. Each guest is only charged for,
         and allocated a bed on, the nights that stay on.
       </p>
@@ -71,7 +71,7 @@ export function GuestNightGrid({
         <table className="w-full border-collapse text-sm">
           <thead>
             <tr>
-              <th className="sticky left-0 z-10 bg-gray-50 px-3 py-2 text-left font-medium">
+              <th className="sticky left-0 z-10 bg-card px-3 py-2 text-left font-medium">
                 Guest
               </th>
               {nights.map((nightKey) => {
@@ -81,7 +81,7 @@ export function GuestNightGrid({
                     key={nightKey}
                     className="whitespace-nowrap px-2 py-2 text-center font-medium"
                   >
-                    <div className="text-gray-500">{weekday}</div>
+                    <div className="text-muted-foreground">{weekday}</div>
                     <div>{day}</div>
                   </th>
                 );
@@ -91,7 +91,7 @@ export function GuestNightGrid({
           <tbody>
             {guestLabels.map((label, guestIndex) => (
               <tr key={guestIndex} className="border-t">
-                <td className="sticky left-0 z-10 bg-white px-3 py-2 font-medium">
+                <td className="sticky left-0 z-10 bg-card px-3 py-2 font-medium">
                   {label || `Guest ${guestIndex + 1}`}
                 </td>
                 {nights.map((nightKey) => {
@@ -109,13 +109,13 @@ export function GuestNightGrid({
                         className={[
                           "flex w-full min-w-14 flex-col items-center gap-0.5 rounded-md border px-2 py-1 transition-colors",
                           on
-                            ? "border-green-300 bg-green-50 text-green-900 hover:bg-green-100"
-                            : "border-gray-200 bg-gray-50 text-gray-400 hover:bg-gray-100",
+                            ? "border-success-6 bg-success-3 text-success-11 hover:bg-success-3"
+                            : "border-border bg-card text-muted-foreground hover:bg-muted",
                         ].join(" ")}
                       >
                         <span className={on ? "" : "line-through"}>{priceText}</span>
                         <span
-                          className={on ? "text-red-500" : "text-green-600"}
+                          className={on ? "text-danger-11" : "text-success-11"}
                           aria-hidden="true"
                         >
                           {on ? "✕" : "+"}

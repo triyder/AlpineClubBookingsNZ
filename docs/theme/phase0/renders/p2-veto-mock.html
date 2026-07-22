@@ -1,0 +1,104 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>#2188 P2 — M1/M2 veto-at-render evidence</title>
+<style>
+  * { box-sizing: border-box; margin: 0; }
+  body { font: 13px/1.4 ui-sans-serif, system-ui, sans-serif; padding: 20px; background: #e7e9e7; color: #111; }
+  h1 { font-size: 16px; margin-bottom: 4px; }
+  .sub { color: #555; margin-bottom: 16px; font-size: 12px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .mode { border-radius: 10px; padding: 14px; }
+  .mode.light { background: #f2f4f2; color: #1c211d; border: 1px solid #d0d3d0; }
+  .mode.dark  { background: #1b1d1c; color: #eceeed; border: 1px solid #383b39; }
+  .mode h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; opacity: .7; margin-bottom: 10px; }
+  .cap { font-size: 11px; opacity: .6; margin: 12px 0 5px; }
+  /* booking strips: a card with a left accent strip + focus ring */
+  .strips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .bk { position: relative; width: 88px; height: 42px; border-radius: 6px; overflow: hidden;
+        display: flex; align-items: center; justify-content: center; font-size: 10px; }
+  .light .bk { background: #f6f8f7; color: #1c211d; box-shadow: 0 1px 2px #0002; }
+  .dark  .bk { background: #151716; color: #eceeed; }
+  .bk .strip { position: absolute; inset: 0 auto 0 0; width: 5px; }
+  .bk.ring { outline: 2px solid var(--rc); outline-offset: -2px; }
+  /* callout */
+  .callout { border-radius: 8px; padding: 10px 12px; border: 1px solid; font-size: 12px; margin-top: 6px; }
+</style></head>
+<body>
+<h1>#2188 P2 — M1 &amp; M2 veto-at-render evidence (default seed; cat/semantic scales are hue-seeded, so both clubs render these identically)</h1>
+<div class="sub">BEFORE = raw Tailwind utilities (+ the now-deleted dark remap). AFTER = signed-off scale vocabulary (cat1–5 step 9 / ring step 7; warning step 3/6/11). Meaning is carried by icon + label, never colour alone.</div>
+
+<h2 style="font-size:14px;margin:6px 0">M1 — bed-allocation booking strips: 9-hue hash → cat1–5 (collisions accepted)</h2>
+<div class="grid">
+  <div class="mode light">
+    <h2>Light</h2>
+    <div class="cap">BEFORE — 9 raw hues (bg-{red,orange,amber,lime,emerald,cyan,blue,violet,fuchsia}-500)</div>
+    <div class="strips" id="m1-before-l"></div>
+    <div class="cap">AFTER — cat1–5 step 9 solid, ring = step 7 (5 hues; hash % 5)</div>
+    <div class="strips" id="m1-after-l"></div>
+  </div>
+  <div class="mode dark">
+    <h2>Dark</h2>
+    <div class="cap">BEFORE — 9 raw hues (dark remap tinted the strips)</div>
+    <div class="strips" id="m1-before-d"></div>
+    <div class="cap">AFTER — cat1–5 step 9 (dark), ring = step 7 (dark)</div>
+    <div class="strips" id="m1-after-d"></div>
+  </div>
+</div>
+
+<h2 style="font-size:14px;margin:18px 0 6px">M2 — orange callout → warning scale (BUMPED / PARTIALLY_REFUNDED)</h2>
+<div class="grid">
+  <div class="mode light">
+    <h2>Light</h2>
+    <div class="cap">BEFORE — bg-orange-50 / border-orange-200 / text-orange-800</div>
+    <div class="callout" style="background:#fff7ed;border-color:#fed7aa;color:#9a3412">⚠ Booking bumped — a higher-priority allocation displaced this bed.</div>
+    <div class="cap">AFTER — bg-warning-3 / border-warning-6 / text-warning-11</div>
+    <div class="callout" style="background:#fee9b2;border-color:#ffc85c;color:#815100">⚠ Booking bumped — a higher-priority allocation displaced this bed.</div>
+  </div>
+  <div class="mode dark">
+    <h2>Dark</h2>
+    <div class="cap">BEFORE — old colored-callout remap (deleted in P2)</div>
+    <div class="callout" style="background:oklch(0.29 0.05 55);border-color:oklch(0.5 0.08 55);color:oklch(0.84 0.11 55)">⚠ Booking bumped — a higher-priority allocation displaced this bed.</div>
+    <div class="cap">AFTER — bg-warning-3 / border-warning-6 / text-warning-11 (dark)</div>
+    <div class="callout" style="background:#2e230e;border-color:#4d3502;color:#e1a83b">⚠ Booking bumped — a higher-priority allocation displaced this bed.</div>
+  </div>
+</div>
+
+<h2 style="font-size:14px;margin:18px 0 6px">M2/M5-adjacent — how the STATUS CHIPS actually ship (owner: veto here if unwanted)</h2>
+<div class="sub" style="margin-bottom:8px">The orange→warning fold above is true for a standalone warning callout. But the booking/payment <b>status chips</b> deviate: <b>BUMPED</b> and <b>PARTIALLY_REFUNDED</b> ship on <b>cat4</b> (categorical), and <b>PENDING</b> (booking) ships on <b>cat5</b> — NOT the warning scale. Reason: amber owns warning-primary (PAYMENT_PENDING → warning), and the status-map colour-uniqueness constraint forbids two warning chips in one column. So the orange/yellow siblings re-home to categorical slots by hue proximity. This is the M2/M5-adjacent deviation — meaning is carried by icon + label, never colour alone.</div>
+<div class="grid">
+  <div class="mode light">
+    <h2>Light — status chips (bg step-3 / text step-11)</h2>
+    <div class="strips" style="gap:10px">
+      <span class="chip" style="background:#fee5d7;color:#a03300">● BUMPED (cat4)</span>
+      <span class="chip" style="background:#fee5d7;color:#a03300">● PARTIALLY_REFUNDED (cat4)</span>
+      <span class="chip" style="background:#e6f0ce;color:#516600">● PENDING (cat5)</span>
+      <span class="chip" style="background:#fee9b2;color:#815100">● PAYMENT_PENDING (warning)</span>
+    </div>
+  </div>
+  <div class="mode dark">
+    <h2>Dark — status chips</h2>
+    <div class="strips" style="gap:10px">
+      <span class="chip" style="background:#341f11;color:#f79957">● BUMPED (cat4)</span>
+      <span class="chip" style="background:#341f11;color:#f79957">● PARTIALLY_REFUNDED (cat4)</span>
+      <span class="chip" style="background:#222715;color:#a5c242">● PENDING (cat5)</span>
+      <span class="chip" style="background:#2e230e;color:#e1a83b">● PAYMENT_PENDING (warning)</span>
+    </div>
+  </div>
+</div>
+<style>.chip{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:600}</style>
+
+<script>
+const RAW9 = ["#ef4444","#f97316","#f59e0b","#84cc16","#10b981","#06b6d4","#3b82f6","#8b5cf6","#d946ef"];
+const CAT9L = ["#7c5cff","#189ab4","#d6409f","#e8730c","#8aa614"];
+const CAT7L = ["#c1bcff","#8ad4e8","#f0b2d3","#fcb589","#bbd472"];
+const CAT9D = ["#7c5cff","#189ab4","#d6409f","#e8730c","#8aa614"];
+const CAT7D = ["#463196","#005161","#722755","#6b3917","#414f08"];
+function strip(hex, ring){ const d=document.createElement("div"); d.className="bk"+(ring?" ring":""); if(ring)d.style.setProperty("--rc",ring);
+  const s=document.createElement("div"); s.className="strip"; s.style.background=hex; d.appendChild(s);
+  const t=document.createElement("span"); t.textContent="#"+(Math.floor(Math.random()*900)+100); d.appendChild(t); return d; }
+// 9 sample bookings, hashed. before: %9 ; after: %5
+const $=(id)=>document.getElementById(id);
+const ids=[0,1,2,3,4,5,6,7,8];
+ids.forEach(i=>{ $("m1-before-l").appendChild(strip(RAW9[i%9])); $("m1-before-d").appendChild(strip(RAW9[i%9]));
+  $("m1-after-l").appendChild(strip(CAT9L[i%5], CAT7L[i%5])); $("m1-after-d").appendChild(strip(CAT9D[i%5], CAT7D[i%5])); });
+</script>
+</body></html>

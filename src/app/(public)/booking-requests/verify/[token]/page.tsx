@@ -60,7 +60,7 @@ export default function BookingRequestVerifyPage() {
           <p className="text-sm text-muted-foreground">Confirming your email address...</p>
         ) : result.outcome === "verified" || result.outcome === "already_verified" ? (
           <div className="space-y-3">
-            <div className="flex items-center gap-2 text-emerald-700">
+            <div className="flex items-center gap-2 text-success-11">
               <CheckCircle2 className="h-6 w-6 shrink-0" />
               <p className="font-medium">Your email address is confirmed.</p>
             </div>
@@ -83,7 +83,7 @@ export default function BookingRequestVerifyPage() {
           </div>
         ) : result.outcome === "expired" ? (
           <div className="space-y-3">
-            <div className="flex items-center gap-2 text-amber-700">
+            <div className="flex items-center gap-2 text-warning-11">
               <Clock className="h-6 w-6 shrink-0" />
               <p className="font-medium">This confirmation link has expired.</p>
             </div>
@@ -94,7 +94,7 @@ export default function BookingRequestVerifyPage() {
           </div>
         ) : (
           <div className="space-y-3">
-            <div className="flex items-center gap-2 text-amber-700">
+            <div className="flex items-center gap-2 text-warning-11">
               <AlertTriangle className="h-6 w-6 shrink-0" />
               <p className="font-medium">This confirmation link is not valid.</p>
             </div>

@@ -688,7 +688,7 @@ export function MemberEditorDialog({
               ref={formErrorRef}
               role="alert"
               tabIndex={-1}
-              className="scroll-mt-20 whitespace-pre-line rounded border border-red-200 bg-red-50 p-2 text-sm text-red-700 focus:outline-none"
+              className="scroll-mt-20 whitespace-pre-line rounded border border-danger-6 bg-danger-3 p-2 text-sm text-danger-11 focus:outline-none"
             >
               {formError}
             </div>

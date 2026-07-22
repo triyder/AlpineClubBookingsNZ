@@ -709,16 +709,13 @@ describe("view-only section banner coverage (#2160)", () => {
         (f) => bannerRenderSites(f.ast).length > 0,
       ).length,
     }).toEqual({
-      // +1 vs #2160's 260: member-photos (hoppers#171) adds the committee
-      // photo-display control, whose view-only-gated Save button keeps its own
-      // reason (a leaf exception).
-      callSites: 261,
-      optOuts: 228,
-      staticOptOuts: 207,
+      callSites: 263,
+      optOuts: 231,
+      staticOptOuts: 210,
       vouchedOptOuts: 21,
-      exceptions: 33,
-      exceptionFiles: 16,
-      bannerComponents: 74,
+      exceptions: 32,
+      exceptionFiles: 15,
+      bannerComponents: 75,
     });
 
     /*
@@ -778,8 +775,7 @@ describe("view-only section banner coverage (#2160)", () => {
       // view-only would get no banner at all.
       memberDetailCards: { controls: 4, files: 1 },
       separateA11yContainer: { controls: 9, files: 4 },
-      // +1 control / +1 file: the member-photos committee photo-display control.
-      leaves: { controls: 20, files: 11 },
+      leaves: { controls: 19, files: 10 },
     });
   });
 

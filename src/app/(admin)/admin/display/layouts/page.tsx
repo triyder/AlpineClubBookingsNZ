@@ -561,7 +561,7 @@ export default function AdminDisplayLayoutsPage() {
           {editingBuiltIn && (
             <div
               role="note"
-              className="space-y-2 rounded-md border border-amber-400/50 bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950/40 dark:text-amber-200"
+              className="space-y-2 rounded-md border border-warning-7/50 bg-warning-3 p-3 text-sm text-warning-11"
             >
               <p className="font-medium">This is a built-in layout.</p>
               <p>
@@ -949,7 +949,7 @@ export default function AdminDisplayLayoutsPage() {
           )}
 
           {warnings.length > 0 && (
-            <div className="space-y-1 rounded-md border border-amber-400/50 bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+            <div className="space-y-1 rounded-md border border-warning-7/50 bg-warning-3 p-3 text-sm text-warning-11">
               <p className="font-medium">
                 Saved, but some CSS was neutralised on the way in:
               </p>

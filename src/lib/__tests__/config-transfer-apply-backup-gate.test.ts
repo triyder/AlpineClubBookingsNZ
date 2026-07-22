@@ -17,12 +17,12 @@ import { buildBundle } from "@/lib/config-transfer/bundle";
 import { buildImportPlan } from "@/lib/config-transfer/import";
 import type { ReadDb } from "@/lib/config-transfer/import-types";
 
-// ADR-002 pre-apply backup durability gate. With BACKUP_ENABLED=true but no
-// BACKUP_S3_BUCKET, runDatabaseBackup "succeeds" onto the web slot's LOCAL
-// disk only — a file the next blue/green deploy wipes. That is NOT a safety
-// backup: the import must refuse to clobber config it cannot restore, and the
-// audit record must state the durability truthfully instead of implying a
-// recoverable backup exists.
+// ADR-002 pre-apply backup durability gate. With backups enabled but no S3
+// destination configured (in-app, #2095), runDatabaseBackup "succeeds" onto the
+// web slot's LOCAL disk only — a file the next blue/green deploy wipes. That is
+// NOT a safety backup: the import must refuse to clobber config it cannot
+// restore, and the audit record must state the durability truthfully instead of
+// implying a recoverable backup exists.
 
 const GENERATED_AT = "2026-07-10T00:00:00.000Z";
 
@@ -118,7 +118,7 @@ describe("config import pre-apply backup durability gate (ADR-002)", () => {
     );
     // Operator-actionable: names the missing durable destination.
     await expect(applyWith(prisma, "overwrite")).rejects.toThrow(
-      /BACKUP_S3_BUCKET/,
+      /S3 destination in Admin -> Backups/,
     );
 
     // The gate fires BEFORE the destructive transaction: nothing was written.
@@ -158,11 +158,11 @@ describe("config import pre-apply backup durability gate (ADR-002)", () => {
     });
   });
 
-  it("keeps the operator opt-out: a skipped backup (BACKUP_ENABLED unset) still applies, audited as non-durable", async () => {
+  it("keeps the operator opt-out: a skipped backup (backups disabled) still applies, audited as non-durable", async () => {
     vi.mocked(runDatabaseBackup).mockResolvedValue({
       success: false,
       skipped: true,
-      reason: "Backups are disabled. Set BACKUP_ENABLED=true.",
+      reason: "Backups are disabled. Enable them on Admin → Backups.",
     });
     const { prisma, create } = applyHarness();
 

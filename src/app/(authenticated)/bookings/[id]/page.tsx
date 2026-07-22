@@ -83,9 +83,9 @@ import {
 
 const historyToneClasses: Record<BookingHistoryTone, string> = {
   default: "border-border bg-muted text-muted-foreground",
-  success: "border-emerald-200 bg-emerald-100 text-emerald-800",
-  warning: "border-amber-200 bg-amber-100 text-amber-800",
-  danger: "border-rose-200 bg-rose-100 text-rose-800",
+  success: "border-success-6 bg-success-3 text-success-11",
+  warning: "border-warning-6 bg-warning-3 text-warning-11",
+  danger: "border-danger-6 bg-danger-3 text-danger-11",
 };
 
 // States with a self-contained outcome worth surfacing as a banner. Active
@@ -99,11 +99,11 @@ const NARRATIVE_BANNER_STATES = new Set<BookingNarrativeState>([
 ]);
 
 const narrativeBannerClasses: Record<string, string> = {
-  paid: "border-emerald-200 bg-emerald-50 text-emerald-900",
-  bumped: "border-sky-200 bg-sky-50 text-sky-900",
-  cancelled_pre_payment: "border-amber-200 bg-amber-50 text-amber-900",
-  cancelled_post_payment: "border-amber-200 bg-amber-50 text-amber-900",
-  declined: "border-rose-200 bg-rose-50 text-rose-900",
+  paid: "border-success-6 bg-success-3 text-success-11",
+  bumped: "border-info-6 bg-info-3 text-info-11",
+  cancelled_pre_payment: "border-warning-6 bg-warning-3 text-warning-11",
+  cancelled_post_payment: "border-warning-6 bg-warning-3 text-warning-11",
+  declined: "border-danger-6 bg-danger-3 text-danger-11",
 };
 
 // Candidate anchors for this long, mostly-conditional page. SectionNav prunes
@@ -957,7 +957,7 @@ export default async function BookingDetailPage({
       )}
 
       {showCompletePaymentCard && (
-        <div className="rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+        <div className="rounded-md border border-warning-6 bg-warning-3 px-4 py-3 text-sm text-warning-11">
           <p className="font-medium">Payment required</p>
           <p>{paymentRequiredDescription}</p>
           <p className="mt-1">
@@ -969,7 +969,7 @@ export default async function BookingDetailPage({
       )}
 
       {isDeleted ? (
-        <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">
+        <div className="rounded-md border border-danger-6 bg-danger-3 px-4 py-3 text-sm text-danger-11">
           <p className="font-medium">Deleted cancelled booking</p>
           <p>
             Deleted {booking.deletedAt?.toLocaleString("en-NZ")}
@@ -998,7 +998,7 @@ export default async function BookingDetailPage({
       ) : null}
 
       {hasProvisionalChildren ? (
-        <div className="space-y-1 rounded-md border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
+        <div className="space-y-1 rounded-md border border-info-6 bg-info-3 px-4 py-3 text-sm text-info-11">
           <p className="font-medium">
             {provisionalChildGuestCount} non-member guest
             {provisionalChildGuestCount === 1 ? "" : "s"} held provisionally
@@ -1023,7 +1023,7 @@ export default async function BookingDetailPage({
       ) : null}
 
       {isProvisionalChild ? (
-        <div className="space-y-1 rounded-md border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
+        <div className="space-y-1 rounded-md border border-info-6 bg-info-3 px-4 py-3 text-sm text-info-11">
           <p className="font-medium">Provisional non-member guests</p>
           <p>
             This is the non-member portion of{" "}
@@ -1042,7 +1042,7 @@ export default async function BookingDetailPage({
       ) : null}
 
       {isFlaggedProvisional ? (
-        <div className="space-y-1 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+        <div className="space-y-1 rounded-md border border-warning-6 bg-warning-3 px-4 py-3 text-sm text-warning-11">
           <p className="font-medium">Provisional booking — no beds held yet</p>
           {nonOwnerAdminViewer ? (
             <p>
@@ -1102,7 +1102,7 @@ export default async function BookingDetailPage({
       )}
 
       {booking.requiresAdminReview && (
-        <div className="space-y-2 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+        <div className="space-y-2 rounded-md border border-warning-6 bg-warning-3 px-4 py-3 text-sm text-warning-11">
           <p>
             <strong>
               {booking.adminReviewStatus === "PENDING"
@@ -1281,17 +1281,17 @@ export default async function BookingDetailPage({
 
       {/* Waitlisted booking: show position */}
       {isWaitlisted && (
-        <Card className="border-purple-200 bg-purple-50">
+        <Card className="border-cat1-6 bg-cat1-3">
           <CardHeader>
-            <CardTitle className="text-purple-900">On the Waitlist</CardTitle>
+            <CardTitle className="text-cat1-11">On the Waitlist</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
             {booking.waitlistPosition && (
-              <p className="text-sm font-medium text-purple-800">
+              <p className="text-sm font-medium text-cat1-11">
                 Position: #{booking.waitlistPosition}
               </p>
             )}
-            <p className="text-sm text-purple-700">
+            <p className="text-sm text-cat1-11">
               {nonOwnerAdminViewer ? (
                 <>
                   We&apos;ll email the member when a spot opens up. They&apos;ll
@@ -1324,37 +1324,37 @@ export default async function BookingDetailPage({
         internetBankingPayment &&
         isPaymentOwedBookingStatus(booking.status) &&
         internetBankingPayment.status !== "SUCCEEDED" && (
-          <Card className="border-amber-200 bg-amber-50">
+          <Card className="border-warning-6 bg-warning-3">
             <CardHeader>
-              <CardTitle className="text-amber-950">Internet Banking Payment</CardTitle>
+              <CardTitle className="text-warning-11">Internet Banking Payment</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-3 text-sm text-amber-950">
+            <CardContent className="space-y-3 text-sm text-warning-11">
               <p>
                 {internetBankingPendingDescription}
               </p>
               <div className="grid gap-2 sm:grid-cols-2">
                 <div>
-                  <span className="text-amber-800">Amount due:</span>{" "}
+                  <span className="text-warning-11">Amount due:</span>{" "}
                   <span className="font-medium">
                     {formatCents(internetBankingPayment.amountCents)}
                   </span>
                 </div>
                 {internetBankingPayment.reference ? (
                   <div>
-                    <span className="text-amber-800">Reference:</span>{" "}
+                    <span className="text-warning-11">Reference:</span>{" "}
                     <span className="font-medium">{internetBankingPayment.reference}</span>
                   </div>
                 ) : null}
                 {internetBankingPayment.xeroInvoiceNumber ? (
                   <div>
-                    <span className="text-amber-800">Xero invoice:</span>{" "}
+                    <span className="text-warning-11">Xero invoice:</span>{" "}
                     <span className="font-medium">
                       {internetBankingPayment.xeroInvoiceNumber}
                     </span>
                   </div>
                 ) : internetBankingPayment.xeroInvoiceId ? (
                   <div>
-                    <span className="text-amber-800">Xero invoice:</span>{" "}
+                    <span className="text-warning-11">Xero invoice:</span>{" "}
                     <span className="font-medium">
                       {internetBankingPayment.xeroInvoiceId.slice(0, 8)}
                     </span>
@@ -1370,13 +1370,13 @@ export default async function BookingDetailPage({
           the payment-link affordance here too (the pre-switch warning inside
           the payment card is gone once the switch has happened). */}
       {showGuestPaymentLinkStandalone && (
-        <Card className="border-amber-200 bg-amber-50">
+        <Card className="border-warning-6 bg-warning-3">
           <CardHeader>
-            <CardTitle className="text-amber-900">
+            <CardTitle className="text-warning-11">
               Your guests still need paying for
             </CardTitle>
           </CardHeader>
-          <CardContent className="space-y-2 text-sm text-amber-900">
+          <CardContent className="space-y-2 text-sm text-warning-11">
             <p>
               You&apos;re paying for your own place by internet banking, so we
               don&apos;t have a card on file to charge for your{" "}
@@ -1394,12 +1394,12 @@ export default async function BookingDetailPage({
       {/* Provisional/on-hold booking: explain why no payment is collected yet
           (issue #777). */}
       {showPaymentOnHoldNotice && (
-        <Card className="border-sky-200 bg-sky-50">
+        <Card className="border-info-6 bg-info-3">
           <CardHeader>
-            <CardTitle className="text-sky-900">Payment on hold</CardTitle>
+            <CardTitle className="text-info-11">Payment on hold</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-sm text-sky-900">
+            <p className="text-sm text-info-11">
               This is a provisional booking. We&apos;ll confirm your place and
               collect payment once your guests are confirmed, closer to your
               stay.
@@ -1419,7 +1419,7 @@ export default async function BookingDetailPage({
               {paymentRequiredDescription}
             </p>
             {showCreditApplied && (
-              <div className="mb-4 space-y-1 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
+              <div className="mb-4 space-y-1 rounded-md border border-success-6 bg-success-3 px-3 py-2 text-sm text-success-11">
                 <div className="flex items-center justify-between">
                   <span>Booking total</span>
                   <span>{formatCents(booking.finalPriceCents)}</span>
@@ -1452,7 +1452,7 @@ export default async function BookingDetailPage({
                   // and offer to email a payment link for the guest portion now,
                   // making the hedged "we'll contact you to arrange it" promise
                   // (#1942) real.
-                  <div className="mt-4 space-y-2 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                  <div className="mt-4 space-y-2 rounded-md border border-warning-6 bg-warning-3 px-4 py-3 text-sm text-warning-11">
                     <p className="font-medium">
                       Paying by internet banking? Your guests still need paying
                       for
@@ -1725,11 +1725,11 @@ export default async function BookingDetailPage({
                   <span
                     className={`text-sm font-medium ${
                       item.tone === "danger"
-                        ? "text-rose-700"
+                        ? "text-danger-11"
                         : item.tone === "success"
-                          ? "text-emerald-700"
+                          ? "text-success-11"
                           : item.tone === "warning"
-                            ? "text-amber-700"
+                            ? "text-warning-11"
                             : "text-muted-foreground"
                     }`}
                   >

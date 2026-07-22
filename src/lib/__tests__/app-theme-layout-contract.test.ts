@@ -9,8 +9,13 @@ import {
   contrastRatio,
   deriveAppMutedForeground,
   themeSeedsFromValues,
+  buildClubThemeCss,
 } from "@/lib/club-theme-schema";
-import { CARD_SHADOW, defaultAppRoleFallbacks } from "@/lib/theme/app-tokens";
+import {
+  buildAppThemeTokens,
+  CARD_SHADOW,
+  defaultAppRoleFallbacks,
+} from "@/lib/theme/app-tokens";
 import { G5A_CARD_SEPARATION } from "@/lib/theme/guarantees";
 
 function readRepoFile(path: string) {
@@ -258,10 +263,104 @@ describe("database theme app-shell contract", () => {
     expect(appThemeRules).toContain("outline-offset: 2px !important");
     expect(appThemeRules).toContain("--font-website-body");
     expect(appThemeRules).toContain("--font-website-heading");
-    // The app block still declares no semantic status tokens (#1808).
+    // The app block still declares no LEGACY 3-value semantic status tokens
+    // (#1808): `--success`/`--success-muted`/`--success-foreground` (and the
+    // warning/info/danger equivalents) stay curated on `:root`/`.dark`. The NEW
+    // generated 12-step scales (`--success-1..12`, #2188 P2) ARE declared here on
+    // purpose — they follow the club theme — so the guard is narrowed to the
+    // 3-value forms only, never the numbered steps.
     expect(appThemeRules).not.toMatch(
-      /--(?:success|warning|info|danger)(?:-|:)/,
+      /--(?:success|warning|info|danger)(?::|-muted|-foreground)/,
     );
+  });
+
+  // #2188 P2 — the generated SEMANTIC + CATEGORICAL 12-step scales exposed as
+  // consumable utilities (completing the plan-lock "numbered steps stay exposed"
+  // clause). Same wiring shape as the role tokens above: each `--<scale>-<step>`
+  // consumes `--gen-<scale>-<step>` (light) / `--gen-<scale>-<step>-dark` (dark)
+  // with the shipped default seed's derived value as the static fallback, and is
+  // surfaced to Tailwind via a `--color-<scale>-<step>` @theme entry. Fallbacks
+  // are COMPUTED from buildAppThemeTokens, never copied literals (R9).
+  it("exposes the generated semantic + categorical step scales with derived fallbacks", () => {
+    const globals = readRepoFile("src/app/globals.css");
+    const start = globals.indexOf(".app-theme-scope {");
+    const end = globals.indexOf("/* App headings pick up", start);
+    const appThemeRules = globals.slice(start, end);
+    const darkStart = appThemeRules.indexOf(".dark .app-theme-scope {");
+    const lightRules = appThemeRules.slice(0, darkStart);
+    const darkRules = appThemeRules.slice(
+      darkStart,
+      appThemeRules.indexOf("}", darkStart) + 1,
+    );
+
+    const { tokens } = buildAppThemeTokens(
+      themeSeedsFromValues(DEFAULT_CLUB_THEME_VALUES),
+    );
+    const EXPOSED_SCALES = [
+      "success",
+      "warning",
+      "info",
+      "danger",
+      "cat1",
+      "cat2",
+      "cat3",
+      "cat4",
+      "cat5",
+    ];
+
+    for (const scale of EXPOSED_SCALES) {
+      for (let step = 1; step <= 12; step++) {
+        const light = tokens[`--gen-${scale}-${step}`];
+        const dark = tokens[`--gen-${scale}-dark-${step}`];
+        expect(light, `${scale}-${step} light gen token`).toMatch(
+          /^#[0-9a-f]{6}$/,
+        );
+        expect(dark, `${scale}-${step} dark gen token`).toMatch(
+          /^#[0-9a-f]{6}$/,
+        );
+        expect(
+          lightRules,
+          `light --${scale}-${step} must consume the generated substrate prop`,
+        ).toContain(`--${scale}-${step}: var(--gen-${scale}-${step}, ${light});`);
+        expect(
+          darkRules,
+          `dark --${scale}-${step} must consume the generated substrate prop`,
+        ).toContain(
+          `--${scale}-${step}: var(--gen-${scale}-${step}-dark, ${dark});`,
+        );
+        // #2188 P2 — the @theme token carries a STATIC default-seed fallback so a
+        // scope with no injected step vars (or no sheet at all) never falls
+        // through to transparent. The fallback equals the light gen value (R9).
+        expect(
+          globals,
+          `@theme must surface bg/text/border-${scale}-${step} with its default fallback`,
+        ).toContain(`--color-${scale}-${step}: var(--${scale}-${step}, ${light});`);
+      }
+    }
+  });
+
+  // #2188 P2 (lens BLOCKER-2) — the website scope (`.website-theme`) consumes the
+  // step utilities (form callouts etc.) but sits OUTSIDE `.app-theme-scope`, so
+  // it gets its own generated step vars from `buildClubThemeCss`. Without them a
+  // `bg-danger-3` public-page callout would resolve to nothing. Pinned against
+  // the same generator, mutation-proof.
+  it("resolves the step scales in the website scope from the club stylesheet", () => {
+    const css = buildClubThemeCss(DEFAULT_CLUB_THEME_VALUES);
+    // A `.website-theme` block declares the exposed step vars.
+    expect(css).toMatch(/\.website-theme\{[^}]*--success-3:/);
+    const { tokens } = buildAppThemeTokens(
+      themeSeedsFromValues(DEFAULT_CLUB_THEME_VALUES),
+    );
+    for (const scale of ["success", "warning", "info", "danger", "cat1", "cat5"]) {
+      for (const step of [3, 9, 11]) {
+        expect(
+          css,
+          `website scope must declare --${scale}-${step}`,
+        ).toContain(`--${scale}-${step}:${tokens[`--gen-${scale}-${step}`]};`);
+      }
+    }
+    // Mutation guard: a scope that DROPPED the step vars would fail the above.
+    expect(css).not.toMatch(/\.website-theme\{\}/);
   });
 
   // #2145 — the CSS half of the derived muted role. The value itself is derived

@@ -150,14 +150,14 @@ export function MemberXeroControls({
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Badge variant="secondary" className="bg-blue-50 text-blue-700 border-blue-200">
+              <Badge variant="secondary" className="bg-info-3 text-info-11 border-info-6">
                 Linked
               </Badge>
               <a
                 href={`https://go.xero.com/app/contacts/contact/${editingMember.xeroContactId}`}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-sm text-blue-600 hover:underline inline-flex items-center gap-1"
+                className="text-sm text-info-11 hover:underline inline-flex items-center gap-1"
               >
                 View in Xero <ExternalLink className="h-3 w-3" />
               </a>
@@ -188,7 +188,7 @@ export function MemberXeroControls({
                 <Badge
                   key={group.id}
                   variant="secondary"
-                  className="bg-emerald-50 text-emerald-700 border-emerald-200"
+                  className="bg-success-3 text-success-11 border-success-6"
                 >
                   {group.name}
                 </Badge>
@@ -201,8 +201,8 @@ export function MemberXeroControls({
             </p>
           )}
           {xeroChoice === "change" && (
-            <div className="space-y-3 rounded-md border border-blue-200 bg-blue-50 p-3">
-              <p className="text-sm text-blue-800">
+            <div className="space-y-3 rounded-md border border-info-6 bg-info-3 p-3">
+              <p className="text-sm text-info-11">
                 Search for a different Xero contact to link to this member. The current link
                 will be replaced.
               </p>
@@ -276,7 +276,7 @@ export function MemberXeroControls({
                 before a brand-new contact is created.
               </div>
               {blankOptionalFields.length > 0 && (
-                <div className="rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">
+                <div className="rounded-md border border-info-6 bg-info-3 p-3 text-sm text-info-11">
                   Profile incomplete: {blankOptionalFields.join(", ")} — missing details will
                   simply be left off the Xero contact.
                 </div>
@@ -296,7 +296,7 @@ export function MemberXeroControls({
                 Create Xero Contact
               </Button>
               {missingFields.length > 0 && (
-                <p className="text-xs text-red-600">
+                <p className="text-xs text-danger-11">
                   Complete these fields first: {missingFields.join(", ")}
                 </p>
               )}
@@ -345,7 +345,7 @@ export function MemberXeroControls({
                 created.
               </p>
               {blankOptionalFields.length > 0 && (
-                <p className="rounded-md border border-blue-200 bg-blue-50 p-2 text-blue-800">
+                <p className="rounded-md border border-info-6 bg-info-3 p-2 text-info-11">
                   Profile incomplete: {blankOptionalFields.join(", ")} — missing details will
                   simply be left off the Xero contact.
                 </p>

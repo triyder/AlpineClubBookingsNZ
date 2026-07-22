@@ -28,7 +28,7 @@ export async function POST() {
   // per-club Google credentials are configured, but refuse server-side too so a
   // wasted OAuth round-trip cannot be started while Google sign-in is off.
   const modules = await loadEffectiveModuleFlags();
-  if (!modules.googleLogin || !googleCredentialsConfigured()) {
+  if (!modules.googleLogin || !(await googleCredentialsConfigured())) {
     return NextResponse.json(
       { error: "Google sign-in is not enabled." },
       { status: 403 },

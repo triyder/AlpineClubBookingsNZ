@@ -71,7 +71,7 @@ export function SendGuestPaymentLinkButton({ bookingId }: { bookingId: string })
             : "Email me a payment link for my guests"}
       </Button>
       {done ? (
-        <p className="mt-2 text-sm text-emerald-700">{done}</p>
+        <p className="mt-2 text-sm text-success-11">{done}</p>
       ) : null}
       {error ? (
         <p className="mt-2 text-sm text-destructive">{error}</p>

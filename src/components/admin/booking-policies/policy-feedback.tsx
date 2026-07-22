@@ -72,7 +72,7 @@ export function PolicyFeedback({
       </div>
       <div role="status">
         {success ? (
-          <div className="bg-green-50 text-green-800 px-4 py-3 rounded-md border border-green-200 mb-6">
+          <div className="bg-success-3 text-success-11 px-4 py-3 rounded-md border border-success-6 mb-6">
             {success}
             <button onClick={onClearSuccess} className="ml-2 underline">
               Dismiss

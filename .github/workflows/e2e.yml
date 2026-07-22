@@ -96,7 +96,6 @@ jobs:
           XERO_MOCK_INTERNAL_ORIGIN=http://127.0.0.1:3000
           CRON_SECRET=e2e-ci-cron-secret
           CRON_ENABLED=false
-          BACKUP_ENABLED=false
           LOG_LEVEL=info
           EOF
 
@@ -240,7 +239,6 @@ jobs:
           XERO_MOCK_INTERNAL_ORIGIN=http://127.0.0.1:3000
           CRON_SECRET=e2e-ci-cron-secret
           CRON_ENABLED=false
-          BACKUP_ENABLED=false
           LOG_LEVEL=info
           EOF
 

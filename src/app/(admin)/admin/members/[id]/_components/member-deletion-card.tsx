@@ -51,7 +51,7 @@ export function MemberDeletionCard({
   const deleteBlockers = deleteEligibility.blockers
 
   return (
-    <Card className={cn("border-red-200", className)}>
+    <Card className={cn("border-danger-6", className)}>
       <CardHeader className="flex flex-col gap-3 space-y-0 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <CardTitle className="text-base font-medium">Member Deletion</CardTitle>
@@ -73,13 +73,13 @@ export function MemberDeletionCard({
       </CardHeader>
       <CardContent className="space-y-4">
         {pendingDeleteRequest ? (
-          <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+          <div className="rounded-md border border-warning-6 bg-warning-3 p-3 text-sm text-warning-11">
             <div className="font-medium">Delete request pending second-admin review</div>
             <div className="mt-1">
               Requested {formatMemberDateNz(pendingDeleteRequest.requestedAt)} by{" "}
               {pendingDeleteRequest.requestedBy?.name ?? "Unknown admin"}
             </div>
-            <div className="mt-2 text-amber-800">{pendingDeleteRequest.reason}</div>
+            <div className="mt-2 text-warning-11">{pendingDeleteRequest.reason}</div>
             <div className="mt-3 flex flex-wrap gap-2">
               <ViewOnlyActionButton
                 canEdit={canEdit}
@@ -102,14 +102,14 @@ export function MemberDeletionCard({
                 Reject
               </ViewOnlyActionButton>
               {!canReviewPendingDeleteRequest && (
-                <span className="self-center text-xs text-amber-800">
+                <span className="self-center text-xs text-warning-11">
                   Requester cannot approve or reject their own delete request.
                 </span>
               )}
             </div>
           </div>
         ) : deleteEligibility.eligible ? (
-          <div className="rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-800">
+          <div className="rounded-md border border-success-6 bg-success-3 p-3 text-sm text-success-11">
             This member has no delete blockers. A reason and second-admin approval are still required.
           </div>
         ) : (

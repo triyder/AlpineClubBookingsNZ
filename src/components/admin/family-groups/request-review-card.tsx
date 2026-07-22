@@ -251,7 +251,7 @@ export function FamilyGroupRequestReviewCard({
                   }}
                   className={`w-full rounded-md border px-3 py-2 text-left text-sm transition ${
                     requestSelection === candidate.id
-                      ? "border-amber-300 bg-amber-50"
+                      ? "border-warning-6 bg-warning-3"
                       : "border-border bg-card hover:bg-accent"
                   }`}
                 >
@@ -259,7 +259,7 @@ export function FamilyGroupRequestReviewCard({
                     {getMemberName(candidate)}
                     <AgeTierBadge tier={candidate.ageTier} />
                     {requestSelection === candidate.id && (
-                      <Badge variant="secondary" className="bg-amber-100 text-amber-800 border-amber-200">
+                      <Badge variant="secondary" className="bg-warning-3 text-warning-11 border-warning-6">
                         Selected
                       </Badge>
                     )}
@@ -301,7 +301,7 @@ export function FamilyGroupRequestReviewCard({
       )}
 
       {requiresMemberChoice && selectedCandidate && (
-        <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50/60 p-3">
+        <div className="mt-4 rounded-lg border border-warning-6 bg-warning-3/60 p-3">
           <p className="text-sm font-medium text-foreground">Selected member record</p>
           <p className="mt-1 text-sm text-muted-foreground">
             {getMemberName(selectedCandidate)}
@@ -345,7 +345,7 @@ export function FamilyGroupRequestReviewCard({
       )}
 
       {request.type === "ADULT_REQUEST" && selectedCreateNew && (
-        <div className="mt-4 rounded-lg border border-violet-200 bg-violet-50/60 p-3">
+        <div className="mt-4 rounded-lg border border-cat1-6 bg-cat1-3/60 p-3">
           <p className="text-sm font-medium text-foreground">
             New non-login adult will be created
           </p>
@@ -362,7 +362,7 @@ export function FamilyGroupRequestReviewCard({
       )}
 
       {request.type === "CHILD_REQUEST" && selectedCreateNew && (
-        <div className="mt-4 rounded-lg border border-blue-200 bg-blue-50/60 p-3">
+        <div className="mt-4 rounded-lg border border-info-6 bg-info-3/60 p-3">
           <p className="text-sm font-medium text-foreground">
             New non-login dependant will be created
           </p>
@@ -389,7 +389,7 @@ export function FamilyGroupRequestReviewCard({
         />
       </div>
 
-      {requestError && <p className="mt-4 text-sm text-red-600">{requestError}</p>}
+      {requestError && <p className="mt-4 text-sm text-danger-11">{requestError}</p>}
 
       <div className="mt-4 flex flex-wrap items-center gap-2">
         <ViewOnlyActionButton

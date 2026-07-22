@@ -287,7 +287,7 @@ export function JoinApplyPageClient({
     return (
       <section className="bg-brand-mist/40 py-12 sm:py-16">
         <div className="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8">
-          <Card className="border-brand-ridge/20 bg-white shadow-[0_22px_46px_-34px_rgba(47,47,43,0.38)]">
+          <Card className="border-brand-ridge/20 bg-card shadow-[0_22px_46px_-34px_rgba(47,47,43,0.38)]">
             <CardHeader className="space-y-3 text-center">
               <CardTitle className="font-heading text-3xl text-brand-charcoal">
                 Application submitted
@@ -309,7 +309,7 @@ export function JoinApplyPageClient({
                 fresh nomination link.
               </p>
               {warnings.length > 0 && (
-                <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-amber-800">
+                <div className="rounded-md border border-warning-6 bg-warning-3 px-4 py-3 text-warning-11">
                   {warnings.join(". ")}
                 </div>
               )}
@@ -347,7 +347,7 @@ export function JoinApplyPageClient({
 
       <section className="bg-brand-mist/40 pb-16 pt-6 sm:pb-20">
         <div className="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8">
-          <Card className="border-brand-ridge/20 bg-white shadow-[0_22px_46px_-34px_rgba(47,47,43,0.38)]">
+          <Card className="border-brand-ridge/20 bg-card shadow-[0_22px_46px_-34px_rgba(47,47,43,0.38)]">
             <CardHeader className="space-y-2">
               <CardTitle className="font-heading text-3xl text-brand-charcoal">
                 Enter your details
@@ -531,7 +531,7 @@ export function JoinApplyPageClient({
                       {form.familyMembers.map((familyMember, index) => (
                         <div
                           key={familyMember.id}
-                          className="space-y-4 rounded-lg border border-brand-ridge/20 bg-white p-4"
+                          className="space-y-4 rounded-lg border border-brand-ridge/20 bg-card p-4"
                         >
                           <div className="flex items-center justify-between gap-4">
                             <h3 className="font-medium text-brand-charcoal">

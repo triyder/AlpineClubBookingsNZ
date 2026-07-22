@@ -187,13 +187,13 @@ function statusVariant(status: SetupStatus): BadgeProps["variant"] {
 
 function StatusIcon({ status }: { status: SetupStatus }) {
   if (status === "complete") {
-    return <CheckCircle2 className="h-4 w-4 text-green-700" />;
+    return <CheckCircle2 className="h-4 w-4 text-success-11" />;
   }
   if (status === "blocked") {
-    return <CircleAlert className="h-4 w-4 text-red-700" />;
+    return <CircleAlert className="h-4 w-4 text-danger-11" />;
   }
   if (status === "warning") {
-    return <CircleAlert className="h-4 w-4 text-amber-700" />;
+    return <CircleAlert className="h-4 w-4 text-warning-11" />;
   }
   return <CircleDashed className="h-4 w-4 text-muted-foreground" />;
 }
@@ -460,13 +460,13 @@ export function SetupPageClient({
       </div>
 
       {error ? (
-        <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+        <div className="rounded-md border border-danger-6 bg-danger-3 px-4 py-3 text-sm text-danger-11">
           {error}
         </div>
       ) : null}
 
       {setupCompleted ? (
-        <div className="rounded-md border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
+        <div className="rounded-md border border-success-6 bg-success-3 px-4 py-3 text-sm text-success-11">
           Setup has been marked complete.
         </div>
       ) : null}
@@ -504,7 +504,7 @@ export function SetupPageClient({
           </div>
 
           {requiredBlockers.length > 0 ? (
-            <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            <div className="rounded-md border border-warning-6 bg-warning-3 px-4 py-3 text-sm text-warning-11">
               Resolve or explicitly skip required blocked steps before marking setup complete.
             </div>
           ) : null}
@@ -590,8 +590,8 @@ export function SetupPageClient({
                             <div
                               className={`rounded-md border px-3 py-2 text-sm ${
                                 result.ok
-                                  ? "border-green-200 bg-green-50 text-green-800"
-                                  : "border-red-200 bg-red-50 text-red-800"
+                                  ? "border-success-6 bg-success-3 text-success-11"
+                                  : "border-danger-6 bg-danger-3 text-danger-11"
                               }`}
                             >
                               {result.message}

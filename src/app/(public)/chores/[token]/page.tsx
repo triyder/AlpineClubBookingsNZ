@@ -61,7 +61,7 @@ export default function GuestChorePage() {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background p-4">
         <div className="max-w-md w-full text-center space-y-4">
-          <AlertTriangle className="h-12 w-12 text-amber-500 mx-auto" />
+          <AlertTriangle className="h-12 w-12 text-warning-11 mx-auto" />
           <h1 className="text-xl font-bold text-foreground">Link Unavailable</h1>
           <p className="text-muted-foreground">{error}</p>
           <p className="text-sm text-muted-foreground">
@@ -124,17 +124,17 @@ export default function GuestChorePage() {
                       key={a.id}
                       className={`w-full text-left flex items-center gap-3 p-4 rounded-lg border transition-colors ${
                         a.status === "COMPLETED"
-                          ? "bg-green-50 border-green-200"
+                          ? "bg-success-3 border-success-6"
                           : "bg-card border-border"
                       }`}
                     >
                       {a.status === "COMPLETED" ? (
-                        <CheckCircle2 className="h-6 w-6 text-green-600 shrink-0" />
+                        <CheckCircle2 className="h-6 w-6 text-success-11 shrink-0" />
                       ) : (
                         <Circle className="h-6 w-6 text-muted-foreground shrink-0" />
                       )}
                       <div>
-                        <div className={`font-medium ${a.status === "COMPLETED" ? "text-green-800 line-through" : "text-foreground"}`}>
+                        <div className={`font-medium ${a.status === "COMPLETED" ? "text-success-11 line-through" : "text-foreground"}`}>
                           {a.choreTemplateName}
                         </div>
                         {a.choreDescription && (

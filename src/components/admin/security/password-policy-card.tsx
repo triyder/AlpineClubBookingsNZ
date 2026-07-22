@@ -195,8 +195,8 @@ export function PasswordPolicyCard() {
             role={error ? "alert" : "status"}
             className={
               error
-                ? "rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"
-                : "rounded-md border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800"
+                ? "rounded-md border border-danger-6 bg-danger-3 px-4 py-3 text-sm text-danger-11"
+                : "rounded-md border border-success-6 bg-success-3 px-4 py-3 text-sm text-success-11"
             }
           >
             {error || savedMessage}
@@ -261,7 +261,7 @@ export function PasswordPolicyCard() {
             </fieldset>
 
             {editing && dirty ? (
-              <p className="text-sm text-amber-700" role="status">
+              <p className="text-sm text-warning-11" role="status">
                 You have unsaved changes.
               </p>
             ) : null}

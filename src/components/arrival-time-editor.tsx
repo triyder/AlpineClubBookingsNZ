@@ -54,7 +54,7 @@ export function ArrivalTimeEditor({
 
   if (!canEdit) {
     return (
-      <p className="text-sm text-gray-600">
+      <p className="text-sm text-muted-foreground">
         {time ? formatArrivalTime(time) : "Not set"}
       </p>
     );
@@ -65,8 +65,8 @@ export function ArrivalTimeEditor({
       <div className="w-48">
         <TimePicker value={time} onChange={handleChange} disabled={saving} />
       </div>
-      {saving && <span className="text-xs text-gray-400">Saving...</span>}
-      {saved && <span className="text-xs text-green-600">Saved</span>}
+      {saving && <span className="text-xs text-muted-foreground">Saving...</span>}
+      {saved && <span className="text-xs text-success-11">Saved</span>}
     </div>
   );
 }

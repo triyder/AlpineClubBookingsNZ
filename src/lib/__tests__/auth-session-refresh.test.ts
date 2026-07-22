@@ -72,6 +72,21 @@ vi.mock("@/lib/two-factor", () => ({
   consumeTwoFactorSessionChallenge: mockConsumeTwoFactorSessionChallenge,
 }));
 
+// #2087: auth.ts now resolves the Google provider from the C1 store. The jwt
+// callback under test never touches Google, so stub the resolver modules to keep
+// this suite isolated from the credential store.
+vi.mock("@/lib/google-config", () => ({
+  getGoogleOAuthConfig: vi.fn().mockResolvedValue(null),
+  recordGoogleVerified: vi.fn(),
+}));
+
+vi.mock("@/lib/google-oauth", () => ({
+  resolveGoogleProfile: vi.fn(),
+  readGoogleLinkIntent: vi.fn().mockResolvedValue(null),
+  readGoogleVerifyIntent: vi.fn().mockResolvedValue(null),
+  linkGoogleAccount: vi.fn(),
+}));
+
 import { auth, authConfig } from "@/lib/auth";
 import { MEMBER_ACCESS_ROLE_SELECT } from "@/lib/access-role-definitions";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";

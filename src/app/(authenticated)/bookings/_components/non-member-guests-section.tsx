@@ -40,16 +40,16 @@ export function NonMemberGuestsSection({
   );
 
   return (
-    <Card className="border-sky-200">
+    <Card className="border-info-6">
       <CardHeader>
-        <CardTitle className="text-sky-900">
+        <CardTitle className="text-info-11">
           {nonOwnerAdminViewer
             ? "The member's non-member guests"
             : "Your non-member guests"}
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
-        <p className="text-sm text-sky-900">
+        <p className="text-sm text-info-11">
           {anyLive
             ? nonOwnerAdminViewer
               ? "The non-member portion of this party is held in a linked provisional booking. No beds are reserved for these guests until they are confirmed and paid for closer to the stay."
@@ -63,7 +63,7 @@ export function NonMemberGuestsSection({
             <li key={child.id}>
               <Link
                 href={`/bookings/${child.id}`}
-                className="block rounded-md border border-sky-100 bg-sky-50/60 p-3 transition-shadow hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
+                className="block rounded-md border border-info-6 bg-info-3/60 p-3 transition-shadow hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-info-7"
               >
                 <div className="flex items-center justify-between gap-3">
                   <div className="space-y-1">
@@ -83,7 +83,7 @@ export function NonMemberGuestsSection({
                         })}
                       </p>
                     ) : null}
-                    <p className="text-xs font-medium text-sky-700 underline">
+                    <p className="text-xs font-medium text-info-11 underline">
                       View provisional guest booking
                     </p>
                   </div>

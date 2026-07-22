@@ -131,7 +131,7 @@ export default function ChangePasswordPage() {
               />
             </div>
 
-            {error && <p className="text-sm text-red-600">{error}</p>}
+            {error && <p className="text-sm text-danger-11">{error}</p>}
 
             <Button type="submit" className="w-full" disabled={loading}>
               {loading ? "Changing..." : "Change Password"}

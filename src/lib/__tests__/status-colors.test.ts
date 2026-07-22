@@ -11,6 +11,7 @@ import {
   subscriptionStatusClass,
 } from "@/lib/status-colors";
 import { FALLBACK_LODGE_CAPACITY as LODGE_CAPACITY } from "@/lib/lodge-capacity";
+import { CHIP_TONE_CLASSES } from "@/lib/chip-tones";
 
 describe("bookingStatusClasses", () => {
   it("defines all booking statuses", () => {
@@ -61,7 +62,7 @@ describe("bookingStatusClass helper", () => {
   it("returns a fallback for unknown statuses", () => {
     const fallback = bookingStatusClass("UNKNOWN_STATUS");
     expect(fallback).toBeTruthy();
-    expect(fallback).toContain("bg-gray-100");
+    expect(fallback).toBe(CHIP_TONE_CLASSES.neutral);
   });
 });
 
@@ -104,7 +105,7 @@ describe("paymentStatusClass helper", () => {
   it("returns a fallback for unknown statuses", () => {
     const fallback = paymentStatusClass("UNKNOWN_STATUS");
     expect(fallback).toBeTruthy();
-    expect(fallback).toContain("bg-gray-100");
+    expect(fallback).toBe(CHIP_TONE_CLASSES.neutral);
   });
 });
 
@@ -133,7 +134,7 @@ describe("subscriptionStatusClass helper", () => {
   it("returns a fallback for unknown statuses", () => {
     const fallback = subscriptionStatusClass("UNKNOWN_STATUS");
     expect(fallback).toBeTruthy();
-    expect(fallback).toContain("bg-gray-100");
+    expect(fallback).toBe(CHIP_TONE_CLASSES.neutral);
   });
 });
 

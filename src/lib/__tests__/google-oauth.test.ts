@@ -44,16 +44,28 @@ vi.mock("@/lib/runtime-config", () => ({
   getAuthSecret: vi.fn(() => "test-secret-value"),
 }));
 
+// #2087: googleCredentialsConfigured is now resolver-backed (DB-only), so mock
+// the resolver rather than stubbing the removed GOOGLE_CLIENT_* env vars.
+const { mockGetGoogleOAuthConfig } = vi.hoisted(() => ({
+  mockGetGoogleOAuthConfig: vi.fn(),
+}));
+vi.mock("@/lib/google-config", () => ({
+  getGoogleOAuthConfig: mockGetGoogleOAuthConfig,
+}));
+
 vi.mock("@/lib/logger", () => ({
   default: { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 
 import {
   GOOGLE_LINK_INTENT_COOKIE,
+  GOOGLE_VERIFY_INTENT_COOKIE,
   buildGoogleLinkIntentValue,
+  buildGoogleVerifyIntentValue,
   googleCredentialsConfigured,
   linkGoogleAccount,
   readGoogleLinkIntent,
+  readGoogleVerifyIntent,
   resolveGoogleProfile,
   unlinkGoogleAccount,
 } from "@/lib/google-oauth";
@@ -118,17 +130,73 @@ describe("google link-intent cookie", () => {
     expect(await readGoogleLinkIntent()).toBeNull();
     expect(mockCookieStore.delete).not.toHaveBeenCalled();
   });
+
+  it("REFUSES a verify cookie replayed as a link (symmetric namespace guard)", async () => {
+    // Mirror image of the verify-side guard: a validly-signed VERIFY cookie
+    // (which carries `k: "verify"`) must never satisfy readGoogleLinkIntent, so
+    // the namespace enforcement is disjoint in BOTH directions.
+    const verifyValue = buildGoogleVerifyIntentValue("admin-1");
+    mockCookieStore.get.mockReturnValue({ value: verifyValue });
+
+    expect(await readGoogleLinkIntent()).toBeNull();
+  });
 });
 
-describe("googleCredentialsConfigured", () => {
-  it("is true only when both secrets are set", () => {
-    const prev = { ...process.env };
-    process.env.GOOGLE_CLIENT_ID = "id";
-    delete process.env.GOOGLE_CLIENT_SECRET;
-    expect(googleCredentialsConfigured()).toBe(false);
-    process.env.GOOGLE_CLIENT_SECRET = "secret";
-    expect(googleCredentialsConfigured()).toBe(true);
-    process.env = prev;
+describe("google verify-intent cookie (#2087)", () => {
+  it("round-trips a signed verify intent bound to the member id", async () => {
+    const value = buildGoogleVerifyIntentValue("admin-1");
+    mockCookieStore.get.mockReturnValue({ value });
+
+    const intent = await readGoogleVerifyIntent();
+
+    expect(intent).toEqual({ memberId: "admin-1" });
+    expect(mockCookieStore.get).toHaveBeenCalledWith(
+      GOOGLE_VERIFY_INTENT_COOKIE,
+    );
+    expect(mockCookieStore.delete).toHaveBeenCalledWith(
+      GOOGLE_VERIFY_INTENT_COOKIE,
+    );
+  });
+
+  it("REFUSES a link cookie replayed as a verify (namespace guard)", async () => {
+    // A validly-signed LINK cookie must never satisfy readGoogleVerifyIntent —
+    // the `k: "verify"` namespace keeps the two intents disjoint even though they
+    // share the same HMAC key.
+    const linkValue = buildGoogleLinkIntentValue("admin-1");
+    mockCookieStore.get.mockReturnValue({ value: linkValue });
+
+    expect(await readGoogleVerifyIntent()).toBeNull();
+  });
+
+  it("rejects a tampered verify signature", async () => {
+    const value = buildGoogleVerifyIntentValue("admin-1");
+    const [, sig] = value.split(".");
+    const forged = `${buildGoogleVerifyIntentValue("attacker").split(".")[0]}.${sig}`;
+    mockCookieStore.get.mockReturnValue({ value: forged });
+
+    expect(await readGoogleVerifyIntent()).toBeNull();
+  });
+
+  it("rejects an expired verify intent", async () => {
+    vi.useFakeTimers();
+    const value = buildGoogleVerifyIntentValue("admin-1");
+    vi.setSystemTime(Date.now() + 60 * 60 * 1000);
+    mockCookieStore.get.mockReturnValue({ value });
+
+    expect(await readGoogleVerifyIntent()).toBeNull();
+    vi.useRealTimers();
+  });
+});
+
+describe("googleCredentialsConfigured (DB-only, #2087)", () => {
+  it("is true only when the resolver returns a config", async () => {
+    mockGetGoogleOAuthConfig.mockResolvedValueOnce(null);
+    expect(await googleCredentialsConfigured()).toBe(false);
+    mockGetGoogleOAuthConfig.mockResolvedValueOnce({
+      clientId: "id",
+      clientSecret: "secret",
+    });
+    expect(await googleCredentialsConfigured()).toBe(true);
   });
 });
 

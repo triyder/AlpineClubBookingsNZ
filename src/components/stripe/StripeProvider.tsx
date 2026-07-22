@@ -83,15 +83,15 @@ export default function StripeProvider({
   if (keyState.status === "loading") {
     return (
       <div className="flex items-center justify-center p-8">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-600 border-t-transparent" />
-        <span className="ml-3 text-gray-600">Preparing payment...</span>
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-info-7 border-t-transparent" />
+        <span className="ml-3 text-muted-foreground">Preparing payment...</span>
       </div>
     );
   }
 
   if (!stripePromise) {
     return (
-      <div className="text-red-500 p-4">
+      <div className="text-danger-11 p-4">
         Stripe is not configured. Ask an administrator to complete the Stripe
         setup wizard.
       </div>

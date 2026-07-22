@@ -28,7 +28,7 @@ services:
     environment:
       APP_RUNTIME_ROLE: staging
       CRON_ENABLED: "false"
-      BACKUP_ENABLED: "false"
+      # Backups are configured in-app (#2095); staging leaves them unconfigured.
       NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3001}
     # mailpit is the non-production SMTP capture the E2E suite relays outbound
     # mail to (USE_SMTP_RELAY). It is listed here so `up --wait app` also starts

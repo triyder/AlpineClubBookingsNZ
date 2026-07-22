@@ -53,9 +53,12 @@ A backup you have never restored is a hope, not a backup.
    backup job still reported daily SUCCESS — see issue **#1361**
    (`S3-less backups report daily SUCCESS while dumps sit on RAM tmpfs wiped
    every deploy; defaults ship backups OFF`). Before you rely on any backup for
-   this upgrade, verify that `BACKUP_S3_*` is configured and that the latest
-   artifact actually landed in durable S3 storage (not a tmpfs path that the
-   deploy will erase).
+   this upgrade, open **Admin → Integrations → Database Backups**
+   (`/admin/backups`, #2095) and verify that the S3 destination is configured
+   ("S3 durable"), that the last successful backup is recent, and that no
+   "re-enter credentials" banner is showing — then confirm the latest artifact
+   actually landed in durable S3 storage (not a tmpfs path that the deploy will
+   erase).
 2. Take a fresh backup immediately before the window, or confirm the most
    recent durable S3 artifact is the one you will restore from.
 3. **Restore-test it** with `scripts/backup-restore-drill.sh --from-dump`

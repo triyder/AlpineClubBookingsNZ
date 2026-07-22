@@ -15,9 +15,9 @@ import type { FinanceAccessLevel } from "@prisma/client";
 
 // test seam
 export const financeAccessBadgeClass: Record<FinanceAccessLevel, string> = {
-  NONE: "bg-slate-100 text-slate-700 border-slate-200",
-  VIEWER: "bg-amber-100 text-amber-800 border-amber-200",
-  MANAGER: "bg-emerald-100 text-emerald-800 border-emerald-200",
+  NONE: "bg-muted text-muted-foreground border-border",
+  VIEWER: "bg-warning-3 text-warning-11 border-warning-6",
+  MANAGER: "bg-success-3 text-success-11 border-success-6",
 };
 
 // test seam
@@ -48,15 +48,15 @@ export type LifecycleStatusConfig = {
 const LIFECYCLE_CONFIG = {
   Archived: {
     label: "Archived" as const,
-    className: "bg-slate-200 text-slate-800 border-slate-300 hover:bg-slate-200",
+    className: "bg-accent text-foreground border-border hover:bg-accent",
   },
   Cancelled: {
     label: "Cancelled" as const,
-    className: "bg-amber-100 text-amber-800 border-amber-200 hover:bg-amber-100",
+    className: "bg-warning-3 text-warning-11 border-warning-6 hover:bg-warning-3",
   },
   Active: {
     label: "Active" as const,
-    className: "bg-green-100 text-green-800 hover:bg-green-200 border-green-200",
+    className: "bg-success-3 text-success-11 hover:bg-success-4 border-success-6",
   },
   Inactive: {
     label: "Inactive" as const,
@@ -79,13 +79,13 @@ export function getLifecycleStatusConfig(
 
 // test seam
 export const LOGIN_BADGE = {
-  className: "bg-slate-100 text-slate-700 border-slate-200",
+  className: "bg-muted text-muted-foreground border-border",
   label: "Can Login",
 } as const;
 
 // test seam
 export const NON_LOGIN_BADGE = {
-  className: "bg-purple-100 text-purple-800 border-purple-200",
+  className: "bg-cat1-3 text-cat1-11 border-cat1-6",
   label: "Non-Login",
 } as const;
 

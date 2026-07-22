@@ -49,8 +49,8 @@ export function MemberPromoCodesCard({ promoCodes, className }: { promoCodes: Me
                         variant="secondary"
                         className={
                           promo.visibleToMember
-                            ? "bg-green-100 text-green-800 border-green-200"
-                            : "bg-amber-100 text-amber-800 border-amber-200"
+                            ? "bg-success-3 text-success-11 border-success-6"
+                            : "bg-warning-3 text-warning-11 border-warning-6"
                         }
                       >
                         {promo.visibleToMember ? "Visible to member" : "Not currently usable"}

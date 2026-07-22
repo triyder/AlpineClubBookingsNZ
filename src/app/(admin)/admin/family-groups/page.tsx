@@ -413,7 +413,7 @@ export default function FamilyGroupsPage() {
       <Card>
         <CardHeader>
           <CardTitle className="text-lg flex items-center gap-2">
-            <Badge className="bg-amber-100 text-amber-800 border-amber-200">
+            <Badge className="bg-warning-3 text-warning-11 border-warning-6">
               {requests.length}
             </Badge>
             Pending Family Group Changes
@@ -450,7 +450,7 @@ export default function FamilyGroupsPage() {
       <Card>
         <CardHeader>
           <CardTitle className="text-lg flex items-center gap-2">
-            <Badge className="bg-amber-100 text-amber-800 border-amber-200">
+            <Badge className="bg-warning-3 text-warning-11 border-warning-6">
               {partnerInvites.length}
             </Badge>
             Outstanding Partner Invitations
@@ -463,7 +463,7 @@ export default function FamilyGroupsPage() {
         </CardHeader>
         <CardContent className="space-y-3">
           {partnerInviteError && (
-            <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            <div className="rounded-md border border-danger-6 bg-danger-3 px-4 py-3 text-sm text-danger-11">
               {partnerInviteError}
             </div>
           )}
@@ -505,7 +505,7 @@ export default function FamilyGroupsPage() {
                           variant="ghost"
                           size="sm"
                           onClick={() => handleRevokePartnerInvite(invite)}
-                          className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                          className="text-danger-11 hover:text-danger-11 hover:bg-danger-3"
                         >
                           <X className="h-4 w-4 mr-1" />
                           Revoke
@@ -572,7 +572,7 @@ export default function FamilyGroupsPage() {
                             onClick={() => removeMember(m.id)}
                             disabled={canEditMembership !== true}
                             title={canEditMembership === false ? ADMIN_VIEW_ONLY_ACTION_REASON : undefined}
-                            className="ml-1 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:text-current"
+                            className="ml-1 hover:text-danger-11 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:text-current"
                           >
                             <X className="h-3 w-3" />
                           </button>
@@ -616,7 +616,7 @@ export default function FamilyGroupsPage() {
                   </p>
                 </div>
 
-                {error && <p className="text-sm text-red-600">{error}</p>}
+                {error && <p className="text-sm text-danger-11">{error}</p>}
 
                 <div className="flex gap-2">
                   <ViewOnlyActionButton
@@ -667,7 +667,7 @@ export default function FamilyGroupsPage() {
                           <Users className="h-4 w-4 text-muted-foreground" />
                           <span className="font-medium">{g.name || "Unnamed Group"}</span>
                           {g.pendingRequests > 0 && (
-                            <Badge className="bg-amber-100 text-amber-800 border-amber-200 text-xs">
+                            <Badge className="bg-warning-3 text-warning-11 border-warning-6 text-xs">
                               {g.pendingRequests} pending
                             </Badge>
                           )}
@@ -724,7 +724,7 @@ export default function FamilyGroupsPage() {
                             variant="ghost"
                             size="sm"
                             onClick={() => handleDelete(g.id)}
-                            className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                            className="text-danger-11 hover:text-danger-11 hover:bg-danger-3"
                             aria-label={`Delete ${g.name || "Unnamed Group"}`}
                           >
                             <Trash2 className="h-4 w-4" />

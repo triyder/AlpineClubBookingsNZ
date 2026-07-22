@@ -153,18 +153,18 @@ export function ContactPageClient({
               </h2>
 
               {status === "sent" ? (
-                <div className="rounded-2xl border border-green-200 bg-green-50 p-6">
-                  <h3 className="font-semibold text-green-800 mb-1">
+                <div className="rounded-2xl border border-success-6 bg-success-3 p-6">
+                  <h3 className="font-semibold text-success-11 mb-1">
                     Message Sent
                   </h3>
-                  <p className="text-green-700 text-sm">
+                  <p className="text-success-11 text-sm">
                     Thanks for getting in touch. We&apos;ll get back to you as
                     soon as we can.
                   </p>
                   <Button
                     variant="outline"
                     size="sm"
-                    className="mt-4 border-brand-charcoal/20 bg-white text-brand-charcoal hover:bg-brand-mist/35 hover:text-brand-charcoal"
+                    className="mt-4 border-brand-charcoal/20 bg-card text-brand-charcoal hover:bg-brand-mist/35 hover:text-brand-charcoal"
                     onClick={() => setStatus("idle")}
                   >
                     Send Another Message
@@ -179,7 +179,7 @@ export function ContactPageClient({
                       onValueChange={setRecipient}
                       disabled={loadingMembers}
                     >
-                      <SelectTrigger className="mt-1 border-brand-ridge/20 bg-white">
+                      <SelectTrigger className="mt-1 border-brand-ridge/20 bg-card">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent className="website-theme border-brand-ridge/20 bg-brand-snow">
@@ -201,7 +201,7 @@ export function ContactPageClient({
                         setForm({ ...form, name: e.target.value })
                       }
                       placeholder="Your name"
-                      className="mt-1 border-brand-ridge/20 bg-white"
+                      className="mt-1 border-brand-ridge/20 bg-card"
                     />
                   </div>
                   <div>
@@ -215,7 +215,7 @@ export function ContactPageClient({
                         setForm({ ...form, email: e.target.value })
                       }
                       placeholder="you@example.com"
-                      className="mt-1 border-brand-ridge/20 bg-white"
+                      className="mt-1 border-brand-ridge/20 bg-card"
                     />
                   </div>
                   <div>
@@ -229,12 +229,12 @@ export function ContactPageClient({
                         setForm({ ...form, message: e.target.value })
                       }
                       placeholder="How can we help?"
-                      className="mt-1 border-brand-ridge/20 bg-white"
+                      className="mt-1 border-brand-ridge/20 bg-card"
                     />
                   </div>
 
                   {status === "error" && (
-                    <p className="text-sm text-red-600">{errorMessage}</p>
+                    <p className="text-sm text-danger-11">{errorMessage}</p>
                   )}
 
                   <Button type="submit" disabled={status === "sending"}>

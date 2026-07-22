@@ -80,7 +80,7 @@ export default function InductionPrintPage() {
                   <td className="py-1 pr-2">
                     {item.label}
                     {item.isMandatory && (
-                      <span className="ml-1 text-xs text-red-600">*</span>
+                      <span className="ml-1 text-xs text-danger-11">*</span>
                     )}
                   </td>
                   <td className="py-1 pr-2 text-xs">

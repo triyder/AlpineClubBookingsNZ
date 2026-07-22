@@ -158,6 +158,41 @@ export function serializeAppThemeTokens(seeds: ThemeSeeds): string {
 }
 
 /**
+ * The semantic + categorical scales exposed as consumable step utilities in
+ * globals.css (#2188 P2). Neutral steps are deliberately NOT exposed.
+ */
+export const EXPOSED_STEP_SCALES = [
+  "success",
+  "warning",
+  "info",
+  "danger",
+  "cat1",
+  "cat2",
+  "cat3",
+  "cat4",
+  "cat5",
+] as const;
+
+/**
+ * Light-mode step variables (`--<scale>-<step>:<hex>;…`) for the exposed scales,
+ * for a scope that consumes the step utilities but sits OUTSIDE `.app-theme-scope`
+ * — i.e. the website (`.website-theme`). The website scope is light-only, so only
+ * the light values are emitted. Same generated club values as the app scope, so a
+ * `bg-danger-3` validation callout on a public page follows the club exactly like
+ * its admin twin (and the @theme static fallback still stands in with no sheet).
+ */
+export function serializeWebsiteStepTokens(seeds: ThemeSeeds): string {
+  const { tokens } = buildAppThemeTokens(seeds);
+  let out = "";
+  for (const scale of EXPOSED_STEP_SCALES) {
+    for (let step = 1; step <= 12; step += 1) {
+      out += `--${scale}-${step}:${tokens[`--gen-${scale}-${step}`]};`;
+    }
+  }
+  return out;
+}
+
+/**
  * The default palette's resolved role tokens, for the static globals.css
  * fallbacks. Keyed by the role name (no `--gen-` prefix). Used by the contract
  * test to pin `var(--gen-<role>, <fallback>)` against the derivation so the CSS

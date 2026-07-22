@@ -167,7 +167,7 @@ export default function BookingRequestQuoteResponsePage() {
         {state === "loading" ? (
           <p className="text-sm text-muted-foreground">Loading quote...</p>
         ) : state === "invalid" ? (
-          <div className="flex gap-3 text-amber-800">
+          <div className="flex gap-3 text-warning-11">
             <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
             <div className="space-y-1">
               <p className="font-medium">This quote link is not valid.</p>
@@ -177,7 +177,7 @@ export default function BookingRequestQuoteResponsePage() {
             </div>
           </div>
         ) : state === "expired" ? (
-          <div className="flex gap-3 text-amber-800">
+          <div className="flex gap-3 text-warning-11">
             <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
             <div className="space-y-1">
               <p className="font-medium">This quote has expired.</p>
@@ -188,12 +188,12 @@ export default function BookingRequestQuoteResponsePage() {
             </div>
           </div>
         ) : state === "error" || !context ? (
-          <div className="flex gap-3 text-amber-800">
+          <div className="flex gap-3 text-warning-11">
             <HelpCircle className="mt-0.5 h-5 w-5 shrink-0" />
             <p>{error || "Unable to load this quote right now."}</p>
           </div>
         ) : result ? (
-          <div className="flex gap-3 text-emerald-800">
+          <div className="flex gap-3 text-success-11">
             <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0" />
             <p className="font-medium">{result}</p>
           </div>

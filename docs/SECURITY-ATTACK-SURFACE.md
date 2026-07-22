@@ -87,7 +87,7 @@ the row, not open work. Open findings now live in labelled GitHub issues
 | `/api/contact` | Public contact form. | Anonymous website users. | Name, email, message, optional published committee assignment recipient key. | SMTP/SES through `sendEmail()`. | Zod validation, CRLF checks, HTML escaping, `rateLimiters.contact` at 10/hour/IP. Committee recipient keys resolve server-side only when the assignment is active, published, contactable, and linked to an active member; delivery prefers the role email and falls back to linked member email server-side. | Email delivery logs through email layer; committee-routed messages store an opaque committee-contact marker instead of the private member recipient address; no audit log. | Spam and mailbox flooding are bounded but not CAPTCHA-backed. Invalid or non-contactable recipient keys safely fall back to the configured club contact address. |
 | `/api/applications` | Public membership application submission. | Anonymous applicant. | Applicant PII, DOB, family member PII, nominator emails, application rows. | Email notifications through nomination/application service. | Zod validation, max family member count of 10, `rateLimiters.membershipApplication` at 3/hour/IP. | Logger on unexpected errors; application workflow records status in DB. | Public PII collection endpoint. #615 should review enumeration, attachment absence, response detail, and email storm controls. |
 | `/api/auth/register` | Public but disabled. | Anonymous caller. | None. | None. | Always returns `410 Gone`; self-service registration replaced by applications. | None. | Low risk. Keep in explicit public allowlist so a future implementation cannot appear silently. |
-| `/api/auth/[...nextauth]` | Public Auth.js credentials entrypoint. | Anonymous login attempts. | Member email, bcrypt password hash verification, session JWT, last login timestamp. | None. | `rateLimiters.login`, email verification gate, active-member gate, session invalidation after password changes, lodge extended session age. | Logger warns if last-login update fails. | Brute force is rate-limited in memory only. #615/#616 should revisit if deployment becomes multi-instance. |
+| `/api/auth/[...nextauth]` | Public Auth.js credentials + Google-OAuth entrypoint. | Anonymous login attempts; Google OAuth round-trips (login, profile-initiated link, and the admin setup verify). | Member email, bcrypt password hash verification, session JWT, last login timestamp; Google `googleSub` linkage. | Google token exchange (client id/secret resolved DB-side, #2087). | `rateLimiters.login`, email verification gate, active-member gate, session invalidation after password changes, lodge extended session age. The NextAuth config is **request-scoped**: the Google provider is omitted unless credentials resolve, and the resolver **fails open** so a DB/decrypt failure can never break password/magic-link/2FA login. Google link + verify round-trips are disambiguated by short-lived HMAC-signed HttpOnly intent cookies (link binds the linking member; verify binds a Full Admin, namespaced `k:"verify"` so the two never cross), both bound to the current session before any write. | Logger warns if last-login update fails; loud log on a Google resolver failure. | Brute force is rate-limited in memory only. #615/#616 should revisit if deployment becomes multi-instance. |
 | `/api/auth/forgot-password`, `/api/auth/reset-password`, `/api/auth/verify-email`, `/api/auth/resend-verification`, `/api/auth/confirm-email-change` | Public token and account recovery routes. | Anonymous user with email or token link. | Password reset/action tokens, verification tokens, member email status, email-change records, password hashes. | Email send; Xero contact update may run after email-change confirmation. | Per-route rate limiters for forgot/reset/resend/verification token; token helpers hash/store tokens and enforce expiry. | Audit logs for password reset and email-change flows where implemented; logger for failures. | Token-bearing URLs and account enumeration behavior need periodic review. #615 covers validation, non-enumerating responses, and token/log redaction. |
 | `/api/auth/change-password`, `/api/auth/request-email-change` | Authenticated active member. | Signed-in member. | Password hash, password-changed timestamp, email-change token rows, member email. | Email send for email-change verification. | Auth.js session plus `requireActiveSessionUser()`; change-password can allow forced password-change sessions; email-change request is rate-limited. | Audit log rows for security-sensitive changes; logger on errors. | Current pattern is hand-rolled member guard. #613 should consider a shared active-member API helper. |
 | `/api/applications/nominate` | Authenticated active member plus nomination token. | Existing member acting as nominator. | Application nomination token/status and member id. | Email/application workflow side effects in nomination service. | Auth.js session, active-account guard, Zod token validation. | Logger on unexpected errors. | Token is body-provided and session-bound by service logic. #614 should include token ownership/regression coverage if not already covered. |
@@ -303,7 +303,8 @@ Admin route subfamilies are:
 | Email/SNS data | Contact, application, admin communications, email templates, SES/SNS webhook. | Rate limits for public senders, template escaping, SNS signature verification, email suppression records. | #616 for SES/SNS topic allowlist and outbound email abuse. |
 | Audit, webhook, cron, and provider logs | `AuditLog`, `WebhookLog`, `CronJobRun`, Xero operation/inbound records. | Structured logging with redaction helpers for known sensitive URL tokens; webhook logs redact error text. | #615/#616 for callback URL and token redaction review; compromised log reader threat below. |
 | CI/deploy secrets | GitHub Actions secrets/vars, `.env`, Compose, GHCR tokens, Sentry token. | CI permission scoping, gitleaks, deployment docs warn not to commit secrets. | #619 for workflow permissions, provenance, and secret-scope review. |
-| Encrypted integration credentials (#2079, #2082) | `IntegrationCredential` (Xero client id/secret/webhook key, wrapped Xero token key; Stripe secret/publishable/webhook-signing keys; Google/Backup later). | AES-256-GCM under an HKDF-SHA256 key derived from `AUTH_SECRET`/`NEXTAUTH_SECRET`, per-write random IV, AAD context-binding to `(provider,key,labelVersion)`; write-only Full-Admin API; secret values never returned/logged/exported; excluded from config-transfer. The Stripe publishable key is the ONE value delivered to the browser (it is not secret) — at runtime via `GET /api/stripe/publishable-key`, never a secret. | See "Credentials at rest" below. |
+| Encrypted integration credentials (#2079, #2082, #2087, #2095) | `IntegrationCredential` (Xero client id/secret/webhook key, wrapped Xero token key; Stripe secret/publishable/webhook-signing keys; **Google OAuth client id + secret, plus a non-secret `verified_at` marker**; Backup S3 access key/secret, restore-validation DSN, and non-secret destination/config). | AES-256-GCM under an HKDF-SHA256 key derived from `AUTH_SECRET`/`NEXTAUTH_SECRET`, per-write random IV, AAD context-binding to `(provider,key,labelVersion)`; write-only Full-Admin API; secret values never returned/logged/exported; excluded from config-transfer. The Stripe publishable key is the ONE value delivered to the browser (it is not secret) — at runtime via `GET /api/stripe/publishable-key`, never a secret. Google's client id/secret are resolved server-side into the request-scoped NextAuth config and never leave the server; the resolver **fails open** (a DB/decrypt failure omits the Google provider, never breaking password/magic-link/2FA sign-in — #2087). | See "Credentials at rest" and "Backup S3 blast radius" below. |
+| Backup S3 destination + credentials (#2095) | `IntegrationCredential` provider `backup`; consumed by `src/lib/backup.ts` (pg_dump → gzip → `aws s3 cp`) and the `/admin/backups` surface. | S3 access key/secret and the restore-validation DSN are write-only Full-Admin secrets (never returned/logged); the destination (bucket/region) is ALSO Full-Admin-only to write even though it is not secret (see below); the S3 secrets ride the child process env (`AWS_*`), never argv, and the Postgres password rides `PGPASSWORD`, never argv; bucket/region are strictly format-validated before any CLI call. | See "Backup S3 blast radius" below. |
 
 ## Credentials at rest (#2079)
 
@@ -339,6 +340,43 @@ that single secret:
   audit row, or config-transfer export; the credential entity is deliberately not
   registered for export, and the `ciphertext`/`authTag` field names are also in
   the config-transfer forbidden-field patterns as defence in depth.
+
+## Backup S3 blast radius (#2095)
+
+The managed backup uploads a **full `pg_dump` of the production database** to the
+configured S3 bucket. That makes the backup subsystem a first-class exfiltration
+surface, not just a durability feature:
+
+- **The destination is privileged even though it is not secret.** Anyone who can
+  change the S3 bucket/region can redirect the entire database dump to a bucket
+  they control. So destination writes are **Full-Admin only** (same tier as the
+  credentials), enforced in `POST /api/admin/backups/config`, not merely
+  support-area edit. Support-area edit can toggle enabled/retention but never the
+  destination or credentials. Every config change writes a metadata-only audit
+  entry (`backup.config.set`); credential writes audit as
+  `integration.credential.set`; run-now audits as `backup.run.now`.
+- **Bucket/region are validated before any CLI call.** They are interpolated into
+  `aws s3 cp` (via `execFileSync` array-args, which are injection-safe) and an
+  `s3://…` URI, so a strict bucket regex and `^[a-z0-9-]+$` region regex reject
+  malformed/surprising input at write time.
+- **Credentials never reach argv.** The S3 access key/secret ride the child
+  process environment (`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`); the Postgres
+  connection password rides `PGPASSWORD` (moved off the `pg_dump`/`psql` command
+  line in #2095) — neither is visible in a host `ps` listing.
+- **Decrypt failure fails loudly.** Backups run unattended from cron, so a
+  post-rotation GCM decrypt failure on the backup credentials is surfaced as a
+  **`FAILURE` cron run + error Sentry check-in** (the disaster-recovery path can
+  never silently disable itself), plus a "re-enter credentials" banner on the
+  Backups page. The Backup row also joins the unified "needs re-entry" aggregate.
+- **Cross-process run lock.** Run-now and the nightly cron both claim a
+  `BackupRun` row under a `pg_advisory_xact_lock`, so no two containers dump at
+  once; a run whose container died mid-dump is reaped to `FAILURE` after a
+  staleness window rather than wedging the lock. Local artifacts live on per-
+  container tmpfs and are ephemeral — only S3 and the DB run record are
+  authoritative.
+- **Restore-validation DSN.** When set, each backup is restored into a disposable
+  shadow database and smoke-checked; the DSN is a write-only Full-Admin secret and
+  the engine refuses it if it equals the live `DATABASE_URL`.
 
 ## Threat Model By Actor
 

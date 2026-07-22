@@ -88,7 +88,7 @@ export function NotificationDeliveryPolicySettings({
         </AdminViewOnlyNotice>
       ) : null}
       {stalePolicyCount > 0 ? (
-        <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+        <div className="rounded-md border border-warning-6 bg-warning-3 p-3 text-sm text-warning-11">
           {stalePolicyCount} stale delivery rule
           {stalePolicyCount === 1 ? "" : "s"} need database cleanup.
         </div>

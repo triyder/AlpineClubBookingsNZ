@@ -51,21 +51,21 @@ function formatDate(value: string) {
 function LinkLabelText({ linkLabel }: { linkLabel: MyBookingItem["linkLabel"] }) {
   if (linkLabel === "provisional-child") {
     return (
-      <p className="text-xs text-sky-700">
+      <p className="text-xs text-info-11">
         Provisional non-member guests · linked to your member booking
       </p>
     );
   }
   if (linkLabel === "linked-parent") {
     return (
-      <p className="text-xs text-sky-700">
+      <p className="text-xs text-info-11">
         Includes linked provisional non-member guests
       </p>
     );
   }
   if (linkLabel === "guest-linked") {
     return (
-      <p className="text-xs text-sky-700">
+      <p className="text-xs text-info-11">
         You are listed as a guest on this booking
       </p>
     );
@@ -223,16 +223,16 @@ export function MyBookingsList({ bookings }: { bookings: MyBookingItem[] }) {
                 <CardContent className="p-4 space-y-3">
                   <Link
                     href={buildHrefWithReturnTo(`/bookings/${booking.id}`, "/bookings")}
-                    className="block rounded-md transition-shadow hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
+                    className="block rounded-md transition-shadow hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-info-7"
                   >
                     <BookingSummary booking={booking} showLinkLabel={false} />
                   </Link>
                   <div
                     role="group"
                     aria-label="Your non-member guests linked to this booking"
-                    className="ml-1 space-y-2 border-l-2 border-sky-200 pl-4"
+                    className="ml-1 space-y-2 border-l-2 border-info-6 pl-4"
                   >
-                    <p className="text-xs font-medium text-sky-700">
+                    <p className="text-xs font-medium text-info-11">
                       Your non-member guests
                     </p>
                     {children.map((child) => (
@@ -242,7 +242,7 @@ export function MyBookingsList({ bookings }: { bookings: MyBookingItem[] }) {
                           `/bookings/${child.id}`,
                           "/bookings",
                         )}
-                        className="block rounded-md border border-sky-100 bg-sky-50/60 p-3 transition-shadow hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
+                        className="block rounded-md border border-info-6 bg-info-3/60 p-3 transition-shadow hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-info-7"
                       >
                         <BookingSummary booking={child} showLinkLabel={false} />
                       </Link>

@@ -154,7 +154,7 @@ function WizardStepList({ step }: { step: WizardStep }) {
             className={[
               "flex min-w-0 items-center gap-2 rounded-md border px-2 py-2 text-xs",
               active ? "border-slate-900 bg-muted text-foreground" : "",
-              complete ? "border-green-200 bg-green-50 text-green-800" : "",
+              complete ? "border-success-6 bg-success-3 text-success-11" : "",
               !active && !complete ? "border-border text-muted-foreground" : "",
             ].join(" ")}
           >
@@ -327,7 +327,7 @@ function ValidationTable({ preview }: { preview: MemberImportPreview }) {
                   ""}
               </TableCell>
               <TableCell>{row.values.role || "USER"}</TableCell>
-              <TableCell className="text-red-700">
+              <TableCell className="text-danger-11">
                 {row.errors.length > 0 ? row.errors.join(", ") : ""}
               </TableCell>
             </TableRow>
@@ -528,7 +528,7 @@ export function MemberImportDialog({
                 />
               </div>
               {parseError && (
-                <div className="flex gap-2 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                <div className="flex gap-2 rounded-md border border-danger-6 bg-danger-3 p-3 text-sm text-danger-11">
                   <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                   <p>{parseError}</p>
                 </div>
@@ -565,7 +565,7 @@ export function MemberImportDialog({
                 </div>
               </div>
               {csvData.rows.length > MEMBER_IMPORT_MAX_ROWS && (
-                <div className="flex gap-2 rounded-md border border-yellow-200 bg-yellow-50 p-3 text-sm text-yellow-800">
+                <div className="flex gap-2 rounded-md border border-warning-6 bg-warning-3 p-3 text-sm text-warning-11">
                   <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                   <p>
                     Imports are limited to {MEMBER_IMPORT_MAX_ROWS} data rows.
@@ -653,13 +653,13 @@ export function MemberImportDialog({
                 </div>
               </div>
               {preview.fileErrors.length > 0 && (
-                <div className="space-y-1 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                <div className="space-y-1 rounded-md border border-danger-6 bg-danger-3 p-3 text-sm text-danger-11">
                   {preview.fileErrors.map((error) => (
                     <p key={error}>{error}</p>
                   ))}
                 </div>
               )}
-              <div className="rounded-md border border-sky-200 bg-sky-50 p-3 text-xs text-sky-800">
+              <div className="rounded-md border border-info-6 bg-info-3 p-3 text-xs text-info-11">
                 <p>
                   Map a <span className="font-medium">Cancelled Date</span>{" "}
                   column to import a member who has already left. Rows with a
@@ -700,7 +700,7 @@ export function MemberImportDialog({
               {importResult && (
                 <div className="space-y-3">
                   {importResult.errors.length > 0 && (
-                    <div className="flex gap-2 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                    <div className="flex gap-2 rounded-md border border-danger-6 bg-danger-3 p-3 text-sm text-danger-11">
                       <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                       <p>
                         No members were created. Fix the row errors and try
@@ -710,7 +710,7 @@ export function MemberImportDialog({
                   )}
                   {importResult.errors.length === 0 &&
                     importResult.created === 0 && (
-                      <div className="flex gap-2 rounded-md border border-yellow-200 bg-yellow-50 p-3 text-sm text-yellow-800">
+                      <div className="flex gap-2 rounded-md border border-warning-6 bg-warning-3 p-3 text-sm text-warning-11">
                         <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                         <p>
                           No members were imported. Review the skipped rows
@@ -720,7 +720,7 @@ export function MemberImportDialog({
                     )}
                   {importResult.errors.length === 0 &&
                     importResult.created > 0 && (
-                      <div className="rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-700">
+                      <div className="rounded-md border border-success-6 bg-success-3 p-3 text-sm text-success-11">
                         Imported {importResult.created} member(s):{" "}
                         {importResult.createdLoginEnabled ??
                           importResult.created}{" "}
@@ -733,7 +733,7 @@ export function MemberImportDialog({
                       <p className="text-xs uppercase text-muted-foreground">
                         Created
                       </p>
-                      <p className="text-sm font-medium text-green-700">
+                      <p className="text-sm font-medium text-success-11">
                         {importResult.created}
                       </p>
                     </div>
@@ -741,7 +741,7 @@ export function MemberImportDialog({
                       <p className="text-xs uppercase text-muted-foreground">
                         Can Login
                       </p>
-                      <p className="text-sm font-medium text-green-700">
+                      <p className="text-sm font-medium text-success-11">
                         {importResult.createdLoginEnabled ??
                           importResult.created}
                       </p>
@@ -766,19 +766,19 @@ export function MemberImportDialog({
                       <p className="text-xs uppercase text-muted-foreground">
                         Skipped
                       </p>
-                      <p className="text-sm font-medium text-yellow-700">
+                      <p className="text-sm font-medium text-warning-11">
                         {importResult.skipped}
                       </p>
                     </div>
                     <div className="rounded-md border p-3">
                       <p className="text-xs uppercase text-muted-foreground">Errors</p>
-                      <p className="text-sm font-medium text-red-700">
+                      <p className="text-sm font-medium text-danger-11">
                         {importResult.errors.length}
                       </p>
                     </div>
                   </div>
                   {importResult.errors.length > 0 && (
-                    <div className="max-h-40 overflow-y-auto rounded-md border border-red-200 p-3 text-xs text-red-700">
+                    <div className="max-h-40 overflow-y-auto rounded-md border border-danger-6 p-3 text-xs text-danger-11">
                       {importResult.errors.map((error, index) => (
                         <p key={`${error.row}-${index}`}>
                           Row {error.row}: {error.errors.join(", ")}
@@ -788,7 +788,7 @@ export function MemberImportDialog({
                   )}
                   {importResult.skippedRows &&
                     importResult.skippedRows.length > 0 && (
-                      <div className="max-h-40 overflow-y-auto rounded-md border border-yellow-200 p-3 text-xs text-yellow-800">
+                      <div className="max-h-40 overflow-y-auto rounded-md border border-warning-6 p-3 text-xs text-warning-11">
                         {importResult.skippedRows.map((skipped, index) => (
                           <p key={`${skipped.row}-${index}`}>
                             Row {skipped.row}: {skipped.reason} ({skipped.email}
@@ -798,7 +798,7 @@ export function MemberImportDialog({
                       </div>
                     )}
                   {importResult.rowNotes && importResult.rowNotes.length > 0 && (
-                    <div className="max-h-40 overflow-y-auto rounded-md border border-sky-200 p-3 text-xs text-sky-800">
+                    <div className="max-h-40 overflow-y-auto rounded-md border border-info-6 p-3 text-xs text-info-11">
                       {importResult.rowNotes.map((note, index) => (
                         <p key={`${note.row}-${index}`}>
                           Row {note.row}: {note.note} ({note.email})

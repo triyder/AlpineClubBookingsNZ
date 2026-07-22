@@ -55,13 +55,13 @@ export function MemberAccessRolePicker({
       : null;
 
   return (
-    <fieldset className="space-y-4 rounded-md border border-slate-200 p-4">
+    <fieldset className="space-y-4 rounded-md border border-border p-4">
       <legend className="px-1 text-sm font-medium">Access Roles</legend>
       <div className="grid gap-3 sm:grid-cols-2">
         {roleOptions.map((option) => (
           <label
             key={option.token}
-            className="flex items-start gap-3 rounded-md border border-slate-200 p-3"
+            className="flex items-start gap-3 rounded-md border border-border p-3"
           >
             <Checkbox
               checked={accessRoles.includes(option.token)}

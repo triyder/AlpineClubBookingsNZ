@@ -33,12 +33,40 @@ vi.mock("@/lib/logger", () => ({
   },
 }));
 
+// Backup config is DB-only (#2095): mock the resolver rather than setting env.
+vi.mock("@/lib/backup-config", () => ({
+  resolveBackupConfig: vi.fn(),
+}));
+
 import {
+  applyLegacyBackupEnvGate,
   buildBackupCronOutcome,
+  LEGACY_BACKUP_ENV_UNMIGRATED_MESSAGE,
   runDatabaseBackup,
   sanitizePostgresUrlForPgDump,
+  splitPostgresPassword,
 } from "@/lib/backup";
+import {
+  resolveBackupConfig,
+  type ResolvedBackupConfig,
+} from "@/lib/backup-config";
 import logger from "@/lib/logger";
+
+function makeConfig(
+  overrides: Partial<ResolvedBackupConfig> = {},
+): ResolvedBackupConfig {
+  return {
+    enabled: true,
+    bucket: null,
+    region: "ap-southeast-2",
+    retentionDays: 7,
+    accessKeyId: null,
+    secretAccessKey: null,
+    restoreValidationUrl: null,
+    needsReentry: false,
+    ...overrides,
+  };
+}
 
 describe("backup", () => {
   const originalEnv = { ...process.env };
@@ -50,10 +78,19 @@ describe("backup", () => {
   const unlinkSyncMock = vi.mocked(unlinkSync);
   const writeFileSyncMock = vi.mocked(writeFileSync);
   const loggerErrorMock = vi.mocked(logger.error);
+  const resolveBackupConfigMock = vi.mocked(resolveBackupConfig);
+
+  function setConfig(overrides: Partial<ResolvedBackupConfig> = {}) {
+    resolveBackupConfigMock.mockResolvedValue(makeConfig(overrides));
+  }
 
   beforeEach(() => {
     vi.clearAllMocks();
     process.env = { ...originalEnv };
+    // A live source database URL stays env-driven (bootstrap config).
+    process.env.DATABASE_URL =
+      "postgresql://postgres:postgres@postgres:5432/tacbookings";
+    setConfig();
     existsSyncMock.mockReturnValue(true);
     readdirSyncMock.mockReturnValue([] as never);
     statSyncMock.mockReturnValue({ size: 1024, mtimeMs: Date.now() } as never);
@@ -75,16 +112,32 @@ describe("backup", () => {
   });
 
   it("returns a skipped result when backups are disabled", async () => {
-    process.env = {
-      ...originalEnv,
-      BACKUP_ENABLED: "false",
-    };
+    setConfig({ enabled: false });
 
     await expect(runDatabaseBackup()).resolves.toEqual({
       success: false,
       skipped: true,
-      reason: "Backups are disabled. Set BACKUP_ENABLED=true.",
+      reason: "Backups are disabled. Enable them on Admin → Backups.",
     });
+  });
+
+  it("fails loudly when stored credentials cannot be decrypted", async () => {
+    setConfig({ needsReentry: true });
+
+    await expect(runDatabaseBackup()).resolves.toEqual({
+      success: false,
+      error:
+        "Backup credentials could not be decrypted (the app auth secret changed). Re-enter the S3 credentials on Admin → Backups.",
+    });
+
+    // A decrypt failure is a FAILURE the cron alerts on, never a silent skip.
+    expect(
+      buildBackupCronOutcome({
+        success: false,
+        error:
+          "Backup credentials could not be decrypted (the app auth secret changed). Re-enter the S3 credentials on Admin → Backups.",
+      }).status,
+    ).toBe("FAILURE");
   });
 
   it("classifies a successful backup as SUCCESS", () => {
@@ -117,7 +170,7 @@ describe("backup", () => {
     ).toEqual({
       status: "FAILURE",
       error:
-        "Backup completed only to local /tmp storage; configure BACKUP_S3_BUCKET for durable backups",
+        "Backup completed only to local ephemeral storage; configure an S3 destination on Admin → Backups for durable backups",
       resultSummary: {
         filename: "backup.sql.gz",
         sizeBytes: 1024,
@@ -128,17 +181,64 @@ describe("backup", () => {
     });
   });
 
+  describe("applyLegacyBackupEnvGate (#2095 MAJOR-1)", () => {
+    const skipped = buildBackupCronOutcome({
+      success: false,
+      skipped: true,
+      reason: "Backups are disabled. Enable them on Admin → Backups.",
+    });
+
+    it("upgrades a SKIPPED run to FAILURE when legacy backup env is present", () => {
+      const gated = applyLegacyBackupEnvGate(skipped, {
+        legacyEnvPresent: true,
+      });
+      expect(gated.status).toBe("FAILURE");
+      expect(gated.error).toBe(LEGACY_BACKUP_ENV_UNMIGRATED_MESSAGE);
+      expect(gated.resultSummary).toMatchObject({
+        healthSignal: "backup-legacy-env-unmigrated",
+      });
+    });
+
+    it("leaves a SKIPPED run quiet when no legacy backup env is present", () => {
+      expect(
+        applyLegacyBackupEnvGate(skipped, { legacyEnvPresent: false }),
+      ).toBe(skipped);
+    });
+
+    it("does not touch a non-SKIPPED outcome even with legacy env present", () => {
+      const failure = buildBackupCronOutcome({
+        success: false,
+        error:
+          "Backup credentials could not be decrypted (the app auth secret changed). Re-enter the S3 credentials on Admin → Backups.",
+      });
+      // needsReentry / not-durable FAILUREs are already loud; the gate is a no-op.
+      expect(applyLegacyBackupEnvGate(failure, { legacyEnvPresent: true })).toBe(
+        failure,
+      );
+
+      const success = buildBackupCronOutcome({
+        success: true,
+        filename: "backup.sql.gz",
+        sizeBytes: 1024,
+        uploadedToS3: true,
+      });
+      expect(applyLegacyBackupEnvGate(success, { legacyEnvPresent: true })).toBe(
+        success,
+      );
+    });
+  });
+
   it("classifies a skipped backup as SKIPPED", () => {
     expect(
       buildBackupCronOutcome({
         success: false,
         skipped: true,
-        reason: "Backups are disabled. Set BACKUP_ENABLED=true.",
+        reason: "Backups are disabled. Enable them on Admin → Backups.",
       })
     ).toEqual({
       status: "SKIPPED",
       resultSummary: {
-        reason: "Backups are disabled. Set BACKUP_ENABLED=true.",
+        reason: "Backups are disabled. Enable them on Admin → Backups.",
       },
     });
   });
@@ -155,14 +255,56 @@ describe("backup", () => {
     });
   });
 
+  it("passes the postgres password via PGPASSWORD, never on the command line", async () => {
+    await expect(runDatabaseBackup()).resolves.toMatchObject({ success: true });
+
+    // The URL on argv has the password stripped…
+    expect(execFileSyncMock).toHaveBeenCalledWith(
+      "pg_dump",
+      ["postgresql://postgres@postgres:5432/tacbookings"],
+      expect.objectContaining({
+        env: expect.objectContaining({ PGPASSWORD: "postgres" }),
+      })
+    );
+  });
+
+  it("splits a postgres password out of a connection URL", () => {
+    expect(
+      splitPostgresPassword("postgresql://user:s3cr3t@host:5432/db"),
+    ).toEqual({
+      argvUrl: "postgresql://user@host:5432/db",
+      password: "s3cr3t",
+    });
+    expect(splitPostgresPassword("postgresql://user@host:5432/db")).toEqual({
+      argvUrl: "postgresql://user@host:5432/db",
+    });
+  });
+
+  it("never returns an unparseable conninfo with its password intact (#2095 MAJOR-2)", () => {
+    // libpq keyword form — new URL() cannot parse it, but the password must not
+    // survive onto argv or into any persisted error.
+    const keyword = splitPostgresPassword(
+      "host=db.internal port=5432 dbname=shadow user=tac password=s3cr3t",
+    );
+    expect(keyword.password).toBeUndefined();
+    expect(keyword.argvUrl).not.toContain("s3cr3t");
+
+    // A URI with an out-of-range port that URL() rejects — the userinfo password
+    // is stripped rather than returned verbatim.
+    const badPort = splitPostgresPassword(
+      "postgresql://tac:s3cr3t@db.internal:99999/shadow",
+    );
+    expect(badPort.password).toBeUndefined();
+    expect(badPort.argvUrl).not.toContain("s3cr3t");
+  });
+
   it("fails when an S3 upload is configured but denied", async () => {
-    process.env = {
-      ...originalEnv,
-      BACKUP_ENABLED: "true",
-      BACKUP_S3_BUCKET: "tacbookings-backups",
-      BACKUP_S3_REGION: "ap-southeast-2",
-      DATABASE_URL: "postgresql://postgres:postgres@postgres:5432/tacbookings",
-    };
+    setConfig({
+      bucket: "tacbookings-backups",
+      region: "ap-southeast-2",
+      accessKeyId: "AKIA-test",
+      secretAccessKey: "secret-test",
+    });
 
     execFileSyncMock.mockImplementation((file) => {
       if (file === "aws") {
@@ -198,7 +340,10 @@ describe("backup", () => {
         "ap-southeast-2",
       ],
       expect.objectContaining({
-        env: expect.objectContaining(process.env),
+        env: expect.objectContaining({
+          AWS_ACCESS_KEY_ID: "AKIA-test",
+          AWS_SECRET_ACCESS_KEY: "secret-test",
+        }),
       })
     );
     expect(mkdirSyncMock).not.toHaveBeenCalled();
@@ -206,12 +351,6 @@ describe("backup", () => {
   });
 
   it("fails closed when pg_dump produces a suspiciously tiny gzip artifact", async () => {
-    process.env = {
-      ...originalEnv,
-      BACKUP_ENABLED: "true",
-      DATABASE_URL: "postgresql://postgres:postgres@postgres:5432/tacbookings",
-    };
-
     execFileSyncMock.mockReturnValue(Buffer.from("-- database dump") as never);
     statSyncMock.mockReturnValue({ size: 20, mtimeMs: Date.now() } as never);
 
@@ -249,12 +388,8 @@ describe("backup", () => {
   });
 
   it("strips Prisma-only query parameters before invoking pg_dump", async () => {
-    process.env = {
-      ...originalEnv,
-      BACKUP_ENABLED: "true",
-      DATABASE_URL:
-        "postgresql://postgres:postgres@postgres:5432/tacbookings?connection_limit=5&pool_timeout=10&schema=bookings&sslmode=require",
-    };
+    process.env.DATABASE_URL =
+      "postgresql://postgres:postgres@postgres:5432/tacbookings?connection_limit=5&pool_timeout=10&schema=bookings&sslmode=require";
 
     await expect(runDatabaseBackup()).resolves.toMatchObject({
       success: true,
@@ -263,10 +398,10 @@ describe("backup", () => {
 
     expect(execFileSyncMock).toHaveBeenCalledWith(
       "pg_dump",
-      [
-        "postgresql://postgres:postgres@postgres:5432/tacbookings?sslmode=require",
-      ],
-      expect.any(Object)
+      ["postgresql://postgres@postgres:5432/tacbookings?sslmode=require"],
+      expect.objectContaining({
+        env: expect.objectContaining({ PGPASSWORD: "postgres" }),
+      })
     );
   });
 
@@ -284,12 +419,8 @@ describe("backup", () => {
   });
 
   it("fails closed when pg_dump exits non-zero", async () => {
-    process.env = {
-      ...originalEnv,
-      BACKUP_ENABLED: "true",
-      DATABASE_URL:
-        "postgresql://postgres:postgres@postgres:5432/tacbookings?connection_limit=5&pool_timeout=10",
-    };
+    process.env.DATABASE_URL =
+      "postgresql://postgres:postgres@postgres:5432/tacbookings?connection_limit=5&pool_timeout=10";
     execFileSyncMock.mockImplementation((file) => {
       if (file === "pg_dump") {
         throw new Error('pg_dump: error: invalid URI query parameter: "connection_limit"');
@@ -307,13 +438,12 @@ describe("backup", () => {
   });
 
   it("verifies S3 readback after upload before declaring success", async () => {
-    process.env = {
-      ...originalEnv,
-      BACKUP_ENABLED: "true",
-      BACKUP_S3_BUCKET: "tacbookings-backups",
-      BACKUP_S3_REGION: "ap-southeast-2",
-      DATABASE_URL: "postgresql://postgres:postgres@postgres:5432/tacbookings",
-    };
+    setConfig({
+      bucket: "tacbookings-backups",
+      region: "ap-southeast-2",
+      accessKeyId: "AKIA-test",
+      secretAccessKey: "secret-test",
+    });
 
     await expect(runDatabaseBackup()).resolves.toMatchObject({
       success: true,
@@ -353,13 +483,10 @@ describe("backup", () => {
   });
 
   it("validates a restored backup against a disposable shadow database", async () => {
-    process.env = {
-      ...originalEnv,
-      BACKUP_ENABLED: "true",
-      DATABASE_URL: "postgresql://postgres:postgres@postgres:5432/tacbookings",
-      BACKUP_RESTORE_VALIDATION_URL:
+    setConfig({
+      restoreValidationUrl:
         "postgresql://postgres:postgres@postgres:5432/tacbookings_restore?connection_limit=1",
-    };
+    });
 
     const result = await runDatabaseBackup();
 
@@ -375,13 +502,15 @@ describe("backup", () => {
     expect(execFileSyncMock).toHaveBeenCalledWith(
       "psql",
       [
-        "postgresql://postgres:postgres@postgres:5432/tacbookings_restore",
+        "postgresql://postgres@postgres:5432/tacbookings_restore",
         "-v",
         "ON_ERROR_STOP=1",
         "-c",
         "DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;",
       ],
-      expect.any(Object)
+      expect.objectContaining({
+        env: expect.objectContaining({ PGPASSWORD: "postgres" }),
+      })
     );
     expect(execFileSyncMock).toHaveBeenCalledWith(
       "gunzip",
@@ -391,13 +520,10 @@ describe("backup", () => {
   });
 
   it("fails backup when restore validation smoke counts are empty", async () => {
-    process.env = {
-      ...originalEnv,
-      BACKUP_ENABLED: "true",
-      DATABASE_URL: "postgresql://postgres:postgres@postgres:5432/tacbookings",
-      BACKUP_RESTORE_VALIDATION_URL:
+    setConfig({
+      restoreValidationUrl:
         "postgresql://postgres:postgres@postgres:5432/tacbookings_restore",
-    };
+    });
     execFileSyncMock.mockImplementation((file, args) => {
       if (file === "psql" && Array.isArray(args) && args.includes("-At")) {
         return "3|0|5\n" as never;
@@ -425,19 +551,17 @@ describe("backup", () => {
   });
 
   it("refuses restore validation when the shadow URL points at the source database", async () => {
-    process.env = {
-      ...originalEnv,
-      BACKUP_ENABLED: "true",
-      DATABASE_URL:
-        "postgresql://postgres:postgres@postgres:5432/tacbookings?connection_limit=5",
-      BACKUP_RESTORE_VALIDATION_URL:
+    process.env.DATABASE_URL =
+      "postgresql://postgres:postgres@postgres:5432/tacbookings?connection_limit=5";
+    setConfig({
+      restoreValidationUrl:
         "postgresql://postgres:postgres@postgres:5432/tacbookings",
-    };
+    });
 
     await expect(runDatabaseBackup()).resolves.toEqual({
       success: false,
       error:
-        "BACKUP_RESTORE_VALIDATION_URL must point at a disposable shadow database, not DATABASE_URL",
+        "The restore-validation URL must point at a disposable shadow database, not the live DATABASE_URL",
     });
 
     expect(execFileSyncMock).not.toHaveBeenCalled();

@@ -298,7 +298,7 @@ export function MountainConditionsPanel() {
       </div>
 
       {error ? (
-        <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+        <div className="mb-4 rounded-md border border-danger-6 bg-danger-3 px-3 py-2 text-sm text-danger-11">
           {error}
         </div>
       ) : null}
@@ -366,7 +366,7 @@ export function MountainConditionsPanel() {
             </div>
             <div className="flex flex-wrap gap-2">
               {isFrozen ? (
-                <Badge className="border-amber-200 bg-amber-100 text-amber-800">
+                <Badge className="border-warning-6 bg-warning-3 text-warning-11">
                   Auto refresh paused
                 </Badge>
               ) : (

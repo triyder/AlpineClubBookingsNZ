@@ -38,9 +38,9 @@ interface PaymentLinkContext {
 type Tone = "success" | "warning" | "info";
 
 const TONE_STYLES: Record<Tone, { wrap: string; icon: typeof Info }> = {
-  success: { wrap: "text-emerald-700", icon: CheckCircle2 },
-  warning: { wrap: "text-amber-700", icon: AlertTriangle },
-  info: { wrap: "text-sky-700", icon: Info },
+  success: { wrap: "text-success-11", icon: CheckCircle2 },
+  warning: { wrap: "text-warning-11", icon: AlertTriangle },
+  info: { wrap: "text-info-11", icon: Info },
 };
 
 function toneForState(state: string): Tone {
@@ -198,7 +198,7 @@ export default function PayByLinkPage() {
           <CardTitle>Payment Link</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="flex items-start gap-2 text-amber-700">
+          <div className="flex items-start gap-2 text-warning-11">
             <AlertTriangle className="h-6 w-6 shrink-0" />
             <p className="font-medium">{loadError}</p>
           </div>
@@ -231,7 +231,7 @@ export default function PayByLinkPage() {
     return (
       <NarrativeCard narrative={context.narrative} tone="info">
         {refreshState === "sent" ? (
-          <div className="flex items-start gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+          <div className="flex items-start gap-2 rounded-md border border-success-6 bg-success-3 px-3 py-2 text-sm text-success-11">
             <CheckCircle2 className="h-5 w-5 shrink-0" />
             <p>We&apos;ve emailed you a fresh payment link. Please check your inbox.</p>
           </div>

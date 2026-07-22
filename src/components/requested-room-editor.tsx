@@ -89,7 +89,7 @@ export function RequestedRoomEditor({
   }
 
   const inactiveChip = room && !room.active ? (
-    <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-800">
+    <Badge variant="outline" className="border-warning-6 bg-warning-3 text-warning-11">
       Room no longer active &mdash; treated as no preference
     </Badge>
   ) : null;
@@ -98,11 +98,11 @@ export function RequestedRoomEditor({
     return (
       <div className="space-y-2">
         <div className="flex items-center gap-2">
-          <p className="text-sm text-gray-600">{room ? room.name : "No preference"}</p>
+          <p className="text-sm text-muted-foreground">{room ? room.name : "No preference"}</p>
           {inactiveChip}
         </div>
         {lockedNote ? (
-          <p className="text-sm text-gray-500">{lockedNote}</p>
+          <p className="text-sm text-muted-foreground">{lockedNote}</p>
         ) : null}
       </div>
     );
@@ -129,8 +129,8 @@ export function RequestedRoomEditor({
         </Select>
       </div>
       {inactiveChip}
-      {saving && <span className="text-xs text-gray-400">Saving...</span>}
-      {saved && <span className="text-xs text-green-600">Saved</span>}
+      {saving && <span className="text-xs text-muted-foreground">Saving...</span>}
+      {saved && <span className="text-xs text-success-11">Saved</span>}
     </div>
   );
 }

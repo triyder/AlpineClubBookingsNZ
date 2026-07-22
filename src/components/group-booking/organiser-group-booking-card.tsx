@@ -335,10 +335,10 @@ export function OrganiserGroupBookingCard({
             variant="outline"
             className={
               group.status === "OPEN"
-                ? "border-emerald-200 bg-emerald-100 text-emerald-800"
+                ? "border-success-6 bg-success-3 text-success-11"
                 : group.status === "CLOSED"
-                  ? "border-slate-200 bg-slate-100 text-slate-700"
-                  : "border-rose-200 bg-rose-100 text-rose-800"
+                  ? "border-border bg-muted text-muted-foreground"
+                  : "border-danger-6 bg-danger-3 text-danger-11"
             }
           >
             {group.status}
@@ -346,21 +346,21 @@ export function OrganiserGroupBookingCard({
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-5">
-        <div className="space-y-3 rounded-md border bg-slate-50 p-3">
+        <div className="space-y-3 rounded-md border bg-card p-3">
           <div>
-            <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
               Join code
             </p>
-            <p className="mt-1 font-mono text-2xl font-semibold tracking-widest text-slate-900">
+            <p className="mt-1 font-mono text-2xl font-semibold tracking-widest text-foreground">
               {group.code}
             </p>
           </div>
           {shareUrl ? (
             <div>
-              <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                 Shareable link
               </p>
-              <p className="mt-1 break-all font-mono text-sm text-slate-700">{shareUrl}</p>
+              <p className="mt-1 break-all font-mono text-sm text-muted-foreground">{shareUrl}</p>
             </div>
           ) : null}
           <div className="flex flex-wrap gap-2">
@@ -371,18 +371,18 @@ export function OrganiserGroupBookingCard({
 
         <div className="grid gap-2 text-sm sm:grid-cols-2">
           <div>
-            <span className="text-slate-500">Payment:</span>{" "}
+            <span className="text-muted-foreground">Payment:</span>{" "}
             {PAYMENT_MODE_LABEL[group.paymentMode]}
           </div>
           {group.joinDeadline ? (
             <div>
-              <span className="text-slate-500">Closes to joins:</span>{" "}
+              <span className="text-muted-foreground">Closes to joins:</span>{" "}
               {formatNZDate(new Date(group.joinDeadline))}
             </div>
           ) : null}
           {group.maxJoiners != null ? (
             <div>
-              <span className="text-slate-500">Max joiners:</span> {group.maxJoiners}
+              <span className="text-muted-foreground">Max joiners:</span> {group.maxJoiners}
             </div>
           ) : null}
         </div>
@@ -414,7 +414,7 @@ export function OrganiserGroupBookingCard({
         ) : null}
 
         <div className="space-y-2">
-          <p className="text-sm font-medium text-slate-900">
+          <p className="text-sm font-medium text-foreground">
             Joiners ({activeJoiners.length})
           </p>
           {activeJoiners.length === 0 ? (
@@ -426,18 +426,18 @@ export function OrganiserGroupBookingCard({
                   key={j.id}
                   className="flex items-center justify-between gap-3 px-3 py-2 text-sm"
                 >
-                  <span className="text-slate-800">
+                  <span className="text-foreground">
                     {j.name}
                     {j.guestCount > 1 ? (
-                      <span className="text-slate-500"> · {j.guestCount} guests</span>
+                      <span className="text-muted-foreground"> · {j.guestCount} guests</span>
                     ) : null}
                     {!j.isMember ? (
-                      <span className="text-slate-400"> · guest</span>
+                      <span className="text-muted-foreground"> · guest</span>
                     ) : null}
                   </span>
                   <span className="flex items-center gap-2">
                     {j.priceCents != null ? (
-                      <span className="text-slate-600">{formatCents(j.priceCents)}</span>
+                      <span className="text-muted-foreground">{formatCents(j.priceCents)}</span>
                     ) : null}
                     {j.status ? (
                       <Badge variant="outline" className="text-xs">
@@ -456,10 +456,10 @@ export function OrganiserGroupBookingCard({
         </div>
 
         {isOrganiserPays ? (
-          <div className="space-y-3 rounded-md border border-slate-200 p-3">
-            <p className="text-sm font-medium text-slate-900">Settle the group</p>
+          <div className="space-y-3 rounded-md border border-border p-3">
+            <p className="text-sm font-medium text-foreground">Settle the group</p>
             {settledAlready ? (
-              <div className="flex items-start gap-2 text-emerald-700">
+              <div className="flex items-start gap-2 text-success-11">
                 <Check className="h-5 w-5 shrink-0" />
                 <p className="text-sm font-medium">
                   Paid in full
@@ -471,7 +471,7 @@ export function OrganiserGroupBookingCard({
               </div>
             ) : settleReference ? (
               <div className="space-y-3">
-                <div className="flex items-start gap-2 text-emerald-700">
+                <div className="flex items-start gap-2 text-success-11">
                   <Check className="h-5 w-5 shrink-0" />
                   <p className="text-sm font-medium">
                     Invoice emailed
@@ -487,18 +487,18 @@ export function OrganiserGroupBookingCard({
                     "The organiser invoice has been emailed. The group booking stays confirmed while Xero reconciles the payment."
                   ).replaceAll("{{paymentReference}}", settleReference)}
                 </p>
-                <div className="rounded-md border border-slate-200 p-3 text-sm">
-                  <p className="font-medium text-slate-900">Payment reference</p>
-                  <p className="mt-1 font-mono text-slate-900">{settleReference}</p>
+                <div className="rounded-md border border-border p-3 text-sm">
+                  <p className="font-medium text-foreground">Payment reference</p>
+                  <p className="mt-1 font-mono text-foreground">{settleReference}</p>
                 </div>
               </div>
             ) : settleClientSecret && settleAmountCents != null ? (
               <div className="space-y-3">
-                <p className="text-sm text-slate-700">
+                <p className="text-sm text-muted-foreground">
                   Combined total: <strong>{formatCents(settleAmountCents)}</strong>
                 </p>
                 {settleComplete ? (
-                  <div className="flex items-start gap-2 text-emerald-700">
+                  <div className="flex items-start gap-2 text-success-11">
                     <Check className="h-5 w-5 shrink-0" />
                     <p className="text-sm font-medium">
                       Payment complete — your group is confirmed.
@@ -536,8 +536,8 @@ export function OrganiserGroupBookingCard({
                         onClick={() => setSettleMethod("stripe")}
                         className={`flex min-h-16 items-start gap-3 rounded-md border p-3 text-left text-sm ${
                           settleMethod === "stripe"
-                            ? "border-blue-500 bg-blue-50 text-blue-950"
-                            : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                            ? "border-info-7 bg-info-3 text-info-11"
+                            : "border-border bg-card text-muted-foreground hover:border-border"
                         }`}
                       >
                         <CreditCard className="mt-0.5 h-4 w-4 shrink-0" />
@@ -553,8 +553,8 @@ export function OrganiserGroupBookingCard({
                         onClick={() => setSettleMethod("internet_banking")}
                         className={`flex min-h-16 items-start gap-3 rounded-md border p-3 text-left text-sm ${
                           settleMethod === "internet_banking"
-                            ? "border-blue-500 bg-blue-50 text-blue-950"
-                            : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                            ? "border-info-7 bg-info-3 text-info-11"
+                            : "border-border bg-card text-muted-foreground hover:border-border"
                         }`}
                       >
                         <Landmark className="mt-0.5 h-4 w-4 shrink-0" />

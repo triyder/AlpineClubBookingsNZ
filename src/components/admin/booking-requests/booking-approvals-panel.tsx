@@ -64,8 +64,8 @@ interface BookingReviewData {
 }
 
 function statusBadgeClass(status: BookingReviewData["adminReviewStatus"]) {
-  if (status === "PENDING") return "border-amber-200 bg-amber-50 text-amber-800";
-  if (status === "APPROVED") return "border-emerald-200 bg-emerald-50 text-emerald-800";
+  if (status === "PENDING") return "border-warning-6 bg-warning-3 text-warning-11";
+  if (status === "APPROVED") return "border-success-6 bg-success-3 text-success-11";
   return "border-border bg-muted text-muted-foreground";
 }
 
@@ -305,7 +305,7 @@ export function BookingApprovalsPanel({
             return (
               <Card
                 key={booking.id}
-                className={highlighted ? "border-amber-300" : undefined}
+                className={highlighted ? "border-warning-6" : undefined}
               >
                 <CardHeader>
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -358,11 +358,11 @@ export function BookingApprovalsPanel({
                   </div>
 
                   {booking.memberReviewJustification && (
-                    <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm">
-                      <p className="font-medium text-amber-900">
+                    <div className="rounded-md border border-warning-6 bg-warning-3 p-3 text-sm">
+                      <p className="font-medium text-warning-11">
                         Member&apos;s reason for booking without an adult
                       </p>
-                      <p className="mt-1 whitespace-pre-wrap text-amber-900">
+                      <p className="mt-1 whitespace-pre-wrap text-warning-11">
                         {booking.memberReviewJustification}
                       </p>
                     </div>

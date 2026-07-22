@@ -1091,7 +1091,7 @@ describe("status colors include waitlist statuses", () => {
   it("bookingStatusClass returns fallback for unknown status", async () => {
     const { bookingStatusClass } = await import("@/lib/status-colors");
 
-    expect(bookingStatusClass("UNKNOWN")).toBe("bg-gray-100 text-gray-700");
+    expect(bookingStatusClass("UNKNOWN")).toBe("bg-muted text-foreground");
   });
 });
 

@@ -92,7 +92,7 @@ export function AccountCreditSection() {
 
   if (error || !data) {
     return (
-      <div className="text-sm text-red-500 py-4">
+      <div className="text-sm text-danger-11 py-4">
         Failed to load account credit.
       </div>
     );
@@ -134,7 +134,7 @@ export function AccountCreditSection() {
                     </td>
                     <td
                       className={`py-2 pr-2 text-right font-medium whitespace-nowrap ${
-                        tx.amountCents >= 0 ? "text-green-600" : "text-red-600"
+                        tx.amountCents >= 0 ? "text-success-11" : "text-danger-11"
                       }`}
                     >
                       {tx.amountCents >= 0 ? "+" : ""}
@@ -145,7 +145,7 @@ export function AccountCreditSection() {
                       {booking ? (
                         <Link
                           href={buildHrefWithReturnTo(`/bookings/${booking.id}`, "/profile")}
-                          className="text-blue-600 hover:underline"
+                          className="text-info-11 hover:underline"
                         >
                           {formatDateRange(booking.checkIn, booking.checkOut)}
                         </Link>

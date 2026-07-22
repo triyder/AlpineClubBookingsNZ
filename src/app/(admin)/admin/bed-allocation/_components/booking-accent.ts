@@ -4,52 +4,21 @@ export interface BookingAccent {
   ringClassName: string;
 }
 
+// #2188 P2 (M1, #2181) — the decorative booking-strip palette migrates off the
+// raw 9-hue Tailwind set onto the generated categorical scales cat1..cat5. This
+// is the signed-off 9→5 collapse: sibling bookings now draw from FIVE distinct
+// categorical hues instead of nine, so more sibling-booking colour collisions
+// occur — accepted, and covered by the M1 veto-at-render evidence in the PR. The
+// solid strip uses each scale's step 9 (the saturated solid band, = the old
+// `-500` weight); the focus ring uses step 7 of the same scale, which reads as a
+// subtle-but-visible ring in BOTH light and dark because the `--gen-*` substrate
+// adapts per mode — so the old `dark:ring-*` companion pair is dropped.
 export const BOOKING_ACCENTS: BookingAccent[] = [
-  {
-    name: "red",
-    stripClassName: "bg-red-500",
-    ringClassName: "ring-red-200 dark:ring-red-800/60",
-  },
-  {
-    name: "orange",
-    stripClassName: "bg-orange-500",
-    ringClassName: "ring-orange-200 dark:ring-orange-800/60",
-  },
-  {
-    name: "amber",
-    stripClassName: "bg-amber-500",
-    ringClassName: "ring-amber-200 dark:ring-amber-800/60",
-  },
-  {
-    name: "lime",
-    stripClassName: "bg-lime-500",
-    ringClassName: "ring-lime-200 dark:ring-lime-800/60",
-  },
-  {
-    name: "emerald",
-    stripClassName: "bg-emerald-500",
-    ringClassName: "ring-emerald-200 dark:ring-emerald-800/60",
-  },
-  {
-    name: "cyan",
-    stripClassName: "bg-cyan-500",
-    ringClassName: "ring-cyan-200 dark:ring-cyan-800/60",
-  },
-  {
-    name: "blue",
-    stripClassName: "bg-blue-500",
-    ringClassName: "ring-blue-200 dark:ring-blue-800/60",
-  },
-  {
-    name: "violet",
-    stripClassName: "bg-violet-500",
-    ringClassName: "ring-violet-200 dark:ring-violet-800/60",
-  },
-  {
-    name: "fuchsia",
-    stripClassName: "bg-fuchsia-500",
-    ringClassName: "ring-fuchsia-200 dark:ring-fuchsia-800/60",
-  },
+  { name: "cat1", stripClassName: "bg-cat1-9", ringClassName: "ring-cat1-7" },
+  { name: "cat2", stripClassName: "bg-cat2-9", ringClassName: "ring-cat2-7" },
+  { name: "cat3", stripClassName: "bg-cat3-9", ringClassName: "ring-cat3-7" },
+  { name: "cat4", stripClassName: "bg-cat4-9", ringClassName: "ring-cat4-7" },
+  { name: "cat5", stripClassName: "bg-cat5-9", ringClassName: "ring-cat5-7" },
 ];
 
 function hashBookingId(bookingId: string) {

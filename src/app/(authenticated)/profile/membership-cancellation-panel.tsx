@@ -33,13 +33,13 @@ function relationshipLabel(candidate: MembershipCancellationCandidate) {
 
 function statusTone(status: string) {
   if (status === "PENDING_CONFIRMATION") {
-    return "border-amber-200 bg-amber-50 text-amber-800";
+    return "border-warning-6 bg-warning-3 text-warning-11";
   }
   if (status === "DECLINED" || status === "REJECTED") {
-    return "border-rose-200 bg-rose-50 text-rose-800";
+    return "border-danger-6 bg-danger-3 text-danger-11";
   }
   if (status === "REQUESTED" || status === "APPROVED") {
-    return "border-blue-200 bg-blue-50 text-blue-800";
+    return "border-info-6 bg-info-3 text-info-11";
   }
   return "border-border bg-muted text-muted-foreground";
 }
@@ -222,7 +222,7 @@ export function MembershipCancellationPanel() {
 
   if (!overview) {
     return (
-      <div className="rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+      <div className="rounded-md border border-danger-6 bg-danger-3 px-4 py-3 text-sm text-danger-11">
         {error || "Cancellation request options are unavailable."}
       </div>
     );
@@ -230,23 +230,23 @@ export function MembershipCancellationPanel() {
 
   return (
     <div className="space-y-6">
-      <div className="space-y-3 rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+      <div className="space-y-3 rounded-md border border-warning-6 bg-warning-3 p-4 text-sm text-warning-11">
         <div className="flex items-start gap-2">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
           <p>{overview.settings.warningText}</p>
         </div>
-        <div className="border-t border-amber-200 pt-3">
+        <div className="border-t border-warning-6 pt-3">
           <p>{overview.settings.rejoinProcessText}</p>
         </div>
       </div>
 
       {message ? (
-        <div className="rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+        <div className="rounded-md border border-success-6 bg-success-3 px-4 py-3 text-sm text-success-11">
           {message}
         </div>
       ) : null}
       {error ? (
-        <div className="rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+        <div className="rounded-md border border-danger-6 bg-danger-3 px-4 py-3 text-sm text-danger-11">
           {error}
         </div>
       ) : null}
@@ -292,7 +292,7 @@ export function MembershipCancellationPanel() {
                       </Badge>
                       {candidate.requiresOwnConfirmation ? (
                         <Badge
-                          className="border-blue-200 bg-blue-50 text-blue-800"
+                          className="border-info-6 bg-info-3 text-info-11"
                           variant="outline"
                         >
                           <Mail className="mr-1 h-3 w-3" />
@@ -306,7 +306,7 @@ export function MembershipCancellationPanel() {
                         : candidate.email}
                     </span>
                     {candidate.ineligibleReason ? (
-                      <span className="mt-1 block text-xs text-rose-700">
+                      <span className="mt-1 block text-xs text-danger-11">
                         {candidate.ineligibleReason}
                       </span>
                     ) : null}

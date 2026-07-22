@@ -77,13 +77,13 @@ export function DeleteBookingButton({
   }
 
   return (
-    <div className="space-y-3 rounded-md border border-red-200 bg-red-50 p-4">
+    <div className="space-y-3 rounded-md border border-danger-6 bg-danger-3 p-4">
       {confirmDialog}
       {requiresReason ? (
         <div className="space-y-1">
           <label
             htmlFor="delete-booking-reason"
-            className="text-sm font-medium text-red-950"
+            className="text-sm font-medium text-danger-11"
           >
             Deletion reason
           </label>
@@ -91,15 +91,15 @@ export function DeleteBookingButton({
             id="delete-booking-reason"
             value={reason}
             onChange={(event) => setReason(event.target.value)}
-            className="min-h-20 w-full rounded-md border border-red-200 bg-white px-3 py-2 text-sm shadow-sm"
+            className="min-h-20 w-full rounded-md border border-danger-6 bg-card px-3 py-2 text-sm shadow-sm"
             maxLength={500}
           />
         </div>
       ) : null}
 
-      {error ? <p className="text-sm text-red-800">{error}</p> : null}
+      {error ? <p className="text-sm text-danger-11">{error}</p> : null}
       {blockers.length > 0 ? (
-        <ul className="space-y-1 text-sm text-red-800">
+        <ul className="space-y-1 text-sm text-danger-11">
           {blockers.map((blocker) => (
             <li key={blocker.code}>
               {blocker.label} ({blocker.count})

@@ -258,9 +258,9 @@ export function IntegrationWizard<Ctx>({
                       className={cn(
                         "flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-xs font-semibold",
                         verified
-                          ? "border-emerald-600 bg-emerald-600 text-white"
+                          ? "border-success-7 bg-success text-success-foreground"
                           : acknowledgedOnly
-                            ? "border-amber-500 bg-amber-500 text-white"
+                            ? "border-warning-7 bg-warning text-warning-foreground"
                             : active
                               ? "border-primary text-foreground"
                               : "border-border text-muted-foreground",
@@ -277,7 +277,7 @@ export function IntegrationWizard<Ctx>({
                         {step.title}
                       </span>
                       {acknowledgedOnly ? (
-                        <span className="block truncate text-xs text-amber-700">
+                        <span className="block truncate text-xs text-warning-11">
                           Skipped for now
                         </span>
                       ) : step.summary ? (

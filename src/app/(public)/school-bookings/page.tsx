@@ -200,7 +200,7 @@ export default function SchoolBookingRequestPage() {
           <CardTitle>Request Sent</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
-          <div className="flex items-center gap-2 text-emerald-700">
+          <div className="flex items-center gap-2 text-success-11">
             <CheckCircle2 className="h-6 w-6 shrink-0" />
             <p className="font-medium">Thanks, {contactFirstName} — almost there.</p>
           </div>
@@ -414,7 +414,7 @@ export default function SchoolBookingRequestPage() {
                     size="sm"
                     onClick={() => removeTeacher(index)}
                     disabled={teachers.length <= 1}
-                    className="text-red-500 hover:text-red-700"
+                    className="text-danger-11 hover:text-danger-11"
                   >
                     Remove
                   </Button>
@@ -444,7 +444,7 @@ export default function SchoolBookingRequestPage() {
               {" "}&amp; helpers, {totalChildren} children)
             </p>
             {overSoftCap ? (
-              <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              <p className="rounded-md border border-warning-6 bg-warning-3 px-3 py-2 text-sm text-warning-11">
                 School groups are capped at {effectiveSoftCap} beds (students plus teachers and
                 parent helpers) unless the remaining beds, up to the lodge&apos;s {effectiveCapacity},{" "}
                 include a club member staying with your group. Requests over {effectiveSoftCap}{" "}

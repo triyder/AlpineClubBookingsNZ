@@ -469,7 +469,7 @@ export default function LodgeSetupWizardPage() {
     if (state.status !== "done") return null;
     return (
       <div className="text-sm space-y-1">
-        <p className="text-green-700">
+        <p className="text-success-11">
           Copied {state.copied} {unit}
           {state.copied === 1 ? "" : "s"}.
         </p>
@@ -511,7 +511,7 @@ export default function LodgeSetupWizardPage() {
                 entry.key === step
                   ? "app-step-active font-medium"
                   : index < stepIndex
-                    ? "text-green-700"
+                    ? "text-success-11"
                     : "text-muted-foreground"
               }
             >
@@ -629,7 +629,7 @@ export default function LodgeSetupWizardPage() {
                 />
               </div>
             </div>
-            {roomsSeeded && <p className="text-sm text-green-700">{roomsSeeded}</p>}
+            {roomsSeeded && <p className="text-sm text-success-11">{roomsSeeded}</p>}
             <p className="text-sm text-muted-foreground">
               Need a mixed layout? Use the full editor:{" "}
               <Link className="underline" href={configureHref("/admin/rooms-beds")}>
@@ -688,7 +688,7 @@ export default function LodgeSetupWizardPage() {
               </div>
             </div>
             {lockersSeeded && (
-              <p className="text-sm text-green-700">{lockersSeeded}</p>
+              <p className="text-sm text-success-11">{lockersSeeded}</p>
             )}
             <div className="flex gap-3">
               <Button variant="outline" onClick={goBack} disabled={saving}>

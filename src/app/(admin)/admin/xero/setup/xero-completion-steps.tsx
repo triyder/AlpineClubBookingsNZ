@@ -188,7 +188,7 @@ export function WebhooksStep({
       </div>
 
       {context.webhookVerified ? (
-        <div className="flex items-start gap-2 rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
+        <div className="flex items-start gap-2 rounded-md border border-success-6 bg-success-3 p-3 text-sm text-success-11">
           <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
           <span>
             Webhooks are verified. Xero&rsquo;s validation ping reached this site
@@ -198,7 +198,7 @@ export function WebhooksStep({
       ) : null}
 
       {!context.webhooksVerifiable ? (
-        <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+        <div className="flex items-start gap-2 rounded-md border border-warning-6 bg-warning-3 p-3 text-sm text-warning-11">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
           <span>
             Webhooks can&rsquo;t be verified on this address. Xero only delivers
@@ -207,7 +207,7 @@ export function WebhooksStep({
             {context.companyUrl ? (
               <>
                 {" "}
-                (<code className="rounded bg-amber-100 px-1">{context.companyUrl}</code>)
+                (<code className="rounded bg-warning-3 px-1">{context.companyUrl}</code>)
               </>
             ) : null}
             . Skip for now; once the site is reachable over public HTTPS, return
@@ -241,7 +241,7 @@ export function WebhooksStep({
               </Label>
               <span className="text-xs">
                 {keySet ? (
-                  <span className="text-emerald-700">Set &#10003;</span>
+                  <span className="text-success-11">Set &#10003;</span>
                 ) : (
                   <span className="text-muted-foreground">Not set</span>
                 )}
@@ -271,7 +271,7 @@ export function WebhooksStep({
               only when there is a message, so the empty region takes no space. */}
           <div role="alert">
             {error ? (
-              <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+              <div className="rounded-md border border-danger-6 bg-danger-3 px-3 py-2 text-sm text-danger-11">
                 {error}
               </div>
             ) : null}
@@ -288,7 +288,7 @@ export function WebhooksStep({
                 </span>
               </div>
             ) : notice ? (
-              <div className="flex items-start gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+              <div className="flex items-start gap-2 rounded-md border border-success-6 bg-success-3 px-3 py-2 text-sm text-success-11">
                 <Info className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
                 <span>{notice}</span>
               </div>
@@ -432,7 +432,7 @@ export function FinishStep({ context }: { context: XeroWizardContext }) {
           announced when it appears — matches CredentialsStep's pattern. */}
       <div role="status">
         {message ? (
-          <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+          <div className="rounded-md border border-success-6 bg-success-3 px-3 py-2 text-sm text-success-11">
             {message}
           </div>
         ) : null}
@@ -456,7 +456,7 @@ export function FinishStep({ context }: { context: XeroWizardContext }) {
 
       <div className="rounded-md border border-border bg-card p-4">
         <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground">
-          <CheckCircle2 className="h-4 w-4 text-emerald-600" aria-hidden />
+          <CheckCircle2 className="h-4 w-4 text-success-11" aria-hidden />
           Setup summary
         </h3>
         <dl className="mt-3 space-y-2 text-sm">
@@ -470,12 +470,12 @@ export function FinishStep({ context }: { context: XeroWizardContext }) {
             <dt className="text-muted-foreground">Webhooks</dt>
             <dd>
               {context.webhookVerified ? (
-                <span className="inline-flex items-center gap-1 font-medium text-emerald-700">
+                <span className="inline-flex items-center gap-1 font-medium text-success-11">
                   <ShieldCheck className="h-4 w-4" aria-hidden />
                   Verified
                 </span>
               ) : (
-                <span className="inline-flex items-center gap-1 font-medium text-amber-700">
+                <span className="inline-flex items-center gap-1 font-medium text-warning-11">
                   <AlertTriangle className="h-4 w-4" aria-hidden />
                   Not configured — scheduled sync only
                 </span>

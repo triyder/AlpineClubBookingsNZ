@@ -133,7 +133,7 @@ export function NotificationPreferences() {
 
   if (!prefs || !editPrefs) {
     return (
-      <div className="text-sm text-red-500 py-4">
+      <div className="text-sm text-danger-11 py-4">
         Failed to load notification preferences.
       </div>
     );
@@ -204,7 +204,7 @@ export function NotificationPreferences() {
       </div>
 
       {error && (
-        <div className="rounded-md bg-red-50 border border-red-200 p-3 text-sm text-red-700">
+        <div className="rounded-md bg-danger-3 border border-danger-6 p-3 text-sm text-danger-11">
           {error}
         </div>
       )}

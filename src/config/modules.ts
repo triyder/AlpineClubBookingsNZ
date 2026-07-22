@@ -231,7 +231,7 @@ export const MODULE_DEFINITIONS: Record<ModuleKey, ModuleDefinition> = {
     description:
       "Let members sign in with their linked Google account. Additive to password login, never a replacement. A member links their own Google account from their profile while signed in — no account is ever created from Google, and unlinked Google accounts are refused.",
     dependencies: [
-      "GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must be configured server-side (per-club Google Cloud OAuth credentials) before the button appears.",
+      "Your club's Google Cloud OAuth credentials are entered and verified in-app on the Google sign-in setup page (Admin → Integrations → Google) — no environment variables or restart. The module stays locked until a real Google sign-in round-trip verifies.",
     ],
   },
   analytics: {
