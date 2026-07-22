@@ -3,7 +3,6 @@ import {
   AA_TEXT_CONTRAST_RATIO,
   CLUB_THEME_COLOUR_FIELDS,
   DEFAULT_CLUB_THEME_VALUES,
-  TOKOROA_CLUB_THEME_VALUES,
   buildClubThemeAppCss,
   buildClubThemeCss,
   contrastRatio,
@@ -16,6 +15,7 @@ import {
   sanitiseRawCss,
   themeSeedsFromValues,
 } from "@/lib/club-theme-schema";
+import { TOKOROA_CLUB_THEME_VALUES } from "@/lib/theme/__tests__/reference-seed-sets";
 import { clubThemeUpdateSchema } from "@/lib/club-theme-update-schema";
 import {
   buildNeutralRamp,

@@ -114,12 +114,6 @@ export const PINS = {
   },
 } as const;
 
-/** Migrated 3-seed values for the two reference palettes (D12 mapping). */
-export const SEED_SETS: Record<"default" | "tokoroa", ThemeSeeds> = {
-  default: { accent: "#57b3ab", neutralSource: "#17231c", support: "#b04d28" },
-  tokoroa: { accent: "#ffcb05", neutralSource: "#2f2f2b", support: "#ff7c12" },
-};
-
 /** Every hue scale the substrate produces, in slot order. */
 export const HUE_SCALES = [
   "accent",

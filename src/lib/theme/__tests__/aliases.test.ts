@@ -8,7 +8,8 @@ import {
   resolveAlias,
   A2_INPUT_RING_NEUTRAL_STEP,
 } from "../aliases";
-import { SEED_SETS, buildThemeSubstrate } from "../theme-substrate";
+import { buildThemeSubstrate } from "../theme-substrate";
+import { SEED_SETS } from "./reference-seed-sets";
 import aliasesJson from "../../../../docs/theme/phase0/data/aliases.json";
 
 /*

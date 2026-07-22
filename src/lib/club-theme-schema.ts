@@ -115,7 +115,8 @@ export const DEFAULT_CLUB_THEME_VALUES: ClubThemeValues = {
   // Generic "Aotearoa" default palette (#1807, contracted to 3 seeds in #2187):
   // a glacial-teal primary accent, a deep bush-green neutral character, and a
   // terracotta support accent. Reads as generic New Zealand alpine, not any
-  // specific club (Tokoroa gold now lives only in TOKOROA_CLUB_THEME_VALUES).
+  // specific club (any fork's own brand colour lives only in that deployment's
+  // ClubTheme DB row, never in this shipping default).
   // These three seed the vendored Radix generator, which derives the full
   // 12-step substrate whose contrast is guaranteed by construction (see the
   // guarantee sweep in `@/lib/theme/guarantees`). The former charcoal/mist/snow/
@@ -123,16 +124,6 @@ export const DEFAULT_CLUB_THEME_VALUES: ClubThemeValues = {
   brandGold: "#57b3ab",
   brandDeep: "#17231c",
   brandSafety: "#b04d28",
-  headingFontKey: "LEAGUE_SPARTAN",
-  bodyFontKey: "INTER",
-  logoDataUrl: null,
-  rawCss: "",
-};
-
-export const TOKOROA_CLUB_THEME_VALUES: ClubThemeValues = {
-  brandGold: "#ffcb05",
-  brandDeep: "#2f2f2b",
-  brandSafety: "#ff7c12",
   headingFontKey: "LEAGUE_SPARTAN",
   bodyFontKey: "INTER",
   logoDataUrl: null,

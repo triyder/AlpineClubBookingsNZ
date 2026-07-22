@@ -20,13 +20,13 @@ import { writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import {
-  SEED_SETS,
   buildThemeSubstrate,
   buildKioskTheme,
   a2ComputedPick,
   a4SolidForeground,
   HUE_SCALES,
 } from "../../src/lib/theme/theme-substrate";
+import { SEED_SETS } from "../../src/lib/theme/__tests__/reference-seed-sets";
 
 function scaleHexes(theme: ReturnType<typeof buildThemeSubstrate>) {
   const out: Record<string, string[]> = {};

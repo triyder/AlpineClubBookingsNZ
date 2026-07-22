@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
-  SEED_SETS,
   buildThemeSubstrate,
   buildKioskTheme,
   a2ComputedPick,
   a4SolidForeground,
   HUE_SCALES,
 } from "../theme-substrate";
+import { SEED_SETS } from "./reference-seed-sets";
 import goldens from "./theme-goldens.json";
 
 /*

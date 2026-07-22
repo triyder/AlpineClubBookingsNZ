@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
-  SEED_SETS,
   buildThemeSubstrate,
   buildKioskTheme,
   contrast,
 } from "../theme-substrate";
+import { SEED_SETS, TOKOROA_CLUB_THEME_VALUES } from "./reference-seed-sets";
 import {
   sweepGuarantees,
   sweepDerivedMutedForeground,
@@ -16,7 +16,6 @@ import {
 } from "../guarantees";
 import {
   DEFAULT_CLUB_THEME_VALUES,
-  TOKOROA_CLUB_THEME_VALUES,
   deriveAppMutedForeground,
   themeSeedsFromValues,
 } from "../../club-theme-schema";
