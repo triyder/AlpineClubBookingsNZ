@@ -149,10 +149,13 @@ export const SINGLETONS: SingletonSpec[] = [
         "CLUB_MODULE_SETTINGS_COLUMN_SELECT and awaiting a contract DROP (#139)",
       // OWNER JUDGEMENT (#2178): the two auth-provider sign-in toggles do not
       // travel today, unlike the other 19 module flags (incl. twoFactor,
-      // analytics, xeroIntegration) which do. Each is inert until per-install,
-      // deployment-local credentials are present, and enabling an authentication
+      // analytics, xeroIntegration) which do. Enabling an authentication
       // method is a per-deployment security decision — so they are excluded.
-      // See the PR body: the owner may flip either to should-travel.
+      // NOT a safe one-line flip to should-travel: the login page renders the
+      // magic-link form off the flag alone (no delivery-presence gate), and the
+      // profile Google card renders off googleLogin alone — an imported `true`
+      // on an unconfigured target would surface a visibly broken auth path.
+      // Travelling either first requires a credential/delivery render gate.
       magicLink:
         "auth-provider sign-in toggle gated on deployment-local email-delivery " +
         "config; a per-install auth decision, not portable club config — OWNER JUDGEMENT (#2178)",
