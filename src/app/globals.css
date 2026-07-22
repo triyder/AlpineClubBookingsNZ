@@ -184,6 +184,50 @@
   --color-cat5-10: var(--cat5-10, #7f9a00);
   --color-cat5-11: var(--cat5-11, #516600);
   --color-cat5-12: var(--cat5-12, #1b2400);
+  /* #2189 P3 — fixed-seed KIOSK tokens (epic #2181 A5/J4). The kiosk /
+     wall-display surfaces are the deliberately literalist, glare-proof,
+     NON-brand-following exception: authored ONCE from the fixed kiosk seed
+     (PINS.kiosk — near-black page, neutral grey ramp, #7dd3fc accent), so they
+     are club- AND mode-independent. Each utility consumes the real `--kiosk-*`
+     custom prop declared on `:root` below, with the derived fixed value as the
+     static fallback. Values are pinned against `buildKioskTokens()` by
+     kiosk-token-contract.test.ts (R9 fallback-pin), never copied literals. */
+  --color-kiosk-page: var(--kiosk-page, #0a0a0b);
+  --color-kiosk-card: var(--kiosk-card, #222);
+  --color-kiosk-inset: var(--kiosk-inset, #292929);
+  --color-kiosk-chip: var(--kiosk-chip, #3a3a3a);
+  --color-kiosk-hover: var(--kiosk-hover, #484848);
+  --color-kiosk-border: var(--kiosk-border, #484848);
+  --color-kiosk-border-muted: var(--kiosk-border-muted, #292929);
+  --color-kiosk-fg: var(--kiosk-fg, #eee);
+  --color-kiosk-muted-fg: var(--kiosk-muted-fg, #b4b4b4);
+  --color-kiosk-faint-fg: var(--kiosk-faint-fg, #6e6e6e);
+  --color-kiosk-accent: var(--kiosk-accent, #7dd3fc);
+  --color-kiosk-accent-hover: var(--kiosk-accent-hover, #72c8f1);
+  --color-kiosk-accent-active: var(--kiosk-accent-active, #6ac0e8);
+  --color-kiosk-accent-fg: var(--kiosk-accent-fg, #092531);
+  --color-kiosk-accent-bg: var(--kiosk-accent-bg, #002637);
+  --color-kiosk-accent-border: var(--kiosk-accent-border, #005074);
+  --color-kiosk-danger-bg: var(--kiosk-danger-bg, #3d120f);
+  --color-kiosk-danger-fg: var(--kiosk-danger-fg, #ff9083);
+  --color-kiosk-danger-border: var(--kiosk-danger-border, #7f221d);
+  --color-kiosk-danger-solid: var(--kiosk-danger-solid, #dc2626);
+  --color-kiosk-danger-solid-fg: var(--kiosk-danger-solid-fg, #ffffff);
+  --color-kiosk-success-bg: var(--kiosk-success-bg, #122819);
+  --color-kiosk-success-fg: var(--kiosk-success-fg, #5ecf84);
+  --color-kiosk-success-border: var(--kiosk-success-border, #15562e);
+  --color-kiosk-success-solid: var(--kiosk-success-solid, #1f9d55);
+  --color-kiosk-success-solid-fg: var(--kiosk-success-solid-fg, #202020);
+  --color-kiosk-success-solid-hover: var(--kiosk-success-solid-hover, #3ab067);
+  --color-kiosk-success-solid-active: var(--kiosk-success-solid-active, #51c379);
+  --color-kiosk-warning-bg: var(--kiosk-warning-bg, #2b200b);
+  --color-kiosk-warning-fg: var(--kiosk-warning-fg, #e2a93d);
+  --color-kiosk-warning-border: var(--kiosk-warning-border, #5d430e);
+  --color-kiosk-warning-solid: var(--kiosk-warning-solid, #e5a50a);
+  --color-kiosk-warning-solid-fg: var(--kiosk-warning-solid-fg, #202020);
+  --color-kiosk-orange-bg: var(--kiosk-orange-bg, #311c0e);
+  --color-kiosk-orange-fg: var(--kiosk-orange-fg, #f89a58);
+  --color-kiosk-orange-border: var(--kiosk-orange-border, #6b3917);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -1106,202 +1150,61 @@
   }
 }
 
-/* Kiosk light-mode readability (#1249). The kiosk is authored in dark tones
-   (literal slate-900/800/700/600 + saturated accent buttons + dark tinted status
-   blocks). In LIGHT mode the three slate tiers map to THREE DISTINCT light tiers
-   (slate-900 -> page, slate-800 -> white card, slate-700 -> inset) separated by a
-   clearly visible mid-grey border (>= 3:1 non-text against every tier), saturated
-   accent buttons keep their fill + white text, and dark tinted status blocks are
-   re-tinted light. Ratios vs the club-theme-schema.ts helpers: dark text on every
-   tier >= 13.8:1; border vs page 3.28:1 / chip 3.49:1 / inset 3.81:1 / card
-   4.28:1; status text on its light tint >= 6.3:1; white on darkened green/amber
-   accent 5.5:1. This whole section is gated on html:not(.dark), so the kiosk's
-   DARK rendering is untouched. */
-html:not(.dark) .app-theme-scope .theme-aware-kiosk {
-  --kiosk-page: oklch(0.91 0 0);
-  --kiosk-card: oklch(1 0 0);
-  --kiosk-inset: oklch(0.96 0 0);
-  --kiosk-chip: oklch(0.93 0 0);
-  --kiosk-hover: oklch(0.88 0 0);
-  --kiosk-border: oklch(0.58 0 0);
-  --kiosk-fg: oklch(0.2 0 0);
-  --kiosk-muted-fg: oklch(0.45 0 0);
-  background-color: var(--kiosk-page);
-  color: var(--kiosk-fg);
-}
-
-html:not(.dark) .app-theme-scope .theme-aware-kiosk .bg-slate-900 {
-  background-color: var(--kiosk-page);
-}
-
-html:not(.dark)
-  .app-theme-scope
-  .theme-aware-kiosk
-  :is(.bg-slate-800, [class~="bg-slate-800/70"], [class~="bg-slate-800/50"]) {
-  background-color: var(--kiosk-card);
-}
-
-html:not(.dark)
-  .app-theme-scope
-  .theme-aware-kiosk
-  :is(.bg-slate-700, [class~="bg-slate-700/50"], [class~="bg-slate-700/30"]) {
-  background-color: var(--kiosk-inset);
-}
-
-html:not(.dark)
-  .app-theme-scope
-  .theme-aware-kiosk
-  :is(.bg-slate-600, [class~="bg-slate-600/50"]) {
-  background-color: var(--kiosk-chip);
-}
-
-html:not(.dark)
-  .app-theme-scope
-  .theme-aware-kiosk
-  :is(
-    .border-slate-500,
-    .border-slate-600,
-    .border-slate-700,
-    [class~="border-slate-700/50"],
-    [class~="border-slate-600/60"]
-  ) {
-  border-color: var(--kiosk-border);
-}
-
-/* Primary light-on-dark text -> dark. text-white on saturated accent buttons is
-   excluded here and re-asserted white below so the buttons match dark mode. */
-html:not(.dark)
-  .app-theme-scope
-  .theme-aware-kiosk
-  :is(.text-slate-200, .text-slate-300) {
-  color: var(--kiosk-fg);
-}
-
-html:not(.dark)
-  .app-theme-scope
-  .theme-aware-kiosk
-  .text-white:not(.bg-blue-600):not(.bg-green-600):not(.bg-amber-600):not(
-    .bg-red-600
-  ) {
-  color: var(--kiosk-fg);
-}
-
-html:not(.dark)
-  .app-theme-scope
-  .theme-aware-kiosk
-  :is(.text-slate-400, .text-slate-500, .text-slate-600) {
-  color: var(--kiosk-muted-fg);
-}
-
-/* Saturated accent buttons keep their fill + white text. green/amber are darkened
-   just enough for white text to clear WCAG AA 4.5:1; blue/red already pass at the
-   default -600 fill. Descendant .text-white (e.g. the completed-chore checkmark
-   SVG) is re-asserted white. */
-html:not(.dark)
-  .app-theme-scope
-  .theme-aware-kiosk
-  :is(.bg-blue-600, .bg-green-600, .bg-amber-600, .bg-red-600)
-  .text-white:not(.bg-blue-600):not(.bg-green-600):not(.bg-amber-600):not(
-    .bg-red-600
-  ) {
-  /* The extra :not()s pad specificity to (0,9,1) so this outranks the
-     non-accent white->dark rule (0,8,1); otherwise a descendant .text-white such
-     as the completed-chore checkmark SVG (child of a bg-green-600 button) would
-     be darkened. White on the darkened green accent is 5.54:1. */
-  color: #fff;
-}
-
-html:not(.dark)
-  .app-theme-scope
-  .theme-aware-kiosk
-  :is(.bg-green-600, [class~="active:bg-green-400"]:active) {
-  background-color: oklch(0.5 0.15 150);
-}
-
-html:not(.dark)
-  .app-theme-scope
-  .theme-aware-kiosk
-  [class~="hover:bg-green-500"]:hover {
-  background-color: oklch(0.54 0.15 150);
-}
-
-html:not(.dark) .app-theme-scope .theme-aware-kiosk .bg-amber-600 {
-  background-color: oklch(0.53 0.14 65);
-}
-
-/* Disabled buttons grey out (matches dark mode). Placed after the accent-fill
-   rules so it wins the specificity tie for a disabled accent button; the paired
-   disabled:text-slate-* is remapped to --kiosk-muted-fg below for a readable,
-   greyed-out label. */
-html:not(.dark)
-  .app-theme-scope
-  .theme-aware-kiosk
-  :is([class~="disabled:bg-slate-700"], [class~="disabled:bg-slate-700/50"]):disabled {
-  background-color: var(--kiosk-chip);
-}
-
-/* Tinted status blocks that keep dark backgrounds in light mode -> light tints
-   with dark family text. */
-html:not(.dark)
-  .app-theme-scope
-  .theme-aware-kiosk
-  [class~="bg-red-900/50"] {
-  background-color: oklch(0.93 0.045 27);
-}
-
-html:not(.dark)
-  .app-theme-scope
-  .theme-aware-kiosk
-  :is([class~="bg-green-900/30"], [class~="bg-green-800/40"]) {
-  background-color: oklch(0.93 0.045 150);
-}
-
-html:not(.dark) .app-theme-scope .theme-aware-kiosk .text-red-200 {
-  color: oklch(0.45 0.16 27);
-}
-
-html:not(.dark) .app-theme-scope .theme-aware-kiosk .text-green-200 {
-  color: oklch(0.42 0.13 150);
-}
-
-/* Instruction-panel links (kiosk-lodge-instructions.tsx text-blue-300 links). */
-html:not(.dark) .app-theme-scope .theme-aware-kiosk .text-blue-300 {
-  color: oklch(0.48 0.16 262);
-}
-
-/* Hover / active feedback on neutral surfaces, plus hover:text-white on plain
-   text controls and disabled slate text. */
-html:not(.dark)
-  .app-theme-scope
-  .theme-aware-kiosk
-  :is(
-    [class~="hover:bg-slate-700"],
-    [class~="hover:bg-slate-600"],
-    [class~="hover:bg-slate-500"],
-    [class~="hover:bg-slate-700/50"],
-    [class~="hover:bg-slate-600/50"],
-    [class~="active:bg-slate-600"],
-    [class~="active:bg-slate-500"],
-    [class~="active:bg-slate-400"],
-    [class~="active:bg-slate-500/50"]
-  ):is(:hover, :active) {
-  background-color: var(--kiosk-hover);
-}
-
-html:not(.dark)
-  .app-theme-scope
-  .theme-aware-kiosk
-  [class~="hover:text-white"]:hover:not(.bg-blue-600):not(.bg-green-600):not(
-    .bg-amber-600
-  ):not(.bg-red-600) {
-  color: var(--kiosk-fg);
-}
-
-html:not(.dark)
-  .app-theme-scope
-  .theme-aware-kiosk
-  :is([class~="disabled:text-slate-500"], [class~="disabled:text-slate-400"]):disabled {
-  color: var(--kiosk-muted-fg);
+/* Fixed-seed kiosk tokens (#2189 P3, epic #2181 A5/J4). This standalone,
+   mode-agnostic block REPLACES the old #1249 light-mode kiosk readability remap
+   (the `.app-theme-scope` kiosk block gated on the absence of `.dark`). That
+   remap existed only because the kiosk was authored in literal dark slate/colour
+   utilities that turned unreadable under the LIGHT palette, so it re-mapped them
+   to light tiers whenever the document was not in dark mode. The kiosk is now
+   authored directly on these fixed `--kiosk-*` tokens, so it renders IDENTICALLY
+   whether or not the document carries the dark class — which is correct: the
+   kiosk is a glare-proof wall display whose appearance must NOT depend on the
+   operator's theme toggle. Mode invariance is the whole point, so these tokens
+   are deliberately un-gated (declared once on `:root`, no light/dark variant),
+   and the literal-keyed light-mode override is no longer needed. The values are
+   the A5 fixed kiosk seed's derived set (near-black page, neutral grey tiers,
+   `#7dd3fc` accent, kiosk-context status hues); every literal here is pinned
+   against `buildKioskTokens()` by kiosk-token-contract.test.ts (R9 fallback-pin),
+   so the CSS and the derivation cannot drift. The kiosk surface paints its page
+   background/foreground through the `bg-kiosk-page` / `text-kiosk-fg` utilities on
+   its root elements, not from this block. */
+:root {
+  --kiosk-page: #0a0a0b;
+  --kiosk-card: #222;
+  --kiosk-inset: #292929;
+  --kiosk-chip: #3a3a3a;
+  --kiosk-hover: #484848;
+  --kiosk-border: #484848;
+  --kiosk-border-muted: #292929;
+  --kiosk-fg: #eee;
+  --kiosk-muted-fg: #b4b4b4;
+  --kiosk-faint-fg: #6e6e6e;
+  --kiosk-accent: #7dd3fc;
+  --kiosk-accent-hover: #72c8f1;
+  --kiosk-accent-active: #6ac0e8;
+  --kiosk-accent-fg: #092531;
+  --kiosk-accent-bg: #002637;
+  --kiosk-accent-border: #005074;
+  --kiosk-danger-bg: #3d120f;
+  --kiosk-danger-fg: #ff9083;
+  --kiosk-danger-border: #7f221d;
+  --kiosk-danger-solid: #dc2626;
+  --kiosk-danger-solid-fg: #ffffff;
+  --kiosk-success-bg: #122819;
+  --kiosk-success-fg: #5ecf84;
+  --kiosk-success-border: #15562e;
+  --kiosk-success-solid: #1f9d55;
+  --kiosk-success-solid-fg: #202020;
+  --kiosk-success-solid-hover: #3ab067;
+  --kiosk-success-solid-active: #51c379;
+  --kiosk-warning-bg: #2b200b;
+  --kiosk-warning-fg: #e2a93d;
+  --kiosk-warning-border: #5d430e;
+  --kiosk-warning-solid: #e5a50a;
+  --kiosk-warning-solid-fg: #202020;
+  --kiosk-orange-bg: #311c0e;
+  --kiosk-orange-fg: #f89a58;
+  --kiosk-orange-border: #6b3917;
 }
 
 .pswp__thumbnail-carousel-wrap {
@@ -1413,6 +1316,29 @@ html:not(.dark)
      otherwise the UA paints dark form controls and default surfaces on paper. */
   :root {
     color-scheme: light !important;
+  }
+
+  /* Kiosk family on paper (#2189 P3, NOTE B). ON SCREEN the kiosk is
+     mode-invariant near-black; ON PAPER that is an ink flood, and the roster-setup
+     wizard is realistically printed. So for print the neutral SURFACE + text
+     `--kiosk-*` tokens flip to a light paper palette (page/card → white, insets →
+     light grey, rules → mid grey, foregrounds → ink); every `bg-kiosk-*` /
+     `text-kiosk-*` utility then resolves light with no per-element print rules. The
+     status + accent tokens deliberately KEEP their tints — small self-consistent
+     badges/buttons/callouts, not a flood. Not `.dark`-gated, so this sits outside
+     the self-healing print contract. Kept as its own `:root` so the color-scheme
+     pin above stays a clean single-declaration rule. */
+  :root {
+    --kiosk-page: #ffffff;
+    --kiosk-card: #ffffff;
+    --kiosk-inset: #f4f4f5;
+    --kiosk-chip: #e9e9ec;
+    --kiosk-hover: #e4e4e7;
+    --kiosk-border: #c4c4c8;
+    --kiosk-border-muted: #e0e0e3;
+    --kiosk-fg: #18181b;
+    --kiosk-muted-fg: #52525b;
+    --kiosk-faint-fg: #6b6b73;
   }
 
   aside,

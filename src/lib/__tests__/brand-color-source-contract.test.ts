@@ -26,31 +26,17 @@ function listSourceFiles(path: string): string[] {
   });
 }
 
-// #2188 P2 — the theme-aware-kiosk FAMILY is authored in literal slate/colored
-// tones and is migrated onto `--kiosk-*` tokens in P3, so BOTH repo-wide
-// contracts below carry a TEMPORARY kiosk-family exclusion (B8), removed in P3.
-// The family is the kiosk tree PLUS the two shared surfaces that also render
-// under `.theme-aware-kiosk` and couple to the `#1249` `html:not(.dark)`
-// light-mode override — migrating them in isolation from the kiosk would break
-// that coupling, so they stay untouched until #2189 P3.
-const KIOSK_FAMILY_TREE = "src/app/(lodge)/lodge/kiosk";
-const KIOSK_FAMILY_FILES = new Set(
-  [
-    // theme-aware-kiosk family — #2189 P3 scope
-    "src/app/(lodge)/lodge/roster/[date]/setup/page.tsx",
-    // theme-aware-kiosk family — #2189 P3 scope
-    "src/components/kiosk-lodge-instructions.tsx",
-  ].map((p) => p.replaceAll("\\", "/")),
-);
+// #2189 P3 — the temporary kiosk-family exclusion (B8) is GONE. In P2 the kiosk
+// tree plus its two shared surfaces (the roster-setup page and
+// kiosk-lodge-instructions) were still authored in literal slate/colour utilities
+// and coupled to the old #1249 light-mode override, so both repo-wide contracts
+// carried a kiosk-family exclusion. P3 authored the whole kiosk family on the
+// fixed-seed `--kiosk-*` tokens and deleted that override, so the five source
+// contracts now run TRULY repo-wide with no kiosk carve-out.
 
-function isKioskFamily(path: string): boolean {
-  const p = path.replaceAll("\\", "/");
-  return p.startsWith(`${KIOSK_FAMILY_TREE}/`) || KIOSK_FAMILY_FILES.has(p);
-}
-
-/** Every TS/TSX source file under `src`, minus `__tests__` and the kiosk family. */
+/** Every TS/TSX source file under `src`, minus `__tests__`. */
 function listRepoSourceFiles(): string[] {
-  return listSourceFiles("src").filter((path) => !isKioskFamily(path));
+  return listSourceFiles("src");
 }
 
 // The ONE remaining file where a literal Tailwind `teal-*` utility is still
@@ -104,7 +90,7 @@ describe("brand accent source contract", () => {
 // not appear as raw Tailwind utilities anywhere in source: every colored surface
 // now reaches its hue through the signed-off scale vocabulary — the semantic
 // `bg/text/border-<success|warning|info|danger>-<step>` scales, the categorical
-// `cat1..cat5` scales, or CHIP_TONE_CLASSES. Repo-wide, kiosk excluded (B8, P3).
+// `cat1..cat5` scales, or CHIP_TONE_CLASSES. Repo-wide, incl. the kiosk family (P3).
 const COLORED_FAMILIES_16 = [
   "red", "orange", "amber", "yellow", "lime", "green", "emerald",
   "cyan", "sky", "blue", "indigo", "violet", "purple", "fuchsia", "pink",
@@ -128,7 +114,7 @@ describe("colored-family source contract (R5, 16 families, repo-wide)", () => {
         : `Raw Tailwind colour-family utilities must not be baked into source. ` +
             `Use the semantic step scales (bg-danger-3/text-danger-11/…), the ` +
             `categorical scales (bg-cat1-3/…), or CHIP_TONE_CLASSES so the ` +
-            `surface follows the club theme. The kiosk tree is exempt until P3. ` +
+            `surface follows the club theme. ` +
             `Offenders:\n${offenders.join("\n")}`,
     ).toEqual([]);
   });
@@ -207,7 +193,7 @@ describe("on-solid AA source contract (F1, repo-wide)", () => {
 // deliberate #1801 SVG-presentation-attribute carve-out and is out of scope
 // for this check.)
 //
-// #2188 P2 — the neutral contract is now REPO-WIDE (kiosk excluded, B8/P3) via
+// #2188 P2 — the neutral contract is now REPO-WIDE (incl. the kiosk family after P3) via
 // `listRepoSourceFiles()`, after P2 migrated every member-facing tree onto the
 // shadcn role tokens and deleted the `.dark .app-theme-scope` neutral remap. The
 // admin/finance roots that used to be listed here are subsumed by the repo-wide
@@ -257,9 +243,10 @@ const THEMED_NEUTRAL_ALLOWLIST = new Set<string>(
     // same shape as this file's teal allowlist entry above.
     "src/components/admin-booking-calendar.tsx",
     // NOTE: the roster-setup page and kiosk-lodge-instructions are NOT here —
-    // they are theme-aware-kiosk FAMILY surfaces, covered by the kiosk-family
-    // EXCLUSION (isKioskFamily, B8, deleted in P3), not by this allowlist. The
-    // allowlist must never carry deferred work.
+    // #2189 P3 authored them (and the whole kiosk tree) on the fixed-seed
+    // `--kiosk-*` tokens, so they pass this repo-wide contract directly. They
+    // never needed an allowlist entry; the allowlist must never carry deferred
+    // work.
     //
     // #2188 P2 additions (repo-wide widening).
     // Un-themed system pages: React error/404 boundaries render OUTSIDE
@@ -293,7 +280,7 @@ describe("themed-surface neutral contract (repo-wide, #2188 P2)", () => {
       }
     }
     // #2188 P2 — widened from the admin/finance roots to the WHOLE repo (kiosk
-    // excluded, B8/P3) so raw neutrals cannot re-enter any themed surface. The
+    // incl. the kiosk family after P3) so raw neutrals cannot re-enter any themed surface. The
     // per-file allowlist above carries the deliberate exceptions.
     const offenders = listRepoSourceFiles().filter((path) => {
       const normalized = path.replaceAll("\\", "/");

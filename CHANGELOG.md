@@ -4,6 +4,18 @@ All notable public reference-release changes should be recorded here.
 
 ## Unreleased
 
+- **The lodge kiosk / wall display now paints from a fixed, glare-proof colour
+  set that never follows the club theme or the light/dark toggle (#2189).** The
+  kiosk, its roster-setup wizard, and the lodge-instructions panel were the one
+  place still authored in hard-coded slate/colour classes with a special
+  light-mode readability patch. They now render from a dedicated fixed `--kiosk-*`
+  token set — a near-black background, neutral grey surfaces, one fixed action
+  accent, and legible status colours — generated once from the pinned kiosk seed
+  and identical on every club in either theme, so a wall-mounted screen always
+  looks the same and stays easy to read at a distance. Nothing else changes for
+  operators; the migration also lets the repo-wide "no raw colour classes" source
+  checks cover the kiosk tree with no remaining exceptions. The separate `display`
+  route already used its own CSS-variable colours and is unchanged.
 - **Site Style now derives the whole theme from three seed colours instead of
   seven hand-picked ones (#2187).** You pick one required accent (your club's
   brand colour) plus, optionally, a neutral character and a support accent; a

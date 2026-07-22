@@ -47,23 +47,23 @@ const rosterStatusMeta: Record<
 > = {
   "no-guests": {
     label: "No guests",
-    className: "border-[#475569] bg-[#334155] text-[#cbd5e1]",
+    className: "border-kiosk-border bg-kiosk-chip text-kiosk-fg",
   },
   "needs-roster": {
     label: "Needs roster",
-    className: "border-red-500/50 bg-[#7f1d1d] text-[#fecaca]",
+    className: "border-kiosk-danger-border bg-kiosk-danger-bg text-kiosk-danger-fg",
   },
   suggested: {
     label: "Suggested",
-    className: "border-amber-500/50 bg-[#78350f] text-[#fde68a]",
+    className: "border-kiosk-warning-border bg-kiosk-warning-bg text-kiosk-warning-fg",
   },
   "needs-attention": {
     label: "Needs chores",
-    className: "border-orange-500/50 bg-[#7c2d12] text-[#fed7aa]",
+    className: "border-kiosk-orange-border bg-kiosk-orange-bg text-kiosk-orange-fg",
   },
   confirmed: {
     label: "Confirmed",
-    className: "border-emerald-500/50 bg-[#064e3b] text-[#a7f3d0]",
+    className: "border-kiosk-success-border bg-kiosk-success-bg text-kiosk-success-fg",
   },
 };
 
@@ -163,14 +163,14 @@ export function KioskWeekView({
       <header className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
           {lodgeName && (
-            <p className="text-sm font-medium uppercase text-[#94a3b8]">
+            <p className="text-sm font-medium uppercase text-kiosk-muted-fg">
               {lodgeName}
             </p>
           )}
-          <h1 className="text-2xl font-bold text-[#f8fafc]">Week View</h1>
-          <p className="text-lg text-[#cbd5e1]">{displayWeekRange(weekStart)}</p>
+          <h1 className="text-2xl font-bold text-kiosk-fg">Week View</h1>
+          <p className="text-lg text-kiosk-fg">{displayWeekRange(weekStart)}</p>
           {readOnly && (
-            <p className="mt-1 text-sm font-medium text-blue-300">
+            <p className="mt-1 text-sm font-medium text-kiosk-accent">
               Read-only view
             </p>
           )}
@@ -181,7 +181,7 @@ export function KioskWeekView({
             type="button"
             onClick={() => onChangeWeek(-1)}
             disabled={!canGoToPreviousWeek}
-            className="inline-flex min-h-[48px] min-w-[48px] items-center justify-center rounded-xl border border-[#334155] bg-[#1e293b] text-[#f8fafc] transition-colors hover:bg-[#334155] active:bg-[#475569] disabled:cursor-not-allowed disabled:border-[#1f2937] disabled:bg-[#111827] disabled:text-[#475569]"
+            className="inline-flex min-h-[48px] min-w-[48px] items-center justify-center rounded-xl border border-kiosk-border bg-kiosk-card text-kiosk-fg transition-colors hover:bg-kiosk-hover active:bg-kiosk-hover disabled:cursor-not-allowed disabled:border-kiosk-border-muted disabled:bg-kiosk-page disabled:text-kiosk-faint-fg"
             aria-label="Previous week"
           >
             <ChevronLeft className="h-5 w-5" />
@@ -189,7 +189,7 @@ export function KioskWeekView({
           <button
             type="button"
             onClick={onToday}
-            className="inline-flex min-h-[48px] items-center justify-center gap-2 rounded-xl bg-brand-gold px-4 py-2 text-sm font-semibold text-brand-charcoal transition-colors hover:bg-brand-gold/90 active:bg-brand-gold/80"
+            className="inline-flex min-h-[48px] items-center justify-center gap-2 rounded-xl bg-kiosk-accent px-4 py-2 text-sm font-semibold text-kiosk-accent-fg transition-colors hover:bg-kiosk-accent-hover active:bg-kiosk-accent-active"
           >
             <CalendarDays className="h-4 w-4" />
             Today
@@ -198,7 +198,7 @@ export function KioskWeekView({
             type="button"
             onClick={onRefresh}
             disabled={refreshing}
-            className="inline-flex min-h-[48px] items-center justify-center gap-2 rounded-xl border border-[#334155] bg-[#1e293b] px-4 py-2 text-sm font-semibold text-[#f8fafc] transition-colors hover:bg-[#334155] active:bg-[#475569] disabled:cursor-wait disabled:text-[#64748b]"
+            className="inline-flex min-h-[48px] items-center justify-center gap-2 rounded-xl border border-kiosk-border bg-kiosk-card px-4 py-2 text-sm font-semibold text-kiosk-fg transition-colors hover:bg-kiosk-hover active:bg-kiosk-hover disabled:cursor-wait disabled:text-kiosk-faint-fg"
           >
             <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
             {refreshing ? "Refreshing" : "Refresh"}
@@ -207,7 +207,7 @@ export function KioskWeekView({
             type="button"
             onClick={() => onChangeWeek(1)}
             disabled={!canGoToNextWeek}
-            className="inline-flex min-h-[48px] min-w-[48px] items-center justify-center rounded-xl border border-[#334155] bg-[#1e293b] text-[#f8fafc] transition-colors hover:bg-[#334155] active:bg-[#475569] disabled:cursor-not-allowed disabled:border-[#1f2937] disabled:bg-[#111827] disabled:text-[#475569]"
+            className="inline-flex min-h-[48px] min-w-[48px] items-center justify-center rounded-xl border border-kiosk-border bg-kiosk-card text-kiosk-fg transition-colors hover:bg-kiosk-hover active:bg-kiosk-hover disabled:cursor-not-allowed disabled:border-kiosk-border-muted disabled:bg-kiosk-page disabled:text-kiosk-faint-fg"
             aria-label="Next week"
           >
             <ChevronRight className="h-5 w-5" />
@@ -224,8 +224,8 @@ export function KioskWeekView({
             return (
               <div
                 key={day.date}
-                className={`min-h-[160px] rounded-xl border border-[#334155] bg-[#111827] p-4 text-[#94a3b8] ${
-                  isToday ? "ring-2 ring-brand-gold/60" : ""
+                className={`min-h-[160px] rounded-xl border border-kiosk-border bg-kiosk-page p-4 text-kiosk-muted-fg ${
+                  isToday ? "ring-2 ring-kiosk-accent/60" : ""
                 }`}
                 aria-label={`${displayDay(day.date)} outside access`}
               >
@@ -244,20 +244,20 @@ export function KioskWeekView({
               key={day.date}
               type="button"
               onClick={() => onSelectDate(day.date)}
-              className={`min-h-[160px] rounded-xl border p-4 text-left text-[#f8fafc] transition-colors hover:bg-[#334155] active:bg-[#475569] ${
+              className={`min-h-[160px] rounded-xl border p-4 text-left text-kiosk-fg transition-colors hover:bg-kiosk-hover active:bg-kiosk-hover ${
                 isSelected
-                  ? "border-brand-gold bg-[#1e293b]"
-                  : "border-[#334155] bg-[#1e293b]"
-              } ${isToday ? "ring-2 ring-brand-gold ring-offset-2 ring-offset-slate-900" : ""}`}
+                  ? "border-kiosk-accent bg-kiosk-card"
+                  : "border-kiosk-border bg-kiosk-card"
+              } ${isToday ? "ring-2 ring-kiosk-accent ring-offset-2 ring-offset-kiosk-page" : ""}`}
               aria-label={`Open ${displayDay(day.date)}`}
             >
               <div className="flex min-h-[48px] items-start justify-between gap-2">
                 <div>
-                  <p className="text-sm font-semibold uppercase text-[#cbd5e1]">
+                  <p className="text-sm font-semibold uppercase text-kiosk-fg">
                     {displayShortDay(day.date)}
                   </p>
                   {isToday && (
-                    <p className="mt-1 text-xs font-semibold uppercase text-[#93c5fd]">
+                    <p className="mt-1 text-xs font-semibold uppercase text-kiosk-accent">
                       Today
                     </p>
                   )}
@@ -267,24 +267,24 @@ export function KioskWeekView({
                 </span>
               </div>
 
-              <div className="mt-5 flex items-center gap-2 text-[#f8fafc]">
-                <Users className="h-5 w-5 text-[#93c5fd]" />
+              <div className="mt-5 flex items-center gap-2 text-kiosk-fg">
+                <Users className="h-5 w-5 text-kiosk-accent" />
                 <span className="text-3xl font-bold">{day.guestCount}</span>
-                <span className="text-sm text-[#cbd5e1]">
+                <span className="text-sm text-kiosk-fg">
                   guest{day.guestCount !== 1 ? "s" : ""}
                 </span>
               </div>
 
               <div className="mt-4 grid grid-cols-2 gap-2 text-sm">
-                <div className="rounded-lg border border-[#334155] bg-[#0f172a] px-3 py-2">
-                  <p className="text-[#cbd5e1]">Arriving</p>
-                  <p className="text-lg font-semibold text-[#86efac]">
+                <div className="rounded-lg border border-kiosk-border bg-kiosk-page px-3 py-2">
+                  <p className="text-kiosk-fg">Arriving</p>
+                  <p className="text-lg font-semibold text-kiosk-success-fg">
                     {day.arrivingCount}
                   </p>
                 </div>
-                <div className="rounded-lg border border-[#334155] bg-[#0f172a] px-3 py-2">
-                  <p className="text-[#cbd5e1]">Departing</p>
-                  <p className="text-lg font-semibold text-[#fde68a]">
+                <div className="rounded-lg border border-kiosk-border bg-kiosk-page px-3 py-2">
+                  <p className="text-kiosk-fg">Departing</p>
+                  <p className="text-lg font-semibold text-kiosk-warning-fg">
                     {day.departingCount}
                   </p>
                 </div>
