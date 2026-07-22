@@ -53,34 +53,24 @@ function listRepoSourceFiles(): string[] {
   return listSourceFiles("src").filter((path) => !isKioskFamily(path));
 }
 
-// The two files where a literal Tailwind `teal-*` utility is still allowed
-// (#2137), each because the `--hue-*` system has no equivalent for the shape of
-// colour they need:
+// The ONE remaining file where a literal Tailwind `teal-*` utility is still
+// allowed (#2137, final teal allowlist entry — evicted in P4):
 //
 // - `admin-booking-calendar.tsx` paints each status as a SOLID swatch
 //   (`WAITLIST_OFFERED: bg-teal-500`) with no tinted-background / accent-text
 //   pairing. `--hue-*` is defined only as such a pair, so there is no clean
 //   token equivalent for a standalone solid fill.
-// - `admin/dashboard/page.tsx` tints the Chore Roster quick-link tile
-//   (`bg-teal-50` + `text-teal-600`). That is the Tailwind -50/-600 tile
-//   convention; the `--hue-*` pair is pinned at -100/-800 (see `globals.css`
-//   `--hue-teal: #115e59` / `--hue-teal-muted: #ccfbf1`, and the pin in
-//   `status-chip.test.tsx`). The tile is the fifth of FIVE identically-built
-//   tiles whose blue/green/purple/orange siblings are all -50/-600, so
-//   migrating this one alone would visibly break the row's uniformity. Moving
-//   the whole row onto a tile-weight hue scale is a deliberate redesign and
-//   needs owner sign-off, not a drive-by.
 //
-// Every other categorical teal (the waitlist-offered chip, the audit `family`
-// badge, the family-group GROUP_CREATE badge) now reaches its hue through
-// `CHIP_TONE_CLASSES.teal` / the `--hue-teal` tokens — those were already
-// -100/-800 pairs, so the migration was value-identical. Everything else must
-// reach the brand accent through semantic tokens (`--primary`, etc.) so it
-// follows the saved site colours.
+// #2188 P2 (M9): the Chore Roster dashboard tile completed its migration onto the
+// brand ROLE tokens (`bg-accent` + `text-primary`) so it follows the club accent,
+// and its allowlist entry was deleted. Every other categorical teal (the
+// waitlist-offered chip, the audit `family` badge, the family-group GROUP_CREATE
+// badge) reaches its hue through `CHIP_TONE_CLASSES.teal` / the `--hue-teal`
+// tokens. Everything else must reach the brand accent through semantic tokens
+// (`--primary`, etc.) so it follows the saved site colours.
 const CATEGORICAL_TEAL_ALLOWLIST = new Set(
   [
     "src/components/admin-booking-calendar.tsx",
-    "src/app/(admin)/admin/dashboard/page.tsx",
   ].map((path) => path.replaceAll("\\", "/")),
 );
 
