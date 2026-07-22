@@ -249,13 +249,13 @@ Deliberately **not** in the list:
   so a `bg-slate-200` badge would be a muted-text surface — but the only such
   badge (`page-content-panel.tsx`) was moved to `bg-muted text-muted-foreground`
   instead. A mid-luminance hairline colour is the wrong background for body text
-  at any weight, and clamping against it would collapse the derived tone into
-  `--foreground` for roughly 30% of gate-passing palettes rather than the ~12%
-  it does today. (Measured like-for-like over the 77 gate-passing palettes of
-  the neutral-ramp sweep in `club-theme-schema.test.ts`, counting a palette that
-  collapses in EITHER mode: 11.7% today, 29.9% with `--border` clamped. Per-mode
-  it is 5.2% → 11.7% light and 6.5% → 24.7% dark. Any single framing shows the
-  same 2.5–3× increase; quote one, not a mixture.)
+  at any weight, and a mid-luminance surface leaves the derived tone almost no
+  headroom: clamping against it would force the tone to walk all the way back
+  onto `--foreground` for a materially larger share of palettes than the muted
+  derivation collapses on today — defeating #2145 (a distinct muted tone) for a
+  surface no text should sit on. The AA guarantee that IS enforced (the
+  neutral-ramp sweep in `club-theme-schema.test.ts`) covers only the surfaces in
+  the clamp set; `--border`/`--input` are deliberately outside it.
 - The dark coloured hue remaps. The `-50` (`oklch(0.29 …)`) and `-100`
   (`oklch(0.33 …)`) tiers sit at or below the `*-muted` tier already checked, so
   in dark mode — where the derived tone is the LIGHT one — clearing AA on

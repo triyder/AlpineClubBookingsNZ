@@ -578,19 +578,16 @@ export const APP_MUTED_FOREGROUND_DARK_SURFACE_TOKENS = [
  * `--border`, so a `bg-slate-200` badge WOULD be a muted-text surface — but the
  * only such badge (`page-content-panel.tsx`) was moved to
  * `bg-muted text-muted-foreground` instead, because a mid-luminance rule colour
- * is the wrong background for body text at any weight. Clamping against it
- * instead would collapse the derived tone into `--foreground` for roughly 30% of
- * gate-passing palettes rather than the ~12% it does today, defeating #2145 for
- * a surface no text should sit on.
+ * is the wrong background for body text at any weight. A mid-luminance surface
+ * also leaves the derived tone almost no headroom, so clamping against it would
+ * force the tone to walk back onto `--foreground` for a materially larger share
+ * of palettes than the derivation collapses on today, defeating #2145 for a
+ * surface no text should sit on.
  *
- * Those two figures are like-for-like: both are measured over the 77
- * gate-passing palettes of the neutral-ramp sweep in
- * `club-theme-schema.test.ts`, counting a palette that collapses in EITHER mode
- * (11.7% today vs 29.9% with `--border` clamped, replicating the `--border`
- * mixes from `globals.css`). Per-mode the same comparison reads 5.2% -> 11.7%
- * light and 6.5% -> 24.7% dark. Every framing shows the same 2.5-3x increase;
- * quote one consistently rather than mixing a light-only figure with an
- * either-mode one.
+ * The AA guarantee that IS enforced is the neutral-ramp sweep in
+ * `club-theme-schema.test.ts`; it covers only the surfaces in the clamp set
+ * (`APP_MUTED_FOREGROUND_{LIGHT,DARK}_SURFACE_TOKENS`), and `--border`/`--input`
+ * are deliberately outside it.
  *
  * Kept as a value rather than a comment so the docs pin can assert the
  * exclusion is STATED, not silently assumed.
