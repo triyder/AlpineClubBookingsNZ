@@ -12,7 +12,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
-import { AdminViewOnlyNotice } from "@/components/admin/view-only-action";
+import {
+  AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import {
   useSectionEditState,
@@ -45,6 +49,7 @@ interface BackupStatus {
   activeRun: BackupRunSummary | null;
   recentRuns: BackupRunSummary[];
   legacyEnvVars: string[];
+  legacyEnvUnmigrated: boolean;
   cronSchedule: string;
   canManageDestination: boolean;
 }
@@ -160,13 +165,22 @@ export function BackupsClient() {
 
   const canManageDestination = status?.canManageDestination ?? false;
 
-  return (
-    <div className="space-y-6">
-      <AdminViewOnlyNotice canEdit={canEdit}>
-        Your admin role can view backup status but cannot change configuration or
-        run a backup.
-      </AdminViewOnlyNotice>
+  // #2160 blueprint: one section banner, hoisted above the loading early-return
+  // and rendered in every branch. The role="status" wrapper stays mounted so the
+  // live region is registered before its content resolves (canEdit is tri-state
+  // and settles after hydration). It sits OUTSIDE the space-y-6 stack so the
+  // empty wrapper an edit-capable admin gets costs no layout.
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-6">
+      Your admin role can view backup status but cannot change configuration or
+      run a backup. Support edit access is required.
+    </AdminViewOnlySectionBanner>
+  );
 
+  return (
+    <>
+      {viewOnlyBanner}
+      <div className="space-y-6">
       {statusError ? (
         <div
           role="alert"
@@ -201,7 +215,8 @@ export function BackupsClient() {
           <RecentRunsCard runs={status.recentRuns} />
         </>
       ) : null}
-    </div>
+      </div>
+    </>
   );
 }
 
@@ -236,12 +251,10 @@ function StatusCard({
     }
   }, [onRan]);
 
+  // canEdit gating is handled by ViewOnlyActionButton; these are the additional
+  // run-specific reasons the button stays disabled.
   const disableRun =
-    canEdit !== true ||
-    running ||
-    status.running ||
-    !status.enabled ||
-    status.needsReentry;
+    running || status.running || !status.enabled || status.needsReentry;
 
   return (
     <Card>
@@ -276,7 +289,21 @@ function StatusCard({
           </div>
         ) : null}
 
-        {status.legacyEnvVars.length > 0 ? (
+        {status.legacyEnvUnmigrated ? (
+          <div
+            role="alert"
+            className="rounded-md border border-danger bg-danger-muted px-3 py-2 text-sm text-danger"
+          >
+            Legacy backup environment variables are still set, but backups are
+            disabled or not configured for durable (S3) storage here. Those
+            variables are no longer read, so nightly backups are NOT running.
+            Re-enter the configuration below to resume them, then remove:{" "}
+            <span className="font-mono">
+              {status.legacyEnvVars.join(", ")}
+            </span>
+            .
+          </div>
+        ) : status.legacyEnvVars.length > 0 ? (
           <div className="rounded-md border border-warning bg-warning-muted px-3 py-2 text-sm text-warning">
             These environment variables are no longer used and should be removed
             after re-entering the configuration here:{" "}
@@ -331,7 +358,12 @@ function StatusCard({
         ) : null}
 
         <div className="flex flex-wrap items-center gap-3">
-          <Button onClick={runNow} disabled={disableRun}>
+          <ViewOnlyActionButton
+            canEdit={canEdit}
+            describeReason={false}
+            onClick={runNow}
+            disabled={disableRun}
+          >
             {running || status.running ? (
               <>
                 <Spinner className="h-4 w-4" /> Running…
@@ -339,7 +371,7 @@ function StatusCard({
             ) : (
               "Run backup now"
             )}
-          </Button>
+          </ViewOnlyActionButton>
           <p className="text-xs text-muted-foreground">
             Runs <code>pg_dump</code> against the live database now. A full
             backup can take several minutes; it runs in the background and this
@@ -433,14 +465,15 @@ function ConfigCard({
             </CardDescription>
           </div>
           {!section.editing ? (
-            <Button
+            <ViewOnlyActionButton
+              canEdit={canEdit}
+              describeReason={false}
               variant="outline"
               size="sm"
               onClick={section.startEditing}
-              disabled={canEdit !== true}
             >
               Edit
-            </Button>
+            </ViewOnlyActionButton>
           ) : null}
         </div>
       </CardHeader>
@@ -522,12 +555,14 @@ function ConfigCard({
 
         {section.editing ? (
           <div className="flex gap-2">
-            <Button
+            <ViewOnlyActionButton
+              canEdit={canEdit}
+              describeReason={false}
               onClick={section.save}
               disabled={!section.dirty || !section.valid || section.saving}
             >
               {section.saving ? "Saving…" : "Save"}
-            </Button>
+            </ViewOnlyActionButton>
             <Button
               variant="outline"
               onClick={section.cancelEditing}

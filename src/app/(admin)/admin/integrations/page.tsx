@@ -5,6 +5,13 @@ import {
 } from "@/components/admin-hub-page";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { getIntegrationsNeedingReentry } from "@/lib/integration-credentials";
+import { auth } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
+import { MEMBER_ACCESS_ROLE_SELECT } from "@/lib/access-role-definitions";
+import {
+  emptyAdminPermissionMatrix,
+  getAdminPermissionMatrix,
+} from "@/lib/admin-permissions";
 
 const sections: AdminHubSection[] = [
   {
@@ -55,12 +62,30 @@ export default async function IntegrationsHubPage() {
       ? `${reentryCount} integration${reentryCount === 1 ? "" : "s"} need credentials re-entered (the app encryption key changed). ${BASE_DESCRIPTION}`
       : BASE_DESCRIPTION;
 
+  // Permission-gate the cards so an admin without support:view does not see the
+  // support-area Backups card and dead-end at a redirect (#2095 MINOR-5).
+  const session = await auth();
+  const member = session?.user
+    ? await prisma.member.findUnique({
+        where: { id: session.user.id },
+        select: {
+          id: true,
+          canLogin: true,
+          accessRoles: { select: MEMBER_ACCESS_ROLE_SELECT },
+        },
+      })
+    : null;
+  const permissionMatrix = member
+    ? getAdminPermissionMatrix(member)
+    : emptyAdminPermissionMatrix();
+
   return (
     <AdminHubPage
       title="Integrations"
       description={description}
       sections={sections}
       features={features}
+      permissionMatrix={permissionMatrix}
     />
   );
 }
