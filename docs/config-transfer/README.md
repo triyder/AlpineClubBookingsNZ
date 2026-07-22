@@ -292,6 +292,34 @@ deeper reference for what each category contains and the import safety model.
 
 Intentionally excluded / deferred:
 
+- **Integration / provider credentials (`IntegrationCredential`) — never, in any
+  form.** The encrypted Xero/Stripe/Google/backup secrets a club has connected
+  are **permanently excluded from config transfer**: neither the encrypted values
+  (`ciphertext`/`iv`/`authTag`) nor any per-field metadata about them ever enters
+  or leaves a bundle. This is enforced two ways at once. **(1) Entity exclusion:**
+  the `IntegrationCredential` entity is simply never registered for export — no
+  category module declares a descriptor for it — so nothing on the row, including
+  the un-patternable `iv` column, can ride along. This is asserted by the
+  "registers NO IntegrationCredential entity" test in
+  `src/lib/__tests__/config-transfer-registry.test.ts`, which walks every
+  registered descriptor and fails if one names the entity, its file, or any of
+  the `iv`/`ciphertext`/`authTag` fields. **(2) Field-name sweep (defence in
+  depth):** the `ciphertext` and `auth.?tag` patterns sit in
+  `FORBIDDEN_FIELD_PATTERNS` in `src/lib/config-transfer/registry.ts`, and
+  `assertDescriptorValid` (run at module load and in tests) throws if any future
+  descriptor's allowlist ever names such a field. So even a mistaken attempt to
+  register the entity would fail the build.
+
+  **Presence-metadata export was considered and rejected.** The alternative
+  floated on the review was to travel non-secret "which providers are configured"
+  booleans (never any value or ciphertext) so an imported clone could surface
+  honest "re-enter credentials" affordances instead of showing nothing. The owner
+  decided against it (decision on #2205, 2026-07-23): the wholesale exclusion is
+  ratified as **permanent policy**, credential rows never travel field-level or
+  otherwise, and no presence metadata is exported. A restored clone is *expected*
+  to come up with no connected providers and re-enter them — the correct, safe
+  outcome (see [Credentials at rest](../SECURITY-ATTACK-SURFACE.md#credentials-at-rest-2079)
+  in the attack-surface doc).
 - Per-lodge capacity / `LodgeSettings` — the `id="default"`-vs-`lodgeId` storage
   duality is unsafe to round-trip; set it on the lodge page (ADR-001).
 - Cancellation / booking-period / minimum-stay policies — these use
@@ -314,7 +342,10 @@ Intentionally excluded / deferred:
   exported; the automatic pre-apply DB backup is the true rollback.
 - **Never contains:** secrets, members, auth/role fields, transactional data
   (bookings, payments, credits, allocations), Xero connection/runtime state,
-  or (by default) lodge door codes.
+  **integration / provider credentials** (`IntegrationCredential`, permanently
+  excluded — see the intentionally-excluded list at the end of
+  [Implemented categories](#implemented-categories) above), or (by default) lodge
+  door codes.
 
 ## Decision records
 
