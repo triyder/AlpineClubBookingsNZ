@@ -181,8 +181,8 @@ export interface FinanceDashboardPageModel {
 }
 
 // #2190 P4 (D15/J7): the trend/bar series colours are DERIVED from the generated
-// substrate rather than hand-picked hex (the old set carried a fork's brand gold
-// #ffcb05 and its support #ff7c12). Like FINANCE_MIX_COLORS these feed Recharts
+// substrate rather than hand-picked hex (the old set led with a fork's brand gold
+// and its support orange). Like FINANCE_MIX_COLORS these feed Recharts
 // `fill`/`stroke` presentation attributes where `var()` does not resolve, so a
 // resolved hex is required; the scales chosen are club-independent at step 9 and
 // distinct from each other and from FINANCE_MIX_COLORS' first slots reused here

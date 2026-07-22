@@ -136,7 +136,7 @@ function requireSeedEnv(
 // and staging where the club-identity smoke asserts on that chrome. It is
 // palette-free: it seeds no colours and no logo, only the completion timestamp
 // (the default palette is already seeded on the row). It replaces the removed,
-// colour-bearing SEED_TOKOROA_THEME_COMPLETE path.
+// colour-bearing fork-seed path.
 async function seedClubTheme() {
   const markComplete = process.env.SEED_THEME_COMPLETE === "1";
   await prisma.clubTheme.upsert({
