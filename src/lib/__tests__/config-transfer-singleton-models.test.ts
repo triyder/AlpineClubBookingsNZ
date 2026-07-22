@@ -16,6 +16,7 @@ import "@/lib/config-transfer/categories/lodge-ops";
 import "@/lib/config-transfer/categories/committee";
 import "@/lib/config-transfer/categories/induction";
 import "@/lib/config-transfer/categories/membership-fees";
+import "@/lib/config-transfer/categories/age-tier";
 import "@/lib/config-transfer/categories/xero-config";
 
 import { getRegisteredEntities } from "@/lib/config-transfer/registry";
@@ -65,8 +66,12 @@ describe("config-transfer singleton-shaped model enumeration", () => {
     expect(SINGLETON_MODELS).toContain("PublicContentSettings");
     expect(SINGLETON_MODELS).toContain("MembershipSubscriptionBillingSettings");
     // AgeTierSetting is @default(cuid()) + tier @unique — NOT a singleton, so it
-    // must NOT appear (it is out of scope for this guard by shape).
+    // must NOT appear here (out of scope for the SINGLETON guard by shape). It is
+    // still covered by config transfer, but as a MULTI-ROW natural-key entity
+    // (the "age-tier" entity in the membership-fees category, #2200), not via the
+    // singleton mechanism this guard polices.
     expect(SINGLETON_MODELS).not.toContain("AgeTierSetting");
+    expect(getRegisteredEntities().some((e) => e.entity === "age-tier")).toBe(true);
   });
 });
 

@@ -18,10 +18,16 @@ All notable public reference-release changes should be recorded here.
   progress, and the AI monthly spend cap. A new test enumerates every
   single-row (`id = "default"`) settings table straight from the schema and
   fails the build if one is neither exported nor explicitly excluded, so a future
-  settings table can't quietly join the blind spot. No secret or credential
-  travels, and no bundle format-version change is needed — an older app importing
-  a newer bundle simply ignores the extra files, and a newer app importing an
-  older bundle leaves the new settings untouched.
+  settings table can't quietly join the blind spot. Your **age-tier definitions**
+  (the age bounds, labels, and per-tier subscription/family-request rules) now
+  travel too, as a multi-row table: on import each tier is matched to the
+  destination's existing tier and updated in place, so member pricing and
+  classification stay intact; a bundle that would leave an incomplete or
+  overlapping age partition is refused with a clear message pointing you to the
+  Age Tiers admin page. No secret or credential travels, and no bundle
+  format-version change is needed — an older app importing a newer bundle simply
+  ignores the extra files, and a newer app importing an older bundle leaves the
+  new settings untouched.
 - **The lodge kiosk / wall display now paints from a fixed, glare-proof colour
   set that never follows the club theme or the light/dark toggle (#2189).** The
   kiosk, its roster-setup wizard, and the lodge-instructions panel were the one

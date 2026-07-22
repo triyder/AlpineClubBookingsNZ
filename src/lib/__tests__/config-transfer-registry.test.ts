@@ -20,6 +20,7 @@ import "@/lib/config-transfer/categories/lodge-ops";
 import "@/lib/config-transfer/categories/committee";
 import "@/lib/config-transfer/categories/induction";
 import "@/lib/config-transfer/categories/membership-fees";
+import "@/lib/config-transfer/categories/age-tier";
 import "@/lib/config-transfer/categories/xero-config";
 
 function descriptor(overrides: Partial<EntityDescriptor> = {}): EntityDescriptor {

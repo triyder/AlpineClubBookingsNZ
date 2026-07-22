@@ -124,8 +124,11 @@ deeper reference for what each category contains and the import safety model.
   reason, so a future settings singleton fails the test until someone classifies
   it. Models keyed by `cuid()`/`uuid()` or a business unique — e.g.
   `AgeTierSetting` (`@default(cuid())`, `tier @unique`, one row per age tier) —
-  are NOT singletons and are out of scope for this guard by shape; a portable
-  multi-row table would use the natural-key entity mechanism instead.
+  are NOT singletons and are out of scope for this guard by shape. Such a portable
+  multi-row table travels through the natural-key entity mechanism instead:
+  `AgeTierSetting` is exported as the **`age-tier`** entity (see the
+  membership-fees category below), keyed on `tier`, so this audit still folds it
+  into config transfer rather than leaving it out.
 
   The audit classified the six models that were absent, plus two the enumeration
   surfaced (`SetupProgress`, `AiAssistantSettings`), as:
@@ -306,6 +309,28 @@ deeper reference for what each category contains and the import safety model.
     xeroAccountCode, xeroItemCode, sortOrder`; natural key
     `(parent fee = membershipTypeKey × ageTier × effectiveFrom) × label`. Each
     row is one Xero invoice line.
+  - `membership-fees/age-tiers.csv` (#2200) — the club's per-tier
+    age-classification **policy** (`AgeTierSetting`):
+    `tier, minAge, maxAge, label, subscriptionRequiredForBooking,
+    familyGroupRequestCreateMemberAllowed, sortOrder`; natural key `tier`
+    (`AgeTier @unique`). These seven columns are exactly what `getAgeTierSettings`
+    reads — portable policy. **Excluded:** the per-install `id` cuid (no FK
+    references it — every consumer keys off the `AgeTier` **enum** value, not this
+    row id) and the `createdAt`/`updatedAt` audit timestamps. `NOT_APPLICABLE` (the
+    server-managed organisation/school tier that never has a row) is a blocking
+    row error, as is a duplicate `tier`. Apply **rekeys by `tier`**: an imported
+    row updates the target's existing row for that tier **in place** (by the
+    target's own id, never the source id) or creates a new row for a tier the
+    target lacks — `tier @unique` makes duplication impossible and nothing is
+    orphaned. Because apply is upsert-only (never deletes), the planner validates
+    the **effective post-merge** tier set against the same partition rule the admin
+    API enforces (`validateAgeTierPartition`: a complete, non-overlapping
+    `[0, ∞)` partition with `ADULT` as the unbounded terminal tier); a subset
+    bundle that would leave the target with an overlapping/gapped partition is
+    blocked with an actionable error rather than silently misclassifying member
+    ages. `age-tiers.csv` rides the membership-fees category as its own module and
+    is emitted whenever the source has age tiers (independent of whether it has
+    fees), so it does not affect the joining-fee precedence rule below.
 
   Referenced membership types must already exist on the target (matched by
   `key`) — membership types themselves are not transferred (they are managed on
