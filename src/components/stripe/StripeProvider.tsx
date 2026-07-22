@@ -83,8 +83,8 @@ export default function StripeProvider({
   if (keyState.status === "loading") {
     return (
       <div className="flex items-center justify-center p-8">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-600 border-t-transparent" />
-        <span className="ml-3 text-gray-600">Preparing payment...</span>
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-info-7 border-t-transparent" />
+        <span className="ml-3 text-muted-foreground">Preparing payment...</span>
       </div>
     );
   }

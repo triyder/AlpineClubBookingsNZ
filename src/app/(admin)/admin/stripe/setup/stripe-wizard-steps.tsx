@@ -29,11 +29,11 @@ function formatSetAt(setAt: string | null): string {
 function LegacyEnvWarning({ vars }: { vars: string[] }) {
   if (vars.length === 0) return null;
   return (
-    <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+    <div className="flex items-start gap-2 rounded-md border border-warning-6 bg-warning-3 p-3 text-sm text-warning-11">
       <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
       <span>
         These legacy environment variables are no longer used and are ignored:{" "}
-        <code className="rounded bg-amber-100 px-1">{vars.join(", ")}</code>.
+        <code className="rounded bg-warning-3 px-1">{vars.join(", ")}</code>.
         Enter the credentials in-app here, then remove them from the environment.
       </span>
     </div>
@@ -44,7 +44,7 @@ function SetStatus({ set, setAt }: { set: boolean; setAt: string | null }) {
   return (
     <span className="text-xs">
       {set ? (
-        <span className="text-emerald-700">Set ✓ {formatSetAt(setAt)}</span>
+        <span className="text-success-11">Set ✓ {formatSetAt(setAt)}</span>
       ) : (
         <span className="text-muted-foreground">Not set</span>
       )}
@@ -187,7 +187,7 @@ export function CredentialsStep({
       <LegacyEnvWarning vars={context.legacyEnvVars} />
 
       {context.needsReentry ? (
-        <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+        <div className="flex items-start gap-2 rounded-md border border-warning-6 bg-warning-3 p-3 text-sm text-warning-11">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
           <span>
             A stored Stripe key can no longer be read (the app encryption key
@@ -255,7 +255,7 @@ export function CredentialsStep({
       {error ? (
         <div
           role="alert"
-          className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800"
+          className="rounded-md border border-danger-6 bg-danger-3 px-3 py-2 text-sm text-danger-11"
         >
           {error}
         </div>
@@ -263,7 +263,7 @@ export function CredentialsStep({
       {success ? (
         <div
           role="status"
-          className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-800"
+          className="rounded-md border border-success-6 bg-success-3 px-3 py-2 text-sm text-success-11"
         >
           {success}
         </div>
@@ -278,7 +278,7 @@ export function CredentialsStep({
           {saving ? "Saving…" : bothSet ? "Replace keys" : "Save keys"}
         </Button>
         {bothSet ? (
-          <span className="inline-flex items-center gap-1 text-sm text-emerald-700">
+          <span className="inline-flex items-center gap-1 text-sm text-success-11">
             <CheckCircle2 className="h-4 w-4" aria-hidden />
             Both keys stored
           </span>
@@ -325,7 +325,7 @@ export function VerifyConnectionStep({
       </Button>
 
       {context.connected ? (
-        <div className="flex items-start gap-2 rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
+        <div className="flex items-start gap-2 rounded-md border border-success-6 bg-success-3 p-3 text-sm text-success-11">
           <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
           <span>
             {context.accountName ? (
@@ -458,7 +458,7 @@ export function WebhookStep({
       {error ? (
         <div
           role="alert"
-          className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800"
+          className="rounded-md border border-danger-6 bg-danger-3 px-3 py-2 text-sm text-danger-11"
         >
           {error}
         </div>
@@ -466,7 +466,7 @@ export function WebhookStep({
       {success ? (
         <div
           role="status"
-          className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-800"
+          className="rounded-md border border-success-6 bg-success-3 px-3 py-2 text-sm text-success-11"
         >
           {success}
         </div>
@@ -490,7 +490,7 @@ export function WebhookStep({
       </div>
 
       {context.webhookVerified ? (
-        <div className="flex items-start gap-2 rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
+        <div className="flex items-start gap-2 rounded-md border border-success-6 bg-success-3 p-3 text-sm text-success-11">
           <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
           <span>
             Verified — a Stripe test event reached this app and its signature
@@ -498,7 +498,7 @@ export function WebhookStep({
           </span>
         </div>
       ) : (
-        <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+        <div className="flex items-start gap-2 rounded-md border border-warning-6 bg-warning-3 p-3 text-sm text-warning-11">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
           <span>
             {context.credentials.webhook_secret.set
