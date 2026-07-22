@@ -4845,3 +4845,72 @@ enum DisplayNameGranularity {
   FIRST_NAME_ONLY
   COUNTS_ONLY
 }
+
+// ---------------------------------------------------------------------------
+// Club events calendar (committee meetings, working bees, social events, ...)
+//
+// A club-wide event calendar shown to every logged-in member (read-only) and
+// editable by Full Admins with lodge:edit and by committee members (any active
+// CommitteeAssignment) — see src/lib/calendar-access.ts for the single write
+// gate. Times are stored as absolute instants; all-day events carry allDay=true
+// with endsAt null. A meeting event carries isMeeting=true and a MiroTalk room
+// slug (meetingRoom); the join URL is built from NEXT_PUBLIC_MIROTALK_URL at
+// render so it is environment-specific (localhost in dev, the meet host in
+// prod). createdById is a bare Member id (no relation) to keep this table's
+// migration surface minimal — it never drives cascades or joins.
+// ---------------------------------------------------------------------------
+model CalendarEvent {
+  id          String    @id @default(cuid())
+  title       String
+  location    String?
+  details     String?   @db.Text
+  allDay      Boolean   @default(false)
+  startsAt    DateTime
+  endsAt      DateTime?
+  isMeeting   Boolean   @default(false)
+  meetingRoom String?
+  createdById String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  // Recurrence (#calendar-recurring). A recurring event is materialised as one
+  // CalendarEvent row per occurrence, all sharing a seriesId. Editing a single
+  // occurrence sets detachedFromSeries=true so later series-wide edits/deletes
+  // skip it (an "exception", as in iCalendar/Google Calendar). A standalone
+  // (non-recurring) event has seriesId null. See src/lib/calendar-service.ts.
+  seriesId           String?
+  detachedFromSeries Boolean              @default(false)
+  series             CalendarEventSeries? @relation(fields: [seriesId], references: [id], onDelete: SetNull)
+
+  @@index([startsAt])
+  @@index([seriesId])
+}
+
+// How a recurring calendar event repeats. The weekday / day-of-month / nth
+// weekday are DERIVED from the series anchor (the first occurrence's start), so
+// no by-day columns are needed: MONTHLY_NTH_WEEKDAY of an anchor that falls on
+// the 3rd Tuesday repeats on the 3rd Tuesday of each month.
+enum CalendarRecurrenceFrequency {
+  DAILY
+  WEEKLY
+  MONTHLY_DAY_OF_MONTH
+  MONTHLY_NTH_WEEKDAY
+}
+
+// The recurrence rule shared by every occurrence of a recurring event. The rule
+// plus the anchor occurrence's start fully determine the generated dates
+// (src/lib/calendar-recurrence.ts). `until` (inclusive end date) and `count`
+// (number of occurrences) are the two supported end conditions; both null means
+// "no explicit end", capped by a safety horizon at generation time.
+model CalendarEventSeries {
+  id          String                      @id @default(cuid())
+  frequency   CalendarRecurrenceFrequency
+  interval    Int                         @default(1)
+  until       DateTime?
+  count       Int?
+  createdById String
+  createdAt   DateTime                    @default(now())
+  updatedAt   DateTime                    @updatedAt
+
+  events CalendarEvent[]
+}

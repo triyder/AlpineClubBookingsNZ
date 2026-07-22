@@ -8,6 +8,7 @@ import {
   Users,
   ArrowRightLeft,
   BookOpen,
+  CalendarDays,
   Clock,
   Tag,
   ClipboardCheck,
@@ -242,7 +243,13 @@ const navSections: NavSection[] = [
         label: "Fees",
         icon: DollarSign,
         orAccess: canAccessConsolidatedFeesPage,
-        keywords: ["hut fees", "joining fees", "annual fees", "rates", "pricing"],
+        keywords: [
+          "hut fees",
+          "joining fees",
+          "annual fees",
+          "rates",
+          "pricing",
+        ],
       },
       {
         href: "/admin/payments",
@@ -272,7 +279,11 @@ const navSections: NavSection[] = [
         icon: RefreshCw,
         keywords: ["accounting", "invoices", "reconcile"],
       },
-      { href: "/admin/xero/member-grouping", label: "Xero Member Grouping", icon: Users },
+      {
+        href: "/admin/xero/member-grouping",
+        label: "Xero Member Grouping",
+        icon: Users,
+      },
     ],
   },
   {
@@ -322,6 +333,12 @@ const navSections: NavSection[] = [
         label: "Lodge Kiosk",
         icon: Tablet,
         keywords: ["check-in", "kiosk", "arrivals"],
+      },
+      {
+        href: "/admin/calendar",
+        label: "Calendar",
+        icon: CalendarDays,
+        keywords: ["events", "meetings", "committee", "schedule"],
       },
       { href: "/admin/work-parties", label: "Work Parties", icon: Hammer },
       {

@@ -326,6 +326,22 @@ export default async function DashboardPage() {
 
   const modules = await loadEffectiveModuleFlags();
 
+  // Upcoming club events for the next two weeks (Events card → /calendar).
+  const twoWeeksOut = new Date(today);
+  twoWeeksOut.setDate(twoWeeksOut.getDate() + 14);
+  const upcomingEvents = await prisma.calendarEvent.findMany({
+    where: { startsAt: { gte: today, lte: twoWeeksOut } },
+    orderBy: { startsAt: "asc" },
+    take: 6,
+    select: {
+      id: true,
+      title: true,
+      startsAt: true,
+      allDay: true,
+      isMeeting: true,
+    },
+  });
+
   return (
     <div className="space-y-8">
       {/* Welcome header */}
@@ -461,6 +477,50 @@ export default async function DashboardPage() {
               ? `${paymentOwed.bookingCount} booking${paymentOwed.bookingCount !== 1 ? "s" : ""} need payment`
               : "No payment due"}
           </p>
+        </SummaryLinkCard>
+
+        <SummaryLinkCard
+          href="/calendar"
+          icon={<CalendarDays aria-hidden="true" className="h-4 w-4" />}
+          title="Events"
+        >
+          {upcomingEvents.length === 0 ? (
+            <>
+              <div className="text-lg font-semibold text-muted-foreground">
+                No upcoming events
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">
+                Nothing scheduled in the next two weeks
+              </p>
+            </>
+          ) : (
+            <ul className="space-y-2">
+              {upcomingEvents.map((event) => (
+                <li key={event.id} className="flex items-baseline gap-2 text-sm">
+                  <span className="w-14 shrink-0 text-xs font-medium text-muted-foreground">
+                    {new Date(event.startsAt).toLocaleDateString("en-NZ", {
+                      day: "numeric",
+                      month: "short",
+                    })}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-foreground">
+                    {event.title}
+                    {event.isMeeting && (
+                      <span className="ml-1 text-xs text-primary">· Meeting</span>
+                    )}
+                  </span>
+                  <span className="shrink-0 text-xs text-muted-foreground">
+                    {event.allDay
+                      ? "All day"
+                      : new Date(event.startsAt).toLocaleTimeString("en-NZ", {
+                          hour: "numeric",
+                          minute: "2-digit",
+                        })}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
         </SummaryLinkCard>
 
         {modules.promoCodes && (

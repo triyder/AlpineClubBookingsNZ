@@ -208,6 +208,8 @@ multi-lodge management, and the lobby display):
   that need cover, and their kiosk PINs.
 - [Work Parties](guides/work-parties.md) — working-bee events and their automatic
   booking discount.
+- [Events Calendar](guides/calendar.md) — the club events calendar, recurring
+  events, per-instance vs series edits, and MiroTalk video meetings.
 - [Lodge Kiosk](guides/lodge.md) — the shared lodge-tablet sign-in for check-in
   and lodge info.
 - [Lodge Instructions](guides/lodge-instructions.md) — the protected opening,

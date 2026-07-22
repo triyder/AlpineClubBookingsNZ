@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   auth: vi.fn(),
   bookingFindFirst: vi.fn(),
   bookingFindMany: vi.fn(),
+  calendarEventFindMany: vi.fn(),
   checkCapacity: vi.fn(),
   getAvailablePromoCodesForMember: vi.fn(),
   getMemberCreditBalance: vi.fn(),
@@ -36,6 +37,9 @@ vi.mock("@/lib/prisma", () => ({
     },
     member: {
       findUnique: mocks.memberFindUnique,
+    },
+    calendarEvent: {
+      findMany: mocks.calendarEventFindMany,
     },
   },
 }));
@@ -141,6 +145,7 @@ describe("DashboardPage summary card drill-downs", () => {
       },
     ]);
     mocks.lockerFindMany.mockResolvedValue([]);
+    mocks.calendarEventFindMany.mockResolvedValue([]);
     mocks.memberFindUnique.mockResolvedValue({
       requiresInduction: false,
       inductions: [],
