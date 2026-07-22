@@ -76,6 +76,14 @@ Import **never deletes**; the automatic pre-apply `pg_dump` backup is the true
 rollback. Validation errors (bad dates, non-integer money, invalid slugs, unknown
 keys) **block** apply until fixed.
 
+**Connected provider credentials never travel.** A bundle never carries the
+Xero/Stripe/Google/backup secrets your club has connected — not the encrypted
+values, and not even a note of which providers are configured. This is permanent
+policy, so a club restored or cloned from a bundle comes up with no connected
+providers and you re-enter them there. See the
+[config-transfer reference](../config-transfer/README.md#implemented-categories)
+for the exact exclusion.
+
 ### Settings your club has never saved
 
 A club-wide setting you have never opened and saved still has a value — the
