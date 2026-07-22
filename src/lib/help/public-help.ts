@@ -6,7 +6,9 @@ import type { HelpPageContent, HelpPageEntry } from "./types";
  * club's own pages for anything specific. Rules for this file:
  *  - Product mechanics only — how to book, how to join, where to sign in.
  *  - Never state fees, dates, cancellation terms, or any club-specific policy;
- *    defer to the club's own website (footer FAQ/terms) and contact page.
+ *    defer to the club's own website pages (site menu/footer) and contact page.
+ *    Never assert that specific footer content exists — contact details and
+ *    quick links are admin-editable and can be saved empty.
  *  - No club proper nouns — always "the club".
  *  - No "AI" or "assistant" wording anywhere in the copy.
  */
@@ -39,7 +41,7 @@ const homeHelp: HelpPageContent = {
     },
     {
       q: "Where do I find fees, dates, or the cancellation policy?",
-      a: "Those are set by the club. Check the club's own pages linked in the site footer, or use the contact details there to ask the club directly.",
+      a: "Those are set by the club. Check the club's own pages in the site menu or footer, or use the club's contact page to ask directly.",
     },
   ],
 };
@@ -51,7 +53,7 @@ export const publicFallbackHelp: HelpPageContent = {
   actions: [
     "Use the site menu to reach the club's public pages.",
     "Members: use Log In to reach your dashboard and booking tools.",
-    "Use the contact details in the footer to ask the club anything specific.",
+    "Use the club's contact page or the site menu links to ask anything specific.",
   ],
   questions: [
     {
@@ -64,7 +66,7 @@ export const publicFallbackHelp: HelpPageContent = {
     },
     {
       q: "Who do I contact for something specific?",
-      a: "The club sets its own fees, dates, and policies. Use the contact details or pages linked in the site footer to reach the club directly.",
+      a: "The club sets its own fees, dates, and policies. Use the club's contact page or the pages in the site menu to reach the club directly.",
     },
   ],
 };

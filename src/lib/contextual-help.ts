@@ -141,7 +141,7 @@ const financeFallbackHelp = help(
   ],
 );
 
-export const adminHelpEntries: HelpEntry[] = [
+const adminHelpEntries: HelpEntry[] = [
   entry(
     "/admin/dashboard",
     help(
@@ -2098,7 +2098,7 @@ export const adminHelpEntries: HelpEntry[] = [
   ),
 ];
 
-export const financeHelpEntries: HelpEntry[] = [
+const financeHelpEntries: HelpEntry[] = [
   entry(
     "/finance",
     help(

@@ -134,6 +134,14 @@ describe("/x/* detail matcher", () => {
       "Your booking",
     );
   });
+
+  it("does not treat a shared string prefix as a path prefix", () => {
+    expect(getHelpForPage("member", "/bookingsfoo").title).toBe("Member help");
+  });
+
+  it("routes nested detail paths to the /bookings/* entry", () => {
+    expect(getHelpForPage("member", "/bookings/a/b").title).toBe("Your booking");
+  });
 });
 
 describe("buildHelpGrounding", () => {
@@ -141,6 +149,7 @@ describe("buildHelpGrounding", () => {
   const CASES: Array<{ surface: HelpSurface; path: string; title: string }> = [
     { surface: "public", path: "/", title: "Welcome" },
     { surface: "member", path: "/book", title: "Book a Stay" },
+    { surface: "member", path: "/bookings/abc123", title: "Your booking" },
     { surface: "admin", path: "/admin/bookings", title: "Bookings" },
     { surface: "finance", path: "/finance", title: "Finance Dashboard" },
   ];
@@ -178,7 +187,7 @@ describe("buildHelpGrounding", () => {
       A: Yes. From the sign-in page you can request a booking without an account, and the club replies with a secure quote you can accept.
 
       Q: Where do I find fees, dates, or the cancellation policy?
-      A: Those are set by the club. Check the club's own pages linked in the site footer, or use the contact details there to ask the club directly."
+      A: Those are set by the club. Check the club's own pages in the site menu or footer, or use the club's contact page to ask directly."
     `);
   });
 });

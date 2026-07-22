@@ -116,7 +116,7 @@ const bookHelp: HelpPageContent = {
     },
     {
       q: "How do I pay?",
-      a: "Pay by card in the wizard's Pay step, or later from the Complete Payment card on your booking page. Where your club offers it and your stay is far enough ahead, you can instead pay by internet banking against an emailed Xero invoice.",
+      a: "Choose card or internet banking on the Review step. Card payments are then taken in the wizard's Pay step, or later from the Complete Payment card on your booking page. Internet banking (where your club offers it and your stay is far enough ahead) raises an emailed Xero invoice instead.",
       group: BOOK_STEP_PAY,
     },
     {
@@ -307,7 +307,8 @@ const dashboardHelp: HelpPageContent = {
   ],
 };
 
-// Source: docs/user-guide/your-account.md — keep in sync (see docs/user-guide/README.md)
+// No dedicated member guide covers induction — generic-safe content only
+// (defers to the club's own wording; nothing to sync against).
 const inductionHelp: HelpPageContent = {
   title: "Induction",
   summary:
@@ -333,7 +334,8 @@ const inductionHelp: HelpPageContent = {
   ],
 };
 
-// Source: docs/user-guide/booking-a-stay.md — keep in sync (see docs/user-guide/README.md)
+// No dedicated member guide covers lodge instructions — generic-safe content
+// only (defers to the club's own documents; nothing to sync against).
 const lodgeInstructionsHelp: HelpPageContent = {
   title: "Lodge instructions",
   summary:
