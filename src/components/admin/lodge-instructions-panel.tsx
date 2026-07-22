@@ -289,7 +289,7 @@ export function LodgeInstructionsPanel() {
           onChange={setScopeLodgeId}
           id="lodge-instructions-scope"
         />
-        <p className="text-sm text-red-600">{loadError}</p>
+        <p className="text-sm text-danger-11">{loadError}</p>
         <Button type="button" variant="outline" onClick={loadDocuments}>
           Retry
         </Button>

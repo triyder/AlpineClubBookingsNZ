@@ -17,7 +17,7 @@ export default async function SiteStylePage() {
           Set the brand colours and fonts used by the public website, member area,
           and admin area, plus the public logo.
         </p>
-        <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+        <p className="mt-2 rounded-md border border-warning-6 bg-warning-3 px-3 py-2 text-sm text-warning-11">
           The public site — including the membership application form — stays
           hidden until this is saved.
         </p>

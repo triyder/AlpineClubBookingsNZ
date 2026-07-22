@@ -175,7 +175,7 @@ export default function BookPage() {
       )}
 
       {error && (
-        <div role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">
+        <div role="alert" className="rounded-md bg-danger-3 p-3 text-sm text-danger-11">
           <p>{error}</p>
           {guestProfileBlocks.length > 0 && (
             <div className="mt-3 space-y-3">
@@ -184,12 +184,12 @@ export default function BookPage() {
                 return (
                   <div
                     key={block.memberId}
-                    className="rounded-md border border-red-200 bg-card p-3"
+                    className="rounded-md border border-danger-6 bg-card p-3"
                   >
-                    <p className="font-medium text-red-800">{block.name}</p>
+                    <p className="font-medium text-danger-11">{block.name}</p>
                     <p className="mt-1">{getGuestProfileBlockMessage(block)}</p>
                     {block.missingFields.length > 0 && (
-                      <p className="mt-1 text-red-600">
+                      <p className="mt-1 text-danger-11">
                         Missing: {block.missingFields.join(", ")}
                       </p>
                     )}
@@ -197,12 +197,12 @@ export default function BookPage() {
                       block.action === "complete_details" && block.canCurrentUserResolve ? (
                         <Link
                           href={PROFILE_FAMILY_GROUP_RETURN_TO_BOOK}
-                          className="mt-2 inline-flex text-sm font-medium text-red-800 underline underline-offset-4"
+                          className="mt-2 inline-flex text-sm font-medium text-danger-11 underline underline-offset-4"
                         >
                           {actionLabel}
                         </Link>
                       ) : (
-                        <p className="mt-2 font-medium text-red-800">{actionLabel}</p>
+                        <p className="mt-2 font-medium text-danger-11">{actionLabel}</p>
                       )
                     )}
                   </div>
@@ -215,9 +215,9 @@ export default function BookPage() {
               {memberNightConflicts.map((conflict) => (
                 <div
                   key={`${conflict.bookingId}-${conflict.guestId}`}
-                  className="rounded-md border border-red-200 bg-card p-3"
+                  className="rounded-md border border-danger-6 bg-card p-3"
                 >
-                  <p className="font-medium text-red-800">
+                  <p className="font-medium text-danger-11">
                     {conflict.memberName}
                   </p>
                   <p className="mt-1">
@@ -231,7 +231,7 @@ export default function BookPage() {
                         asChild
                         size="sm"
                         variant="outline"
-                        className="border-red-200 text-red-800 hover:bg-red-100"
+                        className="border-danger-6 text-danger-11 hover:bg-danger-3"
                       >
                         <Link href={`/bookings/${conflict.bookingId}`}>
                           <ExternalLink className="mr-2 h-4 w-4" />
@@ -244,7 +244,7 @@ export default function BookPage() {
                         type="button"
                         size="sm"
                         variant="outline"
-                        className="border-red-200 text-red-800 hover:bg-red-100"
+                        className="border-danger-6 text-danger-11 hover:bg-danger-3"
                         onClick={() => void handleRemoveConflictGuest(conflict)}
                         disabled={removingConflictGuestId === conflict.guestId}
                       >
@@ -256,7 +256,7 @@ export default function BookPage() {
                     )}
                   </div>
                   {!conflict.canOpenBooking && !conflict.canSelfRemove && (
-                    <p className="mt-2 text-red-600">
+                    <p className="mt-2 text-danger-11">
                       Ask the booking owner or an admin to update that booking before continuing.
                     </p>
                   )}
@@ -293,21 +293,21 @@ export default function BookPage() {
       )}
 
       {showWaitlistPrompt && (
-        <Card className="border-purple-200 bg-purple-50">
+        <Card className="border-cat1-6 bg-cat1-3">
           <CardContent className="pt-6 space-y-4">
             <div className="flex items-start gap-3">
-              <div className="rounded-full bg-purple-100 p-2 mt-0.5">
-                <svg className="h-5 w-5 text-purple-600" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor">
+              <div className="rounded-full bg-cat1-3 p-2 mt-0.5">
+                <svg className="h-5 w-5 text-cat1-11" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
                 </svg>
               </div>
               <div>
-                <h2 className="font-semibold text-purple-900">
+                <h2 className="font-semibold text-cat1-11">
                   {lodges.length > 1 && selectedLodge
                     ? `${selectedLodge.name} is fully booked`
                     : "Lodge is fully booked"}
                 </h2>
-                <p className="text-sm text-purple-700 mt-1">
+                <p className="text-sm text-cat1-11 mt-1">
                   {lodgeLabel} is at capacity on{" "}
                   {waitlistFullNights.length === 1
                     ? waitlistFullNights[0]
@@ -317,8 +317,8 @@ export default function BookPage() {
               </div>
             </div>
             {lodges.length > 1 && lodges.some((lodge) => lodge.id !== lodgeId) && (
-              <div className="rounded-md border border-purple-200 bg-card p-4 space-y-2">
-                <p className="text-sm font-medium text-purple-900">
+              <div className="rounded-md border border-cat1-6 bg-card p-4 space-y-2">
+                <p className="text-sm font-medium text-cat1-11">
                   Happy to stay at another lodge if a spot opens there first?
                 </p>
                 {lodges
@@ -326,7 +326,7 @@ export default function BookPage() {
                   .map((lodge) => (
                     <label
                       key={lodge.id}
-                      className="flex items-center gap-2 text-sm text-purple-800 cursor-pointer"
+                      className="flex items-center gap-2 text-sm text-cat1-11 cursor-pointer"
                     >
                       <Checkbox
                         checked={waitlistAlternateLodgeIds.includes(lodge.id)}
@@ -337,13 +337,13 @@ export default function BookPage() {
                               : current.filter((id) => id !== lodge.id)
                           )
                         }
-                        className="border-purple-300"
+                        className="border-cat1-6"
                         disabled={joiningWaitlist}
                       />
                       Also waitlist me for {lodge.name}
                     </label>
                   ))}
-                <p className="text-xs text-purple-700">
+                <p className="text-xs text-cat1-11">
                   Prices can differ between lodges. If a spot opens at one of
                   these, we&apos;ll email you that lodge&apos;s price for your
                   stay — nothing is booked until you confirm it.
@@ -361,7 +361,7 @@ export default function BookPage() {
               <Button
                 onClick={handleJoinWaitlist}
                 disabled={joiningWaitlist}
-                className="bg-purple-600 hover:bg-purple-700"
+                className="bg-cat1-9 hover:bg-cat1-9"
               >
                 {joiningWaitlist ? "Joining waitlist..." : "Join Waitlist"}
               </Button>

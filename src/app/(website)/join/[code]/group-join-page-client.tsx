@@ -165,7 +165,7 @@ export function GroupJoinPageClient({
         </CardHeader>
         <CardContent className="space-y-5">
           {!summary.isJoinable ? (
-            <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            <div className="flex items-start gap-2 rounded-md border border-warning-6 bg-warning-3 px-3 py-2 text-sm text-warning-11">
               <Info className="h-5 w-5 shrink-0" />
               <p>
                 This group is no longer accepting new joiners
@@ -177,7 +177,7 @@ export function GroupJoinPageClient({
             </div>
           ) : submitted ? (
             <div className="space-y-3">
-              <div className="flex items-center gap-2 text-emerald-700">
+              <div className="flex items-center gap-2 text-success-11">
                 <CheckCircle2 className="h-6 w-6 shrink-0" />
                 <p className="font-medium">Almost there — check your email.</p>
               </div>

@@ -541,7 +541,7 @@ export default function MemberApplicationsPage() {
       </div>
 
       {message && (
-        <div className="rounded-md border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
+        <div className="rounded-md border border-success-6 bg-success-3 px-4 py-3 text-sm text-success-11">
           {message}
         </div>
       )}

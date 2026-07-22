@@ -631,7 +631,7 @@ export function PromoCodesPageClient({
                 {TYPE_LABELS[promo.type]}
               </Badge>
               {isArchived ? (
-                <Badge variant="outline" className="text-orange-600 border-orange-600">
+                <Badge variant="outline" className="text-warning-11 border-warning-7">
                   Archived
                 </Badge>
               ) : (
@@ -1213,7 +1213,7 @@ export function PromoCodesPageClient({
                   <p className="text-xs text-muted-foreground">Loading Xero accounts and items...</p>
                 ) : null}
                 {xeroDataError ? (
-                  <p className="text-xs text-amber-600">
+                  <p className="text-xs text-warning-11">
                     {xeroDataError}. Enter the codes manually below.
                   </p>
                 ) : null}

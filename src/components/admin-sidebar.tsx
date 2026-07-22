@@ -793,8 +793,8 @@ function SidebarLinks({
                 const badgeCount = badges[href];
                 const badgeClasses =
                   href === "/admin/refund-requests"
-                    ? "bg-red-600 text-white"
-                    : "bg-orange-500 text-white";
+                    ? "bg-danger-9 text-white"
+                    : "bg-warning-9 text-white";
 
                 return (
                   <Link

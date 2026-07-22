@@ -164,8 +164,8 @@ export function PhotoGalleryToken({
 
   const cardClassName =
     variant === "slideshow"
-      ? "group snap-start overflow-hidden rounded-3xl border border-brand-ridge/20 bg-white shadow-sm transition-transform duration-200 hover:-translate-y-1 hover:shadow-lg"
-      : "group overflow-hidden rounded-3xl border border-brand-ridge/20 bg-white shadow-sm transition-transform duration-200 hover:-translate-y-1 hover:shadow-lg";
+      ? "group snap-start overflow-hidden rounded-3xl border border-brand-ridge/20 bg-card shadow-sm transition-transform duration-200 hover:-translate-y-1 hover:shadow-lg"
+      : "group overflow-hidden rounded-3xl border border-brand-ridge/20 bg-card shadow-sm transition-transform duration-200 hover:-translate-y-1 hover:shadow-lg";
 
   const imageWrapperClassName =
     variant === "slideshow"

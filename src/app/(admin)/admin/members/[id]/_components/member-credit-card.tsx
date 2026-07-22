@@ -69,7 +69,7 @@ export function MemberCreditCard({
         <div className="flex items-center gap-3">
           <span
             className={`text-lg font-semibold ${
-              creditBalance > 0 ? "text-green-700" : creditBalance < 0 ? "text-red-700" : "text-muted-foreground"
+              creditBalance > 0 ? "text-success-11" : creditBalance < 0 ? "text-danger-11" : "text-muted-foreground"
             }`}
           >{`$${(creditBalance / 100).toFixed(2)}`}</span>
           <ViewOnlyActionButton canEdit={canEditFinance} size="sm" variant="outline" onClick={onToggleAdjustmentForm}>
@@ -79,7 +79,7 @@ export function MemberCreditCard({
       </CardHeader>
       <CardContent>
         {adjustmentError && (
-          <div className="mb-4 p-2 bg-red-50 border border-red-200 text-red-700 rounded text-sm">{adjustmentError}</div>
+          <div className="mb-4 p-2 bg-danger-3 border border-danger-6 text-danger-11 rounded text-sm">{adjustmentError}</div>
         )}
         {showAdjustmentForm && (
           <div className="mb-4 p-4 border border-border rounded-md bg-muted space-y-3">
@@ -118,14 +118,14 @@ export function MemberCreditCard({
         {creditLoading ? (
           <p className="text-sm text-muted-foreground">Loading credit history...</p>
         ) : creditError ? (
-          <p className="text-sm text-red-600">{creditError}</p>
+          <p className="text-sm text-danger-11">{creditError}</p>
         ) : (
           <>
             {pendingAdjustmentRequests.length > 0 && (
-              <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 p-4">
+              <div className="mb-4 rounded-md border border-warning-6 bg-warning-3 p-4">
                 <div className="mb-3">
-                  <p className="text-sm font-medium text-amber-900">Pending manual adjustments</p>
-                  <p className="text-xs text-amber-800">
+                  <p className="text-sm font-medium text-warning-11">Pending manual adjustments</p>
+                  <p className="text-xs text-warning-11">
                     Each request needs approval from a different admin before it becomes account credit.
                   </p>
                 </div>
@@ -148,14 +148,14 @@ export function MemberCreditCard({
                           <TableCell className="text-sm">{formatMemberDateNz(item.createdAt)}</TableCell>
                           <TableCell
                             className={`font-medium ${
-                              item.amountCents > 0 ? "text-green-700" : "text-red-700"
+                              item.amountCents > 0 ? "text-success-11" : "text-danger-11"
                             }`}
                           >{`${item.amountCents > 0 ? "+" : ""}$${(item.amountCents / 100).toFixed(2)}`}</TableCell>
                           <TableCell className="text-sm text-muted-foreground max-w-[260px] truncate">{item.description}</TableCell>
                           <TableCell className="text-sm">{formatAdminName(item.requestedBy)}</TableCell>
                           <TableCell className="text-right">
                             {isOwnRequest ? (
-                              <span className="text-xs text-amber-700">Needs another admin</span>
+                              <span className="text-xs text-warning-11">Needs another admin</span>
                             ) : (
                               <div className="flex items-center justify-end gap-2">
                                 <ViewOnlyActionButton
@@ -209,10 +209,10 @@ export function MemberCreditCard({
                           variant="secondary"
                           className={
                             item.type === "CANCELLATION_REFUND" || item.type === "BOOKING_MODIFICATION_REFUND"
-                              ? "bg-orange-100 text-orange-800 border-orange-200"
+                              ? "bg-warning-3 text-warning-11 border-warning-6"
                               : item.type === "ADMIN_ADJUSTMENT"
-                                ? "bg-blue-100 text-blue-800 border-blue-200"
-                                : "bg-purple-100 text-purple-800 border-purple-200"
+                                ? "bg-info-3 text-info-11 border-info-6"
+                                : "bg-cat1-3 text-cat1-11 border-cat1-6"
                           }
                         >
                           {item.type === "BOOKING_MODIFICATION_REFUND"
@@ -221,7 +221,7 @@ export function MemberCreditCard({
                         </Badge>
                       </TableCell>
                       <TableCell
-                        className={`font-medium ${item.amountCents > 0 ? "text-green-700" : "text-red-700"}`}
+                        className={`font-medium ${item.amountCents > 0 ? "text-success-11" : "text-danger-11"}`}
                       >{`${item.amountCents > 0 ? "+" : ""}$${(item.amountCents / 100).toFixed(2)}`}</TableCell>
                       <TableCell className="text-sm text-muted-foreground max-w-[200px] truncate">{item.description}</TableCell>
                       <TableCell className="text-xs text-muted-foreground">
@@ -243,12 +243,12 @@ export function MemberCreditCard({
                       </TableCell>
                       <TableCell className="text-sm">
                         {item.sourceBooking ? (
-                          <span className="text-blue-600">
+                          <span className="text-info-11">
                             {formatMemberDateNz(item.sourceBooking.checkIn)} -{" "}
                             {formatMemberDateNz(item.sourceBooking.checkOut)}
                           </span>
                         ) : item.appliedToBooking ? (
-                          <span className="text-purple-600">
+                          <span className="text-cat1-11">
                             {formatMemberDateNz(item.appliedToBooking.checkIn)} -{" "}
                             {formatMemberDateNz(item.appliedToBooking.checkOut)}
                           </span>

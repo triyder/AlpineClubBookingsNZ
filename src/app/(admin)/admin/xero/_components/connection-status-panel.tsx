@@ -147,7 +147,7 @@ export function ConnectionStatusPanel({
                 ) : null}
               </div>
               {probeError ? (
-                <p className="text-xs text-red-700">
+                <p className="text-xs text-danger-11">
                   Couldn&apos;t check the connection. Please try again.
                 </p>
               ) : null}
@@ -194,7 +194,7 @@ export function ConnectionStatusPanel({
           // key changed (e.g. the #2079 env→DB upgrade). This is a reconnect,
           // not a first-time connect.
           <div className="space-y-3">
-            <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+            <div className="flex items-start gap-2 rounded-md border border-warning-6 bg-warning-3 p-3 text-sm text-warning-11">
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
               <span>
                 Stored Xero tokens can no longer be read because the encryption

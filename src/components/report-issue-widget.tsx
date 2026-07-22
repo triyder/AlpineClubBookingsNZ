@@ -207,14 +207,14 @@ export function ReportIssueWidget({
           </DialogHeader>
 
           <div className="space-y-4">
-            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
-              <p className="font-medium text-slate-900">{pageTitle || "Current page"}</p>
-              <p className="mt-1 break-all text-xs text-slate-500">{pageUrl}</p>
+            <div className="rounded-lg border border-border bg-card p-3 text-sm text-muted-foreground">
+              <p className="font-medium text-foreground">{pageTitle || "Current page"}</p>
+              <p className="mt-1 break-all text-xs text-muted-foreground">{pageUrl}</p>
             </div>
 
             <div className="space-y-3">
               <div className="flex items-center justify-between gap-3">
-                <div className="flex items-center gap-2 text-sm font-medium text-slate-900">
+                <div className="flex items-center gap-2 text-sm font-medium text-foreground">
                   <Camera className="h-4 w-4" />
                   Screenshot
                 </div>
@@ -244,12 +244,12 @@ export function ReportIssueWidget({
                 </div>
               </div>
 
-              <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+              <div className="rounded-lg border border-warning-6 bg-warning-3 p-3 text-sm text-warning-11">
                 Screenshots may include names, booking details, or payment context visible on the page.
               </div>
 
               {screenshotDataUrl ? (
-                <div className="overflow-hidden rounded-lg border border-slate-200 bg-slate-100">
+                <div className="overflow-hidden rounded-lg border border-border bg-muted">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={screenshotDataUrl}
@@ -258,13 +258,13 @@ export function ReportIssueWidget({
                   />
                 </div>
               ) : (
-                <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-500">
+                <div className="rounded-lg border border-dashed border-border bg-card p-4 text-sm text-muted-foreground">
                   No screenshot captured yet.
                 </div>
               )}
 
               {captureError ? (
-                <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                <div className="flex items-start gap-2 rounded-lg border border-warning-6 bg-warning-3 p-3 text-sm text-warning-11">
                   <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                   <p>{captureError}</p>
                 </div>
@@ -272,7 +272,7 @@ export function ReportIssueWidget({
             </div>
 
             <div className="space-y-2">
-              <label htmlFor="issue-description" className="text-sm font-medium text-slate-900">
+              <label htmlFor="issue-description" className="text-sm font-medium text-foreground">
                 What happened?
               </label>
               <Textarea
@@ -284,7 +284,7 @@ export function ReportIssueWidget({
                 maxLength={2000}
                 disabled={submitting}
               />
-              <p className="text-xs text-slate-500">{description.length}/2000</p>
+              <p className="text-xs text-muted-foreground">{description.length}/2000</p>
             </div>
           </div>
 

@@ -58,7 +58,7 @@ export function MemberSubscriptionHistoryTable({
                   href={`https://go.xero.com/AccountsReceivable/View.aspx?InvoiceID=${sub.xeroInvoiceId}`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-blue-600 hover:underline inline-flex items-center gap-1"
+                  className="text-info-11 hover:underline inline-flex items-center gap-1"
                 >
                   View <ExternalLink className="h-3 w-3" />
                 </a>

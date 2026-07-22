@@ -29,7 +29,7 @@ export default function StripeProvider({
 }: StripeProviderProps) {
   if (!stripePromise) {
     return (
-      <div className="text-red-500 p-4">
+      <div className="text-danger-11 p-4">
         Stripe is not configured. Please set NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY.
       </div>
     );

@@ -469,7 +469,7 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
                         />
                       </div>
                       {fieldErrors[field.key]?.[0] && (
-                        <p className="text-sm text-red-700">
+                        <p className="text-sm text-danger-11">
                           {fieldErrors[field.key]?.[0]}
                         </p>
                       )}
@@ -553,7 +553,7 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
                   className="w-full rounded-md border border-slate-300 bg-white p-3 font-mono text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-400"
                 />
                 {values.rawCss.length > 45_000 && (
-                  <p className="text-sm text-amber-700">
+                  <p className="text-sm text-warning-11">
                     {values.rawCss.length.toLocaleString()} / 50,000 characters
                     used.
                   </p>
@@ -607,7 +607,7 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
                   )}
                 </div>
                 {fieldErrors.logoDataUrl?.[0] && (
-                  <p className="text-sm text-red-700">
+                  <p className="text-sm text-danger-11">
                     {fieldErrors.logoDataUrl?.[0]}
                   </p>
                 )}
@@ -724,7 +724,7 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
             </div>
 
             {adjustments.length > 0 && (
-              <div className="rounded-md border border-sky-300 bg-sky-50 p-4 text-sm text-sky-900">
+              <div className="rounded-md border border-info-6 bg-info-3 p-4 text-sm text-info-11">
                 <div className="mb-2 flex items-center gap-2 font-medium">
                   <CheckCircle2 className="h-4 w-4" />
                   Colours adjusted for accessibility
@@ -766,7 +766,7 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
             )}
 
             {advisoryContrastWarnings.length > 0 && (
-              <div className="rounded-md border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
+              <div className="rounded-md border border-warning-6 bg-warning-3 p-4 text-sm text-warning-11">
                 <div className="mb-2 flex items-center gap-2 font-medium">
                   <AlertTriangle className="h-4 w-4" />
                   Contrast warnings
@@ -780,12 +780,12 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
             )}
 
             {error && (
-              <div className="rounded-md border border-red-300 bg-red-50 p-4 text-sm text-red-800">
+              <div className="rounded-md border border-danger-6 bg-danger-3 p-4 text-sm text-danger-11">
                 {error}
               </div>
             )}
             {savedMessage && (
-              <div className="rounded-md border border-green-300 bg-green-50 p-4 text-sm text-green-800">
+              <div className="rounded-md border border-success-6 bg-success-3 p-4 text-sm text-success-11">
                 {savedMessage}
               </div>
             )}

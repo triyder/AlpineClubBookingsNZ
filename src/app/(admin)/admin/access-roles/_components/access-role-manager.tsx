@@ -215,7 +215,7 @@ export function AccessRoleManager({
       {error && (
         <div
           role="alert"
-          className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700"
+          className="rounded border border-danger-6 bg-danger-3 p-3 text-sm text-danger-11"
         >
           {error}
         </div>
@@ -223,13 +223,13 @@ export function AccessRoleManager({
       {notice && (
         <div
           role="status"
-          className="rounded border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800"
+          className="rounded border border-success-6 bg-success-3 p-3 text-sm text-success-11"
         >
           {notice}
         </div>
       )}
       {!actorIsFullAdmin && (
-        <div className="rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+        <div className="rounded border border-warning-6 bg-warning-3 p-3 text-sm text-warning-11">
           Only a Full Admin can create, edit, or delete access roles. You can
           review the configured roles below.
         </div>
@@ -294,7 +294,7 @@ export function AccessRoleManager({
                   <Button
                     variant="outline"
                     size="sm"
-                    className="text-red-600 hover:text-red-700"
+                    className="text-danger-11 hover:text-danger-11"
                     onClick={() => {
                       setDeleteError("");
                       setDeletingRole(role);
@@ -350,7 +350,7 @@ export function AccessRoleManager({
           {formError && (
             <div
               role="alert"
-              className="rounded border border-red-200 bg-red-50 p-2 text-sm text-red-700"
+              className="rounded border border-danger-6 bg-danger-3 p-2 text-sm text-danger-11"
             >
               {formError}
             </div>
@@ -468,7 +468,7 @@ export function AccessRoleManager({
           {deleteError && (
             <div
               role="alert"
-              className="rounded border border-red-200 bg-red-50 p-2 text-sm text-red-700"
+              className="rounded border border-danger-6 bg-danger-3 p-2 text-sm text-danger-11"
             >
               {deleteError}
             </div>

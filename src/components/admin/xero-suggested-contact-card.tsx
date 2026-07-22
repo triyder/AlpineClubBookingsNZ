@@ -36,7 +36,7 @@ export function XeroSuggestedContactCard({
   return (
     <label
       className={`flex items-start gap-3 rounded-md border p-3 ${
-        contact.isLinked ? "border-amber-200 bg-amber-50" : "border-border bg-card"
+        contact.isLinked ? "border-warning-6 bg-warning-3" : "border-border bg-card"
       }`}
     >
       <input
@@ -55,7 +55,7 @@ export function XeroSuggestedContactCard({
             <Badge
               key={`${contact.contactId}-${reason}`}
               variant="secondary"
-              className="bg-blue-50 text-blue-700 border-blue-200"
+              className="bg-info-3 text-info-11 border-info-6"
             >
               {reason}
             </Badge>
@@ -63,7 +63,7 @@ export function XeroSuggestedContactCard({
         </div>
         {contact.email && <p className="text-xs text-muted-foreground">{contact.email}</p>}
         {contact.isLinked && (
-          <p className="text-xs text-amber-700">
+          <p className="text-xs text-warning-11">
             Already linked to {contact.linkedMemberName}
           </p>
         )}
@@ -72,7 +72,7 @@ export function XeroSuggestedContactCard({
             href={contact.xeroLink}
             target="_blank"
             rel="noopener noreferrer"
-            className="mt-1 inline-flex items-center gap-1 text-xs text-blue-600 hover:underline"
+            className="mt-1 inline-flex items-center gap-1 text-xs text-info-11 hover:underline"
           >
             View in Xero
             <ExternalLink className="h-3 w-3" />

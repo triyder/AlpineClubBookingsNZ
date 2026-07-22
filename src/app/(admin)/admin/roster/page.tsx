@@ -75,9 +75,9 @@ interface RosterData {
 }
 
 const AGE_TIER_COLORS: Record<string, string> = {
-  ADULT: "bg-blue-100 text-blue-800",
-  YOUTH: "bg-green-100 text-green-800",
-  CHILD: "bg-orange-100 text-orange-800",
+  ADULT: "bg-info-3 text-info-11",
+  YOUTH: "bg-success-3 text-success-11",
+  CHILD: "bg-warning-3 text-warning-11",
 }
 
 // Per-date roster status → calendar overlay tone + compact label. `no-guests`
@@ -641,7 +641,7 @@ export default function RosterPage() {
           </Card>
 
           {isConfirmed && uncoveredCount > 0 && (
-            <div className="rounded-md border border-orange-300 bg-orange-50 px-4 py-3 text-sm text-orange-800">
+            <div className="rounded-md border border-warning-6 bg-warning-3 px-4 py-3 text-sm text-warning-11">
               {uncoveredCount} booking{uncoveredCount === 1 ? "" : "s"} staying this
               night {uncoveredCount === 1 ? "has" : "have"} no chores — click
               Regenerate Roster to include {uncoveredCount === 1 ? "it" : "them"}.

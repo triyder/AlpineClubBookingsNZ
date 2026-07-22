@@ -101,14 +101,14 @@ function formatDateTime(value: string | null) {
 
 function statusBadge(report: IssueReportSummary) {
   if (report.resolvedAt) {
-    return <Badge className="border-green-200 bg-green-100 text-green-800">Resolved</Badge>;
+    return <Badge className="border-success-6 bg-success-3 text-success-11">Resolved</Badge>;
   }
-  return <Badge className="border-amber-200 bg-amber-100 text-amber-800">Open</Badge>;
+  return <Badge className="border-warning-6 bg-warning-3 text-warning-11">Open</Badge>;
 }
 
 function screenshotBadge(report: IssueReportSummary) {
   if (report.screenshot.retained) {
-    return <Badge className="border-sky-200 bg-sky-100 text-sky-800">Screenshot retained</Badge>;
+    return <Badge className="border-info-6 bg-info-3 text-info-11">Screenshot retained</Badge>;
   }
   if (report.screenshot.deletedAt) {
     return <Badge className="border-border bg-muted text-muted-foreground">Screenshot deleted</Badge>;
@@ -262,7 +262,7 @@ export default function AdminIssueReportsPage() {
               <Spinner size="sm" label="Loading reports…" />
             </div>
           ) : null}
-          {error ? <p className="py-4 text-sm text-red-600">{error}</p> : null}
+          {error ? <p className="py-4 text-sm text-danger-11">{error}</p> : null}
           {!loading && data?.reports.length === 0 ? (
             <EmptyState
               icon={Bug}
@@ -395,7 +395,7 @@ export default function AdminIssueReportsPage() {
                         type="button"
                         size="sm"
                         variant="outline"
-                        className="gap-2 text-red-700"
+                        className="gap-2 text-danger-11"
                         disabled={submitting}
                         onClick={() => updateReport("deleteScreenshot")}
                       >

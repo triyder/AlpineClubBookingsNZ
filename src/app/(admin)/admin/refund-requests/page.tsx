@@ -652,8 +652,8 @@ export default function RefundRequestsPage() {
                             <span
                               className={
                                 request.amountCents > 0
-                                  ? "font-medium text-green-700"
-                                  : "font-medium text-red-700"
+                                  ? "font-medium text-success-11"
+                                  : "font-medium text-danger-11"
                               }
                             >
                               {request.amountCents > 0 ? "+" : ""}
@@ -672,7 +672,7 @@ export default function RefundRequestsPage() {
                             <span className="text-muted-foreground">Member:</span>{" "}
                             <Link
                               href={buildHrefWithReturnTo(`/admin/members/${request.member.id}`, currentRefundRequestsPath)}
-                              className="text-blue-600 hover:underline"
+                              className="text-info-11 hover:underline"
                             >
                               Open member
                             </Link>
@@ -703,7 +703,7 @@ export default function RefundRequestsPage() {
                                 <span className="text-muted-foreground">Applied credit:</span>{" "}
                                 <Link
                                   href={creditLedgerHref}
-                                  className="text-blue-600 hover:underline"
+                                  className="text-info-11 hover:underline"
                                 >
                                   View credit ledger
                                 </Link>
@@ -721,7 +721,7 @@ export default function RefundRequestsPage() {
                         {request.status === "PENDING" && (
                           <div className="border-t pt-3 mt-3 flex flex-wrap items-center gap-2">
                             {isOwnRequest ? (
-                              <span className="text-sm text-amber-700">
+                              <span className="text-sm text-warning-11">
                                 Needs another admin to approve this request.
                               </span>
                             ) : (

@@ -13,7 +13,7 @@ function listSourceFiles(path: string): string[] {
   if (!existsSync(root)) {
     throw new Error(
       `brand-color-source-contract: source root "${path}" does not exist. ` +
-        `If the tree was renamed, update THEMED_TOKEN_ONLY_ROOTS.`,
+        `If the tree was renamed, update the contract's source roots.`,
     );
   }
   return readdirSync(root).flatMap((entry) => {
@@ -24,6 +24,18 @@ function listSourceFiles(path: string): string[] {
     }
     return /\.tsx?$/.test(entry) ? [child] : [];
   });
+}
+
+// #2188 P2 — the kiosk tree is authored in literal slate/colored tones and is
+// migrated onto `--kiosk-*` tokens in P3, so BOTH repo-wide contracts below
+// carry a TEMPORARY kiosk-tree exclusion (B8), removed in P3.
+const KIOSK_TREE = "src/app/(lodge)/lodge/kiosk";
+
+/** Every TS/TSX source file under `src`, minus `__tests__` and the kiosk tree. */
+function listRepoSourceFiles(): string[] {
+  return listSourceFiles("src").filter(
+    (path) => !path.replaceAll("\\", "/").startsWith(`${KIOSK_TREE}/`),
+  );
 }
 
 // The two files where a literal Tailwind `teal-*` utility is still allowed
@@ -81,6 +93,42 @@ describe("brand accent source contract", () => {
   });
 });
 
+// #2188 P2 (R5) — the NEW repo-wide colored-family source contract. The 16
+// colour families (the 17 the scanner tracks minus `teal`, which M9 routes to
+// the brand accent and which the brand-accent contract above already gates) must
+// not appear as raw Tailwind utilities anywhere in source: every colored surface
+// now reaches its hue through the signed-off scale vocabulary — the semantic
+// `bg/text/border-<success|warning|info|danger>-<step>` scales, the categorical
+// `cat1..cat5` scales, or CHIP_TONE_CLASSES. Repo-wide, kiosk excluded (B8, P3).
+const COLORED_FAMILIES_16 = [
+  "red", "orange", "amber", "yellow", "lime", "green", "emerald",
+  "cyan", "sky", "blue", "indigo", "violet", "purple", "fuchsia", "pink",
+  "rose",
+];
+
+describe("colored-family source contract (R5, 16 families, repo-wide)", () => {
+  it("keeps every colored surface on the scale vocabulary, never raw colour utilities", () => {
+    const coloredRe = new RegExp(
+      `\\b(?:bg|text|border|ring|ring-offset|divide|outline|fill|stroke|from|via|to|accent|caret|decoration|placeholder)-(?:${COLORED_FAMILIES_16.join(
+        "|",
+      )})-(?:50|100|200|300|400|500|600|700|800|900|950)\\b`,
+    );
+    const offenders = listRepoSourceFiles().filter((path) =>
+      coloredRe.test(readFileSync(join(process.cwd(), path), "utf8")),
+    );
+    expect(
+      offenders,
+      offenders.length === 0
+        ? ""
+        : `Raw Tailwind colour-family utilities must not be baked into source. ` +
+            `Use the semantic step scales (bg-danger-3/text-danger-11/…), the ` +
+            `categorical scales (bg-cat1-3/…), or CHIP_TONE_CLASSES so the ` +
+            `surface follows the club theme. The kiosk tree is exempt until P3. ` +
+            `Offenders:\n${offenders.join("\n")}`,
+    ).toEqual([]);
+  });
+});
+
 // The /finance and admin surfaces render inside `app-theme-scope` (see
 // `src/app/(finance)/finance/layout.tsx` and the admin layout), which applies
 // the club theme.
@@ -102,22 +150,14 @@ describe("brand accent source contract", () => {
 // deliberate #1801 SVG-presentation-attribute carve-out and is out of scope
 // for this check.)
 //
-// Still not repo-wide: member-facing surfaces under `src/app/(authenticated)`,
-// `src/app/(public)`, and the shared `src/components` root keep their raw
-// neutrals for now (the `.dark .app-theme-scope` shim still covers them in
-// dark mode). Widening further is a follow-up that has to migrate those
-// trees first.
-const THEMED_TOKEN_ONLY_ROOTS = [
-  "src/app/(admin)",
-  "src/app/(finance)",
-  "src/components/admin",
-  "src/components/finance",
-];
+// #2188 P2 — the neutral contract is now REPO-WIDE (kiosk excluded, B8/P3) via
+// `listRepoSourceFiles()`, after P2 migrated every member-facing tree onto the
+// shadcn role tokens and deleted the `.dark .app-theme-scope` neutral remap. The
+// admin/finance roots that used to be listed here are subsumed by the repo-wide
+// scan; the deliberate exceptions live in THEMED_NEUTRAL_ALLOWLIST above.
 
-// Admin-only leaves that live OUTSIDE the roots above (directly under the
-// shared `src/components` / `src/lib` roots, which are not gated). Gated as
-// explicit files so they keep coverage without dragging the whole shared root
-// (and its member-facing raw neutrals) into the scan.
+// Admin-only leaves kept as an explicit existence guard so a rename surfaces as a
+// clear failure rather than silently dropping coverage.
 const THEMED_TOKEN_ONLY_FILES = [
   "src/components/admin-booking-calendar.tsx",
   "src/components/admin-hub-page.tsx",
@@ -159,11 +199,26 @@ const THEMED_NEUTRAL_ALLOWLIST = new Set<string>(
     // fallback): standalone opaque fills with no tinted/accent pairing, the
     // same shape as this file's teal allowlist entry above.
     "src/components/admin-booking-calendar.tsx",
+    // #2188 P2 additions (repo-wide widening). Deliberate DARK surfaces authored
+    // in literal slate with white text — the same shape as the kiosk; a proper
+    // theme migration is a redesign (owner-visible), not a P2 class swap.
+    "src/app/(lodge)/lodge/roster/[date]/setup/page.tsx",
+    "src/components/kiosk-lodge-instructions.tsx",
+    // Un-themed system pages: React error/404 boundaries render OUTSIDE
+    // app-theme-scope, so there is no club theme to follow — raw neutrals are
+    // correct there.
+    "src/app/error.tsx",
+    "src/app/not-found.tsx",
+    // Radix overlay scrims / decorative black overlays (`bg-black/80`,
+    // `bg-black/10`): opacity scrims over the page, not theme surfaces.
+    "src/components/ui/dialog.tsx",
+    "src/components/ui/sheet.tsx",
+    "src/components/site-banners.tsx",
   ].map((path) => path.replaceAll("\\", "/")),
 );
 
-describe("themed-surface neutral contract", () => {
-  it("keeps the admin and /finance surfaces on theme tokens, never raw neutrals or bg-white", () => {
+describe("themed-surface neutral contract (repo-wide, #2188 P2)", () => {
+  it("keeps every themed surface on theme tokens, never raw neutrals or bg-white", () => {
     // The repo's own dark shim treats slate/gray/zinc/neutral/stone as ONE
     // family, so this matches the whole family rather than slate alone. Note
     // `text-white` is NOT matched: it is a legitimate paired foreground on a
@@ -179,10 +234,10 @@ describe("themed-surface neutral contract", () => {
         );
       }
     }
-    const offenders = [
-      ...THEMED_TOKEN_ONLY_ROOTS.flatMap(listSourceFiles),
-      ...THEMED_TOKEN_ONLY_FILES,
-    ].filter((path) => {
+    // #2188 P2 — widened from the admin/finance roots to the WHOLE repo (kiosk
+    // excluded, B8/P3) so raw neutrals cannot re-enter any themed surface. The
+    // per-file allowlist above carries the deliberate exceptions.
+    const offenders = listRepoSourceFiles().filter((path) => {
       const normalized = path.replaceAll("\\", "/");
       if (THEMED_NEUTRAL_ALLOWLIST.has(normalized)) {
         return false;

@@ -109,7 +109,7 @@ export default function PaymentForm({
 
   if (isPaid) {
     return (
-      <div className="rounded-md bg-green-50 p-4 text-sm text-green-700">
+      <div className="rounded-md bg-success-3 p-4 text-sm text-success-11">
         <p className="font-medium">Payment successful!</p>
         <p className="mt-1">Your payment of {formattedAmount} has been processed.</p>
       </div>
@@ -118,7 +118,7 @@ export default function PaymentForm({
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
-      <div className="rounded-lg border border-gray-200 p-4">
+      <div className="rounded-lg border border-border p-4">
         <PaymentElement
           options={{
             layout: "tabs",
@@ -127,7 +127,7 @@ export default function PaymentForm({
       </div>
 
       {errorMessage && (
-        <div className="rounded-md bg-red-50 p-3 text-sm text-red-700">
+        <div className="rounded-md bg-danger-3 p-3 text-sm text-danger-11">
           {errorMessage}
         </div>
       )}
@@ -146,7 +146,7 @@ export default function PaymentForm({
         </button>
       </div>
       {isSplitDisplay && (
-        <p className="text-sm text-gray-600">
+        <p className="text-sm text-muted-foreground">
           This covers the member places on your booking. Your non-member
           guests&apos; places (about {formatCents(deferredGuestAmountCents!)})
           are charged closer to your stay, not today.

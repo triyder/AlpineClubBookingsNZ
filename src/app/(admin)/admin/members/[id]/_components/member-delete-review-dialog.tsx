@@ -56,9 +56,9 @@ export function MemberDeleteReviewDialog({
               : "Rejecting keeps the member record unchanged."}
           </DialogDescription>
         </DialogHeader>
-        {error && <div className="rounded border border-red-200 bg-red-50 p-2 text-sm text-red-700">{error}</div>}
+        {error && <div className="rounded border border-danger-6 bg-danger-3 p-2 text-sm text-danger-11">{error}</div>}
         {action === "approve" && approvalBlockers.length > 0 && (
-          <div className="rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+          <div className="rounded border border-warning-6 bg-warning-3 p-3 text-sm text-warning-11">
             Approval is blocked until these dependencies are cleared:
             <ul className="mt-2 list-disc space-y-1 pl-5">
               {approvalBlockers.map((blocker) => (

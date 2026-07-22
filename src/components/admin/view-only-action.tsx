@@ -163,7 +163,7 @@ export function AdminForbiddenSaveNotice({
     <p
       role="alert"
       className={cn(
-        "rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800",
+        "rounded-md border border-danger-6 bg-danger-3 px-3 py-2 text-sm text-danger-11",
         className,
       )}
     >

@@ -591,7 +591,7 @@ export default async function DashboardPage() {
                         {booking._count.guests !== 1 ? "s" : ""} ·{" "}
                         {formatCents(booking.finalPriceCents)}
                         {booking.draftExpiresAt && (
-                          <span className="text-amber-700 ml-2">
+                          <span className="text-warning-11 ml-2">
                             Expires{" "}
                             {new Date(
                               booking.draftExpiresAt,

@@ -117,7 +117,7 @@ export default function BookingRequestsPage() {
             {publicQueueCount > 0 && (
               <Badge
                 variant="secondary"
-                className="border-amber-200 bg-amber-100 text-amber-800"
+                className="border-warning-6 bg-warning-3 text-warning-11"
               >
                 {publicQueueCount}
               </Badge>

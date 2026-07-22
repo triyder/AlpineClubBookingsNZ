@@ -122,7 +122,7 @@ export function WaitlistOfferCard({
             <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
           </svg>
           {isExpired ? (
-            <span className="text-red-600">This offer has expired</span>
+            <span className="text-danger-11">This offer has expired</span>
           ) : (
             <span>{timeLeft}</span>
           )}
@@ -135,7 +135,7 @@ export function WaitlistOfferCard({
         )}
 
         {error && (
-          <div className="rounded-md bg-red-50 p-3 text-sm text-red-700">{error}</div>
+          <div className="rounded-md bg-danger-3 p-3 text-sm text-danger-11">{error}</div>
         )}
 
         <div className="flex gap-3">

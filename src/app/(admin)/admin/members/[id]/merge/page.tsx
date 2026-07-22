@@ -225,20 +225,20 @@ export default function MemberMergePage({
 
       {/* Master / loser */}
       <div className="mt-6 grid gap-4 sm:grid-cols-2">
-        <div className="rounded-lg border border-blue-200 bg-blue-50 p-4">
-          <p className="text-xs font-semibold uppercase text-blue-700">Master (kept)</p>
+        <div className="rounded-lg border border-info-6 bg-info-3 p-4">
+          <p className="text-xs font-semibold uppercase text-info-11">Master (kept)</p>
           <p className="mt-1 font-medium text-foreground">
             {master ? `${master.firstName} ${master.lastName}` : "Loading…"}
           </p>
           <p className="text-xs text-muted-foreground">{master?.email}</p>
           {master && (master.active === false || master.archivedAt) && (
-            <p className="mt-2 text-xs font-medium text-red-600">
+            <p className="mt-2 text-xs font-medium text-danger-11">
               This member is inactive or archived and cannot be a merge master.
             </p>
           )}
         </div>
-        <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
-          <p className="text-xs font-semibold uppercase text-amber-700">
+        <div className="rounded-lg border border-warning-6 bg-warning-3 p-4">
+          <p className="text-xs font-semibold uppercase text-warning-11">
             Duplicate (deleted)
           </p>
           {loser ? (
@@ -293,7 +293,7 @@ export default function MemberMergePage({
                 {suggestions.map((s) => (
                   <button
                     key={s.id}
-                    className="rounded-full border px-3 py-1 text-xs hover:bg-blue-50"
+                    className="rounded-full border px-3 py-1 text-xs hover:bg-info-3"
                     onClick={() => {
                       setLoser({
                         id: s.id,
@@ -321,7 +321,7 @@ export default function MemberMergePage({
       )}
 
       {error && (
-        <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+        <div className="mt-4 rounded-lg border border-danger-6 bg-danger-3 p-3 text-sm text-danger-11">
           {error}
         </div>
       )}
@@ -330,11 +330,11 @@ export default function MemberMergePage({
       {preview && (
         <div className="mt-6 space-y-5">
           {preview.blockers.length > 0 && (
-            <div className="rounded-lg border border-red-300 bg-red-50 p-4">
-              <p className="flex items-center gap-2 text-sm font-semibold text-red-800">
+            <div className="rounded-lg border border-danger-6 bg-danger-3 p-4">
+              <p className="flex items-center gap-2 text-sm font-semibold text-danger-11">
                 <AlertTriangle className="h-4 w-4" /> This merge is blocked
               </p>
-              <ul className="mt-2 list-disc pl-5 text-sm text-red-700">
+              <ul className="mt-2 list-disc pl-5 text-sm text-danger-11">
                 {preview.blockers.map((b) => (
                   <li key={b.code}>
                     {b.label}
@@ -370,7 +370,7 @@ export default function MemberMergePage({
                         <td className="py-1 pr-3 font-medium">{r.field}</td>
                         <td className="py-1 pr-3 text-muted-foreground">{display(r.master)}</td>
                         <td className="py-1 pr-3 text-muted-foreground">{display(r.loser)}</td>
-                        <td className="py-1 pr-3 font-medium text-green-700">
+                        <td className="py-1 pr-3 font-medium text-success-11">
                           {display(r.result)} <span className="text-muted-foreground">({r.source})</span>
                         </td>
                       </tr>
@@ -413,8 +413,8 @@ export default function MemberMergePage({
 
           {/* Warnings */}
           {preview.warnings.length > 0 && (
-            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
-              <ul className="list-disc pl-5 text-xs text-amber-800">
+            <div className="rounded-lg border border-warning-6 bg-warning-3 p-3">
+              <ul className="list-disc pl-5 text-xs text-warning-11">
                 {preview.warnings.map((w, i) => (
                   <li key={i}>{w}</li>
                 ))}
@@ -424,11 +424,11 @@ export default function MemberMergePage({
 
           {/* Irreversible banner + confirmation */}
           {preview.blockers.length === 0 && (
-            <div className="rounded-lg border-2 border-red-400 bg-red-50 p-4">
-              <p className="flex items-center gap-2 text-sm font-semibold text-red-800">
+            <div className="rounded-lg border-2 border-danger-7 bg-danger-3 p-4">
+              <p className="flex items-center gap-2 text-sm font-semibold text-danger-11">
                 <AlertTriangle className="h-4 w-4" /> This cannot be undone
               </p>
-              <p className="mt-1 text-xs text-red-700">
+              <p className="mt-1 text-xs text-danger-11">
                 The duplicate <strong>{preview.loserName}</strong> will be
                 permanently deleted. Type{" "}
                 <code className="rounded bg-card px-1">{preview.confirmationPhrase}</code>{" "}

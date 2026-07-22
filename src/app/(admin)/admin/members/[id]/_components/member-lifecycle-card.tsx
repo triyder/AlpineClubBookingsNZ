@@ -125,20 +125,20 @@ export function MemberLifecycleCard({
       </CardHeader>
       <CardContent className="space-y-4">
         {archiveError && (
-          <div className="p-2 bg-red-50 border border-red-200 text-red-700 rounded text-sm">{archiveError}</div>
+          <div className="p-2 bg-danger-3 border border-danger-6 text-danger-11 rounded text-sm">{archiveError}</div>
         )}
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="rounded-md border border-border p-3">
             <p className="text-xs uppercase tracking-wide text-muted-foreground">Cancellation</p>
             {member.cancelledAt ? (
               <div className="mt-2 space-y-1 text-sm">
-                <Badge variant="secondary" className="bg-amber-100 text-amber-800 border-amber-200">
+                <Badge variant="secondary" className="bg-warning-3 text-warning-11 border-warning-6">
                   Cancelled {formatMemberDateNz(member.cancelledAt)}
                 </Badge>
                 {member.cancelledReason && <p className="text-muted-foreground">{member.cancelledReason}</p>}
               </div>
             ) : openCancellationRequest ? (
-              <p className="mt-2 text-sm text-amber-700">Cancellation request pending review.</p>
+              <p className="mt-2 text-sm text-warning-11">Cancellation request pending review.</p>
             ) : (
               <p className="mt-2 text-sm text-muted-foreground">This member has not been cancelled.</p>
             )}
@@ -153,7 +153,7 @@ export function MemberLifecycleCard({
                 {member.archivedReason && <p className="text-muted-foreground">{member.archivedReason}</p>}
               </div>
             ) : pendingArchiveRequest ? (
-              <p className="mt-2 text-sm text-amber-700">Archive request pending review.</p>
+              <p className="mt-2 text-sm text-warning-11">Archive request pending review.</p>
             ) : (
               <p className="mt-2 text-sm text-muted-foreground">
                 {member.cancelledAt ? "Ready to request archive." : "Archive is available after cancellation."}
@@ -163,21 +163,21 @@ export function MemberLifecycleCard({
         </div>
 
         {cancellationError && (
-          <div className="p-2 bg-red-50 border border-red-200 text-red-700 rounded text-sm">{cancellationError}</div>
+          <div className="p-2 bg-danger-3 border border-danger-6 text-danger-11 rounded text-sm">{cancellationError}</div>
         )}
 
         {openCancellationRequest && (
-          <div className="rounded-md border border-amber-200 bg-amber-50 p-4">
+          <div className="rounded-md border border-warning-6 bg-warning-3 p-4">
             <div className="space-y-1">
-              <p className="text-sm font-medium text-amber-950">Pending cancellation request</p>
+              <p className="text-sm font-medium text-warning-11">Pending cancellation request</p>
               {openCancellationRequest.reason && (
-                <p className="text-sm text-amber-900">{openCancellationRequest.reason}</p>
+                <p className="text-sm text-warning-11">{openCancellationRequest.reason}</p>
               )}
-              <p className="text-xs text-amber-800">
+              <p className="text-xs text-warning-11">
                 Requested by {openCancellationRequest.requestedBy?.name ?? "Unknown"} on{" "}
                 {formatMemberDateNz(openCancellationRequest.submittedAt)} ({openCancellationRequest.participantStatus.replace(/_/g, " ").toLowerCase()})
               </p>
-              <p className="text-xs text-amber-800">
+              <p className="text-xs text-warning-11">
                 Review in the <Link href="/admin/membership-cancellations" className="underline">cancellation review queue</Link>.
               </p>
             </div>
@@ -207,18 +207,18 @@ export function MemberLifecycleCard({
         )}
 
         {pendingArchiveRequest && (
-          <div className="rounded-md border border-amber-200 bg-amber-50 p-4">
+          <div className="rounded-md border border-warning-6 bg-warning-3 p-4">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div className="space-y-1">
-                <p className="text-sm font-medium text-amber-950">Pending archive request</p>
-                <p className="text-sm text-amber-900">{pendingArchiveRequest.reason}</p>
-                <p className="text-xs text-amber-800">
+                <p className="text-sm font-medium text-warning-11">Pending archive request</p>
+                <p className="text-sm text-warning-11">{pendingArchiveRequest.reason}</p>
+                <p className="text-xs text-warning-11">
                   Requested by {pendingArchiveRequest.requestedBy?.name ?? "Unknown admin"} on{" "}
                   {formatMemberDateNz(pendingArchiveRequest.requestedAt)}
                 </p>
               </div>
               {isArchiveRequester ? (
-                <p className="text-xs text-amber-800">Needs another admin to approve or reject.</p>
+                <p className="text-xs text-warning-11">Needs another admin to approve or reject.</p>
               ) : (
                 <div className="w-full space-y-2 sm:max-w-sm">
                   <Label htmlFor={`archive-review-note-${pendingArchiveRequest.id}`}>Optional review note</Label>
@@ -300,7 +300,7 @@ export function MemberLifecycleCard({
                       className={
                         request.status === "APPROVED"
                           ? "bg-border text-foreground border-border"
-                          : "bg-red-50 text-red-700 border-red-200"
+                          : "bg-danger-3 text-danger-11 border-danger-6"
                       }
                     >
                       {request.status === "APPROVED" ? "Approved" : "Rejected"}

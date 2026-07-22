@@ -365,7 +365,7 @@ export function MemberBulkMembershipDialog({
                 .
               </p>
               {preview.seasonYear !== currentSeasonYear && (
-                <p className="mt-1 text-xs text-amber-600 dark:text-amber-500">
+                <p className="mt-1 text-xs text-warning-11">
                   Heads up: this is not the current season ({currentSeasonYear}).
                 </p>
               )}

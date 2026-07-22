@@ -122,28 +122,27 @@ The same rule applies to raw NEUTRALS, though for a narrower reason than the
 brand accent — and the reason is worth stating precisely, because a safety net
 already exists.
 
-`globals.css` carries a **`.dark .app-theme-scope` neutral remap** (the #1263
-follow-up block, immediately after the `.finance-trend-chart` chart rules). It
-rewrites literal `bg-white`, `bg-{neutral}-50/100/200`,
-`text-{neutral}-300..950`, `border-{neutral}-100..300`, and the matching
-`divide-`/`hover:` variants onto `--card`, `--muted`, `--border`,
-`--foreground`, `--muted-foreground`, and `--accent`, treating
-slate/gray/zinc/neutral/stone as one family. So a raw neutral inside
-`app-theme-scope` is **already handled in dark mode** — that shim is why dark
-mode read correctly before the migrations below.
-
-What the shim does **not** do is cover LIGHT mode: it is `.dark`-scoped only. A
-literal `slate-*` or `bg-white` therefore stays literally slate/white under a
-strongly non-default club theme in light mode, where the theme's own surface
-colours should apply. That gap — plus the plain consistency argument that a
-surface should be correct at source rather than correct-by-shim — is why code
-inside `app-theme-scope` uses the semantic surface tokens:
+Historically `globals.css` carried a **`.dark .app-theme-scope` neutral remap**
+(the #1263 follow-up block) that rewrote literal `bg-white`,
+`bg-{neutral}-50/100/200`, `text-{neutral}-300..950`, `border-{neutral}-100..300`
+and their `divide-`/`hover:` variants onto `--card`, `--muted`, `--border`,
+`--foreground`, `--muted-foreground` and `--accent`, treating
+slate/gray/zinc/neutral/stone as one family. That shim covered dark mode only —
+in LIGHT mode a literal `slate-*`/`bg-white` stayed slate/white and ignored a
+strongly non-default club theme, so surfaces were correct-by-shim rather than at
+source. **#2188 P2 removed the shim entirely** (see below); code inside
+`app-theme-scope` now uses the semantic surface tokens at source:
 `bg-card` / `text-card-foreground` for card surfaces, `bg-popover` /
 `text-popover-foreground` for floating panels such as chart tooltips,
 `text-muted-foreground` for secondary labels and footnotes, `bg-muted` for
-tinted rows and recessed insets, and `border-border` for rules. The finance
-tree migrated in #2137 and the whole admin tree followed in #2144, so both are
-now token-only at source and gated by
+tinted rows and recessed insets, and `border-border` for rules. Colored surfaces
+likewise reach their hue through the signed-off scale vocabulary — the semantic
+`bg/text/border-<success|warning|info|danger>-<step>` scales, the categorical
+`cat1..cat5` scales, or `CHIP_TONE_CLASSES` — never raw Tailwind colour
+utilities. The finance tree migrated in #2137, admin in #2144, the member-facing
+`(authenticated)`/`(public)` trees in #2187 P1 (B4), and the remaining trees
+(lodge, website, shared components, root) in #2188 P2, so the source is
+token-only repo-wide and gated by
 `src/lib/__tests__/brand-color-source-contract.test.ts`.
 
 **Insets use `bg-muted`, outer surfaces use `bg-card`** (#2144 owner decision).
@@ -155,22 +154,20 @@ page. The #2137 finance precedent (`finance-dashboard-client.tsx`,
 popover takes `bg-card`; a nested strip inside a card, a zebra row, a table
 header band, a read-only field fill, or a recessed well takes `bg-muted`.
 
-With admin migrated, the `.dark .app-theme-scope` neutral remap block in
-`globals.css` is **legacy-compat for the non-admin surfaces plus the
-allowlisted admin files**. The bulk of the raw neutrals that still depend on
-it live under `src/app/(authenticated)`, `src/app/(public)`, and the shared
-`src/components` root (a few hundred occurrences) — but some allowlisted
-admin files depend on it too, wherever their deliberately-literal classes
-fall inside the remap's ranges: the roster and induction print pages read
-correctly when viewed ON SCREEN in dark mode only because the remap rewrites
-their `bg-gray-50/100`, `bg-white`, and grey-ink classes (the remap is not
-print-scoped — print always renders the light palette, #2146), and the
-site-style wizard's raw-CSS editor pane (`bg-white`) is likewise
-remap-darkened on screen. Deleting the block therefore requires migrating
-those member-facing trees — and re-deciding the remap-dependent allowlisted
-files — first. That work is tracked: remap deletion is Phases 2–3 of the
-theme-architecture program planned on issue #2181. Until then the block
-stays exactly as is.
+**#2188 P2 completed the migration and deleted both `.dark .app-theme-scope`
+remap blocks** — the neutral remap and the colored-callout remap — so
+`grep "\.dark .app-theme-scope" globals.css` now returns only P1's generated
+dark core-token block and the A6 J8 card-shadow rule, never a remap. The source
+contract is now **repo-wide** (both the neutral contract and the new 16-family
+colored contract), with a temporary kiosk-tree exclusion (B8) removed in P3.
+The surfaces that legitimately keep raw neutrals are per-file allowlisted with a
+stated reason: the roster/induction print pages and reports print variants
+(paper output, not theme), the site-style wizard's raw-CSS editor pane, the
+display/signage surfaces, solid opaque status chips, deliberate dark surfaces
+(the roster-setup and kiosk-style instruction panels, same shape as the kiosk),
+the un-themed React error/404 boundaries (rendered outside `app-theme-scope`),
+and the Radix overlay scrims (`bg-black/80`). The kiosk tree itself is migrated
+onto `--kiosk-*` tokens in P3.
 
 **The app tokens resolve from a GENERATED substrate** (#2187 P1, the restyle
 event). A club now picks three seeds (accent + optional neutral-character +
@@ -190,8 +187,8 @@ generated dark steps with **no `--brand-*` reference left inside it** (F1). The
 legacy `--brand-*` values still ship as derived SHIMS (`deriveBrandShims`, from
 the substrate neutral ramp) so the website `color-mix()` recipes, the app
 `bg-brand-*` utilities, and the email palette keep working through P1; those
-shims are deleted in P2/P3. The `.dark` neutral/colored remap blocks above are
-untouched by P1.
+shims are deleted in P2/P3. The `.dark` neutral/colored remap blocks described
+above were deleted by #2188 P2 once every tree was migrated at source.
 
 The member-facing `src/app/(authenticated)` and `src/app/(public)` trees were
 migrated off raw neutrals onto the semantic surface tokens in the same event
@@ -245,7 +242,8 @@ waitlist, committee, and family-suggestions.
 
 Deliberately **not** in the list:
 
-- `--border` / `--input`. Dark mode remaps `bg-{neutral}-200` onto `--border`,
+- `--border` / `--input`. Dark mode used to remap `bg-{neutral}-200` onto
+  `--border` (the shim #2188 P2 deleted, when the trees moved to source tokens),
   so a `bg-slate-200` badge would be a muted-text surface — but the only such
   badge (`page-content-panel.tsx`) was moved to `bg-muted text-muted-foreground`
   instead. A mid-luminance hairline colour is the wrong background for body text
@@ -256,8 +254,9 @@ Deliberately **not** in the list:
   surface no text should sit on. The AA guarantee that IS enforced (the
   neutral-ramp sweep in `club-theme-schema.test.ts`) covers only the surfaces in
   the clamp set; `--border`/`--input` are deliberately outside it.
-- The dark coloured hue remaps. The `-50` (`oklch(0.29 …)`) and `-100`
-  (`oklch(0.33 …)`) tiers sit at or below the `*-muted` tier already checked, so
+- The (now-deleted, #2188 P2) dark coloured hue remaps. The `-50`
+  (`oklch(0.29 …)`) and `-100` (`oklch(0.33 …)`) tiers sat at or below the
+  `*-muted` tier already checked, so
   in dark mode — where the derived tone is the LIGHT one — clearing AA on
   `--success-muted` clears them too. The `-200` tier does NOT follow from that
   reasoning and is excluded on evidence instead: `bg-{hue}-200` remaps to

@@ -161,10 +161,10 @@ function PendingRequestSummary({ request }: { request: PendingRequest }) {
           : "Join request";
 
   return (
-    <div className="flex items-start justify-between gap-3 rounded-md border bg-slate-50 px-3 py-2">
+    <div className="flex items-start justify-between gap-3 rounded-md border bg-card px-3 py-2">
       <div>
-        <p className="text-sm font-medium text-slate-900">{title}</p>
-        <p className="text-xs text-slate-500">
+        <p className="text-sm font-medium text-foreground">{title}</p>
+        <p className="text-xs text-muted-foreground">
           {request.familyGroupName ?? "Family group"} · Pending
           {request.isPendingAdminRequest ? " admin review" : " response"}
         </p>
@@ -276,12 +276,12 @@ export function MemberOnboardingWizard({
         </DialogHeader>
 
         {loading ? (
-          <div className="flex items-center justify-center gap-2 py-12 text-sm text-slate-600">
+          <div className="flex items-center justify-center gap-2 py-12 text-sm text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" />
             Loading member details
           </div>
         ) : loadError ? (
-          <div className="space-y-4 rounded-md border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
+          <div className="space-y-4 rounded-md border border-danger-6 bg-danger-3 p-4 text-sm text-danger-11">
             <p>{loadError}</p>
             <Button type="button" variant="outline" onClick={loadOnboarding}>
               <RefreshCw className="h-4 w-4" />
@@ -291,32 +291,32 @@ export function MemberOnboardingWizard({
         ) : data ? (
           <div className="space-y-5">
             <div className="grid gap-2 sm:grid-cols-3">
-              <div className="rounded-md border bg-white p-3">
+              <div className="rounded-md border bg-card p-3">
                 <div className="flex items-center gap-2 text-sm font-medium">
-                  <CircleAlert className="h-4 w-4 text-amber-600" />
+                  <CircleAlert className="h-4 w-4 text-warning-11" />
                   Profile
                 </div>
-                <p className="mt-1 text-xs text-slate-500">
+                <p className="mt-1 text-xs text-muted-foreground">
                   {data.currentMember.status.isProfileComplete
                     ? "Complete"
                     : "Required details missing"}
                 </p>
               </div>
-              <div className="rounded-md border bg-white p-3">
+              <div className="rounded-md border bg-card p-3">
                 <div className="flex items-center gap-2 text-sm font-medium">
-                  <UserCheck className="h-4 w-4 text-sky-700" />
+                  <UserCheck className="h-4 w-4 text-info-11" />
                   Confirmation
                 </div>
-                <p className="mt-1 text-xs text-slate-500">
+                <p className="mt-1 text-xs text-muted-foreground">
                   {detailsAccepted ? "Ready for family review" : "Needs review"}
                 </p>
               </div>
-              <div className="rounded-md border bg-white p-3">
+              <div className="rounded-md border bg-card p-3">
                 <div className="flex items-center gap-2 text-sm font-medium">
-                  <Users className="h-4 w-4 text-indigo-700" />
+                  <Users className="h-4 w-4 text-cat3-11" />
                   Family
                 </div>
-                <p className="mt-1 text-xs text-slate-500">
+                <p className="mt-1 text-xs text-muted-foreground">
                   {data.familyGroups.length > 0 ? "Review linked members" : "No family group"}
                 </p>
               </div>
@@ -325,8 +325,8 @@ export function MemberOnboardingWizard({
             {step === "profile" ? (
               <div className="space-y-4">
                 {data.currentMember.status.missingFieldDetails.length > 0 ? (
-                  <div className="rounded-md border border-amber-200 bg-amber-50 p-3">
-                    <p className="text-sm font-medium text-amber-900">Missing details</p>
+                  <div className="rounded-md border border-warning-6 bg-warning-3 p-3">
+                    <p className="text-sm font-medium text-warning-11">Missing details</p>
                     <div className="mt-2 flex flex-wrap gap-2">
                       {data.currentMember.status.missingFieldDetails.map((field) => (
                         <Badge key={field.key} variant="warning">
@@ -347,25 +347,25 @@ export function MemberOnboardingWizard({
             ) : null}
 
             {step === "confirm" ? (
-              <div className="space-y-4 rounded-md border bg-white p-4">
+              <div className="space-y-4 rounded-md border bg-card p-4">
                 <div className="flex items-start gap-3">
-                  <CheckCircle2 className="mt-0.5 h-5 w-5 text-emerald-700" />
+                  <CheckCircle2 className="mt-0.5 h-5 w-5 text-success-11" />
                   <div>
-                    <h3 className="font-medium text-slate-900">
+                    <h3 className="font-medium text-foreground">
                       Confirm your details are correct.
                     </h3>
-                    <p className="mt-1 text-sm text-slate-600">
+                    <p className="mt-1 text-sm text-muted-foreground">
                       You are confirming your own member profile. Login-capable family members must sign in and confirm themselves.
                     </p>
                   </div>
                 </div>
-                <div className="grid gap-2 rounded-md bg-slate-50 p-3 text-sm sm:grid-cols-2">
+                <div className="grid gap-2 rounded-md bg-card p-3 text-sm sm:grid-cols-2">
                   <div>
-                    <span className="text-slate-500">Name</span>
+                    <span className="text-muted-foreground">Name</span>
                     <p className="font-medium">{data.currentMember.name}</p>
                   </div>
                   <div>
-                    <span className="text-slate-500">Date of birth</span>
+                    <span className="text-muted-foreground">Date of birth</span>
                     <p className="font-medium">
                       {data.currentMember.profile.dateOfBirth}
                     </p>
@@ -382,15 +382,15 @@ export function MemberOnboardingWizard({
             {step === "family" ? (
               <div className="space-y-4">
                 {data.familyGroups.length === 0 ? (
-                  <div className="rounded-md border bg-white p-4 text-sm text-slate-600">
+                  <div className="rounded-md border bg-card p-4 text-sm text-muted-foreground">
                     No family group members are linked to your profile.
                   </div>
                 ) : (
                   <div className="space-y-4">
                     {data.familyGroups.map((group) => (
-                      <div key={group.id} className="space-y-3 rounded-md border bg-white p-4">
+                      <div key={group.id} className="space-y-3 rounded-md border bg-card p-4">
                         <div className="flex items-center gap-2">
-                          <Users className="h-4 w-4 text-indigo-700" />
+                          <Users className="h-4 w-4 text-cat3-11" />
                           <h3 className="font-medium">
                             {group.name ?? "Family group"}
                           </h3>
@@ -399,16 +399,16 @@ export function MemberOnboardingWizard({
                           {group.members.map((member) => (
                             <div
                               key={`${group.id}-${member.id}`}
-                              className="rounded-md border bg-slate-50 px-3 py-2"
+                              className="rounded-md border bg-card px-3 py-2"
                             >
                               <div className="flex flex-wrap items-center gap-2">
-                                <p className="text-sm font-medium text-slate-900">
+                                <p className="text-sm font-medium text-foreground">
                                   {member.name}
                                   {member.isCurrentUser ? " (you)" : ""}
                                 </p>
                                 {getMemberStatusBadge(member)}
                               </div>
-                              <p className="mt-1 text-xs text-slate-500">
+                              <p className="mt-1 text-xs text-muted-foreground">
                                 {member.isCurrentUser
                                   ? "Your own details are reviewed in this wizard."
                                   : member.nextAction === "self_confirmation_required"
@@ -443,9 +443,9 @@ export function MemberOnboardingWizard({
                 )}
 
                 {data.pendingRequests.length > 0 ? (
-                  <div className="space-y-2 rounded-md border bg-white p-4">
+                  <div className="space-y-2 rounded-md border bg-card p-4">
                     <div className="flex items-center gap-2">
-                      <Clock className="h-4 w-4 text-amber-700" />
+                      <Clock className="h-4 w-4 text-warning-11" />
                       <h3 className="font-medium">Pending family requests</h3>
                     </div>
                     {data.pendingRequests.map((request) => (

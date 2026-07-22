@@ -136,7 +136,7 @@ export function PartnerLinkSection({ canManage = false }: PartnerLinkSectionProp
   return (
     <div className="space-y-4">
       {error && (
-        <div className="p-2 bg-red-50 border border-red-200 text-red-700 rounded text-sm">
+        <div className="p-2 bg-danger-3 border border-danger-6 text-danger-11 rounded text-sm">
           {error}
         </div>
       )}
@@ -147,7 +147,7 @@ export function PartnerLinkSection({ canManage = false }: PartnerLinkSectionProp
           {state.pendingIncoming.map((link) => (
             <div
               key={link.id}
-              className="flex items-center justify-between rounded-lg border border-indigo-200 bg-indigo-50 p-3"
+              className="flex items-center justify-between rounded-lg border border-cat3-6 bg-cat3-3 p-3"
             >
               <p className="text-sm font-medium">
                 {partnerName(link.partner)} has asked to record you as their partner
@@ -178,9 +178,9 @@ export function PartnerLinkSection({ canManage = false }: PartnerLinkSectionProp
         <div className="rounded-lg border p-3 space-y-2">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <HeartHandshake className="h-4 w-4 text-indigo-600" />
+              <HeartHandshake className="h-4 w-4 text-cat3-11" />
               <span className="font-medium">{partnerName(state.confirmed.partner)}</span>
-              <Badge className="bg-emerald-100 text-emerald-800 border-emerald-200">
+              <Badge className="bg-success-3 text-success-11 border-success-6">
                 Confirmed partner
               </Badge>
             </div>
@@ -196,8 +196,8 @@ export function PartnerLinkSection({ canManage = false }: PartnerLinkSectionProp
             )}
           </div>
           {showRemoveConfirm && (
-            <div className="flex items-center justify-between rounded-md border border-rose-200 bg-rose-50 p-2">
-              <p className="text-sm text-rose-900">
+            <div className="flex items-center justify-between rounded-md border border-danger-6 bg-danger-3 p-2">
+              <p className="text-sm text-danger-11">
                 Remove this partner relationship? {partnerName(state.confirmed.partner)} will
                 be notified.
               </p>
@@ -227,9 +227,9 @@ export function PartnerLinkSection({ canManage = false }: PartnerLinkSectionProp
       {state.pendingOutgoing.map((link) => (
         <div
           key={link.id}
-          className="flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50 p-3"
+          className="flex items-center justify-between rounded-lg border border-warning-6 bg-warning-3 p-3"
         >
-          <p className="text-sm text-amber-900">
+          <p className="text-sm text-warning-11">
             Waiting for {partnerName(link.partner)} to confirm your partner request.
           </p>
           <Button
@@ -244,8 +244,8 @@ export function PartnerLinkSection({ canManage = false }: PartnerLinkSectionProp
       ))}
 
       {state.pendingPartnerInvite && !state.confirmed && (
-        <div className="flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
-          <p className="text-sm text-amber-900">
+        <div className="flex items-center justify-between gap-3 rounded-lg border border-warning-6 bg-warning-3 p-3">
+          <p className="text-sm text-warning-11">
             Waiting for <strong>{state.pendingPartnerInvite.invitedEmail}</strong> to
             join and accept your invitation — accepting will record them as your
             partner.

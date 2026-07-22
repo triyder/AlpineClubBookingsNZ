@@ -163,7 +163,7 @@ export function NavBar({ user, features }: NavBarProps) {
               </div>
               <DropdownMenuSeparator />
               <DropdownMenuItem
-                className="cursor-pointer text-red-600 focus:bg-red-50 focus:text-red-600 dark:text-red-400 dark:focus:bg-red-950/40 dark:focus:text-red-300"
+                className="cursor-pointer text-danger-11 focus:bg-danger-3 focus:text-danger-11"
                 onClick={() => signOut({ callbackUrl: "/login" })}
               >
                 <LogOut className="mr-2 h-4 w-4" />
@@ -234,7 +234,7 @@ export function NavBar({ user, features }: NavBarProps) {
                   setMobileOpen(false);
                   signOut({ callbackUrl: "/login" });
                 }}
-                className="mt-4 flex w-full items-center gap-2 rounded-md px-3 py-2.5 text-sm font-medium text-red-600 transition-colors hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/40"
+                className="mt-4 flex w-full items-center gap-2 rounded-md px-3 py-2.5 text-sm font-medium text-danger-11 transition-colors hover:bg-danger-3"
               >
                 <LogOut className="h-4 w-4" />
                 Log out

@@ -51,7 +51,7 @@ export function MemberAddressFields({
 }: MemberAddressFieldsProps) {
   const streetValues = pickStreetAddressValues(values);
   const readOnlyInputClassName = readOnly
-    ? "bg-slate-50 text-slate-900 shadow-none focus-visible:ring-0"
+    ? "bg-card text-foreground shadow-none focus-visible:ring-0"
     : undefined;
 
   function applyStreetPatch(patch: Partial<MemberAddressValues>) {

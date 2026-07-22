@@ -212,7 +212,7 @@ function OwnInduction({
                 <li key={signer.memberId}>
                   {signer.firstName} {signer.lastName}
                   {hasSigned && (
-                    <span className="ml-2 text-xs text-green-600">Signed</span>
+                    <span className="ml-2 text-xs text-success-11">Signed</span>
                   )}
                   {signer.emailSentAt && !hasSigned && (
                     <span className="ml-2 text-xs">

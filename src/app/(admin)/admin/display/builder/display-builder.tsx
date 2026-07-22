@@ -404,7 +404,7 @@ export default function DisplayBuilder(props: DisplayBuilderProps) {
         {props.isBuiltIn && (
           <div
             role="note"
-            className="space-y-2 rounded-md border border-amber-400/50 bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950/40 dark:text-amber-200"
+            className="space-y-2 rounded-md border border-warning-7/50 bg-warning-3 p-3 text-sm text-warning-11"
           >
             <p className="font-medium">This is a built-in design.</p>
             <p>
@@ -419,7 +419,7 @@ export default function DisplayBuilder(props: DisplayBuilderProps) {
         {props.defaultCssCustomised && (
           <div
             role="note"
-            className="rounded-md border border-amber-400/50 bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950/40 dark:text-amber-200"
+            className="rounded-md border border-warning-7/50 bg-warning-3 p-3 text-sm text-warning-11"
           >
             The layout&apos;s default CSS was customised in Advanced mode. The
             builder owns the skeleton CSS, so saving here resets it — put custom
@@ -597,7 +597,7 @@ export default function DisplayBuilder(props: DisplayBuilderProps) {
           </div>
         )}
         {warnings.length > 0 && (
-          <div className="space-y-1 rounded-md border border-amber-400/50 bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+          <div className="space-y-1 rounded-md border border-warning-7/50 bg-warning-3 p-3 text-sm text-warning-11">
             <p className="font-medium">Some CSS was neutralised on the way in:</p>
             <ul className="list-disc space-y-0.5 pl-5">
               {warnings.map((issue, i) => (

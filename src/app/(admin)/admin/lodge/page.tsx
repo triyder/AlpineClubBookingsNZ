@@ -164,11 +164,11 @@ function AccountCard({
         {showLodgeControls &&
           account.binding !== "ambiguous" &&
           (account.boundLodgeName ? (
-            <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
+            <div className="rounded-md border border-success-6 bg-success-3 p-3 text-sm text-success-11">
               Serves <span className="font-semibold">{account.boundLodgeName}</span>.
             </div>
           ) : (
-            <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+            <div className="rounded-md border border-warning-6 bg-warning-3 p-3 text-sm text-warning-11">
               <p className="font-semibold">Not bound to a lodge</p>
               <p className="mt-1">
                 This account currently falls back to the club&apos;s default
@@ -178,7 +178,7 @@ function AccountCard({
             </div>
           ))}
         {account.binding === "ambiguous" && (
-          <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+          <div className="rounded-md border border-warning-6 bg-warning-3 p-3 text-sm text-warning-11">
             <p className="font-semibold">
               Ambiguous — assigned to {account.assignedLodgeCount} lodges
             </p>
@@ -273,8 +273,8 @@ function AccountCard({
           <div
             className={`rounded-md p-3 text-sm ${
               saveMessage.type === "success"
-                ? "bg-green-50 text-green-700"
-                : "bg-red-50 text-red-700"
+                ? "bg-success-3 text-success-11"
+                : "bg-danger-3 text-danger-11"
             }`}
           >
             {saveMessage.text}
@@ -402,7 +402,7 @@ export default function AdminLodgePage() {
       <div className="p-6">
         {viewOnlyBanner}
         <h1 className="text-2xl font-bold text-foreground mb-6">Lodge Kiosk</h1>
-        <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-red-700">
+        <div className="bg-danger-3 border border-danger-6 rounded-lg p-4 text-danger-11">
           {error || "Lodge account not found. Run the database seed to create it."}
         </div>
       </div>
@@ -492,8 +492,8 @@ export default function AdminLodgePage() {
                 <div
                   className={`rounded-md p-3 text-sm ${
                     createMessage.type === "success"
-                      ? "bg-green-50 text-green-700"
-                      : "bg-red-50 text-red-700"
+                      ? "bg-success-3 text-success-11"
+                      : "bg-danger-3 text-danger-11"
                   }`}
                 >
                   {createMessage.text}
@@ -523,7 +523,7 @@ export default function AdminLodgePage() {
           )}
           {!adding && createMessage?.type === "success" && (
             <CardContent>
-              <div className="rounded-md p-3 text-sm bg-green-50 text-green-700">
+              <div className="rounded-md p-3 text-sm bg-success-3 text-success-11">
                 {createMessage.text}
               </div>
             </CardContent>

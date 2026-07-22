@@ -455,9 +455,9 @@ export default function RosterSetupWizard() {
               <div
                 className={`w-10 h-10 rounded-full flex items-center justify-center text-lg font-bold ${
                   s === step
-                    ? "bg-blue-600 text-white"
+                    ? "bg-info-9 text-white"
                     : s < step
-                      ? "bg-green-600 text-white"
+                      ? "bg-success-9 text-white"
                       : "bg-slate-700 text-slate-400"
                 }`}
               >
@@ -465,7 +465,7 @@ export default function RosterSetupWizard() {
               </div>
               {s < 4 && (
                 <div
-                  className={`w-8 h-0.5 ${s < step ? "bg-green-600" : "bg-slate-700"}`}
+                  className={`w-8 h-0.5 ${s < step ? "bg-success-9" : "bg-slate-700"}`}
                 />
               )}
             </div>
@@ -480,13 +480,13 @@ export default function RosterSetupWizard() {
       </header>
 
       {error && (
-        <div className="bg-red-900/50 text-red-200 rounded-xl p-4 mb-4 text-lg">
+        <div className="bg-danger-9/50 text-danger-foreground rounded-xl p-4 mb-4 text-lg">
           {error}
         </div>
       )}
 
       {hasExistingRoster && step === 1 && (
-        <div className="bg-amber-900/50 text-amber-200 rounded-xl p-4 mb-4 text-lg">
+        <div className="bg-warning-9/50 text-warning-foreground rounded-xl p-4 mb-4 text-lg">
           A confirmed roster already exists for this date. Completing this wizard
           will replace it.
         </div>
@@ -526,12 +526,12 @@ export default function RosterSetupWizard() {
                         </span>
                         <div className="flex gap-2">
                           {guest.isArriving && (
-                            <span className="bg-green-700 text-green-100 text-sm font-medium px-3 py-1 rounded-full">
+                            <span className="bg-success-9 text-success-foreground text-sm font-medium px-3 py-1 rounded-full">
                               Arriving
                             </span>
                           )}
                           {guest.isDeparting && (
-                            <span className="bg-amber-700 text-amber-100 text-sm font-medium px-3 py-1 rounded-full">
+                            <span className="bg-warning-9 text-warning-foreground text-sm font-medium px-3 py-1 rounded-full">
                               Departing
                             </span>
                           )}
@@ -548,7 +548,7 @@ export default function RosterSetupWizard() {
             <button
               onClick={() => setStep(2)}
               disabled={totalGuests === 0}
-              className="bg-blue-600 hover:bg-blue-500 active:bg-blue-400 disabled:bg-slate-700 disabled:text-slate-500 text-white text-lg font-semibold px-8 py-4 rounded-xl min-h-[56px] transition-colors"
+              className="bg-info-9 hover:bg-info-9 active:bg-info-9 disabled:bg-slate-700 disabled:text-slate-500 text-white text-lg font-semibold px-8 py-4 rounded-xl min-h-[56px] transition-colors"
             >
               Next: Select Chores
             </button>
@@ -580,7 +580,7 @@ export default function RosterSetupWizard() {
                           onClick={() => toggleChore(t.id)}
                           className={`w-full flex items-center gap-3 rounded-xl px-4 py-3 min-h-[56px] text-left transition-colors ${
                             isSelected
-                              ? "bg-blue-800/40 border border-blue-600/50"
+                              ? "bg-info-9/40 border border-info-7/50"
                               : freqInfo?.excluded
                                 ? "bg-slate-800/50 border border-slate-700/50"
                                 : "bg-slate-800 border border-slate-700/50 hover:bg-slate-700"
@@ -589,7 +589,7 @@ export default function RosterSetupWizard() {
                           <div
                             className={`w-8 h-8 rounded-lg border-2 flex items-center justify-center flex-shrink-0 ${
                               isSelected
-                                ? "border-blue-400 bg-blue-600"
+                                ? "border-info-7 bg-info-9"
                                 : "border-slate-500"
                             }`}
                           >
@@ -615,13 +615,13 @@ export default function RosterSetupWizard() {
                                 {t.name}
                               </span>
                               {t.isEssential && (
-                                <span className="bg-yellow-700 text-yellow-100 text-xs font-medium px-2 py-0.5 rounded-full">
+                                <span className="bg-warning-9 text-warning-foreground text-xs font-medium px-2 py-0.5 rounded-full">
                                   Essential
                                 </span>
                               )}
                             </div>
                             {freqInfo?.excluded && freqInfo.reason && (
-                              <p className="text-sm text-amber-400 mt-1">
+                              <p className="text-sm text-warning-11 mt-1">
                                 {freqInfo.reason}
                               </p>
                             )}
@@ -644,7 +644,7 @@ export default function RosterSetupWizard() {
             <button
               onClick={generateRoster}
               disabled={selectedChoreIds.size === 0 || generating}
-              className="bg-blue-600 hover:bg-blue-500 active:bg-blue-400 disabled:bg-slate-700 disabled:text-slate-500 text-white text-lg font-semibold px-8 py-4 rounded-xl min-h-[56px] transition-colors"
+              className="bg-info-9 hover:bg-info-9 active:bg-info-9 disabled:bg-slate-700 disabled:text-slate-500 text-white text-lg font-semibold px-8 py-4 rounded-xl min-h-[56px] transition-colors"
             >
               {generating ? "Generating..." : "Next: Generate Roster"}
             </button>
@@ -763,7 +763,7 @@ export default function RosterSetupWizard() {
               <button
                 onClick={() => setStep(4)}
                 disabled={allocations.length === 0}
-                className="bg-blue-600 hover:bg-blue-500 active:bg-blue-400 disabled:bg-slate-700 disabled:text-slate-500 text-white text-lg font-semibold px-8 py-4 rounded-xl min-h-[56px] transition-colors"
+                className="bg-info-9 hover:bg-info-9 active:bg-info-9 disabled:bg-slate-700 disabled:text-slate-500 text-white text-lg font-semibold px-8 py-4 rounded-xl min-h-[56px] transition-colors"
               >
                 Next: Confirm
               </button>
@@ -785,7 +785,7 @@ export default function RosterSetupWizard() {
             </p>
 
             {hasExistingRoster && (
-              <p className="text-amber-400 text-lg mb-4">
+              <p className="text-warning-11 text-lg mb-4">
                 This will replace the existing confirmed roster.
               </p>
             )}
@@ -842,7 +842,7 @@ export default function RosterSetupWizard() {
             <button
               onClick={confirmRoster}
               disabled={submitting}
-              className="bg-green-600 hover:bg-green-500 active:bg-green-400 disabled:bg-slate-700 disabled:text-slate-500 text-white text-lg font-bold px-10 py-4 rounded-xl min-h-[56px] transition-colors"
+              className="bg-success-9 hover:bg-success-9 active:bg-success-9 disabled:bg-slate-700 disabled:text-slate-500 text-white text-lg font-bold px-10 py-4 rounded-xl min-h-[56px] transition-colors"
             >
               {submitting ? "Confirming..." : "Confirm Roster"}
             </button>

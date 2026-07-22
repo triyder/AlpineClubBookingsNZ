@@ -1116,7 +1116,7 @@ export function EditBookingPanel({
     <div className="space-y-6">
       {/* Admin override (issue #1668) */}
       {adminOverrideAvailable && (
-        <Card className="border-amber-300">
+        <Card className="border-warning-6">
           <CardHeader>
             <CardTitle>Admin override</CardTitle>
           </CardHeader>
@@ -1155,7 +1155,7 @@ export function EditBookingPanel({
                 <span className="font-medium">
                   Move locked/past dates (admin override)
                 </span>
-                <span className="block text-gray-500">
+                <span className="block text-muted-foreground">
                   Bypasses the member-facing date locks so you can move an
                   in-progress or fully-past booking. This is date-only and
                   audited — any pending guest or promo edits are cleared when
@@ -1205,7 +1205,7 @@ export function EditBookingPanel({
                   </span>
                 </label>
                 {!overridePricingMode && (
-                  <p className="text-amber-700">
+                  <p className="text-warning-11">
                     Choose a pricing mode to preview the change.
                   </p>
                 )}
@@ -1245,18 +1245,18 @@ export function EditBookingPanel({
             </div>
           </div>
           {checkIn !== booking.checkIn || checkOut !== booking.checkOut ? (
-            <p className="text-sm text-gray-500 mt-2">
+            <p className="text-sm text-muted-foreground mt-2">
               Originally: {booking.checkIn} to {booking.checkOut}
             </p>
           ) : null}
           {shiftMode ? (
-            <p className="mt-2 text-sm text-slate-600">
+            <p className="mt-2 text-sm text-muted-foreground">
               Shift keeps this {originalNights}-night stay the same length — the
               price stays exactly as booked.
             </p>
           ) : null}
           {isInProgressEdit ? (
-            <div className="mt-2 space-y-1 text-sm text-amber-800">
+            <div className="mt-2 space-y-1 text-sm text-warning-11">
               <p>
                 Your stay has started, so the check-in date stays fixed — you
                 can extend your check-out night by night from {minEditableDate}{" "}
@@ -1288,7 +1288,7 @@ export function EditBookingPanel({
         </CardHeader>
         <CardContent className="space-y-2">
           {isInProgressEdit ? (
-            <p className="text-sm text-gray-500">
+            <p className="text-sm text-muted-foreground">
               Added guests start on {minEditableDate}. Removing an existing
               guest keeps their past and NZ today occupancy and removes only
               future nights.
@@ -1487,7 +1487,7 @@ export function EditBookingPanel({
                         />
                       </div>
                       {showTypoOnlyHint ? (
-                        <p className="col-span-2 text-xs text-gray-500">
+                        <p className="col-span-2 text-xs text-muted-foreground">
                           Only spelling corrections are allowed after payment.
                           To change who this booking is for, contact the office.
                         </p>
@@ -1498,12 +1498,12 @@ export function EditBookingPanel({
                       {guest.firstName} {guest.lastName}
                     </p>
                   )}
-                  <p className="text-sm text-gray-500">
+                  <p className="text-sm text-muted-foreground">
                     {getAgeTierLabel(ageTierOptions, guest.ageTier)} &middot; {guest.isMember ? "Member" : "Non-member"}
                   </p>
                   {(guest.stayStart && guest.stayStart !== booking.checkIn) ||
                   (guest.stayEnd && guest.stayEnd !== booking.checkOut) ? (
-                    <p className="text-xs text-gray-500">
+                    <p className="text-xs text-muted-foreground">
                       Stay: {guest.stayStart ?? booking.checkIn} to{" "}
                       {guest.stayEnd ?? booking.checkOut}
                     </p>
@@ -1559,7 +1559,7 @@ export function EditBookingPanel({
                       <Button
                         variant="ghost"
                         size="sm"
-                        className="text-red-500 hover:text-red-700"
+                        className="text-danger-11 hover:text-danger-11"
                         onClick={() => handleRemoveGuest(guest.id)}
                       >
                         {isInProgressEdit ? "Remove Future" : "Remove"}
@@ -1573,13 +1573,13 @@ export function EditBookingPanel({
 
           {/* Newly added guests */}
           {addedGuests.map((guest) => (
-            <div key={guest.key} className="flex items-center justify-between py-2 bg-green-50 rounded px-2">
+            <div key={guest.key} className="flex items-center justify-between py-2 bg-success-3 rounded px-2">
               <div>
                 <p className="font-medium">
                   {guest.firstName} {guest.lastName}
-                  <span className="ml-2 text-xs text-green-700 font-normal">NEW</span>
+                  <span className="ml-2 text-xs text-success-11 font-normal">NEW</span>
                 </p>
-                <p className="text-sm text-gray-500">
+                <p className="text-sm text-muted-foreground">
                   {getAgeTierLabel(ageTierOptions, guest.ageTier)} &middot; {guest.isMember ? "Member" : "Non-member"}
                 </p>
                 {perGuestDatesEnabled ? (
@@ -1620,7 +1620,7 @@ export function EditBookingPanel({
               <Button
                 variant="ghost"
                 size="sm"
-                className="text-red-500 hover:text-red-700"
+                className="text-danger-11 hover:text-danger-11"
                 onClick={() => handleRemoveAddedGuest(guest.key)}
               >
                 Remove
@@ -1630,7 +1630,7 @@ export function EditBookingPanel({
 
           {/* Add guest inline form */}
           {showAddForm && (
-            <div className="border rounded-md p-3 mt-2 space-y-3 bg-gray-50">
+            <div className="border rounded-md p-3 mt-2 space-y-3 bg-card">
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
                   <Label htmlFor="new-guest-first">First Name</Label>
@@ -1668,7 +1668,7 @@ export function EditBookingPanel({
                   </select>
                 </div>
               </div>
-              <p className="text-sm text-gray-500">
+              <p className="text-sm text-muted-foreground">
                 Typed-in guests are always treated as non-members and charged at non-member rates.
               </p>
               <div className="flex gap-2">
@@ -1698,22 +1698,22 @@ export function EditBookingPanel({
           {booking.promo && promoAction.type === "keep" && (
             <div className="flex items-center justify-between">
               <div>
-                <span className="font-medium text-green-700">
+                <span className="font-medium text-success-11">
                   {booking.promo.workPartyEventName
                     ? `Working bee: ${booking.promo.workPartyEventName}`
                     : booking.promo.code}
                 </span>
                 {booking.promo.description && !booking.promo.workPartyEventName && (
-                  <span className="text-sm text-gray-500 ml-2">{booking.promo.description}</span>
+                  <span className="text-sm text-muted-foreground ml-2">{booking.promo.description}</span>
                 )}
-                <span className={`text-sm ml-2 ${booking.promoAdjustmentCents > 0 ? "text-orange-700" : "text-green-600"}`}>
+                <span className={`text-sm ml-2 ${booking.promoAdjustmentCents > 0 ? "text-warning-11" : "text-success-11"}`}>
                   ({formatSignedCents(booking.promoAdjustmentCents)})
                 </span>
               </div>
               <Button
                 variant="ghost"
                 size="sm"
-                className="text-red-500 hover:text-red-700"
+                className="text-danger-11 hover:text-danger-11"
                 onClick={() => setPromoAction({ type: "remove" })}
               >
                 Remove
@@ -1722,7 +1722,7 @@ export function EditBookingPanel({
           )}
 
           {promoAction.type === "remove" && booking.promo && (
-            <div className="flex items-center justify-between text-gray-400">
+            <div className="flex items-center justify-between text-muted-foreground">
               <div>
                 <span className="line-through">
                   {booking.promo.workPartyEventName
@@ -1744,14 +1744,14 @@ export function EditBookingPanel({
           {promoAction.type === "new" && (
             <div className="flex items-center justify-between">
               <div>
-                <span className="font-medium text-green-700">{promoAction.code.toUpperCase()}</span>
+                <span className="font-medium text-success-11">{promoAction.code.toUpperCase()}</span>
                 {quote?.promoValidation?.valid && quote.promoValidation.promoAdjustmentCents !== undefined && (
-                  <span className={`text-sm ml-2 ${(quote.promoValidation.promoAdjustmentCents ?? 0) > 0 ? "text-orange-700" : "text-green-600"}`}>
+                  <span className={`text-sm ml-2 ${(quote.promoValidation.promoAdjustmentCents ?? 0) > 0 ? "text-warning-11" : "text-success-11"}`}>
                     ({formatSignedCents(quote.promoValidation.promoAdjustmentCents ?? 0)})
                   </span>
                 )}
                 {quote?.promoValidation && !quote.promoValidation.valid && (
-                  <span className="text-sm text-red-600 ml-2">
+                  <span className="text-sm text-danger-11 ml-2">
                     {quote.promoValidation.error}
                   </span>
                 )}
@@ -1759,7 +1759,7 @@ export function EditBookingPanel({
               <Button
                 variant="ghost"
                 size="sm"
-                className="text-red-500 hover:text-red-700"
+                className="text-danger-11 hover:text-danger-11"
                 onClick={() => setPromoAction(booking.promo ? { type: "keep" } : { type: "remove" })}
               >
                 Remove
@@ -1795,21 +1795,21 @@ export function EditBookingPanel({
             <div className="flex items-center justify-between">
               <CardTitle>Price Summary</CardTitle>
               {quoteLoading && quote && (
-                <span className="text-sm font-normal text-gray-500">Updating…</span>
+                <span className="text-sm font-normal text-muted-foreground">Updating…</span>
               )}
             </div>
           </CardHeader>
           <CardContent>
             {quoteLoading && !quote && (
-              <p className="text-sm text-gray-500">Calculating price changes...</p>
+              <p className="text-sm text-muted-foreground">Calculating price changes...</p>
             )}
 
             {quoteError && (
-              <div className="rounded-md bg-red-50 p-3 text-sm text-red-700">{quoteError}</div>
+              <div className="rounded-md bg-danger-3 p-3 text-sm text-danger-11">{quoteError}</div>
             )}
 
             {quote && !quote.capacityAvailable && !overCapacityConfirmActive && (
-              <div className="rounded-md bg-red-50 p-3 text-sm text-red-700">
+              <div className="rounded-md bg-danger-3 p-3 text-sm text-danger-11">
                 <p className="font-medium">
                   {quote.partnerSharedReason ?? "Not enough beds available"}
                 </p>
@@ -1832,7 +1832,7 @@ export function EditBookingPanel({
                 on the create path). */}
             {quote && quote.minimumStayValid === false && (
               <div
-                className="rounded-md bg-amber-50 p-3 text-sm text-amber-900"
+                className="rounded-md bg-warning-3 p-3 text-sm text-warning-11"
                 role="status"
               >
                 <p className="font-medium">
@@ -1847,7 +1847,7 @@ export function EditBookingPanel({
             )}
 
             {overCapacityConfirmActive && (
-              <div className="space-y-2 rounded-md bg-amber-50 p-3 text-sm text-amber-900">
+              <div className="space-y-2 rounded-md bg-warning-3 p-3 text-sm text-warning-11">
                 <p className="font-medium">
                   These nights are over lodge capacity
                 </p>
@@ -1881,13 +1881,13 @@ export function EditBookingPanel({
                 <div className="space-y-1">
                   {quote.itemizedChanges.map((item, i) => (
                     <div key={i} className="flex justify-between text-sm">
-                      <span className="text-gray-600">{item.label}</span>
+                      <span className="text-muted-foreground">{item.label}</span>
                       <span
                         className={`font-medium ${
                           item.amountCents > 0
-                            ? "text-red-600"
+                            ? "text-danger-11"
                             : item.amountCents < 0
-                              ? "text-green-600"
+                              ? "text-success-11"
                               : ""
                         }`}
                       >
@@ -1915,8 +1915,8 @@ export function EditBookingPanel({
                   <div
                     className={`rounded-md p-3 text-sm ${
                       quote.netChargeCents > 0
-                        ? "bg-red-50 text-red-700"
-                        : "bg-green-50 text-green-700"
+                        ? "bg-danger-3 text-danger-11"
+                        : "bg-success-3 text-success-11"
                     }`}
                   >
                     {quote.netChargeCents > 0 ? (
@@ -1950,7 +1950,7 @@ export function EditBookingPanel({
                             <span className="font-medium">
                               {formatCents(quote.settlementOptions.cardRefundAmountCents)}
                             </span>{" "}
-                            <span className="text-gray-500">
+                            <span className="text-muted-foreground">
                               ({quote.settlementOptions.cardRefundPercentage}%)
                             </span>
                           </span>
@@ -1969,14 +1969,14 @@ export function EditBookingPanel({
                             <span className="font-medium">
                               {formatCents(quote.settlementOptions.accountCreditAmountCents)}
                             </span>{" "}
-                            <span className="text-gray-500">
+                            <span className="text-muted-foreground">
                               ({quote.settlementOptions.accountCreditPercentage}%)
                             </span>
                           </span>
                         </label>
                       </div>
                     ) : (
-                      <p className="text-gray-600">
+                      <p className="text-muted-foreground">
                         No refund or account credit is available for this reduction under the current policy.
                       </p>
                     )}
@@ -1984,7 +1984,7 @@ export function EditBookingPanel({
                 )}
 
                 {!quote.promoStillValid && promoAction.type === "keep" && booking.promo && (
-                  <div className="rounded-md bg-amber-50 p-3 text-sm text-amber-700">
+                  <div className="rounded-md bg-warning-3 p-3 text-sm text-warning-11">
                     Your promo code &apos;{booking.promo.code}&apos; is no longer valid and will be removed.
                   </div>
                 )}
@@ -2018,12 +2018,12 @@ export function EditBookingPanel({
               {requestSubmitting ? "Sending..." : "Request Admin Review"}
             </Button>
             {requestError && (
-              <div className="rounded-md bg-red-50 p-3 text-sm text-red-700">
+              <div className="rounded-md bg-danger-3 p-3 text-sm text-danger-11">
                 {requestError}
               </div>
             )}
             {requestSuccess && (
-              <div className="rounded-md bg-green-50 p-3 text-sm text-green-700">
+              <div className="rounded-md bg-success-3 p-3 text-sm text-success-11">
                 {requestSuccess}
               </div>
             )}
@@ -2095,7 +2095,7 @@ export function EditBookingPanel({
       </div>
 
       {saveError && (
-        <div className="rounded-md bg-red-50 p-3 text-sm text-red-700">{saveError}</div>
+        <div className="rounded-md bg-danger-3 p-3 text-sm text-danger-11">{saveError}</div>
       )}
 
       {/* Owner decision (#1668/#1696): the admin explicitly chooses, per edit,

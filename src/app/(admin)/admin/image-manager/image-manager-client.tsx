@@ -406,9 +406,9 @@ export function ImageManagerClient() {
                       onClick={() => setSelectedDir(dir)}
                     >
                       {isSelected ? (
-                        <FolderOpen className="h-4 w-4 shrink-0 text-amber-500" />
+                        <FolderOpen className="h-4 w-4 shrink-0 text-warning-11" />
                       ) : (
-                        <Folder className="h-4 w-4 shrink-0 text-muted-foreground group-hover:text-amber-400" />
+                        <Folder className="h-4 w-4 shrink-0 text-muted-foreground group-hover:text-warning-11" />
                       )}
                       <span className="flex-1 truncate">{dirLabel(dir)}</span>
                       {dir && canEdit && (
@@ -425,13 +425,13 @@ export function ImageManagerClient() {
                           </button>
                           <button
                             title="Delete"
-                            className="rounded p-0.5 hover:bg-red-100"
+                            className="rounded p-0.5 hover:bg-danger-3"
                             onClick={(e) => {
                               e.stopPropagation();
                               openDeleteDir(dir);
                             }}
                           >
-                            <Trash2 className="h-3 w-3 text-red-400" />
+                            <Trash2 className="h-3 w-3 text-danger-11" />
                           </button>
                         </span>
                       )}
@@ -453,7 +453,7 @@ export function ImageManagerClient() {
             className={cn(
               "flex cursor-pointer flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed p-10 text-center transition-colors",
               dragging
-                ? "border-blue-400 bg-blue-50 text-blue-700"
+                ? "border-info-7 bg-info-3 text-info-11"
                 : "border-border bg-muted text-muted-foreground hover:border-muted-foreground hover:bg-accent",
               (uploading || !canEdit) && "pointer-events-none opacity-60",
             )}
@@ -474,7 +474,7 @@ export function ImageManagerClient() {
             <UploadCloud
               className={cn(
                 "h-10 w-10",
-                dragging ? "text-blue-400" : "text-muted-foreground",
+                dragging ? "text-info-11" : "text-muted-foreground",
               )}
             />
             {canEdit === undefined ? (
@@ -557,10 +557,10 @@ export function ImageManagerClient() {
                     {canEdit ? (
                       <button
                         title={`Delete ${img.filename}`}
-                        className="absolute right-1.5 top-1.5 rounded-full bg-card p-1 opacity-0 shadow-sm transition-opacity hover:bg-red-50 group-hover:opacity-100"
+                        className="absolute right-1.5 top-1.5 rounded-full bg-card p-1 opacity-0 shadow-sm transition-opacity hover:bg-danger-3 group-hover:opacity-100"
                         onClick={() => openDeleteImage(img.filename)}
                       >
-                        <Trash2 className="h-3.5 w-3.5 text-red-500" />
+                        <Trash2 className="h-3.5 w-3.5 text-danger-11" />
                       </button>
                     ) : null}
                   </div>

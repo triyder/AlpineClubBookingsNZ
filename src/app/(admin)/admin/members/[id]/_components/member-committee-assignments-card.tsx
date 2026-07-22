@@ -67,7 +67,7 @@ function responseErrorMessage(body: unknown, fallback: string) {
 
 function VisibilityBadge({ visible }: { visible: boolean }) {
   return visible ? (
-    <Badge className="border-green-200 bg-green-100 text-green-800">
+    <Badge className="border-success-6 bg-success-3 text-success-11">
       <Eye className="mr-1 h-3 w-3" />
       Published
     </Badge>
@@ -365,12 +365,12 @@ export function MemberCommitteeAssignmentsCard({
           </AdminViewOnlyNotice>
         ) : null}
         {error ? (
-          <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          <div className="rounded-md border border-danger-6 bg-danger-3 p-3 text-sm text-danger-11">
             {error}
           </div>
         ) : null}
         {message ? (
-          <div className="rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-700">
+          <div className="rounded-md border border-success-6 bg-success-3 p-3 text-sm text-success-11">
             {message}
           </div>
         ) : null}
@@ -513,7 +513,7 @@ export function MemberCommitteeAssignmentsCard({
                   </div>
                 ) : null}
                 <p
-                  className="rounded border border-blue-200 bg-blue-50 px-2.5 py-2 text-sm text-blue-900"
+                  className="rounded border border-info-6 bg-info-3 px-2.5 py-2 text-sm text-info-11"
                   role="status"
                   aria-live="polite"
                 >
@@ -521,7 +521,7 @@ export function MemberCommitteeAssignmentsCard({
                   <span className="font-semibold">
                     {resolvedContact.email ?? "— no address set —"}
                   </span>{" "}
-                  <span className="text-blue-700">({resolvedContact.source})</span>
+                  <span className="text-info-11">({resolvedContact.source})</span>
                   {resolvedContact.email ? "." : " — set an address so messages are not lost."}
                 </p>
               </div>
@@ -559,7 +559,7 @@ export function MemberCommitteeAssignmentsCard({
                       </h3>
                       <VisibilityBadge visible={assignment.published} />
                       {assignment.isActive ? (
-                        <Badge className="border-green-200 bg-green-100 text-green-800">
+                        <Badge className="border-success-6 bg-success-3 text-success-11">
                           Active
                         </Badge>
                       ) : (
@@ -607,7 +607,7 @@ export function MemberCommitteeAssignmentsCard({
                       variant="ghost"
                       size="sm"
                       aria-label="Remove assignment"
-                      className="text-red-600 hover:bg-red-50 hover:text-red-700"
+                      className="text-danger-11 hover:bg-danger-3 hover:text-danger-11"
                       onClick={() => handleDeactivate(assignment)}
                     >
                       <Trash2 className="h-4 w-4" />

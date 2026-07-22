@@ -79,10 +79,10 @@ export function MemberPicker({
 
   if (selected) {
     return (
-      <div className="flex items-center gap-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+      <div className="flex items-center gap-3 p-3 bg-info-3 border border-info-6 rounded-lg">
         <div className="flex-1">
           {/* Explicit text roles rather than inherited: this card's fill is
-              `bg-blue-50`, which the #1248 colored-callout pass re-tints to a
+              `bg-info-3`, which the #1248 colored-callout pass re-tints to a
               dark blue in dark mode, so `--foreground`/`--muted-foreground`
               read correctly on it in both modes (#2144). */}
           <p className="font-medium text-sm text-foreground">
@@ -119,7 +119,7 @@ export function MemberPicker({
           {results.map((m) => (
             <button
               key={m.id}
-              className="w-full text-left px-3 py-2 hover:bg-blue-50 border-b last:border-b-0 transition-colors"
+              className="w-full text-left px-3 py-2 hover:bg-info-3 border-b last:border-b-0 transition-colors"
               onClick={() => {
                 onSelect(m);
                 setShowDropdown(false);

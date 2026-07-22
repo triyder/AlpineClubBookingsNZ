@@ -240,7 +240,7 @@ export function MemberGroupJoinPanel({
         </CardHeader>
         <CardContent className="space-y-5">
           {!summary.isJoinable ? (
-            <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            <div className="flex items-start gap-2 rounded-md border border-warning-6 bg-warning-3 px-3 py-2 text-sm text-warning-11">
               <Info className="h-5 w-5 shrink-0" />
               <p>
                 This group is no longer accepting new joiners
@@ -252,7 +252,7 @@ export function MemberGroupJoinPanel({
             </div>
           ) : submitted ? (
             <div className="space-y-3">
-              <div className="flex items-center gap-2 text-emerald-700">
+              <div className="flex items-center gap-2 text-success-11">
                 <CheckCircle2 className="h-6 w-6 shrink-0" />
                 <p className="font-medium">You&apos;re in!</p>
               </div>
@@ -264,9 +264,9 @@ export function MemberGroupJoinPanel({
                       "Use reference {{paymentReference}} when making a direct transfer. The booking will be confirmed after the Xero invoice payment is reconciled."
                     ).replaceAll("{{paymentReference}}", ibReference)}
                   </p>
-                  <div className="rounded-md border border-slate-200 p-3 text-sm">
-                    <p className="font-medium text-slate-900">Payment reference</p>
-                    <p className="mt-1 font-mono text-slate-900">{ibReference}</p>
+                  <div className="rounded-md border border-border p-3 text-sm">
+                    <p className="font-medium text-foreground">Payment reference</p>
+                    <p className="mt-1 font-mono text-foreground">{ibReference}</p>
                   </div>
                 </>
               ) : (
@@ -304,7 +304,7 @@ export function MemberGroupJoinPanel({
                     return (
                       <div
                         key={fm.id}
-                        className={blocked ? "rounded-md border border-amber-200 bg-amber-50 p-3" : ""}
+                        className={blocked ? "rounded-md border border-warning-6 bg-warning-3 p-3" : ""}
                       >
                         <Button
                           type="button"
@@ -318,10 +318,10 @@ export function MemberGroupJoinPanel({
                           {label}
                         </Button>
                         {blocked && blockMessage && (
-                          <p className="mt-2 text-sm text-amber-800">{blockMessage}</p>
+                          <p className="mt-2 text-sm text-warning-11">{blockMessage}</p>
                         )}
                         {blocked && actionLabel && (
-                          <p className="mt-1 text-xs font-medium text-amber-800">{actionLabel}</p>
+                          <p className="mt-1 text-xs font-medium text-warning-11">{actionLabel}</p>
                         )}
                       </div>
                     );
@@ -341,8 +341,8 @@ export function MemberGroupJoinPanel({
                       onClick={() => setPaymentMethod("stripe")}
                       className={`flex min-h-16 items-start gap-3 rounded-md border p-3 text-left text-sm ${
                         paymentMethod === "stripe"
-                          ? "border-blue-500 bg-blue-50 text-blue-950"
-                          : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                          ? "border-info-7 bg-info-3 text-info-11"
+                          : "border-border bg-card text-muted-foreground hover:border-border"
                       }`}
                     >
                       <CreditCard className="mt-0.5 h-4 w-4 shrink-0" />
@@ -359,8 +359,8 @@ export function MemberGroupJoinPanel({
                       onClick={() => setPaymentMethod("internet_banking")}
                       className={`flex min-h-16 items-start gap-3 rounded-md border p-3 text-left text-sm ${
                         paymentMethod === "internet_banking"
-                          ? "border-blue-500 bg-blue-50 text-blue-950"
-                          : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                          ? "border-info-7 bg-info-3 text-info-11"
+                          : "border-border bg-card text-muted-foreground hover:border-border"
                       }`}
                     >
                       <Landmark className="mt-0.5 h-4 w-4 shrink-0" />

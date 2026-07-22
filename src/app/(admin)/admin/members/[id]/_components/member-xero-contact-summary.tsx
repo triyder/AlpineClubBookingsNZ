@@ -15,7 +15,7 @@ export function MemberXeroContactSummary({ member }: { member: MemberDetail }) {
               href={`https://go.xero.com/Contacts/View/${member.xeroContactId}`}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 text-blue-600 hover:underline"
+              className="inline-flex items-center gap-1 text-info-11 hover:underline"
             >
               {member.xeroContactId}
               <ExternalLink className="h-3 w-3" />
@@ -25,7 +25,7 @@ export function MemberXeroContactSummary({ member }: { member: MemberDetail }) {
           )}
         </div>
         {!member.xeroContactId && (
-          <p className="text-xs text-amber-700">
+          <p className="text-xs text-warning-11">
             Membership refresh skips unlinked members. Link or create a Xero
             contact before expecting subscription status to update
             automatically.
@@ -37,7 +37,7 @@ export function MemberXeroContactSummary({ member }: { member: MemberDetail }) {
               <Badge
                 key={group.id}
                 variant="secondary"
-                className="bg-emerald-50 text-emerald-700 border-emerald-200"
+                className="bg-success-3 text-success-11 border-success-6"
               >
                 {group.name}
               </Badge>

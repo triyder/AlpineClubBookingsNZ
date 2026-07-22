@@ -300,8 +300,8 @@ export default function AdminModulesPage() {
           tabIndex={error ? -1 : undefined}
           className={
             error
-              ? "scroll-mt-20 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 focus:outline-none"
-              : "rounded-md border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800"
+              ? "scroll-mt-20 rounded-md border border-danger-6 bg-danger-3 px-4 py-3 text-sm text-danger-11 focus:outline-none"
+              : "rounded-md border border-success-6 bg-success-3 px-4 py-3 text-sm text-success-11"
           }
         >
           {error || savedMessage}
@@ -329,9 +329,9 @@ export default function AdminModulesPage() {
         {modules.map((module) => {
           const checkboxId = `module-${module.key}`;
           const statusIcon = module.effectiveEnabled ? (
-            <CheckCircle2 className="h-4 w-4 text-green-700" />
+            <CheckCircle2 className="h-4 w-4 text-success-11" />
           ) : (
-            <AlertCircle className="h-4 w-4 text-amber-700" />
+            <AlertCircle className="h-4 w-4 text-warning-11" />
           );
 
           return (

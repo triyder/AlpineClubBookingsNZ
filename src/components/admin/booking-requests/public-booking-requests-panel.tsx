@@ -236,8 +236,8 @@ function statusBadgeClass(status: PublicBookingRequestData["status"]) {
     status === "QUOTE_SENT" ||
     status === "QUERY_PENDING" ||
     status === "MODIFICATION_REQUESTED"
-  ) return "border-amber-200 bg-amber-50 text-amber-800";
-  if (status === "APPROVED" || status === "CONVERTED") return "border-emerald-200 bg-emerald-50 text-emerald-800";
+  ) return "border-warning-6 bg-warning-3 text-warning-11";
+  if (status === "APPROVED" || status === "CONVERTED") return "border-success-6 bg-success-3 text-success-11";
   return "border-border bg-muted text-muted-foreground";
 }
 
@@ -966,7 +966,7 @@ export function PublicBookingRequestsPanel({
             return (
               <Card
                 key={request.id}
-                className={request.id === requestId ? "border-amber-300" : undefined}
+                className={request.id === requestId ? "border-warning-6" : undefined}
               >
                 <CardHeader>
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -993,7 +993,7 @@ export function PublicBookingRequestsPanel({
                       {showLodgeContext && request.lodgeName ? (
                         <Badge
                           variant="outline"
-                          className="border-sky-200 bg-sky-50 text-sky-800"
+                          className="border-info-6 bg-info-3 text-info-11"
                         >
                           {request.lodgeName}
                         </Badge>
@@ -1001,7 +1001,7 @@ export function PublicBookingRequestsPanel({
                       {request.type === "SCHOOL" ? (
                         <Badge
                           variant="outline"
-                          className="border-indigo-200 bg-indigo-50 text-indigo-800"
+                          className="border-cat3-6 bg-cat3-3 text-cat3-11"
                         >
                           School
                         </Badge>
@@ -1062,7 +1062,7 @@ export function PublicBookingRequestsPanel({
                   ) : null}
 
                   {request.status === "NEW" ? (
-                    <p className="text-sm text-amber-700">
+                    <p className="text-sm text-warning-11">
                       Waiting for the requester to verify their email address.
                     </p>
                   ) : null}
@@ -1088,7 +1088,7 @@ export function PublicBookingRequestsPanel({
                   ) : null}
 
                   {request.responseMessage ? (
-                    <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                    <div className="rounded-md border border-warning-6 bg-warning-3 p-3 text-sm text-warning-11">
                       <p className="font-medium">
                         {request.status === "QUERY_PENDING"
                           ? "Requester question"
@@ -1212,7 +1212,7 @@ export function PublicBookingRequestsPanel({
                             those change.
                           </p>
                           {plannedGuestTotal(request) > request.schoolGroupSoftCap ? (
-                            <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                            <p className="rounded-md border border-warning-6 bg-warning-3 px-3 py-2 text-xs text-warning-11">
                               Over {request.schoolGroupSoftCap}: confirm a club member is staying with the
                               group before approving.
                             </p>
@@ -1312,7 +1312,7 @@ export function PublicBookingRequestsPanel({
                         <p className="text-sm font-medium">Linked member guests</p>
                         {linkConflicts[request.id]?.length ? (
                           <div
-                            className="rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900"
+                            className="rounded-md border border-warning-6 bg-warning-3 p-2 text-xs text-warning-11"
                             role="status"
                           >
                             <p className="font-medium">
@@ -1360,7 +1360,7 @@ export function PublicBookingRequestsPanel({
                                   </p>
                                   <p className="text-xs text-muted-foreground">{guest.ageTier}</p>
                                   {linkedId ? (
-                                    <p className="mt-1 text-xs text-emerald-700">
+                                    <p className="mt-1 text-xs text-success-11">
                                       Linked to {linkedLabel ?? linkedId}
                                     </p>
                                   ) : null}
@@ -1541,7 +1541,7 @@ export function PublicBookingRequestsPanel({
                               `/bookings/${request.convertedBookingId}`,
                               currentPath
                             )}
-                            className="text-blue-600 hover:underline"
+                            className="text-info-11 hover:underline"
                           >
                             Open booking
                           </Link>
@@ -1549,7 +1549,7 @@ export function PublicBookingRequestsPanel({
                       ) : null}
                       {request.type === "SCHOOL" && request.convertedBookingId ? (
                         request.attendeesConfirmedAt ? (
-                          <p className="mt-2 text-emerald-700">
+                          <p className="mt-2 text-success-11">
                             Attendee list confirmed{" "}
                             {formatDateTime(request.attendeesConfirmedAt) ?? ""}
                           </p>

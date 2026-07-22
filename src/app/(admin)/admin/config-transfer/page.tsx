@@ -47,8 +47,8 @@ type PlanItem = {
 // Per-action styling so anything that will actually change stands out against
 // the (usually long) list of unchanged rows.
 const ACTION_BADGE: Record<PlanItem["action"], { label: string; badge: string }> = {
-  create: { label: "New", badge: "bg-emerald-100 text-emerald-800" },
-  update: { label: "Updated", badge: "bg-amber-100 text-amber-900" },
+  create: { label: "New", badge: "bg-success-3 text-success-11" },
+  update: { label: "Updated", badge: "bg-warning-3 text-warning-11" },
   unchanged: { label: "Unchanged", badge: "bg-muted text-muted-foreground" },
 };
 type CategoryPlan = {
@@ -332,7 +332,7 @@ export default function ConfigTransferPage() {
             </Button>
           </div>
           {exportError && (
-            <p className="rounded-md bg-red-50 p-2 text-sm text-red-700">
+            <p className="rounded-md bg-danger-3 p-2 text-sm text-danger-11">
               {exportError}
             </p>
           )}
@@ -393,8 +393,8 @@ export default function ConfigTransferPage() {
             <div className="space-y-3 rounded-md border p-4 text-sm">
               <p className="font-medium">
                 Plan:{" "}
-                <span className="text-emerald-700">{plan.summary.create} new</span>,{" "}
-                <span className="text-amber-800">{plan.summary.update} updated</span>,{" "}
+                <span className="text-success-11">{plan.summary.create} new</span>,{" "}
+                <span className="text-warning-11">{plan.summary.update} updated</span>,{" "}
                 <span className="text-muted-foreground">
                   {plan.summary.unchanged} unchanged
                 </span>
@@ -402,12 +402,12 @@ export default function ConfigTransferPage() {
               </p>
 
               {plan.errors.length > 0 && (
-                <div className="rounded-md bg-red-50 p-2">
-                  <p className="font-medium text-red-700">
+                <div className="rounded-md bg-danger-3 p-2">
+                  <p className="font-medium text-danger-11">
                     {plan.errors.length} error(s) — the import is blocked until the
                     bundle is fixed (edit, reseal, then re-preview):
                   </p>
-                  <ul className="ml-6 list-disc text-red-700">
+                  <ul className="ml-6 list-disc text-danger-11">
                     {plan.errors.slice(0, 25).map((e) => (
                       <li key={e}>{e}</li>
                     ))}
@@ -487,28 +487,28 @@ export default function ConfigTransferPage() {
               </fieldset>
 
               {plan.doorCodeChanges.length > 0 && (
-                <p className="flex items-center gap-2 rounded-md bg-amber-50 p-2 font-medium text-amber-900">
+                <p className="flex items-center gap-2 rounded-md bg-warning-3 p-2 font-medium text-warning-11">
                   <ShieldAlert className="h-4 w-4 shrink-0" />
                   This import will set or change the door code for:{" "}
                   {plan.doorCodeChanges.join(", ")}.
                 </p>
               )}
               {plan.doorCodesIncluded && (
-                <p className="text-amber-800">This bundle includes door codes.</p>
+                <p className="text-warning-11">This bundle includes door codes.</p>
               )}
 
               {plan.integrityWarnings.length > 0 && (
-                <div className="rounded-md bg-amber-50 p-2">
-                  <p className="flex items-center gap-2 font-medium text-amber-800">
+                <div className="rounded-md bg-warning-3 p-2">
+                  <p className="flex items-center gap-2 font-medium text-warning-11">
                     <AlertTriangle className="h-4 w-4" />
                     This bundle was edited since export:
                   </p>
-                  <ul className="ml-6 list-disc text-amber-800">
+                  <ul className="ml-6 list-disc text-warning-11">
                     {plan.integrityWarnings.slice(0, 20).map((w) => (
                       <li key={w}>{w}</li>
                     ))}
                   </ul>
-                  <p className="mt-1 text-xs text-amber-700">
+                  <p className="mt-1 text-xs text-warning-11">
                     You can still apply, or “Reseal edited bundle” to refresh its
                     manifest.
                   </p>
@@ -516,7 +516,7 @@ export default function ConfigTransferPage() {
               )}
 
               {plan.xero.mismatch && (
-                <p className="flex items-center gap-2 text-amber-800">
+                <p className="flex items-center gap-2 text-warning-11">
                   <AlertTriangle className="h-4 w-4" />
                   Xero config came from a different connected org — verify before
                   applying (or untick the Xero category above).
@@ -594,7 +594,7 @@ export default function ConfigTransferPage() {
                     </p>
                   )}
                   {cat.warnings.map((w) => (
-                    <p key={w} className="text-amber-800">
+                    <p key={w} className="text-warning-11">
                       {w}
                     </p>
                   ))}
@@ -605,12 +605,12 @@ export default function ConfigTransferPage() {
           )}
 
           {applied && (
-            <p className="rounded-md bg-green-50 p-2 text-sm text-green-700">
+            <p className="rounded-md bg-success-3 p-2 text-sm text-success-11">
               {applied}
             </p>
           )}
           {importError && (
-            <p className="rounded-md bg-red-50 p-2 text-sm text-red-700">
+            <p className="rounded-md bg-danger-3 p-2 text-sm text-danger-11">
               {importError}
             </p>
           )}

@@ -88,7 +88,7 @@ export default async function MembershipCancellationConfirmationPage({
           </>
         ) : null}
 
-        <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+        <div className="rounded-md border border-warning-6 bg-warning-3 px-4 py-3 text-sm text-warning-11">
           Your membership remains active unless you confirm inclusion and an
           administrator later approves and processes the cancellation.
         </div>

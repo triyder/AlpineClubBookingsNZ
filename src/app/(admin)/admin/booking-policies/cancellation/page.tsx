@@ -25,7 +25,7 @@ export default async function CancellationPolicyPage() {
       {staleHoldCopy.length > 0 && (
         <div
           role="status"
-          className="rounded-md border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900"
+          className="rounded-md border border-warning-6 bg-warning-3 p-4 text-sm text-warning-11"
         >
           <p className="font-medium">Public copy may be out of date</p>
           <p className="mt-1">

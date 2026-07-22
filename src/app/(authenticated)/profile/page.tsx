@@ -277,13 +277,13 @@ export default async function ProfilePage({
         </div>
 
         {emailChanged ? (
-          <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+          <div className="rounded-lg border border-success-6 bg-success-3 px-4 py-3 text-sm text-success-11">
             Your email address has been updated successfully.
           </div>
         ) : null}
 
         {emailChangeError ? (
-          <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+          <div className="rounded-lg border border-danger-6 bg-danger-3 px-4 py-3 text-sm text-danger-11">
             {emailChangeError === "missing"
               ? "The email change link was incomplete."
               : emailChangeError === "invalid"
@@ -396,12 +396,12 @@ export default async function ProfilePage({
               />
             ) : null}
             {googleLinked ? (
-              <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+              <div className="rounded-md border border-success-6 bg-success-3 px-3 py-2 text-sm text-success-11">
                 Your Google account has been connected.
               </div>
             ) : null}
             {googleError ? (
-              <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">
+              <div className="rounded-md border border-danger-6 bg-danger-3 px-3 py-2 text-sm text-danger-11">
                 {googleError === "unverified"
                   ? "That Google account's email is not verified, so it cannot be linked."
                   : googleError === "already_linked"

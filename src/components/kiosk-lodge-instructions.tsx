@@ -13,7 +13,7 @@ type InstructionDocument = {
 
 // Dark-theme typography for the sanitised instruction HTML on the kiosk.
 const KIOSK_HTML_CLASSES =
-  "text-base leading-7 text-slate-200 [&_a]:text-blue-300 [&_a]:underline [&_h1]:mt-3 [&_h1]:mb-2 [&_h1]:text-xl [&_h1]:font-bold [&_h2]:mt-3 [&_h2]:mb-2 [&_h2]:text-lg [&_h2]:font-semibold [&_h3]:mt-2 [&_h3]:mb-1 [&_h3]:text-base [&_h3]:font-semibold [&_hr]:my-3 [&_hr]:border-slate-600 [&_li]:my-1 [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:pl-6 [&_p]:my-2 [&_table]:my-2 [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-slate-600 [&_td]:p-2 [&_th]:border [&_th]:border-slate-600 [&_th]:bg-slate-700 [&_th]:p-2 [&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-6";
+  "text-base leading-7 text-slate-200 [&_a]:text-info-foreground [&_a]:underline [&_h1]:mt-3 [&_h1]:mb-2 [&_h1]:text-xl [&_h1]:font-bold [&_h2]:mt-3 [&_h2]:mb-2 [&_h2]:text-lg [&_h2]:font-semibold [&_h3]:mt-2 [&_h3]:mb-1 [&_h3]:text-base [&_h3]:font-semibold [&_hr]:my-3 [&_hr]:border-slate-600 [&_li]:my-1 [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:pl-6 [&_p]:my-2 [&_table]:my-2 [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-slate-600 [&_td]:p-2 [&_th]:border [&_th]:border-slate-600 [&_th]:bg-slate-700 [&_th]:p-2 [&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-6";
 
 /**
  * Collapsible lodge-instructions section for the kiosk. Rendered only for
@@ -72,7 +72,7 @@ export function KioskLodgeInstructions({ date }: { date: string }) {
         className="flex w-full items-center justify-between gap-3 text-left min-h-[44px]"
       >
         <span className="flex items-center gap-2 text-lg font-semibold text-white">
-          <BookOpen className="h-5 w-5 text-blue-300" />
+          <BookOpen className="h-5 w-5 text-info-foreground" />
           Lodge Instructions
         </span>
         {expanded ? (
@@ -84,7 +84,7 @@ export function KioskLodgeInstructions({ date }: { date: string }) {
 
       {expanded && (
         <div className="mt-3 space-y-2">
-          {error && <p className="text-sm text-red-300">{error}</p>}
+          {error && <p className="text-sm text-danger-foreground">{error}</p>}
           {!error && documents === null && (
             <p className="text-sm text-slate-400">Loading instructions...</p>
           )}

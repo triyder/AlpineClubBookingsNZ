@@ -40,7 +40,7 @@ export function MemberDeleteRequestDialog({
             Submit this member for second-admin approval before hard deletion.
           </DialogDescription>
         </DialogHeader>
-        {error && <div className="rounded border border-red-200 bg-red-50 p-2 text-sm text-red-700">{error}</div>}
+        {error && <div className="rounded border border-danger-6 bg-danger-3 p-2 text-sm text-danger-11">{error}</div>}
         <div className="space-y-2">
           <Label htmlFor="delete-reason">Reason</Label>
           <Textarea

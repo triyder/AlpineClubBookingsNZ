@@ -91,7 +91,7 @@ export function AdminBookingToolsCard({
         </CardHeader>
         <CardContent className="space-y-3">
           {providerMismatches.length > 0 && (
-            <div className="space-y-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            <div className="space-y-2 rounded-md border border-warning-6 bg-warning-3 px-3 py-2 text-sm text-warning-11">
               <p className="font-medium">Provider state out of step</p>
               {providerMismatches.map((mismatch) => (
                 <p key={mismatch.id}>

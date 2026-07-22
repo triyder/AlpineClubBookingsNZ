@@ -37,11 +37,11 @@ export function ConfirmDraftButton({ bookingId }: ConfirmDraftButtonProps) {
         <CardTitle>Confirm Booking</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        <p className="text-sm text-gray-600">
+        <p className="text-sm text-muted-foreground">
           This is a saved draft with no charge. Click below to confirm your booking.
         </p>
         {error && (
-          <div className="rounded-md bg-red-50 p-3 text-sm text-red-700">{error}</div>
+          <div className="rounded-md bg-danger-3 p-3 text-sm text-danger-11">{error}</div>
         )}
         <Button onClick={handleConfirm} disabled={confirming}>
           {confirming ? "Confirming..." : "Confirm Booking"}

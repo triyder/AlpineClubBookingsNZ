@@ -492,17 +492,17 @@ export function FinanceReportMappingsPanel() {
       </CardHeader>
       <CardContent className="space-y-5">
         {error ? (
-          <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+          <div className="rounded-md border border-danger-6 bg-danger-3 px-3 py-2 text-sm text-danger-11">
             {error}
           </div>
         ) : null}
         {message ? (
-          <div className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-800">
+          <div className="rounded-md border border-success-6 bg-success-3 px-3 py-2 text-sm text-success-11">
             {message}
           </div>
         ) : null}
         {coaError ? (
-          <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          <div className="rounded-md border border-warning-6 bg-warning-3 px-3 py-2 text-sm text-warning-11">
             Could not load the Xero chart of accounts ({coaError}). You can still
             type account codes manually; reconnect Xero to pick from the live
             account list.
@@ -644,7 +644,7 @@ export function FinanceReportMappingsPanel() {
                                 onClick={() => deleteCategory(category.key)}
                                 aria-label="Delete group"
                               >
-                                <Trash2 className="h-4 w-4 text-red-600" />
+                                <Trash2 className="h-4 w-4 text-danger-11" />
                               </ViewOnlyActionButton>
                             </div>
                           </div>
@@ -686,7 +686,7 @@ export function FinanceReportMappingsPanel() {
 
             <section className="space-y-3">
               <div className="flex items-center gap-2">
-                <SearchX className="h-4 w-4 text-amber-700" />
+                <SearchX className="h-4 w-4 text-warning-11" />
                 <h3 className="text-lg font-semibold text-foreground">
                   Unmapped Lines
                 </h3>
@@ -704,18 +704,18 @@ export function FinanceReportMappingsPanel() {
                   {state.unmappedLines.slice(0, 18).map((line) => (
                     <div
                       key={`${line.kind}:${line.sectionLabel}:${line.lineLabel}:${line.accountCode ?? ""}`}
-                      className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2"
+                      className="rounded-md border border-warning-6 bg-warning-3 px-3 py-2"
                     >
                       <div className="flex items-center justify-between gap-2">
                         <Badge variant="outline">{line.kind}</Badge>
-                        <span className="text-sm font-semibold text-amber-950">
+                        <span className="text-sm font-semibold text-warning-11">
                           {line.formattedAmount}
                         </span>
                       </div>
-                      <p className="mt-1 text-sm font-medium text-amber-950">
+                      <p className="mt-1 text-sm font-medium text-warning-11">
                         {line.lineLabel}
                       </p>
-                      <p className="text-xs text-amber-900">
+                      <p className="text-xs text-warning-11">
                         {line.sectionLabel}
                         {line.accountCode ? ` · code ${line.accountCode}` : ""} ·{" "}
                         {line.periodsPresent} hits

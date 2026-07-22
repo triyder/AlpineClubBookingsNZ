@@ -137,7 +137,7 @@ export function BookingEditor({
         <CardContent className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <p className="text-sm text-gray-500">Check-in</p>
+              <p className="text-sm text-muted-foreground">Check-in</p>
               <p className="font-medium">
                 {new Date(booking.checkIn + "T00:00:00").toLocaleDateString("en-NZ", {
                   weekday: "long",
@@ -148,7 +148,7 @@ export function BookingEditor({
               </p>
             </div>
             <div>
-              <p className="text-sm text-gray-500">Check-out</p>
+              <p className="text-sm text-muted-foreground">Check-out</p>
               <p className="font-medium">
                 {new Date(booking.checkOut + "T00:00:00").toLocaleDateString("en-NZ", {
                   weekday: "long",
@@ -159,17 +159,17 @@ export function BookingEditor({
               </p>
             </div>
             <div>
-              <p className="text-sm text-gray-500">Nights</p>
+              <p className="text-sm text-muted-foreground">Nights</p>
               <p className="font-medium">{booking.nights}</p>
             </div>
             <div>
-              <p className="text-sm text-gray-500">Guests</p>
+              <p className="text-sm text-muted-foreground">Guests</p>
               <p className="font-medium">{booking.guests.length}</p>
             </div>
           </div>
 
           {booking.status === "PENDING" && booking.nonMemberHoldUntil && (
-            <div className="rounded-md bg-yellow-50 p-3 text-sm text-yellow-800">
+            <div className="rounded-md bg-warning-3 p-3 text-sm text-warning-11">
               {nonMemberHoldLapsed ? (
                 <>
                   This booking includes non-members. The hold period ended on{" "}
@@ -202,12 +202,12 @@ export function BookingEditor({
                   <p className="font-medium">
                     {guest.firstName} {guest.lastName}
                   </p>
-                  <p className="text-sm text-gray-500">
+                  <p className="text-sm text-muted-foreground">
                     {guest.ageTier} &middot; {guest.isMember ? "Member" : "Non-member"}
                   </p>
                   {(guest.stayStart && guest.stayStart !== booking.checkIn) ||
                   (guest.stayEnd && guest.stayEnd !== booking.checkOut) ? (
-                    <p className="text-xs text-gray-500">
+                    <p className="text-xs text-muted-foreground">
                       Stay: {guest.stayStart ?? booking.checkIn} to{" "}
                       {guest.stayEnd ?? booking.checkOut}
                     </p>
@@ -231,7 +231,7 @@ export function BookingEditor({
             <span>{formatCents(booking.totalPriceCents)}</span>
           </div>
           {booking.promoAdjustmentCents !== 0 && (
-            <div className={`flex justify-between ${booking.promoAdjustmentCents > 0 ? "text-orange-700" : "text-green-600"}`}>
+            <div className={`flex justify-between ${booking.promoAdjustmentCents > 0 ? "text-warning-11" : "text-success-11"}`}>
               <span>
                 {booking.promo?.workPartyEventName
                   ? "Working bee discount"

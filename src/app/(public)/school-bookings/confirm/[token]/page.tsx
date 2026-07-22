@@ -50,8 +50,8 @@ export default async function SchoolAttendeeConfirmationPage({
           <div
             className={`rounded-md border px-4 py-3 text-sm ${
               details.status === "confirmed"
-                ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-                : "border-amber-200 bg-amber-50 text-amber-900"
+                ? "border-success-6 bg-success-3 text-success-11"
+                : "border-warning-6 bg-warning-3 text-warning-11"
             }`}
           >
             {details.message}

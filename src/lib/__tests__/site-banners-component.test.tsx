@@ -30,9 +30,9 @@ describe("SiteBanners", () => {
     render(<SiteBanners banners={[banner()]} />);
 
     const bar = screen.getByRole("alert");
-    expect(bar.className).toContain("bg-red-100");
-    expect(bar.className).toContain("border-red-300");
-    expect(bar.className).toContain("text-red-900");
+    expect(bar.className).toContain("bg-danger-3");
+    expect(bar.className).toContain("border-danger-6");
+    expect(bar.className).toContain("text-danger-11");
     expect(
       screen.getByText("Mountain closed due to volcanic activity"),
     ).toBeDefined();
@@ -50,8 +50,8 @@ describe("SiteBanners", () => {
 
     const bars = screen.getAllByRole("status");
     expect(bars).toHaveLength(2);
-    expect(bars[0].className).toContain("bg-amber-100");
-    expect(bars[1].className).toContain("bg-blue-100");
+    expect(bars[0].className).toContain("bg-warning-3");
+    expect(bars[1].className).toContain("bg-info-3");
     expect(screen.queryByRole("alert")).toBeNull();
   });
 

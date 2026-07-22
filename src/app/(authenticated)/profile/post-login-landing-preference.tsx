@@ -114,7 +114,7 @@ export function PostLoginLandingPreference() {
       {saving ? (
         <p className="text-xs text-muted-foreground">Saving…</p>
       ) : error ? (
-        <p className="text-xs text-red-600">{error}</p>
+        <p className="text-xs text-danger-11">{error}</p>
       ) : saved ? (
         <p className="text-xs text-success">Saved.</p>
       ) : null}

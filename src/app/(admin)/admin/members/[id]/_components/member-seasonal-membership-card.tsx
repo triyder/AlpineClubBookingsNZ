@@ -391,8 +391,8 @@ export function MemberSeasonalMembershipCard({
           <div
             className={
               error
-                ? "rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
-                : "rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700"
+                ? "rounded-md border border-danger-6 bg-danger-3 px-3 py-2 text-sm text-danger-11"
+                : "rounded-md border border-success-6 bg-success-3 px-3 py-2 text-sm text-success-11"
             }
           >
             {error || message}
@@ -539,7 +539,7 @@ export function MemberSeasonalMembershipCard({
         </div>
 
         {preview && (
-          <div className="space-y-4 rounded-md border border-blue-200 bg-blue-50 p-4">
+          <div className="space-y-4 rounded-md border border-info-6 bg-info-3 p-4">
             <div className="grid gap-3 md:grid-cols-3">
               <BookingSummaryBlock
                 title="Future confirmed"
@@ -555,7 +555,7 @@ export function MemberSeasonalMembershipCard({
               />
             </div>
 
-            <div className="rounded-md border border-blue-200 bg-card p-3 text-sm">
+            <div className="rounded-md border border-info-6 bg-card p-3 text-sm">
               <div className="font-medium text-foreground">
                 Subscription summary
               </div>
@@ -585,7 +585,7 @@ export function MemberSeasonalMembershipCard({
               )}
             </div>
 
-            <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            <div className="rounded-md border border-warning-6 bg-warning-3 px-3 py-2 text-xs text-warning-11">
               Existing future bookings are not automatically repriced by this
               change.
             </div>
