@@ -21,7 +21,7 @@ import baseLogger from "@/lib/logger";
  * scope here — that is #1211's shared-state work.
  */
 
-type ObservabilityScope = "cron" | "webhook";
+type ObservabilityScope = "cron" | "webhook" | "ai";
 type ObservabilityLevel = "error" | "fatal";
 
 interface ReportScopedErrorInput {
@@ -120,4 +120,18 @@ export function reportWebhookError(
   input: Omit<ReportScopedErrorInput, "scope">
 ): void {
   reportScopedError({ ...input, scope: "webhook" });
+}
+
+/**
+ * Bridge a genuine AI-metering persistence FAILURE to Sentry (scoped, deduped).
+ * Scoped like cron/webhook: only the AI usage-recording catch handler
+ * (`recordAiUsage`) calls this, at its genuine-failure path. A failure to write
+ * a usage row means the deployment can no longer prove what it spent, so it is a
+ * real alerting event — and it drives the metering circuit breaker that stops
+ * further spend (#2211, C3).
+ */
+export function reportAiError(
+  input: Omit<ReportScopedErrorInput, "scope">
+): void {
+  reportScopedError({ ...input, scope: "ai" });
 }
