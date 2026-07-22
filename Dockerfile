@@ -27,6 +27,7 @@ ARG NEXT_PUBLIC_SENTRY_DSN
 ENV NEXT_PUBLIC_SENTRY_DSN=$NEXT_PUBLIC_SENTRY_DSN
 
 RUN npx prisma generate
+#RUN NODE_OPTIONS="--max-old-space-size=4096" npm run build
 RUN npm run build
 
 # Production image
