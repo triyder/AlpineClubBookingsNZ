@@ -11,6 +11,7 @@ import { getWebsiteThemeRenderState } from "@/lib/club-theme";
 import { CSP_NONCE_HEADER } from "@/lib/csp";
 import { getDefaultLodgeCapacity } from "@/lib/lodge-capacity";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
+import { getAiAssistantAvailability } from "@/lib/ai-assistant-config";
 import {
   hasFinanceManagerAccess,
   requireFinanceViewer,
@@ -33,6 +34,12 @@ export default async function FinanceLayout({
   ]);
   const liveClubIdentity = { ...clubIdentity, lodgeCapacity };
   const nonce = (await headers()).get(CSP_NONCE_HEADER) ?? undefined;
+
+  // Paid AI free-text path: module on AND a usable Anthropic key stored. Budget
+  // is deliberately not checked at render (runtime fallback handles it).
+  const llmEnabled =
+    effectiveModules.aiAssistant &&
+    (await getAiAssistantAvailability(effectiveModules));
 
   return (
     <AppProviders clubIdentity={liveClubIdentity} nonce={nonce}>
@@ -77,7 +84,11 @@ export default async function FinanceLayout({
           {children}
         </main>
         <ReportIssueWidget />
-        <HelpWidgetAdmin scope="finance" llmEnabled={false} />
+        <HelpWidgetAdmin
+          scope="finance"
+          llmEnabled={llmEnabled}
+          chatEndpoint="/api/help/chat"
+        />
         </HelpWidgetProvider>
       </div>
     </AppProviders>

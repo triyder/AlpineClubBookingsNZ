@@ -14,8 +14,10 @@ import type { HelpQuestion, HelpSection } from "@/lib/contextual-help";
 import type { HelpPageContent } from "@/lib/help/types";
 import { HelpBrowseView } from "./help-browse-view";
 import { HelpChatThread } from "./help-chat-thread";
+import { HelpFreeTextInput } from "./help-free-text-input";
+import { serializePageContext } from "./help-page-context";
 import { useHelpWidgetState } from "./help-widget-context";
-import { useHelpChat } from "./use-help-chat";
+import { useHelpChat, type HelpChatSurface } from "./use-help-chat";
 
 const GREETING = "Kia ora — need a hand with this page?";
 const MAX_CHIPS = 8;
@@ -169,6 +171,22 @@ export function HelpWidget({
   const footerNote =
     surface === "public" ? "Members: sign in for more help." : undefined;
 
+  // The paid AI free-text box renders only on an authenticated surface when the
+  // LLM is available and a typed endpoint is supplied. The public surface never
+  // reaches it (llmEnabled is a hardcoded false there).
+  const showFreeText =
+    llmEnabled && Boolean(chatEndpoint) && surface !== "public";
+
+  // Plain handler — the React Compiler memoises it; a manual useCallback trips
+  // its "could not be preserved" guard (house style).
+  const handleSend = (text: string) => {
+    void chat.sendFreeText(text, {
+      pathname,
+      surface: surface as HelpChatSurface,
+      pageContext: serializePageContext(extras),
+    });
+  };
+
   const launcherWrapperClass =
     position === "website"
       ? "fixed bottom-6 right-5 z-50 sm:right-6 print:hidden"
@@ -255,14 +273,26 @@ export function HelpWidget({
             className="flex-1 overflow-y-auto overscroll-contain px-4 py-4"
           >
             {tab === "ask" ? (
-              <HelpChatThread
-                greeting={GREETING}
-                messages={chat.messages}
-                questions={chips}
-                onAsk={chat.askCurated}
-                footerNote={footerNote}
-                capReached={chat.capReached}
-              />
+              <div className="flex flex-col gap-4">
+                <HelpChatThread
+                  greeting={GREETING}
+                  messages={chat.messages}
+                  questions={chips}
+                  onAsk={chat.askCurated}
+                  footerNote={footerNote}
+                  capReached={chat.capReached}
+                  pending={chat.pending}
+                />
+                {showFreeText ? (
+                  <HelpFreeTextInput
+                    onSend={handleSend}
+                    pending={chat.pending}
+                    capReached={chat.capReached}
+                    disabledReason={chat.disabledReason}
+                    onReset={chat.reset}
+                  />
+                ) : null}
+              </div>
             ) : (
               <HelpBrowseView content={content} extraSections={extraSections} />
             )}
