@@ -15,7 +15,7 @@ import {
 } from "@/components/ui/select";
 import {
   ViewOnlyActionButton,
-  AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
 } from "@/components/admin/view-only-action";
 import {
   useAdminAreaEditAccess,
@@ -262,23 +262,51 @@ export default function XeroMemberGroupingPage() {
     [dryRunId, load],
   );
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the section —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before its
+    content appears; a region injected already-populated is silently dropped by
+    some screen-reader/browser pairings. It is rendered in the pre-config branch
+    too so the region exists from the first paint rather than from whenever the
+    config fetch settles, and it sits OUTSIDE the `space-y-*` stack so the empty
+    wrapper an edit-capable admin gets costs no layout.
+
+    No children: the notice it replaces used the shared default reason, and the
+    spec for this sweep is to carry the old copy over verbatim.
+
+    The two controls gated on `canView` rather than `canEdit` are opted out too:
+    finance edit implies finance view, so whenever `canView` is false `canEdit`
+    is false as well and this banner is on screen covering them.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-6" />
+  );
+
   if (!config) {
     return (
-      <div className="space-y-4">
-        <AdminPageHeader title="Xero member grouping" description="Loading…" />
-        {error ? <p className="text-sm text-danger">{error}</p> : null}
+      <div>
+        {viewOnlyBanner}
+        <div className="space-y-4">
+          <AdminPageHeader title="Xero member grouping" description="Loading…" />
+          {error ? <p className="text-sm text-danger">{error}</p> : null}
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
+    <div>
+      {viewOnlyBanner}
+      <div className="space-y-6">
       <AdminPageHeader
         title="Xero member grouping"
         description="Choose how members are auto-sorted into Xero contact groups, and manage the grouping rules."
         actions={
           <ViewOnlyActionButton
             canEdit={canView}
+            describeReason={false}
             readOnlyReason="Your admin role cannot view Xero member grouping."
             variant="outline"
             size="sm"
@@ -299,7 +327,6 @@ export default function XeroMemberGroupingPage() {
         </span>
       </div>
       {refreshStatus ? <p className="text-sm text-success">{refreshStatus}</p> : null}
-      {!canEdit ? <AdminViewOnlyNotice canEdit={canEdit} /> : null}
       {error ? <p className="text-sm text-danger">{error}</p> : null}
 
       <Card>
@@ -358,7 +385,7 @@ export default function XeroMemberGroupingPage() {
                       <span className="font-medium">{rule.groupName ?? groupName(rule.groupId)}</span>
                       <span className="rounded bg-muted px-1.5 py-0.5 text-xs">{rule.mode}</span>
                       {!rule.isActive ? (
-                        <span className="rounded bg-slate-200 px-1.5 py-0.5 text-xs">inactive</span>
+                        <span className="rounded bg-border px-1.5 py-0.5 text-xs">inactive</span>
                       ) : null}
                     </div>
                     <div className="text-xs text-muted-foreground">
@@ -371,6 +398,7 @@ export default function XeroMemberGroupingPage() {
                   <div className="flex items-center gap-2">
                     <ViewOnlyActionButton
                       canEdit={canEdit}
+                      describeReason={false}
                       variant="outline"
                       size="sm"
                       disabled={busy}
@@ -382,6 +410,7 @@ export default function XeroMemberGroupingPage() {
                     </ViewOnlyActionButton>
                     <ViewOnlyActionButton
                       canEdit={canEdit}
+                      describeReason={false}
                       variant="outline"
                       size="sm"
                       disabled={busy}
@@ -468,6 +497,7 @@ export default function XeroMemberGroupingPage() {
               <div className="flex items-end">
                 <ViewOnlyActionButton
                   canEdit={canEdit}
+                  describeReason={false}
                   size="sm"
                   disabled={busy || !draftGroupId}
                   onClick={() =>
@@ -513,6 +543,7 @@ export default function XeroMemberGroupingPage() {
           <div className="flex flex-wrap gap-2">
             <ViewOnlyActionButton
               canEdit={canView}
+              describeReason={false}
               readOnlyReason="Your admin role cannot view Xero member grouping."
               variant="outline"
               size="sm"
@@ -530,6 +561,7 @@ export default function XeroMemberGroupingPage() {
             </ViewOnlyActionButton>
             <ViewOnlyActionButton
               canEdit={canEdit}
+              describeReason={false}
               size="sm"
               disabled={
                 busy ||
@@ -563,6 +595,7 @@ export default function XeroMemberGroupingPage() {
             {resyncState?.nextCursorMemberId ? (
               <ViewOnlyActionButton
                 canEdit={canEdit}
+                describeReason={false}
                 variant="outline"
                 size="sm"
                 disabled={busy}
@@ -655,6 +688,7 @@ export default function XeroMemberGroupingPage() {
           ) : null}
         </CardContent>
       </Card>
+      </div>
     </div>
   );
 }

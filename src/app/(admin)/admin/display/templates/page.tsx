@@ -9,7 +9,7 @@ import { BackLink } from "@/components/admin/back-link";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import {
   ADMIN_FORBIDDEN_SAVE_REASON,
-  AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import { listDisplayCssTokens } from "@/lib/lodge-display/css-tokens";
@@ -426,8 +426,27 @@ export default function AdminDisplayTemplatesPage() {
   const textareaClass =
     "border-input bg-background w-full rounded-md border p-3 font-mono text-xs";
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the section —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before its
+    content appears; a region injected already-populated is silently dropped by
+    some screen-reader/browser pairings. It sits OUTSIDE the `space-y-*` stack so
+    the empty wrapper an edit-capable admin gets costs no layout.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-6">
+      Your admin role can view the lobby display templates but cannot change
+      them. Lodge edit access is required to author, edit, or delete a
+      template. Preview stays available.
+    </AdminViewOnlySectionBanner>
+  );
+
   return (
-    <div className="space-y-6 p-6">
+    <div className="p-6">
+      {viewOnlyBanner}
+      <div className="space-y-6">
       <div>
         <BackLink href="/admin/display" label="Lobby Display" />
         <h1 className="mt-2 text-2xl font-bold">Display Templates</h1>
@@ -443,14 +462,6 @@ export default function AdminDisplayTemplatesPage() {
           <code className="bg-muted rounded px-1">{"{{config:…}}"}</code> tokens.
         </p>
       </div>
-
-      {!canEdit ? (
-        <AdminViewOnlyNotice canEdit={canEdit}>
-          Your admin role can view the lobby display templates but cannot change
-          them. Lodge edit access is required to author, edit, or delete a
-          template. Preview stays available.
-        </AdminViewOnlyNotice>
-      ) : null}
 
       {message && <p className="text-sm font-medium">{message}</p>}
 
@@ -525,6 +536,7 @@ export default function AdminDisplayTemplatesPage() {
                   </Button>
                   <ViewOnlyActionButton
                     canEdit={canEdit}
+                    describeReason={false}
                     variant="destructive"
                     onClick={() => void deleteTemplate(item)}
                   >
@@ -563,6 +575,7 @@ export default function AdminDisplayTemplatesPage() {
               </p>
               <ViewOnlyActionButton
                 canEdit={canEdit}
+                describeReason={false}
                 variant="outline"
                 className="h-9"
                 onClick={duplicateTemplate}
@@ -913,6 +926,7 @@ export default function AdminDisplayTemplatesPage() {
           <div className="flex items-center gap-3">
             <ViewOnlyActionButton
               canEdit={canEdit}
+              describeReason={false}
               onClick={() => void save()}
               disabled={saving || !draft.name || !draft.key || draft.layoutId === ""}
             >
@@ -926,6 +940,7 @@ export default function AdminDisplayTemplatesPage() {
           </div>
         </CardContent>
       </Card>
+      </div>
     </div>
   );
 }

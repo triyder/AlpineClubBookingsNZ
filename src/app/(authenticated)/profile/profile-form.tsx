@@ -108,7 +108,7 @@ export function ProfileForm({
   const [saving, setSaving] = useState(false);
   const readOnly = !editable;
   const readOnlyInputClassName = readOnly
-    ? "bg-slate-50 text-slate-900 shadow-none focus-visible:ring-0"
+    ? "bg-muted text-foreground shadow-none focus-visible:ring-0"
     : undefined;
 
   function setSavingState(nextSaving: boolean) {

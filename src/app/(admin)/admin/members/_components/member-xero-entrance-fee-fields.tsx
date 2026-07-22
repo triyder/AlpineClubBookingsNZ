@@ -48,7 +48,7 @@ export function MemberXeroEntranceFeeFields({
             decision.setXeroCreateEntranceFeeInvoice(event.target.checked)
             onClearError()
           }}
-          className="mt-0.5 h-4 w-4 rounded border-gray-300"
+          className="mt-0.5 h-4 w-4 rounded border-border"
         />
         <div>
           <Label htmlFor={`${idPrefix}-create-invoice`}>

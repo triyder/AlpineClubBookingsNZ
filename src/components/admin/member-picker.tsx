@@ -81,14 +81,16 @@ export function MemberPicker({
     return (
       <div className="flex items-center gap-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
         <div className="flex-1">
-          {/* Explicit dark text: the card keeps its light background in dark
-              mode, where inherited text is near-white and unreadable. */}
-          <p className="font-medium text-sm text-slate-900">
+          {/* Explicit text roles rather than inherited: this card's fill is
+              `bg-blue-50`, which the #1248 colored-callout pass re-tints to a
+              dark blue in dark mode, so `--foreground`/`--muted-foreground`
+              read correctly on it in both modes (#2144). */}
+          <p className="font-medium text-sm text-foreground">
             {selectedPrefix} {selected.firstName} {selected.lastName}
           </p>
-          <p className="text-xs text-slate-500">{selected.email}</p>
+          <p className="text-xs text-muted-foreground">{selected.email}</p>
         </div>
-        <Badge variant="outline" className="text-xs text-slate-700">{selected.ageTier}</Badge>
+        <Badge variant="outline" className="text-xs text-muted-foreground">{selected.ageTier}</Badge>
         {onClear && (
           <Button variant="outline" size="sm" onClick={onClear}>
             Change
@@ -100,7 +102,7 @@ export function MemberPicker({
 
   return (
     <div ref={wrapperRef} className="relative">
-      <label className="block text-sm font-medium text-gray-700 mb-1">
+      <label className="block text-sm font-medium text-muted-foreground mb-1">
         {label}
       </label>
       <Input
@@ -110,10 +112,10 @@ export function MemberPicker({
         onFocus={() => results.length > 0 && setShowDropdown(true)}
       />
       {loading && (
-        <p className="text-xs text-slate-400 mt-1">Searching...</p>
+        <p className="text-xs text-muted-foreground mt-1">Searching...</p>
       )}
       {showDropdown && results.length > 0 && (
-        <div className="absolute z-50 mt-1 w-full bg-white border rounded-lg shadow-lg max-h-64 overflow-y-auto">
+        <div className="absolute z-50 mt-1 w-full bg-card border rounded-lg shadow-lg max-h-64 overflow-y-auto">
           {results.map((m) => (
             <button
               key={m.id}
@@ -130,14 +132,14 @@ export function MemberPicker({
                 {m.firstName} {m.lastName}
                 <Badge variant="outline" className="ml-2 text-[10px]">{m.ageTier}</Badge>
               </div>
-              <p className="text-xs text-slate-500">{m.email}</p>
+              <p className="text-xs text-muted-foreground">{m.email}</p>
             </button>
           ))}
         </div>
       )}
       {showDropdown && results.length === 0 && query.trim().length >= 2 && !loading && (
-        <div className="absolute z-50 mt-1 w-full bg-white border rounded-lg shadow-lg p-3">
-          <p className="text-sm text-slate-500">
+        <div className="absolute z-50 mt-1 w-full bg-card border rounded-lg shadow-lg p-3">
+          <p className="text-sm text-muted-foreground">
             {onlyKioskMatches
               ? "Only the shared lodge kiosk login matched — it cannot hold bookings. Search for a member instead."
               : "No members found"}

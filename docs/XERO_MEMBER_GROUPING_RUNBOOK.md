@@ -201,16 +201,19 @@ Rules and guarantees:
   the membership-cancellation path.
 - The legacy `AgeTierXeroAcceptedContactGroup` table was **dropped** by the E13
   contract migration `20260720120000` (#1939) — no deployed code queried or
-  joined it after E8. The `AgeTierSetting.xeroContactGroupId/Name` columns are
-  still **present, and become drop-eligible only once the #2130 runtime-prep
-  release has itself deployed**. E13 deferred them because the deployed runtime
-  still SELECTed them; the #2130 runtime-prep release (CHANGELOG `Unreleased`,
-  the release that follows `v0.12.2`) closed that gap in two steps — first
-  narrowing the reads (`getAgeTierSettings`), then the writes (the age-tier
-  settings route, setup wizard, config self-heal and seed upserts), since Prisma
-  emits an implicit `RETURNING` over every scalar column of an unnarrowed
-  `create`/`update`/`upsert`. **Do not drop the columns in the same release as
-  that runtime-prep.** Until the runtime-prep release is itself the
-  deployed/draining colour in production, the live `v0.12.2` colour still names
-  these columns in SQL, so the follow-up contract migration is only safe in a
-  *later* release, once the runtime-prep release has shipped and soaked.
+  joined it after E8. The `AgeTierSetting.xeroContactGroupId/Name` columns were
+  **dropped** by the #2130 STEP 2 contract migration
+  `20260721130000_contract_drop_ismember_and_agetier_xero_columns`, one release
+  later. E13 had deferred them because the deployed runtime still SELECTed them;
+  the #2130 runtime-prep work closed that gap in two steps — `v0.12.2` narrowed
+  the reads (`getAgeTierSettings`), then the STEP 1.5 release narrowed the
+  writes (the age-tier settings route, setup wizard, config self-heal and seed
+  upserts), since Prisma emits an implicit `RETURNING` over every scalar column
+  of an unnarrowed `create`/`update`/`upsert`. The drop was deliberately **not**
+  shipped in the same release as that runtime-prep: until the runtime-prep
+  release is itself the deployed/draining colour, the live colour still names
+  these columns in SQL. If you are upgrading a fork, deploy the runtime-prep
+  release, let it soak, and only then deploy the contract migration — see
+  the [upgrade guide](UPGRADING.md). Grouping is configured entirely through
+  `XeroContactGroupRule` now; the dropped columns were dead copies of data E8
+  had already migrated.

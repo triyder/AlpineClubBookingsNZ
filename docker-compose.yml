@@ -19,16 +19,12 @@ x-app-environment: &app-environment
   NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
   AUTH_SECRET: ${AUTH_SECRET:-${NEXTAUTH_SECRET}}
   AUTH_TRUST_HOST: ${AUTH_TRUST_HOST:-true}
-  STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
-  NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: ${NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY}
+  # Stripe credentials are DB-only (#2082): the secret key, publishable key, and
+  # webhook signing secret are captured in-app and stored encrypted — no STRIPE_*
+  # env vars are read (and the publishable key is delivered at runtime, not
+  # inlined at build time).
   ADDY_API_KEY: ${ADDY_API_KEY:-}
   ADDY_API_SECRET: ${ADDY_API_SECRET:-}
-  STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET}
-  XERO_CLIENT_ID: ${XERO_CLIENT_ID}
-  XERO_CLIENT_SECRET: ${XERO_CLIENT_SECRET}
-  XERO_REDIRECT_URI: ${XERO_REDIRECT_URI}
-  XERO_ENCRYPTION_KEY: ${XERO_ENCRYPTION_KEY}
-  XERO_WEBHOOK_KEY: ${XERO_WEBHOOK_KEY}
   SMTP_HOST: ${SMTP_HOST}
   SMTP_PORT: ${SMTP_PORT}
   USE_AWS_SES: ${USE_AWS_SES:-true}
@@ -67,6 +63,14 @@ x-app-environment: &app-environment
   SENTRY_ORG: ${SENTRY_ORG:-}
   SENTRY_PROJECT: ${SENTRY_PROJECT:-}
   SENTRY_AUTH_TOKEN: ${SENTRY_AUTH_TOKEN:-}
+  # TEST-ONLY mock-Xero E2E harness (#2080). Empty in every real deployment, so
+  # the mock endpoints 404 and the OAuth/org code path is unchanged. The E2E
+  # staging stack sets API_ORIGIN to the BROWSER-reachable origin (the consent
+  # URL the operator's browser follows, e.g. the host-mapped :3001) and
+  # INTERNAL_ORIGIN to the app's container-internal self-origin (:3000) for
+  # server-side token/organisation calls; INTERNAL falls back to API_ORIGIN.
+  XERO_MOCK_API_ORIGIN: ${XERO_MOCK_API_ORIGIN:-}
+  XERO_MOCK_INTERNAL_ORIGIN: ${XERO_MOCK_INTERNAL_ORIGIN:-}
 
 x-app-service: &app-service
   image: ${APP_IMAGE:-${COMPOSE_PROJECT_NAME:-tacbookings}-app:local}
@@ -74,7 +78,8 @@ x-app-service: &app-service
     context: .
     dockerfile: Dockerfile
     args:
-      NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: ${NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY}
+      # Stripe publishable key is delivered at runtime from the DB store (#2082),
+      # not inlined at build time — no NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY arg.
       NEXT_PUBLIC_SENTRY_DSN: ${NEXT_PUBLIC_SENTRY_DSN:-}
   restart: unless-stopped
   logging:
@@ -200,7 +205,6 @@ services:
       dockerfile: Dockerfile
       target: builder
       args:
-        NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: ${NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY:-}
         NEXT_PUBLIC_SENTRY_DSN: ${NEXT_PUBLIC_SENTRY_DSN:-}
     profiles: ["migrate"]
     depends_on:

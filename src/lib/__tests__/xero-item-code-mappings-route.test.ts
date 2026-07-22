@@ -129,11 +129,14 @@ describe("Xero item-code mappings route", () => {
     expect(data.entranceFees.ADULT).toEqual({ itemCode: null, amountCents: 5000 });
   });
 
-  it("GET selects ONLY the consumed columns, never the doomed isMember column (#2130 runtime-prep)", async () => {
-    // Blue/green safety pin: the deployed client must stop naming
-    // XeroItemCodeMapping.isMember in generated SQL one release BEFORE the
-    // #2130 contract migration drops it. Guards against reintroducing a
-    // no-select findMany that names every column.
+  it("GET selects ONLY the consumed columns (#2130)", async () => {
+    // Blue/green safety pin. Its original job was to stop the deployed client
+    // naming XeroItemCodeMapping.isMember one release BEFORE the #2130 STEP 2
+    // contract migration dropped it; that migration
+    // (20260721130000_contract_drop_ismember_and_agetier_xero_columns) has now
+    // shipped. The pin is kept because narrow selects remain the house rule
+    // for this model and it still guards against reintroducing a no-select
+    // findMany that names every column.
     mockPrisma.xeroItemCodeMapping.findMany.mockResolvedValue([]);
 
     await getItemCodeMappings();
@@ -155,14 +158,16 @@ describe("Xero item-code mappings route", () => {
     expect(args.select).not.toHaveProperty("isMember");
   });
 
-  it("PUT narrows every mutation's RETURNING, never naming the doomed isMember column (#2130 runtime-prep)", async () => {
+  it("PUT narrows every mutation's RETURNING (#2130)", async () => {
     // Blue/green safety pin, WRITE half. Prisma emits an implicit RETURNING
     // over every scalar column of a create/update/upsert unless a `select`
-    // narrows it, so an unnarrowed mutation still names
-    // XeroItemCodeMapping.isMember even after the reads were narrowed — a
-    // draining old colour would keep issuing that SQL once the contract
-    // migration drops the column. Exercises all four mutation sites in one
-    // request: tiered upsert, FLAT create, and the JOINING_FEE upsert.
+    // narrows it, so an unnarrowed mutation kept naming
+    // XeroItemCodeMapping.isMember even after the reads were narrowed — which
+    // is why the #2130 STEP 1.5 runtime-prep release had to ship before the
+    // STEP 2 contract migration dropped the column. That drop has landed; the
+    // pin stays because narrow RETURNINGs remain the rule for this model.
+    // Exercises all four mutation sites in one request: tiered upsert, FLAT
+    // create, and the JOINING_FEE upsert.
     mockPrisma.xeroItemCodeMapping.findFirst.mockResolvedValue(null);
 
     const res = await putItemCodeMappings(
@@ -190,7 +195,7 @@ describe("Xero item-code mappings route", () => {
     }
   });
 
-  it("PUT updates an existing FLAT hut fee row with a narrowed RETURNING (#2130 runtime-prep)", async () => {
+  it("PUT updates an existing FLAT hut fee row with a narrowed RETURNING (#2130)", async () => {
     // The find-then-update branch is the one mutation the pin above cannot
     // reach (it needs an existing row), so cover it separately.
     mockPrisma.xeroItemCodeMapping.findFirst.mockResolvedValue({ id: "row-1" });
@@ -309,14 +314,19 @@ describe("Xero item-code mappings route", () => {
 
   // ── HUT_FEE re-key (#1930, E4): keys are `${membershipTypeId}_${seasonType}_${ageTier|FLAT}` ──
 
-  it("GET returns membership-type-keyed hut fees and hides frozen legacy isMember rows", async () => {
+  it("GET returns membership-type-keyed hut fees and hides membershipTypeId-less rows", async () => {
+    // The `isMember` column these fixtures used to carry was dropped by the
+    // #2130 STEP 2 contract migration
+    // (20260721130000_contract_drop_ismember_and_agetier_xero_columns), which
+    // also deleted the orphaned legacy rows from production. The route's
+    // defence does not depend on it: a HUT_FEE row is keyed, and rendered,
+    // solely by membershipTypeId, so a membershipTypeId-less row stays hidden.
     mockPrisma.xeroItemCodeMapping.findMany.mockResolvedValue([
       {
         category: "HUT_FEE",
         membershipTypeId: FULL_TYPE.id,
         seasonType: "WINTER",
         ageTier: "ADULT",
-        isMember: null,
         entranceFeeCategory: null,
         itemCode: "HUTFEE-FULL-WIN-AD",
         amountCents: null,
@@ -326,18 +336,16 @@ describe("Xero item-code mappings route", () => {
         membershipTypeId: SCHOOL_FLAT_TYPE.id,
         seasonType: "SUMMER",
         ageTier: null,
-        isMember: null,
         entranceFeeCategory: null,
         itemCode: "HUTFEE-SCHOOL-FLAT",
         amountCents: null,
       },
-      // Frozen legacy isMember-keyed row (no membershipTypeId): hidden.
+      // Residual un-keyed legacy row (no membershipTypeId): hidden.
       {
         category: "HUT_FEE",
         membershipTypeId: null,
         seasonType: "WINTER",
         ageTier: "ADULT",
-        isMember: true,
         entranceFeeCategory: null,
         itemCode: "LEGACY-ADULT-WIN-MEM",
         amountCents: null,

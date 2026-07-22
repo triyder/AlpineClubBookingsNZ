@@ -7,7 +7,7 @@ import { Archive, AlertTriangle, CheckCircle2, RefreshCw, XCircle } from "lucide
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
-  AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
@@ -199,7 +199,7 @@ function statusBadge(status: string) {
           ? "border-green-200 bg-green-50 text-green-800"
           : status === "DECLINED" || status === "REJECTED"
             ? "border-red-200 bg-red-50 text-red-800"
-            : "border-slate-200 bg-slate-50 text-slate-700";
+            : "border-border bg-muted text-muted-foreground";
 
   return (
     <Badge variant="outline" className={classes}>
@@ -464,20 +464,32 @@ export default function MembershipCancellationsPage() {
     }
   }
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the section —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before its
+    content appears; a region injected already-populated is silently dropped by
+    some screen-reader/browser pairings. It sits OUTSIDE the `space-y-*` stack so
+    the empty wrapper an edit-capable admin gets costs no layout.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEditMembership} className="mb-6">
+      Your admin role can view membership cancellations but cannot
+      approve or reject them.
+    </AdminViewOnlySectionBanner>
+  );
+
   return (
-    <div className="space-y-6">
+    <div>
+      {viewOnlyBanner}
+      <div className="space-y-6">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">
+          <h1 className="text-2xl font-bold text-foreground">
             Membership Cancellations
           </h1>
-          <p className="mt-1 text-sm text-slate-500">{pendingSummary}</p>
-          {!canEditMembership && (
-            <AdminViewOnlyNotice canEdit={canEditMembership} className="mt-3">
-              Your admin role can view membership cancellations but cannot
-              approve or reject them.
-            </AdminViewOnlyNotice>
-          )}
+          <p className="mt-1 text-sm text-muted-foreground">{pendingSummary}</p>
         </div>
         <div className="flex items-center gap-2">
           <Select
@@ -536,13 +548,13 @@ export default function MembershipCancellationsPage() {
         </CardHeader>
         <CardContent>
           {archiveLoading && (
-            <p className="py-6 text-sm text-slate-500">
+            <p className="py-6 text-sm text-muted-foreground">
               Loading archive requests...
             </p>
           )}
 
           {!archiveLoading && archiveData?.requests.length === 0 && (
-            <p className="py-6 text-sm text-slate-500">
+            <p className="py-6 text-sm text-muted-foreground">
               No archive requests are awaiting review.
             </p>
           )}
@@ -566,9 +578,9 @@ export default function MembershipCancellationsPage() {
                     <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                       <div className="space-y-2">
                         <div className="flex flex-wrap items-center gap-2">
-                          <Archive className="h-4 w-4 text-slate-500" />
+                          <Archive className="h-4 w-4 text-muted-foreground" />
                           <Link
-                            className="font-medium text-slate-900 underline-offset-2 hover:underline"
+                            className="font-medium text-foreground underline-offset-2 hover:underline"
                             href={buildHrefWithReturnTo(memberHref, currentPath)}
                           >
                             {request.member?.name ||
@@ -580,11 +592,11 @@ export default function MembershipCancellationsPage() {
                             <Badge variant="outline">Already archived</Badge>
                           )}
                         </div>
-                        <p className="text-sm text-slate-600">
+                        <p className="text-sm text-muted-foreground">
                           Requested by{" "}
                           {request.requestedBy ? (
                             <Link
-                              className="font-medium text-slate-900 underline-offset-2 hover:underline"
+                              className="font-medium text-foreground underline-offset-2 hover:underline"
                               href={buildHrefWithReturnTo(
                                 `/admin/members/${request.requestedBy.id}`,
                                 currentPath,
@@ -597,12 +609,12 @@ export default function MembershipCancellationsPage() {
                           )}{" "}
                           on {formatDateTime(request.requestedAt)}
                         </p>
-                        <p className="text-sm text-slate-600">
+                        <p className="text-sm text-muted-foreground">
                           <span className="font-medium">Reason:</span>{" "}
                           {request.reason}
                         </p>
                         {request.member?.cancelledAt && (
-                          <p className="text-xs text-slate-500">
+                          <p className="text-xs text-muted-foreground">
                             Cancelled {formatDateTime(request.member.cancelledAt)}
                           </p>
                         )}
@@ -637,6 +649,7 @@ export default function MembershipCancellationsPage() {
                         <div className="flex flex-wrap gap-2">
                           <ViewOnlyActionButton
                             canEdit={canEditMembership}
+                            describeReason={false}
                             variant="outline"
                             className="border-red-200 text-red-700 hover:bg-red-50"
                             disabled={Boolean(isSubmitting)}
@@ -647,6 +660,7 @@ export default function MembershipCancellationsPage() {
                           </ViewOnlyActionButton>
                           <ViewOnlyActionButton
                             canEdit={canEditMembership}
+                            describeReason={false}
                             variant="destructive"
                             disabled={Boolean(isSubmitting)}
                             onClick={() =>
@@ -676,11 +690,11 @@ export default function MembershipCancellationsPage() {
         </CardHeader>
         <CardContent>
           {loading && (
-            <p className="py-6 text-sm text-slate-500">Loading requests...</p>
+            <p className="py-6 text-sm text-muted-foreground">Loading requests...</p>
           )}
 
           {!loading && data?.requests.length === 0 && (
-            <p className="py-6 text-sm text-slate-500">
+            <p className="py-6 text-sm text-muted-foreground">
               No membership cancellation requests match this filter.
             </p>
           )}
@@ -692,16 +706,16 @@ export default function MembershipCancellationsPage() {
                   <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
                     <div className="space-y-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        <h2 className="text-base font-semibold text-slate-900">
+                        <h2 className="text-base font-semibold text-foreground">
                           Request {request.id.slice(-8)}
                         </h2>
                         {statusBadge(request.status)}
                       </div>
-                      <p className="text-sm text-slate-600">
+                      <p className="text-sm text-muted-foreground">
                         Requested by{" "}
                         {request.requestedBy ? (
                           <Link
-                            className="font-medium text-slate-900 underline-offset-2 hover:underline"
+                            className="font-medium text-foreground underline-offset-2 hover:underline"
                             href={buildHrefWithReturnTo(
                               `/admin/members/${request.requestedBy.id}`,
                               currentPath,
@@ -715,14 +729,14 @@ export default function MembershipCancellationsPage() {
                         on {formatDateTime(request.submittedAt)}
                       </p>
                       {request.reason && (
-                        <p className="text-sm text-slate-600">
+                        <p className="text-sm text-muted-foreground">
                           <span className="font-medium">Reason:</span>{" "}
                           {request.reason}
                         </p>
                       )}
                     </div>
                     {request.reviewedAt && (
-                      <p className="text-xs text-slate-500">
+                      <p className="text-xs text-muted-foreground">
                         Reviewed {formatDateTime(request.reviewedAt)}
                       </p>
                     )}
@@ -743,13 +757,13 @@ export default function MembershipCancellationsPage() {
                       return (
                         <div
                           key={participant.id}
-                          className="rounded-md border border-slate-200 bg-white p-4"
+                          className="rounded-md border border-border bg-card p-4"
                         >
                           <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                             <div className="space-y-2">
                               <div className="flex flex-wrap items-center gap-2">
                                 <Link
-                                  className="font-medium text-slate-900 underline-offset-2 hover:underline"
+                                  className="font-medium text-foreground underline-offset-2 hover:underline"
                                   href={buildHrefWithReturnTo(
                                     `/admin/members/${participant.memberId}`,
                                     currentPath,
@@ -767,10 +781,10 @@ export default function MembershipCancellationsPage() {
                                   <Badge variant="outline">No login</Badge>
                                 )}
                               </div>
-                              <p className="text-sm text-slate-500">
+                              <p className="text-sm text-muted-foreground">
                                 {participant.email} - {participant.ageTier}
                               </p>
-                              <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
+                              <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
                                 <span>
                                   Confirmed:{" "}
                                   {participant.confirmedAt
@@ -789,7 +803,7 @@ export default function MembershipCancellationsPage() {
                                 )}
                               </div>
                               {participant.adminNote && (
-                                <p className="text-sm text-slate-600">
+                                <p className="text-sm text-muted-foreground">
                                   <span className="font-medium">Admin note:</span>{" "}
                                   {participant.adminNote}
                                 </p>
@@ -847,6 +861,7 @@ export default function MembershipCancellationsPage() {
                               <div className="flex flex-wrap gap-2">
                                 <ViewOnlyActionButton
                                   canEdit={canEditMembership}
+                                  describeReason={false}
                                   variant="outline"
                                   className="border-red-200 text-red-700 hover:bg-red-50"
                                   disabled={rejectDisabled}
@@ -863,6 +878,7 @@ export default function MembershipCancellationsPage() {
                                 </ViewOnlyActionButton>
                                 <ViewOnlyActionButton
                                   canEdit={canEditMembership}
+                                  describeReason={false}
                                   disabled={approveDisabled}
                                   onClick={() =>
                                     openNotifyChoice(
@@ -878,7 +894,7 @@ export default function MembershipCancellationsPage() {
                               </div>
                               {!participant.confirmedAt &&
                                 participant.status === "PENDING_CONFIRMATION" && (
-                                  <p className="text-xs text-slate-500">
+                                  <p className="text-xs text-muted-foreground">
                                     Approval is unavailable until this adult confirms
                                     their own cancellation request.
                                   </p>
@@ -947,6 +963,7 @@ export default function MembershipCancellationsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      </div>
     </div>
   );
 }

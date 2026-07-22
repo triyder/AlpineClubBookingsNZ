@@ -18,7 +18,7 @@ import {
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import {
   AdminForbiddenSaveNotice,
-  AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 
@@ -162,29 +162,50 @@ export function SiteContentPanel() {
     }
   }
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the section —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before its
+    content appears; a region injected already-populated is silently dropped by
+    some screen-reader/browser pairings — which is why it is rendered in the
+    loading branch too. It sits OUTSIDE the `space-y-*` stack so the empty
+    wrapper an edit-capable admin gets costs no layout.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-6">
+      Your admin role can view site content but cannot change it. The
+      editors below are read-only.
+    </AdminViewOnlySectionBanner>
+  );
+
   if (loading) {
-    return <p className="text-sm text-slate-500">Loading site content...</p>;
+    return (
+      <div>
+        {viewOnlyBanner}
+        <p className="text-sm text-muted-foreground">Loading site content...</p>
+      </div>
+    );
   }
 
   if (loadError) {
     return (
-      <div className="space-y-3">
-        <p className="text-sm text-red-600">{loadError}</p>
-        <Button type="button" variant="outline" onClick={loadDocuments}>
-          Retry
-        </Button>
+      <div>
+        {viewOnlyBanner}
+        <div className="space-y-3">
+          <p className="text-sm text-red-600">{loadError}</p>
+          <Button type="button" variant="outline" onClick={loadDocuments}>
+            Retry
+          </Button>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
-      {!canEdit ? (
-        <AdminViewOnlyNotice canEdit={canEdit}>
-          Your admin role can view site content but cannot change it. The
-          editors below are read-only.
-        </AdminViewOnlyNotice>
-      ) : null}
+    <div>
+      {viewOnlyBanner}
+      <div className="space-y-6">
       {forbidden ? <AdminForbiddenSaveNotice /> : null}
       {SECTIONS.map((section) => (
         <Card key={section.key}>
@@ -214,6 +235,7 @@ export function SiteContentPanel() {
             <div className="flex justify-end">
               <ViewOnlyActionButton
                 canEdit={canEdit}
+                describeReason={false}
                 type="button"
                 onClick={() => saveDocument(section.key, section.title)}
                 disabled={savingKey !== null}
@@ -227,6 +249,7 @@ export function SiteContentPanel() {
           </CardContent>
         </Card>
       ))}
+      </div>
     </div>
   );
 }

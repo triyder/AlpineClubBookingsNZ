@@ -203,30 +203,6 @@ async function seedClubTheme() {
   console.log("Default site style seeded");
 }
 
-// Create any missing per-tier rates for a season without touching existing
-// rows, so rates edited by admins survive a re-run.
-async function createMissingSeasonRates(
-  seasonId: string,
-  season: "winter" | "summer",
-) {
-  for (const rate of seedRatesForSeason(season)) {
-    await prisma.seasonRate.upsert({
-      where: {
-        seasonId_ageTier_isMember: {
-          seasonId,
-          ageTier: rate.ageTier,
-          isMember: rate.isMember,
-        },
-      },
-      update: {},
-      create: {
-        seasonId,
-        ...rate,
-      },
-    });
-  }
-}
-
 // Seed the membership-type-keyed hut rates (#1930, E4) with the same D4 fan-out
 // the migration backfill uses: member rates -> every MEMBER_RATE type,
 // non-member rates -> the built-in NON_MEMBER type. Create-if-missing so admin
@@ -582,7 +558,6 @@ async function main() {
       lodgeId: seedLodgeId,
     },
   });
-  await createMissingSeasonRates(winter2026.id, "winter");
   await createMissingMembershipTypeSeasonRates(winter2026.id, "winter");
   console.log(`Season seeded: ${winter2026.name}`);
 
@@ -600,7 +575,6 @@ async function main() {
       lodgeId: seedLodgeId,
     },
   });
-  await createMissingSeasonRates(summer2026.id, "summer");
   await createMissingMembershipTypeSeasonRates(summer2026.id, "summer");
   console.log(`Season seeded: ${summer2026.name}`);
 

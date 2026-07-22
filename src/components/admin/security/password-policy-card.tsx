@@ -14,7 +14,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-  AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
@@ -140,12 +140,28 @@ export function PasswordPolicyCard() {
     section.setSuccess("");
   }
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the section —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before
+    its content appears; a region injected already-populated is silently dropped
+    by some screen-reader/browser pairings. It sits OUTSIDE the `space-y-4`
+    stack so the empty wrapper an edit-capable admin gets costs no layout.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-4">
+      Your admin role can view login &amp; security settings but cannot change
+      them. Support edit access is required.
+    </AdminViewOnlySectionBanner>
+  );
+
   return (
     <Card>
       <CardHeader>
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-start gap-3">
-            <KeyRound className="mt-0.5 h-5 w-5 shrink-0 text-slate-500" />
+            <KeyRound className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
             <div className="min-w-0 flex-1">
               <CardTitle className="text-base">Password policy</CardTitle>
               <CardDescription className="mt-1">
@@ -160,6 +176,7 @@ export function PasswordPolicyCard() {
           {!editing && draft ? (
             <ViewOnlyActionButton
               canEdit={canEdit}
+              describeReason={false}
               variant="outline"
               size="sm"
               type="button"
@@ -170,12 +187,9 @@ export function PasswordPolicyCard() {
           ) : null}
         </div>
       </CardHeader>
-      <CardContent className="space-y-4">
-        <AdminViewOnlyNotice canEdit={canEdit}>
-          Your admin role can view login &amp; security settings but cannot change
-          them. Support edit access is required.
-        </AdminViewOnlyNotice>
-
+      <CardContent>
+        {viewOnlyBanner}
+        <div className="space-y-4">
         {(error || savedMessage) && (
           <div
             role={error ? "alert" : "status"}
@@ -191,7 +205,7 @@ export function PasswordPolicyCard() {
 
         {loading && draft === null ? (
           <div className="flex min-h-[160px] items-center justify-center">
-            <Loader2 className="h-6 w-6 animate-spin text-slate-500" />
+            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
           </div>
         ) : draft ? (
           <>
@@ -209,7 +223,7 @@ export function PasswordPolicyCard() {
                 className="max-w-[8rem]"
                 aria-describedby="min-password-length-hint"
               />
-              <p id="min-password-length-hint" className="text-xs text-slate-500">
+              <p id="min-password-length-hint" className="text-xs text-muted-foreground">
                 Between {MIN_PASSWORD_LENGTH_FLOOR} and {MIN_PASSWORD_LENGTH_CEILING}{" "}
                 characters. A hard maximum of 128 characters always applies.
               </p>
@@ -222,7 +236,7 @@ export function PasswordPolicyCard() {
             </div>
 
             <fieldset className="space-y-3">
-              <legend className="text-sm font-medium text-slate-700">
+              <legend className="text-sm font-medium text-muted-foreground">
                 Required character types
               </legend>
               {CLASS_FIELDS.map(({ key, label }) => {
@@ -257,6 +271,7 @@ export function PasswordPolicyCard() {
                 <>
                   <ViewOnlyActionButton
                     canEdit={canEdit}
+                    describeReason={false}
                     type="button"
                     onClick={() => void section.save()}
                     disabled={!dirty || saving || !minLengthValid}
@@ -291,6 +306,7 @@ export function PasswordPolicyCard() {
             </div>
           </>
         ) : null}
+        </div>
       </CardContent>
     </Card>
   );

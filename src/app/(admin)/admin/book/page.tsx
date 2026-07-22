@@ -25,7 +25,7 @@ import { PromoCodeInput, type PromoResult } from "@/components/promo-code-input"
 import { TimePicker } from "@/components/time-picker";
 import { MemberPicker } from "@/components/admin/member-picker";
 import {
-  AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
@@ -489,16 +489,56 @@ export default function AdminBookPage() {
   const remainingToPay = finalPriceBeforeCredit - appliedCreditCents;
   const showPaymentMethodChoice = internetBankingEnabled && remainingToPay > 0;
 
-  return (
-    <div className="max-w-3xl space-y-6">
-      <h1 className="text-3xl font-bold">Book on Behalf of Member</h1>
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the page —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before
+    its content appears; a region injected already-populated is silently dropped
+    by some screen-reader/browser pairings. It sits OUTSIDE the `space-y-6`
+    stack so the empty wrapper an edit-capable admin gets costs no layout.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEditBookings} className="mb-6">
+      Your admin role can view booking tools but cannot create bookings on
+      behalf of members.
+    </AdminViewOnlySectionBanner>
+  );
 
-      {!canEditBookings && (
-        <AdminViewOnlyNotice canEdit={canEditBookings}>
-          Your admin role can view booking tools but cannot create bookings on
-          behalf of members.
-        </AdminViewOnlyNotice>
-      )}
+  return (
+    <div className="max-w-3xl">
+      {/*
+        #2160: on THIS page the heading comes first, so that a screen-reader
+        user knows which area they are on before the banner tells them they
+        have view-only access to it. `mb-6` replaces the `space-y-6` gap the h1
+        had as the stack's first child, so spacing is unchanged in both states:
+        the `mb-6` lives on the banner's inner div, which only renders for a
+        view-only admin, and the permanently-mounted `role="status"` wrapper an
+        edit-capable admin gets has no height and no margin.
+
+        This ordering is NOT the house rule, and is applied only here and on
+        `/admin/roster`. Everywhere else the banner is the FIRST child of the
+        outermost wrapper, in EVERY render branch, and has to stay there: that
+        is what keeps the `role="status"` wrapper in the same DOM position when
+        a fetch settles. On a section with a loading or error branch, putting a
+        heading above the banner in the loaded branch only makes React
+        reconcile child 0 from the live region into the heading and mount a
+        fresh, already-populated region below it — precisely the defect the
+        mount-order rule in
+        `src/components/admin/__tests__/view-only-banner-contract.test.ts`
+        exists to prevent.
+
+        This page renders in a single branch, so the reorder is free. Plenty of
+        other surfaces are single-branch too and could take it; they have not,
+        because doing so would make the banner's position depend on whether a
+        section happens to have a loading branch — a property you can not see
+        at the render site, and the wrong thing to make a reader check. "Banner
+        first, always" stays the shape everywhere else. See
+        `docs/ARCHITECTURE.md` for the whole rule.
+      */}
+      <h1 className="mb-6 text-3xl font-bold">Book on Behalf of Member</h1>
+      {viewOnlyBanner}
+      <div className="space-y-6">
 
       {/* Owner selection — pick an existing member, or inline-create a
           non-login non-member owner (#1935). The toggle only shows before an
@@ -551,15 +591,15 @@ export default function AdminBookPage() {
       {/* Step indicator — only show after member selected */}
       {selectedMember && (
         <div className="flex items-center gap-2 text-sm">
-          <span className={step === "dates" ? "app-step-active" : "text-gray-400"}>
+          <span className={step === "dates" ? "app-step-active" : "text-muted-foreground"}>
             1. Select Dates
           </span>
-          <span className="text-gray-300">&rarr;</span>
-          <span className={step === "guests" ? "app-step-active" : "text-gray-400"}>
+          <span className="text-muted-foreground">&rarr;</span>
+          <span className={step === "guests" ? "app-step-active" : "text-muted-foreground"}>
             2. Add Guests
           </span>
-          <span className="text-gray-300">&rarr;</span>
-          <span className={step === "review" ? "app-step-active" : "text-gray-400"}>
+          <span className="text-muted-foreground">&rarr;</span>
+          <span className={step === "review" ? "app-step-active" : "text-muted-foreground"}>
             3. Review & Confirm
           </span>
         </div>
@@ -580,8 +620,8 @@ export default function AdminBookPage() {
                 loading={lodgesLoading}
               />
             </div>
-            <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
-              <label className="flex items-start gap-2 text-sm text-slate-800 cursor-pointer">
+            <div className="rounded-md border border-border bg-muted p-3">
+              <label className="flex items-start gap-2 text-sm text-foreground cursor-pointer">
                 <input
                   type="checkbox"
                   checked={allowPastDates}
@@ -595,13 +635,13 @@ export default function AdminBookPage() {
                       setCheckOut(null);
                     }
                   }}
-                  className="mt-0.5 rounded border-slate-300"
+                  className="mt-0.5 rounded border-border"
                 />
                 <span>
                   <span className="font-medium">
                     Record a past stay (retroactive booking)
                   </span>
-                  <span className="block text-xs text-slate-600">
+                  <span className="block text-xs text-muted-foreground">
                     Someone already stayed — record the booking after the fact.
                     Allowed up to 365 days back.
                   </span>
@@ -627,7 +667,7 @@ export default function AdminBookPage() {
             <CardTitle>
               Add Guests
               {checkIn && checkOut && (
-                <span className="ml-2 text-sm font-normal text-gray-500">
+                <span className="ml-2 text-sm font-normal text-muted-foreground">
                   {checkIn.toLocaleDateString("en-NZ")} -{" "}
                   {checkOut.toLocaleDateString("en-NZ")} ({nights} night
                   {nights !== 1 ? "s" : ""})
@@ -711,7 +751,7 @@ export default function AdminBookPage() {
             <CardContent className="space-y-4">
               <div className="grid grid-cols-2 gap-4 text-sm">
                 <div>
-                  <span className="text-gray-500">Check-in:</span>{" "}
+                  <span className="text-muted-foreground">Check-in:</span>{" "}
                   <span className="font-medium">
                     {checkIn!.toLocaleDateString("en-NZ", {
                       weekday: "short",
@@ -722,7 +762,7 @@ export default function AdminBookPage() {
                   </span>
                 </div>
                 <div>
-                  <span className="text-gray-500">Check-out:</span>{" "}
+                  <span className="text-muted-foreground">Check-out:</span>{" "}
                   <span className="font-medium">
                     {checkOut!.toLocaleDateString("en-NZ", {
                       weekday: "short",
@@ -733,11 +773,11 @@ export default function AdminBookPage() {
                   </span>
                 </div>
                 <div>
-                  <span className="text-gray-500">Nights:</span>{" "}
+                  <span className="text-muted-foreground">Nights:</span>{" "}
                   <span className="font-medium">{nights}</span>
                 </div>
                 <div>
-                  <span className="text-gray-500">Guests:</span>{" "}
+                  <span className="text-muted-foreground">Guests:</span>{" "}
                   <span className="font-medium">{guests.length}</span>
                 </div>
               </div>
@@ -888,7 +928,7 @@ export default function AdminBookPage() {
           {showPaymentMethodChoice && (
             <Card>
               <CardContent className="space-y-3 pt-6">
-                <p className="text-sm font-medium text-slate-900">Payment method</p>
+                <p className="text-sm font-medium text-foreground">Payment method</p>
                 <div className="grid gap-2 sm:grid-cols-2">
                   <button
                     type="button"
@@ -896,7 +936,7 @@ export default function AdminBookPage() {
                     className={`flex min-h-16 items-start gap-3 rounded-md border p-3 text-left text-sm ${
                       paymentMethod === "stripe"
                         ? "border-blue-500 bg-blue-50 text-blue-950"
-                        : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                        : "border-border bg-card text-muted-foreground hover:border-muted-foreground"
                     }`}
                   >
                     <CreditCard className="mt-0.5 h-4 w-4 shrink-0" />
@@ -913,7 +953,7 @@ export default function AdminBookPage() {
                     className={`flex min-h-16 items-start gap-3 rounded-md border p-3 text-left text-sm ${
                       paymentMethod === "internet_banking"
                         ? "border-blue-500 bg-blue-50 text-blue-950"
-                        : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                        : "border-border bg-card text-muted-foreground hover:border-muted-foreground"
                     }`}
                   >
                     <Landmark className="mt-0.5 h-4 w-4 shrink-0" />
@@ -930,7 +970,7 @@ export default function AdminBookPage() {
           )}
 
           {isRetroactive && (
-            <div className="rounded-md bg-slate-50 border border-slate-200 p-3 text-sm text-slate-700">
+            <div className="rounded-md bg-muted border border-border p-3 text-sm text-muted-foreground">
               Recording a past stay ({checkIn!.toLocaleDateString("en-NZ")}). The
               member email is optional (you choose on confirm); drafts are not
               available for retroactive bookings.
@@ -949,6 +989,7 @@ export default function AdminBookPage() {
               </ul>
               <ViewOnlyActionButton
                 canEdit={canEditBookings}
+                describeReason={false}
                 className="mt-3"
                 variant="destructive"
                 disabled={submitting}
@@ -971,6 +1012,7 @@ export default function AdminBookPage() {
             <div className="flex gap-3">
               <ViewOnlyActionButton
                 canEdit={canEditBookings}
+                describeReason={false}
                 variant="outline"
                 onClick={handleSaveAsDraft}
                 disabled={
@@ -991,6 +1033,7 @@ export default function AdminBookPage() {
               </ViewOnlyActionButton>
               <ViewOnlyActionButton
                 canEdit={canEditBookings}
+                describeReason={false}
                 onClick={handleConfirmClick}
                 disabled={submitting || savingDraft}
                 size="lg"
@@ -1062,6 +1105,7 @@ export default function AdminBookPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      </div>
     </div>
   );
 }

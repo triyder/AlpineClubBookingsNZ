@@ -67,13 +67,13 @@ export function NonMemberGuestsSection({
               >
                 <div className="flex items-center justify-between gap-3">
                   <div className="space-y-1">
-                    <p className="text-sm font-medium text-slate-800">
+                    <p className="text-sm font-medium text-muted-foreground">
                       {child.guestCount} non-member guest
                       {child.guestCount === 1 ? "" : "s"} &middot;{" "}
                       {formatCents(child.finalPriceCents)}
                     </p>
                     {child.datesDiffer ? (
-                      <p className="text-xs text-slate-600">
+                      <p className="text-xs text-muted-foreground">
                         {child.checkIn.toLocaleDateString("en-NZ", {
                           dateStyle: "long",
                         })}{" "}

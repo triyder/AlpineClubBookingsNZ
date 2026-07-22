@@ -197,7 +197,10 @@ establishes:
   a read-only `checkCapacity` call (never a new capacity computation).
 
 Later epic issues build on these primitives; do not re-introduce hardcoded
-status hex, `bg-white`, or `text-slate-*` on app surfaces.
+status hex, `bg-white`, or `text-slate-*` on app surfaces — since #2144 the
+admin and finance trees are token-only and
+`src/lib/__tests__/brand-color-source-contract.test.ts` fails the build on any
+raw neutral outside its per-file allowlist.
 
 ## Review Prompts
 

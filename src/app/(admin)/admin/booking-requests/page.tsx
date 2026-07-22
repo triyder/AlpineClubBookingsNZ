@@ -145,7 +145,7 @@ export default function BookingRequestsPage() {
         <TabsContent value="public" className="mt-6">
           {activeTab === "public" ? (
             <div className="space-y-4">
-              <p className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
+              <p className="rounded-md border border-border bg-muted p-3 text-sm text-muted-foreground">
                 How a non-member request flows: the requester submits it and
                 confirms their email, then it appears here under{" "}
                 <span className="font-medium">Queue</span>. Price it, approve

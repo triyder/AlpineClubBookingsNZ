@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import {
   AlertCircle,
+  ArrowRight,
   CheckCircle2,
   Loader2,
   RefreshCw,
@@ -24,7 +26,7 @@ import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import {
   ADMIN_FORBIDDEN_SAVE_REASON,
-  AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 
@@ -78,6 +80,12 @@ function readinessLabel(status: ModuleReadinessStatus) {
   if (status === "credentials_missing") return "Needs setup";
   return "Disabled";
 }
+
+// Modules whose "Needs setup" state has a guided setup wizard to deep-link to
+// (#2080). C4/C5 add their providers here as their wizards land.
+const MODULE_SETUP_HREFS: Partial<Record<ModuleKey, string>> = {
+  xeroIntegration: "/admin/xero/setup",
+};
 
 function getReadiness(
   module: ModuleStatus,
@@ -218,20 +226,41 @@ export default function AdminModulesPage() {
     }
   }
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the section —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before its
+    content appears; a region injected already-populated is silently dropped by
+    some screen-reader/browser pairings. It sits OUTSIDE the `space-y-*` stack so
+    the empty wrapper an edit-capable admin gets costs no layout.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-6">
+      Your admin role can view the module settings but cannot change them.
+      Support edit access is required.
+    </AdminViewOnlySectionBanner>
+  );
+
   if (loading && !payload) {
     return (
-      <div className="flex min-h-[320px] items-center justify-center">
-        <Loader2 className="h-6 w-6 animate-spin text-slate-500" />
+      <div>
+        {viewOnlyBanner}
+        <div className="flex min-h-[320px] items-center justify-center">
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        </div>
       </div>
     );
   }
 
   return (
-    <div ref={pageRef} className="space-y-8">
+    <div>
+      {viewOnlyBanner}
+      <div ref={pageRef} className="space-y-8">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Modules</h1>
-          <p className="mt-1 max-w-3xl text-sm text-slate-500">
+          <h1 className="text-2xl font-bold text-foreground">Modules</h1>
+          <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
             Turn optional club modules on or off. These toggles are the single
             control for whether a module is available across the site.
           </p>
@@ -249,6 +278,7 @@ export default function AdminModulesPage() {
           </Button>
           <ViewOnlyActionButton
             canEdit={canEdit}
+            describeReason={false}
             type="button"
             onClick={() => void saveModules()}
             disabled={!dirty || saving || draft === null}
@@ -262,13 +292,6 @@ export default function AdminModulesPage() {
           </ViewOnlyActionButton>
         </div>
       </div>
-
-      {!canEdit && (
-        <AdminViewOnlyNotice canEdit={canEdit}>
-          Your admin role can view the module settings but cannot change them.
-          Support edit access is required.
-        </AdminViewOnlyNotice>
-      )}
 
       {(error || savedMessage) && (
         <div
@@ -285,10 +308,10 @@ export default function AdminModulesPage() {
         </div>
       )}
 
-      <div className="rounded-md border border-slate-200 bg-white px-4 py-3">
+      <div className="rounded-md border border-border bg-card px-4 py-3">
         <div className="flex items-start gap-3">
-          <ServerCog className="mt-0.5 h-5 w-5 shrink-0 text-slate-500" />
-          <div className="space-y-1 text-sm text-slate-600">
+          <ServerCog className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
+          <div className="space-y-1 text-sm text-muted-foreground">
             <p>
               Module activation is stored in the database and does not store
               secrets, tokens, tenant ids, or provider credentials.
@@ -340,7 +363,7 @@ export default function AdminModulesPage() {
                 </div>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="flex items-start gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                <div className="flex items-start gap-2 rounded-md border border-border bg-muted px-3 py-2 text-sm text-muted-foreground">
                   {statusIcon}
                   <div>
                     <Badge
@@ -350,15 +373,25 @@ export default function AdminModulesPage() {
                       {readinessLabel(module.readiness.status)}
                     </Badge>
                     <p>{module.readiness.message}</p>
+                    {module.readiness.status === "credentials_missing" &&
+                    MODULE_SETUP_HREFS[module.key] ? (
+                      <Link
+                        href={MODULE_SETUP_HREFS[module.key] as string}
+                        className="mt-2 inline-flex items-center gap-1 text-sm font-medium text-foreground underline decoration-brand-gold/70 decoration-2 underline-offset-4"
+                      >
+                        Set up
+                        <ArrowRight className="h-3.5 w-3.5" aria-hidden />
+                      </Link>
+                    ) : null}
                   </div>
                 </div>
 
                 {module.readiness.dependencies.length > 0 && (
                   <div>
-                    <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                    <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       Dependencies
                     </p>
-                    <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-slate-600">
+                    <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-muted-foreground">
                       {module.readiness.dependencies.map((dependency) => (
                         <li key={dependency}>{dependency}</li>
                       ))}
@@ -369,6 +402,7 @@ export default function AdminModulesPage() {
             </Card>
           );
         })}
+      </div>
       </div>
     </div>
   );

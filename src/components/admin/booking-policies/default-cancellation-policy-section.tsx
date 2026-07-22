@@ -508,7 +508,7 @@ export function DefaultCancellationPolicySection() {
                         onChange={(e) =>
                           section.setDraft({ holdDays: parseInt(e.target.value) || 7 })
                         }
-                        className={`w-20 ${!editing || !draft.holdEnabled ? "bg-slate-50 text-slate-700" : ""}`}
+                        className={`w-20 ${!editing || !draft.holdEnabled ? "bg-muted text-muted-foreground" : ""}`}
                         disabled={!editing || !draft.holdEnabled}
                       />
                       <span className="text-sm text-muted-foreground">days before check-in</span>
@@ -534,7 +534,7 @@ export function DefaultCancellationPolicySection() {
                       })
                     }
                     disabled={!editing}
-                    className={`w-full rounded-md border border-input px-3 py-2 text-sm ${!editing ? "bg-slate-50 text-slate-700" : "bg-background"}`}
+                    className={`w-full rounded-md border border-input px-3 py-2 text-sm ${!editing ? "bg-muted text-muted-foreground" : "bg-background"}`}
                   >
                     <option value="OWN_LODGE_FIRST">
                       Own lodge first — a lodge&apos;s own waitlist is served before cross-lodge opt-ins

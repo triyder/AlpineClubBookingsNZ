@@ -1,32 +1,29 @@
 import Stripe from "stripe";
 import { APP_STRIPE_CURRENCY } from "@/config/operational";
+import { getOperationalStripeSecretKey } from "@/lib/stripe-config";
 
-function getStripeClient(): Stripe {
-  const key = process.env.STRIPE_SECRET_KEY;
-  if (!key) {
-    throw new Error("STRIPE_SECRET_KEY is not set");
-  }
-  return new Stripe(key, {
-    apiVersion: Stripe.API_VERSION,
-    typescript: true,
-  });
-}
-
-// Lazy-initialize to avoid throwing at import time during tests
+// DB-only credential resolution (#2082): the secret key lives in the encrypted
+// IntegrationCredential store, so client construction is now ASYNC. We memoize
+// the client keyed on the resolved secret so a wizard key change (verify-reset)
+// rebuilds the client on the next call instead of clinging to a stale key —
+// important for the long-lived cron-leader process.
 let _stripe: Stripe | null = null;
+let _stripeKey: string | null = null;
 
-export function getStripe(): Stripe {
-  if (!_stripe) {
-    _stripe = getStripeClient();
+export async function getStripe(): Promise<Stripe> {
+  const key = await getOperationalStripeSecretKey();
+  if (!key) {
+    throw new Error("Stripe secret key is not configured");
+  }
+  if (!_stripe || _stripeKey !== key) {
+    _stripe = new Stripe(key, {
+      apiVersion: Stripe.API_VERSION,
+      typescript: true,
+    });
+    _stripeKey = key;
   }
   return _stripe;
 }
-
-export const stripe = new Proxy({} as Stripe, {
-  get(_, prop) {
-    return (getStripe() as unknown as Record<string | symbol, unknown>)[prop];
-  },
-});
 
 /**
  * Create a PaymentIntent for confirmed bookings (immediate charge).
@@ -50,6 +47,7 @@ export async function createPaymentIntent({
   if (amountCents > 0 && amountCents < STRIPE_MINIMUM_AMOUNT_CENTS) {
     throw new Error(`Amount ${amountCents} cents is below Stripe minimum (${STRIPE_MINIMUM_AMOUNT_CENTS} cents)`);
   }
+  const stripe = await getStripe();
   return stripe.paymentIntents.create(
     {
       amount: amountCents,
@@ -75,6 +73,7 @@ export async function createSetupIntent({
   metadata?: Record<string, string>;
   idempotencyKey?: string;
 }): Promise<Stripe.SetupIntent> {
+  const stripe = await getStripe();
   return stripe.setupIntents.create(
     {
       customer: customerId,
@@ -106,6 +105,7 @@ export async function chargePaymentMethod({
   if (amountCents > 0 && amountCents < STRIPE_MINIMUM_AMOUNT_CENTS) {
     throw new Error(`Amount ${amountCents} cents is below Stripe minimum (${STRIPE_MINIMUM_AMOUNT_CENTS} cents)`);
   }
+  const stripe = await getStripe();
   return stripe.paymentIntents.create(
     {
       amount: amountCents,
@@ -132,6 +132,7 @@ export async function findOrCreateCustomer({
   name: string;
   memberId: string;
 }): Promise<Stripe.Customer> {
+  const stripe = await getStripe();
   const existing = await stripe.customers.list({
     email,
     limit: 100,
@@ -172,6 +173,7 @@ export async function processRefund({
   metadata?: Record<string, string>;
   idempotencyKey?: string;
 }): Promise<Stripe.Refund> {
+  const stripe = await getStripe();
   const params = {
     payment_intent: paymentIntentId,
     amount: amountCents,
@@ -187,6 +189,7 @@ export async function processRefund({
 }
 
 export async function listRefundsForCharge(chargeId: string): Promise<Stripe.Refund[]> {
+  const stripe = await getStripe();
   const refunds: Stripe.Refund[] = [];
   const list = stripe.refunds.list({ charge: chargeId, limit: 100 });
 
@@ -203,6 +206,7 @@ export async function listRefundsForCharge(chargeId: string): Promise<Stripe.Ref
 export async function getPaymentIntent(
   paymentIntentId: string
 ): Promise<Stripe.PaymentIntent> {
+  const stripe = await getStripe();
   return stripe.paymentIntents.retrieve(paymentIntentId);
 }
 
@@ -223,6 +227,7 @@ export async function cancelPaymentIntentIfCancellableWithResult(
     return { paymentIntent, canceled: false };
   }
 
+  const stripe = await getStripe();
   return {
     paymentIntent: await stripe.paymentIntents.cancel(paymentIntentId, {
       cancellation_reason: "requested_by_customer",
@@ -248,6 +253,7 @@ export async function cancelPaymentIntentIfCancellable(
 export async function getSetupIntent(
   setupIntentId: string
 ): Promise<Stripe.SetupIntent> {
+  const stripe = await getStripe();
   return stripe.setupIntents.retrieve(setupIntentId);
 }
 
@@ -270,16 +276,25 @@ export async function cancelSetupIntentIfCancellable(
     return null;
   }
 
+  const stripe = await getStripe();
   return stripe.setupIntents.cancel(setupIntentId);
 }
 
 /**
  * Construct and verify a Stripe webhook event.
+ *
+ * NOTE (#2082): the export NAME `constructWebhookEvent` is intentionally
+ * preserved through the async migration — `api-route-boundaries.test.ts`
+ * regex-pins it as the Stripe webhook signature boundary, and five test files
+ * mock it by this name. It is now async because the underlying client resolves
+ * its secret key from the DB store. The webhook signing secret is supplied by
+ * the caller (the route resolves it fail-closed from the dedicated resolver).
  */
-export function constructWebhookEvent(
+export async function constructWebhookEvent(
   payload: string | Buffer,
   signature: string,
   webhookSecret: string
-): Stripe.Event {
+): Promise<Stripe.Event> {
+  const stripe = await getStripe();
   return stripe.webhooks.constructEvent(payload, signature, webhookSecret);
 }

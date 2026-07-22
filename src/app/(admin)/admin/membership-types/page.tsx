@@ -44,7 +44,7 @@ import { getSeasonYear } from "@/lib/utils";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import {
   ADMIN_FORBIDDEN_SAVE_REASON,
-  AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 
@@ -443,10 +443,10 @@ function MembershipTypeEditorDialog({
           <div className="space-y-6">
             <section className="space-y-4">
               <div>
-                <h3 className="text-sm font-semibold text-slate-900">
+                <h3 className="text-sm font-semibold text-foreground">
                   Identity
                 </h3>
-                <p className="mt-1 text-sm text-slate-500">
+                <p className="mt-1 text-sm text-muted-foreground">
                   Display fields shown anywhere admins assign seasonal
                   membership policy.
                 </p>
@@ -466,7 +466,7 @@ function MembershipTypeEditorDialog({
                 </div>
                 <div className="space-y-2">
                   <Label>Status</Label>
-                  <div className="flex h-10 items-center gap-2 rounded-md border border-slate-200 px-3">
+                  <div className="flex h-10 items-center gap-2 rounded-md border border-border px-3">
                     <Checkbox
                       id="membership-type-editor-active"
                       checked={draft.isActive}
@@ -496,7 +496,7 @@ function MembershipTypeEditorDialog({
                   disabled={!canEdit}
                 />
               </div>
-              <div className="space-y-2 rounded-md border border-slate-200 p-4">
+              <div className="space-y-2 rounded-md border border-border p-4">
                 <div className="flex items-center gap-2">
                   <Checkbox
                     id="membership-type-editor-publicly-listed"
@@ -510,7 +510,7 @@ function MembershipTypeEditorDialog({
                     List this membership type publicly
                   </Label>
                 </div>
-                <p className="text-xs text-slate-500">
+                <p className="text-xs text-muted-foreground">
                   Existing and newly created types stay hidden until this is explicitly enabled.
                 </p>
                 <Label htmlFor="membership-type-editor-public-description">
@@ -533,10 +533,10 @@ function MembershipTypeEditorDialog({
 
             <section className="space-y-4">
               <div>
-                <h3 className="text-sm font-semibold text-slate-900">
+                <h3 className="text-sm font-semibold text-foreground">
                   Booking and subscription behavior
                 </h3>
-                <p className="mt-1 text-sm text-slate-500">
+                <p className="mt-1 text-sm text-muted-foreground">
                   These settings drive future booking policy and effective
                   subscription status without changing access roles.
                 </p>
@@ -592,12 +592,12 @@ function MembershipTypeEditorDialog({
                     </SelectContent>
                   </Select>
                   {draft.subscriptionBehavior === "BASED_ON_AGE_TIER" ? (
-                    <p className="text-sm text-slate-500">
+                    <p className="text-sm text-muted-foreground">
                       Each member&apos;s subscription requirement is taken from
                       their age tier. Set which tiers need a subscription on the{" "}
                       <Link
                         href="/admin/age-tier-settings"
-                        className="font-medium text-slate-700 underline"
+                        className="font-medium text-muted-foreground underline"
                       >
                         age tier settings
                       </Link>{" "}
@@ -615,10 +615,10 @@ function MembershipTypeEditorDialog({
 
             <section className="space-y-4">
               <div>
-                <h3 className="text-sm font-semibold text-slate-900">
+                <h3 className="text-sm font-semibold text-foreground">
                   Allowed age tiers
                 </h3>
-                <p className="mt-1 text-sm text-slate-500">
+                <p className="mt-1 text-sm text-muted-foreground">
                   Select every age tier this membership type can be assigned to.
                 </p>
               </div>
@@ -629,7 +629,7 @@ function MembershipTypeEditorDialog({
                     <label
                       key={ageTier}
                       htmlFor={inputId}
-                      className="inline-flex min-h-10 items-center gap-2 rounded-md border border-slate-200 px-3 py-2 text-sm"
+                      className="inline-flex min-h-10 items-center gap-2 rounded-md border border-border px-3 py-2 text-sm"
                     >
                       <Checkbox
                         id={inputId}
@@ -644,7 +644,7 @@ function MembershipTypeEditorDialog({
                   );
                 })}
               </div>
-              <p className="text-xs text-slate-500">
+              <p className="text-xs text-muted-foreground">
                 Ticking only &ldquo;N/A (no age)&rdquo; makes the type
                 age-exempt: every member on it becomes N/A instead of an age
                 tier (only valid when this type&apos;s subscription behaviour is
@@ -796,7 +796,7 @@ function MembershipTypeMergeDialog({
           </div>
 
           {target && (
-            <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+            <div className="rounded-md border border-border bg-muted px-3 py-2 text-sm text-muted-foreground">
               Move {assignmentCount} assignment
               {assignmentCount === 1 ? "" : "s"} from{" "}
               <span className="font-medium">{source?.name}</span> to{" "}
@@ -864,7 +864,7 @@ function MembershipTypeList({
 }: MembershipTypeListProps) {
   if (membershipTypes.length === 0) {
     return (
-      <div className="rounded-md border border-dashed border-slate-300 bg-white px-4 py-8 text-center text-sm text-slate-500">
+      <div className="rounded-md border border-dashed border-border bg-card px-4 py-8 text-center text-sm text-muted-foreground">
         No membership types have been configured yet.
       </div>
     );
@@ -879,12 +879,12 @@ function MembershipTypeList({
         return (
           <article
             key={type.id}
-            className="rounded-md border border-slate-200 bg-white p-4 shadow-sm"
+            className="rounded-md border border-border bg-card p-4 shadow-sm"
           >
             <div className="grid gap-4 xl:grid-cols-[minmax(0,1.3fr)_minmax(0,1.7fr)_120px_112px] xl:items-center">
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
-                  <h3 className="truncate text-base font-semibold text-slate-900">
+                  <h3 className="truncate text-base font-semibold text-foreground">
                     {type.name}
                   </h3>
                   <Badge variant={type.isActive ? "default" : "secondary"}>
@@ -895,7 +895,7 @@ function MembershipTypeList({
                   </Badge>
                   {dirty && <Badge variant="secondary">Unsaved</Badge>}
                 </div>
-                <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                   <span>{type.key}</span>
                   <span aria-hidden="true">/</span>
                   <span>
@@ -904,7 +904,7 @@ function MembershipTypeList({
                   </span>
                 </div>
                 {type.description ? (
-                  <p className="mt-2 line-clamp-2 text-sm text-slate-600">
+                  <p className="mt-2 line-clamp-2 text-sm text-muted-foreground">
                     {type.description}
                   </p>
                 ) : null}
@@ -923,7 +923,7 @@ function MembershipTypeList({
                   {sortAgeTiers(type.allowedAgeTiers).map((ageTier) => (
                     <span
                       key={ageTier}
-                      className="rounded-md bg-slate-100 px-2 py-1 text-xs font-medium text-slate-700"
+                      className="rounded-md bg-muted px-2 py-1 text-xs font-medium text-muted-foreground"
                     >
                       {formatAgeTierLabel(ageTier)}
                     </span>
@@ -961,6 +961,7 @@ function MembershipTypeList({
               <div className="flex flex-wrap gap-2 xl:justify-end">
                 <ViewOnlyActionButton
                   canEdit={canEdit}
+                  describeReason={false}
                   type="button"
                   variant="outline"
                   onClick={() => onEdit(type)}
@@ -970,6 +971,7 @@ function MembershipTypeList({
                 </ViewOnlyActionButton>
                 <ViewOnlyActionButton
                   canEdit={canEdit}
+                  describeReason={false}
                   type="button"
                   variant="outline"
                   onClick={() => onSetActive(type, !type.isActive)}
@@ -987,6 +989,7 @@ function MembershipTypeList({
                 {!type.isBuiltIn && (
                   <ViewOnlyActionButton
                     canEdit={canEdit}
+                    describeReason={false}
                     type="button"
                     variant="outline"
                     onClick={() => onDelete(type)}
@@ -1511,12 +1514,39 @@ export default function AdminMembershipTypesPage() {
     }
   }
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the section —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before its
+    content appears; a region injected already-populated is silently dropped by
+    some screen-reader/browser pairings. It is rendered in the loading branch too
+    so the region exists from the first paint rather than from whenever the
+    membership-type fetch settles, and it sits OUTSIDE the `space-y-*` stack so
+    the empty wrapper an edit-capable admin gets costs no layout.
+
+    It covers `MembershipTypeList` as well — that component lives in this file
+    and is only ever rendered by this page, beneath this banner. The two DIALOGS
+    above are a different matter: their contents are a separate accessibility
+    container this banner does not reach, so their gated buttons keep their own
+    per-button reason.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-8">
+      Your admin role can view membership types but cannot change them.
+      Membership edit access is required.
+    </AdminViewOnlySectionBanner>
+  );
+
   if (loading && membershipTypes.length === 0) {
     return (
-      <div className="space-y-6">
-        <BackLink href="/admin/membership-setup" label="Membership & Members" />
-        <div className="flex min-h-[320px] items-center justify-center">
-          <Loader2 className="h-6 w-6 animate-spin text-slate-500" />
+      <div>
+        {viewOnlyBanner}
+        <div className="space-y-6">
+          <BackLink href="/admin/membership-setup" label="Membership & Members" />
+          <div className="flex min-h-[320px] items-center justify-center">
+            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+          </div>
         </div>
       </div>
     );
@@ -1528,14 +1558,16 @@ export default function AdminMembershipTypesPage() {
       : Boolean(editingType && savingId === editingType.id);
 
   return (
-    <div ref={pageRef} className="space-y-8">
+    <div ref={pageRef}>
+      {viewOnlyBanner}
+      <div className="space-y-8">
       <BackLink href="/admin/membership-setup" label="Membership & Members" />
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">
+          <h1 className="text-2xl font-bold text-foreground">
             Membership types
           </h1>
-          <p className="mt-1 max-w-3xl text-sm text-slate-500">
+          <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
             Manage seasonal membership policy labels and future booking and
             subscription behavior. Access roles stay separate.
           </p>
@@ -1553,6 +1585,7 @@ export default function AdminMembershipTypesPage() {
           </Button>
           <ViewOnlyActionButton
             canEdit={canEdit}
+            describeReason={false}
             type="button"
             onClick={openNewEditor}
           >
@@ -1561,13 +1594,6 @@ export default function AdminMembershipTypesPage() {
           </ViewOnlyActionButton>
         </div>
       </div>
-
-      {!canEdit ? (
-        <AdminViewOnlyNotice canEdit={canEdit}>
-          Your admin role can view membership types but cannot change them.
-          Membership edit access is required.
-        </AdminViewOnlyNotice>
-      ) : null}
 
       {(error || savedMessage) && (
         <div
@@ -1587,15 +1613,15 @@ export default function AdminMembershipTypesPage() {
       <section className="space-y-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <h2 className="text-base font-semibold text-slate-900">
+            <h2 className="text-base font-semibold text-foreground">
               Type list
             </h2>
-            <p className="mt-1 max-w-3xl text-sm text-slate-500">
+            <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
               Scan policy behavior, allowed tiers, assignment count, and order.
               Open a type to edit its details.
             </p>
           </div>
-          <div className="text-sm text-slate-500">
+          <div className="text-sm text-muted-foreground">
             {sortedTypes.length} configured type
             {sortedTypes.length === 1 ? "" : "s"}
           </div>
@@ -1616,13 +1642,13 @@ export default function AdminMembershipTypesPage() {
         />
       </section>
 
-      <section className="rounded-md border border-slate-200 bg-white p-4">
+      <section className="rounded-md border border-border bg-card p-4">
         <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
           <div>
-            <h2 className="text-base font-semibold text-slate-900">
+            <h2 className="text-base font-semibold text-foreground">
               Roll forward seasonal assignments
             </h2>
-            <p className="mt-1 max-w-3xl text-sm text-slate-500">
+            <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
               Copy missing member membership-type assignments from one season to
               the next. Existing target-season assignments are kept.
             </p>
@@ -1663,6 +1689,7 @@ export default function AdminMembershipTypesPage() {
             </div>
             <ViewOnlyActionButton
               canEdit={canEdit}
+              describeReason={false}
               type="button"
               variant="outline"
               onClick={() => void rollForwardAssignments(true)}
@@ -1680,6 +1707,7 @@ export default function AdminMembershipTypesPage() {
             </ViewOnlyActionButton>
             <ViewOnlyActionButton
               canEdit={canEdit}
+              describeReason={false}
               type="button"
               onClick={() => void rollForwardAssignments(false)}
               disabled={
@@ -1698,46 +1726,46 @@ export default function AdminMembershipTypesPage() {
         </div>
 
         {rollForwardResult && (
-          <div className="mt-4 space-y-3 rounded-md border border-slate-200 bg-slate-50 p-3">
+          <div className="mt-4 space-y-3 rounded-md border border-border bg-muted p-3">
             <div className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-5">
               <div>
-                <div className="text-xs font-medium uppercase text-slate-500">
+                <div className="text-xs font-medium uppercase text-muted-foreground">
                   Seasons
                 </div>
-                <div className="mt-1 text-slate-900">
+                <div className="mt-1 text-foreground">
                   {formatSeasonLabel(rollForwardResult.fromSeasonYear)} to{" "}
                   {formatSeasonLabel(rollForwardResult.toSeasonYear)}
                 </div>
               </div>
               <div>
-                <div className="text-xs font-medium uppercase text-slate-500">
+                <div className="text-xs font-medium uppercase text-muted-foreground">
                   Source
                 </div>
-                <div className="mt-1 text-slate-900">
+                <div className="mt-1 text-foreground">
                   {rollForwardResult.sourceAssignmentCount}
                 </div>
               </div>
               <div>
-                <div className="text-xs font-medium uppercase text-slate-500">
+                <div className="text-xs font-medium uppercase text-muted-foreground">
                   Would copy
                 </div>
-                <div className="mt-1 text-slate-900">
+                <div className="mt-1 text-foreground">
                   {rollForwardResult.wouldCopyCount}
                 </div>
               </div>
               <div>
-                <div className="text-xs font-medium uppercase text-slate-500">
+                <div className="text-xs font-medium uppercase text-muted-foreground">
                   Copied
                 </div>
-                <div className="mt-1 text-slate-900">
+                <div className="mt-1 text-foreground">
                   {rollForwardResult.copiedCount}
                 </div>
               </div>
               <div>
-                <div className="text-xs font-medium uppercase text-slate-500">
+                <div className="text-xs font-medium uppercase text-muted-foreground">
                   Existing target
                 </div>
-                <div className="mt-1 text-slate-900">
+                <div className="mt-1 text-foreground">
                   {rollForwardResult.skippedExistingCount}
                 </div>
               </div>
@@ -1819,6 +1847,7 @@ export default function AdminMembershipTypesPage() {
       />
 
       {confirmDialog}
+      </div>
     </div>
   );
 }

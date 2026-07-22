@@ -4,8 +4,8 @@
 // and refuses to build a transport — throwing "Email delivery is not
 // configured" — when EMAIL_FROM or the SES credentials are absent. Unit tests
 // mock nodemailer's transport, so no real mail is ever sent; these fake values
-// exist only to satisfy that config gate, mirroring how CI supplies fake
-// STRIPE_SECRET_KEY / XERO_ENCRYPTION_KEY values.
+// exist only to satisfy that config gate, mirroring how CI supplies a fake
+// STRIPE_SECRET_KEY value.
 //
 // EMAIL_FROM is set to SAFE_DEFAULT_CONFIG.supportEmail — the exact value
 // email-sender.ts falls back to when EMAIL_FROM is unset (C6 #1985: the envelope

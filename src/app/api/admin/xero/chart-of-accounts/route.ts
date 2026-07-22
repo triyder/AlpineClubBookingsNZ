@@ -8,6 +8,11 @@ import {
   getCachedChartOfAccounts,
   setCachedChartOfAccounts,
 } from "@/lib/xero-admin-cache";
+import {
+  fetchMockChartOfAccounts,
+  getXeroMockApiOrigin,
+  isXeroMockActive,
+} from "@/lib/xero-mock-endpoint";
 
 /**
  * GET /api/admin/xero/chart-of-accounts
@@ -18,6 +23,15 @@ export async function GET(request?: NextRequest) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
   const forceRefresh = request?.nextUrl.searchParams.get("refresh") === "1";
+
+  // E2E mock harness (#2081): route to the gated mock chart of accounts instead
+  // of live Xero. Production-inert — isXeroMockActive() is false everywhere the
+  // XERO_MOCK_API_ORIGIN staging var is unset.
+  if (isXeroMockActive()) {
+    const origin = getXeroMockApiOrigin();
+    const accounts = origin ? await fetchMockChartOfAccounts(origin) : [];
+    return NextResponse.json({ accounts, cache: null });
+  }
 
   if (!forceRefresh) {
     const cachedAccounts = await getCachedChartOfAccounts();

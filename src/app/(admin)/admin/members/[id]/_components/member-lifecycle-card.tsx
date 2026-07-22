@@ -4,7 +4,10 @@ import Link from "next/link"
 import { useState } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { ViewOnlyActionButton } from "@/components/admin/view-only-action"
+import {
+  ViewOnlyActionButton,
+  type AncestorViewOnlyBannerProps,
+} from "@/components/admin/view-only-action"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import {
   Dialog,
@@ -23,7 +26,7 @@ import type {
   OpenCancellationRequestSummary,
 } from "../_types"
 
-interface MemberLifecycleCardProps {
+interface MemberLifecycleCardProps extends AncestorViewOnlyBannerProps {
   member: MemberDetail
   pendingArchiveRequest: MemberLifecycleActionRequest | null
   reviewedArchiveRequests: MemberLifecycleActionRequest[]
@@ -77,6 +80,7 @@ export function MemberLifecycleCard({
   onReviewArchive,
   canEdit,
   className,
+  ancestorRendersViewOnlyBanner = false,
 }: MemberLifecycleCardProps) {
   // #1788: which archive review is waiting on the admin's notify-or-not choice.
   // The dialog only opens when an email would actually send (the target member
@@ -115,7 +119,7 @@ export function MemberLifecycleCard({
     <Card className={className}>
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base font-medium">
-          <Archive className="h-4 w-4 text-slate-500" />
+          <Archive className="h-4 w-4 text-muted-foreground" />
           Lifecycle
         </CardTitle>
       </CardHeader>
@@ -124,34 +128,34 @@ export function MemberLifecycleCard({
           <div className="p-2 bg-red-50 border border-red-200 text-red-700 rounded text-sm">{archiveError}</div>
         )}
         <div className="grid gap-4 sm:grid-cols-2">
-          <div className="rounded-md border border-slate-200 p-3">
-            <p className="text-xs uppercase tracking-wide text-slate-500">Cancellation</p>
+          <div className="rounded-md border border-border p-3">
+            <p className="text-xs uppercase tracking-wide text-muted-foreground">Cancellation</p>
             {member.cancelledAt ? (
               <div className="mt-2 space-y-1 text-sm">
                 <Badge variant="secondary" className="bg-amber-100 text-amber-800 border-amber-200">
                   Cancelled {formatMemberDateNz(member.cancelledAt)}
                 </Badge>
-                {member.cancelledReason && <p className="text-slate-600">{member.cancelledReason}</p>}
+                {member.cancelledReason && <p className="text-muted-foreground">{member.cancelledReason}</p>}
               </div>
             ) : openCancellationRequest ? (
               <p className="mt-2 text-sm text-amber-700">Cancellation request pending review.</p>
             ) : (
-              <p className="mt-2 text-sm text-slate-600">This member has not been cancelled.</p>
+              <p className="mt-2 text-sm text-muted-foreground">This member has not been cancelled.</p>
             )}
           </div>
-          <div className="rounded-md border border-slate-200 p-3">
-            <p className="text-xs uppercase tracking-wide text-slate-500">Archive</p>
+          <div className="rounded-md border border-border p-3">
+            <p className="text-xs uppercase tracking-wide text-muted-foreground">Archive</p>
             {member.archivedAt ? (
               <div className="mt-2 space-y-1 text-sm">
-                <Badge variant="secondary" className="bg-slate-200 text-slate-800 border-slate-300">
+                <Badge variant="secondary" className="bg-border text-foreground border-border">
                   Archived {formatMemberDateNz(member.archivedAt)}
                 </Badge>
-                {member.archivedReason && <p className="text-slate-600">{member.archivedReason}</p>}
+                {member.archivedReason && <p className="text-muted-foreground">{member.archivedReason}</p>}
               </div>
             ) : pendingArchiveRequest ? (
               <p className="mt-2 text-sm text-amber-700">Archive request pending review.</p>
             ) : (
-              <p className="mt-2 text-sm text-slate-600">
+              <p className="mt-2 text-sm text-muted-foreground">
                 {member.cancelledAt ? "Ready to request archive." : "Archive is available after cancellation."}
               </p>
             )}
@@ -181,7 +185,7 @@ export function MemberLifecycleCard({
         )}
 
         {canRequestCancellation && (
-          <div className="rounded-md border border-slate-200 p-4">
+          <div className="rounded-md border border-border p-4">
             <div className="space-y-2">
               <Label htmlFor="cancellation-reason">Cancellation reason *</Label>
               <textarea
@@ -190,13 +194,13 @@ export function MemberLifecycleCard({
                 onChange={(event) => onChangeCancellationReason(event.target.value)}
                 rows={3}
                 maxLength={1000}
-                className="min-h-24 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                className="min-h-24 w-full rounded-md border border-border px-3 py-2 text-sm"
               />
-              <p className="text-xs text-slate-500">
+              <p className="text-xs text-muted-foreground">
                 Admin-initiated cancellation requests go directly to the review queue without requiring the member to confirm by email.
               </p>
             </div>
-            <ViewOnlyActionButton canEdit={canEdit} className="mt-3" size="sm" onClick={onSubmitCancellation} disabled={cancellationSubmitting}>
+            <ViewOnlyActionButton canEdit={canEdit} describeReason={!ancestorRendersViewOnlyBanner} className="mt-3" size="sm" onClick={onSubmitCancellation} disabled={cancellationSubmitting}>
               {cancellationSubmitting ? "Submitting..." : "Request Cancellation"}
             </ViewOnlyActionButton>
           </div>
@@ -224,11 +228,12 @@ export function MemberLifecycleCard({
                     onChange={(event) => onChangeArchiveReviewNote(pendingArchiveRequest.id, event.target.value)}
                     rows={2}
                     maxLength={1000}
-                    className="min-h-20 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
+                    className="min-h-20 w-full rounded-md border border-border bg-card px-3 py-2 text-sm"
                   />
                   <div className="flex justify-end gap-2">
                     <ViewOnlyActionButton
                       canEdit={canEdit}
+                      describeReason={!ancestorRendersViewOnlyBanner}
                       variant="outline"
                       size="sm"
                       disabled={Boolean(archiveActionLoading)}
@@ -238,6 +243,7 @@ export function MemberLifecycleCard({
                     </ViewOnlyActionButton>
                     <ViewOnlyActionButton
                       canEdit={canEdit}
+                      describeReason={!ancestorRendersViewOnlyBanner}
                       variant="destructive"
                       size="sm"
                       disabled={Boolean(archiveActionLoading)}
@@ -253,7 +259,7 @@ export function MemberLifecycleCard({
         )}
 
         {canRequestArchive && (
-          <div className="rounded-md border border-slate-200 p-4">
+          <div className="rounded-md border border-border p-4">
             <div className="space-y-2">
               <Label htmlFor="archive-reason">Archive reason *</Label>
               <textarea
@@ -262,14 +268,15 @@ export function MemberLifecycleCard({
                 onChange={(event) => onChangeArchiveReason(event.target.value)}
                 rows={3}
                 maxLength={1000}
-                className="min-h-24 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                className="min-h-24 w-full rounded-md border border-border px-3 py-2 text-sm"
               />
-              <p className="text-xs text-slate-500">
+              <p className="text-xs text-muted-foreground">
                 A different admin must approve this request before the member is archived.
               </p>
             </div>
             <ViewOnlyActionButton
               canEdit={canEdit}
+              describeReason={!ancestorRendersViewOnlyBanner}
               className="mt-3"
               size="sm"
               onClick={onSubmitArchive}
@@ -283,27 +290,27 @@ export function MemberLifecycleCard({
 
         {reviewedArchiveRequests.length > 0 && (
           <div className="space-y-2">
-            <p className="text-sm font-medium text-slate-900">Recent archive decisions</p>
+            <p className="text-sm font-medium text-foreground">Recent archive decisions</p>
             <div className="space-y-2">
               {reviewedArchiveRequests.map((request) => (
-                <div key={request.id} className="rounded-md border border-slate-200 p-3 text-sm">
+                <div key={request.id} className="rounded-md border border-border p-3 text-sm">
                   <div className="flex flex-wrap items-center gap-2">
                     <Badge
                       variant="secondary"
                       className={
                         request.status === "APPROVED"
-                          ? "bg-slate-200 text-slate-800 border-slate-300"
+                          ? "bg-border text-foreground border-border"
                           : "bg-red-50 text-red-700 border-red-200"
                       }
                     >
                       {request.status === "APPROVED" ? "Approved" : "Rejected"}
                     </Badge>
-                    <span className="text-slate-600">
+                    <span className="text-muted-foreground">
                       {request.reviewedAt ? formatMemberDateNz(request.reviewedAt) : "Not dated"} by{" "}
                       {request.reviewedBy?.name ?? "Unknown admin"}
                     </span>
                   </div>
-                  {request.reviewNote && <p className="mt-1 text-slate-600">{request.reviewNote}</p>}
+                  {request.reviewNote && <p className="mt-1 text-muted-foreground">{request.reviewNote}</p>}
                 </div>
               ))}
             </div>

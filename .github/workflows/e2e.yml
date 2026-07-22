@@ -63,8 +63,8 @@ jobs:
           NEXTAUTH_URL=http://localhost:3001
           AUTH_TRUST_HOST=true
           DB_PASSWORD=e2e-ci-db-password
-          AUTH_SECRET=e2e-ci-auth-secret
-          NEXTAUTH_SECRET=e2e-ci-auth-secret
+          AUTH_SECRET=e2e-ci-auth-secret-0123456789abcdef0123456789abcdef
+          NEXTAUTH_SECRET=e2e-ci-auth-secret-0123456789abcdef0123456789abcdef
           SEED_ADMIN_EMAIL=e2e-admin@example.org
           SEED_ADMIN_PASSWORD=e2e-ci-seed-password
           SEED_LODGE_PASSWORD=e2e-ci-lodge-password
@@ -92,6 +92,8 @@ jobs:
           EMAIL_SERVER_PASSWORD=e2e
           MAILPIT_HTTP_PORT=8025
           EMAIL_FROM=e2e@example.org
+          XERO_MOCK_API_ORIGIN=http://localhost:3001
+          XERO_MOCK_INTERNAL_ORIGIN=http://127.0.0.1:3000
           CRON_SECRET=e2e-ci-cron-secret
           CRON_ENABLED=false
           BACKUP_ENABLED=false
@@ -112,7 +114,6 @@ jobs:
           push: false
           tags: tacbookings-e2e-app:ci
           build-args: |
-            NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=${{ env.STRIPE_TEST_PUBLISHABLE_KEY || 'pk_test_e2e_placeholder' }}
             NEXT_PUBLIC_SENTRY_DSN=
           cache-from: |
             type=gha,scope=alpineclubbookingsnz-app
@@ -210,8 +211,8 @@ jobs:
           NEXTAUTH_URL=http://localhost:3001
           AUTH_TRUST_HOST=true
           DB_PASSWORD=e2e-ci-db-password
-          AUTH_SECRET=e2e-ci-auth-secret
-          NEXTAUTH_SECRET=e2e-ci-auth-secret
+          AUTH_SECRET=e2e-ci-auth-secret-0123456789abcdef0123456789abcdef
+          NEXTAUTH_SECRET=e2e-ci-auth-secret-0123456789abcdef0123456789abcdef
           SEED_ADMIN_EMAIL=e2e-admin@example.org
           SEED_ADMIN_PASSWORD=e2e-ci-seed-password
           SEED_LODGE_PASSWORD=e2e-ci-lodge-password
@@ -235,6 +236,8 @@ jobs:
           EMAIL_SERVER_PASSWORD=e2e
           MAILPIT_HTTP_PORT=8025
           EMAIL_FROM=e2e@example.org
+          XERO_MOCK_API_ORIGIN=http://localhost:3001
+          XERO_MOCK_INTERNAL_ORIGIN=http://127.0.0.1:3000
           CRON_SECRET=e2e-ci-cron-secret
           CRON_ENABLED=false
           BACKUP_ENABLED=false
@@ -253,7 +256,6 @@ jobs:
           push: false
           tags: tacbookings-e2e-app:ci
           build-args: |
-            NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=${{ env.STRIPE_TEST_PUBLISHABLE_KEY || 'pk_test_e2e_placeholder' }}
             NEXT_PUBLIC_SENTRY_DSN=
           cache-from: |
             type=gha,scope=alpineclubbookingsnz-app

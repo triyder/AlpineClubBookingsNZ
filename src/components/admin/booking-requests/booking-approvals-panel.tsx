@@ -16,7 +16,10 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
-import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
+import {
+  AdminViewOnlySectionBanner,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action";
 import { ADMIN_VIEW_ONLY_ACTION_REASON } from "@/hooks/use-admin-area-edit-access";
 import { formatNZDate, formatNZDateTime } from "@/lib/nzst-date";
 import { formatCents } from "@/lib/utils";
@@ -63,7 +66,7 @@ interface BookingReviewData {
 function statusBadgeClass(status: BookingReviewData["adminReviewStatus"]) {
   if (status === "PENDING") return "border-amber-200 bg-amber-50 text-amber-800";
   if (status === "APPROVED") return "border-emerald-200 bg-emerald-50 text-emerald-800";
-  return "border-slate-200 bg-slate-100 text-slate-700";
+  return "border-border bg-muted text-muted-foreground";
 }
 
 interface BookingApprovalsPanelProps {
@@ -227,8 +230,26 @@ export function BookingApprovalsPanel({
     }
   }
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the section —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before
+    its content appears; a region injected already-populated is silently dropped
+    by some screen-reader/browser pairings. It sits OUTSIDE the `space-y-6`
+    stack so the empty wrapper an edit-capable admin gets costs no layout.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-6">
+      Your admin role can view bookings awaiting approval but cannot decide
+      them. Bookings edit access is required to approve or reject a booking.
+    </AdminViewOnlySectionBanner>
+  );
+
   return (
-    <div className="space-y-6">
+    <div>
+      {viewOnlyBanner}
+      <div className="space-y-6">
       {showHeading ? (
         <div>
           <h1 className="text-3xl font-bold">Booking approvals</h1>
@@ -324,9 +345,9 @@ export function BookingApprovalsPanel({
                     </div>
                   </div>
 
-                  <div className="rounded-md border bg-slate-50 p-3 text-sm">
-                    <p className="font-medium text-slate-900">Guests on this booking</p>
-                    <ul className="mt-2 space-y-1 text-slate-700">
+                  <div className="rounded-md border bg-muted p-3 text-sm">
+                    <p className="font-medium text-foreground">Guests on this booking</p>
+                    <ul className="mt-2 space-y-1 text-muted-foreground">
                       {booking.guests.map((guest) => (
                         <li key={guest.id}>
                           {guest.firstName} {guest.lastName} — {guest.ageTier}
@@ -348,8 +369,8 @@ export function BookingApprovalsPanel({
                   )}
 
                   {decided ? (
-                    <div className="rounded-md border bg-slate-50 p-3 text-sm">
-                      <p className="font-medium text-slate-900">
+                    <div className="rounded-md border bg-muted p-3 text-sm">
+                      <p className="font-medium text-foreground">
                         Decision: {booking.adminReviewStatus}
                         {booking.adminReviewedBy
                           ? ` by ${booking.adminReviewedBy.firstName} ${booking.adminReviewedBy.lastName}`
@@ -359,7 +380,7 @@ export function BookingApprovalsPanel({
                           : ""}
                       </p>
                       {booking.adminReviewNotes && (
-                        <p className="mt-2 whitespace-pre-wrap text-slate-700">
+                        <p className="mt-2 whitespace-pre-wrap text-muted-foreground">
                           {booking.adminReviewNotes}
                         </p>
                       )}
@@ -384,6 +405,7 @@ export function BookingApprovalsPanel({
                       <div className="flex flex-wrap gap-2">
                         <ViewOnlyActionButton
                           canEdit={canEdit}
+                          describeReason={false}
                           onClick={() => requestDecision(booking.id, "APPROVED")}
                           disabled={reviewingId === booking.id}
                         >
@@ -391,6 +413,7 @@ export function BookingApprovalsPanel({
                         </ViewOnlyActionButton>
                         <ViewOnlyActionButton
                           canEdit={canEdit}
+                          describeReason={false}
                           variant="destructive"
                           onClick={() => requestDecision(booking.id, "REJECTED")}
                           disabled={reviewingId === booking.id}
@@ -452,6 +475,7 @@ export function BookingApprovalsPanel({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      </div>
     </div>
   );
 }

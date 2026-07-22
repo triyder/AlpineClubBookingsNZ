@@ -10,7 +10,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
+import {
+  AdminViewOnlySectionBanner,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action";
 import { ADMIN_VIEW_ONLY_ACTION_REASON } from "@/hooks/use-admin-area-edit-access";
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
 import { formatNZDate, formatNZDateTime } from "@/lib/nzst-date";
@@ -104,7 +107,7 @@ function formatDateTime(value: string | null) {
 function statusBadgeClass(status: BookingChangeRequestData["status"]) {
   if (status === "REQUESTED") return "border-amber-200 bg-amber-50 text-amber-800";
   if (status === "APPROVED") return "border-emerald-200 bg-emerald-50 text-emerald-800";
-  return "border-slate-200 bg-slate-100 text-slate-700";
+  return "border-border bg-muted text-muted-foreground";
 }
 
 interface BookingChangeRequestsPanelProps {
@@ -232,8 +235,26 @@ export function BookingChangeRequestsPanel({
     }
   }
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the section —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before its
+    content appears; a region injected already-populated is silently dropped by
+    some screen-reader/browser pairings. It sits OUTSIDE the `space-y-*` stack so
+    the empty wrapper an edit-capable admin gets costs no layout.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-6">
+      Your admin role can view booking change requests but cannot approve or
+      reject them. Bookings edit access is required.
+    </AdminViewOnlySectionBanner>
+  );
+
   return (
-    <div className="space-y-6">
+    <div>
+      {viewOnlyBanner}
+      <div className="space-y-6">
       {showHeading ? (
         <div>
           <h1 className="text-3xl font-bold">Booking change requests</h1>
@@ -330,10 +351,10 @@ export function BookingChangeRequestsPanel({
                     </div>
                   </div>
 
-                  <div className="rounded-md border bg-slate-50 p-3 text-sm">
-                    <p className="font-medium text-slate-900">{summary}</p>
+                  <div className="rounded-md border bg-muted p-3 text-sm">
+                    <p className="font-medium text-foreground">{summary}</p>
                     {request.reason ? (
-                      <p className="mt-2 text-slate-700">{request.reason}</p>
+                      <p className="mt-2 text-muted-foreground">{request.reason}</p>
                     ) : null}
                   </div>
 
@@ -367,8 +388,8 @@ export function BookingChangeRequestsPanel({
                   </div>
 
                   {request.status === "REQUESTED" ? (
-                    <div className="space-y-3 rounded-md border border-slate-200 p-3">
-                      <p className="text-xs text-slate-600">
+                    <div className="space-y-3 rounded-md border border-border p-3">
+                      <p className="text-xs text-muted-foreground">
                         Marking a request approved only acknowledges the review.
                         The booking is not edited automatically; open the
                         booking from the link above and apply the change there
@@ -418,6 +439,7 @@ export function BookingChangeRequestsPanel({
                       <div className="flex flex-wrap gap-2">
                         <ViewOnlyActionButton
                           canEdit={canEdit}
+                          describeReason={false}
                           size="sm"
                           onClick={() => reviewRequest(request, "APPROVED")}
                           disabled={reviewingId === request.id && !adminNotes.trim()}
@@ -426,6 +448,7 @@ export function BookingChangeRequestsPanel({
                         </ViewOnlyActionButton>
                         <ViewOnlyActionButton
                           canEdit={canEdit}
+                          describeReason={false}
                           size="sm"
                           variant="outline"
                           onClick={() => reviewRequest(request, "REJECTED")}
@@ -436,17 +459,17 @@ export function BookingChangeRequestsPanel({
                       </div>
                     </div>
                   ) : (
-                    <div className="rounded-md bg-slate-50 p-3 text-sm text-slate-700">
+                    <div className="rounded-md bg-muted p-3 text-sm text-muted-foreground">
                       {request.status === "APPROVED" ? "Approved" : "Rejected"}
                       {reviewedAt ? ` on ${reviewedAt}` : ""}
                       {request.reviewedBy
                         ? ` by ${request.reviewedBy.firstName} ${request.reviewedBy.lastName}`
                         : ""}
                       {request.adminNotes ? (
-                        <p className="mt-2 text-slate-600">{request.adminNotes}</p>
+                        <p className="mt-2 text-muted-foreground">{request.adminNotes}</p>
                       ) : null}
                       {request.linkedModification ? (
-                        <p className="mt-2 text-slate-600">
+                        <p className="mt-2 text-muted-foreground">
                           Linked booking modification:{" "}
                           <span className="font-mono">
                             {request.linkedModification.id}
@@ -472,6 +495,7 @@ export function BookingChangeRequestsPanel({
           })}
         </div>
       )}
+      </div>
     </div>
   );
 }

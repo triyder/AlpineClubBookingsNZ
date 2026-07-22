@@ -19,7 +19,7 @@ export function XeroGroupsRefreshHint({
 }) {
   if (!lastRefreshedAt) {
     return (
-      <p className="text-xs text-slate-500">
+      <p className="text-xs text-muted-foreground">
         No cached Xero groups yet — refresh to populate badges.
       </p>
     )
@@ -30,13 +30,13 @@ export function XeroGroupsRefreshHint({
   })
 
   return (
-    <p className="flex items-center gap-1 text-xs text-slate-500">
+    <p className="flex items-center gap-1 text-xs text-muted-foreground">
       <span>Groups last refreshed {relative}</span>
       <span
         role="img"
         aria-label={CACHE_EXPLANATION}
         title={CACHE_EXPLANATION}
-        className="inline-flex text-slate-400"
+        className="inline-flex text-muted-foreground"
       >
         <Info className="h-3.5 w-3.5" aria-hidden="true" />
       </span>

@@ -19,7 +19,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import {
   AdminForbiddenSaveNotice,
-  AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 
@@ -246,18 +246,37 @@ export function EmailMessageSettingsPanel() {
     }
   }
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the panel —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before
+    its content appears; a region injected already-populated is silently dropped
+    by some screen-reader/browser pairings. That is why it is hoisted above the
+    loading early-return and rendered in both branches. It sits OUTSIDE the
+    `space-y-8` stack so the empty wrapper an edit-capable admin gets costs no
+    layout.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-6">
+      Your admin role can view email settings and templates but cannot change
+      them. Support &amp; System edit access is required.
+    </AdminViewOnlySectionBanner>
+  );
+
   if (loading || !settings) {
-    return <p className="text-sm text-slate-500">Loading email settings</p>;
+    return (
+      <div>
+        {viewOnlyBanner}
+        <p className="text-sm text-muted-foreground">Loading email settings</p>
+      </div>
+    );
   }
 
   return (
-    <div className="space-y-8">
-      {!canEdit ? (
-        <AdminViewOnlyNotice canEdit={canEdit}>
-          Your admin role can view email settings and templates but cannot change
-          them. Support &amp; System edit access is required.
-        </AdminViewOnlyNotice>
-      ) : null}
+    <div>
+      {viewOnlyBanner}
+      <div className="space-y-8">
       {forbiddenSave ? <AdminForbiddenSaveNotice /> : null}
       {staleOverrideCount > 0 ? (
         <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
@@ -302,12 +321,13 @@ export function EmailMessageSettingsPanel() {
             </div>
           ))}
         </div>
-        <p className="text-sm text-slate-500">
+        <p className="text-sm text-muted-foreground">
           Lodge name, travel note, and door code now come from each lodge&apos;s
           own settings (Admin → Lodges).
         </p>
         <ViewOnlyActionButton
           canEdit={canEdit}
+          describeReason={false}
           onClick={saveSettings}
           disabled={savingSettings}
         >
@@ -334,7 +354,7 @@ export function EmailMessageSettingsPanel() {
             </Select>
           </div>
           {currentTemplate ? (
-            <div className="space-y-2 text-sm text-slate-600">
+            <div className="space-y-2 text-sm text-muted-foreground">
               <div className="flex flex-wrap gap-2">
                 <Badge variant="secondary">{currentTemplate.audience}</Badge>
                 <Badge variant="outline">{currentTemplate.key}</Badge>
@@ -383,6 +403,7 @@ export function EmailMessageSettingsPanel() {
         <div className="flex flex-wrap gap-2">
           <ViewOnlyActionButton
             canEdit={canEdit}
+            describeReason={false}
             onClick={saveTemplate}
             disabled={savingTemplate || !currentTemplate}
           >
@@ -399,6 +420,7 @@ export function EmailMessageSettingsPanel() {
           </Button>
           <ViewOnlyActionButton
             canEdit={canEdit}
+            describeReason={false}
             variant="outline"
             onClick={resetTemplate}
             disabled={savingTemplate || !currentTemplate}
@@ -409,19 +431,20 @@ export function EmailMessageSettingsPanel() {
         </div>
 
         {previewHtml ? (
-          <div className="space-y-3 rounded-md border border-slate-200 bg-white p-4">
-            <p className="text-sm font-medium text-slate-900">
+          <div className="space-y-3 rounded-md border border-border bg-card p-4">
+            <p className="text-sm font-medium text-foreground">
               Subject: {previewSubject}
             </p>
             <iframe
               title="Email preview"
-              className="h-[520px] w-full rounded-md border border-slate-200 bg-white"
+              className="h-[520px] w-full rounded-md border border-border bg-card"
               sandbox=""
               srcDoc={previewHtml}
             />
           </div>
         ) : null}
       </section>
+      </div>
     </div>
   );
 }

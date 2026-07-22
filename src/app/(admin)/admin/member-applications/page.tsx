@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
-  AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
@@ -410,20 +410,20 @@ export default function MemberApplicationsPage() {
       application.status === "PENDING_NOMINATORS" && confirmedAt === null;
 
     return (
-      <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+      <div className="rounded-lg border border-border bg-muted p-3">
+        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
           {label}
         </p>
-        <p className="mt-1 font-medium text-slate-900">
+        <p className="mt-1 font-medium text-foreground">
           {name || email}
         </p>
-        <p className="text-slate-600">{email}</p>
-        <p className="mt-2 text-slate-600">
+        <p className="text-muted-foreground">{email}</p>
+        <p className="mt-2 text-muted-foreground">
           Confirmed: {formatDate(confirmedAt)}
         </p>
 
         {!confirmedAt && application.status === "PENDING_NOMINATORS" && (
-          <div className="mt-3 space-y-2 rounded-md border border-white bg-white p-3 text-xs text-slate-600">
+          <div className="mt-3 space-y-2 rounded-md border border-border bg-card p-3 text-xs text-muted-foreground">
             <p>Link expires: {formatDate(tokenExpiresAt)}</p>
             <p>Last sent: {formatDate(tokenLastSentAt)}</p>
             <p>
@@ -436,11 +436,11 @@ export default function MemberApplicationsPage() {
         {canReplace && (
           <div className="mt-3 space-y-2">
             <label className="block space-y-1">
-              <span className="text-xs font-medium text-slate-700">
+              <span className="text-xs font-medium text-muted-foreground">
                 Replacement member
               </span>
               <input
-                className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
+                className="w-full rounded-md border border-border bg-card px-3 py-2 text-sm"
                 value={replacementQueries[key] || ""}
                 onChange={(event) =>
                   setReplacementQueries((prev) => ({
@@ -465,16 +465,17 @@ export default function MemberApplicationsPage() {
                 {(replacementResults[key] || []).map((member) => (
                   <div
                     key={member.id}
-                    className="flex flex-col gap-2 rounded-md border border-slate-200 bg-white p-2 sm:flex-row sm:items-center sm:justify-between"
+                    className="flex flex-col gap-2 rounded-md border border-border bg-card p-2 sm:flex-row sm:items-center sm:justify-between"
                   >
                     <div>
-                      <p className="text-sm font-medium text-slate-900">
+                      <p className="text-sm font-medium text-foreground">
                         {member.firstName} {member.lastName}
                       </p>
-                      <p className="text-xs text-slate-600">{member.email}</p>
+                      <p className="text-xs text-muted-foreground">{member.email}</p>
                     </div>
                     <ViewOnlyActionButton
                       canEdit={canEditMembership}
+                      describeReason={false}
                       type="button"
                       size="sm"
                       disabled={submittingId === application.id}
@@ -492,17 +493,35 @@ export default function MemberApplicationsPage() {
     );
   }
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the page —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before
+    its content appears; a region injected already-populated is silently dropped
+    by some screen-reader/browser pairings. It sits OUTSIDE the `space-y-6`
+    stack so the empty wrapper an edit-capable admin gets costs no layout.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEditMembership} className="mb-6">
+      Your admin role can view member applications but cannot approve,
+      decline, or otherwise act on them.
+    </AdminViewOnlySectionBanner>
+  );
+
   return (
-    <div className="space-y-6">
+    <div>
+      {viewOnlyBanner}
+      <div className="space-y-6">
       <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
         <div>
-          <p className="text-sm font-semibold uppercase tracking-[0.22em] text-slate-500">
+          <p className="text-sm font-semibold uppercase tracking-[0.22em] text-muted-foreground">
             Membership
           </p>
-          <h1 className="text-3xl font-bold tracking-tight text-slate-900">
+          <h1 className="text-3xl font-bold tracking-tight text-foreground">
             Member Applications
           </h1>
-          <p className="mt-1 text-sm text-slate-600">
+          <p className="mt-1 text-sm text-muted-foreground">
             Pending committee review: <strong>{pendingCount}</strong>
           </p>
         </div>
@@ -521,13 +540,6 @@ export default function MemberApplicationsPage() {
         </div>
       </div>
 
-      {!canEditMembership && (
-        <AdminViewOnlyNotice canEdit={canEditMembership}>
-          Your admin role can view member applications but cannot approve,
-          decline, or otherwise act on them.
-        </AdminViewOnlyNotice>
-      )}
-
       {message && (
         <div className="rounded-md border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
           {message}
@@ -542,13 +554,13 @@ export default function MemberApplicationsPage() {
 
       {loading ? (
         <Card>
-          <CardContent className="pt-6 text-sm text-slate-600">
+          <CardContent className="pt-6 text-sm text-muted-foreground">
             Loading applications...
           </CardContent>
         </Card>
       ) : applications.length === 0 ? (
         <Card>
-          <CardContent className="pt-6 text-sm text-slate-600">
+          <CardContent className="pt-6 text-sm text-muted-foreground">
             No applications match this filter.
           </CardContent>
         </Card>
@@ -562,11 +574,11 @@ export default function MemberApplicationsPage() {
                     <CardTitle className="text-2xl">
                       {application.applicantFirstName} {application.applicantLastName}
                     </CardTitle>
-                    <p className="mt-1 text-sm text-slate-600">
+                    <p className="mt-1 text-sm text-muted-foreground">
                       Submitted {formatDate(application.createdAt)}
                     </p>
                   </div>
-                  <div className="inline-flex w-fit rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-slate-700">
+                  <div className="inline-flex w-fit rounded-full bg-muted px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
                     {statusLabel(application.status)}
                   </div>
                 </div>
@@ -576,19 +588,19 @@ export default function MemberApplicationsPage() {
                 <div className="grid gap-4 lg:grid-cols-2">
                   <div className="space-y-3 text-sm">
                     <div>
-                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
                         Contact
                       </p>
-                      <p className="mt-1 text-slate-800">{application.applicantEmail}</p>
+                      <p className="mt-1 text-foreground">{application.applicantEmail}</p>
                       {application.applicantPhone && (
-                        <p className="text-slate-600">{application.applicantPhone}</p>
+                        <p className="text-muted-foreground">{application.applicantPhone}</p>
                       )}
                     </div>
                     <div>
-                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
                         Address
                       </p>
-                      <div className="mt-1 space-y-1 text-slate-700">
+                      <div className="mt-1 space-y-1 text-muted-foreground">
                         {application.applicantAddress.streetAddressLine1 && (
                           <p>{application.applicantAddress.streetAddressLine1}</p>
                         )}
@@ -615,11 +627,11 @@ export default function MemberApplicationsPage() {
                 </div>
 
                 <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
                     Dependents
                   </p>
                   {application.familyMembers.length === 0 ? (
-                    <p className="mt-1 text-sm text-slate-600">
+                    <p className="mt-1 text-sm text-muted-foreground">
                       No dependents included with this application.
                     </p>
                   ) : (
@@ -627,12 +639,12 @@ export default function MemberApplicationsPage() {
                       {application.familyMembers.map((familyMember) => (
                         <div
                           key={`${familyMember.firstName}-${familyMember.lastName}-${familyMember.dateOfBirth}`}
-                          className="rounded-lg border border-slate-200 px-4 py-3 text-sm"
+                          className="rounded-lg border border-border px-4 py-3 text-sm"
                         >
-                          <p className="font-medium text-slate-900">
+                          <p className="font-medium text-foreground">
                             {familyMember.firstName} {familyMember.lastName}
                           </p>
-                          <p className="text-slate-600">
+                          <p className="text-muted-foreground">
                             DOB {new Date(familyMember.dateOfBirth).toLocaleDateString("en-NZ")}
                           </p>
                         </div>
@@ -643,14 +655,14 @@ export default function MemberApplicationsPage() {
 
                 <div className="space-y-2">
                   <label
-                    className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500"
+                    className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground"
                     htmlFor={`notes-${application.id}`}
                   >
                     Committee notes
                   </label>
                   <textarea
                     id={`notes-${application.id}`}
-                    className="min-h-28 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                    className="min-h-28 w-full rounded-md border border-border px-3 py-2 text-sm"
                     value={notes[application.id] || ""}
                     onChange={(event) =>
                       setNotes((prev) => ({
@@ -663,7 +675,7 @@ export default function MemberApplicationsPage() {
                 </div>
 
                 {application.reviewedAt && (
-                  <div className="rounded-md border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                  <div className="rounded-md border border-border bg-muted px-4 py-3 text-sm text-muted-foreground">
                     Reviewed by {application.reviewerName || "an administrator"} on{" "}
                     {formatDate(application.reviewedAt)}
                   </div>
@@ -682,8 +694,8 @@ export default function MemberApplicationsPage() {
                 )}
 
                 {application.status === "PENDING_NOMINATORS" && (
-                  <div className="space-y-3 rounded-md border border-slate-200 bg-slate-50 p-4 text-sm">
-                    <p className="text-slate-700">
+                  <div className="space-y-3 rounded-md border border-border bg-muted p-4 text-sm">
+                    <p className="text-muted-foreground">
                       This application is still waiting on its nominators and cannot
                       be approved until both have confirmed. Refresh the workflow to
                       send fresh links to pending nominators, or replace an unconfirmed
@@ -692,6 +704,7 @@ export default function MemberApplicationsPage() {
                     <div className="flex flex-wrap gap-3">
                       <ViewOnlyActionButton
                         canEdit={canEditMembership}
+                        describeReason={false}
                         type="button"
                         disabled={submittingId === application.id}
                         onClick={() => refreshNominations(application.id)}
@@ -702,6 +715,7 @@ export default function MemberApplicationsPage() {
                       </ViewOnlyActionButton>
                       <ViewOnlyActionButton
                         canEdit={canEditMembership}
+                        describeReason={false}
                         type="button"
                         variant="outline"
                         disabled={submittingId === application.id}
@@ -770,6 +784,7 @@ export default function MemberApplicationsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      </div>
     </div>
   );
 }

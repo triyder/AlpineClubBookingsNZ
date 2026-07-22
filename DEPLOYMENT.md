@@ -103,19 +103,32 @@ Minimum production categories:
 - Modules: optional modules are database-backed in `ClubModuleSettings` and
   controlled from Admin > Modules after first login. No `FEATURE_*`
   environment variables are supported or read by the app.
-- Stripe: `STRIPE_SECRET_KEY`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`,
-  `STRIPE_WEBHOOK_SECRET`
-- Xero: `XERO_CLIENT_ID`, `XERO_CLIENT_SECRET`, `XERO_REDIRECT_URI`,
-  `XERO_ENCRYPTION_KEY`, optional `XERO_WEBHOOK_KEY`. This single connection
-  serves bookings, payments, subscriptions, and the finance dashboard. Configure
-  the Xero app with the exact operational scopes requested by
-  `src/lib/xero-config.ts`: `openid`, `profile`, `email`,
+- Stripe: **no env vars** (#2082). The Stripe secret key, publishable key, and
+  webhook signing secret are captured **in-app** through the guided setup wizard
+  at **Admin > Integrations > Stripe** (Full Admin only) and stored encrypted.
+  The publishable key is delivered to the browser at **runtime** from the store
+  (`GET /api/stripe/publishable-key`), so there is no build-time
+  `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` inlining. The webhook route is
+  **fail-closed** (no stored signing secret ⇒ every event rejected). Any legacy
+  `STRIPE_SECRET_KEY` / `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` /
+  `STRIPE_WEBHOOK_SECRET` env vars still present are ignored and flagged in setup
+  readiness — see the **Upgrade: DB-only provider credentials** runbook below.
+- Xero: **no env vars** (#2079). The Xero client id/secret, webhook key, and
+  token-encryption key are captured **in-app** through the guided setup wizard at
+  **Admin > Xero > Setup** (#2080; Full Admin only) and stored encrypted; the
+  redirect URI derives from `NEXTAUTH_URL`. This
+  single connection serves bookings, payments, subscriptions, and the finance
+  dashboard. Configure the Xero app with the exact operational scopes requested
+  by `src/lib/xero-config.ts`: `openid`, `profile`, `email`,
   `accounting.contacts`, `accounting.invoices`, `accounting.payments`,
   `accounting.settings.read`, `accounting.reports.profitandloss.read`,
   `accounting.reports.balancesheet.read`,
   `accounting.reports.banksummary.read`, and `offline_access`. Do not grant the
-  stale generic all-reports scope; reconnect Xero from `/admin/xero` after
-  changing allowed scopes so new tokens carry the granular report scopes.
+  stale generic all-reports scope; reconnect Xero from `/admin/integrations`
+  after changing allowed scopes so new tokens carry the granular report scopes.
+  Any legacy `XERO_*` credential env vars still present are ignored and flagged
+  in setup readiness — see the **Upgrade: DB-only provider credentials** runbook
+  below.
 - Email: `SMTP_HOST`, `SMTP_PORT`, `AWS_SES_ACCESS_KEY_ID`,
   `AWS_SES_SECRET_ACCESS_KEY`, `EMAIL_FROM`, `SES_SNS_TOPIC_ARN`. `EMAIL_FROM` is
   the only email-identity env var (besides these transport secrets): it is the
@@ -581,7 +594,28 @@ Configure webhook endpoints for the deployed domain:
 - Xero: `/api/webhooks/xero`
 - SES SNS: `/api/webhooks/ses-sns`
 
-Keep webhook secrets in `.env`. Rotate them if they are exposed.
+Stripe and SES webhook secrets are env-configured (`STRIPE_WEBHOOK_SECRET`,
+`SES_SNS_TOPIC_ARN`); rotate them if exposed. The **Xero** webhook key is **not**
+an env var since #2079 — it is captured in-app (Admin > Integrations) and stored
+encrypted, and the `/api/webhooks/xero` route resolves it from there and stays
+**fail-closed** (a missing/unreadable key rejects every delivery, it never
+accepts).
+
+The guided setup wizard (**Admin → Xero → Setup**, step 4 "Webhooks", #2081)
+shows the exact delivery URL to paste into Xero, captures the webhook signing
+key (Full Admin only), and **Verify** waits for Xero's intent-to-receive
+validation ping to reach `/api/webhooks/xero` and pass HMAC before confirming.
+Verification is freshness-scoped and bound to the currently stored key
+(replacing the key re-arms it), so a green tick provably corresponds to a live
+round-trip on the same resolver/HMAC path production uses. Webhooks are
+optional: a deployment can invoice immediately and finish them later, in which
+case a persistent amber **"Webhooks not configured — payment updates rely on
+scheduled sync"** badge shows on the Xero pages until verified. A
+localhost/non-public-HTTPS deployment cannot receive the ping — verify only
+works once the site is reachable over public HTTPS. Because credential reads are
+cached across the blue/green web slots + cron-leader for up to ~45s (#2079), the
+wizard's verify polling window runs to 90s so a genuine ping still lands green
+after a key write.
 
 Subscribe the Stripe endpoint to these event types:
 
@@ -602,6 +636,107 @@ to resend failed events. Verify the event appears in webhook logs and the
 affected booking/payment state before retrying operator actions. Do not repair
 Stripe state by editing payment rows directly; unresolved payment-intent cleanup
 is replayed by the payment recovery cron.
+
+## Provider credentials: DB-only upgrade & auth-secret rotation (#2079)
+
+### Upgrade: DB-only provider credentials
+
+Since #2079 provider credentials (Xero here; Stripe/Google/Backup in later
+releases) are stored **only** in the encrypted `IntegrationCredential` table and
+captured in-app under **Admin > Integrations** (Full Admin only). Bootstrap-class
+config (`AUTH_SECRET`, `DATABASE_URL`, `NEXTAUTH_URL`, SMTP/SES) is unchanged.
+
+**What stops working at the upgrade** for a previously env-configured deployment
+(e.g. an existing Xero-connected install):
+
+- The old `XERO_ENCRYPTION_KEY` is no longer read, so the previously stored Xero
+  OAuth tokens become **unreadable by design** (deliberately no silent key
+  import). Xero surfaces a clean **"reconnect Xero"** state — no crash.
+- `XERO_CLIENT_ID` / `XERO_CLIENT_SECRET` / `XERO_REDIRECT_URI` /
+  `XERO_WEBHOOK_KEY` are ignored; setup readiness raises a warning naming the
+  exact vars still present ("configured in-app now — re-enter there, then remove
+  these from the environment").
+
+**Re-entry order (per provider):**
+
+1. Ensure `AUTH_SECRET` (or `NEXTAUTH_SECRET`) is strong (>= 32 chars, not the
+   `.env.example` placeholder). Credential capture is **hard-blocked** on a weak
+   secret; setup readiness shows a passive amber warning before you start.
+2. Deploy the new release. Nothing fails at boot; readiness shows the legacy-env
+   warnings and the Xero "reconnect" prompt.
+3. Open **Admin > Xero > Setup** (the Integrations hub and the Modules "Set up"
+   CTA link here) and follow the **guided Xero setup wizard** (#2080): it walks
+   you through creating the Xero app with copy-paste-exact values (including the
+   resolved redirect URI), re-entering the client id and client secret, and
+   reconnecting. Each credential write is Full-Admin only, encrypted at rest, and
+   audited (metadata only); values are never displayed back. Entering a new value
+   resets the connection, so the wizard has you reconnect on the next step. The
+   wrapped token-encryption key is auto-generated on first use.
+4. Complete the wizard's **Connect** step (OAuth) so fresh tokens are stored
+   under the new key, and confirm the connected organisation name it shows.
+5. Remove the now-ignored `XERO_*` credential env vars from the environment;
+   the readiness warning clears.
+
+**Stripe (#2082):** the same cutover applies to payments. At the upgrade
+`STRIPE_SECRET_KEY`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`, and
+`STRIPE_WEBHOOK_SECRET` stop being read (setup readiness flags any still present).
+Card payments pause until the keys are re-entered because the publishable key is
+now delivered at runtime from the store, and the webhook route is fail-closed
+until its signing secret is stored. Re-enter under **Admin > Integrations >
+Stripe**: (1) with a strong auth secret, open the wizard and paste the secret and
+publishable keys (test mode first if validating); (2) run **Verify connection** and
+confirm the Stripe account name shown is the right one; (3) **reuse the webhook
+endpoint your Stripe account already has** at this site's
+`/api/webhooks/stripe` URL — open it under Developers > Webhooks, reveal its
+current signing secret, and paste that back into the wizard. Only add a new
+endpoint if none exists yet (fresh installs); creating a second endpoint on an
+upgrade issues a *different* signing secret and orphans deliveries queued
+against the old one. Send a Stripe test event to turn the webhook badge green
+(this step is skippable — payments still process, but bookings only
+auto-reconcile once the webhook is verified). **Events that arrive during the
+re-entry gap are rejected fail-closed, and Stripe retries deliveries for about
+72 hours** — restore the *same* signing secret within that window and the
+queued events verify and replay on retry; duplicate deliveries are deduplicated
+automatically. Replacing any Stripe key clears the verified webhook badge.
+Then remove the legacy `STRIPE_*` env vars.
+
+**Expected downtime:** none at deploy. Xero-backed operations (sync, webhooks,
+invoice/payment automation) pause between the upgrade and step 4 completing, and
+resume once credentials are re-entered and Xero is reconnected. Because
+production runs blue/green web slots plus a cron-leader, a wizard write in one
+web slot is observed by the cron-leader within the credential cache TTL
+(30–60s), no restart required.
+
+### Auth-secret rotation runbook
+
+Rotating `AUTH_SECRET`/`NEXTAUTH_SECRET` is a **planned maintenance event**, not
+a casual refresh. Rotation drops, all at once:
+
+- **all sessions** (everyone is signed out);
+- **all 2FA enrolments and recovery-code hashes** — every member is forced back
+  through two-factor enrollment on next sign-in. **Admin-lockout risk:** an admin
+  who cannot immediately re-enroll (lost authenticator) can be locked out.
+- **all stored provider credentials** (Xero client id/secret/webhook key; Stripe
+  secret/publishable/webhook-signing keys) and the **wrapped Xero token-encryption
+  key** — these fail GCM decryption afterwards and must be re-entered in-app; Xero
+  must be reconnected (re-OAuth) and the Stripe webhook re-verified.
+
+**Safe procedure:**
+
+1. Announce the maintenance window to members and admins.
+2. Before rotating, have at least one Full Admin **disable their 2FA** (so they
+   can still sign in immediately after rotation), or confirm a break-glass access
+   path.
+3. Rotate the secret and redeploy.
+4. Sign in, **re-enable/re-enroll 2FA** for admins first, then re-enter provider
+   credentials (Admin > Integrations) and reconnect Xero.
+5. Communicate to members that they must re-enroll 2FA on next sign-in.
+
+**Security consequence (see `docs/SECURITY-ATTACK-SURFACE.md`):** because all
+provider credentials are encrypted under key material derived from this one
+secret, a database backup **plus** the auth secret is enough to decrypt every
+stored credential. Production and staging/clones must therefore **never** share
+an auth secret.
 
 ## Cron Schedule
 

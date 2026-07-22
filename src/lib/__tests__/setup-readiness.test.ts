@@ -13,13 +13,15 @@ import {
 const baseEnv = {
   DATABASE_URL: "postgresql://user:pass@localhost:5432/app",
   NEXTAUTH_URL: "https://club.example.org",
-  AUTH_SECRET: "auth-secret",
+  // Strong (>= 32 chars, non-placeholder) so the auth-secret strength check
+  // (#2079) stays green in the "complete setup" scenario.
+  AUTH_SECRET: "a".repeat(48),
   CRON_SECRET: "cron-secret",
   SEED_ADMIN_EMAIL: "admin@example.org",
   SEED_ADMIN_PASSWORD: "change-me",
-  STRIPE_SECRET_KEY: "sk_test_123",
-  NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: "pk_test_123",
-  STRIPE_WEBHOOK_SECRET: "whsec_123",
+  // Stripe credentials are captured in-app now (#2082); legacy STRIPE_* env vars
+  // are intentionally absent here so the Stripe check does not raise the "remove
+  // the legacy vars" warning. The keys are represented in the DB snapshot below.
   SMTP_HOST: "email-smtp.ap-southeast-2.amazonaws.com",
   SMTP_PORT: "587",
   AWS_SES_ACCESS_KEY_ID: "smtp-user",
@@ -30,11 +32,9 @@ const baseEnv = {
   NEXT_PUBLIC_SENTRY_DSN: "https://public@example.ingest.sentry.io/1",
   SENTRY_ORG: "example",
   SENTRY_PROJECT: "bookings",
-  XERO_CLIENT_ID: "xero-client",
-  XERO_CLIENT_SECRET: "xero-secret",
-  XERO_REDIRECT_URI: "https://club.example.org/api/admin/xero/callback",
-  XERO_ENCRYPTION_KEY: "a".repeat(64),
-  XERO_WEBHOOK_KEY: "webhook-key",
+  // Xero credentials are captured in-app now (#2079); legacy XERO_* env vars are
+  // intentionally absent here so the operational-Xero check does not raise the
+  // "remove the legacy vars" warning.
   ADDY_API_KEY: "addy-key",
   ADDY_API_SECRET: "addy-secret",
 };
@@ -74,6 +74,10 @@ const completeDatabase: SetupDatabaseSnapshot = {
   membershipCancellationArchiveContacts: false,
   operationalXeroConnected: true,
   operationalXeroTokenExpiresAt: "2026-06-01T00:00:00.000Z",
+  stripeSecretKeySet: true,
+  stripePublishableKeySet: true,
+  stripeWebhookSecretSet: true,
+  stripeNeedsReentry: false,
   xeroAccountMappingCount: 5,
   xeroHutFeeItemMappingCount: 16,
   xeroEntranceFeeMappingCount: 4,
@@ -448,6 +452,28 @@ describe("setup-readiness", () => {
     expect(report).toContain("Finance dashboard is disabled in Admin Modules.");
     expect(report).toContain("Address autocomplete Admin Modules activation: enabled");
     expect(report).not.toContain("env capability");
+  });
+
+  it("shows reconnect-required (not connected) when stored Xero tokens no longer decrypt (#2079)", () => {
+    const readiness = buildSetupReadiness({
+      env: baseEnv,
+      configDir: makeConfigDir(),
+      database: {
+        ...completeDatabase,
+        // A token row exists but is unreadable after an auth-secret change.
+        operationalXeroConnected: false,
+        operationalXeroNeedsReentry: true,
+      },
+    });
+
+    const report = renderSetupCheckReport(readiness);
+
+    expect(report).toContain(
+      "reconnect Xero from the in-app setup (Admin > Xero > Setup)",
+    );
+    expect(report).toContain("Stored Xero tokens no longer decrypt");
+    // Must NOT read as connected/complete over dead tokens.
+    expect(report).not.toContain("Operational Xero is connected.");
   });
 
   it("distinguishes address autocomplete disabled, missing credentials, and ready states", () => {

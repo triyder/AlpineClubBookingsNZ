@@ -93,7 +93,7 @@ export function NotificationDeliveryPolicySettings({
           {stalePolicyCount === 1 ? "" : "s"} need database cleanup.
         </div>
       ) : null}
-      <div className="divide-y divide-slate-200">
+      <div className="divide-y divide-border">
         {policies.map((policy) => (
           <div
             key={policy.templateName}
@@ -101,10 +101,10 @@ export function NotificationDeliveryPolicySettings({
           >
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <Label className="text-sm font-medium text-slate-900">
+                <Label className="text-sm font-medium text-foreground">
                   {policy.label}
                 </Label>
-                <p className="mt-1 text-xs text-slate-500">
+                <p className="mt-1 text-xs text-muted-foreground">
                   Default: {modeLabels[policy.defaultMode]}
                 </p>
               </div>

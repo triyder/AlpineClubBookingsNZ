@@ -145,7 +145,7 @@ function PrimaryDrilldowns({
   returnTo: string;
 }) {
   if (links.length === 0) {
-    return <span className="text-xs text-slate-400">No direct target</span>;
+    return <span className="text-xs text-muted-foreground">No direct target</span>;
   }
 
   const primaryLinks = links.filter((link) => link.primary);
@@ -240,7 +240,7 @@ function MemberSearchFilter({
           ) : null}
           <button
             type="button"
-            className="text-slate-500 hover:text-slate-900"
+            className="text-muted-foreground hover:text-accent-foreground"
             onClick={onClear}
             aria-label="Clear member filter"
           >
@@ -255,7 +255,7 @@ function MemberSearchFilter({
     <div ref={wrapperRef} className="relative min-w-64 space-y-1">
       <Label className="text-xs">Member</Label>
       <div className="relative">
-        <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-slate-400" />
+        <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
         <Input
           value={query}
           onChange={(event) => setQuery(event.target.value)}
@@ -265,18 +265,18 @@ function MemberSearchFilter({
         />
       </div>
       {loading ? (
-        <p className="text-xs text-slate-400">Searching...</p>
+        <p className="text-xs text-muted-foreground">Searching...</p>
       ) : null}
       {open && (
-        <div className="absolute z-50 mt-1 max-h-72 w-full overflow-y-auto rounded-md border bg-white shadow-lg">
+        <div className="absolute z-50 mt-1 max-h-72 w-full overflow-y-auto rounded-md border bg-card shadow-lg">
           {results.length === 0 ? (
-            <p className="px-3 py-2 text-sm text-slate-500">No members found</p>
+            <p className="px-3 py-2 text-sm text-muted-foreground">No members found</p>
           ) : (
             results.map((member) => (
               <button
                 key={member.id}
                 type="button"
-                className="w-full border-b px-3 py-2 text-left last:border-b-0 hover:bg-slate-50"
+                className="w-full border-b px-3 py-2 text-left last:border-b-0 hover:bg-accent"
                 onClick={() => {
                   onSelect(member);
                   setQuery("");
@@ -286,7 +286,7 @@ function MemberSearchFilter({
                 <span className="block text-sm font-medium">
                   {member.firstName} {member.lastName}
                 </span>
-                <span className="block text-xs text-slate-500">
+                <span className="block text-xs text-muted-foreground">
                   {member.email}
                 </span>
               </button>
@@ -436,13 +436,13 @@ export default function AuditLogPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-slate-900">Audit Log</h1>
-        <p className="mt-1 text-sm text-slate-500">
+        <h1 className="text-2xl font-bold text-foreground">Audit Log</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
           Review system, member, finance, booking, Xero, and admin activity
         </p>
       </div>
 
-      <div className="flex flex-wrap items-end gap-3 rounded-lg border bg-white p-4">
+      <div className="flex flex-wrap items-end gap-3 rounded-lg border bg-card p-4">
         <div className="space-y-1">
           <Label className="text-xs">Event Type</Label>
           <Select
@@ -644,14 +644,14 @@ export default function AuditLogPage() {
             <TableBody>
               {loading ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="py-8 text-center text-slate-500">
+                  <TableCell colSpan={7} className="py-8 text-center text-muted-foreground">
                     <Loader2 className="mr-2 inline h-4 w-4 animate-spin" />
                     Loading audit events
                   </TableCell>
                 </TableRow>
               ) : entries.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="py-8 text-center text-slate-500">
+                  <TableCell colSpan={7} className="py-8 text-center text-muted-foreground">
                     No audit entries found
                   </TableCell>
                 </TableRow>
@@ -663,7 +663,7 @@ export default function AuditLogPage() {
                   return (
                     <Fragment key={entry.id}>
                       <TableRow
-                        className={expandable ? "cursor-pointer hover:bg-slate-50" : ""}
+                        className={expandable ? "cursor-pointer hover:bg-accent" : ""}
                         onClick={() => {
                           if (expandable) {
                             setExpandedId(expanded ? null : entry.id);
@@ -679,7 +679,7 @@ export default function AuditLogPage() {
                             )
                           ) : null}
                         </TableCell>
-                        <TableCell className="align-top text-xs text-slate-500">
+                        <TableCell className="align-top text-xs text-muted-foreground">
                           {formatDateTime(entry.createdAt)}
                         </TableCell>
                         <TableCell className="align-top">
@@ -704,15 +704,15 @@ export default function AuditLogPage() {
                                 </Badge>
                               ) : null}
                             </div>
-                            <p className="font-medium text-slate-900">
+                            <p className="font-medium text-foreground">
                               {entry.summary}
                             </p>
                             {entry.description ? (
-                              <p className="max-w-xl text-xs leading-relaxed text-slate-500">
+                              <p className="max-w-xl text-xs leading-relaxed text-muted-foreground">
                                 {entry.description}
                               </p>
                             ) : null}
-                            <p className="font-mono text-[11px] text-slate-400">
+                            <p className="font-mono text-[11px] text-muted-foreground">
                               {entry.action}
                             </p>
                           </div>
@@ -721,7 +721,7 @@ export default function AuditLogPage() {
                           <div>
                             <p>{entry.actorDisplayName}</p>
                             {entry.actor?.email ? (
-                              <p className="truncate text-xs text-slate-500">
+                              <p className="truncate text-xs text-muted-foreground">
                                 {entry.actor.email}
                               </p>
                             ) : null}
@@ -740,20 +740,20 @@ export default function AuditLogPage() {
                               {entry.subjectDisplayName}
                             </Link>
                           ) : (
-                            <span className="text-slate-400">
+                            <span className="text-muted-foreground">
                               {entry.subjectDisplayName ?? "No member"}
                             </span>
                           )}
                           {entry.subject?.email ? (
-                            <p className="truncate text-xs text-slate-500">
+                            <p className="truncate text-xs text-muted-foreground">
                               {entry.subject.email}
                             </p>
                           ) : null}
                         </TableCell>
-                        <TableCell className="align-top text-xs text-slate-500">
+                        <TableCell className="align-top text-xs text-muted-foreground">
                           {entry.entityType ? (
                             <div>
-                              <p className="font-medium text-slate-700">
+                              <p className="font-medium text-muted-foreground">
                                 {entry.entityType}
                               </p>
                               {entry.entityId ? (
@@ -764,7 +764,7 @@ export default function AuditLogPage() {
                               ) : null}
                             </div>
                           ) : (
-                            <span className="text-slate-400">None</span>
+                            <span className="text-muted-foreground">None</span>
                           )}
                         </TableCell>
                         <TableCell className="align-top">
@@ -773,9 +773,9 @@ export default function AuditLogPage() {
                       </TableRow>
                       {expanded ? (
                         <TableRow>
-                          <TableCell colSpan={7} className="bg-slate-50 p-4">
+                          <TableCell colSpan={7} className="bg-muted p-4">
                             <div className="grid gap-4 text-xs md:grid-cols-[220px_1fr]">
-                              <div className="space-y-1 text-slate-600">
+                              <div className="space-y-1 text-muted-foreground">
                                 <p>
                                   <span className="font-medium">Request:</span>{" "}
                                   {entry.requestId || "—"}
@@ -810,20 +810,20 @@ export default function AuditLogPage() {
                               <div className="space-y-3">
                                 {entry.details ? (
                                   <div>
-                                    <p className="mb-1 font-medium text-slate-700">
+                                    <p className="mb-1 font-medium text-muted-foreground">
                                       Details
                                     </p>
-                                    <pre className="max-h-56 overflow-auto rounded-md bg-white p-3 leading-relaxed text-slate-700">
+                                    <pre className="max-h-56 overflow-auto rounded-md bg-card p-3 leading-relaxed text-muted-foreground">
                                       {entry.details}
                                     </pre>
                                   </div>
                                 ) : null}
                                 {entry.metadata ? (
                                   <div>
-                                    <p className="mb-1 font-medium text-slate-700">
+                                    <p className="mb-1 font-medium text-muted-foreground">
                                       Metadata
                                     </p>
-                                    <pre className="max-h-72 overflow-auto rounded-md bg-white p-3 leading-relaxed text-slate-700">
+                                    <pre className="max-h-72 overflow-auto rounded-md bg-card p-3 leading-relaxed text-muted-foreground">
                                       {JSON.stringify(entry.metadata, null, 2)}
                                     </pre>
                                   </div>
@@ -843,7 +843,7 @@ export default function AuditLogPage() {
       </Card>
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <p className="text-sm text-slate-500">{rangeLabel}</p>
+        <p className="text-sm text-muted-foreground">{rangeLabel}</p>
         <div className="flex gap-2">
           <Button
             variant="outline"

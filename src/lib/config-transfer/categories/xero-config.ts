@@ -40,8 +40,10 @@ import { addDaysDateOnly, getTodayDateOnly } from "@/lib/date-only";
 // legacy `isMember` HUT_FEE key (true -> FULL, false -> NON_MEMBER) and the
 // pre-#1931 `ENTRANCE_FEE` category name — was retired one release after the E13
 // contraction (#2131): such a bundle is now REJECTED with a clear validation
-// error, never silently upgraded. The frozen legacy isMember-keyed rows are not
-// exported (export side unchanged).
+// error, never silently upgraded. `membershipTypeId`-less HUT_FEE rows are not
+// exported (export side unchanged); the #2130 STEP 2 contract migration deleted
+// the last of them with the `isMember` column, but the skip is kept defensively
+// for forks and older databases.
 
 const ACCOUNT_FILE = "xero-config/account-mappings.csv";
 const ITEM_FILE = "xero-config/item-code-mappings.csv";
@@ -288,8 +290,10 @@ async function loadXeroBatch(db: ReadDb): Promise<XeroBatch> {
   const membershipTypeKeyById = new Map(membershipTypeRows.map((t) => [t.id, t.key]));
   const items = new Map<string, { id: string; itemCode: string | null; amountCents: number | null }>();
   for (const row of itemRows) {
-    // Skip frozen legacy HUT_FEE rows (isMember-keyed, no membershipTypeId): the
-    // editor and config transfer operate only on the new membership-type key.
+    // Skip `membershipTypeId`-less HUT_FEE rows: the editor and config transfer
+    // operate only on the membership-type key (#1930, E4). Defensive — the
+    // #2130 STEP 2 contract migration deleted the legacy rows, but a fork's
+    // database can still hold one.
     if (row.category === "HUT_FEE" && !row.membershipTypeId) continue;
     const key = itemKeyOf({
       category: row.category,
@@ -576,8 +580,10 @@ export const xeroConfigExporter: CategoryExporter = {
       ctx.db.membershipType.findMany({ select: { id: true, key: true } }),
     ]);
     const membershipTypeKeyById = new Map(membershipTypeRows.map((t) => [t.id, t.key]));
-    // Emit membership-type-keyed HUT_FEE rows and all JOINING_FEE rows; the
-    // frozen legacy isMember-keyed HUT_FEE rows are skipped (#1930, E4).
+    // Emit membership-type-keyed HUT_FEE rows and all JOINING_FEE rows;
+    // `membershipTypeId`-less HUT_FEE rows are skipped (#1930, E4 — the #2130
+    // STEP 2 contract migration deleted the legacy ones, the skip is kept
+    // defensively).
     // ENTRANCE_FEE is not an emitted category — the #1931 migration re-keyed
     // every such row to JOINING_FEE, and it is a rejected import shape (#2131).
     const items = itemRows

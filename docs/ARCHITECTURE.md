@@ -89,6 +89,27 @@ Important route groups:
 - `src/app/api` contains route handlers for auth, bookings, payments, admin,
   finance, lodge, webhooks, cron, and health checks.
 
+> **Theme substrate — the 3-seed model (#2187 P1).** Site Style stores THREE
+> seed colours, not seven: `brandGold` (the required accent), `brandDeep` (an
+> optional neutral character whose hue tints the grey ramp), and `brandSafety`
+> (an optional support accent). The wizard's colour step is 1 required + 2
+> optional hex-only pickers. Those seeds feed the vendored Radix custom-palette
+> generator (`src/lib/theme/`), which derives the full 12-step light/dark
+> substrate with cross-colour text contrast guaranteed by construction, so a
+> low-contrast pick is **adjusted and disclosed (before → after), not rejected**
+> — the old blocking contrast gate is gone. The four former columns
+> (`brandCharcoal`/`brandRidge`/`brandMist`/`brandSnow`) are dead to code:
+> `deriveBrandShims` derives those `--brand-*` shim values from the substrate
+> neutral ramp so the website utilities and email palette keep working through
+> P1 (P2/P3 delete the shims). The columns remain in the DB behind a default (an
+> additive EXPAND migration) so pre-#2187 code stays compatible across a
+> blue/green cutover; the destructive column drop ships in P4. Config-transfer
+> bundles are **format version 2** and reject any version-1 bundle. The deeper
+> substrate wire-up of `globals.css` (generated scale variables + alias blocks +
+> the `.dark .app-theme-scope` rewrite) and the neutral/callout/kiosk remap
+> deletions land in later phases; through P1 the `--brand-*` shims below still
+> drive the app scope.
+
 Every app-shell layout (`(public)`, `(authenticated)`, `(admin)`, `(finance)`)
 injects the admin-configured theme via `getWebsiteThemeRenderState()` inside an
 `app-theme-scope` wrapper, so never hardcode the brand accent (e.g. Tailwind
@@ -109,22 +130,79 @@ rewrites literal `bg-white`, `bg-{neutral}-50/100/200`,
 `--foreground`, `--muted-foreground`, and `--accent`, treating
 slate/gray/zinc/neutral/stone as one family. So a raw neutral inside
 `app-theme-scope` is **already handled in dark mode** — that shim is why dark
-mode reads correctly today, and it is not going away.
+mode read correctly before the migrations below.
 
 What the shim does **not** do is cover LIGHT mode: it is `.dark`-scoped only. A
 literal `slate-*` or `bg-white` therefore stays literally slate/white under a
 strongly non-default club theme in light mode, where the theme's own surface
 colours should apply. That gap — plus the plain consistency argument that a
-surface should be correct at source rather than correct-by-shim — is why new and
-migrated code inside `app-theme-scope` uses the semantic surface tokens:
+surface should be correct at source rather than correct-by-shim — is why code
+inside `app-theme-scope` uses the semantic surface tokens:
 `bg-card` / `text-card-foreground` for card surfaces, `bg-popover` /
 `text-popover-foreground` for floating panels such as chart tooltips,
 `text-muted-foreground` for secondary labels and footnotes, `bg-muted` for
-tinted rows, and `border-border` for rules.
+tinted rows and recessed insets, and `border-border` for rules. The finance
+tree migrated in #2137 and the whole admin tree followed in #2144, so both are
+now token-only at source and gated by
+`src/lib/__tests__/brand-color-source-contract.test.ts`.
+
+**Insets use `bg-muted`, outer surfaces use `bg-card`** (#2144 owner decision).
+The shim's raw→token table maps `bg-white`/`bg-{neutral}-50` onto `--card`, but
+inside `app-theme-scope` `--card` and `--background` share the same colour in
+light mode, so a nested strip converted to `bg-card` renders flat against its
+page. The #2137 finance precedent (`finance-dashboard-client.tsx`,
+`ratio-explorer.tsx`) answers this: a Card/section root, page-level panel, or
+popover takes `bg-card`; a nested strip inside a card, a zebra row, a table
+header band, a read-only field fill, or a recessed well takes `bg-muted`.
+
+With admin migrated, the `.dark .app-theme-scope` neutral remap block in
+`globals.css` is **legacy-compat for the non-admin surfaces plus the
+allowlisted admin files**. The bulk of the raw neutrals that still depend on
+it live under `src/app/(authenticated)`, `src/app/(public)`, and the shared
+`src/components` root (a few hundred occurrences) — but some allowlisted
+admin files depend on it too, wherever their deliberately-literal classes
+fall inside the remap's ranges: the roster and induction print pages read
+correctly when viewed ON SCREEN in dark mode only because the remap rewrites
+their `bg-gray-50/100`, `bg-white`, and grey-ink classes (the remap is not
+print-scoped — print always renders the light palette, #2146), and the
+site-style wizard's raw-CSS editor pane (`bg-white`) is likewise
+remap-darkened on screen. Deleting the block therefore requires migrating
+those member-facing trees — and re-deciding the remap-dependent allowlisted
+files — first. That work is tracked: remap deletion is Phases 2–3 of the
+theme-architecture program planned on issue #2181. Until then the block
+stays exactly as is.
+
+**The app tokens resolve from a GENERATED substrate** (#2187 P1, the restyle
+event). A club now picks three seeds (accent + optional neutral-character +
+optional support); `buildThemeSubstrate` (`src/lib/theme/theme-substrate.ts`)
+turns them into the full 12-step light/dark Radix-style scales, and
+`buildClubThemeAppCss` emits the whole generated custom-property set —
+`--gen-<scale>-<step>` raw steps plus the resolved role tokens
+`--gen-<token>` (light) / `--gen-<token>-dark` (dark), per the data alias map
+in `src/lib/theme/aliases.ts` (`src/lib/theme/app-tokens.ts` assembles them).
+`globals.css`'s static `.app-theme-scope` (light) and `.dark .app-theme-scope`
+(dark) blocks CONSUME those props via `var(--gen-<token>, <default-fallback>)`,
+so an un-themed page still paints the shipped default palette. `--accent`
+(neutral-4) is deliberately one band off `--muted`/`--secondary` (neutral-3) in
+BOTH modes — the structural fix for the seven hover-dead `bg-muted
+hover:bg-accent` #2144 buttons — and the dark core-token block is rewired onto
+generated dark steps with **no `--brand-*` reference left inside it** (F1). The
+legacy `--brand-*` values still ship as derived SHIMS (`deriveBrandShims`, from
+the substrate neutral ramp) so the website `color-mix()` recipes, the app
+`bg-brand-*` utilities, and the email palette keep working through P1; those
+shims are deleted in P2/P3. The `.dark` neutral/colored remap blocks above are
+untouched by P1.
+
+The member-facing `src/app/(authenticated)` and `src/app/(public)` trees were
+migrated off raw neutrals onto the semantic surface tokens in the same event
+(#2187 B4), so at restyle their light mode follows the club theme at source
+rather than by shim; the remaining raw neutrals live under `src/components`,
+the kiosk/lodge display trees, and the allowlisted admin files.
 
 **`--muted-foreground` is a DERIVED tone, not a brand colour** (#2145). Every
-other app text token in the `.app-theme-scope` block resolves to a solid brand
-endpoint (`--foreground` is `--brand-deep` in light, `--brand-snow` in dark).
+other app text token in the `.app-theme-scope` block resolves to a solid
+generated-substrate endpoint (`--foreground` is the club ramp's neutral-12 in
+each mode).
 `--muted-foreground` used to do the same — which made it byte-identical to
 `--foreground`, so `text-muted-foreground` rendered as primary text and the
 `muted` role was inert. It is now computed by `deriveAppMutedForeground` in
@@ -143,12 +221,21 @@ the whole substance of the guard, so it is stated here in full — it is
 
 | Mode  | Checked surfaces |
 | ----- | ---------------- |
-| Light | `--brand-snow` (`--background`/`--card`/`--popover`), `--brand-mist` (`--muted`/`--secondary`/`--accent`), and the curated `--warning-muted` / `--info-muted` / `--success-muted` / `--danger-muted` panel fills |
-| Dark  | `--brand-deep` (`--background`), `--brand-charcoal` (`--card`/`--popover`/`--muted`/`--secondary`/`--accent`), and the same four curated `*-muted` fills in their `.dark` values |
+| Light | `--brand-snow` (`--background`/`--card`/`--popover`), `--brand-mist` (`--muted`/`--secondary`), `--accent` (neutral-4), and the curated `--warning-muted` / `--info-muted` / `--success-muted` / `--danger-muted` panel fills |
+| Dark  | `--brand-deep` (`--background`), `--brand-charcoal` (`--card`/`--popover`/`--muted`/`--secondary`), `--accent` (neutral-4), and the same four curated `*-muted` fills in their `.dark` values |
 
 Both **brand** surfaces are checked per mode, not only the base one, because
 that is what makes the guard hold for an endpoint-crossing palette, where moving
-toward one surface moves away from the other. The four **curated** `*-muted`
+toward one surface moves away from the other. **`--accent`** is checked as its
+own surface because #2144 split it off `--muted`/`--secondary`: it is neutral-4,
+one band DARKER than `--brand-mist` (neutral-3) in light and one band lighter in
+dark, and it is a genuine muted-text background — dropdown and command-menu
+shortcuts render `text-muted-foreground` inside `focus:bg-accent` items. Clamping
+against `--brand-mist` alone left the Tokoroa light tone at 4.37:1 on the hover
+surface; reading the true neutral-4 from each mode's substrate ramp restores it
+to 4.64:1. The guarantee sweep (`guarantee-sweep.test.ts`, G2c) measures the
+shipped derived tone against neutral steps 1–4 in both modes for both reference
+seeds, so a sub-AA step-4 cell fails CI. The four **curated** `*-muted`
 fills are checked because #1808 deliberately leaves them out of
 `app-theme-scope`: they are fixed while the derived tone slides with the brand
 ramp, which is the one pairing that can drift apart with nothing watching. They
@@ -162,13 +249,13 @@ Deliberately **not** in the list:
   so a `bg-slate-200` badge would be a muted-text surface — but the only such
   badge (`page-content-panel.tsx`) was moved to `bg-muted text-muted-foreground`
   instead. A mid-luminance hairline colour is the wrong background for body text
-  at any weight, and clamping against it would collapse the derived tone into
-  `--foreground` for roughly 30% of gate-passing palettes rather than the ~12%
-  it does today. (Measured like-for-like over the 77 gate-passing palettes of
-  the neutral-ramp sweep in `club-theme-schema.test.ts`, counting a palette that
-  collapses in EITHER mode: 11.7% today, 29.9% with `--border` clamped. Per-mode
-  it is 5.2% → 11.7% light and 6.5% → 24.7% dark. Any single framing shows the
-  same 2.5–3× increase; quote one, not a mixture.)
+  at any weight, and a mid-luminance surface leaves the derived tone almost no
+  headroom: clamping against it would force the tone to walk all the way back
+  onto `--foreground` for a materially larger share of palettes than the muted
+  derivation collapses on today — defeating #2145 (a distinct muted tone) for a
+  surface no text should sit on. The AA guarantee that IS enforced (the
+  neutral-ramp sweep in `club-theme-schema.test.ts`) covers only the surfaces in
+  the clamp set; `--border`/`--input` are deliberately outside it.
 - The dark coloured hue remaps. The `-50` (`oklch(0.29 …)`) and `-100`
   (`oklch(0.33 …)`) tiers sit at or below the `*-muted` tier already checked, so
   in dark mode — where the derived tone is the LIGHT one — clearing AA on
@@ -254,12 +341,21 @@ enforce this:
   truth for chip tone classes — those were already -100/-800 pairs, so the
   migration was value-identical.
 - **Themed neutrals.** No raw `slate-`/`gray-`/`zinc-`/`neutral-`/`stone-`
-  utility, `bg-white`, or `bg-`/`text-black` under `src/app/(finance)` or
-  `src/components/finance`, with an empty allowlist (the empty `Set` is kept in
-  the test so a future exception is a reviewable edit). This check is
-  deliberately scoped to the finance tree rather than repo-wide: the admin tree
-  still carries raw slate in many files and would have to be migrated before the
-  check could be widened.
+  utility, `bg-white`, or `bg-`/`text-black` under `src/app/(admin)`,
+  `src/app/(finance)`, `src/components/admin`, or `src/components/finance`,
+  plus four admin-only files gated individually because they live under the
+  ungated shared roots (`admin-booking-calendar.tsx`, `admin-hub-page.tsx`,
+  `admin-permission-matrix-table.tsx`, `src/lib/admin-family-group-ui-helpers.ts`).
+  The #2144 sweep migrated the admin tree, so the check now runs with a
+  nine-entry PER-FILE allowlist, each entry carrying its stated reason in the
+  test (print paper surfaces, signage `bg-black` letterboxes, the site-style
+  code-preview panes that `app-theme-layout-contract` pins as literal slate,
+  solid-fill status chips and swatches, and the member-import wizard's solid
+  near-black active-step emphasis border). Per-file granularity means an entry forfeits
+  gate coverage on that file's other occurrences — prefer fixing a stray over
+  adding an entry. Still not repo-wide: the member-facing
+  `src/app/(authenticated)`/`(public)` trees and the shared `src/components`
+  root keep raw neutrals and would have to migrate before widening further.
 
 The dark-mode colored-callout pass in `globals.css` (#1248) re-tints literal
 Tailwind `bg-{family}-50/100/200`, `text-{family}-600..950`, and
@@ -530,10 +626,10 @@ happened (#2143). That gate belongs at the FORM layer, through the hook's
 `isDirty` — routes deliberately keep no ad-hoc no-op comparison, so a direct API
 caller holding `area:edit` can still write an unchanged body. Edit affordances
 gate on the tri-state `useAdminAreaEditAccess(area)` through
-`ViewOnlyActionButton` / `AdminViewOnlyNotice` (so the resolving `undefined`
-window stays neutral), and the backing write route enforces the matching
-`area:edit` permission. Where a section renders an
-`AdminViewOnlySectionBanner` instead, its buttons pass `describeReason={false}`:
+`ViewOnlyActionButton` / `AdminViewOnlySectionBanner` (so the resolving
+`undefined` window stays neutral), and the backing write route enforces the
+matching `area:edit` permission. The section renders an
+`AdminViewOnlySectionBanner` and its buttons pass `describeReason={false}`:
 the view-only reason is then stated once, at the top of the section, in a
 permanently-mounted `role="status"` region, rather than on disabled buttons that
 are out of the tab order and whose `title` never fires at all (the shared
@@ -546,13 +642,240 @@ early return above that frame re-creates both defects it exists to prevent: a
 failed FIRST load mounts the section together with an already-populated alert in
 one commit, and because a scope change is itself a load it unmounts the
 `PolicyScopeSelect` the admin just operated, dropping keyboard focus to `<body>`
-for the duration of the round trip. That banner shape is
-adopted by the five Booking Policies sections only (#2142); the rest of the
-admin tree keeps `AdminViewOnlyNotice` plus the per-button reason, which stays
-the default. Any card
+for the duration of the round trip. That banner shape started in the five
+Booking Policies sections (#2142) and is now the **default across the admin
+tree** (#2160, extended by #2168) — not a claim that nothing is left. Measured
+on the current tree by `view-only-banner-contract.test.ts`, which asserts these
+figures rather than trusting a hand count: **74 components render a banner, and
+228 of the 260 `ViewOnlyActionButton` call sites opt out** of the per-button
+reason. Those 228 split by WHICH rule covers them: **207** pass the literal
+`describeReason={false}` and are covered by a banner in the same file, and **21**
+pass `describeReason={!ancestorRendersViewOnlyBanner}` and are covered by a
+verified vouching parent (see *Vouching for a child's coverage* below). The
+remaining **32 controls across 15 files deliberately keep the per-button
+default** (`describeReason` left at `true`), in three shapes:
+
+- **Controls inside a dialog, sheet, popover, or dropdown menu.** These live in
+  a separate accessibility container — focus is trapped and the page behind is
+  commonly inert — so a banner rendered in the page body does not reach them.
+  (9 controls across 4 files, which the test enumerates by name; three further
+  controls of this shape live in files counted under the next bucket, see
+  there.)
+- **Leaf components with no section of their own**, which a parent drops into
+  someone else's layout (for example the member detail header's action toolbar,
+  the booking capacity/exclusive hold controls, the family-group login-holder
+  and request-review sub-sections, and the non-member contact form). Nothing
+  local proves an ancestor renders a banner above them, so the reason stays on
+  the control. (19 controls across 10 files.) Read that bucket as the
+  REMAINDER — everything that is neither a member detail card nor one of the
+  four dialog-only files — rather than as a claim that all 19 are leaves. Eight
+  of the ten files are (16 controls); the other two, `page-content-panel.tsx`
+  and `site-banners-panel.tsx`, are full banner-bearing panels whose last 3
+  controls sit inside their own edit/create `Dialog`, so those 3 are really the
+  first shape occurring inside a file that also has the third. Nothing is
+  mis-gated either way — the point is only that the bucket boundary is where the
+  test can draw one mechanically, not a clean taxonomy.
+- **A member detail per-record card gated on a DIFFERENT permission area than
+  the page banner** — today exactly one: `member-credit-card.tsx` (4 controls
+  across 1 file). The other eight cards in
+  `src/app/(admin)/admin/members/[id]/_components/` were converted under #2168
+  and now take their coverage from the page banner. The credit card did not,
+  and that is deliberate rather than a leftover: the page banner states the
+  **membership** area, the credit card's controls are gated on **finance**, so
+  vouching for it would name the wrong permission — and an admin with membership
+  edit but finance view-only would meet no banner at all while looking at four
+  dead buttons. Any second banner for the finance scope would break the owner's
+  one-banner-per-page decision and trip the nesting rule, so the per-button
+  reason stays. Bucket by SCOPE, not by folder, when reading this figure.
+
+Every figure in this section is asserted mechanically by
+`src/components/admin/__tests__/view-only-banner-contract.test.ts` — the totals,
+the static/vouched split, and all three buckets — so they can not drift out of
+step with the tree. Since #2168 the figures themselves are counted over the
+parsed AST, where an attribute is a node and prose is trivia, so a
+`describeReason={false}` written in a comment cannot reach a total at all. That
+was the miscount to beat: both `view-only-action.tsx`'s JSDoc and
+`public-booking-requests-section.tsx`'s JSX commentary quote
+`describeReason={false}` while explaining it, and each was counted as an opt-out
+once. The text-based assertions in the same file still strip comments first, and
+that stripper runs TypeScript's own PARSER, not its scanner: a bare
+`ts.createScanner` cannot resume a template literal after a `${…}` substitution
+(that is the parser's job), so a ``className={`…${…}`}`` above a JSX comment
+opened a bogus template that swallowed the comment's opening `/*` and left its
+quoted `describeReason={false}` in the "code" the text checks read — which is
+how `public-booking-requests-section.tsx` slipped past the stripper a SECOND
+time, caught and fixed in #2166. If you add or convert a gated control, that
+test fails and the numbers here, in `AGENTS.md`, in `docs/STYLE_GUIDE.md`, in
+`CHANGELOG.md` and in the `ViewOnlyActionButton` JSDoc all need updating
+together.
+
+**Vouching for a child's coverage (#2168).** The coverage rule below is asserted
+per FILE, which the member detail page cannot satisfy: the owner's decision is
+ONE banner for that page, so the banner is in `page.tsx` and the opt-outs are in
+the card files. The rule was **not** relaxed to allow that — "some ancestor
+might render a banner" would reopen the orphan-opt-out hazard the rule exists to
+prevent. Instead a parent gets an explicit way to vouch, and the vouch is
+verified:
+
+- the child declares `ancestorRendersViewOnlyBanner?: boolean` (the shared
+  `AncestorViewOnlyBannerProps` in `view-only-action.tsx`), **defaults it to
+  `false`**, and writes `describeReason={!ancestorRendersViewOnlyBanner}`;
+- a covering parent passes the literal `true` at the render site.
+
+The default is the safety property, not the documentation: the opt-out cannot
+happen unless a parent asks for it, at the line a reader sees. A card rendered
+standalone, in a dialog, or by a new parent keeps its per-button reason
+automatically, and so does a NEW gated control added to a converted card.
+
+This is the mirror of `renderViewOnlyBanner` (#2160), and the two compose: there
+a component owns a banner and a covering parent suppresses it; here a component
+owns no banner and a covering parent vouches that it renders one. Both default
+to the self-sufficient behaviour.
+
+The contract test then closes each way the vouch could be a lie:
+
+- `describeReason` accepts **only** the literal `{false}`, the vouched
+  `{!ancestorRendersViewOnlyBanner}`, or the `true` default. A third spelling
+  fails, so neither coverage rule can be escaped by inventing one.
+- the child must default the prop to `false`, and may read it only in
+  `describeReason={!prop}` or as the guard on its own `AdminViewOnlyNotice`. It
+  may not FORWARD it, so coverage never becomes transitive across a hop the test
+  does not check.
+- the vouching parent must render the banner — the element, or the hoisted
+  `const` idiom — in the **same returned JSX tree** as the child, reached
+  **unconditionally** (no `? :`, no `&&`, no callback). A banner that appears
+  only in some states does not cover a child that appears in all of them.
+- the vouch value must be the literal `true`, and a JSX spread at a vouched
+  child's render site fails outright, because `{...props}` could carry the prop
+  invisibly past every other check.
+- wherever the attribute NAME appears, its tag must resolve to a known vouched
+  child through a named import. An aliased, default, barrel or dynamic import
+  fails here rather than quietly leaving the vouch unverified — the one blind
+  spot the nesting check still has is closed for this mechanism.
+- a child that declares the prop but is never vouched for anywhere fails too, so
+  the plumbing cannot sit there implying coverage that never happens.
+- the covering banner's `canEdit` may not be the literal `true` (nor a bare
+  `canEdit`, which JSX reads as true). `AdminViewOnlySectionBanner` emits its
+  sentence only when `canEdit === false`, so a banner hardcoded editable renders
+  an empty live region and orphans every opt-out beneath it.
+
+What it does **not** prove, and reviewers must still check. The checks establish
+that the banner ELEMENT renders; they say nothing about whether it ever
+DISPLAYS. The gap holds four things:
+
+- **which permission area the parent's banner names.** A parent vouching with a
+  banner for a different area is a real defect no static check here can see — it
+  is exactly why `member-credit-card` is excluded above, and the reasoning is
+  written at the render site as well as here.
+- **source ORDER**, so "the banner precedes the controls it explains" remains a
+  review concern.
+- **whether `canEdit`'s expression can ever be false.** Only the literal is
+  rejected; a non-literal expression that never resolves to false produces the
+  same orphaned opt-outs at runtime.
+- **whether the banner has `children`.** A vouching banner with none passes
+  everything, and its page-specific sentence silently degrades to the generic
+  shared heading.
+
+Two scope limits apply to the whole contract test, not only these checks: it
+scans **only paths containing `admin`**, so a vouching parent or vouched child
+moved outside one would become invisible to every check (zero such files exist
+today); and the vouched-child rule reads `describeReason={!prop}` on any
+component, not only `ViewOnlyActionButton` — not exploitable, since no other
+component declares the prop and a planted use fails to compile, but worth
+knowing when reading the check. The behavioural
+half — that an unvouched card really does keep its reason, and a vouched one
+really does drop it while staying disabled — is verified by rendering the real
+components in `src/lib/__tests__/admin-view-only-controls.test.tsx`, so a bug in
+the static analysis cannot make the property vacuous.
+
+**Where the banner goes: first child, every branch.** The banner is the first
+child of a section's outermost wrapper, rendered identically in the loading,
+error and loaded branches. The "every branch" half is asserted mechanically, per
+component and over the AST: a loading-guarded branch must mount the banner, and
+so must every branch below the first one that mounts it. (Terminal branches
+ABOVE the first mount — `lodge-details-panel`'s `accessDenied` and `multiLodge`
+returns, say — carry no banner on purpose: they explain in their own words that
+the section is unavailable, and there are no controls there to gate.) That
+position is load-bearing, not cosmetic: it is
+what keeps the `role="status"` wrapper at the same place in the DOM when a fetch
+settles. Put a heading above the banner in the loaded branch only, and React
+reconciles child 0 from the live region into the heading and mounts a fresh,
+already-populated region below it — the exact defect the mount-order rule exists
+to prevent. Two pages, `/admin/book` and `/admin/roster`, put their page heading
+above the banner instead, so a screen-reader user hears which area they are on
+before hearing that it is view-only; both render in a single branch, so the
+reorder costs nothing there. That is a local exception with a comment at each
+site, **not** a rule to spread: other single-branch sections have deliberately
+been left alone rather than make the banner's position depend on whether a
+section happens to have a loading branch, which is not visible at the render
+site. Making heading-before-banner uniform would mean moving the announcement
+out of the sections entirely (for example, one banner in the admin shell below
+the page title) — a design change with a visible-UI consequence, and a fresh
+owner decision rather than something to retrofit page by page.
+
+Two further invariants are enforced by the same test. First,
+coverage: a file may only use `describeReason={false}` if it also renders an
+`AdminViewOnlySectionBanner`. That is asserted per FILE, because that is the
+only scope in which a reader — and the test — can see that the banner really
+does render above the control. The single sanctioned way out of that scope is
+the #2168 vouching prop described above, which replaces the missing local proof
+with a checked one rather than dropping the requirement. Second, and because the
+coverage rule is by
+construction blind to it, **nesting**: a component that renders a banner may not
+also render a child component that renders one, or a view-only admin meets the
+same sentence twice in two `role="status"` regions. Where a child is legitimately
+reused in a container no ancestor banner reaches (a dialog), it keeps its own
+banner by default and the covering parent passes `renderViewOnlyBanner={false}`
+at the render site — `FamilyGroupEditor` is the worked example: banner-bearing
+inside the member-detail dialog, suppressed on `/admin/family-groups`, which
+already banners the whole page. The check reads EVERY render site of the child,
+not just the first, so a second copy added below a compliant one can not ride on
+it. It follows the house import style (a named import rendered as `<Child …>`)
+and would not see a component reached by an aliased or default import, a barrel
+re-export, or `next/dynamic`; none are used for banner-bearing admin components
+today, but a refactor to one of those forms would quietly take the pair out of
+the test's view rather than fail it.
+
+**Once per section, NOT once per screen.** The nesting rule is about parent and
+child — one banner covering the same controls as another — and that is all it
+is. It does not, and structurally can not, say anything about SIBLINGS. Several
+banner-bearing sections sitting side by side on one page each render their own,
+so a view-only admin meets the sentence once per section: `/admin/security`
+(`password-policy-card`, `magic-link-security-card`, `google-security-card`) and
+`/admin/booking-requests` (approvals, change requests, public requests) show it
+three times each, and `/admin/appearance/identity`,
+`/admin/induction/settings` and `/admin/page-content` twice. That is inherited
+from the #2142 shape rather than introduced by the rollout, and nothing in the
+contract test flags it. Whether stacked sibling banners should collapse into one
+page-level banner is still an open design question with a visible-UI
+consequence. **#2168 answered it for the member detail page only** — one banner
+there, with the eight membership-scoped cards vouched for — and deliberately did
+NOT generalise the answer to sibling stacking elsewhere. The vouching mechanism
+it built is what a settings page would need to collapse its siblings, so the
+tooling now exists; whether to use it is a fresh owner decision, because the
+sibling case differs in kind (side-by-side sections of equal weight, each with
+its own scope, rather than one page's worth of per-record cards). Until that is
+decided, do not dedupe siblings ad hoc, and do not write docs that promise one
+banner per screen.
+
+**Known limitation, accepted by the owner as Decision 1 on #2160.** Gated
+controls keep the `disabled` attribute rather than moving to
+`aria-disabled="true"`, so they remain **out of the keyboard tab order**. The
+banner puts the reason in the reading order ahead of the controls; it does NOT
+make those controls focusable, and a keyboard user still cannot tab to a gated
+button to discover it. That was weighed against the cost of making every gated
+control clickable-but-neutralised (each call site's click path would need
+auditing so no write slips through) and the banner was judged the better trade.
+Revisiting it is a fresh owner decision, not a silent edit — the contract test
+asserts `disabled` is still what ships. Any card
 that shares a strict whole-object PUT with a sibling card must GET the fresh
-settings and merge only its OWN fields before writing, so a save cannot overwrite
-a sibling's change made while the page was open. This NARROWS the
+settings and merge only the fields the admin actually CHANGED before writing, so
+a save cannot overwrite a change made while the page was open. Merging its own
+fields is not narrow enough on its own: it protects the fields the card does not
+own, but a field the card DOES own and the admin never touched still goes out
+from a stale draft and reverts whoever moved it. Send the changed fields only —
+the schema still receives every field, the untouched ones just come from the
+fresh read. This NARROWS the
 read-modify-write window to the milliseconds between that GET and the PUT; it
 does not close it. There is no ETag or `If-Match` on the route, so two genuinely
 simultaneous writes still resolve last-writer-wins — the same property the
@@ -560,48 +883,112 @@ simultaneous writes still resolve last-writer-wins — the same property the
 covers the module toggles
 sharing `PUT /api/admin/modules` (for example the magic-link and Google cards on
 `/admin/security`) and all three cards sharing
-`PUT /api/admin/booking-requests/settings` (#2162). It also constrains what a
-save may re-seed: re-seeding the snapshot from a fresh read can move a field the
-admin never touched, so re-seed that field's editor draft with it. Leaving the
-two out of step arms a dirty-gated Save the admin never armed, one click from
-reverting the other admin's change — while a draft the admin HAD typed into
-stays untouched, because it is their own in-progress input. The rule binds sections that are NEW
-or MODIFIED, so several pre-existing surfaces are acknowledged divergents it does
+`PUT /api/admin/booking-requests/settings` (#2162, #2166). It also constrains
+what a save may re-seed: re-seeding a snapshot from a fresh read can move a field
+the admin never touched, and a snapshot that ends up out of step with the editor
+draft compared against it arms a dirty-gated Save the admin never armed, one
+click from reverting the other admin's change. The structural fix is preferred
+and is what #2166 adopted here: give each card its OWN `useSectionEditState`, so
+its draft and its snapshot are only ever re-seeded together, by that card's own
+load or its own save, and no save can leave a sibling dirty. Where a snapshot
+genuinely is shared across editors, re-seed the draft of every field the admin
+had NOT edited along with it, and leave a draft they HAD typed into alone —
+that is their own in-progress input. Either way the residue is display staleness
+in a card the admin did not touch, which is accepted — the same property
+`/admin/modules` has. Be exact about what an Edit gate does and does not do
+about it: `startEditing` only flips a flag, so opening a card does NOT re-fetch
+and the boxes can already be out of date. What keeps stale display from becoming
+a stale WRITE is the changed-fields-only patch above, not the gate. What the
+gate adds is that the dirty comparison is against the card's own snapshot, which
+is what is on screen, so a stale box never arms Save by itself.
+The rule binds sections that are NEW
+or MODIFIED, so four pre-existing surfaces are acknowledged divergents it does
 not retrofit on its own: the `/admin/modules` grid (deliberate bulk toggles), the
 older staged-but-ungated settings forms, and the age-tier and notification
 settings panels — the last two were previously written up as blanket exemptions
 "because they are list sections", which is no longer the reason: list sections
 are in scope (see the per-row shape below), those two simply have not been
-touched since. Booking Policies still has one divergent, narrowed but NOT
-removed by #2162: no settings control in the area persists on change any more
-(row-level Activate/Deactivate stay plain direct writes, which the per-row shape
-below sanctions) — the last one that did, the **Show indicative pricing** checkbox in
-`public-booking-requests-section.tsx`, was brought onto Edit → Save — but the
-two timing cards in that same file (quote window / reminder lead, and the
-school-attendee prompts) remain staged-but-ungated: always editable, with a
-dirty-gated Save and no Edit or Cancel. That file has now been modified, so this
-is a LIVE divergence, not an untouched one; whether to Edit-gate those two cards
-is an owner decision tracked in #2166 and is not to be retrofitted in passing.
-The pricing card is a worked example of the two rules that meet awkwardly here.
+touched since. Booking Policies has NO divergent left. Every settings control in
+the area now stages behind a per-card Edit → Save/Cancel: the **Show indicative
+pricing** checkbox in `public-booking-requests-section.tsx` stopped persisting on
+change in #2162, and the two timing cards beside it (quote window / reminder
+lead, and the school-attendee prompts) — always editable with a dirty-gated Save
+and no Edit or Cancel until then — were Edit-gated in #2166 on the owner's
+decision. The only direct writes left in the area are discrete ACTIONS rather
+than staged fields: row-level Activate/Deactivate and Delete on the
+booking-period and minimum-stay lists, and the confirm-gated **Remove override**
+on the default cancellation card. The per-row shape below sanctions the row-level
+ones. **Remove override** is not a row action and the per-row shape does not
+reach it; it is justified in its own right, in the JSDoc on
+`handleRemoveOverride` in `default-cancellation-policy-section.tsx` — it deletes
+the lodge's rows regardless of what the open editor holds, so it is a
+destructive action rather than a draft/snapshot save and deliberately bypasses
+`section.save()` and its dirty gate. None of them is a licence to auto-persist a
+settings FIELD.
+
+That section is the worked example of the two rules that meet awkwardly here.
 All five public-booking-request settings live in ONE row behind ONE whole-object
 PUT, so a single hook instance for the section would match storage exactly — but
-the hook carries one `editing` flag and the two timing cards are deliberately
-always-editable, so fusing them would have forced an Edit step onto cards that
-were not in scope and pre-empted #2166. The card therefore takes its OWN
-instance and pays for the shared write object the documented way: it GETs the
-fresh settings and merges only its own key, exactly as the module-toggle cards
-below do, so it can never persist a sibling card's uncommitted draft or its own
-load-time snapshot of one. Both timing handlers were brought onto that same
-fresh read in the same change, so no card in the section can revert another's
-saved value. It carries NO first-save exception even though the
-read synthesises defaults on a miss, because its whole draft is a single boolean
-— "unchanged" and "already effectively stored" are the same state there, so the
-exception would only unlock a pristine, audit-writing no-op.
+the hook carries one `editing` flag, and one Edit unlocking all three cards, one
+Cancel discarding all three drafts, and one Save writing all five fields is not
+what #2166 decided. Each card therefore takes its OWN instance and pays for the
+shared write object the documented way: every save GETs the fresh settings and
+merges only the fields the admin CHANGED, exactly as the module-toggle cards
+below do, so no card can persist a sibling's uncommitted draft or its own
+load-time snapshot of one, and an untouched box — in this card or another —
+never reaches the wire at all, so it cannot revert whoever moved it. The
+narrowing has one consequence worth naming: the quote card's two fields carry
+the route's cross-field rule, so sending only the changed one can compose a pair
+the admin never saw (their new reminder beside a window a second admin moved).
+The card checks the composed pair after its fresh read and refuses it with an
+explanation rather than letting the route answer "Invalid input".
+Three instances would mean
+three identical mount-time GETs and three snapshots a concurrent write could
+leave disagreeing, so the section holds ONE in-flight load in a ref and all
+three `load` callbacks seed from that single response. That shared read
+deliberately carries no `AbortSignal`: the ref holding it is only cleared in a
+microtask, while React StrictMode's mount → cleanup → re-mount is synchronous,
+so a signal-bound promise would be handed to the re-mounted hooks already
+aborted — and every hook would swallow the `AbortError`, clear `loading`, and
+render the hardcoded fallback as though it were stored. None of the three carries
+a first-save exception even though the read synthesises defaults on a miss: those
+synthesised defaults ARE the effective settings at every read site and no
+behaviour keys on the row existing, so the exception would only unlock a
+pristine, audit-writing no-op (#2143). (Config-transfer used to be the one thing
+that DID observe the row: `club-settings.ts` skipped a singleton with none, so a
+club that had never saved these settings exported no
+`booking-request-settings.json`. #2171 closed that for the whole `SINGLETONS`
+set — the exporter now emits an entry for every singleton and fills a missing
+row with the same effective defaults the read sites synthesise, read from the
+shared constants in `src/config/club-settings-defaults.ts` rather than a second
+copy. Nothing in THESE cards changed — the getters moved their inline `?? x`
+defaults to those shared constants and read them, which is value-identical, and
+nothing here depends on the row existing. Import-side there IS a consequence:
+materialising a singleton flips the setup-readiness signals that key on row
+existence — see `docs/config-transfer/README.md`.)
+Validation stays in each card's click
+handler rather than the hook's `isValid`, so an out-of-range or
+reminder-not-shorter-than-window draft gets an explanation instead of a greyed
+button with no reason. The four number boxes take the reference section's
+read-only styling (`bg-muted text-muted-foreground` while not editing — moved
+off raw `bg-slate-50 text-slate-700` by #2144, deliberately onto `bg-muted`
+rather than the raw→token table's `bg-card`, which is invisible against the
+themed light background), because
+Tailwind's preflight resets `color`, `background-color`, and `opacity` on
+`input` at author origin and so erases the browser's own disabled presentation —
+without it a gated box looks exactly like an editable one. The three Edit and
+three Cancel buttons carry an `aria-label` naming their card, so a screen
+reader's button list does not show three identical "Edit"s. That is the same
+FAMILY of defect as the look-alike "Deactivate" buttons #2142 fixed, but not the
+same fix: #2142 changed the VISIBLE text, whereas here only the accessible name
+differs and a sighted admin still sees three buttons reading "Edit". That is
+accepted, because each sits in its own card header beside a distinct title.
 Reference:
-`src/components/admin/booking-policies/group-discount-section.tsx` — note that
-it now carries the section banner, so for the default per-button
-`AdminViewOnlyNotice` treatment look at any admin surface outside Booking
-Policies instead.
+`src/components/admin/booking-policies/group-discount-section.tsx` — it carries
+the section banner, which since #2160 is what every banner-hostable admin
+surface does. For the surviving per-button treatment, look at a control inside a
+dialog (`src/app/(admin)/admin/issue-reports/page.tsx`) or a leaf toolbar
+component (`src/components/admin/admin-capacity-hold-controls.tsx`).
 
 The draft/snapshot half of that pattern lives in the shared
 `useSectionEditState` hook (`src/hooks/use-section-edit-state.ts`), which new

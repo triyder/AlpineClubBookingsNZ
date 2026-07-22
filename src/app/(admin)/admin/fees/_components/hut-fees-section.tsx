@@ -11,7 +11,11 @@ import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { APP_CURRENCY } from "@/config/operational";
 import { formatCents } from "@/lib/pricing";
-import { AdminViewOnlyNotice, ViewOnlyActionButton } from "@/components/admin/view-only-action";
+import {
+  AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action";
 import {
   LodgeSelect,
   initialLodgeIdFromLocation,
@@ -316,6 +320,24 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
     }
   }
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the section —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before its
+    content appears; a region injected already-populated is silently dropped by
+    some screen-reader/browser pairings. It sits OUTSIDE the `space-y-6` stack so
+    the empty wrapper an edit-capable admin gets costs no layout. Still gated on
+    `!forbidden`: an admin who cannot even READ this section gets the stronger
+    "no permission to view" notice below instead, and showing both would
+    contradict itself.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-6">
+      Bookings view access can inspect hut fees. Bookings edit access is required to change nightly rates or seasons.
+    </AdminViewOnlySectionBanner>
+  );
+
   return (
     <Card>
       <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
@@ -328,17 +350,13 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
         </div>
         {!forbidden && !showForm && canEdit && <Button onClick={startCreate}>Add season</Button>}
       </CardHeader>
-      <CardContent className="space-y-6">
+      <CardContent>
+        {!forbidden && viewOnlyBanner}
+        <div className="space-y-6">
         {forbidden && (
           <AdminViewOnlyNotice canEdit={false}>
             You don&apos;t have permission to view this section. Hut fees are managed by
             bookings admins; ask a bookings admin if you need to see nightly rates.
-          </AdminViewOnlyNotice>
-        )}
-
-        {!forbidden && !canEdit && (
-          <AdminViewOnlyNotice canEdit={canEdit}>
-            Bookings view access can inspect hut fees. Bookings edit access is required to change nightly rates or seasons.
           </AdminViewOnlyNotice>
         )}
 
@@ -494,13 +512,13 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
                         </div>
                         {canEdit && (
                           <div className="flex space-x-2">
-                            <ViewOnlyActionButton canEdit={canEdit} variant="outline" size="sm" onClick={() => handleToggleActive(season)}>
+                            <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="outline" size="sm" onClick={() => handleToggleActive(season)}>
                               {season.active ? "Deactivate" : "Activate"}
                             </ViewOnlyActionButton>
-                            <ViewOnlyActionButton canEdit={canEdit} variant="outline" size="sm" onClick={() => startEdit(season)}>
+                            <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="outline" size="sm" onClick={() => startEdit(season)}>
                               Edit
                             </ViewOnlyActionButton>
-                            <ViewOnlyActionButton canEdit={canEdit} variant="destructive" size="sm" onClick={() => handleDelete(season.id)}>
+                            <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="destructive" size="sm" onClick={() => handleDelete(season.id)}>
                               Delete
                             </ViewOnlyActionButton>
                           </div>
@@ -565,6 +583,7 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
             )}
           </>
         )}
+        </div>
       </CardContent>
     </Card>
   );

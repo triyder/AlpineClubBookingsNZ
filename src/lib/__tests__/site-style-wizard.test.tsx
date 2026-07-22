@@ -64,11 +64,7 @@ describe("site style wizard", () => {
             responseTheme(
               {
                 brandGold: body.brandGold,
-                brandCharcoal: body.brandCharcoal,
                 brandDeep: body.brandDeep,
-                brandRidge: body.brandRidge,
-                brandMist: body.brandMist,
-                brandSnow: body.brandSnow,
                 brandSafety: body.brandSafety,
                 headingFontKey: body.headingFontKey,
                 bodyFontKey: body.bodyFontKey,
@@ -139,7 +135,7 @@ describe("site style wizard", () => {
     );
   });
 
-  it("blocks saving when secondary app text would disappear into brand mist", async () => {
+  it("keeps Save enabled and discloses generator adjustments instead of blocking on contrast (#2187)", async () => {
     render(
       <SiteStyleWizard
         initialTheme={{
@@ -150,14 +146,19 @@ describe("site style wizard", () => {
       />,
     );
 
-    fireEvent.change(screen.getByLabelText("Mist value"), {
-      target: { value: DEFAULT_CLUB_THEME_VALUES.brandDeep },
+    // A near-identical accent/neutral pair that the old blocking contrast gate
+    // ("Contrast too low to save") would have rejected. Contrast is now
+    // guaranteed by construction, so the seed is adjusted, never blocked.
+    fireEvent.change(screen.getByLabelText("Neutral character value"), {
+      target: { value: DEFAULT_CLUB_THEME_VALUES.brandGold },
     });
 
-    await screen.findByText(/App text on secondary surface:/);
+    // The generator's accessibility nudge is disclosed (before → after), and
+    // the palette still saves — Save stays enabled.
+    await screen.findByText(/Colours adjusted for accessibility/);
     expect(
       (screen.getByRole("button", { name: "Save and next" }) as HTMLButtonElement)
         .disabled,
-    ).toBe(true);
+    ).toBe(false);
   });
 });

@@ -29,6 +29,7 @@ import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycl
 import { logAudit } from "@/lib/audit";
 import { recordBookingEvent } from "@/lib/booking-events";
 import logger from "@/lib/logger";
+import { DEFAULT_BOOKING_DEFAULTS } from "@/config/club-settings-defaults";
 
 // Cross-lodge waitlist support (ADR-004). The processor consults these
 // helpers when a member has opted into alternate lodges: the queue-order
@@ -51,7 +52,10 @@ export async function getWaitlistCrossLodgeOrder(
     where: { id: "default" },
     select: { waitlistCrossLodgeOrder: true },
   });
-  return defaults?.waitlistCrossLodgeOrder ?? "OWN_LODGE_FIRST";
+  return (
+    defaults?.waitlistCrossLodgeOrder ??
+    DEFAULT_BOOKING_DEFAULTS.waitlistCrossLodgeOrder
+  );
 }
 
 export interface WaitlistQuoteGuest {

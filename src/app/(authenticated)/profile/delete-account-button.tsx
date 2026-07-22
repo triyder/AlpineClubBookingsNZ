@@ -78,7 +78,7 @@ export function DeleteAccountButton() {
                   Please read carefully before proceeding. This action is{" "}
                   <strong>irreversible</strong>.
                 </p>
-                <ul className="list-disc list-inside space-y-1 text-slate-600">
+                <ul className="list-disc list-inside space-y-1 text-muted-foreground">
                   <li>All future bookings will be cancelled with applicable refunds</li>
                   <li>
                     Your personal details (name, email, phone, date of birth) will

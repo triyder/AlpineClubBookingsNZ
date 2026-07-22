@@ -5,7 +5,6 @@ import {
   getClubThemeForAdmin,
   saveClubTheme,
 } from "@/lib/club-theme";
-import { getBlockingContrastWarnings } from "@/lib/club-theme-schema";
 import { clubThemeUpdateSchema } from "@/lib/club-theme-update-schema";
 import { primeEmailPalette } from "@/lib/email-theme";
 import logger from "@/lib/logger";
@@ -46,22 +45,11 @@ export async function PUT(request: NextRequest) {
     );
   }
 
-  // Enforce WCAG AA text contrast on the configurable palette. The colour schema
-  // only validates format, so without this an admin could save arbitrary colours
-  // (hex or oklch, both measured) that render body/nav/button text unreadable on
-  // the public site.
-  const contrastWarnings = getBlockingContrastWarnings(parsed.data);
-  if (contrastWarnings.length > 0) {
-    return NextResponse.json(
-      {
-        error:
-          "These colours don't meet the WCAG AA 4.5:1 minimum contrast for text. Adjust them before saving.",
-        contrastWarnings,
-      },
-      { status: 400 },
-    );
-  }
-
+  // #2187: contrast is now guaranteed BY CONSTRUCTION — the three seeds feed the
+  // vendored Radix generator, whose banded 12-step substrate clears the guarantee
+  // sweep for every seed (see `@/lib/theme/guarantees`). A pathological pick is
+  // adjusted, not rejected, so the old blocking contrast gate is gone; the wizard
+  // surfaces the before/after adjustment as a disclosure instead.
   try {
     const theme = await saveClubTheme(parsed.data);
     invalidatePublicLayoutConfig(PUBLIC_LAYOUT_CACHE_TAGS.theme);
@@ -88,11 +76,7 @@ export async function PUT(request: NextRequest) {
         completed: Boolean(theme.completedAt),
         colours: {
           brandGold: theme.brandGold,
-          brandCharcoal: theme.brandCharcoal,
           brandDeep: theme.brandDeep,
-          brandRidge: theme.brandRidge,
-          brandMist: theme.brandMist,
-          brandSnow: theme.brandSnow,
           brandSafety: theme.brandSafety,
         },
         headingFontKey: theme.headingFontKey,

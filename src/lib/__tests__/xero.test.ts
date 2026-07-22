@@ -8,6 +8,20 @@ vi.mock("@/lib/xero-api-usage", () => ({
   recordXeroApiUsage: mocks.recordXeroApiUsage,
 }))
 
+// DB-only Xero resolution (#2079): stub the token-encryption key so the token
+// crypto round-trip below needs no integration-credential DB rows.
+vi.mock("@/lib/xero-config", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/xero-config")>()
+  return {
+    ...actual,
+    getOperationalXeroEncryptionKey: vi
+      .fn()
+      .mockResolvedValue(
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      ),
+  }
+})
+
 import {
   callXeroApi,
   encryptToken,
@@ -20,6 +34,7 @@ import {
   shouldBackfillMembershipStatus,
   withXeroRetry,
   XeroDailyLimitError,
+  XeroTokenDecryptError,
   XeroTransientOutageError,
   resetXeroRateLimitStateForTests,
 } from "../xero"
@@ -34,57 +49,53 @@ beforeEach(() => {
 // Encryption / Decryption
 // ---------------------------------------------------------------------------
 
+// The token-encryption key is now the DB-backed, HKDF-wrapped Xero token key
+// (#2079), stubbed above via getOperationalXeroEncryptionKey. encryptToken /
+// decryptToken are async. Real HKDF/AAD crypto correctness lives in
+// integration-crypto.test.ts; these cover the token-store wrapper round-trip.
 describe("Token encryption", () => {
-  beforeEach(() => {
-    // 32 bytes = 64 hex chars
-    vi.stubEnv("XERO_ENCRYPTION_KEY", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
-  })
-
-  it("encrypts and decrypts a token correctly", () => {
+  it("encrypts and decrypts a token correctly", async () => {
     const original = "xero_access_token_abc123"
-    const encrypted = encryptToken(original)
+    const encrypted = await encryptToken(original)
     expect(encrypted).not.toBe(original)
     expect(encrypted.split(":")).toHaveLength(3)
-    const decrypted = decryptToken(encrypted)
+    const decrypted = await decryptToken(encrypted)
     expect(decrypted).toBe(original)
   })
 
-  it("produces different ciphertexts for same input (random IV)", () => {
+  it("produces different ciphertexts for same input (random IV)", async () => {
     const token = "same_token"
-    const enc1 = encryptToken(token)
-    const enc2 = encryptToken(token)
+    const enc1 = await encryptToken(token)
+    const enc2 = await encryptToken(token)
     expect(enc1).not.toBe(enc2) // Random IV ensures different output
-    expect(decryptToken(enc1)).toBe(token)
-    expect(decryptToken(enc2)).toBe(token)
+    expect(await decryptToken(enc1)).toBe(token)
+    expect(await decryptToken(enc2)).toBe(token)
   })
 
-  it("throws on missing encryption key", () => {
-    vi.stubEnv("XERO_ENCRYPTION_KEY", "")
-    expect(() => encryptToken("test")).toThrow("XERO_ENCRYPTION_KEY")
-  })
-
-  it("throws on invalid key length", () => {
-    vi.stubEnv("XERO_ENCRYPTION_KEY", "too_short")
-    expect(() => encryptToken("test")).toThrow("64-character hex string")
-  })
-
-  it("throws on tampered ciphertext", () => {
-    const encrypted = encryptToken("test_token")
+  it("throws on tampered ciphertext", async () => {
+    const encrypted = await encryptToken("test_token")
     const parts = encrypted.split(":")
     // Flip the first ciphertext nibble so the payload is always modified.
     parts[2] = `${parts[2][0] === "0" ? "1" : "0"}${parts[2].slice(1)}`
-    expect(() => decryptToken(parts.join(":"))).toThrow()
+    await expect(decryptToken(parts.join(":"))).rejects.toThrow()
   })
 
-  it("throws on a truncated authentication tag", () => {
-    const encrypted = encryptToken("test_token")
+  // #2079 (FIX-1): decryptToken now raises the typed XeroTokenDecryptError on a
+  // malformed/undecryptable row (fail-closed, still throws) so the API/probe map
+  // it to the "reconnect Xero" state instead of surfacing an opaque crypto error.
+  it("throws XeroTokenDecryptError on a truncated authentication tag", async () => {
+    const encrypted = await encryptToken("test_token")
     const parts = encrypted.split(":")
     parts[1] = parts[1].slice(0, -2)
-    expect(() => decryptToken(parts.join(":"))).toThrow("authentication tag length")
+    await expect(decryptToken(parts.join(":"))).rejects.toBeInstanceOf(
+      XeroTokenDecryptError,
+    )
   })
 
-  it("throws on invalid format", () => {
-    expect(() => decryptToken("invalid")).toThrow("Invalid encrypted token format")
+  it("throws XeroTokenDecryptError on invalid format", async () => {
+    await expect(decryptToken("invalid")).rejects.toBeInstanceOf(
+      XeroTokenDecryptError,
+    )
   })
 })
 

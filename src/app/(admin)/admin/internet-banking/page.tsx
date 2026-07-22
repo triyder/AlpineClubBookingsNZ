@@ -7,10 +7,10 @@ export default function InternetBankingAdminPage() {
     <div className="space-y-8">
       <div>
         <BackLink href="/admin/xero/setup" label="Finance Setup" />
-        <h1 className="mt-2 text-2xl font-bold text-slate-900">
+        <h1 className="mt-2 text-2xl font-bold text-foreground">
           Internet Banking
         </h1>
-        <p className="mt-1 text-sm text-slate-500">
+        <p className="mt-1 text-sm text-muted-foreground">
           Configure bed holds and booking lead-time rules for Xero-invoiced
           Internet Banking payments.
         </p>

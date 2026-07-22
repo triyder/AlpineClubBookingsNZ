@@ -17,6 +17,9 @@
     // Invoked from scripts/e2e-stack.sh (shell) only when E2E_MULTI_LODGE=1
     // (advisory multi-lodge project, #1568), never imported.
     "e2e/setup/seed-second-lodge.ts",
+    // Invoked from scripts/e2e-stack.sh (shell) to seed test-mode Stripe keys
+    // into the encrypted credential store (#2082), never imported.
+    "e2e/setup/seed-stripe-credentials.ts",
     // Invoked from scripts/codex/run-next-issue.sh + docs, never imported.
     "scripts/codex/create-review-issues.mjs",
     "scripts/codex/issue-to-prompt.mjs",
@@ -56,6 +59,14 @@
     "src/lib/school-booking-constants.ts": ["duplicates"],
     // WhakapapaChairlift type alias landed 2026-07-08 (snow-conditions refactor)
     // with zero refs; kept pending owner triage at the #1526 PR — see PR body.
-    "src/lib/whakapapa-report.ts": ["types"]
+    "src/lib/whakapapa-report.ts": ["types"],
+    // #2079 (epic #2078) foundation surface: the credential store is the shared
+    // contract the later lanes consume — deleteIntegrationCredential (C4/C5/C6
+    // credential resets), ProviderCredentialState (the canonical per-provider
+    // state model the issue body requires C1 to export for C2–C6), and the
+    // IntegrationLabelVersion union. Remove these carve-outs as the consuming
+    // lanes land.
+    "src/lib/integration-credentials.ts": ["exports", "types"],
+    "src/lib/integration-crypto.ts": ["types"]
   }
 }

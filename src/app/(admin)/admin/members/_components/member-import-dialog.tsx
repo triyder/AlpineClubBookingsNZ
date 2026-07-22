@@ -123,7 +123,7 @@ function CsvTablePreview({
         <TableBody>
           {rows.map((row, rowIndex) => (
             <TableRow key={`${row.lineNumber}-${rowIndex}`}>
-              <TableCell className="text-slate-500">{row.lineNumber}</TableCell>
+              <TableCell className="text-muted-foreground">{row.lineNumber}</TableCell>
               {displayHeaders.map((_, index) => (
                 <TableCell
                   key={`${row.lineNumber}-${index}`}
@@ -153,9 +153,9 @@ function WizardStepList({ step }: { step: WizardStep }) {
             key={wizardStep.key}
             className={[
               "flex min-w-0 items-center gap-2 rounded-md border px-2 py-2 text-xs",
-              active ? "border-slate-900 bg-slate-50 text-slate-950" : "",
+              active ? "border-slate-900 bg-muted text-foreground" : "",
               complete ? "border-green-200 bg-green-50 text-green-800" : "",
-              !active && !complete ? "border-slate-200 text-slate-500" : "",
+              !active && !complete ? "border-border text-muted-foreground" : "",
             ].join(" ")}
           >
             <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full border text-[11px] font-semibold">
@@ -292,7 +292,7 @@ function ValidationTable({ preview }: { preview: MemberImportPreview }) {
         <TableBody>
           {preview.rows.map((row, index) => (
             <TableRow key={`${row.lineNumber}-${index}`}>
-              <TableCell className="text-slate-500">{row.lineNumber}</TableCell>
+              <TableCell className="text-muted-foreground">{row.lineNumber}</TableCell>
               <TableCell>
                 {row.errors.length > 0 ? (
                   <Badge variant="destructive">Blocked</Badge>
@@ -540,23 +540,23 @@ export function MemberImportDialog({
             <div className="space-y-4">
               <div className="grid gap-3 md:grid-cols-4">
                 <div className="rounded-md border p-3">
-                  <p className="text-xs uppercase text-slate-500">File</p>
+                  <p className="text-xs uppercase text-muted-foreground">File</p>
                   <p className="truncate text-sm font-medium">
                     {csvFileName || "Selected CSV"}
                   </p>
                 </div>
                 <div className="rounded-md border p-3">
-                  <p className="text-xs uppercase text-slate-500">Rows</p>
+                  <p className="text-xs uppercase text-muted-foreground">Rows</p>
                   <p className="text-sm font-medium">{csvData.rows.length}</p>
                 </div>
                 <div className="rounded-md border p-3">
-                  <p className="text-xs uppercase text-slate-500">Columns</p>
+                  <p className="text-xs uppercase text-muted-foreground">Columns</p>
                   <p className="text-sm font-medium">
                     {csvData.headers.length}
                   </p>
                 </div>
                 <div className="rounded-md border p-3">
-                  <p className="text-xs uppercase text-slate-500">
+                  <p className="text-xs uppercase text-muted-foreground">
                     Blank Lines
                   </p>
                   <p className="text-sm font-medium">
@@ -603,7 +603,7 @@ export function MemberImportDialog({
                     />
                     {isMemberImportDateField(definition.key) && mapped && (
                       <div className="mt-1.5 space-y-1">
-                        <Label className="text-[10px] uppercase text-slate-500">
+                        <Label className="text-[10px] uppercase text-muted-foreground">
                           Date format
                         </Label>
                         <DateFormatSelect
@@ -613,7 +613,7 @@ export function MemberImportDialog({
                         />
                       </div>
                     )}
-                    <p className="mt-1.5 min-h-4 truncate text-[11px] text-slate-500">
+                    <p className="mt-1.5 min-h-4 truncate text-[11px] text-muted-foreground">
                       {mapped
                         ? sampleValueForField(definition.key) ||
                           "Blank in first row"
@@ -629,7 +629,7 @@ export function MemberImportDialog({
             <div className="space-y-4">
               <div className="grid gap-3 md:grid-cols-3">
                 <div className="rounded-md border p-3">
-                  <p className="text-xs uppercase text-slate-500">Rows Ready</p>
+                  <p className="text-xs uppercase text-muted-foreground">Rows Ready</p>
                   <p className="text-sm font-medium">
                     {
                       preview.rows.filter((row) => row.errors.length === 0)
@@ -638,7 +638,7 @@ export function MemberImportDialog({
                   </p>
                 </div>
                 <div className="rounded-md border p-3">
-                  <p className="text-xs uppercase text-slate-500">
+                  <p className="text-xs uppercase text-muted-foreground">
                     Rows Blocked
                   </p>
                   <p className="text-sm font-medium">
@@ -646,7 +646,7 @@ export function MemberImportDialog({
                   </p>
                 </div>
                 <div className="rounded-md border p-3">
-                  <p className="text-xs uppercase text-slate-500">API Limit</p>
+                  <p className="text-xs uppercase text-muted-foreground">API Limit</p>
                   <p className="text-sm font-medium">
                     {MEMBER_IMPORT_MAX_ROWS} rows
                   </p>
@@ -730,7 +730,7 @@ export function MemberImportDialog({
                     )}
                   <div className="grid gap-3 md:grid-cols-6">
                     <div className="rounded-md border p-3">
-                      <p className="text-xs uppercase text-slate-500">
+                      <p className="text-xs uppercase text-muted-foreground">
                         Created
                       </p>
                       <p className="text-sm font-medium text-green-700">
@@ -738,7 +738,7 @@ export function MemberImportDialog({
                       </p>
                     </div>
                     <div className="rounded-md border p-3">
-                      <p className="text-xs uppercase text-slate-500">
+                      <p className="text-xs uppercase text-muted-foreground">
                         Can Login
                       </p>
                       <p className="text-sm font-medium text-green-700">
@@ -747,23 +747,23 @@ export function MemberImportDialog({
                       </p>
                     </div>
                     <div className="rounded-md border p-3">
-                      <p className="text-xs uppercase text-slate-500">
+                      <p className="text-xs uppercase text-muted-foreground">
                         Can&apos;t Login
                       </p>
-                      <p className="text-sm font-medium text-slate-700">
+                      <p className="text-sm font-medium text-muted-foreground">
                         {importResult.createdNonLogin ?? 0}
                       </p>
                     </div>
                     <div className="rounded-md border p-3">
-                      <p className="text-xs uppercase text-slate-500">
+                      <p className="text-xs uppercase text-muted-foreground">
                         Cancelled
                       </p>
-                      <p className="text-sm font-medium text-slate-700">
+                      <p className="text-sm font-medium text-muted-foreground">
                         {importResult.createdCancelled ?? 0}
                       </p>
                     </div>
                     <div className="rounded-md border p-3">
-                      <p className="text-xs uppercase text-slate-500">
+                      <p className="text-xs uppercase text-muted-foreground">
                         Skipped
                       </p>
                       <p className="text-sm font-medium text-yellow-700">
@@ -771,7 +771,7 @@ export function MemberImportDialog({
                       </p>
                     </div>
                     <div className="rounded-md border p-3">
-                      <p className="text-xs uppercase text-slate-500">Errors</p>
+                      <p className="text-xs uppercase text-muted-foreground">Errors</p>
                       <p className="text-sm font-medium text-red-700">
                         {importResult.errors.length}
                       </p>

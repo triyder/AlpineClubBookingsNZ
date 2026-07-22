@@ -5,7 +5,10 @@ import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { ViewOnlyActionButton } from "@/components/admin/view-only-action"
+import {
+  ViewOnlyActionButton,
+  type AncestorViewOnlyBannerProps,
+} from "@/components/admin/view-only-action"
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import {
@@ -33,7 +36,7 @@ interface PartnerSearchResult {
   email: string
 }
 
-interface MemberPartnerLinkCardProps {
+interface MemberPartnerLinkCardProps extends AncestorViewOnlyBannerProps {
   memberId: string
   isAdultMember: boolean
   memberIsArchived: boolean
@@ -52,6 +55,7 @@ export function MemberPartnerLinkCard({
   memberIsArchived,
   currentMemberPath,
   className,
+  ancestorRendersViewOnlyBanner = false,
 }: MemberPartnerLinkCardProps) {
   const router = useRouter()
   // Assign/remove write /api/admin/members/[id]/partner-link (membership area);
@@ -238,6 +242,7 @@ export function MemberPartnerLinkCard({
           {!memberIsArchived && (
             <ViewOnlyActionButton
               canEdit={canEdit}
+              describeReason={!ancestorRendersViewOnlyBanner}
               variant="outline"
               size="sm"
               onClick={() => handleRemove(link.id, confirmed)}
@@ -261,7 +266,7 @@ export function MemberPartnerLinkCard({
             Archived
           </Badge>
         ) : !state?.confirmed && isAdultMember ? (
-          <ViewOnlyActionButton canEdit={canEdit} variant="outline" size="sm" onClick={() => setAssignOpen((open) => !open)}>
+          <ViewOnlyActionButton canEdit={canEdit} describeReason={!ancestorRendersViewOnlyBanner} variant="outline" size="sm" onClick={() => setAssignOpen((open) => !open)}>
             <HeartHandshake className="h-4 w-4 mr-1" />
             Assign Partner
           </ViewOnlyActionButton>
@@ -314,6 +319,7 @@ export function MemberPartnerLinkCard({
                       </div>
                       <ViewOnlyActionButton
                         canEdit={canEdit}
+                        describeReason={!ancestorRendersViewOnlyBanner}
                         size="sm"
                         className="w-full sm:w-auto"
                         disabled={saving}

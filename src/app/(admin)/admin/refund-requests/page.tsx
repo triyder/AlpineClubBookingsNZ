@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import {
-  AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -329,21 +329,32 @@ export default function RefundRequestsPage() {
 
   const totalItems = refundRequests.length + creditApprovals.length
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the section —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before its
+    content appears; a region injected already-populated is silently dropped by
+    some screen-reader/browser pairings. It sits OUTSIDE the `space-y-*` stack so
+    the empty wrapper an edit-capable admin gets costs no layout.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEditFinance} className="mb-6">
+      Your admin role can view refund appeals and credit approvals but cannot
+      approve, reject, or process them.
+    </AdminViewOnlySectionBanner>
+  )
+
   return (
-    <div className="space-y-6">
+    <div>
+      {viewOnlyBanner}
+      <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold">Refund Appeals & Credits</h1>
         <p className="text-muted-foreground mt-1">
           Review refund appeals and manual credit approvals from one queue
         </p>
       </div>
-
-      {!canEditFinance ? (
-        <AdminViewOnlyNotice canEdit={canEditFinance}>
-          Your admin role can view refund appeals and credit approvals but cannot
-          approve, reject, or process them.
-        </AdminViewOnlyNotice>
-      ) : null}
 
       {error && (
         <div
@@ -464,7 +475,7 @@ export default function RefundRequestsPage() {
                           </p>
                         )}
 
-                        <div className="bg-slate-50 rounded-md p-3">
+                        <div className="bg-muted rounded-md p-3">
                           <p className="text-sm font-medium mb-1">Reason:</p>
                           <p className="text-sm whitespace-pre-wrap">{req.reason}</p>
                         </div>
@@ -499,6 +510,7 @@ export default function RefundRequestsPage() {
                           <div className="flex gap-2 pt-2">
                             <ViewOnlyActionButton
                               canEdit={canEditFinance}
+                              describeReason={false}
                               size="sm"
                               onClick={() => startRefundReview(req)}
                             >
@@ -551,6 +563,7 @@ export default function RefundRequestsPage() {
                             <div className="flex gap-2">
                               <ViewOnlyActionButton
                                 canEdit={canEditFinance}
+                                describeReason={false}
                                 size="sm"
                                 onClick={() => startRefundNotifyChoice(req.id, "APPROVED")}
                                 disabled={processingRefund}
@@ -559,6 +572,7 @@ export default function RefundRequestsPage() {
                               </ViewOnlyActionButton>
                               <ViewOnlyActionButton
                                 canEdit={canEditFinance}
+                                describeReason={false}
                                 size="sm"
                                 variant="destructive"
                                 onClick={() => startRefundNotifyChoice(req.id, "REJECTED")}
@@ -665,7 +679,7 @@ export default function RefundRequestsPage() {
                           </div>
                         </div>
 
-                        <div className="bg-slate-50 rounded-md p-3">
+                        <div className="bg-muted rounded-md p-3">
                           <p className="text-sm font-medium mb-1">Reason:</p>
                           <p className="text-sm whitespace-pre-wrap">
                             {request.description}
@@ -714,6 +728,7 @@ export default function RefundRequestsPage() {
                               <>
                                 <ViewOnlyActionButton
                                   canEdit={canEditFinance}
+                                  describeReason={false}
                                   size="sm"
                                   variant="outline"
                                   disabled={isReviewing}
@@ -723,6 +738,7 @@ export default function RefundRequestsPage() {
                                 </ViewOnlyActionButton>
                                 <ViewOnlyActionButton
                                   canEdit={canEditFinance}
+                                  describeReason={false}
                                   size="sm"
                                   variant="destructive"
                                   disabled={isReviewing}
@@ -785,6 +801,7 @@ export default function RefundRequestsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      </div>
     </div>
   )
 }

@@ -170,7 +170,7 @@ export function XeroCodeSelect({
         onClick={() => setOpen((prev) => !prev)}
       >
         <span
-          className={cn("truncate", !normalizedValue && "text-slate-500")}
+          className={cn("truncate", !normalizedValue && "text-muted-foreground")}
           title={triggerLabel}
         >
           {triggerLabel}
@@ -179,8 +179,8 @@ export function XeroCodeSelect({
       </Button>
 
       {open ? (
-        <div className="absolute z-20 mt-1 w-full max-w-md rounded-md border border-slate-200 bg-white shadow-lg">
-          <div className="border-b border-slate-100 p-2">
+        <div className="absolute z-20 mt-1 w-full max-w-md rounded-md border border-border bg-card shadow-lg">
+          <div className="border-b border-border p-2">
             <Input
               autoFocus
               value={query}
@@ -188,7 +188,7 @@ export function XeroCodeSelect({
               placeholder={`Search ${noun} code or name…`}
             />
             {filterToggle ? (
-              <label className="mt-2 flex items-center gap-2 text-xs text-slate-600">
+              <label className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
                 <input
                   type="checkbox"
                   checked={filterToggle.active}
@@ -205,8 +205,8 @@ export function XeroCodeSelect({
                 type="button"
                 onClick={() => choose("")}
                 className={cn(
-                  "flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-sm text-slate-600 hover:bg-slate-50",
-                  !normalizedValue && "bg-slate-50",
+                  "flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-sm text-muted-foreground hover:bg-accent",
+                  !normalizedValue && "bg-accent",
                 )}
               >
                 <span className="truncate">{emptyLabel}</span>
@@ -216,7 +216,7 @@ export function XeroCodeSelect({
               </button>
             </li>
             {filtered.length === 0 ? (
-              <li className="px-3 py-2 text-sm text-slate-500">
+              <li className="px-3 py-2 text-sm text-muted-foreground">
                 {options.length === 0
                   ? `No Xero ${noun}s available.`
                   : `No ${noun}s match your search.`}
@@ -231,11 +231,11 @@ export function XeroCodeSelect({
                       type="button"
                       onClick={() => choose(normalized)}
                       className={cn(
-                        "flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-sm hover:bg-slate-50",
-                        checked && "bg-slate-50",
+                        "flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent",
+                        checked && "bg-accent",
                       )}
                     >
-                      <span className="truncate text-slate-800">
+                      <span className="truncate text-foreground">
                         <span className="font-medium">{option.code}</span> —{" "}
                         {option.name}
                       </span>
@@ -252,7 +252,7 @@ export function XeroCodeSelect({
                 <button
                   type="button"
                   onClick={() => choose(manualQueryCode)}
-                  className="flex w-full items-center gap-2 border-t border-slate-100 px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
+                  className="flex w-full items-center gap-2 border-t border-border px-3 py-2 text-left text-sm text-muted-foreground hover:bg-accent"
                 >
                   <Plus className="h-4 w-4" />
                   Use code “{manualQueryCode}”

@@ -19,8 +19,9 @@ ENV NEXT_TELEMETRY_DISABLED=1
 ENV NODE_ENV=production
 ENV DATABASE_URL=postgresql://tac:password@postgres:5432/tacbookings
 
-ARG NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
-ENV NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=$NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
+# Stripe publishable key is delivered at runtime from the encrypted DB store
+# (#2082), never inlined at build time — so no NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
+# build ARG/ENV here.
 
 ARG NEXT_PUBLIC_SENTRY_DSN
 ENV NEXT_PUBLIC_SENTRY_DSN=$NEXT_PUBLIC_SENTRY_DSN

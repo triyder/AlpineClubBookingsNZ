@@ -1,6 +1,9 @@
 "use client"
 
-import { ViewOnlyActionButton } from "@/components/admin/view-only-action"
+import {
+  ViewOnlyActionButton,
+  type AncestorViewOnlyBannerProps,
+} from "@/components/admin/view-only-action"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Trash2 } from "lucide-react"
 import { formatMemberDateNz } from "@/lib/admin-member-detail-helpers"
@@ -10,7 +13,7 @@ import type {
   MemberLifecycleActionRequest,
 } from "../_types"
 
-interface MemberDeletionCardProps {
+interface MemberDeletionCardProps extends AncestorViewOnlyBannerProps {
   deleteEligibility: MemberDeleteEligibility
   deleteRequests: MemberLifecycleActionRequest[]
   pendingDeleteRequest: MemberLifecycleActionRequest | undefined
@@ -43,6 +46,7 @@ export function MemberDeletionCard({
   onOpenReviewDialog,
   canEdit,
   className,
+  ancestorRendersViewOnlyBanner = false,
 }: MemberDeletionCardProps) {
   const deleteBlockers = deleteEligibility.blockers
 
@@ -51,12 +55,13 @@ export function MemberDeletionCard({
       <CardHeader className="flex flex-col gap-3 space-y-0 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <CardTitle className="text-base font-medium">Member Deletion</CardTitle>
-          <p className="mt-1 text-sm text-slate-500">
+          <p className="mt-1 text-sm text-muted-foreground">
             Hard deletion is only available for records added in error with no meaningful history.
           </p>
         </div>
         <ViewOnlyActionButton
           canEdit={canEdit}
+          describeReason={!ancestorRendersViewOnlyBanner}
           variant="destructive"
           size="sm"
           onClick={onOpenRequestDialog}
@@ -78,6 +83,7 @@ export function MemberDeletionCard({
             <div className="mt-3 flex flex-wrap gap-2">
               <ViewOnlyActionButton
                 canEdit={canEdit}
+                describeReason={!ancestorRendersViewOnlyBanner}
                 size="sm"
                 variant="destructive"
                 onClick={() => onOpenReviewDialog(pendingDeleteRequest, "approve")}
@@ -87,6 +93,7 @@ export function MemberDeletionCard({
               </ViewOnlyActionButton>
               <ViewOnlyActionButton
                 canEdit={canEdit}
+                describeReason={!ancestorRendersViewOnlyBanner}
                 size="sm"
                 variant="outline"
                 onClick={() => onOpenReviewDialog(pendingDeleteRequest, "reject")}
@@ -106,8 +113,8 @@ export function MemberDeletionCard({
             This member has no delete blockers. A reason and second-admin approval are still required.
           </div>
         ) : (
-          <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
-            <div className="font-medium text-slate-900">Deletion is blocked</div>
+          <div className="rounded-md border border-border bg-muted p-3 text-sm text-muted-foreground">
+            <div className="font-medium text-foreground">Deletion is blocked</div>
             <ul className="mt-2 list-disc space-y-1 pl-5">
               {deleteBlockers.map((blocker) => (
                 <li key={blocker.code}>
@@ -121,19 +128,19 @@ export function MemberDeletionCard({
 
         {deleteRequests.length > 0 && (
           <div className="space-y-2">
-            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+            <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               Recent delete requests
             </div>
-            <div className="divide-y divide-slate-200 rounded-md border border-slate-200">
+            <div className="divide-y divide-border rounded-md border border-border">
               {deleteRequests.map((request) => (
                 <div key={request.id} className="p-3 text-sm">
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="font-medium text-slate-900">{deleteStatusLabel[request.status]}</div>
-                    <div className="text-xs text-slate-500">{formatMemberDateNz(request.requestedAt)}</div>
+                    <div className="font-medium text-foreground">{deleteStatusLabel[request.status]}</div>
+                    <div className="text-xs text-muted-foreground">{formatMemberDateNz(request.requestedAt)}</div>
                   </div>
-                  <div className="mt-1 text-slate-600">{request.reason}</div>
+                  <div className="mt-1 text-muted-foreground">{request.reason}</div>
                   {request.reviewNote && (
-                    <div className="mt-1 text-xs text-slate-500">Review note: {request.reviewNote}</div>
+                    <div className="mt-1 text-xs text-muted-foreground">Review note: {request.reviewNote}</div>
                   )}
                 </div>
               ))}

@@ -23,7 +23,7 @@ function BookingHistoryTable({
   bookings: MemberDetail["bookings"]
 }) {
   if (bookings.length === 0) {
-    return <p className="text-sm text-slate-500">No bookings yet</p>
+    return <p className="text-sm text-muted-foreground">No bookings yet</p>
   }
   return (
     <Table>

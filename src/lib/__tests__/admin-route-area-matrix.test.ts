@@ -213,6 +213,9 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/induction-templates/[id]": "membership",
   "/api/admin/inductions": "membership",
   "/api/admin/inductions/[id]": "membership",
+  "/api/admin/integrations/credentials": "finance",
+  "/api/admin/integrations/stripe/status": "finance",
+  "/api/admin/integrations/wizard-progress": "finance",
   "/api/admin/internet-banking-settings": "finance",
   "/api/admin/issue-reports": "support",
   "/api/admin/issue-reports/[id]": "support",
@@ -354,6 +357,10 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/xero/sync-contacts": "finance",
   "/api/admin/xero/sync-memberships": "finance",
   "/api/admin/xero/usage": "finance",
+  // #2081: webhook intent-to-receive verify status / amber-badge source. Read is
+  // any-admin (status visibility); the webhook-key WRITE stays Full-Admin-only
+  // via the C1 credentials API. Lives under the finance area like its siblings.
+  "/api/admin/xero/webhook/verify-status": "finance",
 };
 
 describe("admin route -> area matrix pin (#1548)", () => {

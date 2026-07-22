@@ -141,7 +141,7 @@ export function GuestsStep({
         <CardTitle>
           Add Guests
           {checkIn && checkOut && (
-            <span className="ml-2 text-sm font-normal text-gray-500">
+            <span className="ml-2 text-sm font-normal text-muted-foreground">
               {checkIn.toLocaleDateString("en-NZ")} - {checkOut.toLocaleDateString("en-NZ")} ({nights} night{nights !== 1 ? "s" : ""})
             </span>
           )}
@@ -208,7 +208,7 @@ export function GuestsStep({
         )}
         {(showInviteFamilyGroupMembersLink || familyMembers.length > 0) && (
           <div className="rounded-lg border border-dashed border-indigo-200 bg-indigo-50/50 p-4 dark:border-indigo-800 dark:bg-indigo-950/30">
-            <p className="text-sm text-slate-600 dark:text-slate-300">
+            <p className="text-sm text-muted-foreground dark:text-muted-foreground">
               Family member missing? Add or invite them in your User Profile &gt;
               Family Group, then return here to quick add them at member rates.{" "}
               <Link
@@ -271,13 +271,13 @@ export function GuestsStep({
           </div>
         )}
         {groupBookingsEnabled && (
-          <div className="space-y-3 rounded-md border border-slate-200 p-4">
+          <div className="space-y-3 rounded-md border border-border p-4">
             <label className="flex items-center gap-2 text-sm font-medium cursor-pointer">
               <input
                 type="checkbox"
                 checked={groupTrip}
                 onChange={(e) => setGroupTrip(e.target.checked)}
-                className="rounded border-slate-300"
+                className="rounded border-border"
               />
               Make this a group trip
             </label>

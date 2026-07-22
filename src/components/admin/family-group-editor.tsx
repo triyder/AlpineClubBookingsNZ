@@ -11,7 +11,7 @@ import { AgeTierBadge } from "@/components/admin/family-groups/age-tier-badge";
 import { FamilyGroupLoginHolderSection } from "@/components/admin/family-groups/login-holder-section";
 import { FamilyGroupRequestReviewSection } from "@/components/admin/family-groups/request-review-section";
 import {
-  AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import { ADMIN_VIEW_ONLY_ACTION_REASON } from "@/hooks/use-admin-area-edit-access";
@@ -35,6 +35,19 @@ export interface FamilyGroupEditorProps {
   onChanged?: () => void;
   // Tri-state (#2065): `undefined` while the session resolves (neutral disabled).
   canEdit: boolean | undefined;
+  /**
+   * Whether this editor renders its OWN view-only banner (#2160). Default
+   * `true`, which is what the dialog mount on `/admin/members/[id]` needs: a
+   * dialog is a separate accessibility container, so no ancestor banner can
+   * reach it and the editor must state the reason itself.
+   *
+   * `/admin/family-groups` renders this editor inline BELOW its own page
+   * banner, which is unconditional and covers the same membership scope, so it
+   * passes `false` — otherwise a view-only membership admin who opens a group
+   * meets the same sentence twice, in two `role="status"` regions. Gating never
+   * changes; this only says WHO states the reason.
+   */
+  renderViewOnlyBanner?: boolean;
 }
 
 export function FamilyGroupEditor({
@@ -42,6 +55,7 @@ export function FamilyGroupEditor({
   onClose,
   onChanged,
   canEdit,
+  renderViewOnlyBanner = true,
 }: FamilyGroupEditorProps) {
   const [group, setGroup] = useState<FamilyGroupDetail | null>(null);
   const [requests, setRequests] = useState<FamilyGroupRequest[]>([]);
@@ -305,39 +319,70 @@ export function FamilyGroupEditor({
     }
   }
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the section —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before its
+    content appears; a region injected already-populated is silently dropped by
+    some screen-reader/browser pairings. It is rendered in EVERY return branch,
+    including the loading one, and sits OUTSIDE the card's `space-y-*` stack so
+    the empty wrapper an edit-capable admin gets costs no layout.
+
+    `renderViewOnlyBanner={false}` suppresses it for the one parent that already
+    covers this editor with its own banner (`/admin/family-groups`, which renders
+    the editor inline under a page banner). The dialog mount keeps the default:
+    a dialog is its own accessibility container, so the ancestor banner does not
+    reach it and this is the only explanation the admin gets there.
+  */
+  const viewOnlyBanner = renderViewOnlyBanner ? (
+    <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-6">
+      Your admin role can view this family group but cannot change it.
+    </AdminViewOnlySectionBanner>
+  ) : null;
+
   if (loading) {
     return (
-      <Card>
-        <CardContent className="p-6 text-sm text-slate-500">Loading family group...</CardContent>
-      </Card>
+      <div>
+        {viewOnlyBanner}
+        <Card>
+          <CardContent className="p-6 text-sm text-muted-foreground">Loading family group...</CardContent>
+        </Card>
+      </div>
     );
   }
 
   if (!group) {
     return (
-      <Card>
-        <CardContent className="space-y-3 p-6">
-          <p className="text-sm text-red-600">{error || "Family group not found"}</p>
-          <Button type="button" variant="outline" onClick={onClose}>
-            Close
-          </Button>
-        </CardContent>
-      </Card>
+      <div>
+        {viewOnlyBanner}
+        <Card>
+          <CardContent className="space-y-3 p-6">
+            <p className="text-sm text-red-600">{error || "Family group not found"}</p>
+            <Button type="button" variant="outline" onClick={onClose}>
+              Close
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
     );
   }
 
   return (
+    <div>
+      {viewOnlyBanner}
     <Card ref={editorRef}>
       <CardHeader>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <CardTitle className="text-lg">Edit Family Group</CardTitle>
-            <p className="mt-1 text-sm text-slate-500">
+            <p className="mt-1 text-sm text-muted-foreground">
               Rename the group, manage linked members, review pending requests, or swap a shared-email login holder.
             </p>
           </div>
           <ViewOnlyActionButton
             canEdit={canEdit}
+            describeReason={false}
             type="button"
             variant="outline"
             size="sm"
@@ -362,10 +407,6 @@ export function FamilyGroupEditor({
           </p>
         )}
         {statusMessage && <p className="text-sm text-emerald-700">{statusMessage}</p>}
-
-        <AdminViewOnlyNotice canEdit={canEdit}>
-          Your admin role can view this family group but cannot change it.
-        </AdminViewOnlyNotice>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
@@ -417,28 +458,28 @@ export function FamilyGroupEditor({
                 disabled={canEdit !== true}
               />
               {searching && (
-                <div className="absolute right-3 top-2.5 text-xs text-slate-400">
+                <div className="absolute right-3 top-2.5 text-xs text-muted-foreground">
                   Searching...
                 </div>
               )}
               {searchResults.length > 0 && (
-                <div className="absolute z-10 mt-1 max-h-48 w-full overflow-y-auto rounded-md border bg-white shadow-lg">
+                <div className="absolute z-10 mt-1 max-h-48 w-full overflow-y-auto rounded-md border bg-card shadow-lg">
                   {searchResults.map((member) => (
                     <button
                       key={member.id}
                       type="button"
                       onClick={() => addMember(member)}
                       disabled={canEdit !== true}
-                      className="w-full px-3 py-2 text-left text-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                      className="w-full px-3 py-2 text-left text-sm hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       <span className="font-medium">{getMemberName(member)}</span>
-                      <span className="ml-2 text-slate-500">{member.email}</span>
+                      <span className="ml-2 text-muted-foreground">{member.email}</span>
                     </button>
                   ))}
                 </div>
               )}
             </div>
-            <p className="mt-1 text-xs text-slate-500">
+            <p className="mt-1 text-xs text-muted-foreground">
               Add adults, youth, or children to this family group
             </p>
           </div>
@@ -446,6 +487,7 @@ export function FamilyGroupEditor({
           <div className="flex flex-wrap gap-2">
             <ViewOnlyActionButton
               canEdit={canEdit}
+              describeReason={false}
               type="submit"
               disabled={submitting || selectedMembers.length < 1}
             >
@@ -476,15 +518,15 @@ export function FamilyGroupEditor({
           onSendPasswordSetupInvite={sendPasswordSetupInvite}
         />
 
-        <section className="space-y-3 rounded-lg border border-slate-200 p-4">
+        <section className="space-y-3 rounded-lg border border-border p-4">
           <div>
-            <h3 className="text-sm font-semibold text-slate-900">Pending family changes</h3>
-            <p className="mt-1 text-sm text-slate-500">
+            <h3 className="text-sm font-semibold text-foreground">Pending family changes</h3>
+            <p className="mt-1 text-sm text-muted-foreground">
               Review requests that target this family group.
             </p>
           </div>
           {requests.length === 0 ? (
-            <p className="rounded-md border border-dashed border-slate-200 p-3 text-sm text-slate-500">
+            <p className="rounded-md border border-dashed border-border p-3 text-sm text-muted-foreground">
               No pending requests for this group.
             </p>
           ) : (
@@ -502,5 +544,6 @@ export function FamilyGroupEditor({
         </section>
       </CardContent>
     </Card>
+    </div>
   );
 }

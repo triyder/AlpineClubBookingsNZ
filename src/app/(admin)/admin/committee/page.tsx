@@ -22,7 +22,7 @@ import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { CommitteePhotoDisplayControl } from "@/components/admin/committee-photo-display-control";
 import {
   ADMIN_FORBIDDEN_SAVE_REASON,
-  AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 
@@ -347,8 +347,26 @@ export default function CommitteePage() {
     (assignment) => assignment.isActive && assignment.published,
   ).length;
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the section —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before its
+    content appears; a region injected already-populated is silently dropped by
+    some screen-reader/browser pairings. It sits OUTSIDE the `space-y-*` stack so
+    the empty wrapper an edit-capable admin gets costs no layout.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-6">
+      Your admin role can view committee roles and assignments but cannot
+      change them. Membership edit access is required.
+    </AdminViewOnlySectionBanner>
+  );
+
   return (
-    <div ref={pageRef} className="space-y-6">
+    <div>
+      {viewOnlyBanner}
+      <div ref={pageRef} className="space-y-6">
       <AdminPageHeader
         title="Committee"
         description="Manage master roles and member-linked assignment metadata."
@@ -374,13 +392,6 @@ export default function CommitteePage() {
         </div>
       ) : null}
 
-      {!canEdit ? (
-        <AdminViewOnlyNotice canEdit={canEdit}>
-          Your admin role can view committee roles and assignments but cannot
-          change them. Membership edit access is required.
-        </AdminViewOnlyNotice>
-      ) : null}
-
       <CommitteePhotoDisplayControl />
 
       <Card>
@@ -393,7 +404,7 @@ export default function CommitteePage() {
               linked member emails are used only when a role email is blank.
             </p>
           </div>
-          <ViewOnlyActionButton canEdit={canEdit} onClick={openAddRoleForm}>
+          <ViewOnlyActionButton canEdit={canEdit} describeReason={false} onClick={openAddRoleForm}>
             <Plus className="mr-2 h-4 w-4" />
             Add Role
           </ViewOnlyActionButton>
@@ -495,7 +506,7 @@ export default function CommitteePage() {
                 Active
               </label>
               <div className="mt-4 flex gap-2">
-                <ViewOnlyActionButton canEdit={canEdit} type="submit" disabled={saving}>
+                <ViewOnlyActionButton canEdit={canEdit} describeReason={false} type="submit" disabled={saving}>
                   <Save className="mr-2 h-4 w-4" />
                   Save Role
                 </ViewOnlyActionButton>
@@ -550,6 +561,7 @@ export default function CommitteePage() {
                   <TableCell className="text-right">
                     <ViewOnlyActionButton
                       canEdit={canEdit}
+                      describeReason={false}
                       variant="ghost"
                       size="sm"
                       onClick={() => openEditRoleForm(role)}
@@ -646,6 +658,7 @@ export default function CommitteePage() {
                       <div className="flex justify-end gap-1">
                         <ViewOnlyActionButton
                           canEdit={canEdit}
+                          describeReason={false}
                           variant="ghost"
                           size="sm"
                           onClick={() => openAssignmentForm(assignment)}
@@ -654,6 +667,7 @@ export default function CommitteePage() {
                         </ViewOnlyActionButton>
                         <ViewOnlyActionButton
                           canEdit={canEdit}
+                          describeReason={false}
                           variant="ghost"
                           size="sm"
                           className="text-danger hover:bg-danger-muted hover:text-danger"
@@ -753,7 +767,7 @@ export default function CommitteePage() {
                 ))}
               </div>
               <div className="mt-4 flex gap-2">
-                <ViewOnlyActionButton canEdit={canEdit} type="submit" disabled={saving}>
+                <ViewOnlyActionButton canEdit={canEdit} describeReason={false} type="submit" disabled={saving}>
                   <Save className="mr-2 h-4 w-4" />
                   Save Assignment
                 </ViewOnlyActionButton>
@@ -769,6 +783,7 @@ export default function CommitteePage() {
           ) : null}
         </CardContent>
       </Card>
+      </div>
     </div>
   );
 }

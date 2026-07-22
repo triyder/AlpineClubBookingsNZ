@@ -58,7 +58,7 @@ export function CancellationRulesEditor({
                     onChange={(e) =>
                       updateRule(index, "daysBeforeStay", parseInt(e.target.value) || 0)
                     }
-                    className={`w-24 ${disabled ? "bg-slate-50 text-slate-700" : ""}`}
+                    className={`w-24 ${disabled ? "bg-muted text-muted-foreground" : ""}`}
                     disabled={disabled}
                   />
                   <span className="text-sm text-muted-foreground">days</span>
@@ -74,7 +74,7 @@ export function CancellationRulesEditor({
                     onChange={(e) =>
                       updateRule(index, "refundPercentage", parseInt(e.target.value) || 0)
                     }
-                    className={`w-24 ${disabled ? "bg-slate-50 text-slate-700" : ""}`}
+                    className={`w-24 ${disabled ? "bg-muted text-muted-foreground" : ""}`}
                     disabled={disabled}
                   />
                   <span className="text-sm text-muted-foreground">%</span>
@@ -90,7 +90,7 @@ export function CancellationRulesEditor({
                     onChange={(e) =>
                       updateRule(index, "creditRefundPercentage", parseInt(e.target.value) || 0)
                     }
-                    className={`w-24 ${disabled ? "bg-slate-50 text-slate-700" : ""}`}
+                    className={`w-24 ${disabled ? "bg-muted text-muted-foreground" : ""}`}
                     disabled={disabled}
                   />
                   <span className="text-sm text-muted-foreground">%</span>
@@ -107,7 +107,7 @@ export function CancellationRulesEditor({
                     onChange={(e) =>
                       updateRule(index, "fixedFeeCents", Math.round((parseFloat(e.target.value) || 0) * 100))
                     }
-                    className={`w-24 ${disabled ? "bg-slate-50 text-slate-700" : ""}`}
+                    className={`w-24 ${disabled ? "bg-muted text-muted-foreground" : ""}`}
                     disabled={disabled}
                   />
                 </div>
@@ -127,7 +127,7 @@ export function CancellationRulesEditor({
                         Math.round((parseFloat(e.target.value) || 0) * 100)
                       )
                     }
-                    className={`w-24 ${disabled ? "bg-slate-50 text-slate-700" : ""}`}
+                    className={`w-24 ${disabled ? "bg-muted text-muted-foreground" : ""}`}
                     disabled={disabled}
                   />
                 </div>

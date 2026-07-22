@@ -145,7 +145,7 @@ async function buildAuthenticatedXeroClient(
     throw new XeroReconnectRequiredError("Xero tenant ID not found. Please reconnect Xero.");
   }
 
-  const xero = createXeroClient();
+  const xero = await createXeroClient();
   await xero.initialize();
   xero.setTokenSet({
     access_token: tokens.accessToken,
@@ -238,7 +238,7 @@ export async function getAuthenticatedXeroClient(): Promise<{
           refresh_token: claimedTokens.refreshToken,
           token_type: "Bearer",
         });
-        const config = getOperationalXeroConfig();
+        const config = await getOperationalXeroConfig();
         try {
           const newTokenSet = await xero.refreshWithRefreshToken(
             config.clientId,

@@ -14,7 +14,7 @@ export default function AuthenticatedNotFound() {
       <div className="mt-8 flex flex-col gap-3 sm:flex-row">
         <Link
           href="/dashboard"
-          className="inline-flex items-center justify-center rounded-lg bg-brand-charcoal px-6 py-3 text-sm font-medium text-white transition-colors hover:bg-brand-deep"
+          className="inline-flex items-center justify-center rounded-lg bg-brand-charcoal px-6 py-3 text-sm font-medium text-brand-snow transition-colors hover:bg-brand-deep"
         >
           Back to dashboard
         </Link>

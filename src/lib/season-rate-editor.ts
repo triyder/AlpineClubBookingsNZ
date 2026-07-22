@@ -3,7 +3,8 @@
  *
  * The /admin/seasons rate editor writes `MembershipTypeSeasonRate` rows keyed
  * by membership type + optional age tier — the authoritative pricing table.
- * The legacy boolean-keyed `SeasonRate` table is left frozen (E13 drops it).
+ * The legacy boolean-keyed `SeasonRate` table was dropped by #2129 step 2
+ * (20260721120000_contract_drop_season_rate).
  */
 import { z } from "zod";
 import type { Prisma } from "@prisma/client";
@@ -133,7 +134,7 @@ export async function validateMembershipTypeSeasonRates(
 
 /**
  * Replace a season's membership-type rate rows (delete + insert) inside a
- * transaction. Leaves the frozen legacy `SeasonRate` rows untouched.
+ * transaction.
  */
 export async function replaceMembershipTypeSeasonRates(
   tx: Prisma.TransactionClient,

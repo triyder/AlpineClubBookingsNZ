@@ -51,11 +51,10 @@ and the admin token-help validation.
 `{{hut-fees}}` reads the **authoritative** per-membership-type nightly rates
 (`MembershipTypeSeasonRate`) — the same rows that price a real booking. Before
 #2129 it read the frozen member/non-member `SeasonRate` table and printed a
-list of "Age tier — Member/Non-member" rows. That table now has no
-**application-runtime** readers and is scheduled for removal, but it is not yet
-unreferenced: one reader and two writers remain in seed code
-(`e2e/setup/seed-second-lodge.ts:202` and `:218-224`, `prisma/seed.ts:208-227`),
-and all three must be removed in the same PR as the DROP migration. See
+list of "Age tier — Member/Non-member" rows. Step 1 removing that last
+application-runtime reader is what made the table droppable; step 2 removed the
+remaining seed-only reader/writers and dropped it in
+`20260721120000_contract_drop_season_rate`. See
 [Authoritative fee configuration](AUTHORITATIVE_FEES.md) for the full picture.
 
 Each active season of each active lodge renders as **one table**:

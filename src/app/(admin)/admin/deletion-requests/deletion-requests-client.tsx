@@ -28,7 +28,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import {
@@ -188,24 +188,35 @@ export default function DeletionRequestsClient({
     );
   };
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the section —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before its
+    content appears; a region injected already-populated is silently dropped by
+    some screen-reader/browser pairings. It sits OUTSIDE the `space-y-*` stack so
+    the empty wrapper an edit-capable admin gets costs no layout.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-6">
+      Your admin role can view deletion requests but cannot approve or reject
+      them.
+    </AdminViewOnlySectionBanner>
+  );
+
   return (
-    <div className="space-y-6">
+    <div>
+      {viewOnlyBanner}
+      <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-slate-900">Deletion Requests</h1>
-        <p className="mt-1 text-sm text-slate-500">
+        <h1 className="text-2xl font-bold text-foreground">Deletion Requests</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
           Review member account deletion requests. Members can request deletion
           of their own account; admins can request permanent (hard) deletion of
           a member record added in error. Hard-delete requests require a second
           admin to approve.
         </p>
       </div>
-
-      {!canEdit && (
-        <AdminViewOnlyNotice canEdit={canEdit}>
-          Your admin role can view deletion requests but cannot approve or reject
-          them.
-        </AdminViewOnlyNotice>
-      )}
 
       <Card>
         <CardHeader>
@@ -237,13 +248,13 @@ export default function DeletionRequestsClient({
         </CardHeader>
         <CardContent>
           {loading && (
-            <p className="text-sm text-slate-500 py-4">Loading...</p>
+            <p className="text-sm text-muted-foreground py-4">Loading...</p>
           )}
           {error && (
             <p className="text-sm text-red-600 py-4">{error}</p>
           )}
           {!loading && data && data.requests.length === 0 && (
-            <p className="text-sm text-slate-500 py-4">
+            <p className="text-sm text-muted-foreground py-4">
               No {statusFilter === "ALL" ? "" : statusFilter.toLowerCase()}{" "}
               deletion requests.
             </p>
@@ -255,31 +266,31 @@ export default function DeletionRequestsClient({
                   <div className="flex items-start justify-between gap-4">
                     <div className="space-y-1">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-medium text-slate-900">
+                        <span className="font-medium text-foreground">
                           {req.member.firstName} {req.member.lastName}
                         </span>
-                        <span className="text-sm text-slate-500">
+                        <span className="text-sm text-muted-foreground">
                           {req.member.email}
                         </span>
                         {statusBadge(req.status)}
                       </div>
-                      <p className="text-xs text-slate-400">
+                      <p className="text-xs text-muted-foreground">
                         Requested {dateTime(req.createdAt)}
                       </p>
                       {req.reason && (
-                        <p className="text-sm text-slate-600">
+                        <p className="text-sm text-muted-foreground">
                           <span className="font-medium">Reason:</span>{" "}
                           {req.reason}
                         </p>
                       )}
                       {req.adminNote && (
-                        <p className="text-sm text-slate-600">
+                        <p className="text-sm text-muted-foreground">
                           <span className="font-medium">Admin note:</span>{" "}
                           {req.adminNote}
                         </p>
                       )}
                       {req.reviewedAt && (
-                        <p className="text-xs text-slate-400">
+                        <p className="text-xs text-muted-foreground">
                           Reviewed{" "}
                           {new Date(req.reviewedAt).toLocaleDateString("en-NZ", {
                             day: "numeric",
@@ -293,6 +304,7 @@ export default function DeletionRequestsClient({
                       <div className="flex gap-2 shrink-0">
                         <ViewOnlyActionButton
                           canEdit={canEdit}
+                          describeReason={false}
                           size="sm"
                           variant="outline"
                           className="text-red-600 border-red-200 hover:bg-red-50"
@@ -304,6 +316,7 @@ export default function DeletionRequestsClient({
                         </ViewOnlyActionButton>
                         <ViewOnlyActionButton
                           canEdit={canEdit}
+                          describeReason={false}
                           size="sm"
                           variant="destructive"
                           onClick={() =>
@@ -331,7 +344,7 @@ export default function DeletionRequestsClient({
               >
                 Previous
               </Button>
-              <span className="text-sm text-slate-500">
+              <span className="text-sm text-muted-foreground">
                 Page {page} of {data.totalPages}
               </span>
               <Button
@@ -459,6 +472,7 @@ export default function DeletionRequestsClient({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      </div>
     </div>
   );
 }
@@ -564,10 +578,10 @@ function AdminInitiatedDeletionSection({
         </CardDescription>
       </CardHeader>
       <CardContent>
-        {loading && <p className="text-sm text-slate-500 py-4">Loading...</p>}
+        {loading && <p className="text-sm text-muted-foreground py-4">Loading...</p>}
         {error && <p className="text-sm text-red-600 py-4">{error}</p>}
         {!loading && data && data.requests.length === 0 && (
-          <p className="text-sm text-slate-500 py-4">
+          <p className="text-sm text-muted-foreground py-4">
             No {statusFilter === "ALL" ? "" : statusFilter.toLowerCase()}{" "}
             admin-initiated deletion requests.
           </p>
@@ -586,27 +600,27 @@ function AdminInitiatedDeletionSection({
                   <div className="flex items-start justify-between gap-4">
                     <div className="space-y-1">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-medium text-slate-900">
+                        <span className="font-medium text-foreground">
                           {req.targetName}
                         </span>
                         {req.member?.email && (
-                          <span className="text-sm text-slate-500">
+                          <span className="text-sm text-muted-foreground">
                             {req.member.email}
                           </span>
                         )}
                         {renderStatus(req.status)}
                       </div>
-                      <p className="text-xs text-slate-400">
+                      <p className="text-xs text-muted-foreground">
                         Requested by {requesterLabel} · {dateTime(req.requestedAt)}
                       </p>
                       {req.reason && (
-                        <p className="text-sm text-slate-600">
+                        <p className="text-sm text-muted-foreground">
                           <span className="font-medium">Reason:</span>{" "}
                           {req.reason}
                         </p>
                       )}
                       {req.reviewNote && (
-                        <p className="text-sm text-slate-600">
+                        <p className="text-sm text-muted-foreground">
                           <span className="font-medium">Review note:</span>{" "}
                           {req.reviewNote}
                         </p>
@@ -652,7 +666,7 @@ function AdminInitiatedDeletionSection({
                           </Button>
                         </div>
                         {isOwnRequest && (
-                          <p className="text-xs text-slate-400">
+                          <p className="text-xs text-muted-foreground">
                             A different admin must review this request
                           </p>
                         )}
@@ -676,7 +690,7 @@ function AdminInitiatedDeletionSection({
             >
               Previous
             </Button>
-            <span className="text-sm text-slate-500">
+            <span className="text-sm text-muted-foreground">
               Page {page} of {data.totalPages}
             </span>
             <Button

@@ -5,6 +5,7 @@ import { logAudit } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 import { getStripe } from "@/lib/stripe";
+import { getOperationalStripeSecretKey } from "@/lib/stripe-config";
 import { resolveEmailDeliveryConfig } from "@/lib/email-delivery";
 
 const providerTestSchema = z.object({
@@ -33,11 +34,13 @@ function readEnv(name: string): string | undefined {
 }
 
 async function testStripe() {
-  if (!readEnv("STRIPE_SECRET_KEY")) {
-    throw new Error("STRIPE_SECRET_KEY is not configured");
+  // DB-only (#2082): the secret key is captured in-app, not from the env.
+  if (!(await getOperationalStripeSecretKey())) {
+    throw new Error("Stripe secret key is not configured");
   }
 
-  await withTimeout("Stripe balance check", getStripe().balance.retrieve());
+  const stripe = await getStripe();
+  await withTimeout("Stripe balance check", stripe.balance.retrieve());
   return "Stripe responded to a balance read using the configured key.";
 }
 
@@ -137,21 +140,26 @@ export async function POST(request: NextRequest) {
       message,
     });
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Provider test failed";
+    // Provider SDK error messages can embed redacted credential fragments
+    // (e.g. Stripe's "Invalid API Key provided: sk_test_****abcd"), so only
+    // the error NAME reaches the audit row and the response stays generic —
+    // the C1 exposure contract keeps key material, even redacted, out of
+    // audit rows (#2082 security review).
+    const errorName = error instanceof Error ? error.name : "UnknownError";
     await logAudit({
       action: "setup_provider_test",
       memberId: session.user.id,
       category: "system",
       outcome: "failure",
       summary: `Setup provider test failed: ${parsed.data.provider}`,
-      metadata: { provider: parsed.data.provider, error: message },
+      metadata: { provider: parsed.data.provider, error: errorName },
     });
     return NextResponse.json({
       ok: false,
       provider: parsed.data.provider,
       checkedAt,
-      message,
+      message:
+        "Provider test failed — the provider rejected the request. Check the stored credentials and try again.",
     });
   }
 }

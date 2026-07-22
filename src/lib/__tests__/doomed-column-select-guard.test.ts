@@ -4,21 +4,35 @@ import { describe, expect, it } from "vitest";
 
 // #2130 guard (same shape as club-module-settings-select-guard.test.ts): every
 // read AND write of XeroItemCodeMapping and AgeTierSetting must name its
-// columns with an explicit `select`. Both models still carry columns that a
-// later contract migration drops — XeroItemCodeMapping.isMember and
-// AgeTierSetting.xeroContactGroupId/xeroContactGroupName — and a bare
+// columns with an explicit `select`. A bare
 // findUnique/findFirst/findMany/create/update/upsert makes Prisma name EVERY
-// scalar column in the SELECT or in a write's implicit RETURNING. A draining
-// old colour issuing that SQL after the drop gets Postgres 42703
-// ("column ... does not exist"), which is exactly the blue/green break the
-// #2130 runtime-prep → contract two-step exists to prevent.
+// scalar column in the SELECT or in a write's implicit RETURNING, so a
+// draining old colour issuing that SQL after a column drop gets Postgres 42703
+// ("column ... does not exist").
+//
+// ORIGINAL RATIONALE, NOW SPENT: this guard was added by the #2130 STEP 1.5
+// runtime-prep release to protect three specific doomed columns —
+// XeroItemCodeMapping.isMember and
+// AgeTierSetting.xeroContactGroupId/xeroContactGroupName — through the window
+// before the contract migration. That migration
+// (20260721130000_contract_drop_ismember_and_agetier_xero_columns, Release B)
+// has now dropped all three, so the original blast radius is gone.
+//
+// KEPT DELIBERATELY, not left behind by accident. Three reasons: (1) narrow
+// selects are the house rule for both models and this is the only thing that
+// enforces it repo-wide; (2) these two tables are the standing legacy-column
+// surface — E4/E8 alone left three doomed columns on them, and the next
+// contraction will want exactly this guard already in place rather than
+// reintroduced under time pressure; (3) it is a cheap read-only static scan
+// with no runtime or fixture cost. Deleting it would silently re-permit a bare
+// findMany, which is the precise regression the #2130 two-step existed to
+// prevent.
 //
 // This is a static source scan rather than only per-call-site mock pins so a
-// NEW call site added between the runtime-prep release and the contract
-// migration fails CI immediately, instead of relying on someone remembering to
-// add a matching mock assertion. Unlike the ClubModuleSettings guard this
-// surface also spans prisma/seed.ts and scripts/, so all three roots are
-// walked.
+// NEW call site fails CI immediately, instead of relying on someone
+// remembering to add a matching mock assertion. Unlike the ClubModuleSettings
+// guard this surface also spans prisma/seed.ts and scripts/, so all three
+// roots are walked.
 //
 // deleteMany/updateMany/count/aggregate/groupBy are deliberately NOT scanned:
 // they emit no RETURNING and project no columns, so they are safe unnarrowed.
@@ -27,7 +41,9 @@ const SCAN_ROOTS = ["src", "prisma", "scripts"].map((dir) =>
   path.join(process.cwd(), dir),
 );
 
-const DOOMED_COLUMN_MODELS = ["xeroItemCodeMapping", "ageTierSetting"];
+// Named for what the guard enforces NOW (narrow selects on these two models),
+// not for the three columns it originally protected — those are dropped.
+const NARROW_SELECT_MODELS = ["xeroItemCodeMapping", "ageTierSetting"];
 
 const PROJECTING_METHODS = [
   "findUnique",
@@ -77,7 +93,7 @@ function extractCallArgs(source: string, openParenIndex: number): string {
 describe("doomed-column models are read and written with an explicit select", () => {
   it("has no bare XeroItemCodeMapping/AgeTierSetting projecting call in src/, prisma/ or scripts/", () => {
     const callPattern = new RegExp(
-      `(?:${DOOMED_COLUMN_MODELS.join("|")})\\??\\.(?:${PROJECTING_METHODS.join(
+      `(?:${NARROW_SELECT_MODELS.join("|")})\\??\\.(?:${PROJECTING_METHODS.join(
         "|",
       )})\\(`,
       "g",

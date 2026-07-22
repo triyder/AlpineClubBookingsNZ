@@ -2,11 +2,23 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
   mockGetFinanceSyncDiagnosticsStatus,
-  mockIsXeroConnected,
+  mockGetXeroConnectionStatus,
 } = vi.hoisted(() => ({
   mockGetFinanceSyncDiagnosticsStatus: vi.fn(),
-  mockIsXeroConnected: vi.fn(),
+  mockGetXeroConnectionStatus: vi.fn(),
 }));
+
+function xeroStatus(overrides: {
+  connected?: boolean;
+  needsReentry?: boolean;
+}) {
+  return {
+    connected: overrides.connected ?? false,
+    needsReentry: overrides.needsReentry ?? false,
+    tenantId: null,
+    tokenExpiresAt: null,
+  };
+}
 
 vi.mock("@/lib/finance-auth", () => ({
   hasFinanceManagerAccess: (input: string | { financeAccessLevel?: string }) =>
@@ -18,7 +30,7 @@ vi.mock("@/lib/finance-sync-diagnostics", () => ({
 }));
 
 vi.mock("@/lib/xero", () => ({
-  isXeroConnected: mockIsXeroConnected,
+  getXeroConnectionStatus: mockGetXeroConnectionStatus,
 }));
 
 import {
@@ -73,7 +85,9 @@ describe("finance report availability messaging", () => {
         cronRuns: [],
       },
     });
-    mockIsXeroConnected.mockResolvedValue(false);
+    mockGetXeroConnectionStatus.mockResolvedValue(
+      xeroStatus({ connected: false })
+    );
   });
 
   it("tells managers to connect Xero from the admin page when not connected", async () => {
@@ -96,8 +110,39 @@ describe("finance report availability messaging", () => {
     ).resolves.toContain("first finance sync");
   });
 
+  it("tells managers to reconnect Xero when stored tokens are unreadable", async () => {
+    mockGetXeroConnectionStatus.mockResolvedValue(
+      xeroStatus({ connected: false, needsReentry: true })
+    );
+
+    const message = await buildFinanceSnapshotMissingMessage({
+      member: financeManager(),
+      reportTitle: "This revenue report",
+      dataLabel: "monthly revenue snapshots",
+    });
+
+    expect(message).toContain("reconnect Xero");
+    expect(message).not.toContain("first finance sync");
+  });
+
+  it("tells viewers to ask an admin to reconnect Xero when tokens are unreadable", async () => {
+    mockGetXeroConnectionStatus.mockResolvedValue(
+      xeroStatus({ connected: false, needsReentry: true })
+    );
+
+    const message = await buildFinanceSnapshotMissingMessage({
+      member: financeViewer(),
+      reportTitle: "This revenue report",
+      dataLabel: "monthly revenue snapshots",
+    });
+
+    expect(message).toContain("reconnect Xero");
+  });
+
   it("reports sync failures as the reason data is missing", async () => {
-    mockIsXeroConnected.mockResolvedValue(true);
+    mockGetXeroConnectionStatus.mockResolvedValue(
+      xeroStatus({ connected: true })
+    );
     mockGetFinanceSyncDiagnosticsStatus.mockResolvedValue({
       workflow: "daily-finance-sync",
       latestRun: {
@@ -141,7 +186,9 @@ describe("finance report availability messaging", () => {
   });
 
   it("uses a generic storage-read message when synced data cannot be read", async () => {
-    mockIsXeroConnected.mockResolvedValue(true);
+    mockGetXeroConnectionStatus.mockResolvedValue(
+      xeroStatus({ connected: true })
+    );
     mockGetFinanceSyncDiagnosticsStatus.mockResolvedValue({
       workflow: "daily-finance-sync",
       latestRun: {

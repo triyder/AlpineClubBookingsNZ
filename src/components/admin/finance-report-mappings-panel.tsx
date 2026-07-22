@@ -24,7 +24,7 @@ import { Label } from "@/components/ui/label";
 import { XeroAccountMultiSelect } from "@/components/admin/xero-account-multi-select";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import {
-  AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import type { XeroAccount } from "@/lib/xero-admin-cache";
@@ -408,9 +408,32 @@ export function FinanceReportMappingsPanel() {
     }
   }
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the section —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before its
+    content appears; a region injected already-populated is silently dropped by
+    some screen-reader/browser pairings. It sits OUTSIDE the card, not in the
+    `space-y-5` CardContent stack, because two of the controls it explains
+    (Backfill History and Save) are in the CardHeader — a banner inside the
+    content would come after them in the reading order. The empty wrapper an
+    edit-capable admin gets costs no layout.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-4">
+      Your admin role can view the finance report mappings but cannot change
+      them. Finance edit access is required.
+    </AdminViewOnlySectionBanner>
+  );
+
+  // A cross-area 403 hides the whole panel, banner included — there is no
+  // section left here for the banner to explain.
   if (forbidden) return null;
 
   return (
+    <div>
+      {viewOnlyBanner}
     <Card>
       <CardHeader>
         <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -437,6 +460,7 @@ export function FinanceReportMappingsPanel() {
             </Button>
             <ViewOnlyActionButton
               canEdit={canEdit}
+              describeReason={false}
               type="button"
               variant="outline"
               onClick={runBackfill}
@@ -451,6 +475,7 @@ export function FinanceReportMappingsPanel() {
             </ViewOnlyActionButton>
             <ViewOnlyActionButton
               canEdit={canEdit}
+              describeReason={false}
               type="button"
               onClick={saveMappings}
               disabled={saving || loading || !state}
@@ -466,12 +491,6 @@ export function FinanceReportMappingsPanel() {
         </div>
       </CardHeader>
       <CardContent className="space-y-5">
-        {!canEdit ? (
-          <AdminViewOnlyNotice canEdit={canEdit}>
-            Your admin role can view the finance report mappings but cannot change
-            them. Finance edit access is required.
-          </AdminViewOnlyNotice>
-        ) : null}
         {error ? (
           <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
             {error}
@@ -491,7 +510,7 @@ export function FinanceReportMappingsPanel() {
         ) : null}
 
         {loading && !state ? (
-          <div className="flex items-center gap-2 text-sm text-slate-600">
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" />
             Loading finance mappings
           </div>
@@ -499,7 +518,7 @@ export function FinanceReportMappingsPanel() {
 
         {state ? (
           <>
-            <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+            <div className="rounded-md border border-border bg-muted px-3 py-2 text-sm text-muted-foreground">
               Latest inspected P&L snapshot:{" "}
               {state.snapshotCoverage.latestProfitAndLossSnapshot ?? "none"} ·{" "}
               {state.snapshotCoverage.inspectedSnapshotCount} snapshots checked.
@@ -511,16 +530,17 @@ export function FinanceReportMappingsPanel() {
                 <section key={kind} className="space-y-3">
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <h3 className="text-lg font-semibold text-slate-900">
+                      <h3 className="text-lg font-semibold text-foreground">
                         {categoryTitle(kind)}
                       </h3>
-                      <p className="text-sm text-slate-600">
+                      <p className="text-sm text-muted-foreground">
                         Groups are shown under their subtype sub-headings, the
                         same way they appear on the finance dashboard.
                       </p>
                     </div>
                     <ViewOnlyActionButton
                       canEdit={canEdit}
+                      describeReason={false}
                       type="button"
                       variant="outline"
                       size="sm"
@@ -536,12 +556,13 @@ export function FinanceReportMappingsPanel() {
                       key={`${kind}:${section.subtype ?? "__ungrouped__"}`}
                       className="space-y-3"
                     >
-                      <div className="flex items-center justify-between gap-2 border-b border-slate-200 pb-1">
-                        <h4 className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+                      <div className="flex items-center justify-between gap-2 border-b border-border pb-1">
+                        <h4 className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
                           {section.subtype ?? "Ungrouped"}
                         </h4>
                         <ViewOnlyActionButton
                           canEdit={canEdit}
+                          describeReason={false}
                           type="button"
                           variant="ghost"
                           size="sm"
@@ -555,7 +576,7 @@ export function FinanceReportMappingsPanel() {
                       {section.items.map((category) => (
                         <div
                           key={category.key}
-                          className="rounded-md border border-slate-200 bg-white p-3"
+                          className="rounded-md border border-border bg-card p-3"
                         >
                           <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_6rem_auto]">
                             <div className="space-y-1.5">
@@ -601,7 +622,7 @@ export function FinanceReportMappingsPanel() {
                               />
                             </div>
                             <div className="flex items-end justify-end gap-3">
-                              <label className="flex items-center gap-2 text-sm text-slate-700">
+                              <label className="flex items-center gap-2 text-sm text-muted-foreground">
                                 <input
                                   type="checkbox"
                                   checked={category.archived}
@@ -616,6 +637,7 @@ export function FinanceReportMappingsPanel() {
                               </label>
                               <ViewOnlyActionButton
                                 canEdit={canEdit}
+                                describeReason={false}
                                 type="button"
                                 variant="ghost"
                                 size="icon"
@@ -665,7 +687,7 @@ export function FinanceReportMappingsPanel() {
             <section className="space-y-3">
               <div className="flex items-center gap-2">
                 <SearchX className="h-4 w-4 text-amber-700" />
-                <h3 className="text-lg font-semibold text-slate-900">
+                <h3 className="text-lg font-semibold text-foreground">
                   Unmapped Lines
                 </h3>
                 <Badge variant={state.unmappedLines.length ? "warning" : "success"}>
@@ -673,7 +695,7 @@ export function FinanceReportMappingsPanel() {
                 </Badge>
               </div>
               {state.unmappedLines.length === 0 ? (
-                <p className="text-sm text-slate-600">
+                <p className="text-sm text-muted-foreground">
                   No unmapped revenue or expense lines were found in inspected
                   snapshots.
                 </p>
@@ -707,5 +729,6 @@ export function FinanceReportMappingsPanel() {
         ) : null}
       </CardContent>
     </Card>
+    </div>
   );
 }

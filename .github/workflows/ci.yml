@@ -148,7 +148,6 @@ jobs:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/tacbookings
       STRIPE_SECRET_KEY: sk_test_fake
       NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: pk_test_fake
-      XERO_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
       XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH: "false"
       XERO_ENABLE_LIVE_MEMBER_GROUP_LOOKUPS: "false"
       XERO_ENABLE_AUTOLOAD_XERO_CONTACT_GROUPS: "false"
@@ -285,11 +284,6 @@ jobs:
           CONCURRENCY_RACE_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:55442/concurrency_race_1881
         run: npx vitest run src/lib/__tests__/concurrency-lock-races.realdb.test.ts
 
-      - name: Test guarded ClubTheme corrective migration against PostgreSQL
-        env:
-          CLUB_THEME_MIGRATION_TEST_DATABASE_URL: ${{ env.DATABASE_URL }}
-        run: npx vitest run src/lib/__tests__/club-theme-default-reseed-migration.test.ts
-
       # E8 (#1934): real-Postgres behavior of the member-grouping cutover
       # migration (legacy-rule deactivation, shape-dedupe, backfill, mode seed,
       # idempotent re-run). Self-provisions a throwaway schema (needs PG 15+
@@ -333,7 +327,8 @@ jobs:
     permissions:
       contents: read
     env:
-      NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: pk_test_fake
+      # Stripe publishable key is delivered at runtime from the DB store (#2082),
+      # not a build arg — nothing Stripe is inlined into the image.
       NEXT_PUBLIC_SENTRY_DSN: ""
       IMAGE_REF: tacbookings-ci:${{ github.sha }}
     steps:
@@ -343,7 +338,6 @@ jobs:
       - name: Build Docker image
         run: |
           docker build \
-            --build-arg NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY="${NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY}" \
             --build-arg NEXT_PUBLIC_SENTRY_DSN="${NEXT_PUBLIC_SENTRY_DSN}" \
             --tag "${IMAGE_REF}" \
             .
@@ -383,15 +377,11 @@ jobs:
     env:
       APP_IMAGE: ${{ vars.GHCR_APP_IMAGE_REPOSITORY || format('ghcr.io/{0}/alpineclubbookingsnz-app', github.repository_owner) }}:${{ github.sha }}
       MIGRATE_IMAGE: ${{ vars.GHCR_MIGRATE_IMAGE_REPOSITORY || format('ghcr.io/{0}/alpineclubbookingsnz-migrate', github.repository_owner) }}:${{ github.sha }}
-      NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: ${{ vars.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY }}
+      # Stripe credentials are DB-only (#2082) — no Stripe build args or env here.
       NEXT_PUBLIC_SENTRY_DSN: ${{ vars.NEXT_PUBLIC_SENTRY_DSN }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
-
-      - name: Validate production build variables
-        run: |
-          test -n "$NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY"
 
       - name: Log in to GHCR
         uses: docker/login-action@v4
@@ -411,7 +401,6 @@ jobs:
           push: true
           tags: ${{ env.APP_IMAGE }}
           build-args: |
-            NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=${{ env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY }}
             NEXT_PUBLIC_SENTRY_DSN=${{ env.NEXT_PUBLIC_SENTRY_DSN }}
           cache-from: type=gha,scope=alpineclubbookingsnz-app
           cache-to: type=gha,mode=max,scope=alpineclubbookingsnz-app
@@ -425,7 +414,6 @@ jobs:
           push: true
           tags: ${{ env.MIGRATE_IMAGE }}
           build-args: |
-            NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=${{ env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY }}
             NEXT_PUBLIC_SENTRY_DSN=${{ env.NEXT_PUBLIC_SENTRY_DSN }}
           cache-from: type=gha,scope=alpineclubbookingsnz-migrate
           cache-to: type=gha,mode=max,scope=alpineclubbookingsnz-migrate

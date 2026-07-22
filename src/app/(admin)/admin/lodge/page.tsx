@@ -10,7 +10,7 @@ import { useClubIdentity } from "@/components/club-identity-provider";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import {
   ADMIN_FORBIDDEN_SAVE_REASON,
-  AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
@@ -144,6 +144,7 @@ function AccountCard({
           {!editing && (
             <ViewOnlyActionButton
               canEdit={canEdit}
+              describeReason={false}
               variant="outline"
               size="sm"
               onClick={() => {
@@ -198,7 +199,7 @@ function AccountCard({
               value={firstName}
               onChange={(e) => setFirstName(e.target.value)}
               disabled={!editing}
-              className={!editing ? "bg-slate-50 text-slate-700" : ""}
+              className={!editing ? "bg-muted text-muted-foreground" : ""}
             />
           </div>
           <div className="space-y-1">
@@ -208,7 +209,7 @@ function AccountCard({
               value={lastName}
               onChange={(e) => setLastName(e.target.value)}
               disabled={!editing}
-              className={!editing ? "bg-slate-50 text-slate-700" : ""}
+              className={!editing ? "bg-muted text-muted-foreground" : ""}
             />
           </div>
         </div>
@@ -221,7 +222,7 @@ function AccountCard({
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             disabled={!editing}
-            className={!editing ? "bg-slate-50 text-slate-700" : ""}
+            className={!editing ? "bg-muted text-muted-foreground" : ""}
           />
         </div>
 
@@ -233,7 +234,7 @@ function AccountCard({
               value={boundLodgeId}
               onChange={(e) => setBoundLodgeId(e.target.value)}
               disabled={!editing}
-              className={`w-full rounded-md border border-input px-3 py-2 text-sm ${!editing ? "bg-slate-50 text-slate-700" : "bg-background"}`}
+              className={`w-full rounded-md border border-input px-3 py-2 text-sm ${!editing ? "bg-muted text-muted-foreground" : "bg-background"}`}
             >
               <option value="">Default lodge</option>
               {lodges.map((lodge) => (
@@ -242,7 +243,7 @@ function AccountCard({
                 </option>
               ))}
             </select>
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-muted-foreground">
               The kiosk signed in with this account shows this lodge&apos;s
               guests, roster, and instructions.
             </p>
@@ -259,11 +260,11 @@ function AccountCard({
               onChange={(e) => setPassword(e.target.value)}
               placeholder="Leave blank to keep current password"
             />
-            <p className="text-xs text-slate-500">Minimum 6 characters</p>
+            <p className="text-xs text-muted-foreground">Minimum 6 characters</p>
           </div>
         )}
 
-        <div className="text-xs text-slate-500">
+        <div className="text-xs text-muted-foreground">
           <p>Created: {new Date(account.createdAt).toLocaleString(APP_LOCALE, { timeZone: APP_TIME_ZONE })}</p>
           <p>Last updated: {new Date(account.updatedAt).toLocaleString(APP_LOCALE, { timeZone: APP_TIME_ZONE })}</p>
         </div>
@@ -282,7 +283,7 @@ function AccountCard({
 
         {editing && (
           <div className="flex gap-3">
-            <ViewOnlyActionButton canEdit={canEdit} onClick={handleSave} disabled={saving}>
+            <ViewOnlyActionButton canEdit={canEdit} describeReason={false} onClick={handleSave} disabled={saving}>
               {saving ? "Saving..." : "Save Changes"}
             </ViewOnlyActionButton>
             <Button variant="outline" onClick={handleCancel} disabled={saving}>
@@ -368,11 +369,30 @@ export default function AdminLodgePage() {
     }
   }
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the page —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before
+    its content appears; a region injected already-populated is silently dropped
+    by some screen-reader/browser pairings. That is why it is hoisted above the
+    loading/error early-returns and rendered in every branch. It sits OUTSIDE
+    the `space-y-6` stack so the empty wrapper an edit-capable admin gets costs
+    no layout.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-6">
+      Your admin role can view the lodge kiosk accounts but cannot change them.
+      Lodge edit access is required.
+    </AdminViewOnlySectionBanner>
+  );
+
   if (loading) {
     return (
       <div className="p-6">
-        <h1 className="text-2xl font-bold text-slate-900 mb-6">Lodge Kiosk</h1>
-        <div className="animate-pulse h-64 bg-slate-100 rounded-lg" />
+        {viewOnlyBanner}
+        <h1 className="text-2xl font-bold text-foreground mb-6">Lodge Kiosk</h1>
+        <div className="animate-pulse h-64 bg-muted rounded-lg" />
       </div>
     );
   }
@@ -380,7 +400,8 @@ export default function AdminLodgePage() {
   if (error || accounts.length === 0) {
     return (
       <div className="p-6">
-        <h1 className="text-2xl font-bold text-slate-900 mb-6">Lodge Kiosk</h1>
+        {viewOnlyBanner}
+        <h1 className="text-2xl font-bold text-foreground mb-6">Lodge Kiosk</h1>
         <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-red-700">
           {error || "Lodge account not found. Run the database seed to create it."}
         </div>
@@ -389,10 +410,12 @@ export default function AdminLodgePage() {
   }
 
   return (
-    <div className="p-6 space-y-6">
-      <h1 className="text-2xl font-bold text-slate-900">Lodge Kiosk</h1>
+    <div className="p-6">
+      {viewOnlyBanner}
+      <div className="space-y-6">
+      <h1 className="text-2xl font-bold text-foreground">Lodge Kiosk</h1>
 
-      <p className="max-w-3xl text-sm text-slate-600">
+      <p className="max-w-3xl text-sm text-muted-foreground">
         This is the shared sign-in used on the physical lodge kiosk screen — it is
         not a personal admin login. Guests and {hutLeaderLabel.toLowerCase()}s use
         it on the lodge device to check in and out and view lodge information. Set
@@ -403,13 +426,6 @@ export default function AdminLodgePage() {
         {showLodgeControls &&
           " With more than one lodge, create one kiosk account per lodge and bind each to the lodge its device lives at."}
       </p>
-
-      {!canEdit && (
-        <AdminViewOnlyNotice canEdit={canEdit}>
-          Your admin role can view the lodge kiosk accounts but cannot change
-          them. Lodge edit access is required.
-        </AdminViewOnlyNotice>
-      )}
 
       {accounts.map((account) => (
         <AccountCard
@@ -428,7 +444,7 @@ export default function AdminLodgePage() {
           <CardHeader className="flex flex-row items-center justify-between">
             <CardTitle>Add a kiosk account</CardTitle>
             {!adding && (
-              <ViewOnlyActionButton canEdit={canEdit} variant="outline" size="sm" onClick={() => setAdding(true)}>
+              <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="outline" size="sm" onClick={() => setAdding(true)}>
                 Add account
               </ViewOnlyActionButton>
             )}
@@ -453,7 +469,7 @@ export default function AdminLodgePage() {
                     value={newPassword}
                     onChange={(e) => setNewPassword(e.target.value)}
                   />
-                  <p className="text-xs text-slate-500">Minimum 6 characters</p>
+                  <p className="text-xs text-muted-foreground">Minimum 6 characters</p>
                 </div>
               </div>
               <div className="space-y-1 max-w-sm">
@@ -486,6 +502,7 @@ export default function AdminLodgePage() {
               <div className="flex gap-3">
                 <ViewOnlyActionButton
                   canEdit={canEdit}
+                  describeReason={false}
                   onClick={handleCreate}
                   disabled={creating || !newEmail || newPassword.length < 6}
                 >
@@ -513,6 +530,7 @@ export default function AdminLodgePage() {
           )}
         </Card>
       )}
+    </div>
     </div>
   );
 }

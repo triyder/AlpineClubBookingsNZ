@@ -69,7 +69,7 @@ export function MemberCreditCard({
         <div className="flex items-center gap-3">
           <span
             className={`text-lg font-semibold ${
-              creditBalance > 0 ? "text-green-700" : creditBalance < 0 ? "text-red-700" : "text-slate-700"
+              creditBalance > 0 ? "text-green-700" : creditBalance < 0 ? "text-red-700" : "text-muted-foreground"
             }`}
           >{`$${(creditBalance / 100).toFixed(2)}`}</span>
           <ViewOnlyActionButton canEdit={canEditFinance} size="sm" variant="outline" onClick={onToggleAdjustmentForm}>
@@ -82,7 +82,7 @@ export function MemberCreditCard({
           <div className="mb-4 p-2 bg-red-50 border border-red-200 text-red-700 rounded text-sm">{adjustmentError}</div>
         )}
         {showAdjustmentForm && (
-          <div className="mb-4 p-4 border border-slate-200 rounded-md bg-slate-50 space-y-3">
+          <div className="mb-4 p-4 border border-border rounded-md bg-muted space-y-3">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-1">
                 <Label htmlFor="adj-amount">Amount ($)</Label>
@@ -94,7 +94,7 @@ export function MemberCreditCard({
                   value={adjustmentAmount}
                   onChange={(e) => onChangeAdjustmentAmount(e.target.value)}
                 />
-                <p className="text-xs text-slate-500">Positive = add credit, negative = deduct</p>
+                <p className="text-xs text-muted-foreground">Positive = add credit, negative = deduct</p>
               </div>
               <div className="space-y-1">
                 <Label htmlFor="adj-desc">Description *</Label>
@@ -107,7 +107,7 @@ export function MemberCreditCard({
                 />
               </div>
             </div>
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-muted-foreground">
               A different admin must approve this request before the member&apos;s credit balance changes.
             </p>
             <ViewOnlyActionButton canEdit={canEditFinance} size="sm" onClick={onSubmitAdjustment} disabled={adjustmentSaving}>
@@ -116,7 +116,7 @@ export function MemberCreditCard({
           </div>
         )}
         {creditLoading ? (
-          <p className="text-sm text-slate-500">Loading credit history...</p>
+          <p className="text-sm text-muted-foreground">Loading credit history...</p>
         ) : creditError ? (
           <p className="text-sm text-red-600">{creditError}</p>
         ) : (
@@ -151,7 +151,7 @@ export function MemberCreditCard({
                               item.amountCents > 0 ? "text-green-700" : "text-red-700"
                             }`}
                           >{`${item.amountCents > 0 ? "+" : ""}$${(item.amountCents / 100).toFixed(2)}`}</TableCell>
-                          <TableCell className="text-sm text-slate-600 max-w-[260px] truncate">{item.description}</TableCell>
+                          <TableCell className="text-sm text-muted-foreground max-w-[260px] truncate">{item.description}</TableCell>
                           <TableCell className="text-sm">{formatAdminName(item.requestedBy)}</TableCell>
                           <TableCell className="text-right">
                             {isOwnRequest ? (
@@ -187,7 +187,7 @@ export function MemberCreditCard({
               </div>
             )}
             {creditHistory.length === 0 ? (
-              <p className="text-sm text-slate-500">No credit transactions</p>
+              <p className="text-sm text-muted-foreground">No credit transactions</p>
             ) : (
               <Table>
                 <TableHeader>
@@ -223,8 +223,8 @@ export function MemberCreditCard({
                       <TableCell
                         className={`font-medium ${item.amountCents > 0 ? "text-green-700" : "text-red-700"}`}
                       >{`${item.amountCents > 0 ? "+" : ""}$${(item.amountCents / 100).toFixed(2)}`}</TableCell>
-                      <TableCell className="text-sm text-slate-600 max-w-[200px] truncate">{item.description}</TableCell>
-                      <TableCell className="text-xs text-slate-600">
+                      <TableCell className="text-sm text-muted-foreground max-w-[200px] truncate">{item.description}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground">
                         {item.type === "ADMIN_ADJUSTMENT" && (item.requestedBy || item.approvedBy) ? (
                           <div className="space-y-1">
                             {item.requestedBy && <p>Requested by {formatAdminName(item.requestedBy)}</p>}
@@ -238,7 +238,7 @@ export function MemberCreditCard({
                             )}
                           </div>
                         ) : (
-                          <span className="text-slate-400">-</span>
+                          <span className="text-muted-foreground">-</span>
                         )}
                       </TableCell>
                       <TableCell className="text-sm">

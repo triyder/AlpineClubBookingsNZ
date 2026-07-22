@@ -127,7 +127,7 @@ export function MemberDependentDialog({
           </TabsList>
           <TabsContent value="create" className="mt-4">
             <div className="grid gap-4 py-2">
-              <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
+              <div className="rounded-md border border-border bg-muted p-3 text-sm text-muted-foreground">
                 This dependent will be created as a non-login member and inherit
                 notifications from the parent email.
               </div>
@@ -317,7 +317,7 @@ export function MemberDependentDialog({
               <div className="space-y-2">
                 <Label htmlFor="link-dependent-search">Member search</Label>
                 <div className="relative">
-                  <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+                  <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
                   <Input
                     id="link-dependent-search"
                     value={linkSearch}
@@ -326,7 +326,7 @@ export function MemberDependentDialog({
                     className="pl-9"
                   />
                   {linkSearching && (
-                    <div className="absolute right-3 top-2.5 text-xs text-slate-400">
+                    <div className="absolute right-3 top-2.5 text-xs text-muted-foreground">
                       Searching...
                     </div>
                   )}
@@ -334,11 +334,11 @@ export function MemberDependentDialog({
               </div>
 
               {linkSelected ? (
-                <div className="rounded-md border border-slate-200 p-3">
+                <div className="rounded-md border border-border p-3">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div>
                       <div className="flex flex-wrap items-center gap-2">
-                        <p className="text-sm font-medium text-slate-900">
+                        <p className="text-sm font-medium text-foreground">
                           {linkSelected.firstName} {linkSelected.lastName}
                         </p>
                         <Badge variant="secondary">
@@ -347,16 +347,16 @@ export function MemberDependentDialog({
                         {!linkSelected.active && (
                           <Badge
                             variant="secondary"
-                            className="bg-slate-100 text-slate-600 border-slate-200"
+                            className="bg-muted text-muted-foreground border-border"
                           >
                             Inactive
                           </Badge>
                         )}
                       </div>
-                      <p className="mt-1 text-xs text-slate-500">
+                      <p className="mt-1 text-xs text-muted-foreground">
                         {linkSelected.email}
                       </p>
-                      <p className="mt-1 text-xs text-slate-500">
+                      <p className="mt-1 text-xs text-muted-foreground">
                         {linkSelected.canLogin ? "Can login" : "Non-login"}
                         {linkSelected.dateOfBirth
                           ? ` · DOB ${formatMemberDateNz(linkSelected.dateOfBirth)}`
@@ -376,39 +376,39 @@ export function MemberDependentDialog({
                 </div>
               ) : linkSearch.trim().length >= 2 &&
                 linkSearchResults.length > 0 ? (
-                <div className="max-h-56 overflow-y-auto rounded-md border border-slate-200">
+                <div className="max-h-56 overflow-y-auto rounded-md border border-border">
                   {linkSearchResults.map((candidate) => (
                     <button
                       key={candidate.id}
                       type="button"
                       onClick={() => onSelectLinkCandidate(candidate)}
-                      className="w-full border-b border-slate-100 px-3 py-2 text-left text-sm last:border-b-0 hover:bg-slate-50"
+                      className="w-full border-b border-border px-3 py-2 text-left text-sm last:border-b-0 hover:bg-accent"
                     >
                       <span className="font-medium">
                         {candidate.firstName} {candidate.lastName}
                       </span>
-                      <span className="ml-2 text-slate-500">
+                      <span className="ml-2 text-muted-foreground">
                         {candidate.email}
                       </span>
-                      <span className="ml-2 text-xs text-slate-400">
+                      <span className="ml-2 text-xs text-muted-foreground">
                         {candidate.ageTier}
                       </span>
                     </button>
                   ))}
                 </div>
               ) : linkSearch.trim().length >= 2 && !linkSearching ? (
-                <p className="text-sm text-slate-500">
+                <p className="text-sm text-muted-foreground">
                   No eligible members found.
                 </p>
               ) : (
-                <p className="text-sm text-slate-500">
+                <p className="text-sm text-muted-foreground">
                   Start typing at least 2 characters to search.
                 </p>
               )}
 
               {linkSelected && (
                 <div className="space-y-4">
-                  <div className="space-y-3 rounded-md border border-slate-200 p-3">
+                  <div className="space-y-3 rounded-md border border-border p-3">
                     <div className="space-y-2">
                       <Label htmlFor="link-dependent-notification-source">
                         Notification email recipient
@@ -420,7 +420,7 @@ export function MemberDependentDialog({
                           onChangeLinkNotificationParentId(event.target.value)
                         }
                         disabled={saving}
-                        className="flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
+                        className="flex h-10 w-full rounded-md border border-border bg-card px-3 py-2 text-sm text-foreground"
                       >
                         <option value="">
                           Use {linkSelected.firstName}&apos;s own email
@@ -470,7 +470,7 @@ export function MemberDependentDialog({
                   <div className="space-y-2">
                     <Label>Add to family groups</Label>
                     {member.familyGroups.length > 0 ? (
-                      <div className="space-y-2 rounded-md border border-slate-200 p-3">
+                      <div className="space-y-2 rounded-md border border-border p-3">
                         {member.familyGroups.map((group) => (
                           <div
                             key={group.id}
@@ -497,7 +497,7 @@ export function MemberDependentDialog({
                         ))}
                       </div>
                     ) : (
-                      <p className="text-sm text-slate-500">
+                      <p className="text-sm text-muted-foreground">
                         This parent is not in any family groups.
                       </p>
                     )}

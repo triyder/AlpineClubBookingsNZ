@@ -62,7 +62,7 @@ function normalizeInputDate(value: Date | string, fieldName: string): Date {
  * Issue #713 replaced the old hard rejection of dates outside the booking
  * checkIn/checkOut with auto-expansion: this function no longer rejects
  * out-of-range dates. Instead it normalizes the guest's stay and the caller
- * expands the booking range to cover it (validating capacity + SeasonRate
+ * expands the booking range to cover it (validating capacity + season-rate
  * coverage inside the advisory lock). The `booking` argument is still used to
  * default a guest with no dates to the whole booking range.
  */

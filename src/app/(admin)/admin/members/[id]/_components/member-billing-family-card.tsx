@@ -77,7 +77,7 @@ export function MemberBillingFamilyCard({
 
   return (
     <div className="px-6 pb-6 text-sm">
-      <Label htmlFor={`billing-family-${memberId}`} className="text-slate-500">
+      <Label htmlFor={`billing-family-${memberId}`} className="text-muted-foreground">
         Billing family
       </Label>
       <div className="mt-1 max-w-md">
@@ -95,7 +95,7 @@ export function MemberBillingFamilyCard({
           </SelectContent>
         </Select>
       </div>
-      <p className="mt-1 text-xs text-slate-500">
+      <p className="mt-1 text-xs text-muted-foreground">
         {individualMode
           ? "This club bills members individually, so the billing family is ignored."
           : familyGroups.length > 1

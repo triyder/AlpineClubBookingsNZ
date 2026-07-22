@@ -119,9 +119,33 @@ describe("PublicBookingRequestsPanel release-hold warning (#1255 RR-1)", () => {
   it("hides request mutation controls for bookings view-only access", async () => {
     render(<PublicBookingRequestsPanel canEdit={false} />);
 
-    expect(
-      await screen.findByText(/can view this request but cannot price/i),
-    ).toBeTruthy();
+    /*
+      Wait on the request CARD, not on the view-only explanation.
+
+      This assertion used to await the per-request `AdminViewOnlyNotice`
+      ("can view this request but cannot price…"), which #2160 removed in favour
+      of one section banner. That notice rendered INSIDE the fetched request
+      card, so awaiting it did double duty: it checked the explanation AND
+      synchronised on the fetch. The banner does not — it renders at the top of
+      the panel, synchronously, whether or not any request has loaded. Swapping
+      the await straight over to the banner would therefore make the two
+      assertions below vacuous: with no card rendered yet, "Release hold" and
+      the contact picker are absent for every `canEdit`, and the test would keep
+      passing even if the gate broke completely.
+
+      So the await is anchored to the contact email, which every request card
+      renders regardless of `canEdit`. Only once the card is on screen do the
+      absence checks mean anything.
+    */
+    expect(await screen.findByText(/ada@example\.com/)).toBeTruthy();
+
+    // The explanation now lives once, in the section banner.
+    expect(screen.getByTestId("admin-view-only-banner").textContent).toMatch(
+      /can view booking requests but cannot price/i,
+    );
+
+    // …and the mutation controls themselves are still gone, which is the point
+    // of this test. Only the explanation moved.
     expect(screen.queryByRole("button", { name: "Release hold" })).toBeNull();
     expect(screen.queryByTestId("contact-picker")).toBeNull();
   });

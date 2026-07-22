@@ -39,8 +39,8 @@ export default async function NotificationRecipientsPage() {
     <div className="space-y-8">
       <div>
         <BackLink href="/admin/notifications" label="Notifications & Email" />
-        <h1 className="mt-2 text-2xl font-bold text-slate-900">Recipients</h1>
-        <p className="mt-1 text-sm text-slate-500">
+        <h1 className="mt-2 text-2xl font-bold text-foreground">Recipients</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
           Choose which system alerts each active admin receives. Changes save
           automatically. New admin alert types default to enabled.
         </p>

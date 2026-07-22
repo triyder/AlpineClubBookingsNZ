@@ -1,0 +1,1667 @@
+{
+  "meta": {
+    "root": "src",
+    "filesScanned": 1437,
+    "prefixes": [
+      "bg",
+      "text",
+      "border",
+      "ring-offset",
+      "ring",
+      "divide",
+      "outline",
+      "fill",
+      "stroke",
+      "shadow",
+      "from",
+      "via",
+      "to",
+      "accent",
+      "caret",
+      "decoration",
+      "placeholder"
+    ],
+    "colorFamilies": [
+      "red",
+      "orange",
+      "amber",
+      "yellow",
+      "lime",
+      "green",
+      "emerald",
+      "teal",
+      "cyan",
+      "sky",
+      "blue",
+      "indigo",
+      "violet",
+      "purple",
+      "fuchsia",
+      "pink",
+      "rose"
+    ],
+    "neutralFamilies": [
+      "slate",
+      "gray",
+      "zinc",
+      "neutral",
+      "stone"
+    ],
+    "note": "Occurrence = one Tailwind colour-utility token (variant prefixes stripped; /opacity suffix folded into the base string). Files under __tests__ excluded, TS/TSX only."
+  },
+  "colored": {
+    "total": 1716,
+    "kioskAggregateTotal": 37,
+    "byTree": {
+      "app-admin": 779,
+      "components-other": 248,
+      "app-authenticated": 218,
+      "components-admin": 212,
+      "lib": 107,
+      "app-public": 44,
+      "kiosk-lodge-kiosk": 37,
+      "app-website": 35,
+      "app-lodge": 31,
+      "app-finance": 5
+    },
+    "byFamily": {
+      "amber": 491,
+      "red": 442,
+      "green": 229,
+      "blue": 168,
+      "emerald": 110,
+      "sky": 53,
+      "rose": 50,
+      "purple": 39,
+      "yellow": 39,
+      "indigo": 31,
+      "orange": 31,
+      "violet": 11,
+      "cyan": 6,
+      "fuchsia": 6,
+      "teal": 4,
+      "lime": 3,
+      "pink": 3
+    },
+    "uniqueBaseCount": 189,
+    "familyCount": 17,
+    "uniquePerFamily": {
+      "amber": 24,
+      "red": 24,
+      "blue": 22,
+      "green": 20,
+      "orange": 13,
+      "purple": 12,
+      "emerald": 11,
+      "indigo": 11,
+      "sky": 9,
+      "yellow": 9,
+      "violet": 7,
+      "cyan": 6,
+      "fuchsia": 6,
+      "rose": 6,
+      "lime": 3,
+      "pink": 3,
+      "teal": 3
+    },
+    "uniqueBase": {
+      "bg-amber-50": {
+        "family": "amber",
+        "count": 101,
+        "anchors": [
+          "src/app/(admin)/admin/access-roles/_components/access-role-manager.tsx:232",
+          "src/app/(admin)/admin/book/page.tsx:886",
+          "src/app/(admin)/admin/booking-policies/cancellation/page.tsx:28"
+        ]
+      },
+      "border-amber-200": {
+        "family": "amber",
+        "count": 84,
+        "anchors": [
+          "src/app/(admin)/admin/access-roles/_components/access-role-manager.tsx:232",
+          "src/app/(admin)/admin/book/page.tsx:886",
+          "src/app/(admin)/admin/booking-requests/page.tsx:120"
+        ]
+      },
+      "text-amber-800": {
+        "family": "amber",
+        "count": 75,
+        "anchors": [
+          "src/app/(admin)/admin/booking-requests/page.tsx:120",
+          "src/app/(admin)/admin/config-transfer/page.tsx:397",
+          "src/app/(admin)/admin/config-transfer/page.tsx:497"
+        ]
+      },
+      "text-amber-900": {
+        "family": "amber",
+        "count": 65,
+        "anchors": [
+          "src/app/(admin)/admin/access-roles/_components/access-role-manager.tsx:232",
+          "src/app/(admin)/admin/book/page.tsx:887",
+          "src/app/(admin)/admin/book/page.tsx:890"
+        ]
+      },
+      "text-amber-700": {
+        "family": "amber",
+        "count": 47,
+        "anchors": [
+          "src/app/(admin)/admin/config-transfer/page.tsx:511",
+          "src/app/(admin)/admin/dashboard/page.tsx:360",
+          "src/app/(admin)/admin/dashboard/page.tsx:378"
+        ]
+      },
+      "border-amber-300": {
+        "family": "amber",
+        "count": 23,
+        "anchors": [
+          "src/app/(admin)/admin/booking-policies/cancellation/page.tsx:28",
+          "src/app/(admin)/admin/member-applications/_components/approval-mapping-panel.tsx:635",
+          "src/app/(admin)/admin/member-applications/_components/approval-mapping-panel.tsx:650"
+        ]
+      },
+      "bg-amber-100": {
+        "family": "amber",
+        "count": 21,
+        "anchors": [
+          "src/app/(admin)/admin/booking-requests/page.tsx:120",
+          "src/app/(admin)/admin/config-transfer/page.tsx:51",
+          "src/app/(admin)/admin/family-groups/page.tsx:416"
+        ]
+      },
+      "border-amber-400": {
+        "family": "amber",
+        "count": 13,
+        "anchors": [
+          "src/app/(admin)/admin/display/builder/display-builder.tsx:407",
+          "src/app/(admin)/admin/display/builder/display-builder.tsx:422",
+          "src/app/(admin)/admin/display/builder/display-builder.tsx:600"
+        ]
+      },
+      "text-amber-950": {
+        "family": "amber",
+        "count": 13,
+        "anchors": [
+          "src/app/(admin)/admin/dashboard/page.tsx:380",
+          "src/app/(admin)/admin/dashboard/page.tsx:407",
+          "src/app/(admin)/admin/dashboard/page.tsx:448"
+        ]
+      },
+      "text-amber-200": {
+        "family": "amber",
+        "count": 11,
+        "anchors": [
+          "src/app/(admin)/admin/display/builder/display-builder.tsx:407",
+          "src/app/(admin)/admin/display/builder/display-builder.tsx:422",
+          "src/app/(admin)/admin/display/builder/display-builder.tsx:600"
+        ]
+      },
+      "bg-amber-950": {
+        "family": "amber",
+        "count": 10,
+        "anchors": [
+          "src/app/(admin)/admin/display/builder/display-builder.tsx:407",
+          "src/app/(admin)/admin/display/builder/display-builder.tsx:422",
+          "src/app/(admin)/admin/display/builder/display-builder.tsx:600"
+        ]
+      },
+      "text-amber-600": {
+        "family": "amber",
+        "count": 7,
+        "anchors": [
+          "src/app/(admin)/admin/dashboard/page.tsx:465",
+          "src/app/(admin)/admin/members/_components/member-bulk-membership-dialog.tsx:368",
+          "src/app/(admin)/admin/promo-codes/promo-codes-page-client.tsx:1216"
+        ]
+      },
+      "bg-amber-500": {
+        "family": "amber",
+        "count": 4,
+        "anchors": [
+          "src/app/(admin)/admin/bed-allocation/_components/booking-accent.ts:20",
+          "src/app/(lodge)/lodge/kiosk/page.tsx:522",
+          "src/components/admin-booking-calendar.tsx:38"
+        ]
+      },
+      "text-amber-400": {
+        "family": "amber",
+        "count": 3,
+        "anchors": [
+          "src/app/(admin)/admin/image-manager/image-manager-client.tsx:411",
+          "src/app/(lodge)/lodge/roster/[date]/setup/page.tsx:624",
+          "src/app/(lodge)/lodge/roster/[date]/setup/page.tsx:788"
+        ]
+      },
+      "text-amber-500": {
+        "family": "amber",
+        "count": 3,
+        "anchors": [
+          "src/app/(admin)/admin/image-manager/image-manager-client.tsx:409",
+          "src/app/(admin)/admin/members/_components/member-bulk-membership-dialog.tsx:368",
+          "src/app/(public)/chores/[token]/page.tsx:64"
+        ]
+      },
+      "bg-amber-700": {
+        "family": "amber",
+        "count": 2,
+        "anchors": [
+          "src/app/(lodge)/lodge/kiosk/page.tsx:825",
+          "src/app/(lodge)/lodge/roster/[date]/setup/page.tsx:534"
+        ]
+      },
+      "text-amber-100": {
+        "family": "amber",
+        "count": 2,
+        "anchors": [
+          "src/app/(lodge)/lodge/kiosk/page.tsx:825",
+          "src/app/(lodge)/lodge/roster/[date]/setup/page.tsx:534"
+        ]
+      },
+      "bg-amber-200": {
+        "family": "amber",
+        "count": 1,
+        "anchors": [
+          "src/components/admin/admin-exclusive-hold-controls.tsx:192"
+        ]
+      },
+      "bg-amber-600": {
+        "family": "amber",
+        "count": 1,
+        "anchors": [
+          "src/app/(lodge)/lodge/kiosk/page.tsx:851"
+        ]
+      },
+      "bg-amber-900": {
+        "family": "amber",
+        "count": 1,
+        "anchors": [
+          "src/app/(lodge)/lodge/roster/[date]/setup/page.tsx:489"
+        ]
+      },
+      "border-amber-500": {
+        "family": "amber",
+        "count": 1,
+        "anchors": [
+          "src/app/(lodge)/lodge/kiosk/_components/kiosk-week-view.tsx:58"
+        ]
+      },
+      "border-amber-600": {
+        "family": "amber",
+        "count": 1,
+        "anchors": [
+          "src/components/additional-payment-card.tsx:92"
+        ]
+      },
+      "ring-amber-200": {
+        "family": "amber",
+        "count": 1,
+        "anchors": [
+          "src/app/(admin)/admin/bed-allocation/_components/booking-accent.ts:21"
+        ]
+      },
+      "ring-amber-800": {
+        "family": "amber",
+        "count": 1,
+        "anchors": [
+          "src/app/(admin)/admin/bed-allocation/_components/booking-accent.ts:21"
+        ]
+      },
+      "bg-blue-50": {
+        "family": "blue",
+        "count": 33,
+        "anchors": [
+          "src/app/(admin)/admin/book/page.tsx:938",
+          "src/app/(admin)/admin/book/page.tsx:955",
+          "src/app/(admin)/admin/dashboard/page.tsx:342"
+        ]
+      },
+      "border-blue-200": {
+        "family": "blue",
+        "count": 25,
+        "anchors": [
+          "src/app/(admin)/admin/dashboard/page.tsx:342",
+          "src/app/(admin)/admin/members/[id]/_components/member-committee-assignments-card.tsx:516",
+          "src/app/(admin)/admin/members/[id]/_components/member-credit-card.tsx:214"
+        ]
+      },
+      "text-blue-600": {
+        "family": "blue",
+        "count": 24,
+        "anchors": [
+          "src/app/(admin)/admin/audit-log/page.tsx:737",
+          "src/app/(admin)/admin/audit-log/page.tsx:802",
+          "src/app/(admin)/admin/dashboard/page.tsx:344"
+        ]
+      },
+      "text-blue-700": {
+        "family": "blue",
+        "count": 13,
+        "anchors": [
+          "src/app/(admin)/admin/dashboard/page.tsx:347",
+          "src/app/(admin)/admin/image-manager/image-manager-client.tsx:456",
+          "src/app/(admin)/admin/members/[id]/_components/member-committee-assignments-card.tsx:524"
+        ]
+      },
+      "text-blue-800": {
+        "family": "blue",
+        "count": 13,
+        "anchors": [
+          "src/app/(admin)/admin/members/[id]/_components/member-credit-card.tsx:214",
+          "src/app/(admin)/admin/members/_components/member-xero-controls.tsx:205",
+          "src/app/(admin)/admin/members/_components/member-xero-controls.tsx:279"
+        ]
+      },
+      "bg-blue-100": {
+        "family": "blue",
+        "count": 9,
+        "anchors": [
+          "src/app/(admin)/admin/members/[id]/_components/member-credit-card.tsx:214",
+          "src/app/(admin)/admin/roster/page.tsx:78",
+          "src/components/admin-booking-calendar.tsx:452"
+        ]
+      },
+      "border-blue-500": {
+        "family": "blue",
+        "count": 7,
+        "anchors": [
+          "src/app/(admin)/admin/book/page.tsx:938",
+          "src/app/(admin)/admin/book/page.tsx:955",
+          "src/app/(website)/join/[code]/member-group-join-panel.tsx:344"
+        ]
+      },
+      "bg-blue-600": {
+        "family": "blue",
+        "count": 6,
+        "anchors": [
+          "src/app/(lodge)/lodge/roster/[date]/setup/page.tsx:458",
+          "src/app/(lodge)/lodge/roster/[date]/setup/page.tsx:551",
+          "src/app/(lodge)/lodge/roster/[date]/setup/page.tsx:592"
+        ]
+      },
+      "text-blue-950": {
+        "family": "blue",
+        "count": 6,
+        "anchors": [
+          "src/app/(admin)/admin/book/page.tsx:938",
+          "src/app/(admin)/admin/book/page.tsx:955",
+          "src/app/(website)/join/[code]/member-group-join-panel.tsx:344"
+        ]
+      },
+      "bg-blue-500": {
+        "family": "blue",
+        "count": 5,
+        "anchors": [
+          "src/app/(admin)/admin/bed-allocation/_components/booking-accent.ts:40",
+          "src/app/(lodge)/lodge/roster/[date]/setup/page.tsx:551",
+          "src/app/(lodge)/lodge/roster/[date]/setup/page.tsx:647"
+        ]
+      },
+      "text-blue-900": {
+        "family": "blue",
+        "count": 5,
+        "anchors": [
+          "src/app/(admin)/admin/dashboard/page.tsx:346",
+          "src/app/(admin)/admin/members/[id]/_components/member-committee-assignments-card.tsx:516",
+          "src/components/booking-payment-section.tsx:33"
+        ]
+      },
+      "border-blue-400": {
+        "family": "blue",
+        "count": 4,
+        "anchors": [
+          "src/app/(admin)/admin/image-manager/image-manager-client.tsx:456",
+          "src/app/(lodge)/lodge/roster/[date]/setup/page.tsx:592",
+          "src/components/booking-calendar.tsx:122"
+        ]
+      },
+      "text-blue-300": {
+        "family": "blue",
+        "count": 4,
+        "anchors": [
+          "src/app/(lodge)/lodge/kiosk/_components/kiosk-week-view.tsx:173",
+          "src/app/(lodge)/lodge/kiosk/page.tsx:774",
+          "src/components/kiosk-lodge-instructions.tsx:16"
+        ]
+      },
+      "bg-blue-400": {
+        "family": "blue",
+        "count": 3,
+        "anchors": [
+          "src/app/(lodge)/lodge/roster/[date]/setup/page.tsx:551",
+          "src/app/(lodge)/lodge/roster/[date]/setup/page.tsx:647",
+          "src/app/(lodge)/lodge/roster/[date]/setup/page.tsx:766"
+        ]
+      },
+      "border-blue-600": {
+        "family": "blue",
+        "count": 2,
+        "anchors": [
+          "src/app/(lodge)/lodge/roster/[date]/setup/page.tsx:583",
+          "src/components/stripe/BookingPaymentWrapper.tsx:143"
+        ]
+      },
+      "ring-blue-200": {
+        "family": "blue",
+        "count": 2,
+        "anchors": [
+          "src/app/(admin)/admin/bed-allocation/_components/booking-accent.ts:41",
+          "src/components/admin/page-content-panel.tsx:1181"
+        ]
+      },
+      "text-blue-400": {
+        "family": "blue",
+        "count": 2,
+        "anchors": [
+          "src/app/(admin)/admin/image-manager/image-manager-client.tsx:477",
+          "src/app/(lodge)/lodge/kiosk/page.tsx:592"
+        ]
+      },
+      "bg-blue-800": {
+        "family": "blue",
+        "count": 1,
+        "anchors": [
+          "src/app/(lodge)/lodge/roster/[date]/setup/page.tsx:583"
+        ]
+      },
+      "border-blue-300": {
+        "family": "blue",
+        "count": 1,
+        "anchors": [
+          "src/lib/site-banner-shared.ts:27"
+        ]
+      },
+      "decoration-blue-400": {
+        "family": "blue",
+        "count": 1,
+        "anchors": [
+          "src/components/admin/page-content-panel.tsx:1081"
+        ]
+      },
+      "ring-blue-500": {
+        "family": "blue",
+        "count": 1,
+        "anchors": [
+          "src/components/booking-notes-editor.tsx:56"
+        ]
+      },
+      "ring-blue-800": {
+        "family": "blue",
+        "count": 1,
+        "anchors": [
+          "src/app/(admin)/admin/bed-allocation/_components/booking-accent.ts:41"
+        ]
+      },
+      "bg-cyan-100": {
+        "family": "cyan",
+        "count": 1,
+        "anchors": [
+          "src/lib/audit-category-badges.ts:27"
+        ]
+      },
+      "bg-cyan-500": {
+        "family": "cyan",
+        "count": 1,
+        "anchors": [
+          "src/app/(admin)/admin/bed-allocation/_components/booking-accent.ts:35"
+        ]
+      },
+      "border-cyan-200": {
+        "family": "cyan",
+        "count": 1,
+        "anchors": [
+          "src/lib/audit-category-badges.ts:27"
+        ]
+      },
+      "ring-cyan-200": {
+        "family": "cyan",
+        "count": 1,
+        "anchors": [
+          "src/app/(admin)/admin/bed-allocation/_components/booking-accent.ts:36"
+        ]
+      },
+      "ring-cyan-800": {
+        "family": "cyan",
+        "count": 1,
+        "anchors": [
+          "src/app/(admin)/admin/bed-allocation/_components/booking-accent.ts:36"
+        ]
+      },
+      "text-cyan-800": {
+        "family": "cyan",
+        "count": 1,
+        "anchors": [
+          "src/lib/audit-category-badges.ts:27"
+        ]
+      },
+      "text-emerald-700": {
+        "family": "emerald",
+        "count": 27,
+        "anchors": [
+          "src/app/(admin)/admin/config-transfer/page.tsx:396",
+          "src/app/(admin)/admin/member-applications/_components/approval-mapping-panel.tsx:593",
+          "src/app/(admin)/admin/members/[id]/_components/member-xero-contact-summary.tsx:40"
+        ]
+      },
+      "border-emerald-200": {
+        "family": "emerald",
+        "count": 24,
+        "anchors": [
+          "src/app/(admin)/admin/access-roles/_components/access-role-manager.tsx:226",
+          "src/app/(admin)/admin/lodge/page.tsx:167",
+          "src/app/(admin)/admin/member-applications/_components/approval-mapping-panel.tsx:408"
+        ]
+      },
+      "text-emerald-800": {
+        "family": "emerald",
+        "count": 21,
+        "anchors": [
+          "src/app/(admin)/admin/access-roles/_components/access-role-manager.tsx:226",
+          "src/app/(admin)/admin/config-transfer/page.tsx:50",
+          "src/app/(authenticated)/bookings/[id]/page.tsx:86"
+        ]
+      },
+      "bg-emerald-50": {
+        "family": "emerald",
+        "count": 18,
+        "anchors": [
+          "src/app/(admin)/admin/access-roles/_components/access-role-manager.tsx:226",
+          "src/app/(admin)/admin/lodge/page.tsx:167",
+          "src/app/(admin)/admin/member-applications/_components/approval-mapping-panel.tsx:408"
+        ]
+      },
+      "bg-emerald-100": {
+        "family": "emerald",
+        "count": 11,
+        "anchors": [
+          "src/app/(admin)/admin/config-transfer/page.tsx:50",
+          "src/app/(admin)/admin/member-applications/_components/approval-mapping-panel.tsx:436",
+          "src/app/(authenticated)/bookings/[id]/page.tsx:86"
+        ]
+      },
+      "text-emerald-900": {
+        "family": "emerald",
+        "count": 4,
+        "anchors": [
+          "src/app/(admin)/admin/lodge/page.tsx:167",
+          "src/app/(admin)/admin/member-applications/_components/approval-mapping-panel.tsx:436",
+          "src/app/(authenticated)/bookings/[id]/page.tsx:102"
+        ]
+      },
+      "bg-emerald-500": {
+        "family": "emerald",
+        "count": 1,
+        "anchors": [
+          "src/app/(admin)/admin/bed-allocation/_components/booking-accent.ts:30"
+        ]
+      },
+      "border-emerald-400": {
+        "family": "emerald",
+        "count": 1,
+        "anchors": [
+          "src/app/(admin)/admin/member-applications/_components/approval-mapping-panel.tsx:436"
+        ]
+      },
+      "border-emerald-500": {
+        "family": "emerald",
+        "count": 1,
+        "anchors": [
+          "src/app/(lodge)/lodge/kiosk/_components/kiosk-week-view.tsx:66"
+        ]
+      },
+      "ring-emerald-200": {
+        "family": "emerald",
+        "count": 1,
+        "anchors": [
+          "src/app/(admin)/admin/bed-allocation/_components/booking-accent.ts:31"
+        ]
+      },
+      "ring-emerald-800": {
+        "family": "emerald",
+        "count": 1,
+        "anchors": [
+          "src/app/(admin)/admin/bed-allocation/_components/booking-accent.ts:31"
+        ]
+      },
+      "bg-fuchsia-100": {
+        "family": "fuchsia",
+        "count": 1,
+        "anchors": [
+          "src/lib/audit-category-badges.ts:28"
+        ]
+      },
+      "bg-fuchsia-500": {
+        "family": "fuchsia",
+        "count": 1,
+        "anchors": [
+          "src/app/(admin)/admin/bed-allocation/_components/booking-accent.ts:50"
+        ]
+      },
+      "border-fuchsia-200": {
+        "family": "fuchsia",
+        "count": 1,
+        "anchors": [
+          "src/lib/audit-category-badges.ts:28"
+        ]
+      },
+      "ring-fuchsia-200": {
+        "family": "fuchsia",
+        "count": 1,
+        "anchors": [
+          "src/app/(admin)/admin/bed-allocation/_components/booking-accent.ts:51"
+        ]
+      },
+      "ring-fuchsia-800": {
+        "family": "fuchsia",
+        "count": 1,
+        "anchors": [
+          "src/app/(admin)/admin/bed-allocation/_components/booking-accent.ts:51"
+        ]
+      },
+      "text-fuchsia-800": {
+        "family": "fuchsia",
+        "count": 1,
+        "anchors": [
+          "src/lib/audit-category-badges.ts:28"
+        ]
+      },
+      "text-green-700": {
+        "family": "green",
+        "count": 51,
+        "anchors": [
+          "src/app/(admin)/admin/book/page.tsx:865",
+          "src/app/(admin)/admin/config-transfer/page.tsx:608",
+          "src/app/(admin)/admin/lodge/page.tsx:276"
+        ]
+      },
+      "bg-green-50": {
+        "family": "green",
+        "count": 42,
+        "anchors": [
+          "src/app/(admin)/admin/book/page.tsx:849",
+          "src/app/(admin)/admin/communications/page.tsx:214",
+          "src/app/(admin)/admin/config-transfer/page.tsx:608"
+        ]
+      },
+      "text-green-800": {
+        "family": "green",
+        "count": 37,
+        "anchors": [
+          "src/app/(admin)/admin/book/page.tsx:850",
+          "src/app/(admin)/admin/book/page.tsx:855",
+          "src/app/(admin)/admin/communications/page.tsx:214"
+        ]
+      },
+      "border-green-200": {
+        "family": "green",
+        "count": 34,
+        "anchors": [
+          "src/app/(admin)/admin/book/page.tsx:849",
+          "src/app/(admin)/admin/communications/page.tsx:214",
+          "src/app/(admin)/admin/deletion-requests/deletion-requests-client.tsx:182"
+        ]
+      },
+      "text-green-600": {
+        "family": "green",
+        "count": 20,
+        "anchors": [
+          "src/app/(admin)/admin/book/page.tsx:806",
+          "src/app/(admin)/admin/book/page.tsx:811",
+          "src/app/(admin)/admin/book/page.tsx:831"
+        ]
+      },
+      "bg-green-100": {
+        "family": "green",
+        "count": 16,
+        "anchors": [
+          "src/app/(admin)/admin/deletion-requests/deletion-requests-client.tsx:182",
+          "src/app/(admin)/admin/health/_components/shared.tsx:9",
+          "src/app/(admin)/admin/health/_components/shared.tsx:10"
+        ]
+      },
+      "bg-green-600": {
+        "family": "green",
+        "count": 7,
+        "anchors": [
+          "src/app/(lodge)/lodge/kiosk/page.tsx:839",
+          "src/app/(lodge)/lodge/kiosk/page.tsx:944",
+          "src/app/(lodge)/lodge/kiosk/page.tsx:980"
+        ]
+      },
+      "border-green-300": {
+        "family": "green",
+        "count": 3,
+        "anchors": [
+          "src/app/(admin)/admin/book/page.tsx:860",
+          "src/app/(admin)/admin/site-style/site-style-wizard.tsx:788",
+          "src/components/guest-night-grid.tsx:112"
+        ]
+      },
+      "bg-green-500": {
+        "family": "green",
+        "count": 2,
+        "anchors": [
+          "src/app/(lodge)/lodge/roster/[date]/setup/page.tsx:845",
+          "src/components/admin-booking-calendar.tsx:39"
+        ]
+      },
+      "bg-green-700": {
+        "family": "green",
+        "count": 2,
+        "anchors": [
+          "src/app/(lodge)/lodge/kiosk/page.tsx:820",
+          "src/app/(lodge)/lodge/roster/[date]/setup/page.tsx:529"
+        ]
+      },
+      "bg-green-800": {
+        "family": "green",
+        "count": 2,
+        "anchors": [
+          "src/app/(lodge)/lodge/kiosk/page.tsx:937",
+          "src/app/(lodge)/lodge/kiosk/page.tsx:973"
+        ]
+      },
+      "border-green-400": {
+        "family": "green",
+        "count": 2,
+        "anchors": [
+          "src/app/(lodge)/lodge/kiosk/page.tsx:944",
+          "src/app/(lodge)/lodge/kiosk/page.tsx:980"
+        ]
+      },
+      "text-green-100": {
+        "family": "green",
+        "count": 2,
+        "anchors": [
+          "src/app/(lodge)/lodge/kiosk/page.tsx:820",
+          "src/app/(lodge)/lodge/roster/[date]/setup/page.tsx:529"
+        ]
+      },
+      "text-green-200": {
+        "family": "green",
+        "count": 2,
+        "anchors": [
+          "src/app/(lodge)/lodge/kiosk/page.tsx:937",
+          "src/app/(lodge)/lodge/kiosk/page.tsx:973"
+        ]
+      },
+      "text-green-900": {
+        "family": "green",
+        "count": 2,
+        "anchors": [
+          "src/components/guest-night-grid.tsx:112",
+          "src/components/promo-code-input.tsx:207"
+        ]
+      },
+      "bg-green-200": {
+        "family": "green",
+        "count": 1,
+        "anchors": [
+          "src/lib/admin-member-badges.ts:59"
+        ]
+      },
+      "bg-green-400": {
+        "family": "green",
+        "count": 1,
+        "anchors": [
+          "src/app/(lodge)/lodge/roster/[date]/setup/page.tsx:845"
+        ]
+      },
+      "bg-green-900": {
+        "family": "green",
+        "count": 1,
+        "anchors": [
+          "src/app/(lodge)/lodge/kiosk/page.tsx:797"
+        ]
+      },
+      "border-green-700": {
+        "family": "green",
+        "count": 1,
+        "anchors": [
+          "src/app/(lodge)/lodge/kiosk/page.tsx:797"
+        ]
+      },
+      "text-green-500": {
+        "family": "green",
+        "count": 1,
+        "anchors": [
+          "src/app/(admin)/admin/health/_components/shared.tsx:42"
+        ]
+      },
+      "bg-indigo-50": {
+        "family": "indigo",
+        "count": 5,
+        "anchors": [
+          "src/app/(admin)/admin/members/[id]/page.tsx:688",
+          "src/app/(authenticated)/book/_components/guests-step.tsx:210",
+          "src/app/(authenticated)/book/_components/guests-step.tsx:244"
+        ]
+      },
+      "border-indigo-200": {
+        "family": "indigo",
+        "count": 5,
+        "anchors": [
+          "src/app/(admin)/admin/members/[id]/page.tsx:688",
+          "src/app/(authenticated)/book/_components/guests-step.tsx:210",
+          "src/app/(authenticated)/book/_components/guests-step.tsx:244"
+        ]
+      },
+      "text-indigo-700": {
+        "family": "indigo",
+        "count": 4,
+        "anchors": [
+          "src/app/(admin)/admin/members/[id]/page.tsx:688",
+          "src/app/(authenticated)/book/_components/guests-step.tsx:216",
+          "src/components/member-onboarding-wizard.tsx:316"
+        ]
+      },
+      "text-indigo-800": {
+        "family": "indigo",
+        "count": 4,
+        "anchors": [
+          "src/app/(admin)/admin/members/[id]/page.tsx:688",
+          "src/app/(authenticated)/book/_components/guests-step.tsx:216",
+          "src/components/admin/booking-requests/public-booking-requests-panel.tsx:1004"
+        ]
+      },
+      "text-indigo-200": {
+        "family": "indigo",
+        "count": 3,
+        "anchors": [
+          "src/app/(authenticated)/book/_components/guests-step.tsx:216",
+          "src/app/(authenticated)/book/_components/guests-step.tsx:245",
+          "src/app/(authenticated)/book/_components/guests-step.tsx:251"
+        ]
+      },
+      "bg-indigo-100": {
+        "family": "indigo",
+        "count": 2,
+        "anchors": [
+          "src/app/(admin)/admin/members/[id]/page.tsx:688",
+          "src/lib/status-colors.ts:46"
+        ]
+      },
+      "bg-indigo-950": {
+        "family": "indigo",
+        "count": 2,
+        "anchors": [
+          "src/app/(authenticated)/book/_components/guests-step.tsx:210",
+          "src/app/(authenticated)/book/_components/guests-step.tsx:244"
+        ]
+      },
+      "border-indigo-800": {
+        "family": "indigo",
+        "count": 2,
+        "anchors": [
+          "src/app/(authenticated)/book/_components/guests-step.tsx:210",
+          "src/app/(authenticated)/book/_components/guests-step.tsx:244"
+        ]
+      },
+      "text-indigo-900": {
+        "family": "indigo",
+        "count": 2,
+        "anchors": [
+          "src/app/(authenticated)/book/_components/guests-step.tsx:245",
+          "src/app/(authenticated)/book/_components/guests-step.tsx:251"
+        ]
+      },
+      "text-indigo-300": {
+        "family": "indigo",
+        "count": 1,
+        "anchors": [
+          "src/app/(authenticated)/book/_components/guests-step.tsx:216"
+        ]
+      },
+      "text-indigo-600": {
+        "family": "indigo",
+        "count": 1,
+        "anchors": [
+          "src/app/(authenticated)/profile/partner-link-section.tsx:181"
+        ]
+      },
+      "bg-lime-500": {
+        "family": "lime",
+        "count": 1,
+        "anchors": [
+          "src/app/(admin)/admin/bed-allocation/_components/booking-accent.ts:25"
+        ]
+      },
+      "ring-lime-200": {
+        "family": "lime",
+        "count": 1,
+        "anchors": [
+          "src/app/(admin)/admin/bed-allocation/_components/booking-accent.ts:26"
+        ]
+      },
+      "ring-lime-800": {
+        "family": "lime",
+        "count": 1,
+        "anchors": [
+          "src/app/(admin)/admin/bed-allocation/_components/booking-accent.ts:26"
+        ]
+      },
+      "text-orange-800": {
+        "family": "orange",
+        "count": 6,
+        "anchors": [
+          "src/app/(admin)/admin/book/page.tsx:680",
+          "src/app/(admin)/admin/members/[id]/_components/member-credit-card.tsx:212",
+          "src/app/(admin)/admin/roster/page.tsx:80"
+        ]
+      },
+      "bg-orange-100": {
+        "family": "orange",
+        "count": 4,
+        "anchors": [
+          "src/app/(admin)/admin/members/[id]/_components/member-credit-card.tsx:212",
+          "src/app/(admin)/admin/roster/page.tsx:80",
+          "src/lib/status-colors.ts:18"
+        ]
+      },
+      "bg-orange-50": {
+        "family": "orange",
+        "count": 4,
+        "anchors": [
+          "src/app/(admin)/admin/book/page.tsx:680",
+          "src/app/(admin)/admin/book/page.tsx:981",
+          "src/app/(admin)/admin/dashboard/page.tsx:769"
+        ]
+      },
+      "text-orange-700": {
+        "family": "orange",
+        "count": 4,
+        "anchors": [
+          "src/app/(admin)/admin/book/page.tsx:806",
+          "src/components/booking-editor.tsx:234",
+          "src/components/edit-booking-panel.tsx:1709"
+        ]
+      },
+      "bg-orange-500": {
+        "family": "orange",
+        "count": 3,
+        "anchors": [
+          "src/app/(admin)/admin/bed-allocation/_components/booking-accent.ts:15",
+          "src/components/admin-booking-calendar.tsx:43",
+          "src/components/admin-sidebar.tsx:797"
+        ]
+      },
+      "border-orange-200": {
+        "family": "orange",
+        "count": 2,
+        "anchors": [
+          "src/app/(admin)/admin/book/page.tsx:981",
+          "src/app/(admin)/admin/members/[id]/_components/member-credit-card.tsx:212"
+        ]
+      },
+      "text-orange-600": {
+        "family": "orange",
+        "count": 2,
+        "anchors": [
+          "src/app/(admin)/admin/dashboard/page.tsx:770",
+          "src/app/(admin)/admin/promo-codes/promo-codes-page-client.tsx:634"
+        ]
+      },
+      "border-orange-300": {
+        "family": "orange",
+        "count": 1,
+        "anchors": [
+          "src/app/(admin)/admin/roster/page.tsx:644"
+        ]
+      },
+      "border-orange-500": {
+        "family": "orange",
+        "count": 1,
+        "anchors": [
+          "src/app/(lodge)/lodge/kiosk/_components/kiosk-week-view.tsx:62"
+        ]
+      },
+      "border-orange-600": {
+        "family": "orange",
+        "count": 1,
+        "anchors": [
+          "src/app/(admin)/admin/promo-codes/promo-codes-page-client.tsx:634"
+        ]
+      },
+      "ring-orange-200": {
+        "family": "orange",
+        "count": 1,
+        "anchors": [
+          "src/app/(admin)/admin/bed-allocation/_components/booking-accent.ts:16"
+        ]
+      },
+      "ring-orange-800": {
+        "family": "orange",
+        "count": 1,
+        "anchors": [
+          "src/app/(admin)/admin/bed-allocation/_components/booking-accent.ts:16"
+        ]
+      },
+      "text-orange-900": {
+        "family": "orange",
+        "count": 1,
+        "anchors": [
+          "src/app/(admin)/admin/book/page.tsx:981"
+        ]
+      },
+      "bg-pink-100": {
+        "family": "pink",
+        "count": 1,
+        "anchors": [
+          "src/lib/admin-family-group-ui-helpers.ts:119"
+        ]
+      },
+      "border-pink-200": {
+        "family": "pink",
+        "count": 1,
+        "anchors": [
+          "src/lib/admin-family-group-ui-helpers.ts:119"
+        ]
+      },
+      "text-pink-700": {
+        "family": "pink",
+        "count": 1,
+        "anchors": [
+          "src/lib/admin-family-group-ui-helpers.ts:119"
+        ]
+      },
+      "bg-purple-100": {
+        "family": "purple",
+        "count": 6,
+        "anchors": [
+          "src/app/(admin)/admin/members/[id]/_components/member-credit-card.tsx:215",
+          "src/app/(authenticated)/book/page.tsx:299",
+          "src/lib/admin-family-group-ui-helpers.ts:121"
+        ]
+      },
+      "border-purple-200": {
+        "family": "purple",
+        "count": 6,
+        "anchors": [
+          "src/app/(admin)/admin/members/[id]/_components/member-credit-card.tsx:215",
+          "src/app/(authenticated)/book/page.tsx:296",
+          "src/app/(authenticated)/book/page.tsx:320"
+        ]
+      },
+      "text-purple-800": {
+        "family": "purple",
+        "count": 6,
+        "anchors": [
+          "src/app/(admin)/admin/members/[id]/_components/member-credit-card.tsx:215",
+          "src/app/(authenticated)/book/page.tsx:329",
+          "src/app/(authenticated)/bookings/[id]/page.tsx:1290"
+        ]
+      },
+      "bg-purple-50": {
+        "family": "purple",
+        "count": 4,
+        "anchors": [
+          "src/app/(admin)/admin/dashboard/page.tsx:747",
+          "src/app/(authenticated)/book/page.tsx:296",
+          "src/app/(authenticated)/bookings/[id]/page.tsx:1284"
+        ]
+      },
+      "text-purple-700": {
+        "family": "purple",
+        "count": 4,
+        "anchors": [
+          "src/app/(authenticated)/book/page.tsx:310",
+          "src/app/(authenticated)/book/page.tsx:346",
+          "src/app/(authenticated)/bookings/[id]/page.tsx:1294"
+        ]
+      },
+      "text-purple-900": {
+        "family": "purple",
+        "count": 4,
+        "anchors": [
+          "src/app/(authenticated)/book/page.tsx:305",
+          "src/app/(authenticated)/book/page.tsx:321",
+          "src/app/(authenticated)/bookings/[id]/page.tsx:1286"
+        ]
+      },
+      "text-purple-600": {
+        "family": "purple",
+        "count": 3,
+        "anchors": [
+          "src/app/(admin)/admin/dashboard/page.tsx:748",
+          "src/app/(admin)/admin/members/[id]/_components/member-credit-card.tsx:251",
+          "src/app/(authenticated)/book/page.tsx:300"
+        ]
+      },
+      "border-purple-300": {
+        "family": "purple",
+        "count": 2,
+        "anchors": [
+          "src/app/(authenticated)/book/page.tsx:340",
+          "src/components/admin/admin-exclusive-hold-controls.tsx:156"
+        ]
+      },
+      "bg-purple-400": {
+        "family": "purple",
+        "count": 1,
+        "anchors": [
+          "src/components/admin-booking-calendar.tsx:44"
+        ]
+      },
+      "bg-purple-500": {
+        "family": "purple",
+        "count": 1,
+        "anchors": [
+          "src/components/admin-booking-calendar.tsx:41"
+        ]
+      },
+      "bg-purple-600": {
+        "family": "purple",
+        "count": 1,
+        "anchors": [
+          "src/app/(authenticated)/book/page.tsx:364"
+        ]
+      },
+      "bg-purple-700": {
+        "family": "purple",
+        "count": 1,
+        "anchors": [
+          "src/app/(authenticated)/book/page.tsx:364"
+        ]
+      },
+      "bg-red-50": {
+        "family": "red",
+        "count": 102,
+        "anchors": [
+          "src/app/(admin)/admin/access-roles/_components/access-role-manager.tsx:218",
+          "src/app/(admin)/admin/access-roles/_components/access-role-manager.tsx:353",
+          "src/app/(admin)/admin/access-roles/_components/access-role-manager.tsx:471"
+        ]
+      },
+      "text-red-700": {
+        "family": "red",
+        "count": 102,
+        "anchors": [
+          "src/app/(admin)/admin/access-roles/_components/access-role-manager.tsx:218",
+          "src/app/(admin)/admin/access-roles/_components/access-role-manager.tsx:297",
+          "src/app/(admin)/admin/access-roles/_components/access-role-manager.tsx:353"
+        ]
+      },
+      "border-red-200": {
+        "family": "red",
+        "count": 72,
+        "anchors": [
+          "src/app/(admin)/admin/access-roles/_components/access-role-manager.tsx:218",
+          "src/app/(admin)/admin/access-roles/_components/access-role-manager.tsx:353",
+          "src/app/(admin)/admin/access-roles/_components/access-role-manager.tsx:471"
+        ]
+      },
+      "text-red-600": {
+        "family": "red",
+        "count": 57,
+        "anchors": [
+          "src/app/(admin)/admin/access-roles/_components/access-role-manager.tsx:297",
+          "src/app/(admin)/admin/deletion-requests/deletion-requests-client.tsx:254",
+          "src/app/(admin)/admin/deletion-requests/deletion-requests-client.tsx:310"
+        ]
+      },
+      "text-red-800": {
+        "family": "red",
+        "count": 40,
+        "anchors": [
+          "src/app/(admin)/admin/communications/page.tsx:215",
+          "src/app/(admin)/admin/dashboard/page.tsx:431",
+          "src/app/(admin)/admin/deletion-requests/deletion-requests-client.tsx:187"
+        ]
+      },
+      "bg-red-100": {
+        "family": "red",
+        "count": 16,
+        "anchors": [
+          "src/app/(admin)/admin/deletion-requests/deletion-requests-client.tsx:187",
+          "src/app/(admin)/admin/health/_components/shared.tsx:19",
+          "src/app/(admin)/admin/health/_components/shared.tsx:20"
+        ]
+      },
+      "text-red-500": {
+        "family": "red",
+        "count": 14,
+        "anchors": [
+          "src/app/(admin)/admin/health/_components/shared.tsx:47",
+          "src/app/(admin)/admin/image-manager/image-manager-client.tsx:563",
+          "src/app/(authenticated)/profile/account-credit-section.tsx:95"
+        ]
+      },
+      "bg-red-900": {
+        "family": "red",
+        "count": 4,
+        "anchors": [
+          "src/app/(lodge)/lodge/kiosk/page.tsx:497",
+          "src/app/(lodge)/lodge/kiosk/page.tsx:619",
+          "src/app/(lodge)/lodge/kiosk/page.tsx:785"
+        ]
+      },
+      "border-red-300": {
+        "family": "red",
+        "count": 4,
+        "anchors": [
+          "src/app/(admin)/admin/members/[id]/merge/page.tsx:333",
+          "src/app/(admin)/admin/site-style/site-style-wizard.tsx:783",
+          "src/components/admin/view-only-action.tsx:166"
+        ]
+      },
+      "text-red-200": {
+        "family": "red",
+        "count": 4,
+        "anchors": [
+          "src/app/(lodge)/lodge/kiosk/page.tsx:497",
+          "src/app/(lodge)/lodge/kiosk/page.tsx:619",
+          "src/app/(lodge)/lodge/kiosk/page.tsx:785"
+        ]
+      },
+      "text-red-300": {
+        "family": "red",
+        "count": 4,
+        "anchors": [
+          "src/app/(lodge)/lodge/kiosk/page.tsx:503",
+          "src/app/(lodge)/lodge/kiosk/page.tsx:687",
+          "src/components/kiosk-lodge-instructions.tsx:87"
+        ]
+      },
+      "text-red-400": {
+        "family": "red",
+        "count": 4,
+        "anchors": [
+          "src/app/(admin)/admin/health/_components/shared.tsx:89",
+          "src/app/(admin)/admin/image-manager/image-manager-client.tsx:434",
+          "src/components/nav-bar.tsx:166"
+        ]
+      },
+      "bg-red-600": {
+        "family": "red",
+        "count": 3,
+        "anchors": [
+          "src/app/(lodge)/lodge/kiosk/page.tsx:532",
+          "src/components/admin-sidebar.tsx:796",
+          "src/components/admin/xero-record-activity-panel.tsx:47"
+        ]
+      },
+      "bg-red-500": {
+        "family": "red",
+        "count": 2,
+        "anchors": [
+          "src/app/(admin)/admin/bed-allocation/_components/booking-accent.ts:10",
+          "src/components/admin-booking-calendar.tsx:42"
+        ]
+      },
+      "bg-red-950": {
+        "family": "red",
+        "count": 2,
+        "anchors": [
+          "src/components/nav-bar.tsx:166",
+          "src/components/nav-bar.tsx:237"
+        ]
+      },
+      "border-red-700": {
+        "family": "red",
+        "count": 2,
+        "anchors": [
+          "src/app/(lodge)/lodge/kiosk/page.tsx:497",
+          "src/app/(lodge)/lodge/kiosk/page.tsx:785"
+        ]
+      },
+      "text-red-900": {
+        "family": "red",
+        "count": 2,
+        "anchors": [
+          "src/app/(authenticated)/bookings/[id]/page.tsx:972",
+          "src/lib/site-banner-shared.ts:25"
+        ]
+      },
+      "text-red-950": {
+        "family": "red",
+        "count": 2,
+        "anchors": [
+          "src/app/(admin)/admin/dashboard/page.tsx:428",
+          "src/components/delete-booking-button.tsx:86"
+        ]
+      },
+      "border-red-100": {
+        "family": "red",
+        "count": 1,
+        "anchors": [
+          "src/components/cancel-booking-button.tsx:298"
+        ]
+      },
+      "border-red-400": {
+        "family": "red",
+        "count": 1,
+        "anchors": [
+          "src/app/(admin)/admin/members/[id]/merge/page.tsx:427"
+        ]
+      },
+      "border-red-500": {
+        "family": "red",
+        "count": 1,
+        "anchors": [
+          "src/app/(lodge)/lodge/kiosk/_components/kiosk-week-view.tsx:54"
+        ]
+      },
+      "ring-red-200": {
+        "family": "red",
+        "count": 1,
+        "anchors": [
+          "src/app/(admin)/admin/bed-allocation/_components/booking-accent.ts:11"
+        ]
+      },
+      "ring-red-800": {
+        "family": "red",
+        "count": 1,
+        "anchors": [
+          "src/app/(admin)/admin/bed-allocation/_components/booking-accent.ts:11"
+        ]
+      },
+      "text-red-100": {
+        "family": "red",
+        "count": 1,
+        "anchors": [
+          "src/app/(lodge)/lodge/kiosk/page.tsx:498"
+        ]
+      },
+      "border-rose-200": {
+        "family": "rose",
+        "count": 16,
+        "anchors": [
+          "src/app/(admin)/admin/audit-log/page.tsx:625",
+          "src/app/(authenticated)/bookings/[id]/page.tsx:88",
+          "src/app/(authenticated)/bookings/[id]/page.tsx:106"
+        ]
+      },
+      "text-rose-800": {
+        "family": "rose",
+        "count": 14,
+        "anchors": [
+          "src/app/(admin)/admin/audit-log/page.tsx:625",
+          "src/app/(authenticated)/bookings/[id]/page.tsx:88",
+          "src/app/(authenticated)/profile/membership-cancellation-panel.tsx:39"
+        ]
+      },
+      "bg-rose-50": {
+        "family": "rose",
+        "count": 12,
+        "anchors": [
+          "src/app/(admin)/admin/audit-log/page.tsx:625",
+          "src/app/(authenticated)/bookings/[id]/page.tsx:106",
+          "src/app/(authenticated)/profile/membership-cancellation-panel.tsx:39"
+        ]
+      },
+      "bg-rose-100": {
+        "family": "rose",
+        "count": 4,
+        "anchors": [
+          "src/app/(authenticated)/bookings/[id]/page.tsx:88",
+          "src/components/group-booking/organiser-group-booking-card.tsx:341",
+          "src/lib/admin-family-group-ui-helpers.ts:177"
+        ]
+      },
+      "text-rose-700": {
+        "family": "rose",
+        "count": 2,
+        "anchors": [
+          "src/app/(authenticated)/bookings/[id]/page.tsx:1728",
+          "src/app/(authenticated)/profile/membership-cancellation-panel.tsx:309"
+        ]
+      },
+      "text-rose-900": {
+        "family": "rose",
+        "count": 2,
+        "anchors": [
+          "src/app/(authenticated)/bookings/[id]/page.tsx:106",
+          "src/app/(authenticated)/profile/partner-link-section.tsx:200"
+        ]
+      },
+      "border-sky-200": {
+        "family": "sky",
+        "count": 11,
+        "anchors": [
+          "src/app/(admin)/admin/issue-reports/page.tsx:111",
+          "src/app/(admin)/admin/members/_components/member-import-dialog.tsx:662",
+          "src/app/(admin)/admin/members/_components/member-import-dialog.tsx:801"
+        ]
+      },
+      "bg-sky-50": {
+        "family": "sky",
+        "count": 10,
+        "anchors": [
+          "src/app/(admin)/admin/members/_components/member-import-dialog.tsx:662",
+          "src/app/(admin)/admin/site-style/site-style-wizard.tsx:727",
+          "src/app/(authenticated)/bookings/[id]/page.tsx:103"
+        ]
+      },
+      "text-sky-900": {
+        "family": "sky",
+        "count": 9,
+        "anchors": [
+          "src/app/(admin)/admin/site-style/site-style-wizard.tsx:727",
+          "src/app/(authenticated)/bookings/[id]/page.tsx:103",
+          "src/app/(authenticated)/bookings/[id]/page.tsx:1001"
+        ]
+      },
+      "text-sky-700": {
+        "family": "sky",
+        "count": 7,
+        "anchors": [
+          "src/app/(authenticated)/bookings/_components/my-bookings-list.tsx:54",
+          "src/app/(authenticated)/bookings/_components/my-bookings-list.tsx:61",
+          "src/app/(authenticated)/bookings/_components/my-bookings-list.tsx:68"
+        ]
+      },
+      "text-sky-800": {
+        "family": "sky",
+        "count": 6,
+        "anchors": [
+          "src/app/(admin)/admin/issue-reports/page.tsx:111",
+          "src/app/(admin)/admin/members/_components/member-import-dialog.tsx:662",
+          "src/app/(admin)/admin/members/_components/member-import-dialog.tsx:801"
+        ]
+      },
+      "bg-sky-100": {
+        "family": "sky",
+        "count": 3,
+        "anchors": [
+          "src/app/(admin)/admin/issue-reports/page.tsx:111",
+          "src/lib/audit-category-badges.ts:19",
+          "src/lib/status-colors.ts:14"
+        ]
+      },
+      "ring-sky-400": {
+        "family": "sky",
+        "count": 3,
+        "anchors": [
+          "src/app/(authenticated)/bookings/_components/my-bookings-list.tsx:226",
+          "src/app/(authenticated)/bookings/_components/my-bookings-list.tsx:245",
+          "src/app/(authenticated)/bookings/_components/non-member-guests-section.tsx:66"
+        ]
+      },
+      "border-sky-100": {
+        "family": "sky",
+        "count": 2,
+        "anchors": [
+          "src/app/(authenticated)/bookings/_components/my-bookings-list.tsx:245",
+          "src/app/(authenticated)/bookings/_components/non-member-guests-section.tsx:66"
+        ]
+      },
+      "border-sky-300": {
+        "family": "sky",
+        "count": 2,
+        "anchors": [
+          "src/app/(admin)/admin/site-style/site-style-wizard.tsx:727",
+          "src/components/admin/admin-capacity-hold-controls.tsx:155"
+        ]
+      },
+      "bg-teal-500": {
+        "family": "teal",
+        "count": 2,
+        "anchors": [
+          "src/components/admin-booking-calendar.tsx:32",
+          "src/components/admin-booking-calendar.tsx:45"
+        ]
+      },
+      "bg-teal-50": {
+        "family": "teal",
+        "count": 1,
+        "anchors": [
+          "src/app/(admin)/admin/dashboard/page.tsx:797"
+        ]
+      },
+      "text-teal-600": {
+        "family": "teal",
+        "count": 1,
+        "anchors": [
+          "src/app/(admin)/admin/dashboard/page.tsx:798"
+        ]
+      },
+      "border-violet-200": {
+        "family": "violet",
+        "count": 3,
+        "anchors": [
+          "src/components/admin/family-groups/request-review-card.tsx:348",
+          "src/lib/admin-family-group-ui-helpers.ts:176",
+          "src/lib/audit-category-badges.ts:21"
+        ]
+      },
+      "bg-violet-100": {
+        "family": "violet",
+        "count": 2,
+        "anchors": [
+          "src/lib/admin-family-group-ui-helpers.ts:176",
+          "src/lib/audit-category-badges.ts:21"
+        ]
+      },
+      "text-violet-800": {
+        "family": "violet",
+        "count": 2,
+        "anchors": [
+          "src/lib/admin-family-group-ui-helpers.ts:176",
+          "src/lib/audit-category-badges.ts:21"
+        ]
+      },
+      "bg-violet-50": {
+        "family": "violet",
+        "count": 1,
+        "anchors": [
+          "src/components/admin/family-groups/request-review-card.tsx:348"
+        ]
+      },
+      "bg-violet-500": {
+        "family": "violet",
+        "count": 1,
+        "anchors": [
+          "src/app/(admin)/admin/bed-allocation/_components/booking-accent.ts:45"
+        ]
+      },
+      "ring-violet-200": {
+        "family": "violet",
+        "count": 1,
+        "anchors": [
+          "src/app/(admin)/admin/bed-allocation/_components/booking-accent.ts:46"
+        ]
+      },
+      "ring-violet-800": {
+        "family": "violet",
+        "count": 1,
+        "anchors": [
+          "src/app/(admin)/admin/bed-allocation/_components/booking-accent.ts:46"
+        ]
+      },
+      "text-yellow-800": {
+        "family": "yellow",
+        "count": 14,
+        "anchors": [
+          "src/app/(admin)/admin/book/page.tsx:922",
+          "src/app/(admin)/admin/deletion-requests/deletion-requests-client.tsx:176",
+          "src/app/(admin)/admin/health/_components/shared.tsx:14"
+        ]
+      },
+      "bg-yellow-100": {
+        "family": "yellow",
+        "count": 9,
+        "anchors": [
+          "src/app/(admin)/admin/deletion-requests/deletion-requests-client.tsx:176",
+          "src/app/(admin)/admin/health/_components/shared.tsx:14",
+          "src/app/(admin)/admin/health/_components/shared.tsx:15"
+        ]
+      },
+      "bg-yellow-50": {
+        "family": "yellow",
+        "count": 6,
+        "anchors": [
+          "src/app/(admin)/admin/book/page.tsx:922",
+          "src/app/(admin)/admin/members/_components/member-import-dialog.tsx:568",
+          "src/app/(admin)/admin/members/_components/member-import-dialog.tsx:713"
+        ]
+      },
+      "border-yellow-200": {
+        "family": "yellow",
+        "count": 4,
+        "anchors": [
+          "src/app/(admin)/admin/deletion-requests/deletion-requests-client.tsx:176",
+          "src/app/(admin)/admin/members/_components/member-import-dialog.tsx:568",
+          "src/app/(admin)/admin/members/_components/member-import-dialog.tsx:713"
+        ]
+      },
+      "text-yellow-700": {
+        "family": "yellow",
+        "count": 2,
+        "anchors": [
+          "src/app/(admin)/admin/members/_components/member-import-dialog.tsx:769",
+          "src/components/stripe/BookingPaymentWrapper.tsx:163"
+        ]
+      },
+      "bg-yellow-400": {
+        "family": "yellow",
+        "count": 1,
+        "anchors": [
+          "src/components/admin-booking-calendar.tsx:37"
+        ]
+      },
+      "bg-yellow-700": {
+        "family": "yellow",
+        "count": 1,
+        "anchors": [
+          "src/app/(lodge)/lodge/roster/[date]/setup/page.tsx:618"
+        ]
+      },
+      "text-yellow-100": {
+        "family": "yellow",
+        "count": 1,
+        "anchors": [
+          "src/app/(lodge)/lodge/roster/[date]/setup/page.tsx:618"
+        ]
+      },
+      "text-yellow-500": {
+        "family": "yellow",
+        "count": 1,
+        "anchors": [
+          "src/app/(admin)/admin/health/_components/shared.tsx:45"
+        ]
+      }
+    }
+  },
+  "neutral": {
+    "total": 538,
+    "authPublicSubset": 0,
+    "byTree": {
+      "components-other": 253,
+      "kiosk-lodge-kiosk": 81,
+      "app-lodge": 71,
+      "app-admin": 40,
+      "app-website": 31,
+      "lib": 30,
+      "app-root": 22,
+      "components-admin": 9,
+      "app-finance": 1
+    },
+    "byFamily": {
+      "slate": 360,
+      "gray": 90,
+      "text-white": 48,
+      "bg-white": 31,
+      "bg-black": 5,
+      "neutral": 3,
+      "text-black": 1
+    }
+  }
+}

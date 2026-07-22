@@ -7,6 +7,7 @@ import {
   type BedAllocationRoom,
 } from "@/lib/bed-allocation";
 import { createAuditLog } from "@/lib/audit";
+import { DEFAULT_BED_ALLOCATION_SETTINGS } from "@/config/club-settings-defaults";
 import { bookingHoldsCapacity } from "@/lib/booking-status";
 import {
   addDaysDateOnly,
@@ -376,9 +377,9 @@ export async function resolveAutoAllocationEnabled(
   const legacy = await db.bedAllocationSettings.findUnique({
     where: { id: "default" },
   });
-  if (!legacy) return true;
+  if (!legacy) return DEFAULT_BED_ALLOCATION_SETTINGS.autoAllocationEnabled;
   if (lodgeId && legacy.lodgeId && legacy.lodgeId !== lodgeId) {
-    return true;
+    return DEFAULT_BED_ALLOCATION_SETTINGS.autoAllocationEnabled;
   }
   return legacy.autoAllocationEnabled;
 }

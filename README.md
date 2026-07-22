@@ -130,7 +130,10 @@ credentials.
    needed — and replace the included club branding and copy with your own
    ([`NOTICE.md`](NOTICE.md)).
 4. Toggle optional modules (kiosk, Xero, waitlist, lobby displays, Internet
-   Banking, …) under **Admin → Modules**.
+   Banking, …) under **Admin → Modules**. Connecting Xero is fully in-app — a
+   guided wizard at **Admin → Xero → Setup** walks you through creating the Xero
+   app, entering its credentials (encrypted at rest), and the OAuth connect, with
+   no `.env` edits or key generation.
 
 The step-by-step adopter path from clone to first deployment is
 [`docs/IMPLEMENTATION_GUIDE.md`](docs/IMPLEMENTATION_GUIDE.md); every

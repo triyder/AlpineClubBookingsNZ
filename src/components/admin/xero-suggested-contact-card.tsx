@@ -36,7 +36,7 @@ export function XeroSuggestedContactCard({
   return (
     <label
       className={`flex items-start gap-3 rounded-md border p-3 ${
-        contact.isLinked ? "border-amber-200 bg-amber-50" : "border-slate-200 bg-white"
+        contact.isLinked ? "border-amber-200 bg-amber-50" : "border-border bg-card"
       }`}
     >
       <input
@@ -46,11 +46,11 @@ export function XeroSuggestedContactCard({
         checked={checked}
         onChange={onSelect}
         disabled={contact.isLinked}
-        className="mt-1 h-4 w-4 border-gray-300"
+        className="mt-1 h-4 w-4 border-border"
       />
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
-          <p className="text-sm font-medium text-slate-900">{contact.name}</p>
+          <p className="text-sm font-medium text-foreground">{contact.name}</p>
           {contact.matchReasons?.map((reason) => (
             <Badge
               key={`${contact.contactId}-${reason}`}
@@ -61,7 +61,7 @@ export function XeroSuggestedContactCard({
             </Badge>
           ))}
         </div>
-        {contact.email && <p className="text-xs text-slate-500">{contact.email}</p>}
+        {contact.email && <p className="text-xs text-muted-foreground">{contact.email}</p>}
         {contact.isLinked && (
           <p className="text-xs text-amber-700">
             Already linked to {contact.linkedMemberName}

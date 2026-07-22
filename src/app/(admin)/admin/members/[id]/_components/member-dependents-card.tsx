@@ -3,7 +3,10 @@
 import { useRouter } from "next/navigation"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { ViewOnlyActionButton } from "@/components/admin/view-only-action"
+import {
+  ViewOnlyActionButton,
+  type AncestorViewOnlyBannerProps,
+} from "@/components/admin/view-only-action"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Plus, Trash2 } from "lucide-react"
@@ -15,7 +18,7 @@ import {
 import { formatAgeTierName } from "@/lib/use-age-tier-options"
 import type { MemberDetail } from "../_types"
 
-interface MemberDependentsCardProps {
+interface MemberDependentsCardProps extends AncestorViewOnlyBannerProps {
   member: MemberDetail
   isAdultMember: boolean
   memberIsArchived: boolean
@@ -39,6 +42,7 @@ export function MemberDependentsCard({
   onUnlinkDependent,
   canEdit,
   className,
+  ancestorRendersViewOnlyBanner = false,
 }: MemberDependentsCardProps) {
   const router = useRouter()
 
@@ -47,7 +51,7 @@ export function MemberDependentsCard({
       <CardHeader className="flex flex-col gap-3 space-y-0 sm:flex-row sm:items-center sm:justify-between">
         <CardTitle className="text-base font-medium">Dependents</CardTitle>
         {isAdultMember && !memberIsArchived && (
-          <ViewOnlyActionButton canEdit={canEdit} variant="outline" size="sm" onClick={onOpenDependentDialog}>
+          <ViewOnlyActionButton canEdit={canEdit} describeReason={!ancestorRendersViewOnlyBanner} variant="outline" size="sm" onClick={onOpenDependentDialog}>
             <Plus className="h-4 w-4 mr-1" />
             Add Dependent
           </ViewOnlyActionButton>
@@ -120,6 +124,7 @@ export function MemberDependentsCard({
                       </Button>
                       <ViewOnlyActionButton
                         canEdit={canEdit}
+                        describeReason={!ancestorRendersViewOnlyBanner}
                         variant="outline"
                         size="sm"
                         onClick={() =>

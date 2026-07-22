@@ -1523,31 +1523,16 @@ model Season {
   updatedAt DateTime   @updatedAt
 
   // Relations
-  // `rates` is the legacy member/non-member boolean-keyed rate table, frozen
-  // since the E4 re-key (#1930); the authoritative pricing rows live in
-  // `membershipTypeRates`. Its last APPLICATION-RUNTIME reader is gone: #2129
-  // step 1 re-sourced the public {{hut-fees}} embed onto `membershipTypeRates`,
-  // dropped the admin season routes' unused `rates` include, and switched the
-  // lodge-setup copy-seasons flow onto `membershipTypeRates`.
-  // The relation is NOT unreferenced, though — the seeders still use it:
-  // ONE READER and TWO WRITERS survive, all outside `src/`. Note that none of
-  // them contains the string "SeasonRate" (they go through this `rates`
-  // relation), so a string grep for the model name will not find them.
-  //   READ   e2e/setup/seed-second-lodge.ts:202 — `include: { rates: true }`
-  //   WRITE  e2e/setup/seed-second-lodge.ts:218-224 — `rates: { create: ... }`
-  //   WRITE  prisma/seed.ts:208-227 — `createMissingSeasonRates` → `seasonRate.upsert`
-  // #2129 step 2 (Release B) must, IN THE SAME PR as the DROP migration:
-  //   1. strip the `rates` include AND the `rates: { create: ... }` block from
-  //      e2e/setup/seed-second-lodge.ts, and
-  //   2. delete `createMissingSeasonRates` (and its two call sites) from prisma/seed.ts.
-  // Both are load-bearing, not cosmetic: `e2e/**` is inside tsconfig.json's
-  // `include` (`**/*.ts`) and is NOT excluded (only node_modules and test/
-  // `__tests__` paths are), so dropping the model without editing the seeder
-  // fails `npm run typecheck` on both lines; and scripts/e2e-stack.sh:92 runs
-  // that seeder under E2E_MULTI_LODGE=1, so the REQUIRED `E2E multi-lodge`
-  // branch-protection check fails at seed time. Dropping without step 1 lands
-  // `main` red. This PR carries no schema change.
-  rates              SeasonRate[]
+  // `membershipTypeRates` holds the authoritative per-membership-type nightly
+  // rates (#1930, E4). The legacy member/non-member boolean-keyed `SeasonRate`
+  // table and its `rates` relation were DROPPED by the #2129 step 2 contract
+  // migration 20260721120000_contract_drop_season_rate (Release B), after
+  // #2129 step 1 re-sourced the public {{hut-fees}} embed onto
+  // `membershipTypeRates` and the same Release B PR removed the surviving seed
+  // reader/writers. Do not reintroduce a boolean member/non-member rate key.
+  // NOT YET DEPLOYED as of this branch: production still runs v0.12.2 and even
+  // the Release A runtime-prep is unshipped. Release B must not be cut into the
+  // same version tag as that runtime-prep — see CHANGELOG.md -> Unreleased.
   membershipTypeRates MembershipTypeSeasonRate[]
   lodge Lodge        @relation(fields: [lodgeId], references: [id], onDelete: Restrict)
 
@@ -1555,37 +1540,10 @@ model Season {
   @@index([lodgeId])
 }
 
-// Frozen legacy hut-rate table (member/non-member boolean key). #2129 step 1
-// removed the last APPLICATION-RUNTIME reader (the public {{hut-fees}} embed),
-// but the table is NOT unreferenced: one reader and two writers remain, all in
-// seed code outside `src/` —
-//   READ   e2e/setup/seed-second-lodge.ts:202 — `include: { rates: true }`
-//   WRITE  e2e/setup/seed-second-lodge.ts:218-224 — `rates: { create: ... }`
-//   WRITE  prisma/seed.ts:208-227 — `createMissingSeasonRates` → `seasonRate.upsert`
-// Scheduled for removal by #2129 step 2 (Release B), whose DROP migration MUST
-// ship in the same PR as: stripping the `rates` include and the
-// `rates: { create: ... }` block from e2e/setup/seed-second-lodge.ts, AND
-// deleting `createMissingSeasonRates` from prisma/seed.ts. Otherwise
-// `npm run typecheck` fails (e2e/** is inside tsconfig.json's `**/*.ts`
-// include and is not excluded) and the required `E2E multi-lodge` check fails
-// at seed time (scripts/e2e-stack.sh:92 runs the seeder under
-// E2E_MULTI_LODGE=1). Do not add new readers or writers.
-model SeasonRate {
-  id                 String  @id @default(cuid())
-  seasonId           String
-  ageTier            AgeTier
-  isMember           Boolean
-  pricePerNightCents Int
-
-  // Relations
-  season Season @relation(fields: [seasonId], references: [id], onDelete: Cascade)
-
-  @@unique([seasonId, ageTier, isMember])
-  @@index([seasonId])
-}
-
 // Hut nightly rate keyed by membership type (#1930, E4). Replaces the
-// member/non-member boolean key on SeasonRate: each MEMBER_RATE membership
+// member/non-member boolean key of the dropped legacy `SeasonRate` table
+// (removed by 20260721120000_contract_drop_season_rate, #2129 step 2): each
+// MEMBER_RATE membership
 // type carries its own rate rows, non-members price via the built-in
 // NON_MEMBER type, and NON_MEMBER_RATE/BLOCK_BOOKING types deliberately carry
 // zero own rows (D2 invariant). `ageTier` is nullable: a per-age-tier type
@@ -2851,6 +2809,97 @@ model XeroToken {
   refreshInProgressUntil DateTime?
   createdAt              DateTime  @default(now())
   updatedAt              DateTime  @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Encrypted integration credentials (guided provider setup — #2079)
+// ---------------------------------------------------------------------------
+//
+// Provider credentials (Xero client id/secret/webhook key here; Stripe/Google/
+// Backup in later epic lanes) encrypted at rest with AES-256-GCM under a key
+// derived from the app auth secret via HKDF-SHA256. The database is the ONLY
+// credential source — legacy provider env vars are detected and flagged, never
+// honoured. Standalone table (no FK coupling) so the migration is a pure
+// blue/green EXPAND. See src/lib/integration-crypto.ts and
+// src/lib/integration-credentials.ts.
+model IntegrationCredential {
+  id           String   @id @default(cuid())
+  // Logical provider namespace, e.g. "xero", "stripe", "google", "backup".
+  provider     String
+  // Credential slot within the provider, e.g. "client_id", "client_secret",
+  // "webhook_key", "token_key". Disjoint from two-factor's label namespace.
+  key          String
+  ciphertext   String
+  iv           String
+  authTag      String
+  // Which auth-secret env var the wrapping key was derived from at write time
+  // (AUTH_SECRET | NEXTAUTH_SECRET) — a silent fallback flip stays diagnosable
+  // without ever exposing the value.
+  secretSource String
+  // HKDF info-label version used to derive the wrapping key, e.g.
+  // "integration-credential:v1" / "xero-token-key:v1".
+  labelVersion String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  // Full Admin member id that last wrote this credential (audit provenance).
+  // Plain string, not an FK, to keep the table standalone/expand-safe.
+  updatedByUserId String?
+
+  @@unique([provider, key])
+  @@index([provider])
+  @@index([updatedAt])
+}
+
+// Per-wizard cursor + acknowledged-step state for the reusable guided-provider
+// setup shell (#2080). ONE row per wizard id ("xero" here; "stripe"/"google"
+// later) — the shell is provider-agnostic, so this table is too. Deliberately
+// NOT the setup-readiness progress store (SETUP_STEP_IDS in setup-readiness.ts):
+// that tracks 15 fixed checklist steps with complete/skip flags and has no
+// per-wizard cursor. Each step's verified gate is re-derived from live server
+// state on load; this row is only the RESUME cursor + acknowledgement record so
+// a reload mid-flow returns to the right step, never a source of truth for
+// whether a step is actually verified.
+model IntegrationWizardProgress {
+  id               String   @id @default(cuid())
+  // Logical wizard namespace, matching a provider ("xero" | "stripe" | "google").
+  wizardId         String   @unique
+  // The step id the operator was last on (resume target).
+  currentStepId    String
+  // Step ids the operator has acknowledged / advanced past. Advisory only:
+  // verification is always re-derived from server truth on load.
+  completedStepIds String[]
+  updatedAt        DateTime @updatedAt
+  // Full Admin/area-admin member id that last advanced the wizard (provenance).
+  updatedByMemberId String?
+
+  @@index([updatedAt])
+}
+
+// Intent-to-receive (ITR) receipt sink for a provider's inbound webhook
+// subscription (#2081, C3). Xero's ITR validation request carries an EMPTY
+// `events: []` array, so the per-event inbound-event recorder leaves no trace of
+// a successful validation. This row is the explicit marker the setup wizard
+// polls: one row per provider ("xero" here), stamped whenever a valid-signature
+// empty-events POST arrives on the real webhook route.
+//
+// FRESHNESS SCOPING (binding, #2081): the verify only goes green on a marker
+// whose `validatedAt` is newer than the operator's verify-start AND whose
+// `keyFingerprint` matches the CURRENTLY stored webhook key — a stale marker
+// from an earlier verification, or one recorded under a previous webhook key,
+// can never satisfy a new verify. `keyFingerprint` is a non-reversible SHA-256
+// of the webhook key (never the key itself), so replacing the key re-arms
+// verification (the fingerprint stops matching) without exposing any secret.
+model WebhookValidationReceipt {
+  id             String   @id @default(cuid())
+  // Logical provider namespace ("xero"; future providers reuse this table).
+  provider       String   @unique
+  // When the last valid ITR ping was received (server clock at receipt).
+  validatedAt    DateTime
+  // Non-reversible fingerprint (SHA-256 hex) of the webhook key that validated
+  // it — binds the marker to a key identity WITHOUT ever storing the key.
+  keyFingerprint String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 }
 
 // ---------------------------------------------------------------------------
@@ -4231,19 +4280,17 @@ model XeroItemCodeMapping {
   category            String // "HUT_FEE" | "ENTRANCE_FEE"
   ageTier             AgeTier? // HUT_FEE only
   seasonType          SeasonType? // HUT_FEE only
-  // Legacy member/non-member key column (#1930, E4), superseded by
-  // membershipTypeId. DROP-ELIGIBLE ONLY AFTER THE #2130 RUNTIME-PREP RELEASE
-  // HAS DEPLOYED — not before. That release (CHANGELOG `Unreleased`, the
-  // release that follows v0.12.2) is STEP 1: it narrowed every read AND write
-  // path on this model with an explicit `select`, so its runtime names only
-  // the columns it selects (Prisma otherwise emits every scalar in a
-  // mutation's implicit RETURNING). Until that release is itself the
-  // deployed/draining colour in production, the live v0.12.2 colour still
-  // names this column in SQL, and dropping it would break the blue/green
-  // deploy this two-step exists to prevent. STEP 2 — the contract migration
-  // that drops this column and the @@unique below — is legal only in a LATER
-  // release, once STEP 1 has shipped and soaked in production.
-  isMember            Boolean? // HUT_FEE only (legacy key, drop-eligible)
+  // The legacy member/non-member `isMember` key column (#1930, E4) and its
+  // companion @@unique([category, ageTier, seasonType, isMember]) were DROPPED
+  // by the #2130 STEP 2 contract migration
+  // 20260721130000_contract_drop_ismember_and_agetier_xero_columns, after the
+  // STEP 1 / STEP 1.5 runtime-prep releases narrowed every read and write on
+  // this model to an explicit `select`. HUT_FEE item codes are keyed solely by
+  // membershipTypeId now; do not reintroduce a boolean member key.
+  // NOT YET DEPLOYED as of this branch: production still runs v0.12.2 and the
+  // STEP 1.5 runtime-prep (Release A) is itself unshipped. Release B must not be
+  // cut into the same version tag as that runtime-prep — see CHANGELOG.md ->
+  // Unreleased.
   // Membership-type key for HUT_FEE item codes (#1930, E4). Nullable ageTier
   // mirrors MembershipTypeSeasonRate: a per-tier type has one row per tier, a
   // flat type has a single NULL-ageTier row. A companion raw-SQL partial
@@ -4257,7 +4304,6 @@ model XeroItemCodeMapping {
   createdAt           DateTime             @default(now())
   updatedAt           DateTime             @updatedAt
 
-  @@unique([category, ageTier, seasonType, isMember])
   // Explicit map: the Prisma default constraint name (68 bytes) exceeds
   // Postgres's 63-byte identifier limit and would be silently truncated,
   // drifting from the migration SQL (#1930, E4). The client API name is
@@ -4280,23 +4326,20 @@ model AgeTierSetting {
   label                                 String // e.g. "Child (under 10)"
   subscriptionRequiredForBooking        Boolean                           @default(true)
   familyGroupRequestCreateMemberAllowed Boolean                           @default(false)
-  // xeroContactGroupId / xeroContactGroupName are legacy single-group columns
-  // superseded by XeroContactGroupRule (E8, #1934). DROP-ELIGIBLE ONLY AFTER
-  // THE #2130 RUNTIME-PREP RELEASE HAS DEPLOYED — not before. That release
-  // (CHANGELOG `Unreleased`, the release that follows v0.12.2) is STEP 1: it
-  // narrowed every read AND write path on this model with an explicit `select`
-  // (getAgeTierSettings and friends; the age-tier route, setup wizard,
-  // config self-heal and seed upserts), so its runtime names only the columns
-  // it selects — Prisma otherwise emits every scalar in a mutation's implicit
-  // RETURNING. Until that release is itself the deployed/draining colour in
-  // production, the live v0.12.2 colour still names these columns in SQL, and
-  // dropping them would break the blue/green deploy this two-step exists to
-  // prevent. STEP 2 — the contract migration that drops both columns — is
-  // legal only in a LATER release, once STEP 1 has shipped and soaked in
-  // production. The AgeTierXeroAcceptedContactGroup child table was already
-  // dropped in the E13 contract migration 20260720120000 (#1939).
-  xeroContactGroupId                    String?
-  xeroContactGroupName                  String?
+  // The legacy single-group xeroContactGroupId / xeroContactGroupName columns
+  // (superseded by XeroContactGroupRule, E8 #1934) were DROPPED by the #2130
+  // STEP 2 contract migration
+  // 20260721130000_contract_drop_ismember_and_agetier_xero_columns, after the
+  // STEP 1 / STEP 1.5 runtime-prep releases narrowed every read and write on
+  // this model to an explicit `select`. Their data was migrated into
+  // XeroContactGroupRule by 20260716140000_xero_member_grouping; the
+  // AgeTierXeroAcceptedContactGroup child table went in the E13 contract
+  // migration 20260720120000 (#1939). Xero member grouping is configured
+  // exclusively through XeroContactGroupRule now.
+  // NOT YET DEPLOYED as of this branch: production still runs v0.12.2 and the
+  // STEP 1.5 runtime-prep (Release A) is itself unshipped. Release B must not be
+  // cut into the same version tag as that runtime-prep — see CHANGELOG.md ->
+  // Unreleased.
   sortOrder                             Int                               @default(0)
   createdAt                             DateTime                          @default(now())
   updatedAt                             DateTime                          @updatedAt
@@ -4524,12 +4567,17 @@ model PublicContentSettings {
 model ClubTheme {
   id             String        @id @default("default")
   brandGold      String
-  brandCharcoal  String
   brandDeep      String
-  brandRidge     String
-  brandMist      String
-  brandSnow      String
   brandSafety    String
+  // #2187 EXPAND: the four former brand columns are dead to code (derived from
+  // the substrate at render time) but stay in the DB so pre-#2187 code renders
+  // across a blue/green cutover. They now carry a DB default so new code can
+  // insert a ClubTheme row without naming them. P4 ships the CONTRACT migration
+  // that drops them (with a BLUE_GREEN_MIGRATION_SAFETY.tsv ledger row).
+  brandCharcoal  String        @default("#21362b")
+  brandRidge     String        @default("#5c6f66")
+  brandMist      String        @default("#d4ddd7")
+  brandSnow      String        @default("#f5f8f6")
   headingFontKey ClubThemeFont @default(LEAGUE_SPARTAN)
   bodyFontKey    ClubThemeFont @default(INTER)
   logoDataUrl    String?

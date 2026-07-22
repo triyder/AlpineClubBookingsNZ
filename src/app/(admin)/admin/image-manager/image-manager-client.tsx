@@ -336,10 +336,10 @@ export function ImageManagerClient() {
     <div className="space-y-6">
       {/* Header */}
       <div>
-        <h1 className="text-2xl font-bold text-slate-900">Image Manager</h1>
-        <p className="mt-1 text-sm text-slate-500">
+        <h1 className="text-2xl font-bold text-foreground">Image Manager</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
           Upload and organise images stored in{" "}
-          <code className="rounded bg-slate-100 px-1 py-0.5 text-xs">
+          <code className="rounded bg-muted px-1 py-0.5 text-xs">
             public/images/
           </code>
           .
@@ -355,13 +355,13 @@ export function ImageManagerClient() {
       {forbidden ? <AdminForbiddenSaveNotice /> : null}
 
       {/* Current directory breadcrumb */}
-      <div className="flex items-center gap-1 text-sm text-slate-600">
-        <span className="font-medium text-slate-400">Saving to:</span>
+      <div className="flex items-center gap-1 text-sm text-muted-foreground">
+        <span className="font-medium text-muted-foreground">Saving to:</span>
         <span className="font-medium">images/</span>
         {selectedDir && (
           <>
-            <ChevronRight className="h-3 w-3 text-slate-400" />
-            <span className="font-medium text-slate-800">
+            <ChevronRight className="h-3 w-3 text-muted-foreground" />
+            <span className="font-medium text-foreground">
               {selectedDir.replace(/\//g, " / ")}
             </span>
           </>
@@ -372,7 +372,7 @@ export function ImageManagerClient() {
         {/* ── Left: Directory panel ── */}
         <Card className="overflow-hidden">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 pt-4 px-4">
-            <CardTitle className="text-sm font-semibold text-slate-700">
+            <CardTitle className="text-sm font-semibold text-muted-foreground">
               Directories
             </CardTitle>
             {canEdit ? (
@@ -399,8 +399,8 @@ export function ImageManagerClient() {
                       className={cn(
                         "group flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors",
                         isSelected
-                          ? "bg-slate-100 font-medium text-slate-900"
-                          : "text-slate-600 hover:bg-slate-50 hover:text-slate-900",
+                          ? "bg-muted font-medium text-foreground"
+                          : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
                       )}
                       style={{ paddingLeft: `${8 + depth * 12}px` }}
                       onClick={() => setSelectedDir(dir)}
@@ -408,20 +408,20 @@ export function ImageManagerClient() {
                       {isSelected ? (
                         <FolderOpen className="h-4 w-4 shrink-0 text-amber-500" />
                       ) : (
-                        <Folder className="h-4 w-4 shrink-0 text-slate-400 group-hover:text-amber-400" />
+                        <Folder className="h-4 w-4 shrink-0 text-muted-foreground group-hover:text-amber-400" />
                       )}
                       <span className="flex-1 truncate">{dirLabel(dir)}</span>
                       {dir && canEdit && (
                         <span className="flex shrink-0 items-center gap-0.5 opacity-0 group-hover:opacity-100">
                           <button
                             title="Rename"
-                            className="rounded p-0.5 hover:bg-slate-200"
+                            className="rounded p-0.5 hover:bg-accent"
                             onClick={(e) => {
                               e.stopPropagation();
                               openRenameDir(dir);
                             }}
                           >
-                            <Pencil className="h-3 w-3 text-slate-500" />
+                            <Pencil className="h-3 w-3 text-muted-foreground" />
                           </button>
                           <button
                             title="Delete"
@@ -454,7 +454,7 @@ export function ImageManagerClient() {
               "flex cursor-pointer flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed p-10 text-center transition-colors",
               dragging
                 ? "border-blue-400 bg-blue-50 text-blue-700"
-                : "border-slate-200 bg-slate-50 text-slate-500 hover:border-slate-300 hover:bg-slate-100",
+                : "border-border bg-muted text-muted-foreground hover:border-muted-foreground hover:bg-accent",
               (uploading || !canEdit) && "pointer-events-none opacity-60",
             )}
             onDragEnter={handleDragEnter}
@@ -474,7 +474,7 @@ export function ImageManagerClient() {
             <UploadCloud
               className={cn(
                 "h-10 w-10",
-                dragging ? "text-blue-400" : "text-slate-400",
+                dragging ? "text-blue-400" : "text-muted-foreground",
               )}
             />
             {canEdit === undefined ? (
@@ -494,7 +494,7 @@ export function ImageManagerClient() {
                   {dragging ? "Drop images here" : "Drag & drop images here"}
                 </p>
                 <p className="text-xs">or click to select files</p>
-                <p className="text-xs text-slate-400">
+                <p className="text-xs text-muted-foreground">
                   JPG, PNG, GIF, WebP, AVIF · max 10 MB per file
                 </p>
               </>
@@ -511,7 +511,7 @@ export function ImageManagerClient() {
 
           {/* Gallery header */}
           <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-slate-700">
+            <h2 className="text-sm font-semibold text-muted-foreground">
               {loadingImages
                 ? "Loading…"
                 : `${images.length} image${images.length !== 1 ? "s" : ""} in this directory`}
@@ -531,7 +531,7 @@ export function ImageManagerClient() {
 
           {/* Image grid */}
           {!loadingImages && images.length === 0 && (
-            <div className="flex flex-col items-center gap-2 py-16 text-slate-400">
+            <div className="flex flex-col items-center gap-2 py-16 text-muted-foreground">
               <ImageIcon className="h-12 w-12" />
               <p className="text-sm">No images in this directory</p>
             </div>
@@ -542,10 +542,10 @@ export function ImageManagerClient() {
               {images.map((img) => (
                 <div
                   key={img.filename}
-                  className="group relative overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm transition-shadow hover:shadow-md"
+                  className="group relative overflow-hidden rounded-lg border border-border bg-card shadow-sm transition-shadow hover:shadow-md"
                 >
                   {/* Thumbnail */}
-                  <div className="relative aspect-square overflow-hidden bg-slate-50">
+                  <div className="relative aspect-square overflow-hidden bg-muted">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
                       src={img.url}
@@ -557,7 +557,7 @@ export function ImageManagerClient() {
                     {canEdit ? (
                       <button
                         title={`Delete ${img.filename}`}
-                        className="absolute right-1.5 top-1.5 rounded-full bg-white/80 p-1 opacity-0 shadow-sm transition-opacity hover:bg-red-50 group-hover:opacity-100"
+                        className="absolute right-1.5 top-1.5 rounded-full bg-card p-1 opacity-0 shadow-sm transition-opacity hover:bg-red-50 group-hover:opacity-100"
                         onClick={() => openDeleteImage(img.filename)}
                       >
                         <Trash2 className="h-3.5 w-3.5 text-red-500" />
@@ -568,20 +568,20 @@ export function ImageManagerClient() {
                   {/* File info */}
                   <div className="p-2">
                     <p
-                      className="truncate text-xs font-medium text-slate-800"
+                      className="truncate text-xs font-medium text-foreground"
                       title={img.filename}
                     >
                       {img.filename}
                     </p>
-                    <p className="mt-0.5 text-xs text-slate-400">
+                    <p className="mt-0.5 text-xs text-muted-foreground">
                       {formatBytes(img.byteSize)}
                     </p>
-                    <p className="text-xs text-slate-400">
+                    <p className="text-xs text-muted-foreground">
                       {formatDate(img.modifiedAt)}
                     </p>
                     {/* Copy URL */}
                     <button
-                      className="mt-1 truncate text-[10px] text-slate-400 hover:text-slate-600 hover:underline"
+                      className="mt-1 truncate text-[10px] text-muted-foreground hover:text-accent-foreground hover:underline"
                       title="Copy URL"
                       onClick={() => {
                         navigator.clipboard.writeText(img.url);
@@ -609,7 +609,7 @@ export function ImageManagerClient() {
           <DialogHeader>
             <DialogTitle>New Folder</DialogTitle>
           </DialogHeader>
-          <p className="text-sm text-slate-500">
+          <p className="text-sm text-muted-foreground">
             Create a new folder inside{" "}
             <span className="font-medium">{dirLabel(selectedDir)}</span>.
           </p>
@@ -677,7 +677,7 @@ export function ImageManagerClient() {
           <DialogHeader>
             <DialogTitle>Delete Folder</DialogTitle>
           </DialogHeader>
-          <p className="text-sm text-slate-600">
+          <p className="text-sm text-muted-foreground">
             Permanently delete{" "}
             <span className="font-semibold">
               {dialog?.kind === "delete-dir" ? dirLabel(dialog.path) : ""}
@@ -708,7 +708,7 @@ export function ImageManagerClient() {
           <DialogHeader>
             <DialogTitle>Delete Image</DialogTitle>
           </DialogHeader>
-          <p className="text-sm text-slate-600">
+          <p className="text-sm text-muted-foreground">
             Permanently delete{" "}
             <span className="font-semibold">
               {dialog?.kind === "delete-image" ? dialog.filename : ""}

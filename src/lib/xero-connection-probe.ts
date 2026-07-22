@@ -61,7 +61,12 @@ function classifyProbeError(error: unknown): XeroTokenHealth {
     if (error.name === "XeroDailyLimitError") {
       return "rate_limited";
     }
-    if (error.name === "XeroReconnectRequiredError") {
+    if (
+      error.name === "XeroReconnectRequiredError" ||
+      // A stored token that no longer decrypts (env→DB upgrade / auth-secret
+      // change) is a reconnect, not an opaque failure (#2079).
+      error.name === "XeroTokenDecryptError"
+    ) {
       return "reconnect_required";
     }
   }

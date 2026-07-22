@@ -69,7 +69,7 @@ export default function BookingRequestVerifyPage() {
               review queue and an officer will be in touch with pricing and a payment link.
             </p>
             {result.checkIn && result.checkOut ? (
-              <div className="rounded-md border bg-slate-50 p-3 text-sm text-slate-700">
+              <div className="rounded-md border bg-muted p-3 text-sm text-muted-foreground">
                 {result.lodgeName ? <p className="mb-1">Lodge: {result.lodgeName}</p> : null}
                 <p>
                   Dates: {formatNZDate(new Date(result.checkIn))} to{" "}

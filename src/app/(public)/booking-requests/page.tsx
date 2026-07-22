@@ -374,7 +374,7 @@ export default function BookingRequestPage() {
           </div>
 
           {showPricing ? (
-            <div className="rounded-md border bg-slate-50 p-3 text-sm text-slate-700">
+            <div className="rounded-md border bg-muted p-3 text-sm text-muted-foreground">
               {quoteLoading ? (
                 "Calculating indicative price..."
               ) : indicativePriceCents != null ? (

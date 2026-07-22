@@ -52,7 +52,7 @@ export function MemberGroupCard({
           <span className="flex min-w-0 flex-1 flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-3">
             <span className="shrink-0">{title}</span>
             {preview ? (
-              <span className="truncate text-sm font-normal text-slate-500 group-data-[state=open]:hidden">
+              <span className="truncate text-sm font-normal text-muted-foreground group-data-[state=open]:hidden">
                 {preview}
               </span>
             ) : null}

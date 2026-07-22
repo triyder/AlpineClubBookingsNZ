@@ -113,6 +113,13 @@ vi.mock("@/lib/stripe", () => ({
   listRefundsForCharge: (...args: unknown[]) => mockListRefundsForCharge(...args),
   processRefund: (...args: unknown[]) => mockProcessRefund(...args),
 }));
+// DB-only (#2082): the webhook route resolves its signing secret via
+// stripe-config and records a test-mode verified marker; mock both so the route
+// reaches signature verification without a DB.
+vi.mock("@/lib/stripe-config", () => ({
+  getOperationalStripeWebhookSecret: vi.fn().mockResolvedValue("whsec_test"),
+  recordStripeWebhookVerified: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock("@/lib/group-settlement", () => ({
   applyGroupSettlementSucceeded: (...args: unknown[]) =>
     mockApplyGroupSettlementSucceeded(...args),

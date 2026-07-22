@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import {
   ADMIN_FORBIDDEN_SAVE_REASON,
-  AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import {
@@ -127,27 +127,44 @@ export function AdminNotificationSettings({
     }
   }
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the section —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before its
+    content appears; a region injected already-populated is silently dropped by
+    some screen-reader/browser pairings. It sits OUTSIDE the `space-y-*` stack so
+    the empty wrapper an edit-capable admin gets costs no layout, and it is
+    rendered in BOTH return branches so the region exists from the first paint.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-6">
+      Your admin role can view admin notification preferences but cannot
+      change them. Support edit access is required.
+    </AdminViewOnlySectionBanner>
+  );
+
   if (admins.length === 0) {
     return (
-      <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500">
-        No active admin users found.
+      <div>
+        {viewOnlyBanner}
+        <div className="rounded-lg border border-dashed border-border bg-muted px-4 py-6 text-sm text-muted-foreground">
+          No active admin users found.
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-4">
-      {!canEdit && (
-        <AdminViewOnlyNotice canEdit={canEdit}>
-          Your admin role can view admin notification preferences but cannot
-          change them. Support edit access is required.
-        </AdminViewOnlyNotice>
-      )}
+    <div>
+      {viewOnlyBanner}
+      <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div />
         {!editing ? (
           <ViewOnlyActionButton
             canEdit={canEdit}
+            describeReason={false}
             variant="outline"
             size="sm"
             onClick={handleEdit}
@@ -168,7 +185,7 @@ export function AdminNotificationSettings({
 
       <div className="grid gap-4 xl:grid-cols-2">
         {admins.map((admin) => (
-          <Card key={admin.id} className="border-slate-200 shadow-sm">
+          <Card key={admin.id} className="border-border shadow-sm">
             <CardHeader className="pb-4">
               <CardTitle className="text-base">{admin.name}</CardTitle>
               <CardDescription>
@@ -183,7 +200,7 @@ export function AdminNotificationSettings({
                 return (
                   <div
                     key={key}
-                    className="flex items-start gap-3 rounded-lg border border-slate-200 p-3"
+                    className="flex items-start gap-3 rounded-lg border border-border p-3"
                   >
                     <Checkbox
                       id={controlId}
@@ -205,6 +222,7 @@ export function AdminNotificationSettings({
             </CardContent>
           </Card>
         ))}
+      </div>
       </div>
     </div>
   );

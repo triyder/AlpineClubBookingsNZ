@@ -10,7 +10,7 @@ import { BackLink } from "@/components/admin/back-link";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import {
   ADMIN_FORBIDDEN_SAVE_REASON,
-  AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import { listDisplayConditions } from "@/lib/lodge-display/conditions";
@@ -437,8 +437,28 @@ export default function AdminDisplayLayoutsPage() {
   const textareaClass =
     "border-input bg-background w-full rounded-md border p-3 font-mono text-xs";
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the section —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before its
+    content appears; a region injected already-populated is silently dropped by
+    some screen-reader/browser pairings. It sits OUTSIDE the `space-y-*` stack so
+    the empty wrapper an edit-capable admin gets costs no layout (the page
+    padding stays on the outer element so the banner is inset like the rest).
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-6">
+      Your admin role can view the lobby display layouts but cannot change
+      them. Lodge edit access is required to author, edit, or delete a
+      layout.
+    </AdminViewOnlySectionBanner>
+  );
+
   return (
-    <div className="space-y-6 p-6">
+    <div className="p-6">
+      {viewOnlyBanner}
+      <div className="space-y-6">
       <div>
         <BackLink href="/admin/display" label="Lobby Display" />
         <h1 className="mt-2 text-2xl font-bold">Display Layouts — Advanced mode</h1>
@@ -467,14 +487,6 @@ export default function AdminDisplayLayoutsPage() {
           (which renders it in a sandboxed frame against a chosen lodge).
         </p>
       </div>
-
-      {!canEdit ? (
-        <AdminViewOnlyNotice canEdit={canEdit}>
-          Your admin role can view the lobby display layouts but cannot change
-          them. Lodge edit access is required to author, edit, or delete a
-          layout.
-        </AdminViewOnlyNotice>
-      ) : null}
 
       {message && <p className="text-sm font-medium">{message}</p>}
 
@@ -521,6 +533,7 @@ export default function AdminDisplayLayoutsPage() {
                   </Button>
                   <ViewOnlyActionButton
                     canEdit={canEdit}
+                    describeReason={false}
                     variant="destructive"
                     onClick={() => void deleteLayout(item)}
                   >
@@ -559,6 +572,7 @@ export default function AdminDisplayLayoutsPage() {
               </p>
               <ViewOnlyActionButton
                 canEdit={canEdit}
+                describeReason={false}
                 variant="outline"
                 className="h-9"
                 onClick={duplicateLayout}
@@ -907,6 +921,7 @@ export default function AdminDisplayLayoutsPage() {
             ))}
             <ViewOnlyActionButton
               canEdit={canEdit}
+              describeReason={false}
               variant="outline"
               onClick={() =>
                 setDraft((current) => ({
@@ -952,6 +967,7 @@ export default function AdminDisplayLayoutsPage() {
           <div className="flex items-center gap-3">
             <ViewOnlyActionButton
               canEdit={canEdit}
+              describeReason={false}
               onClick={() => void save()}
               disabled={saving || !draft.name}
             >
@@ -965,6 +981,7 @@ export default function AdminDisplayLayoutsPage() {
           </div>
         </CardContent>
       </Card>
+      </div>
     </div>
   );
 }

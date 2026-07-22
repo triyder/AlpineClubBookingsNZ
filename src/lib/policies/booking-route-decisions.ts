@@ -37,9 +37,12 @@ export interface SeasonRateSource {
   startDate: Date;
   endDate: Date;
   type?: SeasonType;
-  // Membership-type-keyed rate rows (#1930, E4). Load from
-  // Season.membershipTypeRates (the authoritative table); the legacy
-  // boolean-keyed `rates` relation is frozen and only read by the public embed.
+  // Membership-type-keyed rate rows (#1930, E4) — the ONLY nightly-rate source.
+  // Load from Season.membershipTypeRates. The legacy member/non-member
+  // boolean-keyed SeasonRate table and its `rates` relation no longer exist:
+  // the #2129 step 2 contract migration
+  // 20260721120000_contract_drop_season_rate (Release B) dropped them. Do not
+  // reintroduce a boolean member/non-member rate key.
   membershipTypeRates: Array<{
     membershipTypeId: string;
     ageTier: AgeTier | null;

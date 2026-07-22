@@ -5,6 +5,7 @@ import { useSession } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { BackLink } from "@/components/admin/back-link";
+import { AdminViewOnlySectionBanner } from "@/components/admin/view-only-action";
 import { FamilyGroupEditorDialog } from "@/components/admin/family-group-editor-dialog";
 import {
   formatMemberAccountPreview,
@@ -99,6 +100,39 @@ export default function MemberDetailPage({
   // billing-family card takes it as a prop.
   const canEditMembership = useAdminAreaEditAccess("membership");
   const canEditFinance = useAdminAreaEditAccess("finance");
+
+  /*
+    #2168 owner decision: ONE view-only banner for this page, not one per card.
+
+    #2160 rolled the section banner across the admin tree but deliberately left
+    this page alone: nine per-record cards render here, so converting each of
+    them stacked three identical banners in the Family group, two in Lifecycle &
+    Deletion, and nine on the page. The banner lives here instead, once, above
+    the accordion, and the cards it covers drop their per-button reason by
+    taking `ancestorRendersViewOnlyBanner` at their render site below.
+
+    SCOPE: this banner states the MEMBERSHIP area only, because that is what the
+    cards it vouches for are gated on. `MemberCreditCard` is gated on FINANCE,
+    so it is NOT vouched for and keeps its per-button reason — an admin who can
+    edit membership but only view finance gets no banner here, and this banner
+    would be describing the wrong permission for those controls.
+
+    It is declared UP HERE, above the loading and error early-returns, and
+    rendered in all three branches. `AdminViewOnlySectionBanner` renders its
+    `role="status"` wrapper unconditionally and gates only the content, so the
+    live region has to be registered in the accessibility tree from the first
+    paint — a region injected already-populated is silently dropped by some
+    screen-reader/browser pairings. `canEditMembership` resolves from
+    `undefined` AFTER hydration, which is exactly the announcement moment this
+    protects. It sits OUTSIDE the page's `space-y-6` stack so the empty wrapper
+    an edit-capable admin gets costs no layout.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEditMembership} className="mb-6">
+      Your admin role can view this member but cannot change their details.
+      Membership edit access is required.
+    </AdminViewOnlySectionBanner>
+  );
 
   const [member, setMember] = useState<MemberDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -435,17 +469,23 @@ export default function MemberDetailPage({
 
   if (loading) {
     return (
-      <div className="py-12 text-center">
-        <p className="text-sm text-slate-500">Loading member details...</p>
+      <div>
+        {viewOnlyBanner}
+        <div className="py-12 text-center">
+          <p className="text-sm text-muted-foreground">Loading member details...</p>
+        </div>
       </div>
     );
   }
   if (pageError || !member) {
     return (
-      <div className="space-y-4">
-        <BackLink href={backHref} label={backLabel} />
-        <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-md text-sm">
-          {pageError || "Member not found"}
+      <div>
+        {viewOnlyBanner}
+        <div className="space-y-4">
+          <BackLink href={backHref} label={backLabel} />
+          <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-md text-sm">
+            {pageError || "Member not found"}
+          </div>
         </div>
       </div>
     );
@@ -539,7 +579,9 @@ export default function MemberDetailPage({
   };
 
   return (
-    <div className="space-y-6">
+    <div>
+      {viewOnlyBanner}
+      <div className="space-y-6">
       <MemberDetailHeader
         member={member}
         backHref={backHref}
@@ -624,7 +666,7 @@ export default function MemberDetailPage({
             inheritEmail={inheritEmail}
             canEdit={canEditMembership}
           />
-          <MemberLodgeAccessCard memberId={id} />
+          <MemberLodgeAccessCard memberId={id} ancestorRendersViewOnlyBanner />
         </MemberGroupCard>
 
         <MemberGroupCard
@@ -635,7 +677,7 @@ export default function MemberDetailPage({
         >
           <div className="divide-y">
             <div className="px-6 pb-6 text-sm">
-              <p className="text-slate-500">Family Groups</p>
+              <p className="text-muted-foreground">Family Groups</p>
               <div className="mt-1 font-medium">
                 {member.familyGroups && member.familyGroups.length > 0 ? (
                   <div className="flex flex-wrap gap-1">
@@ -653,7 +695,7 @@ export default function MemberDetailPage({
                     ))}
                   </div>
                 ) : (
-                  <span className="text-xs text-slate-500">None</span>
+                  <span className="text-xs text-muted-foreground">None</span>
                 )}
               </div>
             </div>
@@ -671,6 +713,7 @@ export default function MemberDetailPage({
               />
             )}
             <MemberParentLinksCard
+              ancestorRendersViewOnlyBanner
               className={embeddedCardClassName}
               member={member}
               memberIsArchived={memberIsArchived}
@@ -681,6 +724,7 @@ export default function MemberDetailPage({
               canEdit={canEditMembership}
             />
             <MemberPartnerLinkCard
+              ancestorRendersViewOnlyBanner
               className={embeddedCardClassName}
               memberId={member.id}
               isAdultMember={isAdultMember}
@@ -688,6 +732,7 @@ export default function MemberDetailPage({
               currentMemberPath={currentMemberPath}
             />
             <MemberDependentsCard
+              ancestorRendersViewOnlyBanner
               className={embeddedCardClassName}
               member={member}
               isAdultMember={isAdultMember}
@@ -710,13 +755,14 @@ export default function MemberDetailPage({
           <div className="divide-y">
             {member.lifeMemberDate && (
               <div className="p-6 text-sm">
-                <span className="text-slate-500">Life member since </span>
+                <span className="text-muted-foreground">Life member since </span>
                 <span className="font-medium">
                   {formatMemberDateNz(member.lifeMemberDate)}
                 </span>
               </div>
             )}
             <MemberSeasonalMembershipCard
+              ancestorRendersViewOnlyBanner
               className={embeddedCardClassName}
               member={member}
               onSaved={async () => {
@@ -778,6 +824,7 @@ export default function MemberDetailPage({
           contentClassName="px-0 pb-0"
         >
           <MemberCommitteeAssignmentsCard
+            ancestorRendersViewOnlyBanner
             className={embeddedCardClassName}
             member={member}
             onSaved={async () => {
@@ -804,6 +851,7 @@ export default function MemberDetailPage({
         >
           <div className="divide-y">
             <MemberLifecycleCard
+              ancestorRendersViewOnlyBanner
               className={embeddedCardClassName}
               canEdit={canEditMembership}
               member={member}
@@ -833,6 +881,7 @@ export default function MemberDetailPage({
               onReviewArchive={handleReviewArchiveRequest}
             />
             <MemberDeletionCard
+              ancestorRendersViewOnlyBanner
               className={embeddedCardClassName}
               canEdit={canEditMembership}
               deleteEligibility={member.deleteEligibility}
@@ -853,10 +902,10 @@ export default function MemberDetailPage({
             />
             {actorIsFullAdmin && !isSelf && (
               <div className="rounded-none border-0 shadow-none px-1 pt-2">
-                <h3 className="text-sm font-semibold text-gray-900">
+                <h3 className="text-sm font-semibold text-foreground">
                   Merge a duplicate profile
                 </h3>
-                <p className="mt-1 text-xs text-gray-500">
+                <p className="mt-1 text-xs text-muted-foreground">
                   Combine another duplicate member record into this one. This
                   record stays the master — it keeps its login, security and
                   Xero identity — and the duplicate is permanently deleted.
@@ -1037,6 +1086,7 @@ export default function MemberDetailPage({
         onChangeReviewNote={setDeleteReviewNote}
         onSubmit={handleReviewDeleteRequest}
       />
+      </div>
     </div>
   );
 }

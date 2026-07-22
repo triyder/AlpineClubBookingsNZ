@@ -6,10 +6,10 @@ export default function MinimumStayPage() {
     <div className="space-y-6">
       <div>
         <BackLink href="/admin/booking-policies" label="Booking Policies" />
-        <h1 className="mt-2 text-2xl font-bold text-slate-900">
+        <h1 className="mt-2 text-2xl font-bold text-foreground">
           Minimum Night Stay
         </h1>
-        <p className="mt-1 text-sm text-slate-500">
+        <p className="mt-1 text-sm text-muted-foreground">
           Require a minimum number of nights when a booking touches specific days
           of the week within a date range.
         </p>

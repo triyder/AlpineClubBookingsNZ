@@ -5,6 +5,8 @@ import logger from "@/lib/logger";
 import {
   getExpiredXeroOAuthStateCookieOptions,
   isValidXeroOAuthState,
+  sanitizeXeroOAuthReturnPath,
+  XERO_OAUTH_RETURN_COOKIE,
   XERO_OAUTH_STATE_COOKIE,
 } from "@/lib/xero-oauth-state";
 
@@ -34,6 +36,16 @@ export async function GET(request: NextRequest) {
   const incomingUrl = new URL(request.url);
   const requestState = incomingUrl.searchParams.get("state");
   const cookieState = request.cookies.get(XERO_OAUTH_STATE_COOKIE)?.value;
+  // Where to land after the round-trip: the sanitised return page (the setup
+  // wizard) if the connect route set one, else the default admin Xero page.
+  const returnPath =
+    sanitizeXeroOAuthReturnPath(
+      request.cookies.get(XERO_OAUTH_RETURN_COOKIE)?.value,
+    ) ?? "/admin/xero";
+  // Append our own query params with the right separator: a sanitised return
+  // path may already carry a query (e.g. ?step=connect), so a bare "?" would
+  // produce a malformed "…?a=b?connected=true" (#2080 hardening).
+  const returnQuerySep = returnPath.includes("?") ? "&" : "?";
 
   // Browser-facing OAuth callback: send unauthenticated/non-admin users to
   // the login page instead of returning a JSON error.
@@ -64,9 +76,16 @@ export async function GET(request: NextRequest) {
       "Processing Xero OAuth callback"
     );
     await handleXeroCallback(publicCallbackUrl, requestState ?? undefined);
-    const response = NextResponse.redirect(new URL("/admin/xero?connected=true", baseUrl));
+    const response = NextResponse.redirect(
+      new URL(`${returnPath}${returnQuerySep}connected=true`, baseUrl)
+    );
     response.cookies.set(
       XERO_OAUTH_STATE_COOKIE,
+      "",
+      getExpiredXeroOAuthStateCookieOptions(request.url)
+    );
+    response.cookies.set(
+      XERO_OAUTH_RETURN_COOKIE,
       "",
       getExpiredXeroOAuthStateCookieOptions(request.url)
     );
@@ -75,10 +94,18 @@ export async function GET(request: NextRequest) {
     logger.error({ err: error }, "Xero callback error");
     const message = getSafeXeroCallbackErrorMessage(error);
     const response = NextResponse.redirect(
-      new URL(`/admin/xero?error=${encodeURIComponent(message)}`, baseUrl)
+      new URL(
+        `${returnPath}${returnQuerySep}error=${encodeURIComponent(message)}`,
+        baseUrl,
+      )
     );
     response.cookies.set(
       XERO_OAUTH_STATE_COOKIE,
+      "",
+      getExpiredXeroOAuthStateCookieOptions(request.url)
+    );
+    response.cookies.set(
+      XERO_OAUTH_RETURN_COOKIE,
       "",
       getExpiredXeroOAuthStateCookieOptions(request.url)
     );

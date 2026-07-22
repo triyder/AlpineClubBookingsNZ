@@ -199,7 +199,7 @@ export default function BookingRequestQuoteResponsePage() {
           </div>
         ) : (
           <>
-            <div className="grid gap-3 rounded-md border bg-slate-50 p-3 text-sm sm:grid-cols-2">
+            <div className="grid gap-3 rounded-md border bg-muted p-3 text-sm sm:grid-cols-2">
               {context.type === "SCHOOL" && context.schoolName ? (
                 <p>
                   <span className="text-muted-foreground">School:</span>{" "}
@@ -231,7 +231,7 @@ export default function BookingRequestQuoteResponsePage() {
             </div>
 
             {context.message ? (
-              <div className="rounded-md border bg-white p-3 text-sm text-slate-700">
+              <div className="rounded-md border bg-card p-3 text-sm text-muted-foreground">
                 {context.message}
               </div>
             ) : null}
@@ -244,7 +244,7 @@ export default function BookingRequestQuoteResponsePage() {
                   className={`block cursor-pointer rounded-md border p-3 ${
                     selectedOptionId === option.id
                       ? "border-primary bg-primary/5"
-                      : "border-slate-200"
+                      : "border-border"
                   }`}
                 >
                   <div className="flex items-start gap-3">

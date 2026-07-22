@@ -7,11 +7,26 @@ const {
   mockRecordXeroInboundEvent,
   mockRunXeroInboundReconciliationCycle,
   mockIsXeroConnected,
+  mockGetWebhookKey,
+  mockRecordXeroWebhookValidation,
 } = vi.hoisted(() => ({
   mockRecordWebhookLog: vi.fn().mockResolvedValue(undefined),
   mockRecordXeroInboundEvent: vi.fn().mockResolvedValue(undefined),
   mockRunXeroInboundReconciliationCycle: vi.fn().mockResolvedValue(undefined),
   mockIsXeroConnected: vi.fn().mockResolvedValue(false),
+  // DB-only resolution (#2079): the route resolves the webhook key here, not env.
+  mockGetWebhookKey: vi.fn(),
+  // ITR receipt sink (#2081): recorded on a valid-signature empty-events POST.
+  mockRecordXeroWebhookValidation: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock("@/lib/xero-config", () => ({
+  getOperationalXeroWebhookKey: (...args: unknown[]) => mockGetWebhookKey(...args),
+}));
+
+vi.mock("@/lib/xero-webhook-validation", () => ({
+  recordXeroWebhookValidation: (...args: unknown[]) =>
+    mockRecordXeroWebhookValidation(...args),
 }));
 
 vi.mock("@/lib/webhook-log", () => ({
@@ -62,7 +77,27 @@ function signedRequest(payload: unknown, signatureOverride?: string) {
 describe("Xero webhook route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.stubEnv("XERO_WEBHOOK_KEY", "xero-webhook-key");
+    mockGetWebhookKey.mockResolvedValue("xero-webhook-key");
+  });
+
+  it("fails closed with 500 when no webhook key is configured (never accepts)", async () => {
+    mockGetWebhookKey.mockResolvedValue(undefined);
+    const { POST } = await import("@/app/api/webhooks/xero/route");
+
+    const response = await POST(signedRequest({ events: [] }));
+
+    expect(response.status).toBe(500);
+    expect(mockRecordXeroInboundEvent).not.toHaveBeenCalled();
+  });
+
+  it("fails closed with 500 when the key resolver errors (never accepts)", async () => {
+    mockGetWebhookKey.mockRejectedValue(new Error("db down"));
+    const { POST } = await import("@/app/api/webhooks/xero/route");
+
+    const response = await POST(signedRequest({ events: [] }));
+
+    expect(response.status).toBe(500);
+    expect(mockRecordXeroInboundEvent).not.toHaveBeenCalled();
   });
 
   it("rejects invalid signatures before parsing the payload", async () => {
@@ -75,6 +110,52 @@ describe("Xero webhook route", () => {
   });
 
   it("accepts a valid signed payload", async () => {
+    const { POST } = await import("@/app/api/webhooks/xero/route");
+
+    const response = await POST(signedRequest({ events: [] }));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ status: "ok" });
+  });
+
+  it("records the ITR validation marker on a valid-signature empty-events POST", async () => {
+    // Intent-to-receive (#2081): an empty events array with a valid signature is
+    // Xero's validation ping — the route must leave an observable marker (keyed
+    // to the resolved webhook key) and record NO per-event row.
+    const { POST } = await import("@/app/api/webhooks/xero/route");
+
+    const response = await POST(signedRequest({ events: [] }));
+
+    expect(response.status).toBe(200);
+    expect(mockRecordXeroWebhookValidation).toHaveBeenCalledWith("xero-webhook-key");
+    expect(mockRecordXeroInboundEvent).not.toHaveBeenCalled();
+  });
+
+  it("does NOT record an ITR marker for real (non-empty) event deliveries", async () => {
+    const { POST } = await import("@/app/api/webhooks/xero/route");
+
+    const response = await POST(
+      signedRequest({
+        events: [
+          {
+            eventType: "UPDATE",
+            eventCategory: "INVOICE",
+            resourceId: "invoice-1",
+            eventDateUtc: "2026-05-29T00:00:00.000Z",
+          },
+        ],
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockRecordXeroWebhookValidation).not.toHaveBeenCalled();
+    expect(mockRecordXeroInboundEvent).toHaveBeenCalledTimes(1);
+  });
+
+  it("still returns 200 for a valid ITR even if recording the marker fails", async () => {
+    // A marker-write failure must never turn a valid ITR into a non-200, or Xero
+    // treats the subscription as unverified.
+    mockRecordXeroWebhookValidation.mockRejectedValueOnce(new Error("db down"));
     const { POST } = await import("@/app/api/webhooks/xero/route");
 
     const response = await POST(signedRequest({ events: [] }));

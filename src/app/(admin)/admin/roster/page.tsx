@@ -25,7 +25,7 @@ import { OccupancyCalendar, type CalendarTone } from "@/components/admin/occupan
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
 import {
   ADMIN_FORBIDDEN_SAVE_REASON,
-  AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action"
 import type { RosterDayStatus, RosterDayStatusResult } from "@/lib/roster-status"
@@ -471,9 +471,45 @@ export default function RosterPage() {
       .join(", ")
   }
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the section —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before its
+    content appears; a region injected already-populated is silently dropped by
+    some screen-reader/browser pairings. It sits OUTSIDE the `space-y-*` stack so
+    the empty wrapper an edit-capable admin gets costs no layout.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-6">
+      Your admin role can view the chore roster but cannot change it. Lodge
+      edit access is required.
+    </AdminViewOnlySectionBanner>
+  )
+
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
+    <div>
+      {/*
+        #2160: on THIS page the heading block comes first, so that a
+        screen-reader user knows which area they are on before the banner tells
+        them they have view-only access to it. `mb-6` replaces the `space-y-6`
+        gap this block had as the stack's first child, so spacing is unchanged
+        in both states: the `mb-6` lives on the banner's inner div, which only
+        renders for a view-only admin, and the permanently-mounted
+        `role="status"` wrapper an edit-capable admin gets has no height and no
+        margin.
+
+        This ordering is NOT the house rule — see the fuller note on
+        `/admin/book`. It is applied only on these two pages. Everywhere else
+        the banner stays the FIRST child of the outermost wrapper in EVERY
+        render branch, so the `role="status"` region keeps its DOM position when
+        a fetch settles instead of being re-created already populated. This page
+        renders in a single branch, so the reorder is free; it has not been
+        propagated to the other single-branch sections, because keying the
+        banner's position on whether a section has a loading branch is not
+        something a reader can check at the render site.
+      */}
+      <div className="mb-6 flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold">Chore Roster</h1>
           <p className="text-muted-foreground mt-1">
@@ -499,12 +535,8 @@ export default function RosterPage() {
         </div>
       </div>
 
-      {!canEdit && (
-        <AdminViewOnlyNotice canEdit={canEdit}>
-          Your admin role can view the chore roster but cannot change it. Lodge
-          edit access is required.
-        </AdminViewOnlyNotice>
-      )}
+      {viewOnlyBanner}
+      <div className="space-y-6">
 
       {error && (
         <div className="bg-destructive/10 text-destructive px-4 py-3 rounded-md">
@@ -541,6 +573,7 @@ export default function RosterPage() {
             </div>
             <ViewOnlyActionButton
               canEdit={canEdit}
+              describeReason={false}
               variant="outline"
               onClick={handleRegenerate}
               disabled={loading || saving}
@@ -593,12 +626,12 @@ export default function RosterPage() {
                 </div>
                 <div className="flex items-center space-x-2">
                   {hasAnySuggested && (
-                    <ViewOnlyActionButton canEdit={canEdit} onClick={handleConfirm} disabled={saving}>
+                    <ViewOnlyActionButton canEdit={canEdit} describeReason={false} onClick={handleConfirm} disabled={saving}>
                       Confirm Roster
                     </ViewOnlyActionButton>
                   )}
                   {isConfirmed && roster.assignments.length > 0 && (
-                    <ViewOnlyActionButton canEdit={canEdit} variant="outline" onClick={handleSendEmail} disabled={sendingEmail}>
+                    <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="outline" onClick={handleSendEmail} disabled={sendingEmail}>
                       {sendingEmail ? "Sending..." : "Email Roster to Guests"}
                     </ViewOnlyActionButton>
                   )}
@@ -651,6 +684,7 @@ export default function RosterPage() {
                         </div>
                         <ViewOnlyActionButton
                           canEdit={canEdit}
+                          describeReason={false}
                           variant="ghost"
                           size="sm"
                           onClick={() => handleAddAssignment(template.id)}
@@ -726,6 +760,7 @@ export default function RosterPage() {
                               <TableCell className="text-right">
                                 <ViewOnlyActionButton
                                   canEdit={canEdit}
+                                  describeReason={false}
                                   variant="ghost"
                                   size="sm"
                                   onClick={() => handleRemove(a.id)}
@@ -758,6 +793,7 @@ export default function RosterPage() {
                         <ViewOnlyActionButton
                           key={t.id}
                           canEdit={canEdit}
+                          describeReason={false}
                           variant="outline"
                           size="sm"
                           onClick={() => handleAddAssignment(t.id)}
@@ -819,6 +855,7 @@ export default function RosterPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      </div>
     </div>
   )
 }

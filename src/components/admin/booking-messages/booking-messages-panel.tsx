@@ -18,7 +18,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import {
   AdminForbiddenSaveNotice,
-  AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 
@@ -177,18 +177,35 @@ export function BookingMessagesPanel() {
     }
   }
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the section —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before its
+    content appears; a region injected already-populated is silently dropped by
+    some screen-reader/browser pairings. It sits OUTSIDE the `space-y-*` stack so
+    the empty wrapper an edit-capable admin gets costs no layout.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-6">
+      Your admin role can view booking messages but cannot change them.
+      Support &amp; System edit access is required.
+    </AdminViewOnlySectionBanner>
+  );
+
   if (loading) {
-    return <p className="text-sm text-slate-500">Loading booking messages</p>;
+    return (
+      <div>
+        {viewOnlyBanner}
+        <p className="text-sm text-muted-foreground">Loading booking messages</p>
+      </div>
+    );
   }
 
   return (
-    <div className="space-y-6">
-      {!canEdit ? (
-        <AdminViewOnlyNotice canEdit={canEdit}>
-          Your admin role can view booking messages but cannot change them.
-          Support &amp; System edit access is required.
-        </AdminViewOnlyNotice>
-      ) : null}
+    <div>
+      {viewOnlyBanner}
+      <div className="space-y-6">
       <div className="grid gap-4 lg:grid-cols-[320px_1fr]">
         <div>
           <Label htmlFor="booking-message-select">Template</Label>
@@ -206,7 +223,7 @@ export function BookingMessagesPanel() {
           </Select>
         </div>
         {currentMessage ? (
-          <div className="space-y-2 text-sm text-slate-600">
+          <div className="space-y-2 text-sm text-muted-foreground">
             <div className="flex flex-wrap gap-2">
               <Badge variant="secondary">{currentMessage.section}</Badge>
               <Badge variant="outline">{currentMessage.key}</Badge>
@@ -244,6 +261,7 @@ export function BookingMessagesPanel() {
       <div className="flex flex-wrap gap-2">
         <ViewOnlyActionButton
           canEdit={canEdit}
+          describeReason={false}
           onClick={saveMessage}
           disabled={saving || !currentMessage}
         >
@@ -256,6 +274,7 @@ export function BookingMessagesPanel() {
         </Button>
         <ViewOnlyActionButton
           canEdit={canEdit}
+          describeReason={false}
           variant="outline"
           onClick={resetMessage}
           disabled={saving || !currentMessage}
@@ -266,10 +285,11 @@ export function BookingMessagesPanel() {
       </div>
 
       {previewText ? (
-        <div className="rounded-md border border-slate-200 bg-slate-50 p-4">
-          <p className="whitespace-pre-wrap text-sm text-slate-900">{previewText}</p>
+        <div className="rounded-md border border-border bg-muted p-4">
+          <p className="whitespace-pre-wrap text-sm text-foreground">{previewText}</p>
         </div>
       ) : null}
+      </div>
     </div>
   );
 }

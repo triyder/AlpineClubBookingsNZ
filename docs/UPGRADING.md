@@ -86,51 +86,334 @@ as a red flag and check the release notes before deploying.
 
 ## Unreleased
 
-The unreleased range **closes the config-transfer import compatibility window
-for old bundles** (#2131) and **re-sources the public `{{hut-fees}}` embed onto
-the authoritative per-membership-type rate table** (#2129 step 1). There is
-**no migration and no schema change**, so the deploy itself needs no special
-window: any deploy window is fine, and the old colour is unaffected. The
-operator impact is about **archived configuration bundles** and, if you publish
-hut fees, about which membership types are flagged **Publicly listed**.
+_No schema or migration changes are staged for the next release yet._
+
+---
+
+## v0.13.0 → v0.13.1
+
+`v0.13.1` is a **patch** release carrying **three migrations — two destructive
+`contract` migrations plus one additive/expand migration** — across two
+operator-relevant workstreams:
+
+- **Release B of the #2129/#2130 contract series** (the two `contract`
+  migrations): they finish what the `v0.13.0` runtime-prep (Release A) made legal,
+  require the breaking-migration acknowledgement at deploy time, and are only legal
+  once `v0.13.0` is the deployed, drained colour.
+- **Encrypted DB-only provider credentials (#2079)** (the one expand migration,
+  `20260721210000_add_integration_credential`): Xero credential resolution is hard-
+  cut from env `XERO_*` to an encrypted store, so an existing Xero-connected
+  install enters a documented "needs re-entry" state at cutover and **Xero work
+  pauses** until a Full Admin re-enters credentials in-app and reconnects. Its
+  operator subsection is below the Release B steps.
+
+Both workstreams ship in this one tag; complete the Release B steps **and** the
+#2079 re-entry.
+
+### Release B: the two contract migrations
+
+This is a **separate deploy on top of `v0.13.0`** (the runtime-prep "Release
+A", shipped and deployed). Do not start it until `v0.13.0` has been the live,
+drained colour in production long enough that you are confident it is staying
+(a normal soak — at minimum, past the point where you would have rolled back).
+
+Two destructive `contract` migrations, both `old_code_compatible=yes`, both
+fully justified in `docs/BLUE_GREEN_MIGRATION_SAFETY.tsv`:
+
+- **`20260721120000_contract_drop_season_rate`** — `DROP TABLE "SeasonRate"`,
+  the frozen member/non-member boolean-keyed nightly-rate table. Its rows were
+  copied forward to `MembershipTypeSeasonRate` by the E4 re-key
+  (`20260717140000_pricing_rekey_by_membership_type`) and nothing has priced
+  from them since. Release A (#2129 step 1) removed the last
+  application-runtime reader, the public `{{hut-fees}}` embed; the only other
+  references were seeders, removed in the same PR as this migration. The
+  migration opens with a **coverage guard** that aborts the whole deploy if any
+  `SeasonRate` row has no `MembershipTypeSeasonRate` counterpart — pre-flight it
+  with the query in step 3 below.
+- **`20260721130000_contract_drop_ismember_and_agetier_xero_columns`** —
+  deletes the orphaned legacy `HUT_FEE` item-code rows that carry no
+  `membershipTypeId` (not resolvable for pricing by the current runtime; a production install
+  typically has a handful — ours had 16), drops the old
+  `(category, ageTier, seasonType, isMember)` unique index, drops
+  `XeroItemCodeMapping.isMember`, and drops
+  `AgeTierSetting.xeroContactGroupId`/`xeroContactGroupName` (their data moved
+  into `XeroContactGroupRule` at E8, `20260716140000_xero_member_grouping`).
+  This one is legal **only** because `v0.12.2` narrowed the reads and Release A
+  (#2130 STEP 1.5) narrowed the writes on both models, so the draining colour
+  names none of these columns in a `SELECT` or an implicit `RETURNING`.
+
+**Before deploying Release B**
+
+1. **Take and restore-test a fresh backup — this deploy drops schema.** There is
+   no down-migration. A `DROP TABLE` and a `DROP COLUMN` cannot be undone by
+   rolling the app back; restore from backup is your only recovery for the
+   dropped data.
+2. **Confirm `v0.13.0` is actually the deployed colour.** Check the running
+   image/tag, not just what merged. If the live colour is `v0.12.2` or earlier,
+   **stop** — deploying Release B against it will break the drain.
+3. **Pre-flight the `SeasonRate` coverage check.** The `SeasonRate` drop is only
+   safe because the E4 re-key
+   (`20260717140000_pricing_rekey_by_membership_type`) copied every row forward
+   into `MembershipTypeSeasonRate` — but that copy was **conditional** on your
+   install having a `MEMBER_RATE`-behaviour membership type and a type keyed
+   `NON_MEMBER` at the time. On a fork whose types did not match, it copied
+   nothing and `SeasonRate` is still the only copy of that pricing. Run this
+   **read-only** query against your production database before you start:
+
+   ```sql
+   SELECT sr."seasonId", sr."ageTier", count(*) AS uncovered_rows
+   FROM "SeasonRate" sr
+   WHERE NOT EXISTS (
+     SELECT 1 FROM "MembershipTypeSeasonRate" m
+     WHERE m."seasonId" = sr."seasonId"
+       AND m."ageTier" IS NOT DISTINCT FROM sr."ageTier"
+   )
+   GROUP BY 1, 2;
+   ```
+
+   **Zero rows means you are clear.** Any rows returned name seasons and age
+   tiers whose rates exist *only* in the table about to be dropped, including
+   inactive and past seasons. Recreate those rates as per-membership-type rates
+   (**Admin → Seasons & Rates**) and re-run the query until it is empty. The
+   migration carries the same check as an aborting guard, so if you skip this
+   step the deploy fails safely instead of losing the rates — but it fails
+   mid-deploy, which is a worse place to discover it. If the guard does fire,
+   reconcile the rates; **do not** delete the orphaned rows or edit the guard
+   out.
+4. **Set the breaking-migration acknowledgement for this deploy only.** The
+   blue/green validator refuses a destructive migration without it:
+
+   ```bash
+   export ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS=1
+   export BLUE_GREEN_MIGRATION_OVERRIDE_REASON="Release B contract drops (#2129 step 2, #2130 STEP 2); Release A runtime-prep deployed and soaked since <date>; backup <id> restore-tested"
+   ```
+
+   Put the real soak date and backup identifier in the reason — it is the audit
+   record for why the drop was safe. Unset both afterwards so the next deploy
+   does not inherit the override.
+5. **No special traffic window is needed.** Both tables are cold admin-only
+   config tables: `DROP TABLE`, `DROP INDEX` and `DROP COLUMN` are
+   metadata-only catalog changes taking a brief `ACCESS EXCLUSIVE` lock each,
+   and the row delete touches a handful of rows. No hot table, no table
+   rewrite, no backfill. The normal deploy window is fine; let the deploy guard
+   stop on lock timeout.
+6. **No Xero call is made.** Neither migration contacts Xero — no contact,
+   contact group, item or invoice is touched.
+
+**Post-upgrade actions (Release B)**
+
+1. **Spot-check hut-fee pricing and one Xero hut-fee invoice line.** Quote a
+   member and a non-member booking and confirm the totals and item codes match
+   what you saw before the deploy. They should be identical — the migration
+   removes only structures nothing reads — but this is the cheapest possible
+   confirmation.
+2. **Check Xero member grouping still resolves.** Visit the member-grouping
+   admin page and run its dry-run. Grouping has been driven by
+   `XeroContactGroupRule` since E8; the dropped `AgeTierSetting` columns were
+   dead copies.
+3. **Nothing to reconfigure.** No setting, flag or mapping needs re-entering,
+   and no admin-visible screen changes.
+
+**Rollback boundary (Release B).** A validator or pre-migration failure aborts
+the deploy before any schema change and the old colour keeps serving untouched.
+Once the migrations have applied, a failed cutover auto-restores traffic to the
+Release A colour, which runs correctly against the contracted schema — that is
+precisely what the runtime-prep release bought. **Rolling back past `v0.13.0`
+(to `v0.12.2` or earlier) against the contracted schema will not work**: that
+colour still names the dropped column and table. Roll forward, or restore the
+pre-upgrade backup and lose the writes since it was taken.
+
+### Encrypted DB-only provider credentials (#2079)
+
+The additive migration `20260721210000_add_integration_credential` adds one new
+standalone table and needs no override; it deploys alongside the Release B
+migrations above. The operator-visible part is the **hard cutover of Xero
+credential resolution** from env `XERO_*` to the encrypted store.
+
+**What stops working at cutover** for a previously env-configured, Xero-connected
+install:
+
+- The old `XERO_ENCRYPTION_KEY` is no longer read, so the previously stored Xero
+  OAuth tokens become **unreadable by design** (deliberately no silent key
+  import). Xero surfaces a clean **"reconnect Xero"** state — nothing crashes at
+  boot, cron, webhook, or page load.
+- `XERO_CLIENT_ID` / `XERO_CLIENT_SECRET` / `XERO_REDIRECT_URI` /
+  `XERO_WEBHOOK_KEY` are ignored; setup readiness raises a warning naming the exact
+  vars still present ("configured in-app now — re-enter there, then remove these").
+- **Xero sync, webhook verification, and invoice/payment automation are
+  fail-flagged and paused** — not crashing — until the credentials are re-entered
+  and Xero is reconnected. The Xero outbox marks each pending op FAILED (replayable
+  after reconnect); no money path changes.
+
+**Re-entry steps (Full Admin):**
+
+1. **Ensure `AUTH_SECRET` (or `NEXTAUTH_SECRET`) is strong** — at least 32
+   characters and not the `.env.example` placeholder. Credential capture is
+   **hard-blocked** on a weak secret; setup readiness shows a passive amber warning
+   before you start. There is no boot-time enforcement — the block is at the
+   capture form only.
+2. Deploy the release. Nothing fails at boot; readiness shows the legacy-env
+   warnings and the Xero "reconnect" prompt.
+3. Open **Admin → Xero → Setup** (the Integrations hub links here) and use the
+   **Xero Credentials** section to re-enter the client id, client secret, and
+   (optional) webhook key. Each write is Full-Admin only, encrypted at rest, and
+   audited (metadata only); values are never displayed back. The wrapped
+   token-encryption key auto-generates on first use.
+4. **Reconnect Xero (OAuth)** so fresh tokens are stored under the new key. A
+   client-credential write drops any stale stored tokens (verify-reset), so a
+   reconnect is required after re-entry.
+5. Remove the now-ignored `XERO_*` credential env vars from the environment; the
+   readiness warning clears. Because production runs blue/green web slots plus a
+   cron-leader, a wizard write in one web slot is observed by the cron-leader
+   within the credential cache TTL (about 45 s), no restart required.
+
+The full step-by-step, including the per-provider re-entry order, is the **DB-only
+provider credentials** upgrade runbook in `DEPLOYMENT.md`.
+
+**Credentials at rest.** Stored credentials are encrypted with AES-256-GCM under a
+key derived from the app auth secret, so **a database backup plus the auth secret
+decrypts everything** — treat the auth secret with the same care as the database,
+and **never share a production auth secret with staging or clones** (a restored
+clone is *expected* to fail decryption and enter the re-entry state, which is
+correct, not a bug). See `docs/SECURITY-ATTACK-SURFACE.md` → "Credentials at
+rest".
+
+**Rollback boundary (#2079).** The migration is purely additive, so the old colour
+is unaffected by it; the credential cutover is a runtime behaviour of the new
+colour, not a schema break. Rolling the app back to a build that still reads env
+`XERO_*` would restore the old resolution path, but the standard rollback boundary
+for this release is set by the Release B contract drops above, not by this
+migration.
+
+---
+
+## v0.12.2 → v0.13.0
+
+`v0.13.0` is a **minor** release. It lands the annual-subscription billing epic
+(#2151) — the double-billing fix with void/re-bill (#2147), billing-exception
+resolution provenance (#2148), the membership-type-derived subscription
+requirement that replaces the old role-based exemption (#2149), and the operator
+"already invoiced" family marker (#2161) — plus a week of admin UI, theming,
+config, and Xero-surface work. **This release changes money paths**: read the
+full inventory in `docs/releases/v0.13.0.md` and the `0.13.0` changelog section
+before starting.
+
+It carries **four migrations, all expand / metadata-only and all
+`old_code_compatible=yes`.** Unlike `v0.12.2` (which had two breaking `contract`
+migrations), **none of these is breaking**: the blue/green validator passes with
+**no `ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS` override**, and a normal deploy
+window is sufficient. **If the validator demands that override for this release,
+the checkout is wrong** — stop and re-check you are on `release/v0.13.0` at the
+intended commit before proceeding.
+
+Two operator concerns carried forward from the previous range still apply and are
+repeated below: the config-transfer legacy-bundle window (#2131) and the public
+`{{hut-fees}}` embed re-sourcing (#2129 step 1). Neither adds a migration.
 
 ### Before deployment
 
-1. **Re-export any archived config bundle you intend to keep, before you
-   upgrade.** From this release the importer rejects the legacy bundle shapes
+1. **Take and restore-test a fresh backup**, as always. This release adds tables,
+   columns, an enum value, and a data-only seed, but **drops nothing and rewrites
+   no table**, so a normal deploy window is sufficient.
+2. **Review the four pending migrations against the safety ledger. All four are
+   expand/metadata-only, old-colour compatible, and need no override.**
+   - `20260720130000_subscription_invoice_dedup_void_release` (#2147, **expand,
+     ledgered**) adds the `VOIDED` charge-status enum value, a
+     `MemberSubscription.voidGeneration` integer (constant default 0), a nullable
+     `MembershipSubscriptionChargeCoverage.releasedAt`, and swaps the coverage
+     `subscriptionId` full UNIQUE for a partial UNIQUE over active
+     (`releasedAt IS NULL`) claims. Metadata-only on cold membership-billing
+     tables. The draining old colour never reads the new columns and cannot
+     create a second coverage row per subscription (only the new void→re-bill
+     runtime does), so it never needs the dropped full-unique constraint. See the
+     forward-only note below.
+   - `20260720140000_billing_exception_resolution_provenance` (#2148, **expand,
+     ledgered**) creates the `MembershipBillingExceptionResolution` enum
+     (`CONFIRM | PREVIEW_RECONCILE`) and adds a nullable
+     `MembershipBillingException.resolvedVia` with no default. Metadata-only ADD
+     COLUMN on a cold table; existing/legacy resolved rows and every OPEN row stay
+     NULL — the documented "resolved before this column existed / not yet
+     resolved" state. The old colour never names the enum or the column.
+   - `20260720180000_seed_admin_lodge_membership_types` (#2149, **metadata-only
+     data seed, ledgered**) seeds the built-in ADMIN and LODGE membership types
+     (both `subscriptionBehavior = NOT_REQUIRED`). No DDL and no schema change on
+     the cold, admin-only `MembershipType` / `MembershipTypeAgeTier` config
+     tables; the old colour resolves ADMIN/LODGE via the old role exemption and
+     never reads these rows for a subscription decision. See the behaviour change
+     below.
+   - `20260721100000_family_season_invoice_marker` (#2161, **expand, ledgered**)
+     creates the new, empty `FamilyGroupSeasonInvoiceMarker` table with its
+     indexes, foreign keys, and one partial UNIQUE over active markers per
+     `(familyGroupId, seasonYear)`. Purely additive; the old colour has no model
+     for it and never reads or writes it. See the drain-window edge below.
+3. **Re-export any archived config bundle you intend to keep, before you
+   upgrade (#2131).** From v0.12.2 the importer rejects the legacy bundle shapes
    at dry-run — the `isMember` column on `season-rates.csv` and on the Xero
    `item-code-mappings.csv` HUT_FEE rows, and the pre-#1931 `ENTRANCE_FEE`
    item-code category name. Any bundle exported by **v0.12.2 or earlier** is
-   likely to carry them. Export a fresh bundle from your still-running v0.12.2
-   install (**Admin → Setup & Configuration → Export & Import**) and archive
-   that instead; a bundle exported after the upgrade is already in the current
-   shape.
-2. **If your source install is already gone**, the old zip is not lost — it can
-   be hand-fixed. Follow "Converting a legacy bundle by hand" in the
+   likely to carry them. Export a fresh bundle from your still-running install
+   (**Admin → Setup & Configuration → Export & Import**) and archive that
+   instead; a bundle exported after the upgrade is already in the current shape.
+   If your source install is already gone, the old zip can be hand-fixed —
+   follow "Converting a legacy bundle by hand" in the
    [Export & Import operator guide](guides/config-transfer.md#converting-a-legacy-bundle-by-hand),
-   then **Reseal edited bundle** and re-preview.
-3. **Check your bootstrap path.** If you set `CONFIG_BUNDLE_IMPORT_PATH` for
-   disaster-recovery or clone boots, make sure the bundle at that path is a
-   current-shape export. A legacy bundle there is refused at boot
-   (`refused-invalid`, nothing written) and the replacement install comes up
-   **unconfigured** — the cause is only visible in the boot logs.
+   then **Reseal edited bundle** and re-preview. If you set
+   `CONFIG_BUNDLE_IMPORT_PATH` for disaster-recovery or clone boots, make sure
+   the bundle at that path is a current-shape export: a legacy bundle there is
+   refused at boot (`refused-invalid`, nothing written) and the replacement
+   install comes up **unconfigured**, visible only in the boot logs.
 
 ### Post-upgrade actions
 
-1. **Nothing changes for current-shape bundles.** Export and import of bundles
-   produced by this release are byte-identical to before, and the #1931
-   item-code-amount joining-fee materialisation (from current `JOINING_FEE`
-   rows, e.g. when `membership-fees` is deselected) is unchanged.
-2. **Hand-authored Xero bundles now need a membership type on every HUT_FEE
-   row.** A `HUT_FEE` row in `item-code-mappings.csv` with a blank
-   `membershipTypeKey` is now a blocking row error instead of writing a keyless
-   mapping the runtime never reads. Fill in the column (the exporter always
-   does) before re-importing a hand-edited bundle.
-3. **Check your public hut-fee table if you use the `{{hut-fees}}` embed
+1. **#2149 behaviour change — the role-based subscription exemption is dropped.**
+   Membership type — `subscriptionBehavior`, plus age tier where the type is
+   `BASED_ON_AGE_TIER` — is now the **sole authority** on whether a member owes a
+   subscription; the login `Role` enum is a pure permission concept again. A
+   fee-paying member who happens to hold `role=ADMIN` now shows their **real**
+   subscription status (Paid/Unpaid/Overdue) everywhere, instead of being
+   silently exempt. The migration seeds two built-in types so the dropped
+   exemption has a DB-backed `NOT_REQUIRED` fallback: **ADMIN**
+   (`NOT_REQUIRED`, `BLOCK_BOOKING`) and **LODGE** (`NOT_REQUIRED`,
+   `MEMBER_RATE`), and `defaultMembershipTypeKeyForRole` now maps ADMIN→ADMIN and
+   LODGE→LODGE (previously both fell through to the billable FULL type). Two
+   consequences to expect: a **bare admin service account can no longer book as
+   itself** (its fallback type is `BLOCK_BOOKING`) — a real fee-paying human who
+   holds the admin permission is assigned a real membership type and is
+   unaffected; and a **LODGE kiosk account still books** on behalf of members
+   (`MEMBER_RATE`) and never owes a subscription. The seed is idempotent and
+   self-healing: it create-if-missing **and** reconciles the
+   `isBuiltIn`/`isActive` + `bookingBehavior`/`subscriptionBehavior` of any
+   pre-existing **hand-created** ADMIN/LODGE row, while **preserving an
+   admin-edited name and description**. After cutover, confirm a bare
+   ADMIN/LODGE account is excluded from the billing preview (no
+   `MISSING_MEMBERSHIP_ASSIGNMENT`) and that any real fee-paying admin shows their
+   true subscription status.
+2. **#2147 is a forward-only expand — recovery is roll-forward, not down.** The
+   coverage `subscriptionId` UNIQUE is reshaped to a partial UNIQUE over active
+   claims so a retained released claim can coexist with a fresh active one. Once
+   any subscription accrues a **released + active coverage pair** after a
+   void→re-bill, re-creating the old full `subscriptionId` UNIQUE (the pre-#2147
+   shape) **fails on the duplicate `subscriptionId`**. There is no automated
+   down-migration for this; if you must recover, roll the application forward
+   (fix and redeploy the new colour) rather than attempting to restore the old
+   constraint. A voided invoice now reads as `NOT_INVOICED` (re-billable) where it
+   previously read as `UNPAID` (booking lockout) — an intended, documented
+   semantics change.
+3. **#2161 marker drain-window edge — use the standard confirm quiet window.**
+   During the brief old/new overlap the new colour can create active family
+   markers, and for the marker's documented use case (a real invoice or coverage
+   already covers the family) the old colour's #2147 suppression predicate is a
+   superset that already suppresses the same family, so no old-colour confirm
+   mints a second charge. The one residual edge is a **purely manual marker with
+   no DB-detectable invoice or coverage anywhere in the group**: an old-colour
+   admin confirm during drain would not see that marker and could bill the
+   family. Mitigate it the standard way — run the annual-billing **confirm in a
+   quiet admin window** across the brief overlap and cut over promptly.
+4. **Check your public hut-fee table if you use the `{{hut-fees}}` embed
    (#2129).** The embed now reads the authoritative per-membership-type rate
    table instead of the frozen legacy member/non-member one, and it renders
    **one column per publicly-listed membership type** (types priced identically
-   share a column). Which columns appear is now controlled entirely by the
+   share a column). Which columns appear is controlled entirely by the
    **Publicly listed** flag on each membership type — the same flag the joining-
    fee and annual-fee embeds already use. If you have not set that flag on the
    types you advertise, the table can collapse to a single column and quietly
@@ -138,11 +421,21 @@ hut fees, about which membership types are flagged **Publicly listed**.
    listed** on every type you want on the public rate card *before* upgrading,
    then check the page. Setup readiness also warns on **Seasons And Rates** when
    the embed is enabled but fewer than two types would produce a column.
+   Hand-authored Xero bundles still need a membership type on every `HUT_FEE` row
+   (a blank `membershipTypeKey` is a blocking row error), and export/import of
+   current-shape bundles is byte-identical to before.
 
-**Rollback boundary.** No schema change, so there is nothing to roll back at the
-database level: reverting to the previous colour simply restores the old
-importer, which still accepts legacy bundles, and the previous `{{hut-fees}}`
-rendering.
+**Rollback boundary.** A validator or pre-migration failure aborts the deploy
+before any schema change: the old colour is untouched and keeps serving. A failed
+cutover auto-restores traffic to the old colour, which then runs against the
+migrated schema — **every migration this release is old-colour compatible** (all
+four are expand/metadata-only, and the two forward-only expands, the #2147
+coverage-unique reshape and the #2161 new table, add nothing the old colour
+reads), so the old colour keeps working. Roll forward (fix and redeploy the new
+colour — the preferred path) or restore the pre-upgrade backup, losing all writes
+since it was taken. **There is no down-migration**, and the #2147 coverage-unique
+reshape cannot be automatically reversed once a void→re-bill has created a
+released + active coverage pair (recovery is roll-forward).
 
 ---
 
@@ -195,13 +488,12 @@ changelog section before starting.
      `{{hut-fees}}` embed), `MembershipTypeAgeTier`, and the
      `XeroItemCodeMapping.isMember` / `AgeTierSetting.xeroContactGroup*` columns
      — follow-ups #2129/#2130/#2131.
-     *(Superseded after this release: #2129 step 1 re-sourced the public
-     `{{hut-fees}}` embed onto `MembershipTypeSeasonRate`, removing the last
-     **application-runtime** `SeasonRate` reader — see the following release's
-     entry. One reader and two writers still remain in seed code
-     (`e2e/setup/seed-second-lodge.ts:202` and `:218-224`, `prisma/seed.ts:208-227`)
-     and must be removed in the same PR as the DROP migration. The sentence above
-     describes the position as at v0.12.2.)*
+     *(Superseded after this release. The sentence above describes the position
+     as at v0.12.2. Release A then re-sourced the public `{{hut-fees}}` embed
+     onto `MembershipTypeSeasonRate` (#2129 step 1) and narrowed the remaining
+     writes on the two column-carrying models (#2130 STEP 1.5), and Release B
+     dropped `SeasonRate`, `XeroItemCodeMapping.isMember` and the
+     `AgeTierSetting.xeroContactGroup*` columns — see the Unreleased section.)*
 3. **The two additive migrations need no special handling.**
    `20260719150000_add_post_login_landing` adds a `PostLoginLanding` enum plus a
    nullable `Member.postLoginLanding` column with no default (metadata-only

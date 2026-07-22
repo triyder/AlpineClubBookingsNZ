@@ -11,7 +11,7 @@ import { Trash2, Plus, Users, X, Edit2, Search } from "lucide-react";
 import { FamilyGroupEditor } from "@/components/admin/family-group-editor";
 import { AgeTierBadge } from "@/components/admin/family-groups/age-tier-badge";
 import { FamilyGroupRequestReviewSection } from "@/components/admin/family-groups/request-review-section";
-import { AdminViewOnlyNotice, ViewOnlyActionButton } from "@/components/admin/view-only-action";
+import { AdminViewOnlySectionBanner, ViewOnlyActionButton } from "@/components/admin/view-only-action";
 import {
   ADMIN_VIEW_ONLY_ACTION_REASON,
   useAdminAreaEditAccess,
@@ -316,16 +316,34 @@ export default function FamilyGroupsPage() {
     }
   }
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the section —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before its
+    content appears; a region injected already-populated is silently dropped by
+    some screen-reader/browser pairings. It sits OUTSIDE the `space-y-*` stack so
+    the empty wrapper an edit-capable admin gets costs no layout.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEditMembership} className="mb-6">
+      Your admin role can view family group requests but cannot
+      approve or reject them.
+    </AdminViewOnlySectionBanner>
+  );
+
   return (
-    <div className="space-y-6">
+    <div>
+      {viewOnlyBanner}
+      <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Family Groups</h1>
-          <p className="text-sm text-slate-500 mt-1">
+          <h1 className="text-2xl font-bold text-foreground">Family Groups</h1>
+          <p className="text-sm text-muted-foreground mt-1">
             Link primary members together so they appear in each other&apos;s booking quick-add lists
           </p>
         </div>
-        <ViewOnlyActionButton canEdit={canEditMembership} onClick={openCreateForm}>
+        <ViewOnlyActionButton canEdit={canEditMembership} describeReason={false} onClick={openCreateForm}>
           <Plus className="h-4 w-4 mr-2" />
           New Group
         </ViewOnlyActionButton>
@@ -336,7 +354,7 @@ export default function FamilyGroupsPage() {
         <CardContent className="pt-4 pb-4 space-y-3">
           <div className="flex flex-wrap gap-3 items-end">
             <div className="flex-1 min-w-[200px] max-w-md relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
                 value={filterQuery}
                 onChange={(e) => setFilterQuery(e.target.value)}
@@ -346,7 +364,7 @@ export default function FamilyGroupsPage() {
             </div>
             <div className="flex items-end gap-2">
               <div className="space-y-1">
-                <Label className="text-xs text-slate-500">Min members</Label>
+                <Label className="text-xs text-muted-foreground">Min members</Label>
                 <Input
                   type="number"
                   min="0"
@@ -357,7 +375,7 @@ export default function FamilyGroupsPage() {
                 />
               </div>
               <div className="space-y-1">
-                <Label className="text-xs text-slate-500">Max members</Label>
+                <Label className="text-xs text-muted-foreground">Max members</Label>
                 <Input
                   type="number"
                   min="0"
@@ -373,7 +391,7 @@ export default function FamilyGroupsPage() {
                 type="checkbox"
                 checked={filterHasPending}
                 onChange={(e) => setFilterHasPending(e.target.checked)}
-                className="rounded border-slate-300"
+                className="rounded border-border"
               />
               Has pending requests
             </label>
@@ -385,7 +403,7 @@ export default function FamilyGroupsPage() {
             )}
           </div>
           {hasActiveFilters && (
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-muted-foreground">
               Showing {filteredGroups.length} of {groups.length} group{groups.length !== 1 ? "s" : ""}
             </p>
           )}
@@ -400,27 +418,21 @@ export default function FamilyGroupsPage() {
             </Badge>
             Pending Family Group Changes
           </CardTitle>
-          <p className="text-sm text-slate-500">
+          <p className="text-sm text-muted-foreground">
             Review join, infant/child/youth, same-email adult, and removal requests before approving or rejecting.
           </p>
         </CardHeader>
         <CardContent className="space-y-4">
           {loading ? (
-            <div className="rounded-lg border border-dashed border-slate-200 p-6 text-center text-sm text-slate-500">
+            <div className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
               Loading pending family group changes...
             </div>
           ) : requests.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-slate-200 p-6 text-center text-sm text-slate-500">
+            <div className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
               No family group changes are awaiting review.
             </div>
           ) : (
             <>
-              {!canEditMembership && (
-                <AdminViewOnlyNotice canEdit={canEditMembership} className="mb-4">
-                  Your admin role can view family group requests but cannot
-                  approve or reject them.
-                </AdminViewOnlyNotice>
-              )}
               <FamilyGroupRequestReviewSection
                 requests={requests}
                 onReviewed={async () => {
@@ -443,7 +455,7 @@ export default function FamilyGroupsPage() {
             </Badge>
             Outstanding Partner Invitations
           </CardTitle>
-          <p className="text-sm text-slate-500">
+          <p className="text-sm text-muted-foreground">
             Email invitations to partners who do not have an account yet. They
             join through the membership process, then accept the invite. Revoke
             one to disable its link.
@@ -456,36 +468,36 @@ export default function FamilyGroupsPage() {
             </div>
           )}
           {loading ? (
-            <div className="rounded-lg border border-dashed border-slate-200 p-6 text-center text-sm text-slate-500">
+            <div className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
               Loading outstanding partner invitations...
             </div>
           ) : partnerInvites.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-slate-200 p-6 text-center text-sm text-slate-500">
+            <div className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
               No outstanding partner invitations.
             </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b bg-slate-50">
-                    <th className="text-left px-4 py-2 font-medium text-slate-600">Invited email</th>
-                    <th className="text-left px-4 py-2 font-medium text-slate-600">Group</th>
-                    <th className="text-left px-4 py-2 font-medium text-slate-600">Invited by</th>
-                    <th className="text-left px-4 py-2 font-medium text-slate-600">Expires</th>
-                    <th className="text-right px-4 py-2 font-medium text-slate-600">Actions</th>
+                  <tr className="border-b bg-muted">
+                    <th className="text-left px-4 py-2 font-medium text-muted-foreground">Invited email</th>
+                    <th className="text-left px-4 py-2 font-medium text-muted-foreground">Group</th>
+                    <th className="text-left px-4 py-2 font-medium text-muted-foreground">Invited by</th>
+                    <th className="text-left px-4 py-2 font-medium text-muted-foreground">Expires</th>
+                    <th className="text-right px-4 py-2 font-medium text-muted-foreground">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {partnerInvites.map((invite) => (
-                    <tr key={invite.id} className="border-b hover:bg-slate-50">
+                    <tr key={invite.id} className="border-b hover:bg-accent">
                       <td className="px-4 py-2 font-medium">{invite.invitedEmail}</td>
                       <td className="px-4 py-2">
                         {invite.familyGroupName || "Unnamed Group"}
                       </td>
-                      <td className="px-4 py-2 text-slate-500">
+                      <td className="px-4 py-2 text-muted-foreground">
                         {invite.createdBy?.name || "Unknown"}
                       </td>
-                      <td className="px-4 py-2 text-slate-500">
+                      <td className="px-4 py-2 text-muted-foreground">
                         {new Date(invite.expiresAt).toLocaleDateString()}
                       </td>
                       <td className="px-4 py-2 text-right">
@@ -518,6 +530,12 @@ export default function FamilyGroupsPage() {
               void fetchData();
             }}
             canEdit={canEditMembership}
+            // #2160: the page banner above is unconditional and covers this
+            // whole membership surface, including the editor rendered inline
+            // here, so the editor must not repeat it. The dialog mount on
+            // /admin/members/[id] keeps its own banner — a dialog is a separate
+            // accessibility container that no ancestor banner reaches.
+            renderViewOnlyBanner={false}
           />
         ) : (
           <Card>
@@ -570,30 +588,30 @@ export default function FamilyGroupsPage() {
                       disabled={canEditMembership !== true}
                     />
                     {searching && (
-                      <div className="absolute right-3 top-2.5 text-xs text-slate-400">
+                      <div className="absolute right-3 top-2.5 text-xs text-muted-foreground">
                         Searching...
                       </div>
                     )}
                     {searchResults.length > 0 && (
-                      <div className="absolute z-10 mt-1 w-full bg-white border rounded-md shadow-lg max-h-48 overflow-y-auto">
+                      <div className="absolute z-10 mt-1 w-full bg-card border rounded-md shadow-lg max-h-48 overflow-y-auto">
                         {searchResults.map((m) => (
                           <button
                             key={m.id}
                             type="button"
                             onClick={() => addMember(m)}
                             disabled={canEditMembership !== true}
-                            className="w-full text-left px-3 py-2 hover:bg-slate-50 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+                            className="w-full text-left px-3 py-2 hover:bg-accent text-sm disabled:cursor-not-allowed disabled:opacity-50"
                           >
                             <span className="font-medium">
                               {m.firstName} {m.lastName}
                             </span>
-                            <span className="text-slate-500 ml-2">{m.email}</span>
+                            <span className="text-muted-foreground ml-2">{m.email}</span>
                           </button>
                         ))}
                       </div>
                     )}
                   </div>
-                  <p className="text-xs text-slate-500 mt-1">
+                  <p className="text-xs text-muted-foreground mt-1">
                     Add adults, youth, or children to this family group
                   </p>
                 </div>
@@ -603,6 +621,7 @@ export default function FamilyGroupsPage() {
                 <div className="flex gap-2">
                   <ViewOnlyActionButton
                     canEdit={canEditMembership}
+                    describeReason={false}
                     type="submit"
                     disabled={submitting || selectedMembers.length < 1}
                   >
@@ -622,9 +641,9 @@ export default function FamilyGroupsPage() {
       <Card>
         <CardContent className="p-0">
           {loading ? (
-            <div className="p-6 text-center text-slate-500">Loading...</div>
+            <div className="p-6 text-center text-muted-foreground">Loading...</div>
           ) : filteredGroups.length === 0 ? (
-            <div className="p-6 text-center text-slate-500">
+            <div className="p-6 text-center text-muted-foreground">
               {hasActiveFilters
                 ? "No family groups match the current filters."
                 : "No family groups yet. Create one to link members together."}
@@ -633,19 +652,19 @@ export default function FamilyGroupsPage() {
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b bg-slate-50">
-                    <th className="text-left px-4 py-3 font-medium text-slate-600">Group Name</th>
-                    <th className="text-left px-4 py-3 font-medium text-slate-600">Members</th>
-                    <th className="text-left px-4 py-3 font-medium text-slate-600">Created</th>
-                    <th className="text-right px-4 py-3 font-medium text-slate-600">Actions</th>
+                  <tr className="border-b bg-muted">
+                    <th className="text-left px-4 py-3 font-medium text-muted-foreground">Group Name</th>
+                    <th className="text-left px-4 py-3 font-medium text-muted-foreground">Members</th>
+                    <th className="text-left px-4 py-3 font-medium text-muted-foreground">Created</th>
+                    <th className="text-right px-4 py-3 font-medium text-muted-foreground">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {filteredGroups.map((g) => (
-                    <tr key={g.id} className="border-b hover:bg-slate-50">
+                    <tr key={g.id} className="border-b hover:bg-accent">
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
-                          <Users className="h-4 w-4 text-slate-400" />
+                          <Users className="h-4 w-4 text-muted-foreground" />
                           <span className="font-medium">{g.name || "Unnamed Group"}</span>
                           {g.pendingRequests > 0 && (
                             <Badge className="bg-amber-100 text-amber-800 border-amber-200 text-xs">
@@ -667,21 +686,21 @@ export default function FamilyGroupsPage() {
                                 {/* P3.2: Age tier badge */}
                                 <AgeTierBadge tier={m.ageTier} />
                                 {!m.active && (
-                                  <span className="ml-1 text-slate-400">(inactive)</span>
+                                  <span className="ml-1 text-muted-foreground">(inactive)</span>
                                 )}
                               </Badge>
                             ))}
                         </div>
-                        <div className="text-xs text-slate-500 mt-0.5">
+                        <div className="text-xs text-muted-foreground mt-0.5">
                           {g.memberCount} member{g.memberCount !== 1 ? "s" : ""}
                           {g.inactiveCount > 0 && (
-                            <span className="text-slate-400">
+                            <span className="text-muted-foreground">
                               {" "}({g.inactiveCount} inactive)
                             </span>
                           )}
                         </div>
                       </td>
-                      <td className="px-4 py-3 text-slate-500">
+                      <td className="px-4 py-3 text-muted-foreground">
                         {new Date(g.createdAt).toLocaleDateString()}
                       </td>
                       <td className="px-4 py-3 text-right">
@@ -701,6 +720,7 @@ export default function FamilyGroupsPage() {
                           </Button>
                           <ViewOnlyActionButton
                             canEdit={canEditMembership}
+                            describeReason={false}
                             variant="ghost"
                             size="sm"
                             onClick={() => handleDelete(g.id)}
@@ -719,6 +739,7 @@ export default function FamilyGroupsPage() {
           )}
         </CardContent>
       </Card>
+      </div>
     </div>
   );
 }

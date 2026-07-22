@@ -251,7 +251,9 @@ silently lose the "held provisionally / charged later" explanation.
 > flat (one `NULL`-ageTier row). Xero hut-fee item codes
 > (`XeroItemCodeMapping.membershipTypeId`) re-key the same way so an invoice
 > line never disagrees with the rate that priced it. The legacy boolean-keyed
-> `SeasonRate` table is retained but frozen (public embed only) until E7/E13.
+> `SeasonRate` table was frozen after E4 and **dropped** by
+> `20260721120000_contract_drop_season_rate` (#2129 step 2), once the public
+> `{{hut-fees}}` embed had been re-sourced onto `MembershipTypeSeasonRate`.
 
 When the bed allocation module is effectively enabled and at least one active
 bed exists in Admin -> Configuration -> Rooms & Beds, booking capacity is the
@@ -742,7 +744,7 @@ test/demo mode or disabled:
 | ----------------------- | ---------------------------------------------------------------- |
 | `DATABASE_URL`          | PostgreSQL connection string used by Prisma.                     |
 | `DB_PASSWORD`           | PostgreSQL password used by Docker Compose.                      |
-| `AUTH_SECRET`           | Auth.js session secret.                                          |
+| `AUTH_SECRET`           | Auth.js session secret. Also the root of 2FA-secret and in-app provider-credential encryption (#2079) — use a strong value (>= 32 chars); rotating it is a planned maintenance event (see `DEPLOYMENT.md`). |
 | `NEXTAUTH_SECRET`       | Legacy Auth.js secret fallback; keep aligned with `AUTH_SECRET`. |
 | `NEXTAUTH_URL`          | Exact app origin, for example `http://localhost:3000`.           |
 | `AUTH_TRUST_HOST`       | Set `true` behind trusted proxies/Compose.                       |
@@ -1539,11 +1541,15 @@ once.
 > recovery-code hashes are bound to key material derived from the secret,
 > rotating it **invalidates every member's enrolled authenticator and recovery
 > codes at once** — on their next sign-in each member is forced back through
-> two-factor enrollment. Schedule rotation as a maintenance action with advance
-> member communication and a support plan for anyone who cannot immediately
-> re-enroll (e.g. members who no longer have their authenticator device); never
-> rotate ad hoc. Short-lived email one-time codes are unaffected (re-issued per
-> attempt).
+> two-factor enrollment. Since #2079 the blast radius also includes **all stored
+> provider credentials** (Xero client id/secret/webhook key) **and the wrapped
+> Xero token-encryption key**: after rotation those fail decryption and must be
+> re-entered in-app, and Xero must be reconnected (re-OAuth). Schedule rotation
+> as a maintenance action with advance member communication and a support plan
+> for anyone who cannot immediately re-enroll (e.g. members who no longer have
+> their authenticator device); never rotate ad hoc. See the **auth-secret
+> rotation runbook** in `DEPLOYMENT.md`. Short-lived email one-time codes are
+> unaffected (re-issued per attempt).
 
 Invalid two-factor attempts are rate-limited and tracked per member. Five
 invalid app, email, or recovery-code attempts lock the two-factor challenge for
@@ -1552,26 +1558,70 @@ invalid app, email, or recovery-code attempts lock the two-factor challenge for
 
 ## Stripe
 
-| Variable                             | Description                                               |
-| ------------------------------------ | --------------------------------------------------------- |
-| `STRIPE_SECRET_KEY`                  | Stripe server key; use test mode outside production.      |
-| `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | Stripe browser publishable key.                           |
-| `STRIPE_WEBHOOK_SECRET`              | Stripe webhook signing secret for `/api/webhooks/stripe`. |
+**Stripe credentials are DB-only (#2082).** The Stripe secret key, publishable
+key, and webhook signing secret live **only** in the encrypted
+`IntegrationCredential` store and are captured in-app through the **guided setup
+wizard at Admin > Integrations > Stripe** (Full Admin only) — it links you to the
+Stripe API-keys page (use test mode while you set up), captures the keys
+write-only, verifies the connection by reading your Stripe account and showing
+its display name (the right-account confirmation), and walks you through the
+webhook endpoint (URL to paste, signing secret back, verified via a Stripe
+test event). The webhook step is **optional/skippable** and freshness-scoped —
+replacing any Stripe credential drops the verified webhook badge.
+
+There are **no** `STRIPE_SECRET_KEY`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`, or
+`STRIPE_WEBHOOK_SECRET` environment variables any more — if any are still present
+they are **ignored** and setup readiness raises a warning naming them for removal
+(never silently honoured). Secrets are encrypted at rest with AES-256-GCM under a
+key derived from `AUTH_SECRET`/`NEXTAUTH_SECRET` via HKDF-SHA256.
+
+The **publishable key** is not secret; it is delivered to the card form at
+**runtime** from the store via `GET /api/stripe/publishable-key` — there is no
+build-time `NEXT_PUBLIC_*` inlining, so changing keys in the wizard takes effect
+without a rebuild. The webhook route stays **fail-closed**: with no stored signing
+secret it rejects every event.
 
 ## Operational Xero
 
+**Xero credentials are DB-only (#2079).** The Xero OAuth client id/secret, the
+webhook signing key, and the token-encryption key live **only** in the encrypted
+`IntegrationCredential` store and are captured in-app through the **guided setup
+wizard at Admin > Xero > Setup** (#2080; Full Admin only) — it walks you through
+creating the Xero app with copy-paste-exact values, entering the credentials, and
+the OAuth connect, then confirms the connected organisation name. The redirect
+URI is **derived from `NEXTAUTH_URL`** (`{origin}/api/admin/xero/callback`) and
+shown for copy-paste in the wizard. There are **no**
+`XERO_CLIENT_ID`, `XERO_CLIENT_SECRET`, `XERO_REDIRECT_URI`,
+`XERO_ENCRYPTION_KEY`, or `XERO_WEBHOOK_KEY` environment variables any more — if
+any are still present they are **ignored** and setup readiness raises a warning
+naming them for removal (never silently honoured). Credentials are encrypted at
+rest with AES-256-GCM under a key derived from `AUTH_SECRET`/`NEXTAUTH_SECRET`
+via HKDF-SHA256; the wrapped Xero token-encryption key is auto-generated on
+first use (a strong auth secret is required — see the auth-secret note above).
+
+The wizard then finishes the connection (#2081): an optional **Webhooks** step
+shows the delivery URL (`{origin}/api/webhooks/xero`), captures Xero's webhook
+signing key, and verifies it against Xero's real intent-to-receive ping
+(freshness-scoped and key-bound; replacing the key re-arms verification);
+account/item **mapping** and the one-time contact **import** follow, ending on a
+summary. Webhooks are skippable — until verified, a persistent amber
+**"Webhooks not configured — payment updates rely on scheduled sync"** badge
+shows on the Xero pages, and a localhost/non-public-HTTPS deployment can't verify
+there (the scheduled sync still keeps payments current).
+
+Only these operational-tuning env vars remain (they are not credentials):
+
 | Variable                                   | Description                                                            |
 | ------------------------------------------ | ---------------------------------------------------------------------- |
-| `XERO_CLIENT_ID`                           | Operational Xero OAuth client id.                                      |
-| `XERO_CLIENT_SECRET`                       | Operational Xero OAuth client secret.                                  |
-| `XERO_REDIRECT_URI`                        | Must match the deployed `/api/admin/xero/callback` URL.                |
-| `XERO_ENCRYPTION_KEY`                      | 64-character hex key for encrypted token storage.                      |
-| `XERO_WEBHOOK_KEY`                         | Xero webhook signing key.                                              |
 | `XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH`     | Enables daily membership refresh behavior when operational Xero is on. |
 | `XERO_ENABLE_LIVE_MEMBER_GROUP_LOOKUPS`    | Enables live Xero member group lookups.                                |
 | `XERO_ENABLE_AUTOLOAD_XERO_CONTACT_GROUPS` | Enables automatic Xero contact-group loading.                          |
 | `XERO_INBOUND_FAILED_RETRY_BACKOFF_MS`     | Optional retry backoff for failed inbound Xero reconciliation.         |
 | `XERO_HTTP_TIMEOUT_MS`                     | Optional OAuth-layer HTTP timeout (identity discovery and token requests) in ms; default 10000, overriding xero-node's 3500ms. |
+
+Existing env-configured deployments upgrading past #2079 must re-enter Xero
+credentials in-app and reconnect Xero — see the **upgrade runbook** in
+`DEPLOYMENT.md`.
 
 ## Finance dashboard
 
@@ -1626,8 +1676,11 @@ OAuth scopes:
 - `accounting.reports.banksummary.read`
 
 Before reconnecting, update the Xero developer app allowed scopes to include the
-exact app request, and verify that `XERO_REDIRECT_URI` matches the deployed
-`/api/admin/xero/callback` URL. Then reconnect Xero from `/admin/xero` so fresh
+exact app request. The redirect URI is **derived from `NEXTAUTH_URL`**
+(`{origin}/api/admin/xero/callback`) — there is no `XERO_REDIRECT_URI` env var
+any more (#2079) — so confirm `NEXTAUTH_URL` is the deployed origin and that the
+derived callback URL (shown in the in-app Xero setup) is listed in the Xero
+developer app's redirect URIs. Then reconnect Xero from `/admin/xero` so fresh
 tokens carry the current scope set. Access is controlled per member by
 `MemberAccessRole` rows. `FINANCE_USER` can read the finance dashboard and
 finance viewer APIs; `FINANCE_ADMIN` is the Treasurer bundle and can also run

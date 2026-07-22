@@ -291,9 +291,13 @@ describe("#2146 print always renders the light palette", () => {
   it("excludes the dark app-theme-scope token block from print", () => {
     expect(screenOnly).toContain(".dark .app-theme-scope {");
     // The specific token behind the blank PDF: Card sets `text-card-foreground`
-    // directly on its own root, so this must not resolve to the light-on-white
-    // brand snow when printing.
-    expect(screenOnly).toContain("--card-foreground: var(--brand-snow)");
+    // directly on its own root, so this must not resolve to a near-white dark
+    // ink when printing. #2187 P1 rewired it onto the generated dark substrate
+    // (`--gen-card-foreground-dark`); the exclusion from print is what keeps the
+    // LIGHT `--card-foreground` standing on paper.
+    expect(screenOnly).toContain(
+      "--card-foreground: var(--gen-card-foreground-dark,",
+    );
   });
 
   it("excludes the literal dark callout remap from print", () => {

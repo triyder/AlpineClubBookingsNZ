@@ -36,12 +36,24 @@ export function ConnectionStatusPanel({
   status,
   onConnect,
   onDisconnect,
+  canEdit = true,
 }: {
   status: XeroStatus | null
   onConnect: () => void
   onDisconnect: () => void
+  /**
+   * Tri-state finance-edit access for the connect/reconnect/disconnect controls
+   * (#2080 review): `undefined` while the session resolves (disabled, neutral),
+   * `false` view-only (disabled), `true` may edit. Defaults to `true` so the
+   * standalone Xero page — which does its own gating — is unchanged. The wizard
+   * passes the real value and relies on its own view-only banner to explain.
+   */
+  canEdit?: boolean | undefined
 }) {
   const { confirm, confirmDialog } = useConfirm()
+  // Disabled until we positively know editing is allowed, so the resolving
+  // window (undefined) is a neutral disabled state, matching ViewOnlyActionButton.
+  const editDisabled = canEdit !== true
   const [probing, setProbing] = useState(false)
   const [probe, setProbe] = useState<XeroConnectionProbe | null>(null)
   const [probeError, setProbeError] = useState(false)
@@ -105,7 +117,7 @@ export function ConnectionStatusPanel({
             {/* Live connection-health check. The green "Connected" chip above
                 reflects token-row presence only; this button actually exercises
                 the refresh + a cheap org read (#2105). */}
-            <div className="space-y-2 rounded-md border border-slate-200 bg-slate-50 p-3">
+            <div className="space-y-2 rounded-md border border-border bg-muted p-3">
               <div className="flex flex-wrap items-center gap-2">
                 <Button
                   type="button"
@@ -129,7 +141,7 @@ export function ConnectionStatusPanel({
                   </ToneChip>
                 ) : null}
                 {presentation?.showReconnect ? (
-                  <Button type="button" size="sm" onClick={onConnect}>
+                  <Button type="button" size="sm" onClick={onConnect} disabled={editDisabled}>
                     Reconnect
                   </Button>
                 ) : null}
@@ -154,6 +166,7 @@ export function ConnectionStatusPanel({
             <Button
               variant="destructive"
               size="sm"
+              disabled={editDisabled}
               onClick={async () => {
                 if (
                   await confirm({
@@ -176,8 +189,23 @@ export function ConnectionStatusPanel({
               inside Xero.
             </p>
           </div>
+        ) : status?.needsReentry ? (
+          // Tokens exist but no longer decrypt — the auth secret / encryption
+          // key changed (e.g. the #2079 env→DB upgrade). This is a reconnect,
+          // not a first-time connect.
+          <div className="space-y-3">
+            <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+              <span>
+                Stored Xero tokens can no longer be read because the encryption
+                key (derived from the app auth secret) changed. Reconnect Xero to
+                re-authorise — no data inside Xero is affected.
+              </span>
+            </div>
+            <Button onClick={onConnect} disabled={editDisabled}>Reconnect Xero</Button>
+          </div>
         ) : (
-          <Button onClick={onConnect}>Connect Xero</Button>
+          <Button onClick={onConnect} disabled={editDisabled}>Connect Xero</Button>
         )}
       </CardContent>
     </Card>

@@ -1,3 +1,4 @@
+import { DEFAULT_MEMBERSHIP_LOCKOUT_SETTINGS } from "@/config/club-settings-defaults";
 import { prisma } from "@/lib/prisma";
 
 // Admin-configurable settings for the booking lockout that blocks members with
@@ -39,12 +40,7 @@ export interface PersistedMembershipLockoutSettings {
 }
 
 function getDefaultMembershipLockoutSettings(): MembershipLockoutSettings {
-  return {
-    enabled: true,
-    financialYearEndMonthOverride: null,
-    textFallbackEnabled: true,
-    useFeeScheduleItemCodes: false,
-  };
+  return { ...DEFAULT_MEMBERSHIP_LOCKOUT_SETTINGS };
 }
 
 function coerceYearEndOverride(

@@ -498,18 +498,27 @@
      Existing brand fields deliberately supply both the public website and app:
      gold is the app accent, and deep/ridge/mist/snow form the neutral ramp. The
      semantic success/warning/info/danger tokens remain the curated values declared
-     on :root/.dark above and are intentionally not overridden here (#1808). */
-  --background: var(--brand-snow);
-  --foreground: var(--brand-deep);
-  --card: var(--brand-snow);
-  --card-foreground: var(--brand-deep);
-  --popover: var(--brand-snow);
-  --popover-foreground: var(--brand-deep);
-  --primary: var(--brand-gold);
-  --primary-foreground: var(--brand-charcoal);
-  --secondary: var(--brand-mist);
-  --secondary-foreground: var(--brand-deep);
-  --muted: var(--brand-mist);
+     on :root/.dark above and are intentionally not overridden here (#1808).
+
+     #2187 P1 — the RESTYLE wire-up. Each core token now resolves from the
+     GENERATED substrate that `buildClubThemeAppCss` emits at render time
+     (`--gen-<token>`, see `src/lib/theme/app-tokens.ts`), with a static
+     default-palette fallback for the no-stylesheet case. The fallbacks are the
+     resolved default-seed values — pinned against the derivation in
+     `app-theme-layout-contract.test.ts` so the two cannot drift. `--accent`
+     (neutral-4) is one band off `--muted`/`--secondary` (neutral-3): the
+     structural fix for the seven hover-dead #2144 buttons. */
+  --background: var(--gen-background, #f2f4f2);
+  --foreground: var(--gen-foreground, #1c211d);
+  --card: var(--gen-card, #f6f8f7);
+  --card-foreground: var(--gen-card-foreground, #1c211d);
+  --popover: var(--gen-popover, #f6f8f7);
+  --popover-foreground: var(--gen-popover-foreground, #1c211d);
+  --primary: var(--gen-primary, #57b3ab);
+  --primary-foreground: var(--gen-primary-foreground, #1c211d);
+  --secondary: var(--gen-secondary, #e9ebe9);
+  --secondary-foreground: var(--gen-secondary-foreground, #1c211d);
+  --muted: var(--gen-muted, #e9ebe9);
   /* #2145 — `muted` is a SEMANTIC ROLE, so it must not alias `--foreground`.
      It used to be `var(--brand-deep)`, byte-identical to `--foreground`, which
      made every `text-muted-foreground` label across the admin and finance
@@ -520,9 +529,11 @@
      snow), then stepped BACK toward `--brand-deep` until it clears WCAG AA
      4.5:1 against every light surface muted text can land on: `--brand-snow`
      (`--background`/`--card`/`--popover`), `--brand-mist`
-     (`--muted`/`--secondary`/`--accent`), and the four curated `*-muted` panel
-     fills declared on `:root` above, which #1808 deliberately leaves out of
-     this scope and which therefore do NOT move with the brand palette.
+     (`--muted`/`--secondary`), `--accent` (neutral-4, the #2144 hover surface,
+     one band darker than `--brand-mist` and checked in its own right), and the
+     four curated `*-muted` panel fills declared on `:root` above, which #1808
+     deliberately leaves out of this scope and which therefore do NOT move with
+     the brand palette.
      NOT checked, deliberately: `--border`/`--input`. They are hairline tokens,
      not text backgrounds — see APP_MUTED_FOREGROUND_EXCLUDED_SURFACES.
      It is computed in TypeScript and injected as a solid colour rather than
@@ -532,32 +543,29 @@
      derivation of DEFAULT_CLUB_THEME_VALUES and applies only when no ClubTheme
      stylesheet is injected; it is pinned in app-theme-layout-contract.test.ts
      so the two cannot drift. */
-  --muted-foreground: var(--app-muted-foreground, #555f59);
-  --accent: var(--brand-mist);
-  --accent-foreground: var(--brand-deep);
-  --app-accent-text: var(--brand-deep);
-  /* These remaining mixes are non-text structural boundaries only; no text
-     foreground is paired with a mixed endpoint. */
-  --border: color-mix(in srgb, var(--brand-ridge) 30%, var(--brand-snow));
-  --input: color-mix(in srgb, var(--brand-ridge) 30%, var(--brand-snow));
-  --ring: var(--brand-deep);
-  --chart-1: var(--brand-gold);
-  --chart-2: var(--brand-safety);
-  --chart-3: var(--brand-ridge);
-  --chart-4: var(--brand-mist);
-  --chart-5: var(--brand-charcoal);
-  --sidebar: var(--brand-charcoal);
-  --sidebar-foreground: var(--brand-snow);
-  --sidebar-primary: var(--brand-gold);
-  --sidebar-primary-foreground: var(--brand-charcoal);
-  --sidebar-accent: var(--brand-deep);
-  --sidebar-accent-foreground: var(--brand-snow);
-  --sidebar-border: color-mix(
-    in srgb,
-    var(--brand-ridge) 35%,
-    var(--brand-charcoal)
-  );
-  --sidebar-ring: var(--brand-snow);
+  --muted-foreground: var(--app-muted-foreground, #5a635e);
+  --accent: var(--gen-accent, #e0e3e1);
+  --accent-foreground: var(--gen-accent-foreground, #1c211d);
+  --app-accent-text: var(--gen-app-accent-text, #1c211d);
+  /* These structural boundaries resolve from the substrate neutral ramp:
+     --border = neutral-6, --input/--ring = neutral-10 (J1 pin). */
+  --border: var(--gen-border, #d0d3d0);
+  --input: var(--gen-input, #767c78);
+  --ring: var(--gen-ring, #767c78);
+  --chart-1: var(--gen-chart-1, #7c5cff);
+  --chart-2: var(--gen-chart-2, #189ab4);
+  --chart-3: var(--gen-chart-3, #d6409f);
+  --chart-4: var(--gen-chart-4, #e8730c);
+  --chart-5: var(--gen-chart-5, #8aa614);
+  /* D13 light sidebar surfaces from neutral steps 1–4. */
+  --sidebar: var(--gen-sidebar, #f6f8f7);
+  --sidebar-foreground: var(--gen-sidebar-foreground, #1c211d);
+  --sidebar-primary: var(--gen-sidebar-primary, #57b3ab);
+  --sidebar-primary-foreground: var(--gen-sidebar-primary-foreground, #1c211d);
+  --sidebar-accent: var(--gen-sidebar-accent, #e9ebe9);
+  --sidebar-accent-foreground: var(--gen-sidebar-accent-foreground, #1c211d);
+  --sidebar-border: var(--gen-sidebar-border, #e0e3e1);
+  --sidebar-ring: var(--gen-sidebar-ring, #767c78);
   --font-sans: var(
     --font-website-body,
     var(
@@ -583,39 +591,50 @@
    and therefore beat the print block's inherited colour) resolves light. */
 @media not print {
   .dark .app-theme-scope {
-    --background: var(--brand-deep);
-    --foreground: var(--brand-snow);
-    --card: var(--brand-charcoal);
-    --card-foreground: var(--brand-snow);
-    --popover: var(--brand-charcoal);
-    --popover-foreground: var(--brand-snow);
-    --primary: var(--brand-gold);
-    --primary-foreground: var(--brand-charcoal);
-    --secondary: var(--brand-charcoal);
-    --secondary-foreground: var(--brand-snow);
-    --muted: var(--brand-charcoal);
-    /* #2145, the dark half of the derived muted role: 70% `--brand-snow` + 30%
-       `--brand-deep`, clamped for AA against `--brand-deep`,
-       `--brand-charcoal`, and the four curated `.dark` `*-muted` panel fills.
-       (`--border` is excluded — hairline, not a text background.)
-       The light block above restates `--muted-foreground`,
-       so excluding this block from print leaves the LIGHT derived tone standing
-       on paper — the #2146 pairing invariant is preserved. */
-    --muted-foreground: var(--app-muted-foreground-dark, #b2b8b5);
-    --accent: var(--brand-charcoal);
-    --accent-foreground: var(--brand-snow);
-    --app-accent-text: var(--brand-snow);
-    --border: color-mix(in srgb, var(--brand-mist) 28%, var(--brand-deep));
-    --input: color-mix(in srgb, var(--brand-mist) 28%, var(--brand-deep));
-    --ring: var(--brand-snow);
-    --sidebar: var(--brand-charcoal);
-    --sidebar-foreground: var(--brand-snow);
-    --sidebar-primary: var(--brand-gold);
-    --sidebar-primary-foreground: var(--brand-charcoal);
-    --sidebar-accent: var(--brand-deep);
-    --sidebar-accent-foreground: var(--brand-snow);
-    --sidebar-border: color-mix(in srgb, var(--brand-mist) 25%, var(--brand-deep));
-    --sidebar-ring: var(--brand-snow);
+    /* #2187 P1 — F1 substrate rewrite. The dark core-token block resolves onto
+       the GENERATED DARK substrate steps (`--gen-<token>-dark`, emitted at
+       render time by `buildClubThemeAppCss`) with a static default-palette
+       fallback: NO legacy brand-shim reference remains here (grep-proof F1). This
+       is substrate, not a P2 remap shim — P2's remap-deletion grep carves the
+       neutral/callout remaps out separately. `--accent` (neutral-4) stays one
+       band off `--muted`/`--secondary` (neutral-3) in dark too. Sidebar tokens
+       are D13; `--ring`/`--input` are the neutral-10 pin. */
+    --background: var(--gen-background-dark, #1b1d1c);
+    --foreground: var(--gen-foreground-dark, #eceeed);
+    --card: var(--gen-card-dark, #151716);
+    --card-foreground: var(--gen-card-foreground-dark, #eceeed);
+    --popover: var(--gen-popover-dark, #151716);
+    --popover-foreground: var(--gen-popover-foreground-dark, #eceeed);
+    --primary: var(--gen-primary-dark, #57b3ab);
+    --primary-foreground: var(--gen-primary-foreground-dark, #1c211d);
+    --secondary: var(--gen-secondary-dark, #232524);
+    --secondary-foreground: var(--gen-secondary-foreground-dark, #eceeed);
+    --muted: var(--gen-muted-dark, #232524);
+    /* #2145, the dark half of the derived muted role — a measured-AA solid tone,
+       kept OFF the substrate neutral ramp on purpose (a raw neutral-11 is not
+       gate-measurable). The light block above restates `--muted-foreground`, so
+       excluding this block from print leaves the LIGHT derived tone standing on
+       paper — the #2146 pairing invariant is preserved. */
+    --muted-foreground: var(--app-muted-foreground-dark, #b3b8b5);
+    --accent: var(--gen-accent-dark, #292c2a);
+    --accent-foreground: var(--gen-accent-foreground-dark, #eceeed);
+    --app-accent-text: var(--gen-app-accent-text-dark, #eceeed);
+    --border: var(--gen-border-dark, #383b39);
+    --input: var(--gen-input-dark, #757d76);
+    --ring: var(--gen-ring-dark, #757d76);
+    --chart-1: var(--gen-chart-1-dark, #7c5cff);
+    --chart-2: var(--gen-chart-2-dark, #189ab4);
+    --chart-3: var(--gen-chart-3-dark, #d6409f);
+    --chart-4: var(--gen-chart-4-dark, #e8730c);
+    --chart-5: var(--gen-chart-5-dark, #8aa614);
+    --sidebar: var(--gen-sidebar-dark, #151716);
+    --sidebar-foreground: var(--gen-sidebar-foreground-dark, #eceeed);
+    --sidebar-primary: var(--gen-sidebar-primary-dark, #57b3ab);
+    --sidebar-primary-foreground: var(--gen-sidebar-primary-foreground-dark, #1c211d);
+    --sidebar-accent: var(--gen-sidebar-accent-dark, #232524);
+    --sidebar-accent-foreground: var(--gen-sidebar-accent-foreground-dark, #eceeed);
+    --sidebar-border: var(--gen-sidebar-border-dark, #292c2a);
+    --sidebar-ring: var(--gen-sidebar-ring-dark, #757d76);
   }
 }
 
@@ -880,6 +899,23 @@
   color: var(--accent-foreground);
 }
 
+/* A6 candidate-ii card treatment (#2187 J8): the shadcn Card surface — `bg-card`
+   plus Tailwind's base `shadow` utility (see `src/components/ui/card.tsx`) —
+   renders the pinned J8 elevation shadow, emitted per club as `--gen-card-shadow`
+   / `--gen-card-shadow-dark` by `buildClubThemeAppCss` with the shipped default
+   as the static fallback. Setting `box-shadow` outright REPLACES Tailwind's
+   `.shadow` composite, so exactly one shadow renders (the J8 one), not two. Keyed
+   on `.bg-card` so popovers/dialogs/menus (`bg-popover`/`bg-background`,
+   `shadow-md`/`shadow-lg`) are untouched. This light rule applies on screen AND
+   print (a printed card keeps the light shadow — same #2146 handling as the dark
+   deepening below); the dark rule is screen-only, so print falls back to this
+   light J8 shadow. `.reports-print-card` / lodge print resets still drop it
+   entirely with `box-shadow: none !important`. Pinned in
+   app-theme-layout-contract.test.ts. */
+.app-theme-scope .bg-card.shadow:not(.website-theme *) {
+  box-shadow: var(--gen-card-shadow, 0 1px 2px 0 #040a054a, 0 1px 3px 0 #020b037b);
+}
+
 /* Screen-only (#2146): the deepened dark shadow is a literal value, so it cannot
    resolve back to light on paper. A printed report keeps the light shadow (and
    the print block drops it entirely on report cards). */
@@ -888,6 +924,14 @@
     .app-theme-scope
     :is(.shadow, .shadow-sm, .shadow-md, .shadow-lg, .shadow-xl) {
     --tw-shadow-color: rgb(0 0 0 / 0.45);
+  }
+
+  /* J8 dark card shadow (#2187). Screen-only, so a printed card falls back to the
+     light J8 shadow declared above — the same #2146 rule the `--tw-shadow-color`
+     deepening follows. Replaces Tailwind's `.shadow` composite outright, so
+     exactly one (the J8 dark) shadow renders on the app Card. */
+  .dark .app-theme-scope .bg-card.shadow:not(.website-theme *) {
+    box-shadow: var(--gen-card-shadow-dark, 0 1px 2px 0 #00000066, 0 1px 3px 0 #000000a6);
   }
 }
 

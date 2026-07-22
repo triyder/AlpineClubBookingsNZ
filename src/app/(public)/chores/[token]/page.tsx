@@ -51,20 +51,20 @@ export default function GuestChorePage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50">
-        <p className="text-slate-500">Loading...</p>
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <p className="text-muted-foreground">Loading...</p>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4">
+      <div className="min-h-screen flex items-center justify-center bg-background p-4">
         <div className="max-w-md w-full text-center space-y-4">
           <AlertTriangle className="h-12 w-12 text-amber-500 mx-auto" />
-          <h1 className="text-xl font-bold text-slate-900">Link Unavailable</h1>
-          <p className="text-slate-600">{error}</p>
-          <p className="text-sm text-slate-500">
+          <h1 className="text-xl font-bold text-foreground">Link Unavailable</h1>
+          <p className="text-muted-foreground">{error}</p>
+          <p className="text-sm text-muted-foreground">
             This link may have expired (48 hours) or is invalid.
             Contact the lodge if you need a new link.
           </p>
@@ -88,8 +88,8 @@ export default function GuestChorePage() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50">
-      <header className="bg-blue-800 text-white px-4 py-4">
+    <div className="min-h-screen bg-background">
+      <header className="bg-primary text-primary-foreground px-4 py-4">
         <div className="max-w-lg mx-auto flex items-center gap-2">
           <Mountain className="h-5 w-5" />
           <span className="font-bold">{club.lodgeName} Chores</span>
@@ -98,14 +98,14 @@ export default function GuestChorePage() {
 
       <main className="max-w-lg mx-auto px-4 py-6 space-y-4">
         <div>
-          <h1 className="text-xl font-bold text-slate-900">
+          <h1 className="text-xl font-bold text-foreground">
             {data.guest.firstName} {data.guest.lastName}
           </h1>
-          <p className="text-sm text-slate-600">{formattedDate}</p>
+          <p className="text-sm text-muted-foreground">{formattedDate}</p>
         </div>
 
         {data.assignments.length === 0 ? (
-          <p className="text-slate-500">No chores assigned.</p>
+          <p className="text-muted-foreground">No chores assigned.</p>
         ) : (
           Object.entries(groups).map(([timeOfDay, chores]) => {
             if (chores.length === 0) return null;
@@ -114,7 +114,7 @@ export default function GuestChorePage() {
               timeOfDay === "EVENING" ? "Evening" : "Anytime";
             return (
               <div key={timeOfDay} className="space-y-2">
-                <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wider">
+                <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
                   {label}
                 </h2>
                 {chores
@@ -125,20 +125,20 @@ export default function GuestChorePage() {
                       className={`w-full text-left flex items-center gap-3 p-4 rounded-lg border transition-colors ${
                         a.status === "COMPLETED"
                           ? "bg-green-50 border-green-200"
-                          : "bg-white border-slate-200"
+                          : "bg-card border-border"
                       }`}
                     >
                       {a.status === "COMPLETED" ? (
                         <CheckCircle2 className="h-6 w-6 text-green-600 shrink-0" />
                       ) : (
-                        <Circle className="h-6 w-6 text-slate-300 shrink-0" />
+                        <Circle className="h-6 w-6 text-muted-foreground shrink-0" />
                       )}
                       <div>
-                        <div className={`font-medium ${a.status === "COMPLETED" ? "text-green-800 line-through" : "text-slate-900"}`}>
+                        <div className={`font-medium ${a.status === "COMPLETED" ? "text-green-800 line-through" : "text-foreground"}`}>
                           {a.choreTemplateName}
                         </div>
                         {a.choreDescription && (
-                          <div className="text-sm text-slate-500">{a.choreDescription}</div>
+                          <div className="text-sm text-muted-foreground">{a.choreDescription}</div>
                         )}
                       </div>
                     </div>
@@ -148,12 +148,12 @@ export default function GuestChorePage() {
           })
         )}
 
-        <div className="flex gap-2 rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600">
-          <Lock className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" />
+        <div className="flex gap-2 rounded-lg border border-border bg-card px-4 py-3 text-sm text-muted-foreground">
+          <Lock className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
           <span>Chore completion updates require an authenticated lodge or member session.</span>
         </div>
 
-        <p className="text-xs text-slate-400 text-center mt-8">
+        <p className="text-xs text-muted-foreground text-center mt-8">
           This link expires after 48 hours.
         </p>
       </main>

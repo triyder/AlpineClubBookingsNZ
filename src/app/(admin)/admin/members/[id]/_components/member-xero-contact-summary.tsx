@@ -7,7 +7,7 @@ import type { MemberDetail } from "../_types";
 export function MemberXeroContactSummary({ member }: { member: MemberDetail }) {
   return (
     <div className="text-sm">
-      <p className="text-slate-500">Xero Contact</p>
+      <p className="text-muted-foreground">Xero Contact</p>
       <div className="mt-1 space-y-2 font-medium">
         <div>
           {member.xeroContactId ? (
@@ -45,7 +45,7 @@ export function MemberXeroContactSummary({ member }: { member: MemberDetail }) {
           </div>
         )}
         {member.xeroContactId && !member.xeroContactGroupsLoaded && (
-          <p className="text-xs text-slate-500">
+          <p className="text-xs text-muted-foreground">
             Cached contact groups have not been refreshed yet.
           </p>
         )}

@@ -28,7 +28,7 @@ import { BackLink } from "@/components/admin/back-link";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import {
   ADMIN_FORBIDDEN_SAVE_REASON,
-  AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 
@@ -336,25 +336,50 @@ export default function LodgeConfigurationHubPage() {
     },
   ].filter((area) => area.enabled);
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the section —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before its
+    content appears; a region injected already-populated is silently dropped by
+    some screen-reader/browser pairings — which is why it is rendered in the
+    loading branch too. It sits OUTSIDE the `space-y-*` stack so the empty
+    wrapper an edit-capable admin gets costs no layout.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-6">
+      Your admin role can view this lodge&apos;s capacity but cannot
+      change it. Lodge edit access is required.
+    </AdminViewOnlySectionBanner>
+  );
+
   if (loading) {
     return (
-      <p className="text-sm text-muted-foreground">Loading lodge...</p>
+      <div>
+        {viewOnlyBanner}
+        <p className="text-sm text-muted-foreground">Loading lodge...</p>
+      </div>
     );
   }
 
   if (error || !lodge) {
     return (
-      <div className="space-y-4">
-        <p className="text-sm text-destructive" role="alert">
-          {error ?? "Lodge not found."}
-        </p>
-        <BackLink href="/admin/lodges" label="Lodges" />
+      <div>
+        {viewOnlyBanner}
+        <div className="space-y-4">
+          <p className="text-sm text-destructive" role="alert">
+            {error ?? "Lodge not found."}
+          </p>
+          <BackLink href="/admin/lodges" label="Lodges" />
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
+    <div>
+      {viewOnlyBanner}
+      <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
@@ -427,12 +452,6 @@ export default function LodgeConfigurationHubPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          {!canEdit && (
-            <AdminViewOnlyNotice canEdit={canEdit}>
-              Your admin role can view this lodge&apos;s capacity but cannot
-              change it. Lodge edit access is required.
-            </AdminViewOnlyNotice>
-          )}
           <div className="text-sm">
             <p className="text-muted-foreground">Current capacity</p>
             <p className="font-medium">
@@ -470,6 +489,7 @@ export default function LodgeConfigurationHubPage() {
               />
               <ViewOnlyActionButton
                 canEdit={canEdit}
+                describeReason={false}
                 onClick={() => void saveCapacityOverride()}
                 disabled={savingCapacity || capacityOverride.trim() === savedCapacityOverride.trim()}
               >
@@ -575,6 +595,7 @@ export default function LodgeConfigurationHubPage() {
             </Card>
           );
         })}
+      </div>
       </div>
     </div>
   );

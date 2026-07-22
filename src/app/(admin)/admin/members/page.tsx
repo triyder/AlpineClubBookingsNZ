@@ -9,7 +9,7 @@ import { Alert } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { AdminPageHeader } from "@/components/admin/admin-page-header"
 import {
-  AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action"
 import {
@@ -267,8 +267,26 @@ export default function MembersPage() {
     if (!open) setPasswordActionTarget(null)
   }
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the section —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before its
+    content appears; a region injected already-populated is silently dropped by
+    some screen-reader/browser pairings. It sits OUTSIDE the `space-y-*` stack so
+    the empty wrapper an edit-capable admin gets costs no layout.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEditMembership} className="mb-6">
+      Your admin role can view membership records but cannot create, edit,
+      import, or bulk-update members.
+    </AdminViewOnlySectionBanner>
+  )
+
   return (
-    <div className="space-y-6">
+    <div>
+      {viewOnlyBanner}
+      <div className="space-y-6">
       <AdminPageHeader
         title="Members"
         description={`${total} member${total !== 1 ? "s" : ""}${
@@ -280,6 +298,7 @@ export default function MembersPage() {
               {xeroConnected && (
                 <ViewOnlyActionButton
                   canEdit={canEditMembership}
+                  describeReason={false}
                   variant="outline"
                   size="sm"
                   onClick={handleRefreshXeroGroups}
@@ -299,6 +318,7 @@ export default function MembersPage() {
               </a>
               <ViewOnlyActionButton
                 canEdit={canEditMembership}
+                describeReason={false}
                 variant="outline"
                 size="sm"
                 onClick={() => setImportDialogOpen(true)}
@@ -308,6 +328,7 @@ export default function MembersPage() {
               </ViewOnlyActionButton>
               <ViewOnlyActionButton
                 canEdit={canEditMembership}
+                describeReason={false}
                 onClick={() => setCreateDialogOpen(true)}
               >
                 Add Member
@@ -319,13 +340,6 @@ export default function MembersPage() {
           </div>
         }
       />
-
-      {!canEditMembership && (
-        <AdminViewOnlyNotice canEdit={canEditMembership}>
-          Your admin role can view membership records but cannot create, edit,
-          import, or bulk-update members.
-        </AdminViewOnlyNotice>
-      )}
 
       {error && (
         <Alert
@@ -428,6 +442,7 @@ export default function MembersPage() {
         onImported={handleImported}
         onError={setError}
       />
+      </div>
     </div>
   )
 }

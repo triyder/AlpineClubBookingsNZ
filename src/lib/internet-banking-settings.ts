@@ -1,3 +1,4 @@
+import { DEFAULT_INTERNET_BANKING_PAYMENT_SETTINGS } from "@/config/club-settings-defaults";
 import { addDaysDateOnly, formatDateOnly, getTodayDateOnly } from "@/lib/date-only";
 import { prisma } from "@/lib/prisma";
 
@@ -8,13 +9,6 @@ export interface InternetBankingPaymentSettingsValues {
   holdDays: number;
   minimumDaysBeforeCheckIn: number;
 }
-
-// test seam
-export const DEFAULT_INTERNET_BANKING_PAYMENT_SETTINGS: InternetBankingPaymentSettingsValues = {
-  holdBedSlots: false,
-  holdDays: 3,
-  minimumDaysBeforeCheckIn: 0,
-};
 
 export interface InternetBankingLeadTimeResult {
   allowed: boolean;

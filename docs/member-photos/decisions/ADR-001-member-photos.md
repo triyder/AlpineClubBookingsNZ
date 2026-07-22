@@ -193,5 +193,5 @@ these clarifications where the implementation refined a forward-looking note:
   privacy-safe opt-in; members without a photo show an initials placeholder.
 - **Migration.** Shipped as `20260721110000_add_member_photos` (re-timestamped
   during the upstream sync to append after the merged history), plus
-  `20260721120000_add_committee_photo_display` (MP5). Both expand-only with
+  `20260721140000_add_committee_photo_display` (MP5). Both expand-only with
   blue/green ledger rows.

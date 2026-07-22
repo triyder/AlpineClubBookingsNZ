@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import {
   AdminForbiddenSaveNotice,
-  AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 
@@ -97,18 +97,36 @@ export function InternetBankingSettingsPanel() {
     }
   }
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the section —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before its
+    content appears; a region injected already-populated is silently dropped by
+    some screen-reader/browser pairings — which is why it is rendered in the
+    loading branch too. It sits OUTSIDE the `space-y-*` stack so the empty
+    wrapper an edit-capable admin gets costs no layout.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-6">
+      Your admin role can view Internet Banking settings but cannot change
+      them. Finance edit access is required.
+    </AdminViewOnlySectionBanner>
+  );
+
   if (loading || !settings || !moduleState) {
-    return <p className="text-sm text-slate-500">Loading Internet Banking settings</p>;
+    return (
+      <div>
+        {viewOnlyBanner}
+        <p className="text-sm text-muted-foreground">Loading Internet Banking settings</p>
+      </div>
+    );
   }
 
   return (
-    <div className="space-y-6">
-      {!canEdit ? (
-        <AdminViewOnlyNotice canEdit={canEdit}>
-          Your admin role can view Internet Banking settings but cannot change
-          them. Finance edit access is required.
-        </AdminViewOnlyNotice>
-      ) : null}
+    <div>
+      {viewOnlyBanner}
+      <div className="space-y-6">
       {forbiddenSave ? <AdminForbiddenSaveNotice /> : null}
       <div className="space-y-3">
         <div className="flex flex-wrap gap-2">
@@ -122,8 +140,8 @@ export function InternetBankingSettingsPanel() {
             Internet Banking {moduleState.internetBankingPaymentsEnabled ? "on" : "off"}
           </Badge>
         </div>
-        <p className="text-sm text-slate-600">{xeroBehaviour}</p>
-        <p className="text-sm text-slate-600">{holdPolicySummary}</p>
+        <p className="text-sm text-muted-foreground">{xeroBehaviour}</p>
+        <p className="text-sm text-muted-foreground">{holdPolicySummary}</p>
       </div>
 
       <label className="flex items-start gap-3">
@@ -134,10 +152,10 @@ export function InternetBankingSettingsPanel() {
           onCheckedChange={(checked) => update({ holdBedSlots: checked === true })}
         />
         <span className="text-sm">
-          <span className="font-medium text-slate-900">
+          <span className="font-medium text-foreground">
             Hold beds while Internet Banking payment is pending
           </span>
-          <span className="block text-slate-600">
+          <span className="block text-muted-foreground">
             When on, bookings are confirmed immediately and released if Xero has
             not reconciled payment before the hold expires.
           </span>
@@ -179,10 +197,11 @@ export function InternetBankingSettingsPanel() {
         </div>
       </div>
 
-      <ViewOnlyActionButton canEdit={canEdit} onClick={save} disabled={saving}>
+      <ViewOnlyActionButton canEdit={canEdit} describeReason={false} onClick={save} disabled={saving}>
         <Save className="h-4 w-4" />
         {saving ? "Saving" : "Save Settings"}
       </ViewOnlyActionButton>
+      </div>
     </div>
   );
 }

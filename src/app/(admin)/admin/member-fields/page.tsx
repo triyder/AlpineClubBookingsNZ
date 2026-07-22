@@ -23,7 +23,7 @@ import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import {
   ADMIN_FORBIDDEN_SAVE_REASON,
-  AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 
@@ -164,24 +164,45 @@ export default function AdminMemberFieldsPage() {
     [],
   );
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the section —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before its
+    content appears; a region injected already-populated is silently dropped by
+    some screen-reader/browser pairings. It sits OUTSIDE the `space-y-*` stack so
+    the empty wrapper an edit-capable admin gets costs no layout.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-6">
+      Your admin role can view member fields but cannot change them.
+      Membership edit access is required.
+    </AdminViewOnlySectionBanner>
+  );
+
   if (loading && !payload) {
     return (
-      <div className="space-y-6">
-        <BackLink href="/admin/membership-setup" label="Membership & Members" />
-        <div className="flex min-h-[320px] items-center justify-center">
-          <Loader2 className="h-6 w-6 animate-spin text-slate-500" />
+      <div>
+        {viewOnlyBanner}
+        <div className="space-y-6">
+          <BackLink href="/admin/membership-setup" label="Membership & Members" />
+          <div className="flex min-h-[320px] items-center justify-center">
+            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+          </div>
         </div>
       </div>
     );
   }
 
   return (
-    <div ref={pageRef} className="space-y-8">
+    <div>
+      {viewOnlyBanner}
+      <div ref={pageRef} className="space-y-8">
       <BackLink href="/admin/membership-setup" label="Membership & Members" />
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Member fields</h1>
-          <p className="mt-1 max-w-3xl text-sm text-slate-500">
+          <h1 className="text-2xl font-bold text-foreground">Member fields</h1>
+          <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
             Choose which optional member fields the club collects and displays.
             Turn a field off to avoid collecting data the club does not need.
           </p>
@@ -199,6 +220,7 @@ export default function AdminMemberFieldsPage() {
           </Button>
           <ViewOnlyActionButton
             canEdit={canEdit}
+            describeReason={false}
             type="button"
             onClick={() => void saveSettings()}
             disabled={!dirty || saving || draft === null}
@@ -212,13 +234,6 @@ export default function AdminMemberFieldsPage() {
           </ViewOnlyActionButton>
         </div>
       </div>
-
-      {!canEdit ? (
-        <AdminViewOnlyNotice canEdit={canEdit}>
-          Your admin role can view member fields but cannot change them.
-          Membership edit access is required.
-        </AdminViewOnlyNotice>
-      ) : null}
 
       {(error || savedMessage) && (
         <div
@@ -235,10 +250,10 @@ export default function AdminMemberFieldsPage() {
         </div>
       )}
 
-      <div className="rounded-md border border-slate-200 bg-white px-4 py-3">
+      <div className="rounded-md border border-border bg-card px-4 py-3">
         <div className="flex items-start gap-3">
-          <UserCog className="mt-0.5 h-5 w-5 shrink-0 text-slate-500" />
-          <p className="text-sm text-slate-600">
+          <UserCog className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
+          <p className="text-sm text-muted-foreground">
             When a field is off it is hidden from the member editor, member
             onboarding and profile, and is excluded from CSV import and export.
             Existing data already stored is not deleted.
@@ -283,6 +298,7 @@ export default function AdminMemberFieldsPage() {
             </Card>
           );
         })}
+      </div>
       </div>
     </div>
   );

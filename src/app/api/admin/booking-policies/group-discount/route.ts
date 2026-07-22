@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import { logAudit } from "@/lib/audit";
 import { getDefaultLodgeCapacity } from "@/lib/lodge-capacity";
+import { DEFAULT_GROUP_DISCOUNT_SETTING } from "@/config/club-settings-defaults";
 
 const groupDiscountSchema = z.object({
   minGroupSize: z.number().int().min(2).max(200),
@@ -34,9 +35,7 @@ export async function GET() {
       ? { ...setting, configured: true }
       : {
           id: "default",
-          minGroupSize: 5,
-          summerOnly: true,
-          enabled: false,
+          ...DEFAULT_GROUP_DISCOUNT_SETTING,
           configured: false,
         },
   );

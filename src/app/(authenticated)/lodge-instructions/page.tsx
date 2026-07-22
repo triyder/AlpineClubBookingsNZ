@@ -22,7 +22,7 @@ type InstructionDocument = {
 
 // Shared typography for the sanitised instruction HTML.
 const INSTRUCTION_HTML_CLASSES =
-  "text-base leading-7 text-slate-800 [&_a]:text-blue-700 [&_a]:underline [&_h1]:mt-4 [&_h1]:mb-2 [&_h1]:text-2xl [&_h1]:font-bold [&_h2]:mt-4 [&_h2]:mb-2 [&_h2]:text-xl [&_h2]:font-semibold [&_h3]:mt-3 [&_h3]:mb-2 [&_h3]:text-lg [&_h3]:font-semibold [&_hr]:my-4 [&_li]:my-1 [&_ol]:my-3 [&_ol]:list-decimal [&_ol]:pl-6 [&_p]:my-2 [&_table]:my-3 [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-slate-300 [&_td]:p-2 [&_th]:border [&_th]:border-slate-300 [&_th]:bg-slate-100 [&_th]:p-2 [&_ul]:my-3 [&_ul]:list-disc [&_ul]:pl-6";
+  "text-base leading-7 text-foreground [&_a]:text-blue-700 [&_a]:underline [&_h1]:mt-4 [&_h1]:mb-2 [&_h1]:text-2xl [&_h1]:font-bold [&_h2]:mt-4 [&_h2]:mb-2 [&_h2]:text-xl [&_h2]:font-semibold [&_h3]:mt-3 [&_h3]:mb-2 [&_h3]:text-lg [&_h3]:font-semibold [&_hr]:my-4 [&_li]:my-1 [&_ol]:my-3 [&_ol]:list-decimal [&_ol]:pl-6 [&_p]:my-2 [&_table]:my-3 [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-border [&_td]:p-2 [&_th]:border [&_th]:border-border [&_th]:bg-muted [&_th]:p-2 [&_ul]:my-3 [&_ul]:list-disc [&_ul]:pl-6";
 
 function formatUpdatedAt(value: string | null): string | null {
   if (!value) {
@@ -81,7 +81,7 @@ export default function LodgeInstructionsPage() {
   }, []);
 
   if (loading) {
-    return <p className="text-sm text-slate-500">Loading lodge instructions...</p>;
+    return <p className="text-sm text-muted-foreground">Loading lodge instructions...</p>;
   }
 
   if (notAssigned) {
@@ -97,7 +97,7 @@ export default function LodgeInstructionsPage() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <p className="text-sm text-slate-600">
+          <p className="text-sm text-muted-foreground">
             The lodge opening, closing, and day-to-day instructions are only
             available to admins and members with a current or upcoming{" "}
             {hutLeaderLower} assignment. If you believe you should have access,
@@ -120,10 +120,10 @@ export default function LodgeInstructionsPage() {
     <div className="lodge-instructions-print-root space-y-8">
       <div className="flex flex-wrap items-start justify-between gap-4 print:hidden">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">
+          <h1 className="text-2xl font-bold text-foreground">
             Lodge Instructions
           </h1>
-          <p className="mt-1 text-sm text-slate-500">
+          <p className="mt-1 text-sm text-muted-foreground">
             Opening, closing, and day-to-day instructions for {hutLeaderLower}s.
             Print a copy to pin up in the lodge.
           </p>
@@ -139,13 +139,13 @@ export default function LodgeInstructionsPage() {
         return (
           <section
             key={doc.key}
-            className="lodge-instructions-print-section rounded-lg border border-slate-200 bg-white p-6 shadow-sm"
+            className="lodge-instructions-print-section rounded-lg border border-border bg-card p-6 shadow-sm"
           >
-            <h2 className="text-xl font-semibold text-slate-900">
+            <h2 className="text-xl font-semibold text-foreground">
               {doc.title}
             </h2>
             {updated ? (
-              <p className="mt-1 text-xs text-slate-500">
+              <p className="mt-1 text-xs text-muted-foreground">
                 Last updated {updated}
               </p>
             ) : null}
@@ -157,7 +157,7 @@ export default function LodgeInstructionsPage() {
                 dangerouslySetInnerHTML={{ __html: doc.contentHtml }}
               />
             ) : (
-              <p className="mt-4 text-sm text-slate-500">
+              <p className="mt-4 text-sm text-muted-foreground">
                 No instructions have been written for this section yet.
               </p>
             )}

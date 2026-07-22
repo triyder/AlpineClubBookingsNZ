@@ -8,13 +8,19 @@ import {
   buildClubThemeCss,
   contrastRatio,
   deriveAppMutedForeground,
+  deriveBrandShims,
   getBlockingContrastWarnings,
   getContrastWarnings,
   isValidLogoDataUrl,
   isValidThemeColour,
   sanitiseRawCss,
+  themeSeedsFromValues,
 } from "@/lib/club-theme-schema";
 import { clubThemeUpdateSchema } from "@/lib/club-theme-update-schema";
+import {
+  buildNeutralRamp,
+  buildThemeSubstrate,
+} from "@/lib/theme/theme-substrate";
 
 const tinyPng =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
@@ -28,6 +34,14 @@ describe("club theme validation", () => {
     });
 
     expect(parsed.success).toBe(false);
+  });
+
+  it("accepts a 6-digit hex seed and rejects oklch input (#2187 D6)", () => {
+    // The wizard's native colour picker only emits hex, and the oklch paste-in
+    // path is gone: the user-INPUT validator is now hex-only.
+    expect(isValidThemeColour("#1a2b3c")).toBe(true);
+    expect(isValidThemeColour(" #FFCB05 ")).toBe(true);
+    expect(isValidThemeColour("oklch(0.6 0.1 140)")).toBe(false);
   });
 
   it("neutralises unsafe stored values before emitting CSS", () => {
@@ -59,10 +73,12 @@ describe("club theme validation", () => {
   });
 
   it("warns rather than blocks when key contrast pairs miss AA", () => {
+    // A near-white neutral-character seed derives a near-white page background,
+    // so body text (the same seed) cannot clear AA on it. getContrastWarnings is
+    // advisory only — it surfaces the pair but never blocks the save.
     const warnings = getContrastWarnings({
       ...DEFAULT_CLUB_THEME_VALUES,
       brandDeep: "#ffffff",
-      brandSnow: "#ffffff",
     });
 
     expect(contrastRatio("#000000", "#ffffff")?.toFixed(2)).toBe("21.00");
@@ -73,152 +89,34 @@ describe("club theme validation", () => {
 });
 
 describe("getBlockingContrastWarnings", () => {
-  it("passes the shipped default palette (first-run setup is not blocked)", () => {
-    expect(getBlockingContrastWarnings(DEFAULT_CLUB_THEME_VALUES)).toEqual([]);
-  });
-
-  it("blocks a measurable sub-AA pair", () => {
-    // brand-charcoal button text on a near-identical gold is unreadable.
-    const blocking = getBlockingContrastWarnings({
-      ...DEFAULT_CLUB_THEME_VALUES,
-      brandGold: "#33373e",
-      brandCharcoal: "#30343b",
-    });
-
-    expect(blocking.some((warning) => warning.id === "button-on-gold")).toBe(
-      true,
-    );
-    expect(
-      blocking.every(
-        (warning) => warning.ratio !== null && warning.ratio < 4.5,
-      ),
-    ).toBe(true);
-  });
-
-  it("pins every editable brand contrast pair, including the dark app accent", () => {
-    const failing = {
-      ...DEFAULT_CLUB_THEME_VALUES,
-      brandGold: "#333333",
-      brandCharcoal: "#303030",
-      brandDeep: "#343434",
-      brandMist: "#353535",
-      brandSnow: "#353535",
-    };
-
-    expect(getContrastWarnings(failing).map((warning) => warning.id)).toEqual([
-      "body-on-snow",
-      "header-on-charcoal",
-      "button-on-gold",
-      "app-accent-on-deep",
-      "app-accent-on-snow",
-      "app-muted-on-snow",
-      "app-secondary-on-mist",
-    ]);
-  });
-
-  it("blocks an app accent that is unreadable on dark app chrome", () => {
-    const blocking = getBlockingContrastWarnings({
-      ...DEFAULT_CLUB_THEME_VALUES,
-      brandGold: "#30343b",
-      brandDeep: "#33373e",
-    });
-
-    expect(blocking).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ id: "app-accent-on-deep" }),
-      ]),
-    );
-  });
-
-  it("blocks the contrast-safe light app accent and muted roles when their neutrals drift", () => {
-    const blocking = getBlockingContrastWarnings({
-      ...DEFAULT_CLUB_THEME_VALUES,
-      brandCharcoal: "#f4f4f4",
-      brandDeep: "#f3f3f3",
-      brandSnow: "#f5f5f5",
-    });
-
-    expect(blocking).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ id: "app-accent-on-snow" }),
-        expect.objectContaining({ id: "app-muted-on-snow" }),
-      ]),
-    );
-  });
-
-  it("blocks secondary app text when brand mist collapses onto brand deep", () => {
-    const blocking = getBlockingContrastWarnings({
-      ...DEFAULT_CLUB_THEME_VALUES,
-      brandMist: DEFAULT_CLUB_THEME_VALUES.brandDeep,
-    });
-
-    expect(blocking).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ id: "app-secondary-on-mist" }),
-      ]),
-    );
-  });
-
-  it("keeps both shipped render palettes inside every contrast gate", () => {
+  // The blocking gate no longer gates any save (#2187): the substrate guarantees
+  // contrast by construction, so this helper is advisory-only. The one property
+  // still worth pinning is that the shipped palettes carry no blocking pairs.
+  it("returns no blocking warnings for the shipped render palettes", () => {
     expect(getBlockingContrastWarnings(DEFAULT_CLUB_THEME_VALUES)).toEqual([]);
     expect(getBlockingContrastWarnings(TOKOROA_CLUB_THEME_VALUES)).toEqual([]);
   });
+});
 
-  it("shows why independently safe endpoints must not be interpolated for app text surfaces", () => {
-    // Deep sits between black snow and white mist. Both configured endpoint
-    // pairs clear AA, while their sRGB midpoint collapses almost onto deep.
-    // Direct token endpoints are therefore part of the rendering contract.
-    const endpointCrossingPalette = {
-      ...DEFAULT_CLUB_THEME_VALUES,
-      brandDeep: "#767676",
-      brandSnow: "#000000",
-      brandMist: "#ffffff",
-      brandCharcoal: "#ffffff",
-      brandGold: "#000000",
-    };
+describe("deriveBrandShims (#2187)", () => {
+  it("is deterministic and wires snow/charcoal to the substrate neutral ramp", () => {
+    const first = deriveBrandShims(DEFAULT_CLUB_THEME_VALUES);
+    const second = deriveBrandShims(DEFAULT_CLUB_THEME_VALUES);
+    expect(first).toEqual(second);
 
-    expect(getBlockingContrastWarnings(endpointCrossingPalette)).toEqual([]);
-    expect(contrastRatio("#767676", "#808080") ?? 21).toBeLessThan(4.5);
-  });
+    const neutral = buildThemeSubstrate(
+      themeSeedsFromValues(DEFAULT_CLUB_THEME_VALUES),
+      "light",
+    ).neutralHex;
+    // snow is the lightest neutral step, charcoal the darkest — the roles the
+    // former columns played, now read straight off the substrate ramp.
+    expect(first.snow).toBe(neutral[0]);
+    expect(first.charcoal).toBe(neutral[11]);
 
-  it("builds app brand CSS without raw or semantic overrides", () => {
-    const appCss = buildClubThemeAppCss({
-      ...DEFAULT_CLUB_THEME_VALUES,
-      rawCss:
-        ".app-theme-scope{--success:red;--warning:red;--info:red;--danger:red}",
-    });
-
-    expect(appCss).toContain(".app-theme-scope{");
-    expect(appCss).toContain(
-      `--brand-gold:${DEFAULT_CLUB_THEME_VALUES.brandGold}`,
-    );
-    expect(appCss).not.toMatch(/--(?:success|warning|info|danger)/);
-  });
-
-  it("measures oklch() colours and blocks a low-contrast oklch pair", () => {
-    // The site-style value field accepts oklch, so it must be enforced too.
-    const blocking = getBlockingContrastWarnings({
-      ...DEFAULT_CLUB_THEME_VALUES,
-      brandGold: "oklch(0.6 0.1 140)",
-      brandCharcoal: "oklch(0.58 0.09 140)",
-    });
-
-    const buttonWarning = blocking.find(
-      (warning) => warning.id === "button-on-gold",
-    );
-    expect(buttonWarning).toBeDefined();
-    expect(buttonWarning?.ratio).not.toBeNull();
-    expect(buttonWarning?.ratio ?? 0).toBeLessThan(4.5);
-  });
-
-  it("allows an accessible oklch pair", () => {
-    expect(
-      getBlockingContrastWarnings({
-        ...DEFAULT_CLUB_THEME_VALUES,
-        brandGold: "oklch(0.9 0.05 140)",
-        brandCharcoal: "oklch(0.25 0.02 250)",
-      }),
-    ).toEqual([]);
+    // The three real seeds pass through verbatim.
+    expect(first.gold).toBe(DEFAULT_CLUB_THEME_VALUES.brandGold);
+    expect(first.deep).toBe(DEFAULT_CLUB_THEME_VALUES.brandDeep);
+    expect(first.safety).toBe(DEFAULT_CLUB_THEME_VALUES.brandSafety);
   });
 });
 
@@ -228,11 +126,11 @@ describe("getBlockingContrastWarnings", () => {
 // `text-muted-foreground` label rendered as primary text.
 describe("deriveAppMutedForeground (#2145)", () => {
   // Which surface each mode's muted text can actually land on. The brand tokens
-  // come straight from the `.app-theme-scope` blocks in globals.css; the four
-  // `*-muted` panel fills come from `:root` / `.dark` and are #1808-curated, so
-  // they do NOT move with the brand palette even though the derived tone does —
-  // which is exactly why they have to be checked. `app-theme-layout-contract`
-  // pins these literals against globals.css.
+  // are derived from the 3 seeds (`deriveBrandShims`); the four `*-muted` panel
+  // fills come from `:root` / `.dark` and are #1808-curated, so they do NOT move
+  // with the brand palette even though the derived tone does — which is exactly
+  // why they have to be checked. `app-theme-layout-contract` pins these literals
+  // against globals.css.
   const SEMANTIC_MUTED_LIGHT = [
     "#fef9c3", // --warning-muted
     "#dbeafe", // --info-muted
@@ -245,16 +143,33 @@ describe("deriveAppMutedForeground (#2145)", () => {
     "oklch(0.33 0.05 150)", // --success-muted
     "oklch(0.33 0.05 27)", // --danger-muted
   ];
-  const lightSurfaces = (theme: typeof DEFAULT_CLUB_THEME_VALUES) => [
-    theme.brandSnow, // --background / --card / --popover
-    theme.brandMist, // --muted / --secondary / --accent
-    ...SEMANTIC_MUTED_LIGHT,
-  ];
-  const darkSurfaces = (theme: typeof DEFAULT_CLUB_THEME_VALUES) => [
-    theme.brandDeep, // --background
-    theme.brandCharcoal, // --card / --popover / --muted / --secondary / --accent
-    ...SEMANTIC_MUTED_DARK,
-  ];
+  // `--accent` (#2144) is neutral-4 in each mode — one band off `--muted`/
+  // `--secondary` (neutral-3 = brand-mist), read from the mode's own substrate
+  // ramp. It is a real muted-text surface (`focus:bg-accent` dropdown/command
+  // items) and the DARKER light band, so it is checked in its own right; mirrors
+  // the shipped clamp set in `deriveAppMutedForeground`.
+  const accentSurface = (
+    theme: typeof DEFAULT_CLUB_THEME_VALUES,
+    mode: "light" | "dark",
+  ) => buildNeutralRamp(themeSeedsFromValues(theme), mode)[3];
+  const lightSurfaces = (theme: typeof DEFAULT_CLUB_THEME_VALUES) => {
+    const s = deriveBrandShims(theme);
+    return [
+      s.snow, // --background / --card / --popover
+      s.mist, // --muted / --secondary
+      accentSurface(theme, "light"), // --accent (neutral-4)
+      ...SEMANTIC_MUTED_LIGHT,
+    ];
+  };
+  const darkSurfaces = (theme: typeof DEFAULT_CLUB_THEME_VALUES) => {
+    const s = deriveBrandShims(theme);
+    return [
+      s.deep, // --background
+      s.charcoal, // --card / --popover / --muted / --secondary
+      accentSurface(theme, "dark"), // --accent (neutral-4)
+      ...SEMANTIC_MUTED_DARK,
+    ];
+  };
 
   it.each([
     ["default", DEFAULT_CLUB_THEME_VALUES],
@@ -263,16 +178,15 @@ describe("deriveAppMutedForeground (#2145)", () => {
     "gives the %s palette a muted tone that is DISTINCT from --foreground",
     (_label, theme) => {
       const muted = deriveAppMutedForeground(theme);
+      const s = deriveBrandShims(theme);
 
       // The whole point of the issue: the role must not alias --foreground.
-      expect(muted.light.toLowerCase()).not.toBe(theme.brandDeep.toLowerCase());
-      expect(muted.dark.toLowerCase()).not.toBe(theme.brandSnow.toLowerCase());
+      expect(muted.light.toLowerCase()).not.toBe(s.deep.toLowerCase());
+      expect(muted.dark.toLowerCase()).not.toBe(s.snow.toLowerCase());
       // …but it must still read as TEXT, not as a disabled state. Both shipped
       // palettes stay well clear of the 4.5:1 floor on their base surface.
-      expect(contrastRatio(muted.light, theme.brandSnow) ?? 0).toBeGreaterThan(
-        5,
-      );
-      expect(contrastRatio(muted.dark, theme.brandDeep) ?? 0).toBeGreaterThan(5);
+      expect(contrastRatio(muted.light, s.snow) ?? 0).toBeGreaterThan(5);
+      expect(contrastRatio(muted.dark, s.deep) ?? 0).toBeGreaterThan(5);
     },
   );
 
@@ -302,12 +216,9 @@ describe("deriveAppMutedForeground (#2145)", () => {
   // muted tone must carry MEASURABLY less contrast than `--foreground` does on
   // the same surface, not merely a different hex.
   //
-  // 0.75 is chosen with evidence, not taste: the shipped palettes land at
-  // 0.41/0.53 (default light/dark) and 0.51/0.59 (Tokoroa), so the bar has real
-  // headroom, while a 0.90 mix weight already reads 0.74-0.83 and a 0.99 weight
-  // reads ~0.98. It is asserted only for palettes with headroom — a palette the
-  // clamp walks all the way back to `--foreground` is the documented accessible
-  // outcome and legitimately has a fraction of 1.
+  // It is asserted only for palettes with headroom — a palette the clamp walks
+  // all the way back to `--foreground` is the documented accessible outcome and
+  // legitimately has a fraction of 1.
   const MUTED_STEP_CEILING = 0.75;
 
   it.each([
@@ -317,10 +228,11 @@ describe("deriveAppMutedForeground (#2145)", () => {
     "keeps the %s palette's muted tone a real step below --foreground, not a token one",
     (_label, theme) => {
       const muted = deriveAppMutedForeground(theme);
+      const s = deriveBrandShims(theme);
 
       for (const [tone, foreground, base] of [
-        [muted.light, theme.brandDeep, theme.brandSnow],
-        [muted.dark, theme.brandSnow, theme.brandDeep],
+        [muted.light, s.deep, s.snow],
+        [muted.dark, s.snow, s.deep],
       ] as const) {
         const foregroundRatio = contrastRatio(foreground, base) ?? 0;
         const mutedRatio = contrastRatio(tone, base) ?? 0;
@@ -335,11 +247,13 @@ describe("deriveAppMutedForeground (#2145)", () => {
   );
 
   it("holds AA across every brand palette a club could configure", () => {
-    // The guard's claim is universal, so this sweeps a wide grid of neutral
-    // ramps rather than trusting the two shipped ones. Only palettes that pass
-    // the SAVE GATE are in scope — a palette the gate rejects can never reach
-    // the stylesheet, and the derivation cannot invent contrast the brand
-    // colours do not have (see the endpoint-crossing case below).
+    // The guard's claim is universal, so this sweeps the 3 SEEDS a club can
+    // configure rather than trusting the two shipped ones. The muted derivation
+    // reads only the neutral-character seed (`brandDeep` seeds snow/mist/charcoal
+    // via the substrate ramp, and is itself `--foreground`), so the accent and
+    // support seeds are swept alongside it purely to prove they never perturb the
+    // result. Every configurable palette is in scope: the substrate makes every
+    // one renderable, so there is no save gate to filter by.
     //
     // The assertion is stated RELATIVE to `--foreground`, which is the actual
     // guarantee, and it is TWO-BRANCH: it clears 4.5:1 wherever `--foreground`
@@ -347,58 +261,64 @@ describe("deriveAppMutedForeground (#2145)", () => {
     // no worse than `--foreground` there. It is NOT a parity claim — the muted
     // tone is deliberately less readable than the token it softens (the
     // MUTED_STEP_CEILING test above is what enforces that it stays so).
-    // An absolute "always AA" claim would be
-    // false and for a reason that has nothing to do with #2145 — the curated
-    // `*-muted` fills are #1808-fixed, so a palette can pick a `--brand-snow`
-    // that fails AA on a warning panel all by itself. The derivation must not
-    // make that worse; it cannot make it better.
-    const ramp = ["#000000", "#17231c", "#4d4d46", "#767676", "#a8b0ac", "#d4ddd7", "#f5f8f6", "#ffffff"];
-    let gated = 0;
+    // An absolute "always AA" claim would be false and for a reason that has
+    // nothing to do with #2145 — the curated `*-muted` fills are #1808-fixed, so
+    // a palette can pick a neutral-character seed that fails AA on a warning
+    // panel all by itself. The derivation must not make that worse; it cannot
+    // make it better.
+    const neutralRamp = [
+      "#000000",
+      "#17231c",
+      "#4d4d46",
+      "#767676",
+      "#a8b0ac",
+      "#d4ddd7",
+      "#f5f8f6",
+      "#ffffff",
+    ];
+    const accentSeeds = ["#57b3ab", "#ffcb05"];
+    const supportSeeds = ["#b04d28", "#ff7c12"];
+    let swept = 0;
     let inheritedFailures = 0;
 
-    for (const brandDeep of ramp) {
-      for (const brandSnow of ramp) {
-        for (const brandMist of ramp) {
-          for (const brandCharcoal of ramp) {
-            const theme = {
-              ...DEFAULT_CLUB_THEME_VALUES,
-              brandDeep,
-              brandSnow,
-              brandMist,
-              brandCharcoal,
-            };
-            if (getBlockingContrastWarnings(theme).length > 0) {
-              continue;
-            }
-            gated += 1;
-            const muted = deriveAppMutedForeground(theme);
-            for (const [mode, tone, foreground, surfaces] of [
-              ["light", muted.light, brandDeep, lightSurfaces(theme)],
-              ["dark", muted.dark, brandSnow, darkSurfaces(theme)],
-            ] as const) {
-              for (const surface of surfaces) {
-                const foregroundRatio = contrastRatio(foreground, surface) ?? 0;
-                const mutedRatio = contrastRatio(tone, surface) ?? 0;
-                const where = `${mode} ${tone} on ${surface} (deep ${brandDeep}, snow ${brandSnow}, mist ${brandMist}, charcoal ${brandCharcoal})`;
+    for (const brandDeep of neutralRamp) {
+      for (const brandGold of accentSeeds) {
+        for (const brandSafety of supportSeeds) {
+          const theme = {
+            ...DEFAULT_CLUB_THEME_VALUES,
+            brandGold,
+            brandDeep,
+            brandSafety,
+          };
+          const s = deriveBrandShims(theme);
+          swept += 1;
+          const muted = deriveAppMutedForeground(theme);
+          for (const [mode, tone, foreground, surfaces] of [
+            ["light", muted.light, s.deep, lightSurfaces(theme)],
+            ["dark", muted.dark, s.snow, darkSurfaces(theme)],
+          ] as const) {
+            for (const surface of surfaces) {
+              const foregroundRatio = contrastRatio(foreground, surface) ?? 0;
+              const mutedRatio = contrastRatio(tone, surface) ?? 0;
+              const where = `${mode} ${tone} on ${surface} (deep ${brandDeep}, gold ${brandGold}, safety ${brandSafety})`;
 
-                // Both branches of the guarantee in one bound. Math.min means:
-                // where --foreground clears 4.5:1 the bar is 4.5:1 (restated
-                // explicitly just below); where --foreground itself fails AA on
-                // this surface the bar is --foreground's own ratio, i.e. no
-                // worse than the token it softens. This is NOT a parity
-                // assertion — on a palette with headroom the muted tone is
-                // deliberately well BELOW --foreground.
+              // Both branches of the guarantee in one bound. Math.min means:
+              // where --foreground clears 4.5:1 the bar is 4.5:1 (restated
+              // explicitly just below); where --foreground itself fails AA on
+              // this surface the bar is --foreground's own ratio, i.e. no
+              // worse than the token it softens. This is NOT a parity
+              // assertion — on a palette with headroom the muted tone is
+              // deliberately well BELOW --foreground.
+              expect(mutedRatio, where).toBeGreaterThanOrEqual(
+                Math.min(foregroundRatio, AA_TEXT_CONTRAST_RATIO),
+              );
+              if (foregroundRatio >= AA_TEXT_CONTRAST_RATIO) {
+                // …and clears AA wherever --foreground does.
                 expect(mutedRatio, where).toBeGreaterThanOrEqual(
-                  Math.min(foregroundRatio, AA_TEXT_CONTRAST_RATIO),
+                  AA_TEXT_CONTRAST_RATIO,
                 );
-                if (foregroundRatio >= AA_TEXT_CONTRAST_RATIO) {
-                  // …and clears AA wherever --foreground does.
-                  expect(mutedRatio, where).toBeGreaterThanOrEqual(
-                    AA_TEXT_CONTRAST_RATIO,
-                  );
-                } else {
-                  inheritedFailures += 1;
-                }
+              } else {
+                inheritedFailures += 1;
               }
             }
           }
@@ -406,125 +326,67 @@ describe("deriveAppMutedForeground (#2145)", () => {
       }
     }
 
-    // Guards against the sweep silently gating everything out and passing
-    // vacuously, and against the relative form passing only because the
-    // `--foreground` branch never fires.
-    expect(gated).toBeGreaterThan(20);
+    // Guards against the sweep silently passing vacuously, and against the
+    // relative form passing only because the `--foreground` branch never fires.
+    expect(swept).toBeGreaterThan(20);
     expect(inheritedFailures).toBeGreaterThan(0);
   });
 
-  // The curated `*-muted` panel fills are FIXED (#1808 keeps them out of
-  // `app-theme-scope`) while the derived tone slides with the brand ramp — the
-  // one pairing that can drift apart with nothing watching. A brand-only clamp
-  // ships a sub-AA muted tone on a `bg-warning-muted` / `bg-info-muted` panel
-  // for a palette that passes the save gate, on surfaces where `--foreground`
-  // itself is perfectly readable. Both palettes below are gate-passing, and both
-  // keep a distinct muted tone after the clamp — so this is a genuine fix, not
-  // the derivation giving up and returning `--foreground`.
-  it.each([
-    [
-      "dark",
-      {
-        brandDeep: "#000000",
-        brandSnow: "#a8b0ac",
-        brandMist: "#767676",
-        brandCharcoal: "#2f2f2b",
-      },
-      "oklch(0.33 0.05 75)", // --warning-muted, dark
-    ],
-    [
-      "light",
-      {
-        brandDeep: "#2f2f2b",
-        brandSnow: "#f5f8f6",
-        brandMist: "#f5f8f6",
-        brandCharcoal: "#17231c",
-      },
-      "#dbeafe", // --info-muted, light
-    ],
-  ])(
-    "clears AA on the curated %s semantic panel fills, which do not track the brand palette",
-    (mode, neutrals, panelFill) => {
-      const theme = { ...DEFAULT_CLUB_THEME_VALUES, ...neutrals };
-      expect(getBlockingContrastWarnings(theme)).toEqual([]);
-
-      const muted = deriveAppMutedForeground(theme);
-      const tone = mode === "dark" ? muted.dark : muted.light;
-      const foreground =
-        mode === "dark" ? theme.brandSnow : theme.brandDeep;
-
-      // `--foreground` reads fine on this panel, so a muted tone that does not
-      // is a regression introduced by the derivation, not a palette problem.
-      expect(contrastRatio(foreground, panelFill) ?? 0).toBeGreaterThanOrEqual(
-        AA_TEXT_CONTRAST_RATIO,
-      );
-      expect(contrastRatio(tone, panelFill) ?? 0).toBeGreaterThanOrEqual(
-        AA_TEXT_CONTRAST_RATIO,
-      );
-      // …and the clamp solved it by stepping back, not by collapsing the role.
-      expect(tone.toLowerCase()).not.toBe(foreground.toLowerCase());
-    },
-  );
-
   it("degrades to --foreground rather than ship a sub-AA tone", () => {
-    // The endpoint-crossing palette already pinned above: brandDeep sits BETWEEN
-    // brandSnow and brandMist, so ANY move toward one surface is a move away
-    // from the other. It passes the save gate, so the derivation must handle it
-    // — by walking the mix all the way back and accepting that this palette
-    // simply has no room for a distinct muted tone.
-    const endpointCrossingPalette = {
+    // A mid-grey neutral-character seed derives a near-white page background, so
+    // the seed itself already fails AA on it. Every candidate muted tone mixes
+    // TOWARD that light background — lighter still — so none can clear AA either.
+    // The derivation must handle this by walking the mix all the way back and
+    // accepting that this palette simply has no room for a distinct muted tone.
+    const noHeadroomPalette = {
       ...DEFAULT_CLUB_THEME_VALUES,
-      brandDeep: "#767676",
-      brandSnow: "#000000",
-      brandMist: "#ffffff",
-      brandCharcoal: "#ffffff",
-      brandGold: "#000000",
+      brandDeep: "#8f8f8f",
     };
-    expect(getBlockingContrastWarnings(endpointCrossingPalette)).toEqual([]);
+    const s = deriveBrandShims(noHeadroomPalette);
+    const muted = deriveAppMutedForeground(noHeadroomPalette);
 
-    const muted = deriveAppMutedForeground(endpointCrossingPalette);
+    // Confirm the premise: the seed itself fails AA on its own page background.
+    expect(contrastRatio(s.deep, s.snow) ?? 21).toBeLessThan(
+      AA_TEXT_CONTRAST_RATIO,
+    );
 
-    expect(muted.light).toBe(endpointCrossingPalette.brandDeep);
-    // Having collapsed onto `--foreground`, the tone is by construction exactly
-    // as readable as `--foreground` on every surface — including the curated
-    // `*-muted` fills, where this palette's own `--brand-deep` only manages
-    // 4.23:1. That shortfall is the palette's (an #1808 gap the save gate does
-    // not police), not something the derivation introduced.
-    for (const surface of lightSurfaces(endpointCrossingPalette)) {
+    // Having no room, the tone collapses onto `--foreground`.
+    expect(muted.light).toBe(s.deep);
+    // …and is therefore, by construction, exactly as readable as `--foreground`
+    // on every surface — no better, no worse.
+    for (const surface of lightSurfaces(noHeadroomPalette)) {
       expect(contrastRatio(muted.light, surface)).toBe(
-        contrastRatio(endpointCrossingPalette.brandDeep, surface),
+        contrastRatio(s.deep, surface),
       );
     }
   });
 
-  it("derives a measurable colour from oklch brand values", () => {
-    // The site-style value field accepts oklch, so the derivation cannot assume
-    // hex. The emitted tone is always a resolved hex, which is what makes it
-    // measurable by the same gate that blocks a bad palette.
-    const muted = deriveAppMutedForeground({
-      ...DEFAULT_CLUB_THEME_VALUES,
-      brandDeep: "oklch(0.2 0.03 150)",
-      brandSnow: "oklch(0.98 0.01 150)",
-      brandMist: "oklch(0.88 0.02 150)",
-    });
-
-    expect(muted.light).toMatch(/^#[0-9a-f]{6}$/);
-    expect(
-      contrastRatio(muted.light, "oklch(0.88 0.02 150)") ?? 0,
-    ).toBeGreaterThanOrEqual(AA_TEXT_CONTRAST_RATIO);
-  });
-
   it("emits only schema-valid colours, so the injected CSS cannot be a vector", () => {
     // The derived tones are interpolated into a <style> element, so they must be
-    // as constrained as the sanitised brand fields they come from.
+    // as constrained as the sanitised brand seeds they come from. Unsafe seeds
+    // are normalised away before derivation.
     const muted = deriveAppMutedForeground({
       ...DEFAULT_CLUB_THEME_VALUES,
       brandDeep: "red; } body { display: none",
-      brandSnow: "javascript:alert(1)",
+      brandSafety: "javascript:alert(1)",
     });
 
     expect(isValidThemeColour(muted.light)).toBe(true);
     expect(isValidThemeColour(muted.dark)).toBe(true);
+  });
+
+  it("builds app brand CSS without raw or semantic overrides", () => {
+    const appCss = buildClubThemeAppCss({
+      ...DEFAULT_CLUB_THEME_VALUES,
+      rawCss:
+        ".app-theme-scope{--success:red;--warning:red;--info:red;--danger:red}",
+    });
+
+    expect(appCss).toContain(".app-theme-scope{");
+    expect(appCss).toContain(
+      `--brand-gold:${DEFAULT_CLUB_THEME_VALUES.brandGold}`,
+    );
+    expect(appCss).not.toMatch(/--(?:success|warning|info|danger)/);
   });
 
   it("injects both derived tones into the app stylesheet", () => {
@@ -544,7 +406,9 @@ describe("deriveAppMutedForeground (#2145)", () => {
 describe("generic public default palette (#1807)", () => {
   // The shipped default must read as generic New Zealand alpine, never as a
   // specific club. Tokoroa gold is seeded ONLY behind SEED_TOKOROA_THEME_COMPLETE
-  // (TOKOROA_CLUB_THEME_VALUES); it must not leak into the public default.
+  // (TOKOROA_CLUB_THEME_VALUES); it must not leak into the public default. The
+  // comparison is over the 3 SEED columns (`CLUB_THEME_COLOUR_FIELDS`) — there
+  // are no orphan columns left to compare.
   it("does not reuse any Tokoroa brand colour", () => {
     const tokoroaHexes = new Set(
       CLUB_THEME_COLOUR_FIELDS.map(
@@ -565,7 +429,7 @@ describe("generic public default palette (#1807)", () => {
     ).toBe(false);
   });
 
-  it("is a complete, distinct palette from the Tokoroa theme", () => {
+  it("is a complete, distinct set of seeds from the Tokoroa theme", () => {
     for (const field of CLUB_THEME_COLOUR_FIELDS) {
       expect(DEFAULT_CLUB_THEME_VALUES[field.key]).toMatch(/^#[0-9a-f]{6}$/i);
       expect(DEFAULT_CLUB_THEME_VALUES[field.key]).not.toBe(

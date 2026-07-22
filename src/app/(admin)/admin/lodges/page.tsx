@@ -19,7 +19,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import {
   ADMIN_FORBIDDEN_SAVE_REASON,
-  AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 
@@ -222,8 +222,26 @@ export default function AdminLodgesPage() {
 
   const showForm = creating || editingId !== null;
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the section —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before its
+    content appears; a region injected already-populated is silently dropped by
+    some screen-reader/browser pairings. It sits OUTSIDE the `space-y-*` stack so
+    the empty wrapper an edit-capable admin gets costs no layout.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-6">
+      Your admin role can view the lodge properties but cannot change them.
+      Lodge edit access is required.
+    </AdminViewOnlySectionBanner>
+  );
+
   return (
-    <div className="space-y-6">
+    <div>
+      {viewOnlyBanner}
+      <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">Lodges</h1>
@@ -232,18 +250,11 @@ export default function AdminLodgesPage() {
             change once a second active lodge exists.
           </p>
         </div>
-        <ViewOnlyActionButton canEdit={canEdit} onClick={startCreate} disabled={saving || showForm}>
+        <ViewOnlyActionButton canEdit={canEdit} describeReason={false} onClick={startCreate} disabled={saving || showForm}>
           <Plus className="mr-2 h-4 w-4" />
           Add lodge
         </ViewOnlyActionButton>
       </div>
-
-      {!canEdit && (
-        <AdminViewOnlyNotice canEdit={canEdit}>
-          Your admin role can view the lodge properties but cannot change them.
-          Lodge edit access is required.
-        </AdminViewOnlyNotice>
-      )}
 
       {error ? (
         <p className="text-sm text-destructive" role="alert">
@@ -313,7 +324,7 @@ export default function AdminLodgesPage() {
               />
             </div>
             <div className="flex gap-2">
-              <ViewOnlyActionButton canEdit={canEdit} onClick={() => void submitForm()} disabled={saving}>
+              <ViewOnlyActionButton canEdit={canEdit} describeReason={false} onClick={() => void submitForm()} disabled={saving}>
                 {saving ? "Saving..." : "Save"}
               </ViewOnlyActionButton>
               <Button variant="outline" onClick={cancelEdit} disabled={saving}>
@@ -370,6 +381,7 @@ export default function AdminLodgesPage() {
                     </Button>
                     <ViewOnlyActionButton
                       canEdit={canEdit}
+                      describeReason={false}
                       variant="outline"
                       size="sm"
                       onClick={() => startEdit(lodge)}
@@ -380,6 +392,7 @@ export default function AdminLodgesPage() {
                     </ViewOnlyActionButton>
                     <ViewOnlyActionButton
                       canEdit={canEdit}
+                      describeReason={false}
                       variant="outline"
                       size="sm"
                       onClick={() => void setActive(lodge, !lodge.active)}
@@ -394,6 +407,7 @@ export default function AdminLodgesPage() {
           )}
         </CardContent>
       </Card>
+      </div>
     </div>
   );
 }

@@ -1,10 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
-import { strFromU8 } from "fflate";
+import { strFromU8, strToU8, zipSync } from "fflate";
 
 vi.mock("server-only", () => ({}));
 
 import { buildConfigExport } from "@/lib/config-transfer/export";
-import { readBundle } from "@/lib/config-transfer/bundle";
+import {
+  ConfigTransferBundleError,
+  readBundle,
+} from "@/lib/config-transfer/bundle";
 import { parseCsv } from "@/lib/config-transfer/csv";
 import { siteContentImporter } from "@/lib/config-transfer/categories/site-content";
 import type { ReadDb, TxDb } from "@/lib/config-transfer/import-types";
@@ -76,8 +79,7 @@ function sourceDb(): ReadDb {
     siteContent: { findMany: vi.fn().mockResolvedValue([{ key: "FOOTER_BLURB", contentHtml: "<p>Footer</p>" }]) },
     clubTheme: {
       findUnique: vi.fn().mockResolvedValue({
-        brandGold: "#e0a800", brandCharcoal: "#222", brandDeep: "#111", brandRidge: "#333",
-        brandMist: "#eee", brandSnow: "#fff", brandSafety: "#f00",
+        brandGold: "#e0a800", brandDeep: "#111", brandSafety: "#f00",
         headingFontKey: "LEAGUE_SPARTAN", bodyFontKey: "INTER", logoDataUrl: null, rawCss: "",
       }),
     },
@@ -130,5 +132,31 @@ describe("config-transfer round-trip (site-content)", () => {
     const second = await siteContentImporter.apply(applyCtx);
     expect(second.created).toBe(0);
     expect(store.pages.size).toBe(2);
+  });
+
+  // #2187 (D19/R7): the club-theme entity changed incompatibly at v2 (seven
+  // brand columns collapsed to three seeds) with NO v1 translation path. A v1
+  // bundle still carries orphan columns this app no longer understands, so
+  // readBundle must reject any formatVersion < 2 outright rather than silently
+  // dropping them. buildBundle always stamps the current version, so we hand-
+  // synthesize a minimal v1 bundle (schema-valid manifest, no data files) and
+  // assert readBundle throws at the lowest level that parses a manifest.
+  it("rejects a v1 bundle: importing a formatVersion 1 manifest throws", () => {
+    const v1Manifest = {
+      formatVersion: 1,
+      generatedAt: "2026-07-08T00:00:00.000Z",
+      app: { version: "0.10.1", prismaMigration: null },
+      includedCategories: [],
+      files: [],
+      doorCodesIncluded: false,
+    };
+    const zip = zipSync({
+      "manifest.json": strToU8(JSON.stringify(v1Manifest, null, 2)),
+    });
+
+    expect(() => readBundle(zip)).toThrow(ConfigTransferBundleError);
+    // The rejection message names the predates-format reason (not a
+    // newer-than-supported or generic parse error).
+    expect(() => readBundle(zip)).toThrow(/predates/);
   });
 });

@@ -126,6 +126,20 @@ describe("getXeroApiErrorInfo", () => {
     });
   });
 
+  it("maps XeroTokenDecryptError (undecryptable stored token) to the same 401-style reconnect guidance", () => {
+    // #2079: a token row left unreadable by the env→DB upgrade or an auth-secret
+    // change must surface the clean reconnect prompt, not an opaque 500.
+    const error = new Error("Stored Xero token could not be decrypted");
+    error.name = "XeroTokenDecryptError";
+
+    expect(getXeroApiErrorInfo(error, "Fallback failure")).toEqual({
+      handled: true,
+      status: 401,
+      clientMessage: "Xero connection expired. Please reconnect Xero from the admin panel.",
+      diagnosticMessage: "Stored Xero token could not be decrypted",
+    });
+  });
+
   it("maps local transient outage cooldown errors to a friendly 503 response", () => {
     const error = new Error(
       "Xero is temporarily unavailable. Suppressing further Xero calls for 120 seconds to protect API quota."

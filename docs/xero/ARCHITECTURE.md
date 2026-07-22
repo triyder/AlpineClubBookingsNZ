@@ -140,7 +140,7 @@ this (#1208). Shared JSON-guard micro-helpers (`asRecord`/`readString`/
 
 | Module | Owns |
 | --- | --- |
-| `xero-config` | Reads/validates `XERO_CLIENT_ID`/`SECRET`/`REDIRECT_URI`/`ENCRYPTION_KEY` for the operational connection. |
+| `xero-config` | Resolves the operational connection **from the encrypted DB store** (#2079): client id/secret and webhook key via `IntegrationCredential`, the redirect URI from `NEXTAUTH_URL`, and the auto-generated wrapped token-encryption key. No `XERO_*` credential env vars are read; legacy vars are detected and flagged. |
 | `xero-oauth` | Consent URL, OAuth callback (`handleXeroCallback`), client construction, disconnect (revoke + clear tokens). |
 | `xero-oauth-state` | CSRF state cookie for the OAuth round-trip. |
 | `xero-token-store` | AES-encrypted token persistence (`XeroToken` row), connection status, and the **refresh lease** (`claimXeroTokenRefreshLease`) so concurrent serverless instances don't double-refresh; losers wait for the lease deadline and re-read. |
@@ -211,7 +211,16 @@ this (#1208). Shared JSON-guard micro-helpers (`asRecord`/`readString`/
 
 ### HTTP surface
 
-- `POST /api/webhooks/xero` — HMAC-verified event intake (Flow 2).
+- `POST /api/webhooks/xero` — HMAC-verified event intake (Flow 2). A
+  valid-signature **empty-events** POST is Xero's intent-to-receive (ITR)
+  validation ping: the route records a `WebhookValidationReceipt` marker
+  (receipt time + a non-reversible fingerprint of the resolved webhook key) so
+  the setup wizard can prove the round-trip, then returns 200 (#2081).
+- `GET /api/admin/xero/webhook/verify-status` — the wizard's webhook **Verify**
+  poll + amber-badge source. Freshness-scoped and key-bound: green only for an
+  ITR marker newer than a server-issued verify-start AND matching the currently
+  stored key's fingerprint (so a stale marker or one under a replaced key never
+  satisfies a new verify). Any admin may read; the key write is Full-Admin-only.
 - `POST /api/cron/xero?task=memberships|outbox|retries|inbound|backfill|link-cleanup|report|all`
   — `CRON_SECRET`-gated; `all` runs the tasks in that order; `backfill` also
   runs `link-cleanup` by default. Tasks needing a connection are skipped (and
@@ -232,6 +241,7 @@ this (#1208). Shared JSON-guard micro-helpers (`asRecord`/`readString`/
 | `XeroObjectLink` | Local record ⇄ Xero object links with a `role` (e.g. `PRIMARY_INVOICE`, `REFUND_CREDIT_NOTE`, `CONTACT`, `ENTRANCE_FEE_INVOICE`) and `active` flag; unique on (local, xero, role). Canonical single-active scopes are enforced on upsert. |
 | `XeroInboundEvent` | Stored webhook/admin events. **Status machine:** `RECEIVED → PROCESSING → PROCESSED | FAILED` (FAILED retried after a backoff; stale PROCESSING is operator-replayable). Unique `correlationKey` makes webhook delivery idempotent. |
 | `ProcessedWebhookEvent` | Provider-scoped processing dedupe (`source`+`eventId` unique); the inbound worker claims a row before reconciling and releases it on failure. |
+| `WebhookValidationReceipt` | One row per provider recording the last valid intent-to-receive (ITR) validation ping (#2081): `validatedAt` + a non-reversible SHA-256 `keyFingerprint` of the webhook key that signed it (never the key). Drives the wizard's freshness-scoped, key-bound webhook Verify and the persistent amber "webhooks not configured" badge. |
 | `XeroSyncCursor` | Incremental checkpoints per (`resourceType`, `scope`) for contact/membership/invoice reconciliation. |
 | `XeroContactCache`, `XeroContactGroupCache`, `XeroContactGroupMembershipCache` | Local snapshots of Xero contacts and group memberships (feed admin tooling, member import, group sync). |
 | `XeroApiUsageDaily`, `XeroApiUsageEvent` | Metered API usage vs. the daily budget; rate-limit hit tracking. |
@@ -529,8 +539,9 @@ exact-cent lines and cannot drift, so they are out of scope by construction.
    cookie (`xero-oauth-state`).
 2. Xero redirects to `/api/admin/xero/callback` → `handleXeroCallback`
    validates state, exchanges the code, and `saveXeroTokens` encrypts
-   access/refresh tokens with `XERO_ENCRYPTION_KEY` into the single `XeroToken`
-   row (tenant id included).
+   access/refresh tokens with the auto-generated, HKDF-wrapped token key from the
+   encrypted credential store (#2079) into the single `XeroToken` row (tenant id
+   included).
 3. Every worker call goes through `getAuthenticatedXeroClient`: if the access
    token is near expiry it claims the refresh lease
    (`refreshInProgressUntil`); the winner refreshes and persists, losers wait
@@ -538,6 +549,39 @@ exact-cent lines and cannot drift, so they are out of scope by construction.
    refresh tokens.
 4. `/api/admin/xero/disconnect` revokes and deletes tokens; workers then
    short-circuit via `isXeroConnected()` (cron records SKIPPED).
+
+## Guided setup wizard (#2080)
+
+The operator-facing setup surface at **`/admin/xero/setup`** is a guided,
+three-step wizard, built as a **config of the reusable, provider-agnostic
+`IntegrationWizard` shell** (`src/components/admin/integration-wizard/`) so
+Stripe (C4) and Google (C5) reuse the same shell with their own steps:
+
+1. **Create your Xero app** — portal-mirroring instructions with a shared
+   `CopyField` (secure-context-aware, with a select-on-focus fallback for
+   plain-HTTP LAN) for the app name, company URL, and the **resolved redirect
+   URI** (derived from `NEXTAUTH_URL` via `getOperationalXeroRedirectUri`, so the
+   displayed value is exactly what the flow sends).
+2. **Enter credentials** — the write-only client id / secret form posting to the
+   C1 credentials API (Full Admin only; weak-secret gate surfaced; verify-reset
+   drops the connection and re-arms). Supersedes C1's interim
+   `xero-credentials-section`.
+3. **Connect** — the existing OAuth flow, then confirms the connected
+   organisation **name** (via `/api/admin/xero/organisation`, extended to return
+   the name). The connect route accepts a sanitised `?return=/admin/...` so the
+   callback resumes on the wizard rather than the Sync page.
+
+Each step gates on **live server truth** (`isVerified(context)`); a small
+`IntegrationWizardProgress` row persists only a resume cursor (advisory), so a
+reload mid-flow resumes at the right step and a stale cursor can never skip a
+gate.
+
+**Mock-Xero E2E harness.** A test-only seam (`xero-mock-endpoint.ts`, gated on
+`XERO_MOCK_API_ORIGIN`) routes the consent/token/connections/organisation calls
+to gated `/api/testing/xero-mock/*` endpoints for the wizard happy-path
+Playwright spec. It is **production-inert**: with the env var unset (every real
+deployment) the OAuth/organisation code path is unchanged and the mock endpoints
+404. C3 extends the harness with a webhook-validation ping and chart of accounts.
 
 ## Refactor opportunities (ranked)
 

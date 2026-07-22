@@ -25,7 +25,7 @@ import { formatCents } from "@/lib/pricing";
 import { useLodgeOptions } from "@/components/lodge-select";
 import {
   ADMIN_FORBIDDEN_SAVE_REASON,
-  AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import type { AdminPermissionMatrix } from "@/lib/admin-permissions";
@@ -644,6 +644,7 @@ export function PromoCodesPageClient({
               {isArchived ? (
                 <ViewOnlyActionButton
                   canEdit={canEdit}
+                  describeReason={false}
                   variant="outline"
                   size="sm"
                   onClick={() => handleRestore(promo.id)}
@@ -654,6 +655,7 @@ export function PromoCodesPageClient({
                 <>
                   <ViewOnlyActionButton
                     canEdit={canEdit}
+                    describeReason={false}
                     variant="outline"
                     size="sm"
                     onClick={() => handleToggleActive(promo)}
@@ -662,6 +664,7 @@ export function PromoCodesPageClient({
                   </ViewOnlyActionButton>
                   <ViewOnlyActionButton
                     canEdit={canEdit}
+                    describeReason={false}
                     variant="outline"
                     size="sm"
                     onClick={() => startEdit(promo)}
@@ -670,6 +673,7 @@ export function PromoCodesPageClient({
                   </ViewOnlyActionButton>
                   <ViewOnlyActionButton
                     canEdit={canEdit}
+                    describeReason={false}
                     variant="destructive"
                     size="sm"
                     onClick={() => handleDelete(promo)}
@@ -780,12 +784,35 @@ export function PromoCodesPageClient({
     );
   }
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the section —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before its
+    content appears; a region injected already-populated is silently dropped by
+    some screen-reader/browser pairings. It sits OUTSIDE the `space-y-*` stack so
+    the empty wrapper an edit-capable admin gets costs no layout.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-6">
+      Your admin role can view promo codes but cannot change them. Bookings
+      edit access is required.
+    </AdminViewOnlySectionBanner>
+  );
+
   if (loading) {
-    return <div className="text-center py-8">Loading promo codes...</div>;
+    return (
+      <div>
+        {viewOnlyBanner}
+        <div className="text-center py-8">Loading promo codes...</div>
+      </div>
+    );
   }
 
   return (
-    <div className="space-y-6">
+    <div>
+      {viewOnlyBanner}
+      <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold">Promo Codes</h1>
@@ -794,18 +821,11 @@ export function PromoCodesPageClient({
           </p>
         </div>
         {!showForm && (
-          <ViewOnlyActionButton canEdit={canEdit} onClick={() => setShowForm(true)}>
+          <ViewOnlyActionButton canEdit={canEdit} describeReason={false} onClick={() => setShowForm(true)}>
             Add Promo Code
           </ViewOnlyActionButton>
         )}
       </div>
-
-      {!canEdit && (
-        <AdminViewOnlyNotice canEdit={canEdit}>
-          Your admin role can view promo codes but cannot change them. Bookings
-          edit access is required.
-        </AdminViewOnlyNotice>
-      )}
 
       {error && (
         <div className="bg-destructive/10 text-destructive px-4 py-3 rounded-md">
@@ -1420,7 +1440,7 @@ export function PromoCodesPageClient({
               </div>
 
               <div className="flex space-x-3">
-                <ViewOnlyActionButton canEdit={canEdit} type="submit" disabled={saving}>
+                <ViewOnlyActionButton canEdit={canEdit} describeReason={false} type="submit" disabled={saving}>
                   {saving
                     ? "Saving..."
                     : editingId
@@ -1468,6 +1488,7 @@ export function PromoCodesPageClient({
             )}
           </div>
         )}
+      </div>
       </div>
     </div>
   );

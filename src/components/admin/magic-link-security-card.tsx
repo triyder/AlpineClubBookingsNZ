@@ -14,7 +14,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-  AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
@@ -170,7 +170,25 @@ export function MagicLinkSecurityCard({
     section.setSuccess("");
   }
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the section —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before its
+    content appears; a region injected already-populated is silently dropped by
+    some screen-reader/browser pairings. It sits OUTSIDE the card's `space-y-*`
+    stack so the empty wrapper an edit-capable admin gets costs no layout.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-6">
+      Your admin role can view login &amp; security settings but cannot change
+      them. Support edit access is required.
+    </AdminViewOnlySectionBanner>
+  );
+
   return (
+    <div>
+      {viewOnlyBanner}
     <Card>
       <CardHeader className="flex flex-row items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
@@ -185,6 +203,7 @@ export function MagicLinkSecurityCard({
         {!editing && (
           <ViewOnlyActionButton
             canEdit={canEdit}
+            describeReason={false}
             variant="outline"
             size="sm"
             onClick={startEditing}
@@ -194,11 +213,6 @@ export function MagicLinkSecurityCard({
         )}
       </CardHeader>
       <CardContent className="space-y-4">
-        <AdminViewOnlyNotice canEdit={canEdit}>
-          Your admin role can view login &amp; security settings but cannot change
-          them. Support edit access is required.
-        </AdminViewOnlyNotice>
-
         {error && <Alert variant="error">{error}</Alert>}
         {savedNote && <Alert variant="success">{savedNote}</Alert>}
 
@@ -258,6 +272,7 @@ export function MagicLinkSecurityCard({
           <div className="flex flex-wrap gap-2 pt-2">
             <ViewOnlyActionButton
               canEdit={canEdit}
+              describeReason={false}
               type="button"
               onClick={() => void section.save()}
               disabled={!dirty || saving || !ttlValid}
@@ -281,5 +296,6 @@ export function MagicLinkSecurityCard({
         )}
       </CardContent>
     </Card>
+    </div>
   );
 }

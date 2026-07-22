@@ -9,7 +9,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import {
-  AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
@@ -119,21 +119,32 @@ export default function CommunicationsPage() {
     }
   }
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the section —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before its
+    content appears; a region injected already-populated is silently dropped by
+    some screen-reader/browser pairings. It sits OUTSIDE the `space-y-*` stack so
+    the empty wrapper an edit-capable admin gets costs no layout.
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-6">
+      Your admin role can view communications but cannot send bulk emails to
+      members.
+    </AdminViewOnlySectionBanner>
+  );
+
   return (
-    <div className="space-y-6">
+    <div>
+      {viewOnlyBanner}
+      <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-slate-900">Communications</h1>
-        <p className="text-sm text-slate-500">
+        <h1 className="text-2xl font-bold text-foreground">Communications</h1>
+        <p className="text-sm text-muted-foreground">
           Send bulk emails to club members. Respects notification preferences.
         </p>
       </div>
-
-      {!canEdit && (
-        <AdminViewOnlyNotice canEdit={canEdit}>
-          Your admin role can view communications but cannot send bulk emails to
-          members.
-        </AdminViewOnlyNotice>
-      )}
 
       {/* Compose Form */}
       <Card>
@@ -157,7 +168,7 @@ export default function CommunicationsPage() {
                 maxLength={200}
                 required
               />
-              <p className="text-xs text-slate-400 mt-1">
+              <p className="text-xs text-muted-foreground mt-1">
                 {subject.length}/200 characters
               </p>
             </div>
@@ -190,7 +201,7 @@ export default function CommunicationsPage() {
                 maxLength={10000}
                 required
               />
-              <p className="text-xs text-slate-400 mt-1">
+              <p className="text-xs text-muted-foreground mt-1">
                 {body.length}/10,000 characters. Plain text only — HTML is
                 escaped for security.
               </p>
@@ -210,6 +221,7 @@ export default function CommunicationsPage() {
 
             <ViewOnlyActionButton
               canEdit={canEdit}
+              describeReason={false}
               type="submit"
               disabled={sending || !subject || !body}
             >
@@ -227,16 +239,16 @@ export default function CommunicationsPage() {
         </CardHeader>
         <CardContent>
           {loadingHistory ? (
-            <p className="text-sm text-slate-500">Loading...</p>
+            <p className="text-sm text-muted-foreground">Loading...</p>
           ) : history.length === 0 ? (
-            <p className="text-sm text-slate-500">
+            <p className="text-sm text-muted-foreground">
               No bulk communications sent yet.
             </p>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b text-left text-slate-500">
+                  <tr className="border-b text-left text-muted-foreground">
                     <th className="pb-2 pr-4">Date</th>
                     <th className="pb-2 pr-4">Subject</th>
                     <th className="pb-2 pr-4">Filter</th>
@@ -247,19 +259,19 @@ export default function CommunicationsPage() {
                 <tbody>
                   {history.map((entry) => (
                     <tr key={entry.id} className="border-b">
-                      <td className="py-2 pr-4 text-slate-600">
+                      <td className="py-2 pr-4 text-muted-foreground">
                         {new Date(entry.sentAt).toLocaleDateString("en-NZ", {
                           dateStyle: "medium",
                         })}
                       </td>
                       <td className="py-2 pr-4 font-medium">{entry.subject}</td>
-                      <td className="py-2 pr-4 text-slate-600">
+                      <td className="py-2 pr-4 text-muted-foreground">
                         {entry.recipientFilter}
                       </td>
-                      <td className="py-2 pr-4 text-slate-600">
+                      <td className="py-2 pr-4 text-muted-foreground">
                         {entry.totalRecipients}
                       </td>
-                      <td className="py-2 text-slate-600">
+                      <td className="py-2 text-muted-foreground">
                         {entry.eligibleRecipients}
                       </td>
                     </tr>
@@ -270,6 +282,7 @@ export default function CommunicationsPage() {
           )}
         </CardContent>
       </Card>
+      </div>
     </div>
   );
 }

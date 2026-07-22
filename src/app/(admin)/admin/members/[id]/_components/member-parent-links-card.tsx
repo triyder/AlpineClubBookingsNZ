@@ -3,14 +3,17 @@
 import { useRouter } from "next/navigation"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { ViewOnlyActionButton } from "@/components/admin/view-only-action"
+import {
+  ViewOnlyActionButton,
+  type AncestorViewOnlyBannerProps,
+} from "@/components/admin/view-only-action"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Link2, Trash2 } from "lucide-react"
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path"
 import { parentLinkTypeLabel } from "@/lib/admin-member-detail-helpers"
 import type { MemberDetail } from "../_types"
 
-interface MemberParentLinksCardProps {
+interface MemberParentLinksCardProps extends AncestorViewOnlyBannerProps {
   member: MemberDetail
   memberIsArchived: boolean
   currentMemberPath: string
@@ -32,6 +35,7 @@ export function MemberParentLinksCard({
   onUnlinkParent,
   canEdit,
   className,
+  ancestorRendersViewOnlyBanner = false,
 }: MemberParentLinksCardProps) {
   const router = useRouter()
   const parentLinkCount = member.parentLinks?.length ?? 0
@@ -47,6 +51,7 @@ export function MemberParentLinksCard({
         ) : parentLinkCount < 2 ? (
           <ViewOnlyActionButton
             canEdit={canEdit}
+            describeReason={!ancestorRendersViewOnlyBanner}
             variant="outline"
             size="sm"
             onClick={onOpenParentLinkDialog}
@@ -119,6 +124,7 @@ export function MemberParentLinksCard({
                   </Button>
                   <ViewOnlyActionButton
                     canEdit={canEdit}
+                    describeReason={!ancestorRendersViewOnlyBanner}
                     variant="outline"
                     size="sm"
                     onClick={() =>

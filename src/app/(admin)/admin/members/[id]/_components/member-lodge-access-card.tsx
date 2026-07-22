@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react"
 import {
   AdminViewOnlyNotice,
   ViewOnlyActionButton,
+  type AncestorViewOnlyBannerProps,
 } from "@/components/admin/view-only-action"
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
 import {
@@ -27,7 +28,14 @@ interface LodgeAccessRow {
 // means the member may book every lodge. STAFF grants bind a kiosk account
 // to its lodge. Renders nothing while fewer than two lodges exist (ADR-002
 // presentation rule).
-export function MemberLodgeAccessCard({ memberId }: { memberId: string }) {
+interface MemberLodgeAccessCardProps extends AncestorViewOnlyBannerProps {
+  memberId: string
+}
+
+export function MemberLodgeAccessCard({
+  memberId,
+  ancestorRendersViewOnlyBanner = false,
+}: MemberLodgeAccessCardProps) {
   // lodge-access writes /api/admin/members/[id]/lodge-access (membership area);
   // a view-only membership admin sees the grants but cannot change them (#1997).
   const canEdit = useAdminAreaEditAccess("membership")
@@ -129,10 +137,18 @@ export function MemberLodgeAccessCard({ memberId }: { memberId: string }) {
       </CardHeader>
       <CardContent>
         {loading ? (
-          <p className="text-sm text-slate-500">Loading lodge access...</p>
+          <p className="text-sm text-muted-foreground">Loading lodge access...</p>
         ) : (
           <div className="space-y-4">
-            {!canEdit ? (
+            {/*
+              #2168: this Notice also covers the disabled CHECKBOXES below,
+              which are not ViewOnlyActionButtons, so it is dropped only when an
+              ancestor vouches that it states the same membership scope above
+              this card — on `/admin/members/[id]` the page banner does. Rendered
+              standalone, or under any parent that does not vouch, the Notice
+              stays and this card still explains itself.
+            */}
+            {!ancestorRendersViewOnlyBanner ? (
               <AdminViewOnlyNotice canEdit={canEdit}>
                 Your admin role can view lodge access but cannot change it.
               </AdminViewOnlyNotice>
@@ -160,7 +176,7 @@ export function MemberLodgeAccessCard({ memberId }: { memberId: string }) {
                 ))}
               </div>
               {bookingRestrictionLodgeIds.length === 0 ? (
-                <p className="text-xs text-slate-500">
+                <p className="text-xs text-muted-foreground">
                   No restriction — this member can book every lodge.
                 </p>
               ) : null}
@@ -183,7 +199,7 @@ export function MemberLodgeAccessCard({ memberId }: { memberId: string }) {
                   </label>
                 ))}
               </div>
-              <p className="text-xs text-slate-500">
+              <p className="text-xs text-muted-foreground">
                 Only needed for lodge-operational (kiosk) accounts; it does not
                 affect booking access.
               </p>
@@ -194,6 +210,7 @@ export function MemberLodgeAccessCard({ memberId }: { memberId: string }) {
             ) : null}
             <ViewOnlyActionButton
               canEdit={canEdit}
+              describeReason={!ancestorRendersViewOnlyBanner}
               onClick={() => void save()}
               disabled={saving}
             >

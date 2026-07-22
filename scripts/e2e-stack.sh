@@ -84,6 +84,9 @@ prepare() {
   echo "==> Enabling the modules the E2E journeys need"
   DATABASE_URL="$HOST_DATABASE_URL" npx tsx e2e/setup/enable-e2e-modules.ts
 
+  echo "==> Seeding Stripe test-mode credentials into the encrypted store (#2082; no-op unless test keys are set)"
+  DATABASE_URL="$HOST_DATABASE_URL" npx tsx e2e/setup/seed-stripe-credentials.ts
+
   # Multi-lodge project only (E2E_MULTI_LODGE=1): provision a second active
   # lodge and enable the multiLodge module. Skipped by default, so the default
   # single-lodge suite is seeded byte-identically.

@@ -13,7 +13,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
-  AdminViewOnlyNotice,
+  AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
@@ -111,7 +111,7 @@ function screenshotBadge(report: IssueReportSummary) {
     return <Badge className="border-sky-200 bg-sky-100 text-sky-800">Screenshot retained</Badge>;
   }
   if (report.screenshot.deletedAt) {
-    return <Badge className="border-slate-200 bg-slate-100 text-slate-700">Screenshot deleted</Badge>;
+    return <Badge className="border-border bg-muted text-muted-foreground">Screenshot deleted</Badge>;
   }
   return <Badge variant="outline">No screenshot</Badge>;
 }
@@ -200,21 +200,36 @@ export default function AdminIssueReportsPage() {
     }
   }
 
+  /*
+    #2160: the view-only explanation lives here, once, at the top of the section —
+    announced on arrival and ahead of the controls it explains — instead of on
+    each disabled button below. The `role="status"` wrapper is permanently
+    mounted so the live region is registered in the accessibility tree before its
+    content appears; a region injected already-populated is silently dropped by
+    some screen-reader/browser pairings. It sits OUTSIDE the `space-y-*` stack so
+    the empty wrapper an edit-capable admin gets costs no layout.
+
+    The three gated controls on this page all live inside the report Dialog — a
+    separate accessibility container this page-level banner does not cover — so
+    they keep their own per-button reason (`describeReason` left at its default).
+  */
+  const viewOnlyBanner = (
+    <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-6">
+      Your admin role can view issue reports but cannot resolve, reopen, or
+      delete their screenshots.
+    </AdminViewOnlySectionBanner>
+  );
+
   return (
-    <div className="space-y-6">
+    <div>
+      {viewOnlyBanner}
+      <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-slate-900">Issue Reports</h1>
-        <p className="mt-1 text-sm text-slate-500">
+        <h1 className="text-2xl font-bold text-foreground">Issue Reports</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
           Review member issue reports and manage retained screenshots.
         </p>
       </div>
-
-      {!canEdit && (
-        <AdminViewOnlyNotice canEdit={canEdit}>
-          Your admin role can view issue reports but cannot resolve, reopen, or
-          delete their screenshots.
-        </AdminViewOnlyNotice>
-      )}
 
       <Card>
         <CardHeader>
@@ -262,16 +277,16 @@ export default function AdminIssueReportsPage() {
                   <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                     <div className="min-w-0 space-y-2">
                       <div className="flex flex-wrap items-center gap-2">
-                        <Bug className="h-4 w-4 text-slate-500" />
-                        <span className="font-medium text-slate-900">
+                        <Bug className="h-4 w-4 text-muted-foreground" />
+                        <span className="font-medium text-foreground">
                           {report.pageTitle || "Untitled page"}
                         </span>
                         {statusBadge(report)}
                         {screenshotBadge(report)}
                       </div>
-                      <p className="break-all text-xs text-slate-500">{report.pageUrl}</p>
-                      <p className="line-clamp-2 text-sm text-slate-700">{report.description}</p>
-                      <p className="text-xs text-slate-500">
+                      <p className="break-all text-xs text-muted-foreground">{report.pageUrl}</p>
+                      <p className="line-clamp-2 text-sm text-muted-foreground">{report.description}</p>
+                      <p className="text-xs text-muted-foreground">
                         {report.member.firstName} {report.member.lastName} - {report.member.email} - {formatDateTime(report.createdAt)}
                       </p>
                     </div>
@@ -302,7 +317,7 @@ export default function AdminIssueReportsPage() {
               >
                 Previous
               </Button>
-              <span className="text-sm text-slate-500">
+              <span className="text-sm text-muted-foreground">
                 Page {data.page} of {data.totalPages}
               </span>
               <Button
@@ -331,18 +346,18 @@ export default function AdminIssueReportsPage() {
                 <DialogTitle>{selectedReport.pageTitle || "Issue report"}</DialogTitle>
               </DialogHeader>
               <div className="space-y-5">
-                <div className="grid gap-3 rounded-md border border-slate-200 bg-slate-50 p-3 text-sm sm:grid-cols-2">
+                <div className="grid gap-3 rounded-md border border-border bg-muted p-3 text-sm sm:grid-cols-2">
                   <div>
-                    <p className="text-xs font-medium uppercase text-slate-500">Member</p>
-                    <p className="mt-1 text-slate-900">
+                    <p className="text-xs font-medium uppercase text-muted-foreground">Member</p>
+                    <p className="mt-1 text-foreground">
                       {selectedReport.member.firstName} {selectedReport.member.lastName}
                     </p>
-                    <p className="text-slate-600">{selectedReport.member.email}</p>
+                    <p className="text-muted-foreground">{selectedReport.member.email}</p>
                   </div>
                   <div>
-                    <p className="text-xs font-medium uppercase text-slate-500">Submitted</p>
-                    <p className="mt-1 text-slate-900">{formatDateTime(selectedReport.createdAt)}</p>
-                    <p className="text-slate-600">
+                    <p className="text-xs font-medium uppercase text-muted-foreground">Submitted</p>
+                    <p className="mt-1 text-foreground">{formatDateTime(selectedReport.createdAt)}</p>
+                    <p className="text-muted-foreground">
                       Screenshot expires {formatDateTime(selectedReport.screenshot.expiresAt)}
                     </p>
                   </div>
@@ -365,15 +380,15 @@ export default function AdminIssueReportsPage() {
                 </div>
 
                 <div>
-                  <p className="mb-2 text-sm font-medium text-slate-900">Description</p>
-                  <div className="whitespace-pre-wrap rounded-md border border-slate-200 bg-white p-3 text-sm text-slate-700">
+                  <p className="mb-2 text-sm font-medium text-foreground">Description</p>
+                  <div className="whitespace-pre-wrap rounded-md border border-border bg-card p-3 text-sm text-muted-foreground">
                     {selectedReport.description}
                   </div>
                 </div>
 
                 <div>
                   <div className="mb-2 flex items-center justify-between gap-3">
-                    <p className="text-sm font-medium text-slate-900">Screenshot</p>
+                    <p className="text-sm font-medium text-foreground">Screenshot</p>
                     {selectedReport.screenshot.retained ? (
                       <ViewOnlyActionButton
                         canEdit={canEdit}
@@ -390,7 +405,7 @@ export default function AdminIssueReportsPage() {
                     ) : null}
                   </div>
                   {selectedReport.screenshot.dataUrl ? (
-                    <div className="overflow-hidden rounded-md border border-slate-200 bg-slate-100">
+                    <div className="overflow-hidden rounded-md border border-border bg-muted">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
                         src={selectedReport.screenshot.dataUrl}
@@ -399,26 +414,26 @@ export default function AdminIssueReportsPage() {
                       />
                     </div>
                   ) : (
-                    <div className="rounded-md border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-500">
+                    <div className="rounded-md border border-dashed border-border bg-muted p-4 text-sm text-muted-foreground">
                       Screenshot is not retained for this report.
                     </div>
                   )}
                   {selectedReport.screenshot.deleteReason ? (
-                    <p className="mt-2 text-xs text-slate-500">
+                    <p className="mt-2 text-xs text-muted-foreground">
                       Deletion reason: {selectedReport.screenshot.deleteReason}
                     </p>
                   ) : null}
                 </div>
 
                 <div>
-                  <p className="mb-2 text-sm font-medium text-slate-900">Browser info</p>
-                  <div className="break-all rounded-md border border-slate-200 bg-white p-3 text-xs text-slate-600">
+                  <p className="mb-2 text-sm font-medium text-foreground">Browser info</p>
+                  <div className="break-all rounded-md border border-border bg-card p-3 text-xs text-muted-foreground">
                     {selectedReport.browserInfo.value || "Browser info is not retained for this report."}
                   </div>
                 </div>
 
                 <div className="space-y-2">
-                  <label htmlFor="resolution-note" className="text-sm font-medium text-slate-900">
+                  <label htmlFor="resolution-note" className="text-sm font-medium text-foreground">
                     Resolution note
                   </label>
                   <Textarea
@@ -461,6 +476,7 @@ export default function AdminIssueReportsPage() {
           ) : null}
         </DialogContent>
       </Dialog>
+      </div>
     </div>
   );
 }

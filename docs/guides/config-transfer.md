@@ -76,6 +76,43 @@ Import **never deletes**; the automatic pre-apply `pg_dump` backup is the true
 rollback. Validation errors (bad dates, non-integer money, invalid slugs, unknown
 keys) **block** apply until fixed.
 
+### Settings your club has never saved
+
+A club-wide setting you have never opened and saved still has a value — the
+built-in default the software runs on. Those settings **do travel** in a bundle:
+the export writes the built-in defaults in place of the setting you never saved,
+so importing the bundle moves the source club's settings across rather than
+quietly leaving the target club's own values in place.
+
+Three consequences worth knowing:
+
+- **Importing creates the settings record**, even for a setting nobody ever
+  configured. On the target club, **Admin → Setup** will then count booking
+  defaults, group discount, membership cancellation, and module controls as
+  *configured* or *checked*. The values are the same defaults it was already
+  using — only the "has this been reviewed?" signal changes. Review those four
+  steps after an import.
+- **A default that ships changed in a later release no longer reaches that
+  club**, because the value is now written down rather than resolved fresh each
+  time. Change it deliberately in the admin if you want a different value.
+- **The group-discount card's Save button** is greyed out on an untouched card
+  after an import. Before, an unsaved group-discount setting left Save enabled
+  so you could create the record; the import has now created it. Change a value
+  and Save works as normal.
+
+Club identity and email message settings work slightly differently. Their fields
+— club name, short name, hut-leader label, Facebook URL, support and contact
+addresses, public URL — are optional overrides on top of the values in the
+install's own configuration file. When the source club **has** set them they are
+exported and imported like any other setting, so a transfer does move the
+source's club name and addresses onto the target; that is intended, and it is
+why applying a bundle refreshes the club identity straight away. It is only when
+the source club has never set any override that the bundle carries "no override"
+rather than the source install's own fallback identity, and in that case the
+import leaves the target's identity alone entirely — in **Overwrite** mode it
+will clear an existing target override, but it never creates an identity record
+where there was none.
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
