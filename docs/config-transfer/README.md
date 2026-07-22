@@ -94,6 +94,22 @@ deeper reference for what each category contains and the import safety model.
   refreshes the DB-first club-identity cache so imported identity takes effect
   immediately.
 
+  **Field-level allowlisting is audited in both directions (#2178).** Each
+  singleton exports only the columns in its `fields` allowlist; every other
+  column is named in a per-model `excluded` set with a one-line reason, and two
+  drift tests guard both directions — `fields ⊆ columns` (no allowlist names a
+  dropped column) and `columns ⊆ fields ∪ excluded` (no column is silently
+  never exported). A newly added column therefore fails the reverse test until
+  someone classifies it as should-travel or deliberately-excluded. Deliberately
+  excluded: the singleton primary key, the `updatedByMemberId` audit FK, and the
+  `createdAt`/`updatedAt` timestamps (all instance-local, `COMMON_EXCLUDED_COLUMNS`);
+  the retired `ClubModuleSettings.multiLodge` flag; the phase-7 `lodgeId`
+  soft-links; `GroupDiscountSetting.rateMembershipTypeId` (an instance-local FK);
+  and the two auth-provider sign-in toggles `ClubModuleSettings.magicLink` /
+  `googleLogin` (gated on deployment-local credentials — a per-install auth
+  decision). `MembershipLockoutSettings.useFeeScheduleItemCodes` (#2109) is
+  classified should-travel and now exports like the rest of that singleton.
+
   **A singleton the source club never saved is still exported (#2171).** Every
   entry in `SINGLETONS` always produces its JSON file; where the `id = "default"`
   row is absent the exporter emits the **effective defaults** — the values the
