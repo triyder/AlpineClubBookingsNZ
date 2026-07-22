@@ -63,6 +63,7 @@ const completeDatabase: SetupDatabaseSnapshot = {
     googleLogin: false,
     analytics: false,
     lobbyDisplay: false,
+    aiAssistant: false,
   },
   ageTierSettingCount: 4,
   seasonCount: 2,

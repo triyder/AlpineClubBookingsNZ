@@ -73,6 +73,19 @@ describe("feature route map", () => {
     ]);
   });
 
+  it("gates the AI assistant admin surface but NOT the /api/help/chat route", () => {
+    // The admin usage + settings surfaces hard-gate on the module flag.
+    expect(getRequiredFeaturesForPath("/api/admin/ai-assistant/usage")).toEqual([
+      "aiAssistant",
+    ]);
+    expect(
+      getRequiredFeaturesForPath("/api/admin/ai-assistant/settings"),
+    ).toEqual(["aiAssistant"]);
+    // /api/help/chat is deliberately NOT feature-gated: it returns a structured
+    // module_off fallback rather than a 404 when the module is off.
+    expect(getRequiredFeaturesForPath("/api/help/chat")).toEqual([]);
+  });
+
   it("never gates the lodge admin surface behind a feature flag", () => {
     // Multi-lodge is core (ADR-005): the lodge admin page and its API are
     // always reachable (still admin-gated by the layout), so no feature flag

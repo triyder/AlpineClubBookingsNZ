@@ -61,8 +61,14 @@ vi.mock("@/components/admin-sidebar", () => ({
   ADMIN_NAV_SECTION_ORDER: [],
   getAdminFeatureSearchIndex: () => [],
 }));
-vi.mock("@/components/contextual-help-button", () => ({
-  ContextualHelpButton: () => null,
+vi.mock("@/components/help-widget/help-widget-context", () => ({
+  HelpWidgetProvider: ({ children }: { children: ReactNode }) => children,
+  useHelpWidgetExtras: () => {},
+  useHelpWidgetHint: () => {},
+  useHelpWidgetState: () => ({ extras: {}, hintGroup: null }),
+}));
+vi.mock("@/components/help-widget/help-widget-admin", () => ({
+  HelpWidgetAdmin: () => null,
 }));
 vi.mock("@/components/nav-bar", () => ({ NavBar: () => null }));
 vi.mock("@/components/member-onboarding-wizard", () => ({

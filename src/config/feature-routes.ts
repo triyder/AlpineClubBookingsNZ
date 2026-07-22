@@ -132,6 +132,15 @@ export const FEATURE_ROUTE_RULES: FeatureRouteRule[] = [
     flag: "lobbyDisplay",
     prefixes: ["/display", "/api/display", "/admin/display", "/api/admin/display"],
   },
+  {
+    // AI assistant admin surfaces (usage panel + spend-cap settings) hard-gate
+    // on the module flag. Deliberately NOT /api/help/chat: that route degrades
+    // to a structured { status: "fallback", reason: "module_off" } response when
+    // the module is off (so a curated help panel still renders), rather than the
+    // 404 this feature-route gate produces.
+    flag: "aiAssistant",
+    prefixes: ["/api/admin/ai-assistant"],
+  },
 ];
 
 function matchesPrefix(pathname: string, prefix: string): boolean {

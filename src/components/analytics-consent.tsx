@@ -89,6 +89,28 @@ gtag('config', ${JSON.stringify(cleanMeasurementId)}, { anonymize_ip: true });
     if (stored) updateAnalyticsConsent(stored);
   }, [shouldRender]);
 
+  // Publish the banner's visibility so a co-located bottom-corner widget (the
+  // public help launcher, epic #2094 C2) can step aside while it shows. A data
+  // attribute for the initial read plus an event for reactive updates — the same
+  // signal the banner already drives, not a duplicated storage check.
+  const bannerVisible = shouldRender && hydrated && choice === null;
+  useEffect(() => {
+    const root = document.documentElement;
+    if (bannerVisible) {
+      root.setAttribute("data-analytics-consent-banner", "visible");
+    } else {
+      root.removeAttribute("data-analytics-consent-banner");
+    }
+    window.dispatchEvent(
+      new CustomEvent("analytics-consent-visibility", {
+        detail: { visible: bannerVisible },
+      }),
+    );
+    return () => {
+      root.removeAttribute("data-analytics-consent-banner");
+    };
+  }, [bannerVisible]);
+
   if (!shouldRender) {
     return null;
   }

@@ -336,6 +336,13 @@ const ROUTE_AREA_PREFIXES: Array<{
       "/api/admin/stuck-states",
       "/api/admin/issue-reports",
       "/api/admin/audit-log",
+      // AI help assistant usage + spend-cap settings (#2211, C3). Registered
+      // under support alongside /api/admin/modules — support view = usage panel,
+      // support edit = budget-cap change. The Anthropic key WRITE stays Full
+      // Admin on the credentials route regardless of area level. (The admin UI
+      // page /admin/ai-assistant, if added by C4, resolves here too.)
+      "/admin/ai-assistant",
+      "/api/admin/ai-assistant",
     ],
   },
   {

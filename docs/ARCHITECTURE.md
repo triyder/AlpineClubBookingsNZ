@@ -1350,10 +1350,24 @@ and the WysiwygEditor token help dialog are both derived from it. Lodge
 instruction reader/kiosk routes resolve text tokens on read; the admin editor
 route returns them unresolved so edits round-trip.
 
-`src/lib/contextual-help.ts` is the client-safe registry for Admin and Finance
-page help popups. `ContextualHelpButton` reads the current route, opens an
-accessible dialog from the shell-level help icon, and uses the most specific
-matching route entry so nested Admin pages inherit their parent menu help.
+In-app help is a single chat-style widget (`src/components/help-widget/`) mounted
+on every shell — member, admin, finance, and the public website — via its
+per-surface wrapper (`HelpWidgetMember` / `HelpWidgetAdmin` / `HelpWidgetPublic`).
+A floating launcher opens a non-portalled, non-modal card (`role="dialog"
+aria-modal="false"`) with two tabs: **Ask**, a transcript of curated
+question/answer chips distilled from the corpus, and **Page guide**, the full
+templated page help. It is templated-only today — the free-text LLM path is dead
+code behind an `llmEnabled={false}` prop until epic #2094 C3/C4 ships the route.
+The corpus lives under `src/lib/help/` (`getHelpForPage` / `match.ts`): admin and
+finance delegate to the `src/lib/contextual-help.ts` registry (client-safe, most
+specific matching route wins so nested Admin pages inherit their parent menu
+help), while member and public use the hand-distilled corpora in that folder. A
+page can inject extra sections/questions and a chip-ordering hint through
+`HelpWidgetProvider` + `useHelpWidgetExtras`/`useHelpWidgetHint`; the booking
+detail page uses this (`booking-help-extras.tsx`) to re-surface the booking status
+glossary and cancellation refund schedule (#1371). This widget replaced the
+retired per-shell `ContextualHelpButton` and the booking `BookingHelpDialog`
+(epic #2094 C2).
 
 Site banners are managed at `/admin/site-banners` (Setup & Configuration).
 Admins create plain-text notices with a priority (URGENT/WARNING/NOTIFY) and

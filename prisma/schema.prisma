@@ -3390,6 +3390,70 @@ model SetupProgress {
 }
 
 // ---------------------------------------------------------------------------
+// AI help assistant metering + spend control (#2211, epic #2094 C3)
+// ---------------------------------------------------------------------------
+
+// Per-month rolled-up AI help usage. Mirrors the XeroApiUsageDaily pattern:
+// atomic upsert-with-increments alongside each event write. All token counts are
+// integers; costCents is NZD integer cents (never floats — money stays in cents).
+model AiAssistantUsageMonthly {
+  id               String   @id @default(cuid())
+  // Calendar month in Pacific/Auckland, "YYYY-MM".
+  month            String   @unique
+  requestCount     Int      @default(0)
+  failedCount      Int      @default(0)
+  inputTokens      Int      @default(0)
+  outputTokens     Int      @default(0)
+  cacheWriteTokens Int      @default(0)
+  cacheReadTokens  Int      @default(0)
+  costCents        Int      @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+// One row per AI help call (success OR failure). The question text is NEVER
+// stored — only its character count (questionChars) for cost/abuse analysis.
+// memberId is a PLAIN STRING with NO foreign key: an FK here would trip the
+// blue/green HOT_TABLE_SQL_REGEX FK gate, and this metering table must never
+// block a member delete or a Member schema change.
+model AiAssistantUsageEvent {
+  id               String   @id @default(cuid())
+  month            String
+  memberId         String?
+  surface          String
+  pathname         String
+  model            String
+  success          Boolean
+  errorCode        String?
+  statusCode       Int?
+  durationMs       Int?
+  inputTokens      Int      @default(0)
+  outputTokens     Int      @default(0)
+  cacheWriteTokens Int      @default(0)
+  cacheReadTokens  Int      @default(0)
+  costCents        Int      @default(0)
+  // Character count of the question — the question text itself is never stored.
+  questionChars    Int?
+  // Redacted + truncated (~500 chars) provider error message, when present.
+  errorMessage     String?
+  createdAt        DateTime @default(now())
+
+  @@index([month])
+  @@index([createdAt])
+}
+
+// Deployment-specific AI spend control singleton (id="default"). The monthly
+// budget is a hard cutoff in NZD integer cents (default NZ$10 = 1000c).
+// updatedByMemberId is a PLAIN STRING with NO foreign key (audit-only; the id
+// need not resolve to a live Member row).
+model AiAssistantSettings {
+  id                 String   @id @default("default")
+  monthlyBudgetCents Int      @default(1000)
+  updatedAt          DateTime @updatedAt
+  updatedByMemberId  String?
+}
+
+// ---------------------------------------------------------------------------
 // Club Module Settings (admin-level activation for optional modules)
 // ---------------------------------------------------------------------------
 
@@ -3419,6 +3483,9 @@ model ClubModuleSettings {
   // Google OAuth sign-in (#2035). Default OFF; per-club opt-in on the Login &
   // Security page. Additive to password login, never a replacement.
   googleLogin             Boolean  @default(false)
+  // AI help assistant (#2211, epic #2094 C3). Default OFF; free-text help
+  // questions answered by a paid AI model, grounded in each page's help content.
+  aiAssistant             Boolean  @default(false)
   updatedByMemberId       String?
   createdAt               DateTime @default(now())
   updatedAt               DateTime @default(now()) @updatedAt

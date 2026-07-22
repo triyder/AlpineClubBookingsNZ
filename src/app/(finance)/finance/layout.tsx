@@ -1,9 +1,10 @@
 import { headers } from "next/headers";
 import { AppProviders } from "@/components/app-providers";
-import { ContextualHelpButton } from "@/components/contextual-help-button";
 import { Badge } from "@/components/ui/badge";
 import { NavBar } from "@/components/nav-bar";
 import { ReportIssueWidget } from "@/components/report-issue-widget";
+import { HelpWidgetProvider } from "@/components/help-widget/help-widget-context";
+import { HelpWidgetAdmin } from "@/components/help-widget/help-widget-admin";
 import { getCachedClubIdentity } from "@/lib/public-layout-config";
 import { clubThemeFontVariableClassName } from "@/lib/club-theme-fonts";
 import { getWebsiteThemeRenderState } from "@/lib/club-theme";
@@ -52,6 +53,7 @@ export default async function FinanceLayout({
             canAccessFinance: true,
           }}
         />
+        <HelpWidgetProvider>
         <main className="reports-print-root flex-1 mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
           <div className="mb-8 flex flex-col gap-3 rounded-2xl border bg-card p-6 text-card-foreground shadow-sm sm:flex-row sm:items-center sm:justify-between">
             <div className="space-y-1">
@@ -70,12 +72,13 @@ export default async function FinanceLayout({
               <Badge variant={isManager ? "default" : "secondary"}>
                 {isManager ? "Finance manager" : "Finance viewer"}
               </Badge>
-              <ContextualHelpButton scope="finance" />
             </div>
           </div>
           {children}
         </main>
         <ReportIssueWidget />
+        <HelpWidgetAdmin scope="finance" llmEnabled={false} />
+        </HelpWidgetProvider>
       </div>
     </AppProviders>
   );

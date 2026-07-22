@@ -332,6 +332,12 @@ describe("degraded-mode policy for auth-sensitive limiters (#1142)", () => {
       // only present the code inside its own server-signed blob, so it has
       // no credential-guessing surface.
       "displayPairing",
+      // AI help assistant (#2211, C3): the per-member/per-IP/global limiters
+      // guard paid model spend, so a degraded shared-store fallback must not be
+      // usable to multiply paid-call budget across replicas.
+      "aiChatMember",
+      "aiChatIp",
+      "aiChatGlobal",
     ].sort();
 
     const marked = Object.entries(rateLimiters)

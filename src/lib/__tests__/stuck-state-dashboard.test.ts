@@ -27,6 +27,7 @@ const modulesOn: FeatureFlags = {
   googleLogin: false,
   analytics: false,
   lobbyDisplay: false,
+  aiAssistant: false,
 };
 
 function emptyEmailResponses() {
