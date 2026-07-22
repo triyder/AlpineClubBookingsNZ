@@ -45,6 +45,7 @@ import {
   Landmark,
   BadgeCheck,
   Building2,
+  DatabaseBackup,
   DollarSign,
   LockKeyhole,
   Search,
@@ -370,6 +371,12 @@ const navSections: NavSection[] = [
         icon: Mail,
       },
       { href: "/admin/background-jobs", label: "Background Jobs", icon: Clock },
+      {
+        href: "/admin/backups",
+        label: "Database Backups",
+        icon: DatabaseBackup,
+        keywords: ["backup", "s3", "restore", "disaster recovery", "pg_dump"],
+      },
       {
         href: "/admin/audit-log",
         label: "Audit Log",

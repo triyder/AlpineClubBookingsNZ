@@ -1,4 +1,4 @@
-import { CreditCard, Plug } from "lucide-react";
+import { CreditCard, DatabaseBackup, Plug } from "lucide-react";
 import {
   AdminHubPage,
   type AdminHubSection,
@@ -21,6 +21,13 @@ const sections: AdminHubSection[] = [
       "Enter your Stripe keys, confirm the account, and connect the payment webhook.",
     icon: CreditCard,
   },
+  {
+    href: "/admin/backups",
+    title: "Database Backups",
+    description:
+      "Configure the S3 backup destination and credentials, check backup status, and run a backup on demand.",
+    icon: DatabaseBackup,
+  },
 ];
 
 const BASE_DESCRIPTION =
@@ -28,7 +35,7 @@ const BASE_DESCRIPTION =
 
 // Providers whose encrypted credentials the hub watches for the shared re-entry
 // aggregate (#2079). C4/C5/C6 add "stripe" / "google" / "backup" here.
-const HUB_PROVIDERS = ["xero", "stripe"] as const;
+const HUB_PROVIDERS = ["xero", "stripe", "backup"] as const;
 
 export default async function IntegrationsHubPage() {
   const features = await loadEffectiveModuleFlags();
