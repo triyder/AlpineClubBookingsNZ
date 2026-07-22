@@ -319,6 +319,49 @@ export function buildBackupCronOutcome(result: BackupResult): BackupCronOutcome 
   return failure;
 }
 
+/**
+ * Operator-facing message for the legacy-env migration hazard (#2095 MAJOR-1).
+ */
+export const LEGACY_BACKUP_ENV_UNMIGRATED_MESSAGE =
+  "Legacy BACKUP_* environment variables are set but backups are disabled or " +
+  "not configured for durable (S3) storage in the app. The old env config is " +
+  "no longer read — migrate it at Admin → Backups so nightly backups resume. " +
+  "Backups are NOT running.";
+
+/**
+ * Guard the scheduled cron outcome against the silent-stop migration hazard
+ * (#2095 MAJOR-1).
+ *
+ * A live install that configured backups through the old `BACKUP_*` env vars
+ * upgrades to the DB-only store empty: `resolveBackupConfig()` returns
+ * `enabled:false`, the nightly run records SKIPPED, and the Sentry monitor stays
+ * green — so backups cease unnoticed. When legacy backup env vars are still
+ * present AND the run did not run durably (it was SKIPPED because disabled, or
+ * would only be local-only), upgrade the SKIPPED outcome to a LOUD FAILURE that
+ * tells the operator to migrate config. An enabled-but-not-durable run is
+ * already a FAILURE via `buildBackupCronOutcome`, and a fully-migrated install
+ * (SUCCESS, durable) is left untouched even if a stale env var lingers — that
+ * lingering var is surfaced as a warning on the status payload, not a failure.
+ *
+ * Installs with NO legacy env and backups off stay quiet (SKIPPED): a
+ * deliberately-disabled backup is not an incident.
+ */
+export function applyLegacyBackupEnvGate(
+  outcome: BackupCronOutcome,
+  options: { legacyEnvPresent: boolean },
+): BackupCronOutcome {
+  if (!options.legacyEnvPresent) return outcome;
+  if (outcome.status !== "SKIPPED") return outcome;
+  return {
+    status: "FAILURE",
+    error: LEGACY_BACKUP_ENV_UNMIGRATED_MESSAGE,
+    resultSummary: {
+      ...(outcome.resultSummary ?? {}),
+      healthSignal: "backup-legacy-env-unmigrated",
+    },
+  };
+}
+
 // test seam
 export function sanitizePostgresUrlForPgDump(databaseUrl: string): string {
   try {
@@ -333,11 +376,36 @@ export function sanitizePostgresUrlForPgDump(databaseUrl: string): string {
 }
 
 /**
+ * Strip any embedded password out of a connection string that `new URL()` could
+ * not parse — a libpq keyword-form conninfo (`host=… password=…`) or a URI whose
+ * port is out of range so URL parsing throws. Defence in depth for #2095
+ * MAJOR-2: such a string is never handed to psql/pg_dump on argv (where it would
+ * show in a process listing) OR persisted verbatim, so the password cannot leak
+ * even when the value bypasses the capture-time validation.
+ *
+ * The recovered password is intentionally NOT re-supplied via PGPASSWORD: the
+ * only strings that legitimately reach here are `postgres://` URLs (parsed by
+ * the branch above), so an unparseable value is already a misconfiguration and
+ * failing the connection closed is safer than trying to reconstruct it.
+ */
+function stripUnparseablePassword(conninfo: string): string {
+  return (
+    conninfo
+      // libpq keyword form: password=<token>, quoted or bare.
+      .replace(/(\bpassword\s*=\s*)('[^']*'|"[^"]*"|[^\s]+)/gi, "$1")
+      // URI userinfo form //user:secret@host that URL() rejected (e.g. bad port).
+      .replace(/(:\/\/[^/:@\s]+):[^@/\s]+@/g, "$1@")
+  );
+}
+
+/**
  * Split a postgres connection URL into a command-line-safe URL (password
  * removed) and the decoded password, so pg_dump/psql receive the password via
  * `PGPASSWORD` in the child env rather than on argv where it is visible in a
- * process listing. Returns the URL unchanged (no password) when it is not a
- * parseable URL or carries no password. test seam.
+ * process listing. Returns the URL unchanged (no password) when it carries no
+ * password. When the value is NOT a parseable URL, any embedded password token
+ * is stripped as defence in depth so a live secret is never returned verbatim
+ * (#2095 MAJOR-2). test seam.
  */
 export function splitPostgresPassword(url: string): {
   argvUrl: string;
@@ -350,7 +418,7 @@ export function splitPostgresPassword(url: string): {
     parsed.password = "";
     return { argvUrl: parsed.toString(), password };
   } catch {
-    return { argvUrl: url };
+    return { argvUrl: stripUnparseablePassword(url) };
   }
 }
 

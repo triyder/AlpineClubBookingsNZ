@@ -19,6 +19,7 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 import { runDatabaseBackup, type BackupResult } from "@/lib/backup";
+import { redactSensitiveText } from "@/lib/redact-sensitive-json";
 
 export type BackupRunTrigger = "scheduled" | "manual";
 export type BackupRunStatus = "RUNNING" | "SUCCESS" | "FAILURE" | "SKIPPED";
@@ -26,9 +27,17 @@ export type BackupRunStatus = "RUNNING" | "SUCCESS" | "FAILURE" | "SKIPPED";
 /**
  * A RUNNING row older than this (by `heartbeatAt`) is considered dead — the
  * container that owned it restarted or the process was killed mid-dump — and is
- * reaped to FAILURE on the next claim. Comfortably larger than a healthy backup
- * (the pg_dump/psql commands each time out at 120s) yet small enough that a
- * crashed run does not block the next window for long.
+ * reaped to FAILURE on the next claim.
+ *
+ * `heartbeatAt` is written at claim and again at finalize ONLY; it is NOT
+ * refreshed at intermediate stages. The staleness window therefore has to cover
+ * a whole healthy run in one go, which is the load-bearing invariant here:
+ * BACKUP_STALE_AFTER_MS (30 min) MUST exceed the worst-case cumulative command
+ * time — BACKUP_COMMAND_TIMEOUT_MS (120s per command in src/lib/backup.ts) times
+ * the number of pg_dump/psql/aws stages a run executes — so a slow-but-healthy
+ * run is never reaped out from under itself. Today a durable + restore-validated
+ * run is a handful of ~120s stages, comfortably under 30 min; if the per-command
+ * timeout or the stage count grows materially, raise this window in step.
  */
 export const BACKUP_STALE_AFTER_MS = 30 * 60 * 1000;
 
@@ -173,6 +182,13 @@ async function finalizeBackupRun(
   const durationMs = row
     ? completedAt.getTime() - row.startedAt.getTime()
     : null;
+  // Defence in depth (#2095 MAJOR-2): a backup command error message can embed
+  // the full psql/pg_dump command line, which for a malformed DSN could carry a
+  // password. This row is rendered by the support:view status route and the
+  // backups client, so redact any secret before it is persisted — regardless of
+  // the DSN shape that produced it.
+  const redactedError =
+    fields.error != null ? redactSensitiveText(fields.error) : null;
   await prisma.backupRun.update({
     where: { id: runId },
     data: {
@@ -180,7 +196,7 @@ async function finalizeBackupRun(
       completedAt,
       heartbeatAt: completedAt,
       durationMs,
-      error: fields.error ?? null,
+      error: redactedError,
       resultSummary: fields.result
         ? backupResultSummary(fields.result)
         : undefined,
@@ -245,6 +261,30 @@ export async function getRecentBackupRuns(
     take: limit,
   });
   return rows.map(toSummary);
+}
+
+/**
+ * Retention for the BackupRun history table, matching CronJobRun's policy
+ * (src/lib/cron-job-run.ts `pruneCronRuns`). Without this the run history grows
+ * unbounded (one nightly row forever, plus every manual run). Called from the
+ * daily data-pruning cron.
+ */
+export const BACKUP_RUN_RETENTION_DAYS = 90;
+
+/** Auto-prune old BackupRun records (older than the retention window). */
+export async function pruneBackupRuns(): Promise<{ count: number }> {
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - BACKUP_RUN_RETENTION_DAYS);
+  const { count } = await prisma.backupRun.deleteMany({
+    where: { startedAt: { lt: cutoff } },
+  });
+  if (count > 0) {
+    logger.info(
+      { job: "backup-run-prune", deletedCount: count },
+      "Pruned old backup runs",
+    );
+  }
+  return { count };
 }
 
 /** The currently active (RUNNING, not stale) backup run, or null. */

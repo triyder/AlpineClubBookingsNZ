@@ -50,6 +50,13 @@ export async function GET() {
     detectLegacyProviderEnv().find((f) => f.provider === BACKUP_PROVIDER)?.vars ??
     [];
 
+  // The dangerous migration state (#2095 MAJOR-1): legacy BACKUP_* env vars are
+  // still set but the app config is disabled or not durable, so the nightly cron
+  // is silently NOT producing durable backups. Surfaced as a distinct alarm
+  // (not just the informational "remove these vars" notice).
+  const legacyEnvUnmigrated =
+    legacyEnvVars.length > 0 && (!state.enabled || !state.durable);
+
   return NextResponse.json({
     enabled: state.enabled,
     bucket: state.bucket,
@@ -64,6 +71,7 @@ export async function GET() {
     activeRun,
     recentRuns,
     legacyEnvVars,
+    legacyEnvUnmigrated,
     cronSchedule: backupCronSchedule(),
     // Client uses this to gate the Full-Admin-only destination/credential
     // affordances; the write routes enforce it independently.

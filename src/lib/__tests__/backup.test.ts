@@ -39,7 +39,9 @@ vi.mock("@/lib/backup-config", () => ({
 }));
 
 import {
+  applyLegacyBackupEnvGate,
   buildBackupCronOutcome,
+  LEGACY_BACKUP_ENV_UNMIGRATED_MESSAGE,
   runDatabaseBackup,
   sanitizePostgresUrlForPgDump,
   splitPostgresPassword,
@@ -179,6 +181,53 @@ describe("backup", () => {
     });
   });
 
+  describe("applyLegacyBackupEnvGate (#2095 MAJOR-1)", () => {
+    const skipped = buildBackupCronOutcome({
+      success: false,
+      skipped: true,
+      reason: "Backups are disabled. Enable them on Admin → Backups.",
+    });
+
+    it("upgrades a SKIPPED run to FAILURE when legacy backup env is present", () => {
+      const gated = applyLegacyBackupEnvGate(skipped, {
+        legacyEnvPresent: true,
+      });
+      expect(gated.status).toBe("FAILURE");
+      expect(gated.error).toBe(LEGACY_BACKUP_ENV_UNMIGRATED_MESSAGE);
+      expect(gated.resultSummary).toMatchObject({
+        healthSignal: "backup-legacy-env-unmigrated",
+      });
+    });
+
+    it("leaves a SKIPPED run quiet when no legacy backup env is present", () => {
+      expect(
+        applyLegacyBackupEnvGate(skipped, { legacyEnvPresent: false }),
+      ).toBe(skipped);
+    });
+
+    it("does not touch a non-SKIPPED outcome even with legacy env present", () => {
+      const failure = buildBackupCronOutcome({
+        success: false,
+        error:
+          "Backup credentials could not be decrypted (the app auth secret changed). Re-enter the S3 credentials on Admin → Backups.",
+      });
+      // needsReentry / not-durable FAILUREs are already loud; the gate is a no-op.
+      expect(applyLegacyBackupEnvGate(failure, { legacyEnvPresent: true })).toBe(
+        failure,
+      );
+
+      const success = buildBackupCronOutcome({
+        success: true,
+        filename: "backup.sql.gz",
+        sizeBytes: 1024,
+        uploadedToS3: true,
+      });
+      expect(applyLegacyBackupEnvGate(success, { legacyEnvPresent: true })).toBe(
+        success,
+      );
+    });
+  });
+
   it("classifies a skipped backup as SKIPPED", () => {
     expect(
       buildBackupCronOutcome({
@@ -229,6 +278,24 @@ describe("backup", () => {
     expect(splitPostgresPassword("postgresql://user@host:5432/db")).toEqual({
       argvUrl: "postgresql://user@host:5432/db",
     });
+  });
+
+  it("never returns an unparseable conninfo with its password intact (#2095 MAJOR-2)", () => {
+    // libpq keyword form — new URL() cannot parse it, but the password must not
+    // survive onto argv or into any persisted error.
+    const keyword = splitPostgresPassword(
+      "host=db.internal port=5432 dbname=shadow user=tac password=s3cr3t",
+    );
+    expect(keyword.password).toBeUndefined();
+    expect(keyword.argvUrl).not.toContain("s3cr3t");
+
+    // A URI with an out-of-range port that URL() rejects — the userinfo password
+    // is stripped rather than returned verbatim.
+    const badPort = splitPostgresPassword(
+      "postgresql://tac:s3cr3t@db.internal:99999/shadow",
+    );
+    expect(badPort.password).toBeUndefined();
+    expect(badPort.argvUrl).not.toContain("s3cr3t");
   });
 
   it("fails when an S3 upload is configured but denied", async () => {

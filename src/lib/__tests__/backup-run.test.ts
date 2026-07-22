@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => {
         update: vi.fn(),
         findMany: vi.fn(),
         findFirst: vi.fn(),
+        deleteMany: vi.fn(),
       },
     },
     runDatabaseBackup: vi.fn(),
@@ -31,7 +32,11 @@ vi.mock("@/lib/backup", () => ({
 }));
 vi.mock("@/lib/logger", () => ({ default: mocks.logger }));
 
-import { runManagedBackup } from "@/lib/backup-run";
+import {
+  BACKUP_RUN_RETENTION_DAYS,
+  pruneBackupRuns,
+  runManagedBackup,
+} from "@/lib/backup-run";
 
 describe("runManagedBackup", () => {
   beforeEach(() => {
@@ -117,6 +122,21 @@ describe("runManagedBackup", () => {
     );
   });
 
+  it("redacts any secret in the persisted error (#2095 MAJOR-2)", async () => {
+    mocks.runDatabaseBackup.mockResolvedValue({
+      success: false,
+      error:
+        "Restore validation failed: psql 'host=shadow password=s3cr3t dbname=x' exited",
+    });
+
+    await runManagedBackup({ trigger: "scheduled" });
+
+    const call = mocks.prisma.backupRun.update.mock.calls.at(-1)?.[0];
+    const persistedError: string = call.data.error;
+    expect(persistedError).not.toContain("s3cr3t");
+    expect(persistedError).toContain("[REDACTED]");
+  });
+
   it("finalizes SKIPPED when the backup is disabled", async () => {
     mocks.runDatabaseBackup.mockResolvedValue({
       success: false,
@@ -145,5 +165,28 @@ describe("runManagedBackup", () => {
         data: expect.objectContaining({ status: "FAILURE" }),
       }),
     );
+  });
+});
+
+describe("pruneBackupRuns (#2095 MINOR-7)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("deletes BackupRun rows older than the retention window", async () => {
+    mocks.prisma.backupRun.deleteMany.mockResolvedValue({ count: 3 });
+
+    const now = Date.now();
+    const result = await pruneBackupRuns();
+
+    expect(result).toEqual({ count: 3 });
+    expect(mocks.prisma.backupRun.deleteMany).toHaveBeenCalledTimes(1);
+    const call = mocks.prisma.backupRun.deleteMany.mock.calls[0][0];
+    const cutoff: Date = call.where.startedAt.lt;
+    // Roughly BACKUP_RUN_RETENTION_DAYS in the past (setDate day-arithmetic can
+    // shift by an hour across a DST boundary; a ±2 day window is ample).
+    const daysAgo = (now - cutoff.getTime()) / (24 * 60 * 60 * 1000);
+    expect(daysAgo).toBeGreaterThan(BACKUP_RUN_RETENTION_DAYS - 2);
+    expect(daysAgo).toBeLessThan(BACKUP_RUN_RETENTION_DAYS + 2);
   });
 });

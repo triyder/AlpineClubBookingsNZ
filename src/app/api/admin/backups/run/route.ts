@@ -72,38 +72,50 @@ export async function POST(request: Request) {
     );
   }
 
-  await createAuditLog({
-    action: "backup.run.now",
-    category: "security",
-    severity: "important",
-    outcome: "success",
-    memberId: guard.session.user.id,
-    entityType: "BackupRun",
-    entityId: "manual",
-    summary: "Started a manual database backup",
-    metadata: { trigger: "manual" },
-    ...(() => {
-      const ctx = getAuditRequestContext(request);
-      return {
-        requestId: ctx?.id ?? undefined,
-        ipAddress: ctx?.ipAddress ?? undefined,
-        userAgent: ctx?.userAgent ?? undefined,
-      };
-    })(),
-  });
+  // Capture the request context NOW (the request object is not available inside
+  // the background task once the response returns).
+  const ctx = getAuditRequestContext(request);
+  const auditRequestFields = {
+    requestId: ctx?.id ?? undefined,
+    ipAddress: ctx?.ipAddress ?? undefined,
+    userAgent: ctx?.userAgent ?? undefined,
+  };
+  const memberId = guard.session.user.id;
 
   // Fire-and-forget: the claim + dump run in the background; the response
-  // returns immediately. Errors are finalized onto the BackupRun row inside
-  // runManagedBackup and logged here as a backstop.
+  // returns immediately. The audit entry is written only AFTER a successful
+  // claim (#2095 MINOR-8): if this press lost the cross-process claim to a
+  // racing run, no backup actually started here, so recording "Started a manual
+  // database backup" would be false provenance. Errors are finalized onto the
+  // BackupRun row inside runManagedBackup and logged here as a backstop.
   void runManagedBackup({
     trigger: "manual",
-    triggeredByMemberId: guard.session.user.id,
-  }).catch((err) => {
-    logger.error(
-      { err, job: "backup" },
-      "Background manual backup failed after dispatch",
-    );
-  });
+    triggeredByMemberId: memberId,
+  })
+    .then(async (outcome) => {
+      if (!outcome.claimed) {
+        // Lost the claim to a concurrent run — nothing started, nothing to audit.
+        return;
+      }
+      await createAuditLog({
+        action: "backup.run.now",
+        category: "security",
+        severity: "important",
+        outcome: "success",
+        memberId,
+        entityType: "BackupRun",
+        entityId: outcome.runId ?? "manual",
+        summary: "Started a manual database backup",
+        metadata: { trigger: "manual", runId: outcome.runId ?? null },
+        ...auditRequestFields,
+      });
+    })
+    .catch((err) => {
+      logger.error(
+        { err, job: "backup" },
+        "Background manual backup failed after dispatch",
+      );
+    });
 
   return NextResponse.json({ ok: true, started: true }, { status: 202 });
 }

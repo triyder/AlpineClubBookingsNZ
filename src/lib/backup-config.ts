@@ -64,17 +64,9 @@ export const BACKUP_SECRET_CREDENTIAL_KEYS = [
   BACKUP_CREDENTIAL_KEYS.restoreValidationUrl,
 ] as const;
 
-/** Destination keys — writable only by a Full Admin (in the backups config route). */
-export const BACKUP_DESTINATION_KEYS = [
-  BACKUP_CREDENTIAL_KEYS.bucket,
-  BACKUP_CREDENTIAL_KEYS.region,
-] as const;
-
-/** Operational config keys — writable at support:edit. */
-export const BACKUP_OPERATIONAL_CONFIG_KEYS = [
-  BACKUP_CREDENTIAL_KEYS.enabled,
-  BACKUP_CREDENTIAL_KEYS.retentionDays,
-] as const;
+// The destination (bucket/region) and operational (enabled/retention) key
+// groupings are enforced inline in the backups config route rather than via
+// exported arrays; keep this file's exported surface to what is actually used.
 
 // ---------------------------------------------------------------------------
 // Validation for admin-editable strings interpolated into CLI calls
@@ -100,6 +92,27 @@ export function isValidS3Bucket(value: string): boolean {
 export function isValidS3Region(value: string): boolean {
   const trimmed = value.trim();
   return trimmed.length > 0 && trimmed.length <= 40 && S3_REGION_REGEX.test(trimmed);
+}
+
+/**
+ * Whether a submitted restore-validation DSN is a parseable postgres URI.
+ *
+ * Capture-time gate (#2095 MAJOR-2): the DSN carries a password and is passed to
+ * psql. It MUST be a `postgres://` / `postgresql://` URI so `new URL()` (and
+ * therefore `splitPostgresPassword`) can lift the password off argv into
+ * PGPASSWORD. A libpq keyword-form conninfo (`host=… password=…`) or a
+ * malformed URI that URL parsing rejects would otherwise keep the password on
+ * the psql command line — and in any persisted error — so it is refused here.
+ */
+export function isValidRestoreValidationUrl(value: string): boolean {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return false;
+  try {
+    const parsed = new URL(trimmed);
+    return parsed.protocol === "postgres:" || parsed.protocol === "postgresql:";
+  } catch {
+    return false;
+  }
 }
 
 /**

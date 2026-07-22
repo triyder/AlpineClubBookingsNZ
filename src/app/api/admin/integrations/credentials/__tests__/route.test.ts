@@ -178,6 +178,46 @@ describe("POST /api/admin/integrations/credentials", () => {
     expect(mocks.setIntegrationCredential).not.toHaveBeenCalled();
   });
 
+  it("rejects a non-postgres restore-validation DSN with 400 and writes nothing (#2095 MAJOR-2)", async () => {
+    asFullAdmin();
+    // libpq keyword-form conninfo is not a parseable postgres:// URI.
+    const res = await POST(
+      makeRequest({
+        provider: "backup",
+        key: "restore_validation_url",
+        value: "host=shadow password=s3cr3t dbname=x",
+      }),
+    );
+    expect(res.status).toBe(400);
+    const json = await res.json();
+    expect(json.error).toMatch(/postgres/i);
+    expect(JSON.stringify(json)).not.toContain("s3cr3t");
+    expect(mocks.setIntegrationCredential).not.toHaveBeenCalled();
+  });
+
+  it("accepts a valid postgres:// restore-validation DSN (#2095 MAJOR-2)", async () => {
+    asFullAdmin();
+    mocks.setIntegrationCredential.mockResolvedValue({
+      provider: "backup",
+      key: "restore_validation_url",
+      secretSource: "AUTH_SECRET",
+      labelVersion: "integration-credential:v1",
+      updatedAt: new Date("2026-07-21T10:00:00.000Z"),
+    });
+    const res = await POST(
+      makeRequest({
+        provider: "backup",
+        key: "restore_validation_url",
+        value: "postgresql://tac:s3cr3t@shadow:5432/shadow_db",
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(mocks.setIntegrationCredential).toHaveBeenCalledTimes(1);
+    // Exposure: the value never appears in the response.
+    const json = await res.json();
+    expect(JSON.stringify(json)).not.toContain("s3cr3t");
+  });
+
   it("rejects an unknown provider/key with 400", async () => {
     asFullAdmin();
     const res = await POST(

@@ -3913,8 +3913,12 @@ model BackupRun {
   trigger             String
   startedAt           DateTime  @default(now())
   completedAt         DateTime?
-  // Refreshed while a run is in progress; a RUNNING row older than the
-  // staleness window (no heartbeat) is treated as dead and reaped.
+  // Set at claim and again at finalize — NOT refreshed at intermediate stages.
+  // A RUNNING row whose heartbeatAt is older than the staleness window
+  // (BACKUP_STALE_AFTER_MS) is treated as dead and reaped to FAILURE on the next
+  // claim. Invariant: BACKUP_STALE_AFTER_MS must exceed the worst-case cumulative
+  // command time (BACKUP_COMMAND_TIMEOUT_MS × the number of pg_dump/psql stages)
+  // so a healthy but slow run is never reaped mid-dump.
   heartbeatAt         DateTime  @default(now())
   durationMs          Int?
   // Metadata-only summary (filename, sizeBytes, s3 flags…) — NEVER any secret
