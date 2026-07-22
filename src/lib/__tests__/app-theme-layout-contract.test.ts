@@ -10,7 +10,8 @@ import {
   deriveAppMutedForeground,
   themeSeedsFromValues,
 } from "@/lib/club-theme-schema";
-import { defaultAppRoleFallbacks } from "@/lib/theme/app-tokens";
+import { CARD_SHADOW, defaultAppRoleFallbacks } from "@/lib/theme/app-tokens";
+import { G5A_CARD_SEPARATION } from "@/lib/theme/guarantees";
 
 function readRepoFile(path: string) {
   return readFileSync(join(process.cwd(), path), "utf8");
@@ -299,6 +300,45 @@ describe("database theme app-shell contract", () => {
     // healed-token set from exactly this pairing.
     expect(lightRules).toContain("--muted-foreground:");
     expect(darkRules).toContain("--muted-foreground:");
+  });
+
+  // #2187 J8 — the A6 candidate-ii card treatment is tint (neutral-1 card on
+  // neutral-2 page, already wired via `--card`) PLUS the pinned J8 elevation
+  // shadow. The shadow variables `--gen-card-shadow` / `--gen-card-shadow-dark`
+  // are emitted by `buildClubThemeAppCss`; without a consumer they render nothing.
+  // This pins the `globals.css` wiring that makes them reach the shadcn Card
+  // surface, and the static fallback that stands in with no ClubTheme injected,
+  // so the treatment cannot silently vanish.
+  it("wires the J8 card shadow onto the app Card surface", () => {
+    const globals = readRepoFile("src/app/globals.css");
+
+    // The light rule applies on screen AND print; it is keyed on `.bg-card.shadow`
+    // so popovers/dialogs (bg-popover/bg-background, shadow-md/-lg) are untouched.
+    expect(globals).toContain(
+      ".app-theme-scope .bg-card.shadow:not(.website-theme *) {",
+    );
+    expect(globals).toContain(
+      `box-shadow: var(--gen-card-shadow, ${CARD_SHADOW.light});`,
+    );
+
+    // The dark rule is screen-only (@media not print) so a printed card keeps the
+    // light J8 shadow, mirroring the #2146 dark-shadow handling.
+    expect(globals).toContain(
+      ".dark .app-theme-scope .bg-card.shadow:not(.website-theme *) {",
+    );
+    expect(globals).toContain(
+      `box-shadow: var(--gen-card-shadow-dark, ${CARD_SHADOW.dark});`,
+    );
+
+    // `box-shadow` is set OUTRIGHT (not via `--tw-shadow-color`), which replaces
+    // Tailwind's `.shadow` composite so exactly ONE shadow — the J8 one — renders.
+    // The light fallback is the same J8 value the guarantee sweep pins for G5a.
+    expect(CARD_SHADOW.light).toBe(G5A_CARD_SEPARATION.boxShadow);
+
+    // The Card component emits the base `shadow` utility that this rule overrides;
+    // if it ever switched to a non-`shadow` elevation the selector would miss it.
+    const card = readRepoFile("src/components/ui/card.tsx");
+    expect(card).toMatch(/bg-card[^"]*\bshadow\b/);
   });
 
   // The fallback above is only ever used when NO ClubTheme sheet is injected —

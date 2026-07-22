@@ -899,6 +899,23 @@
   color: var(--accent-foreground);
 }
 
+/* A6 candidate-ii card treatment (#2187 J8): the shadcn Card surface — `bg-card`
+   plus Tailwind's base `shadow` utility (see `src/components/ui/card.tsx`) —
+   renders the pinned J8 elevation shadow, emitted per club as `--gen-card-shadow`
+   / `--gen-card-shadow-dark` by `buildClubThemeAppCss` with the shipped default
+   as the static fallback. Setting `box-shadow` outright REPLACES Tailwind's
+   `.shadow` composite, so exactly one shadow renders (the J8 one), not two. Keyed
+   on `.bg-card` so popovers/dialogs/menus (`bg-popover`/`bg-background`,
+   `shadow-md`/`shadow-lg`) are untouched. This light rule applies on screen AND
+   print (a printed card keeps the light shadow — same #2146 handling as the dark
+   deepening below); the dark rule is screen-only, so print falls back to this
+   light J8 shadow. `.reports-print-card` / lodge print resets still drop it
+   entirely with `box-shadow: none !important`. Pinned in
+   app-theme-layout-contract.test.ts. */
+.app-theme-scope .bg-card.shadow:not(.website-theme *) {
+  box-shadow: var(--gen-card-shadow, 0 1px 2px 0 #040a054a, 0 1px 3px 0 #020b037b);
+}
+
 /* Screen-only (#2146): the deepened dark shadow is a literal value, so it cannot
    resolve back to light on paper. A printed report keeps the light shadow (and
    the print block drops it entirely on report cards). */
@@ -907,6 +924,14 @@
     .app-theme-scope
     :is(.shadow, .shadow-sm, .shadow-md, .shadow-lg, .shadow-xl) {
     --tw-shadow-color: rgb(0 0 0 / 0.45);
+  }
+
+  /* J8 dark card shadow (#2187). Screen-only, so a printed card falls back to the
+     light J8 shadow declared above — the same #2146 rule the `--tw-shadow-color`
+     deepening follows. Replaces Tailwind's `.shadow` composite outright, so
+     exactly one (the J8 dark) shadow renders on the app Card. */
+  .dark .app-theme-scope .bg-card.shadow:not(.website-theme *) {
+    box-shadow: var(--gen-card-shadow-dark, 0 1px 2px 0 #00000066, 0 1px 3px 0 #000000a6);
   }
 }
 

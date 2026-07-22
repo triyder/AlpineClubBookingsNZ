@@ -41,8 +41,15 @@ import {
   type AliasEntry,
 } from "./aliases";
 
-/** J8 card shadow (A6 candidate ii, from measurements.json). Mode-specific. */
-const CARD_SHADOW = {
+/**
+ * J8 card shadow (A6 candidate ii, from measurements.json). Mode-specific.
+ *
+ * Emitted as `--gen-card-shadow` / `--gen-card-shadow-dark` and consumed by the
+ * `.app-theme-scope .bg-card.shadow` rule in `globals.css`, whose static
+ * fallbacks are pinned against these literals by `app-theme-layout-contract.test.ts`.
+ * `CARD_SHADOW.light` is the same string as `G5A_CARD_SEPARATION.boxShadow`.
+ */
+export const CARD_SHADOW = {
   light: "0 1px 2px 0 #040a054a, 0 1px 3px 0 #020b037b",
   dark: "0 1px 2px 0 #00000066, 0 1px 3px 0 #000000a6",
 } as const;
