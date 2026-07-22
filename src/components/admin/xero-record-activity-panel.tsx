@@ -40,15 +40,15 @@ interface XeroRecordActivityPanelProps {
 function operationStatusClass(status: string) {
   switch (status) {
     case "SUCCEEDED":
-      return "bg-success-9 text-white"
+      return "bg-success text-success-foreground"
     case "PARTIAL":
-      return "bg-warning-9 text-white"
+      return "bg-warning text-warning-foreground"
     case "FAILED":
-      return "bg-danger-9 text-white"
+      return "bg-danger text-danger-foreground"
     case "PENDING":
       return "bg-slate-600 text-white"
     case "RUNNING":
-      return "bg-info-9 text-white"
+      return "bg-info text-info-foreground"
     default:
       return ""
   }

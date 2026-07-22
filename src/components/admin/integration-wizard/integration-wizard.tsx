@@ -258,9 +258,9 @@ export function IntegrationWizard<Ctx>({
                       className={cn(
                         "flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-xs font-semibold",
                         verified
-                          ? "border-success-7 bg-success-9 text-white"
+                          ? "border-success-7 bg-success text-success-foreground"
                           : acknowledgedOnly
-                            ? "border-warning-7 bg-warning-9 text-white"
+                            ? "border-warning-7 bg-warning text-warning-foreground"
                             : active
                               ? "border-primary text-foreground"
                               : "border-border text-muted-foreground",

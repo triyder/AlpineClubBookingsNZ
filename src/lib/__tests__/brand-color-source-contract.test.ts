@@ -144,6 +144,58 @@ describe("colored-family source contract (R5, 16 families, repo-wide)", () => {
   });
 });
 
+// #2188 P2 (lens1 F1) — on-solid AA contract. A saturated step-9 fill carries
+// NO guaranteed on-solid foreground (only the role tokens' A4-recomputed
+// `*-foreground` pair clears AA on the solid, per the G4 sweep). So a
+// text-bearing badge must use the ROLE token pair (`bg-warning
+// text-warning-foreground`), never `bg-<scale>-9` with a text utility. Step-9
+// stays only for DECORATIVE, text-free fills (e.g. booking strips). This flags
+// any class string combining `bg-(success|warning|info|danger|cat1..5)-9` with a
+// `text-` utility. A genuinely-decorative exception (text incidental, not on the
+// fill) needs an explicit DECORATIVE_SOLID_FILL_ALLOWLIST entry with a reason.
+const DECORATIVE_SOLID_FILL_ALLOWLIST = new Set<string>(
+  ([] as string[]).map((p) => p.replaceAll("\\", "/")),
+);
+// Matches `bg-<scale>-9` and a `text-*` utility within the SAME class string
+// (only class-token characters between them — a quote/newline ends the string),
+// in either order. `/opacity` and variant prefixes are tolerated.
+const CLS = "[\\w:/\\[\\]().,#%-]";
+const ON_SOLID_TEXT_PAIR = new RegExp(
+  `bg-(?:success|warning|info|danger|cat[1-5])-9(?:/\\d{1,3})?(?:\\s+${CLS}+)*\\s+text-${CLS}+` +
+    `|text-${CLS}+(?:\\s+${CLS}+)*\\s+bg-(?:success|warning|info|danger|cat[1-5])-9(?:/\\d{1,3})?`,
+);
+
+describe("on-solid AA source contract (F1, repo-wide)", () => {
+  it("catches a text utility paired with a step-9 solid fill (mutation guard)", () => {
+    expect('className="bg-warning-9 text-white"').toMatch(ON_SOLID_TEXT_PAIR);
+    expect('className="text-white bg-danger-9"').toMatch(ON_SOLID_TEXT_PAIR);
+    // The correct role-token pair and a decorative text-free fill do NOT match.
+    expect('className="bg-warning text-warning-foreground"').not.toMatch(
+      ON_SOLID_TEXT_PAIR,
+    );
+    expect('className="absolute inset-y-0 w-1 bg-cat1-9"').not.toMatch(
+      ON_SOLID_TEXT_PAIR,
+    );
+  });
+
+  it("keeps every text-bearing solid badge on the role-token AA pair", () => {
+    const offenders = listRepoSourceFiles()
+      .filter((path) => !DECORATIVE_SOLID_FILL_ALLOWLIST.has(path.replaceAll("\\", "/")))
+      .filter((path) =>
+        ON_SOLID_TEXT_PAIR.test(readFileSync(join(process.cwd(), path), "utf8")),
+      );
+    expect(
+      offenders,
+      offenders.length === 0
+        ? ""
+        : `A step-9 solid fill paired with a text utility is not AA-guaranteed. ` +
+            `Use the role-token pair (bg-warning text-warning-foreground, ` +
+            `bg-success text-success-foreground, …). Step-9 is for decorative, ` +
+            `text-free fills only. Offenders:\n${offenders.join("\n")}`,
+    ).toEqual([]);
+  });
+});
+
 // The /finance and admin surfaces render inside `app-theme-scope` (see
 // `src/app/(finance)/finance/layout.tsx` and the admin layout), which applies
 // the club theme.
