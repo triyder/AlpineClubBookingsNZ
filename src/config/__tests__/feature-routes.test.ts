@@ -213,6 +213,34 @@ describe("feature route map", () => {
     ).toBeNull();
   });
 
+  it("does not gate the Integrations hub on xeroIntegration (#2216)", () => {
+    // The Integrations hub aggregates cards for Xero, Stripe, Google sign-in and
+    // Backups; each card is feature-/permission-filtered individually and each
+    // destination keeps its own gate. The hub itself must stay reachable so the
+    // other integrations remain discoverable — and their hub back-links do not
+    // 404 — whenever Xero is off.
+    expect(getRequiredFeaturesForPath("/admin/integrations")).toEqual([]);
+    expect(
+      getDisabledFeatureForPath("/admin/integrations", {
+        ...allOn,
+        xeroIntegration: false,
+      })
+    ).toBeNull();
+    expect(
+      isFeatureHrefVisible("/admin/integrations", {
+        ...allOn,
+        xeroIntegration: false,
+      })
+    ).toBe(true);
+    // The Xero setup card's own href stays gated, so it filters out with Xero off.
+    expect(
+      isFeatureHrefVisible("/admin/xero/setup", {
+        ...allOn,
+        xeroIntegration: false,
+      })
+    ).toBe(false);
+  });
+
   it("does not match shared booking APIs or similar prefixes", () => {
     expect(getRequiredFeaturesForPath("/api/bookings")).toEqual([]);
     expect(getRequiredFeaturesForPath("/financex")).toEqual([]);

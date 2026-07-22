@@ -4,6 +4,15 @@ All notable public reference-release changes should be recorded here.
 
 ## Unreleased
 
+- **The Integrations hub stays reachable when Xero is off (#2216).** The
+  `/admin/integrations` hub was gated behind the `xeroIntegration` module, so
+  turning Xero off made the whole hub — and any page that links back to it (the
+  AI assistant, Stripe, Google sign-in, and Backups setup pages) — return a 404,
+  hiding every non-Xero integration. The hub is no longer module-gated: it
+  renders whenever any integration is available and shows each card only when
+  that integration's own module and permissions allow, so the Xero card still
+  disappears with Xero off while everything else stays reachable. No behaviour
+  changes for the individual setup pages, which keep their existing gates.
 - **Docs: ratified that connected provider credentials (`IntegrationCredential`) are permanently excluded from config transfer — never travelling in any form, and no presence-metadata carve-out — in the config-transfer reference and the security attack-surface doc (owner decision, #2205).**
 - **The lodge kiosk / wall display now paints from a fixed, glare-proof colour
   set that never follows the club theme or the light/dark toggle (#2189).** The
