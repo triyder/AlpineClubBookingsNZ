@@ -393,8 +393,9 @@ function stripUnparseablePassword(conninfo: string): string {
     conninfo
       // libpq keyword form: password=<token>, quoted or bare.
       .replace(/(\bpassword\s*=\s*)('[^']*'|"[^"]*"|[^\s]+)/gi, "$1")
-      // URI userinfo form //user:secret@host that URL() rejected (e.g. bad port).
-      .replace(/(:\/\/[^/:@\s]+):[^@/\s]+@/g, "$1@")
+      // URI userinfo form //user:secret@host that URL() rejected (e.g. bad
+      // port). Username may be empty (`//:secret@host`), so `*` not `+`.
+      .replace(/(:\/\/[^/:@\s]*):[^@/\s]+@/g, "$1@")
   );
 }
 
