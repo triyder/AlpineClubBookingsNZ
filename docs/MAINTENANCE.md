@@ -402,8 +402,8 @@ file). All work happens in a throwaway Postgres 16 container bound to
 
 - Every quarter, as a standing operations task.
 - After any change to the backup pipeline (`src/lib/backup.ts`, the backup cron,
-  the `BACKUP_S3_*` configuration, the database schema, or the Postgres major
-  version).
+  the in-app backup configuration at `/admin/backups`, the database schema, or
+  the Postgres major version).
 - Any time you need confidence that a specific backup file is restorable.
 
 ### Local self-contained mode (default)
@@ -428,16 +428,20 @@ dump file first; the script never touches S3 itself.
 
 To fetch a backup safely, use read-only S3 credentials from a workstation (never
 the production host) to copy one object out of the backup bucket. The backups
-live under the `tacbookings_s3backup/` prefix of the bucket named in
-`BACKUP_S3_BUCKET`, in the region from `BACKUP_S3_REGION` (default
-`ap-southeast-2`), using the `BACKUP_S3_ACCESS_KEY_ID` / `BACKUP_S3_SECRET_ACCESS_KEY`
-credentials. Copy a single `.sql.gz` object to a local scratch path — do not
-print or paste credential values, and do not run this on a production host:
+live under the `tacbookings_s3backup/` prefix of the configured bucket. Read the
+destination **bucket** and **region** from **Admin → Integrations → Database
+Backups** (`/admin/backups`) — since #2095 the backup configuration lives in the
+encrypted in-app store, not in `BACKUP_S3_*` environment variables. Use your OWN
+read-only S3 credentials (from your operator secret store) rather than the app's
+stored write credentials. Set the values as local shell variables and copy a
+single `.sql.gz` object to a local scratch path — do not print or paste
+credential values, and do not run this on a production host:
 
 ```bash
-# Values come from your operator secret store; never echo them.
-aws s3 cp "s3://$BACKUP_S3_BUCKET/tacbookings_s3backup/<backup-file>.sql.gz" \
-  /tmp/restore-check.sql.gz --region "$BACKUP_S3_REGION"
+# BUCKET/REGION are read from Admin -> Backups; the AWS creds are your own
+# read-only workstation credentials from your operator secret store. Never echo.
+aws s3 cp "s3://$BUCKET/tacbookings_s3backup/<backup-file>.sql.gz" \
+  /tmp/restore-check.sql.gz --region "$REGION"
 
 bash scripts/backup-restore-drill.sh --from-dump /tmp/restore-check.sql.gz
 ```

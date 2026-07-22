@@ -144,7 +144,8 @@ When promoting this target from local staging to a shared host:
 2. Use test-mode Stripe keys only.
 3. Use Xero demo org credentials only when a test explicitly needs Xero.
 4. Keep `CRON_ENABLED=false` unless the test explicitly needs scheduled jobs.
-5. Keep `BACKUP_ENABLED=false` unless the test explicitly covers backup behavior.
+5. Leave backups disabled (the default) unless the test explicitly covers backup
+   behavior; enable and configure them in-app at `/admin/backups` (#2095).
 6. Verify `/api/health` and `/api/health/ready` before starting browser checks.
 7. Record the staging origin and auth path in the review issue or release notes.
 

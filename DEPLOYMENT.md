@@ -141,8 +141,9 @@ Minimum production categories:
   `CONTACT_EMAIL` env var to route the contact form must set the DB
   `contactEmail` (Admin > Email Messages); if unset it falls back to the support
   address per the existing precedence, so there is no hard break.
-- Cron and backups: `CRON_SECRET`, `BACKUP_*`, optional
-  `AUDIT_ARCHIVE_DATABASE_URL`
+- Cron and backups: `CRON_SECRET`, `BACKUP_CRON_SCHEDULE` (nightly backup
+  timing; all other backup settings are configured in-app at `/admin/backups`,
+  #2095), optional `AUDIT_ARCHIVE_DATABASE_URL`
 - Bootstrap provisioning (optional): `CONFIG_BUNDLE_IMPORT_PATH` — path to a
   config-transfer bundle applied non-interactively on boot **only** when the
   database is empty of non-seed configuration. See "Config Bundle Auto-Import On
@@ -558,27 +559,49 @@ synthetic data.
 
 ## Backups
 
-The app can run scheduled PostgreSQL dumps to S3-compatible storage when
-`BACKUP_ENABLED=true`. Configure:
+The app runs scheduled PostgreSQL dumps to S3-compatible storage. **Backups are
+configured in-app (#2095), not by environment variables.** Enable and configure
+them at **Admin → Integrations → Database Backups** (`/admin/backups`):
 
-- `BACKUP_S3_BUCKET`
-- `BACKUP_S3_REGION`
-- `BACKUP_S3_ACCESS_KEY_ID`
-- `BACKUP_S3_SECRET_ACCESS_KEY`
-- `BACKUP_RETENTION_DAYS`
-- `BACKUP_CRON_SCHEDULE`
-- optional `BACKUP_RESTORE_VALIDATION_URL`
+- the **enabled** switch and the **retention** window (support-area edit),
+- the S3 **bucket** and **region** (Full Admin only — repointing the destination
+  exfiltrates the entire dump),
+- the S3 **access key ID** / **secret access key** (Full Admin only, write-only,
+  encrypted at rest in the `IntegrationCredential` store),
+- an optional **restore-validation shadow database URL** (Full Admin,
+  write-only) — each backup is restored into it and smoke-checked.
+
+`BACKUP_CRON_SCHEDULE` remains an environment variable (cron-leader timing). The
+legacy `BACKUP_ENABLED`, `BACKUP_S3_*`, `BACKUP_RETENTION_DAYS`, and
+`BACKUP_RESTORE_VALIDATION_URL` variables are **no longer read**. On upgrade, a
+deployment that still sets them completes the in-app re-entry (the Backups page
+shows a "no longer used — re-enter in-app, then remove from the environment"
+warning) and then removes the variables from the environment.
+
+**Encryption-key coupling:** backup credentials are wrapped with a key derived
+from `AUTH_SECRET`/`NEXTAUTH_SECRET` (HKDF-SHA256). Rotating that secret makes
+stored credentials undecryptable, so the nightly backup fails **loudly** — it
+records a `FAILURE` cron run and an error Sentry check-in (never a silent skip),
+and the Backups page shows a "re-enter credentials" banner. Re-enter the S3
+credentials in-app after any auth-secret rotation.
 
 Do not treat local backup files as durable. The production Docker service runs
 with `read_only: true` and mounts `/tmp` as tmpfs, so `/tmp/tacbookings-backups`
 is RAM-backed and is wiped whenever the app container is recreated, including
-routine blue/green deploys. If `BACKUP_ENABLED=true` but `BACKUP_S3_BUCKET` is
-not configured, the job no longer reports healthy: the dump is marked
+routine blue/green deploys. If backups are enabled but no S3 bucket is
+configured, the job no longer reports healthy: the dump is marked
 `backup-not-durable`, the cron run records `FAILURE`, and the Sentry monitor
 check-in is sent as an error. A healthy scheduled backup requires S3 upload and
 readback verification.
 
-`BACKUP_RETENTION_DAYS` prunes only the local backup files; it does not delete
+**Run-now and concurrency:** the Backups page has a "Run backup now" button that
+executes off the request path as a background job. Both it and the nightly cron
+claim a DB-level cross-process lock (a `BackupRun` row under a
+`pg_advisory_xact_lock`), so two containers (blue/green web slots + cron-leader)
+never start overlapping dumps; a run whose container died mid-dump is reaped to
+`FAILURE` after a staleness window.
+
+The retention window prunes only the local backup files; it does not delete
 objects already uploaded to S3. Enforce S3 retention with a bucket lifecycle
 policy (or equivalent object-expiry rule) so uploaded dumps do not accumulate
 indefinitely.

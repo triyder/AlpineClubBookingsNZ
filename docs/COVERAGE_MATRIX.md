@@ -14,7 +14,7 @@ a task-focused operator guide with screenshots. #2049 laid the foundation and
 #2050 filled every gap, so each admin row now links a guide (no `GAP` remains) —
 keep the links current as areas change.
 
-The area list is generated from the actual route directories (69 areas,
+The area list is generated from the actual route directories (70 areas,
 excluding `__tests__`), so it is exhaustive and will not silently miss a
 surface. When a new admin area is added, add a row here in the same PR (this is
 part of the docs-lockstep rule in `AGENTS.md`).
@@ -48,6 +48,7 @@ a `GAP`, replace it with a relative link to that file (e.g.
 | `appearance` | content | — | [guide](guides/appearance.md) (incl. `appearance/identity`) | 4 |
 | `audit-log` | support | `AUDIT_RETENTION_ARCHIVE_RUNBOOK.md` | [guide](guides/audit-log.md) | 4 |
 | `background-jobs` | support | `ARCHITECTURE.md` (Cron Jobs) | [guide](guides/background-jobs.md) | 4 |
+| `backups` | support | `CONFIGURATION.md`, `DEPLOYMENT.md`, `MAINTENANCE.md`, `SECURITY-ATTACK-SURFACE.md` | [guide](guides/backups.md) | 4 |
 | `bed-allocation` | bookings | `ARCHITECTURE.md` (bed allocation), `CAPACITY_MODEL.md` | [guide](guides/bed-allocation.md) | 1 |
 | `book` | bookings | — (admin book-on-behalf) | [guide](guides/book.md) | 1 |
 | `booking-approvals` | bookings | `STATE_MACHINES.md` | [guide](guides/booking-requests.md) (redirect → Approvals tab) | 1 |
@@ -326,7 +327,7 @@ a batch's worklist directly from this file (filter the table by batch). Batches
 | **1** | Bookings & capacity | The booking lifecycle, capacity/beds, seasons, promos, and booking money (payments, booking reports). | 15 |
 | **2** | Membership & applications | Members, applications, family/committee, membership lifecycle & cancellations, and membership billing (fees, subscriptions, refunds, Xero, internet banking). | 20 |
 | **3** | Lodge operations | Physical-lodge day-to-day: rooms/beds inventory, chores, roster, work parties, hut leaders, lodge kiosk/instructions, and multi-lodge management. | 8 |
-| **4** | Comms & content | Outbound comms (email/notifications), public content & appearance, and the platform/support admin surfaces (access roles, audit, security, health, modules, integrations, setup, config-transfer, dashboard). | 26 |
+| **4** | Comms & content | Outbound comms (email/notifications), public content & appearance, and the platform/support admin surfaces (access roles, audit, security, health, modules, integrations, backups, setup, config-transfer, dashboard). | 27 |
 | **5** | Member-facing journeys | The public and member-facing routes (`/`, booking flow, member dashboard, applications, self-service) — **not** admin areas, so not enumerated in the matrix above. Scoped from `UX_FLOW_MAP.md` and the public route tree. **Shipped** as the [Member & Guest Guide](user-guide/README.md). | — |
 
 To pull one batch's admin worklist, take every row whose **Batch** equals that

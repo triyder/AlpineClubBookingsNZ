@@ -1707,17 +1707,26 @@ rate-limited, or temporarily unavailable.
 | `GROUP_CANCEL_RESUME_GRACE_MINUTES`   | Grace before the group-settlement-reaper resumes a crash-interrupted organiser-cancel cleanup (#1236); defaults to 15 minutes. |
 | `WAITLIST_TRANSACTION_RETRY_ATTEMPTS` | Optional waitlist transaction retry count.                                  |
 | `WAITLIST_TRANSACTION_RETRY_DELAY_MS` | Optional waitlist transaction retry delay.                                  |
-| `BACKUP_ENABLED`                      | Enables scheduled PostgreSQL backup job.                                    |
-| `BACKUP_S3_BUCKET`                    | Optional S3 bucket for backup uploads.                                      |
-| `BACKUP_S3_REGION`                    | S3 region, default `ap-southeast-2`.                                        |
-| `BACKUP_S3_ACCESS_KEY_ID`             | S3 access key for backup uploads.                                           |
-| `BACKUP_S3_SECRET_ACCESS_KEY`         | S3 secret key for backup uploads.                                           |
-| `BACKUP_RETENTION_DAYS`               | Local backup retention window in days.                                      |
-| `BACKUP_CRON_SCHEDULE`                | Cron expression for backup schedule.                                        |
-| `BACKUP_RESTORE_VALIDATION_URL`       | Optional disposable database URL for restore smoke validation.              |
+| `BACKUP_CRON_SCHEDULE`                | Cron expression for the nightly backup schedule (cron-leader timing). The ONLY backup setting still read from the environment. |
 | `AUDIT_ARCHIVE_DATABASE_URL`          | Preferred optional archive database for audit retention.                    |
 | `AUDIT_LOG_ARCHIVE_DATABASE_URL`      | Backward-compatible archive database alias.                                 |
 | `SHADOW_DATABASE_URL`                 | Optional Prisma shadow database URL for migration validation.               |
+
+> **Backups are configured in-app, not by environment (#2095).** The S3 bucket,
+> region, access key/secret, retention window, restore-validation shadow
+> database URL, and the enabled switch all live in the encrypted
+> `IntegrationCredential` store and are managed at **Admin → Integrations →
+> Database Backups** (`/admin/backups`). The legacy `BACKUP_ENABLED`,
+> `BACKUP_S3_BUCKET`, `BACKUP_S3_REGION`, `BACKUP_S3_ACCESS_KEY_ID`,
+> `BACKUP_S3_SECRET_ACCESS_KEY`, `BACKUP_RETENTION_DAYS`, and
+> `BACKUP_RESTORE_VALIDATION_URL` variables are **no longer read**: a deployment
+> that still sets them sees a "no longer used — re-enter in-app, then remove from
+> the environment" warning on the Backups page. `BACKUP_CRON_SCHEDULE` is the one
+> exception and remains an environment variable (it is cron-leader timing, not
+> club configuration). The S3 access key/secret and the restore-validation DSN
+> are write-only and never returned to the browser or an audit row; the S3
+> destination (bucket/region) and credentials can only be changed by a Full
+> Admin.
 
 ## Legacy Finance Bridge
 

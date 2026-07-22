@@ -301,7 +301,8 @@ Admin route subfamilies are:
 | Email/SNS data | Contact, application, admin communications, email templates, SES/SNS webhook. | Rate limits for public senders, template escaping, SNS signature verification, email suppression records. | #616 for SES/SNS topic allowlist and outbound email abuse. |
 | Audit, webhook, cron, and provider logs | `AuditLog`, `WebhookLog`, `CronJobRun`, Xero operation/inbound records. | Structured logging with redaction helpers for known sensitive URL tokens; webhook logs redact error text. | #615/#616 for callback URL and token redaction review; compromised log reader threat below. |
 | CI/deploy secrets | GitHub Actions secrets/vars, `.env`, Compose, GHCR tokens, Sentry token. | CI permission scoping, gitleaks, deployment docs warn not to commit secrets. | #619 for workflow permissions, provenance, and secret-scope review. |
-| Encrypted integration credentials (#2079, #2082) | `IntegrationCredential` (Xero client id/secret/webhook key, wrapped Xero token key; Stripe secret/publishable/webhook-signing keys; Google/Backup later). | AES-256-GCM under an HKDF-SHA256 key derived from `AUTH_SECRET`/`NEXTAUTH_SECRET`, per-write random IV, AAD context-binding to `(provider,key,labelVersion)`; write-only Full-Admin API; secret values never returned/logged/exported; excluded from config-transfer. The Stripe publishable key is the ONE value delivered to the browser (it is not secret) — at runtime via `GET /api/stripe/publishable-key`, never a secret. | See "Credentials at rest" below. |
+| Encrypted integration credentials (#2079, #2082, #2095) | `IntegrationCredential` (Xero client id/secret/webhook key, wrapped Xero token key; Stripe secret/publishable/webhook-signing keys; Backup S3 access key/secret, restore-validation DSN, and non-secret destination/config; Google later). | AES-256-GCM under an HKDF-SHA256 key derived from `AUTH_SECRET`/`NEXTAUTH_SECRET`, per-write random IV, AAD context-binding to `(provider,key,labelVersion)`; write-only Full-Admin API; secret values never returned/logged/exported; excluded from config-transfer. The Stripe publishable key is the ONE value delivered to the browser (it is not secret) — at runtime via `GET /api/stripe/publishable-key`, never a secret. | See "Credentials at rest" and "Backup S3 blast radius" below. |
+| Backup S3 destination + credentials (#2095) | `IntegrationCredential` provider `backup`; consumed by `src/lib/backup.ts` (pg_dump → gzip → `aws s3 cp`) and the `/admin/backups` surface. | S3 access key/secret and the restore-validation DSN are write-only Full-Admin secrets (never returned/logged); the destination (bucket/region) is ALSO Full-Admin-only to write even though it is not secret (see below); the S3 secrets ride the child process env (`AWS_*`), never argv, and the Postgres password rides `PGPASSWORD`, never argv; bucket/region are strictly format-validated before any CLI call. | See "Backup S3 blast radius" below. |
 
 ## Credentials at rest (#2079)
 
@@ -337,6 +338,43 @@ that single secret:
   audit row, or config-transfer export; the credential entity is deliberately not
   registered for export, and the `ciphertext`/`authTag` field names are also in
   the config-transfer forbidden-field patterns as defence in depth.
+
+## Backup S3 blast radius (#2095)
+
+The managed backup uploads a **full `pg_dump` of the production database** to the
+configured S3 bucket. That makes the backup subsystem a first-class exfiltration
+surface, not just a durability feature:
+
+- **The destination is privileged even though it is not secret.** Anyone who can
+  change the S3 bucket/region can redirect the entire database dump to a bucket
+  they control. So destination writes are **Full-Admin only** (same tier as the
+  credentials), enforced in `POST /api/admin/backups/config`, not merely
+  support-area edit. Support-area edit can toggle enabled/retention but never the
+  destination or credentials. Every config change writes a metadata-only audit
+  entry (`backup.config.set`); credential writes audit as
+  `integration.credential.set`; run-now audits as `backup.run.now`.
+- **Bucket/region are validated before any CLI call.** They are interpolated into
+  `aws s3 cp` (via `execFileSync` array-args, which are injection-safe) and an
+  `s3://…` URI, so a strict bucket regex and `^[a-z0-9-]+$` region regex reject
+  malformed/surprising input at write time.
+- **Credentials never reach argv.** The S3 access key/secret ride the child
+  process environment (`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`); the Postgres
+  connection password rides `PGPASSWORD` (moved off the `pg_dump`/`psql` command
+  line in #2095) — neither is visible in a host `ps` listing.
+- **Decrypt failure fails loudly.** Backups run unattended from cron, so a
+  post-rotation GCM decrypt failure on the backup credentials is surfaced as a
+  **`FAILURE` cron run + error Sentry check-in** (the disaster-recovery path can
+  never silently disable itself), plus a "re-enter credentials" banner on the
+  Backups page. The Backup row also joins the unified "needs re-entry" aggregate.
+- **Cross-process run lock.** Run-now and the nightly cron both claim a
+  `BackupRun` row under a `pg_advisory_xact_lock`, so no two containers dump at
+  once; a run whose container died mid-dump is reaped to `FAILURE` after a
+  staleness window rather than wedging the lock. Local artifacts live on per-
+  container tmpfs and are ephemeral — only S3 and the DB run record are
+  authoritative.
+- **Restore-validation DSN.** When set, each backup is restored into a disposable
+  shadow database and smoke-checked; the DSN is a write-only Full-Admin secret and
+  the engine refuses it if it equals the live `DATABASE_URL`.
 
 ## Threat Model By Actor
 
