@@ -101,11 +101,11 @@ const BOOKING_TONES: Record<BookingStatus, ToneEntry> = {
 // indigo (275) and REFUNDED = purple (315).
 const PAYMENT_TONES: Record<PaymentStatus, ToneEntry> = {
   PENDING: { tone: "warning", Icon: Clock },
-  PROCESSING: { tone: "indigo", Icon: Loader2 },
+  PROCESSING: { tone: "cat3", Icon: Loader2 },
   SUCCEEDED: { tone: "success", Icon: CheckCircle2 },
   FAILED: { tone: "danger", Icon: XCircle },
-  REFUNDED: { tone: "purple", Icon: Undo2 },
-  PARTIALLY_REFUNDED: { tone: "teal", Icon: Undo2 },
+  REFUNDED: { tone: "cat1", Icon: Undo2 },
+  PARTIALLY_REFUNDED: { tone: "cat4", Icon: Undo2 },
 };
 
 const SUBSCRIPTION_TONES: Record<SubscriptionStatus, ToneEntry> = {

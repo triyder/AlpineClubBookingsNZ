@@ -12,12 +12,14 @@ import { CHIP_TONE_CLASSES } from "@/lib/chip-tones";
 // `bg-<scale>-3 text-<scale>-11` step pattern (G2b-guaranteed AA, theme-following).
 // Every status keeps a UNIQUE tone: the four semantic scales carry the clearly
 // semantic states (CONFIRMED=success, CANCELLED=danger, PAID=info,
-// PAYMENT_PENDING=warning-primary amber), and the categorical scales cat1..cat5
+// PAYMENT_PENDING=warning-primary amber), and the categorical scales cat1..cat6
 // carry the sibling states that share a hue family, assigned by hue proximity to
 // the previous palette (PENDING yellow→cat5 olive-lime, AWAITING_REVIEW sky→cat2
 // cyan, COMPLETED slate→cat3, BUMPED orange→cat4, WAITLISTED purple→cat1).
-// WAITLIST_OFFERED keeps the categorical brand-teal (still load-bearing, retires
-// in P4). Meaning is always carried by icon + label, never colour alone.
+// WAITLIST_OFFERED → cat6 (#2218 — the generated teal 6th scale that supplied the
+// booking column's sixth distinguisher and retired the last --hue-* pair; verified
+// distinct: step-11 accent text ΔE2000 ≥ 14.8 from every sibling). Meaning is
+// always carried by icon + label, never colour alone.
 export const bookingStatusClasses: Record<string, string> = {
   DRAFT:            CHIP_TONE_CLASSES.neutral,
   PENDING:          CHIP_TONE_CLASSES.cat5,
@@ -29,7 +31,7 @@ export const bookingStatusClasses: Record<string, string> = {
   CANCELLED:        CHIP_TONE_CLASSES.danger,
   BUMPED:           CHIP_TONE_CLASSES.cat4,
   WAITLISTED:       CHIP_TONE_CLASSES.cat1,
-  WAITLIST_OFFERED: CHIP_TONE_CLASSES.teal,
+  WAITLIST_OFFERED: CHIP_TONE_CLASSES.cat6,
 };
 
 // test seam

@@ -39,14 +39,13 @@ function listRepoSourceFiles(): string[] {
   return listSourceFiles("src");
 }
 
-// #2190 P4 — the categorical-teal allowlist is now EMPTY. Its last entry,
-// `admin-booking-calendar.tsx`, painted WAITLIST_OFFERED as a raw Tailwind teal
-// solid swatch; P4 moved that swatch onto the categorical `bg-cat2-9` step token,
-// so no source file names a raw Tailwind `teal-*` utility. The only surviving
-// teal is the load-bearing `--hue-teal` chip PAIR behind booking-status
-// WAITLIST_OFFERED (`CHIP_TONE_CLASSES.teal`) — a token, not a raw utility, so it
-// is invisible to the brand-teal regex below. Everything else reaches the brand
-// accent through semantic tokens (`--primary`, etc.).
+// #2190 P4 — the categorical-teal allowlist is now EMPTY, and #2218 retired the
+// legacy `--hue-*` accent system entirely. `admin-booking-calendar.tsx` painted
+// WAITLIST_OFFERED as a raw Tailwind teal swatch; it now uses the categorical
+// `bg-cat6-9` step token (the generated teal 6th scale), so no source file names
+// a raw Tailwind `teal-*` utility and no chip depends on `--hue-teal`. Everything
+// reaches the brand accent through semantic tokens (`--primary`, etc.) and every
+// categorical status hue through the cat1..cat6 scales.
 const CATEGORICAL_TEAL_ALLOWLIST = new Set<string>(
   ([] as string[]).map((path) => path.replaceAll("\\", "/")),
 );

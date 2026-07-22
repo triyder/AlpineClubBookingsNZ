@@ -282,7 +282,6 @@ describe("#2146 print always renders the light palette", () => {
       "--card-foreground: oklch(0.985 0 0)",
       "--danger: oklch(0.84 0.11 27)",
       "--success: oklch(0.84 0.11 150)",
-      "--hue-teal: oklch(0.84 0.11 185)",
     ]) {
       expect(screenOnly).toContain(declaration);
     }

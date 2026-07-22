@@ -32,9 +32,9 @@ interface CalendarBooking {
 // mode). #2190 P4 evicts the last two raw utilities: DRAFT's raw light-grey
 // utility becomes the theme-following `bg-muted` (a faint, de-emphasised draft
 // surface in both modes), and WAITLIST_OFFERED's raw Tailwind teal fill becomes
-// the categorical `bg-cat2-9` (teal-cyan, mode-consistent, distinct from
-// WAITLISTED's cat1-9). The file no longer needs a neutral- or teal-allowlist
-// entry.
+// the categorical `bg-cat6-9` (#2218 — the same teal 6th scale its chip uses,
+// mode-consistent, distinct from WAITLISTED's cat1-9). The file no longer needs a
+// neutral- or teal-allowlist entry.
 export const STATUS_COLORS: Record<string, string> = {
   DRAFT: "bg-muted",
   PENDING: "bg-warning-9",
@@ -45,7 +45,7 @@ export const STATUS_COLORS: Record<string, string> = {
   CANCELLED: "bg-danger-9",
   BUMPED: "bg-warning-9",
   WAITLISTED: "bg-cat1-9",
-  WAITLIST_OFFERED: "bg-cat2-9",
+  WAITLIST_OFFERED: "bg-cat6-9",
 };
 
 const ALL_STATUSES = Object.keys(STATUS_COLORS);
