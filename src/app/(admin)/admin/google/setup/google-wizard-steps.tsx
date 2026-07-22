@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { ExternalLink } from "lucide-react";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -283,6 +284,15 @@ export function VerifyStep({
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState("");
 
+  // On a session-mismatch verify failure the signIn callback redirects back
+  // here with `?googleVerifyError=1` (src/lib/auth.ts). Without this the
+  // operator would land on the verify step with no sign anything went wrong.
+  // Success needs no param handling: the callback records verification, so the
+  // freshly-loaded context reports `verified` and the green Alert below shows.
+  const searchParams = useSearchParams();
+  const verifyFailed =
+    searchParams?.get("googleVerifyError") === "1" && !context.verified;
+
   const canVerify =
     context.isFullAdmin &&
     context.credentials.client_id.set &&
@@ -331,6 +341,13 @@ export function VerifyStep({
         </p>
       </div>
 
+      {verifyFailed ? (
+        <Alert variant="error" title="Verification couldn't be completed">
+          Verification couldn&apos;t be completed — make sure you&apos;re signed
+          in as the same Full Admin who started it, then try again.
+        </Alert>
+      ) : null}
+
       {context.verified ? (
         <Alert variant="success" title="Verified">
           A real Google sign-in round-trip completed successfully. You can now
@@ -346,9 +363,16 @@ export function VerifyStep({
       ) : (
         <Alert variant="warning" title="Not verified yet">
           {context.credentials.client_id.set &&
-          context.credentials.client_secret.set
-            ? "Run the verification round-trip below. If it fails, re-check the Client ID, Client secret, and the redirect URI in Google Cloud."
-            : "Enter both credentials on the previous step, then verify here."}
+          context.credentials.client_secret.set ? (
+            <>
+              Run the verification round-trip below. If the Client ID, Client
+              secret, or redirect URI is wrong, Google will bounce you to the
+              login page with an error instead of returning here — come back to
+              this page and retry after fixing them in Google Cloud.
+            </>
+          ) : (
+            "Enter both credentials on the previous step, then verify here."
+          )}
         </Alert>
       )}
 

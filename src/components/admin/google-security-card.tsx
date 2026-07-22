@@ -187,11 +187,12 @@ export function GoogleSecurityCard({
 
         {!canEnable && !needsReentry && (
           <Alert variant="warning" title="Finish setup before enabling">
-            Google sign-in is set up and verified in-app — no environment
-            variables or restart. {credentialsConfigured
-              ? "Your credentials are stored but not yet verified."
-              : "Enter your Google Cloud OAuth credentials"} and complete a
-            verification round-trip on the{" "}
+            Google sign-in is set up entirely in-app — no environment variables
+            or restart.{" "}
+            {credentialsConfigured
+              ? "Your credentials are stored but not yet verified — complete a verification round-trip"
+              : "Enter your Google Cloud OAuth credentials and complete a verification round-trip"}{" "}
+            on the{" "}
             <Link
               href="/admin/google/setup"
               className="inline-flex items-center gap-1 font-medium underline underline-offset-4"
