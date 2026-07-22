@@ -577,53 +577,10 @@ require_non_placeholder_env_key() {
   fi
 }
 
-require_boolean_env_key() {
-  local key="$1"
-  local default_value="${2:-}"
-  local value
-
-  value="$(trim_whitespace "$(get_env_file_value "$key")")"
-  if [ -z "$value" ]; then
-    value="$default_value"
-  fi
-
-  case "$value" in
-    true|false) ;;
-    *)
-      echo ".env entry must be true or false: $key" >&2
-      return 1
-      ;;
-  esac
-}
-
-require_positive_integer_env_key() {
-  local key="$1"
-  local default_value="${2:-}"
-  local value
-
-  value="$(trim_whitespace "$(get_env_file_value "$key")")"
-  if [ -z "$value" ]; then
-    value="$default_value"
-  fi
-
-  if ! printf '%s' "$value" | grep -Eq '^[1-9][0-9]*$'; then
-    echo ".env entry must be a positive integer: $key" >&2
-    return 1
-  fi
-}
-
-env_key_is_true() {
-  local key="$1"
-  local default_value="${2:-false}"
-  local value
-
-  value="$(trim_whitespace "$(get_env_file_value "$key")")"
-  if [ -z "$value" ]; then
-    value="$default_value"
-  fi
-
-  [ "$value" = "true" ]
-}
+# NOTE: require_boolean_env_key / require_positive_integer_env_key /
+# env_key_is_true were removed with the BACKUP_ENABLED / BACKUP_RETENTION_DAYS
+# preflight (#2095) — backup config is DB-backed now and no other .env key needs
+# them. Reintroduce them if a future boolean/integer .env key appears.
 
 warn_legacy_xero_env() {
   # Xero credentials moved to encrypted, DB-backed storage (#2079). The legacy
@@ -650,6 +607,23 @@ warn_legacy_stripe_env() {
     value="$(trim_whitespace "$(get_env_file_value "$key")")"
     if [ -n "$value" ]; then
       warn "Legacy $key is set but no longer used — Stripe credentials are configured in-app now (#2082). Remove it from .env."
+    fi
+  done
+}
+
+warn_legacy_backup_env() {
+  # Backup configuration moved to encrypted, DB-backed storage (#2095). The
+  # legacy BACKUP_ENABLED / BACKUP_S3_* / BACKUP_RETENTION_DAYS /
+  # BACKUP_RESTORE_VALIDATION_URL env vars are ignored by the app now; warn
+  # (never fail) so operators know to remove them after migrating config in-app
+  # at Admin → Backups. BACKUP_CRON_SCHEDULE is deliberately NOT listed — it is
+  # cron-leader timing and legitimately stays in the environment.
+  local key
+  local value
+  for key in BACKUP_ENABLED BACKUP_S3_BUCKET BACKUP_S3_REGION BACKUP_S3_ACCESS_KEY_ID BACKUP_S3_SECRET_ACCESS_KEY BACKUP_RETENTION_DAYS BACKUP_RESTORE_VALIDATION_URL; do
+    value="$(trim_whitespace "$(get_env_file_value "$key")")"
+    if [ -n "$value" ]; then
+      warn "Legacy $key is set but no longer used — backup configuration is managed in-app now (#2095). Remove it from .env."
     fi
   done
 }
@@ -738,26 +712,18 @@ validate_env_contract() {
   require_non_placeholder_env_key SES_SNS_TOPIC_ARN
   require_non_placeholder_env_key EMAIL_FROM
   require_non_placeholder_env_key LEGACY_DASHBOARD_EXPORT_TOKEN
-  require_boolean_env_key BACKUP_ENABLED false
-  require_positive_integer_env_key BACKUP_RETENTION_DAYS 7
+  # Backup configuration moved to the encrypted, DB-backed store in-app (#2095):
+  # BACKUP_ENABLED / BACKUP_RETENTION_DAYS / BACKUP_S3_* / BACKUP_RESTORE_VALIDATION_URL
+  # are no longer read from .env, so they are not validated here — only warned
+  # about below. BACKUP_CRON_SCHEDULE legitimately stays env-driven (cron-leader
+  # timing) and defaults to "0 3 * * *" when unset.
 
   domain="$(trim_whitespace "$(get_env_file_value DOMAIN)")"
   require_domain_matches_url NEXTAUTH_URL "$domain"
 
   warn_legacy_xero_env
   warn_legacy_stripe_env
-
-  if env_key_is_true BACKUP_ENABLED false; then
-    require_env_key BACKUP_CRON_SCHEDULE
-
-    if [ -n "$(trim_whitespace "$(get_env_file_value BACKUP_S3_BUCKET)")" ]; then
-      require_non_placeholder_env_key BACKUP_S3_BUCKET
-      require_non_placeholder_env_key BACKUP_S3_ACCESS_KEY_ID
-      require_non_placeholder_env_key BACKUP_S3_SECRET_ACCESS_KEY
-    else
-      warn "BACKUP_ENABLED=true with no BACKUP_S3_BUCKET. Backups will stay local to the app container."
-    fi
-  fi
+  warn_legacy_backup_env
 }
 
 using_prebuilt_images() {
@@ -1037,19 +1003,21 @@ validate_runtime_image_contract() {
     command -v wget >/dev/null
   ' >/dev/null
 
-  if env_key_is_true BACKUP_ENABLED false; then
-    docker run --rm --entrypoint sh "$app_image_ref" -lc 'command -v pg_dump >/dev/null' >/dev/null || {
-      echo "BACKUP_ENABLED=true but the app image does not contain pg_dump" >&2
-      return 1
-    }
+  # Backups are configured in-app now (#2095), so the image must ALWAYS be
+  # backup-capable — the enabled switch and S3 destination live in the DB and can
+  # be turned on at runtime with no redeploy. Gating these checks on a (now
+  # unread) BACKUP_ENABLED env var would silently skip them once operators follow
+  # the docs and remove the var, shipping an image that cannot back up. So the
+  # pg_dump and AWS CLI presence checks are unconditional.
+  docker run --rm --entrypoint sh "$app_image_ref" -lc 'command -v pg_dump >/dev/null' >/dev/null || {
+    echo "The app image does not contain pg_dump, which the in-app backup job requires" >&2
+    return 1
+  }
 
-    if [ -n "$(trim_whitespace "$(get_env_file_value BACKUP_S3_BUCKET)")" ]; then
-      docker run --rm --entrypoint sh "$app_image_ref" -lc 'command -v aws >/dev/null' >/dev/null || {
-        echo "BACKUP_S3_BUCKET is set but the app image does not contain the AWS CLI" >&2
-        return 1
-      }
-    fi
-  fi
+  docker run --rm --entrypoint sh "$app_image_ref" -lc 'command -v aws >/dev/null' >/dev/null || {
+    echo "The app image does not contain the AWS CLI, which durable (S3) backups require" >&2
+    return 1
+  }
 }
 
 verify_postgres_query() {
