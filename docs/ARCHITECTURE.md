@@ -325,16 +325,13 @@ enforce this:
 - **Brand accent.** No literal Tailwind `bg-`, `text-`, or `border-` `teal-*`
   utility under `src/` (the check is scoped to those three prefixes; `ring-`,
   `divide-`, `fill-`, and gradient `from-`/`to-` teal are not currently
-  matched). Two files are allowlisted, each because `--hue-*` has no equivalent
-  for the shape of colour they need. `src/components/admin-booking-calendar.tsx`
-  paints each booking status as a SOLID swatch (`bg-teal-500`), and `--hue-*` is
-  defined only as a muted-background / accent-text PAIR.
-  `src/app/(admin)/admin/dashboard/page.tsx` tints the Chore Roster quick-link
-  tile on the Tailwind **-50/-600** convention, whereas the `--hue-*` pair is
-  pinned at **-100/-800**; it is the fifth of five identically-built tiles whose
-  blue/green/purple/orange siblings are all -50/-600, so migrating it alone
-  would visibly break the row. Re-weighting the whole row is a redesign, not a
-  drive-by. Every other categorical teal (the waitlist-offered chip, the audit
+  matched). One file is allowlisted (the final teal entry, evicted in P4):
+  `src/components/admin-booking-calendar.tsx` paints each booking status as a
+  SOLID swatch (`bg-teal-500`), and `--hue-*` is defined only as a
+  muted-background / accent-text PAIR, so there is no clean token for a standalone
+  solid fill. The dashboard Chore Roster tile was migrated onto the brand role
+  tokens (`bg-accent` / `text-primary`, M9, #2188 P2) and is no longer
+  allowlisted. Every other categorical teal (the waitlist-offered chip, the audit
   `family` badge, the family-group `GROUP_CREATE` badge) reaches its hue through
   `CHIP_TONE_CLASSES.teal` in `src/lib/chip-tones.ts`, the single source of
   truth for chip tone classes — those were already -100/-800 pairs, so the
@@ -352,31 +349,31 @@ enforce this:
   solid-fill status chips and swatches, and the member-import wizard's solid
   near-black active-step emphasis border). Per-file granularity means an entry forfeits
   gate coverage on that file's other occurrences — prefer fixing a stray over
-  adding an entry. Still not repo-wide: the member-facing
-  `src/app/(authenticated)`/`(public)` trees and the shared `src/components`
-  root keep raw neutrals and would have to migrate before widening further.
+  adding an entry. As of #2188 P2 the contract is **repo-wide** (the member-facing
+  `(authenticated)`/`(public)`, `(lodge)`, `(website)`, shared `components`, and
+  root trees are all migrated at source), with only the theme-aware-kiosk FAMILY
+  excluded (B8, until #2189 P3).
 
-The dark-mode colored-callout pass in `globals.css` (#1248) re-tints literal
-Tailwind `bg-{family}-50/100/200`, `text-{family}-600..950`, and
-`border-{family}-100..300` inside `app-theme-scope`. It is a UNIFORM,
-palette-wide block covering every Tailwind family, not a teal-specific shim, so
-its teal rows are kept even though the migrations above left few teal literals
-behind: dropping them alone would make the block asymmetric for no benefit. They
-are also still load-bearing — the allowlisted dashboard tile's `bg-teal-50` and
-`text-teal-600` are exactly what this pass re-tints, which is why that tile
-dark-adapts correctly while staying on the -50/-600 tile convention in light
-mode. The calendar's `bg-teal-500` is outside the pass's range (it only remaps
-`-50/-100/-200` fills) and does not depend on it.
+The dark-mode colored-callout pass (#1248) that used to re-tint literal Tailwind
+`bg-{family}-50/100/200` / `text-{family}-600..950` / `border-{family}-100..300`
+inside `app-theme-scope` was **deleted in #2188 P2** — every colored surface now
+carries a scale token at source (`bg-danger-3` / `text-danger-11` / the `cat1..5`
+scales) that adapts per mode by construction, so no re-tint pass is needed. The
+dashboard Chore Roster tile that used to depend on that pass (its `bg-teal-50` /
+`text-teal-600` were what it re-tinted) was migrated onto the brand role tokens
+(`bg-accent` / `text-primary`, M9) in the same phase. The only literal teal left
+is the calendar's `bg-teal-500` status swatch (the final teal allowlist entry,
+evicted in P4).
 
 **Print and PDF always render the LIGHT palette** (#2146). Paper and the
 generated PDF page are white, so dark mode must never reach them. Rather than
 stacking `!important` overrides on the print block — which cannot win against a
 token a descendant sets on itself, such as `Card`'s own `text-card-foreground` —
 every rule that installs the dark palette is wrapped in `@media not print`: the
-`:root`-level `.dark` token ramp, the `.dark .app-theme-scope` token block, and
-the literal-valued colored-callout pass. The token-driven neutral remap needs no
-wrapper because it resolves through `--card` / `--foreground` and self-heals once
-those are light. The `@media print` block then only pins `color-scheme: light`
+`:root`-level `.dark` token ramp and the `.dark .app-theme-scope` generated
+core-token block (the two surviving dark blocks after #2188 P2 deleted the
+neutral and colored-callout remaps). The `@media print` block then only pins
+`color-scheme: light`
 (the one `!important` it needs, because `next-themes` writes `color-scheme` as an
 inline style on `<html>`) plus the page/section layout rules. The
 `html2canvas`-based **Download PDF** path (`src/lib/report-pdf.ts`) is the same

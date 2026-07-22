@@ -62,6 +62,30 @@
   </div>
 </div>
 
+<h2 style="font-size:14px;margin:18px 0 6px">M2/M5-adjacent — how the STATUS CHIPS actually ship (owner: veto here if unwanted)</h2>
+<div class="sub" style="margin-bottom:8px">The orange→warning fold above is true for a standalone warning callout. But the booking/payment <b>status chips</b> deviate: <b>BUMPED</b> and <b>PARTIALLY_REFUNDED</b> ship on <b>cat4</b> (categorical), and <b>PENDING</b> (booking) ships on <b>cat5</b> — NOT the warning scale. Reason: amber owns warning-primary (PAYMENT_PENDING → warning), and the status-map colour-uniqueness constraint forbids two warning chips in one column. So the orange/yellow siblings re-home to categorical slots by hue proximity. This is the M2/M5-adjacent deviation — meaning is carried by icon + label, never colour alone.</div>
+<div class="grid">
+  <div class="mode light">
+    <h2>Light — status chips (bg step-3 / text step-11)</h2>
+    <div class="strips" style="gap:10px">
+      <span class="chip" style="background:#fee5d7;color:#a03300">● BUMPED (cat4)</span>
+      <span class="chip" style="background:#fee5d7;color:#a03300">● PARTIALLY_REFUNDED (cat4)</span>
+      <span class="chip" style="background:#e6f0ce;color:#516600">● PENDING (cat5)</span>
+      <span class="chip" style="background:#fee9b2;color:#815100">● PAYMENT_PENDING (warning)</span>
+    </div>
+  </div>
+  <div class="mode dark">
+    <h2>Dark — status chips</h2>
+    <div class="strips" style="gap:10px">
+      <span class="chip" style="background:#341f11;color:#f79957">● BUMPED (cat4)</span>
+      <span class="chip" style="background:#341f11;color:#f79957">● PARTIALLY_REFUNDED (cat4)</span>
+      <span class="chip" style="background:#222715;color:#a5c242">● PENDING (cat5)</span>
+      <span class="chip" style="background:#2e230e;color:#e1a83b">● PAYMENT_PENDING (warning)</span>
+    </div>
+  </div>
+</div>
+<style>.chip{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:600}</style>
+
 <script>
 const RAW9 = ["#ef4444","#f97316","#f59e0b","#84cc16","#10b981","#06b6d4","#3b82f6","#8b5cf6","#d946ef"];
 const CAT9L = ["#7c5cff","#189ab4","#d6409f","#e8730c","#8aa614"];
