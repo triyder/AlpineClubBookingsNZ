@@ -7,10 +7,19 @@ import {
 } from "../theme-substrate";
 import {
   sweepGuarantees,
+  sweepDerivedMutedForeground,
+  DERIVED_MUTED_SURFACE_STEPS,
   g3Distinctness,
   G5A_CARD_SEPARATION,
   CHIP_TEXT_FLOOR,
+  AA_TEXT,
 } from "../guarantees";
+import {
+  DEFAULT_CLUB_THEME_VALUES,
+  TOKOROA_CLUB_THEME_VALUES,
+  deriveAppMutedForeground,
+  themeSeedsFromValues,
+} from "../../club-theme-schema";
 import measurements from "../../../../docs/theme/phase0/data/measurements.json";
 
 /*
@@ -40,6 +49,35 @@ describe("theme guarantee sweep", () => {
       sweepGuarantees(theme, lightN12, label),
     );
     expect(failures).toEqual([]);
+  });
+
+  it("G2c: the SHIPPED derived --muted-foreground tone clears AA on neutral steps 1–4, both modes, both seeds", () => {
+    const seeds = [
+      ["default", DEFAULT_CLUB_THEME_VALUES],
+      ["tokoroa", TOKOROA_CLUB_THEME_VALUES],
+    ] as const;
+    const failures = seeds.flatMap(([name, values]) => {
+      const tones = deriveAppMutedForeground(values);
+      const s = themeSeedsFromValues(values);
+      return [
+        ...sweepDerivedMutedForeground(
+          tones.light,
+          buildThemeSubstrate(s, "light"),
+          `${name}/light`,
+        ),
+        ...sweepDerivedMutedForeground(
+          tones.dark,
+          buildThemeSubstrate(s, "dark"),
+          `${name}/dark`,
+        ),
+      ];
+    });
+    // A failing cell reports its exact ratio; asserting on the empty list keeps
+    // the numbers in the failure message when CI goes red.
+    expect(failures).toEqual([]);
+    // Guard against a vacuous pass if the surface reach is ever zeroed.
+    expect(DERIVED_MUTED_SURFACE_STEPS).toBeGreaterThanOrEqual(4);
+    expect(AA_TEXT).toBe(4.5);
   });
 
   it("G2b (R11): status-chip text (step-11) clears AA on chip surface (step-3), every scale/mode/seed", () => {

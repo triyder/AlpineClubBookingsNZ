@@ -9,16 +9,27 @@
  *  G1  foreground (neutral-12) on scale steps 1–5      ≥ 4.5:1 (AA text)
  *  G2  muted-fg  (neutral-11) on scale steps 1–3       ≥ 4.5:1 (AA text)
  *  G2b status-chip text (step-11) on chip surface (step-3), every scale ≥ 4.5:1 (R11)
+ *  G2c SHIPPED derived --muted-foreground tone on neutral steps 1–4 ≥ 4.5:1 (AA text)
+ *      (the app-scope muted role's real endpoint, not the raw neutral-11 of G2)
  *  G3  muted-fg (neutral-11) vs foreground (neutral-12): distinctness ratio (recorded)
  *  G4  A4 solid-foreground on step-9 / step-10 fills    ≥ 4.5:1 (AA text)
  *  G5a card/page separation (neutral-1 vs neutral-2): ΔL floor + pinned shadow (J8)
  *  G5b --input/--ring (neutral-10) vs surfaces 1–3      ≥ 3:1
  */
 import { contrast, oklch, a4SolidForeground, type BuiltTheme } from "./theme-substrate";
-import { A2_INPUT_RING_NEUTRAL_STEP } from "./aliases";
+import { A2_INPUT_RING_NEUTRAL_STEP, ACCENT_NEUTRAL_STEP } from "./aliases";
 
 /** WCAG AA minimum for normal-size body text. */
 export const AA_TEXT = 4.5;
+
+/**
+ * G2c surface reach: the neutral steps the app-scope `--muted-foreground` tone can
+ * actually land on — `--card`/`--popover` (1), `--background` (2),
+ * `--muted`/`--secondary` (3), and `--accent` (4, the #2144 hover surface). The
+ * ceiling is `ACCENT_NEUTRAL_STEP` so the sweep tracks the alias map rather than a
+ * copied literal.
+ */
+export const DERIVED_MUTED_SURFACE_STEPS = ACCENT_NEUTRAL_STEP;
 /** G5b floor: interactive-boundary contrast against adjacent surfaces. */
 export const INPUT_RING_MIN = 3;
 /** G2b floor: status-chip text must clear AA (4.5:1) on its pale chip surface. */
@@ -38,7 +49,7 @@ export const G5A_CARD_SEPARATION = {
 } as const;
 
 export interface SweepFailure {
-  guarantee: "G1" | "G2" | "G2b" | "G4" | "G5a" | "G5b";
+  guarantee: "G1" | "G2" | "G2b" | "G2c" | "G4" | "G5a" | "G5b";
   cell: string;
   ratio: number;
   floor: number;
@@ -111,6 +122,39 @@ export function sweepGuarantees(
 /** G3 distinctness ratio (recorded, not a hard floor): muted-fg vs foreground. */
 export function g3Distinctness(theme: BuiltTheme): number {
   return round2(contrast(theme.neutralHex[10], theme.neutralHex[11]));
+}
+
+/**
+ * G2c — the SHIPPED app-scope `--muted-foreground` tone (the measured-AA endpoint
+ * `deriveAppMutedForeground` produces, NOT the raw neutral-11 of G2) must clear AA
+ * on every neutral surface it can land on, steps 1–`DERIVED_MUTED_SURFACE_STEPS`,
+ * for `theme`'s mode. Caller passes the tone for that mode so this stays a pure
+ * function of the built theme + the shipped tone (no schema import here); the
+ * sweep test wires the real default/tokoroa tones through it, both modes.
+ *
+ * This is what makes the step-4 `--accent` case CI-visible: G2 only reaches
+ * step-3 and measures the raw ramp, so a derived tone that lands sub-AA on the
+ * hover surface (Tokoroa light was 4.37:1) passed every existing sweep cell.
+ */
+export function sweepDerivedMutedForeground(
+  mutedTone: string,
+  theme: BuiltTheme,
+  cellPrefix: string,
+): SweepFailure[] {
+  const failures: SweepFailure[] = [];
+  const n = theme.neutralHex;
+  for (let i = 0; i < DERIVED_MUTED_SURFACE_STEPS; i++) {
+    const r = contrast(mutedTone, n[i]);
+    if (r < AA_TEXT) {
+      failures.push({
+        guarantee: "G2c",
+        cell: `${cellPrefix}/muted-fg/step${i + 1}`,
+        ratio: round2(r),
+        floor: AA_TEXT,
+      });
+    }
+  }
+  return failures;
 }
 
 const round2 = (n: number) => Math.round(n * 100) / 100;

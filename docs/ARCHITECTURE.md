@@ -221,12 +221,21 @@ the whole substance of the guard, so it is stated here in full — it is
 
 | Mode  | Checked surfaces |
 | ----- | ---------------- |
-| Light | `--brand-snow` (`--background`/`--card`/`--popover`), `--brand-mist` (`--muted`/`--secondary`/`--accent`), and the curated `--warning-muted` / `--info-muted` / `--success-muted` / `--danger-muted` panel fills |
-| Dark  | `--brand-deep` (`--background`), `--brand-charcoal` (`--card`/`--popover`/`--muted`/`--secondary`/`--accent`), and the same four curated `*-muted` fills in their `.dark` values |
+| Light | `--brand-snow` (`--background`/`--card`/`--popover`), `--brand-mist` (`--muted`/`--secondary`), `--accent` (neutral-4), and the curated `--warning-muted` / `--info-muted` / `--success-muted` / `--danger-muted` panel fills |
+| Dark  | `--brand-deep` (`--background`), `--brand-charcoal` (`--card`/`--popover`/`--muted`/`--secondary`), `--accent` (neutral-4), and the same four curated `*-muted` fills in their `.dark` values |
 
 Both **brand** surfaces are checked per mode, not only the base one, because
 that is what makes the guard hold for an endpoint-crossing palette, where moving
-toward one surface moves away from the other. The four **curated** `*-muted`
+toward one surface moves away from the other. **`--accent`** is checked as its
+own surface because #2144 split it off `--muted`/`--secondary`: it is neutral-4,
+one band DARKER than `--brand-mist` (neutral-3) in light and one band lighter in
+dark, and it is a genuine muted-text background — dropdown and command-menu
+shortcuts render `text-muted-foreground` inside `focus:bg-accent` items. Clamping
+against `--brand-mist` alone left the Tokoroa light tone at 4.37:1 on the hover
+surface; reading the true neutral-4 from each mode's substrate ramp restores it
+to 4.64:1. The guarantee sweep (`guarantee-sweep.test.ts`, G2c) measures the
+shipped derived tone against neutral steps 1–4 in both modes for both reference
+seeds, so a sub-AA step-4 cell fails CI. The four **curated** `*-muted`
 fills are checked because #1808 deliberately leaves them out of
 `app-theme-scope`: they are fixed while the derived tone slides with the brand
 ramp, which is the one pairing that can drift apart with nothing watching. They

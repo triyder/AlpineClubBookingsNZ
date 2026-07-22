@@ -37,6 +37,11 @@ function isStepRef(e: AliasEntry): e is StepRef {
 export const A2_INPUT_RING_NEUTRAL_STEP = 10;
 /** Border step (1-based) for the signed-off variant (b) Radix-subtle. */
 export const BORDER_NEUTRAL_STEP = 6;
+/** Neutral step (1-based) for `--accent` — one band off `--muted`/`--secondary`
+ * (neutral-3), the #2144 hover-surface fix. Exported so the derived
+ * muted-foreground clamp (`deriveAppMutedForeground`) checks the SAME step this
+ * table paints, rather than a copied literal that could drift. */
+export const ACCENT_NEUTRAL_STEP = 4;
 
 /** Core shadcn tokens. `--accent` = neutral-4 is one band off `--muted`/`--secondary`
  * = neutral-3 — the structural fix for the seven hover-dead #2144 buttons. */
@@ -45,7 +50,7 @@ export const CORE_ALIASES: Record<string, AliasEntry> = {
   "--card": { scale: "neutral", step: 1 },
   "--popover": { scale: "neutral", step: 1 },
   "--muted": { scale: "neutral", step: 3 },
-  "--accent": { scale: "neutral", step: 4, note: "hover/neutral accent surface" },
+  "--accent": { scale: "neutral", step: ACCENT_NEUTRAL_STEP, note: "hover/neutral accent surface" },
   "--primary": { scale: "accent", step: 9 },
   "--muted-foreground": { scale: "neutral", step: 11 },
   "--foreground": { scale: "neutral", step: 12 },

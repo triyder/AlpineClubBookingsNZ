@@ -196,6 +196,24 @@ export function buildThemeSubstrate(seeds: ThemeSeeds, mode: Appearance): BuiltT
   return { mode, graySeed, background: bg, neutralHex, neutralAlpha, bandL, scales };
 }
 
+/**
+ * Just the 12-step NEUTRAL ramp for a mode — byte-identical to
+ * `buildThemeSubstrate(seeds, mode).neutralHex`, but without the ~11 hue-scale
+ * generator calls a full build makes. Callers that need only neutral surfaces
+ * (`deriveBrandShims`, the app muted-foreground clamp) run per render, so this
+ * keeps that path an order of magnitude cheaper than a full substrate build.
+ */
+export function buildNeutralRamp(seeds: ThemeSeeds, mode: Appearance): string[] {
+  const { graySeed, bgLight, bgDark } = deriveGrayAndBg(seeds.neutralSource);
+  const bg = mode === "light" ? bgLight : bgDark;
+  return generateRadixColors({
+    appearance: mode,
+    accent: graySeed,
+    gray: graySeed,
+    background: bg,
+  }).grayScale;
+}
+
 /** A5 kiosk substrate (dark only) + its light-neutral-12 for the A4 ladder. */
 export function buildKioskTheme(): { theme: BuiltTheme; lightNeutral12: string } {
   const { background, graySeed, accent } = PINS.kiosk;

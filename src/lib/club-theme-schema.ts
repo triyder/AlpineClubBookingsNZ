@@ -1,7 +1,8 @@
 import {
-  buildThemeSubstrate,
+  buildNeutralRamp,
   type ThemeSeeds,
 } from "@/lib/theme/theme-substrate";
+import { ACCENT_NEUTRAL_STEP } from "@/lib/theme/aliases";
 import { serializeAppThemeTokens } from "@/lib/theme/app-tokens";
 
 export const CLUB_THEME_ID = "default";
@@ -181,8 +182,7 @@ export interface BrandShims {
  * ROLES, not column names — the four former columns are dead to code.
  */
 export function deriveBrandShims(theme: ClubThemeValues): BrandShims {
-  const light = buildThemeSubstrate(themeSeedsFromValues(theme), "light");
-  const n = light.neutralHex;
+  const n = buildNeutralRamp(themeSeedsFromValues(theme), "light");
   return {
     gold: theme.brandGold,
     deep: theme.brandDeep,
@@ -534,9 +534,15 @@ const SEMANTIC_MUTED_SURFACES_DARK = [
 ] as const;
 
 /**
- * The brand tokens whose VALUES the light clamp checks, named as they appear in
+ * The tokens whose VALUES the light clamp checks, named as they appear in
  * `globals.css`. `--brand-snow` backs `--background`/`--card`/`--popover`;
- * `--brand-mist` backs `--muted`/`--secondary`/`--accent`.
+ * `--brand-mist` backs `--muted`/`--secondary`. `--accent` is the #2144 hover
+ * surface — neutral-4, one band DARKER than `--brand-mist` (neutral-3), so it is
+ * the harder light surface and must be checked in its own right: dropdown/command
+ * shortcuts render `text-muted-foreground` inside `focus:bg-accent` items, and
+ * clamping against `--brand-mist` alone under-clamped the tone to 4.37:1 on
+ * step-4 for the Tokoroa palette. Its value is read from the mode's own substrate
+ * neutral ramp (see `deriveAppMutedForeground`).
  *
  * This list is the CONTRACT, not a convenience: `docs/ARCHITECTURE.md` publishes
  * it as "the surfaces the derived muted tone is guaranteed against", and
@@ -547,6 +553,7 @@ const SEMANTIC_MUTED_SURFACES_DARK = [
 export const APP_MUTED_FOREGROUND_LIGHT_SURFACE_TOKENS = [
   "--brand-snow",
   "--brand-mist",
+  "--accent",
   "--warning-muted",
   "--info-muted",
   "--success-muted",
@@ -557,6 +564,7 @@ export const APP_MUTED_FOREGROUND_LIGHT_SURFACE_TOKENS = [
 export const APP_MUTED_FOREGROUND_DARK_SURFACE_TOKENS = [
   "--brand-deep",
   "--brand-charcoal",
+  "--accent",
   "--warning-muted",
   "--info-muted",
   "--success-muted",
@@ -657,18 +665,24 @@ export type AppMutedForegroundTones = {
  * identically to primary text and the `muted` semantic role was inert.
  *
  * Each mode mixes its foreground 30% toward its own base surface and then
- * clamps for AA against the SIX surfaces that mode can put muted text on —
+ * clamps for AA against the SEVEN surfaces that mode can put muted text on —
  * `APP_MUTED_FOREGROUND_LIGHT_SURFACE_TOKENS` /
  * `APP_MUTED_FOREGROUND_DARK_SURFACE_TOKENS`:
  *
  * - light: `--brand-deep` toward `--brand-snow`, checked against `--brand-snow`
  *   (`--background`/`--card`/`--popover`), `--brand-mist`
- *   (`--muted`/`--secondary`/`--accent`), and the four curated light
- *   `*-muted` panel fills;
+ *   (`--muted`/`--secondary`), `--accent` (neutral-4, the #2144 hover surface),
+ *   and the four curated light `*-muted` panel fills;
  * - dark: `--brand-snow` toward `--brand-deep`, checked against `--brand-deep`
  *   (`--background`), `--brand-charcoal`
- *   (`--card`/`--popover`/`--muted`/`--secondary`/`--accent`), and the four
- *   curated dark `*-muted` panel fills.
+ *   (`--card`/`--popover`/`--muted`/`--secondary`), `--accent` (neutral-4), and
+ *   the four curated dark `*-muted` panel fills.
+ *
+ * `--accent` is neutral-4, a DISTINCT (darker light / lighter dark) band from the
+ * `--brand-mist`/`--brand-charcoal` step-3 surfaces since #2144, so it is read
+ * from each mode's own substrate ramp and checked separately — brand-mist alone
+ * left the tone at 4.37:1 on step-4 for the Tokoroa palette (a real
+ * `text-muted-foreground` on `focus:bg-accent` dropdown/command composition).
  *
  * Checking both BRAND surfaces per mode rather than only the base one is what
  * makes the guard hold for an ENDPOINT-CROSSING palette — one whose
@@ -689,17 +703,28 @@ export type AppMutedForegroundTones = {
 export function deriveAppMutedForeground(
   value: Partial<Record<keyof ClubThemeValues, unknown>> | null | undefined,
 ): AppMutedForegroundTones {
-  const s = deriveBrandShims(normaliseThemeValues(value));
+  const theme = normaliseThemeValues(value);
+  const s = deriveBrandShims(theme);
+  // The `--accent` surface (#2144) is neutral-4 in BOTH modes: a distinct band
+  // from `--muted`/`--secondary` (neutral-3 = `--brand-mist`). Read the true
+  // step-4 from each mode's own substrate ramp so the clamp measures the surface
+  // muted text actually lands on (`focus:bg-accent` items), not the step-3 shim.
+  const seeds = themeSeedsFromValues(theme);
+  const accentIndex = ACCENT_NEUTRAL_STEP - 1;
+  const lightAccent = buildNeutralRamp(seeds, "light")[accentIndex];
+  const darkAccent = buildNeutralRamp(seeds, "dark")[accentIndex];
 
   return {
     light: deriveMutedTone(s.deep, s.snow, [
       s.snow,
       s.mist,
+      lightAccent,
       ...SEMANTIC_MUTED_SURFACES_LIGHT,
     ]),
     dark: deriveMutedTone(s.snow, s.deep, [
       s.deep,
       s.charcoal,
+      darkAccent,
       ...SEMANTIC_MUTED_SURFACES_DARK,
     ]),
   };

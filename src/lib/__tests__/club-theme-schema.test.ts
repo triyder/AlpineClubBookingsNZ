@@ -17,7 +17,10 @@ import {
   themeSeedsFromValues,
 } from "@/lib/club-theme-schema";
 import { clubThemeUpdateSchema } from "@/lib/club-theme-update-schema";
-import { buildThemeSubstrate } from "@/lib/theme/theme-substrate";
+import {
+  buildNeutralRamp,
+  buildThemeSubstrate,
+} from "@/lib/theme/theme-substrate";
 
 const tinyPng =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
@@ -140,11 +143,21 @@ describe("deriveAppMutedForeground (#2145)", () => {
     "oklch(0.33 0.05 150)", // --success-muted
     "oklch(0.33 0.05 27)", // --danger-muted
   ];
+  // `--accent` (#2144) is neutral-4 in each mode — one band off `--muted`/
+  // `--secondary` (neutral-3 = brand-mist), read from the mode's own substrate
+  // ramp. It is a real muted-text surface (`focus:bg-accent` dropdown/command
+  // items) and the DARKER light band, so it is checked in its own right; mirrors
+  // the shipped clamp set in `deriveAppMutedForeground`.
+  const accentSurface = (
+    theme: typeof DEFAULT_CLUB_THEME_VALUES,
+    mode: "light" | "dark",
+  ) => buildNeutralRamp(themeSeedsFromValues(theme), mode)[3];
   const lightSurfaces = (theme: typeof DEFAULT_CLUB_THEME_VALUES) => {
     const s = deriveBrandShims(theme);
     return [
       s.snow, // --background / --card / --popover
-      s.mist, // --muted / --secondary / --accent
+      s.mist, // --muted / --secondary
+      accentSurface(theme, "light"), // --accent (neutral-4)
       ...SEMANTIC_MUTED_LIGHT,
     ];
   };
@@ -152,7 +165,8 @@ describe("deriveAppMutedForeground (#2145)", () => {
     const s = deriveBrandShims(theme);
     return [
       s.deep, // --background
-      s.charcoal, // --card / --popover / --muted / --secondary / --accent
+      s.charcoal, // --card / --popover / --muted / --secondary
+      accentSurface(theme, "dark"), // --accent (neutral-4)
       ...SEMANTIC_MUTED_DARK,
     ];
   };
