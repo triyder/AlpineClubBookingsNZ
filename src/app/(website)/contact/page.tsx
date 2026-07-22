@@ -94,6 +94,8 @@ export default async function ContactPage() {
           pageSlug="contact"
           keyPrefix="contact"
           clubIdentity={clubIdentity}
+          lodge={lodge ?? undefined}
+          contactRoleKey={contactRoleKey}
         />
       ) : (
         <ContactPageClient

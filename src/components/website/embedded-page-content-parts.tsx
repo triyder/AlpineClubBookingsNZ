@@ -22,6 +22,12 @@ type EmbeddedPageContentPartsProps = {
   // static config value. The (website) route group has no ClubIdentityProvider,
   // so this must come through props rather than a client hook.
   clubIdentity: ClubIdentity;
+  // Contact-form context, threaded the same way as clubIdentity so a
+  // {{contact-form}} embed renders the club address and the admin-configured
+  // Club Details committee role. Absent on pages that do not resolve them (the
+  // form then hides the address and falls back to the booking-officer heuristic).
+  lodge?: { name: string; address: string | null };
+  contactRoleKey?: string | null;
 };
 
 function galleryIdSlug(pageSlug: string) {
@@ -33,6 +39,8 @@ export function EmbeddedPageContentParts({
   pageSlug,
   keyPrefix = "embedded",
   clubIdentity,
+  lodge,
+  contactRoleKey,
 }: EmbeddedPageContentPartsProps) {
   const idSlug = galleryIdSlug(pageSlug);
 
@@ -58,6 +66,8 @@ export function EmbeddedPageContentParts({
             <ContactPageClient
               key={`${keyPrefix}-contact-form-${index}`}
               club={clubIdentity}
+              lodge={lodge}
+              contactRoleKey={contactRoleKey}
               showHero={false}
             />
           );
