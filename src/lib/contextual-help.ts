@@ -1092,6 +1092,35 @@ const adminHelpEntries: HelpEntry[] = [
     ),
   ),
   entry(
+    "/admin/calendar",
+    help(
+      "Events Calendar",
+      "The club events calendar for meetings, working bees, and committee video meetings. Every member sees it; committee members and admins with lodge edit can add, edit, and delete events, while other members are read-only.",
+      [
+        "Click a day (or New event) to add an event, and set a Repeat rule for recurring meetings such as the 3rd Tuesday of each month.",
+        "When editing a repeating event, choose This event only or All events in the series.",
+        "Tick Video meeting (MiroTalk) to attach a join link committee members and admins can open.",
+      ],
+      [
+        {
+          name: "Repeat",
+          description:
+            "Daily, weekly, monthly by day of month, or monthly by nth weekday, with an interval and an optional end (a date or a number of times).",
+        },
+        {
+          name: "Who can edit",
+          description:
+            "Committee members (an active committee assignment) and admins with lodge edit; all other members are read-only.",
+        },
+        {
+          name: "Video meeting (MiroTalk)",
+          description:
+            "Attaches a self-hosted MiroTalk room to the event; requires NEXT_PUBLIC_MIROTALK_URL to point at your MiroTalk instance.",
+        },
+      ],
+    ),
+  ),
+  entry(
     "/admin/lodge-instructions",
     help(
       "Lodge Instructions",
