@@ -39,25 +39,16 @@ function listRepoSourceFiles(): string[] {
   return listSourceFiles("src");
 }
 
-// The ONE remaining file where a literal Tailwind `teal-*` utility is still
-// allowed (#2137, final teal allowlist entry — evicted in P4):
-//
-// - `admin-booking-calendar.tsx` paints each status as a SOLID swatch
-//   (`WAITLIST_OFFERED: bg-teal-500`) with no tinted-background / accent-text
-//   pairing. `--hue-*` is defined only as such a pair, so there is no clean
-//   token equivalent for a standalone solid fill.
-//
-// #2188 P2 (M9): the Chore Roster dashboard tile completed its migration onto the
-// brand ROLE tokens (`bg-accent` + `text-primary`) so it follows the club accent,
-// and its allowlist entry was deleted. Every other categorical teal (the
-// waitlist-offered chip, the audit `family` badge, the family-group GROUP_CREATE
-// badge) reaches its hue through `CHIP_TONE_CLASSES.teal` / the `--hue-teal`
-// tokens. Everything else must reach the brand accent through semantic tokens
-// (`--primary`, etc.) so it follows the saved site colours.
-const CATEGORICAL_TEAL_ALLOWLIST = new Set(
-  [
-    "src/components/admin-booking-calendar.tsx",
-  ].map((path) => path.replaceAll("\\", "/")),
+// #2190 P4 — the categorical-teal allowlist is now EMPTY. Its last entry,
+// `admin-booking-calendar.tsx`, painted WAITLIST_OFFERED as a raw Tailwind teal
+// solid swatch; P4 moved that swatch onto the categorical `bg-cat2-9` step token,
+// so no source file names a raw Tailwind `teal-*` utility. The only surviving
+// teal is the load-bearing `--hue-teal` chip PAIR behind booking-status
+// WAITLIST_OFFERED (`CHIP_TONE_CLASSES.teal`) — a token, not a raw utility, so it
+// is invisible to the brand-teal regex below. Everything else reaches the brand
+// accent through semantic tokens (`--primary`, etc.).
+const CATEGORICAL_TEAL_ALLOWLIST = new Set<string>(
+  ([] as string[]).map((path) => path.replaceAll("\\", "/")),
 );
 
 describe("brand accent source contract", () => {
@@ -188,10 +179,12 @@ describe("on-solid AA source contract (F1, repo-wide)", () => {
 //
 // #2137 migrated the finance tree; #2144 swept the ~1,400 raw-neutral
 // occurrences out of the admin tree onto the same tokens, so both trees are
-// now gated. (Raw hex still exists in finance for chart colours —
-// `FINANCE_MIX_COLORS`, `ratio-explorer.tsx`, `trend-chart.tsx` — which is the
-// deliberate #1801 SVG-presentation-attribute carve-out and is out of scope
-// for this check.)
+// now gated. (Raw hex still exists in finance for the chart NEUTRALS —
+// `ratio-explorer.tsx`, `trend-chart.tsx` — the deliberate #1801
+// SVG-presentation-attribute carve-out, out of scope for this check.
+// `FINANCE_MIX_COLORS` is no longer a literal palette: #2190 P4 derives its
+// eight slots from the categorical cat scales, pinned by
+// `finance-chart-theme.test.ts`.)
 //
 // #2188 P2 — the neutral contract is now REPO-WIDE (incl. the kiosk family after P3) via
 // `listRepoSourceFiles()`, after P2 migrated every member-facing tree onto the
@@ -231,17 +224,14 @@ const THEMED_NEUTRAL_ALLOWLIST = new Set<string>(
     // Signage: `bg-black` letterboxes simulating a display screen.
     "src/app/(admin)/admin/display/builder/display-builder.tsx",
     "src/app/(admin)/admin/display/preview/page.tsx",
-    // Solid-fill chips paired with `text-white` (`bg-slate-600 text-white`,
-    // `border-slate-900 bg-slate-900 text-white`): opaque status chips, not
-    // surfaces — the dark shim deliberately does not remap them.
-    "src/components/admin/xero-record-activity-panel.tsx",
-    // `border-slate-900` on the active wizard-step chip: a solid near-black
-    // emphasis border outside the shim's border-{n}-100..300 remap range.
-    "src/app/(admin)/admin/members/_components/member-import-dialog.tsx",
-    // Solid booking-status swatches (`DRAFT: bg-gray-300`, `bg-gray-400`
-    // fallback): standalone opaque fills with no tinted/accent pairing, the
-    // same shape as this file's teal allowlist entry above.
-    "src/components/admin-booking-calendar.tsx",
+    // #2190 P4 — three former entries were the last "deferred work wearing an
+    // allowlist badge" and are now GONE: xero-record-activity-panel.tsx (solid
+    // slate PENDING chip + selected record pill) moved onto
+    // bg-foreground/text-background; member-import-dialog.tsx (active-step chip)
+    // moved onto border-foreground; admin-booking-calendar.tsx (DRAFT + fallback
+    // swatches, and the WAITLIST_OFFERED teal swatch) moved onto bg-muted and the
+    // categorical bg-cat2-9 step. All three now pass this contract directly.
+    //
     // NOTE: the roster-setup page and kiosk-lodge-instructions are NOT here —
     // #2189 P3 authored them (and the whole kiosk tree) on the fixed-seed
     // `--kiosk-*` tokens, so they pass this repo-wide contract directly. They
