@@ -7,6 +7,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ExternalLink, UserMinus } from "lucide-react";
 import { buildProfilePathWithReturnTo } from "@/lib/internal-return-path";
+import { useHelpWidgetHint } from "@/components/help-widget/help-widget-context";
 import { DatesStep } from "./_components/dates-step";
 import { GuestsStep } from "./_components/guests-step";
 import { ReviewStep } from "./_components/review-step";
@@ -122,6 +123,11 @@ export default function BookPage() {
     waitlistAlternateLodgeIds,
     setWaitlistAlternateLodgeIds,
   } = useBookingWizard();
+
+  // Hint the help widget which wizard step is active so its chips lead with the
+  // questions tagged for that step (epic #2094 C2). `step` is the wizard step id
+  // ("dates" | "guests" | "review" | "pay").
+  useHelpWidgetHint({ group: step });
 
   return (
     <div className="max-w-3xl space-y-6">

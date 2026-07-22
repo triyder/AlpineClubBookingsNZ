@@ -1,6 +1,7 @@
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
 import { AnalyticsConsent } from "@/components/analytics-consent";
+import { HelpWidgetPublic } from "@/components/help-widget/help-widget-public";
 import { SiteBanners } from "@/components/site-banners";
 import { WebsiteHeader } from "@/components/website-header";
 import { WebsiteFooter } from "@/components/website-footer";
@@ -98,6 +99,9 @@ export default async function WebsiteLayout({
         measurementId={process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID}
         nonce={nonce}
       />
+      {/* Public help widget: hardcoded llmEnabled=false; hides itself while the
+          AnalyticsConsent banner occupies the same bottom corner. */}
+      <HelpWidgetPublic />
     </div>
   );
 }

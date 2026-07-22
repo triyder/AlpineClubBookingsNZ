@@ -13,9 +13,10 @@ import type { HelpPageContent, HelpPageEntry } from "./types";
  * imported by `@/lib/help` (`index.ts`) and the corpus tests.
  */
 
-// The exact profile Family Group deep-link the member booking help dialog uses
-// today (src/components/booking-help-dialog.tsx). Imported (not hardcoded) so it
-// can never drift from the dialog's link.
+// The exact profile Family Group deep-link the booking help extras leaf uses
+// (src/app/(authenticated)/bookings/[id]/_components/booking-help-extras.tsx,
+// which replaced the retired BookingHelpDialog in epic #2094 C2). Imported (not
+// hardcoded) so it can never drift from that link.
 const PROFILE_FAMILY_GROUP_RETURN_TO_BOOK = buildProfilePathWithReturnTo(
   "/book",
   "family-group",

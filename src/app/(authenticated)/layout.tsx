@@ -9,6 +9,8 @@ import { MemberOnboardingWizard } from "@/components/member-onboarding-wizard";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { hasActiveHutLeaderAssignment } from "@/lib/hut-leader";
 import { ReportIssueWidget } from "@/components/report-issue-widget";
+import { HelpWidgetProvider } from "@/components/help-widget/help-widget-context";
+import { HelpWidgetMember } from "@/components/help-widget/help-widget-member";
 import { getCachedClubIdentity } from "@/lib/public-layout-config";
 import { clubThemeFontVariableClassName } from "@/lib/club-theme-fonts";
 import {
@@ -170,15 +172,18 @@ export default async function AuthenticatedLayout({
         </a>
         <SiteBanners banners={siteBanners} />
         <NavBar user={user} features={effectiveModules} />
-        <main
-          id="main-content"
-          tabIndex={-1}
-          className="flex-1 mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 lg:px-8"
-        >
-          {children}
-        </main>
-        <MemberOnboardingWizard initialShouldShow={showOnboardingWizard} />
-        <ReportIssueWidget />
+        <HelpWidgetProvider>
+          <main
+            id="main-content"
+            tabIndex={-1}
+            className="flex-1 mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 lg:px-8"
+          >
+            {children}
+          </main>
+          <MemberOnboardingWizard initialShouldShow={showOnboardingWizard} />
+          <ReportIssueWidget />
+          <HelpWidgetMember llmEnabled={false} />
+        </HelpWidgetProvider>
       </div>
     </AppProviders>
   );

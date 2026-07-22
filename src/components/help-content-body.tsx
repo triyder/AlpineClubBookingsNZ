@@ -1,25 +1,19 @@
-"use client";
-
-import { useState } from "react";
-import { CircleHelp } from "lucide-react";
-import { usePathname } from "next/navigation";
-import { Button } from "@/components/ui/button";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
-  getContextualHelp,
   type ContextualHelpContent,
   type HelpField,
-  type HelpScope,
   type HelpSection,
 } from "@/lib/contextual-help";
 
-function HelpList({ title, items }: { title: string; items: string[] }) {
+/**
+ * Presentational help renderers, extracted VERBATIM from the retired
+ * `contextual-help-button.tsx` (epic #2094 C2). Already token-pure — every
+ * colour is a role/semantic token that resolves in both `.app-theme-scope` and
+ * `.website-theme` — so it is reused unchanged by the help widget's browse
+ * ("Page guide") view. No `"use client"`: these are pure render functions with
+ * no hooks, so they compose into a server or client tree freely.
+ */
+
+export function HelpList({ title, items }: { title: string; items: string[] }) {
   if (items.length === 0) {
     return null;
   }
@@ -36,7 +30,7 @@ function HelpList({ title, items }: { title: string; items: string[] }) {
   );
 }
 
-function FieldHelpList({ fields }: { fields: HelpField[] }) {
+export function FieldHelpList({ fields }: { fields: HelpField[] }) {
   if (fields.length === 0) {
     return null;
   }
@@ -59,16 +53,20 @@ function FieldHelpList({ fields }: { fields: HelpField[] }) {
   );
 }
 
-function SectionHelpList({ sections }: { sections: HelpSection[] }) {
+export function SectionHelpList({
+  title = "Complex sections",
+  sections,
+}: {
+  title?: string;
+  sections: HelpSection[];
+}) {
   if (sections.length === 0) {
     return null;
   }
 
   return (
     <section className="space-y-2">
-      <h3 className="text-sm font-semibold text-foreground">
-        Complex sections
-      </h3>
+      <h3 className="text-sm font-semibold text-foreground">{title}</h3>
       <div className="space-y-3">
         {sections.map((section) => (
           <div key={section.title} className="space-y-1">
@@ -87,7 +85,7 @@ function SectionHelpList({ sections }: { sections: HelpSection[] }) {
   );
 }
 
-function HelpDialogContent({ help }: { help: ContextualHelpContent }) {
+export function HelpContentBody({ help }: { help: ContextualHelpContent }) {
   return (
     <div className="space-y-5">
       <HelpList title="Common actions" items={help.actions} />
@@ -95,37 +93,5 @@ function HelpDialogContent({ help }: { help: ContextualHelpContent }) {
       <SectionHelpList sections={help.sections ?? []} />
       <HelpList title="Important notes" items={help.notes ?? []} />
     </div>
-  );
-}
-
-export function ContextualHelpButton({ scope }: { scope: HelpScope }) {
-  const [open, setOpen] = useState(false);
-  const pathname = usePathname();
-  const help = getContextualHelp(pathname, scope);
-
-  return (
-    <>
-      <Button
-        type="button"
-        variant="outline"
-        size="icon"
-        onClick={() => setOpen(true)}
-        aria-label={`Open ${help.title} help`}
-        title={`${help.title} help`}
-        className="shrink-0 print:hidden"
-      >
-        <CircleHelp className="h-4 w-4" />
-      </Button>
-
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-3xl">
-          <DialogHeader>
-            <DialogTitle>{help.title} help</DialogTitle>
-            <DialogDescription>{help.summary}</DialogDescription>
-          </DialogHeader>
-          <HelpDialogContent help={help} />
-        </DialogContent>
-      </Dialog>
-    </>
   );
 }
