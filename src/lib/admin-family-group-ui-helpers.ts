@@ -116,10 +116,13 @@ export interface FamilyGroupRequestSearchResult extends MemberOption {
 }
 
 export const AGE_TIER_COLORS: Record<string, string> = {
-  INFANT: "bg-cat3-3 text-cat3-11 border-cat3-6",
-  CHILD: "bg-info-3 text-info-11 border-info-6",
-  YOUTH: "bg-cat1-3 text-cat1-11 border-cat1-6",
-  ADULT: "bg-muted text-muted-foreground border-border",
+  // #2188 P2 (lens MEDIUM-5): age tiers are DEMOGRAPHIC categories, so they use
+  // the categorical scales (never severity scales), with ONE assignment shared
+  // with the roster page's AGE_TIER_COLORS — same tier, same colour everywhere.
+  INFANT: "bg-cat1-3 text-cat1-11 border-cat1-6",
+  CHILD: "bg-cat2-3 text-cat2-11 border-cat2-6",
+  YOUTH: "bg-cat3-3 text-cat3-11 border-cat3-6",
+  ADULT: "bg-cat4-3 text-cat4-11 border-cat4-6",
 };
 
 const CHILD_REQUEST_AGE_TIERS = new Set(["INFANT", "CHILD", "YOUTH"]);

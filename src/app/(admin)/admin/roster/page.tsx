@@ -75,9 +75,12 @@ interface RosterData {
 }
 
 const AGE_TIER_COLORS: Record<string, string> = {
-  ADULT: "bg-info-3 text-info-11",
-  YOUTH: "bg-success-3 text-success-11",
-  CHILD: "bg-warning-3 text-warning-11",
+  // #2188 P2 (lens MEDIUM-5): demographic age tiers on the CATEGORICAL scales
+  // (never severity), one assignment shared with admin-family-group-ui-helpers'
+  // AGE_TIER_COLORS — same tier, same colour everywhere.
+  ADULT: "bg-cat4-3 text-cat4-11",
+  YOUTH: "bg-cat3-3 text-cat3-11",
+  CHILD: "bg-cat2-3 text-cat2-11",
 }
 
 // Per-date roster status → calendar overlay tone + compact label. `no-guests`
