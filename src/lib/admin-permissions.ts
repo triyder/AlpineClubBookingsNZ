@@ -280,6 +280,8 @@ const ROUTE_AREA_PREFIXES: Array<{
       "/admin/mountain-conditions",
       "/api/admin/page-content",
       "/api/admin/public-content-settings",
+      // Public Contact page committee-role selector (Club Contact panel).
+      "/api/admin/club-contact",
       // DB-first club identity + lodge-details editing (E3 #1929): site chrome.
       "/api/admin/club-identity",
       "/api/admin/site-banners",

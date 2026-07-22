@@ -55,6 +55,15 @@ roles themselves and each assignment's presentation.
 > Assignments are **created** from a member's detail page (Committee card), not
 > here. This page edits the roles and the presentation of existing assignments.
 
+### Feature the role on the Contact page
+
+The public **Contact Us** page has a **Club Details** box. Choose which committee
+role appears there under **Admin → Site Appearance & Content → Club Identity →
+Club Contact**: the published, contactable members holding the selected role are
+listed, below the club address. Leaving it on the default keeps the historical
+behaviour of showing the booking officer. The club address itself comes from
+**Club Identity → Lodge details → Address**.
+
 ## Settings reference
 
 | Field | What it controls | Default | Notes / constraints |

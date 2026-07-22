@@ -116,3 +116,64 @@ describe("ContactPageClient recipient pre-selection", () => {
     expect(screen.getByText("021 000 001")).toBeTruthy();
   });
 });
+
+describe("ContactPageClient club details contact selection", () => {
+  beforeEach(() => {
+    nav.search = "";
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ members: MEMBERS }),
+    }) as unknown as typeof fetch;
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const lodge = { name: "Alpine Lodge", address: "1 Mountain Rd, Ruapehu" };
+
+  it("defaults to the booking officer and shows the club address above it", async () => {
+    render(<ContactPageClient club={club} lodge={lodge} />);
+
+    await waitFor(() =>
+      expect(screen.getByText("Booking Officer")).toBeTruthy(),
+    );
+    // Club Details member (the fallback booking officer).
+    expect(screen.getByText("Ann Lee")).toBeTruthy();
+    // The address from Site Appearance & Content is rendered.
+    expect(screen.getByText("1 Mountain Rd, Ruapehu")).toBeTruthy();
+  });
+
+  it("shows the admin-selected committee role instead of the booking officer", async () => {
+    render(
+      <ContactPageClient
+        club={club}
+        lodge={lodge}
+        contactRoleKey="secretary"
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByText("Secretary")).toBeTruthy());
+    expect(screen.getByText("Bo Tan")).toBeTruthy();
+    // The booking officer is no longer the club-details contact.
+    expect(screen.queryByText("Booking Officer")).toBeNull();
+    // Address is still shown, above the committee info.
+    expect(screen.getByText("1 Mountain Rd, Ruapehu")).toBeTruthy();
+  });
+
+  it("shows only the address when the configured role has no published members", async () => {
+    render(
+      <ContactPageClient
+        club={club}
+        lodge={lodge}
+        contactRoleKey="nonexistent-role"
+      />,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByText("1 Mountain Rd, Ruapehu")).toBeTruthy(),
+    );
+    expect(screen.queryByText("Booking Officer")).toBeNull();
+    expect(screen.queryByText("Ann Lee")).toBeNull();
+  });
+});

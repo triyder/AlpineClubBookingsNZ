@@ -4541,6 +4541,13 @@ model PublicContentSettings {
   bookNowTarget        BookNowTarget @default(BOOKING_FLOW)
   bookNowPageId        String?
   bookNowPage          PageContent?  @relation("PublicContentBookNowPage", fields: [bookNowPageId], references: [id], onDelete: SetNull)
+  // Which committee role's member(s) appear in the public Contact page "Club
+  // Details" block (admin-configured under Site Appearance & Content → Club
+  // Identity → Club Contact). Stores the CommitteeRole.key; null falls back to
+  // the legacy booking-officer heuristic. A stored key that no longer matches an
+  // active role simply shows no contact — no FK so a role rename/delete never
+  // blocks or dangles here.
+  contactCommitteeRoleKey String?
   updatedByMemberId    String?
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt

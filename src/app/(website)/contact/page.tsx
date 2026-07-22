@@ -43,11 +43,27 @@ async function loadDefaultLodgeContact(): Promise<{
   }
 }
 
+async function loadContactRoleKey(): Promise<string | null> {
+  // Admin-configured committee role for the Club Details block (Site Appearance
+  // & Content → Club Identity → Club Contact). Null falls back to the legacy
+  // booking-officer heuristic. Never throws.
+  try {
+    const settings = await prisma.publicContentSettings.findUnique({
+      where: { id: "default" },
+      select: { contactCommitteeRoleKey: true },
+    });
+    return settings?.contactCommitteeRoleKey ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export default async function ContactPage() {
-  const [page, lodge, clubIdentity] = await Promise.all([
+  const [page, lodge, clubIdentity, contactRoleKey] = await Promise.all([
     getSanitizedPageContentByPath("/contact"),
     loadDefaultLodgeContact(),
     getCachedClubIdentity(),
+    loadContactRoleKey(),
   ]);
   const embeddedBody = page ? await buildEmbeddedBody(page.contentHtml) : [];
 
@@ -78,9 +94,16 @@ export default async function ContactPage() {
           pageSlug="contact"
           keyPrefix="contact"
           clubIdentity={clubIdentity}
+          lodge={lodge ?? undefined}
+          contactRoleKey={contactRoleKey}
         />
       ) : (
-        <ContactPageClient club={clubIdentity} lodge={lodge ?? undefined} showHero={false} />
+        <ContactPageClient
+          club={clubIdentity}
+          lodge={lodge ?? undefined}
+          contactRoleKey={contactRoleKey}
+          showHero={false}
+        />
       )}
     </>
   );
