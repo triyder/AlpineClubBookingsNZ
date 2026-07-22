@@ -132,6 +132,12 @@ export function excludedColumnsFor(spec: SingletonSpec): Record<string, string> 
   return { ...COMMON_EXCLUDED_COLUMNS, ...spec.excluded };
 }
 
+// DELIBERATELY NOT REGISTERED as a travelling singleton (#2211, epic decision):
+// AiAssistantSettings (the AI spend-cap singleton, id="default"). The monthly
+// budget is a deployment-specific operational spend control, not portable club
+// configuration — a source club's cap should never silently reset a target's.
+// A fresh import gets the schema default (NZ$10) and the target operator sets
+// their own. (Recorded epic decision.)
 export const SINGLETONS: SingletonSpec[] = [
   {
     entity: "club-module-settings",
@@ -142,6 +148,13 @@ export const SINGLETONS: SingletonSpec[] = [
       "groupBookings", "lockers", "induction", "workParties", "promoCodes",
       "hutLeaders", "communications", "skifieldConditions",
       "twoFactor", "analytics", "lobbyDisplay",
+      // aiAssistant SHOULD-TRAVEL (#2211): a capability toggle like xeroIntegration,
+      // not an auth-provider decision like magicLink/googleLogin. Importing `true`
+      // onto a target with no Anthropic key is harmless — the /api/help/chat route
+      // degrades to a structured "not_configured" fallback, and curated page help
+      // still renders. The deployment-specific spend cap does NOT travel — see the
+      // note above the SINGLETONS array on not registering AiAssistantSettings.
+      "aiAssistant",
     ],
     excluded: {
       multiLodge:

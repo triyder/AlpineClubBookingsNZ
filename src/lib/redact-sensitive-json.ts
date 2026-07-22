@@ -26,6 +26,12 @@ const SENSITIVE_JSON_KEY_FRAGMENTS = new Set([
   "paymentmethod",
   "charge",
   "clientreferenceid",
+  // AI help assistant (#2211): a free-text question, its transcript, and the
+  // client-supplied page state are user content that must never land in a log
+  // or audit payload. Fragment matches also cover keys like "questionChars".
+  "question",
+  "transcript",
+  "pagecontext",
 ]);
 const SENSITIVE_STRING_VALUE_PATTERNS = [
   /[^\s@]+@[^\s@]+\.[^\s@]+/,
