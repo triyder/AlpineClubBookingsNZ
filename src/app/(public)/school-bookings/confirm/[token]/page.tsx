@@ -66,7 +66,7 @@ export default async function SchoolAttendeeConfirmationPage({
             guests={details.booking.guests}
           />
         ) : details.booking && details.status === "confirmed" ? (
-          <div className="divide-y divide-slate-100 rounded-md border border-slate-200">
+          <div className="divide-y divide-border rounded-md border border-border">
             {details.booking.guests.map((guest) => (
               <div className="flex items-center justify-between p-3 text-sm" key={guest.id}>
                 <span className="font-medium">

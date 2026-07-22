@@ -102,7 +102,7 @@ export default async function NominationPage({
     <div className="mx-auto max-w-3xl space-y-6">
       <Card>
         <CardHeader className="space-y-3">
-          <div className="inline-flex w-fit rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-slate-600">
+          <div className="inline-flex w-fit rounded-full bg-muted px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
             {statusLabel(application.status)}
           </div>
           <CardTitle className="text-3xl">
@@ -144,7 +144,7 @@ export default async function NominationPage({
                 {familyMembers.map((familyMember) => (
                   <li
                     key={`${familyMember.firstName}-${familyMember.lastName}-${familyMember.dateOfBirth}`}
-                    className="rounded-md border border-slate-200 px-3 py-2"
+                    className="rounded-md border border-border px-3 py-2"
                   >
                     <div className="font-medium">
                       {familyMember.firstName} {familyMember.lastName}
@@ -158,8 +158,8 @@ export default async function NominationPage({
             )}
           </div>
 
-          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-            <p className="text-sm text-slate-700">
+          <div className="rounded-lg border border-border bg-muted p-4">
+            <p className="text-sm text-muted-foreground">
               Confirming this nomination records that you support this
               application progressing to committee review. Committee approval is
               still required before any {CLUB_NAME} account is created.

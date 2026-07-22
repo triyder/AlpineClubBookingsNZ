@@ -81,7 +81,7 @@ export default function LodgeInstructionsPage() {
   }, []);
 
   if (loading) {
-    return <p className="text-sm text-slate-500">Loading lodge instructions...</p>;
+    return <p className="text-sm text-muted-foreground">Loading lodge instructions...</p>;
   }
 
   if (notAssigned) {
@@ -97,7 +97,7 @@ export default function LodgeInstructionsPage() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <p className="text-sm text-slate-600">
+          <p className="text-sm text-muted-foreground">
             The lodge opening, closing, and day-to-day instructions are only
             available to admins and members with a current or upcoming{" "}
             {hutLeaderLower} assignment. If you believe you should have access,
@@ -120,10 +120,10 @@ export default function LodgeInstructionsPage() {
     <div className="lodge-instructions-print-root space-y-8">
       <div className="flex flex-wrap items-start justify-between gap-4 print:hidden">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">
+          <h1 className="text-2xl font-bold text-foreground">
             Lodge Instructions
           </h1>
-          <p className="mt-1 text-sm text-slate-500">
+          <p className="mt-1 text-sm text-muted-foreground">
             Opening, closing, and day-to-day instructions for {hutLeaderLower}s.
             Print a copy to pin up in the lodge.
           </p>
@@ -139,13 +139,13 @@ export default function LodgeInstructionsPage() {
         return (
           <section
             key={doc.key}
-            className="lodge-instructions-print-section rounded-lg border border-slate-200 bg-white p-6 shadow-sm"
+            className="lodge-instructions-print-section rounded-lg border border-border bg-card p-6 shadow-sm"
           >
-            <h2 className="text-xl font-semibold text-slate-900">
+            <h2 className="text-xl font-semibold text-foreground">
               {doc.title}
             </h2>
             {updated ? (
-              <p className="mt-1 text-xs text-slate-500">
+              <p className="mt-1 text-xs text-muted-foreground">
                 Last updated {updated}
               </p>
             ) : null}
@@ -157,7 +157,7 @@ export default function LodgeInstructionsPage() {
                 dangerouslySetInnerHTML={{ __html: doc.contentHtml }}
               />
             ) : (
-              <p className="mt-4 text-sm text-slate-500">
+              <p className="mt-4 text-sm text-muted-foreground">
                 No instructions have been written for this section yet.
               </p>
             )}

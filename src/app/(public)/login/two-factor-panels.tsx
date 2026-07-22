@@ -59,7 +59,7 @@ function RecoveryCodes({
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="grid grid-cols-2 gap-2 rounded-md border bg-slate-50 p-3 font-mono text-sm">
+        <div className="grid grid-cols-2 gap-2 rounded-md border bg-muted p-3 font-mono text-sm">
           {codes.map((code) => (
             <div key={code}>{code}</div>
           ))}
@@ -220,7 +220,7 @@ export function TwoFactorEnrollPanel({ callbackUrl }: { callbackUrl: string }) {
           <div className="space-y-4">
             <div className="space-y-2">
               <Label>Manual setup key</Label>
-              <div className="break-all rounded-md border bg-slate-50 p-3 font-mono text-sm">
+              <div className="break-all rounded-md border bg-muted p-3 font-mono text-sm">
                 {totpSetup?.secret ?? "Preparing setup key..."}
               </div>
               {totpSetup ? (

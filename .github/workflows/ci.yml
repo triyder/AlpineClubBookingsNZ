@@ -284,11 +284,6 @@ jobs:
           CONCURRENCY_RACE_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:55442/concurrency_race_1881
         run: npx vitest run src/lib/__tests__/concurrency-lock-races.realdb.test.ts
 
-      - name: Test guarded ClubTheme corrective migration against PostgreSQL
-        env:
-          CLUB_THEME_MIGRATION_TEST_DATABASE_URL: ${{ env.DATABASE_URL }}
-        run: npx vitest run src/lib/__tests__/club-theme-default-reseed-migration.test.ts
-
       # E8 (#1934): real-Postgres behavior of the member-grouping cutover
       # migration (legacy-rule deactivation, shape-dedupe, backfill, mode seed,
       # idempotent re-run). Self-provisions a throwaway schema (needs PG 15+

@@ -68,11 +68,11 @@ export default function ChangePasswordPage() {
   }
 
   return (
-    <div className="flex items-center justify-center min-h-screen bg-slate-50">
+    <div className="flex items-center justify-center min-h-screen bg-background">
       <Card className="w-full max-w-md mx-4">
         <CardHeader>
           <CardTitle>Change Your Password</CardTitle>
-          <p className="text-sm text-slate-600">
+          <p className="text-sm text-muted-foreground">
             You must change your password before continuing.
           </p>
         </CardHeader>
@@ -108,7 +108,7 @@ export default function ChangePasswordPage() {
               />
               <ul
                 id="new-password-requirements"
-                className="text-xs text-slate-500 mt-1 space-y-0.5"
+                className="text-xs text-muted-foreground mt-1 space-y-0.5"
               >
                 {policy.hints.map((hint) => (
                   <li key={hint}>{hint}</li>

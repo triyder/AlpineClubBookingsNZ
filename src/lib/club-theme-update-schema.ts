@@ -23,10 +23,7 @@ import {
 const colourSchema = z
   .string()
   .trim()
-  .refine(
-    isValidThemeColour,
-    "Use a 6-digit hex colour or exact oklch() value.",
-  );
+  .refine(isValidThemeColour, "Use a 6-digit hex colour (e.g. #1a2b3c).");
 
 const logoDataUrlSchema = z
   .string()
@@ -40,11 +37,7 @@ const logoDataUrlSchema = z
 export const clubThemeUpdateSchema = z
   .object({
     brandGold: colourSchema,
-    brandCharcoal: colourSchema,
     brandDeep: colourSchema,
-    brandRidge: colourSchema,
-    brandMist: colourSchema,
-    brandSnow: colourSchema,
     brandSafety: colourSchema,
     headingFontKey: z.enum(CLUB_THEME_FONT_KEYS),
     bodyFontKey: z.enum(CLUB_THEME_FONT_KEYS),

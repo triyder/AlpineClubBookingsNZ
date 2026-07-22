@@ -41,7 +41,7 @@ function statusTone(status: string) {
   if (status === "REQUESTED" || status === "APPROVED") {
     return "border-blue-200 bg-blue-50 text-blue-800";
   }
-  return "border-slate-200 bg-slate-50 text-slate-700";
+  return "border-border bg-muted text-muted-foreground";
 }
 
 function formatDate(value: string) {
@@ -66,7 +66,7 @@ function RequestStatusList({
       {requests.map((request) => (
         <div
           key={request.id}
-          className="rounded-md border border-slate-200 bg-white p-3"
+          className="rounded-md border border-border bg-card p-3"
         >
           <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
             <div>
@@ -90,7 +90,7 @@ function RequestStatusList({
               </p>
             ) : null}
           </div>
-          <div className="mt-3 divide-y divide-slate-100">
+          <div className="mt-3 divide-y divide-border">
             {request.participants.map((participant) => (
               <div
                 className="flex flex-col gap-2 py-2 text-sm first:pt-0 last:pb-0 sm:flex-row sm:items-center sm:justify-between"
@@ -253,7 +253,7 @@ export function MembershipCancellationPanel() {
 
       <div className="space-y-3">
         <div>
-          <h2 className="text-sm font-semibold text-slate-900">
+          <h2 className="text-sm font-semibold text-foreground">
             Select memberships
           </h2>
           <p className="mt-1 text-sm text-muted-foreground">
@@ -266,12 +266,12 @@ export function MembershipCancellationPanel() {
             No eligible memberships were found.
           </p>
         ) : (
-          <div className="divide-y divide-slate-100 rounded-md border border-slate-200">
+          <div className="divide-y divide-border rounded-md border border-border">
             {overview.candidates.map((candidate) => {
               const checked = selectedIds.includes(candidate.id);
               return (
                 <label
-                  className="flex cursor-pointer items-start gap-3 p-3 data-[disabled=true]:cursor-not-allowed data-[disabled=true]:bg-slate-50"
+                  className="flex cursor-pointer items-start gap-3 p-3 data-[disabled=true]:cursor-not-allowed data-[disabled=true]:bg-muted"
                   data-disabled={!candidate.eligible}
                   key={candidate.id}
                 >
@@ -284,7 +284,7 @@ export function MembershipCancellationPanel() {
                   />
                   <span className="min-w-0 flex-1">
                     <span className="flex flex-wrap items-center gap-2">
-                      <span className="font-medium text-slate-900">
+                      <span className="font-medium text-foreground">
                         {candidate.name}
                       </span>
                       <Badge variant="secondary">
@@ -332,7 +332,7 @@ export function MembershipCancellationPanel() {
         />
       </div>
 
-      <label className="flex items-start gap-3 rounded-md border border-slate-200 p-3 text-sm">
+      <label className="flex items-start gap-3 rounded-md border border-border p-3 text-sm">
         <Checkbox
           checked={acknowledgedWarning}
           onCheckedChange={(value) => setAcknowledgedWarning(value === true)}
@@ -351,8 +351,8 @@ export function MembershipCancellationPanel() {
         {submitting ? "Submitting..." : "Submit Cancellation Request"}
       </Button>
 
-      <div className="border-t border-slate-200 pt-5">
-        <h2 className="mb-3 text-sm font-semibold text-slate-900">
+      <div className="border-t border-border pt-5">
+        <h2 className="mb-3 text-sm font-semibold text-foreground">
           Request status
         </h2>
         <RequestStatusList requests={overview.requests} />

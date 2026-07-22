@@ -275,7 +275,7 @@ export function PartnerLinkSection({ canManage = false }: PartnerLinkSectionProp
         )}
 
       {canRequest && (
-        <form onSubmit={handleRequest} className="space-y-3 rounded-md border bg-slate-50 p-3">
+        <form onSubmit={handleRequest} className="space-y-3 rounded-md border bg-muted p-3">
           <p className="text-sm font-medium">Declare your partner</p>
           <div>
             <Label htmlFor="partner-link-email">Partner&apos;s email address</Label>

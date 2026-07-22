@@ -88,7 +88,7 @@ function BookingSummary({
         <p className="font-medium">
           {formatDate(booking.checkIn)} - {formatDate(booking.checkOut)}
         </p>
-        <p className="text-sm text-gray-600">
+        <p className="text-sm text-muted-foreground">
           {booking.guestCount} guest{booking.guestCount !== 1 ? "s" : ""} &middot;{" "}
           {formatCents(booking.finalPriceCents)}
         </p>
@@ -190,7 +190,7 @@ export function MyBookingsList({ bookings }: { bookings: MyBookingItem[] }) {
 
       {visibleBookings.length === 0 ? (
         <Card>
-          <CardContent className="p-6 text-center text-gray-600">
+          <CardContent className="p-6 text-center text-muted-foreground">
             No bookings match the current filter.
           </CardContent>
         </Card>

@@ -279,13 +279,13 @@ export default function PayByLinkPage() {
         <CardTitle>Complete Your Payment</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="rounded-md border bg-slate-50 p-3 text-sm text-slate-700">
+        <div className="rounded-md border bg-muted p-3 text-sm text-muted-foreground">
           <p>
             Dates: {formatNZDate(new Date(payable.checkIn))} to{" "}
             {formatNZDate(new Date(payable.checkOut))}
           </p>
           <p className="mt-1">Guests: {payable.guestCount}</p>
-          <p className="mt-1 font-semibold text-slate-900">
+          <p className="mt-1 font-semibold text-foreground">
             Amount due: {formatCents(payable.amountCents)}
           </p>
           <p className="mt-2 flex items-center gap-1 text-xs text-muted-foreground">
@@ -315,15 +315,15 @@ export default function PayByLinkPage() {
             ) : null}
 
             {payable.internetBankingReference ? (
-              <div className="rounded-md border border-slate-200 p-3 text-sm">
-                <p className="font-medium text-slate-900">Or pay by internet banking</p>
+              <div className="rounded-md border border-border p-3 text-sm">
+                <p className="font-medium text-foreground">Or pay by internet banking</p>
                 <p className="mt-1 text-muted-foreground">
                   {(
                     bookingMessages["paymentLink.internetBanking.description"] ??
                     "Use reference {{paymentReference}} when making a direct transfer. The booking will be confirmed after the Xero invoice payment is reconciled."
                   ).replaceAll("{{paymentReference}}", payable.internetBankingReference)}
                 </p>
-                <p className="mt-2 font-mono text-slate-900">{payable.internetBankingReference}</p>
+                <p className="mt-2 font-mono text-foreground">{payable.internetBankingReference}</p>
               </div>
             ) : null}
           </div>

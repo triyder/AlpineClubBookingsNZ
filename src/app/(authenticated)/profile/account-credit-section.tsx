@@ -100,9 +100,9 @@ export function AccountCreditSection() {
 
   return (
     <div className="space-y-4">
-      <div className="text-center py-3 bg-slate-50 rounded-lg">
+      <div className="text-center py-3 bg-muted rounded-lg">
         <p className="text-sm text-muted-foreground">Current Balance</p>
-        <p className="text-2xl font-bold text-slate-900">
+        <p className="text-2xl font-bold text-foreground">
           {formatCents(data.balanceCents)}
         </p>
       </div>

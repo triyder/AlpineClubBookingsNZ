@@ -184,7 +184,7 @@ export default function BookPage() {
                 return (
                   <div
                     key={block.memberId}
-                    className="rounded-md border border-red-200 bg-white/70 p-3"
+                    className="rounded-md border border-red-200 bg-card p-3"
                   >
                     <p className="font-medium text-red-800">{block.name}</p>
                     <p className="mt-1">{getGuestProfileBlockMessage(block)}</p>
@@ -215,7 +215,7 @@ export default function BookPage() {
               {memberNightConflicts.map((conflict) => (
                 <div
                   key={`${conflict.bookingId}-${conflict.guestId}`}
-                  className="rounded-md border border-red-200 bg-white/70 p-3"
+                  className="rounded-md border border-red-200 bg-card p-3"
                 >
                   <p className="font-medium text-red-800">
                     {conflict.memberName}
@@ -317,7 +317,7 @@ export default function BookPage() {
               </div>
             </div>
             {lodges.length > 1 && lodges.some((lodge) => lodge.id !== lodgeId) && (
-              <div className="rounded-md border border-purple-200 bg-white p-4 space-y-2">
+              <div className="rounded-md border border-purple-200 bg-card p-4 space-y-2">
                 <p className="text-sm font-medium text-purple-900">
                   Happy to stay at another lodge if a spot opens there first?
                 </p>
@@ -378,13 +378,13 @@ export default function BookPage() {
             return (
               <li key={wizardStep.id} className="flex items-center gap-2">
                 {index > 0 && (
-                  <span aria-hidden="true" className="text-gray-300">
+                  <span aria-hidden="true" className="text-muted-foreground">
                     &rarr;
                   </span>
                 )}
                 <span
                   aria-current={isActive ? "step" : undefined}
-                  className={isActive ? "app-step-active" : "text-gray-600"}
+                  className={isActive ? "app-step-active" : "text-muted-foreground"}
                 >
                   {index + 1}. {wizardStep.label}
                   {isActive && <span className="sr-only"> (current step)</span>}

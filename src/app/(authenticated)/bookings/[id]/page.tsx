@@ -82,7 +82,7 @@ import {
 } from "@/components/group-booking/organiser-group-booking-card";
 
 const historyToneClasses: Record<BookingHistoryTone, string> = {
-  default: "border-slate-200 bg-slate-100 text-slate-700",
+  default: "border-border bg-muted text-muted-foreground",
   success: "border-emerald-200 bg-emerald-100 text-emerald-800",
   warning: "border-amber-200 bg-amber-100 text-amber-800",
   danger: "border-rose-200 bg-rose-100 text-rose-800",
@@ -988,7 +988,7 @@ export default async function BookingDetailPage({
         <div
           className={`space-y-1 rounded-md border px-4 py-3 text-sm ${
             narrativeBannerClasses[bookingNarrative.state] ??
-            "border-slate-200 bg-slate-50 text-slate-900"
+            "border-border bg-muted text-foreground"
           }`}
         >
           <p className="font-medium">{bookingNarrative.headline}</p>
@@ -1096,7 +1096,7 @@ export default async function BookingDetailPage({
       )}
 
       {booking.createdBy && (
-        <div className="rounded-md bg-slate-50 border border-slate-200 px-4 py-3 text-sm text-slate-600">
+        <div className="rounded-md bg-muted border border-border px-4 py-3 text-sm text-muted-foreground">
           Created by <strong>{booking.createdBy.firstName} {booking.createdBy.lastName}</strong> (admin) on behalf of this member
         </div>
       )}
@@ -1155,7 +1155,7 @@ export default async function BookingDetailPage({
                       {humanizeStatus(request.status)}
                     </Badge>
                   </div>
-                  <p className="mt-1 text-slate-500">
+                  <p className="mt-1 text-muted-foreground">
                     Submitted{" "}
                     {request.createdAt.toLocaleDateString("en-NZ", {
                       day: "numeric",
@@ -1164,10 +1164,10 @@ export default async function BookingDetailPage({
                     })}
                   </p>
                   {request.reason ? (
-                    <p className="mt-2 text-slate-700">{request.reason}</p>
+                    <p className="mt-2 text-muted-foreground">{request.reason}</p>
                   ) : null}
                   {request.adminNotes ? (
-                    <p className="mt-2 text-slate-600">{request.adminNotes}</p>
+                    <p className="mt-2 text-muted-foreground">{request.adminNotes}</p>
                   ) : null}
                 </div>
               );
@@ -1198,7 +1198,7 @@ export default async function BookingDetailPage({
           </CardHeader>
           <CardContent className="space-y-3">
             {canEditRequestedRoom && !canSeeAdminTools ? (
-              <p className="text-sm text-slate-600">
+              <p className="text-sm text-muted-foreground">
                 Let us know if you&apos;d prefer a particular room. This is a
                 request, not a guaranteed allocation. The lodge confirms beds
                 closer to your stay.
@@ -1228,16 +1228,16 @@ export default async function BookingDetailPage({
           <CardHeader>
             <CardTitle>How to Get to the Lodge</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-3 text-sm text-slate-700">
+          <CardContent className="space-y-3 text-sm text-muted-foreground">
             <p className="whitespace-pre-wrap">
               {memberArrivalInstructions.lodgeTravelNote}
             </p>
             {memberArrivalInstructions.doorCode ? (
               <div>
-                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                   Door code
                 </p>
-                <p className="mt-1 text-lg font-semibold tracking-wide text-slate-950">
+                <p className="mt-1 text-lg font-semibold tracking-wide text-foreground">
                   {memberArrivalInstructions.doorCode}
                 </p>
               </div>
@@ -1262,7 +1262,7 @@ export default async function BookingDetailPage({
             <CardTitle>Complete Booking</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-sm text-gray-600 mb-4">
+            <p className="text-sm text-muted-foreground mb-4">
               This is a saved draft. Review the details above, then confirm when
               you&apos;re ready to pay and finalise the booking.
             </p>
@@ -1415,7 +1415,7 @@ export default async function BookingDetailPage({
             <CardTitle>Complete Payment</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-sm text-gray-600 mb-4">
+            <p className="text-sm text-muted-foreground mb-4">
               {paymentRequiredDescription}
             </p>
             {showCreditApplied && (
@@ -1487,7 +1487,7 @@ export default async function BookingDetailPage({
             <CardTitle>Save Payment Method</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-sm text-gray-600 mb-4">
+            <p className="text-sm text-muted-foreground mb-4">
               Please save a payment method. Your card will be charged when your booking is confirmed
               closer to check-in.
             </p>
@@ -1573,12 +1573,12 @@ export default async function BookingDetailPage({
                 className={
                   paymentDisplay
                     ? paymentStatusClass(paymentDisplay.toneStatus)
-                    : "bg-slate-100 text-slate-700"
+                    : "bg-muted text-muted-foreground"
                 }
               >
                 {paymentDisplay?.label ?? "Cancelled Before Payment"}
               </Badge>
-              <p className="text-sm text-slate-600">
+              <p className="text-sm text-muted-foreground">
                 {paymentDisplay?.detail ??
                   "No original payment was captured for this booking, so nothing needed to be returned."}
               </p>
@@ -1586,7 +1586,7 @@ export default async function BookingDetailPage({
 
             <div className="grid gap-3 text-sm sm:grid-cols-2">
               <div>
-                <span className="text-slate-500">Original payment:</span>{" "}
+                <span className="text-muted-foreground">Original payment:</span>{" "}
                 {originalPaymentCaptured && booking.payment
                   ? formatCents(booking.payment.amountCents)
                   : "No original payment captured"}
@@ -1595,7 +1595,7 @@ export default async function BookingDetailPage({
               {originalPaymentCaptured && cancellationSettlement && (
                 <>
                   <div>
-                    <span className="text-slate-500">
+                    <span className="text-muted-foreground">
                       Returned to original payment method:
                     </span>{" "}
                     {formatCents(
@@ -1604,12 +1604,12 @@ export default async function BookingDetailPage({
                   </div>
 
                   <div>
-                    <span className="text-slate-500">Held as account credit:</span>{" "}
+                    <span className="text-muted-foreground">Held as account credit:</span>{" "}
                     {formatCents(cancellationSettlement.accountCreditCents)}
                   </div>
 
                   <div>
-                    <span className="text-slate-500">
+                    <span className="text-muted-foreground">
                       Non-refundable amount retained:
                     </span>{" "}
                     {formatCents(retainedAfterCancellationCents)}
@@ -1617,7 +1617,7 @@ export default async function BookingDetailPage({
 
                   {cancellationSettlement.restoredAppliedCreditCents > 0 && (
                     <div>
-                      <span className="text-slate-500">
+                      <span className="text-muted-foreground">
                         Previously applied credit restored (per the cancellation
                         policy):
                       </span>{" "}
@@ -1630,7 +1630,7 @@ export default async function BookingDetailPage({
                   {booking.payment?.changeFeeCents
                     ? (
                     <div>
-                      <span className="text-slate-500">
+                      <span className="text-muted-foreground">
                         Included non-refundable change fees:
                       </span>{" "}
                       {formatCents(booking.payment.changeFeeCents)}
@@ -1642,7 +1642,7 @@ export default async function BookingDetailPage({
 
               {latestRefundAppeal && (
                 <div>
-                  <span className="text-slate-500">Latest refund appeal:</span>{" "}
+                  <span className="text-muted-foreground">Latest refund appeal:</span>{" "}
                   <Badge
                     variant={
                       latestRefundAppeal.status === "PENDING"
@@ -1656,12 +1656,12 @@ export default async function BookingDetailPage({
                     {humanizeStatus(latestRefundAppeal.status)}
                   </Badge>
                   {latestRefundAppeal.requestedAmountCents ? (
-                    <span className="ml-2 text-slate-600">
+                    <span className="ml-2 text-muted-foreground">
                       Requested {formatCents(latestRefundAppeal.requestedAmountCents)}
                     </span>
                   ) : null}
                   {latestRefundAppeal.approvedAmountCents ? (
-                    <span className="ml-2 text-slate-600">
+                    <span className="ml-2 text-muted-foreground">
                       Approved {formatCents(latestRefundAppeal.approvedAmountCents)}
                     </span>
                   ) : null}
@@ -1704,10 +1704,10 @@ export default async function BookingDetailPage({
                     >
                       {item.category}
                     </Badge>
-                    <span className="text-sm font-medium text-slate-900">
+                    <span className="text-sm font-medium text-foreground">
                       {item.title}
                     </span>
-                    <span className="text-xs text-slate-500">
+                    <span className="text-xs text-muted-foreground">
                       {item.occurredAt.toLocaleDateString("en-NZ", {
                         day: "numeric",
                         month: "short",
@@ -1718,7 +1718,7 @@ export default async function BookingDetailPage({
                     </span>
                   </div>
                   {item.detail ? (
-                    <p className="text-sm text-slate-600">{item.detail}</p>
+                    <p className="text-sm text-muted-foreground">{item.detail}</p>
                   ) : null}
                 </div>
                 {item.amountDisplay ? (
@@ -1730,7 +1730,7 @@ export default async function BookingDetailPage({
                           ? "text-emerald-700"
                           : item.tone === "warning"
                             ? "text-amber-700"
-                            : "text-slate-700"
+                            : "text-muted-foreground"
                     }`}
                   >
                     {item.amountDisplay}

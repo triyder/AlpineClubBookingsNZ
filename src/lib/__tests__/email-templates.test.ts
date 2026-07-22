@@ -20,6 +20,12 @@ import {
 } from "../email-templates";
 import { getAppBaseUrl } from "../app-url";
 import { formatNZDateTime } from "../nzst-date";
+import {
+  AA_TEXT_CONTRAST_RATIO,
+  DEFAULT_CLUB_THEME_VALUES,
+  contrastRatio,
+  deriveBrandShims,
+} from "../club-theme-schema";
 
 describe("email-templates", () => {
   describe("adminDailyDigestTemplate", () => {
@@ -34,8 +40,19 @@ describe("email-templates", () => {
         totalAlerts: 1,
       });
 
-      expect(html).toContain("background-color: #d4ddd7; color: #17231c;");
-      expect(html).not.toContain("background-color: #d4ddd7; color: #57b3ab;");
+      // The email palette is DERIVED from the substrate (#2187): the header fill
+      // is the neutral-3 "mist" step and the ink is the "deep" seed. Pin the
+      // header style to the COMPUTED shipping derivation, never a stale literal,
+      // so it tracks the generator instead of a hand-copied hex.
+      const { mist, deep, gold } = deriveBrandShims(DEFAULT_CLUB_THEME_VALUES);
+      expect(html).toContain(`background-color: ${mist}; color: ${deep};`);
+      // Never the accent (gold) as header ink — that was the low-contrast bug.
+      expect(html).not.toContain(`background-color: ${mist}; color: ${gold};`);
+
+      // Intent: dark ink on a light header clears WCAG AA for the header fill.
+      const ratio = contrastRatio(deep, mist);
+      expect(ratio).not.toBeNull();
+      expect(ratio as number).toBeGreaterThanOrEqual(AA_TEXT_CONTRAST_RATIO);
     });
   });
 

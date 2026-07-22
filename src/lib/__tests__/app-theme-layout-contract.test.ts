@@ -8,7 +8,10 @@ import {
   DEFAULT_CLUB_THEME_VALUES,
   contrastRatio,
   deriveAppMutedForeground,
+  themeSeedsFromValues,
 } from "@/lib/club-theme-schema";
+import { CARD_SHADOW, defaultAppRoleFallbacks } from "@/lib/theme/app-tokens";
+import { G5A_CARD_SEPARATION } from "@/lib/theme/guarantees";
 
 function readRepoFile(path: string) {
   return readFileSync(join(process.cwd(), path), "utf8");
@@ -146,75 +149,102 @@ describe("database theme app-shell contract", () => {
     expect(alert).not.toMatch(/error:.*destructive/);
   });
 
-  it("maps app presentation tokens to brand variables without remapping semantic status", () => {
+  // #2187 P1 — the RESTYLE wire-up. The app core tokens no longer alias the
+  // `--brand-*` shims: each resolves from the GENERATED substrate that
+  // `buildClubThemeAppCss` emits at render time (`--gen-<token>` light /
+  // `--gen-<token>-dark` dark), with a static default-palette fallback for the
+  // no-stylesheet case. The fallback literals are derived from the same
+  // substrate here so the CSS and the code cannot drift (F1: no `var(--brand-*)`
+  // in the dark block; the #2144 split: `--accent`=neutral-4 ≠ `--muted`/
+  // `--secondary`=neutral-3).
+  it("resolves app presentation tokens from the generated substrate without remapping semantic status", () => {
     const globals = readRepoFile("src/app/globals.css");
     const start = globals.indexOf(".app-theme-scope {");
     const end = globals.indexOf("/* App headings pick up", start);
     const appThemeRules = globals.slice(start, end);
     const darkStart = appThemeRules.indexOf(".dark .app-theme-scope {");
     const lightRules = appThemeRules.slice(0, darkStart);
-    const darkRules = appThemeRules.slice(darkStart);
+    // The dark CORE-token block only (up to its closing brace) — the F1 target.
+    // Rules AFTER it (e.g. the `.bg-primary` charcoal outline) legitimately keep
+    // brand refs and must not fall inside the grep-proof slice.
+    const darkRules = appThemeRules.slice(
+      darkStart,
+      appThemeRules.indexOf("}", darkStart) + 1,
+    );
 
-    expect(appThemeRules).toContain("--primary: var(--brand-gold)");
-    for (const token of ["background", "card", "popover"]) {
-      expect(lightRules).toContain(`--${token}: var(--brand-snow)`);
-    }
-    for (const token of ["secondary", "muted", "accent"]) {
-      expect(lightRules).toContain(`--${token}: var(--brand-mist)`);
-    }
-    for (const token of [
+    const fb = defaultAppRoleFallbacks(
+      themeSeedsFromValues(DEFAULT_CLUB_THEME_VALUES),
+    );
+
+    const roleTokens = [
+      "background",
       "foreground",
+      "card",
       "card-foreground",
+      "popover",
       "popover-foreground",
+      "primary",
+      "primary-foreground",
+      "secondary",
       "secondary-foreground",
+      "muted",
+      "accent",
       "accent-foreground",
-    ]) {
-      expect(lightRules).toContain(`--${token}: var(--brand-deep)`);
+      "app-accent-text",
+      "border",
+      "input",
+      "ring",
+      "chart-1",
+      "chart-2",
+      "chart-3",
+      "chart-4",
+      "chart-5",
+      "sidebar",
+      "sidebar-foreground",
+      "sidebar-primary",
+      "sidebar-primary-foreground",
+      "sidebar-accent",
+      "sidebar-accent-foreground",
+      "sidebar-border",
+      "sidebar-ring",
+    ];
+
+    // Every role token wires to its generated prop with the derived fallback.
+    for (const token of roleTokens) {
+      expect(
+        lightRules,
+        `light --${token} must consume the generated substrate prop`,
+      ).toContain(`--${token}: var(--gen-${token}, ${fb.light[token]});`);
+      expect(
+        darkRules,
+        `dark --${token} must consume the generated substrate prop`,
+      ).toContain(`--${token}: var(--gen-${token}-dark, ${fb.dark[token]});`);
     }
-    // `--muted-foreground` is deliberately NOT in that list (#2145): it is a
-    // semantic role, so it must resolve to a DERIVED tone rather than alias
-    // `--foreground`/`--brand-deep`.
+
+    // F1 grep-proof: no `var(--brand-*)` survives in the dark core block
+    // (comments stripped, so this measures declarations, not prose).
+    const darkDeclarations = darkRules.replaceAll(/\/\*[\s\S]*?\*\//g, "");
+    expect(darkDeclarations).not.toMatch(/var\(--brand-/);
+
+    // The #2144 hover fix: `--accent` (neutral-4) is one band off
+    // `--muted`/`--secondary` (neutral-3) in BOTH modes — distinct hexes.
+    expect(fb.light.accent).not.toBe(fb.light.muted);
+    expect(fb.light.muted).toBe(fb.light.secondary);
+    expect(fb.dark.accent).not.toBe(fb.dark.muted);
+    expect(fb.dark.muted).toBe(fb.dark.secondary);
+
+    // `--muted-foreground` is deliberately NOT routed through the substrate
+    // (#2145): it stays a measured-AA derived tone, not a raw neutral step.
     expect(lightRules).toContain(
       "--muted-foreground: var(--app-muted-foreground,",
     );
-    expect(lightRules).not.toContain("--muted-foreground: var(--brand-deep)");
-    expect(lightRules).toContain("--sidebar: var(--brand-charcoal)");
-    expect(lightRules).toContain("--sidebar-accent: var(--brand-deep)");
-    expect(lightRules).toContain("--sidebar-foreground: var(--brand-snow)");
-    expect(lightRules).toContain("--sidebar-accent-foreground: var(--brand-snow)");
-    expect(lightRules).toContain("--ring: var(--brand-deep)");
-    expect(lightRules).toContain("--sidebar-ring: var(--brand-snow)");
-    expect(darkRules).toContain("--background: var(--brand-deep)");
-    for (const token of [
-      "card",
-      "popover",
-      "secondary",
-      "muted",
-      "accent",
-      "sidebar",
-    ]) {
-      expect(darkRules).toContain(`--${token}: var(--brand-charcoal)`);
-    }
-    for (const token of [
-      "foreground",
-      "card-foreground",
-      "popover-foreground",
-      "secondary-foreground",
-      "accent-foreground",
-      "sidebar-foreground",
-      "sidebar-accent-foreground",
-    ]) {
-      expect(darkRules).toContain(`--${token}: var(--brand-snow)`);
-    }
     expect(darkRules).toContain(
       "--muted-foreground: var(--app-muted-foreground-dark,",
     );
-    expect(darkRules).not.toContain("--muted-foreground: var(--brand-snow)");
-    expect(darkRules).toContain("--sidebar-accent: var(--brand-deep)");
-    expect(darkRules).toContain("--ring: var(--brand-snow)");
-    expect(darkRules).toContain("--sidebar-ring: var(--brand-snow)");
-    expect(lightRules).toContain("--app-accent-text: var(--brand-deep)");
-    expect(darkRules).toContain("--app-accent-text: var(--brand-snow)");
+    expect(lightRules).not.toContain("--muted-foreground: var(--gen-");
+    expect(darkRules).not.toContain("--muted-foreground: var(--gen-");
+
+    // No core token is expressed as an unmeasurable color-mix.
     expect(appThemeRules).not.toMatch(
       /--(?:background|foreground|card|card-foreground|popover|popover-foreground|secondary|secondary-foreground|muted|muted-foreground|accent|accent-foreground|sidebar|sidebar-foreground|sidebar-accent|sidebar-accent-foreground):\s*color-mix/,
     );
@@ -228,6 +258,7 @@ describe("database theme app-shell contract", () => {
     expect(appThemeRules).toContain("outline-offset: 2px !important");
     expect(appThemeRules).toContain("--font-website-body");
     expect(appThemeRules).toContain("--font-website-heading");
+    // The app block still declares no semantic status tokens (#1808).
     expect(appThemeRules).not.toMatch(
       /--(?:success|warning|info|danger)(?:-|:)/,
     );
@@ -271,6 +302,45 @@ describe("database theme app-shell contract", () => {
     expect(darkRules).toContain("--muted-foreground:");
   });
 
+  // #2187 J8 — the A6 candidate-ii card treatment is tint (neutral-1 card on
+  // neutral-2 page, already wired via `--card`) PLUS the pinned J8 elevation
+  // shadow. The shadow variables `--gen-card-shadow` / `--gen-card-shadow-dark`
+  // are emitted by `buildClubThemeAppCss`; without a consumer they render nothing.
+  // This pins the `globals.css` wiring that makes them reach the shadcn Card
+  // surface, and the static fallback that stands in with no ClubTheme injected,
+  // so the treatment cannot silently vanish.
+  it("wires the J8 card shadow onto the app Card surface", () => {
+    const globals = readRepoFile("src/app/globals.css");
+
+    // The light rule applies on screen AND print; it is keyed on `.bg-card.shadow`
+    // so popovers/dialogs (bg-popover/bg-background, shadow-md/-lg) are untouched.
+    expect(globals).toContain(
+      ".app-theme-scope .bg-card.shadow:not(.website-theme *) {",
+    );
+    expect(globals).toContain(
+      `box-shadow: var(--gen-card-shadow, ${CARD_SHADOW.light});`,
+    );
+
+    // The dark rule is screen-only (@media not print) so a printed card keeps the
+    // light J8 shadow, mirroring the #2146 dark-shadow handling.
+    expect(globals).toContain(
+      ".dark .app-theme-scope .bg-card.shadow:not(.website-theme *) {",
+    );
+    expect(globals).toContain(
+      `box-shadow: var(--gen-card-shadow-dark, ${CARD_SHADOW.dark});`,
+    );
+
+    // `box-shadow` is set OUTRIGHT (not via `--tw-shadow-color`), which replaces
+    // Tailwind's `.shadow` composite so exactly ONE shadow — the J8 one — renders.
+    // The light fallback is the same J8 value the guarantee sweep pins for G5a.
+    expect(CARD_SHADOW.light).toBe(G5A_CARD_SEPARATION.boxShadow);
+
+    // The Card component emits the base `shadow` utility that this rule overrides;
+    // if it ever switched to a non-`shadow` elevation the selector would miss it.
+    const card = readRepoFile("src/components/ui/card.tsx");
+    expect(card).toMatch(/bg-card[^"]*\bshadow\b/);
+  });
+
   // The fallback above is only ever used when NO ClubTheme sheet is injected —
   // and in that case the surrounding surfaces come from the `:root`/`.dark`
   // literals, not from `DEFAULT_CLUB_THEME_VALUES`. Deriving the fallback from
@@ -278,7 +348,17 @@ describe("database theme app-shell contract", () => {
   // Nothing asserted that until now, so a `:root` retune would have left the
   // un-themed app pairing a tone derived from one palette against surfaces from
   // another, with every existing test still green.
-  it("keeps the un-themed :root surfaces byte-identical to the default palette", () => {
+  //
+  // #2187: the club theme contracted from seven stored brand columns to three
+  // seeds (`brandGold`/`brandDeep`/`brandSafety`). Those three are the only
+  // values `DEFAULT_CLUB_THEME_VALUES` still carries, and the globals.css `:root`
+  // comment requires them to stay in lockstep with it "so the static app chrome
+  // and the DB default agree for a fresh fork". The four former-column surfaces
+  // (charcoal/ridge/mist/snow) are no longer stored — they are derived at render
+  // time from the substrate neutral ramp (see `deriveBrandShims`) — so they are
+  // dropped from this byte-identity pin. Their static `:root` fallbacks are a
+  // separate globals.css concern, not a `DEFAULT_CLUB_THEME_VALUES` mirror.
+  it("keeps the un-themed :root seed surfaces byte-identical to the default palette", () => {
     const globals = readRepoFile("src/app/globals.css");
     const rootRules = globals.slice(
       globals.indexOf(":root {"),
@@ -289,11 +369,7 @@ describe("database theme app-shell contract", () => {
 
     for (const [variable, value] of [
       ["--brand-gold", DEFAULT_CLUB_THEME_VALUES.brandGold],
-      ["--brand-charcoal", DEFAULT_CLUB_THEME_VALUES.brandCharcoal],
       ["--brand-deep", DEFAULT_CLUB_THEME_VALUES.brandDeep],
-      ["--brand-ridge", DEFAULT_CLUB_THEME_VALUES.brandRidge],
-      ["--brand-mist", DEFAULT_CLUB_THEME_VALUES.brandMist],
-      ["--brand-snow", DEFAULT_CLUB_THEME_VALUES.brandSnow],
       ["--brand-safety", DEFAULT_CLUB_THEME_VALUES.brandSafety],
     ] as const) {
       expect(rootRules).toContain(`${variable}: ${value};`);

@@ -89,6 +89,27 @@ Important route groups:
 - `src/app/api` contains route handlers for auth, bookings, payments, admin,
   finance, lodge, webhooks, cron, and health checks.
 
+> **Theme substrate — the 3-seed model (#2187 P1).** Site Style stores THREE
+> seed colours, not seven: `brandGold` (the required accent), `brandDeep` (an
+> optional neutral character whose hue tints the grey ramp), and `brandSafety`
+> (an optional support accent). The wizard's colour step is 1 required + 2
+> optional hex-only pickers. Those seeds feed the vendored Radix custom-palette
+> generator (`src/lib/theme/`), which derives the full 12-step light/dark
+> substrate with cross-colour text contrast guaranteed by construction, so a
+> low-contrast pick is **adjusted and disclosed (before → after), not rejected**
+> — the old blocking contrast gate is gone. The four former columns
+> (`brandCharcoal`/`brandRidge`/`brandMist`/`brandSnow`) are dead to code:
+> `deriveBrandShims` derives those `--brand-*` shim values from the substrate
+> neutral ramp so the website utilities and email palette keep working through
+> P1 (P2/P3 delete the shims). The columns remain in the DB behind a default (an
+> additive EXPAND migration) so pre-#2187 code stays compatible across a
+> blue/green cutover; the destructive column drop ships in P4. Config-transfer
+> bundles are **format version 2** and reject any version-1 bundle. The deeper
+> substrate wire-up of `globals.css` (generated scale variables + alias blocks +
+> the `.dark .app-theme-scope` rewrite) and the neutral/callout/kiosk remap
+> deletions land in later phases; through P1 the `--brand-*` shims below still
+> drive the app scope.
+
 Every app-shell layout (`(public)`, `(authenticated)`, `(admin)`, `(finance)`)
 injects the admin-configured theme via `getWebsiteThemeRenderState()` inside an
 `app-theme-scope` wrapper, so never hardcode the brand accent (e.g. Tailwind
@@ -151,9 +172,37 @@ files — first. That work is tracked: remap deletion is Phases 2–3 of the
 theme-architecture program planned on issue #2181. Until then the block
 stays exactly as is.
 
+**The app tokens resolve from a GENERATED substrate** (#2187 P1, the restyle
+event). A club now picks three seeds (accent + optional neutral-character +
+optional support); `buildThemeSubstrate` (`src/lib/theme/theme-substrate.ts`)
+turns them into the full 12-step light/dark Radix-style scales, and
+`buildClubThemeAppCss` emits the whole generated custom-property set —
+`--gen-<scale>-<step>` raw steps plus the resolved role tokens
+`--gen-<token>` (light) / `--gen-<token>-dark` (dark), per the data alias map
+in `src/lib/theme/aliases.ts` (`src/lib/theme/app-tokens.ts` assembles them).
+`globals.css`'s static `.app-theme-scope` (light) and `.dark .app-theme-scope`
+(dark) blocks CONSUME those props via `var(--gen-<token>, <default-fallback>)`,
+so an un-themed page still paints the shipped default palette. `--accent`
+(neutral-4) is deliberately one band off `--muted`/`--secondary` (neutral-3) in
+BOTH modes — the structural fix for the seven hover-dead `bg-muted
+hover:bg-accent` #2144 buttons — and the dark core-token block is rewired onto
+generated dark steps with **no `--brand-*` reference left inside it** (F1). The
+legacy `--brand-*` values still ship as derived SHIMS (`deriveBrandShims`, from
+the substrate neutral ramp) so the website `color-mix()` recipes, the app
+`bg-brand-*` utilities, and the email palette keep working through P1; those
+shims are deleted in P2/P3. The `.dark` neutral/colored remap blocks above are
+untouched by P1.
+
+The member-facing `src/app/(authenticated)` and `src/app/(public)` trees were
+migrated off raw neutrals onto the semantic surface tokens in the same event
+(#2187 B4), so at restyle their light mode follows the club theme at source
+rather than by shim; the remaining raw neutrals live under `src/components`,
+the kiosk/lodge display trees, and the allowlisted admin files.
+
 **`--muted-foreground` is a DERIVED tone, not a brand colour** (#2145). Every
-other app text token in the `.app-theme-scope` block resolves to a solid brand
-endpoint (`--foreground` is `--brand-deep` in light, `--brand-snow` in dark).
+other app text token in the `.app-theme-scope` block resolves to a solid
+generated-substrate endpoint (`--foreground` is the club ramp's neutral-12 in
+each mode).
 `--muted-foreground` used to do the same — which made it byte-identical to
 `--foreground`, so `text-muted-foreground` rendered as primary text and the
 `muted` role was inert. It is now computed by `deriveAppMutedForeground` in
@@ -172,12 +221,21 @@ the whole substance of the guard, so it is stated here in full — it is
 
 | Mode  | Checked surfaces |
 | ----- | ---------------- |
-| Light | `--brand-snow` (`--background`/`--card`/`--popover`), `--brand-mist` (`--muted`/`--secondary`/`--accent`), and the curated `--warning-muted` / `--info-muted` / `--success-muted` / `--danger-muted` panel fills |
-| Dark  | `--brand-deep` (`--background`), `--brand-charcoal` (`--card`/`--popover`/`--muted`/`--secondary`/`--accent`), and the same four curated `*-muted` fills in their `.dark` values |
+| Light | `--brand-snow` (`--background`/`--card`/`--popover`), `--brand-mist` (`--muted`/`--secondary`), `--accent` (neutral-4), and the curated `--warning-muted` / `--info-muted` / `--success-muted` / `--danger-muted` panel fills |
+| Dark  | `--brand-deep` (`--background`), `--brand-charcoal` (`--card`/`--popover`/`--muted`/`--secondary`), `--accent` (neutral-4), and the same four curated `*-muted` fills in their `.dark` values |
 
 Both **brand** surfaces are checked per mode, not only the base one, because
 that is what makes the guard hold for an endpoint-crossing palette, where moving
-toward one surface moves away from the other. The four **curated** `*-muted`
+toward one surface moves away from the other. **`--accent`** is checked as its
+own surface because #2144 split it off `--muted`/`--secondary`: it is neutral-4,
+one band DARKER than `--brand-mist` (neutral-3) in light and one band lighter in
+dark, and it is a genuine muted-text background — dropdown and command-menu
+shortcuts render `text-muted-foreground` inside `focus:bg-accent` items. Clamping
+against `--brand-mist` alone left the Tokoroa light tone at 4.37:1 on the hover
+surface; reading the true neutral-4 from each mode's substrate ramp restores it
+to 4.64:1. The guarantee sweep (`guarantee-sweep.test.ts`, G2c) measures the
+shipped derived tone against neutral steps 1–4 in both modes for both reference
+seeds, so a sub-AA step-4 cell fails CI. The four **curated** `*-muted`
 fills are checked because #1808 deliberately leaves them out of
 `app-theme-scope`: they are fixed while the derived tone slides with the brand
 ramp, which is the one pairing that can drift apart with nothing watching. They
@@ -191,13 +249,13 @@ Deliberately **not** in the list:
   so a `bg-slate-200` badge would be a muted-text surface — but the only such
   badge (`page-content-panel.tsx`) was moved to `bg-muted text-muted-foreground`
   instead. A mid-luminance hairline colour is the wrong background for body text
-  at any weight, and clamping against it would collapse the derived tone into
-  `--foreground` for roughly 30% of gate-passing palettes rather than the ~12%
-  it does today. (Measured like-for-like over the 77 gate-passing palettes of
-  the neutral-ramp sweep in `club-theme-schema.test.ts`, counting a palette that
-  collapses in EITHER mode: 11.7% today, 29.9% with `--border` clamped. Per-mode
-  it is 5.2% → 11.7% light and 6.5% → 24.7% dark. Any single framing shows the
-  same 2.5–3× increase; quote one, not a mixture.)
+  at any weight, and a mid-luminance surface leaves the derived tone almost no
+  headroom: clamping against it would force the tone to walk all the way back
+  onto `--foreground` for a materially larger share of palettes than the muted
+  derivation collapses on today — defeating #2145 (a distinct muted tone) for a
+  surface no text should sit on. The AA guarantee that IS enforced (the
+  neutral-ramp sweep in `club-theme-schema.test.ts`) covers only the surfaces in
+  the clamp set; `--border`/`--input` are deliberately outside it.
 - The dark coloured hue remaps. The `-50` (`oklch(0.29 …)`) and `-100`
   (`oklch(0.33 …)`) tiers sit at or below the `*-muted` tier already checked, so
   in dark mode — where the derived tone is the LIGHT one — clearing AA on

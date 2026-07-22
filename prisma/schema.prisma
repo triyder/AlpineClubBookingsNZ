@@ -4515,12 +4515,17 @@ model PublicContentSettings {
 model ClubTheme {
   id             String        @id @default("default")
   brandGold      String
-  brandCharcoal  String
   brandDeep      String
-  brandRidge     String
-  brandMist      String
-  brandSnow      String
   brandSafety    String
+  // #2187 EXPAND: the four former brand columns are dead to code (derived from
+  // the substrate at render time) but stay in the DB so pre-#2187 code renders
+  // across a blue/green cutover. They now carry a DB default so new code can
+  // insert a ClubTheme row without naming them. P4 ships the CONTRACT migration
+  // that drops them (with a BLUE_GREEN_MIGRATION_SAFETY.tsv ledger row).
+  brandCharcoal  String        @default("#21362b")
+  brandRidge     String        @default("#5c6f66")
+  brandMist      String        @default("#d4ddd7")
+  brandSnow      String        @default("#f5f8f6")
   headingFontKey ClubThemeFont @default(LEAGUE_SPARTAN)
   bodyFontKey    ClubThemeFont @default(INTER)
   logoDataUrl    String?

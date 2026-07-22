@@ -112,7 +112,7 @@ export function SchoolAttendeeConfirmForm({
           <div className="space-y-3">
             {guests.map((guest, index) => (
               <div
-                className="grid gap-2 rounded-md border border-slate-200 p-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end"
+                className="grid gap-2 rounded-md border border-border p-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end"
                 key={guest.id}
               >
                 <div className="space-y-1">

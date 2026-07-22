@@ -12,8 +12,13 @@ import { z } from "zod";
  * Bundle format version. Bump the MAJOR meaning of this when the on-disk shape
  * changes incompatibly; the importer refuses a bundle whose formatVersion is
  * greater than the one it understands (ADR-001 "version tolerance").
+ *
+ * v2 (#2187): the `club-theme` entity dropped to the three seed columns
+ * (`brandGold`/`brandDeep`/`brandSafety`). A v1 bundle still carries the four
+ * former brand columns and is NOT translated (D19) — the importer rejects any
+ * `formatVersion < 2` outright rather than silently discarding those columns.
  */
-export const CONFIG_TRANSFER_FORMAT_VERSION = 1;
+export const CONFIG_TRANSFER_FORMAT_VERSION = 2;
 
 /**
  * Top-level categories a bundle can carry. Order is the dependency-safe apply
