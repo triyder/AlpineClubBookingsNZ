@@ -235,6 +235,12 @@ export default async function ProfilePage({
   // whenever the member already has an account linked (so they can disconnect it
   // even after the club turns the module off).
   const showGoogleAccountCard = modules.googleLogin || googleLinkedNow;
+  // DB-only Google credential resolution (#2087), only when the card shows.
+  // Fail-open to false (Connect stays unavailable) if the store is unreachable.
+  const googleConfigured =
+    showGoogleAccountCard && modules.googleLogin
+      ? await googleCredentialsConfigured()
+      : false;
   const profileFormMember = {
     id: member.id,
     firstName: member.firstName,
@@ -277,13 +283,13 @@ export default async function ProfilePage({
         </div>
 
         {emailChanged ? (
-          <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+          <div className="rounded-lg border border-success-6 bg-success-3 px-4 py-3 text-sm text-success-11">
             Your email address has been updated successfully.
           </div>
         ) : null}
 
         {emailChangeError ? (
-          <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+          <div className="rounded-lg border border-danger-6 bg-danger-3 px-4 py-3 text-sm text-danger-11">
             {emailChangeError === "missing"
               ? "The email change link was incomplete."
               : emailChangeError === "invalid"
@@ -396,12 +402,12 @@ export default async function ProfilePage({
               />
             ) : null}
             {googleLinked ? (
-              <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+              <div className="rounded-md border border-success-6 bg-success-3 px-3 py-2 text-sm text-success-11">
                 Your Google account has been connected.
               </div>
             ) : null}
             {googleError ? (
-              <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">
+              <div className="rounded-md border border-danger-6 bg-danger-3 px-3 py-2 text-sm text-danger-11">
                 {googleError === "unverified"
                   ? "That Google account's email is not verified, so it cannot be linked."
                   : googleError === "already_linked"
@@ -417,7 +423,7 @@ export default async function ProfilePage({
               <GoogleAccountCard
                 linked={googleLinkedNow}
                 moduleEnabled={modules.googleLogin}
-                credentialsConfigured={googleCredentialsConfigured()}
+                credentialsConfigured={googleConfigured}
               />
             ) : null}
           </CardContent>

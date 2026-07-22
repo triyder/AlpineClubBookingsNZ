@@ -92,6 +92,63 @@ export function getOperationalXeroRedirectUri(): string {
   }
 }
 
+/**
+ * True only for an https:// origin whose host is not localhost/loopback — the
+ * single condition under which Xero can actually deliver a webhook (and its
+ * intent-to-receive ping) to this deployment. Shared by the setup page and the
+ * webhook verify-status route so the wizard step and the persistent amber badge
+ * agree on whether webhooks are verifiable here.
+ */
+export function isPublicHttpsOrigin(origin: string): boolean {
+  if (!origin) return false;
+  try {
+    const url = new URL(origin);
+    if (url.protocol !== "https:") return false;
+    const host = url.hostname.toLowerCase();
+    return (
+      host !== "localhost" &&
+      host !== "127.0.0.1" &&
+      host !== "::1" &&
+      host !== "[::1]" &&
+      !host.endsWith(".localhost")
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Whether this deployment can verify Xero webhooks at all: derived from the
+ * NEXTAUTH_URL-backed redirect origin (public HTTPS, non-localhost). When false,
+ * a webhook key can be stored but the intent-to-receive ping can never arrive,
+ * so the wizard defaults to Skip and the badge softens to an informational note.
+ *
+ * The mock-Xero E2E harness is the deliberate exception: its ITR trigger POSTs
+ * the real webhook route from inside the container, so no public HTTPS origin
+ * is needed — with the mock active (never in a real deployment), webhooks are
+ * verifiable and the wizard's verify path is exercised end to end.
+ */
+function xeroMockHarnessActive(): boolean {
+  // Mirrors isXeroMockActive() (xero-mock-endpoint.ts) — duplicated here
+  // because importing it would form the cycle xero-config -> xero-mock-endpoint
+  // -> xero-token-store -> xero-config. Same double gate: env origin set AND
+  // not a real production runtime (production build with a non-staging role).
+  if (
+    process.env.NODE_ENV === "production" &&
+    process.env.APP_RUNTIME_ROLE !== "staging"
+  ) {
+    return false;
+  }
+  return Boolean(process.env.XERO_MOCK_API_ORIGIN?.trim());
+}
+
+export function getXeroWebhooksVerifiable(): boolean {
+  if (xeroMockHarnessActive()) return true;
+  const redirectUri = getOperationalXeroRedirectUri();
+  const origin = redirectUri ? new URL(redirectUri).origin : "";
+  return isPublicHttpsOrigin(origin);
+}
+
 export interface OperationalXeroConfig {
   clientId: string;
   clientSecret: string;
@@ -201,7 +258,30 @@ export const LEGACY_PROVIDER_ENV_VARS: Record<string, readonly string[]> = {
     "XERO_WEBHOOK_KEY",
     "XERO_REDIRECT_URI",
   ],
-  // stripe / google / backup credential env names are added by C4 / C5 / C6.
+  // Stripe credentials are captured in-app now (#2082); the publishable key is
+  // delivered at runtime from the store, so its old NEXT_PUBLIC_* build-time var
+  // is legacy too. All three are detected-and-warned, never read for operation.
+  stripe: [
+    "STRIPE_SECRET_KEY",
+    "STRIPE_WEBHOOK_SECRET",
+    "NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY",
+  ],
+  // Google sign-in credentials are captured in-app now (#2087). The two legacy
+  // GOOGLE_CLIENT_* vars are detected-and-warned, never read for operation.
+  google: ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"],
+  // Backup configuration moved to the encrypted store in-app (#2095, C6); every
+  // BACKUP_* value is detected-and-warned, never read for operation. The ONE
+  // exception is BACKUP_CRON_SCHEDULE (cron-leader timing, not club config),
+  // which stays in the environment and is deliberately absent from this list.
+  backup: [
+    "BACKUP_ENABLED",
+    "BACKUP_S3_BUCKET",
+    "BACKUP_S3_REGION",
+    "BACKUP_S3_ACCESS_KEY_ID",
+    "BACKUP_S3_SECRET_ACCESS_KEY",
+    "BACKUP_RETENTION_DAYS",
+    "BACKUP_RESTORE_VALIDATION_URL",
+  ],
 };
 
 export interface LegacyProviderEnvFinding {

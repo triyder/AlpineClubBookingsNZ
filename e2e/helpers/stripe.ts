@@ -4,6 +4,12 @@ import { expect, type FrameLocator, type Page } from "@playwright/test";
 // Element loads from js.stripe.com and rejects placeholder keys. Specs skip
 // unless both keys look like real test-mode keys, and the suite refuses to run
 // against live keys outright.
+//
+// DB-only credentials (#2082): the app no longer reads STRIPE_* env vars — it
+// resolves the secret key and (at runtime) the publishable key from the
+// encrypted C1 store. The env keys here are the SOURCE the E2E stack seeds into
+// that store (e2e/setup/seed-stripe-credentials.ts); this gate still keys off
+// the env values to decide whether the seed ran and the specs should execute.
 export function stripeTestModeConfigured(): boolean {
   const secretKey = process.env.STRIPE_SECRET_KEY ?? "";
   const publishableKey = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY ?? "";

@@ -1,0 +1,189 @@
+{
+  "note": "Alias map is DATA, consumed by the sheet-assembly agent. Steps are 1-based; array index = step-1.",
+  "core": {
+    "--background": {
+      "scale": "neutral",
+      "step": 2
+    },
+    "--card": {
+      "scale": "neutral",
+      "step": 1
+    },
+    "--popover": {
+      "scale": "neutral",
+      "step": 1
+    },
+    "--muted": {
+      "scale": "neutral",
+      "step": 3
+    },
+    "--accent": {
+      "scale": "neutral",
+      "step": 4,
+      "note": "hover/neutral accent surface"
+    },
+    "--primary": {
+      "scale": "accent",
+      "step": 9
+    },
+    "--muted-foreground": {
+      "scale": "neutral",
+      "step": 11
+    },
+    "--foreground": {
+      "scale": "neutral",
+      "step": 12
+    },
+    "--secondary": {
+      "scale": "neutral",
+      "step": 3,
+      "note": "D13: quiet neutral surface, aligns with --muted band"
+    },
+    "--input": {
+      "from": "A2",
+      "note": "computed >=3:1 pick (see measurements.a2_input_ring)"
+    },
+    "--ring": {
+      "from": "A2",
+      "note": "computed >=3:1 pick (same as --input)"
+    }
+  },
+  "border": {
+    "variant_a_computed": {
+      "--border": {
+        "from": "D11.variant_a_computed_3to1"
+      }
+    },
+    "variant_b_radix_subtle": {
+      "--border": {
+        "scale": "neutral",
+        "step": 6
+      }
+    },
+    "--input": {
+      "from": "A2",
+      "note": "A2 pick in BOTH variants (D11 refinement)"
+    },
+    "--ring": {
+      "from": "A2",
+      "note": "A2 pick in BOTH variants (D11 refinement)"
+    }
+  },
+  "chart_finance_8slot": [
+    {
+      "series": 1,
+      "scale": "cat1",
+      "step": 9
+    },
+    {
+      "series": 2,
+      "scale": "cat2",
+      "step": 9
+    },
+    {
+      "series": 3,
+      "scale": "cat3",
+      "step": 9
+    },
+    {
+      "series": 4,
+      "scale": "cat4",
+      "step": 9
+    },
+    {
+      "series": 5,
+      "scale": "cat5",
+      "step": 9
+    },
+    {
+      "series": 6,
+      "scale": "cat1",
+      "step": 7
+    },
+    {
+      "series": 7,
+      "scale": "cat2",
+      "step": 7
+    },
+    {
+      "series": 8,
+      "scale": "cat3",
+      "step": 7
+    }
+  ],
+  "--chart-1..5": [
+    {
+      "token": "--chart-1",
+      "scale": "cat1",
+      "step": 9
+    },
+    {
+      "token": "--chart-2",
+      "scale": "cat2",
+      "step": 9
+    },
+    {
+      "token": "--chart-3",
+      "scale": "cat3",
+      "step": 9
+    },
+    {
+      "token": "--chart-4",
+      "scale": "cat4",
+      "step": 9
+    },
+    {
+      "token": "--chart-5",
+      "scale": "cat5",
+      "step": 9
+    }
+  ],
+  "destructive_danger": {
+    "--destructive": {
+      "scale": "danger",
+      "note": "D14: exactly one red"
+    },
+    "--danger": {
+      "scale": "danger"
+    },
+    "--destructive-foreground": {
+      "from": "A4",
+      "scale": "danger",
+      "note": "recomputed on-solid fg"
+    }
+  },
+  "sidebar_light_D13": {
+    "--sidebar": {
+      "scale": "neutral",
+      "step": 1
+    },
+    "--sidebar-foreground": {
+      "scale": "neutral",
+      "step": 12
+    },
+    "--sidebar-accent": {
+      "scale": "neutral",
+      "step": 3
+    },
+    "--sidebar-accent-foreground": {
+      "scale": "neutral",
+      "step": 12
+    },
+    "--sidebar-border": {
+      "scale": "neutral",
+      "step": 4,
+      "note": "D13: sidebar surfaces from neutral 1-4 light steps"
+    },
+    "--sidebar-primary": {
+      "scale": "accent",
+      "step": 9
+    },
+    "--sidebar-primary-foreground": {
+      "from": "A4",
+      "scale": "accent"
+    },
+    "--sidebar-ring": {
+      "from": "A2"
+    }
+  }
+}

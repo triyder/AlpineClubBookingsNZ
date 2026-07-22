@@ -576,7 +576,7 @@ export default function AdminBookPage() {
       )}
 
       {error && (
-        <div className="rounded-md bg-red-50 p-3 text-sm text-red-700">
+        <div className="rounded-md bg-danger-3 p-3 text-sm text-danger-11">
           <p>{error}</p>
           {errorReason === "reconnect_required" && (
             <p className="mt-1">
@@ -677,7 +677,7 @@ export default function AdminBookPage() {
           </CardHeader>
           <CardContent className="space-y-4">
             {guests.length > availableBeds && (
-              <div className="rounded-md bg-orange-50 p-3 text-sm text-orange-800">
+              <div className="rounded-md bg-warning-3 p-3 text-sm text-warning-11">
                 This booking exceeds the {availableBeds} bed
                 {availableBeds === 1 ? "" : "s"} available for these dates.
                 You can still create it \u2014 you will confirm the over-capacity
@@ -803,12 +803,12 @@ export default function AdminBookPage() {
                     <span>Subtotal</span>
                     <span>{formatCents(priceQuote.totalPriceCents)}</span>
                   </div>
-                  <div className={`flex justify-between text-sm ${appliedPromo.promoAdjustmentCents > 0 ? "text-orange-700" : "text-green-600"}`}>
+                  <div className={`flex justify-between text-sm ${appliedPromo.promoAdjustmentCents > 0 ? "text-warning-11" : "text-success-11"}`}>
                     <span>Promo adjustment ({appliedPromo.code})</span>
                     <span>{formatSignedCents(appliedPromo.promoAdjustmentCents)}</span>
                   </div>
                   {appliedCreditCents > 0 && (
-                    <div className="flex justify-between text-sm text-green-600">
+                    <div className="flex justify-between text-sm text-success-11">
                       <span>Account credit</span>
                       <span>-{formatCents(appliedCreditCents)}</span>
                     </div>
@@ -828,7 +828,7 @@ export default function AdminBookPage() {
                         <span>Subtotal</span>
                         <span>{formatCents(priceQuote.totalPriceCents)}</span>
                       </div>
-                      <div className="flex justify-between text-sm text-green-600">
+                      <div className="flex justify-between text-sm text-success-11">
                         <span>Account credit</span>
                         <span>-{formatCents(appliedCreditCents)}</span>
                       </div>
@@ -846,23 +846,23 @@ export default function AdminBookPage() {
               )}
 
               {availableCreditCents > 0 && (
-                <div className="rounded-md bg-green-50 border border-green-200 p-4 mt-2">
-                  <p className="text-sm text-green-800 mb-2">
+                <div className="rounded-md bg-success-3 border border-success-6 p-4 mt-2">
+                  <p className="text-sm text-success-11 mb-2">
                     {selectedMember.firstName} has{" "}
                     <strong>{formatCents(availableCreditCents)}</strong> in account
                     credit
                   </p>
-                  <label className="flex items-center gap-2 text-sm text-green-800 cursor-pointer">
+                  <label className="flex items-center gap-2 text-sm text-success-11 cursor-pointer">
                     <input
                       type="checkbox"
                       checked={useCredit}
                       onChange={(e) => setUseCredit(e.target.checked)}
-                      className="rounded border-green-300"
+                      className="rounded border-success-6"
                     />
                     Apply credit to this booking
                   </label>
                   {useCredit && remainingToPay === 0 && (
-                    <p className="mt-2 text-sm font-medium text-green-700">
+                    <p className="mt-2 text-sm font-medium text-success-11">
                       Credit covers entire booking — no card payment needed
                     </p>
                   )}
@@ -883,11 +883,11 @@ export default function AdminBookPage() {
                 />
               </div>
               {requiresAdminReviewLocal && (
-                <div className="space-y-2 rounded-md border border-amber-200 bg-amber-50 p-4">
-                  <Label htmlFor="review-justification" className="text-amber-900">
+                <div className="space-y-2 rounded-md border border-warning-6 bg-warning-3 p-4">
+                  <Label htmlFor="review-justification" className="text-warning-11">
                     Reason for booking without an adult (optional, stored with the booking)
                   </Label>
-                  <p className="text-sm text-amber-900">
+                  <p className="text-sm text-warning-11">
                     This booking has minors but no adult. Because you are an admin it
                     will be auto-approved, but capturing the reason here documents the
                     decision in the audit trail.
@@ -919,7 +919,7 @@ export default function AdminBookPage() {
           </Card>
 
           {guests.some((g) => !g.isMember) && (
-            <div className="rounded-md bg-yellow-50 p-4 text-sm text-yellow-800">
+            <div className="rounded-md bg-warning-3 p-4 text-sm text-warning-11">
               <strong>Note:</strong> This booking includes non-member guests. It may
               be held as PENDING until closer to check-in.
             </div>
@@ -935,7 +935,7 @@ export default function AdminBookPage() {
                     onClick={() => setPaymentMethod("stripe")}
                     className={`flex min-h-16 items-start gap-3 rounded-md border p-3 text-left text-sm ${
                       paymentMethod === "stripe"
-                        ? "border-blue-500 bg-blue-50 text-blue-950"
+                        ? "border-info-7 bg-info-3 text-info-11"
                         : "border-border bg-card text-muted-foreground hover:border-muted-foreground"
                     }`}
                   >
@@ -952,7 +952,7 @@ export default function AdminBookPage() {
                     onClick={() => setPaymentMethod("internet_banking")}
                     className={`flex min-h-16 items-start gap-3 rounded-md border p-3 text-left text-sm ${
                       paymentMethod === "internet_banking"
-                        ? "border-blue-500 bg-blue-50 text-blue-950"
+                        ? "border-info-7 bg-info-3 text-info-11"
                         : "border-border bg-card text-muted-foreground hover:border-muted-foreground"
                     }`}
                   >
@@ -978,7 +978,7 @@ export default function AdminBookPage() {
           )}
 
           {overCapacityNights && (
-            <div className="rounded-md border border-orange-200 bg-orange-50 p-4 text-sm text-orange-900">
+            <div className="rounded-md border border-warning-6 bg-warning-3 p-4 text-sm text-warning-11">
               <p className="font-medium">Some nights are over lodge capacity</p>
               <ul className="mt-2 list-disc pl-5">
                 {overCapacityNights.map((n) => (

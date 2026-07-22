@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import {
   AlertCircle,
+  ArrowRight,
   CheckCircle2,
   Loader2,
   RefreshCw,
@@ -78,6 +80,13 @@ function readinessLabel(status: ModuleReadinessStatus) {
   if (status === "credentials_missing") return "Needs setup";
   return "Disabled";
 }
+
+// Modules whose "Needs setup" state has a guided setup wizard to deep-link to
+// (#2080). C4/C5 add their providers here as their wizards land.
+const MODULE_SETUP_HREFS: Partial<Record<ModuleKey, string>> = {
+  xeroIntegration: "/admin/xero/setup",
+  googleLogin: "/admin/google/setup",
+};
 
 function getReadiness(
   module: ModuleStatus,
@@ -292,8 +301,8 @@ export default function AdminModulesPage() {
           tabIndex={error ? -1 : undefined}
           className={
             error
-              ? "scroll-mt-20 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 focus:outline-none"
-              : "rounded-md border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800"
+              ? "scroll-mt-20 rounded-md border border-danger-6 bg-danger-3 px-4 py-3 text-sm text-danger-11 focus:outline-none"
+              : "rounded-md border border-success-6 bg-success-3 px-4 py-3 text-sm text-success-11"
           }
         >
           {error || savedMessage}
@@ -321,9 +330,9 @@ export default function AdminModulesPage() {
         {modules.map((module) => {
           const checkboxId = `module-${module.key}`;
           const statusIcon = module.effectiveEnabled ? (
-            <CheckCircle2 className="h-4 w-4 text-green-700" />
+            <CheckCircle2 className="h-4 w-4 text-success-11" />
           ) : (
-            <AlertCircle className="h-4 w-4 text-amber-700" />
+            <AlertCircle className="h-4 w-4 text-warning-11" />
           );
 
           return (
@@ -365,6 +374,16 @@ export default function AdminModulesPage() {
                       {readinessLabel(module.readiness.status)}
                     </Badge>
                     <p>{module.readiness.message}</p>
+                    {module.readiness.status === "credentials_missing" &&
+                    MODULE_SETUP_HREFS[module.key] ? (
+                      <Link
+                        href={MODULE_SETUP_HREFS[module.key] as string}
+                        className="mt-2 inline-flex items-center gap-1 text-sm font-medium text-foreground underline decoration-brand-gold/70 decoration-2 underline-offset-4"
+                      >
+                        Set up
+                        <ArrowRight className="h-3.5 w-3.5" aria-hidden />
+                      </Link>
+                    ) : null}
                   </div>
                 </div>
 

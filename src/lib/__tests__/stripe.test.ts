@@ -1,7 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-// Set env BEFORE any imports
-vi.stubEnv("STRIPE_SECRET_KEY", "sk_test_fake");
+// DB-only credential resolution (#2082): the secret key now comes from the
+// encrypted store via stripe-config, so mock that resolver instead of the env.
+vi.mock("@/lib/stripe-config", () => ({
+  getOperationalStripeSecretKey: vi.fn().mockResolvedValue("sk_test_fake"),
+}));
 
 // Mock Stripe before importing the module
 const mockPaymentIntentsCreate = vi.fn();
@@ -302,11 +305,11 @@ describe("Stripe library", () => {
   });
 
   describe("constructWebhookEvent", () => {
-    it("calls Stripe webhooks.constructEvent with correct params", () => {
+    it("calls Stripe webhooks.constructEvent with correct params", async () => {
       const mockEvent = { id: "evt_test", type: "payment_intent.succeeded" };
       mockWebhooksConstructEvent.mockReturnValue(mockEvent);
 
-      const result = constructWebhookEvent(
+      const result = await constructWebhookEvent(
         "payload_body",
         "sig_header",
         "whsec_test"

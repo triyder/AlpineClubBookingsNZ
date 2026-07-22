@@ -83,8 +83,8 @@ describe("StatusChip presentation contract", () => {
   it("applies the resolved tone background/text utility classes", () => {
     const { container } = renderChip("booking", "CONFIRMED");
     const chip = container.querySelector('[data-slot="status-chip"]');
-    expect(chip?.className).toContain("bg-success-muted");
-    expect(chip?.className).toContain("text-success");
+    expect(chip?.className).toContain("bg-success-3");
+    expect(chip?.className).toContain("text-success-11");
   });
 
   // Not because `--muted-foreground` fails AA on `--muted` — since #2145 the
@@ -100,8 +100,8 @@ describe("StatusChip presentation contract", () => {
   it("danger uses the additive --danger* tokens, not solid destructive", () => {
     const { container } = renderChip("booking", "CANCELLED");
     const chip = container.querySelector('[data-slot="status-chip"]');
-    expect(chip?.className).toContain("bg-danger-muted");
-    expect(chip?.className).toContain("text-danger");
+    expect(chip?.className).toContain("bg-danger-3");
+    expect(chip?.className).toContain("text-danger-11");
     expect(chip?.className).not.toContain("bg-destructive");
   });
 

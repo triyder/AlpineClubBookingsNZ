@@ -7,6 +7,7 @@ import { buildXeroIdempotencyKey, recordXeroInboundEvent } from "@/lib/xero-sync
 import { runXeroInboundReconciliationCycle } from "@/lib/xero-inbound-reconciliation";
 import { isXeroConnected } from "@/lib/xero";
 import { getOperationalXeroWebhookKey } from "@/lib/xero-config";
+import { recordXeroWebhookValidation } from "@/lib/xero-webhook-validation";
 import {
   isWebhookBodyInvalidContentLengthError,
   isWebhookBodyTooLargeError,
@@ -158,6 +159,26 @@ export async function POST(request: NextRequest) {
       { error: "Too many webhook events" },
       { status: 413 }
     );
+  }
+
+  // Intent-to-receive (ITR) receipt sink (#2081): Xero validates a new webhook
+  // subscription with a valid-signature POST carrying an EMPTY events array.
+  // The per-event loop below records nothing for it, so without this marker a
+  // successful validation would leave no observable trace for the setup wizard
+  // to poll. Record it against the CURRENT webhook key's fingerprint (never the
+  // key itself) so the wizard's verify is freshness- and key-scoped. Failure to
+  // record must never turn a valid ITR into a non-200 — Xero would then treat
+  // the subscription as unverified — so we log and still return 200.
+  if (events.length === 0) {
+    try {
+      await recordXeroWebhookValidation(webhookKey);
+    } catch (error) {
+      logger.error(
+        { err: error },
+        "Failed to record Xero webhook intent-to-receive marker"
+      );
+    }
+    return NextResponse.json({ status: "ok" });
   }
 
   for (const event of events) {

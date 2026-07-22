@@ -35,7 +35,7 @@ beforeEach(() => {
   h.auth.mockResolvedValue({ user: { id: "member-1" } });
   h.requireActiveSessionUser.mockResolvedValue(null);
   h.loadEffectiveModuleFlags.mockResolvedValue({ googleLogin: true });
-  h.googleCredentialsConfigured.mockReturnValue(true);
+  h.googleCredentialsConfigured.mockResolvedValue(true);
 });
 
 describe("POST /api/profile/google/link/start", () => {
@@ -64,7 +64,7 @@ describe("POST /api/profile/google/link/start", () => {
   });
 
   it("403s when Google credentials are not configured", async () => {
-    h.googleCredentialsConfigured.mockReturnValue(false);
+    h.googleCredentialsConfigured.mockResolvedValue(false);
     const res = await startPost();
     expect(res.status).toBe(403);
   });

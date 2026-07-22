@@ -38,9 +38,9 @@ interface PaymentLinkContext {
 type Tone = "success" | "warning" | "info";
 
 const TONE_STYLES: Record<Tone, { wrap: string; icon: typeof Info }> = {
-  success: { wrap: "text-emerald-700", icon: CheckCircle2 },
-  warning: { wrap: "text-amber-700", icon: AlertTriangle },
-  info: { wrap: "text-sky-700", icon: Info },
+  success: { wrap: "text-success-11", icon: CheckCircle2 },
+  warning: { wrap: "text-warning-11", icon: AlertTriangle },
+  info: { wrap: "text-info-11", icon: Info },
 };
 
 function toneForState(state: string): Tone {
@@ -198,7 +198,7 @@ export default function PayByLinkPage() {
           <CardTitle>Payment Link</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="flex items-start gap-2 text-amber-700">
+          <div className="flex items-start gap-2 text-warning-11">
             <AlertTriangle className="h-6 w-6 shrink-0" />
             <p className="font-medium">{loadError}</p>
           </div>
@@ -231,7 +231,7 @@ export default function PayByLinkPage() {
     return (
       <NarrativeCard narrative={context.narrative} tone="info">
         {refreshState === "sent" ? (
-          <div className="flex items-start gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+          <div className="flex items-start gap-2 rounded-md border border-success-6 bg-success-3 px-3 py-2 text-sm text-success-11">
             <CheckCircle2 className="h-5 w-5 shrink-0" />
             <p>We&apos;ve emailed you a fresh payment link. Please check your inbox.</p>
           </div>
@@ -279,13 +279,13 @@ export default function PayByLinkPage() {
         <CardTitle>Complete Your Payment</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="rounded-md border bg-slate-50 p-3 text-sm text-slate-700">
+        <div className="rounded-md border bg-muted p-3 text-sm text-muted-foreground">
           <p>
             Dates: {formatNZDate(new Date(payable.checkIn))} to{" "}
             {formatNZDate(new Date(payable.checkOut))}
           </p>
           <p className="mt-1">Guests: {payable.guestCount}</p>
-          <p className="mt-1 font-semibold text-slate-900">
+          <p className="mt-1 font-semibold text-foreground">
             Amount due: {formatCents(payable.amountCents)}
           </p>
           <p className="mt-2 flex items-center gap-1 text-xs text-muted-foreground">
@@ -315,15 +315,15 @@ export default function PayByLinkPage() {
             ) : null}
 
             {payable.internetBankingReference ? (
-              <div className="rounded-md border border-slate-200 p-3 text-sm">
-                <p className="font-medium text-slate-900">Or pay by internet banking</p>
+              <div className="rounded-md border border-border p-3 text-sm">
+                <p className="font-medium text-foreground">Or pay by internet banking</p>
                 <p className="mt-1 text-muted-foreground">
                   {(
                     bookingMessages["paymentLink.internetBanking.description"] ??
                     "Use reference {{paymentReference}} when making a direct transfer. The booking will be confirmed after the Xero invoice payment is reconciled."
                   ).replaceAll("{{paymentReference}}", payable.internetBankingReference)}
                 </p>
-                <p className="mt-2 font-mono text-slate-900">{payable.internetBankingReference}</p>
+                <p className="mt-2 font-mono text-foreground">{payable.internetBankingReference}</p>
               </div>
             ) : null}
           </div>

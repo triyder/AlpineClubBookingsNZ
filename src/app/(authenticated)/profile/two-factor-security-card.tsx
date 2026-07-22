@@ -105,7 +105,7 @@ export function TwoFactorSecurityCard({
       ) : null}
 
       {codes ? (
-        <div className="space-y-3 rounded-md border bg-slate-50 p-3">
+        <div className="space-y-3 rounded-md border bg-muted p-3">
           <div className="grid grid-cols-2 gap-2 font-mono text-sm">
             {codes.map((code) => (
               <div key={code}>{code}</div>

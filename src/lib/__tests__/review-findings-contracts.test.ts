@@ -2178,19 +2178,20 @@ describe("review finding source/schema contracts", () => {
     }
   });
 
-  it("remaps the darkest neutral text tier so the door code is legible in dark mode (F28)", () => {
-    // #1371 F28: the lodge door code renders text-slate-950 on a dark card, but
-    // the dark neutral remap only covered the -900/-800..-300 tiers, leaving -950
-    // near-black on dark. The -950 tier must map to --foreground.
+  it("keeps the door code legible in dark mode via a source token, not a remap (F28)", () => {
+    // #1371 F28 originally relied on the `.dark .app-theme-scope` neutral remap
+    // lifting a raw `text-slate-950` door code to `--foreground` in dark mode.
+    // #2188 P2 DELETED that remap and migrated the door code (hut-leaders page)
+    // onto `text-foreground` at source, which is legible in BOTH modes by
+    // construction — the same guarantee, now correct-at-source, not by shim.
+    const hutLeaders = readRepoFile("src/app/(admin)/admin/hut-leaders/page.tsx");
+    // The prominent mono door-code line renders on the semantic foreground token.
+    expect(hutLeaders).toMatch(/font-mono[^"]*text-foreground/);
+    // And it must NOT have reverted to a raw darkest-neutral tier.
+    expect(hutLeaders).not.toMatch(/text-(?:slate|gray|zinc|neutral|stone)-950/);
+    // The deleted remap is gone from globals (grep-proof of the P2 deletion).
     const globals = readRepoFile("src/app/globals.css");
-    const foregroundRemap = sliceFrom(
-      globals,
-      ".text-slate-950",
-      "color: var(--foreground)",
-    );
-    expect(foregroundRemap).toContain(".text-gray-950");
-    expect(foregroundRemap).toContain(".text-neutral-950");
-    expect(foregroundRemap).toContain(".text-stone-950");
+    expect(globals).not.toMatch(/\.dark \.app-theme-scope[\s\S]{0,80}\.text-slate-950/);
   });
 
   it("keeps promo review-step text on directly gated semantic/solid pairs (F28)", () => {

@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { getRuntimeConfigCheck } from "@/lib/runtime-config";
 import { resolveEmailDeliveryConfig } from "@/lib/email-delivery";
 import { countExhaustedPaymentRecoveryOperations } from "@/lib/payment-recovery-health";
+import { getOperationalStripeSecretKey } from "@/lib/stripe-config";
 
 interface CheckResult {
   status: "ok" | "error";
@@ -79,12 +80,16 @@ async function checkDatabase(): Promise<CheckResult> {
 async function checkStripe(): Promise<CheckResult> {
   const start = Date.now();
   try {
-    const key = process.env.STRIPE_SECRET_KEY;
+    // DB-only (#2082): resolve from the encrypted store, not the environment.
+    const key = await withTimeout(
+      getOperationalStripeSecretKey(),
+      CHECK_TIMEOUT_MS,
+    );
     if (!key) {
       return {
         status: "error",
-        latencyMs: 0,
-        error: "STRIPE_SECRET_KEY not configured",
+        latencyMs: Date.now() - start,
+        error: "Stripe secret key not configured",
       };
     }
     if (
@@ -92,7 +97,11 @@ async function checkStripe(): Promise<CheckResult> {
       !key.startsWith("sk_live_") &&
       !key.startsWith("rk_")
     ) {
-      return { status: "error", latencyMs: 0, error: "Invalid key format" };
+      return {
+        status: "error",
+        latencyMs: Date.now() - start,
+        error: "Invalid key format",
+      };
     }
     return { status: "ok", latencyMs: Date.now() - start };
   } catch (err) {

@@ -217,7 +217,7 @@ export function MagicLinkSecurityCard({
         {savedNote && <Alert variant="success">{savedNote}</Alert>}
 
         {editing && dirty && (
-          <p className="text-sm text-amber-700" role="status">
+          <p className="text-sm text-warning-11" role="status">
             You have unsaved changes.
           </p>
         )}

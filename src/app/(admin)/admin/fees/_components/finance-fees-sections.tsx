@@ -360,14 +360,14 @@ export function FinanceFeesSections({ financeCanEdit }: { financeCanEdit?: boole
           : <div className="space-y-2 rounded-md border p-3">
               <div className="flex items-center justify-between">
                 <Label>Invoice-line components</Label>
-                <span className={componentsReconcile ? "text-sm text-muted-foreground" : "text-sm text-amber-700"}>
+                <span className={componentsReconcile ? "text-sm text-muted-foreground" : "text-sm text-warning-11"}>
                   Components total {dollars(componentsTotalCents)}{componentsReconcile ? "" : ` · must equal the fee amount ${dollars(parsedFeeCents)}`}
                 </span>
               </div>
               <p className="text-xs text-muted-foreground">Each component is its own Xero invoice line. A single component uses the fee total. Components must sum to the fee amount. Leave Account or Item empty to use the resolved default.</p>
               {/* Loads asynchronously, so announce it politely to screen readers
                   (#2068, U1). */}
-              {(coaError || itemsError) && <div role="status" className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+              {(coaError || itemsError) && <div role="status" className="rounded-md border border-warning-6 bg-warning-3 px-3 py-2 text-sm text-warning-11">
                 Could not load the Xero {coaError && itemsError ? "chart of accounts and item list" : coaError ? "chart of accounts" : "item list"}. You can still type account and item codes manually; reconnect Xero to pick from the live lists.
               </div>}
               {componentRows.map((row, index) =><div key={index} className="grid items-end gap-2 md:grid-cols-[2fr_1fr_auto_1fr_1fr_auto]">
@@ -394,7 +394,7 @@ export function FinanceFeesSections({ financeCanEdit }: { financeCanEdit?: boole
     {familyBillingActive && <Card><CardHeader className="flex flex-row items-center justify-between"><CardTitle>Family billing members</CardTitle>{data?.canEdit && !familyEditing && <Button variant="outline" size="sm" aria-label="Edit family billing" onClick={startFamilyEditing}>Edit</Button>}</CardHeader><CardContent className="space-y-3">
       <p className="text-sm text-muted-foreground">Choose the explicit invoice recipient for each membered family. Login holder and family admin are not inferred.</p>
       {data?.familyGroups.length === 0 && <p className="text-sm text-muted-foreground">No membered families.</p>}
-      {data?.familyGroups.map((group) => { const selectId = `family-billing-${group.id}`; return <div key={group.id} className="grid items-center gap-2 rounded-md border p-3 md:grid-cols-[1fr_2fr]"><div><div className="font-medium">{group.name || "Unnamed family"}</div>{group.billingException && <span className="text-sm text-amber-700">Billing exception</span>}</div><div>{familyEditing ? <><Label htmlFor={selectId}>Billing member</Label><Select value={stagedBilling[group.id] ?? "none"} onValueChange={(value) => setStagedBilling((prev) => ({ ...prev, [group.id]: value === "none" ? null : value }))} disabled={saving}><SelectTrigger id={selectId}><SelectValue /></SelectTrigger><SelectContent><SelectItem value="none">No billing member</SelectItem>{group.members.map((member) => <SelectItem key={member.id} value={member.id} disabled={!member.active}>{memberName(member)} · {member.email}{member.active ? "" : " (inactive)"}</SelectItem>)}</SelectContent></Select></> : <><div className="text-sm text-muted-foreground">Billing member</div><p className="text-sm">{billingMemberLabel(group)}</p></>}</div></div>; })}
+      {data?.familyGroups.map((group) => { const selectId = `family-billing-${group.id}`; return <div key={group.id} className="grid items-center gap-2 rounded-md border p-3 md:grid-cols-[1fr_2fr]"><div><div className="font-medium">{group.name || "Unnamed family"}</div>{group.billingException && <span className="text-sm text-warning-11">Billing exception</span>}</div><div>{familyEditing ? <><Label htmlFor={selectId}>Billing member</Label><Select value={stagedBilling[group.id] ?? "none"} onValueChange={(value) => setStagedBilling((prev) => ({ ...prev, [group.id]: value === "none" ? null : value }))} disabled={saving}><SelectTrigger id={selectId}><SelectValue /></SelectTrigger><SelectContent><SelectItem value="none">No billing member</SelectItem>{group.members.map((member) => <SelectItem key={member.id} value={member.id} disabled={!member.active}>{memberName(member)} · {member.email}{member.active ? "" : " (inactive)"}</SelectItem>)}</SelectContent></Select></> : <><div className="text-sm text-muted-foreground">Billing member</div><p className="text-sm">{billingMemberLabel(group)}</p></>}</div></div>; })}
       {familyEditing && <div className="flex gap-2"><Button disabled={saving} onClick={() => void saveFamilyBilling()}>Save billing members</Button><Button variant="ghost" disabled={saving} onClick={cancelFamilyEditing}>Cancel</Button></div>}
     </CardContent></Card>}
     <Dialog open={deleteTarget !== null} onOpenChange={(open) => { if (!open && !saving) setDeleteTarget(null); }}>

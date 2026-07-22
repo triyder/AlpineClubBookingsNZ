@@ -405,7 +405,7 @@ export default function ApprovalMappingPanel({
         {sel.mode === "MAP" && (
           <div className="mt-3 space-y-2">
             {sel.member ? (
-              <div className="flex items-center justify-between rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm">
+              <div className="flex items-center justify-between rounded-md border border-success-6 bg-success-3 px-3 py-2 text-sm">
                 <span>
                   Mapped to <strong>{candidateLabel(sel.member)}</strong>{" "}
                   <span className="text-muted-foreground">({sel.member.email})</span>
@@ -420,7 +420,7 @@ export default function ApprovalMappingPanel({
                 </Button>
               </div>
             ) : (
-              <p className="text-sm text-amber-700">
+              <p className="text-sm text-warning-11">
                 Choose an existing member below.
               </p>
             )}
@@ -433,7 +433,7 @@ export default function ApprovalMappingPanel({
                     type="button"
                     className={`rounded-full border px-3 py-1 text-xs ${
                       sel.member?.id === candidate.id
-                        ? "border-emerald-400 bg-emerald-100 text-emerald-900"
+                        ? "border-success-7 bg-success-3 text-success-11"
                         : "border-border bg-card text-muted-foreground hover:bg-accent"
                     }`}
                     onClick={() => chooseMember(candidate)}
@@ -494,7 +494,7 @@ export default function ApprovalMappingPanel({
             {outcome.errors.map((error, index) => (
               <p
                 key={`err-${index}`}
-                className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800"
+                className="rounded-md border border-danger-6 bg-danger-3 px-3 py-2 text-xs text-danger-11"
               >
                 {error}
               </p>
@@ -502,7 +502,7 @@ export default function ApprovalMappingPanel({
             {outcome.notes.map((note, index) => (
               <p
                 key={`note-${index}`}
-                className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800"
+                className="rounded-md border border-warning-6 bg-warning-3 px-3 py-2 text-xs text-warning-11"
               >
                 {note}
               </p>
@@ -521,7 +521,7 @@ export default function ApprovalMappingPanel({
                     {outcome.fieldDiffs
                       .filter((diff) => diff.willChange)
                       .map((diff) => (
-                        <tr key={diff.field} className="bg-amber-50/60">
+                        <tr key={diff.field} className="bg-warning-3/60">
                           <td className="py-1 pr-3 font-medium text-muted-foreground">
                             {diff.label}
                           </td>
@@ -590,12 +590,12 @@ export default function ApprovalMappingPanel({
             {previewing ? "Previewing..." : "Preview mapping"}
           </Button>
           {preview && previewIsFresh && previewErrors.length === 0 && (
-            <span className="text-sm text-emerald-700">
+            <span className="text-sm text-success-11">
               Preview ready — no blocking issues.
             </span>
           )}
           {preview && !previewIsFresh && (
-            <span className="text-sm text-amber-700">
+            <span className="text-sm text-warning-11">
               Selections changed — preview again before approving.
             </span>
           )}
@@ -607,7 +607,7 @@ export default function ApprovalMappingPanel({
           {preview.blockingErrors.map((error, index) => (
             <p
               key={index}
-              className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800"
+              className="rounded-md border border-danger-6 bg-danger-3 px-3 py-2 text-sm text-danger-11"
             >
               {error}
             </p>
@@ -615,12 +615,12 @@ export default function ApprovalMappingPanel({
         </div>
       )}
 
-      <div className="space-y-3 rounded-md border border-amber-200 bg-amber-50 p-4 text-sm">
+      <div className="space-y-3 rounded-md border border-warning-6 bg-warning-3 p-4 text-sm">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-800">
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-warning-11">
             Joining fee invoice
           </p>
-          <p className="mt-1 text-amber-900">
+          <p className="mt-1 text-warning-11">
             Choose whether to raise the joining fee invoice when this application
             is approved.
             {applicantSel.mode === "MAP" && (
@@ -632,7 +632,7 @@ export default function ApprovalMappingPanel({
           </p>
         </div>
         <select
-          className="w-full rounded-md border border-amber-300 bg-card px-3 py-2 text-sm text-foreground"
+          className="w-full rounded-md border border-warning-6 bg-card px-3 py-2 text-sm text-foreground"
           value={effectiveFee.action}
           onChange={(event) => {
             setFeeTouched(true);
@@ -647,7 +647,7 @@ export default function ApprovalMappingPanel({
             <label className="space-y-1">
               <span className="text-xs font-medium text-muted-foreground">Amount override ($)</span>
               <input
-                className="w-full rounded-md border border-amber-300 px-3 py-2 text-sm"
+                className="w-full rounded-md border border-warning-6 px-3 py-2 text-sm"
                 inputMode="decimal"
                 placeholder="Use configured amount"
                 value={effectiveFee.amount}
@@ -660,7 +660,7 @@ export default function ApprovalMappingPanel({
             <label className="space-y-1">
               <span className="text-xs font-medium text-muted-foreground">Narration override</span>
               <input
-                className="w-full rounded-md border border-amber-300 px-3 py-2 text-sm"
+                className="w-full rounded-md border border-warning-6 px-3 py-2 text-sm"
                 placeholder="Use default narration"
                 value={effectiveFee.narration}
                 onChange={(event) => {
@@ -679,7 +679,7 @@ export default function ApprovalMappingPanel({
               Reason for not raising invoice
             </span>
             <textarea
-              className="min-h-24 w-full rounded-md border border-amber-300 px-3 py-2 text-sm"
+              className="min-h-24 w-full rounded-md border border-warning-6 px-3 py-2 text-sm"
               value={effectiveFee.reason}
               onChange={(event) => {
                 setFeeTouched(true);

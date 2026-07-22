@@ -26,8 +26,8 @@ function HelpList({ title, items }: { title: string; items: string[] }) {
 
   return (
     <section className="space-y-2">
-      <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
-      <ul className="list-disc space-y-1 pl-5 text-sm leading-6 text-slate-700">
+      <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+      <ul className="list-disc space-y-1 pl-5 text-sm leading-6 text-muted-foreground">
         {items.map((item) => (
           <li key={item}>{item}</li>
         ))}
@@ -43,15 +43,15 @@ function FieldHelpList({ fields }: { fields: HelpField[] }) {
 
   return (
     <section className="space-y-2">
-      <h3 className="text-sm font-semibold text-slate-900">Key fields</h3>
+      <h3 className="text-sm font-semibold text-foreground">Key fields</h3>
       <dl className="space-y-2 text-sm leading-6">
         {fields.map((field) => (
           <div
             key={field.name}
-            className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2"
+            className="rounded-md border border-border bg-card px-3 py-2"
           >
-            <dt className="font-medium text-slate-900">{field.name}</dt>
-            <dd className="text-slate-700">{field.description}</dd>
+            <dt className="font-medium text-foreground">{field.name}</dt>
+            <dd className="text-muted-foreground">{field.description}</dd>
           </div>
         ))}
       </dl>
@@ -66,16 +66,16 @@ function SectionHelpList({ sections }: { sections: HelpSection[] }) {
 
   return (
     <section className="space-y-2">
-      <h3 className="text-sm font-semibold text-slate-900">
+      <h3 className="text-sm font-semibold text-foreground">
         Complex sections
       </h3>
       <div className="space-y-3">
         {sections.map((section) => (
           <div key={section.title} className="space-y-1">
-            <h4 className="text-sm font-medium text-slate-900">
+            <h4 className="text-sm font-medium text-foreground">
               {section.title}
             </h4>
-            <ul className="list-disc space-y-1 pl-5 text-sm leading-6 text-slate-700">
+            <ul className="list-disc space-y-1 pl-5 text-sm leading-6 text-muted-foreground">
               {section.details.map((detail) => (
                 <li key={detail}>{detail}</li>
               ))}

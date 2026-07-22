@@ -339,10 +339,10 @@ export function MemberPasswordActionDialog({
             {(inviteSent > 0 || resetSent > 0 || skippedTotal > 0) && (
               <div className="space-y-1">
                 {inviteSent > 0 && (
-                  <p className="text-emerald-700">Sent {inviteSent} setup invite(s).</p>
+                  <p className="text-success-11">Sent {inviteSent} setup invite(s).</p>
                 )}
                 {resetSent > 0 && (
-                  <p className="text-emerald-700">
+                  <p className="text-success-11">
                     Sent {resetSent} password reset email(s) with a{" "}
                     {outcome.reset?.expiryLabel} window.
                   </p>
@@ -357,7 +357,7 @@ export function MemberPasswordActionDialog({
             {isRetryable && (
               <div
                 role="alert"
-                className="space-y-2 rounded-md border border-red-200 bg-red-50 p-3 text-red-700"
+                className="space-y-2 rounded-md border border-danger-6 bg-danger-3 p-3 text-danger-11"
               >
                 {outcome.inviteError && <p>{outcome.inviteError}</p>}
                 {outcome.invite && outcome.invite.failures.length > 0 && (

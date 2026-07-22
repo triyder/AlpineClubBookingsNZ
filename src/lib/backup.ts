@@ -2,14 +2,18 @@
  * Automated PostgreSQL database backup.
  * Runs pg_dump and optionally uploads to S3.
  *
- * Environment variables:
- *   BACKUP_ENABLED=true           - Enable/disable backups
- *   BACKUP_S3_BUCKET              - S3 bucket name (required for durable healthy backups; uploads to the tacbookings_s3backup/ prefix)
- *   BACKUP_S3_REGION              - AWS region for S3 (defaults to ap-southeast-2)
- *   BACKUP_S3_ACCESS_KEY_ID       - AWS access key for S3 uploads
- *   BACKUP_S3_SECRET_ACCESS_KEY   - AWS secret key for S3 uploads
- *   BACKUP_RETENTION_DAYS         - Number of days to keep local backups (default 7)
- *   DATABASE_URL                  - PostgreSQL connection string
+ * Configuration is DB-only (#2095, C6): the enabled switch, S3 destination
+ * (bucket/region), access key/secret, retention window and restore-validation
+ * shadow DSN all resolve from the encrypted IntegrationCredential store via
+ * `resolveBackupConfig()` (src/lib/backup-config.ts). The legacy `BACKUP_ENABLED`
+ * / `BACKUP_S3_*` / `BACKUP_RETENTION_DAYS` / `BACKUP_RESTORE_VALIDATION_URL`
+ * env vars are no longer read — they are detected and flagged for in-app
+ * re-entry. Only `DATABASE_URL` (the source database, bootstrap config) and
+ * `BACKUP_CRON_SCHEDULE` (cron-leader timing) remain environment-driven.
+ *
+ * The postgres connection password is passed to pg_dump/psql via `PGPASSWORD`
+ * in the child environment, never on the command line, so it cannot leak into a
+ * process listing (`ps`) on the host.
  */
 
 import { execFileSync } from "child_process";
@@ -24,9 +28,9 @@ import {
 import path from "path";
 import { gzipSync } from "zlib";
 import logger from "@/lib/logger";
+import { resolveBackupConfig } from "@/lib/backup-config";
 
 const BACKUP_DIR = "/tmp/tacbookings-backups";
-const DEFAULT_RETENTION_DAYS = 7;
 const S3_BACKUP_PREFIX = "tacbookings_s3backup";
 const MIN_BACKUP_SIZE_BYTES = 128;
 const BACKUP_COMMAND_TIMEOUT_MS = 120_000;
@@ -75,11 +79,24 @@ export interface BackupCronOutcome {
  * Run a database backup using pg_dump.
  */
 export async function runDatabaseBackup(): Promise<BackupResult> {
-  if (process.env.BACKUP_ENABLED !== "true") {
+  const config = await resolveBackupConfig();
+
+  // A stored-but-undecryptable credential (the app auth secret changed) is a
+  // LOUD failure, never a silent skip: backups run unattended from cron, so the
+  // disaster-recovery path must alert rather than quietly disable itself.
+  if (config.needsReentry) {
+    return {
+      success: false,
+      error:
+        "Backup credentials could not be decrypted (the app auth secret changed). Re-enter the S3 credentials on Admin → Backups.",
+    };
+  }
+
+  if (!config.enabled) {
     return {
       success: false,
       skipped: true,
-      reason: "Backups are disabled. Set BACKUP_ENABLED=true.",
+      reason: "Backups are disabled. Enable them on Admin → Backups.",
     };
   }
 
@@ -89,14 +106,15 @@ export async function runDatabaseBackup(): Promise<BackupResult> {
   }
 
   const sanitizedDatabaseUrl = sanitizePostgresUrlForPgDump(databaseUrl);
-  const restoreValidationDatabaseUrl = process.env.BACKUP_RESTORE_VALIDATION_URL;
+  const restoreValidationDatabaseUrl = config.restoreValidationUrl ?? undefined;
   if (
     restoreValidationDatabaseUrl &&
     sanitizePostgresUrlForPgDump(restoreValidationDatabaseUrl) === sanitizedDatabaseUrl
   ) {
     return {
       success: false,
-      error: "BACKUP_RESTORE_VALIDATION_URL must point at a disposable shadow database, not DATABASE_URL",
+      error:
+        "The restore-validation URL must point at a disposable shadow database, not the live DATABASE_URL",
     };
   }
 
@@ -151,10 +169,10 @@ export async function runDatabaseBackup(): Promise<BackupResult> {
     let restoreValidation: BackupRestoreValidation | undefined;
 
     // Upload to S3 if configured
-    const s3Bucket = process.env.BACKUP_S3_BUCKET;
+    const s3Bucket = config.bucket;
     if (s3Bucket) {
       try {
-        const s3Region = process.env.BACKUP_S3_REGION || "ap-southeast-2";
+        const s3Region = config.region;
         s3Key = `${S3_BACKUP_PREFIX}/${filename}`;
 
         const readback = uploadAndVerifyS3Readback({
@@ -164,6 +182,8 @@ export async function runDatabaseBackup(): Promise<BackupResult> {
           s3Bucket,
           s3Key,
           s3Region,
+          accessKeyId: config.accessKeyId,
+          secretAccessKey: config.secretAccessKey,
         });
 
         uploadedToS3 = true;
@@ -216,7 +236,7 @@ export async function runDatabaseBackup(): Promise<BackupResult> {
     cleanupS3Readback(s3ReadbackPath);
 
     // Clean up old local backups
-    cleanupOldBackups();
+    cleanupOldBackups(config.retentionDays);
 
     return {
       success: true,
@@ -249,7 +269,7 @@ export function buildBackupCronOutcome(result: BackupResult): BackupCronOutcome 
       return {
         status: "FAILURE",
         error:
-          "Backup completed only to local /tmp storage; configure BACKUP_S3_BUCKET for durable backups",
+          "Backup completed only to local ephemeral storage; configure an S3 destination on Admin → Backups for durable backups",
         resultSummary: {
           ...resultSummary,
           healthSignal: "backup-not-durable",
@@ -299,6 +319,49 @@ export function buildBackupCronOutcome(result: BackupResult): BackupCronOutcome 
   return failure;
 }
 
+/**
+ * Operator-facing message for the legacy-env migration hazard (#2095 MAJOR-1).
+ */
+export const LEGACY_BACKUP_ENV_UNMIGRATED_MESSAGE =
+  "Legacy BACKUP_* environment variables are set but backups are disabled or " +
+  "not configured for durable (S3) storage in the app. The old env config is " +
+  "no longer read — migrate it at Admin → Backups so nightly backups resume. " +
+  "Backups are NOT running.";
+
+/**
+ * Guard the scheduled cron outcome against the silent-stop migration hazard
+ * (#2095 MAJOR-1).
+ *
+ * A live install that configured backups through the old `BACKUP_*` env vars
+ * upgrades to the DB-only store empty: `resolveBackupConfig()` returns
+ * `enabled:false`, the nightly run records SKIPPED, and the Sentry monitor stays
+ * green — so backups cease unnoticed. When legacy backup env vars are still
+ * present AND the run did not run durably (it was SKIPPED because disabled, or
+ * would only be local-only), upgrade the SKIPPED outcome to a LOUD FAILURE that
+ * tells the operator to migrate config. An enabled-but-not-durable run is
+ * already a FAILURE via `buildBackupCronOutcome`, and a fully-migrated install
+ * (SUCCESS, durable) is left untouched even if a stale env var lingers — that
+ * lingering var is surfaced as a warning on the status payload, not a failure.
+ *
+ * Installs with NO legacy env and backups off stay quiet (SKIPPED): a
+ * deliberately-disabled backup is not an incident.
+ */
+export function applyLegacyBackupEnvGate(
+  outcome: BackupCronOutcome,
+  options: { legacyEnvPresent: boolean },
+): BackupCronOutcome {
+  if (!options.legacyEnvPresent) return outcome;
+  if (outcome.status !== "SKIPPED") return outcome;
+  return {
+    status: "FAILURE",
+    error: LEGACY_BACKUP_ENV_UNMIGRATED_MESSAGE,
+    resultSummary: {
+      ...(outcome.resultSummary ?? {}),
+      healthSignal: "backup-legacy-env-unmigrated",
+    },
+  };
+}
+
 // test seam
 export function sanitizePostgresUrlForPgDump(databaseUrl: string): string {
   try {
@@ -312,23 +375,88 @@ export function sanitizePostgresUrlForPgDump(databaseUrl: string): string {
   }
 }
 
+/**
+ * Strip any embedded password out of a connection string that `new URL()` could
+ * not parse — a libpq keyword-form conninfo (`host=… password=…`) or a URI whose
+ * port is out of range so URL parsing throws. Defence in depth for #2095
+ * MAJOR-2: such a string is never handed to psql/pg_dump on argv (where it would
+ * show in a process listing) OR persisted verbatim, so the password cannot leak
+ * even when the value bypasses the capture-time validation.
+ *
+ * The recovered password is intentionally NOT re-supplied via PGPASSWORD: the
+ * only strings that legitimately reach here are `postgres://` URLs (parsed by
+ * the branch above), so an unparseable value is already a misconfiguration and
+ * failing the connection closed is safer than trying to reconstruct it.
+ */
+function stripUnparseablePassword(conninfo: string): string {
+  return (
+    conninfo
+      // libpq keyword form: password=<token>, quoted or bare.
+      .replace(/(\bpassword\s*=\s*)('[^']*'|"[^"]*"|[^\s]+)/gi, "$1")
+      // URI userinfo form //user:secret@host that URL() rejected (e.g. bad
+      // port). Username may be empty (`//:secret@host`), so `*` not `+`.
+      .replace(/(:\/\/[^/:@\s]*):[^@/\s]+@/g, "$1@")
+  );
+}
+
+/**
+ * Split a postgres connection URL into a command-line-safe URL (password
+ * removed) and the decoded password, so pg_dump/psql receive the password via
+ * `PGPASSWORD` in the child env rather than on argv where it is visible in a
+ * process listing. Returns the URL unchanged (no password) when it carries no
+ * password. When the value is NOT a parseable URL, any embedded password token
+ * is stripped as defence in depth so a live secret is never returned verbatim
+ * (#2095 MAJOR-2). test seam.
+ */
+export function splitPostgresPassword(url: string): {
+  argvUrl: string;
+  password?: string;
+} {
+  try {
+    const parsed = new URL(url);
+    if (!parsed.password) return { argvUrl: url };
+    const password = decodeURIComponent(parsed.password);
+    parsed.password = "";
+    return { argvUrl: parsed.toString(), password };
+  } catch {
+    return { argvUrl: stripUnparseablePassword(url) };
+  }
+}
+
+/** Child env with `PGPASSWORD` set when a password was split out of the URL. */
+function buildPostgresEnvironment(password?: string): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  if (password) {
+    env.PGPASSWORD = password;
+  } else {
+    // Never inherit an ambient PGPASSWORD that does not match this URL.
+    delete env.PGPASSWORD;
+  }
+  return env;
+}
+
 function runPgDump(filepath: string, sanitizedDatabaseUrl: string) {
-  const dump = execFileSync("pg_dump", [sanitizedDatabaseUrl], {
+  const { argvUrl, password } = splitPostgresPassword(sanitizedDatabaseUrl);
+  const dump = execFileSync("pg_dump", [argvUrl], {
     timeout: BACKUP_COMMAND_TIMEOUT_MS,
     maxBuffer: BACKUP_COMMAND_MAX_BUFFER_BYTES,
+    env: buildPostgresEnvironment(password),
     stdio: ["ignore", "pipe", "pipe"],
   });
 
   writeFileSync(filepath, gzipSync(dump));
 }
 
-function buildAwsEnvironment(): NodeJS.ProcessEnv {
+function buildAwsEnvironment(
+  accessKeyId: string | null,
+  secretAccessKey: string | null,
+): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
-  if (process.env.BACKUP_S3_ACCESS_KEY_ID) {
-    env.AWS_ACCESS_KEY_ID = process.env.BACKUP_S3_ACCESS_KEY_ID;
+  if (accessKeyId) {
+    env.AWS_ACCESS_KEY_ID = accessKeyId;
   }
-  if (process.env.BACKUP_S3_SECRET_ACCESS_KEY) {
-    env.AWS_SECRET_ACCESS_KEY = process.env.BACKUP_S3_SECRET_ACCESS_KEY;
+  if (secretAccessKey) {
+    env.AWS_SECRET_ACCESS_KEY = secretAccessKey;
   }
   return env;
 }
@@ -340,6 +468,8 @@ function uploadAndVerifyS3Readback({
   s3Bucket,
   s3Key,
   s3Region,
+  accessKeyId,
+  secretAccessKey,
 }: {
   filepath: string;
   filename: string;
@@ -347,10 +477,12 @@ function uploadAndVerifyS3Readback({
   s3Bucket: string;
   s3Key: string;
   s3Region: string;
+  accessKeyId: string | null;
+  secretAccessKey: string | null;
 }) {
   const s3Uri = `s3://${s3Bucket}/${s3Key}`;
   const readbackPath = path.join(BACKUP_DIR, `${filename}.s3-readback`);
-  const env = buildAwsEnvironment();
+  const env = buildAwsEnvironment(accessKeyId, secretAccessKey);
 
   execFileSync("aws", ["s3", "cp", filepath, s3Uri, "--region", s3Region], {
     timeout: BACKUP_COMMAND_TIMEOUT_MS,
@@ -385,9 +517,11 @@ function validateBackupRestore(
   restoreValidationDatabaseUrl: string,
   source: BackupRestoreValidation["source"]
 ): BackupRestoreValidation {
-  const sanitizedRestoreUrl = sanitizePostgresUrlForPgDump(
-    restoreValidationDatabaseUrl
-  );
+  const { argvUrl: sanitizedRestoreUrl, password: restorePassword } =
+    splitPostgresPassword(
+      sanitizePostgresUrlForPgDump(restoreValidationDatabaseUrl),
+    );
+  const restoreEnv = buildPostgresEnvironment(restorePassword);
 
   execFileSync(
     "psql",
@@ -400,6 +534,7 @@ function validateBackupRestore(
     ],
     {
       timeout: BACKUP_COMMAND_TIMEOUT_MS,
+      env: restoreEnv,
       stdio: ["ignore", "pipe", "pipe"],
     }
   );
@@ -414,6 +549,7 @@ function validateBackupRestore(
     input: sql,
     timeout: BACKUP_COMMAND_TIMEOUT_MS,
     maxBuffer: BACKUP_COMMAND_MAX_BUFFER_BYTES,
+    env: restoreEnv,
     stdio: ["pipe", "pipe", "pipe"],
   });
 
@@ -432,6 +568,7 @@ function validateBackupRestore(
     {
       encoding: "utf8",
       timeout: BACKUP_COMMAND_TIMEOUT_MS,
+      env: restoreEnv,
       stdio: ["ignore", "pipe", "pipe"],
     }
   );
@@ -464,10 +601,9 @@ function validateBackupRestore(
 }
 
 /**
- * Remove backup files older than BACKUP_RETENTION_DAYS.
+ * Remove backup files older than the configured retention window.
  */
-function cleanupOldBackups() {
-  const retentionDays = parseInt(process.env.BACKUP_RETENTION_DAYS || "") || DEFAULT_RETENTION_DAYS;
+function cleanupOldBackups(retentionDays: number) {
   const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
 
   if (!existsSync(BACKUP_DIR)) return;

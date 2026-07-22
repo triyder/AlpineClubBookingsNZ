@@ -19,9 +19,9 @@ const baseEnv = {
   CRON_SECRET: "cron-secret",
   SEED_ADMIN_EMAIL: "admin@example.org",
   SEED_ADMIN_PASSWORD: "change-me",
-  STRIPE_SECRET_KEY: "sk_test_123",
-  NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: "pk_test_123",
-  STRIPE_WEBHOOK_SECRET: "whsec_123",
+  // Stripe credentials are captured in-app now (#2082); legacy STRIPE_* env vars
+  // are intentionally absent here so the Stripe check does not raise the "remove
+  // the legacy vars" warning. The keys are represented in the DB snapshot below.
   SMTP_HOST: "email-smtp.ap-southeast-2.amazonaws.com",
   SMTP_PORT: "587",
   AWS_SES_ACCESS_KEY_ID: "smtp-user",
@@ -74,6 +74,10 @@ const completeDatabase: SetupDatabaseSnapshot = {
   membershipCancellationArchiveContacts: false,
   operationalXeroConnected: true,
   operationalXeroTokenExpiresAt: "2026-06-01T00:00:00.000Z",
+  stripeSecretKeySet: true,
+  stripePublishableKeySet: true,
+  stripeWebhookSecretSet: true,
+  stripeNeedsReentry: false,
   xeroAccountMappingCount: 5,
   xeroHutFeeItemMappingCount: 16,
   xeroEntranceFeeMappingCount: 4,

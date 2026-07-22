@@ -11,6 +11,8 @@ import { readBundle } from "@/lib/config-transfer/bundle";
 import {
   SINGLETONS,
   clubSettingsImporter,
+  COMMON_EXCLUDED_COLUMNS,
+  excludedColumnsFor,
 } from "@/lib/config-transfer/categories/club-settings";
 import type { ApplyContext, ReadDb, TxDb } from "@/lib/config-transfer/import-types";
 import { buildBundle } from "@/lib/config-transfer/bundle";
@@ -299,6 +301,100 @@ describe("club-settings allowlists match the Prisma schema", () => {
   });
 });
 
+// Reverse drift guard (#2178). The block above checks fields ⊆ columns (a spec
+// naming a column that no longer exists). This checks the OTHER direction:
+// columns ⊆ fields ∪ optInFields ∪ excluded. Every real column on each model
+// must be either exported or named in the deliberate exclusion set with a
+// reason, so a newly added column belongs to neither and fails here — someone
+// has to classify it as should-travel or deliberately-excluded rather than it
+// silently never travelling (as useFeeScheduleItemCodes / magicLink / googleLogin
+// did before this audit).
+describe("club-settings allowlists account for every column (reverse guard)", () => {
+  const modelsByName = new Map(
+    Prisma.dmmf.datamodel.models.map((m) => [m.name, m]),
+  );
+  const modelNameOf = (delegate: string) =>
+    delegate[0].toUpperCase() + delegate.slice(1);
+
+  it("every model column is exported or named in the exclusion set with a reason", () => {
+    const problems: string[] = [];
+    for (const spec of SINGLETONS) {
+      const modelName = modelNameOf(spec.delegate);
+      const model = modelsByName.get(modelName);
+      if (!model) {
+        problems.push(`delegate "${spec.delegate}" → no Prisma model "${modelName}"`);
+        continue;
+      }
+      const excluded = excludedColumnsFor(spec);
+      const accountedFor = new Set([
+        ...spec.fields,
+        ...(spec.optInFields ?? []),
+        ...Object.keys(excluded),
+      ]);
+      for (const field of model.fields) {
+        // Relations are not DB columns; only scalar/enum fields map to columns.
+        if (field.kind === "object") continue;
+        if (!accountedFor.has(field.name)) {
+          problems.push(
+            `${modelName}.${field.name} is neither exported nor excluded — classify it (#2178)`,
+          );
+          continue;
+        }
+        // An excluded column must carry a non-empty reason.
+        if (field.name in excluded && !excluded[field.name]?.trim()) {
+          problems.push(`${modelName}.${field.name} excluded without a reason`);
+        }
+      }
+    }
+    expect(problems).toEqual([]);
+  });
+
+  it("no column is both exported and excluded", () => {
+    const problems: string[] = [];
+    for (const spec of SINGLETONS) {
+      const exported = new Set([...spec.fields, ...(spec.optInFields ?? [])]);
+      // Merged set: a COMMON_EXCLUDED_COLUMNS entry added to `fields` is just as
+      // contradictory as a per-spec one, and the defaults-coverage test skips the
+      // DEFAULTS_INTENTIONALLY_PARTIAL singletons, so it must be caught here.
+      for (const col of Object.keys(excludedColumnsFor(spec))) {
+        if (exported.has(col)) {
+          problems.push(`${spec.entity}.${col} is in both fields and excluded`);
+        }
+      }
+    }
+    expect(problems).toEqual([]);
+  });
+
+  it("every model-specific exclusion names a real column (no stale exclusions)", () => {
+    // COMMON_EXCLUDED_COLUMNS is a tolerant superset (e.g. BookingDefaults has
+    // no timestamps), so only the per-spec `excluded` entries are checked here.
+    const problems: string[] = [];
+    for (const spec of SINGLETONS) {
+      const columns = new Set(
+        (modelsByName.get(modelNameOf(spec.delegate))?.fields ?? []).map(
+          (f) => f.name,
+        ),
+      );
+      for (const col of Object.keys(spec.excluded ?? {})) {
+        if (!columns.has(col)) {
+          problems.push(`${spec.entity}.${col} is excluded but not a column`);
+        }
+      }
+    }
+    expect(problems).toEqual([]);
+  });
+
+  it("the shared exclusion set covers the singleton id/audit/timestamp columns", () => {
+    // Membership assertion so the shared set cannot be silently emptied.
+    expect(Object.keys(COMMON_EXCLUDED_COLUMNS).sort()).toEqual([
+      "createdAt",
+      "id",
+      "updatedAt",
+      "updatedByMemberId",
+    ]);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // #2171 — a singleton the club has NEVER SAVED still travels, carrying the
 // effective defaults every read site synthesises on a miss, so an import
@@ -395,6 +491,9 @@ describe("club-settings exports effective defaults for an unsaved singleton (#21
       financialYearEndMonthOverride: null,
       textFallbackEnabled:
         DEFAULT_MEMBERSHIP_LOCKOUT_SETTINGS.textFallbackEnabled,
+      // #2178: the fee-schedule paid-detection toggle now travels too.
+      useFeeScheduleItemCodes:
+        DEFAULT_MEMBERSHIP_LOCKOUT_SETTINGS.useFeeScheduleItemCodes,
     });
 
     // Default COPY travels too, so the target reads the same words.
@@ -580,6 +679,107 @@ describe("club-settings exports effective defaults for an unsaved singleton (#21
     expect(result.created).toBe(1);
     expect(delegates.groupDiscountSetting.upsert).toHaveBeenCalledTimes(1);
     expect(delegates.bookingRequestSettings.upsert).not.toHaveBeenCalled();
+  });
+});
+
+// #2178 — the newly-travelling MembershipLockoutSettings.useFeeScheduleItemCodes
+// must round-trip on import, AND a bundle exported by an older version that omits
+// the field must still import unchanged (field-level missing-field tolerance, no
+// bundle format-version bump needed).
+describe("membership-lockout useFeeScheduleItemCodes round-trips (#2178)", () => {
+  it("updates an existing target when the bundle carries the flag on", async () => {
+    const zip = buildBundle({
+      entries: [
+        {
+          path: "club-settings/membership-lockout-settings.json",
+          category: "club-settings",
+          rowCount: 1,
+          bytes: strToU8(
+            JSON.stringify({
+              enabled: true,
+              financialYearEndMonthOverride: null,
+              textFallbackEnabled: true,
+              useFeeScheduleItemCodes: true,
+            }),
+          ),
+        },
+      ],
+      appVersion: "0.13.2",
+      prismaMigration: null,
+      includedCategories: ["club-settings"],
+      doorCodesIncluded: false,
+      generatedAt: "2026-07-08T00:00:00.000Z",
+    });
+    const target = {
+      ...DEFAULT_MEMBERSHIP_LOCKOUT_SETTINGS,
+      useFeeScheduleItemCodes: false,
+    };
+    const plan = await buildImportPlan(
+      stubDb({ membershipLockoutSettings: target }),
+      zip,
+      { mode: "merge" },
+    );
+    const item = plan.categories[0].items.find(
+      (i) => i.entity === "membership-lockout-settings",
+    );
+    expect(item?.action).toBe("update");
+    expect(item?.changedFields).toEqual(["useFeeScheduleItemCodes"]);
+
+    const { files } = readBundle(zip);
+    const { tx, delegates } = stubTx({ membershipLockoutSettings: target });
+    await clubSettingsImporter.apply(applyCtx(tx, files, "merge"));
+    expect(delegates.membershipLockoutSettings.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        update: expect.objectContaining({ useFeeScheduleItemCodes: true }),
+      }),
+    );
+  });
+
+  it("leaves the field untouched when an OLDER bundle omits it", async () => {
+    // Pre-#2178 export: the three original fields, no useFeeScheduleItemCodes.
+    const zip = buildBundle({
+      entries: [
+        {
+          path: "club-settings/membership-lockout-settings.json",
+          category: "club-settings",
+          rowCount: 1,
+          bytes: strToU8(
+            JSON.stringify({
+              enabled: true,
+              financialYearEndMonthOverride: null,
+              textFallbackEnabled: true,
+            }),
+          ),
+        },
+      ],
+      appVersion: "0.12.2",
+      prismaMigration: null,
+      includedCategories: ["club-settings"],
+      doorCodesIncluded: false,
+      generatedAt: "2026-07-08T00:00:00.000Z",
+    });
+    // Target already runs with the flag ON; the older bundle must not clear it.
+    const target = {
+      ...DEFAULT_MEMBERSHIP_LOCKOUT_SETTINGS,
+      useFeeScheduleItemCodes: true,
+    };
+    const plan = await buildImportPlan(
+      stubDb({ membershipLockoutSettings: target }),
+      zip,
+      { mode: "overwrite" },
+    );
+    const item = plan.categories[0].items.find(
+      (i) => i.entity === "membership-lockout-settings",
+    );
+    expect(item?.action).toBe("unchanged");
+    expect(plan.categories[0].errors).toEqual([]);
+
+    const { files } = readBundle(zip);
+    const { tx, delegates } = stubTx({ membershipLockoutSettings: target });
+    await clubSettingsImporter.apply(applyCtx(tx, files, "overwrite"));
+    // No write at all: the only bundle fields equal the target, and the omitted
+    // useFeeScheduleItemCodes is never touched.
+    expect(delegates.membershipLockoutSettings.upsert).not.toHaveBeenCalled();
   });
 });
 

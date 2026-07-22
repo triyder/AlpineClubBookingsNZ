@@ -314,7 +314,10 @@ describe("reconcileSeasonSubscriptionForAssignment", () => {
       status: string;
       xeroInvoiceId: string | null;
       manuallyMarkedPaidAt: Date | null;
-      chargeCoverage: { id: string } | null;
+      // #2147/#2179: chargeCoverage is a to-many relation — the real client
+      // ALWAYS returns an array (never null), here already narrowed to ACTIVE
+      // claims by the select's `where: { releasedAt: null }`.
+      chargeCoverage: Array<{ id: string }>;
     } | null,
     updateCount = 1,
   ) {
@@ -330,7 +333,7 @@ describe("reconcileSeasonSubscriptionForAssignment", () => {
     status: "NOT_REQUIRED",
     xeroInvoiceId: null,
     manuallyMarkedPaidAt: null,
-    chargeCoverage: null,
+    chargeCoverage: [] as Array<{ id: string }>,
   };
 
   it("flips a stale NOT_REQUIRED seed row to NOT_INVOICED for a REQUIRED type", async () => {
@@ -342,6 +345,21 @@ describe("reconcileSeasonSubscriptionForAssignment", () => {
     });
 
     expect(result).toEqual({ reconciled: true });
+    // #2179: the coverage read must count ACTIVE claims only (a released claim
+    // means the member is re-billable and must not block the reconcile).
+    expect(db.memberSubscription.findUnique).toHaveBeenCalledWith({
+      where: { memberId_seasonYear: { memberId: "m1", seasonYear: 2026 } },
+      select: {
+        status: true,
+        xeroInvoiceId: true,
+        manuallyMarkedPaidAt: true,
+        chargeCoverage: {
+          where: { releasedAt: null },
+          take: 1,
+          select: { id: true },
+        },
+      },
+    });
     expect(db.memberSubscription.updateMany).toHaveBeenCalledWith({
       where: {
         memberId: "m1",
@@ -349,6 +367,10 @@ describe("reconcileSeasonSubscriptionForAssignment", () => {
         status: "NOT_REQUIRED",
         xeroInvoiceId: null,
         manuallyMarkedPaidAt: null,
+        // #2179: the no-active-coverage guard is re-asserted relationally at
+        // write time (a NO_INVOICE confirm can attach an active claim to a
+        // still-NOT_REQUIRED row between the read and this write).
+        chargeCoverage: { none: { releasedAt: null } },
       },
       data: { status: "NOT_INVOICED" },
     });
@@ -394,10 +416,59 @@ describe("reconcileSeasonSubscriptionForAssignment", () => {
     expect(db.memberSubscription.updateMany).not.toHaveBeenCalled();
   });
 
+  // #2179 regression: the guard used to be `chargeCoverage !== null`, which is
+  // ALWAYS true against the real client (a to-many select returns [] when no
+  // claim matches), so the reconcile branch was unreachable outside the stale
+  // single-object test mocks. Exercise the guard BOTH ways with the real list
+  // shape: an empty active-claim list reconciles; a present active claim
+  // refuses.
+  it("#2179: reconciles on an empty active-coverage list, refuses on a present active claim", async () => {
+    const noActiveClaims = makeReconcileDb({ ...untouchedSeedRow, chargeCoverage: [] });
+    expect(
+      await reconcileSeasonSubscriptionForAssignment(noActiveClaims as never, {
+        memberId: "m1",
+        seasonYear: 2026,
+        subscriptionBehavior: "REQUIRED",
+      }),
+    ).toEqual({ reconciled: true });
+    expect(noActiveClaims.memberSubscription.updateMany).toHaveBeenCalledTimes(1);
+
+    // e.g. a NO_INVOICE billing confirm: status stays NOT_REQUIRED but an
+    // ACTIVE coverage claim exists — real billing state, never reconciled.
+    const activeClaim = makeReconcileDb({
+      ...untouchedSeedRow,
+      chargeCoverage: [{ id: "cov-active" }],
+    });
+    expect(
+      await reconcileSeasonSubscriptionForAssignment(activeClaim as never, {
+        memberId: "m1",
+        seasonYear: 2026,
+        subscriptionBehavior: "REQUIRED",
+      }),
+    ).toEqual({ reconciled: false });
+    expect(activeClaim.memberSubscription.updateMany).not.toHaveBeenCalled();
+  });
+
+  // The write-time WHERE re-asserts every read-phase guard, so a concurrent
+  // writer that moved the row between the read and the write makes updateMany
+  // match 0 rows. The lost race MUST surface as { reconciled: false } — the
+  // count>0 mapping is the proof that a lost claim reports no side effect.
+  it("reports { reconciled: false } when the write-time guard loses the race (updateMany matches 0 rows)", async () => {
+    const db = makeReconcileDb(untouchedSeedRow, 0);
+    const result = await reconcileSeasonSubscriptionForAssignment(db as never, {
+      memberId: "m1",
+      seasonYear: 2026,
+      subscriptionBehavior: "REQUIRED",
+    });
+
+    expect(result).toEqual({ reconciled: false });
+    expect(db.memberSubscription.updateMany).toHaveBeenCalledTimes(1);
+  });
+
   it("never touches a manually marked-paid or charge-covered row", async () => {
     for (const guarded of [
       { ...untouchedSeedRow, manuallyMarkedPaidAt: new Date() },
-      { ...untouchedSeedRow, chargeCoverage: { id: "cov-1" } },
+      { ...untouchedSeedRow, chargeCoverage: [{ id: "cov-1" }] },
       { ...untouchedSeedRow, status: "PAID" },
     ]) {
       const db = makeReconcileDb(guarded);

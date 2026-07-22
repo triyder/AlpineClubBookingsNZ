@@ -11,7 +11,9 @@ import {
   loadClubModuleSettings,
   normalizeClubModuleSettings,
 } from "@/lib/module-settings";
+import { getGoogleSetupState } from "@/lib/google-config";
 import { prisma } from "@/lib/prisma";
+import logger from "@/lib/logger";
 import {
   invalidatePublicLayoutConfig,
   PUBLIC_LAYOUT_CACHE_TAGS,
@@ -91,6 +93,33 @@ export async function PUT(request: Request) {
   const before = normalizeClubModuleSettings(existing);
   const after = parsed.data.settings;
   const changes = getChanges(before, after);
+
+  // Hard verify gate (#2087, D2): googleLogin may only be turned ON once a real
+  // Google OAuth round-trip has verified the stored credentials. This is the
+  // authoritative server-side lock (the setup wizard + security card also gate
+  // the toggle in the UI). Fail-CLOSED here: if we cannot confirm verification,
+  // refuse enabling rather than silently letting an unverified module through.
+  if (!before.googleLogin && after.googleLogin) {
+    let verified = false;
+    try {
+      const state = await getGoogleSetupState();
+      verified = state.verified && !state.needsReentry;
+    } catch (err) {
+      logger.error(
+        { err: err instanceof Error ? err.name : "unknown" },
+        "Could not confirm Google verification for the module enable-gate",
+      );
+    }
+    if (!verified) {
+      return NextResponse.json(
+        {
+          error:
+            "Verify Google sign-in in the setup wizard (Admin → Integrations → Google) before enabling it.",
+        },
+        { status: 409 },
+      );
+    }
+  }
 
   const write = prisma.clubModuleSettings.upsert({
     where: { id: CLUB_MODULE_SETTINGS_ID },

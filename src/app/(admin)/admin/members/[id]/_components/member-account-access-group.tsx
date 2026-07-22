@@ -187,7 +187,7 @@ export function MemberAccountAccessGroup({
             ref={errorRef}
             role="alert"
             tabIndex={-1}
-            className="scroll-mt-20 whitespace-pre-line rounded border border-red-200 bg-red-50 p-2 text-sm text-red-700 focus:outline-none"
+            className="scroll-mt-20 whitespace-pre-line rounded border border-danger-6 bg-danger-3 p-2 text-sm text-danger-11 focus:outline-none"
           >
             {error}
           </div>
@@ -440,7 +440,7 @@ export function MemberAccountAccessGroup({
                   Searching eligible adult members...
                 </p>
               ) : inheritEmail.error ? (
-                <p className="text-xs text-red-600">{inheritEmail.error}</p>
+                <p className="text-xs text-danger-11">{inheritEmail.error}</p>
               ) : inheritEmail.search.trim().length >= 2 ? (
                 inheritEmail.results.length > 0 ? (
                   <div className="max-h-48 space-y-2 overflow-auto rounded-md border border-border bg-card p-2">

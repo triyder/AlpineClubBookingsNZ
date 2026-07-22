@@ -196,6 +196,46 @@ export const explicitPublicApiRoutes = {
     reason:
       "Public cached Whakapapa mountain-condition payload used by public website embed tokens; fixed upstream source, rate limited, no member data.",
   },
+  "src/app/api/stripe/publishable-key/route.ts": {
+    boundary: "public",
+    reason:
+      "Runtime delivery of the non-secret Stripe publishable key (#2082): session-free by design because the unauthenticated pay/[token] page loads the card form; returns only the publishable key or null, never the secret key or webhook secret (structurally scoped to the publishable_key credential row).",
+  },
+  "src/app/api/testing/xero-mock/authorize/route.ts": {
+    boundary: "public",
+    reason:
+      "Mock-Xero OAuth consent endpoint for the E2E harness (#2080). Production-inert: returns 404 unless XERO_MOCK_API_ORIGIN is set AND the runtime is not real production (NODE_ENV=production with a non-staging APP_RUNTIME_ROLE); serves no real data and touches no member state.",
+  },
+  "src/app/api/testing/xero-mock/chart-of-accounts/route.ts": {
+    boundary: "public",
+    reason:
+      "Mock-Xero chart-of-accounts endpoint for the E2E harness (#2081). Production-inert via the same XERO_MOCK_API_ORIGIN + runtime-role double gate; fixed fake payload only.",
+  },
+  "src/app/api/testing/xero-mock/connections/route.ts": {
+    boundary: "public",
+    reason:
+      "Mock-Xero connections endpoint for the E2E harness (#2080). Production-inert via the same XERO_MOCK_API_ORIGIN + runtime-role double gate; fixed fake payload only.",
+  },
+  "src/app/api/testing/xero-mock/items/route.ts": {
+    boundary: "public",
+    reason:
+      "Mock-Xero items endpoint for the E2E harness (#2081). Production-inert via the same XERO_MOCK_API_ORIGIN + runtime-role double gate; fixed fake payload only.",
+  },
+  "src/app/api/testing/xero-mock/organisation/route.ts": {
+    boundary: "public",
+    reason:
+      "Mock-Xero organisation endpoint for the E2E harness (#2080). Production-inert via the same XERO_MOCK_API_ORIGIN + runtime-role double gate; fixed fake payload only.",
+  },
+  "src/app/api/testing/xero-mock/send-validation/route.ts": {
+    boundary: "public",
+    reason:
+      "Mock-Xero intent-to-receive trigger for the E2E harness (#2081): signs an empty-events body with the STORED webhook key and POSTs the real /api/webhooks/xero route (production-parity verify). Production-inert via the same XERO_MOCK_API_ORIGIN + runtime-role double gate.",
+  },
+  "src/app/api/testing/xero-mock/token/route.ts": {
+    boundary: "public",
+    reason:
+      "Mock-Xero token-exchange endpoint for the E2E harness (#2080). Production-inert via the same XERO_MOCK_API_ORIGIN + runtime-role double gate; mints fake tokens consumed only by the gated mock OAuth branch.",
+  },
   "src/app/api/webhooks/ses-sns/route.ts": {
     boundary: "webhook",
     reason: "AWS SNS signed SES feedback webhook.",

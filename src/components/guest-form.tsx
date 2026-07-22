@@ -151,7 +151,7 @@ export function GuestForm({
       </div>
 
       {guests.length === 0 && (
-        <p className="text-sm text-gray-500">
+        <p className="text-sm text-muted-foreground">
           Add at least one guest to proceed. You should include yourself if you&apos;re staying.
         </p>
       )}
@@ -211,7 +211,7 @@ export function GuestForm({
               variant="ghost"
               size="sm"
               onClick={() => removeGuest(index)}
-              className="text-red-500 hover:text-red-700"
+              className="text-danger-11 hover:text-danger-11"
             >
               Remove
             </Button>
@@ -256,7 +256,7 @@ export function GuestForm({
             </select>
           </div>
 
-          <p className="text-sm text-gray-500">
+          <p className="text-sm text-muted-foreground">
             {isLinkedMember
               ? "Linked family members keep their member details and member pricing."
               : "Typed-in guests are treated as non-members and charged at non-member rates."}

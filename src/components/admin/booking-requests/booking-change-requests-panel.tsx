@@ -105,8 +105,8 @@ function formatDateTime(value: string | null) {
 }
 
 function statusBadgeClass(status: BookingChangeRequestData["status"]) {
-  if (status === "REQUESTED") return "border-amber-200 bg-amber-50 text-amber-800";
-  if (status === "APPROVED") return "border-emerald-200 bg-emerald-50 text-emerald-800";
+  if (status === "REQUESTED") return "border-warning-6 bg-warning-3 text-warning-11";
+  if (status === "APPROVED") return "border-success-6 bg-success-3 text-success-11";
   return "border-border bg-muted text-muted-foreground";
 }
 
@@ -311,7 +311,7 @@ export function BookingChangeRequestsPanel({
             return (
               <Card
                 key={request.id}
-                className={request.id === requestId ? "border-amber-300" : undefined}
+                className={request.id === requestId ? "border-warning-6" : undefined}
               >
                 <CardHeader>
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -372,7 +372,7 @@ export function BookingChangeRequestsPanel({
                         `/bookings/${request.booking.id}`,
                         currentPath
                       )}
-                      className="text-blue-600 hover:underline"
+                      className="text-info-11 hover:underline"
                     >
                       Open booking
                     </Link>
@@ -381,7 +381,7 @@ export function BookingChangeRequestsPanel({
                         `/admin/members/${request.booking.member.id}`,
                         currentPath
                       )}
-                      className="text-blue-600 hover:underline"
+                      className="text-info-11 hover:underline"
                     >
                       Open member
                     </Link>
@@ -479,7 +479,7 @@ export function BookingChangeRequestsPanel({
                           delta)
                         </p>
                       ) : request.status === "APPROVED" ? (
-                        <p className="mt-2 text-amber-700">
+                        <p className="mt-2 text-warning-11">
                           No booking modification linked. The booking edit may
                           still be outstanding — apply it from the booking page
                           (using the admin override control for locked or

@@ -7,20 +7,26 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const {
   mockResolveGoogleProfile,
   mockReadGoogleLinkIntent,
+  mockReadGoogleVerifyIntent,
   mockLinkGoogleAccount,
   mockLoadEffectiveModuleFlags,
+  mockGetGoogleOAuthConfig,
+  mockRecordGoogleVerified,
   mockMemberUpdate,
   mockNextAuthAuth,
   mockNextAuth,
 } = vi.hoisted(() => {
   // nextAuth.auth() — what the module-local auth() wrapper delegates to; the
-  // signIn link branch reads the CURRENT session through it.
+  // signIn link + verify branches read the CURRENT session through it.
   const mockNextAuthAuth = vi.fn();
   return {
     mockResolveGoogleProfile: vi.fn(),
     mockReadGoogleLinkIntent: vi.fn(),
+    mockReadGoogleVerifyIntent: vi.fn(),
     mockLinkGoogleAccount: vi.fn(),
     mockLoadEffectiveModuleFlags: vi.fn(),
+    mockGetGoogleOAuthConfig: vi.fn(),
+    mockRecordGoogleVerified: vi.fn(),
     mockMemberUpdate: vi.fn(),
     mockNextAuthAuth,
     mockNextAuth: vi.fn(() => ({
@@ -82,10 +88,16 @@ vi.mock("@/lib/two-factor", () => ({
 vi.mock("@/lib/google-oauth", () => ({
   resolveGoogleProfile: mockResolveGoogleProfile,
   readGoogleLinkIntent: mockReadGoogleLinkIntent,
+  readGoogleVerifyIntent: mockReadGoogleVerifyIntent,
   linkGoogleAccount: mockLinkGoogleAccount,
 }));
 
-import { authConfig } from "@/lib/auth";
+vi.mock("@/lib/google-config", () => ({
+  getGoogleOAuthConfig: mockGetGoogleOAuthConfig,
+  recordGoogleVerified: mockRecordGoogleVerified,
+}));
+
+import { authConfig, buildRequestAuthConfig } from "@/lib/auth";
 
 type SignIn = (params: {
   user?: unknown;
@@ -101,6 +113,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockLoadEffectiveModuleFlags.mockResolvedValue({ googleLogin: true });
   mockReadGoogleLinkIntent.mockResolvedValue(null);
+  // Default: no verify round-trip in progress (login/link cases). Verify cases
+  // override this.
+  mockReadGoogleVerifyIntent.mockResolvedValue(null);
   mockMemberUpdate.mockResolvedValue({});
   // Default: the current session belongs to the member the intent names (the
   // legitimate link flow). Negative cases override this.
@@ -119,6 +134,60 @@ describe("authConfig Google provider wiring", () => {
     const result = await provider.profile({ sub: "s", email: "e" });
     expect(mockResolveGoogleProfile).toHaveBeenCalledWith({ sub: "s", email: "e" });
     expect(result).toEqual({ id: "member-1", googleLoginStatus: "ok" });
+  });
+});
+
+describe("buildRequestAuthConfig — per-request provider list (#2087)", () => {
+  function providerIds(providers: unknown[]): unknown[] {
+    return providers.map((p) => (p as { id?: unknown }).id);
+  }
+
+  it("OMITS Google when the resolver returns null (unconfigured)", async () => {
+    mockGetGoogleOAuthConfig.mockResolvedValue(null);
+    const config = await buildRequestAuthConfig();
+    expect(config.providers).toHaveLength(2);
+    expect(providerIds(config.providers)).not.toContain("google");
+  });
+
+  it("APPENDS the Google provider when credentials resolve", async () => {
+    mockGetGoogleOAuthConfig.mockResolvedValue({
+      clientId: "cid",
+      clientSecret: "csecret",
+    });
+    const config = await buildRequestAuthConfig();
+    expect(config.providers).toHaveLength(3);
+    const google = config.providers[2] as unknown as {
+      id: string;
+      clientId?: string;
+    };
+    expect(google.id).toBe("google");
+    expect(google.clientId).toBe("cid");
+  });
+
+  it("FAILS OPEN: a throwing resolver still yields the base providers (no throw)", async () => {
+    // The acceptance test (#2087): credentials/magic-link sign-in must survive a
+    // DB/decrypt failure in the shared config — the config resolves, Google is
+    // simply absent, and nothing throws.
+    mockGetGoogleOAuthConfig.mockRejectedValue(new Error("db down"));
+    const config = await buildRequestAuthConfig();
+    expect(config.providers).toHaveLength(2);
+    expect(providerIds(config.providers)).not.toContain("google");
+    // Pin the SURVIVORS by identity, not just count: the magic-link Credentials
+    // provider (and the un-ided password Credentials provider) must both remain,
+    // so an identity-based base-provider derivation can never drop one.
+    expect(providerIds(config.providers)).toContain("magic-link");
+    expect(config.callbacks).toBe(authConfig.callbacks);
+  });
+
+  it("derives the base providers by IDENTITY, not position (regression #2087)", async () => {
+    // A positional slice(0, 2) would silently drop magic-link if any provider
+    // were ever inserted before Google. The identity filter (drop the `google`
+    // provider) keeps every non-Google provider regardless of order.
+    mockGetGoogleOAuthConfig.mockResolvedValue(null);
+    const config = await buildRequestAuthConfig();
+    const ids = providerIds(config.providers);
+    expect(ids).not.toContain("google");
+    expect(ids).toContain("magic-link");
   });
 });
 
@@ -289,5 +358,85 @@ describe("signIn callback — LINK path (profile-initiated)", () => {
 
     expect(mockLinkGoogleAccount).toHaveBeenCalledWith("member-1", "sub-1");
     expect(result).toBe("/profile?googleLinked=1#security");
+  });
+});
+
+describe("signIn callback — setup-wizard VERIFY path (#2087)", () => {
+  const fullAdminSession = {
+    user: { id: "admin-1", accessRoles: ["ADMIN"] },
+  };
+
+  it("records verification and redirects when a Full Admin completes the round-trip", async () => {
+    mockReadGoogleVerifyIntent.mockResolvedValue({ memberId: "admin-1" });
+    mockNextAuthAuth.mockResolvedValue(fullAdminSession);
+
+    const result = await signIn({
+      account: googleAccount,
+      profile: { sub: "admin-sub" },
+    });
+
+    expect(mockRecordGoogleVerified).toHaveBeenCalledTimes(1);
+    expect(result).toBe("/admin/google/setup?googleVerified=1");
+    // Never mints a session or links anything.
+    expect(mockMemberUpdate).not.toHaveBeenCalled();
+    expect(mockLinkGoogleAccount).not.toHaveBeenCalled();
+  });
+
+  it("verifies even while the googleLogin module is still OFF (D2 unlock path)", async () => {
+    mockLoadEffectiveModuleFlags.mockResolvedValue({ googleLogin: false });
+    mockReadGoogleVerifyIntent.mockResolvedValue({ memberId: "admin-1" });
+    mockNextAuthAuth.mockResolvedValue(fullAdminSession);
+
+    const result = await signIn({
+      account: googleAccount,
+      profile: { sub: "admin-sub" },
+    });
+
+    // The module kill-switch does NOT block a verify — that is what unlocks it.
+    expect(mockRecordGoogleVerified).toHaveBeenCalledTimes(1);
+    expect(result).toBe("/admin/google/setup?googleVerified=1");
+  });
+
+  it("refuses to record when a DIFFERENT member holds the session (stale-cookie guard)", async () => {
+    mockReadGoogleVerifyIntent.mockResolvedValue({ memberId: "admin-1" });
+    mockNextAuthAuth.mockResolvedValue({
+      user: { id: "someone-else", accessRoles: ["ADMIN"] },
+    });
+
+    const result = await signIn({
+      account: googleAccount,
+      profile: { sub: "s" },
+    });
+
+    expect(mockRecordGoogleVerified).not.toHaveBeenCalled();
+    expect(result).toBe("/admin/google/setup?googleVerifyError=1");
+  });
+
+  it("refuses to record when the session is not a Full Admin", async () => {
+    mockReadGoogleVerifyIntent.mockResolvedValue({ memberId: "admin-1" });
+    mockNextAuthAuth.mockResolvedValue({
+      user: { id: "admin-1", accessRoles: ["MEMBERSHIP"] },
+    });
+
+    const result = await signIn({
+      account: googleAccount,
+      profile: { sub: "s" },
+    });
+
+    expect(mockRecordGoogleVerified).not.toHaveBeenCalled();
+    expect(result).toBe("/admin/google/setup?googleVerifyError=1");
+  });
+
+  it("refuses to record when there is no current session", async () => {
+    mockReadGoogleVerifyIntent.mockResolvedValue({ memberId: "admin-1" });
+    mockNextAuthAuth.mockResolvedValue(null);
+
+    const result = await signIn({
+      account: googleAccount,
+      profile: { sub: "s" },
+    });
+
+    expect(mockRecordGoogleVerified).not.toHaveBeenCalled();
+    expect(result).toBe("/admin/google/setup?googleVerifyError=1");
   });
 });

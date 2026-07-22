@@ -20,7 +20,7 @@ export function PayStep({
         <CardTitle>Complete Payment</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        <p className="text-sm text-gray-600">
+        <p className="text-sm text-muted-foreground">
           Your booking is created. Complete payment to finish securing it.
         </p>
         <BookingPaymentWrapper
@@ -32,7 +32,7 @@ export function PayStep({
             router.push(`/bookings/${createdBooking.id}`)
           }
         />
-        <p className="text-sm text-gray-600">
+        <p className="text-sm text-muted-foreground">
           <Link
             href={`/bookings/${createdBooking.id}`}
             className="underline"

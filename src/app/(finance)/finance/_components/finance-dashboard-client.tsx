@@ -401,7 +401,7 @@ export function FinanceDashboardClient({ model }: FinanceDashboardClientProps) {
           {model.warnings.map((warning) => (
             <div
               key={warning}
-              className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900"
+              className="rounded-md border border-warning-6 bg-warning-3 px-3 py-2 text-sm text-warning-11"
             >
               {warning}
             </div>
@@ -519,7 +519,7 @@ export function FinanceDashboardClient({ model }: FinanceDashboardClientProps) {
                         {item.href ? (
                           <a
                             href={item.href}
-                            className="text-xs text-blue-600 hover:underline"
+                            className="text-xs text-info-11 hover:underline"
                           >
                             {item.linkLabel ?? "Open"}
                           </a>
@@ -557,7 +557,7 @@ export function FinanceDashboardClient({ model }: FinanceDashboardClientProps) {
                     href={note.href}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-sm text-blue-600 hover:underline"
+                    className="text-sm text-info-11 hover:underline"
                   >
                     {note.linkLabel ?? "Open in Xero"}
                   </a>

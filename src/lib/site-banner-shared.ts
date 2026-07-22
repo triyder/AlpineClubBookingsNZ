@@ -22,7 +22,7 @@ export const SITE_BANNER_PRIORITY_CLASSES: Record<
   SiteBannerPriorityValue,
   string
 > = {
-  URGENT: "bg-red-100 border-red-300 text-red-900",
-  WARNING: "bg-amber-100 border-amber-300 text-amber-900",
-  NOTIFY: "bg-blue-100 border-blue-300 text-blue-900",
+  URGENT: "bg-danger-3 border-danger-6 text-danger-11",
+  WARNING: "bg-warning-3 border-warning-6 text-warning-11",
+  NOTIFY: "bg-info-3 border-info-6 text-info-11",
 };

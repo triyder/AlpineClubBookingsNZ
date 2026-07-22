@@ -139,8 +139,8 @@ export function CancelBookingButton({
 
   if (step === "loading") {
     return (
-      <div className="rounded-md border border-slate-200 bg-slate-50 p-4">
-        <p className="text-sm text-slate-500">Loading cancellation details...</p>
+      <div className="rounded-md border border-border bg-card p-4">
+        <p className="text-sm text-muted-foreground">Loading cancellation details...</p>
       </div>
     );
   }
@@ -152,36 +152,36 @@ export function CancelBookingButton({
     // email-promise copy would be untrue — state the recorded choice instead.
     const emailSuppressed = notifiedMember === false;
     return (
-      <div className="rounded-md border border-green-200 bg-green-50 p-4 space-y-1">
-        <p className="text-sm font-medium text-green-800">
+      <div className="rounded-md border border-success-6 bg-success-3 p-4 space-y-1">
+        <p className="text-sm font-medium text-success-11">
           {onBehalfOfMember
             ? "Booking cancelled on behalf of the member"
             : "Booking cancelled successfully"}
         </p>
         {result?.creditRestoredCents && result.creditRestoredCents > 0 && (
-          <p className="text-sm text-green-700">
+          <p className="text-sm text-success-11">
             {formatDollars(result.creditRestoredCents)} of previously applied credit has been returned to {onBehalfOfMember ? "the member's" : "your"} account.
           </p>
         )}
         {refund > 0 && isCredit ? (
-          <p className="text-sm text-green-700">
+          <p className="text-sm text-success-11">
             A credit of {formatDollars(refund)} has been added to {onBehalfOfMember ? "the member's" : "your"} account for future bookings.
           </p>
         ) : refund > 0 ? (
-          <p className="text-sm text-green-700">
+          <p className="text-sm text-success-11">
             {onBehalfOfMember
               ? `The refund of ${formatDollars(refund)} has been processed to the member's original payment method.${emailSuppressed ? "" : " They will receive a confirmation email shortly."}`
               : `Your refund of ${formatDollars(refund)} has been processed to your original payment method.${emailSuppressed ? "" : " You will receive a confirmation email shortly."}`}
           </p>
         ) : emailSuppressed ? null : (
-          <p className="text-sm text-green-700">
+          <p className="text-sm text-success-11">
             {onBehalfOfMember
               ? "The member will receive a confirmation email shortly."
               : "You will receive a confirmation email shortly."}
           </p>
         )}
         {emailSuppressed && (
-          <p className="text-sm text-green-700">
+          <p className="text-sm text-success-11">
             The member was not emailed about this cancellation — your choice is
             recorded in the audit log.
           </p>
@@ -192,8 +192,8 @@ export function CancelBookingButton({
 
   if (step === "error") {
     return (
-      <div className="rounded-md border border-red-200 bg-red-50 p-4 space-y-2">
-        <p className="text-sm text-red-700">{errorMsg}</p>
+      <div className="rounded-md border border-danger-6 bg-danger-3 p-4 space-y-2">
+        <p className="text-sm text-danger-11">{errorMsg}</p>
         <Button variant="outline" size="sm" onClick={() => setStep("idle")}>
           Try Again
         </Button>
@@ -212,15 +212,15 @@ export function CancelBookingButton({
     const hasRefund = hasCardRefund || preview.creditRestoredCents > 0;
 
     return (
-      <div className="rounded-md border border-red-200 bg-red-50 p-4 space-y-3">
-        <p className="text-sm font-medium text-red-800">
+      <div className="rounded-md border border-danger-6 bg-danger-3 p-4 space-y-3">
+        <p className="text-sm font-medium text-danger-11">
           {onBehalfOfMember
             ? "Cancel on behalf of member"
             : "Cancellation Summary"}
         </p>
 
         {onBehalfOfMember && (
-          <p className="text-sm text-red-700">
+          <p className="text-sm text-danger-11">
             You are cancelling this booking on behalf of the member. Any refund
             or account credit is applied to the member&apos;s account
             {canChooseMemberEmail
@@ -231,11 +231,11 @@ export function CancelBookingButton({
 
         {!preview.hasPayment ? (
           <div className="space-y-1">
-            <p className="text-sm text-slate-700">
+            <p className="text-sm text-muted-foreground">
               No payment has been taken for this booking. No refund applies.
             </p>
             {preview.creditRestoredCents > 0 && (
-              <p className="text-sm text-green-700">
+              <p className="text-sm text-success-11">
                 {formatDollars(preview.creditRestoredCents)} of previously applied
                 account credit will be returned to{" "}
                 {onBehalfOfMember ? "the member's" : "your"} account.
@@ -243,7 +243,7 @@ export function CancelBookingButton({
             )}
           </div>
         ) : !hasRefund ? (
-          <p className="text-sm text-slate-700">
+          <p className="text-sm text-muted-foreground">
             No refund applies per cancellation policy.
           </p>
         ) : (
@@ -253,7 +253,7 @@ export function CancelBookingButton({
                 so the radios are hidden and only the restored-credit row shows. */}
             {hasCardRefund && (
               <div className="space-y-2">
-                <p className="font-medium text-slate-700">Choose refund method:</p>
+                <p className="font-medium text-muted-foreground">Choose refund method:</p>
                 <label className="flex items-start gap-2 cursor-pointer">
                   <input
                     type="radio"
@@ -264,10 +264,10 @@ export function CancelBookingButton({
                     className="mt-0.5"
                   />
                   <span>
-                    <span className="font-medium text-slate-800">
+                    <span className="font-medium text-foreground">
                       Refund {formatDollars(preview.refundAmountCents)} to original payment method
                     </span>
-                    <span className="text-slate-500 ml-1">({preview.refundPercentage}% refund)</span>
+                    <span className="text-muted-foreground ml-1">({preview.refundPercentage}% refund)</span>
                   </span>
                 </label>
                 <label className="flex items-start gap-2 cursor-pointer">
@@ -280,12 +280,12 @@ export function CancelBookingButton({
                     className="mt-0.5"
                   />
                   <span>
-                    <span className="font-medium text-green-700">
+                    <span className="font-medium text-success-11">
                       Hold {formatDollars(preview.creditRefundAmountCents)} as account credit
                     </span>
-                    <span className="text-slate-500 ml-1">({preview.creditRefundPercentage}% refund)</span>
+                    <span className="text-muted-foreground ml-1">({preview.creditRefundPercentage}% refund)</span>
                     {preview.creditRefundAmountCents > preview.refundAmountCents && (
-                      <span className="ml-1 text-xs text-green-600 font-medium">
+                      <span className="ml-1 text-xs text-success-11 font-medium">
                         +{formatDollars(preview.creditRefundAmountCents - preview.refundAmountCents)} more
                       </span>
                     )}
@@ -295,13 +295,13 @@ export function CancelBookingButton({
             )}
 
             {/* Amount summary */}
-            <div className="border-t border-red-100 pt-2 space-y-1">
+            <div className="border-t border-danger-6 pt-2 space-y-1">
               {hasCardRefund && (
                 <div className="flex justify-between">
-                  <span className="text-slate-600">
+                  <span className="text-muted-foreground">
                     {refundMethod === "credit" ? "Credit to account:" : "Refund to card:"}
                   </span>
-                  <span className="font-medium text-green-700">
+                  <span className="font-medium text-success-11">
                     {formatDollars(
                       refundMethod === "credit"
                         ? preview.creditRefundAmountCents
@@ -312,29 +312,29 @@ export function CancelBookingButton({
               )}
               {preview.keptAmountCents > 0 && refundMethod === "card" && (
                 <div className="flex justify-between">
-                  <span className="text-slate-600">
+                  <span className="text-muted-foreground">
                     Amount kept ({preview.refundPercentage}% refund):
                   </span>
-                  <span className="font-medium text-slate-700">{formatDollars(preview.keptAmountCents)}</span>
+                  <span className="font-medium text-muted-foreground">{formatDollars(preview.keptAmountCents)}</span>
                 </div>
               )}
               {refundAppealDescription ? (
-                <p className="pt-2 text-xs text-slate-500">
+                <p className="pt-2 text-xs text-muted-foreground">
                   {refundAppealDescription}
                 </p>
               ) : null}
               {preview.changeFeeCents > 0 && (
                 <div className="flex justify-between">
-                  <span className="text-slate-600">Change fees (non-refundable):</span>
-                  <span className="font-medium text-slate-700">{formatDollars(preview.changeFeeCents)}</span>
+                  <span className="text-muted-foreground">Change fees (non-refundable):</span>
+                  <span className="font-medium text-muted-foreground">{formatDollars(preview.changeFeeCents)}</span>
                 </div>
               )}
               {preview.creditRestoredCents > 0 && (
                 <div className="flex justify-between">
-                  <span className="text-slate-600">
+                  <span className="text-muted-foreground">
                     Previously applied credit restored (per the cancellation policy):
                   </span>
-                  <span className="font-medium text-green-700">{formatDollars(preview.creditRestoredCents)}</span>
+                  <span className="font-medium text-success-11">{formatDollars(preview.creditRestoredCents)}</span>
                 </div>
               )}
             </div>
@@ -397,8 +397,8 @@ export function CancelBookingButton({
 
   // Cancelling state
   return (
-    <div className="rounded-md border border-slate-200 bg-slate-50 p-4">
-      <p className="text-sm text-slate-500">Cancelling booking...</p>
+    <div className="rounded-md border border-border bg-card p-4">
+      <p className="text-sm text-muted-foreground">Cancelling booking...</p>
     </div>
   );
 }

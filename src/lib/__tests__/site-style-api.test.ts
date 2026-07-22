@@ -92,44 +92,25 @@ describe("site style admin API", () => {
     expect(mocks.revalidatePath).not.toHaveBeenCalled();
   });
 
-  it("rejects palettes that fail WCAG AA text contrast", async () => {
+  it("saves a low-contrast seed palette now that contrast is guaranteed by construction (#2187)", async () => {
+    // The three seeds feed the vendored Radix generator, whose banded 12-step
+    // substrate clears the guarantee sweep for every seed — a pathological pick
+    // is adjusted, not rejected. The old blocking contrast gate (which returned
+    // 400 for a near-identical accent/neutral pair) is gone, so this now SAVES.
     const response = await PUT(
       request({
         ...DEFAULT_CLUB_THEME_VALUES,
-        // brand-charcoal button text on a near-identical gold: unreadable.
         brandGold: "#33373e",
-        brandCharcoal: "#30343b",
+        brandDeep: "#30343b",
       }),
     );
     const body = await response.json();
 
-    expect(response.status).toBe(400);
-    expect(body.error).toMatch(/contrast/i);
-    expect(body.contrastWarnings).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ id: "button-on-gold" }),
-      ]),
-    );
-    expect(mocks.clubThemeUpsert).not.toHaveBeenCalled();
-    expect(mocks.revalidatePath).not.toHaveBeenCalled();
-  });
-
-  it("rejects unreadable text on the light app secondary surface", async () => {
-    const response = await PUT(
-      request({
-        ...DEFAULT_CLUB_THEME_VALUES,
-        brandMist: DEFAULT_CLUB_THEME_VALUES.brandDeep,
-      }),
-    );
-    const body = await response.json();
-
-    expect(response.status).toBe(400);
-    expect(body.contrastWarnings).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ id: "app-secondary-on-mist" }),
-      ]),
-    );
-    expect(mocks.clubThemeUpsert).not.toHaveBeenCalled();
+    expect(response.status).toBe(200);
+    expect(body.theme).toBeTruthy();
+    expect(body.error).toBeUndefined();
+    expect(mocks.clubThemeUpsert).toHaveBeenCalled();
+    expect(mocks.revalidatePath).toHaveBeenCalled();
   });
 
   it("saves completion and revalidates every themed layout", async () => {

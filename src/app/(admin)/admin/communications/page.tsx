@@ -211,8 +211,8 @@ export default function CommunicationsPage() {
               <div
                 className={`rounded-md p-3 text-sm ${
                   result.success
-                    ? "bg-green-50 text-green-800 border border-green-200"
-                    : "bg-red-50 text-red-800 border border-red-200"
+                    ? "bg-success-3 text-success-11 border border-success-6"
+                    : "bg-danger-3 text-danger-11 border border-danger-6"
                 }`}
               >
                 {result.message}

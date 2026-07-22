@@ -57,7 +57,7 @@ export default function PrintRosterPage() {
   }, [dateStr, lodgeId])
 
   if (loading) return <div className="p-8 text-center">Loading...</div>
-  if (error) return <div className="p-8 text-center text-red-600">{error}</div>
+  if (error) return <div className="p-8 text-center text-danger-11">{error}</div>
   if (!roster) return null
 
   // Group assignments by chore, sorted by choreSortOrder
@@ -162,7 +162,7 @@ export default function PrintRosterPage() {
         </table>
 
         {/* Footer note */}
-        <div className="mt-6 p-3 border-2 border-gray-800 bg-yellow-50 text-center">
+        <div className="mt-6 p-3 border-2 border-gray-800 bg-warning-3 text-center">
           <p className="font-bold text-sm">
             Last person to bed: Check heaters and fire are safe and doors are secure.
           </p>

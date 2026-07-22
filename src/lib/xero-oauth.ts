@@ -8,6 +8,12 @@
 import { XeroClient } from "xero-node";
 import { getOperationalXeroConfig } from "@/lib/xero-config";
 import {
+  buildMockXeroConsentUrl,
+  getXeroMockApiOrigin,
+  getXeroMockInternalOrigin,
+  handleMockXeroCallback,
+} from "@/lib/xero-mock-endpoint";
+import {
   deleteXeroTokens,
   loadXeroTokens,
   saveXeroTokens,
@@ -24,6 +30,10 @@ export async function createXeroClient(state?: string): Promise<XeroClient> {
  * Build the Xero OAuth2 consent URL for admin to connect.
  */
 export async function getXeroConsentUrl(state?: string): Promise<string> {
+  // Test-only mock-Xero harness (#2080). Inert in production (env unset).
+  const mockOrigin = getXeroMockApiOrigin();
+  if (mockOrigin) return buildMockXeroConsentUrl(mockOrigin, state);
+
   const xero = await createXeroClient(state);
   await xero.initialize();
   return xero.buildConsentUrl();
@@ -34,6 +44,15 @@ export async function getXeroConsentUrl(state?: string): Promise<string> {
  * Exchanges the authorization code for tokens and stores them encrypted.
  */
 export async function handleXeroCallback(url: string, state?: string): Promise<void> {
+  // Test-only mock-Xero harness (#2080). Inert in production (env unset).
+  // Token exchange is a SERVER-side fetch, so it uses the in-container origin
+  // (the browser-facing origin may be a host-mapped port the container can't dial).
+  const mockInternalOrigin = getXeroMockInternalOrigin();
+  if (mockInternalOrigin) {
+    await handleMockXeroCallback(mockInternalOrigin, url);
+    return;
+  }
+
   const xero = await createXeroClient(state);
   await xero.initialize();
   const tokenSet = await xero.apiCallback(url);

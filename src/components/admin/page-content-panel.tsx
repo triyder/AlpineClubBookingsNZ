@@ -1078,7 +1078,7 @@ export const WysiwygEditor = forwardRef<
           onBlur={readOnly ? undefined : captureSelection}
           onInput={readOnly ? undefined : onInput}
           onClick={readOnly ? undefined : handleEditorClick}
-          className={`${editorClassName} overflow-y-auto rounded-md border border-border bg-card p-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring [&_a]:text-blue-700 [&_a]:underline [&_a]:decoration-blue-400 [&_b]:font-bold [&_blockquote]:my-3 [&_blockquote]:border-l-4 [&_blockquote]:border-border [&_blockquote]:pl-3 [&_blockquote]:italic [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_em]:italic [&_h1]:mt-4 [&_h1]:mb-2 [&_h1]:text-3xl [&_h1]:font-bold [&_h2]:mt-4 [&_h2]:mb-2 [&_h2]:text-2xl [&_h2]:font-bold [&_h3]:mt-3 [&_h3]:mb-2 [&_h3]:text-xl [&_h3]:font-semibold [&_hr]:my-4 [&_hr]:border-border [&_i]:italic [&_li]:my-1 [&_ol]:my-3 [&_ol]:list-decimal [&_ol]:pl-6 [&_p]:my-2 [&_pre]:my-3 [&_pre]:overflow-x-auto [&_pre]:rounded [&_pre]:bg-muted [&_pre]:p-3 [&_pre]:font-mono [&_strong]:font-bold [&_table]:my-3 [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-border [&_td]:p-2 [&_th]:border [&_th]:border-border [&_th]:bg-muted [&_th]:p-2 [&_u]:underline [&_ul]:my-3 [&_ul]:list-disc [&_ul]:pl-6`}
+          className={`${editorClassName} overflow-y-auto rounded-md border border-border bg-card p-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring [&_a]:text-info-11 [&_a]:underline [&_a]:decoration-info-11 [&_b]:font-bold [&_blockquote]:my-3 [&_blockquote]:border-l-4 [&_blockquote]:border-border [&_blockquote]:pl-3 [&_blockquote]:italic [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_em]:italic [&_h1]:mt-4 [&_h1]:mb-2 [&_h1]:text-3xl [&_h1]:font-bold [&_h2]:mt-4 [&_h2]:mb-2 [&_h2]:text-2xl [&_h2]:font-bold [&_h3]:mt-3 [&_h3]:mb-2 [&_h3]:text-xl [&_h3]:font-semibold [&_hr]:my-4 [&_hr]:border-border [&_i]:italic [&_li]:my-1 [&_ol]:my-3 [&_ol]:list-decimal [&_ol]:pl-6 [&_p]:my-2 [&_pre]:my-3 [&_pre]:overflow-x-auto [&_pre]:rounded [&_pre]:bg-muted [&_pre]:p-3 [&_pre]:font-mono [&_strong]:font-bold [&_table]:my-3 [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-border [&_td]:p-2 [&_th]:border [&_th]:border-border [&_th]:bg-muted [&_th]:p-2 [&_u]:underline [&_ul]:my-3 [&_ul]:list-disc [&_ul]:pl-6`}
         />
       )}
 
@@ -1178,7 +1178,7 @@ export const WysiwygEditor = forwardRef<
                         key={`${image.source}:${image.url}`}
                         className={`group relative cursor-pointer overflow-hidden rounded-lg border-2 bg-card shadow-sm transition-all ${
                           isSelected
-                            ? "border-blue-500 ring-2 ring-blue-200"
+                            ? "border-info-7 ring-2 ring-info-7"
                             : "border-border hover:border-muted-foreground hover:shadow-md"
                         }`}
                         onClick={() => {
@@ -1223,9 +1223,9 @@ export const WysiwygEditor = forwardRef<
                                   void deleteUploadedImage(uploaded, event);
                                 }
                               }}
-                              className="absolute right-1 top-1 rounded-full bg-card p-1 opacity-0 shadow-sm transition-opacity hover:bg-red-50 group-hover:opacity-100"
+                              className="absolute right-1 top-1 rounded-full bg-card p-1 opacity-0 shadow-sm transition-opacity hover:bg-danger-3 group-hover:opacity-100"
                             >
-                              <Trash2 className="h-3 w-3 text-red-500" />
+                              <Trash2 className="h-3 w-3 text-danger-11" />
                             </button>
                           ) : null}
                         </div>
@@ -1862,7 +1862,7 @@ export function PageContentPanel() {
                     {!page.published && (
                       <Badge
                         variant="outline"
-                        className="border-amber-300 text-[10px] uppercase text-amber-700"
+                        className="border-warning-6 text-[10px] uppercase text-warning-11"
                       >
                         Hidden
                       </Badge>

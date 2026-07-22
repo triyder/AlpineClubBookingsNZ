@@ -39,13 +39,12 @@ export async function saveClubTheme(input: ClubThemeUpdateInput) {
     ? (existing?.completedAt ?? new Date())
     : (existing?.completedAt ?? null);
 
+  // #2187: only the three seed columns are written; the four former brand
+  // columns (charcoal/ridge/mist/snow surfaces) are dead to code and left to
+  // their DB defaults (P4 drops them).
   const data = {
     brandGold: input.brandGold,
-    brandCharcoal: input.brandCharcoal,
     brandDeep: input.brandDeep,
-    brandRidge: input.brandRidge,
-    brandMist: input.brandMist,
-    brandSnow: input.brandSnow,
     brandSafety: input.brandSafety,
     headingFontKey: input.headingFontKey,
     bodyFontKey: input.bodyFontKey,

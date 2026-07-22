@@ -152,7 +152,7 @@ export function AdminCapacityHoldControls({
     <div className="space-y-2">
       {confirmDialog}
       {hasAdminCapacityHold && (
-        <div className="rounded-md border border-sky-300 bg-sky-50 px-3 py-2 text-sm text-sky-900">
+        <div className="rounded-md border border-info-6 bg-info-3 px-3 py-2 text-sm text-info-11">
           <p className="font-medium">Capacity held by admin</p>
           <p>
             Beds reserved
@@ -167,7 +167,7 @@ export function AdminCapacityHoldControls({
         </div>
       )}
       {error && (
-        <div className="rounded-md bg-red-50 p-3 text-sm text-red-700">
+        <div className="rounded-md bg-danger-3 p-3 text-sm text-danger-11">
           {error}
         </div>
       )}

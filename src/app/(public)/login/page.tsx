@@ -89,6 +89,11 @@ export default async function LoginPage({
   // Only needed on the form-render path (an authenticated visitor redirects
   // above). Mirrors the public layout's cached read of effective module flags.
   const modules = await getCachedEffectiveModuleFlags();
+  // DB-only Google credential resolution (#2087). Fail-open: resolves to false
+  // (no button) rather than throwing if the store is unavailable.
+  const googleConfigured = modules.googleLogin
+    ? await googleCredentialsConfigured()
+    : false;
 
   return (
     <LoginForm
@@ -99,7 +104,7 @@ export default async function LoginPage({
       explicitCallbackUrl={explicitCallbackUrl}
       authBounceRef={authBounceRef}
       magicLinkEnabled={modules.magicLink}
-      googleLoginEnabled={modules.googleLogin && googleCredentialsConfigured()}
+      googleLoginEnabled={modules.googleLogin && googleConfigured}
       oauthError={oauthError}
     />
   );

@@ -73,9 +73,9 @@ export function MemberXeroCreateDialog({
             existing contacts before the new contact is created.
           </DialogDescription>
         </DialogHeader>
-        {error && <div className="p-2 bg-red-50 border border-red-200 text-red-700 rounded text-sm">{error}</div>}
+        {error && <div className="p-2 bg-danger-3 border border-danger-6 text-danger-11 rounded text-sm">{error}</div>}
         <div className="space-y-4">
-          <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+          <div className="rounded-md border border-warning-6 bg-warning-3 p-3 text-sm text-warning-11">
             Use this only when you&apos;re confident the member should not be linked to an existing Xero contact.
           </div>
           <div className="flex items-start gap-2">

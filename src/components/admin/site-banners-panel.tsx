@@ -344,7 +344,7 @@ export function SiteBannersPanel() {
       <div>
         {viewOnlyBanner}
         <div className="space-y-3">
-          <p className="text-sm text-red-600">
+          <p className="text-sm text-danger-11">
             {loadError ?? "Failed to load site banners. Please try again."}
           </p>
           <Button type="button" variant="outline" onClick={loadBanners}>

@@ -358,7 +358,7 @@ export function FamilyGroupEditor({
         {viewOnlyBanner}
         <Card>
           <CardContent className="space-y-3 p-6">
-            <p className="text-sm text-red-600">{error || "Family group not found"}</p>
+            <p className="text-sm text-danger-11">{error || "Family group not found"}</p>
             <Button type="button" variant="outline" onClick={onClose}>
               Close
             </Button>
@@ -386,7 +386,7 @@ export function FamilyGroupEditor({
             type="button"
             variant="outline"
             size="sm"
-            className="text-red-600 hover:bg-red-50 hover:text-red-700"
+            className="text-danger-11 hover:bg-danger-3 hover:text-danger-11"
             onClick={handleDelete}
             disabled={deleting}
           >
@@ -401,12 +401,12 @@ export function FamilyGroupEditor({
             ref={errorRef}
             role="alert"
             tabIndex={-1}
-            className="scroll-mt-20 text-sm text-red-600 focus:outline-none"
+            className="scroll-mt-20 text-sm text-danger-11 focus:outline-none"
           >
             {error}
           </p>
         )}
-        {statusMessage && <p className="text-sm text-emerald-700">{statusMessage}</p>}
+        {statusMessage && <p className="text-sm text-success-11">{statusMessage}</p>}
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
@@ -440,7 +440,7 @@ export function FamilyGroupEditor({
                         onClick={() => removeMember(member.id)}
                         disabled={canEdit !== true}
                         title={canEdit === false ? ADMIN_VIEW_ONLY_ACTION_REASON : undefined}
-                        className="ml-1 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:text-current"
+                        className="ml-1 hover:text-danger-11 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:text-current"
                         aria-label={`Remove ${getMemberName(member)}`}
                       >
                         <X className="h-3 w-3" />

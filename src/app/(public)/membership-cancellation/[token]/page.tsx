@@ -71,7 +71,7 @@ export default async function MembershipCancellationConfirmationPage({
               <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
                 Participants
               </p>
-              <div className="mt-2 divide-y divide-slate-100 rounded-md border border-slate-200">
+              <div className="mt-2 divide-y divide-border rounded-md border border-border">
                 {details.request.participants.map((participant) => (
                   <div
                     className="flex flex-col gap-2 p-3 text-sm sm:flex-row sm:items-center sm:justify-between"
@@ -88,7 +88,7 @@ export default async function MembershipCancellationConfirmationPage({
           </>
         ) : null}
 
-        <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+        <div className="rounded-md border border-warning-6 bg-warning-3 px-4 py-3 text-sm text-warning-11">
           Your membership remains active unless you confirm inclusion and an
           administrator later approves and processes the cancellation.
         </div>

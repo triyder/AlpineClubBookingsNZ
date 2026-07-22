@@ -193,7 +193,7 @@ export function SiteContentPanel() {
       <div>
         {viewOnlyBanner}
         <div className="space-y-3">
-          <p className="text-sm text-red-600">{loadError}</p>
+          <p className="text-sm text-danger-11">{loadError}</p>
           <Button type="button" variant="outline" onClick={loadDocuments}>
             Retry
           </Button>

@@ -268,7 +268,7 @@ export function NonMemberContactForm({ onSelected }: Props) {
       )}
 
       {error && (
-        <div className="rounded-md bg-red-50 p-3 text-sm text-red-700">{error}</div>
+        <div className="rounded-md bg-danger-3 p-3 text-sm text-danger-11">{error}</div>
       )}
 
       <div className="flex justify-end">

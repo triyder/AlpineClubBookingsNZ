@@ -49,7 +49,7 @@ export function DeleteAccountButton() {
 
   if (submitted) {
     return (
-      <p className="text-sm text-green-700 bg-green-50 border border-green-200 rounded-md px-3 py-2">
+      <p className="text-sm text-success-11 bg-success-3 border border-success-6 rounded-md px-3 py-2">
         Your deletion request has been submitted. An admin will review it and
         contact you by email.
       </p>
@@ -61,7 +61,7 @@ export function DeleteAccountButton() {
       <Button
         variant="outline"
         size="sm"
-        className="text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700"
+        className="text-danger-11 border-danger-6 hover:bg-danger-3 hover:text-danger-11"
         onClick={() => setOpen(true)}
       >
         <AlertTriangle className="h-4 w-4 mr-2" />
@@ -71,14 +71,14 @@ export function DeleteAccountButton() {
       <Dialog open={open} onOpenChange={(v) => !submitting && setOpen(v)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle className="text-red-700">Request Account Deletion</DialogTitle>
+            <DialogTitle className="text-danger-11">Request Account Deletion</DialogTitle>
             <DialogDescription asChild>
               <div className="space-y-2 text-sm">
                 <p>
                   Please read carefully before proceeding. This action is{" "}
                   <strong>irreversible</strong>.
                 </p>
-                <ul className="list-disc list-inside space-y-1 text-slate-600">
+                <ul className="list-disc list-inside space-y-1 text-muted-foreground">
                   <li>All future bookings will be cancelled with applicable refunds</li>
                   <li>
                     Your personal details (name, email, phone, date of birth) will
@@ -110,7 +110,7 @@ export function DeleteAccountButton() {
               rows={3}
             />
           </div>
-          {error && <p className="text-sm text-red-600">{error}</p>}
+          {error && <p className="text-sm text-danger-11">{error}</p>}
           <DialogFooter>
             <Button
               variant="outline"

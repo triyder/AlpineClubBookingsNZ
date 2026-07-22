@@ -4,6 +4,22 @@ All notable public reference-release changes should be recorded here.
 
 ## Unreleased
 
+- **Site Style now derives the whole theme from three seed colours instead of
+  seven hand-picked ones (#2187).** You pick one required accent (your club's
+  brand colour) plus, optionally, a neutral character and a support accent; a
+  vendored Radix colour generator turns those seeds into the full light/dark
+  palette, with cross-colour text contrast guaranteed by construction. Because
+  contrast is now guaranteed, a low-contrast pick is no longer rejected — the
+  wizard **saves it and discloses the colours it adjusted** (before → after)
+  rather than blocking you. Colour input is hex only. Configuration bundles move
+  to **format version 2**; a bundle exported by an older app (version 1) is
+  refused with a clear message rather than importing stale colour columns. The
+  whole member and admin app now paints from the generated palette (the admin
+  sidebar reads as a light surface, hover states on quiet buttons are visible
+  again, and the member-facing booking/profile/public pages follow your theme),
+  so this release is a **single visible restyle** — component names are
+  unchanged, only the colours behind them.
+
 ## 0.13.1 - 2026-07-22
 
 - **Provider credentials now live in an encrypted database store, and Xero
@@ -129,6 +145,60 @@ All notable public reference-release changes should be recorded here.
   columns are gone — narrow selects remain the rule for both models and it is
   the only repo-wide enforcement of it.
 
+- **Connecting Stripe no longer involves `.env` files or a rebuild (#2082 —
+  guided-setup epic #2078).** The Stripe secret key, publishable key, and webhook
+  signing secret now live in the database, encrypted at rest under a key derived
+  from the app's auth secret — the `STRIPE_SECRET_KEY`,
+  `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`, and `STRIPE_WEBHOOK_SECRET` environment
+  variables are **no longer read** (lingering values are detected and flagged for
+  removal, never silently used). A step-by-step wizard on **Admin → Integrations
+  → Stripe** walks a Full Admin from the Stripe dashboard keys through a write-only
+  capture, a **Verify connection** step that reads the Stripe account and shows its
+  name (the right-account confirmation), and an optional, freshness-scoped webhook
+  step (endpoint URL to paste, signing secret back, verified via a Stripe test
+  event). The **publishable key is delivered to the card form at runtime** from the
+  store, so there is no build-time inlining and key changes take effect without a
+  rebuild; the webhook route is **fail-closed** (no stored signing secret ⇒ every
+  event rejected), and replacing any Stripe credential clears the verified webhook
+  badge. **Upgrading an env-configured club:** card payments pause until the keys
+  are re-entered in-app — the deployment guide carries the exact upgrade runbook,
+  and the blue/green deploy script no longer requires the removed variables.
+- **Connecting Xero no longer involves `.env` files, terminals, or restarts
+  (#2079, #2080 — guided-setup epic #2078).** Xero credentials (client id,
+  client secret, webhook key) now live in the database, encrypted at rest
+  under a key derived from the app's auth secret — the `XERO_CLIENT_ID`,
+  `XERO_CLIENT_SECRET`, `XERO_REDIRECT_URI`, `XERO_ENCRYPTION_KEY`, and
+  `XERO_WEBHOOK_KEY` environment variables are **no longer read** (lingering
+  values are detected and flagged for removal, never silently used). A
+  step-by-step wizard on **Admin → Xero → Setup** walks a Full Admin from
+  "module switched on" to "connected to the right Xero organisation": exact
+  copy-paste values for the Xero developer portal (including the real OAuth
+  redirect URL, now derived from the deployment's own address), a write-only
+  credential form guarded by an auth-secret strength check, and an OAuth
+  connect step that confirms the connected organisation by name. Progress
+  survives page reloads, and every step gates on verified success. **Upgrading
+  an already-connected club:** previously stored Xero tokens become unreadable
+  by design (the old env-var encryption key is retired), so Xero shows a clean
+  "reconnect" state until credentials are re-entered in-app — the deployment
+  guide carries the exact upgrade and auth-secret-rotation runbooks, and the
+  blue/green deploy script no longer requires the removed variables.
+- **The guided Xero setup now finishes the whole job: verified webhooks,
+  account mapping, one-time import, and a summary (#2081 — epic #2078).** After
+  connecting, the wizard adds an optional **Webhooks** step: it shows the exact
+  delivery URL to paste into Xero, captures Xero's webhook signing key (Full
+  Admin only, encrypted at rest), and **Verify** waits for Xero's real
+  intent-to-receive validation ping to arrive on `/api/webhooks/xero` and pass
+  HMAC before going green — so a green tick provably means the live round-trip
+  works. Verification is freshness-scoped and key-bound: only a validation
+  recorded *after* you press Verify and *matching the currently stored key*
+  counts, so replacing the key re-arms verification. Webhooks stay **skippable**
+  (a club can invoice from day one); skipping leaves a persistent amber
+  **"Webhooks not configured — payment updates rely on scheduled sync"** badge
+  on the Xero Setup and Xero Sync pages that a later verify clears everywhere,
+  and a localhost/non-public-HTTPS deployment explains why webhooks can't verify
+  there and defaults to Skip. The wizard then embeds the existing account/item
+  mapping and one-time contact-import tools as steps and ends on a finish
+  summary linking to day-to-day **Admin → Xero**.
 - **The admin area now follows the club's saved site colours in light mode
   (#2144).** Every admin screen previously carried hard-coded light-grey
   ("slate") Tailwind colours that ignored the club theme in light mode; a
@@ -403,8 +473,8 @@ All notable public reference-release changes should be recorded here.
   screen built from several sections — Security, or Booking Requests — shows it
   once per section, three times in those two cases. This is the
   pattern Booking Policies adopted in #2142 (below), now applied across most of
-  the admin tree: 207 of the 260 gated buttons are covered by a banner in their
-  own section, and #2168 below takes the total to 228 — about seven out of eight
+  the admin tree: 210 of the 263 gated buttons are covered by a banner in their
+  own section, and #2168 below takes the total to 231 — about seven out of eight
   now explained by a banner instead of individually. **Nothing about who can do what
   has changed** — the same
   people can edit the same things, every button is gated exactly as it was, and

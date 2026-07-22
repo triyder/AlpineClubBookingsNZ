@@ -75,6 +75,14 @@ export interface SetupDatabaseSnapshot {
   // callers or when no DB snapshot was taken.
   operationalXeroNeedsReentry?: boolean;
   operationalXeroTokenExpiresAt: string | null;
+  // DB-only Stripe credentials (#2082): metadata-only set-state of the three
+  // encrypted Stripe keys, plus whether any of them fails to decrypt (the auth
+  // secret changed). Optional/undefined for older callers or when no DB snapshot
+  // was taken — the Stripe check then reports "not checked".
+  stripeSecretKeySet?: boolean;
+  stripePublishableKeySet?: boolean;
+  stripeWebhookSecretSet?: boolean;
+  stripeNeedsReentry?: boolean;
   xeroAccountMappingCount: number;
   xeroHutFeeItemMappingCount: number;
   xeroEntranceFeeMappingCount: number;
@@ -303,22 +311,6 @@ function isHttpUrl(value: string | undefined): boolean {
     return false;
   }
 }
-
-function isLikelyStripeSecret(value: string | undefined): boolean {
-  return Boolean(
-    value &&
-    (value.startsWith("sk_test_") ||
-      value.startsWith("sk_live_") ||
-      value.startsWith("rk_")),
-  );
-}
-
-function isLikelyStripePublishable(value: string | undefined): boolean {
-  return Boolean(
-    value && (value.startsWith("pk_test_") || value.startsWith("pk_live_")),
-  );
-}
-
 
 function toStatusScore(status: SetupStatus): number {
   switch (status) {
@@ -1031,46 +1023,100 @@ function buildSeasonRateCheck(
   );
 }
 
+/**
+ * Stripe readiness, DB-only (#2082). Credentials are captured in-app (encrypted
+ * store) — no STRIPE_* env vars are read for operation. Any legacy Stripe env
+ * vars still present are detected and warned about. Precedence of the resulting
+ * status: not-checked → legacy-env/needs-reentry warnings → missing secret or
+ * publishable key blocks (payments can't run) → missing webhook secret warns
+ * (payments run but won't auto-reconcile) → complete.
+ */
 function buildStripeCheck(
   env: Env,
+  db: SetupDatabaseSnapshot | undefined,
   progress: SetupProgressState,
 ): SetupStepCheck {
-  const issues = [
-    !isLikelyStripeSecret(readEnv(env, "STRIPE_SECRET_KEY"))
-      ? "STRIPE_SECRET_KEY is missing or has an unexpected prefix"
-      : null,
-    !isLikelyStripePublishable(
-      readEnv(env, "NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY"),
-    )
-      ? "NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY is missing or has an unexpected prefix"
-      : null,
-    !hasEnv(env, "STRIPE_WEBHOOK_SECRET")
-      ? "STRIPE_WEBHOOK_SECRET is missing"
-      : null,
-  ].filter((issue): issue is string => Boolean(issue));
+  const base = {
+    id: "stripe" as const,
+    title: "Stripe",
+    description:
+      "Card payments, saved payment methods, refunds, and webhooks.",
+    required: true,
+    // Land on the wizard where credentials are actually captured (#2082).
+    href: "/admin/stripe/setup",
+    action: {
+      type: "provider-test" as const,
+      provider: "stripe" as const,
+      label: "Test Stripe",
+    },
+  };
+
+  const legacyStripeVars =
+    detectLegacyProviderEnv(env).find((f) => f.provider === "stripe")?.vars ??
+    [];
+  const legacyDetails =
+    legacyStripeVars.length > 0
+      ? [
+          `Legacy env vars detected (no longer used): ${legacyStripeVars.join(", ")}. Re-enter these in-app, then remove them from the environment.`,
+        ]
+      : [];
+
+  if (!db) {
+    return applyProgress(
+      {
+        ...base,
+        status: "warning",
+        message:
+          "Stripe credentials are captured in-app; the stored state was not checked.",
+        details: [
+          "Credentials are stored in-app (encrypted); no STRIPE_* env vars are used.",
+          ...legacyDetails,
+          "Database state was not checked.",
+        ],
+      },
+      progress,
+    );
+  }
+
+  const secretSet = Boolean(db.stripeSecretKeySet);
+  const publishableSet = Boolean(db.stripePublishableKeySet);
+  const webhookSet = Boolean(db.stripeWebhookSecretSet);
+  const needsReentry = Boolean(db.stripeNeedsReentry);
+  const keysConfigured = secretSet && publishableSet;
+
+  const status: SetupStatus = needsReentry
+    ? "warning"
+    : !keysConfigured
+      ? "blocked"
+      : legacyStripeVars.length > 0 || !webhookSet
+        ? "warning"
+        : "complete";
+
+  const message = needsReentry
+    ? "Stored Stripe keys can no longer be read (the auth secret changed) — re-enter them in the in-app setup (Admin > Integrations > Stripe)."
+    : !keysConfigured
+      ? "Enter your Stripe secret and publishable keys in the in-app setup (Admin > Integrations > Stripe)."
+      : legacyStripeVars.length > 0
+        ? "Remove the legacy STRIPE_* env vars — Stripe is configured in-app now."
+        : !webhookSet
+          ? "Stripe keys are set; add the webhook signing secret so payments reconcile automatically."
+          : "Stripe is configured in-app.";
 
   return applyProgress(
     {
-      id: "stripe",
-      title: "Stripe",
-      description:
-        "Card payments, saved payment methods, refunds, and webhooks.",
-      status: issues.length === 0 ? "complete" : "blocked",
-      required: true,
-      message:
-        issues.length === 0
-          ? "Stripe environment variables are present."
-          : "Stripe environment variables need attention.",
-      details:
-        issues.length === 0
-          ? ["Secrets are set; values are not displayed."]
-          : issues,
-      href: "/admin/payments",
-      action: {
-        type: "provider-test",
-        provider: "stripe",
-        label: "Test Stripe",
-      },
+      ...base,
+      status,
+      message,
+      details: [
+        "Credentials are stored in-app (encrypted); no STRIPE_* env vars are used.",
+        `Secret key: ${secretSet ? "set" : "not set"}`,
+        `Publishable key: ${publishableSet ? "set" : "not set"}`,
+        `Webhook signing secret: ${webhookSet ? "set" : "not set"}`,
+        ...(needsReentry
+          ? ["A stored Stripe key no longer decrypts; re-enter to restore payments."]
+          : []),
+        ...legacyDetails,
+      ],
     },
     progress,
   );
@@ -1408,7 +1454,7 @@ export function buildSetupReadiness(
       buildSeasonRateCheck(input.database, progress),
     ],
     integrations: [
-      buildStripeCheck(env, progress),
+      buildStripeCheck(env, input.database, progress),
       buildEmailCheck(env, progress),
       buildSentryCheck(env, progress),
       buildAddressAutocompleteCheck(env, input.database, progress),
@@ -1487,9 +1533,8 @@ export function getSetupRequiredEnvNames(): string[] {
   return [
     ...REQUIRED_RUNTIME_ENV,
     "AUTH_SECRET or NEXTAUTH_SECRET",
-    "STRIPE_SECRET_KEY",
-    "NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY",
-    "STRIPE_WEBHOOK_SECRET",
+    // Stripe credentials (secret/publishable keys, webhook signing secret) are
+    // captured in-app now (#2082) — they are no longer required env.
     "USE_AWS_SES",
     "USE_SMTP_RELAY",
     "SMTP_HOST",

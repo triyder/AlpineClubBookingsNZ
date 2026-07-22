@@ -19,10 +19,17 @@ import { GoogleSecurityCard } from "@/components/admin/google-security-card";
 // off the STAGED value.
 
 const NOTICE_RE = /can view login & security settings but cannot change them/i;
-const WARNING_RE = /Google credentials not configured/i;
+// #2087: the old env "credentials not configured" warning is replaced by the
+// verify-gate "Finish setup before enabling" prompt.
+const GATE_RE = /Finish setup before enabling/i;
 
 function renderCard(
-  overrides: { googleLogin?: boolean; credentialsConfigured?: boolean } = {},
+  overrides: {
+    googleLogin?: boolean;
+    credentialsConfigured?: boolean;
+    verified?: boolean;
+    needsReentry?: boolean;
+  } = {},
 ) {
   return render(
     <GoogleSecurityCard
@@ -31,6 +38,10 @@ function renderCard(
         googleLogin: overrides.googleLogin ?? false,
       }}
       credentialsConfigured={overrides.credentialsConfigured ?? true}
+      // Default verified so the enable-toggle behaviour is exercisable; the
+      // gate-specific test overrides this to false.
+      verified={overrides.verified ?? true}
+      needsReentry={overrides.needsReentry ?? false}
     />,
   );
 }
@@ -81,13 +92,21 @@ describe("GoogleSecurityCard (#2103)", () => {
     expect(screen.getByText(/unsaved changes/i)).toBeTruthy();
   });
 
-  it("previews the credentials warning off the STAGED value before Save", () => {
-    renderCard({ googleLogin: false, credentialsConfigured: false });
-    // Off by default -> no warning.
-    expect(screen.queryByText(WARNING_RE)).toBeNull();
+  it("locks the enable toggle until Google is verified (D2 gate)", () => {
+    renderCard({ googleLogin: false, credentialsConfigured: true, verified: false });
+    // The verify-gate prompt shows and the toggle cannot be enabled.
+    expect(screen.getByText(GATE_RE)).toBeTruthy();
     fireEvent.click(editButton());
-    fireEvent.click(toggle()); // stage enable
-    expect(screen.getByText(WARNING_RE)).toBeTruthy();
+    expect(toggle().disabled).toBe(true);
+    fireEvent.click(toggle()); // attempt to stage enable — must not take
+    expect(toggle().checked).toBe(false);
+  });
+
+  it("shows no verify-gate prompt once verified", () => {
+    renderCard({ googleLogin: false, verified: true });
+    expect(screen.queryByText(GATE_RE)).toBeNull();
+    fireEvent.click(editButton());
+    expect(toggle().disabled).toBe(false);
   });
 
   it("Save merges the staged toggle over the FRESH modules GET and PUTs once", async () => {

@@ -7,6 +7,11 @@ import {
   getCachedItems,
   setCachedItems,
 } from "@/lib/xero-admin-cache";
+import {
+  fetchMockXeroItems,
+  getXeroMockApiOrigin,
+  isXeroMockActive,
+} from "@/lib/xero-mock-endpoint";
 
 /**
  * GET /api/admin/xero/items
@@ -17,6 +22,14 @@ export async function GET(request?: NextRequest) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
   const forceRefresh = request?.nextUrl.searchParams.get("refresh") === "1";
+
+  // E2E mock harness (#2081): route to the gated mock items instead of live
+  // Xero. Production-inert (see chart-of-accounts route).
+  if (isXeroMockActive()) {
+    const origin = getXeroMockApiOrigin();
+    const items = origin ? await fetchMockXeroItems(origin) : [];
+    return NextResponse.json({ items, cache: null });
+  }
 
   if (!forceRefresh) {
     const cachedItems = await getCachedItems();

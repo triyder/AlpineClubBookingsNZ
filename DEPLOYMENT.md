@@ -103,11 +103,20 @@ Minimum production categories:
 - Modules: optional modules are database-backed in `ClubModuleSettings` and
   controlled from Admin > Modules after first login. No `FEATURE_*`
   environment variables are supported or read by the app.
-- Stripe: `STRIPE_SECRET_KEY`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`,
-  `STRIPE_WEBHOOK_SECRET`
+- Stripe: **no env vars** (#2082). The Stripe secret key, publishable key, and
+  webhook signing secret are captured **in-app** through the guided setup wizard
+  at **Admin > Integrations > Stripe** (Full Admin only) and stored encrypted.
+  The publishable key is delivered to the browser at **runtime** from the store
+  (`GET /api/stripe/publishable-key`), so there is no build-time
+  `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` inlining. The webhook route is
+  **fail-closed** (no stored signing secret ⇒ every event rejected). Any legacy
+  `STRIPE_SECRET_KEY` / `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` /
+  `STRIPE_WEBHOOK_SECRET` env vars still present are ignored and flagged in setup
+  readiness — see the **Upgrade: DB-only provider credentials** runbook below.
 - Xero: **no env vars** (#2079). The Xero client id/secret, webhook key, and
-  token-encryption key are captured **in-app** (Admin > Integrations, Full Admin
-  only) and stored encrypted; the redirect URI derives from `NEXTAUTH_URL`. This
+  token-encryption key are captured **in-app** through the guided setup wizard at
+  **Admin > Xero > Setup** (#2080; Full Admin only) and stored encrypted; the
+  redirect URI derives from `NEXTAUTH_URL`. This
   single connection serves bookings, payments, subscriptions, and the finance
   dashboard. Configure the Xero app with the exact operational scopes requested
   by `src/lib/xero-config.ts`: `openid`, `profile`, `email`,
@@ -132,8 +141,9 @@ Minimum production categories:
   `CONTACT_EMAIL` env var to route the contact form must set the DB
   `contactEmail` (Admin > Email Messages); if unset it falls back to the support
   address per the existing precedence, so there is no hard break.
-- Cron and backups: `CRON_SECRET`, `BACKUP_*`, optional
-  `AUDIT_ARCHIVE_DATABASE_URL`
+- Cron and backups: `CRON_SECRET`, `BACKUP_CRON_SCHEDULE` (nightly backup
+  timing; all other backup settings are configured in-app at `/admin/backups`,
+  #2095), optional `AUDIT_ARCHIVE_DATABASE_URL`
 - Bootstrap provisioning (optional): `CONFIG_BUNDLE_IMPORT_PATH` — path to a
   config-transfer bundle applied non-interactively on boot **only** when the
   database is empty of non-seed configuration. See "Config Bundle Auto-Import On
@@ -549,27 +559,49 @@ synthetic data.
 
 ## Backups
 
-The app can run scheduled PostgreSQL dumps to S3-compatible storage when
-`BACKUP_ENABLED=true`. Configure:
+The app runs scheduled PostgreSQL dumps to S3-compatible storage. **Backups are
+configured in-app (#2095), not by environment variables.** Enable and configure
+them at **Admin → Integrations → Database Backups** (`/admin/backups`):
 
-- `BACKUP_S3_BUCKET`
-- `BACKUP_S3_REGION`
-- `BACKUP_S3_ACCESS_KEY_ID`
-- `BACKUP_S3_SECRET_ACCESS_KEY`
-- `BACKUP_RETENTION_DAYS`
-- `BACKUP_CRON_SCHEDULE`
-- optional `BACKUP_RESTORE_VALIDATION_URL`
+- the **enabled** switch and the **retention** window (support-area edit),
+- the S3 **bucket** and **region** (Full Admin only — repointing the destination
+  exfiltrates the entire dump),
+- the S3 **access key ID** / **secret access key** (Full Admin only, write-only,
+  encrypted at rest in the `IntegrationCredential` store),
+- an optional **restore-validation shadow database URL** (Full Admin,
+  write-only) — each backup is restored into it and smoke-checked.
+
+`BACKUP_CRON_SCHEDULE` remains an environment variable (cron-leader timing). The
+legacy `BACKUP_ENABLED`, `BACKUP_S3_*`, `BACKUP_RETENTION_DAYS`, and
+`BACKUP_RESTORE_VALIDATION_URL` variables are **no longer read**. On upgrade, a
+deployment that still sets them completes the in-app re-entry (the Backups page
+shows a "no longer used — re-enter in-app, then remove from the environment"
+warning) and then removes the variables from the environment.
+
+**Encryption-key coupling:** backup credentials are wrapped with a key derived
+from `AUTH_SECRET`/`NEXTAUTH_SECRET` (HKDF-SHA256). Rotating that secret makes
+stored credentials undecryptable, so the nightly backup fails **loudly** — it
+records a `FAILURE` cron run and an error Sentry check-in (never a silent skip),
+and the Backups page shows a "re-enter credentials" banner. Re-enter the S3
+credentials in-app after any auth-secret rotation.
 
 Do not treat local backup files as durable. The production Docker service runs
 with `read_only: true` and mounts `/tmp` as tmpfs, so `/tmp/tacbookings-backups`
 is RAM-backed and is wiped whenever the app container is recreated, including
-routine blue/green deploys. If `BACKUP_ENABLED=true` but `BACKUP_S3_BUCKET` is
-not configured, the job no longer reports healthy: the dump is marked
+routine blue/green deploys. If backups are enabled but no S3 bucket is
+configured, the job no longer reports healthy: the dump is marked
 `backup-not-durable`, the cron run records `FAILURE`, and the Sentry monitor
 check-in is sent as an error. A healthy scheduled backup requires S3 upload and
 readback verification.
 
-`BACKUP_RETENTION_DAYS` prunes only the local backup files; it does not delete
+**Run-now and concurrency:** the Backups page has a "Run backup now" button that
+executes off the request path as a background job. Both it and the nightly cron
+claim a DB-level cross-process lock (a `BackupRun` row under a
+`pg_advisory_xact_lock`), so two containers (blue/green web slots + cron-leader)
+never start overlapping dumps; a run whose container died mid-dump is reaped to
+`FAILURE` after a staleness window.
+
+The retention window prunes only the local backup files; it does not delete
 objects already uploaded to S3. Enforce S3 retention with a bucket lifecycle
 policy (or equivalent object-expiry rule) so uploaded dumps do not accumulate
 indefinitely.
@@ -591,6 +623,22 @@ an env var since #2079 — it is captured in-app (Admin > Integrations) and stor
 encrypted, and the `/api/webhooks/xero` route resolves it from there and stays
 **fail-closed** (a missing/unreadable key rejects every delivery, it never
 accepts).
+
+The guided setup wizard (**Admin → Xero → Setup**, step 4 "Webhooks", #2081)
+shows the exact delivery URL to paste into Xero, captures the webhook signing
+key (Full Admin only), and **Verify** waits for Xero's intent-to-receive
+validation ping to reach `/api/webhooks/xero` and pass HMAC before confirming.
+Verification is freshness-scoped and bound to the currently stored key
+(replacing the key re-arms it), so a green tick provably corresponds to a live
+round-trip on the same resolver/HMAC path production uses. Webhooks are
+optional: a deployment can invoice immediately and finish them later, in which
+case a persistent amber **"Webhooks not configured — payment updates rely on
+scheduled sync"** badge shows on the Xero pages until verified. A
+localhost/non-public-HTTPS deployment cannot receive the ping — verify only
+works once the site is reachable over public HTTPS. Because credential reads are
+cached across the blue/green web slots + cron-leader for up to ~45s (#2079), the
+wizard's verify polling window runs to 90s so a genuine ping still lands green
+after a key write.
 
 Subscribe the Stripe endpoint to these event types:
 
@@ -639,16 +687,41 @@ config (`AUTH_SECRET`, `DATABASE_URL`, `NEXTAUTH_URL`, SMTP/SES) is unchanged.
    secret; setup readiness shows a passive amber warning before you start.
 2. Deploy the new release. Nothing fails at boot; readiness shows the legacy-env
    warnings and the Xero "reconnect" prompt.
-3. Open **Admin > Xero > Setup** (the Integrations hub links here) and use the
-   **Xero Credentials** section to re-enter the client id, client secret, and
-   (optional) webhook key. Each write is Full-Admin only, encrypted at rest, and
-   audited (metadata only); values are never displayed back. The wrapped
-   token-encryption key is auto-generated on first use. (This interim entry form
-   is superseded by the guided Xero setup wizard in a later release, C2/#2080 —
-   the re-entry steps stay the same.)
-4. Reconnect Xero (OAuth) so fresh tokens are stored under the new key.
+3. Open **Admin > Xero > Setup** (the Integrations hub and the Modules "Set up"
+   CTA link here) and follow the **guided Xero setup wizard** (#2080): it walks
+   you through creating the Xero app with copy-paste-exact values (including the
+   resolved redirect URI), re-entering the client id and client secret, and
+   reconnecting. Each credential write is Full-Admin only, encrypted at rest, and
+   audited (metadata only); values are never displayed back. Entering a new value
+   resets the connection, so the wizard has you reconnect on the next step. The
+   wrapped token-encryption key is auto-generated on first use.
+4. Complete the wizard's **Connect** step (OAuth) so fresh tokens are stored
+   under the new key, and confirm the connected organisation name it shows.
 5. Remove the now-ignored `XERO_*` credential env vars from the environment;
    the readiness warning clears.
+
+**Stripe (#2082):** the same cutover applies to payments. At the upgrade
+`STRIPE_SECRET_KEY`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`, and
+`STRIPE_WEBHOOK_SECRET` stop being read (setup readiness flags any still present).
+Card payments pause until the keys are re-entered because the publishable key is
+now delivered at runtime from the store, and the webhook route is fail-closed
+until its signing secret is stored. Re-enter under **Admin > Integrations >
+Stripe**: (1) with a strong auth secret, open the wizard and paste the secret and
+publishable keys (test mode first if validating); (2) run **Verify connection** and
+confirm the Stripe account name shown is the right one; (3) **reuse the webhook
+endpoint your Stripe account already has** at this site's
+`/api/webhooks/stripe` URL — open it under Developers > Webhooks, reveal its
+current signing secret, and paste that back into the wizard. Only add a new
+endpoint if none exists yet (fresh installs); creating a second endpoint on an
+upgrade issues a *different* signing secret and orphans deliveries queued
+against the old one. Send a Stripe test event to turn the webhook badge green
+(this step is skippable — payments still process, but bookings only
+auto-reconcile once the webhook is verified). **Events that arrive during the
+re-entry gap are rejected fail-closed, and Stripe retries deliveries for about
+72 hours** — restore the *same* signing secret within that window and the
+queued events verify and replay on retry; duplicate deliveries are deduplicated
+automatically. Replacing any Stripe key clears the verified webhook badge.
+Then remove the legacy `STRIPE_*` env vars.
 
 **Expected downtime:** none at deploy. Xero-backed operations (sync, webhooks,
 invoice/payment automation) pause between the upgrade and step 4 completing, and
@@ -666,9 +739,10 @@ a casual refresh. Rotation drops, all at once:
 - **all 2FA enrolments and recovery-code hashes** — every member is forced back
   through two-factor enrollment on next sign-in. **Admin-lockout risk:** an admin
   who cannot immediately re-enroll (lost authenticator) can be locked out.
-- **all stored provider credentials** (Xero client id/secret/webhook key) and the
-  **wrapped Xero token-encryption key** — these fail GCM decryption afterwards
-  and must be re-entered in-app; Xero must be reconnected (re-OAuth).
+- **all stored provider credentials** (Xero client id/secret/webhook key; Stripe
+  secret/publishable/webhook-signing keys) and the **wrapped Xero token-encryption
+  key** — these fail GCM decryption afterwards and must be re-entered in-app; Xero
+  must be reconnected (re-OAuth) and the Stripe webhook re-verified.
 
 **Safe procedure:**
 

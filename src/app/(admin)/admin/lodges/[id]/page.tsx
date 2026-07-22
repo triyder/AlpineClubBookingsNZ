@@ -509,7 +509,7 @@ export default function LodgeConfigurationHubPage() {
               Number.isFinite(Number(capacityOverride)) &&
               Number(capacityOverride) < activeBedCount && (
                 <p
-                  className="rounded-md bg-amber-50 p-2 text-xs text-amber-800"
+                  className="rounded-md bg-warning-3 p-2 text-xs text-warning-11"
                   role="status"
                 >
                   This is below the {activeBedCount} active bed
@@ -525,8 +525,8 @@ export default function LodgeConfigurationHubPage() {
             <div
               className={`rounded-md p-3 text-sm ${
                 capacityMessage.type === "success"
-                  ? "bg-green-50 text-green-700"
-                  : "bg-red-50 text-red-700"
+                  ? "bg-success-3 text-success-11"
+                  : "bg-danger-3 text-danger-11"
               }`}
             >
               {capacityMessage.text}

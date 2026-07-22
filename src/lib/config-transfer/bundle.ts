@@ -282,6 +282,18 @@ export function readBundle(zipBytes: Uint8Array): ReadBundleResult {
     );
   }
 
+  // #2187 (D19): the club-theme entity changed incompatibly at v2 (seven brand
+  // columns collapsed to three seeds). There is NO v1 translation path — a v1
+  // bundle carries orphan columns this app no longer understands, so reject it
+  // loudly rather than silently dropping them.
+  if (manifest.formatVersion < CONFIG_TRANSFER_FORMAT_VERSION) {
+    throw new ConfigTransferBundleError(
+      `Bundle format version ${manifest.formatVersion} predates this app's ` +
+        `format (${CONFIG_TRANSFER_FORMAT_VERSION}) and cannot be imported; ` +
+        `re-export from an up-to-date app`,
+    );
+  }
+
   // Files-first: every file actually present (bar the manifest) is usable.
   const files = new Map<string, Uint8Array>();
   for (const name of names) {

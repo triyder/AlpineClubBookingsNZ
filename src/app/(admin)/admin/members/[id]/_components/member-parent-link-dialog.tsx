@@ -73,7 +73,7 @@ export function MemberParentLinkDialog({
             Link {member.firstName} {member.lastName} under an active adult member.
           </DialogDescription>
         </DialogHeader>
-        {error && <div className="p-2 bg-red-50 border border-red-200 text-red-700 rounded text-sm">{error}</div>}
+        {error && <div className="p-2 bg-danger-3 border border-danger-6 text-danger-11 rounded text-sm">{error}</div>}
         <div className="space-y-4 py-2">
           <div className="space-y-2">
             <Label htmlFor="link-parent-search">Parent search</Label>

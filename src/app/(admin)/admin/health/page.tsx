@@ -37,7 +37,7 @@ export default function AdminHealthPage() {
     return (
       <div className="p-6">
         <h1 className="text-2xl font-bold text-foreground mb-6">System Health</h1>
-        <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-red-700">
+        <div className="bg-danger-3 border border-danger-6 rounded-lg p-4 text-danger-11">
           Failed to load health data: {error}
         </div>
       </div>
@@ -178,7 +178,7 @@ export default function AdminHealthPage() {
               <p className="text-sm text-muted-foreground">Sentry</p>
               <p className="text-lg font-medium">
                 {systemInfo.sentryConfigured ? (
-                  <span className="text-green-600">Connected</span>
+                  <span className="text-success-11">Connected</span>
                 ) : (
                   <span className="text-muted-foreground">Not configured</span>
                 )}
@@ -195,14 +195,14 @@ export default function AdminHealthPage() {
                 href={systemInfo.sentryDashboardUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-sm text-blue-600 hover:underline"
+                className="text-sm text-info-11 hover:underline"
               >
                 Open Sentry Dashboard
               </a>
             </div>
           )}
           {systemInfo.sentryConfigWarning && (
-            <div className="mt-3 pt-3 border-t text-sm text-amber-700 flex items-start gap-2">
+            <div className="mt-3 pt-3 border-t text-sm text-warning-11 flex items-start gap-2">
               <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
               <span>{systemInfo.sentryConfigWarning}</span>
             </div>
@@ -227,11 +227,11 @@ export default function AdminHealthPage() {
                 <h3 className="font-medium text-foreground capitalize mb-2">{source}</h3>
                 <div className="grid grid-cols-3 gap-2 text-center">
                   <div>
-                    <p className="text-2xl font-bold text-green-600">{stats.success}</p>
+                    <p className="text-2xl font-bold text-success-11">{stats.success}</p>
                     <p className="text-xs text-muted-foreground">Success</p>
                   </div>
                   <div>
-                    <p className="text-2xl font-bold text-red-600">{stats.failure}</p>
+                    <p className="text-2xl font-bold text-danger-11">{stats.failure}</p>
                     <p className="text-xs text-muted-foreground">Failed</p>
                   </div>
                   <div>

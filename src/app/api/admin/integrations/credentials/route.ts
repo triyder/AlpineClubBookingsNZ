@@ -11,6 +11,22 @@ import { setIntegrationCredential } from "@/lib/integration-credentials";
 import { WeakAuthSecretError } from "@/lib/integration-crypto";
 import { deleteXeroTokens } from "@/lib/xero-token-store";
 import { XERO_CREDENTIAL_KEYS, XERO_PROVIDER } from "@/lib/xero-config";
+import {
+  STRIPE_PROVIDER,
+  STRIPE_WRITABLE_CREDENTIAL_KEYS,
+  clearStripeWebhookVerified,
+} from "@/lib/stripe-config";
+import {
+  BACKUP_CREDENTIAL_KEYS,
+  BACKUP_PROVIDER,
+  BACKUP_SECRET_CREDENTIAL_KEYS,
+  isValidRestoreValidationUrl,
+} from "@/lib/backup-config";
+import {
+  GOOGLE_PROVIDER,
+  GOOGLE_WRITABLE_CREDENTIAL_KEYS,
+  clearGoogleVerified,
+} from "@/lib/google-config";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 
@@ -35,6 +51,13 @@ const WRITABLE_CREDENTIALS: Record<string, readonly string[]> = {
     XERO_CREDENTIAL_KEYS.clientSecret,
     XERO_CREDENTIAL_KEYS.webhookKey,
   ],
+  [STRIPE_PROVIDER]: [...STRIPE_WRITABLE_CREDENTIAL_KEYS],
+  [GOOGLE_PROVIDER]: [...GOOGLE_WRITABLE_CREDENTIAL_KEYS],
+  // Backup S3 access key/secret + the restore-validation shadow DSN (#2095, C6):
+  // write-only secrets, Full Admin. The non-secret destination (bucket/region)
+  // and operational config (enabled/retention) are written on the backups
+  // config route, not here.
+  [BACKUP_PROVIDER]: [...BACKUP_SECRET_CREDENTIAL_KEYS],
 };
 
 // GET /api/admin/integrations/credentials?provider=xero — METADATA-ONLY status.
@@ -115,6 +138,19 @@ async function applyVerifyReset(provider: string, key: string): Promise<void> {
   ) {
     await deleteXeroTokens();
   }
+  // Stripe (epic decision 6): writing ANY Stripe credential — secret,
+  // publishable, or the signing secret — drops the webhook-verified marker so a
+  // green webhook badge can never survive a credential swap. The connection
+  // check itself is live-derived (no persisted verified flag to reset).
+  if (provider === STRIPE_PROVIDER) {
+    await clearStripeWebhookVerified();
+  }
+  // Google (epic decision 6 / D2): writing either Google credential drops the
+  // verified marker so the module re-locks until a fresh OAuth round-trip
+  // verifies. The verified state is a stored marker (no live-derived check).
+  if (provider === GOOGLE_PROVIDER) {
+    await clearGoogleVerified();
+  }
 }
 
 export async function POST(request: Request) {
@@ -136,6 +172,24 @@ export async function POST(request: Request) {
   if (!allowedKeys || !allowedKeys.includes(key)) {
     return NextResponse.json(
       { error: "Unknown provider or credential key." },
+      { status: 400 },
+    );
+  }
+
+  // Capture-time gate for the restore-validation DSN (#2095 MAJOR-2): it carries
+  // a password passed to psql, so it must be a parseable postgres:// URI. A
+  // keyword-form conninfo or malformed URI would keep the password on argv (and
+  // in any persisted error), so it is rejected with a clear message here.
+  if (
+    provider === BACKUP_PROVIDER &&
+    key === BACKUP_CREDENTIAL_KEYS.restoreValidationUrl &&
+    !isValidRestoreValidationUrl(value)
+  ) {
+    return NextResponse.json(
+      {
+        error:
+          "The restore-validation URL must be a postgres:// or postgresql:// connection URI (for example postgresql://user:password@host:5432/shadow_db).",
+      },
       { status: 400 },
     );
   }

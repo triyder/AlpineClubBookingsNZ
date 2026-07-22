@@ -482,7 +482,7 @@ export default function MemberDetailPage({
         {viewOnlyBanner}
         <div className="space-y-4">
           <BackLink href={backHref} label={backLabel} />
-          <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-md text-sm">
+          <div className="p-3 bg-danger-3 border border-danger-6 text-danger-11 rounded-md text-sm">
             {pageError || "Member not found"}
           </div>
         </div>
@@ -604,7 +604,7 @@ export default function MemberDetailPage({
           ref={relationshipErrorRef}
           role="alert"
           tabIndex={-1}
-          className="scroll-mt-20 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700 focus:outline-none"
+          className="scroll-mt-20 rounded-md border border-danger-6 bg-danger-3 p-3 text-sm text-danger-11 focus:outline-none"
         >
           {relationshipError}
         </div>
@@ -617,7 +617,7 @@ export default function MemberDetailPage({
             ref={xeroErrorRef}
             role="alert"
             tabIndex={-1}
-            className="scroll-mt-20 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700 focus:outline-none"
+            className="scroll-mt-20 rounded-md border border-danger-6 bg-danger-3 p-3 text-sm text-danger-11 focus:outline-none"
           >
             {xeroError}
           </div>
@@ -685,7 +685,7 @@ export default function MemberDetailPage({
                         type="button"
                         variant="outline"
                         size="sm"
-                        className="h-7 border-indigo-200 bg-indigo-50 px-2 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 hover:text-indigo-800"
+                        className="h-7 border-cat3-6 bg-cat3-3 px-2 text-xs font-semibold text-cat3-11 hover:bg-cat3-3 hover:text-cat3-11"
                         onClick={() => setFamilyGroupEditorId(fg.id)}
                       >
                         {fg.name || "Unnamed"}
@@ -844,7 +844,7 @@ export default function MemberDetailPage({
           id="lifecycle"
           title="Lifecycle & Deletion"
           preview={groupPreviews.lifecycle}
-          className="border-red-200"
+          className="border-danger-6"
           contentClassName="px-0 pb-0"
         >
           <div className="divide-y">

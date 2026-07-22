@@ -381,7 +381,7 @@ export function SubscriptionLockoutSettingsPanel({
               cannot see finance (the Xero fetches were skipped for them). */}
           {canFinance ? (
             settings.enabled && !xeroConnected ? (
-              <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+              <div className="rounded-md border border-warning-6 bg-warning-3 p-3 text-sm text-warning-11">
                 <span className="font-medium">Heads up:</span> the lockout is on,
                 but Xero is not connected, so the system cannot read anyone&rsquo;s
                 paid status. While Xero is disconnected the lockout has no effect
@@ -459,7 +459,7 @@ export function SubscriptionLockoutSettingsPanel({
           </div>
 
           {settings.financialYearEndMonthOverride != null && (
-            <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+            <div className="rounded-md border border-warning-6 bg-warning-3 p-3 text-sm text-warning-11">
               Changing the financial year-end month changes how every existing
               and future subscription season is calculated. Only set an override
               if your membership year genuinely differs from your Xero accounting
@@ -620,7 +620,7 @@ export function SubscriptionLockoutSettingsPanel({
                       key={code}
                       className={`inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-medium ${
                         overlappingCodes.includes(code)
-                          ? "border-amber-300 bg-amber-50 text-amber-900"
+                          ? "border-warning-6 bg-warning-3 text-warning-11"
                           : "border-border bg-muted text-foreground"
                       }`}
                     >
@@ -643,7 +643,7 @@ export function SubscriptionLockoutSettingsPanel({
                 </p>
               )}
               {overlappingCodes.length > 0 && (
-                <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+                <div className="rounded-md border border-warning-6 bg-warning-3 p-3 text-sm text-warning-11">
                   <span className="font-medium">Overlap warning:</span> the item
                   code{overlappingCodes.length > 1 ? "s" : ""}{" "}
                   {overlappingCodes.join(", ")} also identif

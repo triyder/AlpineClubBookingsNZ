@@ -66,13 +66,14 @@ export const PAGE_CONTENT_FIELDS = [
 
 export const SITE_CONTENT_FIELDS = ["key", "contentHtml"] as const;
 
+// #2187: only the three seed columns cross the wire. The four former brand
+// columns (the charcoal/ridge/mist/snow surfaces) are dead to code and derived
+// at render time from the substrate, so a bundle neither emits nor imports them.
+// CONFIG_TRANSFER_FORMAT_VERSION is 2 and the importer rejects any v1 bundle
+// that still carries them.
 export const CLUB_THEME_FIELDS = [
   "brandGold",
-  "brandCharcoal",
   "brandDeep",
-  "brandRidge",
-  "brandMist",
-  "brandSnow",
   "brandSafety",
   "headingFontKey",
   "bodyFontKey",
@@ -184,11 +185,7 @@ export const siteContentExporter: CategoryExporter = {
       where: { id: "default" },
       select: {
         brandGold: true,
-        brandCharcoal: true,
         brandDeep: true,
-        brandRidge: true,
-        brandMist: true,
-        brandSnow: true,
         brandSafety: true,
         headingFontKey: true,
         bodyFontKey: true,
@@ -734,8 +731,9 @@ async function applySiteContent(ctx: ApplyContext): Promise<CategoryApplyResult>
     }
     const current = batch.theme;
     if (!current) {
-      // The theme row has required columns with no DB defaults; a create relies
-      // on the bundle carrying them (validated by Prisma at runtime).
+      // The three seed columns are required with no DB default, so the bundle
+      // must carry them (validated by Prisma at runtime). The four orphan columns
+      // have DB defaults (#2187 EXPAND migration), so omitting them is safe.
       await ctx.tx.clubTheme.create({
         data: { id: "default", ...data } as Prisma.ClubThemeUncheckedCreateInput,
       });

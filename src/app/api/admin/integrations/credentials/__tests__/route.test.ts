@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   setIntegrationCredential: vi.fn(),
   createAuditLog: vi.fn(),
   deleteXeroTokens: vi.fn(),
+  clearStripeWebhookVerified: vi.fn(),
   loggerError: vi.fn(),
   findMany: vi.fn(),
 }));
@@ -19,6 +20,15 @@ vi.mock("@/lib/prisma", () => ({
 }));
 vi.mock("@/lib/integration-credentials", () => ({
   setIntegrationCredential: mocks.setIntegrationCredential,
+}));
+vi.mock("@/lib/stripe-config", () => ({
+  STRIPE_PROVIDER: "stripe",
+  STRIPE_WRITABLE_CREDENTIAL_KEYS: [
+    "secret_key",
+    "publishable_key",
+    "webhook_secret",
+  ],
+  clearStripeWebhookVerified: mocks.clearStripeWebhookVerified,
 }));
 vi.mock("@/lib/audit", () => ({
   createAuditLog: mocks.createAuditLog,
@@ -123,6 +133,89 @@ describe("POST /api/admin/integrations/credentials", () => {
     });
     await POST(makeRequest({ provider: "xero", key: "webhook_key", value: "hook" }));
     expect(mocks.deleteXeroTokens).not.toHaveBeenCalled();
+  });
+
+  it("applies Stripe verify-reset (drops the webhook-verified marker) on any Stripe write", async () => {
+    asFullAdmin();
+    mocks.setIntegrationCredential.mockResolvedValue({
+      provider: "stripe",
+      key: "webhook_secret",
+      secretSource: "AUTH_SECRET",
+      labelVersion: "integration-credential:v1",
+      updatedAt: new Date("2026-07-21T10:00:00.000Z"),
+    });
+    const res = await POST(
+      makeRequest({ provider: "stripe", key: "webhook_secret", value: "whsec_x" }),
+    );
+    expect(res.status).toBe(200);
+    expect(mocks.clearStripeWebhookVerified).toHaveBeenCalledTimes(1);
+    // Cross-provider isolation: a Stripe write never touches Xero tokens.
+    expect(mocks.deleteXeroTokens).not.toHaveBeenCalled();
+  });
+
+  it("accepts the Stripe secret key via the extended allowlist", async () => {
+    asFullAdmin();
+    mocks.setIntegrationCredential.mockResolvedValue({
+      provider: "stripe",
+      key: "secret_key",
+      secretSource: "AUTH_SECRET",
+      labelVersion: "integration-credential:v1",
+      updatedAt: new Date("2026-07-21T10:00:00.000Z"),
+    });
+    const res = await POST(
+      makeRequest({ provider: "stripe", key: "secret_key", value: "sk_test_x" }),
+    );
+    expect(res.status).toBe(200);
+    expect(mocks.setIntegrationCredential).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects the internal webhook_verified marker key (not writable via the API)", async () => {
+    asFullAdmin();
+    const res = await POST(
+      makeRequest({ provider: "stripe", key: "webhook_verified", value: "x" }),
+    );
+    expect(res.status).toBe(400);
+    expect(mocks.setIntegrationCredential).not.toHaveBeenCalled();
+  });
+
+  it("rejects a non-postgres restore-validation DSN with 400 and writes nothing (#2095 MAJOR-2)", async () => {
+    asFullAdmin();
+    // libpq keyword-form conninfo is not a parseable postgres:// URI.
+    const res = await POST(
+      makeRequest({
+        provider: "backup",
+        key: "restore_validation_url",
+        value: "host=shadow password=s3cr3t dbname=x",
+      }),
+    );
+    expect(res.status).toBe(400);
+    const json = await res.json();
+    expect(json.error).toMatch(/postgres/i);
+    expect(JSON.stringify(json)).not.toContain("s3cr3t");
+    expect(mocks.setIntegrationCredential).not.toHaveBeenCalled();
+  });
+
+  it("accepts a valid postgres:// restore-validation DSN (#2095 MAJOR-2)", async () => {
+    asFullAdmin();
+    mocks.setIntegrationCredential.mockResolvedValue({
+      provider: "backup",
+      key: "restore_validation_url",
+      secretSource: "AUTH_SECRET",
+      labelVersion: "integration-credential:v1",
+      updatedAt: new Date("2026-07-21T10:00:00.000Z"),
+    });
+    const res = await POST(
+      makeRequest({
+        provider: "backup",
+        key: "restore_validation_url",
+        value: "postgresql://tac:s3cr3t@shadow:5432/shadow_db",
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(mocks.setIntegrationCredential).toHaveBeenCalledTimes(1);
+    // Exposure: the value never appears in the response.
+    const json = await res.json();
+    expect(JSON.stringify(json)).not.toContain("s3cr3t");
   });
 
   it("rejects an unknown provider/key with 400", async () => {

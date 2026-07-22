@@ -60,7 +60,7 @@ export default function SetupForm({
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
-      <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+      <div className="rounded-lg border border-warning-6 bg-warning-3 p-4 text-sm text-warning-11">
         <p className="font-medium">Card will not be charged now</p>
         <p className="mt-1">
           Your card details will be saved securely. Payment will only be
@@ -69,7 +69,7 @@ export default function SetupForm({
         </p>
       </div>
 
-      <div className="rounded-lg border border-gray-200 p-4">
+      <div className="rounded-lg border border-border p-4">
         <PaymentElement
           options={{
             layout: "tabs",
@@ -78,7 +78,7 @@ export default function SetupForm({
       </div>
 
       {errorMessage && (
-        <div className="rounded-md bg-red-50 p-3 text-sm text-red-700">
+        <div className="rounded-md bg-danger-3 p-3 text-sm text-danger-11">
           {errorMessage}
         </div>
       )}

@@ -66,6 +66,13 @@ const SCOPED_ADVISORY_LOCK_INVENTORY: Record<string, number> = {
   "src/lib/admin-family-group-requests-service.ts": 2,
   "src/lib/admin-roster-service.ts": 1,
   "src/lib/authoritative-fees.ts": 1,
+  // #2095: claimBackupRun takes the singleton backup:run-lock key for the
+  // milliseconds of the reap/check/insert claim transaction only (the dump
+  // itself runs outside any transaction), so cron and run-now backups
+  // serialise across containers. Single-lock holder, no composition with any
+  // booking/money/lifecycle key; counterpart analysis in
+  // docs/CONCURRENCY_AND_LOCKING.md.
+  "src/lib/backup-run.ts": 1,
   "src/lib/booking-member-night-conflicts.ts": 1,
   "src/lib/capacity.ts": 1,
   "src/lib/config-transfer/apply.ts": 1,

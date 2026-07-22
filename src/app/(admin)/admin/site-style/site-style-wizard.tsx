@@ -40,16 +40,19 @@ import {
   MAX_LOGO_DATA_URL_BYTES,
   buildClubThemeCss,
   deriveAppMutedForeground,
+  deriveBrandShims,
   fontCssVariable,
   fontLabel,
-  getBlockingContrastWarnings,
   getContrastWarnings,
   isValidLogoDataUrl,
+  themeSeedsFromValues,
   type ClubThemeColourKey,
   type ClubThemeFontKey,
   type ClubThemeValues,
   type ContrastWarning,
 } from "@/lib/club-theme-schema";
+import { buildThemeSubstrate } from "@/lib/theme/theme-substrate";
+import { buildAppThemeTokens } from "@/lib/theme/app-tokens";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import {
   AdminForbiddenSaveNotice,
@@ -114,19 +117,57 @@ function themePayload(values: ClubThemeValues, completeSetup: boolean) {
  */
 function previewStyle(values: ClubThemeValues): CSSProperties {
   const muted = deriveAppMutedForeground(values);
+  const brand = deriveBrandShims(values);
+  // #2187 (c) — the preview emits the FULL generated substrate set via the same
+  // shipping emitter as `buildClubThemeAppCss` (`--gen-*` / `--gen-*-dark`), not
+  // just the `--brand-*` shims, so the sample paints exactly the palette that
+  // ships for the seeds being edited.
+  const generated = buildAppThemeTokens(
+    themeSeedsFromValues(values),
+  ).tokens as Record<string, string>;
   return {
+    ...generated,
     "--app-muted-foreground": muted.light,
     "--app-muted-foreground-dark": muted.dark,
-    "--brand-gold": values.brandGold,
-    "--brand-charcoal": values.brandCharcoal,
-    "--brand-deep": values.brandDeep,
-    "--brand-ridge": values.brandRidge,
-    "--brand-mist": values.brandMist,
-    "--brand-snow": values.brandSnow,
-    "--brand-safety": values.brandSafety,
+    "--brand-gold": brand.gold,
+    "--brand-charcoal": brand.charcoal,
+    "--brand-deep": brand.deep,
+    "--brand-ridge": brand.ridge,
+    "--brand-mist": brand.mist,
+    "--brand-snow": brand.snow,
+    "--brand-safety": brand.safety,
     "--font-website-heading": `var(${fontCssVariable(values.headingFontKey)})`,
     "--font-website-body": `var(${fontCssVariable(values.bodyFontKey)})`,
   } as CSSProperties;
+}
+
+/**
+ * The adjusted-colour disclosure (#2187 D, replaces the blocking contrast gate).
+ *
+ * A seed is never rejected: the vendored generator adjusts a pathological pick
+ * so the shipped scale clears the guarantee sweep. This computes, per seed, the
+ * colour that actually SHIPS (the generator's step-9 accent for the primary/
+ * support seeds; the derived neutral character for the neutral seed) so the
+ * wizard can show a before → after swatch pair whenever the two differ.
+ */
+type SeedAdjustment = { key: ClubThemeColourKey; label: string; before: string; after: string };
+
+function seedAdjustments(values: ClubThemeValues): SeedAdjustment[] {
+  const light = buildThemeSubstrate(themeSeedsFromValues(values), "light");
+  const shipped: Record<ClubThemeColourKey, string> = {
+    brandGold: light.scales.accent.hex[8],
+    brandSafety: light.scales.support.hex[8],
+    brandDeep: light.neutralHex[11],
+  };
+  const differs = (a: string, b: string) => a.toLowerCase() !== b.toLowerCase();
+  return CLUB_THEME_COLOUR_FIELDS.filter((field) =>
+    differs(values[field.key], shipped[field.key]),
+  ).map((field) => ({
+    key: field.key,
+    label: field.label,
+    before: values[field.key],
+    after: shipped[field.key],
+  }));
 }
 
 export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
@@ -135,11 +176,7 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
   const [forbidden, setForbidden] = useState(false);
   const [values, setValues] = useState<ClubThemeValues>({
     brandGold: initialTheme.brandGold,
-    brandCharcoal: initialTheme.brandCharcoal,
     brandDeep: initialTheme.brandDeep,
-    brandRidge: initialTheme.brandRidge,
-    brandMist: initialTheme.brandMist,
-    brandSnow: initialTheme.brandSnow,
     brandSafety: initialTheme.brandSafety,
     headingFontKey: initialTheme.headingFontKey,
     bodyFontKey: initialTheme.bodyFontKey,
@@ -186,12 +223,11 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
     setFieldErrors(parsed.success ? {} : parsed.error.flatten().fieldErrors);
   }, [updateSchema, values]);
   const contrastWarnings = useMemo(() => getContrastWarnings(values), [values]);
-  // Measurable AA failures block saving (mirrors the server gate in the
-  // site-style route); both hex and oklch values are measured.
-  const blockingContrastWarnings = useMemo(
-    () => getBlockingContrastWarnings(values),
-    [values],
-  );
+  // #2187: a seed is never rejected for contrast — the generator adjusts a
+  // pathological pick and the substrate clears the guarantee sweep by
+  // construction. Instead of blocking the save, disclose which seeds the
+  // generator adjusted (before → after) so the choice is transparent.
+  const adjustments = useMemo(() => seedAdjustments(values), [values]);
   const advisoryContrastWarnings = useMemo(
     () => contrastWarnings.filter((warning) => warning.ratio === null),
     [contrastWarnings],
@@ -240,11 +276,7 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
       const theme = body.theme as SiteStyleThemeResponse;
       setValues({
         brandGold: theme.brandGold,
-        brandCharcoal: theme.brandCharcoal,
         brandDeep: theme.brandDeep,
-        brandRidge: theme.brandRidge,
-        brandMist: theme.brandMist,
-        brandSnow: theme.brandSnow,
         brandSafety: theme.brandSafety,
         headingFontKey: theme.headingFontKey,
         bodyFontKey: theme.bodyFontKey,
@@ -316,7 +348,9 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
   const hasFieldErrors = Object.values(fieldErrors).some(
     (messages) => messages && messages.length > 0,
   );
-  const saveBlocked = hasFieldErrors || blockingContrastWarnings.length > 0;
+  // Only a malformed field (non-hex value) blocks the save now; contrast is
+  // guaranteed by construction, so a low-contrast pick is adjusted, not blocked.
+  const saveBlocked = hasFieldErrors;
 
   /*
     #2160: the view-only explanation lives here, once, at the top of the section —
@@ -400,7 +434,15 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
                 <div className="grid gap-4 sm:grid-cols-2">
                   {CLUB_THEME_COLOUR_FIELDS.map((field) => (
                     <div key={field.key} className="space-y-2">
-                      <Label htmlFor={field.key}>{field.label}</Label>
+                      <Label htmlFor={field.key}>
+                        {field.label}{" "}
+                        <span className="text-xs font-normal text-muted-foreground">
+                          {field.required ? "(required)" : "(optional)"}
+                        </span>
+                      </Label>
+                      <p className="text-xs text-muted-foreground">
+                        {field.role}
+                      </p>
                       <div className="flex gap-2">
                         <Input
                           id={field.key}
@@ -427,7 +469,7 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
                         />
                       </div>
                       {fieldErrors[field.key]?.[0] && (
-                        <p className="text-sm text-red-700">
+                        <p className="text-sm text-danger-11">
                           {fieldErrors[field.key]?.[0]}
                         </p>
                       )}
@@ -511,7 +553,7 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
                   className="w-full rounded-md border border-slate-300 bg-white p-3 font-mono text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-400"
                 />
                 {values.rawCss.length > 45_000 && (
-                  <p className="text-sm text-amber-700">
+                  <p className="text-sm text-warning-11">
                     {values.rawCss.length.toLocaleString()} / 50,000 characters
                     used.
                   </p>
@@ -565,7 +607,7 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
                   )}
                 </div>
                 {fieldErrors.logoDataUrl?.[0] && (
-                  <p className="text-sm text-red-700">
+                  <p className="text-sm text-danger-11">
                     {fieldErrors.logoDataUrl?.[0]}
                   </p>
                 )}
@@ -681,27 +723,50 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
               </p>
             </div>
 
-            {blockingContrastWarnings.length > 0 && (
-              <div className="rounded-md border border-red-300 bg-red-50 p-4 text-sm text-red-800">
+            {adjustments.length > 0 && (
+              <div className="rounded-md border border-info-6 bg-info-3 p-4 text-sm text-info-11">
                 <div className="mb-2 flex items-center gap-2 font-medium">
-                  <AlertTriangle className="h-4 w-4" />
-                  Contrast too low to save
+                  <CheckCircle2 className="h-4 w-4" />
+                  Colours adjusted for accessibility
                 </div>
-                <p className="mb-2">
-                  Saving is disabled until these text pairs meet the WCAG AA
-                  4.5:1 minimum. Lighten or darken the colours below and the
-                  warning clears automatically.
+                <p className="mb-3">
+                  Your palette always saves. To keep text and controls readable,
+                  the generator nudged the colours below. This is what ships:
                 </p>
-                <ul className="space-y-1">
-                  {blockingContrastWarnings.map((warning) => (
-                    <li key={warning.id}>{warning.message}</li>
+                <ul className="space-y-2">
+                  {adjustments.map((adjustment) => (
+                    <li
+                      key={adjustment.key}
+                      className="flex items-center gap-2"
+                    >
+                      <span className="min-w-32 font-medium">
+                        {adjustment.label}
+                      </span>
+                      <span
+                        className="inline-block h-4 w-4 shrink-0 rounded-sm border border-black/10"
+                        style={{ backgroundColor: adjustment.before }}
+                        aria-hidden
+                      />
+                      <span className="font-mono text-xs">
+                        {adjustment.before}
+                      </span>
+                      <span aria-hidden>→</span>
+                      <span
+                        className="inline-block h-4 w-4 shrink-0 rounded-sm border border-black/10"
+                        style={{ backgroundColor: adjustment.after }}
+                        aria-hidden
+                      />
+                      <span className="font-mono text-xs">
+                        {adjustment.after}
+                      </span>
+                    </li>
                   ))}
                 </ul>
               </div>
             )}
 
             {advisoryContrastWarnings.length > 0 && (
-              <div className="rounded-md border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
+              <div className="rounded-md border border-warning-6 bg-warning-3 p-4 text-sm text-warning-11">
                 <div className="mb-2 flex items-center gap-2 font-medium">
                   <AlertTriangle className="h-4 w-4" />
                   Contrast warnings
@@ -715,12 +780,12 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
             )}
 
             {error && (
-              <div className="rounded-md border border-red-300 bg-red-50 p-4 text-sm text-red-800">
+              <div className="rounded-md border border-danger-6 bg-danger-3 p-4 text-sm text-danger-11">
                 {error}
               </div>
             )}
             {savedMessage && (
-              <div className="rounded-md border border-green-300 bg-green-50 p-4 text-sm text-green-800">
+              <div className="rounded-md border border-success-6 bg-success-3 p-4 text-sm text-success-11">
                 {savedMessage}
               </div>
             )}

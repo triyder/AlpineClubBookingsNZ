@@ -167,7 +167,7 @@ export default function BookingRequestQuoteResponsePage() {
         {state === "loading" ? (
           <p className="text-sm text-muted-foreground">Loading quote...</p>
         ) : state === "invalid" ? (
-          <div className="flex gap-3 text-amber-800">
+          <div className="flex gap-3 text-warning-11">
             <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
             <div className="space-y-1">
               <p className="font-medium">This quote link is not valid.</p>
@@ -177,7 +177,7 @@ export default function BookingRequestQuoteResponsePage() {
             </div>
           </div>
         ) : state === "expired" ? (
-          <div className="flex gap-3 text-amber-800">
+          <div className="flex gap-3 text-warning-11">
             <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
             <div className="space-y-1">
               <p className="font-medium">This quote has expired.</p>
@@ -188,18 +188,18 @@ export default function BookingRequestQuoteResponsePage() {
             </div>
           </div>
         ) : state === "error" || !context ? (
-          <div className="flex gap-3 text-amber-800">
+          <div className="flex gap-3 text-warning-11">
             <HelpCircle className="mt-0.5 h-5 w-5 shrink-0" />
             <p>{error || "Unable to load this quote right now."}</p>
           </div>
         ) : result ? (
-          <div className="flex gap-3 text-emerald-800">
+          <div className="flex gap-3 text-success-11">
             <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0" />
             <p className="font-medium">{result}</p>
           </div>
         ) : (
           <>
-            <div className="grid gap-3 rounded-md border bg-slate-50 p-3 text-sm sm:grid-cols-2">
+            <div className="grid gap-3 rounded-md border bg-muted p-3 text-sm sm:grid-cols-2">
               {context.type === "SCHOOL" && context.schoolName ? (
                 <p>
                   <span className="text-muted-foreground">School:</span>{" "}
@@ -231,7 +231,7 @@ export default function BookingRequestQuoteResponsePage() {
             </div>
 
             {context.message ? (
-              <div className="rounded-md border bg-white p-3 text-sm text-slate-700">
+              <div className="rounded-md border bg-card p-3 text-sm text-muted-foreground">
                 {context.message}
               </div>
             ) : null}
@@ -244,7 +244,7 @@ export default function BookingRequestQuoteResponsePage() {
                   className={`block cursor-pointer rounded-md border p-3 ${
                     selectedOptionId === option.id
                       ? "border-primary bg-primary/5"
-                      : "border-slate-200"
+                      : "border-border"
                   }`}
                 >
                   <div className="flex items-start gap-3">

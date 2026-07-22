@@ -192,13 +192,13 @@ function participantStatusLabel(status: string) {
 function statusBadge(status: string) {
   const classes =
     status === "REQUESTED"
-      ? "border-blue-200 bg-blue-50 text-blue-800"
+      ? "border-info-6 bg-info-3 text-info-11"
       : status === "PENDING_CONFIRMATION"
-        ? "border-amber-200 bg-amber-50 text-amber-800"
+        ? "border-warning-6 bg-warning-3 text-warning-11"
         : status === "CANCELLED" || status === "COMPLETED"
-          ? "border-green-200 bg-green-50 text-green-800"
+          ? "border-success-6 bg-success-3 text-success-11"
           : status === "DECLINED" || status === "REJECTED"
-            ? "border-red-200 bg-red-50 text-red-800"
+            ? "border-danger-6 bg-danger-3 text-danger-11"
             : "border-border bg-muted text-muted-foreground";
 
   return (
@@ -525,12 +525,12 @@ export default function MembershipCancellationsPage() {
       </div>
 
       {error && (
-        <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+        <div className="rounded-md border border-danger-6 bg-danger-3 px-4 py-3 text-sm text-danger-11">
           {error}
         </div>
       )}
       {message && (
-        <div className="rounded-md border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
+        <div className="rounded-md border border-success-6 bg-success-3 px-4 py-3 text-sm text-success-11">
           {message}
         </div>
       )}
@@ -622,7 +622,7 @@ export default function MembershipCancellationsPage() {
                     </div>
 
                     {requesterIsCurrentAdmin ? (
-                      <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                      <div className="rounded-md border border-warning-6 bg-warning-3 p-3 text-sm text-warning-11">
                         A different admin must approve or reject this archive
                         request.
                       </div>
@@ -651,7 +651,7 @@ export default function MembershipCancellationsPage() {
                             canEdit={canEditMembership}
                             describeReason={false}
                             variant="outline"
-                            className="border-red-200 text-red-700 hover:bg-red-50"
+                            className="border-danger-6 text-danger-11 hover:bg-danger-3"
                             disabled={Boolean(isSubmitting)}
                             onClick={() => reviewArchiveRequest(request.id, "reject")}
                           >
@@ -812,7 +812,7 @@ export default function MembershipCancellationsPage() {
                           </div>
 
                           {participant.blockers.length > 0 && (
-                            <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                            <div className="mt-3 rounded-md border border-warning-6 bg-warning-3 p-3 text-sm text-warning-11">
                               <div className="flex gap-2">
                                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                                 <div>
@@ -853,7 +853,7 @@ export default function MembershipCancellationsPage() {
                                   placeholder="Optional note for the member and audit log"
                                 />
                               </div>
-                              <div className="rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">
+                              <div className="rounded-md border border-info-6 bg-info-3 p-3 text-sm text-info-11">
                                 Paid membership subscriptions are not refunded.
                                 Unpaid or overdue subscription invoices are
                                 cleared with an allocated Xero credit note.
@@ -863,7 +863,7 @@ export default function MembershipCancellationsPage() {
                                   canEdit={canEditMembership}
                                   describeReason={false}
                                   variant="outline"
-                                  className="border-red-200 text-red-700 hover:bg-red-50"
+                                  className="border-danger-6 text-danger-11 hover:bg-danger-3"
                                   disabled={rejectDisabled}
                                   onClick={() =>
                                     openNotifyChoice(
@@ -901,7 +901,7 @@ export default function MembershipCancellationsPage() {
                                 )}
                               {requesterIsCurrentAdmin &&
                                 canApprove(participant) && (
-                                  <p className="text-xs text-amber-700">
+                                  <p className="text-xs text-warning-11">
                                     A different admin must approve cancellation
                                     requests you initiated.
                                   </p>

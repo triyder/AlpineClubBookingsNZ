@@ -2832,6 +2832,58 @@ model IntegrationCredential {
   @@index([updatedAt])
 }
 
+// Per-wizard cursor + acknowledged-step state for the reusable guided-provider
+// setup shell (#2080). ONE row per wizard id ("xero" here; "stripe"/"google"
+// later) — the shell is provider-agnostic, so this table is too. Deliberately
+// NOT the setup-readiness progress store (SETUP_STEP_IDS in setup-readiness.ts):
+// that tracks 15 fixed checklist steps with complete/skip flags and has no
+// per-wizard cursor. Each step's verified gate is re-derived from live server
+// state on load; this row is only the RESUME cursor + acknowledgement record so
+// a reload mid-flow returns to the right step, never a source of truth for
+// whether a step is actually verified.
+model IntegrationWizardProgress {
+  id               String   @id @default(cuid())
+  // Logical wizard namespace, matching a provider ("xero" | "stripe" | "google").
+  wizardId         String   @unique
+  // The step id the operator was last on (resume target).
+  currentStepId    String
+  // Step ids the operator has acknowledged / advanced past. Advisory only:
+  // verification is always re-derived from server truth on load.
+  completedStepIds String[]
+  updatedAt        DateTime @updatedAt
+  // Full Admin/area-admin member id that last advanced the wizard (provenance).
+  updatedByMemberId String?
+
+  @@index([updatedAt])
+}
+
+// Intent-to-receive (ITR) receipt sink for a provider's inbound webhook
+// subscription (#2081, C3). Xero's ITR validation request carries an EMPTY
+// `events: []` array, so the per-event inbound-event recorder leaves no trace of
+// a successful validation. This row is the explicit marker the setup wizard
+// polls: one row per provider ("xero" here), stamped whenever a valid-signature
+// empty-events POST arrives on the real webhook route.
+//
+// FRESHNESS SCOPING (binding, #2081): the verify only goes green on a marker
+// whose `validatedAt` is newer than the operator's verify-start AND whose
+// `keyFingerprint` matches the CURRENTLY stored webhook key — a stale marker
+// from an earlier verification, or one recorded under a previous webhook key,
+// can never satisfy a new verify. `keyFingerprint` is a non-reversible SHA-256
+// of the webhook key (never the key itself), so replacing the key re-arms
+// verification (the fingerprint stops matching) without exposing any secret.
+model WebhookValidationReceipt {
+  id             String   @id @default(cuid())
+  // Logical provider namespace ("xero"; future providers reuse this table).
+  provider       String   @unique
+  // When the last valid ITR ping was received (server clock at receipt).
+  validatedAt    DateTime
+  // Non-reversible fingerprint (SHA-256 hex) of the webhook key that validated
+  // it — binds the marker to a key identity WITHOUT ever storing the key.
+  keyFingerprint String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
 // ---------------------------------------------------------------------------
 // Finance Snapshot Storage
 // ---------------------------------------------------------------------------
@@ -3843,6 +3895,46 @@ model CronJobRun {
   @@index([startedAt])
 }
 
+// Cross-process running-state + history for the managed database backup (#2095,
+// C6). The nightly cron and the /admin/backups "run backup now" action both go
+// through the SAME claim: a RUNNING row is created only under a brief
+// `pg_advisory_xact_lock` so two containers (blue/green web slots + cron-leader,
+// docker-compose.yml) can never start overlapping pg_dumps. Terminal states
+// (SUCCESS | FAILURE | SKIPPED) close a run; a RUNNING row whose `heartbeatAt`
+// has aged past the staleness window is reaped to FAILURE on the next claim so a
+// container that died mid-dump never wedges the lock forever. The admin page
+// polls this table for live status and last-run history; the durable backup
+// record of truth remains S3 + the CronJobRun "backup" health signal.
+model BackupRun {
+  id                  String    @id @default(cuid())
+  // RUNNING | SUCCESS | FAILURE | SKIPPED
+  status              String
+  // "scheduled" (nightly cron) | "manual" (admin run-now).
+  trigger             String
+  startedAt           DateTime  @default(now())
+  completedAt         DateTime?
+  // Set at claim and again at finalize — NOT refreshed at intermediate stages.
+  // A RUNNING row whose heartbeatAt is older than the staleness window
+  // (BACKUP_STALE_AFTER_MS) is treated as dead and reaped to FAILURE on the next
+  // claim. Invariant: BACKUP_STALE_AFTER_MS must exceed the worst-case cumulative
+  // command time (BACKUP_COMMAND_TIMEOUT_MS × the number of pg_dump/psql stages)
+  // so a healthy but slow run is never reaped mid-dump.
+  heartbeatAt         DateTime  @default(now())
+  durationMs          Int?
+  // Metadata-only summary (filename, sizeBytes, s3 flags…) — NEVER any secret
+  // or DSN. Mirrors the CronJobRun.resultSummary shape.
+  resultSummary       Json?
+  error               String?
+  // Full Admin/area-admin member id that pressed run-now (provenance); null for
+  // scheduled runs.
+  triggeredByMemberId String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  @@index([status])
+  @@index([startedAt])
+}
+
 // ---------------------------------------------------------------------------
 // Hut Leader Assignment (F8)
 // ---------------------------------------------------------------------------
@@ -4463,12 +4555,17 @@ model PublicContentSettings {
 model ClubTheme {
   id             String        @id @default("default")
   brandGold      String
-  brandCharcoal  String
   brandDeep      String
-  brandRidge     String
-  brandMist      String
-  brandSnow      String
   brandSafety    String
+  // #2187 EXPAND: the four former brand columns are dead to code (derived from
+  // the substrate at render time) but stay in the DB so pre-#2187 code renders
+  // across a blue/green cutover. They now carry a DB default so new code can
+  // insert a ClubTheme row without naming them. P4 ships the CONTRACT migration
+  // that drops them (with a BLUE_GREEN_MIGRATION_SAFETY.tsv ledger row).
+  brandCharcoal  String        @default("#21362b")
+  brandRidge     String        @default("#5c6f66")
+  brandMist      String        @default("#d4ddd7")
+  brandSnow      String        @default("#f5f8f6")
   headingFontKey ClubThemeFont @default(LEAGUE_SPARTAN)
   bodyFontKey    ClubThemeFont @default(INTER)
   logoDataUrl    String?

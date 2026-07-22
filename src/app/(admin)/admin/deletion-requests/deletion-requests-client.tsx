@@ -173,18 +173,18 @@ export default function DeletionRequestsClient({
   const statusBadge = (status: string) => {
     if (status === "PENDING")
       return (
-        <Badge className="bg-yellow-100 text-yellow-800 border-yellow-200">
+        <Badge className="bg-warning-3 text-warning-11 border-warning-6">
           Pending
         </Badge>
       );
     if (status === "APPROVED")
       return (
-        <Badge className="bg-green-100 text-green-800 border-green-200">
+        <Badge className="bg-success-3 text-success-11 border-success-6">
           Approved
         </Badge>
       );
     return (
-      <Badge className="bg-red-100 text-red-800 border-red-200">Rejected</Badge>
+      <Badge className="bg-danger-3 text-danger-11 border-danger-6">Rejected</Badge>
     );
   };
 
@@ -251,7 +251,7 @@ export default function DeletionRequestsClient({
             <p className="text-sm text-muted-foreground py-4">Loading...</p>
           )}
           {error && (
-            <p className="text-sm text-red-600 py-4">{error}</p>
+            <p className="text-sm text-danger-11 py-4">{error}</p>
           )}
           {!loading && data && data.requests.length === 0 && (
             <p className="text-sm text-muted-foreground py-4">
@@ -307,7 +307,7 @@ export default function DeletionRequestsClient({
                           describeReason={false}
                           size="sm"
                           variant="outline"
-                          className="text-red-600 border-red-200 hover:bg-red-50"
+                          className="text-danger-11 border-danger-6 hover:bg-danger-3"
                           onClick={() =>
                             setReviewDialog({ request: req, action: "reject" })
                           }
@@ -579,7 +579,7 @@ function AdminInitiatedDeletionSection({
       </CardHeader>
       <CardContent>
         {loading && <p className="text-sm text-muted-foreground py-4">Loading...</p>}
-        {error && <p className="text-sm text-red-600 py-4">{error}</p>}
+        {error && <p className="text-sm text-danger-11 py-4">{error}</p>}
         {!loading && data && data.requests.length === 0 && (
           <p className="text-sm text-muted-foreground py-4">
             No {statusFilter === "ALL" ? "" : statusFilter.toLowerCase()}{" "}
@@ -632,7 +632,7 @@ function AdminInitiatedDeletionSection({
                           <Button
                             size="sm"
                             variant="outline"
-                            className="text-red-600 border-red-200 hover:bg-red-50"
+                            className="text-danger-11 border-danger-6 hover:bg-danger-3"
                             disabled={isOwnRequest || !canEdit}
                             title={
                               !canEdit

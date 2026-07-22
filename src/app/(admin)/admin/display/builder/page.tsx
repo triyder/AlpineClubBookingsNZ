@@ -174,7 +174,7 @@ export default function DisplayBuilderPage() {
           // A built-in TEMPLATE is code-managed and read-only, so Rebuild-then-Save
           // could never persist. Offer a real fork instead: duplicate into a fresh,
           // editable board in the builder (§U1).
-          <div className="space-y-3 rounded-md border border-amber-400/50 bg-amber-50 p-4 text-sm text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+          <div className="space-y-3 rounded-md border border-warning-7/50 bg-warning-3 p-4 text-sm text-warning-11">
             <p className="font-medium">This is a built-in design.</p>
             <p>
               Built-ins are refreshed from code on every upgrade, so the builder
@@ -210,7 +210,7 @@ export default function DisplayBuilderPage() {
           // re-saves the layout body) would 409 with a message blaming the wrong
           // entity. Offer the paths that actually work instead — never Rebuild
           // (#2048 E).
-          <div className="space-y-3 rounded-md border border-amber-400/50 bg-amber-50 p-4 text-sm text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+          <div className="space-y-3 rounded-md border border-warning-7/50 bg-warning-3 p-4 text-sm text-warning-11">
             <p className="font-medium">
               This board&apos;s layout is a built-in.
             </p>
@@ -239,7 +239,7 @@ export default function DisplayBuilderPage() {
             </Button>
           </div>
         ) : (
-          <div className="space-y-3 rounded-md border border-amber-400/50 bg-amber-50 p-4 text-sm text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+          <div className="space-y-3 rounded-md border border-warning-7/50 bg-warning-3 p-4 text-sm text-warning-11">
             <p className="font-medium">This board can&apos;t be opened in the visual builder.</p>
             <p>
               It was hand-edited (or built with a different layout idiom), so the

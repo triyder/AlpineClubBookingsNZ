@@ -390,7 +390,7 @@ export default function ReportsPage() {
         </div>
       </div>
 
-      {error ? <div className="rounded-lg bg-red-50 p-4 text-red-700">{error}</div> : null}
+      {error ? <div className="rounded-lg bg-danger-3 p-4 text-danger-11">{error}</div> : null}
 
       {data ? (
         <div ref={reportRef} className="reports-print-root space-y-6 print:space-y-4">

@@ -59,6 +59,15 @@ interface SingletonSpec {
   fields: string[];
   optInFields?: string[];
   /**
+   * Prisma columns on this model that DELIBERATELY never travel in a bundle,
+   * each mapped to a one-line reason. Merged with COMMON_EXCLUDED_COLUMNS to
+   * form the full per-model exclusion set the reverse drift guard checks (#2178):
+   * every real column must be in `fields`, `optInFields`, or here, so a newly
+   * added column fails the test until someone classifies it as should-travel or
+   * deliberately-excluded, rather than silently never being exported.
+   */
+  excluded?: Record<string, string>;
+  /**
    * Explicit Prisma `select` for reads of this singleton. Only set where a
    * shared select already exists (e.g. CLUB_MODULE_SETTINGS_COLUMN_SELECT) to
    * keep a retired-but-not-yet-dropped column out of the generated SQL — see
@@ -98,6 +107,31 @@ export const DEFAULTS_INTENTIONALLY_PARTIAL = new Set([
   "email-message-setting",
 ]);
 
+/**
+ * Columns present on (most) singletons that are never portable club
+ * configuration: the fixed singleton primary key, the audit FK to the member
+ * who last saved on the SOURCE install (that id need not exist on the target),
+ * and the row timestamps. They are excluded from every export by omission from
+ * `fields`; enumerated here so the reverse drift guard (#2178) treats the
+ * omission as a deliberate decision rather than an oversight. Kept as one shared
+ * set so the exclusion mechanism stays uniform across all 12 singletons. A model
+ * that lacks one of these columns (e.g. BookingDefaults has no timestamps) is
+ * unaffected: the guard only requires columns ⊆ fields ∪ excluded, never the
+ * reverse, so this can be a tolerant superset.
+ */
+export const COMMON_EXCLUDED_COLUMNS: Record<string, string> = {
+  id: 'singleton primary key (always "default") — identity, not configuration',
+  updatedByMemberId:
+    "audit FK to the source install's member; the id need not exist on the target",
+  createdAt: "row creation timestamp — instance-local bookkeeping",
+  updatedAt: "row mutation timestamp — instance-local bookkeeping",
+};
+
+/** Full column-exclusion set for a singleton: the shared columns plus its own. */
+export function excludedColumnsFor(spec: SingletonSpec): Record<string, string> {
+  return { ...COMMON_EXCLUDED_COLUMNS, ...spec.excluded };
+}
+
 export const SINGLETONS: SingletonSpec[] = [
   {
     entity: "club-module-settings",
@@ -109,6 +143,26 @@ export const SINGLETONS: SingletonSpec[] = [
       "hutLeaders", "communications", "skifieldConditions",
       "twoFactor", "analytics", "lobbyDisplay",
     ],
+    excluded: {
+      multiLodge:
+        "retired-but-not-yet-dropped flag; kept out of every read via " +
+        "CLUB_MODULE_SETTINGS_COLUMN_SELECT and awaiting a contract DROP (#139)",
+      // OWNER JUDGEMENT (#2178): the two auth-provider sign-in toggles do not
+      // travel today, unlike the other 19 module flags (incl. twoFactor,
+      // analytics, xeroIntegration) which do. Enabling an authentication
+      // method is a per-deployment security decision — so they are excluded.
+      // NOT a safe one-line flip to should-travel: the login page renders the
+      // magic-link form off the flag alone (no delivery-presence gate), and the
+      // profile Google card renders off googleLogin alone — an imported `true`
+      // on an unconfigured target would surface a visibly broken auth path.
+      // Travelling either first requires a credential/delivery render gate.
+      magicLink:
+        "auth-provider sign-in toggle gated on deployment-local email-delivery " +
+        "config; a per-install auth decision, not portable club config — OWNER JUDGEMENT (#2178)",
+      googleLogin:
+        "auth-provider sign-in toggle gated on deployment-local Google OAuth " +
+        "credentials (GOOGLE_CLIENT_ID/SECRET); a per-install auth decision — OWNER JUDGEMENT (#2178)",
+    },
     select: CLUB_MODULE_SETTINGS_COLUMN_SELECT,
     defaults: () => DEFAULT_MODULE_SETTINGS,
   },
@@ -116,6 +170,11 @@ export const SINGLETONS: SingletonSpec[] = [
     entity: "booking-defaults",
     delegate: "bookingDefaults",
     fields: ["nonMemberHoldEnabled", "nonMemberHoldDays", "waitlistCrossLodgeOrder"],
+    excluded: {
+      lodgeId:
+        "soft-link FK for the phase-7 per-lodge conversion, unused by runtime " +
+        "reads today; a source lodge id is not portable across installs",
+    },
     defaults: () => DEFAULT_BOOKING_DEFAULTS,
   },
   {
@@ -128,6 +187,11 @@ export const SINGLETONS: SingletonSpec[] = [
     entity: "bed-allocation-settings",
     delegate: "bedAllocationSettings",
     fields: ["autoAllocationEnabled"],
+    excluded: {
+      lodgeId:
+        "soft-link FK for the phase-7 per-lodge conversion, unused by runtime " +
+        "reads today; a source lodge id is not portable across installs",
+    },
     defaults: () => DEFAULT_BED_ALLOCATION_SETTINGS,
   },
   {
@@ -137,6 +201,11 @@ export const SINGLETONS: SingletonSpec[] = [
       "showPricingToNonMembers", "quoteResponseTtlDays", "quoteReminderLeadDays",
       "attendeeConfirmationLeadDays", "attendeeConfirmationReminderDays",
     ],
+    excluded: {
+      lodgeId:
+        "soft-link FK for the phase-7 per-lodge conversion, unused by runtime " +
+        "reads today; a source lodge id is not portable across installs",
+    },
     defaults: () => DEFAULT_BOOKING_REQUEST_SETTINGS,
   },
   {
@@ -176,6 +245,11 @@ export const SINGLETONS: SingletonSpec[] = [
     entity: "group-discount-setting",
     delegate: "groupDiscountSetting",
     fields: ["minGroupSize", "summerOnly", "enabled"],
+    excluded: {
+      rateMembershipTypeId:
+        "FK to a MembershipType row; an instance-local id that need not resolve " +
+        "on the target, so the target keeps its own seeded default type",
+    },
     defaults: () => DEFAULT_GROUP_DISCOUNT_SETTING,
   },
   {
@@ -190,7 +264,16 @@ export const SINGLETONS: SingletonSpec[] = [
   {
     entity: "membership-lockout-settings",
     delegate: "membershipLockoutSettings",
-    fields: ["enabled", "financialYearEndMonthOverride", "textFallbackEnabled"],
+    // useFeeScheduleItemCodes (#2109) is portable paid-detection configuration —
+    // it selects how a club's own Xero invoices are recognised as membership
+    // payments (any fee-schedule item code vs the single subscription code), a
+    // per-club billing preference exactly like `enabled`/`textFallbackEnabled`.
+    // It was added after this list was written and had silently never travelled;
+    // added here per the #2178 audit (should-travel).
+    fields: [
+      "enabled", "financialYearEndMonthOverride", "textFallbackEnabled",
+      "useFeeScheduleItemCodes",
+    ],
     defaults: () => DEFAULT_MEMBERSHIP_LOCKOUT_SETTINGS,
   },
   {

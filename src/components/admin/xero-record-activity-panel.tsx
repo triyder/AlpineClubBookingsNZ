@@ -40,15 +40,15 @@ interface XeroRecordActivityPanelProps {
 function operationStatusClass(status: string) {
   switch (status) {
     case "SUCCEEDED":
-      return "bg-green-600 text-white"
+      return "bg-success text-success-foreground"
     case "PARTIAL":
-      return "bg-amber-500 text-white"
+      return "bg-warning text-warning-foreground"
     case "FAILED":
-      return "bg-red-600 text-white"
+      return "bg-danger text-danger-foreground"
     case "PENDING":
       return "bg-slate-600 text-white"
     case "RUNNING":
-      return "bg-blue-600 text-white"
+      return "bg-info text-info-foreground"
     default:
       return ""
   }
@@ -106,7 +106,7 @@ function OperationItem({
           <span>
             Local:{" "}
             {operation.localUrl ? (
-              <Link href={operation.localUrl} className="text-blue-600 hover:underline">
+              <Link href={operation.localUrl} className="text-info-11 hover:underline">
                 {operation.localLabel ?? `${operation.localModel} ${shortId(operation.localId)}`}
               </Link>
             ) : (
@@ -122,7 +122,7 @@ function OperationItem({
                 href={operation.xeroObjectUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 text-blue-600 hover:underline"
+                className="inline-flex items-center gap-1 text-info-11 hover:underline"
               >
                 {operation.xeroObjectNumber || shortId(operation.xeroObjectId)}
                 <ExternalLink className="h-3 w-3" />
@@ -135,7 +135,7 @@ function OperationItem({
       </div>
 
       {operation.lastErrorMessage && (
-        <p className="text-sm text-red-700">
+        <p className="text-sm text-danger-11">
           {operation.lastErrorCode ? `${operation.lastErrorCode}: ` : ""}
           {redactSensitiveText(operation.lastErrorMessage)}
         </p>
@@ -334,12 +334,12 @@ export function XeroRecordActivityPanel({
         </CardHeader>
         <CardContent className="space-y-4">
           {message && (
-            <div className="rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-700">
+            <div className="rounded-md border border-success-6 bg-success-3 p-3 text-sm text-success-11">
               {message}
             </div>
           )}
           {error && (
-            <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+            <div className="rounded-md border border-danger-6 bg-danger-3 p-3 text-sm text-danger-11">
               {error}
             </div>
           )}
@@ -356,11 +356,11 @@ export function XeroRecordActivityPanel({
                 </div>
                 <div className="rounded-lg border bg-muted p-3">
                   <p className="text-xs uppercase tracking-wide text-muted-foreground">Failed</p>
-                  <p className="text-lg font-semibold text-red-700">{data.summary.failedOperations}</p>
+                  <p className="text-lg font-semibold text-danger-11">{data.summary.failedOperations}</p>
                 </div>
                 <div className="rounded-lg border bg-muted p-3">
                   <p className="text-xs uppercase tracking-wide text-muted-foreground">Partial</p>
-                  <p className="text-lg font-semibold text-amber-700">{data.summary.partialOperations}</p>
+                  <p className="text-lg font-semibold text-warning-11">{data.summary.partialOperations}</p>
                 </div>
                 <div className="rounded-lg border bg-muted p-3">
                   <p className="text-xs uppercase tracking-wide text-muted-foreground">Pending / Running</p>
@@ -382,7 +382,7 @@ export function XeroRecordActivityPanel({
                         href={link.xeroObjectUrl ?? undefined}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs text-blue-700 hover:bg-blue-50"
+                        className="inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs text-info-11 hover:bg-info-3"
                       >
                         {link.role}
                         <span className="text-muted-foreground">•</span>
@@ -440,12 +440,12 @@ export function XeroRecordActivityPanel({
         </CardHeader>
         <CardContent className="space-y-4">
           {message && (
-            <div className="rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-700">
+            <div className="rounded-md border border-success-6 bg-success-3 p-3 text-sm text-success-11">
               {message}
             </div>
           )}
           {error && (
-            <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+            <div className="rounded-md border border-danger-6 bg-danger-3 p-3 text-sm text-danger-11">
               {error}
             </div>
           )}
@@ -462,11 +462,11 @@ export function XeroRecordActivityPanel({
                 </div>
                 <div className="rounded-lg border bg-muted p-4">
                   <p className="text-xs uppercase tracking-wide text-muted-foreground">Failed</p>
-                  <p className="mt-1 text-2xl font-semibold text-red-700">{data.summary.failedOperations}</p>
+                  <p className="mt-1 text-2xl font-semibold text-danger-11">{data.summary.failedOperations}</p>
                 </div>
                 <div className="rounded-lg border bg-muted p-4">
                   <p className="text-xs uppercase tracking-wide text-muted-foreground">Partial</p>
-                  <p className="mt-1 text-2xl font-semibold text-amber-700">{data.summary.partialOperations}</p>
+                  <p className="mt-1 text-2xl font-semibold text-warning-11">{data.summary.partialOperations}</p>
                 </div>
                 <div className="rounded-lg border bg-muted p-4">
                   <p className="text-xs uppercase tracking-wide text-muted-foreground">Pending / Running</p>
@@ -540,7 +540,7 @@ export function XeroRecordActivityPanel({
                     <Badge variant="outline">{link.xeroObjectType}</Badge>
                     <Badge
                       variant="secondary"
-                      className={link.active ? "bg-green-100 text-green-800 border-green-200" : "bg-muted text-muted-foreground"}
+                      className={link.active ? "bg-success-3 text-success-11 border-success-6" : "bg-muted text-muted-foreground"}
                     >
                       {link.active ? "Active" : "Inactive"}
                     </Badge>
@@ -549,7 +549,7 @@ export function XeroRecordActivityPanel({
                     <span>
                       Local:{" "}
                       {link.localUrl ? (
-                        <Link href={link.localUrl} className="text-blue-600 hover:underline">
+                        <Link href={link.localUrl} className="text-info-11 hover:underline">
                           {link.localLabel ?? `${link.localModel} ${shortId(link.localId)}`}
                         </Link>
                       ) : (
@@ -563,7 +563,7 @@ export function XeroRecordActivityPanel({
                           href={link.xeroObjectUrl}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1 text-blue-600 hover:underline"
+                          className="inline-flex items-center gap-1 text-info-11 hover:underline"
                         >
                           {link.xeroObjectNumber || shortId(link.xeroObjectId)}
                           <ExternalLink className="h-3 w-3" />
@@ -652,7 +652,7 @@ export function XeroRecordActivityPanel({
                             href={event.xeroObjectUrl}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1 text-blue-600 hover:underline"
+                            className="inline-flex items-center gap-1 text-info-11 hover:underline"
                           >
                             {shortId(event.resourceId)}
                             <ExternalLink className="h-3 w-3" />
@@ -666,7 +666,7 @@ export function XeroRecordActivityPanel({
                   </div>
 
                   {event.errorMessage && (
-                    <p className="text-sm text-red-700">{event.errorMessage}</p>
+                    <p className="text-sm text-danger-11">{event.errorMessage}</p>
                   )}
 
                   <div className="flex flex-wrap items-center gap-2">

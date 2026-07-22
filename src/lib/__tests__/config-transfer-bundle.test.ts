@@ -11,6 +11,7 @@ import {
   type BundleEntry,
 } from "@/lib/config-transfer/bundle";
 import {
+  CONFIG_TRANSFER_FORMAT_VERSION,
   CONFIG_TRANSFER_MANIFEST_PATH,
   type ConfigTransferManifest,
 } from "@/lib/config-transfer/manifest";
@@ -56,7 +57,7 @@ describe("config-transfer bundle codec", () => {
     const zip = build();
     const { manifest, files, warnings } = readBundle(zip);
 
-    expect(manifest.formatVersion).toBe(1);
+    expect(manifest.formatVersion).toBe(CONFIG_TRANSFER_FORMAT_VERSION);
     expect(manifest.generatedAt).toBe(GENERATED_AT);
     expect(manifest.includedCategories).toEqual([
       "site-content",
@@ -168,7 +169,7 @@ describe("config-transfer bundle codec", () => {
       wrapped[`__MACOSX/config-transfer-2026-07-09/._${name}`] = strToU8("junk");
     }
     const { manifest, files, warnings } = readBundle(zipSync(wrapped));
-    expect(manifest.formatVersion).toBe(1); // manifest found after prefix strip
+    expect(manifest.formatVersion).toBe(CONFIG_TRANSFER_FORMAT_VERSION); // manifest found after prefix strip
     expect(files.get("site-content/pages.csv")).toBeDefined();
     expect([...files.keys()].some((k) => k.startsWith("__MACOSX") || k.includes(".DS_Store"))).toBe(false);
     expect(warnings).toEqual([]); // stripped cleanly → checksums still match

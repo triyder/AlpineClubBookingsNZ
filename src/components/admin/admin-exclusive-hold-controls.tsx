@@ -153,7 +153,7 @@ export function AdminExclusiveHoldControls({
     <div className="space-y-2">
       {confirmDialog}
       {wholeLodgeHold && (
-        <div className="rounded-md border border-purple-300 bg-purple-50 px-3 py-2 text-sm text-purple-900">
+        <div className="rounded-md border border-cat1-6 bg-cat1-3 px-3 py-2 text-sm text-cat1-11">
           <p className="font-medium">Exclusive whole-lodge hold</p>
           <p>
             The whole lodge is reserved for this group
@@ -166,7 +166,7 @@ export function AdminExclusiveHoldControls({
         </div>
       )}
       {wholeLodgeHold && conflicts.length > 0 && (
-        <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+        <div className="rounded-md border border-warning-6 bg-warning-3 px-3 py-2 text-sm text-warning-11">
           <p className="font-medium">
             {conflicts.length} overlapping booking
             {conflicts.length === 1 ? "" : "s"} to resolve
@@ -189,7 +189,7 @@ export function AdminExclusiveHoldControls({
                   // block/refuse the hold, but the settlement carve-out (#1771)
                   // will admit it onto the held nights later — flag it so the
                   // officer resolves it before it settles.
-                  <span className="ml-1 rounded bg-amber-200 px-1.5 py-0.5 text-xs font-medium text-amber-900">
+                  <span className="ml-1 rounded bg-warning-4 px-1.5 py-0.5 text-xs font-medium text-warning-11">
                     overridden, not yet holding
                   </span>
                 )}
@@ -199,7 +199,7 @@ export function AdminExclusiveHoldControls({
         </div>
       )}
       {error && (
-        <div className="rounded-md bg-red-50 p-3 text-sm text-red-700">
+        <div className="rounded-md bg-danger-3 p-3 text-sm text-danger-11">
           {error}
         </div>
       )}

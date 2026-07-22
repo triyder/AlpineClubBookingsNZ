@@ -139,13 +139,13 @@ export function EmailDeliverabilitySection({
           </div>
           <div className="bg-card border rounded-lg p-4">
             <p className="text-sm text-muted-foreground">Bounces</p>
-            <p className="text-2xl font-bold text-red-600">
+            <p className="text-2xl font-bold text-danger-11">
               {emailDeliverability.summary.bounceCount}
             </p>
           </div>
           <div className="bg-card border rounded-lg p-4">
             <p className="text-sm text-muted-foreground">Complaints</p>
-            <p className="text-2xl font-bold text-red-600">
+            <p className="text-2xl font-bold text-danger-11">
               {emailDeliverability.summary.complaintCount}
             </p>
           </div>
@@ -215,7 +215,7 @@ export function EmailDeliverabilitySection({
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
           <div className="bg-card border rounded-lg p-4">
             <p className="text-sm text-muted-foreground">Active failures</p>
-            <p className="text-2xl font-bold text-red-600">
+            <p className="text-2xl font-bold text-danger-11">
               {tokenEmailRecovery.summary.activeCount}
             </p>
           </div>
@@ -293,7 +293,7 @@ export function EmailDeliverabilitySection({
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
           <div className="bg-card border rounded-lg p-4">
             <p className="text-sm text-muted-foreground">Active failures</p>
-            <p className="text-2xl font-bold text-red-600">
+            <p className="text-2xl font-bold text-danger-11">
               {emailFailures.summary.activeCount}
             </p>
           </div>
@@ -377,7 +377,7 @@ export function EmailDeliverabilitySection({
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
           <div className="bg-card border rounded-lg p-4">
             <p className="text-sm text-muted-foreground">Undelivered alerts</p>
-            <p className="text-2xl font-bold text-red-600">
+            <p className="text-2xl font-bold text-danger-11">
               {adminAlertDelivery.summary.recentCount}
             </p>
           </div>

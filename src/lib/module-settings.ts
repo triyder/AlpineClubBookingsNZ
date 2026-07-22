@@ -75,17 +75,11 @@ function readinessMessage(params: {
     };
   }
 
-  if (
-    params.key === "googleLogin" &&
-    (!process.env.GOOGLE_CLIENT_ID?.trim() ||
-      !process.env.GOOGLE_CLIENT_SECRET?.trim())
-  ) {
-    return {
-      status: "credentials_missing",
-      message:
-        "Google sign-in is enabled, but GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are not both configured.",
-    };
-  }
+  // Google sign-in credentials are DB-only now (#2087) and the module cannot be
+  // enabled until a real OAuth verify passes (the enable-gate in
+  // PUT /api/admin/modules), so an ENABLED googleLogin is already configured +
+  // verified — there is no env var to check here. Setup + verification live on
+  // the in-app wizard (/admin/google/setup).
 
   if (
     params.key === "analytics" &&

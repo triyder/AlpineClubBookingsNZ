@@ -125,14 +125,14 @@ gtag('config', ${JSON.stringify(cleanMeasurementId)}, { anonymize_ip: true });
         <div
           role="dialog"
           aria-label="Analytics cookie consent"
-          className="fixed inset-x-0 bottom-0 z-50 border-t border-slate-200 bg-white/95 px-4 py-4 shadow-lg backdrop-blur"
+          className="fixed inset-x-0 bottom-0 z-50 border-t border-border bg-card px-4 py-4 shadow-lg backdrop-blur"
         >
           <div className="mx-auto flex w-full max-w-7xl flex-col gap-4 sm:flex-row sm:items-center">
             <BarChart3
               aria-hidden="true"
-              className="hidden h-5 w-5 shrink-0 text-slate-500 sm:block"
+              className="hidden h-5 w-5 shrink-0 text-muted-foreground sm:block"
             />
-            <p className="flex-1 text-sm leading-6 text-slate-700">
+            <p className="flex-1 text-sm leading-6 text-muted-foreground">
               We use optional Google Analytics to understand aggregate site use.
               It runs only if you accept.
             </p>
@@ -151,7 +151,7 @@ gtag('config', ${JSON.stringify(cleanMeasurementId)}, { anonymize_ip: true });
                 type="button"
                 aria-label="Close analytics consent banner"
                 onClick={() => setConsent("declined")}
-                className="flex h-10 w-10 items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-500"
+                className="flex h-10 w-10 items-center justify-center rounded-md border border-border text-muted-foreground hover:bg-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 <X aria-hidden="true" className="h-4 w-4" />
               </button>

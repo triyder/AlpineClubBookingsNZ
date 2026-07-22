@@ -339,12 +339,12 @@ export default async function AdminDashboardPage() {
 
       {hasPendingAdminReviews && (
         <Link href="/admin/refund-requests">
-          <Card className="border-blue-200 bg-blue-50 hover:shadow-md transition-shadow cursor-pointer">
+          <Card className="border-info-6 bg-info-3 hover:shadow-md transition-shadow cursor-pointer">
             <CardContent className="flex items-start gap-3 pt-5">
-              <AlertTriangle className="h-5 w-5 text-blue-600 flex-shrink-0 mt-0.5" />
+              <AlertTriangle className="h-5 w-5 text-info-11 flex-shrink-0 mt-0.5" />
               <div>
-                <p className="font-medium text-blue-900">Pending Review Queue</p>
-                <p className="text-sm text-blue-700 mt-1">
+                <p className="font-medium text-info-11">Pending Review Queue</p>
+                <p className="text-sm text-info-11 mt-1">
                   {pendingReviewSummary.join(" and ")} waiting for admin review.
                 </p>
               </div>
@@ -355,12 +355,12 @@ export default async function AdminDashboardPage() {
 
       {hasPendingBookingApprovals && (
         <Link href={bookingRequestsHref}>
-          <Card className="border-amber-200 bg-amber-50 hover:shadow-md transition-shadow cursor-pointer">
+          <Card className="border-warning-6 bg-warning-3 hover:shadow-md transition-shadow cursor-pointer">
             <CardContent className="flex items-start gap-3 pt-5">
-              <AlertTriangle className="h-5 w-5 text-amber-700 flex-shrink-0 mt-0.5" />
+              <AlertTriangle className="h-5 w-5 text-warning-11 flex-shrink-0 mt-0.5" />
               <div>
-                <p className="font-medium text-amber-900">Booking Requests</p>
-                <p className="text-sm text-amber-800 mt-1">
+                <p className="font-medium text-warning-11">Booking Requests</p>
+                <p className="text-sm text-warning-11 mt-1">
                   {bookingApprovalSummary.join(" and ")} waiting for admin decision.
                 </p>
               </div>
@@ -373,14 +373,14 @@ export default async function AdminDashboardPage() {
           still PAYMENT_PENDING — flagged so it cannot silently linger. */}
       {stats.unpaidFinishedStays > 0 && (
         <Link href={buildUnpaidFinishedStaysHref(stats.todayKey)}>
-          <Card className="border-amber-200 bg-amber-50 hover:shadow-md transition-shadow cursor-pointer">
+          <Card className="border-warning-6 bg-warning-3 hover:shadow-md transition-shadow cursor-pointer">
             <CardContent className="flex items-start gap-3 pt-5">
-              <DollarSign className="h-5 w-5 text-amber-700 flex-shrink-0 mt-0.5" />
+              <DollarSign className="h-5 w-5 text-warning-11 flex-shrink-0 mt-0.5" />
               <div>
-                <p className="font-medium text-amber-950">
+                <p className="font-medium text-warning-11">
                   Unpaid Finished Stays
                 </p>
-                <p className="text-sm text-amber-800 mt-1">
+                <p className="text-sm text-warning-11 mt-1">
                   {stats.unpaidFinishedStays} booking
                   {stats.unpaidFinishedStays === 1 ? "" : "s"} still payment
                   pending after check-out. Follow up on payment or settle the
@@ -400,14 +400,14 @@ export default async function AdminDashboardPage() {
         <Link
           href={buildUnsettledAdditionalFinishedStaysHref(stats.todayKey)}
         >
-          <Card className="border-amber-200 bg-amber-50 hover:shadow-md transition-shadow cursor-pointer">
+          <Card className="border-warning-6 bg-warning-3 hover:shadow-md transition-shadow cursor-pointer">
             <CardContent className="flex items-start gap-3 pt-5">
-              <DollarSign className="h-5 w-5 text-amber-700 flex-shrink-0 mt-0.5" />
+              <DollarSign className="h-5 w-5 text-warning-11 flex-shrink-0 mt-0.5" />
               <div>
-                <p className="font-medium text-amber-950">
+                <p className="font-medium text-warning-11">
                   Finished Stays With Unpaid Additions
                 </p>
-                <p className="text-sm text-amber-800 mt-1">
+                <p className="text-sm text-warning-11 mt-1">
                   {stats.unsettledAdditionalFinishedStays} paid booking
                   {stats.unsettledAdditionalFinishedStays === 1 ? "" : "s"}{" "}
                   with an additional payment still owing after check-out.
@@ -421,14 +421,14 @@ export default async function AdminDashboardPage() {
 
       {stats.pendingDeletionRequests > 0 && (
         <Link href="/admin/deletion-requests?status=PENDING">
-          <Card className="border-red-200 bg-red-50 hover:shadow-md transition-shadow cursor-pointer">
+          <Card className="border-danger-6 bg-danger-3 hover:shadow-md transition-shadow cursor-pointer">
             <CardContent className="flex items-start gap-3 pt-5">
-              <Trash2 className="h-5 w-5 text-red-700 flex-shrink-0 mt-0.5" />
+              <Trash2 className="h-5 w-5 text-danger-11 flex-shrink-0 mt-0.5" />
               <div>
-                <p className="font-medium text-red-950">
+                <p className="font-medium text-danger-11">
                   Account Deletion Requests
                 </p>
-                <p className="text-sm text-red-800 mt-1">
+                <p className="text-sm text-danger-11 mt-1">
                   {stats.pendingDeletionRequests} account deletion request
                   {stats.pendingDeletionRequests === 1 ? "" : "s"} waiting for
                   admin review.
@@ -441,14 +441,14 @@ export default async function AdminDashboardPage() {
 
       {stats.pendingMembershipReviews > 0 && (
         <Link href="/admin/membership-cancellations">
-          <Card className="border-amber-200 bg-amber-50 hover:shadow-md transition-shadow cursor-pointer">
+          <Card className="border-warning-6 bg-warning-3 hover:shadow-md transition-shadow cursor-pointer">
             <CardContent className="flex items-start gap-3 pt-5">
-              <UserX className="h-5 w-5 text-amber-700 flex-shrink-0 mt-0.5" />
+              <UserX className="h-5 w-5 text-warning-11 flex-shrink-0 mt-0.5" />
               <div>
-                <p className="font-medium text-amber-950">
+                <p className="font-medium text-warning-11">
                   Membership Lifecycle Review
                 </p>
-                <p className="text-sm text-amber-800 mt-1">
+                <p className="text-sm text-warning-11 mt-1">
                   {pendingMembershipReviewSummary.join(" and ")} waiting for admin review.
                 </p>
               </div>
@@ -460,12 +460,12 @@ export default async function AdminDashboardPage() {
       {/* Hut Leader warning */}
       {stats.unassignedDatesWithBookings.length > 0 && (
         <Link href="/admin/hut-leaders">
-          <Card className="border-amber-200 bg-amber-50 hover:shadow-md transition-shadow cursor-pointer">
+          <Card className="border-warning-6 bg-warning-3 hover:shadow-md transition-shadow cursor-pointer">
             <CardContent className="flex items-start gap-3 pt-5">
-              <AlertTriangle className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
+              <AlertTriangle className="h-5 w-5 text-warning-11 flex-shrink-0 mt-0.5" />
               <div>
-                <p className="font-medium text-amber-900">{CLUB_HUT_LEADER_LABEL} Assignment Required</p>
-                <p className="text-sm text-amber-700 mt-1">
+                <p className="font-medium text-warning-11">{CLUB_HUT_LEADER_LABEL} Assignment Required</p>
+                <p className="text-sm text-warning-11 mt-1">
                   {stats.unassignedDatesWithBookings.length} upcoming date{stats.unassignedDatesWithBookings.length !== 1 ? "s" : ""} with bookings but no {CLUB_HUT_LEADER_LABEL.toLowerCase()} assigned:{" "}
                   {stats.unassignedDatesWithBookings.slice(0, 5).join(", ")}
                   {stats.unassignedDatesWithBookings.length > 5 ? ` and ${stats.unassignedDatesWithBookings.length - 5} more` : ""}
@@ -700,8 +700,8 @@ export default async function AdminDashboardPage() {
           <Card className="hover:shadow-md transition-shadow">
             <CardHeader>
               <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-50">
-                  <Users className="h-5 w-5 text-blue-600" />
+                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-info-3">
+                  <Users className="h-5 w-5 text-info-11" />
                 </div>
                 <div>
                   <CardTitle className="text-base">Members</CardTitle>
@@ -722,8 +722,8 @@ export default async function AdminDashboardPage() {
           <Card className="hover:shadow-md transition-shadow">
             <CardHeader>
               <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-green-50">
-                  <CalendarRange className="h-5 w-5 text-green-600" />
+                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-success-3">
+                  <CalendarRange className="h-5 w-5 text-success-11" />
                 </div>
                 <div>
                   <CardTitle className="text-base">Seasons</CardTitle>
@@ -744,8 +744,8 @@ export default async function AdminDashboardPage() {
           <Card className="hover:shadow-md transition-shadow">
             <CardHeader>
               <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-purple-50">
-                  <BookOpen className="h-5 w-5 text-purple-600" />
+                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-cat1-3">
+                  <BookOpen className="h-5 w-5 text-cat1-11" />
                 </div>
                 <div>
                   <CardTitle className="text-base">Bookings</CardTitle>
@@ -766,8 +766,8 @@ export default async function AdminDashboardPage() {
           <Card className="hover:shadow-md transition-shadow">
             <CardHeader>
               <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-orange-50">
-                  <Tag className="h-5 w-5 text-orange-600" />
+                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-warning-3">
+                  <Tag className="h-5 w-5 text-warning-11" />
                 </div>
                 <div>
                   <CardTitle className="text-base">Promo Codes</CardTitle>
@@ -788,14 +788,15 @@ export default async function AdminDashboardPage() {
           <Card className="hover:shadow-md transition-shadow">
             <CardHeader>
               <div className="flex items-center gap-3">
-                {/* Deliberately NOT on the `--hue-*` tokens (#2137): this is the
-                    fifth of five identically-built quick-link tiles, all on the
-                    Tailwind -50/-600 convention. The `--hue-*` pair encodes
-                    -100/-800, so migrating this tile alone would give it a
-                    deeper tint and a darker icon than its four siblings. See the
-                    allowlist note in brand-color-source-contract.test.ts. */}
-                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-teal-50">
-                  <ClipboardList className="h-5 w-5 text-teal-600" />
+                {/* #2188 P2 (M9): the Chore Roster tile is the BRAND-accent one
+                    of the five quick-link tiles. It follows the club accent via
+                    the role tokens — a neutral-tint container (`bg-accent`) with
+                    a brand-accent icon (`text-primary`, which resolves to the
+                    app's AA-gated accent ink in `app-theme-scope`) — rather than
+                    a hardcoded teal. Its four siblings carry semantic hues on the
+                    step scales; this one carries the club brand. */}
+                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-accent">
+                  <ClipboardList className="h-5 w-5 text-primary" />
                 </div>
                 <div>
                   <CardTitle className="text-base">Chore Roster</CardTitle>

@@ -116,10 +116,13 @@ export interface FamilyGroupRequestSearchResult extends MemberOption {
 }
 
 export const AGE_TIER_COLORS: Record<string, string> = {
-  INFANT: "bg-pink-100 text-pink-700 border-pink-200",
-  CHILD: "bg-blue-100 text-blue-700 border-blue-200",
-  YOUTH: "bg-purple-100 text-purple-700 border-purple-200",
-  ADULT: "bg-muted text-muted-foreground border-border",
+  // #2188 P2 (lens MEDIUM-5): age tiers are DEMOGRAPHIC categories, so they use
+  // the categorical scales (never severity scales), with ONE assignment shared
+  // with the roster page's AGE_TIER_COLORS — same tier, same colour everywhere.
+  INFANT: "bg-cat1-3 text-cat1-11 border-cat1-6",
+  CHILD: "bg-cat2-3 text-cat2-11 border-cat2-6",
+  YOUTH: "bg-cat3-3 text-cat3-11 border-cat3-6",
+  ADULT: "bg-cat4-3 text-cat4-11 border-cat4-6",
 };
 
 const CHILD_REQUEST_AGE_TIERS = new Set(["INFANT", "CHILD", "YOUTH"]);
@@ -172,13 +175,13 @@ export function getFamilyGroupRequestTypeLabel(request: FamilyGroupRequest) {
 }
 
 export function getFamilyGroupRequestBadgeClass(request: FamilyGroupRequest) {
-  if (request.type === "CHILD_REQUEST") return "bg-blue-100 text-blue-800 border-blue-200";
-  if (request.type === "ADULT_REQUEST") return "bg-violet-100 text-violet-800 border-violet-200";
-  if (request.type === "REMOVAL_REQUEST") return "bg-rose-100 text-rose-800 border-rose-200";
+  if (request.type === "CHILD_REQUEST") return "bg-info-3 text-info-11 border-info-6";
+  if (request.type === "ADULT_REQUEST") return "bg-cat1-3 text-cat1-11 border-cat1-6";
+  if (request.type === "REMOVAL_REQUEST") return "bg-danger-3 text-danger-11 border-danger-6";
   // GROUP_CREATE reaches its teal through the shared `--hue-*` chip tones
   // (#2137) rather than a literal Tailwind `teal-*` pair.
   if (request.type === "GROUP_CREATE") return `${CHIP_TONE_CLASSES.teal} border-hue-teal/20`;
-  return "bg-emerald-100 text-emerald-800 border-emerald-200";
+  return "bg-success-3 text-success-11 border-success-6";
 }
 
 export function getFamilyGroupRequestSubjectName(request: FamilyGroupRequest) {

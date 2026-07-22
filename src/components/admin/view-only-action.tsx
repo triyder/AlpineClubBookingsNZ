@@ -57,9 +57,9 @@ interface ViewOnlyActionButtonProps extends ButtonProps {
    *
    * Since #2160 the DEFAULT is no longer the usual case — it is the fallback.
    * Most admin sections render an {@link AdminViewOnlySectionBanner} and pass
-   * `describeReason={false}` here (209 of 262 call sites), and since #2168 a
+   * `describeReason={false}` here (210 of 263 call sites), and since #2168 a
    * further 21 pass `describeReason={!ancestorRendersViewOnlyBanner}` because a
-   * VOUCHING PARENT renders the banner instead — 230 opt-outs in total.
+   * VOUCHING PARENT renders the banner instead — 231 opt-outs in total.
    * `view-only-banner-contract.test.ts` asserts every one of those figures, so
    * they are measured rather than counted by hand. The default survives in
    * three shapes:
@@ -163,7 +163,7 @@ export function AdminForbiddenSaveNotice({
     <p
       role="alert"
       className={cn(
-        "rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800",
+        "rounded-md border border-danger-6 bg-danger-3 px-3 py-2 text-sm text-danger-11",
         className,
       )}
     >

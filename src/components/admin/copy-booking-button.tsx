@@ -133,7 +133,7 @@ export function CopyBookingButton({
             </div>
           ) : null}
           {error ? (
-            <div className="rounded-md bg-red-50 p-3 text-sm text-red-700">
+            <div className="rounded-md bg-danger-3 p-3 text-sm text-danger-11">
               {error}
             </div>
           ) : null}

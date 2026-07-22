@@ -89,6 +89,27 @@ Important route groups:
 - `src/app/api` contains route handlers for auth, bookings, payments, admin,
   finance, lodge, webhooks, cron, and health checks.
 
+> **Theme substrate — the 3-seed model (#2187 P1).** Site Style stores THREE
+> seed colours, not seven: `brandGold` (the required accent), `brandDeep` (an
+> optional neutral character whose hue tints the grey ramp), and `brandSafety`
+> (an optional support accent). The wizard's colour step is 1 required + 2
+> optional hex-only pickers. Those seeds feed the vendored Radix custom-palette
+> generator (`src/lib/theme/`), which derives the full 12-step light/dark
+> substrate with cross-colour text contrast guaranteed by construction, so a
+> low-contrast pick is **adjusted and disclosed (before → after), not rejected**
+> — the old blocking contrast gate is gone. The four former columns
+> (`brandCharcoal`/`brandRidge`/`brandMist`/`brandSnow`) are dead to code:
+> `deriveBrandShims` derives those `--brand-*` shim values from the substrate
+> neutral ramp so the website utilities and email palette keep working through
+> P1 (P2/P3 delete the shims). The columns remain in the DB behind a default (an
+> additive EXPAND migration) so pre-#2187 code stays compatible across a
+> blue/green cutover; the destructive column drop ships in P4. Config-transfer
+> bundles are **format version 2** and reject any version-1 bundle. The deeper
+> substrate wire-up of `globals.css` (generated scale variables + alias blocks +
+> the `.dark .app-theme-scope` rewrite) and the neutral/callout/kiosk remap
+> deletions land in later phases; through P1 the `--brand-*` shims below still
+> drive the app scope.
+
 Every app-shell layout (`(public)`, `(authenticated)`, `(admin)`, `(finance)`)
 injects the admin-configured theme via `getWebsiteThemeRenderState()` inside an
 `app-theme-scope` wrapper, so never hardcode the brand accent (e.g. Tailwind
@@ -101,28 +122,27 @@ The same rule applies to raw NEUTRALS, though for a narrower reason than the
 brand accent — and the reason is worth stating precisely, because a safety net
 already exists.
 
-`globals.css` carries a **`.dark .app-theme-scope` neutral remap** (the #1263
-follow-up block, immediately after the `.finance-trend-chart` chart rules). It
-rewrites literal `bg-white`, `bg-{neutral}-50/100/200`,
-`text-{neutral}-300..950`, `border-{neutral}-100..300`, and the matching
-`divide-`/`hover:` variants onto `--card`, `--muted`, `--border`,
-`--foreground`, `--muted-foreground`, and `--accent`, treating
-slate/gray/zinc/neutral/stone as one family. So a raw neutral inside
-`app-theme-scope` is **already handled in dark mode** — that shim is why dark
-mode read correctly before the migrations below.
-
-What the shim does **not** do is cover LIGHT mode: it is `.dark`-scoped only. A
-literal `slate-*` or `bg-white` therefore stays literally slate/white under a
-strongly non-default club theme in light mode, where the theme's own surface
-colours should apply. That gap — plus the plain consistency argument that a
-surface should be correct at source rather than correct-by-shim — is why code
-inside `app-theme-scope` uses the semantic surface tokens:
+Historically `globals.css` carried a **`.dark .app-theme-scope` neutral remap**
+(the #1263 follow-up block) that rewrote literal `bg-white`,
+`bg-{neutral}-50/100/200`, `text-{neutral}-300..950`, `border-{neutral}-100..300`
+and their `divide-`/`hover:` variants onto `--card`, `--muted`, `--border`,
+`--foreground`, `--muted-foreground` and `--accent`, treating
+slate/gray/zinc/neutral/stone as one family. That shim covered dark mode only —
+in LIGHT mode a literal `slate-*`/`bg-white` stayed slate/white and ignored a
+strongly non-default club theme, so surfaces were correct-by-shim rather than at
+source. **#2188 P2 removed the shim entirely** (see below); code inside
+`app-theme-scope` now uses the semantic surface tokens at source:
 `bg-card` / `text-card-foreground` for card surfaces, `bg-popover` /
 `text-popover-foreground` for floating panels such as chart tooltips,
 `text-muted-foreground` for secondary labels and footnotes, `bg-muted` for
-tinted rows and recessed insets, and `border-border` for rules. The finance
-tree migrated in #2137 and the whole admin tree followed in #2144, so both are
-now token-only at source and gated by
+tinted rows and recessed insets, and `border-border` for rules. Colored surfaces
+likewise reach their hue through the signed-off scale vocabulary — the semantic
+`bg/text/border-<success|warning|info|danger>-<step>` scales, the categorical
+`cat1..cat5` scales, or `CHIP_TONE_CLASSES` — never raw Tailwind colour
+utilities. The finance tree migrated in #2137, admin in #2144, the member-facing
+`(authenticated)`/`(public)` trees in #2187 P1 (B4), and the remaining trees
+(lodge, website, shared components, root) in #2188 P2, so the source is
+token-only repo-wide and gated by
 `src/lib/__tests__/brand-color-source-contract.test.ts`.
 
 **Insets use `bg-muted`, outer surfaces use `bg-card`** (#2144 owner decision).
@@ -134,26 +154,52 @@ page. The #2137 finance precedent (`finance-dashboard-client.tsx`,
 popover takes `bg-card`; a nested strip inside a card, a zebra row, a table
 header band, a read-only field fill, or a recessed well takes `bg-muted`.
 
-With admin migrated, the `.dark .app-theme-scope` neutral remap block in
-`globals.css` is **legacy-compat for the non-admin surfaces plus the
-allowlisted admin files**. The bulk of the raw neutrals that still depend on
-it live under `src/app/(authenticated)`, `src/app/(public)`, and the shared
-`src/components` root (a few hundred occurrences) — but some allowlisted
-admin files depend on it too, wherever their deliberately-literal classes
-fall inside the remap's ranges: the roster and induction print pages read
-correctly when viewed ON SCREEN in dark mode only because the remap rewrites
-their `bg-gray-50/100`, `bg-white`, and grey-ink classes (the remap is not
-print-scoped — print always renders the light palette, #2146), and the
-site-style wizard's raw-CSS editor pane (`bg-white`) is likewise
-remap-darkened on screen. Deleting the block therefore requires migrating
-those member-facing trees — and re-deciding the remap-dependent allowlisted
-files — first. That work is tracked: remap deletion is Phases 2–3 of the
-theme-architecture program planned on issue #2181. Until then the block
-stays exactly as is.
+**#2188 P2 completed the migration and deleted both `.dark .app-theme-scope`
+remap blocks** — the neutral remap and the colored-callout remap — so
+`grep "\.dark .app-theme-scope" globals.css` now returns only P1's generated
+dark core-token block and the A6 J8 card-shadow rule, never a remap. The source
+contract is now **repo-wide** (both the neutral contract and the new 16-family
+colored contract), with a temporary kiosk-tree exclusion (B8) removed in P3.
+The surfaces that legitimately keep raw neutrals are per-file allowlisted with a
+stated reason: the roster/induction print pages and reports print variants
+(paper output, not theme), the site-style wizard's raw-CSS editor pane, the
+display/signage surfaces, solid opaque status chips, deliberate dark surfaces
+(the roster-setup and kiosk-style instruction panels, same shape as the kiosk),
+the un-themed React error/404 boundaries (rendered outside `app-theme-scope`),
+and the Radix overlay scrims (`bg-black/80`). The kiosk tree itself is migrated
+onto `--kiosk-*` tokens in P3.
+
+**The app tokens resolve from a GENERATED substrate** (#2187 P1, the restyle
+event). A club now picks three seeds (accent + optional neutral-character +
+optional support); `buildThemeSubstrate` (`src/lib/theme/theme-substrate.ts`)
+turns them into the full 12-step light/dark Radix-style scales, and
+`buildClubThemeAppCss` emits the whole generated custom-property set —
+`--gen-<scale>-<step>` raw steps plus the resolved role tokens
+`--gen-<token>` (light) / `--gen-<token>-dark` (dark), per the data alias map
+in `src/lib/theme/aliases.ts` (`src/lib/theme/app-tokens.ts` assembles them).
+`globals.css`'s static `.app-theme-scope` (light) and `.dark .app-theme-scope`
+(dark) blocks CONSUME those props via `var(--gen-<token>, <default-fallback>)`,
+so an un-themed page still paints the shipped default palette. `--accent`
+(neutral-4) is deliberately one band off `--muted`/`--secondary` (neutral-3) in
+BOTH modes — the structural fix for the seven hover-dead `bg-muted
+hover:bg-accent` #2144 buttons — and the dark core-token block is rewired onto
+generated dark steps with **no `--brand-*` reference left inside it** (F1). The
+legacy `--brand-*` values still ship as derived SHIMS (`deriveBrandShims`, from
+the substrate neutral ramp) so the website `color-mix()` recipes, the app
+`bg-brand-*` utilities, and the email palette keep working through P1; those
+shims are deleted in P2/P3. The `.dark` neutral/colored remap blocks described
+above were deleted by #2188 P2 once every tree was migrated at source.
+
+The member-facing `src/app/(authenticated)` and `src/app/(public)` trees were
+migrated off raw neutrals onto the semantic surface tokens in the same event
+(#2187 B4), so at restyle their light mode follows the club theme at source
+rather than by shim; the remaining raw neutrals live under `src/components`,
+the kiosk/lodge display trees, and the allowlisted admin files.
 
 **`--muted-foreground` is a DERIVED tone, not a brand colour** (#2145). Every
-other app text token in the `.app-theme-scope` block resolves to a solid brand
-endpoint (`--foreground` is `--brand-deep` in light, `--brand-snow` in dark).
+other app text token in the `.app-theme-scope` block resolves to a solid
+generated-substrate endpoint (`--foreground` is the club ramp's neutral-12 in
+each mode).
 `--muted-foreground` used to do the same — which made it byte-identical to
 `--foreground`, so `text-muted-foreground` rendered as primary text and the
 `muted` role was inert. It is now computed by `deriveAppMutedForeground` in
@@ -172,12 +218,21 @@ the whole substance of the guard, so it is stated here in full — it is
 
 | Mode  | Checked surfaces |
 | ----- | ---------------- |
-| Light | `--brand-snow` (`--background`/`--card`/`--popover`), `--brand-mist` (`--muted`/`--secondary`/`--accent`), and the curated `--warning-muted` / `--info-muted` / `--success-muted` / `--danger-muted` panel fills |
-| Dark  | `--brand-deep` (`--background`), `--brand-charcoal` (`--card`/`--popover`/`--muted`/`--secondary`/`--accent`), and the same four curated `*-muted` fills in their `.dark` values |
+| Light | `--brand-snow` (`--background`/`--card`/`--popover`), `--brand-mist` (`--muted`/`--secondary`), `--accent` (neutral-4), and the curated `--warning-muted` / `--info-muted` / `--success-muted` / `--danger-muted` panel fills |
+| Dark  | `--brand-deep` (`--background`), `--brand-charcoal` (`--card`/`--popover`/`--muted`/`--secondary`), `--accent` (neutral-4), and the same four curated `*-muted` fills in their `.dark` values |
 
 Both **brand** surfaces are checked per mode, not only the base one, because
 that is what makes the guard hold for an endpoint-crossing palette, where moving
-toward one surface moves away from the other. The four **curated** `*-muted`
+toward one surface moves away from the other. **`--accent`** is checked as its
+own surface because #2144 split it off `--muted`/`--secondary`: it is neutral-4,
+one band DARKER than `--brand-mist` (neutral-3) in light and one band lighter in
+dark, and it is a genuine muted-text background — dropdown and command-menu
+shortcuts render `text-muted-foreground` inside `focus:bg-accent` items. Clamping
+against `--brand-mist` alone left the Tokoroa light tone at 4.37:1 on the hover
+surface; reading the true neutral-4 from each mode's substrate ramp restores it
+to 4.64:1. The guarantee sweep (`guarantee-sweep.test.ts`, G2c) measures the
+shipped derived tone against neutral steps 1–4 in both modes for both reference
+seeds, so a sub-AA step-4 cell fails CI. The four **curated** `*-muted`
 fills are checked because #1808 deliberately leaves them out of
 `app-theme-scope`: they are fixed while the derived tone slides with the brand
 ramp, which is the one pairing that can drift apart with nothing watching. They
@@ -187,19 +242,21 @@ waitlist, committee, and family-suggestions.
 
 Deliberately **not** in the list:
 
-- `--border` / `--input`. Dark mode remaps `bg-{neutral}-200` onto `--border`,
+- `--border` / `--input`. Dark mode used to remap `bg-{neutral}-200` onto
+  `--border` (the shim #2188 P2 deleted, when the trees moved to source tokens),
   so a `bg-slate-200` badge would be a muted-text surface — but the only such
   badge (`page-content-panel.tsx`) was moved to `bg-muted text-muted-foreground`
   instead. A mid-luminance hairline colour is the wrong background for body text
-  at any weight, and clamping against it would collapse the derived tone into
-  `--foreground` for roughly 30% of gate-passing palettes rather than the ~12%
-  it does today. (Measured like-for-like over the 77 gate-passing palettes of
-  the neutral-ramp sweep in `club-theme-schema.test.ts`, counting a palette that
-  collapses in EITHER mode: 11.7% today, 29.9% with `--border` clamped. Per-mode
-  it is 5.2% → 11.7% light and 6.5% → 24.7% dark. Any single framing shows the
-  same 2.5–3× increase; quote one, not a mixture.)
-- The dark coloured hue remaps. The `-50` (`oklch(0.29 …)`) and `-100`
-  (`oklch(0.33 …)`) tiers sit at or below the `*-muted` tier already checked, so
+  at any weight, and a mid-luminance surface leaves the derived tone almost no
+  headroom: clamping against it would force the tone to walk all the way back
+  onto `--foreground` for a materially larger share of palettes than the muted
+  derivation collapses on today — defeating #2145 (a distinct muted tone) for a
+  surface no text should sit on. The AA guarantee that IS enforced (the
+  neutral-ramp sweep in `club-theme-schema.test.ts`) covers only the surfaces in
+  the clamp set; `--border`/`--input` are deliberately outside it.
+- The (now-deleted, #2188 P2) dark coloured hue remaps. The `-50`
+  (`oklch(0.29 …)`) and `-100` (`oklch(0.33 …)`) tiers sat at or below the
+  `*-muted` tier already checked, so
   in dark mode — where the derived tone is the LIGHT one — clearing AA on
   `--success-muted` clears them too. The `-200` tier does NOT follow from that
   reasoning and is excluded on evidence instead: `bg-{hue}-200` remaps to
@@ -268,16 +325,13 @@ enforce this:
 - **Brand accent.** No literal Tailwind `bg-`, `text-`, or `border-` `teal-*`
   utility under `src/` (the check is scoped to those three prefixes; `ring-`,
   `divide-`, `fill-`, and gradient `from-`/`to-` teal are not currently
-  matched). Two files are allowlisted, each because `--hue-*` has no equivalent
-  for the shape of colour they need. `src/components/admin-booking-calendar.tsx`
-  paints each booking status as a SOLID swatch (`bg-teal-500`), and `--hue-*` is
-  defined only as a muted-background / accent-text PAIR.
-  `src/app/(admin)/admin/dashboard/page.tsx` tints the Chore Roster quick-link
-  tile on the Tailwind **-50/-600** convention, whereas the `--hue-*` pair is
-  pinned at **-100/-800**; it is the fifth of five identically-built tiles whose
-  blue/green/purple/orange siblings are all -50/-600, so migrating it alone
-  would visibly break the row. Re-weighting the whole row is a redesign, not a
-  drive-by. Every other categorical teal (the waitlist-offered chip, the audit
+  matched). One file is allowlisted (the final teal entry, evicted in P4):
+  `src/components/admin-booking-calendar.tsx` paints each booking status as a
+  SOLID swatch (`bg-teal-500`), and `--hue-*` is defined only as a
+  muted-background / accent-text PAIR, so there is no clean token for a standalone
+  solid fill. The dashboard Chore Roster tile was migrated onto the brand role
+  tokens (`bg-accent` / `text-primary`, M9, #2188 P2) and is no longer
+  allowlisted. Every other categorical teal (the waitlist-offered chip, the audit
   `family` badge, the family-group `GROUP_CREATE` badge) reaches its hue through
   `CHIP_TONE_CLASSES.teal` in `src/lib/chip-tones.ts`, the single source of
   truth for chip tone classes — those were already -100/-800 pairs, so the
@@ -295,31 +349,31 @@ enforce this:
   solid-fill status chips and swatches, and the member-import wizard's solid
   near-black active-step emphasis border). Per-file granularity means an entry forfeits
   gate coverage on that file's other occurrences — prefer fixing a stray over
-  adding an entry. Still not repo-wide: the member-facing
-  `src/app/(authenticated)`/`(public)` trees and the shared `src/components`
-  root keep raw neutrals and would have to migrate before widening further.
+  adding an entry. As of #2188 P2 the contract is **repo-wide** (the member-facing
+  `(authenticated)`/`(public)`, `(lodge)`, `(website)`, shared `components`, and
+  root trees are all migrated at source), with only the theme-aware-kiosk FAMILY
+  excluded (B8, until #2189 P3).
 
-The dark-mode colored-callout pass in `globals.css` (#1248) re-tints literal
-Tailwind `bg-{family}-50/100/200`, `text-{family}-600..950`, and
-`border-{family}-100..300` inside `app-theme-scope`. It is a UNIFORM,
-palette-wide block covering every Tailwind family, not a teal-specific shim, so
-its teal rows are kept even though the migrations above left few teal literals
-behind: dropping them alone would make the block asymmetric for no benefit. They
-are also still load-bearing — the allowlisted dashboard tile's `bg-teal-50` and
-`text-teal-600` are exactly what this pass re-tints, which is why that tile
-dark-adapts correctly while staying on the -50/-600 tile convention in light
-mode. The calendar's `bg-teal-500` is outside the pass's range (it only remaps
-`-50/-100/-200` fills) and does not depend on it.
+The dark-mode colored-callout pass (#1248) that used to re-tint literal Tailwind
+`bg-{family}-50/100/200` / `text-{family}-600..950` / `border-{family}-100..300`
+inside `app-theme-scope` was **deleted in #2188 P2** — every colored surface now
+carries a scale token at source (`bg-danger-3` / `text-danger-11` / the `cat1..5`
+scales) that adapts per mode by construction, so no re-tint pass is needed. The
+dashboard Chore Roster tile that used to depend on that pass (its `bg-teal-50` /
+`text-teal-600` were what it re-tinted) was migrated onto the brand role tokens
+(`bg-accent` / `text-primary`, M9) in the same phase. The only literal teal left
+is the calendar's `bg-teal-500` status swatch (the final teal allowlist entry,
+evicted in P4).
 
 **Print and PDF always render the LIGHT palette** (#2146). Paper and the
 generated PDF page are white, so dark mode must never reach them. Rather than
 stacking `!important` overrides on the print block — which cannot win against a
 token a descendant sets on itself, such as `Card`'s own `text-card-foreground` —
 every rule that installs the dark palette is wrapped in `@media not print`: the
-`:root`-level `.dark` token ramp, the `.dark .app-theme-scope` token block, and
-the literal-valued colored-callout pass. The token-driven neutral remap needs no
-wrapper because it resolves through `--card` / `--foreground` and self-heals once
-those are light. The `@media print` block then only pins `color-scheme: light`
+`:root`-level `.dark` token ramp and the `.dark .app-theme-scope` generated
+core-token block (the two surviving dark blocks after #2188 P2 deleted the
+neutral and colored-callout remaps). The `@media print` block then only pins
+`color-scheme: light`
 (the one `!important` it needs, because `next-themes` writes `color-scheme` as an
 inline style on `<html>`) plus the page/section layout rules. The
 `html2canvas`-based **Download PDF** path (`src/lib/report-pdf.ts`) is the same
@@ -588,9 +642,9 @@ for the duration of the round trip. That banner shape started in the five
 Booking Policies sections (#2142) and is now the **default across the admin
 tree** (#2160, extended by #2168) — not a claim that nothing is left. Measured
 on the current tree by `view-only-banner-contract.test.ts`, which asserts these
-figures rather than trusting a hand count: **74 components render a banner, and
-230 of the 262 `ViewOnlyActionButton` call sites opt out** of the per-button
-reason. Those 230 split by WHICH rule covers them: **209** pass the literal
+figures rather than trusting a hand count: **75 components render a banner, and
+231 of the 263 `ViewOnlyActionButton` call sites opt out** of the per-button
+reason. Those 231 split by WHICH rule covers them: **210** pass the literal
 `describeReason={false}` and are covered by a banner in the same file, and **21**
 pass `describeReason={!ancestorRendersViewOnlyBanner}` and are covered by a
 verified vouching parent (see *Vouching for a child's coverage* below). The

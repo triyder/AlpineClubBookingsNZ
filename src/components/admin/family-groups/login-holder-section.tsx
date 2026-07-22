@@ -98,7 +98,7 @@ export function FamilyGroupLoginHolderSection({
                               {getMemberName(member)}
                             </span>
                             {member.canLogin && (
-                              <Badge variant="secondary" className="bg-emerald-50 text-emerald-700 border-emerald-200">
+                              <Badge variant="secondary" className="bg-success-3 text-success-11 border-success-6">
                                 Current
                               </Badge>
                             )}
@@ -110,7 +110,7 @@ export function FamilyGroupLoginHolderSection({
                           </div>
                           <p className="text-xs text-muted-foreground">{member.email}</p>
                           {!member.hasPassword && (
-                            <p className="mt-1 text-xs text-amber-700">
+                            <p className="mt-1 text-xs text-warning-11">
                               This member has never set a password. Use &apos;Send password setup email&apos; first.
                             </p>
                           )}
@@ -144,10 +144,10 @@ export function FamilyGroupLoginHolderSection({
               )}
               <p className="text-xs text-muted-foreground">{SESSION_LAG_WARNING}</p>
               {errors[cluster.email] && (
-                <p className="text-sm text-red-600">{errors[cluster.email]}</p>
+                <p className="text-sm text-danger-11">{errors[cluster.email]}</p>
               )}
               {messages[cluster.email] && (
-                <p className="text-sm text-emerald-700">{messages[cluster.email]}</p>
+                <p className="text-sm text-success-11">{messages[cluster.email]}</p>
               )}
               <ViewOnlyActionButton
                 canEdit={canEdit}

@@ -180,7 +180,7 @@ export default function BookingRequestPage() {
           <CardTitle>Request Sent</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
-          <div className="flex items-center gap-2 text-emerald-700">
+          <div className="flex items-center gap-2 text-success-11">
             <CheckCircle2 className="h-6 w-6 shrink-0" />
             <p className="font-medium">Thanks, {contactFirstName} — almost there.</p>
           </div>
@@ -364,7 +364,7 @@ export default function BookingRequestPage() {
                     size="sm"
                     onClick={() => removeGuest(index)}
                     disabled={guests.length <= 1}
-                    className="text-red-500 hover:text-red-700"
+                    className="text-danger-11 hover:text-danger-11"
                   >
                     Remove
                   </Button>
@@ -374,7 +374,7 @@ export default function BookingRequestPage() {
           </div>
 
           {showPricing ? (
-            <div className="rounded-md border bg-slate-50 p-3 text-sm text-slate-700">
+            <div className="rounded-md border bg-muted p-3 text-sm text-muted-foreground">
               {quoteLoading ? (
                 "Calculating indicative price..."
               ) : indicativePriceCents != null ? (

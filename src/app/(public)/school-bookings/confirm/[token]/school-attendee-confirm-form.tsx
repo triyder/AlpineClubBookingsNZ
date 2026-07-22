@@ -97,12 +97,12 @@ export function SchoolAttendeeConfirmForm({
   return (
     <div className="space-y-4">
       {message ? (
-        <div className="rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+        <div className="rounded-md border border-success-6 bg-success-3 px-4 py-3 text-sm text-success-11">
           {message}
         </div>
       ) : null}
       {error ? (
-        <div className="rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+        <div className="rounded-md border border-danger-6 bg-danger-3 px-4 py-3 text-sm text-danger-11">
           {error}
         </div>
       ) : null}
@@ -112,7 +112,7 @@ export function SchoolAttendeeConfirmForm({
           <div className="space-y-3">
             {guests.map((guest, index) => (
               <div
-                className="grid gap-2 rounded-md border border-slate-200 p-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end"
+                className="grid gap-2 rounded-md border border-border p-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end"
                 key={guest.id}
               >
                 <div className="space-y-1">

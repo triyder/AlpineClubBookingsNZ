@@ -146,8 +146,9 @@ export async function applyConfigImport(
   const bootstrapSkip = preApplyBackup === "required" ? null : preApplyBackup;
 
   // Pre-apply backup FIRST (ADR-002: backup, then verify, then execute). A
-  // hard failure aborts; an operator-disabled backup (BACKUP_ENABLED unset)
-  // proceeds but is recorded. The empty-target bootstrap (ADR-003) is the sole
+  // hard failure aborts; an operator-disabled backup (backups disabled in
+  // Admin -> Backups) proceeds but is recorded. The empty-target bootstrap
+  // (ADR-003) is the sole
   // exception: an empty database has no prior configuration to protect, so the
   // backup is waived and recorded as skipped-for-bootstrap rather than run.
   let backup: BackupResult;
@@ -171,9 +172,9 @@ export async function applyConfigImport(
     if (backup.success && !backup.uploadedToS3) {
       throw new ConfigImportBackupError(
         "the backup was written only to this server's local disk, which does " +
-          "not survive a redeploy; configure BACKUP_S3_BUCKET so a durable " +
-          "pre-import backup exists, or set BACKUP_ENABLED=false to explicitly " +
-          "opt out of the safety backup",
+          "not survive a redeploy; configure an S3 destination in Admin -> " +
+          "Backups so a durable pre-import backup exists, or disable backups " +
+          "there to explicitly opt out of the safety backup",
       );
     }
   }

@@ -154,7 +154,7 @@ export function ConfirmPendingGuestsButton({
               : " There is no saved card, so the booking will move to payment-owed for payment to be arranged separately."}
         </p>
         {error && (
-          <div className="rounded-md bg-red-50 p-3 text-sm text-red-700">
+          <div className="rounded-md bg-danger-3 p-3 text-sm text-danger-11">
             {error}
           </div>
         )}

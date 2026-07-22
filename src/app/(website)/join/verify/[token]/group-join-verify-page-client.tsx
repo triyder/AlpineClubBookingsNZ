@@ -101,12 +101,12 @@ export function GroupJoinVerifyPageClient({
 
           {outcome === "created" ? (
             <div className="space-y-3">
-              <div className="flex items-center gap-2 text-emerald-700">
+              <div className="flex items-center gap-2 text-success-11">
                 <CheckCircle2 className="h-6 w-6 shrink-0" />
                 <p className="font-medium">Your spot is reserved — taking you to payment...</p>
               </div>
               {details.checkIn && details.checkOut ? (
-                <div className="rounded-md border bg-slate-50 p-3 text-sm text-slate-700">
+                <div className="rounded-md border bg-card p-3 text-sm text-muted-foreground">
                   <p>
                     Dates: {formatNZDate(new Date(details.checkIn))} to{" "}
                     {formatNZDate(new Date(details.checkOut))}
@@ -115,7 +115,7 @@ export function GroupJoinVerifyPageClient({
                     <p className="mt-1">Guests: {details.guestCount}</p>
                   ) : null}
                   {typeof details.priceCents === "number" ? (
-                    <p className="mt-1 font-semibold text-slate-900">
+                    <p className="mt-1 font-semibold text-foreground">
                       Amount due: {formatCents(details.priceCents)}
                     </p>
                   ) : null}
@@ -134,7 +134,7 @@ export function GroupJoinVerifyPageClient({
           ) : null}
 
           {outcome === "already_done" ? (
-            <div className="flex items-start gap-2 text-emerald-700">
+            <div className="flex items-start gap-2 text-success-11">
               <CheckCircle2 className="h-6 w-6 shrink-0" />
               <p className="font-medium">
                 You&apos;re already confirmed for this group booking. Check your email for the
@@ -145,7 +145,7 @@ export function GroupJoinVerifyPageClient({
 
           {outcome === "expired" ? (
             <div className="space-y-2">
-              <div className="flex items-center gap-2 text-amber-700">
+              <div className="flex items-center gap-2 text-warning-11">
                 <Clock className="h-6 w-6 shrink-0" />
                 <p className="font-medium">This confirmation link has expired.</p>
               </div>
@@ -157,7 +157,7 @@ export function GroupJoinVerifyPageClient({
           ) : null}
 
           {outcome === "capacity_full" ? (
-            <div className="flex items-start gap-2 text-amber-700">
+            <div className="flex items-start gap-2 text-warning-11">
               <AlertTriangle className="h-6 w-6 shrink-0" />
               <p className="font-medium">
                 The lodge has filled up for these dates, so this spot is no longer available.
@@ -166,7 +166,7 @@ export function GroupJoinVerifyPageClient({
           ) : null}
 
           {outcome === "not_joinable" ? (
-            <div className="flex items-start gap-2 text-amber-700">
+            <div className="flex items-start gap-2 text-warning-11">
               <AlertTriangle className="h-6 w-6 shrink-0" />
               <p className="font-medium">
                 {message || "This group is no longer accepting joins."}
@@ -176,7 +176,7 @@ export function GroupJoinVerifyPageClient({
 
           {outcome === "invalid" || outcome === "error" ? (
             <div className="space-y-2">
-              <div className="flex items-center gap-2 text-amber-700">
+              <div className="flex items-center gap-2 text-warning-11">
                 <AlertTriangle className="h-6 w-6 shrink-0" />
                 <p className="font-medium">This confirmation link is not valid.</p>
               </div>

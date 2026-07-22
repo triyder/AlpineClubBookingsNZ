@@ -104,6 +104,9 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/access-roles/[id]": "support",
   "/api/admin/age-tier-settings": "bookings",
   "/api/admin/audit-log": "support",
+  "/api/admin/backups/config": "support",
+  "/api/admin/backups/run": "support",
+  "/api/admin/backups/status": "support",
   "/api/admin/bed-allocation": "bookings",
   "/api/admin/bed-allocation/allocations": "bookings",
   "/api/admin/bed-allocation/allocations/[id]": "bookings",
@@ -214,6 +217,10 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/inductions": "membership",
   "/api/admin/inductions/[id]": "membership",
   "/api/admin/integrations/credentials": "finance",
+  "/api/admin/integrations/google/status": "finance",
+  "/api/admin/integrations/google/verify/start": "finance",
+  "/api/admin/integrations/stripe/status": "finance",
+  "/api/admin/integrations/wizard-progress": "finance",
   "/api/admin/internet-banking-settings": "finance",
   "/api/admin/issue-reports": "support",
   "/api/admin/issue-reports/[id]": "support",
@@ -355,6 +362,10 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/xero/sync-contacts": "finance",
   "/api/admin/xero/sync-memberships": "finance",
   "/api/admin/xero/usage": "finance",
+  // #2081: webhook intent-to-receive verify status / amber-badge source. Read is
+  // any-admin (status visibility); the webhook-key WRITE stays Full-Admin-only
+  // via the C1 credentials API. Lives under the finance area like its siblings.
+  "/api/admin/xero/webhook/verify-status": "finance",
 };
 
 describe("admin route -> area matrix pin (#1548)", () => {

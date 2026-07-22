@@ -67,35 +67,35 @@ export function AdditionalPaymentCard({
       : `/bookings/${bookingId}`;
 
   return (
-    <Card className="border-amber-300 bg-amber-50">
+    <Card className="border-warning-6 bg-warning-3">
       <CardHeader>
-        <CardTitle className="text-amber-800">
+        <CardTitle className="text-warning-11">
           Additional Payment Required
         </CardTitle>
       </CardHeader>
       <CardContent>
         {paymentComplete ? (
-          <div className="rounded-md bg-green-50 p-4 text-sm text-green-700">
+          <div className="rounded-md bg-success-3 p-4 text-sm text-success-11">
             <p className="font-medium">Payment successful!</p>
             <p className="mt-1">Your additional payment has been processed.</p>
           </div>
         ) : (
           <>
-            <p className="text-sm text-amber-700 mb-4">
+            <p className="text-sm text-warning-11 mb-4">
               A recent booking modification increased your total by{" "}
               <strong>{formatCents(additionalAmountCents)}</strong>. Please
               complete payment to finalise the modification.
             </p>
 
             {loading && (
-              <div className="flex items-center gap-2 py-4 text-sm text-gray-500">
-                <div className="h-4 w-4 animate-spin rounded-full border-2 border-amber-600 border-t-transparent" />
+              <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground">
+                <div className="h-4 w-4 animate-spin rounded-full border-2 border-warning-7 border-t-transparent" />
                 Loading payment details...
               </div>
             )}
 
             {error && (
-              <div className="rounded-md bg-red-50 p-3 text-sm text-red-700">
+              <div className="rounded-md bg-danger-3 p-3 text-sm text-danger-11">
                 {error}
               </div>
             )}

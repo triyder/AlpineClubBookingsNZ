@@ -204,9 +204,9 @@ export function MemberLodgeAccessCard({
                 affect booking access.
               </p>
             </div>
-            {error ? <p className="text-sm text-red-600">{error}</p> : null}
+            {error ? <p className="text-sm text-danger-11">{error}</p> : null}
             {success ? (
-              <p className="text-sm text-green-700">{success}</p>
+              <p className="text-sm text-success-11">{success}</p>
             ) : null}
             <ViewOnlyActionButton
               canEdit={canEdit}

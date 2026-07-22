@@ -93,7 +93,7 @@ export function RefundAppealButton({
         {existingRequests.length > 0 && (
           <div className="space-y-2">
             {existingRequests.map((req) => (
-              <div key={req.id} className="bg-slate-50 rounded-md p-3 text-sm space-y-1">
+              <div key={req.id} className="bg-card rounded-md p-3 text-sm space-y-1">
                 <div className="flex items-center justify-between">
                   <Badge
                     variant={

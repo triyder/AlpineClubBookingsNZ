@@ -1,4 +1,4 @@
-import { CLUB_THEME_COLOUR_FIELDS, sanitiseRawCss } from "@/lib/club-theme-schema";
+import { sanitiseRawCss, type BrandShims } from "@/lib/club-theme-schema";
 
 // Authored-CSS handling for the lobby display (ADR-003 §4, LTV-029, #75).
 //
@@ -63,13 +63,24 @@ const FONT_TOKENS: DisplayCssToken[] = [
   { name: "--font-website-body", description: "Club theme body font family.", family: "brand" },
 ];
 
-/** camelCase club-theme colour key → its `--brand-<kebab>` custom property, the
- * exact name `buildClubThemeCss` emits (kept in sync via CLUB_THEME_COLOUR_FIELDS):
- * `brandGold` → `--brand-gold`. */
-function brandTokenName(key: string): string {
-  const kebab = key.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
-  return `--${kebab}`;
-}
+/**
+ * The seven legacy `--brand-*` custom properties the display page injects
+ * unscoped via `themeCss` (`buildClubThemeCss` → `deriveBrandShims`). Since
+ * #2187 P1 only three brand seeds are STORED (gold/deep/safety); the other four
+ * surfaces (charcoal/ridge/mist/snow) are derived from the substrate neutral
+ * ramp — but all seven are still emitted through the shims and remain valid
+ * `var(--brand-*)` references authored display CSS may use (kiosk/display is P3
+ * scope, untouched in P1). Keyed by `BrandShims` ROLE so this advertised set
+ * stays in lockstep with the derivation: adding a role forces an entry here. */
+const BRAND_SHIM_TOKEN_DESCRIPTIONS: Record<keyof BrandShims, string> = {
+  gold: "Primary accent — the club's main brand colour.",
+  charcoal: "Darkest neutral — ink / nav surface (derived from the ramp).",
+  deep: "Neutral-character seed colour.",
+  ridge: "Mid neutral — hairline / border (derived from the ramp).",
+  mist: "Quiet neutral surface fill (derived from the ramp).",
+  snow: "Lightest neutral — page / card surface (derived from the ramp).",
+  safety: "Support accent for highlights.",
+};
 
 /**
  * The stable set of theme tokens an author may use in display CSS: the board's
@@ -79,9 +90,11 @@ function brandTokenName(key: string): string {
  * (#80), and the data source the LTV-034 reference expects.
  */
 export function listDisplayCssTokens(): DisplayCssToken[] {
-  const brandColours: DisplayCssToken[] = CLUB_THEME_COLOUR_FIELDS.map((field) => ({
-    name: brandTokenName(field.key),
-    description: `Club theme "${field.label}" brand colour.`,
+  const brandColours: DisplayCssToken[] = (
+    Object.keys(BRAND_SHIM_TOKEN_DESCRIPTIONS) as (keyof BrandShims)[]
+  ).map((role) => ({
+    name: `--brand-${role}`,
+    description: BRAND_SHIM_TOKEN_DESCRIPTIONS[role],
     family: "brand" as const,
   }));
   return [...DISPLAY_PALETTE_TOKENS, ...brandColours, ...FONT_TOKENS];

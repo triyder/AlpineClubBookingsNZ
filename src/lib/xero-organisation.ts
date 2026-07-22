@@ -9,6 +9,11 @@
 
 import logger from "@/lib/logger";
 import { parseDateOnly } from "@/lib/date-only";
+import {
+  fetchMockXeroOrganisation,
+  getXeroMockInternalOrigin,
+} from "@/lib/xero-mock-endpoint";
+import { registerXeroOrganisationCacheInvalidator } from "@/lib/xero-organisation-cache-bus";
 import { callXeroApi, getAuthenticatedXeroClient } from "./xero-api-client";
 
 const ORG_CACHE_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
@@ -58,6 +63,82 @@ export async function getXeroFinancialYearEndMonth(
     );
     // Fall back to the last cached value if we have one, otherwise null.
     return cached?.month ?? null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Connected-organisation summary (#2080): the org NAME (+ year-end month) so the
+// setup wizard's step 3 can confirm the operator linked the RIGHT Xero org after
+// the OAuth round-trip. Cached in-process with the same long TTL as the
+// year-end read; a status/summary read must never mutate the DB.
+// ---------------------------------------------------------------------------
+
+export interface XeroConnectedOrganisation {
+  name: string | null;
+  financialYearEndMonth: number | null;
+}
+
+interface OrgSummaryCacheEntry {
+  summary: XeroConnectedOrganisation;
+  fetchedAt: number;
+}
+
+let orgSummaryCache: OrgSummaryCacheEntry | null = null;
+
+/**
+ * Returns the connected Xero organisation's name and financial year-end month,
+ * or nulls when Xero is not connected / unavailable. Never throws — a failed
+ * read falls back to the last cached summary (or nulls). Cached in-process.
+ *
+ * Honours the test-only mock-Xero harness (#2080): inert in production.
+ */
+export async function getXeroConnectedOrganisation(
+  forceRefresh = false,
+): Promise<XeroConnectedOrganisation> {
+  if (
+    !forceRefresh &&
+    orgSummaryCache &&
+    Date.now() - orgSummaryCache.fetchedAt < ORG_CACHE_TTL_MS
+  ) {
+    return orgSummaryCache.summary;
+  }
+
+  // Server-side fetch — use the in-container origin (see getXeroMockInternalOrigin).
+  const mockOrigin = getXeroMockInternalOrigin();
+  if (mockOrigin) {
+    const summary = await fetchMockXeroOrganisation(mockOrigin);
+    orgSummaryCache = { summary, fetchedAt: Date.now() };
+    return summary;
+  }
+
+  try {
+    const { xero, tenantId } = await getAuthenticatedXeroClient();
+    const response = await callXeroApi(
+      () => xero.accountingApi.getOrganisations(tenantId),
+      {
+        operation: "getOrganisations",
+        resourceType: "ORGANISATION",
+        workflow: "setupWizardOrgConfirmation",
+        context: "xero-organisation getConnectedOrganisation",
+      },
+    );
+    const org = response.body.organisations?.[0];
+    const rawMonth = org?.financialYearEndMonth;
+    const summary: XeroConnectedOrganisation = {
+      name: org?.name ?? null,
+      financialYearEndMonth:
+        typeof rawMonth === "number" && rawMonth >= 1 && rawMonth <= 12
+          ? rawMonth
+          : null,
+    };
+    orgSummaryCache = { summary, fetchedAt: Date.now() };
+    return summary;
+  } catch (error) {
+    logger.warn(
+      { err: error },
+      "Failed to read Xero connected organisation summary",
+    );
+    return orgSummaryCache?.summary ?? { name: null, financialYearEndMonth: null };
   }
 }
 
@@ -193,4 +274,27 @@ export function getEffectiveXeroLockDate(lockDates: XeroLockDates): Date | null 
 // test seam
 export function resetXeroLockDatesCacheForTests(): void {
   lockDatesCache = null;
+}
+
+// ---------------------------------------------------------------------------
+// Cache invalidation (#2080 review, CORRECTNESS-F1): every cache above is keyed
+// on the CONNECTED Xero organisation. When the connection identity changes —
+// a connect/reconnect saves new tokens (possibly a DIFFERENT org) or a
+// disconnect drops them — those caches are stale and must be reset, or the
+// setup wizard's "is this the right org?" step would confirm the OLD org's name.
+// The token store fires this via the dependency-free bus (no import cycle).
+// ---------------------------------------------------------------------------
+
+/** Reset every in-process organisation cache (name/FYE, summary, lock dates). */
+function resetXeroOrganisationCaches(): void {
+  cached = null;
+  orgSummaryCache = null;
+  lockDatesCache = null;
+}
+
+registerXeroOrganisationCacheInvalidator(resetXeroOrganisationCaches);
+
+// test seam
+export function resetXeroOrganisationCachesForTests(): void {
+  resetXeroOrganisationCaches();
 }

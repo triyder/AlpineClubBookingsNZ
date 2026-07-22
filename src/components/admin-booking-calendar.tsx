@@ -34,14 +34,14 @@ interface CalendarBooking {
 // `src/lib/__tests__/brand-color-source-contract.test.ts` (#2137).
 export const STATUS_COLORS: Record<string, string> = {
   DRAFT: "bg-gray-300",
-  PENDING: "bg-yellow-400",
-  PAYMENT_PENDING: "bg-amber-500",
-  CONFIRMED: "bg-green-500",
-  PAID: "bg-blue-500",
-  COMPLETED: "bg-purple-500",
-  CANCELLED: "bg-red-500",
-  BUMPED: "bg-orange-500",
-  WAITLISTED: "bg-purple-400",
+  PENDING: "bg-warning-9",
+  PAYMENT_PENDING: "bg-warning-9",
+  CONFIRMED: "bg-success-9",
+  PAID: "bg-info-9",
+  COMPLETED: "bg-cat1-9",
+  CANCELLED: "bg-danger-9",
+  BUMPED: "bg-warning-9",
+  WAITLISTED: "bg-cat1-9",
   WAITLIST_OFFERED: "bg-teal-500",
 };
 
@@ -434,7 +434,7 @@ export function AdminBookingCalendar() {
             // itself stays live (D-G2).
             const isPast = isValidDay && dayStr < todayStr;
             const beds = isValidDay ? availability[dayStr] : undefined;
-            const bedsBg = beds === undefined ? "" : beds === 0 ? "bg-red-50" : beds <= 5 ? "bg-red-50/50" : beds <= 15 ? "bg-amber-50/50" : "";
+            const bedsBg = beds === undefined ? "" : beds === 0 ? "bg-danger-3" : beds <= 5 ? "bg-danger-3/50" : beds <= 15 ? "bg-warning-3/50" : "";
             const cellBg = !isValidDay ? "bg-card" : isPast ? "bg-muted" : bedsBg;
             return (
               <div
@@ -449,7 +449,7 @@ export function AdminBookingCalendar() {
                     <span
                       className={`text-xs leading-none ${
                         isToday
-                          ? "font-bold text-blue-600 bg-blue-100 rounded-full px-1.5 py-0.5"
+                          ? "font-bold text-info-11 bg-info-3 rounded-full px-1.5 py-0.5"
                           : isPast
                             ? "text-muted-foreground"
                             : "text-muted-foreground"
@@ -462,7 +462,7 @@ export function AdminBookingCalendar() {
                         className={`text-[11px] leading-none font-medium ${
                           isPast ? "opacity-60 " : ""
                         }${
-                          beds === 0 ? "text-red-600" : beds <= 5 ? "text-red-600" : beds <= 15 ? "text-amber-600" : "text-green-600"
+                          beds === 0 ? "text-danger-11" : beds <= 5 ? "text-danger-11" : beds <= 15 ? "text-warning-11" : "text-success-11"
                         }`}
                       >
                         {beds} bed{beds !== 1 ? "s" : ""}

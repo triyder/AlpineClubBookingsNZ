@@ -133,7 +133,7 @@ export function NotificationPreferences() {
 
   if (!prefs || !editPrefs) {
     return (
-      <div className="text-sm text-red-500 py-4">
+      <div className="text-sm text-danger-11 py-4">
         Failed to load notification preferences.
       </div>
     );
@@ -170,10 +170,10 @@ export function NotificationPreferences() {
             disabled={!editing}
             className={`relative inline-flex h-6 w-11 shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-gold focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 ${
               editing ? "cursor-pointer" : ""
-            } ${displayPrefs[key] ? "bg-brand-gold" : "bg-gray-200"}`}
+            } ${displayPrefs[key] ? "bg-brand-gold" : "bg-muted"}`}
           >
             <span
-              className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+              className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-card shadow ring-0 transition duration-200 ease-in-out ${
                 displayPrefs[key] ? "translate-x-5" : "translate-x-0"
               }`}
             />
@@ -204,7 +204,7 @@ export function NotificationPreferences() {
       </div>
 
       {error && (
-        <div className="rounded-md bg-red-50 border border-red-200 p-3 text-sm text-red-700">
+        <div className="rounded-md bg-danger-3 border border-danger-6 p-3 text-sm text-danger-11">
           {error}
         </div>
       )}

@@ -16,6 +16,7 @@ import {
   UsagePanel,
 } from "./_components/panels"
 import { Message } from "./_components/message"
+import { WebhookAmberBadge } from "./_components/webhook-amber-badge"
 import { SECTION_DEFAULTS, type SectionKey, type SyncResult } from "./_components/types"
 import { useXeroConnection } from "./_hooks/use-xero-connection"
 
@@ -88,6 +89,8 @@ export default function XeroPage() {
       {error && <Message tone="error" message={error} onDismiss={() => setError("")} />}
       {operationMessage && <Message tone="success" message={operationMessage} onDismiss={() => setOperationMessage("")} />}
       {connectSuccess && <Message tone="success" message="Xero connected successfully!" onDismiss={() => setConnectSuccess(false)} />}
+
+      <WebhookAmberBadge connected={connected} />
 
       <ConnectionStatusPanel status={status} onConnect={handleConnect} onDisconnect={handleDisconnect} />
 

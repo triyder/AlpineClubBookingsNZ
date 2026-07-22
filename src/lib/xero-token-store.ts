@@ -11,6 +11,7 @@ import {
   getOperationalXeroEncryptionKey,
   peekOperationalXeroEncryptionKey,
 } from "@/lib/xero-config";
+import { invalidateXeroOrganisationCaches } from "@/lib/xero-organisation-cache-bus";
 
 const ENCRYPTION_ALGORITHM = "aes-256-gcm";
 const IV_LENGTH = 16;
@@ -234,6 +235,13 @@ export async function saveXeroTokens(
       });
     }
   });
+
+  // A connect/reconnect can bind a DIFFERENT Xero organisation, so drop the
+  // in-process org caches (name/FYE/lock dates) — the wizard's right-org
+  // confirmation must read the NEW org, not a stale name (#2080 F1). NOTE: the
+  // refresh-lease branch above returns early and never reaches here, because a
+  // token refresh keeps the same organisation and must not defeat the cache.
+  invalidateXeroOrganisationCaches();
 }
 
 export async function loadXeroTokens(): Promise<XeroTokenRecord | null> {
@@ -411,4 +419,7 @@ export async function getXeroConnectionStatus(): Promise<{
  */
 export async function deleteXeroTokens(): Promise<void> {
   await prisma.xeroToken.deleteMany();
+  // Disconnect / credential verify-reset: no org is connected any more, so the
+  // cached org name/FYE/lock dates must not linger for the next connection (F1).
+  invalidateXeroOrganisationCaches();
 }
