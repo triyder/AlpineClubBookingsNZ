@@ -128,8 +128,8 @@ const DECORATIVE_SOLID_FILL_ALLOWLIST = new Set<string>(
 // in either order. `/opacity` and variant prefixes are tolerated.
 const CLS = "[\\w:/\\[\\]().,#%-]";
 const ON_SOLID_TEXT_PAIR = new RegExp(
-  `bg-(?:success|warning|info|danger|cat[1-5])-9(?:/\\d{1,3})?(?:\\s+${CLS}+)*\\s+text-${CLS}+` +
-    `|text-${CLS}+(?:\\s+${CLS}+)*\\s+bg-(?:success|warning|info|danger|cat[1-5])-9(?:/\\d{1,3})?`,
+  `bg-(?:success|warning|info|danger|cat[1-6])-9(?:/\\d{1,3})?(?:\\s+${CLS}+)*\\s+text-${CLS}+` +
+    `|text-${CLS}+(?:\\s+${CLS}+)*\\s+bg-(?:success|warning|info|danger|cat[1-6])-9(?:/\\d{1,3})?`,
 );
 
 describe("on-solid AA source contract (F1, repo-wide)", () => {

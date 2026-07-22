@@ -184,6 +184,21 @@
   --color-cat5-10: var(--cat5-10, #7f9a00);
   --color-cat5-11: var(--cat5-11, #516600);
   --color-cat5-12: var(--cat5-12, #1b2400);
+  /* #2218 P4 — the SIXTH categorical scale (teal, H≈183). Added so the booking
+     status column has a 6th distinguisher (WAITLIST_OFFERED) and the last
+     legacy --hue-* accent pair could retire. Default light-step fallbacks. */
+  --color-cat6-1: var(--cat6-1, #f3f9f8);
+  --color-cat6-2: var(--cat6-2, #ebf6f4);
+  --color-cat6-3: var(--cat6-3, #d2f3ec);
+  --color-cat6-4: var(--cat6-4, #bbefe5);
+  --color-cat6-5: var(--cat6-5, #a6eade);
+  --color-cat6-6: var(--cat6-6, #92e5d6);
+  --color-cat6-7: var(--cat6-7, #78dccd);
+  --color-cat6-8: var(--cat6-8, #3ccdba);
+  --color-cat6-9: var(--cat6-9, #14b8a6);
+  --color-cat6-10: var(--cat6-10, #00ac9a);
+  --color-cat6-11: var(--cat6-11, #006d5f);
+  --color-cat6-12: var(--cat6-12, #002822);
   /* #2189 P3 — fixed-seed KIOSK tokens (epic #2181 A5/J4). The kiosk /
      wall-display surfaces are the deliberately literalist, glare-proof,
      NON-brand-following exception: authored ONCE from the fixed kiosk seed

@@ -171,6 +171,7 @@ export const EXPOSED_STEP_SCALES = [
   "cat3",
   "cat4",
   "cat5",
+  "cat6",
 ] as const;
 
 /**

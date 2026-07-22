@@ -105,6 +105,13 @@ export const PINS = {
     cat3: "#d6409f",
     cat4: "#e8730c",
     cat5: "#8aa614",
+    // #2218 P4 — a sixth categorical hue (teal, oklch H≈183). Chosen for MAXIMUM
+    // minimum perceptual separation from cat1-5 AND the four semantic hues: its
+    // step-9 sits ΔE2000 ≈ 17.6 (hue ≥ 31°) from every existing cat/semantic
+    // step-9 tone (the widest min-ΔE of the measured candidates), in the
+    // green(152°)-cyan(216°) gap. It gives the booking column its needed 6th
+    // distinguisher (WAITLIST_OFFERED), retiring the last --hue-* pair.
+    cat6: "#14b8a6",
   } as Record<string, string>,
   /** A5 kiosk: fixed, club-independent, glare-proof high contrast. Dark only. */
   kiosk: {
@@ -127,6 +134,7 @@ export const HUE_SCALES = [
   "cat3",
   "cat4",
   "cat5",
+  "cat6",
 ] as const;
 export type HueScaleName = (typeof HUE_SCALES)[number];
 
