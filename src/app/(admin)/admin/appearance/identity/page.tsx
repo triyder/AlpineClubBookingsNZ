@@ -1,4 +1,5 @@
 import { BackLink } from "@/components/admin/back-link";
+import { ClubContactPanel } from "@/components/admin/club-contact-panel";
 import { ClubIdentityPanel } from "@/components/admin/club-identity-panel";
 import { LodgeDetailsPanel } from "@/components/admin/lodge-details-panel";
 import {
@@ -45,6 +46,19 @@ export default function ClubIdentityAdminPage() {
         </CardHeader>
         <CardContent>
           <LodgeDetailsPanel />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Club Contact</CardTitle>
+          <CardDescription>
+            Which committee role appears in the Contact page&apos;s Club Details
+            box.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ClubContactPanel />
         </CardContent>
       </Card>
     </div>

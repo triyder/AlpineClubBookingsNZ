@@ -31,12 +31,17 @@ interface ContactPageClientProps {
   // Default lodge identity, loaded server-side (E3 #1929). The address block is
   // hidden when address is null. No hardcoded geography lives in this file.
   lodge?: { name: string; address: string | null };
+  // Admin-configured committee role (CommitteeRole.key) whose member(s) appear
+  // in the Club Details block. null/undefined falls back to the booking-officer
+  // heuristic below (Site Appearance & Content → Club Identity → Club Contact).
+  contactRoleKey?: string | null;
   showHero?: boolean;
 }
 
 export function ContactPageClient({
   club,
   lodge,
+  contactRoleKey,
   showHero = true,
 }: ContactPageClientProps) {
   const facebookUrl = club.socialLinks.facebook ?? club.publicUrl;
@@ -87,13 +92,21 @@ export function ContactPageClient({
       })),
   ];
 
-  const bookingOfficer = members.find(
-    (m) =>
-      (m.roleKey === "bookings" ||
-        m.roleKey === "booking-officer" ||
-        /\bbooking/i.test(m.role)) &&
-      (m.phone || m.contactKey),
-  );
+  // Members shown in the "Club Details" box. When an admin has chosen a contact
+  // committee role, show every published member holding it; otherwise fall back
+  // to the legacy booking-officer heuristic so existing sites are unchanged.
+  const contactMembers: CommitteeMember[] = contactRoleKey
+    ? members.filter((m) => m.roleKey === contactRoleKey)
+    : (() => {
+        const officer = members.find(
+          (m) =>
+            (m.roleKey === "bookings" ||
+              m.roleKey === "booking-officer" ||
+              /\bbooking/i.test(m.role)) &&
+            (m.phone || m.contactKey),
+        );
+        return officer ? [officer] : [];
+      })();
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -252,36 +265,7 @@ export function ContactPageClient({
 
               <Card className="border-brand-ridge/20 bg-brand-snow/90 shadow-[0_20px_45px_-35px_rgba(47,47,43,0.45)]">
                 <CardContent className="pt-6 space-y-4">
-                  {bookingOfficer && (
-                    <div className="flex items-start gap-3">
-                      <Phone className="mt-0.5 h-5 w-5 shrink-0 text-brand-gold" />
-                      <div>
-                        <p className="text-sm font-medium text-brand-charcoal">
-                          {bookingOfficer.role}
-                        </p>
-                        <p className="text-sm text-brand-deep/75">
-                          {bookingOfficer.name}
-                        </p>
-                        {bookingOfficer.phone ? (
-                          <a
-                            href={`tel:${bookingOfficer.phone.replace(/\s/g, "")}`}
-                            className="website-link text-sm"
-                          >
-                            {bookingOfficer.phone}
-                          </a>
-                        ) : null}
-                        {bookingOfficer.contactKey ? (
-                          <a
-                            href={`/contact?recipient=${encodeURIComponent(bookingOfficer.contactKey)}`}
-                            className="website-link inline-flex items-center gap-1 text-sm"
-                          >
-                            <Mail className="h-3.5 w-3.5" />
-                            Send a message
-                          </a>
-                        ) : null}
-                      </div>
-                    </div>
-                  )}
+                  {/* Club address first, above the committee contact(s). */}
                   {lodge?.address ? (
                     <div className="flex items-start gap-3">
                       <MapPin className="mt-0.5 h-5 w-5 shrink-0 text-brand-gold" />
@@ -295,6 +279,36 @@ export function ContactPageClient({
                       </div>
                     </div>
                   ) : null}
+                  {contactMembers.map((member) => (
+                    <div key={member.id} className="flex items-start gap-3">
+                      <Phone className="mt-0.5 h-5 w-5 shrink-0 text-brand-gold" />
+                      <div>
+                        <p className="text-sm font-medium text-brand-charcoal">
+                          {member.role}
+                        </p>
+                        <p className="text-sm text-brand-deep/75">
+                          {member.name}
+                        </p>
+                        {member.phone ? (
+                          <a
+                            href={`tel:${member.phone.replace(/\s/g, "")}`}
+                            className="website-link block text-sm"
+                          >
+                            {member.phone}
+                          </a>
+                        ) : null}
+                        {member.contactKey ? (
+                          <a
+                            href={`/contact?recipient=${encodeURIComponent(member.contactKey)}`}
+                            className="website-link inline-flex items-center gap-1 text-sm"
+                          >
+                            <Mail className="h-3.5 w-3.5" />
+                            Send a message
+                          </a>
+                        ) : null}
+                      </div>
+                    </div>
+                  ))}
                 </CardContent>
               </Card>
 
