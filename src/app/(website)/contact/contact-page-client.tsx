@@ -292,15 +292,16 @@ export function ContactPageClient({
                         {member.phone ? (
                           <a
                             href={`tel:${member.phone.replace(/\s/g, "")}`}
-                            className="website-link block text-sm"
+                            className="website-link mt-1 flex w-fit items-center gap-1 text-sm"
                           >
+                            <Phone className="h-3.5 w-3.5" />
                             {member.phone}
                           </a>
                         ) : null}
                         {member.contactKey ? (
                           <a
                             href={`/contact?recipient=${encodeURIComponent(member.contactKey)}`}
-                            className="website-link inline-flex items-center gap-1 text-sm"
+                            className="website-link mt-1 flex w-fit items-center gap-1 text-sm"
                           >
                             <Mail className="h-3.5 w-3.5" />
                             Send a message
