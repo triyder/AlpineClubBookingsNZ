@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { Sparkle } from "lucide-react";
+import { BookOpen } from "lucide-react";
 import type { HelpQuestion } from "@/lib/contextual-help";
 import type { HelpChatMessage } from "./use-help-chat";
 
@@ -63,7 +63,7 @@ export function HelpChatThread({
                 ) : null}
                 {message.fromGuide ? (
                   <p className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
-                    <Sparkle aria-hidden="true" className="h-3 w-3" />
+                    <BookOpen aria-hidden="true" className="h-3 w-3" />
                     From the help guide
                   </p>
                 ) : null}

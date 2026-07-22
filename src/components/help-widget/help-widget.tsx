@@ -217,23 +217,18 @@ export function HelpWidget({
               type="button"
               onClick={close}
               aria-label="Close help"
-              className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="flex h-11 w-11 items-center justify-center rounded-md text-muted-foreground hover:bg-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               <X aria-hidden="true" className="h-4 w-4" />
             </button>
           </header>
 
-          <div
-            role="tablist"
-            aria-label="Help views"
-            className="flex gap-1 border-b border-border px-2 py-2"
-          >
+          <div className="flex gap-1 border-b border-border px-2 py-2">
             <button
               type="button"
-              role="tab"
-              aria-selected={tab === "ask"}
+              aria-pressed={tab === "ask"}
               onClick={() => setTab("ask")}
-              className={`rounded-md px-3 py-1 text-sm font-medium focus:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+              className={`rounded-md px-3 py-2 text-sm font-medium focus:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
                 tab === "ask"
                   ? "bg-muted text-foreground"
                   : "text-muted-foreground hover:text-foreground"
@@ -243,10 +238,9 @@ export function HelpWidget({
             </button>
             <button
               type="button"
-              role="tab"
-              aria-selected={tab === "guide"}
+              aria-pressed={tab === "guide"}
               onClick={() => setTab("guide")}
-              className={`rounded-md px-3 py-1 text-sm font-medium focus:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+              className={`rounded-md px-3 py-2 text-sm font-medium focus:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
                 tab === "guide"
                   ? "bg-muted text-foreground"
                   : "text-muted-foreground hover:text-foreground"
@@ -258,7 +252,7 @@ export function HelpWidget({
 
           <div
             onFocusCapture={handleBodyFocus}
-            className="flex-1 overflow-y-auto px-4 py-4"
+            className="flex-1 overflow-y-auto overscroll-contain px-4 py-4"
           >
             {tab === "ask" ? (
               <HelpChatThread

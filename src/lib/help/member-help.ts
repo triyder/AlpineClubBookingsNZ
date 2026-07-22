@@ -154,7 +154,7 @@ const bookingsListHelp: HelpPageContent = {
     },
     {
       q: "How do I change or cancel a booking?",
-      a: "Open the booking from this list. You can change its dates, guests, or promo code (some nights are locked close to check-in and may need club review), or cancel it — the booking's help dialog shows the refund schedule before you start.",
+      a: "Open the booking from this list. You can change its dates, guests, or promo code (some nights are locked close to check-in and may need club review), or cancel it — the booking's Page guide shows the refund schedule before you start.",
     },
   ],
 };
@@ -168,7 +168,7 @@ const bookingDetailHelp: HelpPageContent = {
   actions: [
     "Read the status badges to see where the booking and its payment stand.",
     "Use Complete Payment to pay by card or internet banking if money is still due.",
-    "Open the help dialog before cancelling to see the refund schedule that applies to you.",
+    "Open this page's guide (Help → Page guide) before cancelling to see the refund schedule that applies to you.",
   ],
   sections: [
     {
@@ -178,7 +178,7 @@ const bookingDetailHelp: HelpPageContent = {
     {
       title: "Cancelling and refunds",
       details: [
-        "The help dialog shows the cancellation refund schedule once a payment has been captured, so you see the consequence before you start.",
+        "This page's guide shows the cancellation refund schedule once a payment has been captured, so you see the consequence before you start.",
         "Whether you get money back, and how much, depends on how close to check-in you cancel and your club's policy.",
         "A paid booking refunds to your card or as account credit per the schedule; an unpaid but cancellable booking simply shows 'no payment received, no refund'.",
       ],
@@ -207,7 +207,7 @@ const bookingDetailHelp: HelpPageContent = {
     },
     {
       q: "Will I get a refund if I cancel?",
-      a: "Open the booking's help dialog to see the refund schedule that applies before you cancel. A paid booking refunds to your card or as account credit depending on how close to check-in you cancel and your club's policy; an unpaid booking has nothing to refund.",
+      a: "Open this page's guide (Help → Page guide) to see the refund schedule that applies before you cancel. A paid booking refunds to your card or as account credit depending on how close to check-in you cancel and your club's policy; an unpaid booking has nothing to refund.",
     },
     {
       q: "Do I get money back on my card or as account credit?",

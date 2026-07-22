@@ -121,11 +121,11 @@ describe("HelpWidget", () => {
     fireEvent.click(
       within(panel).getByRole("button", { name: "How do I book a stay?" }),
     );
-    // Move to the Page guide tab so the reset is observable.
-    fireEvent.click(within(panel).getByRole("tab", { name: "Page guide" }));
+    // Move to the Page guide toggle so the reset is observable.
+    fireEvent.click(within(panel).getByRole("button", { name: "Page guide" }));
     expect(
-      within(panel).getByRole("tab", { name: "Page guide" }).getAttribute(
-        "aria-selected",
+      within(panel).getByRole("button", { name: "Page guide" }).getAttribute(
+        "aria-pressed",
       ),
     ).toBe("true");
 
@@ -139,10 +139,10 @@ describe("HelpWidget", () => {
       />,
     );
 
-    // Back on the Ask tab (chips), transcript preserved.
+    // Back on the Ask toggle (chips), transcript preserved.
     expect(
-      within(panel).getByRole("tab", { name: "Ask" }).getAttribute(
-        "aria-selected",
+      within(panel).getByRole("button", { name: "Ask" }).getAttribute(
+        "aria-pressed",
       ),
     ).toBe("true");
     expect(
@@ -176,7 +176,7 @@ describe("HelpWidget", () => {
     expect(chips[0].textContent).toContain("Extra question?");
 
     // The extra section shows in the Page guide view.
-    fireEvent.click(within(panel).getByRole("tab", { name: "Page guide" }));
+    fireEvent.click(within(panel).getByRole("button", { name: "Page guide" }));
     expect(within(panel).getByText("Extra section")).toBeTruthy();
     expect(within(panel).getByText("Detail one.")).toBeTruthy();
   });
@@ -224,6 +224,73 @@ describe("HelpWidget", () => {
     expect(document.activeElement).toBe(
       screen.getByTestId("help-widget-launcher"),
     );
+  });
+
+  it("renders a chip answer's deep link with its exact href", () => {
+    const linkContent = content({
+      questions: [
+        {
+          q: "A family member is missing from the quick-add list.",
+          a: "Add or invite them in your profile Family Group section.",
+          link: {
+            href: "/profile?returnTo=%2Fbook#family-group",
+            label: "Open Family Group in your profile",
+          },
+        },
+      ],
+    });
+    render(
+      <HelpWidget
+        surface="member"
+        llmEnabled={false}
+        resolveHelp={resolveStub(linkContent)}
+      />,
+    );
+    openPanel();
+
+    const panel = screen.getByTestId("help-widget-panel");
+    fireEvent.click(
+      within(panel).getByRole("button", {
+        name: "A family member is missing from the quick-add list.",
+      }),
+    );
+
+    const link = within(panel).getByRole("link", {
+      name: "Open Family Group in your profile",
+    });
+    expect(link.getAttribute("href")).toBe(
+      "/profile?returnTo=%2Fbook#family-group",
+    );
+  });
+
+  it("renders page-guide fields (dl/dt/dd) and section titles", () => {
+    const guideContent = content({
+      fields: [{ name: "Check-in date", description: "The first lodge night." }],
+      sections: [
+        { title: "Booking status glossary", details: ["Confirmed means booked."] },
+      ],
+    });
+    render(
+      <HelpWidget
+        surface="member"
+        llmEnabled={false}
+        resolveHelp={resolveStub(guideContent)}
+      />,
+    );
+    openPanel();
+
+    const panel = screen.getByTestId("help-widget-panel");
+    fireEvent.click(within(panel).getByRole("button", { name: "Page guide" }));
+
+    // The field renders through the dl/dt/dd structure.
+    const fieldName = within(panel).getByText("Check-in date");
+    expect(fieldName.tagName).toBe("DT");
+    expect(
+      within(panel).getByText("The first lodge night.").tagName,
+    ).toBe("DD");
+    // The section title renders too.
+    expect(within(panel).getByText("Booking status glossary")).toBeTruthy();
+    expect(within(panel).getByText("Confirmed means booked.")).toBeTruthy();
   });
 
   it("renders the public position variant with the members footer note", () => {
