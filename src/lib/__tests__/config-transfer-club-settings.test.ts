@@ -72,6 +72,10 @@ const MODULES = {
   induction: true, workParties: true, promoCodes: true, hutLeaders: true,
   communications: true, skifieldConditions: true,
   twoFactor: false, analytics: false,
+  // Every travelling module flag is a non-null Boolean; the #2200 dry-run
+  // `constraints.required` audit rejects a projected null, so the fixture must
+  // carry all of them (a real DB row always does).
+  lobbyDisplay: false, aiAssistant: false,
 };
 const EMAIL = {
   clubName: "Grads", bookingsName: "Bookings", lodgeName: "Lodge",
@@ -1117,5 +1121,74 @@ describe("#2200 singleton dry-run validation (bounds, required, enum)", () => {
     });
     const plan = await buildImportPlan(stubDb({}), zip, { mode: "merge" });
     expect(plan.errors.join(" ")).toMatch(/membershipTypes — null is not allowed/);
+  });
+
+  // The pre-existing twelve singletons carry the same per-field `constraints`
+  // as the three #2200 additions (nullability audit). Representative coverage:
+  // a required-null reject, a nullable-null accept, and a mirrored range bound.
+  it("rejects a present null on a required booking-defaults field", async () => {
+    const zip = singletonBundle("booking-defaults", {
+      nonMemberHoldEnabled: null,
+      nonMemberHoldDays: 7,
+      waitlistCrossLodgeOrder: "OWN_LODGE_FIRST",
+    });
+    const plan = await buildImportPlan(stubDb({}), zip, { mode: "merge" });
+    expect(plan.errors.join(" ")).toMatch(
+      /nonMemberHoldEnabled — null is not allowed/,
+    );
+  });
+
+  it("accepts a null on the nullable membership-lockout financialYearEndMonthOverride", async () => {
+    // financialYearEndMonthOverride is Int? (null = follow Xero's accounting
+    // year), so a present null must NOT fail the dry-run.
+    const zip = singletonBundle("membership-lockout-settings", {
+      enabled: true,
+      financialYearEndMonthOverride: null,
+      textFallbackEnabled: true,
+      useFeeScheduleItemCodes: false,
+    });
+    const plan = await buildImportPlan(stubDb({}), zip, { mode: "merge" });
+    expect(plan.errors).toEqual([]);
+  });
+
+  it("still enforces the 1–12 bound when financialYearEndMonthOverride is present", async () => {
+    for (const bad of [0, 13]) {
+      const zip = singletonBundle("membership-lockout-settings", {
+        enabled: true,
+        financialYearEndMonthOverride: bad,
+        textFallbackEnabled: true,
+        useFeeScheduleItemCodes: false,
+      });
+      const plan = await buildImportPlan(stubDb({}), zip, { mode: "merge" });
+      expect(plan.errors.join(" ")).toMatch(
+        /financialYearEndMonthOverride — .*out of range.*1–12/,
+      );
+    }
+  });
+
+  it("rejects group-discount minGroupSize outside the admin 2–200 range", async () => {
+    for (const bad of [1, 201]) {
+      const zip = singletonBundle("group-discount-setting", {
+        minGroupSize: bad,
+        summerOnly: true,
+        enabled: false,
+      });
+      const plan = await buildImportPlan(stubDb({}), zip, { mode: "merge" });
+      expect(plan.errors.join(" ")).toMatch(
+        /minGroupSize — .*out of range.*2–200/,
+      );
+    }
+  });
+
+  it("rejects booking-defaults nonMemberHoldDays outside the admin 1–365 range", async () => {
+    const zip = singletonBundle("booking-defaults", {
+      nonMemberHoldEnabled: true,
+      nonMemberHoldDays: 366,
+      waitlistCrossLodgeOrder: "OWN_LODGE_FIRST",
+    });
+    const plan = await buildImportPlan(stubDb({}), zip, { mode: "merge" });
+    expect(plan.errors.join(" ")).toMatch(
+      /nonMemberHoldDays — .*out of range.*1–365/,
+    );
   });
 });
