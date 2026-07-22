@@ -258,7 +258,15 @@ export const LEGACY_PROVIDER_ENV_VARS: Record<string, readonly string[]> = {
     "XERO_WEBHOOK_KEY",
     "XERO_REDIRECT_URI",
   ],
-  // stripe / google / backup credential env names are added by C4 / C5 / C6.
+  // Stripe credentials are captured in-app now (#2082); the publishable key is
+  // delivered at runtime from the store, so its old NEXT_PUBLIC_* build-time var
+  // is legacy too. All three are detected-and-warned, never read for operation.
+  stripe: [
+    "STRIPE_SECRET_KEY",
+    "STRIPE_WEBHOOK_SECRET",
+    "NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY",
+  ],
+  // google / backup credential env names are added by C5 / C6.
 };
 
 export interface LegacyProviderEnvFinding {

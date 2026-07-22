@@ -196,6 +196,11 @@ export const explicitPublicApiRoutes = {
     reason:
       "Public cached Whakapapa mountain-condition payload used by public website embed tokens; fixed upstream source, rate limited, no member data.",
   },
+  "src/app/api/stripe/publishable-key/route.ts": {
+    boundary: "public",
+    reason:
+      "Runtime delivery of the non-secret Stripe publishable key (#2082): session-free by design because the unauthenticated pay/[token] page loads the card form; returns only the publishable key or null, never the secret key or webhook secret (structurally scoped to the publishable_key credential row).",
+  },
   "src/app/api/testing/xero-mock/authorize/route.ts": {
     boundary: "public",
     reason:

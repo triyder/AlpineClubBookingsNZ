@@ -147,6 +147,12 @@ vi.mock("@/lib/stripe", () => ({
   constructWebhookEvent: vi.fn(),
   listRefundsForCharge: vi.fn().mockResolvedValue([]),
 }));
+// DB-only (#2082): the webhook route resolves its signing secret via
+// stripe-config and records a test-mode verified marker.
+vi.mock("@/lib/stripe-config", () => ({
+  getOperationalStripeWebhookSecret: vi.fn().mockResolvedValue("whsec_test"),
+  recordStripeWebhookVerified: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock("@/lib/audit", () => ({ logAudit: vi.fn() }));
 vi.mock("@/lib/email", () => ({
   sendBookingModifiedEmail: vi.fn().mockResolvedValue(undefined),

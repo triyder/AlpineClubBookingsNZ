@@ -19,11 +19,12 @@ x-app-environment: &app-environment
   NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
   AUTH_SECRET: ${AUTH_SECRET:-${NEXTAUTH_SECRET}}
   AUTH_TRUST_HOST: ${AUTH_TRUST_HOST:-true}
-  STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
-  NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: ${NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY}
+  # Stripe credentials are DB-only (#2082): the secret key, publishable key, and
+  # webhook signing secret are captured in-app and stored encrypted — no STRIPE_*
+  # env vars are read (and the publishable key is delivered at runtime, not
+  # inlined at build time).
   ADDY_API_KEY: ${ADDY_API_KEY:-}
   ADDY_API_SECRET: ${ADDY_API_SECRET:-}
-  STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET}
   SMTP_HOST: ${SMTP_HOST}
   SMTP_PORT: ${SMTP_PORT}
   USE_AWS_SES: ${USE_AWS_SES:-true}
@@ -77,7 +78,8 @@ x-app-service: &app-service
     context: .
     dockerfile: Dockerfile
     args:
-      NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: ${NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY}
+      # Stripe publishable key is delivered at runtime from the DB store (#2082),
+      # not inlined at build time — no NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY arg.
       NEXT_PUBLIC_SENTRY_DSN: ${NEXT_PUBLIC_SENTRY_DSN:-}
   restart: unless-stopped
   logging:
@@ -203,7 +205,6 @@ services:
       dockerfile: Dockerfile
       target: builder
       args:
-        NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: ${NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY:-}
         NEXT_PUBLIC_SENTRY_DSN: ${NEXT_PUBLIC_SENTRY_DSN:-}
     profiles: ["migrate"]
     depends_on:

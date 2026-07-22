@@ -140,6 +140,7 @@ const ROUTE_AREA_PREFIXES: Array<{
       "/admin/setup/finance",
       "/admin/integrations",
       "/admin/xero",
+      "/admin/stripe",
       "/admin/payments",
       "/admin/internet-banking",
       "/admin/refund-requests",

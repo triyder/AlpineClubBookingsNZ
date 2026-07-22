@@ -1,4 +1,4 @@
-import { Plug } from "lucide-react";
+import { CreditCard, Plug } from "lucide-react";
 import {
   AdminHubPage,
   type AdminHubSection,
@@ -14,6 +14,13 @@ const sections: AdminHubSection[] = [
       "Connect Xero and configure the accounting settings used by finance workflows.",
     icon: Plug,
   },
+  {
+    href: "/admin/stripe/setup",
+    title: "Stripe Setup",
+    description:
+      "Enter your Stripe keys, confirm the account, and connect the payment webhook.",
+    icon: CreditCard,
+  },
 ];
 
 const BASE_DESCRIPTION =
@@ -21,7 +28,7 @@ const BASE_DESCRIPTION =
 
 // Providers whose encrypted credentials the hub watches for the shared re-entry
 // aggregate (#2079). C4/C5/C6 add "stripe" / "google" / "backup" here.
-const HUB_PROVIDERS = ["xero"] as const;
+const HUB_PROVIDERS = ["xero", "stripe"] as const;
 
 export default async function IntegrationsHubPage() {
   const features = await loadEffectiveModuleFlags();

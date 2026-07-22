@@ -103,8 +103,16 @@ Minimum production categories:
 - Modules: optional modules are database-backed in `ClubModuleSettings` and
   controlled from Admin > Modules after first login. No `FEATURE_*`
   environment variables are supported or read by the app.
-- Stripe: `STRIPE_SECRET_KEY`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`,
-  `STRIPE_WEBHOOK_SECRET`
+- Stripe: **no env vars** (#2082). The Stripe secret key, publishable key, and
+  webhook signing secret are captured **in-app** through the guided setup wizard
+  at **Admin > Integrations > Stripe** (Full Admin only) and stored encrypted.
+  The publishable key is delivered to the browser at **runtime** from the store
+  (`GET /api/stripe/publishable-key`), so there is no build-time
+  `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` inlining. The webhook route is
+  **fail-closed** (no stored signing secret ⇒ every event rejected). Any legacy
+  `STRIPE_SECRET_KEY` / `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` /
+  `STRIPE_WEBHOOK_SECRET` env vars still present are ignored and flagged in setup
+  readiness — see the **Upgrade: DB-only provider credentials** runbook below.
 - Xero: **no env vars** (#2079). The Xero client id/secret, webhook key, and
   token-encryption key are captured **in-app** through the guided setup wizard at
   **Admin > Xero > Setup** (#2080; Full Admin only) and stored encrypted; the
@@ -669,6 +677,29 @@ config (`AUTH_SECRET`, `DATABASE_URL`, `NEXTAUTH_URL`, SMTP/SES) is unchanged.
 5. Remove the now-ignored `XERO_*` credential env vars from the environment;
    the readiness warning clears.
 
+**Stripe (#2082):** the same cutover applies to payments. At the upgrade
+`STRIPE_SECRET_KEY`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`, and
+`STRIPE_WEBHOOK_SECRET` stop being read (setup readiness flags any still present).
+Card payments pause until the keys are re-entered because the publishable key is
+now delivered at runtime from the store, and the webhook route is fail-closed
+until its signing secret is stored. Re-enter under **Admin > Integrations >
+Stripe**: (1) with a strong auth secret, open the wizard and paste the secret and
+publishable keys (test mode first if validating); (2) run **Verify connection** and
+confirm the Stripe account name shown is the right one; (3) **reuse the webhook
+endpoint your Stripe account already has** at this site's
+`/api/webhooks/stripe` URL — open it under Developers > Webhooks, reveal its
+current signing secret, and paste that back into the wizard. Only add a new
+endpoint if none exists yet (fresh installs); creating a second endpoint on an
+upgrade issues a *different* signing secret and orphans deliveries queued
+against the old one. Send a Stripe test event to turn the webhook badge green
+(this step is skippable — payments still process, but bookings only
+auto-reconcile once the webhook is verified). **Events that arrive during the
+re-entry gap are rejected fail-closed, and Stripe retries deliveries for about
+72 hours** — restore the *same* signing secret within that window and the
+queued events verify and replay on retry; duplicate deliveries are deduplicated
+automatically. Replacing any Stripe key clears the verified webhook badge.
+Then remove the legacy `STRIPE_*` env vars.
+
 **Expected downtime:** none at deploy. Xero-backed operations (sync, webhooks,
 invoice/payment automation) pause between the upgrade and step 4 completing, and
 resume once credentials are re-entered and Xero is reconnected. Because
@@ -685,9 +716,10 @@ a casual refresh. Rotation drops, all at once:
 - **all 2FA enrolments and recovery-code hashes** — every member is forced back
   through two-factor enrollment on next sign-in. **Admin-lockout risk:** an admin
   who cannot immediately re-enroll (lost authenticator) can be locked out.
-- **all stored provider credentials** (Xero client id/secret/webhook key) and the
-  **wrapped Xero token-encryption key** — these fail GCM decryption afterwards
-  and must be re-entered in-app; Xero must be reconnected (re-OAuth).
+- **all stored provider credentials** (Xero client id/secret/webhook key; Stripe
+  secret/publishable/webhook-signing keys) and the **wrapped Xero token-encryption
+  key** — these fail GCM decryption afterwards and must be re-entered in-app; Xero
+  must be reconnected (re-OAuth) and the Stripe webhook re-verified.
 
 **Safe procedure:**
 

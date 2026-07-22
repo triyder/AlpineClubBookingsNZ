@@ -145,6 +145,24 @@ All notable public reference-release changes should be recorded here.
   columns are gone — narrow selects remain the rule for both models and it is
   the only repo-wide enforcement of it.
 
+- **Connecting Stripe no longer involves `.env` files or a rebuild (#2082 —
+  guided-setup epic #2078).** The Stripe secret key, publishable key, and webhook
+  signing secret now live in the database, encrypted at rest under a key derived
+  from the app's auth secret — the `STRIPE_SECRET_KEY`,
+  `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`, and `STRIPE_WEBHOOK_SECRET` environment
+  variables are **no longer read** (lingering values are detected and flagged for
+  removal, never silently used). A step-by-step wizard on **Admin → Integrations
+  → Stripe** walks a Full Admin from the Stripe dashboard keys through a write-only
+  capture, a **Verify connection** step that reads the Stripe account and shows its
+  name (the right-account confirmation), and an optional, freshness-scoped webhook
+  step (endpoint URL to paste, signing secret back, verified via a Stripe test
+  event). The **publishable key is delivered to the card form at runtime** from the
+  store, so there is no build-time inlining and key changes take effect without a
+  rebuild; the webhook route is **fail-closed** (no stored signing secret ⇒ every
+  event rejected), and replacing any Stripe credential clears the verified webhook
+  badge. **Upgrading an env-configured club:** card payments pause until the keys
+  are re-entered in-app — the deployment guide carries the exact upgrade runbook,
+  and the blue/green deploy script no longer requires the removed variables.
 - **Connecting Xero no longer involves `.env` files, terminals, or restarts
   (#2079, #2080 — guided-setup epic #2078).** Xero credentials (client id,
   client secret, webhook key) now live in the database, encrypted at rest

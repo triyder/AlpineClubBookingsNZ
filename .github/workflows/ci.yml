@@ -327,7 +327,8 @@ jobs:
     permissions:
       contents: read
     env:
-      NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: pk_test_fake
+      # Stripe publishable key is delivered at runtime from the DB store (#2082),
+      # not a build arg — nothing Stripe is inlined into the image.
       NEXT_PUBLIC_SENTRY_DSN: ""
       IMAGE_REF: tacbookings-ci:${{ github.sha }}
     steps:
@@ -337,7 +338,6 @@ jobs:
       - name: Build Docker image
         run: |
           docker build \
-            --build-arg NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY="${NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY}" \
             --build-arg NEXT_PUBLIC_SENTRY_DSN="${NEXT_PUBLIC_SENTRY_DSN}" \
             --tag "${IMAGE_REF}" \
             .
@@ -377,15 +377,11 @@ jobs:
     env:
       APP_IMAGE: ${{ vars.GHCR_APP_IMAGE_REPOSITORY || format('ghcr.io/{0}/alpineclubbookingsnz-app', github.repository_owner) }}:${{ github.sha }}
       MIGRATE_IMAGE: ${{ vars.GHCR_MIGRATE_IMAGE_REPOSITORY || format('ghcr.io/{0}/alpineclubbookingsnz-migrate', github.repository_owner) }}:${{ github.sha }}
-      NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: ${{ vars.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY }}
+      # Stripe credentials are DB-only (#2082) — no Stripe build args or env here.
       NEXT_PUBLIC_SENTRY_DSN: ${{ vars.NEXT_PUBLIC_SENTRY_DSN }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
-
-      - name: Validate production build variables
-        run: |
-          test -n "$NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY"
 
       - name: Log in to GHCR
         uses: docker/login-action@v4
@@ -405,7 +401,6 @@ jobs:
           push: true
           tags: ${{ env.APP_IMAGE }}
           build-args: |
-            NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=${{ env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY }}
             NEXT_PUBLIC_SENTRY_DSN=${{ env.NEXT_PUBLIC_SENTRY_DSN }}
           cache-from: type=gha,scope=alpineclubbookingsnz-app
           cache-to: type=gha,mode=max,scope=alpineclubbookingsnz-app
@@ -419,7 +414,6 @@ jobs:
           push: true
           tags: ${{ env.MIGRATE_IMAGE }}
           build-args: |
-            NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=${{ env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY }}
             NEXT_PUBLIC_SENTRY_DSN=${{ env.NEXT_PUBLIC_SENTRY_DSN }}
           cache-from: type=gha,scope=alpineclubbookingsnz-migrate
           cache-to: type=gha,mode=max,scope=alpineclubbookingsnz-migrate

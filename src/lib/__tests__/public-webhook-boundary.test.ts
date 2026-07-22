@@ -14,6 +14,14 @@ vi.mock("@/lib/stripe", () => ({
   constructWebhookEvent: mockConstructWebhookEvent,
 }));
 
+// DB-only (#2082): the webhook route resolves its signing secret from the C1
+// store via stripe-config, not the environment. Provide the secret so the route
+// reaches the signature check under test.
+vi.mock("@/lib/stripe-config", () => ({
+  getOperationalStripeWebhookSecret: vi.fn().mockResolvedValue("whsec_test"),
+  recordStripeWebhookVerified: vi.fn(),
+}));
+
 vi.mock("@/lib/stripe-webhook-service", () => ({
   processStripeWebhookEvent: vi.fn(),
 }));
@@ -42,7 +50,6 @@ describe("public and webhook route boundary behavior", () => {
         checks: { db: { status: "ok", latencyMs: 1 } },
       },
     });
-    process.env.STRIPE_WEBHOOK_SECRET = "whsec_test";
   });
 
   it("keeps the public health route session-free and redacted", async () => {

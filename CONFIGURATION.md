@@ -1515,11 +1515,28 @@ invalid app, email, or recovery-code attempts lock the two-factor challenge for
 
 ## Stripe
 
-| Variable                             | Description                                               |
-| ------------------------------------ | --------------------------------------------------------- |
-| `STRIPE_SECRET_KEY`                  | Stripe server key; use test mode outside production.      |
-| `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | Stripe browser publishable key.                           |
-| `STRIPE_WEBHOOK_SECRET`              | Stripe webhook signing secret for `/api/webhooks/stripe`. |
+**Stripe credentials are DB-only (#2082).** The Stripe secret key, publishable
+key, and webhook signing secret live **only** in the encrypted
+`IntegrationCredential` store and are captured in-app through the **guided setup
+wizard at Admin > Integrations > Stripe** (Full Admin only) — it links you to the
+Stripe API-keys page (use test mode while you set up), captures the keys
+write-only, verifies the connection by reading your Stripe account and showing
+its display name (the right-account confirmation), and walks you through the
+webhook endpoint (URL to paste, signing secret back, verified via a Stripe
+test event). The webhook step is **optional/skippable** and freshness-scoped —
+replacing any Stripe credential drops the verified webhook badge.
+
+There are **no** `STRIPE_SECRET_KEY`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`, or
+`STRIPE_WEBHOOK_SECRET` environment variables any more — if any are still present
+they are **ignored** and setup readiness raises a warning naming them for removal
+(never silently honoured). Secrets are encrypted at rest with AES-256-GCM under a
+key derived from `AUTH_SECRET`/`NEXTAUTH_SECRET` via HKDF-SHA256.
+
+The **publishable key** is not secret; it is delivered to the card form at
+**runtime** from the store via `GET /api/stripe/publishable-key` — there is no
+build-time `NEXT_PUBLIC_*` inlining, so changing keys in the wizard takes effect
+without a rebuild. The webhook route stays **fail-closed**: with no stored signing
+secret it rejects every event.
 
 ## Operational Xero
 
