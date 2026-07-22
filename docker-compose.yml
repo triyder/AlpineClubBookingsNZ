@@ -78,7 +78,6 @@ x-app-service: &app-service
       # Stripe publishable key is delivered at runtime from the DB store (#2082),
       # not inlined at build time — no NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY arg.
       NEXT_PUBLIC_SENTRY_DSN: ${NEXT_PUBLIC_SENTRY_DSN:-}
-      NODE_OPTIONS: ${NODE_OPTIONS}
   restart: unless-stopped
   logging:
     driver: json-file
