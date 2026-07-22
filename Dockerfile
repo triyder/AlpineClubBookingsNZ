@@ -26,6 +26,8 @@ ENV DATABASE_URL=postgresql://tac:password@postgres:5432/tacbookings
 ARG NEXT_PUBLIC_SENTRY_DSN
 ENV NEXT_PUBLIC_SENTRY_DSN=$NEXT_PUBLIC_SENTRY_DSN
 
+ARG NODE_OPTIONS
+ENV NODE_OPTIONS=$NODE_OPTIONS
 RUN npx prisma generate
 RUN npm run build
 
