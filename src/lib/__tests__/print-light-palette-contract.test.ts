@@ -611,14 +611,17 @@ function listComponentFiles(path: string): string[] {
 //                              above. `ui/card.tsx` is where #2146 actually
 //                              originated, so this root is not optional.
 //
-// The last three entries are individual shared components that render on a
+// The last two entries are individual shared components that render on a
 // printable page without living in one of the trees above. They are NOT
-// equivalent to each other, and only one of them is belt-and-braces:
+// equivalent to each other:
 //
-// - `contextual-help-button.tsx` — rendered inside `main.reports-print-root`
-//   ((finance)/finance/layout.tsx:55,73) and in the admin layout. It is the one
-//   that carries `print:hidden` itself (contextual-help-button.tsx:115), so for
-//   this entry the root really is belt-and-braces.
+// (The retired `contextual-help-button.tsx` used to be listed here as the one
+// belt-and-braces case — it carried `print:hidden` itself. Epic #2094 C2
+// replaced it and `booking-help-dialog.tsx` with the global help widget, whose
+// launcher and panel both carry `print:hidden`; those live under
+// `src/components/help-widget/`, are token-pure, and never print, so they need
+// no entry here.)
+//
 // - `date-range-controls.tsx` — LOAD-BEARING, do not prune. `/admin/reports`
 //   renders it at page.tsx:334, which is OUTSIDE the `.reports-print-root` div
 //   at page.tsx:396 but still on the printed document, and it has no
@@ -638,8 +641,8 @@ function listComponentFiles(path: string): string[] {
 //   report screen away from doing so, and the cost of listing it is nil.)
 //
 // Listing them here rather than leaning on the census is deliberate: the
-// census's only remedy is `NON_PRINTABLE_DARK_UTILITY_FILES`, and adding any of
-// these three to that list would be a false claim — each renders visible markup
+// census's only remedy is `NON_PRINTABLE_DARK_UTILITY_FILES`, and adding either
+// of these two to that list would be a false claim — each renders visible markup
 // on a page an operator can print.
 const PRINTABLE_SURFACE_ROOTS = [
   "src/app/(finance)",
@@ -650,7 +653,6 @@ const PRINTABLE_SURFACE_ROOTS = [
   "src/app/(authenticated)/lodge-instructions",
   "src/app/(website)/hut-leader-instructions",
   "src/components/ui",
-  "src/components/contextual-help-button.tsx",
   "src/components/admin/date-range-controls.tsx",
   "src/components/lodge-select.tsx",
 ];
