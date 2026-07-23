@@ -19,13 +19,13 @@ The calendar is always on — there is no module toggle to enable it.
 
 ## Who can do what
 
-| Action                  | Members (ordinary) | Committee members | Admins with lodge **edit** |
-| ----------------------- | ------------------ | ----------------- | -------------------------- |
-| View read-only calendar | ✅ read-only       | ✅                | ✅                         |
-| Create an event         | ❌                 | ✅                | ✅                         |
-| Edit an event           | ❌                 | ✅                | ✅                         |
-| Delete an event         | ❌                 | ✅                | ✅                         |
-| Open video-meeting link | ❌                 | ✅                | ✅                         |
+| Action                  | Members (ordinary) | Committee members | Admins **edit** |
+| ----------------------- | ------------------ | ----------------- | --------------- |
+| View read-only calendar | ✅ read-only       | ✅                | ✅              |
+| Create an event         | ❌                 | ✅                | ✅              |
+| Edit an event           | ❌                 | ❌                | ✅              |
+| Delete an event         | ❌                 | ❌                | ✅              |
+| Open video-meeting link | ❌                 | ✅                | ✅              |
 
 - **Everyone who can log in** sees the calendar. Ordinary members get a
   read-only view: opening an event shows its details with only a **Close**
@@ -188,12 +188,12 @@ link, so committee members join straight in while unauthorised people (who never
 get the link, and could not forge a token) stay out. The token is minted fresh
 per page load and the signing key never reaches the browser.
 
-| Variable | What it is |
-| --- | --- |
-| `MIRO_JWT_KEY` | Must equal MiroTalk's own `JWT_KEY`. |
-| `MIRO_MEETING_USERNAME` / `MIRO_MEETING_PASSWORD` | Must match one entry in MiroTalk's `HOST_USERS` (MiroTalk re-checks these). |
-| `MIRO_MEETING_PRESENTER` | `true` (default) = the clicker joins as host so the meeting starts immediately; `false` leaves joiners on MiroTalk's "waiting for host" screen. |
-| `MIRO_JWT_EXP` | Token lifetime — `1h` (default), `30m`, `900` (seconds), etc. Minted fresh on each page load, so this only bounds a link left unopened. |
+| Variable                                          | What it is                                                                                                                                      |
+| ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `MIRO_JWT_KEY`                                    | Must equal MiroTalk's own `JWT_KEY`.                                                                                                            |
+| `MIRO_MEETING_USERNAME` / `MIRO_MEETING_PASSWORD` | Must match one entry in MiroTalk's `HOST_USERS` (MiroTalk re-checks these).                                                                     |
+| `MIRO_MEETING_PRESENTER`                          | `true` (default) = the clicker joins as host so the meeting starts immediately; `false` leaves joiners on MiroTalk's "waiting for host" screen. |
+| `MIRO_JWT_EXP`                                    | Token lifetime — `1h` (default), `30m`, `900` (seconds), etc. Minted fresh on each page load, so this only bounds a link left unopened.         |
 
 **On the MiroTalk side** nothing structural changes — you already have
 `JWT_KEY`, `HOST_PROTECTED`, `HOST_USER_AUTH`, and `HOST_USERS`. Just make sure
@@ -226,7 +226,7 @@ Leave these unset to keep the plain link (MiroTalk shows its own login prompt).
 | An ordinary member sees **Save**/**Delete** on events | That account is actually a committee member or a lodge-edit admin                               | Confirm with `npx tsx scripts/diagnose-calendar-access.ts their@email`; committee assignment grants calendar edit by design       |
 | A member should be able to edit but is read-only      | They have no active committee assignment and no lodge-edit role                                 | Add a committee assignment (**Admin → Members → [member] → Committee**) or grant lodge edit                                       |
 | A repeating event shows on only one month             | The recurrence was not saved (older build)                                                      | Open the event, set **Repeat**, and **Save** (this converts it to a series), or delete and recreate; ensure the app is up to date |
-| **Open meeting link** does nothing / wrong host       | `MIROTALK_URL` is unset or points at the wrong instance                                         | Set `MIROTALK_URL` to your MiroTalk base URL (with `https://`) and restart the app                                               |
+| **Open meeting link** does nothing / wrong host       | `MIROTALK_URL` is unset or points at the wrong instance                                         | Set `MIROTALK_URL` to your MiroTalk base URL (with `https://`) and restart the app                                                |
 | Camera/mic blocked in the meeting                     | MiroTalk is served over plain HTTP (not localhost) or without a camera/mic `Permissions-Policy` | Serve MiroTalk over HTTPS on its own subdomain with camera/mic allowed                                                            |
 
 ## Related links
