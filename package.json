@@ -95,7 +95,7 @@
     "jspdf": "^4.2.1",
     "lucide-react": "^1.24.0",
     "next": "16.2.11",
-    "next-auth": "5.0.0-beta.31",
+    "next-auth": "5.0.0-beta.32",
     "next-themes": "^0.4.6",
     "node-cron": "^4.6.0",
     "nodemailer": "^9.0.1",
@@ -122,10 +122,12 @@
     "axios": "1.18.1",
     "dompurify": "3.4.12",
     "follow-redirects": "1.16.0",
-    "postcss": "8.5.10",
+    "postcss": "8.5.22",
     "vite": "8.0.16",
     "form-data": "4.0.6",
     "brace-expansion": "5.0.7",
+    "@auth/core": "0.41.3",
+    "find-my-way": "9.7.0",
     "next-auth": {
       "nodemailer": "$nodemailer"
     }
