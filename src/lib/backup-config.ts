@@ -30,9 +30,16 @@ import {
 export const BACKUP_PROVIDER = "backup";
 
 export const DEFAULT_BACKUP_REGION = "ap-southeast-2";
-export const DEFAULT_BACKUP_RETENTION_DAYS = 7;
-export const MIN_BACKUP_RETENTION_DAYS = 1;
-export const MAX_BACKUP_RETENTION_DAYS = 3650;
+import {
+  DEFAULT_BACKUP_RETENTION_DAYS,
+  MIN_BACKUP_RETENTION_DAYS,
+  MAX_BACKUP_RETENTION_DAYS,
+} from "./backup-config-shared";
+export {
+  DEFAULT_BACKUP_RETENTION_DAYS,
+  MIN_BACKUP_RETENTION_DAYS,
+  MAX_BACKUP_RETENTION_DAYS,
+};
 
 /**
  * All backup credential/config slots stored in the encrypted store. Split by the

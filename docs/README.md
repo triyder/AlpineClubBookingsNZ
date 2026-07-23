@@ -191,6 +191,8 @@ content and appearance, and the platform/support admin surfaces):
 - [Setup](guides/setup.md) — the installation checklist and configuration hub.
 - [Integrations](guides/integrations.md) — connected services (Xero;
   feature-gated).
+- [AI Help Assistant](guides/ai-help.md) — the in-app help widget and the
+  optional paid AI assistant (module, key, spend cap, and privacy).
 - [Export & Import](guides/config-transfer.md) — portable configuration/content
   bundles (Full Admin only).
 

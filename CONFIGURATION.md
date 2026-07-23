@@ -1567,6 +1567,9 @@ secret it rejects every event.
 
 ## AI help assistant
 
+> See the [AI Help Assistant guide](docs/guides/ai-help.md) for the operator
+> walkthrough and what members see.
+
 **The Anthropic API key is DB-only (#2211).** The key lives **only** in the
 encrypted `IntegrationCredential` store (provider `anthropic`, key `api_key`),
 captured write-only on **Admin → Integrations** (Full Admin only). There is **no**
@@ -1816,7 +1819,10 @@ rate-limited, or temporarily unavailable.
 > region, access key/secret, retention window, restore-validation shadow
 > database URL, and the enabled switch all live in the encrypted
 > `IntegrationCredential` store and are managed at **Admin → Integrations →
-> Database Backups** (`/admin/backups`). The legacy `BACKUP_ENABLED`,
+> Database Backups**. First-time setup uses the guided wizard
+> (`/admin/backups/setup` — S3 credentials → destination → nightly schedule → a
+> real verification run); the flat page (`/admin/backups`) is the post-setup
+> editing surface. The legacy `BACKUP_ENABLED`,
 > `BACKUP_S3_BUCKET`, `BACKUP_S3_REGION`, `BACKUP_S3_ACCESS_KEY_ID`,
 > `BACKUP_S3_SECRET_ACCESS_KEY`, `BACKUP_RETENTION_DAYS`, and
 > `BACKUP_RESTORE_VALIDATION_URL` variables are **no longer read**: a deployment
