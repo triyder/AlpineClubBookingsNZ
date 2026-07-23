@@ -84,7 +84,9 @@ describe("feature-aware navigation", () => {
     expect(items).not.toContain("Waitlist");
     expect(items).not.toContain("Roster");
     expect(items).not.toContain("Chores");
-    expect(items).not.toContain("Integrations");
+    // #2216: the Integrations hub is deliberately ungated from xeroIntegration —
+    // it stays visible so the Stripe/Google/Backups/AI cards remain reachable.
+    expect(items).toContain("Integrations");
     expect(items).toContain("Bookings");
     expect(items).toContain("Booking Requests");
     expect(items).toContain("Stuck States");
@@ -104,7 +106,8 @@ describe("feature-aware navigation", () => {
 
     expect(items).toContain("Site Appearance & Content");
     expect(items).not.toContain("Chores");
-    expect(items).not.toContain("Integrations");
+    // #2216: Integrations is no longer Xero-gated (see the sidebar test above).
+    expect(items).toContain("Integrations");
   });
 
   it("links booking request navigation to the combined request page", () => {

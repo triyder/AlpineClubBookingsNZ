@@ -7,8 +7,11 @@ import { NavBar } from "@/components/nav-bar";
 import { SiteBanners } from "@/components/site-banners";
 import { MemberOnboardingWizard } from "@/components/member-onboarding-wizard";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
+import { getAiAssistantAvailability } from "@/lib/ai-assistant-config";
 import { hasActiveHutLeaderAssignment } from "@/lib/hut-leader";
 import { ReportIssueWidget } from "@/components/report-issue-widget";
+import { HelpWidgetProvider } from "@/components/help-widget/help-widget-context";
+import { HelpWidgetMember } from "@/components/help-widget/help-widget-member";
 import { getCachedClubIdentity } from "@/lib/public-layout-config";
 import { clubThemeFontVariableClassName } from "@/lib/club-theme-fonts";
 import {
@@ -153,6 +156,15 @@ export default async function AuthenticatedLayout({
   const liveClubIdentity = { ...clubIdentity, lodgeCapacity };
   const nonce = requestHeaders.get(CSP_NONCE_HEADER) ?? undefined;
 
+  // The paid AI free-text path renders only when the module is on AND a usable
+  // Anthropic key is stored (getAiAssistantAvailability folds in both). The
+  // module-off short-circuit avoids a needless credential read. Budget is NOT
+  // checked here — a budget-exhausted deployment still shows the box and the
+  // /api/help/chat route returns a structured "budget_exhausted" fallback.
+  const llmEnabled =
+    effectiveModules.aiAssistant &&
+    (await getAiAssistantAvailability(effectiveModules));
+
   return (
     <AppProviders clubIdentity={liveClubIdentity} nonce={nonce}>
       <div
@@ -170,15 +182,21 @@ export default async function AuthenticatedLayout({
         </a>
         <SiteBanners banners={siteBanners} />
         <NavBar user={user} features={effectiveModules} />
-        <main
-          id="main-content"
-          tabIndex={-1}
-          className="flex-1 mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 lg:px-8"
-        >
-          {children}
-        </main>
-        <MemberOnboardingWizard initialShouldShow={showOnboardingWizard} />
-        <ReportIssueWidget />
+        <HelpWidgetProvider>
+          <main
+            id="main-content"
+            tabIndex={-1}
+            className="flex-1 mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 lg:px-8"
+          >
+            {children}
+          </main>
+          <MemberOnboardingWizard initialShouldShow={showOnboardingWizard} />
+          <ReportIssueWidget />
+          <HelpWidgetMember
+            llmEnabled={llmEnabled}
+            chatEndpoint="/api/help/chat"
+          />
+        </HelpWidgetProvider>
       </div>
     </AppProviders>
   );

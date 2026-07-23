@@ -3,7 +3,6 @@ import {
   AA_TEXT_CONTRAST_RATIO,
   CLUB_THEME_COLOUR_FIELDS,
   DEFAULT_CLUB_THEME_VALUES,
-  TOKOROA_CLUB_THEME_VALUES,
   buildClubThemeAppCss,
   buildClubThemeCss,
   contrastRatio,
@@ -16,6 +15,7 @@ import {
   sanitiseRawCss,
   themeSeedsFromValues,
 } from "@/lib/club-theme-schema";
+import { SYNTHETIC_CLUB_THEME_VALUES } from "@/lib/theme/__tests__/reference-seed-sets";
 import { clubThemeUpdateSchema } from "@/lib/club-theme-update-schema";
 import {
   buildNeutralRamp,
@@ -92,9 +92,9 @@ describe("getBlockingContrastWarnings", () => {
   // The blocking gate no longer gates any save (#2187): the substrate guarantees
   // contrast by construction, so this helper is advisory-only. The one property
   // still worth pinning is that the shipped palettes carry no blocking pairs.
-  it("returns no blocking warnings for the shipped render palettes", () => {
+  it("returns no blocking warnings for the shipped default or a synthetic bright palette", () => {
     expect(getBlockingContrastWarnings(DEFAULT_CLUB_THEME_VALUES)).toEqual([]);
-    expect(getBlockingContrastWarnings(TOKOROA_CLUB_THEME_VALUES)).toEqual([]);
+    expect(getBlockingContrastWarnings(SYNTHETIC_CLUB_THEME_VALUES)).toEqual([]);
   });
 });
 
@@ -173,7 +173,7 @@ describe("deriveAppMutedForeground (#2145)", () => {
 
   it.each([
     ["default", DEFAULT_CLUB_THEME_VALUES],
-    ["Tokoroa", TOKOROA_CLUB_THEME_VALUES],
+    ["synthetic", SYNTHETIC_CLUB_THEME_VALUES],
   ])(
     "gives the %s palette a muted tone that is DISTINCT from --foreground",
     (_label, theme) => {
@@ -192,7 +192,7 @@ describe("deriveAppMutedForeground (#2145)", () => {
 
   it.each([
     ["default", DEFAULT_CLUB_THEME_VALUES],
-    ["Tokoroa", TOKOROA_CLUB_THEME_VALUES],
+    ["synthetic", SYNTHETIC_CLUB_THEME_VALUES],
   ])("clears WCAG AA on every %s app surface, in both modes", (_label, theme) => {
     const muted = deriveAppMutedForeground(theme);
 
@@ -223,7 +223,7 @@ describe("deriveAppMutedForeground (#2145)", () => {
 
   it.each([
     ["default", DEFAULT_CLUB_THEME_VALUES],
-    ["Tokoroa", TOKOROA_CLUB_THEME_VALUES],
+    ["synthetic", SYNTHETIC_CLUB_THEME_VALUES],
   ])(
     "keeps the %s palette's muted tone a real step below --foreground, not a token one",
     (_label, theme) => {
@@ -276,8 +276,8 @@ describe("deriveAppMutedForeground (#2145)", () => {
       "#f5f8f6",
       "#ffffff",
     ];
-    const accentSeeds = ["#57b3ab", "#ffcb05"];
-    const supportSeeds = ["#b04d28", "#ff7c12"];
+    const accentSeeds = ["#57b3ab", "#eab308"];
+    const supportSeeds = ["#b04d28", "#e11d48"];
     let swept = 0;
     let inheritedFailures = 0;
 
@@ -395,8 +395,9 @@ describe("deriveAppMutedForeground (#2145)", () => {
 
     expect(appCss).toContain(`--app-muted-foreground:${muted.light};`);
     expect(appCss).toContain(`--app-muted-foreground-dark:${muted.dark};`);
-    // The public website scope keeps its own color-mix muted tone and must not
-    // pick up the app-only tokens.
+    // The public website scope resolves its muted tone from the substrate
+    // (`--muted-foreground` = neutral-11, #2217) and must not pick up the
+    // app-only measured tokens.
     expect(buildClubThemeCss(DEFAULT_CLUB_THEME_VALUES)).not.toContain(
       "--app-muted-foreground",
     );
@@ -405,22 +406,25 @@ describe("deriveAppMutedForeground (#2145)", () => {
 
 describe("generic public default palette (#1807)", () => {
   // The shipped default must read as generic New Zealand alpine, never as a
-  // specific club. Tokoroa gold is seeded ONLY behind SEED_TOKOROA_THEME_COMPLETE
-  // (TOKOROA_CLUB_THEME_VALUES); it must not leak into the public default. The
-  // comparison is over the 3 SEED columns (`CLUB_THEME_COLOUR_FIELDS`) — there
-  // are no orphan columns left to compare.
-  it("does not reuse any Tokoroa brand colour", () => {
-    const tokoroaHexes = new Set(
+  // specific club. No fork brand palette ships in the public repo (#2190 D15) —
+  // the default must not coincide with the synthetic bright reference palette,
+  // and, as a standing regression guard, must never be the founding fork's
+  // signature gold. The comparison is over the 3 SEED columns
+  // (`CLUB_THEME_COLOUR_FIELDS`) — there are no orphan columns left to compare.
+  it("does not reuse the synthetic reference palette's colours", () => {
+    const referenceHexes = new Set(
       CLUB_THEME_COLOUR_FIELDS.map(
-        (field) => TOKOROA_CLUB_THEME_VALUES[field.key].toLowerCase(),
+        (field) => SYNTHETIC_CLUB_THEME_VALUES[field.key].toLowerCase(),
       ),
     );
     for (const field of CLUB_THEME_COLOUR_FIELDS) {
-      expect(tokoroaHexes.has(DEFAULT_CLUB_THEME_VALUES[field.key].toLowerCase())).toBe(
+      expect(referenceHexes.has(DEFAULT_CLUB_THEME_VALUES[field.key].toLowerCase())).toBe(
         false,
       );
     }
-    // Belt-and-suspenders: the signature Tokoroa gold specifically is absent.
+    // Standing regression guard: the founding fork's signature gold must never
+    // re-enter the public default (this asserts its ABSENCE — the hex itself
+    // lives nowhere else in the repo).
     expect(
       CLUB_THEME_COLOUR_FIELDS.some(
         (field) =>
@@ -429,11 +433,11 @@ describe("generic public default palette (#1807)", () => {
     ).toBe(false);
   });
 
-  it("is a complete, distinct set of seeds from the Tokoroa theme", () => {
+  it("is a complete, distinct set of seeds from the synthetic reference palette", () => {
     for (const field of CLUB_THEME_COLOUR_FIELDS) {
       expect(DEFAULT_CLUB_THEME_VALUES[field.key]).toMatch(/^#[0-9a-f]{6}$/i);
       expect(DEFAULT_CLUB_THEME_VALUES[field.key]).not.toBe(
-        TOKOROA_CLUB_THEME_VALUES[field.key],
+        SYNTHETIC_CLUB_THEME_VALUES[field.key],
       );
     }
   });

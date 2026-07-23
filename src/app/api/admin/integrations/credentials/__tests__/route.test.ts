@@ -169,6 +169,36 @@ describe("POST /api/admin/integrations/credentials", () => {
     expect(mocks.setIntegrationCredential).toHaveBeenCalledTimes(1);
   });
 
+  it("accepts the Anthropic api_key via the extended allowlist (#2211)", async () => {
+    asFullAdmin();
+    mocks.setIntegrationCredential.mockResolvedValue({
+      provider: "anthropic",
+      key: "api_key",
+      secretSource: "AUTH_SECRET",
+      labelVersion: "integration-credential:v1",
+      updatedAt: new Date("2026-07-23T10:00:00.000Z"),
+    });
+    const res = await POST(
+      makeRequest({ provider: "anthropic", key: "api_key", value: "sk-ant-xxx" }),
+    );
+    expect(res.status).toBe(200);
+    expect(mocks.setIntegrationCredential).toHaveBeenCalledTimes(1);
+    // No verify-reset side-effect for anthropic (no verified marker exists).
+    expect(mocks.deleteXeroTokens).not.toHaveBeenCalled();
+    expect(mocks.clearStripeWebhookVerified).not.toHaveBeenCalled();
+    const json = await res.json();
+    expect(JSON.stringify(json)).not.toContain("sk-ant-xxx");
+  });
+
+  it("rejects an unknown anthropic key (only api_key is writable)", async () => {
+    asFullAdmin();
+    const res = await POST(
+      makeRequest({ provider: "anthropic", key: "not_a_key", value: "x" }),
+    );
+    expect(res.status).toBe(400);
+    expect(mocks.setIntegrationCredential).not.toHaveBeenCalled();
+  });
+
   it("rejects the internal webhook_verified marker key (not writable via the API)", async () => {
     asFullAdmin();
     const res = await POST(

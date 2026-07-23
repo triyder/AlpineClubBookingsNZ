@@ -15,6 +15,9 @@ import {
   buildAppThemeTokens,
   CARD_SHADOW,
   defaultAppRoleFallbacks,
+  defaultWebsiteRoleFallbacks,
+  serializeWebsiteRoleTokens,
+  WEBSITE_ROLE_ALIASES,
 } from "@/lib/theme/app-tokens";
 import { G5A_CARD_SEPARATION } from "@/lib/theme/guarantees";
 
@@ -361,6 +364,54 @@ describe("database theme app-shell contract", () => {
     }
     // Mutation guard: a scope that DROPPED the step vars would fail the above.
     expect(css).not.toMatch(/\.website-theme\{\}/);
+  });
+
+  // #2217 (theme burndown ITEM A) — the website SEMANTIC ROLE tokens are migrated
+  // OFF the `--brand-*` shims and `color-mix()` recipes ONTO the generated
+  // substrate steps. `buildClubThemeCss` injects them (per-club override), and the
+  // globals.css `.website-theme` static block carries the DEFAULT palette's
+  // resolved hexes as the no-stylesheet fallback. This pins BOTH halves against the
+  // resolver so the CSS literals and the derivation cannot drift, and guards the
+  // preserved branded look (gold primary/ring, dark charcoal nav).
+  it("resolves the website role tokens from the substrate (no brand shims / mixes)", () => {
+    const seeds = themeSeedsFromValues(DEFAULT_CLUB_THEME_VALUES);
+    const css = buildClubThemeCss(DEFAULT_CLUB_THEME_VALUES);
+    const roles = defaultWebsiteRoleFallbacks(seeds);
+
+    // The injected `.website-theme` block carries every resolved role token, so a
+    // per-club sheet overrides the static fallback by source order.
+    const injected = serializeWebsiteRoleTokens(seeds);
+    expect(css).toContain(injected);
+    for (const role of Object.keys(WEBSITE_ROLE_ALIASES)) {
+      expect(css, `injected --${role}`).toContain(`--${role}:${roles[role]};`);
+    }
+
+    // The globals.css static `.website-theme { … }` block declares each role with
+    // the DEFAULT resolved hex, names no brand shim, and carries no `color-mix`.
+    const globals = readRepoFile("src/app/globals.css");
+    const start = globals.indexOf(".website-theme {");
+    const block = globals.slice(start, globals.indexOf("}", start));
+    expect(start).toBeGreaterThan(0);
+    expect(block).not.toContain("var(--brand-");
+    expect(block).not.toContain("color-mix");
+    for (const role of Object.keys(WEBSITE_ROLE_ALIASES)) {
+      expect(block, `static --${role} fallback`).toContain(
+        `--${role}: ${roles[role]};`,
+      );
+    }
+
+    // The BRANDED look is preserved: the accent (gold) is the primary/action, the
+    // focus ring, and the sidebar action; the nav surface stays the darkest ink.
+    const light = buildAppThemeTokens(seeds).tokens;
+    const gold = light["--gen-accent-9"];
+    const darkInk = light["--gen-neutral-12"];
+    const lightPage = light["--gen-neutral-1"];
+    expect(roles.primary).toBe(gold);
+    expect(roles.ring).toBe(gold);
+    expect(roles["sidebar-primary"]).toBe(gold);
+    expect(roles.sidebar).toBe(darkInk);
+    expect(roles.background).toBe(lightPage);
+    expect(roles["sidebar-foreground"]).toBe(lightPage);
   });
 
   // #2145 — the CSS half of the derived muted role. The value itself is derived

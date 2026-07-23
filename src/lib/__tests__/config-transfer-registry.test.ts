@@ -20,6 +20,7 @@ import "@/lib/config-transfer/categories/lodge-ops";
 import "@/lib/config-transfer/categories/committee";
 import "@/lib/config-transfer/categories/induction";
 import "@/lib/config-transfer/categories/membership-fees";
+import "@/lib/config-transfer/categories/age-tier";
 import "@/lib/config-transfer/categories/xero-config";
 
 function descriptor(overrides: Partial<EntityDescriptor> = {}): EntityDescriptor {
@@ -51,6 +52,17 @@ describe("config-transfer registry — forbidden field guard", () => {
     for (const f of ["slug", "name", "capacity", "sortOrder", "contentHtml"]) {
       expect(isForbiddenField(f)).toBe(false);
     }
+  });
+
+  // #2200: the password-POLICY length bound is portable (an integer rule), but
+  // every credential-bearing password field stays blocked.
+  it("allows the password-length policy bound but still blocks credential material", () => {
+    expect(isForbiddenField("minPasswordLength")).toBe(false);
+    expect(isForbiddenField("maxPasswordLength")).toBe(false);
+    expect(isForbiddenField("password")).toBe(true);
+    expect(isForbiddenField("passwordHash")).toBe(true);
+    expect(isForbiddenField("newPassword")).toBe(true);
+    expect(isForbiddenField("forcePasswordChange")).toBe(true);
   });
 
   it("treats door codes as sensitive opt-in, not forbidden", () => {

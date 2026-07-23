@@ -5,18 +5,24 @@ Audience: Operator
 ## What it is
 
 The hub for connected external services used by accounting and other
-provider-backed workflows. Today it holds one card — **Xero Setup** — which
-opens the Xero connection and accounting configuration used by finance. Find it
-at **Admin → Setup & Configuration → Integrations** (`/admin/integrations`).
+provider-backed workflows. It holds a card per integration — **Xero Setup**,
+**Stripe Setup**, **Google sign-in Setup**, and **Database Backups** — and each
+card opens that provider's own setup page. Find it at **Admin → Setup &
+Configuration → Integrations** (`/admin/integrations`).
 
-> **Feature-gated — no screenshot in the demo seed.** This route is gated by the
-> `xeroIntegration` module (see [Modules](modules.md) and
-> `src/config/feature-routes.ts`). The demo/staging seed leaves Xero **off**
-> (the `xeroIntegration` module defaults off), so `/admin/integrations` returns
-> a 404 there and the documentation screenshot harness captures nothing for it —
-> exactly like the [Xero Sync](xero.md) and [Internet Banking](internet-banking.md)
-> guides. This guide therefore describes the screen in prose; enable the Xero
-> integration module to reach the live page.
+> **The hub itself is not feature-gated (#2216).** `/admin/integrations` is
+> deliberately *not* listed under any module flag in
+> `src/config/feature-routes.ts`, so the hub renders whenever any integration
+> module is on. Each card is feature- and permission-filtered individually by
+> `AdminHubPage`, and every destination keeps its own gate — so the hub simply
+> shows whichever integrations are enabled for the current admin. In particular
+> the **Xero Setup** card (and the `/admin/xero/*` routes behind it) stays gated
+> by the `xeroIntegration` module: with Xero off the card is absent but the hub —
+> and the other cards / their back-links to it — remain reachable. The
+> demo/staging seed leaves Xero **off** (the `xeroIntegration` module defaults
+> off), so the documentation screenshot harness captures the hub without its Xero
+> card; this guide describes the Xero flow in prose. Enable the Xero integration
+> module to reach the live Xero Setup page.
 
 ## When you'd use it
 
@@ -29,10 +35,11 @@ at **Admin → Setup & Configuration → Integrations** (`/admin/integrations`).
 
 ### Open Xero setup
 
-1. Enable the **Xero integration** module on [Modules](modules.md) (the
-   Integrations sidebar entry and route stay hidden until it is on).
-2. Go to **Admin → Setup & Configuration → Integrations**. The hub shows the
-   **Xero Setup** card.
+1. Enable the **Xero integration** module on [Modules](modules.md) (the Xero
+   Setup card and the `/admin/xero/*` routes stay hidden until it is on; the
+   Integrations hub itself remains reachable regardless).
+2. Go to **Admin → Setup & Configuration → Integrations**. With Xero enabled the
+   hub shows the **Xero Setup** card.
 3. Open **Xero Setup** (`/admin/xero/setup`) to connect Xero and configure the
    accounting settings finance workflows rely on. The connection, sync,
    reconciliation ledger, and records browser are documented in the
@@ -52,8 +59,8 @@ and [`DEPLOYMENT.md`](../../DEPLOYMENT.md)).
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
-| `/admin/integrations` shows a 404 | The `xeroIntegration` module is off | Enable it on [Modules](modules.md) |
-| No Integrations entry in the sidebar | Same — the module gates the sidebar link too | Enable the module and reload |
+| No **Xero Setup** card on the Integrations hub | The `xeroIntegration` module is off (the hub still renders; only its Xero card is hidden) | Enable it on [Modules](modules.md) |
+| `/admin/integrations` shows a 404 | No integration surfaces are reachable at all, or the admin layout gate blocks you | Confirm you have an integration/finance/support area role; the hub itself is not module-gated (#2216) |
 | Xero Setup won't connect | Xero OAuth credentials/tenant tokens aren't configured server-side | Configure them per [`CONFIGURATION.md`](../../CONFIGURATION.md); see [`xero/ARCHITECTURE.md`](../xero/ARCHITECTURE.md) |
 
 ## Related links

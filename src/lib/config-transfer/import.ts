@@ -21,6 +21,7 @@ import { displayImporter } from "./categories/display";
 import { committeeImporter } from "./categories/committee";
 import { inductionImporter } from "./categories/induction";
 import { membershipFeesImporter } from "./categories/membership-fees";
+import { ageTierImporter } from "./categories/age-tier";
 import { xeroConfigImporter, connectedXeroTenantId, readXeroSourceTenantId } from "./categories/xero-config";
 
 // Import plan orchestrator (dry-run). Reads + validates the bundle, runs each
@@ -38,6 +39,9 @@ export const CATEGORY_IMPORTERS: CategoryImporter[] = [
   displayImporter,
   committeeImporter,
   inductionImporter,
+  // age-tier rides the membership-fees category as its own module (#2200); its
+  // plan/apply short-circuit when the bundle carries no age-tiers.csv.
+  ageTierImporter,
   membershipFeesImporter,
   xeroConfigImporter,
 ];

@@ -103,6 +103,8 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/access-roles": "support",
   "/api/admin/access-roles/[id]": "support",
   "/api/admin/age-tier-settings": "bookings",
+  "/api/admin/ai-assistant/settings": "support",
+  "/api/admin/ai-assistant/usage": "support",
   "/api/admin/audit-log": "support",
   "/api/admin/backups/config": "support",
   "/api/admin/backups/run": "support",

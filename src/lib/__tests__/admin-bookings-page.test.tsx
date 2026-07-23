@@ -85,6 +85,7 @@ const effectiveModulesOn = {
   googleLogin: false,
   analytics: false,
   lobbyDisplay: false,
+  aiAssistant: false,
 };
 
 describe("AdminBookingsPage", () => {

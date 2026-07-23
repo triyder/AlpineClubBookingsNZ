@@ -2,6 +2,11 @@
 // src/lib/__tests__/seed-account-defaults.test.ts. Everything here must stay
 // free of real personal data: names, phone numbers, and emails are clearly
 // generic placeholders that a club replaces through the admin screens.
+//
+// #2190 P4 — no fork/Tokoroa brand values live here (or anywhere in the public
+// repo): the public seed provisions only the generic DEFAULT_CLUB_THEME_VALUES,
+// and a fork provisions its own palette from its own deployment's ClubTheme row
+// (standing directive D15).
 
 export interface SeedMemberAccountData {
   email: string;
@@ -439,14 +444,3 @@ export function buildSeedChoreTemplates(): SeedChoreTemplate[] {
   ];
 }
 
-/**
- * Whether seedClubTheme should skip writing the Tokoroa theme defaults.
- * SEED_TOKOROA_THEME_COMPLETE=1 is re-applied on every seed run, but once an
- * admin has completed site style setup (completedAt set), re-running the
- * seed must not overwrite their edits.
- */
-export function shouldSkipTokoroaThemeSeed(
-  existing: { completedAt: Date | null } | null,
-): boolean {
-  return existing?.completedAt != null;
-}

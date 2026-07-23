@@ -128,6 +128,13 @@ export type ApplyConfigImportResult = {
   totals: CategoryApplyResult;
   backup: { attempted: boolean; skipped: boolean };
   doorCodesWritten: string[];
+  /**
+   * Distinct entity names this import actually changed (created or updated; an
+   * unchanged item is excluded). Lets a caller fire an entity-specific side
+   * effect only when that entity moved — e.g. the apply route drops the in-process
+   * age-tier cache only when the `age-tier` entity changed (#2200).
+   */
+  appliedEntities: string[];
 };
 
 export async function applyConfigImport(
@@ -194,6 +201,7 @@ export async function applyConfigImport(
     action: string;
     changedFields?: string[];
   }> = [];
+  let appliedEntities: string[] = [];
   let selectedCategories: ConfigTransferCategory[] = [];
 
   await prisma.$transaction(
@@ -241,6 +249,18 @@ export async function applyConfigImport(
             })),
         )
         .slice(0, 200);
+
+      // Distinct entities this import actually changes (uncapped, unlike the
+      // 200-item auditDiff), so a caller can gate an entity-specific side effect.
+      appliedEntities = [
+        ...new Set(
+          replan.categories.flatMap((cat) =>
+            cat.items
+              .filter((i) => i.action !== "unchanged")
+              .map((i) => i.entity),
+          ),
+        ),
+      ].sort();
 
       // Recreate bundled images once (only when an image-referencing category
       // is selected — disclosed by the plan's media items); all categories
@@ -323,5 +343,6 @@ export async function applyConfigImport(
       skipped: backup.skipped === true,
     },
     doorCodesWritten: notes.doorCodesWritten,
+    appliedEntities,
   };
 }

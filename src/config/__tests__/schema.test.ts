@@ -236,6 +236,7 @@ describe("featureFlagsSchema", () => {
         googleLogin: false,
         analytics: false,
         lobbyDisplay: false,
+        aiAssistant: false,
       }),
     ).toBeDefined();
   });

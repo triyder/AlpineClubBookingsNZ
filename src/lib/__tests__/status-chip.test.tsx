@@ -30,11 +30,11 @@ const CASES: Case[] = [
   // PROCESSING / REFUNDED / PARTIALLY_REFUNDED get distinct accent hues (#156)
   // so the payments table shows each state instead of collapsing them onto
   // info/neutral/warning.
-  { kind: "payment", value: "PROCESSING", label: "Processing", tone: "indigo" },
+  { kind: "payment", value: "PROCESSING", label: "Processing", tone: "cat3" },
   { kind: "payment", value: "SUCCEEDED", label: "Succeeded", tone: "success" },
   { kind: "payment", value: "FAILED", label: "Failed", tone: "danger" },
-  { kind: "payment", value: "REFUNDED", label: "Refunded", tone: "purple" },
-  { kind: "payment", value: "PARTIALLY_REFUNDED", label: "Partially refunded", tone: "teal" },
+  { kind: "payment", value: "REFUNDED", label: "Refunded", tone: "cat1" },
+  { kind: "payment", value: "PARTIALLY_REFUNDED", label: "Partially refunded", tone: "cat4" },
   // subscription
   { kind: "subscription", value: "NOT_INVOICED", label: "Not Invoiced", tone: "neutral" },
   { kind: "subscription", value: "NOT_REQUIRED", label: "Not Required", tone: "neutral" },

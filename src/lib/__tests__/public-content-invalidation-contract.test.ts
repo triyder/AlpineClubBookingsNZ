@@ -67,4 +67,15 @@ describe("public content authority invalidation contract", () => {
     expect(source).toContain("PUBLIC_LAYOUT_CACHE_TAGS.identity");
     expect(source).toContain("primeClubIdentitySync()");
   });
+
+  // #2200: an import that changes the age tiers must drop the in-process
+  // getAgeTierSettings cache — gated on the age-tier entity actually changing so
+  // an unrelated import does not needlessly clear it. The behavioural gate (fires
+  // only when appliedEntities includes "age-tier") is proven in
+  // config-transfer-apply-age-tier-cache.test.ts; this pins the route wiring.
+  it("clears the age-tier cache on config-transfer apply, gated on the age-tier entity", () => {
+    const source = fs.readFileSync(path.join(process.cwd(), "src/app/api/admin/config-transfer/apply/route.ts"), "utf8");
+    expect(source).toContain("invalidateAgeTierCache()");
+    expect(source).toMatch(/appliedEntities\.includes\("age-tier"\)/);
+  });
 });

@@ -2241,19 +2241,24 @@ describe("review finding source/schema contracts", () => {
     // Admin help still renders the same shared glossary (no divergent copy).
     expect(contextualHelp).toContain("details: BOOKING_STATUS_GLOSSARY,");
 
-    const helpDialog = readRepoFile("src/components/booking-help-dialog.tsx");
-    expect(helpDialog).toContain("BOOKING_STATUS_GLOSSARY");
-    expect(helpDialog).toContain("Cancellation refund schedule");
+    // Epic #2094 C2 retired the BookingHelpDialog: the same four blocks now feed
+    // the global help widget via this render-null extras leaf. The PR #1389
+    // guarantees must survive against the new file.
+    const extras = readRepoFile(
+      "src/app/(authenticated)/bookings/[id]/_components/booking-help-extras.tsx",
+    );
+    expect(extras).toContain("BOOKING_STATUS_GLOSSARY");
+    expect(extras).toContain("Cancellation refund schedule");
     // An unpaid-but-cancellable booking must not imply a refund it can't get
     // (owner review of PR #1389): say no payment received / no refund instead.
-    expect(helpDialog).toContain(
+    expect(extras).toContain(
       "No payment has been received for this booking, so no refund",
     );
 
     const bookingDetail = readRepoFile(
       "src/app/(authenticated)/bookings/[id]/page.tsx",
     );
-    expect(bookingDetail).toContain("<BookingHelpDialog");
+    expect(bookingDetail).toContain("<BookingHelpExtras");
     expect(bookingDetail).toContain("describeCancellationSchedule");
     // The refund schedule is gated on a captured payment; unpaid bookings get the
     // no-refund message instead.

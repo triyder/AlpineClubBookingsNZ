@@ -50,6 +50,7 @@ import {
   DollarSign,
   LockKeyhole,
   Search,
+  Bot,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -393,6 +394,12 @@ const navSections: NavSection[] = [
         label: "Database Backups",
         icon: DatabaseBackup,
         keywords: ["backup", "s3", "restore", "disaster recovery", "pg_dump"],
+      },
+      {
+        href: "/admin/ai-assistant",
+        label: "AI help assistant",
+        icon: Bot,
+        keywords: ["ai", "assistant", "anthropic", "llm", "help", "spend cap"],
       },
       {
         href: "/admin/audit-log",

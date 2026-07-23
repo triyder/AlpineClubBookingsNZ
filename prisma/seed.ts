@@ -1,8 +1,6 @@
 // Club-agnostic first-run seed. Every section is create-if-missing: re-running
 // the seed against a populated database must never delete, overwrite, or
 // duplicate data. Clubs customise the placeholders through the admin screens.
-import fs from "node:fs";
-import path from "node:path";
 import { type AgeTier, PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import { clubConfig } from "../src/config/club";
@@ -15,9 +13,6 @@ import { CLUB_CONFIG_LODGE_CAPACITY } from "../src/lib/lodge-capacity";
 import {
   CLUB_THEME_ID,
   DEFAULT_CLUB_THEME_VALUES,
-  MAX_LOGO_DATA_URL_BYTES,
-  TOKOROA_CLUB_THEME_VALUES,
-  isValidLogoDataUrl,
 } from "../src/lib/club-theme-schema";
 import { DEFAULT_INDUCTION_TEMPLATE } from "../src/lib/induction-checklist-template";
 import { DEFAULT_FINANCE_REPORT_CATEGORIES } from "../src/lib/finance-report-mapping-defaults";
@@ -34,7 +29,6 @@ import {
   buildSeedChoreTemplates,
   buildSeedCommitteeRoles,
   buildSeedLodgeMemberData,
-  shouldSkipTokoroaThemeSeed,
 } from "./seed-data";
 import { starterPageContent } from "./starter-page-content";
 import { starterSiteContent } from "./starter-site-content";
@@ -132,75 +126,33 @@ function requireSeedEnv(
   return value;
 }
 
-function readBrandingLogoDataUrl() {
-  const logoPath = path.join(process.cwd(), "public", "branding", "logo.png");
-  if (!fs.existsSync(logoPath)) {
-    return null;
-  }
-
-  const logo = fs.readFileSync(logoPath);
-  if (logo.byteLength > MAX_LOGO_DATA_URL_BYTES) {
-    throw new Error(
-      `public/branding/logo.png is ${logo.byteLength} bytes; the site style logo cap is ${MAX_LOGO_DATA_URL_BYTES} bytes.`,
-    );
-  }
-
-  const dataUrl = `data:image/png;base64,${logo.toString("base64")}`;
-  if (!isValidLogoDataUrl(dataUrl)) {
-    throw new Error(
-      "public/branding/logo.png could not be converted to a valid logo data URL.",
-    );
-  }
-
-  return dataUrl;
-}
-
+// #2190 P4 — the public seed provisions ONLY the generic default site style.
+// A fork's own brand palette lives in its deployment's ClubTheme DB row and is
+// provisioned by that fork's own seed override, not by public-repo code
+// (standing directive D15 — no fork/Tokoroa colours in the public repo).
+//
+// SEED_THEME_COMPLETE=1 stamps the DEFAULT palette's setup COMPLETE (completedAt)
+// so the public site renders its real header/footer/title chrome — used by E2E
+// and staging where the club-identity smoke asserts on that chrome. It is
+// palette-free: it seeds no colours and no logo, only the completion timestamp
+// (the default palette is already seeded on the row). It replaces the removed,
+// colour-bearing fork-seed path.
 async function seedClubTheme() {
-  if (process.env.SEED_TOKOROA_THEME_COMPLETE === "1") {
-    const existing = await prisma.clubTheme.findUnique({
-      where: { id: CLUB_THEME_ID },
-      select: { completedAt: true },
-    });
-    if (shouldSkipTokoroaThemeSeed(existing)) {
-      console.log(
-        "Club theme setup already completed; skipping Tokoroa site style re-seed",
-      );
-      return;
-    }
-
-    const logoDataUrl = readBrandingLogoDataUrl();
-    await prisma.clubTheme.upsert({
-      where: { id: CLUB_THEME_ID },
-      update: {
-        ...TOKOROA_CLUB_THEME_VALUES,
-        logoDataUrl,
-        completedAt: new Date(),
-      },
-      create: {
-        id: CLUB_THEME_ID,
-        ...TOKOROA_CLUB_THEME_VALUES,
-        logoDataUrl,
-        completedAt: new Date(),
-      },
-    });
-    console.log(
-      logoDataUrl
-        ? "Tokoroa site style seeded with palette and logo"
-        : "Tokoroa site style seeded with palette; public/branding/logo.png was not present",
-    );
-    return;
-  }
-
+  const markComplete = process.env.SEED_THEME_COMPLETE === "1";
   await prisma.clubTheme.upsert({
     where: { id: CLUB_THEME_ID },
-    update: {},
+    update: markComplete ? { completedAt: new Date() } : {},
     create: {
       id: CLUB_THEME_ID,
       ...DEFAULT_CLUB_THEME_VALUES,
-      completedAt: null,
+      completedAt: markComplete ? new Date() : null,
     },
   });
-  console.log("Default site style seeded");
+  console.log(
+    markComplete
+      ? "Default site style seeded and marked complete"
+      : "Default site style seeded",
+  );
 }
 
 // Seed the membership-type-keyed hut rates (#1930, E4) with the same D4 fan-out

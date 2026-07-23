@@ -146,6 +146,7 @@ export const featureFlagsSchema = z
     googleLogin: z.boolean(),
     analytics: z.boolean(),
     lobbyDisplay: z.boolean(),
+    aiAssistant: z.boolean(),
   })
   .strict();
 

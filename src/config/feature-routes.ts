@@ -41,9 +41,14 @@ export const FEATURE_ROUTE_RULES: FeatureRouteRule[] = [
     ],
   },
   {
+    // NB: /admin/integrations (the Integrations hub) is deliberately NOT gated
+    // here. The hub aggregates cards for Xero, Stripe, Google sign-in and
+    // Backups; AdminHubPage feature- and permission-filters each card
+    // individually, and every destination keeps its own gate. Gating the hub on
+    // xeroIntegration used to 404 the whole hub — and any page that back-links
+    // to it — whenever Xero was off, hiding every other integration (#2216).
     flag: "xeroIntegration",
     prefixes: [
-      "/admin/integrations",
       "/admin/xero",
       "/admin/internet-banking",
       "/api/admin/xero",
@@ -131,6 +136,15 @@ export const FEATURE_ROUTE_RULES: FeatureRouteRule[] = [
     // (ADR-001 §1, docs/lobby-display/decisions/).
     flag: "lobbyDisplay",
     prefixes: ["/display", "/api/display", "/admin/display", "/api/admin/display"],
+  },
+  {
+    // AI assistant admin surfaces (usage panel + spend-cap settings) hard-gate
+    // on the module flag. Deliberately NOT /api/help/chat: that route degrades
+    // to a structured { status: "fallback", reason: "module_off" } response when
+    // the module is off (so a curated help panel still renders), rather than the
+    // 404 this feature-route gate produces.
+    flag: "aiAssistant",
+    prefixes: ["/admin/ai-assistant", "/api/admin/ai-assistant"],
   },
 ];
 

@@ -15,9 +15,9 @@ import { CHIP_TONE_CLASSES } from "@/lib/chip-tones";
  * CHIP_TONE_CLASSES (the `bg-<scale>-3 text-<scale>-11` step pattern, G2b-AA).
  * Per the sign-off: security folds to `danger` (M3 rose→danger); the semantic
  * categories reuse their scale (booking→success, lodge→warning amber, xero/
- * account→info blue); the remaining categoricals collapse onto cat1..cat5 by hue
+ * account→info blue); the remaining categoricals collapse onto cat1..cat6 by hue
  * proximity (payment violet→cat1, communication cyan→cat2, privacy fuchsia→cat3);
- * `family` keeps the categorical brand-teal (still load-bearing, retires in P4);
+ * `family` → cat6 (#2218 — the generated teal 6th scale that retired --hue-teal);
  * admin/system stay neutral. The two accepted collisions (account≡xero on info,
  * admin≡system on neutral) are sibling meta-categories — meaning is carried by
  * icon + label, never colour alone (the M1 "collisions accepted" clause).
@@ -26,7 +26,7 @@ export const AUDIT_CATEGORY_BADGE_CLASSES: Record<string, string> = {
   account: `${CHIP_TONE_CLASSES.info} border-info-6`,
   booking: `${CHIP_TONE_CLASSES.success} border-success-6`,
   payment: `${CHIP_TONE_CLASSES.cat1} border-cat1-6`,
-  family: `${CHIP_TONE_CLASSES.teal} border-hue-teal/20`,
+  family: `${CHIP_TONE_CLASSES.cat6} border-cat6-6`,
   admin: `${CHIP_TONE_CLASSES.neutral} border-border`,
   security: `${CHIP_TONE_CLASSES.danger} border-danger-6`,
   lodge: `${CHIP_TONE_CLASSES.warning} border-warning-6`,
