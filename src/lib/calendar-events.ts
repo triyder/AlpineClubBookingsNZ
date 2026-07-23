@@ -5,6 +5,7 @@ import {
   MAX_OCCURRENCES,
   type RecurrenceEndMode,
 } from "@/lib/calendar-recurrence";
+import { resolveMirotalkMeetingToken } from "@/lib/mirotalk-token";
 
 /**
  * Base URL of the self-hosted MiroTalk instance used for meeting events.
@@ -27,9 +28,17 @@ function resolveMirotalkBaseUrl(): string {
   return /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
 }
 
-/** Build a MiroTalk join URL for a stored room slug. */
+/**
+ * Build a MiroTalk join URL for a stored room slug. When JWT access is
+ * configured (MIRO_JWT_KEY + host credentials), a freshly-signed, short-lived
+ * access token is appended as `?token=…` so committee members join without the
+ * MiroTalk host-login prompt. The token is minted per request — the signing key
+ * and host password never reach the browser (see src/lib/mirotalk-token.ts).
+ */
 export function buildMeetingJoinUrl(room: string): string {
-  return `${resolveMirotalkBaseUrl().replace(/\/+$/, "")}/join/${encodeURIComponent(room)}`;
+  const url = `${resolveMirotalkBaseUrl().replace(/\/+$/, "")}/join/${encodeURIComponent(room)}`;
+  const token = resolveMirotalkMeetingToken();
+  return token ? `${url}?token=${encodeURIComponent(token)}` : url;
 }
 
 /**

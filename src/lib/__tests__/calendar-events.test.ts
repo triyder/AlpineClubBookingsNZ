@@ -1,5 +1,9 @@
-import { afterEach, describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import type { CalendarEvent } from "@prisma/client";
+
+// buildMeetingJoinUrl now pulls in the server-only mirotalk-token module; the
+// client-boundary guard must be neutralised for this Node test.
+vi.mock("server-only", () => ({}));
 import {
   buildMeetingJoinUrl,
   resolveCalendarEventDates,
@@ -57,6 +61,12 @@ describe("buildMeetingJoinUrl", () => {
     else process.env.MIROTALK_URL = savedRuntime;
     if (savedPublic === undefined) delete process.env.NEXT_PUBLIC_MIROTALK_URL;
     else process.env.NEXT_PUBLIC_MIROTALK_URL = savedPublic;
+    // Token vars are never set in the base cases; clear any a test set so the
+    // no-token assertions elsewhere in this file are not affected.
+    delete process.env.MIRO_JWT_KEY;
+    delete process.env.MIRO_MEETING_USERNAME;
+    delete process.env.MIRO_MEETING_PASSWORD;
+    delete process.env.MIRO_MEETING_PRESENTER;
   });
 
   it("builds a /join/<room> URL from the default base", () => {
@@ -72,6 +82,18 @@ describe("buildMeetingJoinUrl", () => {
     expect(buildMeetingJoinUrl("xyz")).toBe(
       "https://meet.lwtc.org.nz/join/xyz",
     );
+  });
+
+  it("appends a ?token= when JWT access is configured", () => {
+    process.env.MIROTALK_URL = "https://meet.lwtc.org.nz";
+    process.env.MIRO_JWT_KEY = "shared-key";
+    process.env.MIRO_MEETING_USERNAME = "lwtc";
+    process.env.MIRO_MEETING_PASSWORD = "pw";
+    const url = buildMeetingJoinUrl("xyz");
+    expect(url.startsWith("https://meet.lwtc.org.nz/join/xyz?token=")).toBe(true);
+    // A three-part JWT follows token=.
+    const token = new URL(url).searchParams.get("token") ?? "";
+    expect(token.split(".")).toHaveLength(3);
   });
 
   it("assumes https for a bare host with no scheme", () => {
