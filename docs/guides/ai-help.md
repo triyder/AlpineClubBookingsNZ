@@ -92,8 +92,9 @@ status but not the key field.
 
 Unlike Google sign-in, there is **no verify-step** on the key: the app never
 pings Anthropic to prove the key works before enabling. If the key is wrong the
-box still renders but each answer returns a generic "assistant is unavailable"
-notice (and an operator alert is raised — see Troubleshooting).
+box still renders but each answer returns a generic can't-answer notice
+pointing members at the Page guide tab or the club office (and an operator
+alert is raised — see Troubleshooting).
 
 ### 3. Set the monthly spend cap
 
@@ -161,7 +162,7 @@ notice (and an operator alert is raised — see Troubleshooting).
 | --- | --- | --- |
 | Members don't see the ask box (only chips + Page guide) | The module is off, or no key is stored | Enable the module on **Admin → Modules** and confirm the key shows **Saved** on **Admin → AI help assistant** |
 | Box shows "unavailable for the rest of the month" | The monthly spend cap has been reached | Wait for the next NZ calendar month, or raise the cap (support-edit) |
-| Box appears but every answer says the assistant is "unavailable" | The stored key is invalid/rejected, the provider is failing, or metering can't be written | Re-enter a valid Anthropic key (Full Admin); an auth rejection also raises an operator alert. Curated help keeps working meanwhile |
+| Box appears but every answer is the generic "Sorry — I could not answer that just now" notice | The stored key is invalid/rejected, the provider is failing, or metering can't be written | Re-enter a valid Anthropic key (Full Admin); an auth rejection also raises an operator alert. Curated help keeps working meanwhile |
 | Key status shows **Re-enter required** | The app auth secret (`AUTH_SECRET`/`NEXTAUTH_SECRET`) was rotated, so the encrypted key can no longer be decrypted | Re-enter the Anthropic key (Full Admin); the assistant stays off until you do |
 | "That's the limit for one conversation." | The per-conversation exchange cap was reached | Use **Start new chat** to begin a fresh conversation |
 | `/admin/ai-assistant` returns 404 | The AI help assistant module is off | Enable it on **Admin → Modules** — the whole admin page is hidden while the module is off |
