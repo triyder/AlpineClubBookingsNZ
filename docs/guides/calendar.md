@@ -30,7 +30,7 @@ The calendar is always on — there is no module toggle to enable it.
 - **Everyone who can log in** sees the calendar. Ordinary members get a
   read-only view: opening an event shows its details with only a **Close**
   button — no Save or Delete.
-- **Committee members** may add, edit, and delete events. "Committee member"
+- **Committee members** may add events only. "Committee member"
   means the member holds at least one **active** committee assignment under an
   active committee role (**Admin → Members → [member] → Committee**, managed on
   the [Committee](committee.md) page). This is the one place a committee
