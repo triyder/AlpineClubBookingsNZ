@@ -190,7 +190,7 @@ per page load and the signing key never reaches the browser.
 | --- | --- |
 | `MIRO_JWT_KEY` | Must equal MiroTalk's own `JWT_KEY`. |
 | `MIRO_MEETING_USERNAME` / `MIRO_MEETING_PASSWORD` | Must match one entry in MiroTalk's `HOST_USERS` (MiroTalk re-checks these). |
-| `MIRO_MEETING_PRESENTER` | `true` = every joiner is a host; `false` (default) = the first to join hosts, the rest are participants. |
+| `MIRO_MEETING_PRESENTER` | `true` (default) = the clicker joins as host so the meeting starts immediately; `false` leaves joiners on MiroTalk's "waiting for host" screen. |
 | `MIRO_JWT_EXP` | Token lifetime — `1h` (default), `30m`, `900` (seconds), etc. Minted fresh on each page load, so this only bounds a link left unopened. |
 
 **On the MiroTalk side** nothing structural changes — you already have

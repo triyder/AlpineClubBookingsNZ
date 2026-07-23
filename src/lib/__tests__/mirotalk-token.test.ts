@@ -163,4 +163,28 @@ describe("resolveMirotalkMeetingToken", () => {
       presenter: "true",
     });
   });
+
+  it("defaults to presenter=true so the clicker hosts (auto-start)", () => {
+    process.env.MIRO_JWT_KEY = "k";
+    process.env.MIRO_MEETING_USERNAME = "lwtc";
+    process.env.MIRO_MEETING_PASSWORD = "pw";
+    delete process.env.MIRO_MEETING_PRESENTER;
+    const token = resolveMirotalkMeetingToken();
+    const payload = decodeSegment(token!.split(".")[1]) as { data: string };
+    expect(
+      JSON.parse(cryptoJsAesDecrypt(payload.data, "k")).presenter,
+    ).toBe("true");
+  });
+
+  it("honours MIRO_MEETING_PRESENTER=false", () => {
+    process.env.MIRO_JWT_KEY = "k";
+    process.env.MIRO_MEETING_USERNAME = "lwtc";
+    process.env.MIRO_MEETING_PASSWORD = "pw";
+    process.env.MIRO_MEETING_PRESENTER = "false";
+    const token = resolveMirotalkMeetingToken();
+    const payload = decodeSegment(token!.split(".")[1]) as { data: string };
+    expect(
+      JSON.parse(cryptoJsAesDecrypt(payload.data, "k")).presenter,
+    ).toBe("false");
+  });
 });

@@ -157,9 +157,14 @@ export function resolveMirotalkMeetingToken(): string | null {
   const password = process.env.MIRO_MEETING_PASSWORD;
   if (!key || !username || !password) return null;
 
+  // Default true: the calendar link is meant to let committee members open and
+  // host the meeting immediately. MiroTalk's /join page grants host status
+  // purely from this flag (it does NOT apply first-to-join there), so "false"
+  // leaves the clicker stuck on the "waiting for host" screen. Set
+  // MIRO_MEETING_PRESENTER=false only if you want joiners to wait for a host.
   const presenter =
-    (process.env.MIRO_MEETING_PRESENTER ?? "false").trim().toLowerCase() ===
-    "true";
+    (process.env.MIRO_MEETING_PRESENTER ?? "true").trim().toLowerCase() !==
+    "false";
   const expiresInSeconds = parseExpiresToSeconds(process.env.MIRO_JWT_EXP);
 
   return buildMirotalkToken({

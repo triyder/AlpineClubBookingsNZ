@@ -72,7 +72,7 @@ x-app-environment: &app-environment
   MIRO_JWT_EXP: ${MIRO_JWT_EXP:-1h}
   MIRO_MEETING_USERNAME: ${MIRO_MEETING_USERNAME:-}
   MIRO_MEETING_PASSWORD: ${MIRO_MEETING_PASSWORD:-}
-  MIRO_MEETING_PRESENTER: ${MIRO_MEETING_PRESENTER:-false}
+  MIRO_MEETING_PRESENTER: ${MIRO_MEETING_PRESENTER:-true}
   # TEST-ONLY mock-Xero E2E harness (#2080). Empty in every real deployment, so
   # the mock endpoints 404 and the OAuth/org code path is unchanged. The E2E
   # staging stack sets API_ORIGIN to the BROWSER-reachable origin (the consent
