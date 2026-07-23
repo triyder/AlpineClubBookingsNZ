@@ -31,14 +31,23 @@ function resolveMirotalkBaseUrl(): string {
 /**
  * Build a MiroTalk join URL for a stored room slug. When JWT access is
  * configured (MIRO_JWT_KEY + host credentials), a freshly-signed, short-lived
- * access token is appended as `?token=…` so committee members join without the
- * MiroTalk host-login prompt. The token is minted per request — the signing key
- * and host password never reach the browser (see src/lib/mirotalk-token.ts).
+ * access token authenticates committee members as host so the meeting starts
+ * with no login prompt. The token is minted per request — the signing key and
+ * host password never reach the browser (see src/lib/mirotalk-token.ts).
+ *
+ * IMPORTANT: MiroTalk only reads the token on its QUERY-form route
+ * (`/join?room=…&token=…`). Its path-form route (`/join/<room>`) is a different
+ * handler that ignores the token and shows the "waiting for host" page, so a
+ * token URL must use the query form. Without a token we keep the friendlier
+ * path form (the standard shareable MiroTalk link).
  */
 export function buildMeetingJoinUrl(room: string): string {
-  const url = `${resolveMirotalkBaseUrl().replace(/\/+$/, "")}/join/${encodeURIComponent(room)}`;
+  const base = resolveMirotalkBaseUrl().replace(/\/+$/, "");
   const token = resolveMirotalkMeetingToken();
-  return token ? `${url}?token=${encodeURIComponent(token)}` : url;
+  if (token) {
+    return `${base}/join?room=${encodeURIComponent(room)}&token=${encodeURIComponent(token)}`;
+  }
+  return `${base}/join/${encodeURIComponent(room)}`;
 }
 
 /**

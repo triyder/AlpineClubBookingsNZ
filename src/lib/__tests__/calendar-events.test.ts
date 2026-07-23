@@ -84,16 +84,18 @@ describe("buildMeetingJoinUrl", () => {
     );
   });
 
-  it("appends a ?token= when JWT access is configured", () => {
+  it("uses the query-form URL with room + token when JWT access is configured", () => {
     process.env.MIROTALK_URL = "https://meet.lwtc.org.nz";
     process.env.MIRO_JWT_KEY = "shared-key";
     process.env.MIRO_MEETING_USERNAME = "lwtc";
     process.env.MIRO_MEETING_PASSWORD = "pw";
     const url = buildMeetingJoinUrl("xyz");
-    expect(url.startsWith("https://meet.lwtc.org.nz/join/xyz?token=")).toBe(true);
-    // A three-part JWT follows token=.
-    const token = new URL(url).searchParams.get("token") ?? "";
-    expect(token.split(".")).toHaveLength(3);
+    // MiroTalk only honours the token on /join?room=…&token=… (not /join/<room>).
+    expect(url.startsWith("https://meet.lwtc.org.nz/join?")).toBe(true);
+    const params = new URL(url).searchParams;
+    expect(params.get("room")).toBe("xyz");
+    // A three-part JWT in token=.
+    expect((params.get("token") ?? "").split(".")).toHaveLength(3);
   });
 
   it("assumes https for a bare host with no scheme", () => {

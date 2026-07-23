@@ -119,9 +119,11 @@ launches the meeting in a new tab; ordinary members do not (meetings are for the
 people running them).
 
 The app never embeds MiroTalk — it links out to it. Each meeting event stores an
-unguessable room slug, and the join URL is built server-side as
-`${MIROTALK_URL}/join/<room>`, so the same event resolves to the right host in
-each environment.
+unguessable room slug, and the join URL is built server-side from `MIROTALK_URL`,
+so the same event resolves to the right host in each environment. Without JWT
+access it uses the shareable path form `…/join/<room>`; with JWT access it uses
+MiroTalk's token route `…/join?room=<room>&token=<jwt>` (the only route that
+reads the token — the path form ignores it).
 
 ### Installing MiroTalk
 
