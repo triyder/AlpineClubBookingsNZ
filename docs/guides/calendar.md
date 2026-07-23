@@ -119,9 +119,9 @@ launches the meeting in a new tab; ordinary members do not (meetings are for the
 people running them).
 
 The app never embeds MiroTalk — it links out to it. Each meeting event stores an
-unguessable room slug, and the join URL is built as
-`${NEXT_PUBLIC_MIROTALK_URL}/join/<room>`, so the same event resolves to the
-right host in each environment.
+unguessable room slug, and the join URL is built server-side as
+`${MIROTALK_URL}/join/<room>`, so the same event resolves to the right host in
+each environment.
 
 ### Installing MiroTalk
 
@@ -130,7 +130,17 @@ app. Point the app at it with one environment variable:
 
 | Variable                   | What it is                         | Default                 |
 | -------------------------- | ---------------------------------- | ----------------------- |
-| `NEXT_PUBLIC_MIROTALK_URL` | Base URL of your MiroTalk instance | `http://localhost:3010` |
+| `MIROTALK_URL`             | Base URL of your MiroTalk instance | `http://localhost:3010` |
+| `NEXT_PUBLIC_MIROTALK_URL` | Legacy fallback (build-time only)  | —                       |
+
+- **Prefer `MIROTALK_URL`.** The join link is built server-side, so this is a
+  **runtime** setting: set it in the app's environment and restart — no rebuild.
+- `NEXT_PUBLIC_MIROTALK_URL` is still read as a fallback, but `NEXT_PUBLIC_*`
+  values are inlined at **build time**, so a runtime `.env` change won't move a
+  pre-built image — use `MIROTALK_URL` instead.
+- **Include the scheme** — e.g. `https://meet.example.org`. A value with no
+  scheme is assumed to be `https://` (a bare host would otherwise produce a
+  broken relative link). Trailing slashes are ignored.
 
 **Local development (Windows/macOS/Linux with Docker):**
 
@@ -142,8 +152,8 @@ docker run -d --name mirotalk-p2p -p 3010:3000 \
 ```
 
 Open `http://localhost:3010` to confirm your camera and mic work (WebRTC is
-allowed on `localhost` without HTTPS). Leave `NEXT_PUBLIC_MIROTALK_URL` unset to
-use the `http://localhost:3010` default, then create a meeting event and click
+allowed on `localhost` without HTTPS). Leave `MIROTALK_URL` unset to use the
+`http://localhost:3010` default, then create a meeting event and click
 **Open meeting link**.
 
 **Production (single VM behind Caddy):**
@@ -154,7 +164,8 @@ use the `http://localhost:3010` default, then create a meeting event and click
 2. Reverse-proxy the subdomain through Caddy so it gets a TLS certificate, and
    give that subdomain a `Permissions-Policy` that **allows** `camera` and
    `microphone` (the app's main site deliberately disables them).
-3. Set `NEXT_PUBLIC_MIROTALK_URL=https://meet.<yourdomain>` for the app.
+3. Set `MIROTALK_URL=https://meet.<yourdomain>` for the app (runtime env, then
+   restart — no rebuild).
 4. For members joining from home, run a **TURN server** (MiroTalk bundles
    coturn) and open its ports on the VM firewall (3478 UDP/TCP, 5349), so
    participants behind restrictive networks can connect.
@@ -187,7 +198,7 @@ app only links to it, which keeps the licence boundary clean.
 | An ordinary member sees **Save**/**Delete** on events | That account is actually a committee member or a lodge-edit admin                               | Confirm with `npx tsx scripts/diagnose-calendar-access.ts their@email`; committee assignment grants calendar edit by design       |
 | A member should be able to edit but is read-only      | They have no active committee assignment and no lodge-edit role                                 | Add a committee assignment (**Admin → Members → [member] → Committee**) or grant lodge edit                                       |
 | A repeating event shows on only one month             | The recurrence was not saved (older build)                                                      | Open the event, set **Repeat**, and **Save** (this converts it to a series), or delete and recreate; ensure the app is up to date |
-| **Open meeting link** does nothing / wrong host       | `NEXT_PUBLIC_MIROTALK_URL` is unset or points at the wrong instance                             | Set it to your MiroTalk base URL and rebuild                                                                                      |
+| **Open meeting link** does nothing / wrong host       | `MIROTALK_URL` is unset or points at the wrong instance                                         | Set `MIROTALK_URL` to your MiroTalk base URL (with `https://`) and restart the app                                               |
 | Camera/mic blocked in the meeting                     | MiroTalk is served over plain HTTP (not localhost) or without a camera/mic `Permissions-Policy` | Serve MiroTalk over HTTPS on its own subdomain with camera/mic allowed                                                            |
 
 ## Related links

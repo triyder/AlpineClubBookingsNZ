@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect } from "vitest";
 import type { CalendarEvent } from "@prisma/client";
 import {
   buildMeetingJoinUrl,
@@ -49,10 +49,44 @@ describe("resolveCalendarEventDates", () => {
 });
 
 describe("buildMeetingJoinUrl", () => {
-  it("builds a /join/<room> URL from the configured base", () => {
-    // Default base is http://localhost:3010 in tests (no env override).
+  const savedRuntime = process.env.MIROTALK_URL;
+  const savedPublic = process.env.NEXT_PUBLIC_MIROTALK_URL;
+
+  afterEach(() => {
+    if (savedRuntime === undefined) delete process.env.MIROTALK_URL;
+    else process.env.MIROTALK_URL = savedRuntime;
+    if (savedPublic === undefined) delete process.env.NEXT_PUBLIC_MIROTALK_URL;
+    else process.env.NEXT_PUBLIC_MIROTALK_URL = savedPublic;
+  });
+
+  it("builds a /join/<room> URL from the default base", () => {
+    delete process.env.MIROTALK_URL;
+    delete process.env.NEXT_PUBLIC_MIROTALK_URL;
     expect(buildMeetingJoinUrl("room-abc")).toBe(
       "http://localhost:3010/join/room-abc",
+    );
+  });
+
+  it("uses the runtime MIROTALK_URL (server-only, no rebuild)", () => {
+    process.env.MIROTALK_URL = "https://meet.lwtc.org.nz";
+    expect(buildMeetingJoinUrl("xyz")).toBe(
+      "https://meet.lwtc.org.nz/join/xyz",
+    );
+  });
+
+  it("assumes https for a bare host with no scheme", () => {
+    delete process.env.MIROTALK_URL;
+    process.env.NEXT_PUBLIC_MIROTALK_URL = "meet.lwtc.org.nz";
+    expect(buildMeetingJoinUrl("xyz")).toBe(
+      "https://meet.lwtc.org.nz/join/xyz",
+    );
+  });
+
+  it("prefers MIROTALK_URL over NEXT_PUBLIC_MIROTALK_URL", () => {
+    process.env.MIROTALK_URL = "https://runtime.example.org";
+    process.env.NEXT_PUBLIC_MIROTALK_URL = "https://baked.example.org";
+    expect(buildMeetingJoinUrl("xyz")).toBe(
+      "https://runtime.example.org/join/xyz",
     );
   });
 });

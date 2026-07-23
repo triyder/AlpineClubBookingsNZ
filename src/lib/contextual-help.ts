@@ -1130,7 +1130,7 @@ const adminHelpEntries: HelpEntry[] = [
         {
           name: "Video meeting (MiroTalk)",
           description:
-            "Attaches a self-hosted MiroTalk room to the event; requires NEXT_PUBLIC_MIROTALK_URL to point at your MiroTalk instance.",
+            "Attaches a self-hosted MiroTalk room to the event; requires MIROTALK_URL to point at your MiroTalk instance.",
         },
       ],
     ),

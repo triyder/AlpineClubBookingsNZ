@@ -8,18 +8,28 @@ import {
 
 /**
  * Base URL of the self-hosted MiroTalk instance used for meeting events.
- * Environment-specific by design: `http://localhost:3010` in local dev, the
- * public meeting host (e.g. `https://meet.<domain>`) in production, set via the
- * `NEXT_PUBLIC_MIROTALK_URL` build-time env var. A meeting event stores only its
- * room slug (`meetingRoom`); the join URL is derived here so the same event row
- * resolves to the right host in each environment.
+ *
+ * Resolved at call time, and used ONLY server-side (join URLs are built during
+ * API serialization, never in a client bundle), so it is a RUNTIME setting:
+ * set `MIROTALK_URL` in the app's environment and restart — no rebuild needed.
+ * `NEXT_PUBLIC_MIROTALK_URL` is still honoured as a fallback for older configs,
+ * but NEXT_PUBLIC_* values are inlined at BUILD time, so prefer `MIROTALK_URL`.
+ *
+ * A value with no scheme is assumed to be https, so `meet.example.org` becomes
+ * `https://meet.example.org/...` rather than a broken relative link. The
+ * `http://localhost:3010` default keeps local dev working over plain HTTP.
  */
-export const MIROTALK_BASE_URL =
-  process.env.NEXT_PUBLIC_MIROTALK_URL?.trim() || "http://localhost:3010";
+function resolveMirotalkBaseUrl(): string {
+  const raw = (
+    process.env.MIROTALK_URL ?? process.env.NEXT_PUBLIC_MIROTALK_URL
+  )?.trim();
+  if (!raw) return "http://localhost:3010";
+  return /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+}
 
 /** Build a MiroTalk join URL for a stored room slug. */
 export function buildMeetingJoinUrl(room: string): string {
-  return `${MIROTALK_BASE_URL.replace(/\/+$/, "")}/join/${encodeURIComponent(room)}`;
+  return `${resolveMirotalkBaseUrl().replace(/\/+$/, "")}/join/${encodeURIComponent(room)}`;
 }
 
 /**

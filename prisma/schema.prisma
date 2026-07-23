@@ -4958,8 +4958,8 @@ enum DisplayNameGranularity {
 // CommitteeAssignment) — see src/lib/calendar-access.ts for the single write
 // gate. Times are stored as absolute instants; all-day events carry allDay=true
 // with endsAt null. A meeting event carries isMeeting=true and a MiroTalk room
-// slug (meetingRoom); the join URL is built from NEXT_PUBLIC_MIROTALK_URL at
-// render so it is environment-specific (localhost in dev, the meet host in
+// slug (meetingRoom); the join URL is built server-side from the MIROTALK_URL
+// env var so it is environment-specific (localhost in dev, the meet host in
 // prod). createdById is a bare Member id (no relation) to keep this table's
 // migration surface minimal — it never drives cascades or joins.
 // ---------------------------------------------------------------------------
