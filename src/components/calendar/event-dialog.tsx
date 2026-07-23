@@ -44,8 +44,14 @@ interface EventDialogProps {
   event: CalendarEventDTO | null;
   /** Pre-selected day (YYYY-MM-DD) when creating from a day cell. */
   initialDate: string | null;
-  /** Whether the current member may add/edit/delete (committee or lodge admin). */
-  canManage: boolean;
+  /** Whether the current member may create NEW events. */
+  canCreate: boolean;
+  /**
+   * Whether EXISTING events open editable (Save/Delete). When false, an existing
+   * event shows the read-only detail view even for a manager — the member
+   * calendar creates but does not edit; /admin/calendar keeps full editing.
+   */
+  canEditExisting: boolean;
   /** Called after a successful create/update/delete so the caller can refetch. */
   onSaved: () => void;
 }
@@ -66,7 +72,8 @@ export function EventDialog({
   onOpenChange,
   event,
   initialDate,
-  canManage,
+  canCreate,
+  canEditExisting,
   onSaved,
 }: EventDialogProps) {
   const isEdit = event !== null;
@@ -143,8 +150,10 @@ export function EventDialog({
     }
   }, [open, event, initialDate]);
 
-  // Read-only detail view for ordinary members.
-  if (!canManage && event) {
+  // Read-only detail view: shown to ordinary members, and to managers on the
+  // member calendar (where existing events are not editable). A meeting shows a
+  // "Join meeting" button so the viewer can enter it.
+  if (event && !canEditExisting) {
     return (
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="sm:max-w-lg">
@@ -198,7 +207,21 @@ export function EventDialog({
               <p className="text-muted-foreground">No further details.</p>
             )}
           </div>
-          <DialogFooter>
+          <DialogFooter className="gap-2 sm:justify-between">
+            {event.isMeeting && event.meetingUrl ? (
+              <Button asChild>
+                <a
+                  href={event.meetingUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <Video aria-hidden className="mr-2 h-4 w-4" />
+                  Join meeting
+                </a>
+              </Button>
+            ) : (
+              <span />
+            )}
             <Button variant="outline" onClick={() => onOpenChange(false)}>
               Close
             </Button>
@@ -207,6 +230,10 @@ export function EventDialog({
       </Dialog>
     );
   }
+
+  // Creating requires create permission. The New-event affordances are hidden
+  // without it, so this is a defensive guard against an unreachable state.
+  if (!event && !canCreate) return null;
 
   // Labels for the Repeat picker follow the currently-selected date.
   const anchorDate = date ? new Date(`${date}T00:00`) : new Date();

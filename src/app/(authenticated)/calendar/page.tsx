@@ -32,11 +32,13 @@ export default async function MemberCalendarPage() {
         <p className="mt-1 text-sm text-muted-foreground">
           Upcoming meetings and events at {CLUB_NAME}.
           {canManage
-            ? " Click a day to add an event."
-            : " Select an event to see its details."}
+            ? " Click a day to add an event. Open an event to view it or join its meeting."
+            : " Select an event to see its details or join its meeting."}
         </p>
       </div>
-      <CalendarView canManage={canManage} />
+      {/* Existing events are read-only here (create-and-view); full editing and
+          deletion live on /admin/calendar. */}
+      <CalendarView canManage={canManage} allowEditExisting={false} />
     </div>
   );
 }

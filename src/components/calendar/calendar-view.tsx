@@ -17,9 +17,20 @@ import { EventDialog } from "./event-dialog";
 interface CalendarViewProps {
   /** Whether the current member may add/edit/delete (committee or lodge admin). */
   canManage: boolean;
+  /**
+   * When false, existing events are read-only even for a manager — new events
+   * can still be created. The member calendar (/calendar) passes false so it is
+   * create-and-view only; /admin/calendar leaves it true for full editing.
+   */
+  allowEditExisting?: boolean;
 }
 
-export function CalendarView({ canManage }: CalendarViewProps) {
+export function CalendarView({
+  canManage,
+  allowEditExisting = true,
+}: CalendarViewProps) {
+  const canCreate = canManage;
+  const canEditExisting = canManage && allowEditExisting;
   const [viewDate, setViewDate] = useState<Date>(() => startOfMonth(new Date()));
   const [events, setEvents] = useState<CalendarEventDTO[]>([]);
   const [loading, setLoading] = useState(true);
@@ -106,7 +117,7 @@ export function CalendarView({ canManage }: CalendarViewProps) {
           )}
         </div>
 
-        {canManage && (
+        {canCreate && (
           <Button size="sm" onClick={() => openCreate(null)}>
             <Plus className="mr-2 h-4 w-4" />
             New event
@@ -118,7 +129,7 @@ export function CalendarView({ canManage }: CalendarViewProps) {
         year={year}
         month={month}
         eventsByDay={eventsByDay}
-        canManage={canManage}
+        canCreate={canCreate}
         onSelectEvent={openEvent}
         onSelectDay={(dayKey) => openCreate(dayKey)}
       />
@@ -128,7 +139,8 @@ export function CalendarView({ canManage }: CalendarViewProps) {
         onOpenChange={setDialogOpen}
         event={selectedEvent}
         initialDate={createDate}
-        canManage={canManage}
+        canCreate={canCreate}
+        canEditExisting={canEditExisting}
         onSaved={fetchEvents}
       />
     </div>

@@ -16,7 +16,7 @@ interface MonthCalendarProps {
   year: number;
   month: number;
   eventsByDay: Map<string, CalendarEventDTO[]>;
-  canManage: boolean;
+  canCreate: boolean;
   onSelectEvent: (event: CalendarEventDTO) => void;
   /** Called with a YYYY-MM-DD key when an empty day is clicked (managers only). */
   onSelectDay: (dayKey: string) => void;
@@ -28,7 +28,7 @@ export function MonthCalendar({
   year,
   month,
   eventsByDay,
-  canManage,
+  canCreate,
   onSelectEvent,
   onSelectDay,
 }: MonthCalendarProps) {
@@ -64,11 +64,11 @@ export function MonthCalendar({
               className={cn(
                 "min-h-[104px] border-b border-r border-border p-1.5 last:border-r-0 [&:nth-child(7n)]:border-r-0",
                 inMonth ? "bg-background" : "bg-muted/20",
-                canManage && "cursor-pointer transition-colors hover:bg-accent/40",
+                canCreate && "cursor-pointer transition-colors hover:bg-accent/40",
               )}
               onClick={(e) => {
                 // Only treat clicks on the empty cell (not a chip) as "new event".
-                if (canManage && e.target === e.currentTarget) {
+                if (canCreate && e.target === e.currentTarget) {
                   onSelectDay(key);
                 }
               }}
@@ -124,7 +124,7 @@ export function MonthCalendar({
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation();
-                      if (canManage) onSelectDay(key);
+                      if (canCreate) onSelectDay(key);
                     }}
                     className="px-1.5 text-xs font-medium text-muted-foreground hover:text-foreground"
                   >
