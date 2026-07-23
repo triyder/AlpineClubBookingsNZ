@@ -60,6 +60,10 @@ x-app-environment: &app-environment
   SENTRY_ORG: ${SENTRY_ORG:-}
   SENTRY_PROJECT: ${SENTRY_PROJECT:-}
   SENTRY_AUTH_TOKEN: ${SENTRY_AUTH_TOKEN:-}
+  # MiroTalk video-meeting base URL (calendar events). Runtime, server-side only
+  # — join links are built as <MIROTALK_URL>/join/<room>. Empty falls back to the
+  # http://localhost:3010 default in code.
+  MIROTALK_URL: ${MIROTALK_URL:-}
   # TEST-ONLY mock-Xero E2E harness (#2080). Empty in every real deployment, so
   # the mock endpoints 404 and the OAuth/org code path is unchanged. The E2E
   # staging stack sets API_ORIGIN to the BROWSER-reachable origin (the consent

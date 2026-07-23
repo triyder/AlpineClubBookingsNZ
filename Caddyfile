@@ -56,3 +56,11 @@ dashboard.{$DOMAIN} {
 	}
 	redir * https://{$DOMAIN}/finance-legacy{uri} permanent
 }
+
+meet.{$DOMAIN} {
+    header {
+        Permissions-Policy "camera=(self), microphone=(self), display-capture=(self)"
+        Strict-Transport-Security "max-age=63072000; includeSubDomains"
+    }
+    reverse_proxy MIROTALK_TARGET:3010
+}
