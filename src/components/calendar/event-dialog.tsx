@@ -469,7 +469,7 @@ export function EventDialog({
             </div>
 
             {repeat !== "NONE" && (
-              <div className="grid grid-cols-1 gap-4 rounded-md border border-border bg-muted/30 p-3 sm:grid-cols-2">
+              <div className="grid grid-cols-1 gap-4 rounded-md border border-border bg-muted p-3 sm:grid-cols-2">
                 <div className="space-y-1.5">
                   <Label htmlFor="event-interval">Repeat every</Label>
                   <div className="flex items-center gap-2">
@@ -557,7 +557,7 @@ export function EventDialog({
               />
             </div>
 
-            <div className="flex items-center gap-2 rounded-md border border-border bg-muted/40 p-3">
+            <div className="flex items-center gap-2 rounded-md border border-border bg-muted p-3">
               <Checkbox
                 id="event-meeting"
                 checked={isMeeting}
