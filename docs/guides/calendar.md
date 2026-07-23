@@ -19,13 +19,13 @@ The calendar is always on — there is no module toggle to enable it.
 
 ## Who can do what
 
-| Action                  | Members (ordinary) | Committee members | Admins **edit** |
-| ----------------------- | ------------------ | ----------------- | --------------- |
-| View read-only calendar | ✅ read-only       | ✅                | ✅              |
-| Create an event         | ❌                 | ✅                | ✅              |
-| Edit an event           | ❌                 | ❌                | ✅              |
-| Delete an event         | ❌                 | ❌                | ✅              |
-| Open video-meeting link | ❌                 | ✅                | ✅              |
+| Action                  | Members (ordinary) | Committee members | Admins |
+| ----------------------- | ------------------ | ----------------- | ------ |
+| View read-only calendar | ✅ read-only       | ✅                | ✅     |
+| Create an event         | ❌                 | ✅                | ✅     |
+| Edit an event           | ❌                 | ❌                | ✅     |
+| Delete an event         | ❌                 | ❌                | ✅     |
+| Open video-meeting link | ❌                 | ✅                | ✅     |
 
 - **Everyone who can log in** sees the calendar. Ordinary members get a
   read-only view: opening an event shows its details with only a **Close**
