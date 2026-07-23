@@ -23,7 +23,11 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   forbidOnly: !!process.env.CI,
-  retries: 0,
+  // Retry flaky specs on CI only (Playwright's documented default). A single
+  // transient flake — e.g. the multi-step mock-Xero OAuth wizard exceeding a
+  // timeout on a loaded runner — should not fail an otherwise-green suite.
+  // Local runs keep 0 so flakiness stays visible while developing.
+  retries: process.env.CI ? 2 : 0,
   reporter: process.env.CI
     ? [["list"], ["html", { open: "never" }], ["github"]]
     : [["list"], ["html", { open: "never" }]],

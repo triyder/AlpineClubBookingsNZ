@@ -487,6 +487,11 @@ export const SINGLETONS: SingletonSpec[] = [
       bookNowPageId:
         "FK to a PageContent row; an instance-local id that need not resolve on " +
         "the target — getBookNowConfig fails open to the booking flow without it",
+      contactCommitteeRoleKey:
+        "soft reference to a CommitteeRole.key selecting the Contact page Club " +
+        "Details role; instance-local like the Book-Now exclusions — a key need " +
+        "not resolve on the target, where the Contact page falls open to the " +
+        "booking-officer heuristic when it matches no active role",
     },
     defaults: () => DEFAULT_PUBLIC_CONTENT_SETTINGS,
   },

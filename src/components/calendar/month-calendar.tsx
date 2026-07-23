@@ -37,7 +37,7 @@ export function MonthCalendar({
   return (
     <div className="overflow-hidden rounded-lg border border-border">
       {/* Weekday header */}
-      <div className="grid grid-cols-7 border-b border-border bg-muted/40">
+      <div className="grid grid-cols-7 border-b border-border bg-muted">
         {weekdayLabels().map((label) => (
           <div
             key={label}
@@ -63,8 +63,8 @@ export function MonthCalendar({
               key={key}
               className={cn(
                 "min-h-[104px] border-b border-r border-border p-1.5 last:border-r-0 [&:nth-child(7n)]:border-r-0",
-                inMonth ? "bg-background" : "bg-muted/20",
-                canCreate && "cursor-pointer transition-colors hover:bg-accent/40",
+                inMonth ? "bg-background" : "bg-muted",
+                canCreate && "cursor-pointer transition-colors hover:bg-accent",
               )}
               onClick={(e) => {
                 // Only treat clicks on the empty cell (not a chip) as "new event".
@@ -98,8 +98,8 @@ export function MonthCalendar({
                     className={cn(
                       "flex w-full items-center gap-1 truncate rounded px-1.5 py-0.5 text-left text-xs transition-colors",
                       event.isMeeting
-                        ? "bg-primary/10 text-primary hover:bg-primary/20"
-                        : "bg-accent text-accent-foreground hover:bg-accent/70",
+                        ? "bg-primary text-primary-foreground hover:opacity-90"
+                        : "bg-accent text-accent-foreground hover:opacity-90",
                     )}
                     title={event.title}
                   >

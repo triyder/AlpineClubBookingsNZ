@@ -709,13 +709,13 @@ describe("view-only section banner coverage (#2160)", () => {
         (f) => bannerRenderSites(f.ast).length > 0,
       ).length,
     }).toEqual({
-      callSites: 263,
-      optOuts: 231,
-      staticOptOuts: 210,
+      callSites: 264,
+      optOuts: 232,
+      staticOptOuts: 211,
       vouchedOptOuts: 21,
       exceptions: 32,
       exceptionFiles: 15,
-      bannerComponents: 75,
+      bannerComponents: 76,
     });
 
     /*
