@@ -50,7 +50,15 @@ export interface EntityDescriptor {
  * disjoint from these, and serialisers must never emit them.
  */
 export const FORBIDDEN_FIELD_PATTERNS: RegExp[] = [
-  /password/i,
+  // Any "password" field is credential material and must never travel — EXCEPT
+  // the password-POLICY length bound (`minPasswordLength` / `maxPasswordLength`),
+  // which is a portable club rule carrying an integer, not a secret (#2200). The
+  // exemption is narrow — only "password" immediately followed by the whole word
+  // "length" (word-boundary anchored), so `passwordHash` / bare `password` /
+  // `forcePasswordChange` stay forbidden here, the hash is additionally blocked
+  // by the dedicated /passwordhash/i pattern below, and any secret-suffixed name
+  // (e.g. "...secret", "...token") is still caught by its own pattern.
+  /password(?!length\b)/i,
   /secret/i,
   /token/i,
   /(^|[^a-z])api[_-]?key/i,

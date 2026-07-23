@@ -14,6 +14,7 @@ import {
   getSeasonStartDate,
   type AgeTierSettingData,
 } from "@/lib/age-tier";
+import { DEFAULT_MEMBERSHIP_SUBSCRIPTION_BILLING_SETTINGS } from "@/config/club-settings-defaults";
 import { createAuditLog } from "@/lib/audit";
 import { getEffectiveMembershipAnnualFee, getFamilyBillingMode } from "@/lib/authoritative-fees";
 import { formatDateOnly, getTodayDateOnly, parseDateOnly } from "@/lib/date-only";
@@ -263,7 +264,7 @@ export async function getSubscriptionBillingDueDays(tx: Prisma.TransactionClient
     where: { id: "default" },
     select: { invoiceDueDays: true },
   });
-  return row?.invoiceDueDays ?? 30;
+  return row?.invoiceDueDays ?? DEFAULT_MEMBERSHIP_SUBSCRIPTION_BILLING_SETTINGS.invoiceDueDays;
 }
 
 export async function buildSubscriptionBillingPreview(input: {

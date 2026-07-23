@@ -79,6 +79,11 @@ function makeStore(seed?: {
     components.filter((c) => c.membershipAnnualFeeId === feeId).map((c) => ({ ...c }));
 
   const db = {
+    // #2200: the age-tier exporter/importer ride the membership-fees category as
+    // a separate module. These fee tests carry no age tiers, so the delegate
+    // returns none — age-tiers.csv is simply not emitted and the fee assertions
+    // are unaffected.
+    ageTierSetting: { findMany: async () => [] },
     membershipType: { findMany: async () => types.map((t) => ({ ...t })) },
     joiningFee: {
       findMany: async () => joiningFees.map(withType),

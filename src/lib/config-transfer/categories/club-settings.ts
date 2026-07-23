@@ -10,14 +10,18 @@ import {
   DEFAULT_MEMBERSHIP_CANCELLATION_SETTINGS,
   DEFAULT_MEMBERSHIP_LOCKOUT_SETTINGS,
   DEFAULT_MEMBERSHIP_NOMINATION_SETTINGS,
+  DEFAULT_MEMBERSHIP_SUBSCRIPTION_BILLING_SETTINGS,
+  DEFAULT_PUBLIC_CONTENT_SETTINGS,
 } from "@/config/club-settings-defaults";
 import { DEFAULT_MEMBER_FIELDS_SETTINGS } from "@/config/member-fields";
+import { DEFAULT_LOGIN_SECURITY_POLICY } from "@/lib/password-policy";
 import {
   CLUB_MODULE_SETTINGS_COLUMN_SELECT,
   DEFAULT_MODULE_SETTINGS,
 } from "@/config/modules";
 import type { BundleEntry } from "../bundle";
 import { registerEntity } from "../registry";
+import { prismaEnumValues } from "../values";
 import type { CategoryExporter, ExportContext } from "../export-types";
 import {
   changedFields,
@@ -52,12 +56,30 @@ interface SingletonDelegate {
   }): Promise<unknown>;
 }
 
+/**
+ * Per-field dry-run constraints for a singleton (#2200). These mirror the
+ * admin-API bounds that config transfer would otherwise bypass, so a hand-edited
+ * value out of the admin's allowed range fails the PLAN (dry-run) instead of the
+ * write. `required` fills the gap left by Prisma 7's DMMF stripping `isRequired`
+ * (so `parseSingleton` can no longer read non-nullability from the schema): a
+ * PRESENT `null` on a required field is a plan error. `min`/`max` are inclusive
+ * bounds for an Int field. Enum-typed fields are validated automatically against
+ * the real Prisma enum, independent of this map.
+ */
+interface SingletonFieldConstraint {
+  required?: boolean;
+  min?: number;
+  max?: number;
+}
+
 interface SingletonSpec {
   entity: string;
   /** Prisma delegate name, e.g. "bookingDefaults". */
   delegate: string;
   fields: string[];
   optInFields?: string[];
+  /** Per-field dry-run bounds (see SingletonFieldConstraint). */
+  constraints?: Record<string, SingletonFieldConstraint>;
   /**
    * Prisma columns on this model that DELIBERATELY never travel in a bundle,
    * each mapped to a one-line reason. Merged with COMMON_EXCLUDED_COLUMNS to
@@ -176,6 +198,31 @@ export const SINGLETONS: SingletonSpec[] = [
         "auth-provider sign-in toggle gated on deployment-local Google OAuth " +
         "credentials (GOOGLE_CLIENT_ID/SECRET); a per-install auth decision — OWNER JUDGEMENT (#2178)",
     },
+    // Every travelling column is a non-null Boolean toggle (schema @default),
+    // so a present null fails the dry-run (#2200 model-level nullability audit).
+    // No numeric bounds: no route enforces a range on a boolean.
+    constraints: {
+      kiosk: { required: true },
+      chores: { required: true },
+      financeDashboard: { required: true },
+      waitlist: { required: true },
+      xeroIntegration: { required: true },
+      bedAllocation: { required: true },
+      internetBankingPayments: { required: true },
+      addressAutocomplete: { required: true },
+      groupBookings: { required: true },
+      lockers: { required: true },
+      induction: { required: true },
+      workParties: { required: true },
+      promoCodes: { required: true },
+      hutLeaders: { required: true },
+      communications: { required: true },
+      skifieldConditions: { required: true },
+      twoFactor: { required: true },
+      analytics: { required: true },
+      lobbyDisplay: { required: true },
+      aiAssistant: { required: true },
+    },
     select: CLUB_MODULE_SETTINGS_COLUMN_SELECT,
     defaults: () => DEFAULT_MODULE_SETTINGS,
   },
@@ -183,6 +230,15 @@ export const SINGLETONS: SingletonSpec[] = [
     entity: "booking-defaults",
     delegate: "bookingDefaults",
     fields: ["nonMemberHoldEnabled", "nonMemberHoldDays", "waitlistCrossLodgeOrder"],
+    // All three columns are non-null (@default); a present null fails the dry-run
+    // (#2200). nonMemberHoldDays mirrors the admin route's 1–365 bound
+    // (booking-policies/cancellation route: z.number().int().min(1).max(365)).
+    // waitlistCrossLodgeOrder is enum-validated automatically.
+    constraints: {
+      nonMemberHoldEnabled: { required: true },
+      nonMemberHoldDays: { required: true, min: 1, max: 365 },
+      waitlistCrossLodgeOrder: { required: true },
+    },
     excluded: {
       lodgeId:
         "soft-link FK for the phase-7 per-lodge conversion, unused by runtime " +
@@ -194,12 +250,23 @@ export const SINGLETONS: SingletonSpec[] = [
     entity: "member-fields-settings",
     delegate: "memberFieldsSettings",
     fields: ["showTitle", "showGender", "showOccupation"],
+    // All three columns are non-null Boolean (@default true); a present null
+    // fails the dry-run (#2200). No route enforces a numeric range.
+    constraints: {
+      showTitle: { required: true },
+      showGender: { required: true },
+      showOccupation: { required: true },
+    },
     defaults: () => DEFAULT_MEMBER_FIELDS_SETTINGS,
   },
   {
     entity: "bed-allocation-settings",
     delegate: "bedAllocationSettings",
     fields: ["autoAllocationEnabled"],
+    // Non-null Boolean (@default true); a present null fails the dry-run (#2200).
+    constraints: {
+      autoAllocationEnabled: { required: true },
+    },
     excluded: {
       lodgeId:
         "soft-link FK for the phase-7 per-lodge conversion, unused by runtime " +
@@ -214,6 +281,19 @@ export const SINGLETONS: SingletonSpec[] = [
       "showPricingToNonMembers", "quoteResponseTtlDays", "quoteReminderLeadDays",
       "attendeeConfirmationLeadDays", "attendeeConfirmationReminderDays",
     ],
+    // All non-null (@default); a present null fails the dry-run (#2200). Int
+    // bounds mirror the admin route (booking-requests/settings): quoteResponseTtlDays
+    // z.number().int().min(1).max(60), quoteReminderLeadDays min(0).max(30),
+    // attendeeConfirmationLeadDays min(0).max(90), attendeeConfirmationReminderDays
+    // min(1).max(30). The route's cross-field refine (reminder < ttl) is not a
+    // per-field bound and is left to the admin-reviewed dry-run diff.
+    constraints: {
+      showPricingToNonMembers: { required: true },
+      quoteResponseTtlDays: { required: true, min: 1, max: 60 },
+      quoteReminderLeadDays: { required: true, min: 0, max: 30 },
+      attendeeConfirmationLeadDays: { required: true, min: 0, max: 90 },
+      attendeeConfirmationReminderDays: { required: true, min: 1, max: 30 },
+    },
     excluded: {
       lodgeId:
         "soft-link FK for the phase-7 per-lodge conversion, unused by runtime " +
@@ -225,6 +305,14 @@ export const SINGLETONS: SingletonSpec[] = [
     entity: "internet-banking-payment-settings",
     delegate: "internetBankingPaymentSettings",
     fields: ["holdBedSlots", "holdDays", "minimumDaysBeforeCheckIn"],
+    // All non-null (@default); a present null fails the dry-run (#2200). Int
+    // bounds mirror the admin route (internet-banking-settings): holdDays
+    // z.number().int().min(1).max(30), minimumDaysBeforeCheckIn min(0).max(365).
+    constraints: {
+      holdBedSlots: { required: true },
+      holdDays: { required: true, min: 1, max: 30 },
+      minimumDaysBeforeCheckIn: { required: true, min: 0, max: 365 },
+    },
     defaults: () => DEFAULT_INTERNET_BANKING_PAYMENT_SETTINGS,
   },
   {
@@ -236,6 +324,8 @@ export const SINGLETONS: SingletonSpec[] = [
     fields: ["name", "shortName", "hutLeaderLabel", "facebookUrl"],
     // No override saved = every column null, which is what the admin GET
     // synthesises. See DEFAULTS_INTENTIONALLY_PARTIAL.
+    // No `constraints`: every column is nullable (String?), so null is a
+    // legitimate value — nothing to require (#2200 nullability audit).
     defaults: () => ({}),
   },
   {
@@ -252,12 +342,24 @@ export const SINGLETONS: SingletonSpec[] = [
     // As club-identity-settings: these columns are nullable overrides on top of
     // the install's own club.json/env identity, and that identity is not
     // portable. See DEFAULTS_INTENTIONALLY_PARTIAL.
+    // No `constraints`: every column is nullable (String?), so null is a
+    // legitimate value — nothing to require (#2200 nullability audit).
     defaults: () => ({}),
   },
   {
     entity: "group-discount-setting",
     delegate: "groupDiscountSetting",
     fields: ["minGroupSize", "summerOnly", "enabled"],
+    // All non-null (@default); a present null fails the dry-run (#2200).
+    // minGroupSize mirrors the admin route (booking-policies/group-discount):
+    // z.number().int().min(2).max(200). The route's additional
+    // minGroupSize <= lodgeCapacity check is a dynamic capacity guard, not a
+    // static bound, so it is not mirrored here.
+    constraints: {
+      minGroupSize: { required: true, min: 2, max: 200 },
+      summerOnly: { required: true },
+      enabled: { required: true },
+    },
     excluded: {
       rateMembershipTypeId:
         "FK to a MembershipType row; an instance-local id that need not resolve " +
@@ -272,6 +374,18 @@ export const SINGLETONS: SingletonSpec[] = [
       "gateEnabled", "minimumMembershipMonths", "minimumNights",
       "requiredSignOffs", "gateEffectiveFrom",
     ],
+    // gateEffectiveFrom is nullable (DateTime?) — null is a legitimate value, so
+    // it carries no constraint. The other four are non-null (@default) and fail
+    // the dry-run on a present null (#2200). Int bounds mirror the admin route
+    // (membership-nomination-settings): minimumMembershipMonths
+    // z.number().int().min(0).max(600), minimumNights min(0).max(3650),
+    // requiredSignOffs min(1).max(10).
+    constraints: {
+      gateEnabled: { required: true },
+      minimumMembershipMonths: { required: true, min: 0, max: 600 },
+      minimumNights: { required: true, min: 0, max: 3650 },
+      requiredSignOffs: { required: true, min: 1, max: 10 },
+    },
     defaults: () => DEFAULT_MEMBERSHIP_NOMINATION_SETTINGS,
   },
   {
@@ -287,13 +401,114 @@ export const SINGLETONS: SingletonSpec[] = [
       "enabled", "financialYearEndMonthOverride", "textFallbackEnabled",
       "useFeeScheduleItemCodes",
     ],
+    // financialYearEndMonthOverride is nullable (Int?) — null (= follow Xero's
+    // accounting year) is a legitimate value, so it carries no `required`; its
+    // 1–12 month bound still applies when a value is present, mirroring the admin
+    // route (membership-lockout-settings): z.number().int().min(1).max(12)
+    // .nullable(). The three booleans are non-null (@default) and fail on a
+    // present null (#2200).
+    constraints: {
+      enabled: { required: true },
+      financialYearEndMonthOverride: { min: 1, max: 12 },
+      textFallbackEnabled: { required: true },
+      useFeeScheduleItemCodes: { required: true },
+    },
     defaults: () => DEFAULT_MEMBERSHIP_LOCKOUT_SETTINGS,
   },
   {
     entity: "membership-cancellation-setting",
     delegate: "membershipCancellationSetting",
     fields: ["warningText", "rejoinProcessText", "xeroArchiveContactsOnCancellation"],
+    // warningText / rejoinProcessText are nullable (String?) — null is a
+    // legitimate value, so no `required`. xeroArchiveContactsOnCancellation is a
+    // non-null Boolean (@default false) and fails on a present null (#2200).
+    constraints: {
+      xeroArchiveContactsOnCancellation: { required: true },
+    },
     defaults: () => DEFAULT_MEMBERSHIP_CANCELLATION_SETTINGS,
+  },
+  {
+    // #2200 (model-level completeness audit): portable club login/security POLICY
+    // — the password-complexity rules and the magic-link token TTL. Every field is
+    // a portable club decision with no secret, credential, tenant, or deployment
+    // coupling (the FORBIDDEN_FIELD_PATTERNS sweep passes: none is a secret/token
+    // value — magicLinkTtlMinutes is a duration, not a token). An absent row reads
+    // as the code default (normalizeLoginSecurityPolicy over null), so the exporter
+    // emits exactly that constant.
+    entity: "login-security-setting",
+    delegate: "loginSecuritySetting",
+    fields: [
+      "minPasswordLength", "requireUppercase", "requireLowercase",
+      "requireDigit", "requireSymbol", "magicLinkTtlMinutes",
+    ],
+    // Every column is a non-null policy field: a present null fails the dry-run
+    // (#2200). Range bounds are not enforced here because normalizeLoginSecurityPolicy
+    // already clamps minPasswordLength/magicLinkTtlMinutes on read, so an out-of-range
+    // import is corrected at read time rather than silently mis-applied.
+    constraints: {
+      minPasswordLength: { required: true },
+      requireUppercase: { required: true },
+      requireLowercase: { required: true },
+      requireDigit: { required: true },
+      requireSymbol: { required: true },
+      magicLinkTtlMinutes: { required: true },
+    },
+    defaults: () => ({ ...DEFAULT_LOGIN_SECURITY_POLICY }),
+  },
+  {
+    // #2200: portable public-content visibility POLICY — the six double-opt-in
+    // embed gates plus whether the public "Book Now" button is shown. The
+    // Book-Now DESTINATION does not travel: bookNowTarget/bookNowPageId reference
+    // a specific install's PageContent id (instance-local, like the phase-7
+    // lodgeId / rateMembershipTypeId FK exclusions), and getBookNowConfig fails
+    // open to the booking flow when the target page is absent — so a target keeps
+    // its own destination and the button is never dead.
+    entity: "public-content-settings",
+    delegate: "publicContentSettings",
+    fields: [
+      "membershipTypes", "entranceFees", "hutFees", "bookingPolicySummary",
+      "cancellationPolicy", "annualFees", "showBookNow",
+    ],
+    // Every exported column is a non-null boolean gate: a present null fails the
+    // dry-run (#2200).
+    constraints: {
+      membershipTypes: { required: true },
+      entranceFees: { required: true },
+      hutFees: { required: true },
+      bookingPolicySummary: { required: true },
+      cancellationPolicy: { required: true },
+      annualFees: { required: true },
+      showBookNow: { required: true },
+    },
+    excluded: {
+      bookNowTarget:
+        "half of the instance-local Book-Now destination; only meaningful with " +
+        "bookNowPageId, which names a specific install's PageContent row",
+      bookNowPageId:
+        "FK to a PageContent row; an instance-local id that need not resolve on " +
+        "the target — getBookNowConfig fails open to the booking flow without it",
+    },
+    defaults: () => DEFAULT_PUBLIC_CONTENT_SETTINGS,
+  },
+  {
+    // #2200: portable membership billing POLICY — the invoice due-days window and
+    // the club family-billing model. Neither embeds a Xero/provider or tenant
+    // reference (verified against the schema), so both are portable club config,
+    // exactly like the other membership-settings singletons. familyBillingMode
+    // interacts with PER_FAMILY fee schedules (which travel in the membership-fees
+    // category); a whole-bundle export stays internally consistent, and the
+    // admin-reviewed dry-run surfaces any partial-import mismatch.
+    entity: "membership-subscription-billing-settings",
+    delegate: "membershipSubscriptionBillingSettings",
+    fields: ["invoiceDueDays", "familyBillingMode"],
+    // Mirror the admin API's bounds so a hand-edited bundle fails the dry-run:
+    // invoiceDueDays is 1–365 (subscription-billing route z.number().int().min(1).max(365)),
+    // and both fields are non-null. familyBillingMode is enum-validated automatically.
+    constraints: {
+      invoiceDueDays: { required: true, min: 1, max: 365 },
+      familyBillingMode: { required: true },
+    },
+    defaults: () => DEFAULT_MEMBERSHIP_SUBSCRIPTION_BILLING_SETTINGS,
   },
 ];
 
@@ -373,9 +588,25 @@ function parseSingleton(
     const value = record[field];
     const column = model?.fields.find((f) => f.name === field);
     if (!column) continue; // guarded separately by the schema-drift test
+    const rule = spec.constraints?.[field];
     if (value === null) {
-      if (column.isRequired) {
+      // Prisma 7's client DMMF strips `isRequired`, so non-nullability is no
+      // longer readable from the schema here (#2200) — a spec declares it via
+      // `constraints.required`. A present null on a required field is a plan
+      // error, so a hand-edited bundle fails the dry-run, not the write.
+      if (rule?.required) {
         errors.push(`${file}: ${field} — null is not allowed (required setting)`);
+        ok = false;
+      }
+      continue;
+    }
+    // Enum columns (e.g. familyBillingMode) are validated against the real
+    // Prisma enum so an invalid value fails the dry-run, not the write (#2200).
+    if (column.kind === "enum") {
+      if (typeof value !== "string" || !prismaEnumValues(column.type).has(value)) {
+        errors.push(
+          `${file}: ${field} — ${JSON.stringify(value)} is not a valid ${column.type}`,
+        );
         ok = false;
       }
       continue;
@@ -390,6 +621,24 @@ function parseSingleton(
       errors.push(
         `${file}: ${field} — ${JSON.stringify(value)} is not a valid ${column.type}`,
       );
+      ok = false;
+      continue;
+    }
+    // Inclusive Int bounds mirroring the admin API, so an out-of-range value
+    // (e.g. invoiceDueDays outside 1–365) fails the dry-run, not the write.
+    if (
+      column.type === "Int" &&
+      typeof value === "number" &&
+      ((rule?.min !== undefined && value < rule.min) ||
+        (rule?.max !== undefined && value > rule.max))
+    ) {
+      const range =
+        rule?.min !== undefined && rule?.max !== undefined
+          ? `${rule.min}–${rule.max}`
+          : rule?.min !== undefined
+            ? `at least ${rule.min}`
+            : `at most ${rule?.max}`;
+      errors.push(`${file}: ${field} — ${value} is out of range (must be ${range})`);
       ok = false;
     }
   }

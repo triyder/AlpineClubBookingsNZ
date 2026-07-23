@@ -4,6 +4,30 @@ All notable public reference-release changes should be recorded here.
 
 ## Unreleased
 
+- **Configuration transfer now covers three more club-wide settings, and guards
+  against any future settings singleton being silently left out (#2200).** A
+  bundle now carries your **login/security policy** (password-complexity rules
+  and the magic-link link lifetime), your **public-content visibility** choices
+  (the double-opt-in embed toggles and whether the public "Book Now" button
+  shows), and your **subscription-billing policy** (invoice due-days and the
+  family-billing model) — portable club decisions that previously stayed behind
+  when you moved config between installs. Instance-specific settings deliberately
+  do **not** travel and are now recorded as such with a reason: the Xero
+  member-grouping mode (tied to your connected Xero organisation), per-lodge
+  capacity/soft-cap settings (they belong with each lodge), setup-wizard
+  progress, and the AI monthly spend cap. A new test enumerates every
+  single-row (`id = "default"`) settings table straight from the schema and
+  fails the build if one is neither exported nor explicitly excluded, so a future
+  settings table can't quietly join the blind spot. Your **age-tier definitions**
+  (the age bounds, labels, and per-tier subscription/family-request rules) now
+  travel too, as a multi-row table: on import each tier is matched to the
+  destination's existing tier and updated in place, so member pricing and
+  classification stay intact; a bundle that would leave an incomplete or
+  overlapping age partition is refused with a clear message pointing you to the
+  Age Tiers admin page. No secret or credential travels, and no bundle
+  format-version change is needed — an older app importing a newer bundle simply
+  ignores the extra files, and a newer app importing an older bundle leaves the
+  new settings untouched.
 - **The public website now paints from the same generated palette as the admin
   app (#2217).** The public site's neutral chrome — page, cards, borders, inputs,
   muted text, hover surfaces and the dark-nav hairline — is now resolved from the
