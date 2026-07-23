@@ -3408,6 +3408,70 @@ model SetupProgress {
 }
 
 // ---------------------------------------------------------------------------
+// AI help assistant metering + spend control (#2211, epic #2094 C3)
+// ---------------------------------------------------------------------------
+
+// Per-month rolled-up AI help usage. Mirrors the XeroApiUsageDaily pattern:
+// atomic upsert-with-increments alongside each event write. All token counts are
+// integers; costCents is NZD integer cents (never floats — money stays in cents).
+model AiAssistantUsageMonthly {
+  id               String   @id @default(cuid())
+  // Calendar month in Pacific/Auckland, "YYYY-MM".
+  month            String   @unique
+  requestCount     Int      @default(0)
+  failedCount      Int      @default(0)
+  inputTokens      Int      @default(0)
+  outputTokens     Int      @default(0)
+  cacheWriteTokens Int      @default(0)
+  cacheReadTokens  Int      @default(0)
+  costCents        Int      @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+// One row per AI help call (success OR failure). The question text is NEVER
+// stored — only its character count (questionChars) for cost/abuse analysis.
+// memberId is a PLAIN STRING with NO foreign key: an FK here would trip the
+// blue/green HOT_TABLE_SQL_REGEX FK gate, and this metering table must never
+// block a member delete or a Member schema change.
+model AiAssistantUsageEvent {
+  id               String   @id @default(cuid())
+  month            String
+  memberId         String?
+  surface          String
+  pathname         String
+  model            String
+  success          Boolean
+  errorCode        String?
+  statusCode       Int?
+  durationMs       Int?
+  inputTokens      Int      @default(0)
+  outputTokens     Int      @default(0)
+  cacheWriteTokens Int      @default(0)
+  cacheReadTokens  Int      @default(0)
+  costCents        Int      @default(0)
+  // Character count of the question — the question text itself is never stored.
+  questionChars    Int?
+  // Redacted + truncated (~500 chars) provider error message, when present.
+  errorMessage     String?
+  createdAt        DateTime @default(now())
+
+  @@index([month])
+  @@index([createdAt])
+}
+
+// Deployment-specific AI spend control singleton (id="default"). The monthly
+// budget is a hard cutoff in NZD integer cents (default NZ$10 = 1000c).
+// updatedByMemberId is a PLAIN STRING with NO foreign key (audit-only; the id
+// need not resolve to a live Member row).
+model AiAssistantSettings {
+  id                 String   @id @default("default")
+  monthlyBudgetCents Int      @default(1000)
+  updatedAt          DateTime @updatedAt
+  updatedByMemberId  String?
+}
+
+// ---------------------------------------------------------------------------
 // Club Module Settings (admin-level activation for optional modules)
 // ---------------------------------------------------------------------------
 
@@ -3437,6 +3501,9 @@ model ClubModuleSettings {
   // Google OAuth sign-in (#2035). Default OFF; per-club opt-in on the Login &
   // Security page. Additive to password login, never a replacement.
   googleLogin             Boolean  @default(false)
+  // AI help assistant (#2211, epic #2094 C3). Default OFF; free-text help
+  // questions answered by a paid AI model, grounded in each page's help content.
+  aiAssistant             Boolean  @default(false)
   updatedByMemberId       String?
   createdAt               DateTime @default(now())
   updatedAt               DateTime @default(now()) @updatedAt
@@ -4609,15 +4676,13 @@ model ClubTheme {
   brandGold      String
   brandDeep      String
   brandSafety    String
-  // #2187 EXPAND: the four former brand columns are dead to code (derived from
-  // the substrate at render time) but stay in the DB so pre-#2187 code renders
-  // across a blue/green cutover. They now carry a DB default so new code can
-  // insert a ClubTheme row without naming them. P4 ships the CONTRACT migration
-  // that drops them (with a BLUE_GREEN_MIGRATION_SAFETY.tsv ledger row).
-  brandCharcoal  String        @default("#21362b")
-  brandRidge     String        @default("#5c6f66")
-  brandMist      String        @default("#d4ddd7")
-  brandSnow      String        @default("#f5f8f6")
+  // #2187 epic #2181: a club picks THREE seeds (brandGold/brandDeep/brandSafety)
+  // that feed the vendored Radix generator for the full 12-step substrate. The
+  // four former brand columns (brandCharcoal/brandRidge/brandMist/brandSnow) were
+  // dead to code from P1 (derived at render time by deriveBrandShims) and were
+  // dropped by the P4 CONTRACT migration
+  // 20260722160000_contract_drop_club_theme_orphan_columns after P1's EXPAND
+  // (20260722140000_expand_club_theme_orphan_column_defaults) drained.
   headingFontKey ClubThemeFont @default(LEAGUE_SPARTAN)
   bodyFontKey    ClubThemeFont @default(INTER)
   logoDataUrl    String?

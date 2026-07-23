@@ -13,6 +13,7 @@ import { displayExporter } from "./categories/display";
 import { committeeExporter } from "./categories/committee";
 import { inductionExporter } from "./categories/induction";
 import { membershipFeesExporter } from "./categories/membership-fees";
+import { ageTierExporter } from "./categories/age-tier";
 import { xeroConfigExporter } from "./categories/xero-config";
 
 // Export orchestrator: runs the selected category exporters, bundles any
@@ -28,6 +29,9 @@ export const CATEGORY_EXPORTERS: CategoryExporter[] = [
   displayExporter,
   committeeExporter,
   inductionExporter,
+  // age-tier rides the membership-fees category as its own module (#2200), so
+  // it must precede the fee exporter for a stable, readable file ordering.
+  ageTierExporter,
   membershipFeesExporter,
   xeroConfigExporter,
 ];

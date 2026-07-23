@@ -178,9 +178,9 @@ export function getFamilyGroupRequestBadgeClass(request: FamilyGroupRequest) {
   if (request.type === "CHILD_REQUEST") return "bg-info-3 text-info-11 border-info-6";
   if (request.type === "ADULT_REQUEST") return "bg-cat1-3 text-cat1-11 border-cat1-6";
   if (request.type === "REMOVAL_REQUEST") return "bg-danger-3 text-danger-11 border-danger-6";
-  // GROUP_CREATE reaches its teal through the shared `--hue-*` chip tones
+  // GROUP_CREATE reaches its teal through CHIP_TONE_CLASSES.cat6 (#2218)
   // (#2137) rather than a literal Tailwind `teal-*` pair.
-  if (request.type === "GROUP_CREATE") return `${CHIP_TONE_CLASSES.teal} border-hue-teal/20`;
+  if (request.type === "GROUP_CREATE") return `${CHIP_TONE_CLASSES.cat6} border-cat6-6`;
   return "bg-success-3 text-success-11 border-success-6";
 }
 

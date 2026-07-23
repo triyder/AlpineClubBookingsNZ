@@ -89,23 +89,20 @@ const BOOKING_TONES: Record<BookingStatus, ToneEntry> = {
   WAITLIST_OFFERED: { tone: "info", Icon: Ticket },
 };
 
-// Every payment state gets a DISTINCT hue (#156): the five-tone collapse
-// previously hid three states behind shared tones (PROCESSING = info like other
-// informational chips, REFUNDED = neutral, PARTIALLY_REFUNDED = warning like
-// PENDING). PROCESSING/REFUNDED/PARTIALLY_REFUNDED now use accent hues so the
-// payments table reads each state at a glance. Icons still carry meaning.
-//
-// PARTIALLY_REFUNDED uses teal (185), not orange (55): orange sat ~20 deg from
-// PENDING = warning (75) and ~28 deg from FAILED = danger (27), lumping three
-// warm chips together. Teal drops it into the cool gap, clear of PROCESSING =
-// indigo (275) and REFUNDED = purple (315).
+// Every payment state gets a DISTINCT tone (#156, re-homed onto the generated
+// categorical scales in #2218): PROCESSING = cat3 (magenta family), REFUNDED =
+// cat1 (indigo family), PARTIALLY_REFUNDED = cat4 (orange family) — each
+// pairwise-distinct from the semantic tones the other states use (PENDING =
+// warning, FAILED = danger, SUCCEEDED = success), measured in both modes in
+// the #2219 delta review. Icons still carry meaning; colour is never the only
+// signal.
 const PAYMENT_TONES: Record<PaymentStatus, ToneEntry> = {
   PENDING: { tone: "warning", Icon: Clock },
-  PROCESSING: { tone: "indigo", Icon: Loader2 },
+  PROCESSING: { tone: "cat3", Icon: Loader2 },
   SUCCEEDED: { tone: "success", Icon: CheckCircle2 },
   FAILED: { tone: "danger", Icon: XCircle },
-  REFUNDED: { tone: "purple", Icon: Undo2 },
-  PARTIALLY_REFUNDED: { tone: "teal", Icon: Undo2 },
+  REFUNDED: { tone: "cat1", Icon: Undo2 },
+  PARTIALLY_REFUNDED: { tone: "cat4", Icon: Undo2 },
 };
 
 const SUBSCRIPTION_TONES: Record<SubscriptionStatus, ToneEntry> = {

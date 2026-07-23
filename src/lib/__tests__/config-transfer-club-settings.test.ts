@@ -23,8 +23,14 @@ import {
   DEFAULT_GROUP_DISCOUNT_SETTING,
   DEFAULT_MEMBERSHIP_CANCELLATION_SETTINGS,
   DEFAULT_MEMBERSHIP_LOCKOUT_SETTINGS,
+  DEFAULT_MEMBERSHIP_SUBSCRIPTION_BILLING_SETTINGS,
+  DEFAULT_PUBLIC_CONTENT_SETTINGS,
 } from "@/config/club-settings-defaults";
+import { DEFAULT_LOGIN_SECURITY_POLICY } from "@/lib/password-policy";
+import { DEFAULT_FAMILY_BILLING_MODE } from "@/lib/authoritative-fees";
 import { CLUB_MODULE_SETTINGS_COLUMN_SELECT } from "@/config/modules";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 
 // Delegate names touched by the club-settings category.
 const SINGLETON_DELEGATES = [
@@ -40,6 +46,10 @@ const SINGLETON_DELEGATES = [
   "membershipNominationSettings",
   "membershipLockoutSettings",
   "membershipCancellationSetting",
+  // #2200 — three portable settings singletons added by the model-level audit.
+  "loginSecuritySetting",
+  "publicContentSettings",
+  "membershipSubscriptionBillingSettings",
 ];
 
 /** Build a stub DB whose singleton delegates return the given rows (else null). */
@@ -62,6 +72,10 @@ const MODULES = {
   induction: true, workParties: true, promoCodes: true, hutLeaders: true,
   communications: true, skifieldConditions: true,
   twoFactor: false, analytics: false,
+  // Every travelling module flag is a non-null Boolean; the #2200 dry-run
+  // `constraints.required` audit rejects a projected null, so the fixture must
+  // carry all of them (a real DB row always does).
+  lobbyDisplay: false, aiAssistant: false,
 };
 const EMAIL = {
   clubName: "Grads", bookingsName: "Bookings", lodgeName: "Lodge",
@@ -783,6 +797,219 @@ describe("membership-lockout useFeeScheduleItemCodes round-trips (#2178)", () =>
   });
 });
 
+// ---------------------------------------------------------------------------
+// #2200 — the three settings singletons the model-level completeness audit
+// classified PORTABLE (login/security policy, public-content visibility policy,
+// membership billing policy) now export, import, and round-trip like the rest of
+// the club-settings category, and their effective defaults stay bound to the
+// Prisma schema so the exporter cannot drift from what an unsaved club reads.
+// ---------------------------------------------------------------------------
+
+/** Extract the raw token inside `@default(...)` for a field, from the schema. */
+function schemaDefaultToken(
+  schema: string,
+  modelName: string,
+  fieldName: string,
+): string | null {
+  const lines = schema.split(/\r?\n/);
+  let inModel = false;
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (line.match(new RegExp(`^model\\s+${modelName}\\s*\\{`))) {
+      inModel = true;
+      continue;
+    }
+    if (inModel && line.startsWith("}")) break;
+    if (inModel && line.match(new RegExp(`^${fieldName}\\s`))) {
+      const m = line.match(/@default\(([^)]*)\)/);
+      return m ? m[1].replace(/^"|"$/g, "") : null;
+    }
+  }
+  return null;
+}
+
+describe("#2200 portable singletons export/import and stay schema-bound", () => {
+  const SCHEMA = readFileSync(
+    path.resolve(process.cwd(), "prisma/schema.prisma"),
+    "utf8",
+  );
+
+  it("emits an entry for each of the three new singletons, carrying schema-default values on a miss", async () => {
+    const { zip } = await exportFromUnsavedClub();
+    const { files } = readBundle(zip);
+
+    expect(readJson(files, "login-security-setting")).toEqual({
+      ...DEFAULT_LOGIN_SECURITY_POLICY,
+    });
+    expect(readJson(files, "public-content-settings")).toEqual({
+      ...DEFAULT_PUBLIC_CONTENT_SETTINGS,
+    });
+    expect(readJson(files, "membership-subscription-billing-settings")).toEqual({
+      ...DEFAULT_MEMBERSHIP_SUBSCRIPTION_BILLING_SETTINGS,
+    });
+  });
+
+  it("never exports the instance-local Book-Now destination fields", async () => {
+    const { zip } = await exportFromUnsavedClub();
+    const { files } = readBundle(zip);
+    const publicContent = readJson(files, "public-content-settings");
+    expect("bookNowTarget" in publicContent).toBe(false);
+    expect("bookNowPageId" in publicContent).toBe(false);
+  });
+
+  it("round-trips a saved login-security policy: create on an absent target, update on a differing one", async () => {
+    const saved = {
+      minPasswordLength: 16,
+      requireUppercase: true,
+      requireLowercase: true,
+      requireDigit: true,
+      requireSymbol: false,
+      magicLinkTtlMinutes: 30,
+    };
+    const { zip } = await buildConfigExport({
+      db: stubDb({ loginSecuritySetting: saved }),
+      categories: ["club-settings"],
+      includeDoorCodes: false,
+      appVersion: "0.14.0",
+      prismaMigration: null,
+      generatedAt: "2026-07-23T00:00:00.000Z",
+    });
+    const { files } = readBundle(zip);
+    expect(readJson(files, "login-security-setting")).toEqual(saved);
+
+    // Absent target → create.
+    const createPlan = await buildImportPlan(stubDb({}), zip, { mode: "merge" });
+    expect(
+      createPlan.categories[0].items.find((i) => i.entity === "login-security-setting")?.action,
+    ).toBe("create");
+
+    // Differing target → update, only the changed field reported.
+    const target = { ...saved, minPasswordLength: 12 };
+    const plan = await buildImportPlan(
+      stubDb({ loginSecuritySetting: target }),
+      zip,
+      { mode: "merge" },
+    );
+    const item = plan.categories[0].items.find(
+      (i) => i.entity === "login-security-setting",
+    );
+    expect(item?.action).toBe("update");
+    expect(item?.changedFields).toEqual(["minPasswordLength"]);
+
+    const { tx, delegates } = stubTx({ loginSecuritySetting: target });
+    await clubSettingsImporter.apply(applyCtx(tx, files, "merge"));
+    expect(delegates.loginSecuritySetting.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ update: expect.objectContaining({ minPasswordLength: 16 }) }),
+    );
+  });
+
+  it("round-trips the billing policy (invoiceDueDays + familyBillingMode)", async () => {
+    const saved = { invoiceDueDays: 45, familyBillingMode: "BILL_MEMBERS_INDIVIDUALLY" };
+    const { zip } = await buildConfigExport({
+      db: stubDb({ membershipSubscriptionBillingSettings: saved }),
+      categories: ["club-settings"],
+      includeDoorCodes: false,
+      appVersion: "0.14.0",
+      prismaMigration: null,
+      generatedAt: "2026-07-23T00:00:00.000Z",
+    });
+    const { files } = readBundle(zip);
+    expect(readJson(files, "membership-subscription-billing-settings")).toEqual(saved);
+
+    const target = { invoiceDueDays: 30, familyBillingMode: "BILL_FAMILY_VIA_BILLING_MEMBER" };
+    const { tx, delegates } = stubTx({ membershipSubscriptionBillingSettings: target });
+    await clubSettingsImporter.apply(applyCtx(tx, files, "merge"));
+    expect(delegates.membershipSubscriptionBillingSettings.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        update: expect.objectContaining({
+          invoiceDueDays: 45,
+          familyBillingMode: "BILL_MEMBERS_INDIVIDUALLY",
+        }),
+      }),
+    );
+  });
+
+  it("round-trips public-content visibility gates (booleans travel in both modes)", async () => {
+    const saved = {
+      membershipTypes: true, entranceFees: true, hutFees: false,
+      bookingPolicySummary: true, cancellationPolicy: false, annualFees: true,
+      showBookNow: false,
+    };
+    const { zip } = await buildConfigExport({
+      db: stubDb({ publicContentSettings: { ...saved, bookNowTarget: "PAGE", bookNowPageId: "pg_source" } }),
+      categories: ["club-settings"],
+      includeDoorCodes: false,
+      appVersion: "0.14.0",
+      prismaMigration: null,
+      generatedAt: "2026-07-23T00:00:00.000Z",
+    });
+    const { files } = readBundle(zip);
+    // The instance-local destination fields were dropped; only policy travels.
+    expect(readJson(files, "public-content-settings")).toEqual(saved);
+
+    const { tx, delegates } = stubTx({});
+    await clubSettingsImporter.apply(applyCtx(tx, files, "merge"));
+    // A `false` gate is non-blank, so it is written on create.
+    expect(delegates.publicContentSettings.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ create: { id: "default", ...saved } }),
+    );
+  });
+
+  it("imports an OLDER bundle that omits the new singletons, leaving each untouched (no format-version bump)", async () => {
+    // A pre-#2200 export: only one legacy singleton present.
+    const zip = buildBundle({
+      entries: [
+        {
+          path: "club-settings/group-discount-setting.json",
+          category: "club-settings",
+          rowCount: 1,
+          bytes: strToU8(JSON.stringify(DEFAULT_GROUP_DISCOUNT_SETTING)),
+        },
+      ],
+      appVersion: "0.13.0",
+      prismaMigration: null,
+      includedCategories: ["club-settings"],
+      doorCodesIncluded: false,
+      generatedAt: "2026-07-23T00:00:00.000Z",
+    });
+    const { files } = readBundle(zip);
+    const { tx, delegates } = stubTx({});
+    await clubSettingsImporter.apply(applyCtx(tx, files, "merge"));
+    // Files-first: the three new singletons are absent, so none is written.
+    expect(delegates.loginSecuritySetting.upsert).not.toHaveBeenCalled();
+    expect(delegates.publicContentSettings.upsert).not.toHaveBeenCalled();
+    expect(delegates.membershipSubscriptionBillingSettings.upsert).not.toHaveBeenCalled();
+  });
+
+  it("keeps each new singleton's effective default bound to the Prisma schema column default", () => {
+    // The exporter emits these on a miss; if a schema default changes without the
+    // constant, an unsaved club would export a stale value. Bind them together.
+    const cases: Array<[string, Record<string, unknown>]> = [
+      ["LoginSecuritySetting", { ...DEFAULT_LOGIN_SECURITY_POLICY }],
+      ["PublicContentSettings", { ...DEFAULT_PUBLIC_CONTENT_SETTINGS }],
+      ["MembershipSubscriptionBillingSettings", { ...DEFAULT_MEMBERSHIP_SUBSCRIPTION_BILLING_SETTINGS }],
+    ];
+    const problems: string[] = [];
+    for (const [model, defaults] of cases) {
+      for (const [field, value] of Object.entries(defaults)) {
+        const token = schemaDefaultToken(SCHEMA, model, field);
+        if (token === null) {
+          problems.push(`${model}.${field}: no @default() in schema`);
+        } else if (token !== String(value)) {
+          problems.push(`${model}.${field}: schema @default(${token}) != constant ${String(value)}`);
+        }
+      }
+    }
+    expect(problems).toEqual([]);
+  });
+
+  it("keeps the billing family-mode default in lockstep with DEFAULT_FAMILY_BILLING_MODE", () => {
+    expect(DEFAULT_MEMBERSHIP_SUBSCRIPTION_BILLING_SETTINGS.familyBillingMode).toBe(
+      DEFAULT_FAMILY_BILLING_MODE,
+    );
+  });
+});
+
 describe("every singleton spec declares defaults for every field it exports", () => {
   it("covers each exported field, and only the two override-only singletons opt out", () => {
     // Assert the MEMBERSHIP of the exemption set, not just its effect: without
@@ -808,5 +1035,160 @@ describe("every singleton spec declares defaults for every field it exports", ()
       }
     }
     expect(problems).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #2200 — singleton dry-run validation. Config transfer bypasses the admin API,
+// so the singleton parser mirrors its bounds: an out-of-range Int, a present
+// null on a required field, or an invalid enum must fail the DRY-RUN (plan
+// errors), not the write. (Prisma 7's DMMF strips isRequired, so `required` is
+// declared per-field in the spec `constraints`.)
+// ---------------------------------------------------------------------------
+
+function singletonBundle(entity: string, obj: Record<string, unknown>) {
+  return buildBundle({
+    entries: [
+      {
+        path: `club-settings/${entity}.json`,
+        category: "club-settings",
+        rowCount: 1,
+        bytes: strToU8(JSON.stringify(obj)),
+      },
+    ],
+    appVersion: "0.14.0",
+    prismaMigration: null,
+    includedCategories: ["club-settings"],
+    doorCodesIncluded: false,
+    generatedAt: "2026-07-23T00:00:00.000Z",
+  });
+}
+
+describe("#2200 singleton dry-run validation (bounds, required, enum)", () => {
+  it("rejects invoiceDueDays outside the admin 1–365 range", async () => {
+    for (const bad of [0, -5, 999999]) {
+      const zip = singletonBundle("membership-subscription-billing-settings", {
+        invoiceDueDays: bad,
+        familyBillingMode: "BILL_FAMILY_VIA_BILLING_MEMBER",
+      });
+      const plan = await buildImportPlan(stubDb({}), zip, { mode: "merge" });
+      expect(plan.errors.join(" ")).toMatch(/invoiceDueDays — .*out of range.*1–365/);
+    }
+  });
+
+  it("accepts an in-range invoiceDueDays and a valid familyBillingMode", async () => {
+    const zip = singletonBundle("membership-subscription-billing-settings", {
+      invoiceDueDays: 45,
+      familyBillingMode: "BILL_MEMBERS_INDIVIDUALLY",
+    });
+    const plan = await buildImportPlan(stubDb({}), zip, { mode: "merge" });
+    expect(plan.errors).toEqual([]);
+  });
+
+  it("rejects an invalid familyBillingMode enum value", async () => {
+    const zip = singletonBundle("membership-subscription-billing-settings", {
+      invoiceDueDays: 30,
+      familyBillingMode: "NOT_A_MODE",
+    });
+    const plan = await buildImportPlan(stubDb({}), zip, { mode: "merge" });
+    expect(plan.errors.join(" ")).toMatch(
+      /familyBillingMode — .*is not a valid FamilyBillingMode/,
+    );
+  });
+
+  it("rejects a present null on a required login-security field", async () => {
+    const zip = singletonBundle("login-security-setting", {
+      minPasswordLength: null,
+      requireUppercase: false,
+      requireLowercase: false,
+      requireDigit: false,
+      requireSymbol: false,
+      magicLinkTtlMinutes: 15,
+    });
+    const plan = await buildImportPlan(stubDb({}), zip, { mode: "merge" });
+    expect(plan.errors.join(" ")).toMatch(/minPasswordLength — null is not allowed/);
+  });
+
+  it("rejects a present null on a required public-content gate", async () => {
+    const zip = singletonBundle("public-content-settings", {
+      membershipTypes: null,
+      entranceFees: false,
+      hutFees: false,
+      bookingPolicySummary: false,
+      cancellationPolicy: false,
+      annualFees: false,
+      showBookNow: true,
+    });
+    const plan = await buildImportPlan(stubDb({}), zip, { mode: "merge" });
+    expect(plan.errors.join(" ")).toMatch(/membershipTypes — null is not allowed/);
+  });
+
+  // The pre-existing twelve singletons carry the same per-field `constraints`
+  // as the three #2200 additions (nullability audit). Representative coverage:
+  // a required-null reject, a nullable-null accept, and a mirrored range bound.
+  it("rejects a present null on a required booking-defaults field", async () => {
+    const zip = singletonBundle("booking-defaults", {
+      nonMemberHoldEnabled: null,
+      nonMemberHoldDays: 7,
+      waitlistCrossLodgeOrder: "OWN_LODGE_FIRST",
+    });
+    const plan = await buildImportPlan(stubDb({}), zip, { mode: "merge" });
+    expect(plan.errors.join(" ")).toMatch(
+      /nonMemberHoldEnabled — null is not allowed/,
+    );
+  });
+
+  it("accepts a null on the nullable membership-lockout financialYearEndMonthOverride", async () => {
+    // financialYearEndMonthOverride is Int? (null = follow Xero's accounting
+    // year), so a present null must NOT fail the dry-run.
+    const zip = singletonBundle("membership-lockout-settings", {
+      enabled: true,
+      financialYearEndMonthOverride: null,
+      textFallbackEnabled: true,
+      useFeeScheduleItemCodes: false,
+    });
+    const plan = await buildImportPlan(stubDb({}), zip, { mode: "merge" });
+    expect(plan.errors).toEqual([]);
+  });
+
+  it("still enforces the 1–12 bound when financialYearEndMonthOverride is present", async () => {
+    for (const bad of [0, 13]) {
+      const zip = singletonBundle("membership-lockout-settings", {
+        enabled: true,
+        financialYearEndMonthOverride: bad,
+        textFallbackEnabled: true,
+        useFeeScheduleItemCodes: false,
+      });
+      const plan = await buildImportPlan(stubDb({}), zip, { mode: "merge" });
+      expect(plan.errors.join(" ")).toMatch(
+        /financialYearEndMonthOverride — .*out of range.*1–12/,
+      );
+    }
+  });
+
+  it("rejects group-discount minGroupSize outside the admin 2–200 range", async () => {
+    for (const bad of [1, 201]) {
+      const zip = singletonBundle("group-discount-setting", {
+        minGroupSize: bad,
+        summerOnly: true,
+        enabled: false,
+      });
+      const plan = await buildImportPlan(stubDb({}), zip, { mode: "merge" });
+      expect(plan.errors.join(" ")).toMatch(
+        /minGroupSize — .*out of range.*2–200/,
+      );
+    }
+  });
+
+  it("rejects booking-defaults nonMemberHoldDays outside the admin 1–365 range", async () => {
+    const zip = singletonBundle("booking-defaults", {
+      nonMemberHoldEnabled: true,
+      nonMemberHoldDays: 366,
+      waitlistCrossLodgeOrder: "OWN_LODGE_FIRST",
+    });
+    const plan = await buildImportPlan(stubDb({}), zip, { mode: "merge" });
+    expect(plan.errors.join(" ")).toMatch(
+      /nonMemberHoldDays — .*out of range.*1–365/,
+    );
   });
 });

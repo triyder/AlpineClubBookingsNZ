@@ -27,6 +27,10 @@ import {
   GOOGLE_WRITABLE_CREDENTIAL_KEYS,
   clearGoogleVerified,
 } from "@/lib/google-config";
+import {
+  ANTHROPIC_PROVIDER,
+  ANTHROPIC_WRITABLE_CREDENTIAL_KEYS,
+} from "@/lib/ai-assistant-config";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 
@@ -58,6 +62,11 @@ const WRITABLE_CREDENTIALS: Record<string, readonly string[]> = {
   // and operational config (enabled/retention) are written on the backups
   // config route, not here.
   [BACKUP_PROVIDER]: [...BACKUP_SECRET_CREDENTIAL_KEYS],
+  // AI help assistant Anthropic API key (#2211, C3): a single write-only secret,
+  // Full Admin. No verify-reset branch below — unlike Google/Stripe there is no
+  // verified marker to drop (the verify-ping endpoint was cut per plan); the
+  // key's own needs-reentry state is derived live from the encrypted store.
+  [ANTHROPIC_PROVIDER]: [...ANTHROPIC_WRITABLE_CREDENTIAL_KEYS],
 };
 
 // GET /api/admin/integrations/credentials?provider=xero — METADATA-ONLY status.

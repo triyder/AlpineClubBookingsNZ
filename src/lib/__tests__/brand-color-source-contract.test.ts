@@ -26,52 +26,28 @@ function listSourceFiles(path: string): string[] {
   });
 }
 
-// #2188 P2 — the theme-aware-kiosk FAMILY is authored in literal slate/colored
-// tones and is migrated onto `--kiosk-*` tokens in P3, so BOTH repo-wide
-// contracts below carry a TEMPORARY kiosk-family exclusion (B8), removed in P3.
-// The family is the kiosk tree PLUS the two shared surfaces that also render
-// under `.theme-aware-kiosk` and couple to the `#1249` `html:not(.dark)`
-// light-mode override — migrating them in isolation from the kiosk would break
-// that coupling, so they stay untouched until #2189 P3.
-const KIOSK_FAMILY_TREE = "src/app/(lodge)/lodge/kiosk";
-const KIOSK_FAMILY_FILES = new Set(
-  [
-    // theme-aware-kiosk family — #2189 P3 scope
-    "src/app/(lodge)/lodge/roster/[date]/setup/page.tsx",
-    // theme-aware-kiosk family — #2189 P3 scope
-    "src/components/kiosk-lodge-instructions.tsx",
-  ].map((p) => p.replaceAll("\\", "/")),
-);
+// #2189 P3 — the temporary kiosk-family exclusion (B8) is GONE. In P2 the kiosk
+// tree plus its two shared surfaces (the roster-setup page and
+// kiosk-lodge-instructions) were still authored in literal slate/colour utilities
+// and coupled to the old #1249 light-mode override, so both repo-wide contracts
+// carried a kiosk-family exclusion. P3 authored the whole kiosk family on the
+// fixed-seed `--kiosk-*` tokens and deleted that override, so the five source
+// contracts now run TRULY repo-wide with no kiosk carve-out.
 
-function isKioskFamily(path: string): boolean {
-  const p = path.replaceAll("\\", "/");
-  return p.startsWith(`${KIOSK_FAMILY_TREE}/`) || KIOSK_FAMILY_FILES.has(p);
-}
-
-/** Every TS/TSX source file under `src`, minus `__tests__` and the kiosk family. */
+/** Every TS/TSX source file under `src`, minus `__tests__`. */
 function listRepoSourceFiles(): string[] {
-  return listSourceFiles("src").filter((path) => !isKioskFamily(path));
+  return listSourceFiles("src");
 }
 
-// The ONE remaining file where a literal Tailwind `teal-*` utility is still
-// allowed (#2137, final teal allowlist entry — evicted in P4):
-//
-// - `admin-booking-calendar.tsx` paints each status as a SOLID swatch
-//   (`WAITLIST_OFFERED: bg-teal-500`) with no tinted-background / accent-text
-//   pairing. `--hue-*` is defined only as such a pair, so there is no clean
-//   token equivalent for a standalone solid fill.
-//
-// #2188 P2 (M9): the Chore Roster dashboard tile completed its migration onto the
-// brand ROLE tokens (`bg-accent` + `text-primary`) so it follows the club accent,
-// and its allowlist entry was deleted. Every other categorical teal (the
-// waitlist-offered chip, the audit `family` badge, the family-group GROUP_CREATE
-// badge) reaches its hue through `CHIP_TONE_CLASSES.teal` / the `--hue-teal`
-// tokens. Everything else must reach the brand accent through semantic tokens
-// (`--primary`, etc.) so it follows the saved site colours.
-const CATEGORICAL_TEAL_ALLOWLIST = new Set(
-  [
-    "src/components/admin-booking-calendar.tsx",
-  ].map((path) => path.replaceAll("\\", "/")),
+// #2190 P4 — the categorical-teal allowlist is now EMPTY, and #2218 retired the
+// legacy `--hue-*` accent system entirely. `admin-booking-calendar.tsx` painted
+// WAITLIST_OFFERED as a raw Tailwind teal swatch; it now uses the categorical
+// `bg-cat6-9` step token (the generated teal 6th scale), so no source file names
+// a raw Tailwind `teal-*` utility and no chip depends on `--hue-teal`. Everything
+// reaches the brand accent through semantic tokens (`--primary`, etc.) and every
+// categorical status hue through the cat1..cat6 scales.
+const CATEGORICAL_TEAL_ALLOWLIST = new Set<string>(
+  ([] as string[]).map((path) => path.replaceAll("\\", "/")),
 );
 
 describe("brand accent source contract", () => {
@@ -92,7 +68,7 @@ describe("brand accent source contract", () => {
         : `Hardcoded Tailwind teal-* utilities are the brand accent and must ` +
             `not be baked into source. Use semantic tokens (--primary, ` +
             `bg-primary/text-primary-foreground, border-primary/30, ...) so the ` +
-            `admin-configured site colours apply, or the --hue-* system for a ` +
+            `admin-configured site colours apply, or the cat1..cat6 scales for a ` +
             `categorical status hue. Offenders:\n${offenders.join("\n")}`,
     ).toEqual([]);
   });
@@ -104,7 +80,7 @@ describe("brand accent source contract", () => {
 // not appear as raw Tailwind utilities anywhere in source: every colored surface
 // now reaches its hue through the signed-off scale vocabulary — the semantic
 // `bg/text/border-<success|warning|info|danger>-<step>` scales, the categorical
-// `cat1..cat5` scales, or CHIP_TONE_CLASSES. Repo-wide, kiosk excluded (B8, P3).
+// `cat1..cat6` scales, or CHIP_TONE_CLASSES. Repo-wide, incl. the kiosk family (P3).
 const COLORED_FAMILIES_16 = [
   "red", "orange", "amber", "yellow", "lime", "green", "emerald",
   "cyan", "sky", "blue", "indigo", "violet", "purple", "fuchsia", "pink",
@@ -128,7 +104,7 @@ describe("colored-family source contract (R5, 16 families, repo-wide)", () => {
         : `Raw Tailwind colour-family utilities must not be baked into source. ` +
             `Use the semantic step scales (bg-danger-3/text-danger-11/…), the ` +
             `categorical scales (bg-cat1-3/…), or CHIP_TONE_CLASSES so the ` +
-            `surface follows the club theme. The kiosk tree is exempt until P3. ` +
+            `surface follows the club theme. ` +
             `Offenders:\n${offenders.join("\n")}`,
     ).toEqual([]);
   });
@@ -140,7 +116,7 @@ describe("colored-family source contract (R5, 16 families, repo-wide)", () => {
 // text-bearing badge must use the ROLE token pair (`bg-warning
 // text-warning-foreground`), never `bg-<scale>-9` with a text utility. Step-9
 // stays only for DECORATIVE, text-free fills (e.g. booking strips). This flags
-// any class string combining `bg-(success|warning|info|danger|cat1..5)-9` with a
+// any class string combining `bg-(success|warning|info|danger|cat1..6)-9` with a
 // `text-` utility. A genuinely-decorative exception (text incidental, not on the
 // fill) needs an explicit DECORATIVE_SOLID_FILL_ALLOWLIST entry with a reason.
 const DECORATIVE_SOLID_FILL_ALLOWLIST = new Set<string>(
@@ -151,8 +127,8 @@ const DECORATIVE_SOLID_FILL_ALLOWLIST = new Set<string>(
 // in either order. `/opacity` and variant prefixes are tolerated.
 const CLS = "[\\w:/\\[\\]().,#%-]";
 const ON_SOLID_TEXT_PAIR = new RegExp(
-  `bg-(?:success|warning|info|danger|cat[1-5])-9(?:/\\d{1,3})?(?:\\s+${CLS}+)*\\s+text-${CLS}+` +
-    `|text-${CLS}+(?:\\s+${CLS}+)*\\s+bg-(?:success|warning|info|danger|cat[1-5])-9(?:/\\d{1,3})?`,
+  `bg-(?:success|warning|info|danger|cat[1-6])-9(?:/\\d{1,3})?(?:\\s+${CLS}+)*\\s+text-${CLS}+` +
+    `|text-${CLS}+(?:\\s+${CLS}+)*\\s+bg-(?:success|warning|info|danger|cat[1-6])-9(?:/\\d{1,3})?`,
 );
 
 describe("on-solid AA source contract (F1, repo-wide)", () => {
@@ -202,12 +178,14 @@ describe("on-solid AA source contract (F1, repo-wide)", () => {
 //
 // #2137 migrated the finance tree; #2144 swept the ~1,400 raw-neutral
 // occurrences out of the admin tree onto the same tokens, so both trees are
-// now gated. (Raw hex still exists in finance for chart colours —
-// `FINANCE_MIX_COLORS`, `ratio-explorer.tsx`, `trend-chart.tsx` — which is the
-// deliberate #1801 SVG-presentation-attribute carve-out and is out of scope
-// for this check.)
+// now gated. (Raw hex still exists in finance for the chart NEUTRALS —
+// `ratio-explorer.tsx`, `trend-chart.tsx` — the deliberate #1801
+// SVG-presentation-attribute carve-out, out of scope for this check.
+// `FINANCE_MIX_COLORS` is no longer a literal palette: #2190 P4 derives its
+// eight slots from the categorical cat scales, pinned by
+// `finance-chart-theme.test.ts`.)
 //
-// #2188 P2 — the neutral contract is now REPO-WIDE (kiosk excluded, B8/P3) via
+// #2188 P2 — the neutral contract is now REPO-WIDE (incl. the kiosk family after P3) via
 // `listRepoSourceFiles()`, after P2 migrated every member-facing tree onto the
 // shadcn role tokens and deleted the `.dark .app-theme-scope` neutral remap. The
 // admin/finance roots that used to be listed here are subsumed by the repo-wide
@@ -245,21 +223,19 @@ const THEMED_NEUTRAL_ALLOWLIST = new Set<string>(
     // Signage: `bg-black` letterboxes simulating a display screen.
     "src/app/(admin)/admin/display/builder/display-builder.tsx",
     "src/app/(admin)/admin/display/preview/page.tsx",
-    // Solid-fill chips paired with `text-white` (`bg-slate-600 text-white`,
-    // `border-slate-900 bg-slate-900 text-white`): opaque status chips, not
-    // surfaces — the dark shim deliberately does not remap them.
-    "src/components/admin/xero-record-activity-panel.tsx",
-    // `border-slate-900` on the active wizard-step chip: a solid near-black
-    // emphasis border outside the shim's border-{n}-100..300 remap range.
-    "src/app/(admin)/admin/members/_components/member-import-dialog.tsx",
-    // Solid booking-status swatches (`DRAFT: bg-gray-300`, `bg-gray-400`
-    // fallback): standalone opaque fills with no tinted/accent pairing, the
-    // same shape as this file's teal allowlist entry above.
-    "src/components/admin-booking-calendar.tsx",
+    // #2190 P4 — three former entries were the last "deferred work wearing an
+    // allowlist badge" and are now GONE: xero-record-activity-panel.tsx (solid
+    // slate PENDING chip + selected record pill) moved onto
+    // bg-foreground/text-background; member-import-dialog.tsx (active-step chip)
+    // moved onto border-foreground; admin-booking-calendar.tsx (DRAFT + fallback
+    // swatches, and the WAITLIST_OFFERED teal swatch) moved onto bg-muted and the
+    // categorical bg-cat2-9 step. All three now pass this contract directly.
+    //
     // NOTE: the roster-setup page and kiosk-lodge-instructions are NOT here —
-    // they are theme-aware-kiosk FAMILY surfaces, covered by the kiosk-family
-    // EXCLUSION (isKioskFamily, B8, deleted in P3), not by this allowlist. The
-    // allowlist must never carry deferred work.
+    // #2189 P3 authored them (and the whole kiosk tree) on the fixed-seed
+    // `--kiosk-*` tokens, so they pass this repo-wide contract directly. They
+    // never needed an allowlist entry; the allowlist must never carry deferred
+    // work.
     //
     // #2188 P2 additions (repo-wide widening).
     // Un-themed system pages: React error/404 boundaries render OUTSIDE
@@ -293,7 +269,7 @@ describe("themed-surface neutral contract (repo-wide, #2188 P2)", () => {
       }
     }
     // #2188 P2 — widened from the admin/finance roots to the WHOLE repo (kiosk
-    // excluded, B8/P3) so raw neutrals cannot re-enter any themed surface. The
+    // incl. the kiosk family after P3) so raw neutrals cannot re-enter any themed surface. The
     // per-file allowlist above carries the deliberate exceptions.
     const offenders = listRepoSourceFiles().filter((path) => {
       const normalized = path.replaceAll("\\", "/");

@@ -4,6 +4,88 @@ All notable public reference-release changes should be recorded here.
 
 ## Unreleased
 
+- **Configuration transfer now covers three more club-wide settings, and guards
+  against any future settings singleton being silently left out (#2200).** A
+  bundle now carries your **login/security policy** (password-complexity rules
+  and the magic-link link lifetime), your **public-content visibility** choices
+  (the double-opt-in embed toggles and whether the public "Book Now" button
+  shows), and your **subscription-billing policy** (invoice due-days and the
+  family-billing model) — portable club decisions that previously stayed behind
+  when you moved config between installs. Instance-specific settings deliberately
+  do **not** travel and are now recorded as such with a reason: the Xero
+  member-grouping mode (tied to your connected Xero organisation), per-lodge
+  capacity/soft-cap settings (they belong with each lodge), setup-wizard
+  progress, and the AI monthly spend cap. A new test enumerates every
+  single-row (`id = "default"`) settings table straight from the schema and
+  fails the build if one is neither exported nor explicitly excluded, so a future
+  settings table can't quietly join the blind spot. Your **age-tier definitions**
+  (the age bounds, labels, and per-tier subscription/family-request rules) now
+  travel too, as a multi-row table: on import each tier is matched to the
+  destination's existing tier and updated in place, so member pricing and
+  classification stay intact; a bundle that would leave an incomplete or
+  overlapping age partition is refused with a clear message pointing you to the
+  Age Tiers admin page. No secret or credential travels, and no bundle
+  format-version change is needed — an older app importing a newer bundle simply
+  ignores the extra files, and a newer app importing an older bundle leaves the
+  new settings untouched.
+- **The public website now paints from the same generated palette as the admin
+  app (#2217).** The public site's neutral chrome — page, cards, borders, inputs,
+  muted text, hover surfaces and the dark-nav hairline — is now resolved from the
+  generated 12-step palette instead of ad-hoc colour-mixing recipes, so a club's
+  saved colours drive every website surface the same way they drive the app. The
+  branded look is unchanged by design: a light page, a gold primary action and
+  focus ring, and a dark charcoal navigation bar are all preserved.
+- **Status and label chips now draw from one generated colour system, and the
+  last legacy accent colours are gone (#2218).** A sixth categorical colour (a
+  teal, added to the generated palette) gives the booking board a distinct tone
+  for the "waitlist offered" state, which lets the older hand-tuned accent
+  colours behind the payments, member, audit, bed-type and family-group chips
+  retire entirely — every coloured chip now follows the club theme through the
+  same generated scales, so colours stay consistent and readable in light and
+  dark by construction. No workflow changes; a few admin chips shift hue slightly.
+- **Theme burn-down: the last hand-picked colours leave the product, and the
+  four dead theme columns are dropped from the database (#2190).** This closes
+  out the theme rebuild. The finance dashboard's mix/breakdown charts now draw
+  their series colours from the generated categorical scales instead of a fixed
+  hand-picked list (the old palette led with a bright gold that belonged to one
+  fork), so the chart colours are part of the same generated system as the rest
+  of the app. Five small admin surfaces that were still painted with raw colour
+  utilities — the booking-calendar draft and waitlist-offered swatches, the Xero
+  activity status chips, and the member-import step marker — now use theme
+  tokens, so they follow the club palette and the light/dark toggle. The one
+  fork-specific brand colour that lingered in shared code (a gold accent and its
+  reference values) is removed from the shipping product; a fork's own colours
+  live only in that deployment's saved theme. Finally, the four legacy theme
+  columns that stopped being used when Site Style moved to three seeds
+  (`brandCharcoal` / `brandRidge` / `brandMist` / `brandSnow`) are **dropped from
+  the `ClubTheme` table** by a contract migration — the surfaces they used to
+  hold are derived from the generated palette at render time, so nothing is lost
+  and the change is invisible to operators. **Operators: this migration removes
+  database columns and must run only after the previous release (the three-seed
+  substrate, #2187) has been deployed and drained; the blue/green safety ledger
+  records the sequence.**
+- **The Integrations hub stays reachable when Xero is off (#2216).** The
+  `/admin/integrations` hub was gated behind the `xeroIntegration` module, so
+  turning Xero off made the whole hub — and any page that links back to it (the
+  AI assistant, Stripe, Google sign-in, and Backups setup pages) — return a 404,
+  hiding every non-Xero integration. The hub is no longer module-gated: it
+  renders whenever any integration is available and shows each card only when
+  that integration's own module and permissions allow, so the Xero card still
+  disappears with Xero off while everything else stays reachable. No behaviour
+  changes for the individual setup pages, which keep their existing gates.
+- **Docs: ratified that connected provider credentials (`IntegrationCredential`) are permanently excluded from config transfer — never travelling in any form, and no presence-metadata carve-out — in the config-transfer reference and the security attack-surface doc (owner decision, #2205).**
+- **The lodge kiosk / wall display now paints from a fixed, glare-proof colour
+  set that never follows the club theme or the light/dark toggle (#2189).** The
+  kiosk, its roster-setup wizard, and the lodge-instructions panel were the one
+  place still authored in hard-coded slate/colour classes with a special
+  light-mode readability patch. They now render from a dedicated fixed `--kiosk-*`
+  token set — a near-black background, neutral grey surfaces, one fixed action
+  accent, and legible status colours — generated once from the pinned kiosk seed
+  and identical on every club in either theme, so a wall-mounted screen always
+  looks the same and stays easy to read at a distance. Nothing else changes for
+  operators; the migration also lets the repo-wide "no raw colour classes" source
+  checks cover the kiosk tree with no remaining exceptions. The separate `display`
+  route already used its own CSS-variable colours and is unchanged.
 - **Site Style now derives the whole theme from three seed colours instead of
   seven hand-picked ones (#2187).** You pick one required accent (your club's
   brand colour) plus, optionally, a neutral character and a support accent; a

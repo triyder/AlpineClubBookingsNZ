@@ -339,12 +339,13 @@ assets in `public/branding/`:
 
 The matching `*.example.*` files are placeholders for forks and public docs.
 
-Existing Tokoroa deployments can preserve the former look during the transition
-by running the seed with `SEED_TOKOROA_THEME_COMPLETE=1`. That path records the
-current palette (`#ffcb05`, `#4d4d46`, `#2f2f2b`, `#6a6a63`, `#d9d5c2`,
-`#f7f5ed`, `#ff7c12`), marks site style setup complete, and stores
-`public/branding/logo.png` as the database logo when that file exists and is
-900KB or smaller.
+Running the seed with `SEED_THEME_COMPLETE=1` marks site-style setup complete for
+the **generic default** palette (stamping `completedAt` only — no colours, no
+logo) so the public site renders its real header/footer/title chrome instead of
+the "getting ready" holding page; E2E and staging use it. A deployment fork that
+wants its own brand palette keeps that palette in its own `ClubTheme` database row
+and provisions it from its own seed override — per standing directive D15, no
+fork's brand colours (or a fork-specific seed path) live in this public repository.
 
 ## Website Page Content
 
@@ -1386,6 +1387,7 @@ cannot be read, optional modules fail closed.
 | Email sign-in link | off | Lets members request a single-use email link to sign in without their password (additive to password login, never a replacement). Only ever works for existing active members with a verified email; the `magic-link-login` link expiry defaults to 15 minutes (stored on the Login & Security settings, range 5–60) and is read by the sign-in request flow. |
 | Google sign-in | off | Lets members sign in with a Google account they have linked from their profile (additive to password login, never a replacement). Credentials are entered and verified **in-app** on the Google sign-in setup page (Admin → Integrations → Google) — no env vars, no restart. The module cannot be turned on until a real Google OAuth round-trip verifies (hard gate), and replacing a credential re-locks it until re-verified. The "Continue with Google" button appears only when the module is on AND credentials resolve. No account is ever created from Google, and an unlinked Google account is refused with a friendly message. See the Google sign-in section below. |
 | Google Analytics | off | Consent-gated GA4 tracking on public website and public account pages. Requires `NEXT_PUBLIC_GA_MEASUREMENT_ID`; GA scripts load only after a visitor accepts the analytics banner. |
+| AI help assistant | off | Free-text help questions answered by a paid AI model (Anthropic Claude Haiku), grounded strictly in each page's curated help content. The Anthropic API key is entered **in-app** on Admin → Integrations (encrypted vault, never an env var). Unlike Google sign-in there is **no** enable-gate on a present key — with the module on but no key, the ask box degrades to a structured fallback and curated page help still works. A monthly spend cap (default NZ$10) hard-stops AI answers for the rest of the month once reached. See the AI help assistant section below. |
 
 Cron-backed optional module schedules are still registered when
 `CRON_ENABLED=true`; each run checks the effective module state before doing
@@ -1605,6 +1607,79 @@ The **publishable key** is not secret; it is delivered to the card form at
 build-time `NEXT_PUBLIC_*` inlining, so changing keys in the wizard takes effect
 without a rebuild. The webhook route stays **fail-closed**: with no stored signing
 secret it rejects every event.
+
+## AI help assistant
+
+**The Anthropic API key is DB-only (#2211).** The key lives **only** in the
+encrypted `IntegrationCredential` store (provider `anthropic`, key `api_key`),
+captured write-only on **Admin → Integrations** (Full Admin only). There is **no**
+`ANTHROPIC_API_KEY` environment variable — the key is never read from the
+environment for operation, and it is never returned to a browser, logged, or put
+in an audit row. It is encrypted at rest with AES-256-GCM under a key derived
+from `AUTH_SECRET`/`NEXTAUTH_SECRET`; if the auth secret is rotated the key drops
+to a "needs re-entry" state and the assistant stops answering until it is
+re-entered.
+
+The assistant answers free-text help questions with a paid model
+(Anthropic Claude Haiku 4.5), **grounded strictly** in each page's curated help
+content: if the answer is not in that content it says it does not know and points
+to the page's help panel or to contacting the club — it never invents features,
+prices, dates, or policies, and it has no tools and no data access.
+
+**Where it appears (#2212).** Once the module is on **and** a key is stored, the
+help widget on every **authenticated** surface (member, admin, finance) grows a
+free-text ask box under the curated chips, with a persistent disclaimer that AI
+answers can be wrong and that the question is sent to Anthropic (US). The
+**public website** widget stays curated-only — it never gets the free-text path.
+Each conversation is capped to a few exchanges, then offers "Start new chat".
+The admin surface lives at **Admin → AI help assistant** (`/admin/ai-assistant`),
+reached from the **"AI help assistant"** card on **Admin → Integrations** or the
+sidebar item under *Monitoring & Support*. That page carries the write-only key
+field, the monthly spend-cap editor, and a usage panel (month spend vs cap, token
+totals, request/failed counts, per-surface breakdown, and recent failures — no
+question text is ever stored). The whole page 404s while the module is off.
+
+**Recommended setup sequence:**
+
+1. **Enter the key** on Admin → Integrations → **AI help assistant** (or Admin →
+   AI help assistant). We strongly recommend creating a **dedicated Anthropic
+   workspace** for this key and setting a **console spend limit of about
+   US$20–30/month** on it as a hard backstop that sits *outside* the app — so
+   even a misconfiguration or an app bug cannot spend beyond it.
+2. **Enable the module** on Admin → Modules ("AI help assistant"). Unlike Google
+   sign-in there is **no verify-gate**: enabling with no key stored is harmless —
+   the ask box degrades to a structured fallback and curated page help still
+   works. This asymmetry is deliberate (an unconfigured assistant is invisible,
+   not broken).
+3. **Adjust the budget** if needed on **Admin → AI help assistant** (the
+   monthly spend-cap editor takes dollars-and-cents; support-edit access). The
+   in-app **monthly spend cap** (default **NZ$10**, `AiAssistantSettings.monthlyBudgetCents`,
+   integer cents) is a **hard cutoff**: once the month's estimated spend would
+   exceed it, the assistant returns a "budget exhausted" fallback for the rest of
+   the calendar month (Pacific/Auckland) and no further paid calls are made. Cost
+   is deliberately **over-estimated** (conservative NZD FX, rounded up) so the cap
+   trips early rather than late, and the app also stops spending if it can no
+   longer record usage ("can't-meter ⇒ don't-spend"). The cap is a
+   deployment-specific control and does **not** travel in a config-transfer
+   bundle — a fresh import gets the NZ$10 default.
+
+Per-member, per-IP, and global daily rate limits throttle abuse, but the monthly
+budget cap is the real spend ceiling.
+
+**Privacy — update your privacy page before enabling.** When the assistant is on,
+a member's typed question (and any page context the widget attaches) is sent to
+**Anthropic PBC (United States)** to generate the answer; Anthropic acts as a
+data **processor** for the club. The question text is **not** stored by this app —
+only aggregate metering (token counts, cost, success/failure) is kept, never the
+question itself. The in-widget disclaimer already warns members not to include
+personal details, but the club's own **privacy statement is club-authored**
+(PageContent `/privacy`), so a club enabling this module should add Anthropic to
+its list of processors. Suggested wording:
+
+> _"If you use our in-app AI help assistant, the question you type is sent to
+> Anthropic PBC (United States), our AI processor, to generate a reply. We do not
+> store the text of your question. Please don't include personal or sensitive
+> details in AI help questions."_
 
 ## Operational Xero
 

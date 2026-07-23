@@ -40,10 +40,10 @@ email, so you have a record of what changed.
 
 ### Cancel a booking — and check the refund first
 
-1. Open the booking. Its help/status dialog shows the **booking status glossary**
-   and, once a payment has been captured, the **cancellation refund schedule**
-   that applies — so you can see the refund consequence **before** you start the
-   cancellation.
+1. Open the booking. The Help widget's **Page guide** shows the **booking status
+   glossary** and, once a payment has been captured, the **cancellation refund
+   schedule** that applies — so you can see the refund consequence **before** you
+   start the cancellation.
 2. Start the cancellation and confirm. Whether you get money back, and how much,
    depends on how close to check-in you cancel and your club's policy:
    - **Refund to card** or **account credit** for a paid booking, per the

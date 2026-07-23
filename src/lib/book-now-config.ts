@@ -1,6 +1,7 @@
 import "server-only";
 
 import { buildBookingLoginPath } from "@/lib/auth-redirect";
+import { DEFAULT_PUBLIC_CONTENT_SETTINGS } from "@/config/club-settings-defaults";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -33,8 +34,11 @@ export async function getBookNowConfig(
       },
     });
 
-    // No row yet: preserve the historical shown-and-points-at-booking-flow.
-    if (!settings) return { show: true, href: defaultHref };
+    // No row yet: preserve the historical shown-and-points-at-booking-flow. The
+    // shown default is the same portable value config transfer exports for an
+    // unsaved singleton (#2200), sourced from one constant so the two cannot drift.
+    if (!settings)
+      return { show: DEFAULT_PUBLIC_CONTENT_SETTINGS.showBookNow, href: defaultHref };
 
     if (!settings.showBookNow) return { show: false, href: defaultHref };
 

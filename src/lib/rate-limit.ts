@@ -244,6 +244,31 @@ export function getClientIp(request: Request): string {
 }
 
 /**
+ * Build the standard 429 response for a rate-limit denial, with Retry-After and
+ * X-RateLimit-* headers. Shared by applyRateLimit (per-IP) and any handler that
+ * calls checkRateLimit directly (e.g. per-member / global limiters) so every
+ * 429 carries identical headers.
+ */
+export function rateLimitedResponse(result: RateLimitResult): Response {
+  const retryAfter = Math.ceil((result.resetAt - Date.now()) / 1000);
+  return new Response(
+    JSON.stringify({
+      error: "Too many requests. Please try again later.",
+    }),
+    {
+      status: 429,
+      headers: {
+        "Content-Type": "application/json",
+        "Retry-After": String(retryAfter),
+        "X-RateLimit-Limit": String(result.limit),
+        "X-RateLimit-Remaining": "0",
+        "X-RateLimit-Reset": String(result.resetAt),
+      },
+    }
+  );
+}
+
+/**
  * Apply rate limiting to a request. Returns a Response if rate limited, null if allowed.
  */
 export async function applyRateLimit(
@@ -254,22 +279,7 @@ export async function applyRateLimit(
   const result = await checkRateLimit(config, ip);
 
   if (!result.success) {
-    const retryAfter = Math.ceil((result.resetAt - Date.now()) / 1000);
-    return new Response(
-      JSON.stringify({
-        error: "Too many requests. Please try again later.",
-      }),
-      {
-        status: 429,
-        headers: {
-          "Content-Type": "application/json",
-          "Retry-After": String(retryAfter),
-          "X-RateLimit-Limit": String(result.limit),
-          "X-RateLimit-Remaining": "0",
-          "X-RateLimit-Reset": String(result.resetAt),
-        },
-      }
-    );
+    return rateLimitedResponse(result);
   }
 
   return null;
@@ -345,6 +355,22 @@ export const rateLimiters = {
   groupBookingJoinRequest: { id: "group-booking-join-request", limit: 5, windowSeconds: 60 * 60 } as RateLimitConfig,
   /** Group join verification links: 10 hits per 15 minutes */
   groupBookingToken: { id: "group-booking-token", limit: 10, windowSeconds: 15 * 60 } as RateLimitConfig,
+  // AI help assistant (#2211, C3). These caps only throttle abuse/burst; the
+  // real spend cap is the monthly budget gate (checkAiBudget) in the route —
+  // authSensitive so a degraded shared-store fallback cannot be used to multiply
+  // paid-call budget across replicas.
+  /** AI help chat per member: 10 questions per 10 minutes */
+  aiChatMember: { id: "ai-chat-member", limit: 10, windowSeconds: 600, authSensitive: true } as RateLimitConfig,
+  /** AI help chat per IP: 20 questions per 10 minutes */
+  aiChatIp: { id: "ai-chat-ip", limit: 20, windowSeconds: 600, authSensitive: true } as RateLimitConfig,
+  /**
+   * AI help chat global backstop: 300 questions per day across the deployment.
+   * authSensitive, so on a shared-store outage the degraded per-process fallback
+   * runs at limit/4 (~75/process): the global 300/day effectively becomes ~75
+   * per replica. That deliberately under-permits (fail-safe) — a degraded store
+   * tightens, never loosens, the paid-call backstop.
+   */
+  aiChatGlobal: { id: "ai-chat-global", limit: 300, windowSeconds: 86400, authSensitive: true } as RateLimitConfig,
 } as const;
 
 // test seam

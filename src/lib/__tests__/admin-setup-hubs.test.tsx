@@ -118,7 +118,11 @@ describe("admin setup hub pages", () => {
     expect(html).not.toContain("/admin/mountain-conditions");
   });
 
-  it("hides integration cards behind the existing Xero route gate", async () => {
+  it("keeps the Integrations hub reachable with Xero off, hiding only the Xero card (#2216)", async () => {
+    // The hub is no longer gated on xeroIntegration (#2216): it renders whenever
+    // any integration module is on, and AdminHubPage filters each card by its
+    // own feature href — so the Xero card drops out while the hub (and every
+    // other integration card / back-link) stays reachable.
     vi.mocked(loadEffectiveModuleFlags).mockResolvedValue({
       ...allOn,
       xeroIntegration: false,
@@ -129,6 +133,9 @@ describe("admin setup hub pages", () => {
     expect(html).toContain("Integrations");
     expect(html).not.toContain("Xero Setup");
     expect(html).not.toContain("/admin/xero/setup");
+    // Other integration cards remain reachable from the hub.
+    expect(html).toContain("/admin/stripe/setup");
+    expect(html).toContain("/admin/backups");
   });
 
   it("renders the new setup drill-down hub pages", async () => {

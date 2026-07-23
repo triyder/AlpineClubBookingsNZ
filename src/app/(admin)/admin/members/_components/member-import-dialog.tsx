@@ -153,7 +153,7 @@ function WizardStepList({ step }: { step: WizardStep }) {
             key={wizardStep.key}
             className={[
               "flex min-w-0 items-center gap-2 rounded-md border px-2 py-2 text-xs",
-              active ? "border-slate-900 bg-muted text-foreground" : "",
+              active ? "border-foreground bg-muted text-foreground" : "",
               complete ? "border-success-6 bg-success-3 text-success-11" : "",
               !active && !complete ? "border-border text-muted-foreground" : "",
             ].join(" ")}

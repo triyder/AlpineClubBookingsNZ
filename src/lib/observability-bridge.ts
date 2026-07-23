@@ -21,7 +21,7 @@ import baseLogger from "@/lib/logger";
  * scope here — that is #1211's shared-state work.
  */
 
-type ObservabilityScope = "cron" | "webhook";
+type ObservabilityScope = "cron" | "webhook" | "ai";
 type ObservabilityLevel = "error" | "fatal";
 
 interface ReportScopedErrorInput {
@@ -120,4 +120,19 @@ export function reportWebhookError(
   input: Omit<ReportScopedErrorInput, "scope">
 ): void {
   reportScopedError({ ...input, scope: "webhook" });
+}
+
+/**
+ * Bridge a genuine AI FAILURE to Sentry (scoped, deduped). Scoped like
+ * cron/webhook: called from the usage-recording failure path (`recordAiUsage`)
+ * and the chat route's provider-auth-failure path. A failure to write a usage
+ * row means the deployment can no longer prove what it spent (and it drives the
+ * metering circuit breaker that stops further spend); a provider-auth failure
+ * means the stored Anthropic key is bad and an operator must re-enter it. Both
+ * are real alerting events (#2211, C3).
+ */
+export function reportAiError(
+  input: Omit<ReportScopedErrorInput, "scope">
+): void {
+  reportScopedError({ ...input, scope: "ai" });
 }

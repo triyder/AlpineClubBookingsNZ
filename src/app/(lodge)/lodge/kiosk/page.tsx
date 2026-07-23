@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { CalendarDays, RefreshCw } from "lucide-react";
-import { ThemeSwitcher } from "@/components/theme-switcher";
 import { KioskLodgeInstructions } from "@/components/kiosk-lodge-instructions";
 import { useClubIdentity } from "@/components/club-identity-provider";
 import type { KioskTier } from "@/lib/kiosk-access";
@@ -482,7 +481,7 @@ export default function KioskPage() {
 
   if (loading) {
     return (
-      <div className="theme-aware-kiosk min-h-screen bg-slate-900 text-white flex items-center justify-center">
+      <div className="theme-aware-kiosk min-h-screen bg-kiosk-page text-kiosk-fg flex items-center justify-center">
         <div className="text-2xl">Loading...</div>
       </div>
     );
@@ -493,14 +492,14 @@ export default function KioskPage() {
   // notice rather than empty panels an admin would have to guess at.
   if (access?.misconfigured) {
     return (
-      <div className="theme-aware-kiosk min-h-screen bg-slate-900 text-white flex items-center justify-center p-6">
-        <div className="max-w-lg rounded-2xl border border-red-700/50 bg-red-900/50 p-6 text-center text-red-200">
-          <h1 className="text-2xl font-bold text-red-100">Kiosk needs attention</h1>
+      <div className="theme-aware-kiosk min-h-screen bg-kiosk-page text-kiosk-fg flex items-center justify-center p-6">
+        <div className="max-w-lg rounded-2xl border border-kiosk-danger-border bg-kiosk-danger-bg p-6 text-center text-kiosk-danger-fg">
+          <h1 className="text-2xl font-bold text-kiosk-danger-fg">Kiosk needs attention</h1>
           <p className="mt-3 text-lg">
             {access.error ??
               "This kiosk account is assigned to more than one lodge, so it cannot show a lodge list."}
           </p>
-          <p className="mt-2 text-sm text-red-300/80">
+          <p className="mt-2 text-sm text-kiosk-danger-fg/80">
             An administrator can fix this under Admin &rarr; Lodge Kiosk by
             setting this account to operate a single lodge.
           </p>
@@ -510,26 +509,16 @@ export default function KioskPage() {
   }
 
   return (
-    <div
-      className="theme-aware-kiosk min-h-screen bg-slate-900 text-white p-4 select-none"
-      style={
-        view === "week"
-          ? { backgroundColor: "#0f172a", color: "#ffffff" }
-          : undefined
-      }
-    >
+    <div className="theme-aware-kiosk min-h-screen bg-kiosk-page text-kiosk-fg p-4 select-none">
       {isPreview && (
-        <div className="mb-4 rounded-xl border border-amber-400 bg-amber-500/90 px-4 py-2 text-center text-sm font-semibold text-black">
+        <div className="mb-4 rounded-xl border border-kiosk-warning-border bg-kiosk-warning-solid px-4 py-2 text-center text-sm font-semibold text-kiosk-warning-solid-fg">
           PREVIEW — {access?.lodgeName ?? "Default lodge"} kiosk
           {access?.previewAccountEmail ? ` (account ${access.previewAccountEmail})` : ""}
           {" · read-only, no changes are saved"}
         </div>
       )}
-      <div className="mb-4 flex justify-end">
-        <ThemeSwitcher className="w-full max-w-sm" />
-      </div>
       {actionError && (
-        <div className="bg-red-600 text-white text-center py-2 text-sm font-medium">
+        <div className="bg-kiosk-danger-solid text-kiosk-danger-solid-fg text-center py-2 text-sm font-medium">
           {actionError}
         </div>
       )}
@@ -537,7 +526,7 @@ export default function KioskPage() {
       {/* Admin tier preview dropdown */}
       {access?.tier === "admin" && (
         <div className="flex items-center justify-end mb-3 gap-2">
-          <span className={`text-sm ${view === "week" ? "text-[#cbd5e1]" : "text-slate-400"}`}>
+          <span className="text-sm text-kiosk-muted-fg">
             Viewing as:
           </span>
           <select
@@ -546,7 +535,7 @@ export default function KioskPage() {
               const val = e.target.value as KioskTier;
               setViewAs(val === access.tier ? null : val);
             }}
-            className="bg-slate-700 text-white text-sm rounded px-3 py-1.5 border border-slate-600"
+            className="bg-kiosk-inset text-kiosk-fg text-sm rounded px-3 py-1.5 border border-kiosk-border"
           >
             <option value="admin">Admin</option>
             <option value="hut-leader">{hutLeaderLabel}</option>
@@ -561,10 +550,10 @@ export default function KioskPage() {
           <button
             onClick={() => changeDate(-1)}
             disabled={!canNavigateBack()}
-            className={`min-h-[56px] min-w-[64px] rounded-xl px-6 py-4 text-2xl font-bold text-white ${
+            className={`min-h-[56px] min-w-[64px] rounded-xl px-6 py-4 text-2xl font-bold text-kiosk-fg ${
               canNavigateBack()
-                ? "bg-slate-700 hover:bg-slate-600 active:bg-slate-500"
-                : "cursor-not-allowed bg-slate-800 text-slate-600"
+                ? "bg-kiosk-inset hover:bg-kiosk-hover active:bg-kiosk-hover"
+                : "cursor-not-allowed bg-kiosk-card text-kiosk-faint-fg"
             }`}
             aria-label="Previous day"
           >
@@ -572,29 +561,29 @@ export default function KioskPage() {
           </button>
           <div className="text-center">
             {access?.lodgeName && (
-              <p className="text-sm font-medium uppercase text-slate-300">
+              <p className="text-sm font-medium uppercase text-kiosk-fg">
                 {access.lodgeName}
               </p>
             )}
             <button
               type="button"
               onClick={showWeekForDate}
-              className="mb-3 inline-flex min-h-[40px] items-center justify-center gap-2 rounded-lg bg-slate-800 px-3 py-2 text-sm font-semibold text-slate-200 transition-colors hover:bg-slate-700 active:bg-slate-600"
+              className="mb-3 inline-flex min-h-[40px] items-center justify-center gap-2 rounded-lg bg-kiosk-card px-3 py-2 text-sm font-semibold text-kiosk-fg transition-colors hover:bg-kiosk-hover active:bg-kiosk-hover"
             >
               <CalendarDays className="h-4 w-4" />
               &lsaquo; Week
             </button>
             <h1 className="text-2xl font-bold">{displayDate(date)}</h1>
-            <p className="text-lg text-slate-400">
+            <p className="text-lg text-kiosk-muted-fg">
               {totalGuests} guest{totalGuests !== 1 ? "s" : ""} on lodge list
             </p>
             {(effectiveTier === "staying-guest" || effectiveTier === "none") && (
-              <p className="mt-1 text-sm text-blue-400">Read-only view</p>
+              <p className="mt-1 text-sm text-kiosk-accent">Read-only view</p>
             )}
             <button
               onClick={refreshNow}
               disabled={refreshing}
-              className="mt-3 inline-flex min-h-[40px] items-center justify-center gap-2 rounded-lg bg-slate-800 px-3 py-2 text-sm font-semibold text-slate-200 transition-colors hover:bg-slate-700 active:bg-slate-600 disabled:cursor-wait disabled:text-slate-400"
+              className="mt-3 inline-flex min-h-[40px] items-center justify-center gap-2 rounded-lg bg-kiosk-card px-3 py-2 text-sm font-semibold text-kiosk-fg transition-colors hover:bg-kiosk-hover active:bg-kiosk-hover disabled:cursor-wait disabled:text-kiosk-muted-fg"
             >
               <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
               {refreshing ? "Refreshing..." : "Refresh"}
@@ -603,10 +592,10 @@ export default function KioskPage() {
           <button
             onClick={() => changeDate(1)}
             disabled={!canNavigateForward()}
-            className={`min-h-[56px] min-w-[64px] rounded-xl px-6 py-4 text-2xl font-bold text-white ${
+            className={`min-h-[56px] min-w-[64px] rounded-xl px-6 py-4 text-2xl font-bold text-kiosk-fg ${
               canNavigateForward()
-                ? "bg-slate-700 hover:bg-slate-600 active:bg-slate-500"
-                : "cursor-not-allowed bg-slate-800 text-slate-600"
+                ? "bg-kiosk-inset hover:bg-kiosk-hover active:bg-kiosk-hover"
+                : "cursor-not-allowed bg-kiosk-card text-kiosk-faint-fg"
             }`}
             aria-label="Next day"
           >
@@ -616,13 +605,13 @@ export default function KioskPage() {
       )}
 
       {error && (
-        <div className="bg-red-900/50 text-red-200 rounded-xl p-4 mb-4 text-lg">
+        <div className="bg-kiosk-danger-bg text-kiosk-danger-fg rounded-xl p-4 mb-4 text-lg">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <span>{error}</span>
             {authRequired && (
               <a
                 href={`/login?callbackUrl=${encodeURIComponent("/lodge/kiosk")}`}
-                className="inline-flex min-h-[44px] items-center justify-center rounded-xl bg-brand-gold px-4 py-2 text-sm font-semibold text-brand-charcoal transition-colors hover:bg-brand-gold/90 active:bg-brand-gold/80"
+                className="inline-flex min-h-[44px] items-center justify-center rounded-xl bg-kiosk-accent px-4 py-2 text-sm font-semibold text-kiosk-accent-fg transition-colors hover:bg-kiosk-accent-hover active:bg-kiosk-accent-active"
               >
                 Sign in
               </a>
@@ -632,13 +621,13 @@ export default function KioskPage() {
       )}
 
       {effectiveTier === "lodge" && (
-        <section className="bg-slate-800 rounded-2xl p-4 mb-4 border border-slate-700">
+        <section className="bg-kiosk-card rounded-2xl p-4 mb-4 border border-kiosk-border">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div>
-              <h2 className="text-lg font-semibold text-white">
+              <h2 className="text-lg font-semibold text-kiosk-fg">
                 {hutLeaderSentence} controls
               </h2>
-              <p className="text-sm text-slate-300 mt-1">
+              <p className="text-sm text-kiosk-fg mt-1">
                 Enter the 6-digit {hutLeaderLower} PIN to unlock {hutLeaderLower}{" "}
                 controls on this kiosk, including roster management.
               </p>
@@ -649,7 +638,7 @@ export default function KioskPage() {
                   setShowPinForm(true);
                   setPinError(null);
                 }}
-                className="inline-flex items-center justify-center rounded-xl bg-brand-gold px-4 py-3 text-sm font-semibold text-brand-charcoal transition-colors hover:bg-brand-gold/90 active:bg-brand-gold/80"
+                className="inline-flex items-center justify-center rounded-xl bg-kiosk-accent px-4 py-3 text-sm font-semibold text-kiosk-accent-fg transition-colors hover:bg-kiosk-accent-hover active:bg-kiosk-accent-active"
               >
                 Enter PIN
               </button>
@@ -664,7 +653,7 @@ export default function KioskPage() {
               <div className="flex-1">
                 <label
                   htmlFor="hut-leader-pin"
-                  className="block text-sm font-medium text-slate-300 mb-2"
+                  className="block text-sm font-medium text-kiosk-fg mb-2"
                 >
                   {hutLeaderSentence} PIN
                 </label>
@@ -678,20 +667,20 @@ export default function KioskPage() {
                   onChange={(event) =>
                     setPin(event.target.value.replace(/\D/g, "").slice(0, 6))
                   }
-                  className="w-full rounded-xl border border-slate-600 bg-slate-900 px-4 py-3 text-lg tracking-[0.35em] text-white outline-none transition-colors focus:border-brand-gold"
+                  className="w-full rounded-xl border border-kiosk-border bg-kiosk-page px-4 py-3 text-lg tracking-[0.35em] text-kiosk-fg outline-none transition-colors focus:border-kiosk-accent"
                   placeholder="123456"
                   autoComplete="one-time-code"
                   required
                 />
                 {pinError && (
-                  <p className="mt-2 text-sm text-red-300">{pinError}</p>
+                  <p className="mt-2 text-sm text-kiosk-danger-fg">{pinError}</p>
                 )}
               </div>
               <div className="flex gap-2">
                 <button
                   type="submit"
                   disabled={pinLoading || pin.length !== 6}
-                  className="rounded-xl bg-brand-gold px-4 py-3 text-sm font-semibold text-brand-charcoal transition-colors hover:bg-brand-gold/90 active:bg-brand-gold/80 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400"
+                  className="rounded-xl bg-kiosk-accent px-4 py-3 text-sm font-semibold text-kiosk-accent-fg transition-colors hover:bg-kiosk-accent-hover active:bg-kiosk-accent-active disabled:cursor-not-allowed disabled:bg-kiosk-chip disabled:text-kiosk-faint-fg"
                 >
                   {pinLoading ? "Checking..." : "Unlock"}
                 </button>
@@ -702,7 +691,7 @@ export default function KioskPage() {
                     setPin("");
                     setPinError(null);
                   }}
-                  className="rounded-xl bg-slate-700 px-4 py-3 text-sm font-semibold text-slate-200 transition-colors hover:bg-slate-600 active:bg-slate-500"
+                  className="rounded-xl bg-kiosk-inset px-4 py-3 text-sm font-semibold text-kiosk-fg transition-colors hover:bg-kiosk-hover active:bg-kiosk-hover"
                 >
                   Cancel
                 </button>
@@ -740,23 +729,23 @@ export default function KioskPage() {
         {/* Lodge List Panel */}
         <section>
           <div className="flex min-h-[44px] items-center justify-between gap-3 mb-3">
-            <h2 className="text-xl font-semibold text-slate-300">
+            <h2 className="text-xl font-semibold text-kiosk-fg">
               Lodge List
             </h2>
           </div>
           {bookings.length === 0 ? (
-            <div className="bg-slate-800 rounded-xl p-6 text-center text-slate-400 text-lg">
+            <div className="bg-kiosk-card rounded-xl p-6 text-center text-kiosk-muted-fg text-lg">
               No guests on the lodge list for this date
             </div>
           ) : (
             <div className="space-y-6">
               {lodgeListSections.map((section) => (
                 <div key={section.title}>
-                  <h3 className="mb-2 text-base font-medium text-slate-400">
+                  <h3 className="mb-2 text-base font-medium text-kiosk-muted-fg">
                     {section.title} ({section.bookings.reduce((sum, booking) => sum + booking.guests.length, 0)})
                   </h3>
                   {section.bookings.length === 0 ? (
-                    <div className="rounded-xl bg-slate-800/70 p-4 text-center text-sm text-slate-500">
+                    <div className="rounded-xl bg-kiosk-card p-4 text-center text-sm text-kiosk-muted-fg">
                       {section.emptyText}
                     </div>
                   ) : (
@@ -764,25 +753,25 @@ export default function KioskPage() {
                       {section.bookings.map((booking) => (
                         <div
                           key={`${section.title}-${booking.bookingId}`}
-                          className="bg-slate-800 rounded-xl p-4"
+                          className="bg-kiosk-card rounded-xl p-4"
                         >
                           <div className="flex items-center justify-between mb-2">
-                            <p className="text-sm text-slate-400">
+                            <p className="text-sm text-kiosk-muted-fg">
                               Booked by {booking.memberName}
                             </p>
                             {booking.expectedArrivalTime && booking.guests.some((g) => g.isArriving) && (
-                              <span className="text-sm text-blue-300 font-medium">
+                              <span className="text-sm text-kiosk-accent font-medium">
                                 Arriving {formatArrivalTime(booking.expectedArrivalTime)}
                               </span>
                             )}
                             {!booking.expectedArrivalTime && booking.guests.some((g) => g.isArriving) && (
-                              <span className="text-sm text-slate-500">
+                              <span className="text-sm text-kiosk-muted-fg">
                                 Arrival time: Not specified
                               </span>
                             )}
                           </div>
                           {booking.blockedFromCheckin && (
-                            <p className="mb-2 inline-block rounded-lg border border-red-700/50 bg-red-900/50 px-3 py-1 text-sm font-semibold text-red-200">
+                            <p className="mb-2 inline-block rounded-lg border border-kiosk-danger-border bg-kiosk-danger-bg px-3 py-1 text-sm font-semibold text-kiosk-danger-fg">
                               Blocked from Check-In — see Booking Officer
                             </p>
                           )}
@@ -792,10 +781,10 @@ export default function KioskPage() {
                                 key={guest.id}
                                 className={`flex items-center justify-between rounded-lg px-4 py-3 min-h-[56px] ${
                                   guest.departedAt
-                                    ? "bg-slate-700/30 opacity-60"
+                                    ? "bg-kiosk-inset opacity-60"
                                     : guest.arrivedAt
-                                      ? "bg-green-900/30 border border-green-700/50"
-                                      : "bg-slate-700/50"
+                                      ? "bg-kiosk-success-bg border border-kiosk-success-border"
+                                      : "bg-kiosk-inset"
                                 }`}
                               >
                                 <div>
@@ -803,12 +792,12 @@ export default function KioskPage() {
                                     <span className="text-lg font-medium">
                                       {guest.firstName} {guest.lastName}
                                     </span>
-                                    <span className="text-sm text-slate-400">
+                                    <span className="text-sm text-kiosk-muted-fg">
                                       {guest.ageTier}
                                     </span>
                                   </div>
                                   {guest.ageTier === "ADULT" && (
-                                    <p className="text-sm text-slate-400 mt-1">
+                                    <p className="text-sm text-kiosk-muted-fg mt-1">
                                       {guest.phone
                                         ? `Phone ${guest.phone}`
                                         : "Phone not available"}
@@ -817,17 +806,17 @@ export default function KioskPage() {
                                 </div>
                                 <div className="flex gap-2 items-center">
                                   {guest.isArriving && (
-                                    <span className="bg-green-700 text-green-100 text-sm font-medium px-3 py-1 rounded-full">
+                                    <span className="bg-kiosk-success-solid text-kiosk-success-solid-fg text-sm font-medium px-3 py-1 rounded-full">
                                       Arriving
                                     </span>
                                   )}
                                   {guest.isDeparting && (
-                                    <span className="bg-amber-700 text-amber-100 text-sm font-medium px-3 py-1 rounded-full">
+                                    <span className="bg-kiosk-warning-solid text-kiosk-warning-solid-fg text-sm font-medium px-3 py-1 rounded-full">
                                       Departing
                                     </span>
                                   )}
                                   {!guest.isMember && (
-                                    <span className="bg-slate-600 text-slate-300 text-sm px-3 py-1 rounded-full">
+                                    <span className="bg-kiosk-chip text-kiosk-fg text-sm px-3 py-1 rounded-full">
                                       Non-member
                                     </span>
                                   )}
@@ -836,8 +825,8 @@ export default function KioskPage() {
                                       onClick={() => toggleArrival(guest.id)}
                                       className={`text-sm font-medium px-4 py-2 rounded-lg min-h-[44px] transition-colors ${
                                         guest.arrivedAt
-                                          ? "bg-green-600 text-white"
-                                          : "bg-brand-gold text-brand-charcoal hover:bg-brand-gold/90 active:bg-brand-gold/80"
+                                          ? "bg-kiosk-success-solid text-kiosk-success-solid-fg"
+                                          : "bg-kiosk-accent text-kiosk-accent-fg hover:bg-kiosk-accent-hover active:bg-kiosk-accent-active"
                                       }`}
                                     >
                                       {guest.arrivedAt ? "Arrived" : "Mark Arrived"}
@@ -848,8 +837,8 @@ export default function KioskPage() {
                                       onClick={() => toggleDeparture(guest.id)}
                                       className={`text-sm font-medium px-4 py-2 rounded-lg min-h-[44px] transition-colors ${
                                         guest.departedAt
-                                          ? "bg-amber-600 text-white"
-                                          : "bg-brand-gold text-brand-charcoal hover:bg-brand-gold/90 active:bg-brand-gold/80"
+                                          ? "bg-kiosk-warning-solid text-kiosk-warning-solid-fg"
+                                          : "bg-kiosk-accent text-kiosk-accent-fg hover:bg-kiosk-accent-hover active:bg-kiosk-accent-active"
                                       }`}
                                     >
                                       {guest.departedAt ? "Departed" : "Mark Departed"}
@@ -872,21 +861,21 @@ export default function KioskPage() {
         {/* Chore Roster Panel */}
         <section>
           <div className="flex min-h-[44px] items-center justify-between gap-3 mb-3">
-            <h2 className="text-xl font-semibold text-slate-300">
+            <h2 className="text-xl font-semibold text-kiosk-fg">
               Chore Roster
             </h2>
             {canManageRoster && (
               <a
                 href={`/lodge/roster/${date}/setup`}
-                className="inline-block bg-brand-gold hover:bg-brand-gold/90 active:bg-brand-gold/80 text-brand-charcoal text-sm font-semibold px-4 py-2 rounded-xl min-h-[44px] transition-colors whitespace-nowrap"
+                className="inline-block bg-kiosk-accent hover:bg-kiosk-accent-hover active:bg-kiosk-accent-active text-kiosk-accent-fg text-sm font-semibold px-4 py-2 rounded-xl min-h-[44px] transition-colors whitespace-nowrap"
               >
                 {hasAssignments ? "Manage Today's Roster" : "Set Up Today's Roster"}
               </a>
             )}
           </div>
           {!hasAssignments ? (
-            <div className="bg-slate-800 rounded-xl p-6 text-center">
-              <p className="text-slate-400 text-lg mb-4">
+            <div className="bg-kiosk-card rounded-xl p-6 text-center">
+              <p className="text-kiosk-muted-fg text-lg mb-4">
                 No roster set up for this date
               </p>
             </div>
@@ -896,7 +885,7 @@ export default function KioskPage() {
                 .filter((g) => g.assignments.length > 0)
                 .map((group) => (
                   <div key={group.label}>
-                    <h3 className="text-base font-medium text-slate-400 mb-2">
+                    <h3 className="text-base font-medium text-kiosk-muted-fg mb-2">
                       {group.label}
                     </h3>
                     <div className="space-y-2">
@@ -921,7 +910,7 @@ export default function KioskPage() {
                       ).map((chore) => (
                         <div
                           key={chore.name}
-                          className="bg-slate-800 rounded-xl p-4"
+                          className="bg-kiosk-card rounded-xl p-4"
                         >
                           <h4 className="font-semibold text-lg mb-2">
                             {chore.name}
@@ -934,20 +923,20 @@ export default function KioskPage() {
                                   onClick={() => toggleChore(a.id, a.status)}
                                   className={`w-full flex items-center gap-3 rounded-lg px-4 py-3 min-h-[56px] text-left transition-colors ${
                                     a.status === "COMPLETED"
-                                      ? "bg-green-800/40 text-green-200"
-                                      : "bg-slate-700/50 hover:bg-slate-600/50 active:bg-slate-500/50"
+                                      ? "bg-kiosk-success-bg text-kiosk-success-fg"
+                                      : "bg-kiosk-inset hover:bg-kiosk-hover active:bg-kiosk-hover"
                                   }`}
                                 >
                                   <div
                                     className={`w-8 h-8 rounded-lg border-2 flex items-center justify-center flex-shrink-0 ${
                                       a.status === "COMPLETED"
-                                        ? "border-green-400 bg-green-600"
-                                        : "border-slate-500"
+                                        ? "border-kiosk-success-solid bg-kiosk-success-solid"
+                                        : "border-kiosk-border"
                                     }`}
                                   >
                                     {a.status === "COMPLETED" && (
                                       <svg
-                                        className="w-5 h-5 text-white"
+                                        className="w-5 h-5 text-kiosk-success-solid-fg"
                                         fill="none"
                                         viewBox="0 0 24 24"
                                         stroke="currentColor"
@@ -970,20 +959,20 @@ export default function KioskPage() {
                                   key={a.id}
                                   className={`w-full flex items-center gap-3 rounded-lg px-4 py-3 min-h-[56px] ${
                                     a.status === "COMPLETED"
-                                      ? "bg-green-800/40 text-green-200"
-                                      : "bg-slate-700/30"
+                                      ? "bg-kiosk-success-bg text-kiosk-success-fg"
+                                      : "bg-kiosk-inset"
                                   }`}
                                 >
                                   <div
                                     className={`w-8 h-8 rounded-lg border-2 flex items-center justify-center flex-shrink-0 ${
                                       a.status === "COMPLETED"
-                                        ? "border-green-400 bg-green-600"
-                                        : "border-slate-500"
+                                        ? "border-kiosk-success-solid bg-kiosk-success-solid"
+                                        : "border-kiosk-border"
                                     }`}
                                   >
                                     {a.status === "COMPLETED" && (
                                       <svg
-                                        className="w-5 h-5 text-white"
+                                        className="w-5 h-5 text-kiosk-success-solid-fg"
                                         fill="none"
                                         viewBox="0 0 24 24"
                                         stroke="currentColor"
@@ -1016,7 +1005,7 @@ export default function KioskPage() {
       )}
 
       {/* Last refresh indicator */}
-      <footer className={`mt-6 text-center text-sm ${view === "week" ? "text-[#94a3b8]" : "text-slate-600"}`}>
+      <footer className="mt-6 text-center text-sm text-kiosk-muted-fg">
         Auto-refreshes every {failCount >= 3 ? "5m" : "60s"}
       </footer>
     </div>

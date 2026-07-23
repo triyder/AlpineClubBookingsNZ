@@ -3,7 +3,6 @@
 import type { AgeTier } from "@prisma/client";
 import { useState, useEffect, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { ThemeSwitcher } from "@/components/theme-switcher";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -425,23 +424,20 @@ export default function RosterSetupWizard() {
 
   if (loading) {
     return (
-      <div className="theme-aware-kiosk min-h-screen bg-slate-900 text-white flex items-center justify-center">
+      <div className="theme-aware-kiosk min-h-screen bg-kiosk-page text-kiosk-fg flex items-center justify-center">
         <div className="text-2xl">Loading...</div>
       </div>
     );
   }
 
   return (
-    <div className="theme-aware-kiosk min-h-screen bg-slate-900 text-white p-4 select-none max-w-4xl mx-auto">
-      <div className="mb-4 flex justify-end">
-        <ThemeSwitcher className="w-full max-w-sm" />
-      </div>
+    <div className="theme-aware-kiosk min-h-screen bg-kiosk-page text-kiosk-fg p-4 select-none max-w-4xl mx-auto">
       {/* Header */}
       <header className="mb-6">
         <div className="flex items-center justify-between mb-2">
           <button
             onClick={() => router.push("/lodge/kiosk")}
-            className="text-slate-400 hover:text-white text-lg px-4 py-2 rounded-lg"
+            className="text-kiosk-muted-fg hover:text-kiosk-fg text-lg px-4 py-2 rounded-lg"
           >
             &larr; Back to Kiosk
           </button>
@@ -455,23 +451,23 @@ export default function RosterSetupWizard() {
               <div
                 className={`w-10 h-10 rounded-full flex items-center justify-center text-lg font-bold ${
                   s === step
-                    ? "bg-blue-600 text-white"
+                    ? "bg-kiosk-accent text-kiosk-accent-fg"
                     : s < step
-                      ? "bg-green-600 text-white"
-                      : "bg-slate-700 text-slate-400"
+                      ? "bg-kiosk-success-solid text-kiosk-success-solid-fg"
+                      : "bg-kiosk-inset text-kiosk-muted-fg"
                 }`}
               >
                 {s < step ? "\u2713" : s}
               </div>
               {s < 4 && (
                 <div
-                  className={`w-8 h-0.5 ${s < step ? "bg-green-600" : "bg-slate-700"}`}
+                  className={`w-8 h-0.5 ${s < step ? "bg-kiosk-success-solid" : "bg-kiosk-inset"}`}
                 />
               )}
             </div>
           ))}
         </div>
-        <div className="text-center mt-2 text-slate-400">
+        <div className="text-center mt-2 text-kiosk-muted-fg">
           {step === 1 && "Review Guests"}
           {step === 2 && "Select Chores"}
           {step === 3 && "Review Roster"}
@@ -480,13 +476,13 @@ export default function RosterSetupWizard() {
       </header>
 
       {error && (
-        <div className="bg-red-900/50 text-red-200 rounded-xl p-4 mb-4 text-lg">
+        <div className="bg-kiosk-danger-bg text-kiosk-danger-fg rounded-xl p-4 mb-4 text-lg">
           {error}
         </div>
       )}
 
       {hasExistingRoster && step === 1 && (
-        <div className="bg-amber-900/50 text-amber-200 rounded-xl p-4 mb-4 text-lg">
+        <div className="bg-kiosk-warning-bg text-kiosk-warning-fg rounded-xl p-4 mb-4 text-lg">
           A confirmed roster already exists for this date. Completing this wizard
           will replace it.
         </div>
@@ -499,7 +495,7 @@ export default function RosterSetupWizard() {
             Guests Staying ({totalGuests})
           </h2>
           {bookings.length === 0 ? (
-            <div className="bg-slate-800 rounded-xl p-6 text-center text-slate-400 text-lg">
+            <div className="bg-kiosk-card rounded-xl p-6 text-center text-kiosk-muted-fg text-lg">
               No guests staying on this date
             </div>
           ) : (
@@ -507,31 +503,31 @@ export default function RosterSetupWizard() {
               {bookings.map((booking) => (
                 <div
                   key={booking.bookingId}
-                  className="bg-slate-800 rounded-xl p-4"
+                  className="bg-kiosk-card rounded-xl p-4"
                 >
-                  <p className="text-sm text-slate-400 mb-2">
+                  <p className="text-sm text-kiosk-muted-fg mb-2">
                     Booked by {booking.memberName}
                   </p>
                   <div className="space-y-2">
                     {booking.guests.map((guest) => (
                       <div
                         key={guest.id}
-                        className="flex items-center justify-between bg-slate-700/50 rounded-lg px-4 py-3 min-h-[48px]"
+                        className="flex items-center justify-between bg-kiosk-inset rounded-lg px-4 py-3 min-h-[48px]"
                       >
                         <span className="text-lg">
                           {guest.firstName} {guest.lastName}
-                          <span className="text-sm text-slate-400 ml-2">
+                          <span className="text-sm text-kiosk-muted-fg ml-2">
                             {guest.ageTier}
                           </span>
                         </span>
                         <div className="flex gap-2">
                           {guest.isArriving && (
-                            <span className="bg-green-700 text-green-100 text-sm font-medium px-3 py-1 rounded-full">
+                            <span className="bg-kiosk-success-solid text-kiosk-success-solid-fg text-sm font-medium px-3 py-1 rounded-full">
                               Arriving
                             </span>
                           )}
                           {guest.isDeparting && (
-                            <span className="bg-amber-700 text-amber-100 text-sm font-medium px-3 py-1 rounded-full">
+                            <span className="bg-kiosk-warning-solid text-kiosk-warning-solid-fg text-sm font-medium px-3 py-1 rounded-full">
                               Departing
                             </span>
                           )}
@@ -548,7 +544,7 @@ export default function RosterSetupWizard() {
             <button
               onClick={() => setStep(2)}
               disabled={totalGuests === 0}
-              className="bg-blue-600 hover:bg-blue-500 active:bg-blue-400 disabled:bg-slate-700 disabled:text-slate-500 text-white text-lg font-semibold px-8 py-4 rounded-xl min-h-[56px] transition-colors"
+              className="bg-kiosk-accent hover:bg-kiosk-accent-hover active:bg-kiosk-accent-active disabled:bg-kiosk-chip disabled:text-kiosk-faint-fg text-kiosk-accent-fg text-lg font-semibold px-8 py-4 rounded-xl min-h-[56px] transition-colors"
             >
               Next: Select Chores
             </button>
@@ -567,7 +563,7 @@ export default function RosterSetupWizard() {
               .filter((g) => g.templates.length > 0)
               .map((group) => (
                 <div key={group.tod}>
-                  <h3 className="text-base font-medium text-slate-400 mb-2">
+                  <h3 className="text-base font-medium text-kiosk-muted-fg mb-2">
                     {group.label}
                   </h3>
                   <div className="space-y-2">
@@ -580,22 +576,22 @@ export default function RosterSetupWizard() {
                           onClick={() => toggleChore(t.id)}
                           className={`w-full flex items-center gap-3 rounded-xl px-4 py-3 min-h-[56px] text-left transition-colors ${
                             isSelected
-                              ? "bg-blue-800/40 border border-blue-600/50"
+                              ? "bg-kiosk-accent-bg border border-kiosk-accent-border"
                               : freqInfo?.excluded
-                                ? "bg-slate-800/50 border border-slate-700/50"
-                                : "bg-slate-800 border border-slate-700/50 hover:bg-slate-700"
+                                ? "bg-kiosk-card border border-kiosk-border"
+                                : "bg-kiosk-card border border-kiosk-border hover:bg-kiosk-hover"
                           }`}
                         >
                           <div
                             className={`w-8 h-8 rounded-lg border-2 flex items-center justify-center flex-shrink-0 ${
                               isSelected
-                                ? "border-blue-400 bg-blue-600"
-                                : "border-slate-500"
+                                ? "border-kiosk-accent bg-kiosk-accent"
+                                : "border-kiosk-border"
                             }`}
                           >
                             {isSelected && (
                               <svg
-                                className="w-5 h-5 text-white"
+                                className="w-5 h-5 text-kiosk-accent-fg"
                                 fill="none"
                                 viewBox="0 0 24 24"
                                 stroke="currentColor"
@@ -615,13 +611,13 @@ export default function RosterSetupWizard() {
                                 {t.name}
                               </span>
                               {t.isEssential && (
-                                <span className="bg-yellow-700 text-yellow-100 text-xs font-medium px-2 py-0.5 rounded-full">
+                                <span className="bg-kiosk-warning-solid text-kiosk-warning-solid-fg text-xs font-medium px-2 py-0.5 rounded-full">
                                   Essential
                                 </span>
                               )}
                             </div>
                             {freqInfo?.excluded && freqInfo.reason && (
-                              <p className="text-sm text-amber-400 mt-1">
+                              <p className="text-sm text-kiosk-warning-fg mt-1">
                                 {freqInfo.reason}
                               </p>
                             )}
@@ -637,14 +633,14 @@ export default function RosterSetupWizard() {
           <div className="mt-6 flex justify-between">
             <button
               onClick={() => setStep(1)}
-              className="bg-slate-700 hover:bg-slate-600 text-white text-lg font-semibold px-8 py-4 rounded-xl min-h-[56px] transition-colors"
+              className="bg-kiosk-inset hover:bg-kiosk-hover text-kiosk-fg text-lg font-semibold px-8 py-4 rounded-xl min-h-[56px] transition-colors"
             >
               Back
             </button>
             <button
               onClick={generateRoster}
               disabled={selectedChoreIds.size === 0 || generating}
-              className="bg-blue-600 hover:bg-blue-500 active:bg-blue-400 disabled:bg-slate-700 disabled:text-slate-500 text-white text-lg font-semibold px-8 py-4 rounded-xl min-h-[56px] transition-colors"
+              className="bg-kiosk-accent hover:bg-kiosk-accent-hover active:bg-kiosk-accent-active disabled:bg-kiosk-chip disabled:text-kiosk-faint-fg text-kiosk-accent-fg text-lg font-semibold px-8 py-4 rounded-xl min-h-[56px] transition-colors"
             >
               {generating ? "Generating..." : "Next: Generate Roster"}
             </button>
@@ -671,7 +667,7 @@ export default function RosterSetupWizard() {
               .filter((g) => g.templates.length > 0)
               .map((group) => (
                 <div key={group.tod}>
-                  <h3 className="text-base font-medium text-slate-400 mb-2">
+                  <h3 className="text-base font-medium text-kiosk-muted-fg mb-2">
                     {group.label}
                   </h3>
                   <div className="space-y-2">
@@ -687,7 +683,7 @@ export default function RosterSetupWizard() {
                       return (
                         <div
                           key={template.id}
-                          className="bg-slate-800 rounded-xl p-4"
+                          className="bg-kiosk-card rounded-xl p-4"
                         >
                           <div className="flex items-center justify-between gap-3 mb-2">
                             <h4 className="font-semibold text-lg">
@@ -697,28 +693,28 @@ export default function RosterSetupWizard() {
                               type="button"
                               onClick={() => addAllocation(template.id)}
                               disabled={eligibleGuests.length === 0}
-                              className="bg-slate-700 hover:bg-slate-600 disabled:bg-slate-700/50 disabled:text-slate-500 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
+                              className="bg-kiosk-inset hover:bg-kiosk-hover disabled:bg-kiosk-chip disabled:text-kiosk-faint-fg text-kiosk-fg text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
                             >
                               + Add Person
                             </button>
                           </div>
                           <div className="space-y-2">
                             {items.length === 0 ? (
-                              <div className="bg-slate-700/30 rounded-lg px-4 py-3 text-slate-400">
+                              <div className="bg-kiosk-inset rounded-lg px-4 py-3 text-kiosk-muted-fg">
                                 No one assigned yet. Add someone to keep this chore on the roster.
                               </div>
                             ) : (
                               items.map(({ allocation, globalIndex }) => (
                               <div
                                 key={`${allocation.choreTemplateId}-${allocation.bookingGuestId}-${globalIndex}`}
-                                className="flex items-center gap-3 bg-slate-700/50 rounded-lg px-4 py-3 min-h-[56px]"
+                                className="flex items-center gap-3 bg-kiosk-inset rounded-lg px-4 py-3 min-h-[56px]"
                               >
                                 <select
                                   value={allocation.bookingGuestId}
                                   onChange={(e) =>
                                     reassignGuest(globalIndex, e.target.value)
                                   }
-                                  className="flex-1 bg-slate-600 text-white rounded-lg px-3 py-2 text-lg min-h-[44px]"
+                                  className="flex-1 bg-kiosk-chip text-kiosk-fg rounded-lg px-3 py-2 text-lg min-h-[44px]"
                                 >
                                   {eligibleGuests.map((g) => (
                                     <option key={g.id} value={g.id}>
@@ -729,7 +725,7 @@ export default function RosterSetupWizard() {
                                 <button
                                   type="button"
                                   onClick={() => removeAllocation(globalIndex)}
-                                  className="bg-slate-700 hover:bg-slate-600 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
+                                  className="bg-kiosk-inset hover:bg-kiosk-hover text-kiosk-fg text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
                                 >
                                   Remove
                                 </button>
@@ -748,7 +744,7 @@ export default function RosterSetupWizard() {
           <div className="mt-6 flex justify-between gap-2 flex-wrap">
             <button
               onClick={() => setStep(2)}
-              className="bg-slate-700 hover:bg-slate-600 text-white text-lg font-semibold px-8 py-4 rounded-xl min-h-[56px] transition-colors"
+              className="bg-kiosk-inset hover:bg-kiosk-hover text-kiosk-fg text-lg font-semibold px-8 py-4 rounded-xl min-h-[56px] transition-colors"
             >
               Back
             </button>
@@ -756,14 +752,14 @@ export default function RosterSetupWizard() {
               <button
                 onClick={generateRoster}
                 disabled={generating}
-                className="bg-slate-700 hover:bg-slate-600 text-white text-lg font-semibold px-6 py-4 rounded-xl min-h-[56px] transition-colors"
+                className="bg-kiosk-inset hover:bg-kiosk-hover text-kiosk-fg text-lg font-semibold px-6 py-4 rounded-xl min-h-[56px] transition-colors"
               >
                 {generating ? "Regenerating..." : "Regenerate"}
               </button>
               <button
                 onClick={() => setStep(4)}
                 disabled={allocations.length === 0}
-                className="bg-blue-600 hover:bg-blue-500 active:bg-blue-400 disabled:bg-slate-700 disabled:text-slate-500 text-white text-lg font-semibold px-8 py-4 rounded-xl min-h-[56px] transition-colors"
+                className="bg-kiosk-accent hover:bg-kiosk-accent-hover active:bg-kiosk-accent-active disabled:bg-kiosk-chip disabled:text-kiosk-faint-fg text-kiosk-accent-fg text-lg font-semibold px-8 py-4 rounded-xl min-h-[56px] transition-colors"
               >
                 Next: Confirm
               </button>
@@ -777,15 +773,15 @@ export default function RosterSetupWizard() {
         <div>
           <h2 className="text-xl font-semibold mb-4">Confirm Roster</h2>
 
-          <div className="bg-slate-800 rounded-xl p-6 mb-6">
-            <p className="text-lg text-slate-300 mb-4">
+          <div className="bg-kiosk-card rounded-xl p-6 mb-6">
+            <p className="text-lg text-kiosk-fg mb-4">
               You are about to confirm {allocations.length} chore assignment
               {allocations.length !== 1 ? "s" : ""} for{" "}
               {displayDate(dateStr)}.
             </p>
 
             {hasExistingRoster && (
-              <p className="text-amber-400 text-lg mb-4">
+              <p className="text-kiosk-warning-fg text-lg mb-4">
                 This will replace the existing confirmed roster.
               </p>
             )}
@@ -796,7 +792,7 @@ export default function RosterSetupWizard() {
                 .filter((g) => g.allocations.length > 0)
                 .map((group) => (
                   <div key={group.tod}>
-                    <h3 className="text-base font-medium text-slate-400 mb-1">
+                    <h3 className="text-base font-medium text-kiosk-muted-fg mb-1">
                       {group.label}
                     </h3>
                     {Object.values(
@@ -819,10 +815,10 @@ export default function RosterSetupWizard() {
                     ).map((chore) => (
                       <div
                         key={chore.name}
-                        className="bg-slate-700/50 rounded-lg px-4 py-2 mb-1"
+                        className="bg-kiosk-inset rounded-lg px-4 py-2 mb-1"
                       >
                         <span className="font-medium">{chore.name}</span>
-                        <span className="text-slate-400 ml-2">
+                        <span className="text-kiosk-muted-fg ml-2">
                           {chore.guests.join(", ")}
                         </span>
                       </div>
@@ -835,14 +831,14 @@ export default function RosterSetupWizard() {
           <div className="flex justify-between">
             <button
               onClick={() => setStep(3)}
-              className="bg-slate-700 hover:bg-slate-600 text-white text-lg font-semibold px-8 py-4 rounded-xl min-h-[56px] transition-colors"
+              className="bg-kiosk-inset hover:bg-kiosk-hover text-kiosk-fg text-lg font-semibold px-8 py-4 rounded-xl min-h-[56px] transition-colors"
             >
               Back
             </button>
             <button
               onClick={confirmRoster}
               disabled={submitting}
-              className="bg-green-600 hover:bg-green-500 active:bg-green-400 disabled:bg-slate-700 disabled:text-slate-500 text-white text-lg font-bold px-10 py-4 rounded-xl min-h-[56px] transition-colors"
+              className="bg-kiosk-success-solid hover:bg-kiosk-success-solid-hover active:bg-kiosk-success-solid-active disabled:bg-kiosk-chip disabled:text-kiosk-faint-fg text-kiosk-success-solid-fg text-lg font-bold px-10 py-4 rounded-xl min-h-[56px] transition-colors"
             >
               {submitting ? "Confirming..." : "Confirm Roster"}
             </button>

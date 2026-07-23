@@ -1,10 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
-  SEED_SETS,
   buildThemeSubstrate,
   buildKioskTheme,
   contrast,
 } from "../theme-substrate";
+import {
+  SEED_SETS,
+  SYNTHETIC_SEEDS,
+  SYNTHETIC_CLUB_THEME_VALUES,
+} from "./reference-seed-sets";
 import {
   sweepGuarantees,
   sweepDerivedMutedForeground,
@@ -16,7 +20,6 @@ import {
 } from "../guarantees";
 import {
   DEFAULT_CLUB_THEME_VALUES,
-  TOKOROA_CLUB_THEME_VALUES,
   deriveAppMutedForeground,
   themeSeedsFromValues,
 } from "../../club-theme-schema";
@@ -32,11 +35,18 @@ import measurements from "../../../../docs/theme/phase0/data/measurements.json";
 type Built = ReturnType<typeof buildThemeSubstrate>;
 function allThemes(): Array<{ theme: Built; lightN12: string; label: string }> {
   const out: Array<{ theme: Built; lightN12: string; label: string }> = [];
-  for (const seedName of Object.keys(SEED_SETS) as Array<keyof typeof SEED_SETS>) {
-    const light = buildThemeSubstrate(SEED_SETS[seedName], "light");
+  // The shipping default (golden-pinned) plus the synthetic bright-accent stress
+  // palette — the two reference palettes the substrate must hold for. Neither is
+  // a real club's brand (#2190 D15).
+  const seeds: Array<[string, (typeof SEED_SETS)["default"]]> = [
+    ...(Object.entries(SEED_SETS) as Array<[string, (typeof SEED_SETS)["default"]]>),
+    ["synthetic", SYNTHETIC_SEEDS],
+  ];
+  for (const [seedName, seed] of seeds) {
+    const light = buildThemeSubstrate(seed, "light");
     const lightN12 = light.neutralHex[11];
     out.push({ theme: light, lightN12, label: `${seedName}/light` });
-    out.push({ theme: buildThemeSubstrate(SEED_SETS[seedName], "dark"), lightN12, label: `${seedName}/dark` });
+    out.push({ theme: buildThemeSubstrate(seed, "dark"), lightN12, label: `${seedName}/dark` });
   }
   const { theme, lightNeutral12 } = buildKioskTheme();
   out.push({ theme, lightN12: lightNeutral12, label: "kiosk/dark" });
@@ -54,7 +64,7 @@ describe("theme guarantee sweep", () => {
   it("G2c: the SHIPPED derived --muted-foreground tone clears AA on neutral steps 1–4, both modes, both seeds", () => {
     const seeds = [
       ["default", DEFAULT_CLUB_THEME_VALUES],
-      ["tokoroa", TOKOROA_CLUB_THEME_VALUES],
+      ["synthetic", SYNTHETIC_CLUB_THEME_VALUES],
     ] as const;
     const failures = seeds.flatMap(([name, values]) => {
       const tones = deriveAppMutedForeground(values);
@@ -119,7 +129,12 @@ describe("theme guarantee sweep", () => {
       }
       if (g.G5b_input_ring_vs_surfaces1to3) cells.push([`G5b/${seed}/${mode}`, g.G5b_input_ring_vs_surfaces1to3.pass]);
     };
-    for (const seed of ["default", "tokoroa"]) for (const mode of ["light", "dark"]) visit(seed, mode, gs[seed][mode]);
+    // The frozen Phase-0 measurements.json is the sign-off record and still
+    // holds every recorded reference seed (including the fork palette shown at
+    // sign-off, "fork data ... for sign-off only"); reproduce all of its
+    // non-kiosk seeds by key rather than naming any club here (#2190 D15).
+    for (const seed of Object.keys(gs).filter((k) => k !== "kiosk"))
+      for (const mode of ["light", "dark"]) visit(seed, mode, gs[seed][mode]);
     visit("kiosk", "dark", gs.kiosk.dark);
     const failing = cells.filter(([, pass]) => !pass).map(([k]) => k);
     expect(failing).toEqual([]);

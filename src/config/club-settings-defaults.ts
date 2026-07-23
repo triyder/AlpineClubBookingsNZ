@@ -94,6 +94,42 @@ export const DEFAULT_MEMBERSHIP_LOCKOUT_SETTINGS = {
   useFeeScheduleItemCodes: false,
 } as const;
 
+/**
+ * `PublicContentSettings` — the values the public read paths synthesise when the
+ * `id = "default"` row is absent (#2200). Every double-opt-in visibility gate is
+ * OFF on a miss (`isPublicContentEnabled` returns `settings?.[gate] === true`,
+ * `src/lib/public-page-content-tokens.ts`) and the public "Book Now" button is
+ * SHOWN, pointing at the booking flow (`getBookNowConfig`,
+ * `src/lib/book-now-config.ts`). Only the portable policy fields are declared
+ * here — `bookNowTarget`/`bookNowPageId` are instance-local (they reference a
+ * specific install's `PageContent` id) and never travel, so they have no
+ * effective-default to carry. These match the schema column defaults, which is
+ * asserted against `prisma/schema.prisma` by a config-transfer test.
+ */
+export const DEFAULT_PUBLIC_CONTENT_SETTINGS = {
+  membershipTypes: false,
+  entranceFees: false,
+  hutFees: false,
+  bookingPolicySummary: false,
+  cancellationPolicy: false,
+  annualFees: false,
+  showBookNow: true,
+} as const;
+
+/**
+ * `MembershipSubscriptionBillingSettings` — the effective club billing policy a
+ * missing `id = "default"` row synthesises (#2200). `invoiceDueDays` is read by
+ * `getSubscriptionBillingDueDays` and `familyBillingMode` by `getFamilyBillingMode`
+ * (`src/lib/authoritative-fees.ts`), both `?? default`. A test asserts
+ * `familyBillingMode` equals `DEFAULT_FAMILY_BILLING_MODE` and that both values
+ * match the schema column defaults, so the three sources cannot drift. Both are
+ * portable club policy with no provider/tenant coupling.
+ */
+export const DEFAULT_MEMBERSHIP_SUBSCRIPTION_BILLING_SETTINGS = {
+  invoiceDueDays: 30,
+  familyBillingMode: "BILL_FAMILY_VIA_BILLING_MEMBER",
+} as const;
+
 /** `MembershipCancellationSetting` — read by `normalizeMembershipCancellationSettings`. */
 export const DEFAULT_MEMBERSHIP_CANCELLATION_SETTINGS = {
   warningText:

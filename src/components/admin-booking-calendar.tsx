@@ -26,14 +26,17 @@ interface CalendarBooking {
   guestCount: number;
 }
 
-// Solid calendar swatches: one saturated -400/-500 fill per status, with no
-// paired tinted background or accent text. The `--hue-*` token system is a
-// muted-bg / accent-text PAIR, so it has no equivalent for a standalone solid
-// fill — `WAITLIST_OFFERED: bg-teal-500` therefore stays a literal Tailwind
-// utility and remains the sole entry in the categorical-teal allowlist in
-// `src/lib/__tests__/brand-color-source-contract.test.ts` (#2137).
+// Solid calendar swatches: one step-9 categorical/semantic fill per status (the
+// bars carry white text, so every fill is a mode-independent saturated step-9 or
+// a mode-inverting neutral surface that stays dark under white text in dark
+// mode). #2190 P4 evicts the last two raw utilities: DRAFT's raw light-grey
+// utility becomes the theme-following `bg-muted` (a faint, de-emphasised draft
+// surface in both modes), and WAITLIST_OFFERED's raw Tailwind teal fill becomes
+// the categorical `bg-cat6-9` (#2218 — the same teal 6th scale its chip uses,
+// mode-consistent, distinct from WAITLISTED's cat1-9). The file no longer needs a
+// neutral- or teal-allowlist entry.
 export const STATUS_COLORS: Record<string, string> = {
-  DRAFT: "bg-gray-300",
+  DRAFT: "bg-muted",
   PENDING: "bg-warning-9",
   PAYMENT_PENDING: "bg-warning-9",
   CONFIRMED: "bg-success-9",
@@ -42,7 +45,7 @@ export const STATUS_COLORS: Record<string, string> = {
   CANCELLED: "bg-danger-9",
   BUMPED: "bg-warning-9",
   WAITLISTED: "bg-cat1-9",
-  WAITLIST_OFFERED: "bg-teal-500",
+  WAITLIST_OFFERED: "bg-cat6-9",
 };
 
 const ALL_STATUSES = Object.keys(STATUS_COLORS);
@@ -502,7 +505,7 @@ export function AdminBookingCalendar() {
                 data-row-height={rowHeight}
                 className={`absolute rounded pointer-events-auto cursor-pointer hover:brightness-110 transition-all flex items-center overflow-hidden ${
                   isPastSeg ? "opacity-50 " : ""
-                }${STATUS_COLORS[booking.status] || "bg-gray-400"}`}
+                }${STATUS_COLORS[booking.status] || "bg-muted"}`}
                 style={{
                   left: `calc(${leftPct}% + 2px)`,
                   width: `calc(${widthPct}% - 4px)`,
@@ -591,7 +594,7 @@ export function AdminBookingCalendar() {
                 <span className="flex min-w-0 items-center gap-2">
                   <span
                     className={`inline-block h-2.5 w-2.5 shrink-0 rounded-sm ${
-                      STATUS_COLORS[b.status] || "bg-gray-400"
+                      STATUS_COLORS[b.status] || "bg-muted"
                     }`}
                   />
                   <span className="truncate font-medium">{b.memberName}</span>

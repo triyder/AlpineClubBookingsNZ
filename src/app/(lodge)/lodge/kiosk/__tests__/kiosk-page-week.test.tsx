@@ -9,10 +9,6 @@ import {
   type KioskWeekDaySummary,
 } from "../_components/kiosk-week-view";
 
-vi.mock("@/components/theme-switcher", () => ({
-  ThemeSwitcher: () => <div data-testid="theme-switcher" />,
-}));
-
 vi.mock("@/components/kiosk-lodge-instructions", () => ({
   KioskLodgeInstructions: ({ date }: { date: string }) => (
     <div data-testid="kiosk-instructions">{date}</div>

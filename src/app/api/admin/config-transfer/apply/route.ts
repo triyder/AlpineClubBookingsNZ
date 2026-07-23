@@ -15,6 +15,7 @@ import {
 } from "@/lib/config-transfer/route-helpers";
 import { configTransferErrorResponse } from "@/lib/config-transfer/route-error";
 import { primeClubIdentitySync } from "@/lib/club-identity-settings";
+import { invalidateAgeTierCache } from "@/lib/age-tier";
 import { primeEmailPalette } from "@/lib/email-theme";
 import { revalidatePublicPageContent } from "@/lib/public-content-revalidation";
 import {
@@ -82,6 +83,14 @@ export async function POST(request: Request) {
     // sync call sites (TOTP issuer) see the imported identity immediately
     // (E3 #1929; precedent 5107a136 for the email theme).
     await primeClubIdentitySync();
+    // Age-tier classification and per-tier pricing read a 5-minute in-process
+    // cache (getAgeTierSettings). A boundary-shifting import must clear it so the
+    // imported tiers take effect immediately, exactly as the admin PUT does —
+    // gated on the age-tier entity actually changing so an unrelated import does
+    // not needlessly drop the cache (#2200).
+    if (result.appliedEntities.includes("age-tier")) {
+      invalidateAgeTierCache();
+    }
     return NextResponse.json({ result });
   } catch (error) {
     if (error instanceof ConfigImportDriftError) {

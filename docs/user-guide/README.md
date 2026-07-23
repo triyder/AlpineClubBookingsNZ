@@ -24,6 +24,14 @@ Every screen and figure here comes from the seeded demo club **Example Mountain
 Club**, so your own club's name, colours, fees, and lodge capacity will differ —
 the steps are the same.
 
+> **In-app help is distilled from these guides.** The chat-style help widget
+> (epic #2094) answers members in-app from a hand-distilled corpus in
+> `src/lib/help/member-help.ts` (and the public corpus in `public-help.ts`), each
+> entry naming the guide it came from. These short in-app answers are a
+> distillation, not a copy — when you change a member guide here, review and
+> update the matching entry in that corpus in the same pull request so the two
+> never drift.
+
 ## How these guides are written (member-guide skeleton)
 
 The [`STYLE_GUIDE.md`](../STYLE_GUIDE.md) defines the operator-guide skeleton

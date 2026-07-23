@@ -23,6 +23,7 @@ export const MODULE_KEYS = [
   "googleLogin",
   "analytics",
   "lobbyDisplay",
+  "aiAssistant",
 ] as const;
 
 export type ModuleKey = (typeof MODULE_KEYS)[number];
@@ -76,6 +77,7 @@ export const DEFAULT_MODULE_SETTINGS: ModuleSettingsValues = {
   googleLogin: false,
   analytics: false,
   lobbyDisplay: false,
+  aiAssistant: false,
 };
 
 export interface ModuleDefinition {
@@ -250,6 +252,16 @@ export const MODULE_DEFINITIONS: Record<ModuleKey, ModuleDefinition> = {
       "Read-only paired lobby screens showing per-lodge arrivals, departures, chores, and lodge information.",
     dependencies: [
       "Display devices are paired from the lodge admin pages once the module is on.",
+    ],
+  },
+  aiAssistant: {
+    key: "aiAssistant",
+    label: "AI help assistant",
+    description:
+      "Free-text help questions answered by a paid AI model, grounded in each page's help content. Curated page help works without it.",
+    dependencies: [
+      "Enter your Anthropic API key under Admin → Integrations before the assistant can answer.",
+      "A monthly spend cap (default NZ$10) hard-stops AI answers for the rest of the month once reached; adjust it on the AI assistant settings.",
     ],
   },
 };

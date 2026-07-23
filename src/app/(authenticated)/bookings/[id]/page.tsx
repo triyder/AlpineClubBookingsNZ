@@ -29,7 +29,7 @@ import { getBookingEditPolicy, bookingStayHasStarted } from "@/lib/booking-edit-
 import { getBookingPaymentMode } from "@/lib/booking-payment-flow";
 import { RefundAppealButton } from "@/components/refund-appeal-button";
 import { humanizeStatus, paymentStatusClass } from "@/lib/status-colors";
-import { BookingHelpDialog } from "@/components/booking-help-dialog";
+import { BookingHelpExtras } from "./_components/booking-help-extras";
 import {
   NonMemberGuestsSection,
   type NonMemberGuestChild,
@@ -881,13 +881,15 @@ export default async function BookingDetailPage({
         className="min-w-0 max-w-2xl flex-1 space-y-6"
       >
       <ScrollToHash />
+      {/* Render-null: feeds the four booking-help blocks into the global help
+          widget (epic #2094 C2), replacing the retired BookingHelpDialog. */}
+      <BookingHelpExtras
+        cancellationSchedule={cancellationSchedule}
+        cancellationHasNoPayment={cancellationHasNoPayment}
+      />
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold">Booking Details</h1>
         <div className="flex items-center gap-2">
-          <BookingHelpDialog
-            cancellationSchedule={cancellationSchedule}
-            cancellationHasNoPayment={cancellationHasNoPayment}
-          />
           <Link href={backHref}>
             <Button variant="outline">Back to Bookings</Button>
           </Link>

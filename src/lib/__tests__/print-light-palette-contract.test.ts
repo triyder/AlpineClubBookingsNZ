@@ -282,7 +282,6 @@ describe("#2146 print always renders the light palette", () => {
       "--card-foreground: oklch(0.985 0 0)",
       "--danger: oklch(0.84 0.11 27)",
       "--success: oklch(0.84 0.11 150)",
-      "--hue-teal: oklch(0.84 0.11 185)",
     ]) {
       expect(screenOnly).toContain(declaration);
     }
@@ -611,14 +610,17 @@ function listComponentFiles(path: string): string[] {
 //                              above. `ui/card.tsx` is where #2146 actually
 //                              originated, so this root is not optional.
 //
-// The last three entries are individual shared components that render on a
+// The last two entries are individual shared components that render on a
 // printable page without living in one of the trees above. They are NOT
-// equivalent to each other, and only one of them is belt-and-braces:
+// equivalent to each other:
 //
-// - `contextual-help-button.tsx` — rendered inside `main.reports-print-root`
-//   ((finance)/finance/layout.tsx:55,73) and in the admin layout. It is the one
-//   that carries `print:hidden` itself (contextual-help-button.tsx:115), so for
-//   this entry the root really is belt-and-braces.
+// (The retired `contextual-help-button.tsx` used to be listed here as the one
+// belt-and-braces case — it carried `print:hidden` itself. Epic #2094 C2
+// replaced it and `booking-help-dialog.tsx` with the global help widget, whose
+// launcher and panel both carry `print:hidden`; those live under
+// `src/components/help-widget/`, are token-pure, and never print, so they need
+// no entry here.)
+//
 // - `date-range-controls.tsx` — LOAD-BEARING, do not prune. `/admin/reports`
 //   renders it at page.tsx:334, which is OUTSIDE the `.reports-print-root` div
 //   at page.tsx:396 but still on the printed document, and it has no
@@ -638,8 +640,8 @@ function listComponentFiles(path: string): string[] {
 //   report screen away from doing so, and the cost of listing it is nil.)
 //
 // Listing them here rather than leaning on the census is deliberate: the
-// census's only remedy is `NON_PRINTABLE_DARK_UTILITY_FILES`, and adding any of
-// these three to that list would be a false claim — each renders visible markup
+// census's only remedy is `NON_PRINTABLE_DARK_UTILITY_FILES`, and adding either
+// of these two to that list would be a false claim — each renders visible markup
 // on a page an operator can print.
 const PRINTABLE_SURFACE_ROOTS = [
   "src/app/(finance)",
@@ -650,7 +652,6 @@ const PRINTABLE_SURFACE_ROOTS = [
   "src/app/(authenticated)/lodge-instructions",
   "src/app/(website)/hut-leader-instructions",
   "src/components/ui",
-  "src/components/contextual-help-button.tsx",
   "src/components/admin/date-range-controls.tsx",
   "src/components/lodge-select.tsx",
 ];
@@ -715,7 +716,7 @@ describe("#2146 no literal-palette dark: utility on a printable surface", () => 
             `@media not print wrappers there cannot exclude it — it prints ` +
             `exactly as written and reintroduces #2146. On a printable ` +
             `surface, either drop the dark: variant or move the colour onto a ` +
-            `semantic token (bg-card / text-muted-foreground / the --hue-* ` +
+            `semantic token (bg-card / text-muted-foreground / a ` +
             `pairs), which resolves light on paper. Offenders:\n` +
             `${offenders.join("\n")}`,
     ).toEqual([]);
@@ -814,7 +815,7 @@ describe("#2146 no literal-palette dark: utility on a printable surface", () => 
             `the default remedy:\n` +
             `  - It CAN render inside a print root (directly, or as a shared ` +
             `component used by one): drop the dark: variant or move the colour ` +
-            `onto a semantic token / the --hue-* pairs, and add its path to ` +
+            `onto a semantic or categorical scale token, and add its path to ` +
             `PRINTABLE_SURFACE_ROOTS so the stricter check covers it from now ` +
             `on.\n` +
             `  - It can NEVER render inside a print root: add it to ` +

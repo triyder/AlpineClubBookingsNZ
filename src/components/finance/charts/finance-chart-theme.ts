@@ -1,23 +1,37 @@
 import { formatDollarsDisplay } from "@/lib/finance-format";
+import { buildThemeSubstrate } from "@/lib/theme/theme-substrate";
+import {
+  DEFAULT_CLUB_THEME_VALUES,
+  themeSeedsFromValues,
+} from "@/lib/club-theme-schema";
+import { CHART_FINANCE_8SLOT } from "@/lib/theme/aliases";
 
 /**
  * Ordered palette for mix/breakdown charts (pies, stacked bars).
  *
- * DECISION — KEEP as literal brand hex, do NOT tokenise (#1801 carve-out,
- * re-affirmed by the owner in #2137). These values feed Recharts `fill` /
- * `stroke` PRESENTATION ATTRIBUTES, where `var()` does not resolve, so a CSS
- * token cannot be substituted here without re-plumbing every chart. They are
- * also deliberately CATEGORICAL: brand tones chosen to stay mutually
- * distinguishable independent of the admin-configured site colours.
+ * #2190 P4 (D15/J7): the eight slots are now DERIVED from the signed-off
+ * CATEGORICAL scales rather than hand-picked brand hex (the old palette led with
+ * a fork's brand gold and carried seven other literals). The mapping is the
+ * `chart_finance_8slot` order recorded in `docs/theme/phase0/data/aliases.json`
+ * and encoded once as `CHART_FINANCE_8SLOT`: series 1–5 = cat1–5 step 9, series
+ * 6–8 = cat1–3 step 7.
  *
- * KNOWN EDGE CASES at the tail of the palette (pre-existing, not introduced by
- * #2137, and NOT fixed here because the keep decision freezes these values):
- * slot 7 `#2f2f2b` is near-invisible against the DARK card (~1.04:1) and slot 8
- * `#d9d5c2` is near-invisible against the LIGHT card (~1.27:1); slot 3
- * `#6a6a63` is marginal. `mix-pie-chart.tsx` draws its Cells without a stroke,
- * so a chart that actually reaches a 7th or 8th category can render a slice
- * that reads as background. Treat the first six tones as the safe set; changing
- * the palette or adding a cell stroke needs an owner decision.
+ * WHY a fixed reference build. These values feed Recharts `fill` / `stroke`
+ * PRESENTATION ATTRIBUTES, where `var()` does not resolve, so a resolved hex is
+ * required. The categorical scales are club-INDEPENDENT at step 9 (the seed sits
+ * unbanded at step 9 by construction) and vary only by ≤1/255 at step 7 (the A1
+ * band snaps to the club's neutral ramp), so building them once from the shipping
+ * default reference seeds (`DEFAULT_CLUB_THEME_VALUES`, the single source of truth
+ * — no hand-copied triple) yields the categorical intent: a palette that stays
+ * mutually distinguishable regardless of the admin-configured site colours. The
+ * exact eight hexes are pinned by `finance-chart-theme.test.ts`, which recomputes
+ * them from the substrate so a generator change surfaces as a test diff.
+ *
+ * KNOWN EDGE CASE at the tail: series 6–8 (step 7) are LIGHT tints of the
+ * series 1–3 hues, so a chart that actually reaches a 6th–8th category renders a
+ * lighter variant of an earlier slice. `mix-pie-chart.tsx` draws its Cells
+ * without a stroke, so treat the first five vivid tones as the safe set; a stroke
+ * or a different tail mapping needs an owner decision.
  *
  * Chart NEUTRALS (grid, axis, ticks) are handled differently: `trend-chart.tsx`
  * still passes literal `stroke="#e2e8f0"` / `"#94a3b8"` for the same
@@ -26,16 +40,17 @@ import { formatDollarsDisplay } from "@/lib/finance-format";
  * selectors, which DO follow the theme (including dark mode). See the in-file
  * comment at `trend-chart.tsx` `sharedAxes`.
  */
-export const FINANCE_MIX_COLORS = [
-  "#ffcb05",
-  "#ff7c12",
-  "#6a6a63",
-  "#2563eb",
-  "#16a34a",
-  "#9333ea",
-  "#2f2f2b",
-  "#d9d5c2",
-] as const;
+function buildFinanceMixColors(): readonly string[] {
+  const light = buildThemeSubstrate(
+    themeSeedsFromValues(DEFAULT_CLUB_THEME_VALUES),
+    "light",
+  );
+  return CHART_FINANCE_8SLOT.map(
+    ({ scale, step }) => light.scales[scale].hex[step - 1],
+  );
+}
+
+export const FINANCE_MIX_COLORS = buildFinanceMixColors();
 
 export type FinanceValueType = "currency" | "count" | "percent" | "ratio";
 

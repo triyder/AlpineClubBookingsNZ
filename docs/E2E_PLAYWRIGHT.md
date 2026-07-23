@@ -35,6 +35,17 @@ Not covered by browser tests (by design):
   local mailpit container (no live provider), but the membership spec drives the
   confirmation pages using seeded tokens rather than parsing the captured email
   (see below). Only the email-code two-factor spec reads a captured message back.
+- **The AI help assistant LLM path** (`POST /api/help/chat`, #2211) — answering a
+  free-text question requires a live paid Anthropic API key, which is never
+  configured in CI or staging (no key ⇒ the route returns a structured
+  `not_configured` fallback), and calling a real paid model from a browser test
+  would be non-deterministic and cost money. The entire path — gate order,
+  surface downgrade, budget cap, metering, and the SDK error taxonomy — is
+  instead covered by jsdom-mocked Vitest suites
+  (`src/app/api/help/chat/__tests__/route.test.ts`,
+  `src/lib/__tests__/anthropic-client.test.ts`,
+  `src/lib/__tests__/ai-assistant-usage.test.ts`) with the SDK and provider
+  mocked, which is the deliberate substitute for browser coverage here.
 
 Not covered yet, but tracked for addition (issue #1373 — restored to this list
 so the gaps are not silently implied as covered):
