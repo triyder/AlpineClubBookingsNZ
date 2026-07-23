@@ -14,7 +14,7 @@ export const metadata: Metadata = {
 // post-setup editing surface.
 export default function BackupSetupPage() {
   return (
-    <div className="max-w-4xl p-6">
+    <div className="max-w-6xl p-6">
       <BackLink href="/admin/integrations" label="Integrations" />
       <h1 className="mt-2 mb-2 text-2xl font-bold">Database backup setup</h1>
       <p className="mb-6 text-muted-foreground">
