@@ -90,6 +90,127 @@ _No schema or migration changes are staged for the next release yet._
 
 ---
 
+## v0.13.1 → v0.13.2
+
+`v0.13.2` is a **patch** release carrying **six migrations — five additive/expand
+migrations plus one destructive `contract` migration** — and two operator actions
+that are not migrations: re-entering backup credentials, and re-exporting any
+configuration bundle you rely on. The five expand migrations need no operator
+action; the contract migration and the two non-migration actions are covered
+below.
+
+The five expand migrations are all additive and blue/green safe:
+
+- **`20260722120000_add_integration_wizard_progress`** — the setup-wizard cursor
+  for the new guided provider wizards (#2080).
+- **`20260722130000_add_xero_webhook_validation_receipt`** — the Xero webhook
+  validation-receipt sink used by the Xero wizard's verify step (#2081).
+- **`20260722140000_expand_club_theme_orphan_column_defaults`** — adds a DB
+  `DEFAULT` to the four legacy `ClubTheme` colour columns so the new runtime can
+  `INSERT` a theme row without naming them, while the draining previous colour is
+  unaffected (#2187). This is the EXPAND half of the pair whose CONTRACT drop is
+  below.
+- **`20260722150000_add_backup_run`** — the backup-run ledger for the managed
+  backup integration (#2095).
+- **`20260723120000_add_ai_assistant`** — the AI help assistant models (#2211).
+
+### The `ClubTheme` orphan-column contract drop
+
+`20260722160000_contract_drop_club_theme_orphan_columns` **drops** the four
+former `ClubTheme` columns `brandCharcoal` / `brandRidge` / `brandMist` /
+`brandSnow`. It is `old_code_compatible=yes` and carries a full rationale row in
+`docs/BLUE_GREEN_MIGRATION_SAFETY.tsv`
+(`previous_expand_release = 20260722140000_expand_club_theme_orphan_column_defaults`),
+and the blue/green validator **refuses to run it without the breaking-migration
+acknowledgement.**
+
+The subtlety this release: the paired EXPAND migration ships in **this same tag**,
+so at the moment `v0.13.2` is deploying, the draining previous colour (`v0.13.1`)
+still names those four columns in its theme reads and writes — Prisma projects
+every scalar in an unnarrowed `SELECT` and in a mutation's implicit `RETURNING`.
+Dropping the columns while `v0.13.1` is still live breaks the old colour. The
+drop is legal **only once `v0.13.2` has replaced and drained `v0.13.1`.** Choose
+one of two paths:
+
+- **Defer it (recommended).** Deploy `v0.13.2`, letting the five expand
+  migrations run, and mark the contract migration applied **without running it**
+  so the old colour keeps its columns while it drains:
+
+  ```bash
+  npx prisma migrate resolve --applied 20260722160000_contract_drop_club_theme_orphan_columns
+  ```
+
+  Then, in a later window once `v0.13.2` is the soaked, drained colour, run the
+  drop for real. Because the migration is now recorded as applied,
+  `prisma migrate deploy` will **never execute it again** — first reset its
+  record so the deploy re-picks it up (with the override below):
+
+  ```bash
+  npx prisma migrate resolve --rolled-back 20260722160000_contract_drop_club_theme_orphan_columns
+  ```
+
+  or, equivalently, run the migration's `ALTER TABLE "ClubTheme" DROP COLUMN …`
+  statements manually in that window and leave the record as applied.
+- **Run it in a quiet window.** Once `v0.13.1` is fully drained and `v0.13.2` is
+  the live colour, run the drop with the breaking-migration acknowledgement:
+
+  ```bash
+  export ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS=1
+  export BLUE_GREEN_MIGRATION_OVERRIDE_REASON="ClubTheme orphan-column drop (#2187 P4); v0.13.2 substrate runtime deployed and drained since <date>; backup <id> restore-tested"
+  ```
+
+  Put the real drain date and a restore-tested backup id in the reason — it is the
+  audit record for why the drop was safe. Unset both afterwards so the next deploy
+  does not inherit the override.
+
+There is **no down-migration**: a `DROP COLUMN` cannot be undone by rolling the
+app back. The four dropped surfaces are derived from the generated palette at
+render time, so no theme surface is lost, but the raw columns are gone — take and
+restore-test a fresh backup before you run the drop.
+
+### Before deployment
+
+1. **Take and restore-test a fresh backup** before running the contract drop —
+   the column drop is irreversible without it.
+2. **Confirm your blue/green plan for the contract drop** — decide up front
+   whether you are deferring it (mark-applied now, run later) or running it in a
+   quiet window once `v0.13.1` has drained. Do **not** run the drop while a
+   pre-`v0.13.2` colour is still live.
+3. **Note the backup re-entry that follows.** If this install configured backups
+   through the legacy `BACKUP_*` env vars, have the S3 access key, secret,
+   bucket, region, and restore-validation DSN ready to re-enter after the upgrade
+   (see post-upgrade actions) — nightly backups fail loudly until you do.
+
+### Post-upgrade actions
+
+1. **Re-enter the backup settings (#2095).** The legacy `BACKUP_ENABLED`,
+   `BACKUP_S3_*`, `BACKUP_RETENTION_DAYS`, and `BACKUP_RESTORE_VALIDATION_URL`
+   environment variables are **no longer read**. An install that configured
+   backups through them upgrades to an empty store, so the nightly backup reports
+   a **loud FAILURE** (never a silent skip) until you re-enter the settings at
+   **Admin → Integrations → Database Backups** (`/admin/backups`). Confirm a
+   manual **Run backup now** succeeds and the durable (S3) destination is
+   configured. Only `BACKUP_CRON_SCHEDULE` (cron-leader timing) stays in the
+   environment; remove the other `BACKUP_*` vars once migrated.
+2. **Re-export any configuration bundle you rely on (#2187).** Bundles now export
+   at **format version 2**; a bundle exported by a pre-`v0.13.2` app (version 1)
+   is **refused on import** with a clear message. Re-export from the upgraded
+   source install before moving configuration between installs.
+3. **The provider wizards need no forced action (#2080/#2082/#2087).** They are
+   the new guided path to the DB-only credential store already introduced in
+   `v0.13.1`; existing connections keep working. Any legacy provider env vars are
+   detected, warned about, and ignored — re-enter the values in the wizard, then
+   remove the env vars.
+4. **The AI help assistant is off by default (#2094).** It does nothing until a
+   Full Admin enables the module and enters an Anthropic API key (in-app, held
+   only in the encrypted vault). The chat-style help widget answers curated page
+   questions regardless of whether the paid module is on. A hard monthly spend cap
+   (default NZ$10) bounds AI spend once enabled.
+5. **Run the contract drop when the soak is complete** if you deferred it — see
+   the two paths above.
+
+---
+
 ## v0.13.0 → v0.13.1
 
 `v0.13.1` is a **patch** release carrying **three migrations — two destructive

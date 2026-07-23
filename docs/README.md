@@ -342,4 +342,4 @@ Larger subsystems keep their own hub. Each links back to this page.
 
 Per-release notes and the owner-review communication drafts are indexed in
 [`releases/README.md`](releases/README.md) (newest first — currently
-[`releases/v0.13.1.md`](releases/v0.13.1.md)).
+[`releases/v0.13.2.md`](releases/v0.13.2.md)).

@@ -7,6 +7,7 @@ drafts that accompany a release. Newest first.
 
 ## Published release notes
 
+- [v0.13.2](v0.13.2.md) — 2026-07-23 patch public reference release (deferred contract drop, backup re-home, provider wizards, AI help).
 - [v0.13.1](v0.13.1.md) — 2026-07-22 patch public reference release (breaking contract migrations).
 - [v0.13.0](v0.13.0.md) — 2026-07-21 minor public reference release.
 - [v0.12.2](v0.12.2.md) — 2026-07-20 patch public reference release.
