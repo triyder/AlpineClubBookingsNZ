@@ -339,12 +339,13 @@ assets in `public/branding/`:
 
 The matching `*.example.*` files are placeholders for forks and public docs.
 
-Existing Tokoroa deployments can preserve the former look during the transition
-by running the seed with `SEED_TOKOROA_THEME_COMPLETE=1`. That path records the
-current palette (`#ffcb05`, `#4d4d46`, `#2f2f2b`, `#6a6a63`, `#d9d5c2`,
-`#f7f5ed`, `#ff7c12`), marks site style setup complete, and stores
-`public/branding/logo.png` as the database logo when that file exists and is
-900KB or smaller.
+Running the seed with `SEED_THEME_COMPLETE=1` marks site-style setup complete for
+the **generic default** palette (stamping `completedAt` only — no colours, no
+logo) so the public site renders its real header/footer/title chrome instead of
+the "getting ready" holding page; E2E and staging use it. A deployment fork that
+wants its own brand palette keeps that palette in its own `ClubTheme` database row
+and provisions it from its own seed override — per standing directive D15, no
+fork's brand colours (or a fork-specific seed path) live in this public repository.
 
 ## Website Page Content
 

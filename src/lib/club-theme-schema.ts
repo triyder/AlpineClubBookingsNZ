@@ -6,6 +6,7 @@ import { ACCENT_NEUTRAL_STEP } from "@/lib/theme/aliases";
 import {
   serializeAppThemeTokens,
   serializeWebsiteStepTokens,
+  serializeWebsiteRoleTokens,
 } from "@/lib/theme/app-tokens";
 
 export const CLUB_THEME_ID = "default";
@@ -115,7 +116,8 @@ export const DEFAULT_CLUB_THEME_VALUES: ClubThemeValues = {
   // Generic "Aotearoa" default palette (#1807, contracted to 3 seeds in #2187):
   // a glacial-teal primary accent, a deep bush-green neutral character, and a
   // terracotta support accent. Reads as generic New Zealand alpine, not any
-  // specific club (Tokoroa gold now lives only in TOKOROA_CLUB_THEME_VALUES).
+  // specific club (any fork's own brand colour lives only in that deployment's
+  // ClubTheme DB row, never in this shipping default).
   // These three seed the vendored Radix generator, which derives the full
   // 12-step substrate whose contrast is guaranteed by construction (see the
   // guarantee sweep in `@/lib/theme/guarantees`). The former charcoal/mist/snow/
@@ -123,16 +125,6 @@ export const DEFAULT_CLUB_THEME_VALUES: ClubThemeValues = {
   brandGold: "#57b3ab",
   brandDeep: "#17231c",
   brandSafety: "#b04d28",
-  headingFontKey: "LEAGUE_SPARTAN",
-  bodyFontKey: "INTER",
-  logoDataUrl: null,
-  rawCss: "",
-};
-
-export const TOKOROA_CLUB_THEME_VALUES: ClubThemeValues = {
-  brandGold: "#ffcb05",
-  brandDeep: "#2f2f2b",
-  brandSafety: "#ff7c12",
   headingFontKey: "LEAGUE_SPARTAN",
   bodyFontKey: "INTER",
   logoDataUrl: null,
@@ -290,6 +282,7 @@ export function buildClubThemeCss(
   value: Partial<Record<keyof ClubThemeValues, unknown>> | null | undefined,
 ): string {
   const theme = normaliseThemeValues(value);
+  const seeds = themeSeedsFromValues(theme);
   const base = `:root,.website-theme{${buildClubThemeDeclarations(theme)}}`;
   // #2188 P2 — the website scope (`.website-theme`, light-only) consumes the
   // semantic + categorical STEP utilities too (form callouts etc.), but sits
@@ -297,10 +290,18 @@ export function buildClubThemeCss(
   // as a `.website-theme` block with the same generated club values as the app
   // scope; globals.css's @theme step tokens carry a static default fallback so a
   // no-sheet page never falls through to transparent.
-  const websiteSteps = `.website-theme{${serializeWebsiteStepTokens(
-    themeSeedsFromValues(theme),
-  )}}`;
-  const core = `${base}${websiteSteps}`;
+  //
+  // #2217 (theme burndown) — the website SEMANTIC ROLE tokens
+  // (`--background`/`--primary`/`--sidebar`/…) are now also injected here, as
+  // RESOLVED substrate-step hexes (`serializeWebsiteRoleTokens`), migrating the
+  // `.website-theme` block OFF the `--brand-*` shims + `color-mix()` recipes it
+  // used to carry. Same selector as the globals.css `.website-theme` static
+  // fallbacks, so these per-club values override them by source order while
+  // preserving the branded look (gold primary/ring, dark charcoal nav).
+  const websiteTokens = `.website-theme{${serializeWebsiteStepTokens(
+    seeds,
+  )}${serializeWebsiteRoleTokens(seeds)}}`;
+  const core = `${base}${websiteTokens}`;
   return theme.rawCss ? `${core}\n${theme.rawCss}` : core;
 }
 
@@ -360,10 +361,12 @@ function channelToLinear(value: number) {
 
 const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
 
-// Linear sRGB for an oklch() colour. The value field on the site-style wizard
-// accepts any schema-valid colour (hex or oklch), so contrast enforcement has to
-// measure oklch too — otherwise an admin could paste a low-contrast oklch pair
-// straight through the gate. oklch -> oklab -> linear sRGB uses Björn Ottosson's
+// Linear sRGB for an oklch() colour. User INPUT is hex-only (#2187 D6:
+// `isValidThemeColour` is a hex regex; the oklch paste-in path is gone), so this
+// path never runs on an admin-entered value. It stays because the internal
+// derivation still MEASURES oklch literals — the curated dark `*-muted` surfaces
+// are authored in oklch (SEMANTIC_MUTED_SURFACES_DARK), and the muted-tone clamp
+// mixes/measures against them. oklch -> oklab -> linear sRGB uses Björn Ottosson's
 // matrices; the linear RGB it yields is exactly what the luminance sum needs (no
 // extra gamma step), clamped for out-of-gamut hues.
 function oklchToLinearRgb(
@@ -822,11 +825,15 @@ export function getContrastWarnings(
 }
 
 /**
- * The subset of contrast warnings that must block a save: pairs whose ratio is
- * measurable and below the WCAG AA 4.5:1 text minimum. Both accepted colour
- * formats (hex and oklch) are measured, so this covers every value an admin can
- * enter. The ratio === null guard is a defensive fallback for a value that
- * somehow parses to neither; such a pair stays advisory rather than blocking.
+ * The subset of contrast warnings whose ratio is measurable and below the WCAG
+ * AA 4.5:1 text minimum. #2187 removed the blocking save gate — the generated
+ * substrate guarantees contrast by construction, so a low-contrast seed is
+ * ADJUSTED and disclosed (before → after in the wizard), never rejected. This
+ * helper therefore gates NO save; it is retained as an advisory signal (the
+ * wizard's adjusted-colour disclosure) and pinned by club-theme-schema.test.ts as
+ * empty for the shipped palettes. Input is hex-only, so `contrastRatio` measures
+ * every value an admin can enter; the ratio === null guard is a defensive
+ * fallback for a value that parses to neither format.
  */
 export function getBlockingContrastWarnings(
   value: Partial<Record<keyof ClubThemeValues, unknown>>,

@@ -281,12 +281,12 @@ export function MemberTable({
                           key={familyGroup.id}
                           href={`/admin/family-groups?edit=${familyGroup.id}`}
                         >
-                          <InfoChip tone="indigo" className="cursor-pointer">
+                          <InfoChip tone="cat1" className="cursor-pointer">
                             {familyGroup.name || "Unnamed Group"}
                           </InfoChip>
                         </Link>
                       ) : (
-                        <InfoChip key={familyGroup.id} tone="indigo">
+                        <InfoChip key={familyGroup.id} tone="cat1">
                           {familyGroup.name || "Unnamed Group"}
                         </InfoChip>
                       )
@@ -330,7 +330,7 @@ export function MemberTable({
                   {member.xeroContactGroups.length > 0 && (
                     <div className="flex flex-wrap gap-1">
                       {member.xeroContactGroups.map((group) => (
-                        <InfoChip key={group.id} tone="emerald">
+                        <InfoChip key={group.id} tone="cat5">
                           {group.name}
                         </InfoChip>
                       ))}

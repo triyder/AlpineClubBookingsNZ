@@ -31,6 +31,41 @@ interface TooltipPayloadEntry {
   value?: number | string | ReadonlyArray<number | string>;
 }
 
+const LABEL_RADIAN = Math.PI / 180;
+
+// #2190 P4 — Recharts fills the outer slice labels with the SLICE colour by
+// default, which fails WCAG AA on the light card for every cat-scale fill. Render
+// the labels as theme-NEUTRAL text (`--foreground`, always max contrast on the
+// card in both modes) positioned from the slice geometry Recharts passes.
+function renderMixLabel(props: {
+  cx?: number;
+  cy?: number;
+  midAngle?: number;
+  outerRadius?: number;
+  name?: string;
+  percent?: number;
+}) {
+  const cx = props.cx ?? 0;
+  const cy = props.cy ?? 0;
+  const midAngle = props.midAngle ?? 0;
+  const outerRadius = props.outerRadius ?? 0;
+  const { name, percent } = props;
+  const r = outerRadius + 18;
+  const x = cx + r * Math.cos(-midAngle * LABEL_RADIAN);
+  const y = cy + r * Math.sin(-midAngle * LABEL_RADIAN);
+  return (
+    <text
+      x={x}
+      y={y}
+      textAnchor={x > cx ? "start" : "end"}
+      dominantBaseline="central"
+      style={{ fill: "var(--foreground)", fontSize: "11px" }}
+    >
+      {name} ({Math.round((percent ?? 0) * 100)}%)
+    </text>
+  );
+}
+
 export function MixPieChart({
   data,
   valueType = "currency",
@@ -88,9 +123,7 @@ export function MixPieChart({
               innerRadius={55}
               outerRadius={90}
               paddingAngle={3}
-              label={({ name, percent }) =>
-                `${name} (${((percent ?? 0) * 100).toFixed(0)}%)`
-              }
+              label={renderMixLabel}
               labelLine={false}
             >
               {positive.map((datum, index) => (

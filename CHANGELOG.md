@@ -4,6 +4,42 @@ All notable public reference-release changes should be recorded here.
 
 ## Unreleased
 
+- **The public website now paints from the same generated palette as the admin
+  app (#2217).** The public site's neutral chrome — page, cards, borders, inputs,
+  muted text, hover surfaces and the dark-nav hairline — is now resolved from the
+  generated 12-step palette instead of ad-hoc colour-mixing recipes, so a club's
+  saved colours drive every website surface the same way they drive the app. The
+  branded look is unchanged by design: a light page, a gold primary action and
+  focus ring, and a dark charcoal navigation bar are all preserved.
+- **Status and label chips now draw from one generated colour system, and the
+  last legacy accent colours are gone (#2218).** A sixth categorical colour (a
+  teal, added to the generated palette) gives the booking board a distinct tone
+  for the "waitlist offered" state, which lets the older hand-tuned accent
+  colours behind the payments, member, audit, bed-type and family-group chips
+  retire entirely — every coloured chip now follows the club theme through the
+  same generated scales, so colours stay consistent and readable in light and
+  dark by construction. No workflow changes; a few admin chips shift hue slightly.
+- **Theme burn-down: the last hand-picked colours leave the product, and the
+  four dead theme columns are dropped from the database (#2190).** This closes
+  out the theme rebuild. The finance dashboard's mix/breakdown charts now draw
+  their series colours from the generated categorical scales instead of a fixed
+  hand-picked list (the old palette led with a bright gold that belonged to one
+  fork), so the chart colours are part of the same generated system as the rest
+  of the app. Five small admin surfaces that were still painted with raw colour
+  utilities — the booking-calendar draft and waitlist-offered swatches, the Xero
+  activity status chips, and the member-import step marker — now use theme
+  tokens, so they follow the club palette and the light/dark toggle. The one
+  fork-specific brand colour that lingered in shared code (a gold accent and its
+  reference values) is removed from the shipping product; a fork's own colours
+  live only in that deployment's saved theme. Finally, the four legacy theme
+  columns that stopped being used when Site Style moved to three seeds
+  (`brandCharcoal` / `brandRidge` / `brandMist` / `brandSnow`) are **dropped from
+  the `ClubTheme` table** by a contract migration — the surfaces they used to
+  hold are derived from the generated palette at render time, so nothing is lost
+  and the change is invisible to operators. **Operators: this migration removes
+  database columns and must run only after the previous release (the three-seed
+  substrate, #2187) has been deployed and drained; the blue/green safety ledger
+  records the sequence.**
 - **The Integrations hub stays reachable when Xero is off (#2216).** The
   `/admin/integrations` hub was gated behind the `xeroIntegration` module, so
   turning Xero off made the whole hub — and any page that links back to it (the

@@ -54,21 +54,10 @@
   --color-danger: var(--danger);
   --color-danger-foreground: var(--danger-foreground);
   --color-danger-muted: var(--danger-muted);
-  /* Per-value accent hues (#156). These are NOT semantic status colours; they
-     exist only to keep sibling values in one admin column (settlement kinds,
-     payment states, member badges, bed types) visually distinct. Each is a
-     fg/bg PAIR: `--hue-*` is the accent text colour, `--hue-*-muted` the tinted
-     background, mirroring the four semantic pairs above. */
-  --color-hue-orange: var(--hue-orange);
-  --color-hue-orange-muted: var(--hue-orange-muted);
-  --color-hue-teal: var(--hue-teal);
-  --color-hue-teal-muted: var(--hue-teal-muted);
-  --color-hue-indigo: var(--hue-indigo);
-  --color-hue-indigo-muted: var(--hue-indigo-muted);
-  --color-hue-purple: var(--hue-purple);
-  --color-hue-purple-muted: var(--hue-purple-muted);
-  --color-hue-emerald: var(--hue-emerald);
-  --color-hue-emerald-muted: var(--hue-emerald-muted);
+  /* #2218 P4 — the legacy per-value accent hue pairs (--hue-orange/teal/indigo/
+     purple/emerald, #156) are GONE. Every categorical chip now uses the generated
+     cat1..cat6 scales; cat6 supplied the 6th distinguisher the booking column
+     needed, so nothing consumes --hue-* any more. */
   /* #2188 P2 — generated 12-step SEMANTIC (success/warning/info/danger) and
      CATEGORICAL (cat1..cat5) scales exposed as consumable utilities, completing
      the plan-lock's "the numbered steps stay exposed for the tail" clause that
@@ -184,6 +173,21 @@
   --color-cat5-10: var(--cat5-10, #7f9a00);
   --color-cat5-11: var(--cat5-11, #516600);
   --color-cat5-12: var(--cat5-12, #1b2400);
+  /* #2218 P4 — the SIXTH categorical scale (teal, H≈183). Added so the booking
+     status column has a 6th distinguisher (WAITLIST_OFFERED) and the last
+     legacy --hue-* accent pair could retire. Default light-step fallbacks. */
+  --color-cat6-1: var(--cat6-1, #f3f9f8);
+  --color-cat6-2: var(--cat6-2, #ebf6f4);
+  --color-cat6-3: var(--cat6-3, #d2f3ec);
+  --color-cat6-4: var(--cat6-4, #bbefe5);
+  --color-cat6-5: var(--cat6-5, #a6eade);
+  --color-cat6-6: var(--cat6-6, #92e5d6);
+  --color-cat6-7: var(--cat6-7, #78dccd);
+  --color-cat6-8: var(--cat6-8, #3ccdba);
+  --color-cat6-9: var(--cat6-9, #14b8a6);
+  --color-cat6-10: var(--cat6-10, #00ac9a);
+  --color-cat6-11: var(--cat6-11, #006d5f);
+  --color-cat6-12: var(--cat6-12, #002822);
   /* #2189 P3 — fixed-seed KIOSK tokens (epic #2181 A5/J4). The kiosk /
      wall-display surfaces are the deliberately literalist, glare-proof,
      NON-brand-following exception: authored ONCE from the fixed kiosk seed
@@ -244,8 +248,8 @@
   /* Generic "Aotearoa" default brand palette (#1807): glacial-teal primary,
      deep bush-green cool-stone neutrals, terracotta safety. These must stay in
      lockstep with DEFAULT_CLUB_THEME_VALUES in src/lib/club-theme-schema.ts so
-     the static app chrome and the DB default agree for a fresh fork. Tokoroa
-     gold lives only in TOKOROA_CLUB_THEME_VALUES + the seed flag path. */
+     the static app chrome and the DB default agree for a fresh fork. A fork's
+     own brand colour lives only in its deployment's ClubTheme DB row. */
   --brand-gold: #57b3ab;
   --brand-charcoal: #21362b;
   --brand-deep: #17231c;
@@ -317,21 +321,7 @@
   --danger: #991b1b;
   --danger-foreground: #ffffff;
   --danger-muted: #fee2e2;
-  /* Per-value accent hue pairs (#156). Light values are the Tailwind -800 text /
-     -100 tint pairings (the same convention the semantic pairs use), so each
-     accent text on its muted tint clears WCAG AA (measured 6.38-8.06:1). These
-     are additive tokens for distinguishing sibling column values; they do not
-     alter the default palette or the semantic status tokens above. */
-  --hue-orange: #9a3412;
-  --hue-orange-muted: #ffedd5;
-  --hue-teal: #115e59;
-  --hue-teal-muted: #ccfbf1;
-  --hue-indigo: #3730a3;
-  --hue-indigo-muted: #e0e7ff;
-  --hue-purple: #6b21a8;
-  --hue-purple-muted: #f3e8ff;
-  --hue-emerald: #065f46;
-  --hue-emerald-muted: #d1fae5;
+  /* #2218 P4 — legacy --hue-* accent pairs removed; categorical chips use cat1..cat6. */
 }
 
 /* Screen-only (#2146). Print is always ink on white paper, so the dark ramp is
@@ -407,73 +397,65 @@
     --danger: oklch(0.84 0.11 27);
     --danger-foreground: oklch(0.2 0 0);
     --danger-muted: oklch(0.33 0.05 27);
-    /* Per-value accent hue pairs (#156) — dark re-tint follows the same structure
-       as the semantic pairs and the colored-callout remap: accent text
-       oklch(0.84 0.11 h) on muted bg oklch(0.33 0.05 h). Lightness is held equal
-       to the semantic pairs, so contrast is the documented >= 5.8:1 regardless of
-       hue. Hues match the callout ramp (orange 55, emerald 165, teal 185, indigo
-       275, purple 315). */
-    --hue-orange: oklch(0.84 0.11 55);
-    --hue-orange-muted: oklch(0.33 0.05 55);
-    --hue-teal: oklch(0.84 0.11 185);
-    --hue-teal-muted: oklch(0.33 0.05 185);
-    --hue-indigo: oklch(0.84 0.11 275);
-    --hue-indigo-muted: oklch(0.33 0.05 275);
-    --hue-purple: oklch(0.84 0.11 315);
-    --hue-purple-muted: oklch(0.33 0.05 315);
-    --hue-emerald: oklch(0.84 0.11 165);
-    --hue-emerald-muted: oklch(0.33 0.05 165);
+    /* #2218 P4 — legacy --hue-* dark pairs removed; categorical chips use cat1..cat6. */
   }
 }
 
 .website-theme {
   --website-heading-font: var(--font-website-heading, var(--font-sans));
   --font-sans: var(--font-website-body, ui-sans-serif, system-ui, sans-serif);
-  --background: var(--brand-snow);
-  --foreground: var(--brand-deep);
-  --card: #fffdf7;
-  --card-foreground: var(--brand-deep);
-  --popover: #fffdf7;
-  --popover-foreground: var(--brand-deep);
-  --primary: var(--brand-gold);
-  --primary-foreground: var(--brand-charcoal);
-  --secondary: var(--brand-mist);
-  --secondary-foreground: var(--brand-deep);
-  --muted: color-mix(in srgb, var(--brand-mist) 72%, var(--brand-snow));
-  --muted-foreground: color-mix(
-    in srgb,
-    var(--brand-deep) 70%,
-    var(--brand-snow)
-  );
-  --accent: color-mix(in srgb, var(--brand-gold) 16%, var(--brand-snow));
-  --accent-foreground: var(--brand-deep);
+  /* #2217 (theme burndown) — the website role tokens are migrated OFF the
+     `--brand-*` shims and the srgb-mix recipes and ONTO the GENERATED substrate
+     steps. The literals below are the DEFAULT palette's resolved light-mode hexes
+     (a static, no-stylesheet fallback); at render time `buildClubThemeCss`
+     injects a `.website-theme` block whose `serializeWebsiteRoleTokens()` output
+     overrides these per-club by source order (see `src/lib/theme/app-tokens.ts`,
+     `WEBSITE_ROLE_ALIASES`). The BRANDED look is preserved deliberately: a light
+     page (neutral-1), a GOLD (accent-9) primary/ring, and a DARK charcoal
+     (neutral-12) nav. `--destructive*` stay fixed oklch (not brand-derived).
+     Pinned against the resolver in `app-theme-layout-contract.test.ts` so the
+     CSS literals and the derivation cannot drift. */
+  --background: #f6f8f7;
+  --foreground: #1c211d;
+  --card: #f6f8f7;
+  --card-foreground: #1c211d;
+  --popover: #f6f8f7;
+  --popover-foreground: #1c211d;
+  --primary: #57b3ab;
+  --primary-foreground: #1c211d;
+  --secondary: #e9ebe9;
+  --secondary-foreground: #1c211d;
+  --muted: #e9ebe9;
+  --muted-foreground: #595e5a;
+  --accent: #e0e3e1;
+  --accent-foreground: #1c211d;
   --destructive: oklch(0.577 0.245 27.325);
   --destructive-foreground: oklch(0.985 0 0);
-  --border: color-mix(in srgb, var(--brand-ridge) 30%, var(--brand-snow));
-  --input: color-mix(in srgb, var(--brand-ridge) 30%, var(--brand-snow));
-  --ring: color-mix(in srgb, var(--brand-gold) 72%, white);
-  --sidebar: var(--brand-charcoal);
-  --sidebar-foreground: var(--brand-snow);
-  --sidebar-primary: var(--brand-gold);
-  --sidebar-primary-foreground: var(--brand-charcoal);
-  --sidebar-accent: color-mix(in srgb, var(--brand-snow) 12%, transparent);
-  --sidebar-accent-foreground: var(--brand-snow);
-  --sidebar-border: color-mix(
-    in srgb,
-    var(--brand-ridge) 35%,
-    var(--brand-charcoal)
-  );
-  --sidebar-ring: color-mix(in srgb, var(--brand-gold) 80%, white);
+  --border: #d0d3d0;
+  --input: #c5c8c5;
+  --ring: #57b3ab;
+  --sidebar: #1c211d;
+  --sidebar-foreground: #f6f8f7;
+  --sidebar-primary: #57b3ab;
+  --sidebar-primary-foreground: #1c211d;
+  --sidebar-accent: #595e5a;
+  --sidebar-accent-foreground: #f6f8f7;
+  --sidebar-border: #595e5a;
+  --sidebar-ring: #57b3ab;
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-sans);
 }
 
 .website-mobile-menu {
-  --background: var(--brand-charcoal);
-  --foreground: var(--brand-snow);
-  background: var(--brand-charcoal);
-  color: var(--brand-snow);
+  /* #2217 — dark mobile menu chrome: charcoal → neutral-12, snow → neutral-1
+     (default-palette resolved fallbacks; the injected `.website-theme` block's
+     `--sidebar`/`--sidebar-foreground` do not reach here, so these carry the
+     dark nav directly). */
+  --background: #1c211d;
+  --foreground: #f6f8f7;
+  background: #1c211d;
+  color: #f6f8f7;
 }
 
 .website-theme :is(h1, h2, h3, h4, [data-website-heading="true"]) {

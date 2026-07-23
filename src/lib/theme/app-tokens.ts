@@ -171,6 +171,7 @@ export const EXPOSED_STEP_SCALES = [
   "cat3",
   "cat4",
   "cat5",
+  "cat6",
 ] as const;
 
 /**
@@ -209,4 +210,96 @@ export function defaultAppRoleFallbacks(seeds: ThemeSeeds): {
     light: resolveRoleTokens(light, lightNeutral12),
     dark: resolveRoleTokens(dark, lightNeutral12),
   };
+}
+
+/**
+ * The public website's semantic role tokens (#2217, theme burndown ITEM A),
+ * mapped onto generated substrate steps — the migration OFF the `--brand-*`
+ * shims and `color-mix()` recipes the `.website-theme` block used to carry.
+ *
+ * This is NOT the app's neutral alias map: the public site keeps its BRANDED
+ * look — a light page, a GOLD (accent) primary/action, and a DARK charcoal
+ * (neutral-12) navigation — so the mapping is authored fresh here rather than
+ * reusing `APP_ROLE_ALIASES` (whose sidebar is a LIGHT neutral-1 surface). The
+ * three deliberately-accent roles are `--primary`, `--ring`, and the
+ * `--sidebar-primary` pair; every other role is a neutral step so the chrome
+ * stays quiet and the brand accent stays the one thing that pops.
+ *
+ * Light-only: the website scope has no dark mode (mirrors
+ * `serializeWebsiteStepTokens`). `--destructive`/`--destructive-foreground` are
+ * intentionally absent — they are fixed oklch values, not brand-derived, and
+ * stay declared statically in the `.website-theme` globals.css block.
+ */
+export const WEBSITE_ROLE_ALIASES: Record<string, AliasEntry> = {
+  // Light page surfaces: neutral-1 is the lightest step (page/card/popover).
+  background: { scale: "neutral", step: 1 },
+  foreground: { scale: "neutral", step: 12 },
+  card: { scale: "neutral", step: 1 },
+  "card-foreground": { scale: "neutral", step: 12 },
+  popover: { scale: "neutral", step: 1 },
+  "popover-foreground": { scale: "neutral", step: 12 },
+  // Branded GOLD primary/action, with the AA-recomputed on-solid foreground.
+  primary: { scale: "accent", step: 9 },
+  "primary-foreground": { from: "A4", scale: "accent" },
+  secondary: { scale: "neutral", step: 3 },
+  "secondary-foreground": { scale: "neutral", step: 12 },
+  muted: { scale: "neutral", step: 3 },
+  "muted-foreground": { scale: "neutral", step: 11 },
+  // Hover surface — one band darker than muted/secondary (neutral-3).
+  accent: { scale: "neutral", step: 4 },
+  "accent-foreground": { scale: "neutral", step: 12 },
+  border: { scale: "neutral", step: 6 },
+  input: { scale: "neutral", step: 7 },
+  // KEEP a branded GOLD focus ring — the one deliberately-accent role among the
+  // hairline tokens (the app scope pins --ring to neutral-10; the website does
+  // not, because the gold ring is part of the public brand identity).
+  ring: { scale: "accent", step: 9 },
+  // KEEP the DARK charcoal nav: sidebar surface is neutral-12 with light ink.
+  sidebar: { scale: "neutral", step: 12 },
+  "sidebar-foreground": { scale: "neutral", step: 1 },
+  "sidebar-primary": { scale: "accent", step: 9 },
+  "sidebar-primary-foreground": { from: "A4", scale: "accent" },
+  "sidebar-accent": { scale: "neutral", step: 11 },
+  "sidebar-accent-foreground": { scale: "neutral", step: 1 },
+  "sidebar-border": { scale: "neutral", step: 11 },
+  "sidebar-ring": { scale: "accent", step: 9 },
+};
+
+/** Resolve every website role token against the LIGHT substrate. */
+function resolveWebsiteRoleTokens(seeds: ThemeSeeds): Record<string, string> {
+  const light = buildThemeSubstrate(seeds, "light");
+  const lightNeutral12 = light.neutralHex[11];
+  const out: Record<string, string> = {};
+  for (const [role, entry] of Object.entries(WEBSITE_ROLE_ALIASES)) {
+    out[role] = resolveAlias(entry, light, lightNeutral12);
+  }
+  return out;
+}
+
+/**
+ * The website's semantic role tokens (`--<role>:<hex>;…`) as RESOLVED light-mode
+ * hexes, for a scope OUTSIDE `.app-theme-scope` — the public site
+ * (`.website-theme`). Injected by `buildClubThemeCss` so per-club values override
+ * the static default-palette fallbacks the `.website-theme` block declares in
+ * globals.css. The branded look (gold primary/ring, dark nav) is preserved by
+ * `WEBSITE_ROLE_ALIASES`. Light-only.
+ */
+export function serializeWebsiteRoleTokens(seeds: ThemeSeeds): string {
+  const roles = resolveWebsiteRoleTokens(seeds);
+  let out = "";
+  for (const role of Object.keys(WEBSITE_ROLE_ALIASES)) {
+    out += `--${role}:${roles[role]};`;
+  }
+  return out;
+}
+
+/**
+ * The default palette's resolved website role hexes, for the static globals.css
+ * `.website-theme` fallbacks. Keyed by role name (no prefix). Pinned by the
+ * contract test so the CSS literal and the resolver cannot drift.
+ */
+export function defaultWebsiteRoleFallbacks(
+  seeds: ThemeSeeds,
+): Record<string, string> {
+  return resolveWebsiteRoleTokens(seeds);
 }

@@ -14,7 +14,7 @@ interface BedTypeMeta {
   // or bottom of a stacked bunk.
   StackIcon?: BedTypeIcon;
   label: string;
-  // Per-bed-type accent tint (#156) drawn from the shared `--hue-*` tokens, so
+  // Per-bed-type accent tint (#156) drawn from the generated categorical scales (#2218), so
   // the icon reads its type at a glance in both light and dark. Applied to the
   // icon only; the label keeps its muted text colour.
   tint: string;
@@ -23,7 +23,7 @@ interface BedTypeMeta {
 function bedTypeMeta(bedType: string): BedTypeMeta {
   switch (bedType) {
     case "DOUBLE":
-      return { Icon: BedDouble, label: "Double bed", tint: "text-hue-purple" };
+      return { Icon: BedDouble, label: "Double bed", tint: "text-cat3-11" };
     // Both bunk ends share ONE hue (#156): teal read at 20 deg from emerald on a
     // 16px icon was effectively indistinguishable, and top vs bottom is already
     // carried unambiguously by the ChevronUp/ChevronDown glyph. The shared tint
@@ -33,14 +33,14 @@ function bedTypeMeta(bedType: string): BedTypeMeta {
         Icon: BedSingle,
         StackIcon: ChevronUp,
         label: "Bunk (top)",
-        tint: "text-hue-teal",
+        tint: "text-cat6-11",
       };
     case "BUNK_BOTTOM":
       return {
         Icon: BedSingle,
         StackIcon: ChevronDown,
         label: "Bunk (bottom)",
-        tint: "text-hue-teal",
+        tint: "text-cat6-11",
       };
     default:
       return { Icon: BedSingle, label: "Single bed", tint: "text-info" };

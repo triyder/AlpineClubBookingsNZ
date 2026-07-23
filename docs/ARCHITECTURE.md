@@ -89,34 +89,54 @@ Important route groups:
 - `src/app/api` contains route handlers for auth, bookings, payments, admin,
   finance, lodge, webhooks, cron, and health checks.
 
-> **Theme substrate — the 3-seed model (#2187 P1).** Site Style stores THREE
-> seed colours, not seven: `brandGold` (the required accent), `brandDeep` (an
-> optional neutral character whose hue tints the grey ramp), and `brandSafety`
-> (an optional support accent). The wizard's colour step is 1 required + 2
-> optional hex-only pickers. Those seeds feed the vendored Radix custom-palette
-> generator (`src/lib/theme/`), which derives the full 12-step light/dark
-> substrate with cross-colour text contrast guaranteed by construction, so a
-> low-contrast pick is **adjusted and disclosed (before → after), not rejected**
-> — the old blocking contrast gate is gone. The four former columns
-> (`brandCharcoal`/`brandRidge`/`brandMist`/`brandSnow`) are dead to code:
-> `deriveBrandShims` derives those `--brand-*` shim values from the substrate
-> neutral ramp so the website utilities and email palette keep working through
-> P1 (P2/P3 delete the shims). The columns remain in the DB behind a default (an
-> additive EXPAND migration) so pre-#2187 code stays compatible across a
-> blue/green cutover; the destructive column drop ships in P4. Config-transfer
-> bundles are **format version 2** and reject any version-1 bundle. The deeper
-> substrate wire-up of `globals.css` (generated scale variables + alias blocks +
-> the `.dark .app-theme-scope` rewrite) and the neutral/callout/kiosk remap
-> deletions land in later phases; through P1 the `--brand-*` shims below still
-> drive the app scope.
+> **Theme substrate — the 3-seed model (epic #2181, P1–P4 complete).** Site Style
+> stores THREE seed colours, not seven: `brandGold` (the required accent),
+> `brandDeep` (an optional neutral character whose hue tints the grey ramp), and
+> `brandSafety` (an optional support accent), defined by
+> `CLUB_THEME_COLOUR_FIELDS` in `src/lib/club-theme-schema.ts`. The wizard's
+> colour step is 1 required + 2 optional **hex-only** pickers (`isValidThemeColour`
+> is a hex regex; the oklch paste-in user-input path is gone — the only surviving
+> oklch is internal MEASUREMENT maths that measures the curated dark
+> semantic-muted surfaces). Those seeds feed the vendored Radix custom-palette
+> generator (`src/lib/theme/theme-substrate.ts`, `buildThemeSubstrate`), which
+> derives the full 12-step light/dark substrate with cross-colour text contrast
+> guaranteed by construction — swept by `src/lib/theme/guarantees.ts` +
+> `__tests__/guarantee-sweep.test.ts` (guarantees G1–G5, several split into
+> lettered sub-guarantees). Shadcn/app token names are declared as ALIASES onto
+> generated steps in `src/lib/theme/aliases.ts` (assembled by `app-tokens.ts`).
+> A low-contrast pick is **adjusted and disclosed (before → after), not rejected**
+> — the old blocking contrast gate is gone (`getBlockingContrastWarnings` survives
+> only as an advisory helper that gates no save). The four former columns
+> (`brandCharcoal`/`brandRidge`/`brandMist`/`brandSnow`) were dead to code from P1
+> and were **DROPPED by P4's contract migration**
+> (`prisma/migrations/20260722160000_contract_drop_club_theme_orphan_columns`);
+> `ClubTheme` now stores only the three seeds plus the fonts, logo, raw CSS, and
+> timestamps. The additive EXPAND migration had kept the columns behind a default
+> so pre-#2187 code stayed compatible across the blue/green cutover; the contract
+> drop ran once no code read them. The `--brand-*` values still ship as DERIVED
+> shims (`deriveBrandShims`, from the substrate neutral ramp); the app scope's
+> generated token block carries **no `--brand-*` reference** (F1), and #2217 P4
+> re-mapped the website `.website-theme` role tokens off their `color-mix()`
+> recipes onto resolved generated steps too (`serializeWebsiteRoleTokens`,
+> injected by `buildClubThemeCss`), preserving the branded public look (gold
+> primary/ring, dark nav). The shims stay because the EMAIL palette still derives
+> from them and the app brand utilities / wizard preview / muted-tone clamp still
+> read them (the website's legal-callout and mobile-menu `bg-brand-*` utilities
+> are a small remaining consumer, left for their own render review). Config-transfer
+> bundles are **format version 2** (`CONFIG_TRANSFER_FORMAT_VERSION`) and reject
+> any version-1 bundle.
 
 Every app-shell layout (`(public)`, `(authenticated)`, `(admin)`, `(finance)`)
 injects the admin-configured theme via `getWebsiteThemeRenderState()` inside an
 `app-theme-scope` wrapper, so never hardcode the brand accent (e.g. Tailwind
 `teal-*`) in components: reach it through semantic tokens (`--primary`,
 `bg-primary`, `text-primary-foreground`, `border-primary/30`, ...) so the saved
-site colours apply in light and dark, and use the `--hue-*` tokens for
-categorical status hues that must stay fixed across themes.
+site colours apply in light and dark, and use the generated categorical scales
+`cat1..cat6` (via `CHIP_TONE_CLASSES` or `bg/text-cat<N>-<step>`) for categorical
+status hues. (#2218 P4 added a sixth categorical scale, `cat6` — a teal H≈183
+chosen for maximum separation from cat1-5 and the four semantic hues — and
+retired the legacy `--hue-*` accent pairs entirely; every categorical chip now
+reaches a generated cat scale.)
 
 The same rule applies to raw NEUTRALS, though for a narrower reason than the
 brand accent — and the reason is worth stating precisely, because a safety net
@@ -138,7 +158,7 @@ source. **#2188 P2 removed the shim entirely** (see below); code inside
 tinted rows and recessed insets, and `border-border` for rules. Colored surfaces
 likewise reach their hue through the signed-off scale vocabulary — the semantic
 `bg/text/border-<success|warning|info|danger>-<step>` scales, the categorical
-`cat1..cat5` scales, or `CHIP_TONE_CLASSES` — never raw Tailwind colour
+`cat1..cat6` scales, or `CHIP_TONE_CLASSES` — never raw Tailwind colour
 utilities. The finance tree migrated in #2137, admin in #2144, the member-facing
 `(authenticated)`/`(public)` trees in #2187 P1 (B4), and the remaining trees
 (lodge, website, shared components, root) in #2188 P2, so the source is
@@ -185,10 +205,18 @@ BOTH modes — the structural fix for the seven hover-dead `bg-muted
 hover:bg-accent` #2144 buttons — and the dark core-token block is rewired onto
 generated dark steps with **no `--brand-*` reference left inside it** (F1). The
 legacy `--brand-*` values still ship as derived SHIMS (`deriveBrandShims`, from
-the substrate neutral ramp) so the website `color-mix()` recipes, the app
-`bg-brand-*` utilities, and the email palette keep working through P1; those
-shims are deleted in P2/P3. The `.dark` neutral/colored remap blocks described
-above were deleted by #2188 P2 once every tree was migrated at source.
+the substrate neutral ramp). #2217 P4 re-mapped the website `.website-theme`
+(and `.website-mobile-menu`) role tokens off their `color-mix()` recipes onto
+RESOLVED generated substrate steps via `serializeWebsiteRoleTokens` (injected by
+`buildClubThemeCss`, with default-palette static fallbacks in `globals.css`),
+preserving the branded look (accent-9 gold primary + focus ring, neutral-12 dark
+nav) — so no `.website-theme` `color-mix()` or `var(--brand-*)` remains. The
+shims are still load-bearing: the EMAIL palette derives from them, and the app
+brand utilities, the site-style wizard preview, and the muted-tone clamp read
+them (plus the website legal-callout / mobile-menu `bg-brand-*` utilities, a small
+consumer left for a separate render review). The `.dark`
+neutral/colored remap blocks described above were deleted by #2188 P2 once every
+tree was migrated at source.
 
 The member-facing `src/app/(authenticated)` and `src/app/(public)` trees were
 migrated off raw neutrals onto the semantic surface tokens in the same event
@@ -293,8 +321,11 @@ read more into it than it delivers:
 - **It does not guarantee** that the tone is visually DISTINCT from
   `--foreground`. A palette with no contrast headroom walks all the way back and
   the two coincide again, exactly as before #2145. Accessibility wins over the
-  semantic distinction; `getBlockingContrastWarnings` is what stops a palette
-  that poor being saved at all.
+  semantic distinction. Nothing blocks such a palette from being saved any more:
+  the substrate generator adjusts a pathological seed (disclosed before → after)
+  so the shipped scale clears contrast by construction, and
+  `getBlockingContrastWarnings` survives only as an advisory helper that gates no
+  save.
 - **It says nothing about ALPHA uses of the token.** Every ratio above is
   measured on the opaque tone. Where a call site applies an alpha — the dashed
   `border-muted-foreground/70` and `/80` provisional-chip outlines in
@@ -319,52 +350,65 @@ values. `src/lib/__tests__/club-theme-schema.test.ts` gates the derived values
 `src/lib/__tests__/app-theme-layout-contract.test.ts` pins the `globals.css`
 wiring and its static fallback.
 
-Two contract tests in `src/lib/__tests__/brand-color-source-contract.test.ts`
-enforce this:
+Two of the source contracts in
+`src/lib/__tests__/brand-color-source-contract.test.ts` are worth stating in
+detail (the file now carries five — brand accent, the 16-family colored contract,
+the on-solid AA pair guard, themed neutrals, and print-light):
 
 - **Brand accent.** No literal Tailwind `bg-`, `text-`, or `border-` `teal-*`
   utility under `src/` (the check is scoped to those three prefixes; `ring-`,
   `divide-`, `fill-`, and gradient `from-`/`to-` teal are not currently
-  matched). One file is allowlisted (the final teal entry, evicted in P4):
-  `src/components/admin-booking-calendar.tsx` paints each booking status as a
-  SOLID swatch (`bg-teal-500`), and `--hue-*` is defined only as a
-  muted-background / accent-text PAIR, so there is no clean token for a standalone
-  solid fill. The dashboard Chore Roster tile was migrated onto the brand role
-  tokens (`bg-accent` / `text-primary`, M9, #2188 P2) and is no longer
-  allowlisted. Every other categorical teal (the waitlist-offered chip, the audit
-  `family` badge, the family-group `GROUP_CREATE` badge) reaches its hue through
-  `CHIP_TONE_CLASSES.teal` in `src/lib/chip-tones.ts`, the single source of
-  truth for chip tone classes — those were already -100/-800 pairs, so the
-  migration was value-identical.
+  matched). The `CATEGORICAL_TEAL_ALLOWLIST` is now **EMPTY**: #2190 P4 moved its
+  last entry — `admin-booking-calendar.tsx`, which painted the `WAITLIST_OFFERED`
+  status as a solid `bg-teal-500` swatch — onto the categorical `bg-cat6-9` step
+  token, so no source file names a raw teal utility. The dashboard Chore Roster
+  tile was migrated onto the brand role tokens (`bg-accent` / `text-primary`, M9,
+  #2188 P2). #2218 P4 retired the legacy `--hue-*` accent pairs ENTIRELY: cat6
+  gave the booking column its sixth distinguisher (`WAITLIST_OFFERED` →
+  `CHIP_TONE_CLASSES.cat6`), and every other former hue consumer (payments
+  settlement/xero chips, the Internet-Banking chips, member-table badges,
+  status-chip PROCESSING/REFUNDED/PARTIALLY_REFUNDED, the audit `family` and
+  family-group `GROUP_CREATE` badges, the bed-type icons) moved onto a cat scale.
+  `CHIP_TONE_CLASSES` (`src/lib/chip-tones.ts`, the single source of truth for
+  chip tone classes) now carries only the five semantic tones plus `cat1..cat6` —
+  no `--hue-*` remains anywhere.
 - **Themed neutrals.** No raw `slate-`/`gray-`/`zinc-`/`neutral-`/`stone-`
-  utility, `bg-white`, or `bg-`/`text-black` under `src/app/(admin)`,
-  `src/app/(finance)`, `src/components/admin`, or `src/components/finance`,
-  plus four admin-only files gated individually because they live under the
-  ungated shared roots (`admin-booking-calendar.tsx`, `admin-hub-page.tsx`,
-  `admin-permission-matrix-table.tsx`, `src/lib/admin-family-group-ui-helpers.ts`).
-  The #2144 sweep migrated the admin tree, so the check now runs with a
-  nine-entry PER-FILE allowlist, each entry carrying its stated reason in the
-  test (print paper surfaces, signage `bg-black` letterboxes, the site-style
-  code-preview panes that `app-theme-layout-contract` pins as literal slate,
-  solid-fill status chips and swatches, and the member-import wizard's solid
-  near-black active-step emphasis border). Per-file granularity means an entry forfeits
-  gate coverage on that file's other occurrences — prefer fixing a stray over
-  adding an entry. As of #2188 P2 the contract is **repo-wide** (the member-facing
-  `(authenticated)`/`(public)`, `(lodge)`, `(website)`, shared `components`, and
-  root trees are all migrated at source). #2189 P3 removed the last carve-out —
-  the kiosk family — so all five source contracts now run **truly repo-wide** with
-  no kiosk exclusion (see "Kiosk / wall-display" below).
+  utility, `bg-white`, or `bg-`/`text-black` anywhere in source — the contract is
+  **repo-wide** via `listRepoSourceFiles()` (the member-facing
+  `(authenticated)`/`(public)`, `(lodge)`, `(website)`, `(admin)`, `(finance)`,
+  shared `components`, and root trees are all migrated onto the shadcn role tokens
+  at source). Four admin-only leaves (`admin-booking-calendar.tsx`,
+  `admin-hub-page.tsx`, `admin-permission-matrix-table.tsx`,
+  `src/lib/admin-family-group-ui-helpers.ts`) are additionally pinned by name as a
+  `THEMED_TOKEN_ONLY_FILES` existence guard, so a rename surfaces as a clear
+  failure rather than silently dropping coverage; they pass token-only. The
+  `THEMED_NEUTRAL_ALLOWLIST` is a small set of PER-FILE exceptions, each with a
+  stated reason: the site-style code-preview panes that `app-theme-layout-contract`
+  pins as literal slate, the roster/induction/reports print (paper) surfaces, the
+  display builder/preview `bg-black` letterboxes, the un-themed `error.tsx` /
+  `not-found.tsx` boundaries (rendered outside `app-theme-scope`), the Radix
+  overlay scrims (`dialog.tsx` / `sheet.tsx`), and `site-banners.tsx`. #2190 P4
+  evicted the last three entries that were deferred work wearing an allowlist
+  badge — `xero-record-activity-panel.tsx` (→ `bg-foreground` / `text-background`),
+  `member-import-dialog.tsx` (→ `border-foreground`), and
+  `admin-booking-calendar.tsx`'s DRAFT/fallback swatches (→ `bg-muted`) — so every
+  remaining entry is a principled fixed surface. Per-file granularity means an
+  entry forfeits gate coverage on that file's other occurrences — prefer fixing a
+  stray over adding an entry. #2189 P3 removed the last carve-out — the kiosk
+  family — so all five source contracts now run **truly repo-wide** with no kiosk
+  exclusion (see "Kiosk / wall-display" below).
 
 The dark-mode colored-callout pass (#1248) that used to re-tint literal Tailwind
 `bg-{family}-50/100/200` / `text-{family}-600..950` / `border-{family}-100..300`
 inside `app-theme-scope` was **deleted in #2188 P2** — every colored surface now
-carries a scale token at source (`bg-danger-3` / `text-danger-11` / the `cat1..5`
+carries a scale token at source (`bg-danger-3` / `text-danger-11` / the `cat1..6`
 scales) that adapts per mode by construction, so no re-tint pass is needed. The
 dashboard Chore Roster tile that used to depend on that pass (its `bg-teal-50` /
 `text-teal-600` were what it re-tinted) was migrated onto the brand role tokens
-(`bg-accent` / `text-primary`, M9) in the same phase. The only literal teal left
-is the calendar's `bg-teal-500` status swatch (the final teal allowlist entry,
-evicted in P4).
+(`bg-accent` / `text-primary`, M9) in the same phase. #2190 P4 evicted the last
+raw teal — the booking calendar's `bg-teal-500` `WAITLIST_OFFERED` swatch, moved
+onto `bg-cat2-9` — so no literal teal utility remains in source and the
+`CATEGORICAL_TEAL_ALLOWLIST` is empty.
 
 **Print and PDF always render the LIGHT palette** (#2146). Paper and the
 generated PDF page are white, so dark mode must never reach them. Rather than
@@ -433,7 +477,7 @@ two halves with different enforcement:
    utilities on an enumerated list. The scan covers `.ts` as well as `.tsx`,
    because this repo already keeps palette class strings in plain modules
    (`bed-allocation/_components/booking-accent.ts`). On a printable surface,
-   reach the colour through a semantic token or the `--hue-*` pairs instead.
+   reach the colour through a semantic token or a categorical `cat1..cat6` scale instead.
 
    **What the class-string scan does and does not see.** It is a regex over
    source text, not a Tailwind parse, so the boundary is worth stating exactly
@@ -470,10 +514,15 @@ Download PDF is the button operators actually press (and was the second half of
 until real coverage exists.
 
 Chart colours are a documented carve-out. `FINANCE_MIX_COLORS` in
-`src/components/finance/charts/finance-chart-theme.ts` stays a literal hex
-palette (#1801, re-affirmed in #2137): the values feed Recharts `fill`/`stroke`
-SVG presentation attributes, where `var()` does not resolve, and they are
-categorical tones chosen to stay distinguishable independent of the club theme.
+`src/components/finance/charts/finance-chart-theme.ts` resolves to concrete hex
+at module load, because the values feed Recharts `fill`/`stroke` SVG presentation
+attributes where `var()` does not resolve. As of **#2190 P4** those eight slots
+are no longer hand-picked literals: `buildFinanceMixColors()` DERIVES them from
+the signed-off categorical scales (`buildThemeSubstrate` over a fixed reference
+seed, mapping the `cat1..cat5` steps in `CHART_FINANCE_8SLOT`), so no fork brand
+literal is baked in — `finance-chart-theme.test.ts` pins this and asserts the
+palette contains no Tokoroa gold. They remain categorical tones chosen to stay
+distinguishable independent of the live club theme.
 Chart neutrals (grid, axis, ticks) are themed in `globals.css` through the
 `.finance-trend-chart .recharts-*` selectors, which override the light-mode
 literal fallbacks that `trend-chart.tsx` passes as attributes.

@@ -226,7 +226,7 @@ function xeroStateChip(state: string): { tone: ChipTone; icon: LucideIcon } {
     case "invoiceLinked":
       return { tone: "success", icon: CheckCircle2 };
     case "invoiceMissing":
-      return { tone: "orange", icon: FileText };
+      return { tone: "cat4", icon: FileText };
     case "operationFailed":
       return { tone: "danger", icon: XCircle };
     case "operationPartial":
@@ -246,14 +246,14 @@ function settlementKindChip(kind: string): { tone: ChipTone; icon: LucideIcon } 
     case "cardRefund":
       return { tone: "info", icon: CreditCard };
     case "accountCredit":
-      return { tone: "purple", icon: Wallet };
+      return { tone: "cat3", icon: Wallet };
     case "mixed":
       // Pulled out of the blue-purple arc (#156): info/indigo/purple crowded
-      // three kinds into pale blue, and cardRefund vs mixed co-occur. Orange sits
-      // well clear of the other four kinds (info 250 / purple 315 / teal 185).
-      return { tone: "orange", icon: Receipt };
+      // three kinds into pale blue, and cardRefund vs mixed co-occur. cat4 orange sits
+      // well clear of the other four kinds (info blue / cat3 / cat6 teal).
+      return { tone: "cat4", icon: Receipt };
     case "restoredCredit":
-      return { tone: "teal", icon: Wallet };
+      return { tone: "cat6", icon: Wallet };
     case "none":
     default:
       return { tone: "neutral", icon: MinusCircle };
@@ -923,7 +923,7 @@ export default function PaymentsPage() {
                       )}
                       {isInternetBanking && (
                         <div className="space-y-1">
-                          <MiniChip tone="teal" icon={Landmark}>Internet Banking</MiniChip>
+                          <MiniChip tone="cat6" icon={Landmark}>Internet Banking</MiniChip>
                           {p.reference && (
                             <Link
                               href={xeroActivityHref}

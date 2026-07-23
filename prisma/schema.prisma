@@ -4624,15 +4624,13 @@ model ClubTheme {
   brandGold      String
   brandDeep      String
   brandSafety    String
-  // #2187 EXPAND: the four former brand columns are dead to code (derived from
-  // the substrate at render time) but stay in the DB so pre-#2187 code renders
-  // across a blue/green cutover. They now carry a DB default so new code can
-  // insert a ClubTheme row without naming them. P4 ships the CONTRACT migration
-  // that drops them (with a BLUE_GREEN_MIGRATION_SAFETY.tsv ledger row).
-  brandCharcoal  String        @default("#21362b")
-  brandRidge     String        @default("#5c6f66")
-  brandMist      String        @default("#d4ddd7")
-  brandSnow      String        @default("#f5f8f6")
+  // #2187 epic #2181: a club picks THREE seeds (brandGold/brandDeep/brandSafety)
+  // that feed the vendored Radix generator for the full 12-step substrate. The
+  // four former brand columns (brandCharcoal/brandRidge/brandMist/brandSnow) were
+  // dead to code from P1 (derived at render time by deriveBrandShims) and were
+  // dropped by the P4 CONTRACT migration
+  // 20260722160000_contract_drop_club_theme_orphan_columns after P1's EXPAND
+  // (20260722140000_expand_club_theme_orphan_column_defaults) drained.
   headingFontKey ClubThemeFont @default(LEAGUE_SPARTAN)
   bodyFontKey    ClubThemeFont @default(INTER)
   logoDataUrl    String?

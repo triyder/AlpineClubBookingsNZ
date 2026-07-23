@@ -46,7 +46,10 @@ function operationStatusClass(status: string) {
     case "FAILED":
       return "bg-danger text-danger-foreground"
     case "PENDING":
-      return "bg-slate-600 text-white"
+      // Neutral "queued" state: a solid foreground-on-background chip that
+      // inverts with the theme (no raw slate), distinct from the four coloured
+      // role fills above/below.
+      return "bg-foreground text-background"
     case "RUNNING":
       return "bg-info text-info-foreground"
     default:
@@ -488,7 +491,7 @@ export function XeroRecordActivityPanel({
                       className={cn(
                         "rounded-full border px-3 py-1 text-xs",
                         record.localModel === localModel && record.localId === localId
-                          ? "border-slate-900 bg-slate-900 text-white"
+                          ? "border-foreground bg-foreground text-background"
                           : "text-muted-foreground hover:bg-accent"
                       )}
                     >

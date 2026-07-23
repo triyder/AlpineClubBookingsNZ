@@ -77,7 +77,7 @@ function paymentChip(source: AdminBookingRow["operational"]["paymentSource"]): {
     case "STRIPE":
       return { tone: "info", icon: CreditCard, label: "Stripe" };
     case "INTERNET_BANKING":
-      return { tone: "teal", icon: Landmark, label: "Internet Banking" };
+      return { tone: "cat6", icon: Landmark, label: "Internet Banking" };
     case "NONE":
     default:
       return { tone: "neutral", icon: MinusCircle, label: "No payment" };
