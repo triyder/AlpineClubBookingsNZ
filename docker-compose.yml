@@ -199,6 +199,16 @@ services:
         max-file: "5"
     environment:
       DOMAIN: ${DOMAIN:-localhost}
+      # MiroTalk video-meeting reverse proxy (see the meet block in Caddyfile).
+      # MEET_HOST = the exact public hostname (e.g. meet.lwtc.org.nz).
+      # MIROTALK_UPSTREAM = where Caddy reaches MiroTalk (host.docker.internal:3010
+      # for a host `docker run`, or a compose service name).
+      MEET_HOST: ${MEET_HOST:-meet.localhost}
+      MIROTALK_UPSTREAM: ${MIROTALK_UPSTREAM:-host.docker.internal:3010}
+    # Lets the Caddy container reach a MiroTalk started with its own `docker run`
+    # via host.docker.internal (Linux needs this mapping).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "80:80"
       - "443:443"

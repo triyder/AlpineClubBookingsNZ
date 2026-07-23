@@ -57,10 +57,19 @@ dashboard.{$DOMAIN} {
 	redir * https://{$DOMAIN}/finance-legacy{uri} permanent
 }
 
-meet.{$DOMAIN} {
+# MiroTalk video-meeting host. MEET_HOST must be the EXACT public hostname you
+# browse to (e.g. meet.lwtc.org.nz) — it is NOT necessarily a subdomain of
+# $DOMAIN, so it is its own variable. MIROTALK_UPSTREAM is where MiroTalk is
+# reachable FROM THE CADDY CONTAINER: host.docker.internal:3010 for a MiroTalk
+# started with its own `docker run` (needs the extra_hosts entry on the caddy
+# service), or a compose service name like mirotalk:3010. Defaults keep Caddy
+# valid (and this block inert) when the vars are unset, so the main site is
+# never affected. DNS for MEET_HOST must point at this VM and ports 80+443 must
+# be open so Caddy can obtain the TLS certificate.
+{$MEET_HOST:meet.localhost} {
     header {
         Permissions-Policy "camera=(self), microphone=(self), display-capture=(self)"
         Strict-Transport-Security "max-age=63072000; includeSubDomains"
     }
-    reverse_proxy MIROTALK_TARGET:3010
+    reverse_proxy {$MIROTALK_UPSTREAM:host.docker.internal:3010}
 }
