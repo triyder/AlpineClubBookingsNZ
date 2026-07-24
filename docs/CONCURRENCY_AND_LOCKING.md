@@ -200,7 +200,17 @@ do not use unnamespaced `hashtext(<id>)` for new lock families.
   `member-merge.ts`) *before* calling `deleteOwnedMemberPhotoBlobs`. Because no
   writer ever takes a `MediaImage` lock before the owning `Member` row, the two
   cannot deadlock. Do not reorder a `deleteOwnedMemberPhotoBlobs` call ahead of
-  its transaction's `Member`-row write.
+  its transaction's `Member`-row write. Both cleanup writers also read the
+  leaving member's `photoImageId` **fresh under that already-held row lock** —
+  the deletion path from its own `member.update … select photoImageId`, the
+  merge from a `member.findUnique` after `teardownLoserXero`'s `member.update` —
+  never from an earlier in-memory snapshot. That closes an under-deletion race:
+  an admin-on-behalf upload landing after the snapshot but before the lock is
+  held repoints the member to a NEW blob carrying the *admin's*
+  `uploadedByMemberId`; keying the sweep off the stale snapshot would match
+  neither that blob's id nor its uploader and orphan it once the member is
+  hard-deleted. The fresh locked read supplies the member's current pointer so
+  the blob is swept.
 
 Do not add or compose a row lock without updating this inventory and documenting
 its order against every advisory- and row-lock counterpart.
