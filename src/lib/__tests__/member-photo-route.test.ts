@@ -101,6 +101,30 @@ const PNG_BYTES = (() => {
   ]);
 })();
 
+// A structurally valid PNG of EXACTLY `total` bytes: signature + IHDR + one
+// large IDAT (a critical chunk the metadata stripper keeps) + IEND. Used to
+// prove a photo of exactly MAX_MEMBER_PHOTO_BYTES passes the fail-closed strip
+// and stores (201) rather than 413ing on the inclusive-cap boundary (#2235).
+function pngOfExactSize(total: number): Buffer {
+  const pngChunk = (type: string, data: Buffer) => {
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(data.length, 0);
+    const crc = Buffer.alloc(4); // stripper does not validate the CRC
+    return Buffer.concat([len, Buffer.from(type, "ascii"), data, crc]);
+  };
+  const ihdrData = Buffer.alloc(13);
+  ihdrData.writeUInt32BE(64, 0); // width
+  ihdrData.writeUInt32BE(32, 4); // height
+  const sig = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const ihdr = pngChunk("IHDR", ihdrData);
+  const iend = pngChunk("IEND", Buffer.alloc(0));
+  // sig + ihdr + (12 header/crc + idatLen) + iend === total.
+  const idatLen = total - (sig.length + ihdr.length + 12 + iend.length);
+  if (idatLen < 0) throw new Error("target size too small for a PNG");
+  const idat = pngChunk("IDAT", Buffer.alloc(idatLen, 0x00));
+  return Buffer.concat([sig, ihdr, idat, iend]);
+}
+
 const GIF_BYTES = Buffer.from("GIF89a\x01\x00\x01\x00", "latin1");
 
 const WEBP_BYTES = (() => {
@@ -246,6 +270,61 @@ function uploadRequest(id: string, file: File) {
     method: "POST",
     body: formData,
   });
+}
+
+// Build a raw multipart body of `sizeBytes` total so a streamed (chunked) or
+// spoofed-Content-Length upload can drive the oversize-body path directly,
+// bypassing the old Content-Length pre-check the way an attacker would.
+function rawMultipartBody(sizeBytes: number): Buffer {
+  const boundary = "----memberPhotoTestBoundary";
+  const header = Buffer.from(
+    `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="big.png"\r\nContent-Type: image/png\r\n\r\n`,
+    "utf8",
+  );
+  const trailer = Buffer.from(`\r\n--${boundary}--\r\n`, "utf8");
+  const dataLen = Math.max(0, sizeBytes - header.length - trailer.length);
+  return Buffer.concat([header, Buffer.alloc(dataLen, 0x61), trailer]);
+}
+
+const MEMBER_PHOTO_BOUNDARY_CT =
+  "multipart/form-data; boundary=----memberPhotoTestBoundary";
+
+/**
+ * A streamed upload whose body exceeds the request cap but declares a tiny,
+ * honest-looking Content-Length — the exact chunked/spoofed bypass #2235 closes.
+ */
+function chunkedOversizeUploadRequest(id: string): NextRequest {
+  const body = rawMultipartBody(3 * 1024 * 1024); // > 2MB + 64KB request cap
+  let offset = 0;
+  let cancelled = false;
+  // Cancel-safe source: once the reader stops/cancels, never enqueue again, so
+  // the fixture can't race a closed controller if the runtime tears the
+  // abandoned body down mid-stream.
+  const stream = new ReadableStream({
+    pull(controller) {
+      if (cancelled) return;
+      if (offset >= body.length) {
+        controller.close();
+        return;
+      }
+      const end = Math.min(offset + 64 * 1024, body.length);
+      controller.enqueue(new Uint8Array(body.subarray(offset, end)));
+      offset = end;
+    },
+    cancel() {
+      cancelled = true;
+    },
+  });
+  return new NextRequest(`http://localhost/api/members/${id}/photo`, {
+    method: "POST",
+    headers: {
+      "content-type": MEMBER_PHOTO_BOUNDARY_CT,
+      // Spoofed-small length that would sail past a naive pre-check.
+      "content-length": "1024",
+    },
+    body: stream,
+    duplex: "half",
+  } as ConstructorParameters<typeof NextRequest>[1] & { duplex: "half" });
 }
 
 function params(id: string) {
@@ -571,6 +650,43 @@ describe("POST /api/members/[id]/photo — upload", () => {
 
     expect(response.status).toBe(413);
     expect(mocks.mediaImageCreate).not.toHaveBeenCalled();
+  });
+
+  it("accepts a photo of EXACTLY the 2MB cap (inclusive boundary, #2235 off-by-one guard)", async () => {
+    // busboy trips its file limit at `size === cap`; the streamed reader passes
+    // `cap + 1` so a photo of exactly MAX_MEMBER_PHOTO_BYTES still stores, as it
+    // did under the old post-parse `size > MAX` check — never a spurious 413 on
+    // the boundary. A real 2MB PNG so it also clears the fail-closed EXIF strip.
+    const MAX_MEMBER_PHOTO_BYTES = 2 * 1024 * 1024;
+    wireMemberLookups({ photoImageId: null });
+    mocks.auth.mockResolvedValue(ownerSession);
+
+    const exact = pngOfExactSize(MAX_MEMBER_PHOTO_BYTES);
+    expect(exact.length).toBe(MAX_MEMBER_PHOTO_BYTES);
+    const file = new File([new Uint8Array(exact)], "exact.png", {
+      type: "image/png",
+    });
+    const response = await POST(uploadRequest(TARGET_ID, file), params(TARGET_ID));
+
+    expect(response.status).toBe(201);
+    expect(mocks.mediaImageCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a chunked, spoofed-Content-Length oversize body with 413 (streamed cap, #2235)", async () => {
+    // Regression: the old Content-Length pre-check trusted the header, so a
+    // chunked or spoofed-small Content-Length skipped it and request.formData()
+    // buffered the whole multi-MB body. The streamed reader now cuts it off.
+    wireMemberLookups({ photoImageId: null });
+    mocks.auth.mockResolvedValue(ownerSession);
+
+    const response = await POST(
+      chunkedOversizeUploadRequest(TARGET_ID),
+      params(TARGET_ID),
+    );
+
+    expect(response.status).toBe(413);
+    expect(mocks.mediaImageCreate).not.toHaveBeenCalled();
+    expect(mocks.transaction).not.toHaveBeenCalled();
   });
 
   it("blocks a member uploading to another member's id (IDOR) with 403", async () => {

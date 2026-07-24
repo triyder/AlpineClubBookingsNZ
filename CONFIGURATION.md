@@ -449,9 +449,28 @@ menu.
   headers.
 - Admin > Image Manager uploads filesystem images into the shared
   `public/images` tree/volume and serves them from `/api/images/uploaded/...`.
-  Those uploads accept PNG, JPEG, GIF, WebP, and AVIF files up to 10MB. SVG is
-  intentionally rejected there because filesystem uploads are served as static
-  image assets without the database image route's restrictive CSP.
+  Those uploads accept PNG, JPEG, GIF, WebP, and AVIF files up to 10MB per file.
+  A single upload batch is capped at 25 files and an 80MB total request body; a
+  batch that exceeds either cap is rejected (`413`) with an actionable message
+  naming the limit that was hit ("at most 25 files" vs "keep each batch under
+  80MB — split the upload"). SVG is intentionally rejected there because
+  filesystem uploads are served as static image assets without the database image
+  route's restrictive CSP.
+- All multipart upload routes (member photos, the image library, the image
+  manager, and configuration-bundle imports) read the request body through a
+  shared **streamed, capped reader** (`src/lib/capped-multipart.ts`, #2235)
+  rather than buffering the whole body first. An oversize body — including a
+  chunked request with no `Content-Length` or a spoofed-small one — is cut off
+  mid-stream and rejected (`413`) before it can exhaust memory, and each route's
+  per-file byte cap is enforced incrementally as an **inclusive** maximum (a file
+  of exactly the cap is accepted; only one byte over is rejected). The
+  **guaranteed backstop** is
+  still the reverse-proxy / platform request-body limit: the repo's `Caddyfile`
+  and `Caddyfile.staging` set `request_body { max_size 100MB }`, comfortably
+  above the largest in-app cap, so an oversize body is dropped at the edge
+  before it reaches the app. Deployments not fronted by Caddy must set the
+  equivalent (Nginx `client_max_body_size`, or the host platform limit). See
+  `docs/SECURITY-ATTACK-SURFACE.md` for the full threat model.
 
 ### Configurable "Book Now" button
 

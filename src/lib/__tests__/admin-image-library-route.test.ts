@@ -66,6 +66,54 @@ function uploadRequest(file: File, altText?: string) {
   });
 }
 
+function rawImageMultipartBody(sizeBytes: number): Buffer {
+  const boundary = "----imageLibraryTestBoundary";
+  const header = Buffer.from(
+    `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="big.png"\r\nContent-Type: image/png\r\n\r\n`,
+    "utf8",
+  );
+  const trailer = Buffer.from(`\r\n--${boundary}--\r\n`, "utf8");
+  const dataLen = Math.max(0, sizeBytes - header.length - trailer.length);
+  return Buffer.concat([header, Buffer.alloc(dataLen, 0x61), trailer]);
+}
+
+/**
+ * A streamed upload whose body exceeds the request cap but declares a tiny,
+ * honest-looking Content-Length — the chunked/spoofed bypass #2235 closes.
+ */
+function chunkedOversizeUploadRequest(): NextRequest {
+  const body = rawImageMultipartBody(3 * 1024 * 1024); // > 2MB + 64KB request cap
+  let offset = 0;
+  let cancelled = false;
+  // Cancel-safe source: once the reader stops/cancels, never enqueue again, so
+  // the fixture can't race a closed controller if the runtime tears the
+  // abandoned body down mid-stream.
+  const stream = new ReadableStream({
+    pull(controller) {
+      if (cancelled) return;
+      if (offset >= body.length) {
+        controller.close();
+        return;
+      }
+      const end = Math.min(offset + 64 * 1024, body.length);
+      controller.enqueue(new Uint8Array(body.subarray(offset, end)));
+      offset = end;
+    },
+    cancel() {
+      cancelled = true;
+    },
+  });
+  return new NextRequest("http://localhost/api/admin/image-library", {
+    method: "POST",
+    headers: {
+      "content-type": "multipart/form-data; boundary=----imageLibraryTestBoundary",
+      "content-length": "1024",
+    },
+    body: stream,
+    duplex: "half",
+  } as ConstructorParameters<typeof NextRequest>[1] & { duplex: "half" });
+}
+
 describe("GET /api/admin/image-library", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -238,6 +286,30 @@ describe("POST /api/admin/image-library", () => {
     const response = await POST(uploadRequest(file));
     expect(response.status).toBe(413);
     expect(mocks.mediaImageCreate).not.toHaveBeenCalled();
+  });
+
+  it("rejects a chunked, spoofed-Content-Length oversize body with 413 (streamed cap, #2235)", async () => {
+    const response = await POST(chunkedOversizeUploadRequest());
+    expect(response.status).toBe(413);
+    expect(mocks.mediaImageCreate).not.toHaveBeenCalled();
+  });
+
+  it("accepts a valid image of EXACTLY the 2MB cap (inclusive boundary, #2235 off-by-one guard)", async () => {
+    // busboy trips its file limit at `size === cap`; the streamed reader passes
+    // `cap + 1` so a file of exactly MAX_MEDIA_IMAGE_BYTES still succeeds, as it
+    // did under the old post-parse `size > MAX` check. Guards the exact-cap 413
+    // regression the raw busboy limit would otherwise produce.
+    const MAX_MEDIA_IMAGE_BYTES = 2 * 1024 * 1024;
+    const exact = Buffer.concat([
+      PNG_BYTES,
+      Buffer.alloc(MAX_MEDIA_IMAGE_BYTES - PNG_BYTES.length),
+    ]);
+    expect(exact.length).toBe(MAX_MEDIA_IMAGE_BYTES);
+    const file = new File([exact], "exact.png", { type: "image/png" });
+    const response = await POST(uploadRequest(file));
+
+    expect(response.status).toBe(201);
+    expect(mocks.mediaImageCreate).toHaveBeenCalledTimes(1);
   });
 
   it("trusts magic bytes over a spoofed declared Content-Type", async () => {

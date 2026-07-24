@@ -17,6 +17,7 @@ import {
   MAX_MEMBER_PHOTO_REQUEST_BYTES,
   isAllowedMemberPhotoContentType,
 } from "@/lib/member-photo";
+import { readCappedMultipartFormData } from "@/lib/capped-multipart";
 
 /**
  * Scoped member-photo serving + upload/remove endpoint (epic #171, MP2).
@@ -240,29 +241,27 @@ export async function POST(
     return notFoundResponse();
   }
 
-  const contentLengthHeader = request.headers.get("content-length");
-  if (contentLengthHeader) {
-    const contentLength = Number.parseInt(contentLengthHeader, 10);
-    if (
-      Number.isFinite(contentLength) &&
-      contentLength > MAX_MEMBER_PHOTO_REQUEST_BYTES
-    ) {
-      return NextResponse.json(
-        { error: "Photo exceeds the 2MB upload limit" },
-        { status: 413 },
-      );
-    }
+  // Stream the multipart body through a capped reader: an oversize (chunked or
+  // spoofed-Content-Length) body is cut off mid-stream instead of being fully
+  // buffered by request.formData(). The reader folds in the honest
+  // Content-Length fast-fail and enforces the per-file 2MB cap.
+  const multipart = await readCappedMultipartFormData(request, {
+    maxRequestBytes: MAX_MEMBER_PHOTO_REQUEST_BYTES,
+    maxFileBytes: MAX_MEMBER_PHOTO_BYTES,
+    maxFiles: 1,
+  });
+  if (!multipart.ok) {
+    return multipart.reason === "too_large"
+      ? NextResponse.json(
+          { error: "Photo exceeds the 2MB upload limit" },
+          { status: 413 },
+        )
+      : NextResponse.json(
+          { error: "Invalid multipart/form-data body" },
+          { status: 400 },
+        );
   }
-
-  let formData: FormData;
-  try {
-    formData = await request.formData();
-  } catch {
-    return NextResponse.json(
-      { error: "Invalid multipart/form-data body" },
-      { status: 400 },
-    );
-  }
+  const formData = multipart.formData;
 
   const file = formData.get("file");
   if (!(file instanceof File)) {

@@ -12,6 +12,7 @@ import {
   mediaImageServingUrl,
   sanitiseMediaImageFilename,
 } from "@/lib/media-image";
+import { readCappedMultipartFormData } from "@/lib/capped-multipart";
 
 const listQuerySchema = z.object({
   page: z.coerce.number().int().min(1).max(10_000).default(1),
@@ -94,29 +95,27 @@ export async function POST(request: NextRequest) {
   if (!guard.ok) return guard.response;
   const session = guard.session;
 
-  const contentLengthHeader = request.headers.get("content-length");
-  if (contentLengthHeader) {
-    const contentLength = Number.parseInt(contentLengthHeader, 10);
-    if (
-      Number.isFinite(contentLength) &&
-      contentLength > MAX_MEDIA_IMAGE_REQUEST_BYTES
-    ) {
-      return NextResponse.json(
-        { error: "Image exceeds the 2MB upload limit" },
-        { status: 413 },
-      );
-    }
+  // Stream the multipart body through a capped reader so an oversize (chunked or
+  // spoofed-Content-Length) body is cut off mid-stream rather than buffered in
+  // full by request.formData(). Folds in the honest Content-Length fast-fail and
+  // enforces the per-file 2MB cap.
+  const multipart = await readCappedMultipartFormData(request, {
+    maxRequestBytes: MAX_MEDIA_IMAGE_REQUEST_BYTES,
+    maxFileBytes: MAX_MEDIA_IMAGE_BYTES,
+    maxFiles: 1,
+  });
+  if (!multipart.ok) {
+    return multipart.reason === "too_large"
+      ? NextResponse.json(
+          { error: "Image exceeds the 2MB upload limit" },
+          { status: 413 },
+        )
+      : NextResponse.json(
+          { error: "Invalid multipart/form-data body" },
+          { status: 400 },
+        );
   }
-
-  let formData: FormData;
-  try {
-    formData = await request.formData();
-  } catch {
-    return NextResponse.json(
-      { error: "Invalid multipart/form-data body" },
-      { status: 400 },
-    );
-  }
+  const formData = multipart.formData;
 
   const file = formData.get("file");
   if (!(file instanceof File)) {
