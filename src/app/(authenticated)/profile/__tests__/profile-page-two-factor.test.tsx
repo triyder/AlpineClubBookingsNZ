@@ -15,6 +15,13 @@ vi.mock("next/navigation", () => ({
   redirect: vi.fn((path: string) => {
     throw new Error(`redirect:${path}`);
   }),
+  // The profile page now renders the client ProfilePhotoSection, which calls
+  // useRouter() during render.
+  useRouter: () => ({
+    refresh: vi.fn(),
+    push: vi.fn(),
+    replace: vi.fn(),
+  }),
 }));
 
 vi.mock("@/lib/auth", () => ({

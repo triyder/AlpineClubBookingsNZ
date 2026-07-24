@@ -114,6 +114,7 @@ export const DEFAULT_PUBLIC_CONTENT_SETTINGS = {
   cancellationPolicy: false,
   annualFees: false,
   showBookNow: true,
+  committeePhotoDisplay: "NONE",
 } as const;
 
 /**

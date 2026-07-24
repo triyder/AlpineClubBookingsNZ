@@ -775,7 +775,7 @@ describe("view-only section banner coverage (#2160)", () => {
       // view-only would get no banner at all.
       memberDetailCards: { controls: 4, files: 1 },
       separateA11yContainer: { controls: 9, files: 4 },
-      leaves: { controls: 19, files: 10 },
+      leaves: { controls: 20, files: 11 },
     });
   });
 

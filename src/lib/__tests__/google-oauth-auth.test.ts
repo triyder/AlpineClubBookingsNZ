@@ -274,6 +274,76 @@ describe("signIn callback — LOGIN path (sub-only)", () => {
     });
     expect(result).toBe("/login?error=google_failed");
   });
+
+  it("refuses a 'failed' status (resolver fail-closed) with the couldn't-complete redirect (#2229)", async () => {
+    // The resolver/profile() boundary failed closed to the sentinel WITH a sub
+    // present, so this reaches the status switch (not the early no-sub guard).
+    // It must map to google_failed, not the generic google_refused.
+    const result = await signIn({
+      user: { id: "google-oauth:s", googleLoginStatus: "failed" },
+      account: googleAccount,
+      profile: { sub: "s" },
+    });
+    expect(result).toBe("/login?error=google_failed");
+    expect(mockMemberUpdate).not.toHaveBeenCalled();
+  });
+
+  it("REFUSES the sign-in when the lastLoginAt bump hits P2025 — a dangling session id (#2229)", async () => {
+    // Production incident: the id we were about to mint a session for matched NO
+    // member row (a fallback-user substitution). A P2025 on the login-timestamp
+    // update is proof of that — refuse instead of minting a session /dashboard
+    // could never resolve (which drove the /login <-> /dashboard white-flash loop).
+    mockMemberUpdate.mockRejectedValue(
+      Object.assign(new Error("Record to update not found."), { code: "P2025" }),
+    );
+
+    const result = await signIn({
+      user: { id: "dangling-uuid", googleLoginStatus: "ok" },
+      account: googleAccount,
+      profile: { sub: "s" },
+    });
+
+    expect(result).toBe("/login?error=google_failed");
+  });
+
+  it("STILL allows the sign-in when the lastLoginAt bump hits a transient error (id is sound) (#2229)", async () => {
+    // A generic/connection error is NOT proof of a dangling id — only the bump
+    // failed. Keep the warn-and-allow behaviour so a DB blip never blocks a
+    // legitimate Google login.
+    mockMemberUpdate.mockRejectedValue(new Error("connection reset"));
+
+    const result = await signIn({
+      user: { id: "member-1", googleLoginStatus: "ok" },
+      account: googleAccount,
+      profile: { sub: "s" },
+    });
+
+    expect(result).toBe(true);
+  });
+});
+
+describe("Google provider profile() — fail closed (#2229)", () => {
+  it("returns the refusal sentinel and NEVER throws when the resolver throws", async () => {
+    // The boundary to @auth/core must be belt-and-braces: a throw escaping
+    // profile() lets @auth/core substitute a default user whose id matches no
+    // member (the dangling-session incident). It must resolve to the "failed"
+    // sentinel with a non-member id instead.
+    const provider = authConfig.providers[2] as unknown as {
+      profile: (p: unknown) => Promise<unknown>;
+    };
+    mockResolveGoogleProfile.mockRejectedValue(new Error("resolver exploded"));
+
+    const result = (await provider.profile({
+      sub: "s",
+      email: "e@example.com",
+    })) as { id: string; email: string | null; googleLoginStatus: string };
+
+    expect(result).toEqual({
+      id: "google-oauth:s",
+      email: "e@example.com",
+      googleLoginStatus: "failed",
+    });
+  });
 });
 
 describe("signIn callback — LINK path (profile-initiated)", () => {

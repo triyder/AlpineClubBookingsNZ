@@ -929,11 +929,14 @@ describe("#2200 portable singletons export/import and stay schema-bound", () => 
     );
   });
 
-  it("round-trips public-content visibility gates (booleans travel in both modes)", async () => {
+  it("round-trips public-content visibility gates (gates + committee-photo mode travel in both modes)", async () => {
     const saved = {
       membershipTypes: true, entranceFees: true, hutFees: false,
       bookingPolicySummary: true, cancellationPolicy: false, annualFees: true,
       showBookNow: false,
+      // The committee-photo display mode is portable public-page config too: a
+      // non-default enum value travels like the gates.
+      committeePhotoDisplay: "CIRCLE",
     };
     const { zip } = await buildConfigExport({
       db: stubDb({ publicContentSettings: { ...saved, bookNowTarget: "PAGE", bookNowPageId: "pg_source" } }),

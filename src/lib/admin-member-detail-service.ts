@@ -356,6 +356,11 @@ export async function getAdminMemberDetail(params: {
         accessRoles: { select: MEMBER_ACCESS_ROLE_SELECT },
         ageTier: true,
         active: true,
+        // Member profile photo (MP4, epic #171) — surfaced so an admin can
+        // view/manage it on the member-detail page; spread through `...member`
+        // into the response body below.
+        photoImageId: true,
+        photoUpdatedAt: true,
         canLogin: true,
         forcePasswordChange: true,
         parentMemberId: true,

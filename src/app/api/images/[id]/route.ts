@@ -22,10 +22,15 @@ export async function GET(
 
   const image = await prisma.mediaImage.findUnique({
     where: { id },
-    select: { data: true, contentType: true },
+    select: { data: true, contentType: true, kind: true },
   });
 
-  if (!image) {
+  // Only CONTENT images are addressable through this public, unauthenticated,
+  // immutably-cached path. MEMBER_PHOTO blobs live in the same table but are a
+  // private data class served exclusively through the scoped, authorised
+  // `/api/members/[id]/photo` endpoint (ADR-001 decision 3). Returning the same
+  // 404 as a missing row keeps a member photo's existence non-disclosable here.
+  if (!image || image.kind !== "CONTENT") {
     return NextResponse.json({ error: "Image not found" }, { status: 404 });
   }
 

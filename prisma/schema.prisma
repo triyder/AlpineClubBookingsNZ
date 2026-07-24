@@ -492,6 +492,16 @@ model Member {
   // MemberFieldsSettings.showOccupation.
   occupation              String?
 
+  // Member profile photo (MP1, epic #171). Nullable FK to a MEMBER_PHOTO
+  // MediaImage (bytes-in-DB, survives redeploys). Visible to the member (own),
+  // admins, and — only when the member has a published CommitteeAssignment —
+  // the public committee page, always via a scoped serving endpoint, never the
+  // public /api/images path. photoUpdatedByMemberId is an FK-less audit snapshot
+  // (mirrors SiteBanner.updatedByMemberId), not a Member relation.
+  photoImageId           String?
+  photoUpdatedAt         DateTime?
+  photoUpdatedByMemberId String?
+
   // Structured phone (matches Xero's countryCode/areaCode/number format)
   phoneCountryCode String? // e.g. "64"
   phoneAreaCode    String? // e.g. "27"
@@ -661,6 +671,12 @@ model Member {
   committeeAssignments                       CommitteeAssignment[]                      @relation("CommitteeAssignmentMember")
   committeeAssignmentsAssigned               CommitteeAssignment[]                      @relation("CommitteeAssignmentAssignedBy")
 
+  // Member profile photo (MP1). Outbound scalar FK, so it is part of the
+  // additive master-wins field merge (not a re-pointed inbound relation); the
+  // reverse side lives on MediaImage.photoOfMembers. onDelete: SetNull so
+  // deleting the image blob clears the pointer rather than blocking.
+  photoImage MediaImage? @relation("MemberPhoto", fields: [photoImageId], references: [id], onDelete: SetNull)
+
   @@index([email])
   @@index([xeroContactId])
   @@index([parentMemberId])
@@ -678,6 +694,8 @@ model Member {
   @@index([twoFactorEnabled])
   @@index([twoFactorLockedUntil])
   @@index([hutLeaderEligible])
+  // Member-photo lookups (own-photo serving, committee-page fan-out).
+  @@index([photoImageId])
 }
 
 model MemberAccessRole {
@@ -3707,6 +3725,18 @@ model PageContent {
   @@index([updatedByMemberId])
 }
 
+// Discriminates what an image blob is used for (MP1, epic #171). CONTENT is the
+// default and covers every pre-existing row plus admin page-content uploads,
+// which are the only kind the website media picker (/api/admin/image-library)
+// ever surfaces. MEMBER_PHOTO rows are member profile photos referenced by
+// Member.photoImageId and are deliberately hidden from the content picker and
+// served only through the scoped member-photo endpoint (never the public
+// /api/images path) — see docs/member-photos/decisions/ADR-001-member-photos.md.
+enum MediaImageKind {
+  CONTENT
+  MEMBER_PHOTO
+}
+
 // Uploaded images for the page-content image picker, stored in the database
 // (rather than the filesystem) so they survive Docker redeploys. Served
 // publicly via /api/images/[id].
@@ -3720,10 +3750,18 @@ model MediaImage {
   width              Int?
   height             Int?
   uploadedByMemberId String?
+  kind               MediaImageKind @default(CONTENT)
   createdAt          DateTime @default(now())
+
+  // Reverse side of Member.photoImage. A MEMBER_PHOTO blob is normally the photo
+  // of exactly one member, but the FK is not unique so Prisma models this as a
+  // list. onDelete: SetNull lives on the owning Member.photoImage side.
+  photoOfMembers Member[] @relation("MemberPhoto")
 
   @@index([uploadedByMemberId])
   @@index([createdAt])
+  // Supports the content-picker filter (kind = CONTENT) and member-photo lookups.
+  @@index([kind])
 }
 
 // Admin-managed site-wide notification banners. Displayed above the site
@@ -4587,9 +4625,23 @@ enum BookNowTarget {
   PAGE
 }
 
+// Public committee-roster photo display (MP5, epic #171). NONE (default) shows
+// the text-only roster and renders no photos publicly even for members who have
+// one — a privacy-safe opt-in, mirroring the double-opt-in pattern used for
+// sensitive public content (annualFees). CIRCLE/SQUARE show each published
+// member's photo in that shape, with an initials placeholder for members
+// without one.
+enum CommitteePhotoDisplay {
+  NONE
+  CIRCLE
+  SQUARE
+}
+
 model PublicContentSettings {
   id                   String   @id @default("default")
   membershipTypes      Boolean  @default(false)
+  // Committee-roster photo display + shape (MP5, epic #171). See enum above.
+  committeePhotoDisplay CommitteePhotoDisplay @default(NONE)
   entranceFees         Boolean  @default(false)
   hutFees              Boolean  @default(false)
   bookingPolicySummary Boolean  @default(false)

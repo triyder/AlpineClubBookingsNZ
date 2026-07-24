@@ -15,6 +15,7 @@ import { PostLoginLandingPreference } from "./post-login-landing-preference";
 import { FamilyGroupSection } from "./family-group-section";
 import { PartnerLinkSection } from "./partner-link-section";
 import { AccountCreditSection } from "./account-credit-section";
+import { ProfilePhotoSection } from "./profile-photo-section";
 import { DataExportButton } from "./data-export-button";
 import { DeleteAccountButton } from "./delete-account-button";
 import { MembershipCancellationPanel } from "./membership-cancellation-panel";
@@ -99,6 +100,7 @@ function formatPromoBenefit(promo: {
 // Anchor rail for this long (~13 card) page. Every section below is rendered
 // unconditionally, so SectionNav keeps them all; ordering matches the page.
 const PROFILE_SECTIONS: SectionNavItem[] = [
+  { id: "profile-photo", label: "Profile Photo" },
   { id: "account-information", label: "Account Information" },
   { id: "security", label: "Security" },
   { id: "subscription-history", label: "Subscription History" },
@@ -169,6 +171,8 @@ export default async function ProfilePage({
       ageTier: true,
       occupation: true,
       lodgeScreenPhoneOptIn: true,
+      photoImageId: true,
+      photoUpdatedAt: true,
       active: true,
       createdAt: true,
       passwordChangedAt: true,
@@ -301,6 +305,29 @@ export default async function ProfilePage({
                     : "The email change could not be completed."}
           </div>
         ) : null}
+
+        {/* Profile photo */}
+        <Card id="profile-photo" className="scroll-mt-20">
+          <CardHeader>
+            <CardTitle>Profile Photo</CardTitle>
+            <CardDescription>
+              Add a photo of yourself. Committee members&apos; photos appear on
+              the public committee page.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ProfilePhotoSection
+              memberId={member.id}
+              memberName={`${member.firstName} ${member.lastName}`.trim()}
+              initialHasPhoto={member.photoImageId !== null}
+              initialPhotoVersion={
+                member.photoUpdatedAt
+                  ? member.photoUpdatedAt.toISOString()
+                  : null
+              }
+            />
+          </CardContent>
+        </Card>
 
         {/* Account info */}
         <Card id="account-information" className="scroll-mt-20">

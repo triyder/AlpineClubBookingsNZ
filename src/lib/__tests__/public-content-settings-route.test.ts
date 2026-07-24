@@ -25,6 +25,7 @@ const existing = {
   id: "default", membershipTypes: true, entranceFees: false, hutFees: true,
   bookingPolicySummary: false, cancellationPolicy: true, annualFees: true,
   showBookNow: true, bookNowTarget: "BOOKING_FLOW" as const, bookNowPageId: null,
+  committeePhotoDisplay: "NONE" as const,
   updatedByMemberId: "admin-0", createdAt: new Date(), updatedAt: new Date(),
 };
 
@@ -43,11 +44,12 @@ describe("public content settings route", () => {
       membershipTypes: true, entranceFees: false, hutFees: true,
       bookingPolicySummary: false, cancellationPolicy: true, annualFees: true,
       showBookNow: true, bookNowTarget: "BOOKING_FLOW", bookNowPageId: null,
+      committeePhotoDisplay: "NONE",
     }, pages: [] });
   });
 
   it("audits writes and invalidates public routes", async () => {
-    const body = { membershipTypes: true, entranceFees: false, hutFees: true, bookingPolicySummary: false, cancellationPolicy: true, annualFees: true, showBookNow: true, bookNowTarget: "BOOKING_FLOW", bookNowPageId: null };
+    const body = { membershipTypes: true, entranceFees: false, hutFees: true, bookingPolicySummary: false, cancellationPolicy: true, annualFees: true, showBookNow: true, bookNowTarget: "BOOKING_FLOW", bookNowPageId: null, committeePhotoDisplay: "NONE" };
     const response = await PUT(new Request("http://localhost/api/admin/public-content-settings", { method: "PUT", body: JSON.stringify(body) }));
     expect(response.status).toBe(200);
     expect(mocks.requireAdmin).toHaveBeenCalledWith({ permission: { area: "content", level: "edit" } });

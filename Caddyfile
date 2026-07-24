@@ -14,6 +14,13 @@
 		# Caddy's `?` prefix means "set if not already present" so it never intersects with Next's policy.
 		?Content-Security-Policy "default-src 'self'"
 	}
+	# Guaranteed request-body backstop (#2235): drop oversize bodies at the
+	# edge before they reach the app. Set comfortably above the largest
+	# legitimate in-app cap (80MB image-manager batch, ~52MB config bundle);
+	# the app's streamed per-route caps do the precise enforcement.
+	request_body {
+		max_size 100MB
+	}
 	# Rewrite legacy /images/* requests to the runtime-serving API route so
 	# uploaded images are served correctly without restarting containers.
 	handle /images/* {

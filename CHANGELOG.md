@@ -4,6 +4,26 @@ All notable public reference-release changes should be recorded here.
 
 ## Unreleased
 
+- **Image and configuration uploads can no longer be used to exhaust server
+  memory (#2235).** Every upload form (member photos, the website image library,
+  the Image Manager, and configuration-bundle import/preview/reseal) now reads
+  the request body through a shared streamed, size-capped reader instead of
+  buffering the whole upload into memory first. Previously a signed-in user could
+  send a very large upload with a missing or understated size header and force
+  the server to hold the entire body in memory before the real limits applied;
+  the new reader stops reading the moment an upload exceeds its limit and rejects
+  it. Valid uploads are unchanged: the same file types and per-file size limits
+  apply, and the Image Manager still uploads several files at once (now capped at
+  25 files and 80MB per batch). A file of *exactly* the size limit is still
+  accepted (the caps are inclusive maxima, as before); only a file over the limit
+  is rejected. When a batch is refused, the message now names the specific limit
+  that was hit — "at most 25 files" for too many files, or "keep each batch under
+  80MB — split the upload" for an oversize batch — and a configuration import that
+  carries oversized form fields is no longer misreported as an oversized bundle
+  file. Operators should also set a request-body size limit at their reverse proxy
+  (for example Caddy `request_body { max_size }`) as the guaranteed backstop — see
+  `docs/SECURITY-ATTACK-SURFACE.md`.
+
 ## 0.13.2 - 2026-07-23
 
 - **Configuration transfer now covers three more club-wide settings, and guards
@@ -630,7 +650,7 @@ All notable public reference-release changes should be recorded here.
   screen built from several sections — Security, or Booking Requests — shows it
   once per section, three times in those two cases. This is the
   pattern Booking Policies adopted in #2142 (below), now applied across most of
-  the admin tree: 210 of the 263 gated buttons are covered by a banner in their
+  the admin tree: 210 of the 264 gated buttons are covered by a banner in their
   own section, and #2168 below takes the total to 231 — about seven out of eight
   now explained by a banner instead of individually. **Nothing about who can do what
   has changed** — the same

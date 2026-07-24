@@ -6,8 +6,8 @@ vi.mock("server-only", () => ({}));
 const mocks = vi.hoisted(() => ({
   auth: vi.fn(),
   requireActiveSessionUser: vi.fn(),
-  mediaImageFindUnique: vi.fn(),
-  mediaImageDelete: vi.fn(),
+  mediaImageFindFirst: vi.fn(),
+  mediaImageDeleteMany: vi.fn(),
   pageContentFindMany: vi.fn(),
   auditLogCreate: vi.fn(),
 }));
@@ -25,8 +25,8 @@ vi.mock("@/lib/session-guards", () => ({
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     mediaImage: {
-      findUnique: mocks.mediaImageFindUnique,
-      delete: mocks.mediaImageDelete,
+      findFirst: mocks.mediaImageFindFirst,
+      deleteMany: mocks.mediaImageDeleteMany,
     },
     pageContent: {
       findMany: mocks.pageContentFindMany,
@@ -54,7 +54,7 @@ describe("DELETE /api/admin/image-library/[id]", () => {
     mocks.auth.mockResolvedValue(adminSession);
     mocks.requireActiveSessionUser.mockResolvedValue(null);
     mocks.pageContentFindMany.mockResolvedValue([]);
-    mocks.mediaImageDelete.mockResolvedValue({});
+    mocks.mediaImageDeleteMany.mockResolvedValue({ count: 1 });
     mocks.auditLogCreate.mockResolvedValue({});
   });
 
@@ -64,7 +64,7 @@ describe("DELETE /api/admin/image-library/[id]", () => {
       params: Promise.resolve({ id: "img-1" }),
     });
     expect(response.status).toBe(401);
-    expect(mocks.mediaImageDelete).not.toHaveBeenCalled();
+    expect(mocks.mediaImageDeleteMany).not.toHaveBeenCalled();
   });
 
   it("rejects non-admin members", async () => {
@@ -73,22 +73,41 @@ describe("DELETE /api/admin/image-library/[id]", () => {
       params: Promise.resolve({ id: "img-1" }),
     });
     expect(response.status).toBe(403);
-    expect(mocks.mediaImageDelete).not.toHaveBeenCalled();
+    expect(mocks.mediaImageDeleteMany).not.toHaveBeenCalled();
   });
 
   it("returns 404 for an unknown image", async () => {
-    mocks.mediaImageFindUnique.mockResolvedValue(null);
+    mocks.mediaImageFindFirst.mockResolvedValue(null);
 
     const response = await DELETE(deleteRequest("missing"), {
       params: Promise.resolve({ id: "missing" }),
     });
 
     expect(response.status).toBe(404);
-    expect(mocks.mediaImageDelete).not.toHaveBeenCalled();
+    expect(mocks.mediaImageDeleteMany).not.toHaveBeenCalled();
   });
 
-  it("deletes an image that is not referenced by any page", async () => {
-    mocks.mediaImageFindUnique.mockResolvedValue({
+  it("scopes the lookup to CONTENT so a MEMBER_PHOTO id cannot be deleted", async () => {
+    // A member-photo blob shares the MediaImage table; the scoped lookup finds
+    // nothing, so a content admin who knows its id gets the not-found response
+    // and no delete is issued.
+    mocks.mediaImageFindFirst.mockResolvedValue(null);
+
+    const response = await DELETE(deleteRequest("member-photo-1"), {
+      params: Promise.resolve({ id: "member-photo-1" }),
+    });
+
+    expect(response.status).toBe(404);
+    expect(mocks.mediaImageFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "member-photo-1", kind: "CONTENT" },
+      }),
+    );
+    expect(mocks.mediaImageDeleteMany).not.toHaveBeenCalled();
+  });
+
+  it("deletes a CONTENT image that is not referenced by any page", async () => {
+    mocks.mediaImageFindFirst.mockResolvedValue({
       id: "img-1",
       filename: "photo.png",
     });
@@ -101,14 +120,15 @@ describe("DELETE /api/admin/image-library/[id]", () => {
 
     expect(response.status).toBe(200);
     expect(body).toEqual({ success: true, referencedBySlugs: [] });
-    expect(mocks.mediaImageDelete).toHaveBeenCalledWith({
-      where: { id: "img-1" },
+    // The delete itself is kind-scoped (defence in depth).
+    expect(mocks.mediaImageDeleteMany).toHaveBeenCalledWith({
+      where: { id: "img-1", kind: "CONTENT" },
     });
     expect(mocks.auditLogCreate).toHaveBeenCalled();
   });
 
   it("permits deletion of a referenced image and reports which pages use it", async () => {
-    mocks.mediaImageFindUnique.mockResolvedValue({
+    mocks.mediaImageFindFirst.mockResolvedValue({
       id: "img-1",
       filename: "hero.jpg",
     });
@@ -127,8 +147,8 @@ describe("DELETE /api/admin/image-library/[id]", () => {
       success: true,
       referencedBySlugs: ["home", "about"],
     });
-    expect(mocks.mediaImageDelete).toHaveBeenCalledWith({
-      where: { id: "img-1" },
+    expect(mocks.mediaImageDeleteMany).toHaveBeenCalledWith({
+      where: { id: "img-1", kind: "CONTENT" },
     });
 
     expect(mocks.pageContentFindMany).toHaveBeenCalledWith(

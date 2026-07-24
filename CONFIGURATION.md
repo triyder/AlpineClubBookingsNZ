@@ -449,9 +449,28 @@ menu.
   headers.
 - Admin > Image Manager uploads filesystem images into the shared
   `public/images` tree/volume and serves them from `/api/images/uploaded/...`.
-  Those uploads accept PNG, JPEG, GIF, WebP, and AVIF files up to 10MB. SVG is
-  intentionally rejected there because filesystem uploads are served as static
-  image assets without the database image route's restrictive CSP.
+  Those uploads accept PNG, JPEG, GIF, WebP, and AVIF files up to 10MB per file.
+  A single upload batch is capped at 25 files and an 80MB total request body; a
+  batch that exceeds either cap is rejected (`413`) with an actionable message
+  naming the limit that was hit ("at most 25 files" vs "keep each batch under
+  80MB — split the upload"). SVG is intentionally rejected there because
+  filesystem uploads are served as static image assets without the database image
+  route's restrictive CSP.
+- All multipart upload routes (member photos, the image library, the image
+  manager, and configuration-bundle imports) read the request body through a
+  shared **streamed, capped reader** (`src/lib/capped-multipart.ts`, #2235)
+  rather than buffering the whole body first. An oversize body — including a
+  chunked request with no `Content-Length` or a spoofed-small one — is cut off
+  mid-stream and rejected (`413`) before it can exhaust memory, and each route's
+  per-file byte cap is enforced incrementally as an **inclusive** maximum (a file
+  of exactly the cap is accepted; only one byte over is rejected). The
+  **guaranteed backstop** is
+  still the reverse-proxy / platform request-body limit: the repo's `Caddyfile`
+  and `Caddyfile.staging` set `request_body { max_size 100MB }`, comfortably
+  above the largest in-app cap, so an oversize body is dropped at the edge
+  before it reaches the app. Deployments not fronted by Caddy must set the
+  equivalent (Nginx `client_max_body_size`, or the host platform limit). See
+  `docs/SECURITY-ATTACK-SURFACE.md` for the full threat model.
 
 ### Configurable "Book Now" button
 
@@ -1054,6 +1073,49 @@ steps now create master roles only; the historical migrations that seeded roles
 and hidden assignments from legacy rows remain in place for installs that ran
 them. Assignment changes and master role changes are audited with before/after
 metadata.
+
+## Member Photos
+
+Members can have a profile photo (epic #171). There is nothing to configure at
+deploy time — no environment variables, no image service — but the visibility
+model matters for privacy.
+
+- **Storage.** A photo is a `MediaImage` row (`kind = MEMBER_PHOTO`, bytes in
+  Postgres so it survives redeploys) referenced by `Member.photoImageId`. It is
+  kept out of the website content picker (`/api/admin/image-library`, which lists
+  `kind = CONTENT` only) and is never served through the public
+  `/api/images/[id]` content path.
+- **Who can set it.** A member uploads/replaces/removes **their own** photo from
+  their profile page; a `membership:edit` admin can do the same on a member's
+  behalf from the member-detail page (a read-only admin sees it but cannot
+  change it). Uploads are cropped and downscaled in the browser to a 512×512
+  square; the server validates content type (JPEG/PNG/WebP), a 2 MB cap, and a
+  4096 px backstop, then stores the bytes verbatim. Every admin change is
+  audited (`member_photo.upload` / `member_photo.remove`, with the on-behalf
+  flag).
+- **Who can see it.** The photo is served through a scoped, member-keyed
+  endpoint (`/api/members/[id]/photo`). It is **public only** when the member is
+  active and holds an active, **published** `CommitteeAssignment` — in lockstep
+  with `/api/committee`. Otherwise only the member themselves or a
+  `membership:view` admin can see it; everyone else gets a 404 (the endpoint
+  prefers 404 over 403 so a private photo's existence is never confirmed).
+- **Consent.** Implied by self-upload; the enforced boundary is control (who can
+  set / remove / see). Removal is always permitted.
+- **Committee roster display.** Whether the public committee roster
+  (`{{committee-members-cards}}`) actually shows photos is a separate opt-in on
+  `PublicContentSettings.committeePhotoDisplay`, set from either the Page Content
+  admin or the Committee admin page (both edit the same global setting, gated on
+  content edit):
+  - `NONE` (default) — text-only roster; no photos are shown even for members
+    who have one.
+  - `CIRCLE` / `SQUARE` — show each published member's photo in that shape, with
+    an initials placeholder for members without one.
+
+  This setting is presentational: it controls the roster render and whether
+  `/api/committee` emits photo metadata, but it does not change the serving rule
+  above. See `docs/member-photos/decisions/ADR-001-member-photos.md` for the
+  full design and `docs/SECURITY-ATTACK-SURFACE.md` for the serving/upload
+  authorisation matrix.
 
 Booking and subscription enforcement is season-aware:
 

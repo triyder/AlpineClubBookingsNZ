@@ -82,7 +82,7 @@ the row, not open work. Open findings now live in labelled GitHub issues
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `src/proxy.ts` global proxy and module gates | No session auth. Applies CSP/security headers to page requests and selected API matcher paths; returns 404 for disabled module routes. | Anonymous and authenticated browser traffic. | Module settings via `loadEffectiveModuleFlags()`. | None. | CSP nonce, `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`, module route blocking. | No per-request audit. | API matcher is selective, not global for every API path. Keep route-level auth as the enforcement boundary. |
 | `/api/health`, `/api/health/ready` | Public. | Load balancers, operators, anonymous callers. | DB reachability, runtime version/uptime, config readiness. Public responses omit provider error detail. | DB query only. | No rate limit. No secrets in response. | Logger debug/error only. | Anonymous callers can observe availability. #615 can decide whether to add light rate limiting or cache headers. |
-| `/api/age-tier-settings`, `/api/committee` | Public read endpoints. | Anonymous website users. | Public age-tier/rate settings and published committee assignment presentation fields. | None. | No rate limit. Committee query selects active, published assignment fields only; member email is not selected or returned, phone is returned only when show-phone is enabled, and contact keys are returned only for contactable assignments. | None beyond DB errors if thrown. | Public committee names and optional phone numbers are intentional once an admin publishes the assignment; email remains server-only. |
+| `/api/age-tier-settings`, `/api/committee` | Public read endpoints. | Anonymous website users. | Public age-tier/rate settings and published committee assignment presentation fields; and, **only when `PublicContentSettings.committeePhotoDisplay != NONE`**, per-published-member photo metadata (member id + `photoUpdatedAt` version) so the roster can build the scoped `/api/members/[id]/photo` URL. | None. | No rate limit. Committee query selects active, published assignment fields only; member email is not selected or returned, phone is returned only when show-phone is enabled, and contact keys are returned only for contactable assignments. Photo metadata (incl. member id) is emitted **only** when the club has opted the roster into photos — with `committeePhotoDisplay = NONE` (the default), no member id or photo pointer is returned. | None beyond DB errors if thrown. | Public committee names and optional phone numbers are intentional once an admin publishes the assignment; email remains server-only. Committee-photo bytes are still served (and gated) by the scoped `/api/members/[id]/photo` endpoint — `committeePhotoDisplay` governs roster rendering/metadata only, not the serving rule. |
 | `/api/address-autocomplete/search`, `/api/address-autocomplete/details/[id]` | Public server-side proxy to Addy, gated by the `addressAutocomplete` Admin Module. | Anonymous website users. | Search terms, address suggestion ids, Addy result payloads. | Addy API via `src/lib/addy-api.ts`. | Module-route/proxy gate returns 404 while disabled, Zod query validation, `rateLimiters.addressAutocomplete` at 90/min/IP. Secrets stay server-side. | Minimal error responses, no audit. | Upstream-cost and enumeration surface remains public only when the module is enabled; manual address entry remains the fallback. |
 | `/api/contact` | Public contact form. | Anonymous website users. | Name, email, message, optional published committee assignment recipient key. | SMTP/SES through `sendEmail()`. | Zod validation, CRLF checks, HTML escaping, `rateLimiters.contact` at 10/hour/IP. Committee recipient keys resolve server-side only when the assignment is active, published, contactable, and linked to an active member; delivery prefers the role email and falls back to linked member email server-side. | Email delivery logs through email layer; committee-routed messages store an opaque committee-contact marker instead of the private member recipient address; no audit log. | Spam and mailbox flooding are bounded but not CAPTCHA-backed. Invalid or non-contactable recipient keys safely fall back to the configured club contact address. |
 | `/api/applications` | Public membership application submission. | Anonymous applicant. | Applicant PII, DOB, family member PII, nominator emails, application rows. | Email notifications through nomination/application service. | Zod validation, max family member count of 10, `rateLimiters.membershipApplication` at 3/hour/IP. | Logger on unexpected errors; application workflow records status in DB. | Public PII collection endpoint. #615 should review enumeration, attachment absence, response detail, and email storm controls. |
@@ -96,6 +96,8 @@ the row, not open work. Open findings now live in labelled GitHub issues
 | `/api/bookings/[id]/**`, including cancel, modify, guests, payment confirmation, refund request, waitlist confirmation, notes, arrival time, and payment secret routes | Authenticated active member with route/service ownership checks. | Booking owner/member, sometimes admin through service rules. | Booking ownership, guest records, payment transactions, Stripe IDs/client secrets, cancellation/refund/change-request data, notes. | Stripe PaymentIntent/SetupIntent confirmation or retrieval, Xero invoice/credit-note outbox, email notifications. | Auth.js session, active-account guard, rate limits on cancel/change flows, service-level owner checks, Zod/date validation. | Audit logs for payment/guest/refund/change operations where implemented; logger on failures. | IDOR and money-state risk. #614 should include representative owner-boundary tests; #617 should review transaction invariants. |
 | `/api/payments/options`, `/api/payments/charge-saved-method`, `/api/payments/create-payment-intent`, `/api/payments/create-setup-intent` | Authenticated active member. | Signed-in member discovering payment options, paying for booking, or saving payment method. | Payment method availability, payment, payment transaction, booking, Stripe customer/payment method/client secret references. | Stripe API for Stripe paths; Xero-backed Internet Banking availability is reported but settlement stays in Xero reconciliation. | Auth.js session, active-account guard, booking/payment service checks, module-state gates for Internet Banking. | Audit/logging around payment reconciliation and failure paths. | Client secret exposure is intentional to the owning member only. Internet Banking bookings must stay out of Stripe-only mutation paths; #617 should verify ownership checks and cents-only money handling. |
 | `/api/profile`, `/api/notifications/preferences`, `/api/member/**` | Authenticated active member. | Signed-in member. | Member PII, address/phone/email preferences, audit log, credit balance, subscription status, onboarding, data export, deletion request, membership cancellation request/confirmation. | Email send, Xero contact/group update, export generation where invoked. | Auth.js session, active-account guard, rate limits for data export, deletion request, and cancellation request/confirmation. | Audit log for profile/security/deletion/cancellation operations; logger for Xero/email failures. | Member PII and lifecycle state. #614 should cover inactive/forced-password boundaries; #617 should review lifecycle integrity. |
+| `/api/members/[id]/photo` GET (serve) | Data-layer authorisation, not a session-guard marker. Public **iff** the target member has an active, published `CommitteeAssignment`; otherwise the handler resolves the session and serves only to the owning member (own id) or a `membership:view` admin. | Anonymous website visitor (committee case), owning member, or membership admin. | One `MediaImage` blob (`kind = MEMBER_PHOTO`) plus the target member's photo pointer and committee-published status. Member photos never surface through the public `/api/images/[id]` content path (that route returns 404 for any non-`CONTENT` row — enforced, not just documented) or the content picker (`kind = CONTENT` filter). | None. | Documented mixed-method public GET in `api-route-security.ts`, enforced by `api-route-boundaries.test.ts`. Committee-public responses use `Cache-Control: public, max-age=300, must-revalidate` + an **opaque digest ETag** (never the raw `MediaImage` id; short window bounds cache-leak past un-publication); private responses use `private, no-store` + `Vary: Cookie`. `Content-Disposition: inline`, `X-Content-Type-Options: nosniff`, and a locked-down CSP on every response; content-type restricted to JPEG/PNG/WebP at upload (no SVG). | Non-mutating; no per-fetch audit. | Prefers 404 over 403 so a private photo's existence is never confirmed. Cache-leak window bounded to 300s if committee membership is revoked. |
+| `/api/members/[id]/photo` POST/DELETE (upload/remove) | Owning member via `requireActiveSessionUser` (self path), or a `membership:edit` admin via `requireAdmin` acting on behalf. A plain member may act only on their own id (no IDOR). | Signed-in member (self) or membership-edit admin. | Creates/deletes a `MediaImage` (`kind = MEMBER_PHOTO`) and sets `Member.photoImageId` + `photoUpdatedAt`/`photoUpdatedByMemberId` audit columns. Replace and remove read the current pointer under a `SELECT … FOR UPDATE` row lock and delete exactly that prior MEMBER_PHOTO blob (scoped `deleteMany` on `kind`) inside one transaction — concurrent replace/remove serialise, no orphans. | None. | Content-type sniffed from magic bytes (JPEG/PNG/WebP allowlist), 2MB byte cap (Content-Length pre-check + buffered recheck), and a 4096px dimension backstop (JPEG/PNG/GIF/WebP dimensions parsed, incl. the VP8X canvas, so an oversized decode-bomb is rejected). EXIF/XMP/comment metadata (camera GPS) is stripped from JPEG/PNG/WebP before storage. Client-side resize only — no server image library (metadata strip is byte-surgery, not a re-encode). Documented member mixed-methods, enforced by `api-route-boundaries.test.ts`. | `logAudit` `member_photo.upload` / `member_photo.remove` with actor/subject and on-behalf flag; DB audit columns stamped. | Self-upload is the consent (ADR-001 decision 4). Committee removal warning is a UI concern (MP3/MP5); no DB-level block. |
 | `/api/members/family/**` | Authenticated active member, usually family-group owner or adult login holder. | Signed-in member managing family relationships. | Family groups, invitations, child/adult join/removal requests, delegated non-login member details, inherited email, dependent records. | Email notifications and optional Xero contact/group sync. | Auth.js session, active-account guard, family request rate limiter, service-level ownership and adult/login-holder checks. | Audit log, logger, and email logs. | Family IDOR and shared-email risk. #614 should include a representative family-owned-resource boundary test. |
 | `/api/issue-reports` | Authenticated active member. | Signed-in member reporting an issue. | Issue report text, screenshot metadata/storage path if captured, member id. | Email notification to admins. | Auth.js session, active-account guard, issue-report retention helpers. | Audit log and logger. | Not anonymous in current code. #615 should only treat it as public if the implementation changes. |
 | `/api/chores/[token]` | Public opaque token. | Guest with chore link. | Guest chore assignment for one token/date. | None. | `rateLimiters.guestChoreToken`; token validation; `PUT` explicitly returns 405. | None. | Token URL can be logged or forwarded. Existing mitigation is rate limit and token expiry. Keep in public allowlist. |
@@ -753,6 +755,84 @@ Residual risks to keep visible:
   HIGH to blocking later if the operational noise level is acceptable.
 - The repo does not yet publish signed image attestations or SBOM artifacts.
   Current image provenance is protected PR checks plus commit-SHA GHCR tags.
+
+## Streamed Multipart Upload Cap Review - 2026-07-24
+
+Reviewed every `multipart/form-data` upload route for the memory-pressure DoS in
+#2235: a `Content-Length` header pre-check followed by `request.formData()`. The
+`Content-Length` header is optional and attacker-controlled, so a chunked
+request (no header) or a spoofed-small value skipped the pre-check and
+`request.formData()` then buffered the **entire** body into memory before the
+real per-file byte caps ran. An authenticated user could POST a multi-GB body
+and exhaust server memory.
+
+Hardening applied in #2235:
+
+- A shared streaming reader, `readCappedMultipartFormData`
+  (`src/lib/capped-multipart.ts`), replaces `request.formData()` on every
+  multipart route. It pipes `request.body` through `busboy` incrementally with a
+  total-byte counter sitting **upstream** of the parser: the moment the running
+  total exceeds the route's request-body ceiling the source stream is cancelled
+  and the parser torn down, so the server stops consuming a hostile body
+  mid-flight instead of buffering it whole. It also enforces per-file, file-count
+  and field caps, and fails **closed** (413) when `busboy` would silently
+  truncate a file past its `fileSize` limit rather than accepting the truncated
+  remainder. It keeps the cheap honest-`Content-Length` fast-fail (413 before the
+  stream is read) and uses the strict `Content-Length` parse from
+  `readBoundedWebhookText` so a malformed header is treated as absent, never
+  trusted.
+- Adopted across all four multipart surfaces with their existing status codes and
+  messages preserved: `/api/members/[id]/photo` (2MB/file), `/api/admin/image-library`
+  (2MB/file), `/api/admin/image-manager/upload` (a batch route — now capped at 25
+  files and an 80MB total request body, while keeping its friendly per-file
+  10MB result), and the config-transfer `readBundleUpload` shared by the plan /
+  apply / reseal routes (50MB bundle file, ~54MB request body).
+- **Inclusive caps (fix, this review).** `busboy` trips its `fileSize` / `fieldSize`
+  truncation when the running size *reaches* the limit (`size === limit`), so the
+  first cut of #2235 turned a byte-exact upload (a file of exactly 2MB / 50MB, or a
+  form field of exactly the field cap) into a spurious 413 — the old post-parse
+  `size > MAX` check accepted it. The reader now configures `busboy` with
+  `fileSize: maxFileBytes + 1` and `fieldSize: maxFieldBytes + 1`, restoring the
+  inclusive-maximum semantics; the routes keep their own `size > MAX` re-checks.
+- **Cause-tagged 413s.** The reader now reports *which* cap tripped
+  (`request` / `file` / `field` / `count`) so routes message precisely: the
+  image-manager batch distinguishes "too many files (25 limit)" from "batch too
+  large (80MB total) — split it", and `readBundleUpload` was given an explicit
+  2MB form-field cap (the accompanying `resolutions` JSON legitimately exceeds the
+  1MiB default) and now says "Upload form fields are too large." for a field/count
+  overflow instead of the misleading "Bundle is too large." reserved for the file
+  itself.
+
+Guaranteed backstop (defence in depth):
+
+- The reverse-proxy / platform request-body cap is the guaranteed first line of
+  defence: it rejects an oversize body at the edge before it ever reaches the
+  Node process, independent of any application code. Configure it on every
+  deployment — Caddy's `request_body { max_size <n> }` directive, Nginx
+  `client_max_body_size`, or the host platform's request-size limit — set
+  comfortably above the largest legitimate in-app cap (the config-transfer 50MB
+  bundle and the 80MB image-manager batch), e.g. 100MB.
+- **Current state:** the repo's `Caddyfile` and `Caddyfile.staging` set
+  `request_body { max_size 100MB }` (#2235), so an oversize body is dropped at
+  the edge on every Caddy-fronted deployment. Deployments fronted by something
+  other than Caddy must configure the equivalent limit themselves. The in-app
+  reader remains the second line regardless — it enforces the per-route
+  byte/file caps a generic proxy limit cannot know about, and it protects an
+  attacker path that reaches the Node process directly (bypassing the proxy).
+
+Accepted residual risk:
+
+- **Slow-loris (trickle) uploads.** This fix targets *memory* pressure — it
+  bounds how many bytes a hostile body can buffer, not how long a connection is
+  held. A client that trickles bytes *under* the caps still occupies a connection
+  and request-handler slot for as long as the transfer lasts; the streamed reader
+  does not shorten that. This is bounded today by Node's default
+  `server.requestTimeout` (~5 minutes, after which the request is aborted) and by
+  the reverse proxy's own connection/read timeouts and concurrency handling. We
+  accept it as a **residual** here rather than treat it as closed: mitigating
+  connection-holding attacks is the proxy/platform's job (request/idle timeouts,
+  per-IP connection limits), not this in-app byte cap. Revisit if a deployment
+  fronts the Node process without such a timeout.
 
 ## Follow-Up Mapping
 

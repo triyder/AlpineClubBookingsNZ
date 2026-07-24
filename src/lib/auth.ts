@@ -176,7 +176,32 @@ function buildGoogleProvider(credentials: {
       // eligible, else a sentinel carrying the refusal reason for signIn. The
       // sentinel intentionally omits the augmented User fields (it can never
       // mint a session — signIn refuses first), so cast past the User type.
-      return (await resolveGoogleProfile(profile)) as unknown as GoogleMemberUser;
+      //
+      // Defence in depth (#2229): resolveGoogleProfile is already fail-closed and
+      // never throws, but this boundary to @auth/core must be belt-and-braces —
+      // any throw escaping profile() lets @auth/core substitute a default user
+      // whose id matches no member (the dangling-session incident). Catch here
+      // too and return the explicit refusal sentinel so a session can never be
+      // minted from a fallback identity.
+      try {
+        return (await resolveGoogleProfile(
+          profile,
+        )) as unknown as GoogleMemberUser;
+      } catch (error) {
+        logger.error(
+          { err: error instanceof Error ? error.name : "unknown" },
+          "Google provider profile() threw — refusing sign-in (fail closed)",
+        );
+        const rawSub = (profile as { sub?: unknown } | undefined)?.sub;
+        const rawEmail = (profile as { email?: unknown } | undefined)?.email;
+        const sub = typeof rawSub === "string" ? rawSub : "";
+        const email = typeof rawEmail === "string" ? rawEmail : null;
+        return {
+          id: `google-oauth:${sub || "unknown"}`,
+          email,
+          googleLoginStatus: "failed",
+        } as unknown as GoogleMemberUser;
+      }
     },
   });
 }
@@ -456,6 +481,11 @@ export const authConfig = {
             return "/login?error=google_unlinked";
           case "password_change":
             return "/login?error=google_password_change";
+          case "failed":
+            // The resolver (or profile() boundary) failed closed — a transient
+            // internal error, not a refused member (#2229). Surface the
+            // "couldn't complete" message rather than the "not linked" one.
+            return "/login?error=google_failed";
           default:
             return "/login?error=google_refused";
         }
@@ -470,6 +500,26 @@ export const authConfig = {
           data: { lastLoginAt: new Date() },
         });
       } catch (error) {
+        // A P2025 (record-not-found) is PROOF the id we are about to mint a
+        // session for matches no member row — a dangling session id (production
+        // incident 2026-07-24, #2229, where @auth/core substituted a fallback
+        // user). Refuse the sign-in rather than mint a session that /dashboard
+        // can never resolve (which drove the /login <-> /dashboard white-flash
+        // loop). Every OTHER error (transient DB/connection issue) keeps the
+        // warn-and-allow behaviour: the id is sound, only the timestamp bump
+        // failed — distinguish strictly by Prisma error code.
+        if (
+          error &&
+          typeof error === "object" &&
+          "code" in error &&
+          (error as { code?: unknown }).code === "P2025"
+        ) {
+          logger.error(
+            { err: error, memberId: user.id },
+            "Google sign-in refused: session id resolves to no member (dangling id)",
+          );
+          return "/login?error=google_failed";
+        }
         logger.warn(
           { err: error, memberId: user.id },
           "Failed to update member last login timestamp (Google sign-in)",
@@ -574,6 +624,21 @@ export const authConfig = {
           if (user && hasAccessRole(member, "LODGE")) {
             token.exp = Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60;
           }
+        } else {
+          // No live member resolves for this token id — a deleted member, or a
+          // dangling id from a fallback-user substitution (#2229). Invalidate the
+          // session using the SAME kill-switch as a revoking password change:
+          // auth() (the shared helper) nulls any session carrying
+          // sessionInvalidated. Because every server touch — the authenticated
+          // layout AND /login itself — resolves the session through auth(), a
+          // dangling token now reads as logged-out EVERYWHERE, so /login renders
+          // the sign-in form instead of bouncing back to /dashboard. That breaks
+          // the /dashboard <-> /login white-flash loop at its root rather than
+          // papering over one redirect. loadSessionMemberSecurity returns null
+          // ONLY for a genuinely absent row (a transient DB error throws and is
+          // left to propagate), so a connection blip never invalidates a live
+          // session.
+          token.sessionInvalidated = true;
         }
       }
 

@@ -22,8 +22,11 @@ export async function DELETE(
   if (!guard.ok) return guard.response;
   const session = guard.session;
 
-  const existing = await prisma.mediaImage.findUnique({
-    where: { id },
+  // Scope the lookup to CONTENT so a content admin can never reach a
+  // MEMBER_PHOTO blob (which shares this table) from the media-library surface,
+  // mirroring how the member-photo route scopes its own deletes to MEMBER_PHOTO.
+  const existing = await prisma.mediaImage.findFirst({
+    where: { id, kind: "CONTENT" },
     select: { id: true, filename: true },
   });
   if (!existing) {
@@ -41,7 +44,9 @@ export async function DELETE(
     select: { slug: true },
   });
 
-  await prisma.mediaImage.delete({ where: { id } });
+  // Kind-scoped delete (defence in depth): even if the lookup raced, the delete
+  // only ever touches a CONTENT row, never a member photo.
+  await prisma.mediaImage.deleteMany({ where: { id, kind: "CONTENT" } });
 
   logAudit({
     action: "media_image.delete",

@@ -61,10 +61,14 @@ export function buildContentSecurityPolicy(nonce: string, options: CspOptions = 
   // `'self' data:`; every other route's img-src is unchanged.
   const isDisplay = pathname === "/display";
   const isPreviewHost = pathname === "/admin/display/preview";
+  // `blob:` is required for the member-photo crop UI (epic #171): it previews the
+  // locally-selected file by loading its `URL.createObjectURL(...)` blob into an
+  // <img>. blob: URLs are same-origin and page-created — no exfiltration vector,
+  // unlike the `https:` wildcard the display route deliberately drops.
   const imgSrc =
     isDisplay || isPreviewHost
       ? "img-src 'self' data:"
-      : "img-src 'self' data: https: https://www.google-analytics.com https://*.google-analytics.com";
+      : "img-src 'self' data: blob: https: https://www.google-analytics.com https://*.google-analytics.com";
 
   const directives = [
     "default-src 'self'",

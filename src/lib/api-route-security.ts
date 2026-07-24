@@ -269,6 +269,25 @@ export type MixedMethodApiRouteMetadata = {
  * boundary and lets the boundary test enforce per-method guards (issue #812).
  */
 export const mixedMethodApiRoutes = {
+  "src/app/api/members/[id]/photo/route.ts": {
+    methods: {
+      GET: {
+        boundary: "public",
+        reason:
+          "Scoped member-photo serving (epic #171, MP2). Anonymous fetches succeed only when the target member has an active, published CommitteeAssignment (their photo is committee-public); otherwise the handler resolves the session and serves only to the owning member or a membership viewer/admin, returning 404 to everyone else. Committee-public responses carry a short public cache; private responses are no-store. Data-layer authorisation, never the public /api/images path.",
+      },
+      POST: {
+        boundary: "member",
+        reason:
+          "Member self-upload or membership-edit admin on-behalf upload. A plain member may act only on their own id (requireActiveSessionUser); acting on another member requires requireAdmin({ membership: edit }). Validates content-type (JPEG/PNG/WebP), byte cap and dimension backstop; no server-side resize.",
+      },
+      DELETE: {
+        boundary: "member",
+        reason:
+          "Member self-remove or membership-edit admin on-behalf remove, same actor gate as POST. Clears Member.photoImageId with audit columns and deletes the MEMBER_PHOTO blob.",
+      },
+    },
+  },
   "src/app/api/group-bookings/[code]/route.ts": {
     methods: {
       GET: {

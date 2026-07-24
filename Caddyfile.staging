@@ -1,4 +1,9 @@
 {$STAGING_CADDY_SITE:http://localhost} {
+	# Guaranteed request-body backstop (#2235); mirrors the production
+	# Caddyfile. See docs/SECURITY-ATTACK-SURFACE.md.
+	request_body {
+		max_size 100MB
+	}
 	header {
 		X-Content-Type-Options "nosniff"
 		X-Frame-Options "DENY"
