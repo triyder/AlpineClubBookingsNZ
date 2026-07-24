@@ -163,12 +163,14 @@ export async function readCappedMultipartFormData(
       // undici does not contain (observed on Node 24 CI; on Node's default
       // unhandled-rejection policy this can terminate the worker — a DoS, the
       // opposite of this reader's purpose). We cannot try/catch undici's
-      // internal pull. Because the wrapper is pull-driven, ceasing to read halts
+      // internal pull. Because the wrapper is pull-driven (type "bytes",
+      // highWaterMark 0 — it prefetches nothing itself), ceasing to read halts
       // the source: `pull` (hence `iterator.next()` on the socket) is only
       // driven by consumer demand, so once `pump()` returns on the `settled`
-      // guard the IncomingMessage is left paused and memory stays bounded to
-      // ~one highWaterMark of prefetch (measured: a couple of 64 KiB chunks past
-      // the cap). The guaranteed backstop remains the reverse-proxy body cap.
+      // guard the IncomingMessage is left paused. Residual memory past the cap
+      // is one IncomingMessage highWaterMark (~64 KiB, measured) plus the
+      // kernel socket buffer — a constant independent of attacker body size.
+      // The guaranteed backstop remains the reverse-proxy body cap.
       try {
         bb.destroy();
       } catch {
