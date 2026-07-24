@@ -77,8 +77,13 @@ function oversizeAggregateRequest(): NextRequest {
   const LIMIT = MAX_UPLOAD_REQUEST_BYTES + 2 * 1024 * 1024; // a touch over the cap
   let sent = 0;
   let headerSent = false;
+  let cancelled = false;
+  // Cancel-safe source: once the reader stops/cancels, never enqueue again, so
+  // the fixture can't race a closed controller if the runtime tears the
+  // abandoned body down mid-stream.
   const stream = new ReadableStream({
     pull(controller) {
+      if (cancelled) return;
       if (!headerSent) {
         headerSent = true;
         controller.enqueue(new Uint8Array(header));
@@ -91,6 +96,9 @@ function oversizeAggregateRequest(): NextRequest {
       }
       controller.enqueue(CHUNK);
       sent += CHUNK.length;
+    },
+    cancel() {
+      cancelled = true;
     },
   });
   return new NextRequest("http://localhost/api/admin/image-manager/upload", {

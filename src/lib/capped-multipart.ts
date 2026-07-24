@@ -13,8 +13,10 @@ import busboy from "busboy";
  *
  * This reader instead pipes `request.body` through busboy incrementally with a
  * total-byte counter sitting UPSTREAM of the parser: the moment the running
- * total exceeds `maxRequestBytes` the source stream is cancelled and the parser
- * torn down, so the server stops consuming a hostile body mid-flight. busboy's
+ * total exceeds `maxRequestBytes` the reader STOPS pulling from the source and
+ * the parser is torn down, so the server stops consuming a hostile body
+ * mid-flight. (We deliberately stop reading rather than cancel the body reader
+ * — see the `settle` note below for why cancelling is unsafe here.) busboy's
  * own `fileSize`/`files`/`fields`/`parts` limits abort truncating parts the same
  * way. It returns a standard `FormData` built from in-memory `File` objects, so
  * a route only swaps `await request.formData()` for this helper and maps the two
@@ -143,11 +145,30 @@ export async function readCappedMultipartFormData(
     const settle = (result: CappedMultipartResult) => {
       if (settled) return;
       settled = true;
-      // Stop consuming the source and tear the parser down so no bytes are read
-      // after a cap trips and no dangling listeners survive. busboy.destroy()
-      // may emit 'error'; the error listener below is left attached and the
-      // settled guard makes it a no-op.
-      reader.cancel().catch(() => {});
+      // Tear the parser down and STOP pulling from the body — but do NOT call
+      // `reader.cancel()`. Constraint: in production `request.body` is undici's
+      // internal BYTE stream built by `ReadableStreamFrom()` over the Node
+      // `IncomingMessage` — Next sets `NodeNextRequest.body = _req` (the raw
+      // IncomingMessage) and hands it to `new NextRequest(url, { body,
+      // duplex: "half" })` (next/dist/server/base-http/node.js +
+      // .../web/spec-extension/adapters/next-request.js `fromNodeNextRequest`),
+      // and undici wraps any async-iterable body via `ReadableStreamFrom`
+      // (node_modules/undici/lib/core/util.js:623). That wrapper is a
+      // pull-driven `type: "bytes"` stream whose async pull runs
+      // `iterator.next().then((v) => controller.enqueue(v))` with
+      // `cancel() { iterator.return(); }`. Cancelling mid-stream closes the byte
+      // controller while a `next()` is in flight; the resolved chunk is then
+      // enqueued into the already-closed controller → "Invalid state:
+      // ReadableStream is already closed", surfacing as an UNHANDLED rejection
+      // undici does not contain (observed on Node 24 CI; on Node's default
+      // unhandled-rejection policy this can terminate the worker — a DoS, the
+      // opposite of this reader's purpose). We cannot try/catch undici's
+      // internal pull. Because the wrapper is pull-driven, ceasing to read halts
+      // the source: `pull` (hence `iterator.next()` on the socket) is only
+      // driven by consumer demand, so once `pump()` returns on the `settled`
+      // guard the IncomingMessage is left paused and memory stays bounded to
+      // ~one highWaterMark of prefetch (measured: a couple of 64 KiB chunks past
+      // the cap). The guaranteed backstop remains the reverse-proxy body cap.
       try {
         bb.destroy();
       } catch {

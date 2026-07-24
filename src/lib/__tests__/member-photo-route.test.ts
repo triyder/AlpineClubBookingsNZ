@@ -296,8 +296,13 @@ const MEMBER_PHOTO_BOUNDARY_CT =
 function chunkedOversizeUploadRequest(id: string): NextRequest {
   const body = rawMultipartBody(3 * 1024 * 1024); // > 2MB + 64KB request cap
   let offset = 0;
+  let cancelled = false;
+  // Cancel-safe source: once the reader stops/cancels, never enqueue again, so
+  // the fixture can't race a closed controller if the runtime tears the
+  // abandoned body down mid-stream.
   const stream = new ReadableStream({
     pull(controller) {
+      if (cancelled) return;
       if (offset >= body.length) {
         controller.close();
         return;
@@ -305,6 +310,9 @@ function chunkedOversizeUploadRequest(id: string): NextRequest {
       const end = Math.min(offset + 64 * 1024, body.length);
       controller.enqueue(new Uint8Array(body.subarray(offset, end)));
       offset = end;
+    },
+    cancel() {
+      cancelled = true;
     },
   });
   return new NextRequest(`http://localhost/api/members/${id}/photo`, {

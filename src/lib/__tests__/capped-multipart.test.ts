@@ -43,6 +43,13 @@ function bufferedRequest(body: Buffer, headers: Record<string, string> = {}) {
  * A Request whose body is a chunked ReadableStream that reports how many chunks
  * were actually pulled and whether it was cancelled — so a test can prove the
  * reader stops consuming the source instead of draining the whole body.
+ *
+ * Non-buffering is proven by `chunksPulled`/`bytesEnqueued` staying near the cap
+ * (the reader ceases to pull once the request cap trips). `cancelled` is
+ * expected to stay FALSE: the helper deliberately does NOT cancel the body
+ * reader (that would race undici's byte-stream wrapper — see the `settle` note
+ * in capped-multipart.ts); it relies on the source being pull-driven so that
+ * simply not reading halts it.
  */
 function streamedRequest(
   body: Buffer,
@@ -134,9 +141,11 @@ describe("readCappedMultipartFormData", () => {
     });
 
     expect(result).toEqual({ ok: false, reason: "too_large", cause: "request" });
-    // Non-buffering proof: the source was cancelled after ~cap bytes, nowhere
-    // near the full 4 MB (256 KB / 64 KB ≈ 4 chunks, plus a small margin).
-    expect(meta.cancelled).toBe(true);
+    // Non-buffering proof: the reader stopped pulling after ~cap bytes, nowhere
+    // near the full 4 MB (256 KB / 64 KB ≈ 4 chunks, plus a small margin). The
+    // helper stops by ceasing to read, NOT by cancelling the body reader, so the
+    // source's cancel() must never fire.
+    expect(meta.cancelled).toBe(false);
     expect(meta.chunksPulled).toBeLessThan(12);
     expect(meta.bytesEnqueued).toBeLessThan(1024 * 1024);
   });
@@ -160,7 +169,8 @@ describe("readCappedMultipartFormData", () => {
     });
 
     expect(result).toEqual({ ok: false, reason: "too_large", cause: "request" });
-    expect(meta.cancelled).toBe(true);
+    // The reader stops by ceasing to pull, not by cancelling (see note above).
+    expect(meta.cancelled).toBe(false);
     expect(meta.bytesEnqueued).toBeLessThan(1024 * 1024);
   });
 
