@@ -460,10 +460,11 @@ menu.
   chunked request with no `Content-Length` or a spoofed-small one — is cut off
   mid-stream and rejected (`413`) before it can exhaust memory, and each route's
   per-file byte cap is enforced incrementally. The **guaranteed backstop** is
-  still the reverse-proxy / platform request-body limit (Caddy
-  `request_body { max_size <n> }`, Nginx `client_max_body_size`, or the host
-  platform limit): set it comfortably above the largest in-app cap (e.g. 100MB)
-  so an oversize body is dropped at the edge before it reaches the app. See
+  still the reverse-proxy / platform request-body limit: the repo's `Caddyfile`
+  and `Caddyfile.staging` set `request_body { max_size 100MB }`, comfortably
+  above the largest in-app cap, so an oversize body is dropped at the edge
+  before it reaches the app. Deployments not fronted by Caddy must set the
+  equivalent (Nginx `client_max_body_size`, or the host platform limit). See
   `docs/SECURITY-ATTACK-SURFACE.md` for the full threat model.
 
 ### Configurable "Book Now" button

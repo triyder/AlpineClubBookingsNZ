@@ -797,14 +797,13 @@ Guaranteed backstop (defence in depth):
   `client_max_body_size`, or the host platform's request-size limit — set
   comfortably above the largest legitimate in-app cap (the config-transfer 50MB
   bundle and the 80MB image-manager batch), e.g. 100MB.
-- **Current state / operator action:** the repo's `Caddyfile` does **not** yet
-  set `request_body { max_size }`, so today the in-app streamed reader in
-  `readCappedMultipartFormData` is the effective enforcement. Adding the Caddy
-  (or platform) cap is recommended so an oversize body is dropped at the edge
-  rather than streamed into the app. The in-app reader remains the second line
-  regardless — it enforces the per-route byte/file caps a generic proxy limit
-  cannot know about, and it protects an attacker path that reaches the Node
-  process directly (bypassing the proxy).
+- **Current state:** the repo's `Caddyfile` and `Caddyfile.staging` set
+  `request_body { max_size 100MB }` (#2235), so an oversize body is dropped at
+  the edge on every Caddy-fronted deployment. Deployments fronted by something
+  other than Caddy must configure the equivalent limit themselves. The in-app
+  reader remains the second line regardless — it enforces the per-route
+  byte/file caps a generic proxy limit cannot know about, and it protects an
+  attacker path that reaches the Node process directly (bypassing the proxy).
 
 ## Follow-Up Mapping
 
