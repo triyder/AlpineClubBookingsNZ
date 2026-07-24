@@ -265,6 +265,28 @@ describe("resolveGoogleProfile (sub-only, no provisioning)", () => {
     expect(result.googleLoginStatus).toBe("failed");
     expect(mockMemberFindFirst).not.toHaveBeenCalled();
   });
+
+  it("FAILS CLOSED to the refusal sentinel when the DB read throws (never throws) (#2229)", async () => {
+    // The resolver runs inside the provider profile(), i.e. inside @auth/core. A
+    // transient DB failure must NEVER surface as a throw — that let @auth/core
+    // substitute a default/fallback user whose id matched no member row, the
+    // dangling-session incident. It must resolve to the "failed" sentinel with a
+    // non-member id instead.
+    mockMemberFindFirst.mockRejectedValue(new Error("connection lost"));
+
+    const result = await resolveGoogleProfile({
+      sub: "google-sub-1",
+      email: "member@example.com",
+    });
+
+    expect(result).toEqual({
+      id: "google-oauth:google-sub-1",
+      email: "member@example.com",
+      googleLoginStatus: "failed",
+    });
+    // The non-member sentinel id can never resolve a session.
+    expect(result.id).not.toBe("member-1");
+  });
 });
 
 describe("linkGoogleAccount (guards + audit)", () => {

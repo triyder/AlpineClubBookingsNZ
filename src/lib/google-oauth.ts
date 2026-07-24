@@ -326,31 +326,46 @@ export async function resolveGoogleProfile(profile: {
     return { id: sentinelId, email, googleLoginStatus: "failed" };
   }
 
-  const member = await prisma.member.findFirst({
-    where: { googleSub: sub, canLogin: true },
-  });
+  // This runs INSIDE the Google provider's profile(), i.e. inside @auth/core. A
+  // throw escaping here lets @auth/core substitute a default/fallback user whose
+  // id matches no member row — the production dangling-session incident that
+  // trapped /dashboard <-> /login in a redirect loop (#2229). The live DB read
+  // below can throw transiently, so fail CLOSED to the explicit refusal sentinel
+  // rather than ever surfacing a throw. The sentinel id is deliberately not a
+  // member id, and signIn maps "failed" to a friendly refusal redirect.
+  try {
+    const member = await prisma.member.findFirst({
+      where: { googleSub: sub, canLogin: true },
+    });
 
-  if (!member) {
-    return { id: sentinelId, email, googleLoginStatus: "unlinked" };
-  }
-  if (!member.active || !member.emailVerified) {
-    return { id: sentinelId, email, googleLoginStatus: "refused" };
-  }
-  if (member.forcePasswordChange) {
-    return { id: sentinelId, email, googleLoginStatus: "password_change" };
-  }
+    if (!member) {
+      return { id: sentinelId, email, googleLoginStatus: "unlinked" };
+    }
+    if (!member.active || !member.emailVerified) {
+      return { id: sentinelId, email, googleLoginStatus: "refused" };
+    }
+    if (member.forcePasswordChange) {
+      return { id: sentinelId, email, googleLoginStatus: "password_change" };
+    }
 
-  return {
-    id: member.id,
-    email: member.email,
-    name: `${member.firstName} ${member.lastName}`,
-    role: member.role,
-    forcePasswordChange: member.forcePasswordChange,
-    isEmailVerified: member.emailVerified,
-    twoFactorEnabled: member.twoFactorEnabled,
-    twoFactorMethod: member.twoFactorMethod,
-    googleLoginStatus: "ok",
-  };
+    return {
+      id: member.id,
+      email: member.email,
+      name: `${member.firstName} ${member.lastName}`,
+      role: member.role,
+      forcePasswordChange: member.forcePasswordChange,
+      isEmailVerified: member.emailVerified,
+      twoFactorEnabled: member.twoFactorEnabled,
+      twoFactorMethod: member.twoFactorMethod,
+      googleLoginStatus: "ok",
+    };
+  } catch (error) {
+    logger.error(
+      { err: error instanceof Error ? error.name : "unknown" },
+      "resolveGoogleProfile failed — refusing Google sign-in (fail closed)",
+    );
+    return { id: sentinelId, email, googleLoginStatus: "failed" };
+  }
 }
 
 export type GoogleLinkOutcome =
