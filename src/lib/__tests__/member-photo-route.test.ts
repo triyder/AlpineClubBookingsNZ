@@ -101,6 +101,30 @@ const PNG_BYTES = (() => {
   ]);
 })();
 
+// A structurally valid PNG of EXACTLY `total` bytes: signature + IHDR + one
+// large IDAT (a critical chunk the metadata stripper keeps) + IEND. Used to
+// prove a photo of exactly MAX_MEMBER_PHOTO_BYTES passes the fail-closed strip
+// and stores (201) rather than 413ing on the inclusive-cap boundary (#2235).
+function pngOfExactSize(total: number): Buffer {
+  const pngChunk = (type: string, data: Buffer) => {
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(data.length, 0);
+    const crc = Buffer.alloc(4); // stripper does not validate the CRC
+    return Buffer.concat([len, Buffer.from(type, "ascii"), data, crc]);
+  };
+  const ihdrData = Buffer.alloc(13);
+  ihdrData.writeUInt32BE(64, 0); // width
+  ihdrData.writeUInt32BE(32, 4); // height
+  const sig = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const ihdr = pngChunk("IHDR", ihdrData);
+  const iend = pngChunk("IEND", Buffer.alloc(0));
+  // sig + ihdr + (12 header/crc + idatLen) + iend === total.
+  const idatLen = total - (sig.length + ihdr.length + 12 + iend.length);
+  if (idatLen < 0) throw new Error("target size too small for a PNG");
+  const idat = pngChunk("IDAT", Buffer.alloc(idatLen, 0x00));
+  return Buffer.concat([sig, ihdr, idat, iend]);
+}
+
 const GIF_BYTES = Buffer.from("GIF89a\x01\x00\x01\x00", "latin1");
 
 const WEBP_BYTES = (() => {
@@ -618,6 +642,26 @@ describe("POST /api/members/[id]/photo — upload", () => {
 
     expect(response.status).toBe(413);
     expect(mocks.mediaImageCreate).not.toHaveBeenCalled();
+  });
+
+  it("accepts a photo of EXACTLY the 2MB cap (inclusive boundary, #2235 off-by-one guard)", async () => {
+    // busboy trips its file limit at `size === cap`; the streamed reader passes
+    // `cap + 1` so a photo of exactly MAX_MEMBER_PHOTO_BYTES still stores, as it
+    // did under the old post-parse `size > MAX` check — never a spurious 413 on
+    // the boundary. A real 2MB PNG so it also clears the fail-closed EXIF strip.
+    const MAX_MEMBER_PHOTO_BYTES = 2 * 1024 * 1024;
+    wireMemberLookups({ photoImageId: null });
+    mocks.auth.mockResolvedValue(ownerSession);
+
+    const exact = pngOfExactSize(MAX_MEMBER_PHOTO_BYTES);
+    expect(exact.length).toBe(MAX_MEMBER_PHOTO_BYTES);
+    const file = new File([new Uint8Array(exact)], "exact.png", {
+      type: "image/png",
+    });
+    const response = await POST(uploadRequest(TARGET_ID, file), params(TARGET_ID));
+
+    expect(response.status).toBe(201);
+    expect(mocks.mediaImageCreate).toHaveBeenCalledTimes(1);
   });
 
   it("rejects a chunked, spoofed-Content-Length oversize body with 413 (streamed cap, #2235)", async () => {

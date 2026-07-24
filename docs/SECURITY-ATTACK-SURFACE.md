@@ -786,7 +786,22 @@ Hardening applied in #2235:
   (2MB/file), `/api/admin/image-manager/upload` (a batch route — now capped at 25
   files and an 80MB total request body, while keeping its friendly per-file
   10MB result), and the config-transfer `readBundleUpload` shared by the plan /
-  apply / reseal routes (50MB bundle file, ~52MB request body).
+  apply / reseal routes (50MB bundle file, ~54MB request body).
+- **Inclusive caps (fix, this review).** `busboy` trips its `fileSize` / `fieldSize`
+  truncation when the running size *reaches* the limit (`size === limit`), so the
+  first cut of #2235 turned a byte-exact upload (a file of exactly 2MB / 50MB, or a
+  form field of exactly the field cap) into a spurious 413 — the old post-parse
+  `size > MAX` check accepted it. The reader now configures `busboy` with
+  `fileSize: maxFileBytes + 1` and `fieldSize: maxFieldBytes + 1`, restoring the
+  inclusive-maximum semantics; the routes keep their own `size > MAX` re-checks.
+- **Cause-tagged 413s.** The reader now reports *which* cap tripped
+  (`request` / `file` / `field` / `count`) so routes message precisely: the
+  image-manager batch distinguishes "too many files (25 limit)" from "batch too
+  large (80MB total) — split it", and `readBundleUpload` was given an explicit
+  2MB form-field cap (the accompanying `resolutions` JSON legitimately exceeds the
+  1MiB default) and now says "Upload form fields are too large." for a field/count
+  overflow instead of the misleading "Bundle is too large." reserved for the file
+  itself.
 
 Guaranteed backstop (defence in depth):
 
@@ -804,6 +819,20 @@ Guaranteed backstop (defence in depth):
   reader remains the second line regardless — it enforces the per-route
   byte/file caps a generic proxy limit cannot know about, and it protects an
   attacker path that reaches the Node process directly (bypassing the proxy).
+
+Accepted residual risk:
+
+- **Slow-loris (trickle) uploads.** This fix targets *memory* pressure — it
+  bounds how many bytes a hostile body can buffer, not how long a connection is
+  held. A client that trickles bytes *under* the caps still occupies a connection
+  and request-handler slot for as long as the transfer lasts; the streamed reader
+  does not shorten that. This is bounded today by Node's default
+  `server.requestTimeout` (~5 minutes, after which the request is aborted) and by
+  the reverse proxy's own connection/read timeouts and concurrency handling. We
+  accept it as a **residual** here rather than treat it as closed: mitigating
+  connection-holding attacks is the proxy/platform's job (request/idle timeouts,
+  per-IP connection limits), not this in-app byte cap. Revisit if a deployment
+  fronts the Node process without such a timeout.
 
 ## Follow-Up Mapping
 

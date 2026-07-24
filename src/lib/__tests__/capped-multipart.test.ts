@@ -133,7 +133,7 @@ describe("readCappedMultipartFormData", () => {
       maxFiles: 1,
     });
 
-    expect(result).toEqual({ ok: false, reason: "too_large" });
+    expect(result).toEqual({ ok: false, reason: "too_large", cause: "request" });
     // Non-buffering proof: the source was cancelled after ~cap bytes, nowhere
     // near the full 4 MB (256 KB / 64 KB ≈ 4 chunks, plus a small margin).
     expect(meta.cancelled).toBe(true);
@@ -159,7 +159,7 @@ describe("readCappedMultipartFormData", () => {
       maxFiles: 1,
     });
 
-    expect(result).toEqual({ ok: false, reason: "too_large" });
+    expect(result).toEqual({ ok: false, reason: "too_large", cause: "request" });
     expect(meta.cancelled).toBe(true);
     expect(meta.bytesEnqueued).toBeLessThan(1024 * 1024);
   });
@@ -180,7 +180,7 @@ describe("readCappedMultipartFormData", () => {
       maxFiles: 1,
     });
 
-    expect(result).toEqual({ ok: false, reason: "too_large" });
+    expect(result).toEqual({ ok: false, reason: "too_large", cause: "request" });
     // The fast-fail fired on the header before the helper read the body: the
     // helper never called getReader(). undici itself may eagerly pull at most a
     // single chunk while constructing the Request, but the multi-MB body is
@@ -209,10 +209,90 @@ describe("readCappedMultipartFormData", () => {
       maxFiles: 1,
     });
 
-    expect(result).toEqual({ ok: false, reason: "too_large" });
+    // Truncation trap reports cause "file" so a route can message the FILE cap.
+    expect(result).toEqual({ ok: false, reason: "too_large", cause: "file" });
   });
 
-  it("rejects more file parts than maxFiles", async () => {
+  it("accepts a file of EXACTLY maxFileBytes (inclusive cap, off-by-one guard #2235)", async () => {
+    // busboy trips its file limit at `fileSize === limit`; the helper passes
+    // `maxFileBytes + 1` so a file of exactly the cap succeeds, matching the old
+    // post-parse `size > MAX` semantics. Regression guard against the exact-cap
+    // 413 the raw busboy limit would produce.
+    const cap = 64 * 1024;
+    const bytes = Buffer.alloc(cap, 0x62); // exactly at the cap
+    const body = buildMultipart([
+      {
+        kind: "file",
+        name: "file",
+        filename: "exact.png",
+        contentType: "image/png",
+        bytes,
+      },
+    ]);
+
+    const result = await readCappedMultipartFormData(bufferedRequest(body), {
+      maxRequestBytes: 1024 * 1024,
+      maxFileBytes: cap,
+      maxFiles: 1,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const file = result.formData.get("file");
+    expect(file).toBeInstanceOf(File);
+    if (!(file instanceof File)) return;
+    expect(file.size).toBe(cap);
+  });
+
+  it("accepts a field value of EXACTLY maxFieldBytes (inclusive cap #2235)", async () => {
+    const cap = 4096;
+    const value = "y".repeat(cap); // exactly at the field cap
+    const body = buildMultipart([{ kind: "field", name: "big", value }]);
+
+    const result = await readCappedMultipartFormData(bufferedRequest(body), {
+      maxRequestBytes: 1024 * 1024,
+      maxFileBytes: 1024 * 1024,
+      maxFieldBytes: cap,
+      maxFields: 4,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.formData.get("big")).toBe(value);
+  });
+
+  it("rejects a field value exceeding maxFieldBytes with cause \"field\"", async () => {
+    const cap = 4096;
+    const value = "z".repeat(cap + 1); // one byte over the field cap
+    const body = buildMultipart([{ kind: "field", name: "big", value }]);
+
+    const result = await readCappedMultipartFormData(bufferedRequest(body), {
+      maxRequestBytes: 1024 * 1024,
+      maxFileBytes: 1024 * 1024,
+      maxFieldBytes: cap,
+      maxFields: 4,
+    });
+
+    expect(result).toEqual({ ok: false, reason: "too_large", cause: "field" });
+  });
+
+  it("rejects more fields than maxFields with cause \"count\"", async () => {
+    const body = buildMultipart([
+      { kind: "field", name: "a", value: "1" },
+      { kind: "field", name: "b", value: "2" },
+      { kind: "field", name: "c", value: "3" },
+    ]);
+
+    const result = await readCappedMultipartFormData(bufferedRequest(body), {
+      maxRequestBytes: 1024 * 1024,
+      maxFileBytes: 1024 * 1024,
+      maxFields: 2,
+    });
+
+    expect(result).toEqual({ ok: false, reason: "too_large", cause: "count" });
+  });
+
+  it("rejects more file parts than maxFiles with cause \"count\"", async () => {
     const bytes = Buffer.from([1, 2, 3]);
     const body = buildMultipart([
       { kind: "file", name: "files", filename: "a.png", contentType: "image/png", bytes },
@@ -225,7 +305,7 @@ describe("readCappedMultipartFormData", () => {
       maxFiles: 1,
     });
 
-    expect(result).toEqual({ ok: false, reason: "too_large" });
+    expect(result).toEqual({ ok: false, reason: "too_large", cause: "count" });
   });
 
   it("returns invalid for a non-multipart content type", async () => {

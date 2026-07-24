@@ -286,6 +286,24 @@ describe("POST /api/admin/image-library", () => {
     expect(mocks.mediaImageCreate).not.toHaveBeenCalled();
   });
 
+  it("accepts a valid image of EXACTLY the 2MB cap (inclusive boundary, #2235 off-by-one guard)", async () => {
+    // busboy trips its file limit at `size === cap`; the streamed reader passes
+    // `cap + 1` so a file of exactly MAX_MEDIA_IMAGE_BYTES still succeeds, as it
+    // did under the old post-parse `size > MAX` check. Guards the exact-cap 413
+    // regression the raw busboy limit would otherwise produce.
+    const MAX_MEDIA_IMAGE_BYTES = 2 * 1024 * 1024;
+    const exact = Buffer.concat([
+      PNG_BYTES,
+      Buffer.alloc(MAX_MEDIA_IMAGE_BYTES - PNG_BYTES.length),
+    ]);
+    expect(exact.length).toBe(MAX_MEDIA_IMAGE_BYTES);
+    const file = new File([exact], "exact.png", { type: "image/png" });
+    const response = await POST(uploadRequest(file));
+
+    expect(response.status).toBe(201);
+    expect(mocks.mediaImageCreate).toHaveBeenCalledTimes(1);
+  });
+
   it("trusts magic bytes over a spoofed declared Content-Type", async () => {
     // Bytes are a real PNG, but the browser/client declares a disallowed type.
     const file = new File([PNG_BYTES], "photo.bin", {
