@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireActiveSession } from "@/lib/session-guards";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { logAudit } from "@/lib/audit";
-import { canManageCalendarEvents } from "@/lib/calendar-access";
+import { canEditCalendarEvents } from "@/lib/calendar-access";
 import {
   updateCalendarEvent,
   deleteCalendarEvent,
@@ -15,10 +15,12 @@ import {
 } from "@/lib/calendar-events";
 
 /**
- * Update a calendar event. Restricted to committee members and lodge-edit
- * admins. `scope` ("single" | "series", default "single") selects whether a
- * recurring event's edit applies to just this occurrence or the whole series —
- * see src/lib/calendar-service.ts for the propagate-vs-regenerate semantics.
+ * Update a calendar event. Restricted to lodge-edit admins ONLY — committee
+ * members are create-only and may not edit existing events (see
+ * src/lib/calendar-access.ts and docs/guides/calendar.md). `scope`
+ * ("single" | "series", default "single") selects whether a recurring event's
+ * edit applies to just this occurrence or the whole series — see
+ * src/lib/calendar-service.ts for the propagate-vs-regenerate semantics.
  */
 export async function PATCH(
   req: NextRequest,
@@ -27,7 +29,7 @@ export async function PATCH(
   const guard = await requireActiveSession();
   if (!guard.ok) return guard.response;
 
-  if (!(await canManageCalendarEvents(guard.session.user))) {
+  if (!canEditCalendarEvents(guard.session.user)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -116,9 +118,12 @@ export async function PATCH(
 }
 
 /**
- * Delete a calendar event. Restricted to committee members and lodge-edit
- * admins. `?scope=series` deletes every occurrence of the series; the default
- * ("single") deletes just this occurrence.
+ * Delete a calendar event. Restricted to lodge-edit admins ONLY — committee
+ * members are create-only and may not delete events, so a non-admin can never
+ * wipe an admin's event or `?scope=series` whole series (see
+ * src/lib/calendar-access.ts and docs/guides/calendar.md). `?scope=series`
+ * deletes every occurrence of the series; the default ("single") deletes just
+ * this occurrence.
  */
 export async function DELETE(
   req: NextRequest,
@@ -127,7 +132,7 @@ export async function DELETE(
   const guard = await requireActiveSession();
   if (!guard.ok) return guard.response;
 
-  if (!(await canManageCalendarEvents(guard.session.user))) {
+  if (!canEditCalendarEvents(guard.session.user)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 

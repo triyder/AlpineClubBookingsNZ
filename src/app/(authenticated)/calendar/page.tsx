@@ -33,7 +33,7 @@ export default async function MemberCalendarPage() {
           Upcoming meetings and events at {CLUB_NAME}.
           {canManage
             ? " Click a day to add an event. Open an event to view it or join its meeting."
-            : " Select an event to see its details or join its meeting."}
+            : " Select an event to see its details."}
         </p>
       </div>
       {/* Existing events are read-only here (create-and-view); full editing and

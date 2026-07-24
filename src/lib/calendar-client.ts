@@ -123,6 +123,21 @@ export function formatEventDateLong(event: CalendarEventDTO): string {
   });
 }
 
+/**
+ * Long date label for a `YYYY-MM-DD` day key (parsed as a local date), used as
+ * the day-detail dialog heading. Falls back to the raw key if it is malformed.
+ */
+export function formatDayKeyLong(dayKey: string): string {
+  const [y, m, d] = dayKey.split("-").map(Number);
+  if (!y || !m || !d) return dayKey;
+  return new Date(y, m - 1, d).toLocaleDateString("en-NZ", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
+}
+
 /** `<input type="date">` value (local YYYY-MM-DD) for an ISO instant. */
 export function toDateInputValue(iso: string): string {
   return dateKey(new Date(iso));

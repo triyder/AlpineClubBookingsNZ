@@ -15,7 +15,17 @@ two places:
 Both surfaces render the same calendar; what differs is whether the viewer can
 change anything.
 
-The calendar is always on — there is no module toggle to enable it.
+The calendar itself is always on — there is no module toggle to enable it.
+
+> **Video meetings are not out-of-the-box.** Creating events and viewing the
+> calendar work with zero setup, but the **MiroTalk video meeting** attached to
+> an event only connects once you have separately provisioned a self-hosted
+> MiroTalk service **and** the WebRTC media path it needs: a STUN/TURN server
+> and open UDP ports so members joining from home (off the lodge LAN, behind
+> NAT/firewalls) can actually connect. Without TURN, a meeting link may open but
+> audio/video will silently fail for remote participants. See
+> [Video meetings (MiroTalk)](#video-meetings-mirotalk) → *Production* before
+> relying on meetings.
 
 ## Who can do what
 
@@ -56,6 +66,9 @@ a member cannot use are never shown — and even a stale page could not save.
 2. Use **‹ ›** to move month to month, **Today** to jump back, and click any
    event chip to see its details. A ↻ icon marks a repeating event; a camera
    icon marks a video meeting.
+3. A busy day shows the first few events and a **+N more** link. Click it to open
+   that day's full list, then click any event to see its details — so every
+   event on a crowded day is reachable, for members and admins alike.
 
 ### Create an event
 
@@ -130,16 +143,25 @@ reads the token — the path form ignores it).
 MiroTalk is a **separate service** you self-host; it is not bundled with this
 app. Point the app at it with one environment variable:
 
-| Variable                   | What it is                         | Default                 |
-| -------------------------- | ---------------------------------- | ----------------------- |
-| `MIROTALK_URL`             | Base URL of your MiroTalk instance | `http://localhost:3010` |
-| `NEXT_PUBLIC_MIROTALK_URL` | Legacy fallback (build-time only)  | —                       |
+| Variable                   | What it is                         | Default                          |
+| -------------------------- | ---------------------------------- | -------------------------------- |
+| `MIROTALK_URL`             | Base URL of your MiroTalk instance | `https://meet.<your app domain>` |
+| `NEXT_PUBLIC_MIROTALK_URL` | Legacy fallback (build-time only)  | —                                |
 
 - **Prefer `MIROTALK_URL`.** The join link is built server-side, so this is a
   **runtime** setting: set it in the app's environment and restart — no rebuild.
 - `NEXT_PUBLIC_MIROTALK_URL` is still read as a fallback, but `NEXT_PUBLIC_*`
   values are inlined at **build time**, so a runtime `.env` change won't move a
   pre-built image — use `MIROTALK_URL` instead.
+- **When unset, the base is derived from your app's own domain** (`NEXTAUTH_URL`)
+  as `https://meet.<domain>` — so a production deploy that forgets to set it
+  points at a real, same-domain host you control (a broken `meet.` subdomain is
+  an obvious, fixable error) rather than silently sending members to
+  `http://localhost:3010` on **their own** machine. A leading `www.` is dropped;
+  if your app runs on another subdomain (e.g. `bookings.example.org`) the derived
+  host becomes `meet.bookings.example.org`, so set `MIROTALK_URL` explicitly in
+  that case. A **loopback** app host falls back to `http://localhost:3010` for
+  local dev.
 - **Include the scheme** — e.g. `https://meet.example.org`. A value with no
   scheme is assumed to be `https://` (a bare host would otherwise produce a
   broken relative link). Trailing slashes are ignored.
@@ -223,8 +245,9 @@ Leave these unset to keep the plain link (MiroTalk shows its own login prompt).
 
 | Symptom                                               | Likely cause                                                                                    | Fix                                                                                                                               |
 | ----------------------------------------------------- | ----------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| An ordinary member sees **Save**/**Delete** on events | That account is actually a committee member or a lodge-edit admin                               | Confirm with `npx tsx scripts/diagnose-calendar-access.ts their@email`; committee assignment grants calendar edit by design       |
-| A member should be able to edit but is read-only      | They have no active committee assignment and no lodge-edit role                                 | Add a committee assignment (**Admin → Members → [member] → Committee**) or grant lodge edit                                       |
+| A member sees **Save**/**Delete** on events           | That account is a lodge-edit admin (only admins can edit or delete; committee members see **New event** but not Save/Delete)      | Confirm with `npx tsx scripts/diagnose-calendar-access.ts their@email`; if they should not edit, remove their lodge-edit role     |
+| A member should be able to **create** but cannot       | They have no active committee assignment and no lodge-edit role                                 | Add a committee assignment (**Admin → Members → [member] → Committee**) or grant lodge edit                                       |
+| A committee member cannot **edit or delete** an event  | Working as designed — committee members are create-only; only lodge-edit admins may edit/delete | Grant the member the lodge-edit admin role if they need to edit or delete events                                                 |
 | A repeating event shows on only one month             | The recurrence was not saved (older build)                                                      | Open the event, set **Repeat**, and **Save** (this converts it to a series), or delete and recreate; ensure the app is up to date |
 | **Open meeting link** does nothing / wrong host       | `MIROTALK_URL` is unset or points at the wrong instance                                         | Set `MIROTALK_URL` to your MiroTalk base URL (with `https://`) and restart the app                                                |
 | Camera/mic blocked in the meeting                     | MiroTalk is served over plain HTTP (not localhost) or without a camera/mic `Permissions-Policy` | Serve MiroTalk over HTTPS on its own subdomain with camera/mic allowed                                                            |

@@ -1,11 +1,12 @@
 "use client";
 
-import { Video, Repeat } from "lucide-react";
+import { Video, Repeat, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { CalendarEventDTO } from "@/lib/calendar-events";
 import {
   buildMonthGrid,
   dateKey,
+  formatDayKeyLong,
   formatEventTime,
   isSameMonth,
   isToday,
@@ -20,6 +21,12 @@ interface MonthCalendarProps {
   onSelectEvent: (event: CalendarEventDTO) => void;
   /** Called with a YYYY-MM-DD key when an empty day is clicked (managers only). */
   onSelectDay: (dayKey: string) => void;
+  /**
+   * Called with a YYYY-MM-DD key to open the full day-detail list — every
+   * viewer, triggered by the "+N more" overflow so the 4th event onward is
+   * reachable.
+   */
+  onOpenDay: (dayKey: string) => void;
 }
 
 const MAX_CHIPS_PER_DAY = 3;
@@ -31,6 +38,7 @@ export function MonthCalendar({
   canCreate,
   onSelectEvent,
   onSelectDay,
+  onOpenDay,
 }: MonthCalendarProps) {
   const days = buildMonthGrid(year, month);
 
@@ -57,17 +65,20 @@ export function MonthCalendar({
           const dayEvents = eventsByDay.get(key) ?? [];
           const shown = dayEvents.slice(0, MAX_CHIPS_PER_DAY);
           const overflow = dayEvents.length - shown.length;
+          const dayLabel = formatDayKeyLong(key);
 
           return (
             <div
               key={key}
               className={cn(
-                "min-h-[104px] border-b border-r border-border p-1.5 last:border-r-0 [&:nth-child(7n)]:border-r-0",
+                "group min-h-[104px] border-b border-r border-border p-1.5 last:border-r-0 [&:nth-child(7n)]:border-r-0",
                 inMonth ? "bg-background" : "bg-muted",
                 canCreate && "cursor-pointer transition-colors hover:bg-accent",
               )}
               onClick={(e) => {
-                // Only treat clicks on the empty cell (not a chip) as "new event".
+                // Mouse convenience only: a click on the empty cell (not a chip)
+                // starts a new event. Keyboard users get the per-cell "Add event"
+                // button below, so this div is never the sole path.
                 if (canCreate && e.target === e.currentTarget) {
                   onSelectDay(key);
                 }
@@ -82,8 +93,24 @@ export function MonthCalendar({
                     !today && !inMonth && "text-muted-foreground",
                   )}
                 >
-                  {day.getDate()}
+                  {/* Screen readers announce the full date; sighted users see the
+                      day number. */}
+                  <span className="sr-only">{dayLabel}</span>
+                  <span aria-hidden>{day.getDate()}</span>
                 </span>
+                {canCreate && (
+                  <button
+                    type="button"
+                    aria-label={`Add event on ${dayLabel}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onSelectDay(key);
+                    }}
+                    className="inline-flex h-5 w-5 items-center justify-center rounded text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:opacity-100"
+                  >
+                    <Plus className="h-3.5 w-3.5" aria-hidden />
+                  </button>
+                )}
               </div>
 
               <div className="space-y-1">
@@ -124,9 +151,10 @@ export function MonthCalendar({
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation();
-                      if (canCreate) onSelectDay(key);
+                      onOpenDay(key);
                     }}
-                    className="px-1.5 text-xs font-medium text-muted-foreground hover:text-foreground"
+                    className="rounded px-1.5 text-xs font-medium text-muted-foreground hover:text-foreground"
+                    aria-label={`Show all ${dayEvents.length} events on this day`}
                   >
                     +{overflow} more
                   </button>

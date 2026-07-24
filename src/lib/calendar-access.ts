@@ -7,22 +7,28 @@ import {
 /**
  * Write access to the club events calendar (#calendar).
  *
- * Two audiences may add / edit / delete events, deliberately asymmetric with
- * how the rest of the admin surface is gated:
+ * Access is deliberately ASYMMETRIC — CREATE is broader than EDIT/DELETE — and
+ * the server, not the UI, is the authority (see docs/guides/calendar.md → "Who
+ * can do what"):
  *
- * - **Full Admins** (anyone whose merged permission matrix grants `lodge:edit`)
- *   — the calendar lives under Admin → Lodge Operations, so it inherits the
- *   lodge area's edit level exactly like Work Parties or Roster.
- * - **Committee members** — any member holding at least one ACTIVE
- *   `CommitteeAssignment` under an ACTIVE `CommitteeRole`. Committee assignment
- *   normally grants NO app privileges (it is public contact metadata, see
- *   CONFIGURATION.md → Committee Settings); the calendar is the one deliberate
- *   exception, per the feature owner's requirement that committee members
- *   manage events without being made Full Admins.
+ * - **Create** (`canManageCalendarEvents`): **Full Admins** (merged permission
+ *   matrix grants `lodge:edit`) OR **committee members** — any member holding at
+ *   least one ACTIVE `CommitteeAssignment` under an ACTIVE `CommitteeRole`.
+ *   Committee assignment normally grants NO app privileges (it is public contact
+ *   metadata, see CONFIGURATION.md → Committee Settings); letting committee
+ *   members *add* events is the one deliberate exception, so they can post
+ *   meetings without being made Full Admins.
+ * - **Edit / delete** (`canEditCalendarEvents`): **Full Admins only**
+ *   (`lodge:edit`). Committee members are create-only: they may NOT edit or
+ *   delete events — not even their own, and never another admin's series. This
+ *   is why edit/delete gates on the admin leg alone and does not consult the
+ *   committee table.
  *
- * Everyone else who can log in is read-only. The gate is enforced server-side
- * in every calendar write route and mirrored into the UI (canManage) so the
- * controls a member cannot use are never shown.
+ * Everyone else who can log in is read-only. The gate is enforced server-side in
+ * every calendar write route. The UI mirrors CREATE authority into `canManage`
+ * so ordinary members never see the create/join controls; edit/delete controls
+ * live only on /admin/calendar, which is itself lodge-area gated, so a
+ * committee-only member (all-none admin matrix) never renders them.
  */
 export async function isActiveCommitteeMember(
   memberId: string,
@@ -44,13 +50,29 @@ export function hasCalendarManageViaAdmin(input: AdminPermissionInput): boolean 
 }
 
 /**
- * True when this member may add / edit / delete calendar events — a Full Admin
- * with `lodge:edit`, OR an active committee member. Reads the committee table
- * only when the admin leg does not already grant access.
+ * True when this member may CREATE calendar events — a Full Admin with
+ * `lodge:edit`, OR an active committee member. Reads the committee table only
+ * when the admin leg does not already grant access. Also drives the UI
+ * `canManage` flag (create + join-meeting affordances).
+ *
+ * NOTE: this is the CREATE gate, not edit/delete. For editing or deleting an
+ * existing event use {@link canEditCalendarEvents} — committee members are
+ * create-only and must never pass the edit/delete gate.
  */
 export async function canManageCalendarEvents(
   input: AdminPermissionInput & { id: string },
 ): Promise<boolean> {
   if (hasCalendarManageViaAdmin(input)) return true;
   return isActiveCommitteeMember(input.id);
+}
+
+/**
+ * True when this member may EDIT or DELETE an existing calendar event — Full
+ * Admins with `lodge:edit` ONLY. Committee members are create-only per
+ * docs/guides/calendar.md, so this deliberately does NOT consult the committee
+ * table: a committee member (or any non-admin) is denied. Synchronous — the
+ * decision needs no database read.
+ */
+export function canEditCalendarEvents(input: AdminPermissionInput): boolean {
+  return hasCalendarManageViaAdmin(input);
 }

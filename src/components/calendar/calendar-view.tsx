@@ -13,6 +13,7 @@ import {
 } from "@/lib/calendar-client";
 import { MonthCalendar } from "./month-calendar";
 import { EventDialog } from "./event-dialog";
+import { DayEventsDialog } from "./day-events-dialog";
 
 interface CalendarViewProps {
   /** Whether the current member may add/edit/delete (committee or lodge admin). */
@@ -34,6 +35,7 @@ export function CalendarView({
   const [viewDate, setViewDate] = useState<Date>(() => startOfMonth(new Date()));
   const [events, setEvents] = useState<CalendarEventDTO[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState<CalendarEventDTO | null>(
@@ -41,11 +43,15 @@ export function CalendarView({
   );
   const [createDate, setCreateDate] = useState<string | null>(null);
 
+  // Day-detail overflow list ("+N more"): the day whose full event list is open.
+  const [dayDetailKey, setDayDetailKey] = useState<string | null>(null);
+
   const year = viewDate.getFullYear();
   const month = viewDate.getMonth();
 
   const fetchEvents = useCallback(async () => {
     setLoading(true);
+    setLoadError(false);
     const { from, to } = monthGridRange(year, month);
     try {
       const params = new URLSearchParams({
@@ -56,9 +62,13 @@ export function CalendarView({
       if (res.ok) {
         const data = (await res.json()) as { events: CalendarEventDTO[] };
         setEvents(data.events);
+      } else {
+        // A non-OK response would otherwise leave a silent, stale/empty grid.
+        setLoadError(true);
       }
     } catch {
-      // Leave the previous events in place on a transient failure.
+      // Surface the failure (with a retry) instead of a silent empty grid.
+      setLoadError(true);
     } finally {
       setLoading(false);
     }
@@ -80,6 +90,18 @@ export function CalendarView({
     setSelectedEvent(event);
     setCreateDate(null);
     setDialogOpen(true);
+  }
+
+  // Selecting an event from the day-detail list swaps that dialog for the
+  // single-event view; creating from it swaps for the create form.
+  function openEventFromDay(event: CalendarEventDTO) {
+    setDayDetailKey(null);
+    openEvent(event);
+  }
+
+  function createFromDay(dayKey: string) {
+    setDayDetailKey(null);
+    openCreate(dayKey);
   }
 
   return (
@@ -115,6 +137,15 @@ export function CalendarView({
           {loading && (
             <span className="text-xs text-muted-foreground">Loading…</span>
           )}
+          {/* Announce month changes (and load state) to screen readers, since the
+              grid re-renders without moving focus. */}
+          <span className="sr-only" role="status" aria-live="polite">
+            {loading
+              ? `Loading ${formatMonthTitle(year, month)}`
+              : loadError
+                ? `Could not load events for ${formatMonthTitle(year, month)}`
+                : `Showing ${formatMonthTitle(year, month)}`}
+          </span>
         </div>
 
         {canCreate && (
@@ -125,6 +156,18 @@ export function CalendarView({
         )}
       </div>
 
+      {loadError && (
+        <div
+          role="alert"
+          className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-foreground"
+        >
+          <span>Couldn’t load calendar events. Please try again.</span>
+          <Button variant="outline" size="sm" onClick={fetchEvents}>
+            Retry
+          </Button>
+        </div>
+      )}
+
       <MonthCalendar
         year={year}
         month={month}
@@ -132,6 +175,19 @@ export function CalendarView({
         canCreate={canCreate}
         onSelectEvent={openEvent}
         onSelectDay={(dayKey) => openCreate(dayKey)}
+        onOpenDay={(dayKey) => setDayDetailKey(dayKey)}
+      />
+
+      <DayEventsDialog
+        open={dayDetailKey !== null}
+        onOpenChange={(v) => {
+          if (!v) setDayDetailKey(null);
+        }}
+        dayKey={dayDetailKey}
+        events={dayDetailKey ? (eventsByDay.get(dayDetailKey) ?? []) : []}
+        canCreate={canCreate}
+        onSelectEvent={openEventFromDay}
+        onCreate={createFromDay}
       />
 
       <EventDialog
@@ -140,6 +196,7 @@ export function CalendarView({
         event={selectedEvent}
         initialDate={createDate}
         canCreate={canCreate}
+        canManage={canManage}
         canEditExisting={canEditExisting}
         onSaved={fetchEvents}
       />

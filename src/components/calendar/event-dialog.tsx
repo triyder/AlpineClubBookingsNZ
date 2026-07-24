@@ -47,6 +47,13 @@ interface EventDialogProps {
   /** Whether the current member may create NEW events. */
   canCreate: boolean;
   /**
+   * Whether the current member may MANAGE the calendar (an active committee
+   * member or a lodge admin). Gates the read-only "Join meeting" button:
+   * ordinary members see event details but not the meeting link — only
+   * committee members / admins can join. See src/lib/calendar-access.ts.
+   */
+  canManage: boolean;
+  /**
    * Whether EXISTING events open editable (Save/Delete). When false, an existing
    * event shows the read-only detail view even for a manager — the member
    * calendar creates but does not edit; /admin/calendar keeps full editing.
@@ -73,6 +80,7 @@ export function EventDialog({
   event,
   initialDate,
   canCreate,
+  canManage,
   canEditExisting,
   onSaved,
 }: EventDialogProps) {
@@ -100,6 +108,12 @@ export function EventDialog({
   // When editing/deleting an occurrence of a series, ask which occurrences the
   // action applies to before committing.
   const [scopePrompt, setScopePrompt] = useState<"save" | "delete" | null>(null);
+  // Confirm dialogs (replacing native window.confirm): deleting a single event,
+  // and discarding unsaved edits when closing the form.
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [discardPrompt, setDiscardPrompt] = useState(false);
+  // Serialised baseline of the form as last (re)opened, to detect dirty edits.
+  const [baseline, setBaseline] = useState<string>("");
 
   // Reset the form whenever the dialog opens for a different event/day.
   useEffect(() => {
@@ -107,52 +121,64 @@ export function EventDialog({
     setError(null);
     setSaving(false);
     setScopePrompt(null);
-    if (event) {
-      setTitle(event.title);
-      setAllDay(event.allDay);
-      setDate(toDateInputValue(event.startsAt));
-      setStartTime(event.allDay ? "" : toTimeInputValue(event.startsAt));
-      setEndTime(event.endsAt ? toTimeInputValue(event.endsAt) : "");
-      setLocation(event.location ?? "");
-      setDetails(event.details ?? "");
-      setIsMeeting(event.isMeeting);
-      if (event.recurrence) {
-        setRepeat(event.recurrence.frequency);
-        setIntervalValue(event.recurrence.interval);
-        setEndMode(event.recurrence.endMode);
-        setUntil(
-          event.recurrence.until
+    setConfirmDelete(false);
+    setDiscardPrompt(false);
+
+    const next = event
+      ? {
+          title: event.title,
+          allDay: event.allDay,
+          date: toDateInputValue(event.startsAt),
+          startTime: event.allDay ? "" : toTimeInputValue(event.startsAt),
+          endTime: event.endsAt ? toTimeInputValue(event.endsAt) : "",
+          location: event.location ?? "",
+          details: event.details ?? "",
+          isMeeting: event.isMeeting,
+          repeat: (event.recurrence?.frequency ?? "NONE") as RepeatValue,
+          interval: event.recurrence?.interval ?? 1,
+          endMode: (event.recurrence?.endMode ?? "never") as RecurrenceEndMode,
+          until: event.recurrence?.until
             ? toDateInputValue(event.recurrence.until)
             : "",
-        );
-        setCount(event.recurrence.count ?? 10);
-      } else {
-        setRepeat("NONE");
-        setIntervalValue(1);
-        setEndMode("never");
-        setUntil("");
-        setCount(10);
-      }
-    } else {
-      setTitle("");
-      setAllDay(false);
-      setDate(initialDate ?? todayDateValue());
-      setStartTime("09:00");
-      setEndTime("");
-      setLocation("");
-      setDetails("");
-      setIsMeeting(false);
-      setRepeat("NONE");
-      setIntervalValue(1);
-      setEndMode("never");
-      setUntil("");
-      setCount(10);
-    }
+          count: event.recurrence?.count ?? 10,
+        }
+      : {
+          title: "",
+          allDay: false,
+          date: initialDate ?? todayDateValue(),
+          startTime: "09:00",
+          endTime: "",
+          location: "",
+          details: "",
+          isMeeting: false,
+          repeat: "NONE" as RepeatValue,
+          interval: 1,
+          endMode: "never" as RecurrenceEndMode,
+          until: "",
+          count: 10,
+        };
+
+    setTitle(next.title);
+    setAllDay(next.allDay);
+    setDate(next.date);
+    setStartTime(next.startTime);
+    setEndTime(next.endTime);
+    setLocation(next.location);
+    setDetails(next.details);
+    setIsMeeting(next.isMeeting);
+    setRepeat(next.repeat);
+    setIntervalValue(next.interval);
+    setEndMode(next.endMode);
+    setUntil(next.until);
+    setCount(next.count);
+    // Record the just-loaded values as the clean baseline for dirty detection.
+    setBaseline(JSON.stringify(next));
   }, [open, event, initialDate]);
 
   // Read-only detail view: shown to ordinary members, and to managers on the
   // member calendar (where existing events are not editable). A meeting shows a
-  // "Join meeting" button so the viewer can enter it.
+  // "Join meeting" button only to managers (committee members / admins) — an
+  // ordinary member sees the event details but cannot join the meeting.
   if (event && !canEditExisting) {
     return (
       <Dialog open={open} onOpenChange={onOpenChange}>
@@ -208,7 +234,7 @@ export function EventDialog({
             )}
           </div>
           <DialogFooter className="gap-2 sm:justify-between">
-            {event.isMeeting && event.meetingUrl ? (
+            {canManage && event.isMeeting && event.meetingUrl ? (
               <Button asChild>
                 <a
                   href={event.meetingUrl}
@@ -234,6 +260,36 @@ export function EventDialog({
   // Creating requires create permission. The New-event affordances are hidden
   // without it, so this is a defensive guard against an unreachable state.
   if (!event && !canCreate) return null;
+
+  // Dirty detection: compare the live form to the baseline captured on open, so
+  // closing a form with unsaved edits can prompt before discarding.
+  const currentSnapshot = JSON.stringify({
+    title,
+    allDay,
+    date,
+    startTime,
+    endTime,
+    location,
+    details,
+    isMeeting,
+    repeat,
+    interval,
+    endMode,
+    until,
+    count,
+  });
+  const isDirty = currentSnapshot !== baseline;
+
+  // Guarded close: prompt before discarding unsaved edits; a clean form (or an
+  // in-flight save) closes straight away.
+  function requestClose() {
+    if (saving) return;
+    if (isDirty) {
+      setDiscardPrompt(true);
+      return;
+    }
+    onOpenChange(false);
+  }
 
   // Labels for the Repeat picker follow the currently-selected date.
   const anchorDate = date ? new Date(`${date}T00:00`) : new Date();
@@ -350,6 +406,7 @@ export function EventDialog({
         setError("Could not delete the event. Please try again.");
         setSaving(false);
         setScopePrompt(null);
+        setConfirmDelete(false);
         return;
       }
       onSaved();
@@ -358,6 +415,7 @@ export function EventDialog({
       setError("Could not delete the event. Please try again.");
       setSaving(false);
       setScopePrompt(null);
+      setConfirmDelete(false);
     }
   }
 
@@ -367,14 +425,19 @@ export function EventDialog({
       setScopePrompt("delete");
       return;
     }
-    if (window.confirm(`Delete "${event.title}"? This cannot be undone.`)) {
-      performDelete("single");
-    }
+    // In-app confirm dialog (not native window.confirm), matching the series
+    // scope chooser.
+    setConfirmDelete(true);
   }
 
   return (
     <>
-      <Dialog open={open} onOpenChange={onOpenChange}>
+      <Dialog
+        open={open}
+        onOpenChange={(next) => {
+          if (!next) requestClose();
+        }}
+      >
         <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>{isEdit ? "Edit event" : "New event"}</DialogTitle>
@@ -610,7 +673,7 @@ export function EventDialog({
               <Button
                 type="button"
                 variant="outline"
-                onClick={() => onOpenChange(false)}
+                onClick={requestClose}
                 disabled={saving}
               >
                 Cancel
@@ -671,6 +734,70 @@ export function EventDialog({
               Cancel
             </Button>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Single-event delete confirmation (in-app, replacing window.confirm). */}
+      <Dialog
+        open={confirmDelete}
+        onOpenChange={(v) => {
+          if (!v) setConfirmDelete(false);
+        }}
+      >
+        <DialogContent className="sm:max-w-sm" showCloseButton={false}>
+          <DialogHeader>
+            <DialogTitle>Delete event</DialogTitle>
+            <DialogDescription>
+              Delete “{event?.title}”? This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2">
+            <Button
+              variant="outline"
+              disabled={saving}
+              onClick={() => setConfirmDelete(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={saving}
+              onClick={() => performDelete("single")}
+            >
+              {saving ? "Deleting…" : "Delete"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Unsaved-changes guard when closing the form. */}
+      <Dialog
+        open={discardPrompt}
+        onOpenChange={(v) => {
+          if (!v) setDiscardPrompt(false);
+        }}
+      >
+        <DialogContent className="sm:max-w-sm" showCloseButton={false}>
+          <DialogHeader>
+            <DialogTitle>Discard changes?</DialogTitle>
+            <DialogDescription>
+              You have unsaved changes to this event. Discard them?
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setDiscardPrompt(false)}>
+              Keep editing
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                setDiscardPrompt(false);
+                onOpenChange(false);
+              }}
+            >
+              Discard
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </>

@@ -6,6 +6,45 @@ import {
   type RecurrenceEndMode,
 } from "@/lib/calendar-recurrence";
 import { resolveMirotalkMeetingToken } from "@/lib/mirotalk-token";
+import { getAppBaseUrl } from "@/lib/app-url";
+
+/** MiroTalk dev instance used when the app itself is on a loopback host. */
+const LOCAL_MIROTALK_FALLBACK = "http://localhost:3010";
+
+function isLoopbackHost(host: string): boolean {
+  return (
+    host === "localhost" ||
+    host === "127.0.0.1" ||
+    host === "::1" ||
+    host === "[::1]" ||
+    host.endsWith(".localhost")
+  );
+}
+
+/**
+ * Default MiroTalk base URL when neither `MIROTALK_URL` nor
+ * `NEXT_PUBLIC_MIROTALK_URL` is set: derive `https://meet.<app-domain>` from the
+ * app's OWN origin (`NEXTAUTH_URL`, via getAppBaseUrl). This makes a production
+ * deploy that forgot to set `MIROTALK_URL` point at a real, same-domain host the
+ * operator controls (e.g. `https://meet.example.org`) — a visible, diagnosable
+ * failure if that subdomain is not up — instead of the old
+ * `http://localhost:3010`, which silently resolved to the *clicker's own
+ * machine* on every prod deploy.
+ *
+ * A leading `www.` is dropped; any other extra subdomain is kept (an app at
+ * `bookings.example.org` derives `meet.bookings.example.org`), so operators on a
+ * non-www subdomain should set `MIROTALK_URL` explicitly. When the app host is a
+ * loopback (local dev), fall back to the localhost MiroTalk dev instance.
+ */
+function defaultMirotalkBaseUrl(): string {
+  try {
+    const { hostname } = new URL(getAppBaseUrl());
+    if (isLoopbackHost(hostname)) return LOCAL_MIROTALK_FALLBACK;
+    return `https://meet.${hostname.replace(/^www\./i, "")}`;
+  } catch {
+    return LOCAL_MIROTALK_FALLBACK;
+  }
+}
 
 /**
  * Base URL of the self-hosted MiroTalk instance used for meeting events.
@@ -17,14 +56,14 @@ import { resolveMirotalkMeetingToken } from "@/lib/mirotalk-token";
  * but NEXT_PUBLIC_* values are inlined at BUILD time, so prefer `MIROTALK_URL`.
  *
  * A value with no scheme is assumed to be https, so `meet.example.org` becomes
- * `https://meet.example.org/...` rather than a broken relative link. The
- * `http://localhost:3010` default keeps local dev working over plain HTTP.
+ * `https://meet.example.org/...` rather than a broken relative link. When unset,
+ * the base is derived from the app's own domain — see {@link defaultMirotalkBaseUrl}.
  */
 function resolveMirotalkBaseUrl(): string {
   const raw = (
     process.env.MIROTALK_URL ?? process.env.NEXT_PUBLIC_MIROTALK_URL
   )?.trim();
-  if (!raw) return "http://localhost:3010";
+  if (!raw) return defaultMirotalkBaseUrl();
   return /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
 }
 

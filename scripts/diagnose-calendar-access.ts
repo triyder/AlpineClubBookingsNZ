@@ -63,21 +63,33 @@ async function main() {
   console.log("permission matrix   :", matrix);
   console.log("lodge level         :", matrix.lodge);
   console.log("committee assignments:", assignments.length ? assignments : "(none)");
+  const canCreate = viaAdmin || committee;
+  const canEditDelete = viaAdmin;
+
   console.log("\n--- gate legs ---");
   console.log("hasCalendarManageViaAdmin (lodge:edit) :", viaAdmin);
   console.log("isActiveCommitteeMember                :", committee);
   console.log(
-    "\n>>> canManageCalendarEvents =",
-    viaAdmin || committee,
-    viaAdmin || committee ? "(CAN edit/delete)" : "(READ-ONLY)",
+    "\n>>> canManageCalendarEvents (CREATE) =",
+    canCreate,
+    canCreate ? "(CAN create)" : "(cannot create)",
+  );
+  console.log(
+    ">>> canEditCalendarEvents  (EDIT/DELETE) =",
+    canEditDelete,
+    canEditDelete ? "(CAN edit/delete)" : "(cannot edit/delete)",
   );
   console.log(
     viaAdmin
-      ? "\nReason: an access role grants lodge:edit (Full Admin / Booking Officer)."
+      ? "\nReason: an access role grants lodge:edit (Full Admin / Booking Officer)\n" +
+        "— full create, edit, and delete."
       : committee
-        ? "\nReason: an active committee assignment under an active role."
-        : "\nThis member is read-only. If they still see Edit/Delete, the app is\n" +
-          "serving a stale build or a stale session — restart the server and re-login.",
+        ? "\nReason: an active committee assignment under an active role\n" +
+          "— create-only. Committee members cannot edit or delete events; only\n" +
+          "lodge-edit admins can (see docs/guides/calendar.md)."
+        : "\nThis member is read-only. If they still see New event / Edit / Delete,\n" +
+          "the app is serving a stale build or a stale session — restart the\n" +
+          "server and re-login.",
   );
 
   await prisma.$disconnect();

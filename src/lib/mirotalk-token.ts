@@ -81,8 +81,12 @@ function base64url(input: Buffer | string): string {
   return Buffer.from(input).toString("base64url");
 }
 
-/** Minimal HS256 JWT (`jsonwebtoken`-compatible for verify + exp). */
-function signHs256(
+/**
+ * Minimal HS256 JWT (`jsonwebtoken`-compatible for verify + exp). Exported so a
+ * known-answer test can pin it against a token minted by the genuine
+ * `jsonwebtoken` library (see mirotalk-token.test.ts).
+ */
+export function signHs256(
   data: Record<string, unknown>,
   key: string,
   expiresInSeconds: number,

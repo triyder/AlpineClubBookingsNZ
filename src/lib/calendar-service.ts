@@ -120,6 +120,23 @@ function buildOccurrenceRows(
 /** Prisma client or an interactive-transaction client. */
 type Db = typeof prisma | Prisma.TransactionClient;
 
+/**
+ * Serialize concurrent whole-series mutations. Without this, two editors saving
+ * the same recurring series can interleave their delete-and-regenerate under
+ * Read Committed and duplicate or drop occurrences. Keyed per-series (namespaced
+ * so calendar keys can't false-share with the per-lodge capacity lock), the lock
+ * releases at transaction end — mirrors lockLodgeForCapacity in
+ * src/lib/capacity.ts. $executeRaw (not $queryRaw): pg_advisory_xact_lock
+ * returns void, which the driver adapter cannot deserialize as a result row.
+ */
+async function lockCalendarSeries(
+  tx: Pick<Prisma.TransactionClient, "$executeRaw">,
+  seriesId: string,
+): Promise<void> {
+  const key = `calendar-series:${seriesId}`;
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`;
+}
+
 async function createSeriesWithOccurrences(
   data: ResolvedEventData & { recurrence: RecurrenceRule },
   actorId: string,
@@ -210,19 +227,21 @@ async function propagateSeriesFieldChanges(
   data: ResolvedEventData,
 ): Promise<void> {
   const durationMs = durationMsOf(data.startsAt, data.endsAt);
-  const occurrences = await prisma.calendarEvent.findMany({
-    where: { seriesId, detachedFromSeries: false },
-    select: { id: true, startsAt: true, meetingRoom: true },
-  });
-
-  await prisma.$transaction(
-    occurrences.map((occ) => {
+  // Read the occurrence set UNDER the per-series lock (inside the transaction),
+  // so a concurrent regenerate cannot delete rows out from under this update.
+  await prisma.$transaction(async (tx) => {
+    await lockCalendarSeries(tx, seriesId);
+    const occurrences = await tx.calendarEvent.findMany({
+      where: { seriesId, detachedFromSeries: false },
+      select: { id: true, startsAt: true, meetingRoom: true },
+    });
+    for (const occ of occurrences) {
       const start = withTimeOfDay(occ.startsAt, data.startsAt, data.allDay);
       const endsAt =
         data.allDay || durationMs == null
           ? null
           : new Date(start.getTime() + durationMs);
-      return prisma.calendarEvent.update({
+      await tx.calendarEvent.update({
         where: { id: occ.id },
         data: {
           title: data.title,
@@ -235,8 +254,8 @@ async function propagateSeriesFieldChanges(
           meetingRoom: nextMeetingRoom(data.isMeeting, occ.meetingRoom),
         },
       });
-    }),
-  );
+    }
+  });
 }
 
 /**
@@ -250,6 +269,7 @@ async function regenerateSeries(
   actorId: string,
 ): Promise<void> {
   await prisma.$transaction(async (tx) => {
+    await lockCalendarSeries(tx, series.id);
     await tx.calendarEventSeries.update({
       where: { id: series.id },
       data: {
@@ -278,6 +298,7 @@ async function collapseSeriesToSingle(
   data: ResolvedEventData,
 ): Promise<CalendarEvent> {
   return prisma.$transaction(async (tx) => {
+    await lockCalendarSeries(tx, existing.seriesId!);
     // Remove every other occurrence; detach the survivor from the series.
     await tx.calendarEvent.deleteMany({
       where: { seriesId: existing.seriesId!, id: { not: existing.id } },
@@ -330,6 +351,9 @@ export async function updateCalendarEvent(
   // to repeat, save" works without deleting and recreating.
   if (!existing.seriesId && data.recurrence) {
     const anchor = await prisma.$transaction(async (tx) => {
+      // Serialize concurrent "convert this standalone event into a series" saves
+      // on the same row (keyed by the event id, since no series exists yet).
+      await lockCalendarSeries(tx, id);
       await tx.calendarEvent.delete({ where: { id } });
       return createSeriesWithOccurrences(
         { ...data, recurrence: data.recurrence as RecurrenceRule },
@@ -397,6 +421,7 @@ export async function deleteCalendarEvent(
   if (scope === "series" && existing.seriesId) {
     const seriesId = existing.seriesId;
     const result = await prisma.$transaction(async (tx) => {
+      await lockCalendarSeries(tx, seriesId);
       const deleted = await tx.calendarEvent.deleteMany({ where: { seriesId } });
       await tx.calendarEventSeries.delete({ where: { id: seriesId } });
       return deleted.count;

@@ -8,7 +8,61 @@ import {
   cryptoJsAesEncrypt,
   parseExpiresToSeconds,
   resolveMirotalkMeetingToken,
+  signHs256,
 } from "@/lib/mirotalk-token";
+
+// ---------------------------------------------------------------------------
+// Known-answer vectors (KAT) captured from the GENUINE libraries that MiroTalk
+// actually uses — crypto-js@4 (AES/OpenSSL "Salted__" format, MD5 EvpKDF) and
+// jsonwebtoken@9 (HS256). Neither library is a dependency of this app (we
+// re-implement both with Node's built-in `crypto`), so these fixed vectors are
+// how the suite proves byte-for-byte compatibility rather than merely
+// round-tripping against our own re-implementation. Regenerate with:
+//   npm i crypto-js@4 jsonwebtoken@9   (in a scratch dir)
+//   const CryptoJS = require("crypto-js");
+//   const s = CryptoJS.enc.Hex.parse(KAT_SALT_HEX);
+//   const r = CryptoJS.lib.WordArray.random; CryptoJS.lib.WordArray.random = () => s.clone();
+//   CryptoJS.AES.encrypt(KAT_PLAINTEXT, KAT_KEY).toString();      // → KAT_AES_B64
+//   CryptoJS.lib.WordArray.random = r;
+//   Date.now = () => KAT_IAT * 1000;
+//   require("jsonwebtoken").sign({ data: KAT_AES_B64 }, KAT_KEY,  // → KAT_JWT
+//     { algorithm: "HS256", expiresIn: 3600 });
+const KAT_KEY = "shared-jwt-key";
+const KAT_PLAINTEXT = JSON.stringify({
+  username: "lwtc",
+  password: "pw",
+  presenter: "true",
+});
+const KAT_SALT_HEX = "0001020304050607";
+const KAT_AES_B64 =
+  "U2FsdGVkX18AAQIDBAUGB8wfIax4rSig77kqVEX/mtxFSGNnS+shwN9Sloo7oixLZY2oq2X/b+IJ02hRg5MeLboOS/zH8BkiSPPONBbONLo=";
+const KAT_IAT = 1_700_000_000;
+const KAT_JWT =
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJkYXRhIjoiVTJGc2RHVmtYMThBQVFJREJBVUdCOHdmSWF4NHJTaWc3N2txVkVYL210eEZTR05uUytzaHdOOVNsb283b2l4TFpZMm9xMlgvYitJSjAyaFJnNU1lTGJvT1Mvekg4QmtpU1BQT05CYk9OTG89IiwiaWF0IjoxNzAwMDAwMDAwLCJleHAiOjE3MDAwMDM2MDB9.Tpa8rwDsiXuKPVud59TmKAkW_jTuSlIUYiW-d7w06aQ";
+
+describe("MiroTalk crypto known-answer vectors (genuine libraries)", () => {
+  it("cryptoJsAesEncrypt reproduces genuine crypto-js output byte-for-byte (fixed salt)", () => {
+    // The whole point of the pinned-salt overload: with the same salt the output
+    // must EQUAL what crypto-js@4's AES.encrypt(plaintext, passphrase) produced.
+    const out = cryptoJsAesEncrypt(
+      KAT_PLAINTEXT,
+      KAT_KEY,
+      Buffer.from(KAT_SALT_HEX, "hex"),
+    );
+    expect(out).toBe(KAT_AES_B64);
+  });
+
+  it("signHs256 reproduces a genuine jsonwebtoken@9 HS256 token byte-for-byte (fixed clock)", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(KAT_IAT * 1000);
+    try {
+      const token = signHs256({ data: KAT_AES_B64 }, KAT_KEY, 3600);
+      expect(token).toBe(KAT_JWT);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
 
 // Independent OpenSSL/CryptoJS-compatible AES decrypt, so a round-trip proves
 // our encrypt produces exactly what MiroTalk's CryptoJS.AES.decrypt consumes.

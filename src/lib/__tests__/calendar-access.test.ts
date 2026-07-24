@@ -10,7 +10,10 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
-import { canManageCalendarEvents } from "@/lib/calendar-access";
+import {
+  canManageCalendarEvents,
+  canEditCalendarEvents,
+} from "@/lib/calendar-access";
 
 const lodgeEditMatrix = {
   overview: "none",
@@ -55,5 +58,42 @@ describe("canManageCalendarEvents", () => {
       adminPermissionMatrix: noAccessMatrix,
     });
     expect(result).toBe(false);
+  });
+});
+
+describe("canEditCalendarEvents", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("grants a lodge-edit admin", () => {
+    expect(
+      canEditCalendarEvents({
+        id: "member-1",
+        adminPermissionMatrix: lodgeEditMatrix,
+      }),
+    ).toBe(true);
+  });
+
+  it("DENIES an active committee member (create-only, never edit/delete)", () => {
+    // Even if this member holds an active committee assignment, edit/delete is
+    // admin-only — the gate must not consult the committee table at all.
+    mocks.committeeFindFirst.mockResolvedValue({ id: "assign-1" });
+    expect(
+      canEditCalendarEvents({
+        id: "member-2",
+        adminPermissionMatrix: noAccessMatrix,
+      }),
+    ).toBe(false);
+    expect(mocks.committeeFindFirst).not.toHaveBeenCalled();
+  });
+
+  it("denies a plain member with no committee assignment", () => {
+    expect(
+      canEditCalendarEvents({
+        id: "member-3",
+        adminPermissionMatrix: noAccessMatrix,
+      }),
+    ).toBe(false);
   });
 });

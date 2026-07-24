@@ -55,12 +55,15 @@ describe("resolveCalendarEventDates", () => {
 describe("buildMeetingJoinUrl", () => {
   const savedRuntime = process.env.MIROTALK_URL;
   const savedPublic = process.env.NEXT_PUBLIC_MIROTALK_URL;
+  const savedNextAuth = process.env.NEXTAUTH_URL;
 
   afterEach(() => {
     if (savedRuntime === undefined) delete process.env.MIROTALK_URL;
     else process.env.MIROTALK_URL = savedRuntime;
     if (savedPublic === undefined) delete process.env.NEXT_PUBLIC_MIROTALK_URL;
     else process.env.NEXT_PUBLIC_MIROTALK_URL = savedPublic;
+    if (savedNextAuth === undefined) delete process.env.NEXTAUTH_URL;
+    else process.env.NEXTAUTH_URL = savedNextAuth;
     // Token vars are never set in the base cases; clear any a test set so the
     // no-token assertions elsewhere in this file are not affected.
     delete process.env.MIRO_JWT_KEY;
@@ -69,11 +72,30 @@ describe("buildMeetingJoinUrl", () => {
     delete process.env.MIRO_MEETING_PRESENTER;
   });
 
-  it("builds a /join/<room> URL from the default base", () => {
+  it("falls back to the localhost MiroTalk dev instance for a loopback app host", () => {
     delete process.env.MIROTALK_URL;
     delete process.env.NEXT_PUBLIC_MIROTALK_URL;
+    delete process.env.NEXTAUTH_URL; // getAppBaseUrl → http://localhost:3000
     expect(buildMeetingJoinUrl("room-abc")).toBe(
       "http://localhost:3010/join/room-abc",
+    );
+  });
+
+  it("derives https://meet.<app-domain> from NEXTAUTH_URL when MIROTALK_URL is unset", () => {
+    delete process.env.MIROTALK_URL;
+    delete process.env.NEXT_PUBLIC_MIROTALK_URL;
+    process.env.NEXTAUTH_URL = "https://lwtc.org.nz";
+    expect(buildMeetingJoinUrl("room-abc")).toBe(
+      "https://meet.lwtc.org.nz/join/room-abc",
+    );
+  });
+
+  it("drops a leading www. when deriving the meet.<domain> default", () => {
+    delete process.env.MIROTALK_URL;
+    delete process.env.NEXT_PUBLIC_MIROTALK_URL;
+    process.env.NEXTAUTH_URL = "https://www.lwtc.org.nz";
+    expect(buildMeetingJoinUrl("xyz")).toBe(
+      "https://meet.lwtc.org.nz/join/xyz",
     );
   });
 
