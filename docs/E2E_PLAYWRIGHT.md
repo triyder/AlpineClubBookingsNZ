@@ -313,6 +313,26 @@ E2E`; check the job log and the `playwright-report-multi-lodge` artifact when
 it goes red. It stays a separate job so the second-lodge seed never reaches
 the single-lodge stack the main suite asserts on.
 
+## Harness stability (keep-alive socket race)
+
+Playwright's `apiRequestContext` reuses pooled keep-alive sockets. The Next.js
+standalone server (`node server.js`) defaults to Node's 5-second
+`keepAliveTimeout`, which is *shorter* than the gaps a spec's setup leaves
+between API requests. The server would close an idle socket, the client would
+reuse it for the next request, and the connection reset surfaced as an
+intermittent `apiRequestContext.<verb>: socket hang up` (typically the
+`PUT /api/admin/modules` in `e2e/helpers/modules.ts`) — a ~19% flake on `main`,
+never a product bug. Two harness-side settings remove it:
+
+- **Server side:** `docker-compose.staging.yml` sets `KEEP_ALIVE_TIMEOUT=65000`
+  on the `app` service. The standalone `server.js` reads this env var (ms) and
+  raises `http.Server#keepAliveTimeout` to 65s, so the server never closes a
+  keep-alive socket before the client is done with it. Staging/E2E-scoped only;
+  the production compose environment is unchanged.
+- **Playwright side:** `playwright.config.ts` sets `retries: process.env.CI ? 2
+  : 0` — a backstop for any residual transport-level reset in CI, with no
+  retries locally so real failures surface immediately.
+
 ## Safety
 
 - The stack is the isolated `tacbookings-staging` compose project with its own

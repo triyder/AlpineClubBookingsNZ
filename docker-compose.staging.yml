@@ -30,6 +30,20 @@ services:
       CRON_ENABLED: "false"
       # Backups are configured in-app (#2095); staging leaves them unconfigured.
       NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3001}
+      # Idle keep-alive socket lifetime for the Next.js standalone server
+      # (`node server.js` reads process.env.KEEP_ALIVE_TIMEOUT, in ms, and sets
+      # http.Server#keepAliveTimeout). Node's default is 5s, which is *shorter*
+      # than the gaps Playwright leaves between requests on a pooled keep-alive
+      # socket during a spec's setup: the server closes the idle socket, the
+      # client reuses it for the next request, and the connection is reset —
+      # surfacing as `apiRequestContext.<verb>: socket hang up` (e.g. the PUT
+      # /api/admin/modules in e2e/helpers/modules.ts). Raising it to 65s means
+      # the server never closes a keep-alive socket before the client is done
+      # with it, removing the race at its source. Staging/E2E-scoped only — the
+      # production compose environment is unchanged. Node's headersTimeout
+      # (default 60s) only ticks while a request's bytes are being received, not
+      # during keep-alive idle, so it does not need raising for this.
+      KEEP_ALIVE_TIMEOUT: "65000"
     # mailpit is the non-production SMTP capture the E2E suite relays outbound
     # mail to (USE_SMTP_RELAY). It is listed here so `up --wait app` also starts
     # it and the app never comes up expecting an SMTP host that is not running.
