@@ -74,6 +74,12 @@ const SCOPED_ADVISORY_LOCK_INVENTORY: Record<string, number> = {
   // docs/CONCURRENCY_AND_LOCKING.md.
   "src/lib/backup-run.ts": 1,
   "src/lib/booking-member-night-conflicts.ts": 1,
+  // #calendar-recurring: lockCalendarSeries takes calendar-series:{seriesId} for
+  // the milliseconds of a whole-series regenerate/propagate/collapse/delete so
+  // two concurrent editors can't interleave a delete-and-regenerate and
+  // duplicate/drop occurrences. Single-lock holder; its own keyspace, composed
+  // with no booking/money/capacity/lifecycle key (calendar rows only).
+  "src/lib/calendar-service.ts": 1,
   "src/lib/capacity.ts": 1,
   "src/lib/config-transfer/apply.ts": 1,
   "src/lib/member-credit.ts": 1,

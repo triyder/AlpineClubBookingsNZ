@@ -709,12 +709,18 @@ describe("view-only section banner coverage (#2160)", () => {
         (f) => bannerRenderSites(f.ast).length > 0,
       ).length,
     }).toEqual({
-      callSites: 264,
+      // Reconciled to the true current counts: this block was stale by one
+      // (callSites 264→265, exceptions 32→33, exceptionFiles 15→16) after a
+      // committee admin control (member-photos #171) landed on main without its
+      // coverage figure being re-run. The per-bucket block below was already
+      // consistent (its files sum to 16), so only these totals moved — no bucket
+      // change. Never loosen these; re-run and update on any real rollout change.
+      callSites: 265,
       optOuts: 232,
       staticOptOuts: 211,
       vouchedOptOuts: 21,
-      exceptions: 32,
-      exceptionFiles: 15,
+      exceptions: 33,
+      exceptionFiles: 16,
       bannerComponents: 76,
     });
 

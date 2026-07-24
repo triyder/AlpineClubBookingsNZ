@@ -123,18 +123,19 @@ type Db = typeof prisma | Prisma.TransactionClient;
 /**
  * Serialize concurrent whole-series mutations. Without this, two editors saving
  * the same recurring series can interleave their delete-and-regenerate under
- * Read Committed and duplicate or drop occurrences. Keyed per-series (namespaced
- * so calendar keys can't false-share with the per-lodge capacity lock), the lock
- * releases at transaction end — mirrors lockLodgeForCapacity in
- * src/lib/capacity.ts. $executeRaw (not $queryRaw): pg_advisory_xact_lock
- * returns void, which the driver adapter cannot deserialize as a result row.
+ * Read Committed and duplicate or drop occurrences. This is a DOMAIN-KEYED
+ * scoped advisory lock (hashtext of a namespaced string, its own keyspace
+ * distinct from the per-lodge capacity key), released at transaction end — same
+ * family as lockRosterDate / fee-schedule locks. $executeRaw (not $queryRaw):
+ * pg_advisory_xact_lock returns void, which the driver adapter cannot
+ * deserialize as a result row.
  */
 async function lockCalendarSeries(
   tx: Pick<Prisma.TransactionClient, "$executeRaw">,
   seriesId: string,
 ): Promise<void> {
   const key = `calendar-series:${seriesId}`;
-  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`;
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${key}))`;
 }
 
 async function createSeriesWithOccurrences(
