@@ -248,6 +248,53 @@ function uploadRequest(id: string, file: File) {
   });
 }
 
+// Build a raw multipart body of `sizeBytes` total so a streamed (chunked) or
+// spoofed-Content-Length upload can drive the oversize-body path directly,
+// bypassing the old Content-Length pre-check the way an attacker would.
+function rawMultipartBody(sizeBytes: number): Buffer {
+  const boundary = "----memberPhotoTestBoundary";
+  const header = Buffer.from(
+    `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="big.png"\r\nContent-Type: image/png\r\n\r\n`,
+    "utf8",
+  );
+  const trailer = Buffer.from(`\r\n--${boundary}--\r\n`, "utf8");
+  const dataLen = Math.max(0, sizeBytes - header.length - trailer.length);
+  return Buffer.concat([header, Buffer.alloc(dataLen, 0x61), trailer]);
+}
+
+const MEMBER_PHOTO_BOUNDARY_CT =
+  "multipart/form-data; boundary=----memberPhotoTestBoundary";
+
+/**
+ * A streamed upload whose body exceeds the request cap but declares a tiny,
+ * honest-looking Content-Length — the exact chunked/spoofed bypass #2235 closes.
+ */
+function chunkedOversizeUploadRequest(id: string): NextRequest {
+  const body = rawMultipartBody(3 * 1024 * 1024); // > 2MB + 64KB request cap
+  let offset = 0;
+  const stream = new ReadableStream({
+    pull(controller) {
+      if (offset >= body.length) {
+        controller.close();
+        return;
+      }
+      const end = Math.min(offset + 64 * 1024, body.length);
+      controller.enqueue(new Uint8Array(body.subarray(offset, end)));
+      offset = end;
+    },
+  });
+  return new NextRequest(`http://localhost/api/members/${id}/photo`, {
+    method: "POST",
+    headers: {
+      "content-type": MEMBER_PHOTO_BOUNDARY_CT,
+      // Spoofed-small length that would sail past a naive pre-check.
+      "content-length": "1024",
+    },
+    body: stream,
+    duplex: "half",
+  } as ConstructorParameters<typeof NextRequest>[1] & { duplex: "half" });
+}
+
 function params(id: string) {
   return { params: Promise.resolve({ id }) };
 }
@@ -571,6 +618,23 @@ describe("POST /api/members/[id]/photo — upload", () => {
 
     expect(response.status).toBe(413);
     expect(mocks.mediaImageCreate).not.toHaveBeenCalled();
+  });
+
+  it("rejects a chunked, spoofed-Content-Length oversize body with 413 (streamed cap, #2235)", async () => {
+    // Regression: the old Content-Length pre-check trusted the header, so a
+    // chunked or spoofed-small Content-Length skipped it and request.formData()
+    // buffered the whole multi-MB body. The streamed reader now cuts it off.
+    wireMemberLookups({ photoImageId: null });
+    mocks.auth.mockResolvedValue(ownerSession);
+
+    const response = await POST(
+      chunkedOversizeUploadRequest(TARGET_ID),
+      params(TARGET_ID),
+    );
+
+    expect(response.status).toBe(413);
+    expect(mocks.mediaImageCreate).not.toHaveBeenCalled();
+    expect(mocks.transaction).not.toHaveBeenCalled();
   });
 
   it("blocks a member uploading to another member's id (IDOR) with 403", async () => {
