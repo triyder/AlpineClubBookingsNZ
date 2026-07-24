@@ -8,8 +8,20 @@ import {
   resolveInImagesRoot,
   storageUnavailableMessage,
 } from "@/lib/image-storage";
+import { readCappedMultipartFormData } from "@/lib/capped-multipart";
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB per file
+
+// This route accepts a whole batch (drag-and-drop of several files) and reports
+// per-file results, so it keeps its own friendly per-file MAX_FILE_SIZE check.
+// The streamed reader adds the memory backstop the batch path lacked: a hard
+// ceiling on the total request body and the number of file parts, so a chunked
+// or spoofed-Content-Length batch can't buffer unbounded bytes. The per-file
+// busboy limit is set to the total ceiling (not MAX_FILE_SIZE) so a single
+// oversize file is still surfaced as a per-file result rather than failing the
+// whole batch — preserving the existing partial-success behaviour.
+const MAX_UPLOAD_FILES = 25;
+const MAX_UPLOAD_REQUEST_BYTES = 80 * 1024 * 1024; // 80 MB per request batch
 
 function sanitizeFilename(name: string): string {
   // Strip any path components, then replace unsafe characters
@@ -30,12 +42,24 @@ export async function POST(request: NextRequest) {
   });
   if (!guard.ok) return guard.response;
 
-  let formData: FormData;
-  try {
-    formData = await request.formData();
-  } catch {
-    return NextResponse.json({ error: "Invalid form data" }, { status: 400 });
+  const multipart = await readCappedMultipartFormData(request, {
+    maxRequestBytes: MAX_UPLOAD_REQUEST_BYTES,
+    maxFileBytes: MAX_UPLOAD_REQUEST_BYTES,
+    maxFiles: MAX_UPLOAD_FILES,
+  });
+  if (!multipart.ok) {
+    return multipart.reason === "too_large"
+      ? NextResponse.json(
+          {
+            error: `Upload is too large. Send at most ${MAX_UPLOAD_FILES} files and ${
+              MAX_UPLOAD_REQUEST_BYTES / (1024 * 1024)
+            } MB per batch.`,
+          },
+          { status: 413 },
+        )
+      : NextResponse.json({ error: "Invalid form data" }, { status: 400 });
   }
+  const formData = multipart.formData;
 
   const dir =
     typeof formData.get("dir") === "string"

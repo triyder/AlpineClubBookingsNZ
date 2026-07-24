@@ -5,7 +5,8 @@ import { z } from "zod";
 
 import { requireAdmin } from "@/lib/session-guards";
 import { isFullAdmin } from "@/lib/access-roles";
-import { MAX_BUNDLE_BYTES } from "./bundle";
+import { readCappedMultipartFormData } from "@/lib/capped-multipart";
+import { MAX_BUNDLE_BYTES, MAX_BUNDLE_REQUEST_BYTES } from "./bundle";
 import type { ImportMode, MatchResolution } from "./import-types";
 import {
   CONFIG_TRANSFER_CATEGORIES,
@@ -69,8 +70,23 @@ export async function readBundleUpload(request: Request): Promise<UploadResult> 
     ok: false,
     response: NextResponse.json({ error }, { status }),
   });
+  // Stream the multipart body through a capped reader so an oversize (chunked or
+  // spoofed-Content-Length) bundle upload is cut off mid-stream rather than
+  // buffered in full by request.formData(). The per-file cap reproduces the
+  // MAX_BUNDLE_BYTES 413 below before the whole file is held in memory.
+  const multipart = await readCappedMultipartFormData(request, {
+    maxRequestBytes: MAX_BUNDLE_REQUEST_BYTES,
+    maxFileBytes: MAX_BUNDLE_BYTES,
+    maxFiles: 1,
+  });
+  if (!multipart.ok) {
+    return multipart.reason === "too_large"
+      ? bad("Bundle is too large.", 413)
+      : bad("Could not read the uploaded bundle.");
+  }
+  const form = multipart.formData;
+
   try {
-    const form = await request.formData();
     const file = form.get("bundle");
     if (!(file instanceof File)) return bad("Missing 'bundle' file.");
     if (file.size > MAX_BUNDLE_BYTES) return bad("Bundle is too large.", 413);

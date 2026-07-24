@@ -21,6 +21,13 @@ import {
 /** Overall (compressed) bundle upload cap (MVP). */
 export const MAX_BUNDLE_BYTES = 50 * 1024 * 1024;
 /**
+ * Whole multipart request-body ceiling for a bundle upload: the bundle file cap
+ * plus headroom for the accompanying form fields (mode / categories /
+ * resolutions / expectedFingerprint) and multipart boundary overhead. Enforced
+ * by the streamed reader before the body is buffered (#2235).
+ */
+export const MAX_BUNDLE_REQUEST_BYTES = MAX_BUNDLE_BYTES + 2 * 1024 * 1024;
+/**
  * Per-file uncompressed cap, enforced BEFORE inflation via the unzip filter.
  * (Media files are additionally capped at MAX_MEDIA_IMAGE_BYTES by the media
  * plan/apply phase in media.ts.)
