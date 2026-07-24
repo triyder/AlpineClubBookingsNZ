@@ -756,6 +756,56 @@ Residual risks to keep visible:
 - The repo does not yet publish signed image attestations or SBOM artifacts.
   Current image provenance is protected PR checks plus commit-SHA GHCR tags.
 
+## Streamed Multipart Upload Cap Review - 2026-07-24
+
+Reviewed every `multipart/form-data` upload route for the memory-pressure DoS in
+#2235: a `Content-Length` header pre-check followed by `request.formData()`. The
+`Content-Length` header is optional and attacker-controlled, so a chunked
+request (no header) or a spoofed-small value skipped the pre-check and
+`request.formData()` then buffered the **entire** body into memory before the
+real per-file byte caps ran. An authenticated user could POST a multi-GB body
+and exhaust server memory.
+
+Hardening applied in #2235:
+
+- A shared streaming reader, `readCappedMultipartFormData`
+  (`src/lib/capped-multipart.ts`), replaces `request.formData()` on every
+  multipart route. It pipes `request.body` through `busboy` incrementally with a
+  total-byte counter sitting **upstream** of the parser: the moment the running
+  total exceeds the route's request-body ceiling the source stream is cancelled
+  and the parser torn down, so the server stops consuming a hostile body
+  mid-flight instead of buffering it whole. It also enforces per-file, file-count
+  and field caps, and fails **closed** (413) when `busboy` would silently
+  truncate a file past its `fileSize` limit rather than accepting the truncated
+  remainder. It keeps the cheap honest-`Content-Length` fast-fail (413 before the
+  stream is read) and uses the strict `Content-Length` parse from
+  `readBoundedWebhookText` so a malformed header is treated as absent, never
+  trusted.
+- Adopted across all four multipart surfaces with their existing status codes and
+  messages preserved: `/api/members/[id]/photo` (2MB/file), `/api/admin/image-library`
+  (2MB/file), `/api/admin/image-manager/upload` (a batch route — now capped at 25
+  files and an 80MB total request body, while keeping its friendly per-file
+  10MB result), and the config-transfer `readBundleUpload` shared by the plan /
+  apply / reseal routes (50MB bundle file, ~52MB request body).
+
+Guaranteed backstop (defence in depth):
+
+- The reverse-proxy / platform request-body cap is the guaranteed first line of
+  defence: it rejects an oversize body at the edge before it ever reaches the
+  Node process, independent of any application code. Configure it on every
+  deployment — Caddy's `request_body { max_size <n> }` directive, Nginx
+  `client_max_body_size`, or the host platform's request-size limit — set
+  comfortably above the largest legitimate in-app cap (the config-transfer 50MB
+  bundle and the 80MB image-manager batch), e.g. 100MB.
+- **Current state / operator action:** the repo's `Caddyfile` does **not** yet
+  set `request_body { max_size }`, so today the in-app streamed reader in
+  `readCappedMultipartFormData` is the effective enforcement. Adding the Caddy
+  (or platform) cap is recommended so an oversize body is dropped at the edge
+  rather than streamed into the app. The in-app reader remains the second line
+  regardless — it enforces the per-route byte/file caps a generic proxy limit
+  cannot know about, and it protects an attacker path that reaches the Node
+  process directly (bypassing the proxy).
+
 ## Follow-Up Mapping
 
 - #613 - Standardize route guards: route metadata and shared active-session and

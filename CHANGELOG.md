@@ -4,6 +4,20 @@ All notable public reference-release changes should be recorded here.
 
 ## Unreleased
 
+- **Image and configuration uploads can no longer be used to exhaust server
+  memory (#2235).** Every upload form (member photos, the website image library,
+  the Image Manager, and configuration-bundle import/preview/reseal) now reads
+  the request body through a shared streamed, size-capped reader instead of
+  buffering the whole upload into memory first. Previously a signed-in user could
+  send a very large upload with a missing or understated size header and force
+  the server to hold the entire body in memory before the real limits applied;
+  the new reader stops reading the moment an upload exceeds its limit and rejects
+  it. Valid uploads are unchanged: the same file types and per-file size limits
+  apply, and the Image Manager still uploads several files at once (now capped at
+  25 files and 80MB per batch). Operators should also set a request-body size
+  limit at their reverse proxy (for example Caddy `request_body { max_size }`) as
+  the guaranteed backstop — see `docs/SECURITY-ATTACK-SURFACE.md`.
+
 ## 0.13.2 - 2026-07-23
 
 - **Configuration transfer now covers three more club-wide settings, and guards
