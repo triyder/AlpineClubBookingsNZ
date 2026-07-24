@@ -155,6 +155,39 @@ const NO_EOI_JPEG_BYTES = (() => {
   return Buffer.concat([soi, exif, sof0, sos]);
 })();
 
+// The GPS payload embedded in the EXIF fixtures, so a test can assert it is
+// present in the raw upload but absent from the stored (stripped) bytes.
+const EXIF_GPS_MARKER = Buffer.from("GPS:-41.29,174.78", "latin1");
+
+// A WELL-FORMED JPEG: the same APP1 EXIF/GPS as above but WITH a proper primary
+// EOI (FF D9), so the fail-closed stripper reaches its clean-exit and CAN confirm
+// the strip. The route must accept it (201) and store the CLEANED bytes — the
+// APP1 EXIF segment gone — proving the end-to-end "GPS never reaches storage"
+// guarantee for the direct-upload path (not just the lib-level strip unit test).
+const EXIF_JPEG_WITH_EOI_BYTES = (() => {
+  const soi = Buffer.from([0xff, 0xd8]);
+  const exif = (() => {
+    const payload = Buffer.concat([Buffer.from("Exif\0\0", "latin1"), EXIF_GPS_MARKER]);
+    const len = Buffer.alloc(2);
+    len.writeUInt16BE(payload.length + 2, 0);
+    return Buffer.concat([Buffer.from([0xff, 0xe1]), len, payload]); // APP1
+  })();
+  const sof0 = (() => {
+    const s = Buffer.alloc(11);
+    s.writeUInt8(0xff, 0);
+    s.writeUInt8(0xc0, 1);
+    s.writeUInt16BE(9, 2);
+    s.writeUInt8(8, 4);
+    s.writeUInt16BE(16, 5); // height
+    s.writeUInt16BE(16, 7); // width
+    s.writeUInt8(1, 9);
+    return s;
+  })();
+  const sos = Buffer.from([0xff, 0xda, 0x00, 0x02, 0x01, 0x77]);
+  const eoi = Buffer.from([0xff, 0xd9]); // primary EOI → clean strip exit
+  return Buffer.concat([soi, exif, sof0, sos, eoi]);
+})();
+
 /**
  * Wire prisma.member.findUnique to answer each of the route's three distinct
  * selects: the GET committee/photo lookup, the GET private-branch viewer
@@ -406,6 +439,39 @@ describe("POST /api/members/[id]/photo — upload", () => {
     expect(mocks.logAudit).toHaveBeenCalledWith(
       expect.objectContaining({ action: "member_photo.upload" }),
     );
+  });
+
+  it("strips EXIF/GPS from a well-formed JPEG and stores only the cleaned bytes (201)", async () => {
+    wireMemberLookups({ photoImageId: null });
+    mocks.auth.mockResolvedValue(ownerSession);
+
+    // Sanity: the raw upload really does carry the GPS marker.
+    expect(EXIF_JPEG_WITH_EOI_BYTES.includes(EXIF_GPS_MARKER)).toBe(true);
+
+    const file = new File([EXIF_JPEG_WITH_EOI_BYTES], "me.jpg", { type: "image/jpeg" });
+    const response = await POST(uploadRequest(TARGET_ID, file), params(TARGET_ID));
+
+    expect(response.status).toBe(201);
+    expect(mocks.mediaImageCreate).toHaveBeenCalledTimes(1);
+
+    // The bytes handed to storage must be the CLEANED buffer, not the original:
+    // no GPS payload, no "Exif" header, and no APP1 (FF E1) marker survives —
+    // while it remains a structurally valid JPEG (SOI … primary EOI).
+    const stored = Buffer.from(mocks.mediaImageCreate.mock.calls[0][0].data.data as Uint8Array);
+    expect(stored.includes(EXIF_GPS_MARKER)).toBe(false);
+    expect(stored.includes(Buffer.from("Exif", "latin1"))).toBe(false);
+    let hasApp1 = false;
+    for (let i = 0; i + 1 < stored.length; i += 1) {
+      if (stored[i] === 0xff && stored[i + 1] === 0xe1) {
+        hasApp1 = true;
+        break;
+      }
+    }
+    expect(hasApp1).toBe(false);
+    expect(stored[0]).toBe(0xff);
+    expect(stored[1]).toBe(0xd8);
+    expect(stored[stored.length - 2]).toBe(0xff);
+    expect(stored[stored.length - 1]).toBe(0xd9);
   });
 
   it("accepts a WebP whose dimensions cannot be parsed (truncated header)", async () => {
