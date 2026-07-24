@@ -6,6 +6,7 @@ import {
 } from "@/lib/admin-account-guards";
 import { hasAdminAccess } from "@/lib/access-roles";
 import { buildStructuredAuditLogCreateArgs } from "@/lib/audit";
+import { deleteOwnedMemberPhotoBlobs } from "@/lib/member-photo";
 import { memberDisplayName } from "@/lib/member-serialization";
 import { prisma } from "@/lib/prisma";
 
@@ -276,6 +277,14 @@ export const MEMBER_MERGE_SNAPSHOT_SCALAR_COLUMNS: readonly string[] = [
   "AuditLog.actorMemberId",
   "AuditLog.subjectMemberId",
   "AuditLog.memberId",
+  // MP1 (#189): FK-less member-id audit snapshots. MediaImage.uploadedByMemberId
+  // carries no @relation (so a loser-uploaded image is never cascaded/moved);
+  // any loser MEMBER_PHOTO blob is instead cleaned up by
+  // reconcileLoserMemberPhotos. Member.photoUpdatedByMemberId records who last
+  // set the photo and, like every other snapshot column, keeps the loser's id as
+  // immutable history when a loser's photo group is absorbed by the master.
+  "MediaImage.uploadedByMemberId",
+  "Member.photoUpdatedByMemberId",
 ];
 
 // ---------------------------------------------------------------------------
@@ -377,6 +386,18 @@ const GROUP_FILL_SPECS: { name: string; key: string; fields: string[] }[] = [
     name: "phone",
     key: "phoneNumber",
     fields: ["phoneCountryCode", "phoneAreaCode", "phoneNumber"],
+  },
+  {
+    // Member profile photo (MP1, #189). photoImageId is an OUTBOUND scalar FK
+    // (Member -> MediaImage), so it is merged here, master-wins: the master
+    // keeps its own photo (and photoUpdatedAt/photoUpdatedByMemberId audit
+    // snapshot); the loser's whole group is absorbed ONLY when the master has no
+    // photo. The loser's now-unreferenced MEMBER_PHOTO blob is cleaned up at
+    // execute time (reconcileLoserMemberPhotos) so it can never survive as a
+    // dangling public asset.
+    name: "photo",
+    key: "photoImageId",
+    fields: ["photoImageId", "photoUpdatedAt", "photoUpdatedByMemberId"],
   },
   {
     name: "streetAddress",
@@ -1342,6 +1363,46 @@ export async function executeMemberMerge(params: {
       await tx.member.update({ where: { id: masterId }, data: fieldOutcome.patch });
     }
 
+    // 5b) Member-photo reconciliation (MP1, #189). The master's final photo is
+    // its own when it had one, else the loser's absorbed one (in the patch). Any
+    // OTHER loser MEMBER_PHOTO blob — the loser's discarded photo and anything it
+    // uploaded — is hard-deleted so it cannot linger as a dangling public asset.
+    // Lock order (deadlock-freedom): the preceding merge steps (relation moves,
+    // loser Xero teardown, field merge) have already taken the master/loser
+    // `Member` row locks, so this MediaImage delete takes MediaImage AFTER
+    // Member — matching the photo upload writer's order. Keep this after those
+    // steps. See docs/CONCURRENCY_AND_LOCKING.md → "Member photo writer".
+    const keepPhotoImageId =
+      ((fieldOutcome.patch.photoImageId as string | null | undefined) ??
+        (masterFull as unknown as { photoImageId: string | null }).photoImageId) ??
+      null;
+    // Read the loser's CURRENT photoImageId FRESH under the row lock rather than
+    // trusting the `loserFull` snapshot taken at the top of the transaction. The
+    // photo upload route deliberately does NOT take the member-lifecycle advisory
+    // lock (docs/CONCURRENCY_AND_LOCKING.md → "Member photo writer"), so between
+    // the snapshot read (~top of tx) and here an admin can POST a photo ON BEHALF
+    // OF the loser: it creates a NEW blob L2 (carrying the ADMIN's
+    // `uploadedByMemberId`, not the loser's), repoints the loser to L2, deletes
+    // the loser's old blob L1 and commits. The stale snapshot still names L1, so a
+    // reconcile keyed on it would match neither the deleted L1 nor the admin-owned
+    // L2 — and once the loser is hard-deleted, L2 orphans as a dangling public
+    // asset. teardownLoserXero's unconditional `member.update` (step 4 above) has
+    // already taken the loser's row lock, so this read returns the committed
+    // post-upload pointer (L2). Mirrors the account-deletion path
+    // (member-lifecycle-actions.ts), which reads photoImageId fresh from its own
+    // locking `member.update`. This is a plain read of the already-locked loser
+    // row — it introduces no new MediaImage-before-Member ordering.
+    const loserFresh = await tx.member.findUnique({
+      where: { id: loserId },
+      select: { photoImageId: true },
+    });
+    const photoReconcile = await reconcileLoserMemberPhotos(
+      tx,
+      loserId,
+      loserFresh?.photoImageId ?? null,
+      keepPhotoImageId,
+    );
+
     // 6) One critical audit.
     const loserSnapshot = buildLoserSnapshot(loserFull);
     await tx.auditLog.create(
@@ -1364,6 +1425,7 @@ export async function executeMemberMerge(params: {
           collisions: resolveResults.collisions,
           resolutionWarnings: resolveResults.warnings,
           xeroTeardown,
+          photoReconcile,
           movedIdSample: movedIdSample.sample,
           movedIdSampleTruncated: movedIdSample.truncated,
         },
@@ -1475,6 +1537,40 @@ async function collectMovedIdSample(
     if (rows.length > remaining) truncated = true;
   }
   return { sample, truncated };
+}
+
+/**
+ * MP1 (#189) — member-photo cleanup on merge. `Member.photoImageId` is an
+ * outbound scalar FK handled by the master-wins field merge; this deletes the
+ * loser's own MEMBER_PHOTO `MediaImage` (its discarded photo) plus any blob it
+ * uploaded that is now unreferenced, EXCEPT the one the master keeps — so no
+ * member-photo blob survives unreferenced as a dangling public asset. It does
+ * NOT delete a blob still referenced by another surviving member: an admin
+ * (a possible loser) may have uploaded photos on behalf of others, which carry
+ * the admin's `uploadedByMemberId` but are the *subject's* current photo. That
+ * carve-out lives in the shared `deleteOwnedMemberPhotoBlobs` helper. Deleting a
+ * blob the loser still points to is safe (`onDelete: SetNull`). Runs BEFORE the
+ * loser hard-delete, while the loser still references its own blob.
+ *
+ * `loserPhotoImageId` is the loser's CURRENT photo pointer, read FRESH by the
+ * caller under the loser's row lock (NOT the stale `loserFull` snapshot), so a
+ * blob just repointed by a concurrent on-behalf upload is the one considered.
+ */
+async function reconcileLoserMemberPhotos(
+  tx: Prisma.TransactionClient,
+  loserId: string,
+  loserPhotoImageId: string | null,
+  keepPhotoImageId: string | null,
+): Promise<{ deleted: number }> {
+  // Delegate to the shared helper so the merge and account-deletion paths apply
+  // the identical "spare blobs referenced by another surviving member" rule.
+  // The loser is hard-deleted moments later (still present at this point), so
+  // its own blob — referenced only by it — is still swept.
+  return deleteOwnedMemberPhotoBlobs(tx, {
+    memberId: loserId,
+    photoImageId: loserPhotoImageId,
+    keepImageId: keepPhotoImageId,
+  });
 }
 
 async function nullSelfRelationCycles(

@@ -9,6 +9,7 @@ import {
   extractImageDimensions,
   mediaImageServingUrl,
   sanitiseMediaImageFilename,
+  stripImageMetadata,
 } from "@/lib/media-image";
 
 function buildPng(width: number, height: number): Buffer {
@@ -225,5 +226,399 @@ describe("mediaImageServingUrl", () => {
 describe("MAX_MEDIA_IMAGE_BYTES", () => {
   it("is 2MB", () => {
     expect(MAX_MEDIA_IMAGE_BYTES).toBe(2 * 1024 * 1024);
+  });
+});
+
+// ─── WebP dimension parsing (decode-bomb backstop, review #7) ────────────────
+
+function buildWebpVp8x(width: number, height: number): Buffer {
+  const payload = Buffer.alloc(10); // 4 flags/reserved + 3 (w-1) + 3 (h-1), LE
+  payload.writeUIntLE(width - 1, 4, 3);
+  payload.writeUIntLE(height - 1, 7, 3);
+  const buf = Buffer.alloc(20 + payload.length);
+  buf.write("RIFF", 0, "ascii");
+  buf.writeUInt32LE(4 + 8 + payload.length, 4);
+  buf.write("WEBP", 8, "ascii");
+  buf.write("VP8X", 12, "ascii");
+  buf.writeUInt32LE(payload.length, 16);
+  payload.copy(buf, 20);
+  return buf;
+}
+
+describe("extractImageDimensions — WebP (VP8X)", () => {
+  it("parses the canvas dimensions from a VP8X chunk", () => {
+    expect(extractImageDimensions(buildWebpVp8x(1024, 768), "image/webp")).toEqual(
+      { width: 1024, height: 768 },
+    );
+  });
+
+  it("reads an oversized canvas so the caller's backstop can reject it", () => {
+    expect(
+      extractImageDimensions(buildWebpVp8x(16384, 16384), "image/webp"),
+    ).toEqual({ width: 16384, height: 16384 });
+  });
+});
+
+// ─── Metadata stripping (privacy, review #6) ─────────────────────────────────
+
+function pngChunk(type: string, data: Buffer): Buffer {
+  const len = Buffer.alloc(4);
+  len.writeUInt32BE(data.length, 0);
+  const crc = Buffer.alloc(4); // stripper does not validate the CRC
+  return Buffer.concat([len, Buffer.from(type, "ascii"), data, crc]);
+}
+
+function webpChunk(fourCC: string, data: Buffer): Buffer {
+  const header = Buffer.alloc(8);
+  header.write(fourCC, 0, "ascii");
+  header.writeUInt32LE(data.length, 4);
+  const pad = data.length % 2 === 1 ? Buffer.from([0]) : Buffer.alloc(0);
+  return Buffer.concat([header, data, pad]);
+}
+
+function jpegAppSegment(marker: number, payload: Buffer): Buffer {
+  const len = Buffer.alloc(2);
+  len.writeUInt16BE(payload.length + 2, 0);
+  return Buffer.concat([Buffer.from([0xff, marker]), len, payload]);
+}
+
+const JPEG_SOF0 = (() => {
+  const s = Buffer.alloc(11);
+  s.writeUInt8(0xff, 0);
+  s.writeUInt8(0xc0, 1);
+  s.writeUInt16BE(9, 2);
+  s.writeUInt8(8, 4);
+  s.writeUInt16BE(16, 5); // height
+  s.writeUInt16BE(16, 7); // width
+  s.writeUInt8(1, 9);
+  return s;
+})();
+const JPEG_SOS_EOI = Buffer.from([0xff, 0xda, 0x00, 0x02, 0x01, 0xff, 0xd9]);
+
+const SECRET = "GPS:-41.29,174.78";
+
+describe("stripImageMetadata", () => {
+  it("removes the EXIF APP1 segment from a JPEG but keeps the frame (ok:true)", () => {
+    const soi = Buffer.from([0xff, 0xd8]);
+    const exifPayload = Buffer.from(`Exif\0\0${SECRET}`, "latin1");
+    const app1Len = Buffer.alloc(2);
+    app1Len.writeUInt16BE(exifPayload.length + 2, 0);
+    const app1 = Buffer.concat([Buffer.from([0xff, 0xe1]), app1Len, exifPayload]);
+    const sof0 = (() => {
+      const s = Buffer.alloc(11);
+      s.writeUInt8(0xff, 0);
+      s.writeUInt8(0xc0, 1);
+      s.writeUInt16BE(9, 2);
+      s.writeUInt8(8, 4);
+      s.writeUInt16BE(16, 5); // height
+      s.writeUInt16BE(16, 7); // width
+      s.writeUInt8(1, 9);
+      return s;
+    })();
+    const sos = Buffer.from([0xff, 0xda, 0x00, 0x02, 0x01, 0xff, 0xd9]);
+    const jpeg = Buffer.concat([soi, app1, sof0, sos]);
+
+    const result = stripImageMetadata(jpeg, "image/jpeg");
+    expect(result.ok).toBe(true);
+    const stripped = result.bytes;
+
+    expect(stripped.includes(Buffer.from(SECRET, "latin1"))).toBe(false);
+    expect(stripped.length).toBeLessThan(jpeg.length);
+    // Still a JPEG whose dimensions survive.
+    expect(stripped[0]).toBe(0xff);
+    expect(stripped[1]).toBe(0xd8);
+    expect(extractImageDimensions(stripped, "image/jpeg")).toEqual({
+      width: 16,
+      height: 16,
+    });
+  });
+
+  it("strips a valid JPEG carrying EXIF/GPS to ok:true with the GPS gone", () => {
+    // A structurally clean, EOI-terminated JPEG whose only extra segment is an
+    // EXIF APP1 carrying GPS. The confirmed-clean (ok:true) path must remove it.
+    const jpeg = Buffer.concat([
+      Buffer.from([0xff, 0xd8]),
+      jpegAppSegment(0xe1, Buffer.from(`Exif\0\0${SECRET}`, "latin1")),
+      JPEG_SOF0,
+      JPEG_SOS_EOI,
+    ]);
+
+    const result = stripImageMetadata(jpeg, "image/jpeg");
+
+    expect(result.ok).toBe(true);
+    expect(result.bytes.includes(Buffer.from(SECRET, "latin1"))).toBe(false);
+    expect(extractImageDimensions(result.bytes, "image/jpeg")).toEqual({
+      width: 16,
+      height: 16,
+    });
+  });
+
+  it("rejects (ok:false) a renderable JPEG whose trailing FF D9 EOI is removed, leaving bytes unchanged", () => {
+    // THE core regression guard for the fail-open leak: a JPEG that still sniffs
+    // as image/jpeg, still parses a frame, still renders in a browser — but has
+    // NO primary EOI. The old code returned it unchanged (EXIF/GPS intact) and
+    // the route stored & served it. Fail-closed: ok:false, original bytes back.
+    const withEoi = Buffer.concat([
+      Buffer.from([0xff, 0xd8]),
+      jpegAppSegment(0xe1, Buffer.from(`Exif\0\0${SECRET}`, "latin1")),
+      JPEG_SOF0,
+      JPEG_SOS_EOI, // ...ends 0xff 0xd9
+    ]);
+    // Drop the trailing EOI marker (last two bytes: FF D9).
+    const noEoi = withEoi.subarray(0, withEoi.length - 2);
+
+    const result = stripImageMetadata(noEoi, "image/jpeg");
+
+    expect(result.ok).toBe(false);
+    // Bytes handed back unchanged (route rejects, so they are never stored).
+    expect(result.bytes.equals(noEoi)).toBe(true);
+    expect(result.bytes.includes(Buffer.from(SECRET, "latin1"))).toBe(true);
+  });
+
+  it("rejects (ok:false) non-image garbage", () => {
+    const garbage = Buffer.from("this is not an image at all", "utf8");
+    const result = stripImageMetadata(garbage, "image/jpeg");
+    expect(result.ok).toBe(false);
+    expect(result.bytes.equals(garbage)).toBe(true);
+  });
+
+  it("removes eXIf and tEXt chunks from a PNG, keeping critical chunks (ok:true)", () => {
+    const sig = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const ihdrData = Buffer.alloc(13);
+    ihdrData.writeUInt32BE(16, 0);
+    ihdrData.writeUInt32BE(16, 4);
+    const png = Buffer.concat([
+      sig,
+      pngChunk("IHDR", ihdrData),
+      pngChunk("eXIf", Buffer.from(SECRET, "latin1")),
+      pngChunk("tEXt", Buffer.from(`Comment\0${SECRET}`, "latin1")),
+      pngChunk("IDAT", Buffer.from([0x00])),
+      pngChunk("IEND", Buffer.alloc(0)),
+    ]);
+
+    const result = stripImageMetadata(png, "image/png");
+    expect(result.ok).toBe(true);
+    const stripped = result.bytes;
+
+    expect(stripped.includes(Buffer.from(SECRET, "latin1"))).toBe(false);
+    expect(stripped.includes(Buffer.from("IHDR", "ascii"))).toBe(true);
+    expect(stripped.includes(Buffer.from("IDAT", "ascii"))).toBe(true);
+    expect(stripped.includes(Buffer.from("IEND", "ascii"))).toBe(true);
+    expect(stripped.includes(Buffer.from("eXIf", "ascii"))).toBe(false);
+  });
+
+  it("rejects (ok:false) a PNG with no IEND (truncated), leaving bytes unchanged", () => {
+    const sig = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const ihdrData = Buffer.alloc(13);
+    ihdrData.writeUInt32BE(16, 0);
+    ihdrData.writeUInt32BE(16, 4);
+    // IHDR + a metadata chunk carrying GPS, then EOF — no IEND terminator.
+    const png = Buffer.concat([
+      sig,
+      pngChunk("IHDR", ihdrData),
+      pngChunk("eXIf", Buffer.from(SECRET, "latin1")),
+    ]);
+
+    const result = stripImageMetadata(png, "image/png");
+
+    expect(result.ok).toBe(false);
+    expect(result.bytes.equals(png)).toBe(true);
+  });
+
+  it("removes the EXIF chunk from a WebP RIFF container (ok:true)", () => {
+    const body = Buffer.concat([
+      webpChunk("VP8L", Buffer.from([0x2f, 0x00, 0x00, 0x00, 0x00])),
+      webpChunk("EXIF", Buffer.from(SECRET, "latin1")),
+    ]);
+    const webp = Buffer.concat([
+      Buffer.from("RIFF", "ascii"),
+      (() => {
+        const s = Buffer.alloc(4);
+        s.writeUInt32LE(4 + body.length, 0);
+        return s;
+      })(),
+      Buffer.from("WEBP", "ascii"),
+      body,
+    ]);
+
+    const result = stripImageMetadata(webp, "image/webp");
+    expect(result.ok).toBe(true);
+    const stripped = result.bytes;
+
+    expect(stripped.includes(Buffer.from(SECRET, "latin1"))).toBe(false);
+    expect(stripped.toString("ascii", 0, 4)).toBe("RIFF");
+    expect(stripped.toString("ascii", 8, 12)).toBe("WEBP");
+    expect(stripped.includes(Buffer.from("VP8L", "ascii"))).toBe(true);
+    // RIFF size header is recomputed to match the shortened body.
+    expect(stripped.readUInt32LE(4)).toBe(stripped.length - 8);
+  });
+
+  it("returns ok:true for a clean WebP with no EXIF/XMP (nothing to strip)", () => {
+    // A well-formed RIFF/WEBP with a single VP8L chunk and no metadata: the walk
+    // completes cleanly to EOF, so the confirmed-clean path returns ok:true and
+    // the original bytes (nothing was changed).
+    const body = webpChunk("VP8L", Buffer.from([0x2f, 0x00, 0x00, 0x00, 0x00]));
+    const webp = Buffer.concat([
+      Buffer.from("RIFF", "ascii"),
+      (() => {
+        const s = Buffer.alloc(4);
+        s.writeUInt32LE(4 + body.length, 0);
+        return s;
+      })(),
+      Buffer.from("WEBP", "ascii"),
+      body,
+    ]);
+
+    const result = stripImageMetadata(webp, "image/webp");
+
+    expect(result.ok).toBe(true);
+    expect(result.bytes.equals(webp)).toBe(true);
+  });
+
+  it("rejects (ok:false) a malformed WebP whose non-final chunk overruns EOF", () => {
+    // A VP8L chunk that declares a size far larger than the bytes present, with
+    // more (would-be) chunks implied after it: the overrun is not the tolerated
+    // final-odd-pad case, so it is genuinely malformed → reject.
+    const header = Buffer.alloc(8);
+    header.write("VP8L", 0, "ascii");
+    header.writeUInt32LE(999, 4); // claims 999 payload bytes that don't exist
+    const body = Buffer.concat([header, Buffer.from([0x2f, 0x00])]);
+    const webp = Buffer.concat([
+      Buffer.from("RIFF", "ascii"),
+      (() => {
+        const s = Buffer.alloc(4);
+        s.writeUInt32LE(4 + body.length, 0);
+        return s;
+      })(),
+      Buffer.from("WEBP", "ascii"),
+      body,
+    ]);
+
+    const result = stripImageMetadata(webp, "image/webp");
+
+    expect(result.ok).toBe(false);
+    expect(result.bytes.equals(webp)).toBe(true);
+  });
+
+  it("drops APP13 IPTC (and any non-colour APPn) while preserving JFIF/ICC (allow-list, ok:true)", () => {
+    const iptcSecret = "IPTC-HOME-42-BAKER-ST";
+    const soi = Buffer.from([0xff, 0xd8]);
+    const app0Jfif = jpegAppSegment(
+      0xe0,
+      Buffer.from("JFIF\0\x01\x01\x00\x00\x01\x00\x01\x00\x00", "latin1"),
+    ); // colour/structural — must be kept
+    const app13Iptc = jpegAppSegment(
+      0xed,
+      Buffer.from(`Photoshop 3.0\0${iptcSecret}`, "latin1"),
+    ); // IPTC — must be dropped
+    const app2Icc = jpegAppSegment(0xe2, Buffer.from("ICC_PROFILE\0keep-colour")); // kept
+    const jpeg = Buffer.concat([
+      soi,
+      app0Jfif,
+      app13Iptc,
+      app2Icc,
+      JPEG_SOF0,
+      JPEG_SOS_EOI,
+    ]);
+
+    const result = stripImageMetadata(jpeg, "image/jpeg");
+    expect(result.ok).toBe(true);
+    const stripped = result.bytes;
+
+    // IPTC PII gone; JFIF and ICC colour segments preserved; frame intact.
+    expect(stripped.includes(Buffer.from(iptcSecret, "latin1"))).toBe(false);
+    expect(stripped.includes(Buffer.from("JFIF", "latin1"))).toBe(true);
+    expect(stripped.includes(Buffer.from("ICC_PROFILE", "latin1"))).toBe(true);
+    expect(stripped.includes(Buffer.from("Photoshop", "latin1"))).toBe(false);
+    expect(extractImageDimensions(stripped, "image/jpeg")).toEqual({
+      width: 16,
+      height: 16,
+    });
+  });
+
+  it("strips a trailing WebP EXIF chunk even when it omits its RIFF pad byte (ok:true)", () => {
+    // Final EXIF chunk with an odd payload length and NO pad byte (built by hand
+    // — webpChunk would add the pad).
+    const exifData = Buffer.from(SECRET, "latin1"); // odd length
+    const exifHeader = Buffer.alloc(8);
+    exifHeader.write("EXIF", 0, "ascii");
+    exifHeader.writeUInt32LE(exifData.length, 4);
+    const exifNoPad = Buffer.concat([exifHeader, exifData]);
+    const body = Buffer.concat([
+      webpChunk("VP8L", Buffer.from([0x2f, 0x00, 0x00, 0x00])),
+      exifNoPad,
+    ]);
+    const webp = Buffer.concat([
+      Buffer.from("RIFF", "ascii"),
+      (() => {
+        const s = Buffer.alloc(4);
+        s.writeUInt32LE(4 + body.length, 0);
+        return s;
+      })(),
+      Buffer.from("WEBP", "ascii"),
+      body,
+    ]);
+
+    const result = stripImageMetadata(webp, "image/webp");
+    expect(result.ok).toBe(true);
+    const stripped = result.bytes;
+
+    expect(stripped.includes(Buffer.from(SECRET, "latin1"))).toBe(false);
+    expect(stripped.toString("ascii", 8, 12)).toBe("WEBP");
+    expect(stripped.includes(Buffer.from("VP8L", "ascii"))).toBe(true);
+  });
+
+  it("truncates at the primary EOI, dropping an appended MPF/motion-photo image and its EXIF (ok:true)", () => {
+    const gps1 = "GPS-PRIMARY-41.29";
+    const gps2 = "GPS-SECONDARY-41.29";
+    const oneJpeg = (gps: string) =>
+      Buffer.concat([
+        Buffer.from([0xff, 0xd8]),
+        jpegAppSegment(0xe1, Buffer.from(`Exif\0\0${gps}`, "latin1")),
+        JPEG_SOF0,
+        JPEG_SOS_EOI,
+      ]);
+    // Primary image + an appended secondary image (as MPF / motion-photo JPEGs do).
+    const mpf = Buffer.concat([oneJpeg(gps1), oneJpeg(gps2)]);
+
+    const result = stripImageMetadata(mpf, "image/jpeg");
+    expect(result.ok).toBe(true);
+    const stripped = result.bytes;
+
+    // Primary EXIF stripped AND the appended secondary image (with its own GPS)
+    // dropped entirely by truncating at the primary EOI.
+    expect(stripped.includes(Buffer.from(gps1, "latin1"))).toBe(false);
+    expect(stripped.includes(Buffer.from(gps2, "latin1"))).toBe(false);
+    expect(stripped[stripped.length - 2]).toBe(0xff);
+    expect(stripped[stripped.length - 1]).toBe(0xd9);
+    expect(extractImageDimensions(stripped, "image/jpeg")).toEqual({
+      width: 16,
+      height: 16,
+    });
+  });
+
+  it("drops a non-ICC APP2 (MPF index) while keeping an ICC-profile APP2 (ok:true)", () => {
+    const mpfSecret = "MPF-POINTS-AT-SECONDARY";
+    const jpeg = Buffer.concat([
+      Buffer.from([0xff, 0xd8]),
+      jpegAppSegment(0xe2, Buffer.from(`MPF\0${mpfSecret}`, "latin1")), // drop
+      jpegAppSegment(0xe2, Buffer.from("ICC_PROFILE\0colour-data", "latin1")), // keep
+      JPEG_SOF0,
+      JPEG_SOS_EOI,
+    ]);
+
+    const result = stripImageMetadata(jpeg, "image/jpeg");
+    expect(result.ok).toBe(true);
+    const stripped = result.bytes;
+
+    expect(stripped.includes(Buffer.from(mpfSecret, "latin1"))).toBe(false);
+    expect(stripped.includes(Buffer.from("ICC_PROFILE", "latin1"))).toBe(true);
+  });
+
+  it("rejects (ok:false) a malformed JPEG, leaving bytes unchanged", () => {
+    const garbage = Buffer.from([0xff, 0xd8, 0x12, 0x34, 0x56]);
+    const result = stripImageMetadata(garbage, "image/jpeg");
+    expect(result.ok).toBe(false);
+    expect(result.bytes.equals(garbage)).toBe(true);
   });
 });

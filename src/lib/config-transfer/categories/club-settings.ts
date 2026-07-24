@@ -467,10 +467,15 @@ export const SINGLETONS: SingletonSpec[] = [
     delegate: "publicContentSettings",
     fields: [
       "membershipTypes", "entranceFees", "hutFees", "bookingPolicySummary",
-      "cancellationPolicy", "annualFees", "showBookNow",
+      "cancellationPolicy", "annualFees", "showBookNow", "committeePhotoDisplay",
     ],
-    // Every exported column is a non-null boolean gate: a present null fails the
-    // dry-run (#2200).
+    // Every exported column is non-null: a present null fails the dry-run
+    // (#2200). All but committeePhotoDisplay are boolean gates; that one is the
+    // CommitteePhotoDisplay enum (NONE/CIRCLE/SQUARE), validated automatically
+    // against the DMMF. It is portable public-page config exactly like the gates
+    // — no instance-local reference (unlike the excluded Book-Now FKs), and the
+    // setting travels without any member photo, which stays member data outside
+    // config transfer and gated by the committee-only serving boundary.
     constraints: {
       membershipTypes: { required: true },
       entranceFees: { required: true },
@@ -479,6 +484,7 @@ export const SINGLETONS: SingletonSpec[] = [
       cancellationPolicy: { required: true },
       annualFees: { required: true },
       showBookNow: { required: true },
+      committeePhotoDisplay: { required: true },
     },
     excluded: {
       bookNowTarget:

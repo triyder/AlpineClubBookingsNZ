@@ -127,6 +127,18 @@ describe("GET /api/admin/image-library", () => {
     );
   });
 
+  it("lists only CONTENT images, never member photos (MP1, #171)", async () => {
+    await GET(listRequest());
+    // Both the page and the total are scoped to kind = CONTENT so a
+    // MEMBER_PHOTO row can never surface in the website content picker.
+    expect(mocks.mediaImageFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { kind: "CONTENT" } }),
+    );
+    expect(mocks.mediaImageCount).toHaveBeenCalledWith({
+      where: { kind: "CONTENT" },
+    });
+  });
+
   it("rejects invalid pagination params", async () => {
     const response = await GET(listRequest("?pageSize=0"));
     expect(response.status).toBe(400);
@@ -189,6 +201,8 @@ describe("POST /api/admin/image-library", () => {
         data: expect.objectContaining({
           contentType: "image/png",
           uploadedByMemberId: "admin-1",
+          // Content-picker uploads are always stamped CONTENT (MP1, #171).
+          kind: "CONTENT",
         }),
       }),
     );

@@ -49,6 +49,7 @@ import { MemberDependentsCard } from "./_components/member-dependents-card";
 import { MemberCreditCard } from "./_components/member-credit-card";
 import { MemberSeasonalMembershipCard } from "./_components/member-seasonal-membership-card";
 import { MemberCommitteeAssignmentsCard } from "./_components/member-committee-assignments-card";
+import { MemberPhotoCard } from "./_components/member-photo-card";
 import { MemberXeroLinkDialog } from "./_components/member-xero-link-dialog";
 import {
   buildAccountEditForm,
@@ -641,6 +642,7 @@ export default function MemberDetailPage({
           title="Contact & Personal"
           preview={groupPreviews.contact}
         >
+          <MemberPhotoCard member={member} canEdit={canEditMembership} />
           <MemberContactGroup
             member={member}
             isSelf={isSelf}

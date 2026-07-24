@@ -66,14 +66,17 @@ export async function GET(request: NextRequest) {
   }
   const { page, pageSize } = parsedQuery.data;
 
+  // Member profile photos (kind = MEMBER_PHOTO) must never surface in the
+  // website content picker — filter both the page and the total (MP1, #171).
   const [images, total] = await Promise.all([
     prisma.mediaImage.findMany({
+      where: { kind: "CONTENT" },
       select: MEDIA_IMAGE_LIST_SELECT,
       orderBy: { createdAt: "desc" },
       skip: (page - 1) * pageSize,
       take: pageSize,
     }),
-    prisma.mediaImage.count(),
+    prisma.mediaImage.count({ where: { kind: "CONTENT" } }),
   ]);
 
   return NextResponse.json({
@@ -164,6 +167,9 @@ export async function POST(request: NextRequest) {
       width: dimensions?.width ?? null,
       height: dimensions?.height ?? null,
       uploadedByMemberId: session.user.id,
+      // Content-picker uploads are always CONTENT; member photos are created
+      // only through the dedicated member-photo endpoint (MP1, #171).
+      kind: "CONTENT",
     },
     select: MEDIA_IMAGE_LIST_SELECT,
   });

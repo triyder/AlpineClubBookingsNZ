@@ -41,6 +41,7 @@ describe("GET /api/images/[id]", () => {
     mocks.mediaImageFindUnique.mockResolvedValue({
       data,
       contentType: "image/png",
+      kind: "CONTENT",
     });
 
     const response = await GET(imageRequest("img-1"), {
@@ -67,6 +68,7 @@ describe("GET /api/images/[id]", () => {
     mocks.mediaImageFindUnique.mockResolvedValue({
       data: Buffer.from("svg-bytes"),
       contentType: "image/svg+xml",
+      kind: "CONTENT",
     });
 
     const response = await GET(
@@ -84,6 +86,7 @@ describe("GET /api/images/[id]", () => {
     mocks.mediaImageFindUnique.mockResolvedValue({
       data: Buffer.from("<svg xmlns='http://www.w3.org/2000/svg'></svg>"),
       contentType: "image/svg+xml",
+      kind: "CONTENT",
     });
 
     const response = await GET(imageRequest("img-3"), {
@@ -97,5 +100,24 @@ describe("GET /api/images/[id]", () => {
     expect(response.headers.get("Content-Security-Policy")).toBe(
       "default-src 'none'; style-src 'unsafe-inline'",
     );
+  });
+
+  it("returns 404 for a MEMBER_PHOTO id (never served on the public content path)", async () => {
+    // ADR-001 decision 3: member photos are a private data class served only
+    // through the scoped, authorised /api/members/[id]/photo endpoint. The same
+    // 404 as a missing row keeps a member photo's existence non-disclosable.
+    mocks.mediaImageFindUnique.mockResolvedValue({
+      data: Buffer.from([0x89, 0x50, 0x4e, 0x47]),
+      contentType: "image/png",
+      kind: "MEMBER_PHOTO",
+    });
+
+    const response = await GET(imageRequest("photo-1"), {
+      params: Promise.resolve({ id: "photo-1" }),
+    });
+
+    expect(response.status).toBe(404);
+    const body = await response.json();
+    expect(body.error).toMatch(/not found/i);
   });
 });

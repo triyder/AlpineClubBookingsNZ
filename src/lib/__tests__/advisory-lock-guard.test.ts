@@ -102,6 +102,12 @@ const SCOPED_ADVISORY_LOCK_INVENTORY: Record<string, number> = {
 const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   "src/lib/admin-bed-allocation.ts": 1,
   "src/lib/booking-create-promo.ts": 1,
+  // Member-photo upload (POST) and remove (DELETE) each lock the member row
+  // (`SELECT "photoImageId" … FOR UPDATE`) so concurrent replace/remove
+  // serialise and never orphan a MEMBER_PHOTO blob. Member-id keyed; no
+  // advisory lock; disjoint from booking/money writers. See
+  // docs/CONCURRENCY_AND_LOCKING.md → "Member photo writer".
+  "src/app/api/members/[id]/photo/route.ts": 2,
 };
 
 const CAPACITY_LOCK_MINT = "src/lib/capacity.ts";

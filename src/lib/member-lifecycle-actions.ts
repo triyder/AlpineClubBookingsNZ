@@ -14,6 +14,7 @@ import {
 } from "@/lib/admin-account-guards";
 import { MEMBER_ACCESS_ROLE_SELECT } from "@/lib/access-role-definitions";
 import { createAuditLog } from "@/lib/audit";
+import { deleteOwnedMemberPhotoBlobs } from "@/lib/member-photo";
 import {
   sendAdminMemberArchiveRequestedAlert,
   sendAdminMemberDeleteApprovedEmail,
@@ -1212,14 +1213,30 @@ export async function reviewMemberDeleteRequest({
       data: { active: false },
     });
 
-    await tx.member.update({
+    const memberBeforeDelete = await tx.member.update({
       where: { id: request.memberId },
       data: { xeroContactId: null },
+      select: { photoImageId: true },
     });
 
     const reviewed = await tx.memberLifecycleActionRequest.findUniqueOrThrow({
       where: { id: request.id },
       include: lifecycleActionRequestInclude,
+    });
+
+    // Scrub the member's own MEMBER_PHOTO blob (and any unreferenced blob they
+    // uploaded) so the hard-delete leaves no orphaned photo bytes — mirroring
+    // the merge reconcile. The shared helper spares blobs still referenced by
+    // another surviving member (an ex-admin deleted here may have uploaded
+    // photos on behalf of others). Runs before the delete while the member's
+    // pointer still exists. Lock order (deadlock-freedom): the `member.update`
+    // above already holds this member's row lock, so this MediaImage delete
+    // takes MediaImage AFTER Member — matching the photo upload writer's
+    // Member(FOR UPDATE)→MediaImage order. Do not move this above that update.
+    // See docs/CONCURRENCY_AND_LOCKING.md → "Member photo writer".
+    const photoReconcile = await deleteOwnedMemberPhotoBlobs(tx, {
+      memberId: request.memberId,
+      photoImageId: memberBeforeDelete.photoImageId,
     });
 
     await tx.member.delete({ where: { id: request.memberId } });
@@ -1242,6 +1259,7 @@ export async function reviewMemberDeleteRequest({
           action: MemberLifecycleAction.DELETE,
           requestReason: request.reason,
           snapshotStored: true,
+          memberPhotoBlobsDeleted: photoReconcile.deleted,
         },
         ipAddress,
       },

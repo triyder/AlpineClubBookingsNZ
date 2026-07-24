@@ -17,6 +17,8 @@ const settingsSchema = z.object({
   showBookNow: z.boolean(),
   bookNowTarget: z.enum(["BOOKING_FLOW", "PAGE"]),
   bookNowPageId: z.string().min(1).nullable(),
+  // Committee-roster photo display + shape (MP5, #171).
+  committeePhotoDisplay: z.enum(["NONE", "CIRCLE", "SQUARE"]),
 }).strict();
 
 type Settings = {
@@ -29,6 +31,7 @@ type Settings = {
   showBookNow: boolean;
   bookNowTarget: "BOOKING_FLOW" | "PAGE";
   bookNowPageId: string | null;
+  committeePhotoDisplay: "NONE" | "CIRCLE" | "SQUARE";
 };
 
 const defaults: Settings = {
@@ -41,6 +44,7 @@ const defaults: Settings = {
   showBookNow: true,
   bookNowTarget: "BOOKING_FLOW",
   bookNowPageId: null,
+  committeePhotoDisplay: "NONE",
 };
 
 const settingsSelect = {
@@ -53,6 +57,7 @@ const settingsSelect = {
   showBookNow: true,
   bookNowTarget: true,
   bookNowPageId: true,
+  committeePhotoDisplay: true,
 } as const;
 
 function serializeSettings(row: Settings): Settings {
@@ -66,6 +71,7 @@ function serializeSettings(row: Settings): Settings {
     showBookNow: row.showBookNow,
     bookNowTarget: row.bookNowTarget,
     bookNowPageId: row.bookNowPageId,
+    committeePhotoDisplay: row.committeePhotoDisplay,
   };
 }
 

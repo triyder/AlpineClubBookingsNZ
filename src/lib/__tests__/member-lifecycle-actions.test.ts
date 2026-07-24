@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
 const mockPrisma = vi.hoisted(() => {
   const countDelegate = () => ({ count: vi.fn().mockResolvedValue(0) });
 
@@ -14,6 +15,9 @@ const mockPrisma = vi.hoisted(() => {
       update: vi.fn(),
       updateMany: vi.fn(),
       delete: vi.fn(),
+    },
+    mediaImage: {
+      deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
     memberLifecycleActionRequest: {
       count: vi.fn().mockResolvedValue(0),
@@ -152,6 +156,7 @@ const now = new Date("2026-05-24T10:00:00.000Z");
 const cleanMember = {
   id: "member-1",
   email: "erroneous@example.test",
+  photoImageId: "member-photo-img",
   passwordHash: "hash",
   forcePasswordChange: false,
   passwordChangedAt: null,
@@ -545,6 +550,8 @@ describe("member delete lifecycle actions", () => {
     expect(mockPrisma.member.update).toHaveBeenCalledWith({
       where: { id: "member-1" },
       data: { xeroContactId: null },
+      // Also selects photoImageId so the blob scrub can target the member's photo.
+      select: { photoImageId: true },
     });
     // #1886 F23: the approval is written through a status-guarded claim so a
     // concurrently-reviewed request can never be overwritten.
@@ -568,6 +575,19 @@ describe("member delete lifecycle actions", () => {
     );
     expect(mockPrisma.member.delete).toHaveBeenCalledWith({
       where: { id: "member-1" },
+    });
+    // review #4: the member's own MEMBER_PHOTO blob is scrubbed in the same
+    // transaction (sparing blobs still referenced by another surviving member),
+    // so a hard-delete leaves no orphaned photo bytes.
+    expect(mockPrisma.mediaImage.deleteMany).toHaveBeenCalledWith({
+      where: {
+        kind: "MEMBER_PHOTO",
+        OR: [
+          { uploadedByMemberId: "member-1" },
+          { id: "member-photo-img" },
+        ],
+        photoOfMembers: { none: { id: { not: "member-1" } } },
+      },
     });
   });
 

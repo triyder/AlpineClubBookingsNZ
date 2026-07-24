@@ -179,6 +179,38 @@ do not use unnamespaced `hashtext(<id>)` for new lock families.
 - `admin-bed-allocation.ts` locks the owning `LodgeRoom` row with `FOR UPDATE`
   before checking and changing one room's bunk-group membership. This protocol
   is independent of the booking/capacity/credit lock cluster.
+- **Member photo writer** — `src/app/api/members/[id]/photo/route.ts` (epic #171):
+  the upload (POST) and remove (DELETE) transactions each `SELECT "photoImageId"
+  FROM "Member" WHERE "id" = $1 FOR UPDATE` before creating/repointing the blob,
+  so two concurrent replace/remove requests for the same member serialise on the
+  member row and can never leave a `MEMBER_PHOTO` blob orphaned. Member-id keyed;
+  no advisory lock; disjoint from the booking/capacity/credit and money lock
+  clusters. The counterpart cleanup writer `deleteOwnedMemberPhotoBlobs` runs
+  inside the member-merge and account-deletion transactions and touches the same
+  `MEMBER_PHOTO` rows. A photo upload is **not** serialised by the
+  member-lifecycle advisory lock, so a live upload for a member *can* be
+  in-flight when a merge/account-deletion of that member begins — the member
+  stays an uploadable subject (self or admin-on-behalf) until the lifecycle
+  transaction commits. What makes that safe and **deadlock-free** is a single
+  shared acquisition order that every writer honours: **lock the `Member` row
+  first, then the `MediaImage` rows.** The upload takes `Member … FOR UPDATE`
+  then `MediaImage` create/deleteMany; the cleanup writers take the `Member` row
+  via `member.update` (lifecycle `xeroContactId` null at
+  `member-lifecycle-actions.ts`; merge field-merge/`teardownLoserXero` in
+  `member-merge.ts`) *before* calling `deleteOwnedMemberPhotoBlobs`. Because no
+  writer ever takes a `MediaImage` lock before the owning `Member` row, the two
+  cannot deadlock. Do not reorder a `deleteOwnedMemberPhotoBlobs` call ahead of
+  its transaction's `Member`-row write. Both cleanup writers also read the
+  leaving member's `photoImageId` **fresh under that already-held row lock** —
+  the deletion path from its own `member.update … select photoImageId`, the
+  merge from a `member.findUnique` after `teardownLoserXero`'s `member.update` —
+  never from an earlier in-memory snapshot. That closes an under-deletion race:
+  an admin-on-behalf upload landing after the snapshot but before the lock is
+  held repoints the member to a NEW blob carrying the *admin's*
+  `uploadedByMemberId`; keying the sweep off the stale snapshot would match
+  neither that blob's id nor its uploader and orphan it once the member is
+  hard-deleted. The fresh locked read supplies the member's current pointer so
+  the blob is swept.
 
 Do not add or compose a row lock without updating this inventory and documenting
 its order against every advisory- and row-lock counterpart.

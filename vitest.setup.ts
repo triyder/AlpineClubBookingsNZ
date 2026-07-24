@@ -13,7 +13,15 @@
 // is byte-for-byte identical to the unset behaviour and no test that asserts the
 // sender address changes. Set with ??= so any test that deliberately exercises a
 // different/!ok config by assigning or deleting these keeps control.
+import { vi } from "vitest";
 import { SAFE_DEFAULT_CONFIG } from "@/config/club";
+
+// `server-only` is a Next.js guard that throws when a module is imported outside
+// a Server Component. Server-side libraries (e.g. member-photo.ts) legitimately
+// import it; in the Vitest node environment the guard has no meaning, so stub it
+// globally. Without this, any test that transitively imports a server-only
+// module fails to load. Applies to all test files via setupFiles.
+vi.mock("server-only", () => ({}));
 
 process.env.EMAIL_FROM ??= SAFE_DEFAULT_CONFIG.supportEmail;
 process.env.AWS_SES_ACCESS_KEY_ID ??= "test-ses-access-key-id";

@@ -105,6 +105,56 @@ describe("mergeMemberFields", () => {
     expect(patch.phoneNumber).toBeUndefined();
   });
 
+  it("keeps the master's photo when it has one (photo master-wins, MP1)", () => {
+    const { patch } = mergeMemberFields(
+      baseMember({
+        photoImageId: "master-img",
+        photoUpdatedAt: new Date("2026-01-01T00:00:00Z"),
+        photoUpdatedByMemberId: "m",
+      }),
+      baseMember({
+        photoImageId: "loser-img",
+        photoUpdatedAt: new Date("2026-02-01T00:00:00Z"),
+        photoUpdatedByMemberId: "l",
+      }),
+    );
+    // Master already has a photo: none of the photo group is overwritten.
+    expect(patch.photoImageId).toBeUndefined();
+    expect(patch.photoUpdatedAt).toBeUndefined();
+    expect(patch.photoUpdatedByMemberId).toBeUndefined();
+  });
+
+  it("absorbs the loser's whole photo group only when the master has none (MP1)", () => {
+    const loserUpdatedAt = new Date("2026-02-01T00:00:00Z");
+    const { patch } = mergeMemberFields(
+      baseMember({ photoImageId: null, photoUpdatedAt: null, photoUpdatedByMemberId: null }),
+      baseMember({
+        photoImageId: "loser-img",
+        photoUpdatedAt: loserUpdatedAt,
+        photoUpdatedByMemberId: "l",
+      }),
+    );
+    expect(patch.photoImageId).toBe("loser-img");
+    expect(patch.photoUpdatedAt).toBe(loserUpdatedAt);
+    expect(patch.photoUpdatedByMemberId).toBe("l");
+  });
+
+  it("never Frankensteins the photo group when master already has a photo (MP1)", () => {
+    const { patch } = mergeMemberFields(
+      baseMember({ photoImageId: "master-img", photoUpdatedAt: null, photoUpdatedByMemberId: null }),
+      baseMember({
+        photoImageId: "loser-img",
+        photoUpdatedAt: new Date("2026-02-01T00:00:00Z"),
+        photoUpdatedByMemberId: "l",
+      }),
+    );
+    // The key (photoImageId) is set on the master, so the whole group stays the
+    // master's — the loser's photoUpdatedAt/By never leak in.
+    expect(patch.photoImageId).toBeUndefined();
+    expect(patch.photoUpdatedAt).toBeUndefined();
+    expect(patch.photoUpdatedByMemberId).toBeUndefined();
+  });
+
   it("ORs requiresInduction and hutLeaderEligible", () => {
     const { patch } = mergeMemberFields(
       baseMember({ requiresInduction: false, hutLeaderEligible: false }),

@@ -63,6 +63,9 @@ describe("CSP policy", () => {
     expect(directive(policy, "img-src")).toContain(
       "https://www.google-analytics.com",
     );
+    // The member-photo crop UI (epic #171) previews the selected file by loading
+    // its object URL into an <img>, so the global img-src must allow blob:.
+    expect(directive(policy, "img-src")).toContain("blob:");
     expect(directive(policy, "worker-src")).toBe("worker-src 'self' blob:");
     expect(directive(policy, "object-src")).toBe("object-src 'none'");
     expect(directive(policy, "frame-ancestors")).toBe("frame-ancestors 'none'");
@@ -99,7 +102,7 @@ describe("CSP policy", () => {
       "default-src 'self'; " +
       "script-src 'self' 'nonce-unit-test-nonce' https://js.stripe.com https://www.googletagmanager.com; " +
       "style-src 'self' 'unsafe-inline'; " +
-      "img-src 'self' data: https: https://www.google-analytics.com https://*.google-analytics.com; " +
+      "img-src 'self' data: blob: https: https://www.google-analytics.com https://*.google-analytics.com; " +
       "font-src 'self' data:; " +
       "connect-src 'self' https://api.stripe.com https://js.stripe.com https://*.ingest.sentry.io https://www.google-analytics.com https://*.google-analytics.com; " +
       "frame-src https://js.stripe.com https://hooks.stripe.com; " +
@@ -203,7 +206,7 @@ describe("CSP proxy", () => {
     expect(
       directive(dashboardResponse.headers.get(CSP_HEADER) as string, "img-src"),
     ).toBe(
-      "img-src 'self' data: https: https://www.google-analytics.com https://*.google-analytics.com",
+      "img-src 'self' data: blob: https: https://www.google-analytics.com https://*.google-analytics.com",
     );
   });
 

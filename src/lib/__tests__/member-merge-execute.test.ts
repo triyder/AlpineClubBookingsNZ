@@ -554,6 +554,200 @@ describe("partner-link warnings reach the audit metadata (M3)", () => {
   });
 });
 
+describe("member-photo reconciliation at execute time (MP1, #189)", () => {
+  /** A member delegate whose findUnique returns the supplied photo-bearing pair. */
+  function photoMemberDelegate(masterRow: unknown, loserRow: unknown) {
+    return {
+      ...defaultDelegate(),
+      findUnique: vi.fn(({ where }: { where: { id: string } }) =>
+        Promise.resolve(
+          where.id === MASTER_ID ? masterRow : where.id === LOSER_ID ? loserRow : null,
+        ),
+      ),
+      // actorIsFullAdmin -> 1 for the actor; every other count (e.g.
+      // wouldRemoveLastFullAdmin) -> 0.
+      count: vi.fn(({ where }: { where: { id?: string } }) =>
+        Promise.resolve(where?.id === ACTOR_ID ? 1 : 0),
+      ),
+      update: vi.fn().mockResolvedValue({}),
+      delete: vi.fn().mockResolvedValue({}),
+    };
+  }
+
+  function photoToken(masterRow: Record<string, unknown>, loserRow: Record<string, unknown>) {
+    const core: MemberMergePreviewCore = {
+      fieldMerge: mergeMemberFields(masterRow, loserRow).diff,
+      relationMoves: [],
+      collisions: [],
+      blockers: [],
+      warnings: [],
+    };
+    return buildMemberMergePreviewToken(
+      MASTER_ID,
+      LOSER_ID,
+      masterRow.updatedAt as Date,
+      loserRow.updatedAt as Date,
+      core,
+    );
+  }
+
+  it("keeps the master's photo and deletes the loser's orphaned MEMBER_PHOTO blob", async () => {
+    const masterRow = makeMember(MASTER_ID, { occupation: null, photoImageId: "master-img" });
+    const loserRow = makeMember(LOSER_ID, { occupation: "Engineer", photoImageId: "loser-img" });
+    const mediaImage = { ...defaultDelegate(), deleteMany: vi.fn().mockResolvedValue({ count: 1 }) };
+    const { client, member } = makeClient({
+      member: photoMemberDelegate(masterRow, loserRow),
+      mediaImage,
+    });
+
+    await executeMemberMerge({
+      masterId: MASTER_ID,
+      loserId: LOSER_ID,
+      actorMemberId: ACTOR_ID,
+      previewToken: photoToken(
+        masterRow as unknown as Record<string, unknown>,
+        loserRow as unknown as Record<string, unknown>,
+      ),
+      confirmationText: "MERGE Dup Person",
+      db: client as never,
+    });
+
+    // Master keeps master-img; the loser's own MEMBER_PHOTO plus any blob it
+    // uploaded that no OTHER surviving member references is swept, excluding the
+    // master's kept photo. The `photoOfMembers` carve-out spares photos the
+    // loser uploaded on behalf of members who still reference them.
+    expect(mediaImage.deleteMany).toHaveBeenCalledWith({
+      where: {
+        kind: "MEMBER_PHOTO",
+        OR: [{ uploadedByMemberId: LOSER_ID }, { id: "loser-img" }],
+        photoOfMembers: { none: { id: { not: LOSER_ID } } },
+        NOT: { id: "master-img" },
+      },
+    });
+    // The loser is still hard-deleted.
+    const memberSpy = member as { delete: ReturnType<typeof vi.fn> };
+    expect(memberSpy.delete).toHaveBeenCalledWith({ where: { id: LOSER_ID } });
+  });
+
+  it("absorbs the loser's photo when the master has none and never deletes the absorbed blob", async () => {
+    const masterRow = makeMember(MASTER_ID, { occupation: null, photoImageId: null });
+    const loserRow = makeMember(LOSER_ID, { occupation: "Engineer", photoImageId: "loser-img" });
+    const mediaImage = { ...defaultDelegate(), deleteMany: vi.fn().mockResolvedValue({ count: 0 }) };
+    const { client, member } = makeClient({
+      member: photoMemberDelegate(masterRow, loserRow),
+      mediaImage,
+    });
+
+    await executeMemberMerge({
+      masterId: MASTER_ID,
+      loserId: LOSER_ID,
+      actorMemberId: ACTOR_ID,
+      previewToken: photoToken(
+        masterRow as unknown as Record<string, unknown>,
+        loserRow as unknown as Record<string, unknown>,
+      ),
+      confirmationText: "MERGE Dup Person",
+      db: client as never,
+    });
+
+    // Master absorbs loser-img via the field merge...
+    const memberSpy = member as { update: ReturnType<typeof vi.fn> };
+    expect(memberSpy.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: MASTER_ID },
+        data: expect.objectContaining({ photoImageId: "loser-img" }),
+      }),
+    );
+    // ...and the sweep excludes loser-img (now the master's photo) from deletion.
+    expect(mediaImage.deleteMany).toHaveBeenCalledWith({
+      where: {
+        kind: "MEMBER_PHOTO",
+        OR: [{ uploadedByMemberId: LOSER_ID }, { id: "loser-img" }],
+        photoOfMembers: { none: { id: { not: LOSER_ID } } },
+        NOT: { id: "loser-img" },
+      },
+    });
+  });
+
+  it("sweeps the loser's CURRENT photo (read fresh under lock), not the stale snapshot", async () => {
+    // Race: an admin POSTs a photo ON BEHALF OF the loser AFTER the merge's
+    // top-of-transaction `loserFull` snapshot (photoImageId "L1") but BEFORE the
+    // reconcile. The upload creates blob "L2" (uploadedByMemberId = the ADMIN,
+    // NOT the loser), repoints the loser to L2 and deletes L1. By reconcile time
+    // the loser row is row-locked (teardownLoserXero's member.update), so a fresh
+    // locked read returns L2 — the value the sweep must key on so L2 is not
+    // orphaned once the loser is hard-deleted. We model this by making the
+    // loser's `findUnique` return the stale L1 for the plain snapshot read and
+    // the fresh L2 for the `select: { photoImageId }` locked read at reconcile.
+    const masterRow = makeMember(MASTER_ID, { occupation: null, photoImageId: "master-img" });
+    const staleLoser = makeMember(LOSER_ID, { occupation: "Engineer", photoImageId: "L1" });
+    const memberDelegate = {
+      ...defaultDelegate(),
+      findUnique: vi.fn(
+        ({ where, select }: { where: { id: string }; select?: { photoImageId?: boolean } }) => {
+          if (where.id === MASTER_ID) return Promise.resolve(masterRow);
+          if (where.id !== LOSER_ID) return Promise.resolve(null);
+          // The fresh locked read at reconcile time carries select.photoImageId;
+          // it must observe the CURRENT pointer (L2) set by the racing upload.
+          if (select?.photoImageId) return Promise.resolve({ photoImageId: "L2" });
+          // Every other loser read (the top-of-tx snapshot, guards, token) sees
+          // the stale pre-upload snapshot (L1).
+          return Promise.resolve(staleLoser);
+        },
+      ),
+      count: vi.fn(({ where }: { where: { id?: string } }) =>
+        Promise.resolve(where?.id === ACTOR_ID ? 1 : 0),
+      ),
+      update: vi.fn().mockResolvedValue({}),
+      delete: vi.fn().mockResolvedValue({}),
+    };
+    const mediaImage = { ...defaultDelegate(), deleteMany: vi.fn().mockResolvedValue({ count: 1 }) };
+    const { client, member } = makeClient({ member: memberDelegate, mediaImage });
+
+    // The preview token is built from the stale snapshot (what the admin saw when
+    // opening the merge). Master keeps its own photo, so photoImageId is not in
+    // the field-merge patch and the token is unaffected by the loser's pointer.
+    await executeMemberMerge({
+      masterId: MASTER_ID,
+      loserId: LOSER_ID,
+      actorMemberId: ACTOR_ID,
+      previewToken: photoToken(
+        masterRow as unknown as Record<string, unknown>,
+        staleLoser as unknown as Record<string, unknown>,
+      ),
+      confirmationText: "MERGE Dup Person",
+      db: client as never,
+    });
+
+    // The sweep predicate keys on the FRESH pointer L2 (not the stale L1), so the
+    // just-created L2 blob — still referenced only by the loser at reconcile time
+    // — is swept and cannot orphan once the loser is deleted.
+    expect(mediaImage.deleteMany).toHaveBeenCalledWith({
+      where: {
+        kind: "MEMBER_PHOTO",
+        OR: [{ uploadedByMemberId: LOSER_ID }, { id: "L2" }],
+        photoOfMembers: { none: { id: { not: LOSER_ID } } },
+        NOT: { id: "master-img" },
+      },
+    });
+    // Guard against regression: the stale L1 must NOT be the swept id.
+    const sweep = mediaImage.deleteMany.mock.calls[0][0] as {
+      where: { OR: { id?: string }[] };
+    };
+    expect(sweep.where.OR).not.toContainEqual({ id: "L1" });
+    // The fresh locked read of the loser's photoImageId happened.
+    const memberFindUnique = (member as { findUnique: ReturnType<typeof vi.fn> }).findUnique;
+    expect(memberFindUnique).toHaveBeenCalledWith({
+      where: { id: LOSER_ID },
+      select: { photoImageId: true },
+    });
+    // The loser is still hard-deleted.
+    expect((member as { delete: ReturnType<typeof vi.fn> }).delete).toHaveBeenCalledWith({
+      where: { id: LOSER_ID },
+    });
+  });
+});
+
 describe("MemberMergeError", () => {
   it("carries a status code and code", () => {
     const err = new MemberMergeError("nope", 409, "preview_drift", { a: 1 });

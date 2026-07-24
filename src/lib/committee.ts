@@ -66,11 +66,16 @@ export const publicCommitteeAssignmentSelect = {
   },
   member: {
     select: {
+      id: true,
       firstName: true,
       lastName: true,
       phoneCountryCode: true,
       phoneAreaCode: true,
       phoneNumber: true,
+      // Member photo (MP5, #171): whether one exists and its version, for the
+      // committee-roster avatar via the scoped serving endpoint.
+      photoImageId: true,
+      photoUpdatedAt: true,
     },
   },
 } satisfies Prisma.CommitteeAssignmentSelect;
@@ -198,10 +203,24 @@ export function serializeCommitteeAssignment(assignment: CommitteeAssignmentRow)
 
 export function serializePublicCommitteeAssignment(
   assignment: PublicCommitteeAssignmentRow,
+  options: { includePhoto?: boolean } = {},
 ) {
   const phone = assignment.showPhone
     ? formatCommitteeMemberPhone(assignment.member)
     : null;
+
+  // Photo metadata is emitted only when the club has opted the roster into
+  // photos (committeePhotoDisplay != NONE). When disabled we expose nothing
+  // about who has a photo — the field is simply absent.
+  const photo =
+    options.includePhoto && assignment.member.photoImageId
+      ? {
+          memberId: assignment.member.id,
+          version: assignment.member.photoUpdatedAt
+            ? assignment.member.photoUpdatedAt.toISOString()
+            : null,
+        }
+      : null;
 
   return {
     id: assignment.id,
@@ -213,5 +232,6 @@ export function serializePublicCommitteeAssignment(
     description:
       normalizeCommitteeText(assignment.blurb) ??
       normalizeCommitteeText(assignment.committeeRole.description),
+    photo,
   };
 }
