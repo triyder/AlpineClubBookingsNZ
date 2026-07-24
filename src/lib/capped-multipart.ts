@@ -47,7 +47,20 @@ export interface CappedMultipartLimits {
 
 export type CappedMultipartResult =
   | { ok: true; formData: FormData }
-  | { ok: false; reason: "too_large" | "invalid" };
+  | {
+      ok: false;
+      reason: "too_large" | "invalid";
+      /**
+       * Which cap tripped, so a route can message precisely (e.g. distinguish a
+       * too-large FILE from too-large form FIELDS or too MANY parts). Optional —
+       * existing routes may ignore it and key only on `reason`.
+       *   - `request` — the whole-request byte ceiling (or oversize Content-Length)
+       *   - `file`    — a single file part exceeded `maxFileBytes`
+       *   - `field`   — a single non-file field exceeded `maxFieldBytes`
+       *   - `count`   — too many file parts / fields / parts
+       */
+      cause?: "request" | "file" | "field" | "count";
+    };
 
 const DEFAULT_MAX_FILES = 1;
 const DEFAULT_MAX_FIELD_BYTES = 1024 * 1024; // 1 MiB
@@ -88,7 +101,7 @@ export async function readCappedMultipartFormData(
     request.headers.get("content-length"),
   );
   if (declaredLength !== null && declaredLength > maxRequestBytes) {
-    return { ok: false, reason: "too_large" };
+    return { ok: false, reason: "too_large", cause: "request" };
   }
 
   const body = request.body;
@@ -103,9 +116,17 @@ export async function readCappedMultipartFormData(
     bb = busboy({
       headers: { "content-type": request.headers.get("content-type") ?? "" },
       limits: {
-        fileSize: maxFileBytes,
+        // busboy fires its truncation limit when the running size REACHES the
+        // configured value (`fileSize === limit` / `fieldSize === limit`; see
+        // node_modules/busboy/lib/types/multipart.js), so a part of EXACTLY
+        // maxFileBytes/maxFieldBytes would trip and 413. Add 1 to keep both caps
+        // INCLUSIVE maxima, matching the routes' post-parse `size > MAX`
+        // semantics: a file/field of exactly the cap succeeds; the limit only
+        // trips at cap+1. (Verified against the installed busboy: equality
+        // trips truncation for both fileSize and fieldSize.)
+        fileSize: maxFileBytes + 1,
         files: maxFiles,
-        fieldSize: maxFieldBytes,
+        fieldSize: maxFieldBytes + 1,
         fields: maxFields,
       },
     });
@@ -143,7 +164,9 @@ export async function readCappedMultipartFormData(
       // busboy TRUNCATES a file past `fileSize` and emits 'limit' rather than
       // erroring — never accept the silently-truncated remainder; fail the whole
       // request as oversize (matching the routes' 413 semantics).
-      stream.on("limit", () => settle({ ok: false, reason: "too_large" }));
+      stream.on("limit", () =>
+        settle({ ok: false, reason: "too_large", cause: "file" }),
+      );
       stream.on("error", () => settle({ ok: false, reason: "invalid" }));
       stream.on("end", () => {
         if (settled) return;
@@ -158,16 +181,22 @@ export async function readCappedMultipartFormData(
       // A truncated field name or value means the field cap was hit; reject
       // rather than store a silently-truncated value.
       if (info.nameTruncated || info.valueTruncated) {
-        settle({ ok: false, reason: "too_large" });
+        settle({ ok: false, reason: "too_large", cause: "field" });
         return;
       }
       formData.append(name, value);
     });
 
     // Any part/file/field count limit is a hard reject, never a silent drop.
-    bb.on("partsLimit", () => settle({ ok: false, reason: "too_large" }));
-    bb.on("filesLimit", () => settle({ ok: false, reason: "too_large" }));
-    bb.on("fieldsLimit", () => settle({ ok: false, reason: "too_large" }));
+    bb.on("partsLimit", () =>
+      settle({ ok: false, reason: "too_large", cause: "count" }),
+    );
+    bb.on("filesLimit", () =>
+      settle({ ok: false, reason: "too_large", cause: "count" }),
+    );
+    bb.on("fieldsLimit", () =>
+      settle({ ok: false, reason: "too_large", cause: "count" }),
+    );
     // Malformed multipart (bad boundary, truncated part headers, …).
     bb.on("error", () => settle({ ok: false, reason: "invalid" }));
     bb.on("close", () => settle({ ok: true, formData }));
@@ -185,7 +214,7 @@ export async function readCappedMultipartFormData(
           if (settled) return;
           total += value.byteLength;
           if (total > maxRequestBytes) {
-            settle({ ok: false, reason: "too_large" });
+            settle({ ok: false, reason: "too_large", cause: "request" });
             return;
           }
           if (!bb.write(Buffer.from(value))) {

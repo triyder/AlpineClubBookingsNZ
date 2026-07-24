@@ -6,7 +6,11 @@ import { z } from "zod";
 import { requireAdmin } from "@/lib/session-guards";
 import { isFullAdmin } from "@/lib/access-roles";
 import { readCappedMultipartFormData } from "@/lib/capped-multipart";
-import { MAX_BUNDLE_BYTES, MAX_BUNDLE_REQUEST_BYTES } from "./bundle";
+import {
+  MAX_BUNDLE_BYTES,
+  MAX_BUNDLE_REQUEST_BYTES,
+  MAX_BUNDLE_UPLOAD_FIELD_BYTES,
+} from "./bundle";
 import type { ImportMode, MatchResolution } from "./import-types";
 import {
   CONFIG_TRANSFER_CATEGORIES,
@@ -78,11 +82,22 @@ export async function readBundleUpload(request: Request): Promise<UploadResult> 
     maxRequestBytes: MAX_BUNDLE_REQUEST_BYTES,
     maxFileBytes: MAX_BUNDLE_BYTES,
     maxFiles: 1,
+    // Give the accompanying form fields (esp. the resolutions JSON) real room —
+    // the 1 MiB default would 413 a large resolution set as "Bundle is too
+    // large." even though the FILE was fine (#2235 Finding 3).
+    maxFieldBytes: MAX_BUNDLE_UPLOAD_FIELD_BYTES,
   });
   if (!multipart.ok) {
-    return multipart.reason === "too_large"
-      ? bad("Bundle is too large.", 413)
-      : bad("Could not read the uploaded bundle.");
+    if (multipart.reason === "too_large") {
+      // A too-large form FIELD (or too many parts) is not the bundle file being
+      // oversize — message it distinctly so the admin isn't told the bundle is
+      // too big when it was the accompanying form data that overflowed. The
+      // file/request cases keep the exact existing "Bundle is too large." copy.
+      return multipart.cause === "field" || multipart.cause === "count"
+        ? bad("Upload form fields are too large.", 413)
+        : bad("Bundle is too large.", 413);
+    }
+    return bad("Could not read the uploaded bundle.");
   }
   const form = multipart.formData;
 

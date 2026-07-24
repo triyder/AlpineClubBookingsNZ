@@ -48,16 +48,20 @@ export async function POST(request: NextRequest) {
     maxFiles: MAX_UPLOAD_FILES,
   });
   if (!multipart.ok) {
-    return multipart.reason === "too_large"
-      ? NextResponse.json(
-          {
-            error: `Upload is too large. Send at most ${MAX_UPLOAD_FILES} files and ${
+    if (multipart.reason === "too_large") {
+      // Actionable, cause-specific copy (surfaced verbatim in the client toast):
+      // too MANY files names the 25-file limit; an oversize aggregate names the
+      // total-MB limit and tells the admin to split the batch. Kept as an
+      // intentional DoS backstop — no client-side chunking (#2235 Finding 2).
+      const error =
+        multipart.cause === "count"
+          ? `Too many files. Upload at most ${MAX_UPLOAD_FILES} files per batch.`
+          : `Upload is too large. Keep each batch under ${
               MAX_UPLOAD_REQUEST_BYTES / (1024 * 1024)
-            } MB per batch.`,
-          },
-          { status: 413 },
-        )
-      : NextResponse.json({ error: "Invalid form data" }, { status: 400 });
+            } MB in total — split the upload into smaller batches.`;
+      return NextResponse.json({ error }, { status: 413 });
+    }
+    return NextResponse.json({ error: "Invalid form data" }, { status: 400 });
   }
   const formData = multipart.formData;
 

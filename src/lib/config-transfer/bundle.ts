@@ -21,12 +21,26 @@ import {
 /** Overall (compressed) bundle upload cap (MVP). */
 export const MAX_BUNDLE_BYTES = 50 * 1024 * 1024;
 /**
- * Whole multipart request-body ceiling for a bundle upload: the bundle file cap
- * plus headroom for the accompanying form fields (mode / categories /
- * resolutions / expectedFingerprint) and multipart boundary overhead. Enforced
- * by the streamed reader before the body is buffered (#2235).
+ * Per-field cap for the bundle upload's accompanying form fields (mode /
+ * categories / resolutions / expectedFingerprint). The `resolutions` JSON grows
+ * with the number of match conflicts an admin resolves, so it can legitimately
+ * exceed the streamed reader's 1 MiB default — 2 MiB gives real headroom while
+ * still bounding a hostile field. (#2235 Finding 3.)
  */
-export const MAX_BUNDLE_REQUEST_BYTES = MAX_BUNDLE_BYTES + 2 * 1024 * 1024;
+export const MAX_BUNDLE_UPLOAD_FIELD_BYTES = 2 * 1024 * 1024;
+/**
+ * Whole multipart request-body ceiling for a bundle upload: the bundle file cap
+ * plus headroom for the accompanying form fields and multipart boundary
+ * overhead. Enforced by the streamed reader before the body is buffered (#2235).
+ *
+ * Arithmetic: worst legitimate body = a 50 MiB bundle file at its cap + a 2 MiB
+ * `resolutions` field (MAX_BUNDLE_UPLOAD_FIELD_BYTES) + the small mode /
+ * categories / expectedFingerprint fields + multipart part-header/boundary
+ * overhead (a few KiB). The 4 MiB of headroom below covers the 2 MiB field plus
+ * that slack, so a legitimate max-size bundle carrying a large resolutions set
+ * is not spuriously rejected by the request cap before the field cap can apply.
+ */
+export const MAX_BUNDLE_REQUEST_BYTES = MAX_BUNDLE_BYTES + 4 * 1024 * 1024;
 /**
  * Per-file uncompressed cap, enforced BEFORE inflation via the unzip filter.
  * (Media files are additionally capped at MAX_MEDIA_IMAGE_BYTES by the media
