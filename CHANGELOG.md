@@ -4,6 +4,8 @@ All notable public reference-release changes should be recorded here.
 
 ## Unreleased
 
+## 0.13.2 - 2026-07-23
+
 - **Configuration transfer now covers three more club-wide settings, and guards
   against any future settings singleton being silently left out (#2200).** A
   bundle now carries your **login/security policy** (password-complexity rules
@@ -24,10 +26,10 @@ All notable public reference-release changes should be recorded here.
   destination's existing tier and updated in place, so member pricing and
   classification stay intact; a bundle that would leave an incomplete or
   overlapping age partition is refused with a clear message pointing you to the
-  Age Tiers admin page. No secret or credential travels, and no bundle
-  format-version change is needed — an older app importing a newer bundle simply
-  ignores the extra files, and a newer app importing an older bundle leaves the
-  new settings untouched.
+  Age Tiers admin page. No secret or credential travels. Note that this
+  same release moves configuration bundles to format version 2 (#2187), so a
+  bundle import across the version boundary is refused in either direction
+  rather than applied partially.
 - **The public website now paints from the same generated palette as the admin
   app (#2217).** The public site's neutral chrome — page, cards, borders, inputs,
   muted text, hover surfaces and the dark-nav hairline — is now resolved from the
@@ -100,7 +102,80 @@ All notable public reference-release changes should be recorded here.
   sidebar reads as a light surface, hover states on quiet buttons are visible
   again, and the member-facing booking/profile/public pages follow your theme),
   so this release is a **single visible restyle** — component names are
-  unchanged, only the colours behind them.
+  unchanged, only the colours behind them (#2187, #2188).
+- **Connecting Xero, Stripe, and Google sign-in is now a guided in-app wizard
+  instead of an environment-variable chore (#2080, #2081, #2082, #2087).**
+  Building on the encrypted credential store from v0.13.1 (#2079), each provider
+  now has a step-by-step setup wizard at **Admin → Integrations** that walks a
+  Full Admin through creating the app on the provider's side, pasting the
+  credentials straight into the encrypted vault, and confirming the connection
+  works before anything goes live — no `.env` editing and no redeploy. **Xero**
+  (#2080/#2081) leads you through app creation, credential capture, and the OAuth
+  connect on a reusable wizard shell, then completes the setup with verified
+  webhooks, item-code mappings, and member import, and shows an amber badge on
+  the setup page when webhook verification still needs attention. **Stripe**
+  (#2082) captures its keys the same way and reads the publishable key at runtime
+  from the store, so changing keys takes effect immediately rather than needing a
+  fresh build. **Google sign-in** (#2087) captures its OAuth credentials in-app,
+  runs on a request-scoped NextAuth config, and keeps the module locked until a
+  real Google round-trip verifies, so an unconfigured provider can never render a
+  visibly broken sign-in path. Legacy provider env vars are detected, warned
+  about, and ignored — re-enter the values in the wizard, then remove the env
+  vars.
+- **Database backups are now configured in the app, not the environment
+  (#2095).** Backup settings — the S3 access key and secret, destination bucket
+  and region, retention window, the restore-validation shadow database, and the
+  on/off switch — move into the same encrypted credential store as the other
+  providers and are managed from a new **Admin → Integrations → Database Backups**
+  page (`/admin/backups`), with a **Run backup now** action that runs as a
+  background job behind a database-level cross-process lock so two containers can
+  never run it at once. The S3 secret and the restore-validation connection
+  string are write-only and never echoed back. **Operators: the legacy `BACKUP_*`
+  environment variables are no longer read.** An install that configured backups
+  through the old env vars upgrades to an empty store, so **until you re-enter the
+  backup settings on the new page the nightly backup reports a loud FAILURE
+  rather than silently skipping** — a stopped disaster-recovery path must alert,
+  not disappear. Only `BACKUP_CRON_SCHEDULE` (when the nightly job fires) stays in
+  the environment.
+- **A new opt-in AI help assistant answers members' free-text questions, and the
+  in-app help is now a chat-style widget on every surface (#2094).** The help
+  system was rebuilt (#2209, #2210): a single curated help corpus feeds a
+  chat-style help widget that appears on every member and admin page, answering
+  page-specific questions and showing a full page guide, replacing the older
+  scattered help UIs. On top of that, an **optional AI help assistant** module
+  (#2211, #2212) — **off by default** — lets authenticated members ask free-text
+  questions that a paid AI model (Anthropic Claude Haiku 4.5) answers **grounded
+  strictly in that curated corpus**. The club supplies its own Anthropic API key,
+  entered in-app and held only in the encrypted vault (never an environment
+  variable), and a **hard monthly spend cap** (default **NZ$10**, stored in
+  integer cents) stops AI answers for the rest of the month once reached; the
+  budget gate **fails closed**, reserving a conservative worst-case cost before
+  each call so the cap trips early rather than late, and stops spending entirely
+  if it can no longer record usage. Enabling the module without a key is harmless —
+  the ask box degrades to a structured fallback and the curated page help still
+  works. Members are told the answer may be wrong and that their question is sent
+  to Anthropic (United States); the question text itself is never stored.
+- **Configuration transfer now fails the build if a club-settings column is
+  neither exported nor explicitly excluded (#2178).** A reverse-drift guard
+  audits the club-settings tables against what the config bundle actually carries,
+  so a newly added settings column can no longer quietly fall out of a transfer —
+  it must be either exported or listed with a reason for staying behind. This
+  complements the singleton-table audit (#2200) and changes nothing an operator
+  sees; it protects future config transfers from silently losing a setting.
+- **Season-subscription charge-coverage reconciliation now reads active coverage
+  correctly (#2179).** The guard that flips a stale, untouched
+  `NOT_REQUIRED` seed subscription row to `NOT_INVOICED` was testing a
+  to-many coverage relation with a null-check that was always true, so it never
+  actually fired against real data. It now checks for an **active** charge-coverage
+  claim (an unreleased one — a claim whose invoice was voided no longer blocks a
+  re-billable member) both when it reads and, relationally, when it writes, so the
+  reconcile correctly stands aside when live coverage exists and proceeds when it
+  does not. No visible workflow change; billing status stays accurate for members
+  whose coverage was released.
+- **Dependency security advisories cleared (#2196, #2224).** Routine dependency
+  patching resolved newly published advisories in `hono`, `fast-uri`, `dompurify`,
+  and `sharp` (#2196) and moved Next.js to 16.2.11 to clear a middleware-bypass
+  and a Server-Actions denial-of-service advisory (#2224). No behaviour change.
 
 ## 0.13.1 - 2026-07-22
 

@@ -30,10 +30,10 @@ const sections: AdminHubSection[] = [
     icon: KeyRound,
   },
   {
-    href: "/admin/backups",
+    href: "/admin/backups/setup",
     title: "Database Backups",
     description:
-      "Configure the S3 backup destination and credentials, check backup status, and run a backup on demand.",
+      "Set up durable S3 backups step by step — credentials, destination, nightly schedule, and a real verification run.",
     icon: DatabaseBackup,
   },
   {

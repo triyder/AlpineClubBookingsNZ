@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import {
   Card,
   CardContent,
@@ -301,7 +302,14 @@ function StatusCard({
             <span className="font-mono">
               {status.legacyEnvVars.join(", ")}
             </span>
-            .
+            . The{" "}
+            <Link
+              href="/admin/backups/setup"
+              className="font-medium underline underline-offset-4"
+            >
+              guided backup setup
+            </Link>{" "}
+            walks through re-entering each value.
           </div>
         ) : status.legacyEnvVars.length > 0 ? (
           <div className="rounded-md border border-warning bg-warning-muted px-3 py-2 text-sm text-warning">
@@ -378,6 +386,15 @@ function StatusCard({
             page updates when it finishes.
           </p>
         </div>
+
+        {/* Disabled-reason hint (#2227): the run button greys out for several
+            reasons. needsReentry and running already have their own alert/pill
+            above, so the one otherwise-silent case is "backups disabled". */}
+        {!status.enabled && !status.needsReentry && !status.running ? (
+          <p className="text-sm text-warning">
+            Enable backups below first.
+          </p>
+        ) : null}
       </CardContent>
     </Card>
   );

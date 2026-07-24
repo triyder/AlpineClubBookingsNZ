@@ -191,6 +191,49 @@ describe("auth session refresh", () => {
     );
   });
 
+  it("invalidates a session whose token id resolves to NO live member (dangling id, #2229)", async () => {
+    // The dashboard <-> /login white-flash loop breaker: a token id that matches
+    // no member row (deleted member, or a fallback-user substitution) must mark
+    // the session invalidated so the shared auth() helper nulls it EVERYWHERE —
+    // including /login, which then renders the form instead of bouncing back.
+    mockFindUnique.mockResolvedValue(null);
+
+    const refreshedToken = await authConfig.callbacks.jwt?.({
+      token: {
+        id: "dangling-uuid",
+        role: "MEMBER",
+        forcePasswordChange: false,
+        isEmailVerified: true,
+        sessionIssuedAt: Date.now(),
+      },
+    } as never);
+
+    expect(refreshedToken).toEqual(
+      expect.objectContaining({
+        sessionInvalidated: true,
+      }),
+    );
+  });
+
+  it("propagates a transient DB error from the refresh rather than invalidating a live session (#2229)", async () => {
+    // Only a genuinely absent row (null) invalidates. A connection blip THROWS
+    // from loadSessionMemberSecurity — it must propagate (existing behaviour),
+    // never be mistaken for a dangling id and silently log the member out.
+    mockFindUnique.mockRejectedValue(new Error("connection reset"));
+
+    await expect(
+      authConfig.callbacks.jwt?.({
+        token: {
+          id: "member-1",
+          role: "MEMBER",
+          forcePasswordChange: false,
+          isEmailVerified: true,
+          sessionIssuedAt: Date.now(),
+        },
+      } as never),
+    ).rejects.toThrow("connection reset");
+  });
+
   it("does not trust a password-only JWT when two-factor is later enabled", async () => {
     mockLoadEffectiveModuleFlags.mockResolvedValue({ twoFactor: true });
     mockFindUnique.mockResolvedValue({

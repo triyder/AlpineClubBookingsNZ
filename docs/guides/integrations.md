@@ -50,6 +50,7 @@ Configuration → Integrations** (`/admin/integrations`).
 | Card | What it opens | Requires |
 | --- | --- | --- |
 | Xero Setup | The Xero connection and accounting configuration (`/admin/xero/setup`) | The `xeroIntegration` module; Xero OAuth credentials and tenant tokens configured server-side |
+| Database Backups | The guided backup setup wizard (`/admin/backups/setup`): S3 credentials, destination, nightly schedule, and a verification run | Support view; the S3 credentials and destination writes require Full Admin. See [Database Backups](backups.md) |
 
 Integrations is a **support**/**finance** area hub; the Xero credentials
 themselves are configured outside this table (see [`CONFIGURATION.md`](../../CONFIGURATION.md)

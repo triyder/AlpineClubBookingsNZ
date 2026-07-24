@@ -1317,9 +1317,14 @@ LOGIN (/login "Continue with Google", shown only when module on + creds present)
     no match -> unlinked -> /login?error=google_unlinked (NEVER email-match, NEVER provision)
     inactive or unverified -> refused -> /login?error=google_refused
     forcePasswordChange -> /login?error=google_password_change
+    resolver throws (DB error mid-resolve) -> failed (fail-closed sentinel) -> /login?error=google_failed
     eligible -> same user shape as password login -> lastLoginAt bumped
   signIn callback: module off -> /login?error=google_disabled (even for linked members)
+    lastLoginAt bump hits P2025 (member row gone -> id would dangle) -> refuse -> /login?error=google_failed
     eligible -> allow -> JWT issued with twoFactorVerified=false (2FA member still routed to /login/verify)
+  jwt callback (every request): token.id resolves to NO member row -> sessionInvalidated=true
+    -> auth() reads null everywhere -> single redirect to /login rendering the form
+       (breaks the /dashboard<->/login loop for dangling sessions; #2229)
 ```
 
 To verify: sub-path sign-in; the email-match-without-link refusal (takeover
@@ -1327,8 +1332,10 @@ regression — no auto-link, no provision); the unverified-email link block; the
 link/unlink/re-link audited flows; the sub-already-linked-to-another and
 member-already-linked refusals; archived/dependent/forcePasswordChange refusals
 even when linked; the module kill-switch in both directions; that a linked
-2FA-enrolled member still lands on `/login/verify`; and that every refusal
-renders a visible friendly message via the `/login?error=…` wiring.
+2FA-enrolled member still lands on `/login/verify`; that a resolver throw or a
+dangling member id refuses/invalidates instead of minting a session (#2229);
+and that every refusal renders a visible friendly message via the
+`/login?error=…` wiring.
 
 ## Analytics Consent Lifecycle
 

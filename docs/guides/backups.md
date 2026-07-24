@@ -6,8 +6,18 @@ Audience: Operator
 
 The managed database-backup surface. It configures where nightly PostgreSQL
 backups are stored, shows backup status and history, and lets you run a backup on
-demand. Find it at **Admin → Integrations → Database Backups**
-(`/admin/backups`), or from the **System** section of the admin sidebar.
+demand.
+
+There are two ways in:
+
+- **Guided setup wizard** (`/admin/backups/setup`) — the **Database Backups** card
+  on **Admin → Integrations** opens this. It walks first-time setup step by step
+  (S3 credentials → destination → turn on nightly backups → a real verification
+  run) with the same guided experience as Stripe, Xero and Google sign-in, and
+  will not let you jump ahead until each step is done.
+- **Flat backups page** (`/admin/backups`, also under the **System** section of
+  the admin sidebar) — the post-setup editing surface: status, configuration,
+  credentials, and run history all on one page.
 
 Since #2095 the backup configuration lives entirely in the app (encrypted in the
 `IntegrationCredential` store) — there are no more `BACKUP_*` environment
@@ -28,7 +38,34 @@ in the environment.
 
 ## Step-by-step
 
+### First-time setup with the wizard (recommended)
+
+Open **Admin → Integrations → Database Backups** to start the guided wizard. It
+has four steps and gates each one until it is satisfied:
+
+1. **S3 credentials** (Full Admin) — enter the S3 **access key ID** and **secret
+   access key**. Both are write-only: once saved they are never shown again.
+2. **Destination** (Full Admin) — enter the **bucket** and **region**. Repointing
+   the destination sends the whole database dump elsewhere, so it is Full-Admin
+   only.
+3. **Turn it on** (Support edit) — switch on **nightly database backups** and set
+   a **retention** window.
+4. **Verify** (Support edit) — press **Run verification backup**. This runs a real
+   `pg_dump` now, uploads it to S3, and reads it back. When it succeeds you get a
+   **Verified** badge showing the uploaded object's S3 key and size — proof the
+   whole path works end to end.
+
+If a deployment still has legacy `BACKUP_*` environment variables set, step 1
+shows a migration callout naming the values to re-enter (bucket, region, access
+key ID, secret access key) and listing the variables to remove afterwards.
+
+After setup, use the flat **Database Backups** page (`/admin/backups`) for
+ongoing configuration, credential rotation, and run history.
+
 ### Configure the destination and credentials (Full Admin)
+
+The flat page exposes the same settings without the step gating, for edits after
+initial setup:
 
 1. Go to **Admin → Integrations → Database Backups**.
 2. In **Credentials (Full Admin only)**, enter the S3 **access key ID** and
