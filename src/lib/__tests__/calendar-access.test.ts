@@ -67,11 +67,10 @@ describe("canEditCalendarEvents", () => {
   });
 
   it("grants a lodge-edit admin", () => {
+    // canEditCalendarEvents reads only the admin matrix (AdminPermissionInput);
+    // it takes no member id because it never consults the committee table.
     expect(
-      canEditCalendarEvents({
-        id: "member-1",
-        adminPermissionMatrix: lodgeEditMatrix,
-      }),
+      canEditCalendarEvents({ adminPermissionMatrix: lodgeEditMatrix }),
     ).toBe(true);
   });
 
@@ -80,20 +79,14 @@ describe("canEditCalendarEvents", () => {
     // admin-only — the gate must not consult the committee table at all.
     mocks.committeeFindFirst.mockResolvedValue({ id: "assign-1" });
     expect(
-      canEditCalendarEvents({
-        id: "member-2",
-        adminPermissionMatrix: noAccessMatrix,
-      }),
+      canEditCalendarEvents({ adminPermissionMatrix: noAccessMatrix }),
     ).toBe(false);
     expect(mocks.committeeFindFirst).not.toHaveBeenCalled();
   });
 
   it("denies a plain member with no committee assignment", () => {
     expect(
-      canEditCalendarEvents({
-        id: "member-3",
-        adminPermissionMatrix: noAccessMatrix,
-      }),
+      canEditCalendarEvents({ adminPermissionMatrix: noAccessMatrix }),
     ).toBe(false);
   });
 });
