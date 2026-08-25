@@ -1,4 +1,7 @@
-import { plainTextEmailTemplate } from "@/lib/email-templates/layout";
+import {
+  markdownLiteEmailTemplate,
+  plainTextEmailTemplate,
+} from "@/lib/email-templates/layout";
 import {
   applyEmailMessageSettingsToHtml,
   applyEmailMessageSettingsToSubject,
@@ -23,6 +26,10 @@ interface EmailTemplateOverrideRecord {
   templateName: string;
   subject: string | null;
   bodyText: string | null;
+  // Fork #38: true only for bodies saved from the markdown-lite editor.
+  // Optional so a mocked or pre-migration row reads as false — a legacy body
+  // is never reinterpreted.
+  bodyMarkdown?: boolean | null;
   updatedAt?: Date | string | null;
   updatedByMemberId?: string | null;
 }
@@ -788,9 +795,14 @@ export async function prepareEmailMessage({
   const overrideBodyText = override?.bodyText?.trim();
   if (overrideBodyText) {
     // A stored body override re-renders the whole themed shell, so it goes
-    // through the render gate too (#2900).
+    // through the render gate too (#2900). Fork #38: bodies saved from the
+    // markdown-lite editor render through the formatting twin; every earlier
+    // row has bodyMarkdown false and keeps the plain path byte-for-byte.
+    const renderBody = override?.bodyMarkdown
+      ? markdownLiteEmailTemplate
+      : plainTextEmailTemplate;
     nextHtml = await renderEmailHtml(() =>
-      plainTextEmailTemplate(renderTemplateString(overrideBodyText, data)),
+      renderBody(renderTemplateString(overrideBodyText, data)),
     );
     overrideApplied = true;
     bodyOverrideApplied = true;
@@ -812,11 +824,15 @@ export async function renderEmailTemplatePreview({
   templateName,
   subject,
   bodyText,
+  bodyMarkdown,
   templateData,
 }: {
   templateName: string;
   subject: string;
   bodyText: string;
+  // Fork #38: preview with the same renderer the save will use, so the admin
+  // sees formatting exactly as members will receive it.
+  bodyMarkdown?: boolean;
   templateData?: EmailTemplateData;
 }) {
   const settings = await loadEmailMessageSettings();
@@ -836,7 +852,9 @@ export async function renderEmailTemplatePreview({
   );
   const html = applyEmailMessageSettingsToHtml(
     await renderEmailHtml(() =>
-      plainTextEmailTemplate(renderTemplateString(bodyText, data)),
+      (bodyMarkdown ? markdownLiteEmailTemplate : plainTextEmailTemplate)(
+        renderTemplateString(bodyText, data),
+      ),
     ),
     settings,
   );
