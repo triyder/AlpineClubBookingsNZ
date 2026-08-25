@@ -1178,7 +1178,7 @@ export function sampleValue(token: string): string {
   // because composing needs the HMAC secret and this module is editor-facing.
   if (token === "ical") {
     return [
-      "Add this stay to your calendar:",
+      "Add this stay to your calendar",
       "Calendar file (.ics): https://bookings.example.org/api/calendar/booking/bkg_example?token=sample",
       "Google Calendar: https://calendar.google.com/calendar/render?action=TEMPLATE&text=Example+Lodge+stay&dates=20260801/20260806",
       "Outlook: https://outlook.live.com/calendar/0/deeplink/compose?rru=addevent&allday=true&startdt=2026-08-01&enddt=2026-08-06",
@@ -1717,6 +1717,9 @@ const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   "guestNightsLabel",
   "holdUntil",
   "hoursRemaining",
+  // Fork issue #35: pre-composed add-to-calendar block (.ics / Google /
+  // Outlook links); empty only when the sender could not build the links.
+  "ical",
   "inducteeName",
   "inductionUrl",
   "intendedMemberId",

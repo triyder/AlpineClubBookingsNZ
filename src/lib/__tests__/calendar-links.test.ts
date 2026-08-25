@@ -163,7 +163,7 @@ describe("the {{ical}} block", () => {
     const block = bookingAddToCalendarBlock(links);
     const lines = block.split("\n");
     expect(lines).toHaveLength(4);
-    expect(lines[0]).toBe("Add this stay to your calendar:");
+    expect(lines[0]).toBe("Add this stay to your calendar");
     expect(lines[1]).toBe(`Calendar file (.ics): ${links.icsUrl}`);
     expect(lines[2]).toBe(`Google Calendar: ${links.googleUrl}`);
     expect(lines[3]).toBe(`Outlook: ${links.outlookUrl}`);

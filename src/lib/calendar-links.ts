@@ -214,12 +214,15 @@ export function bookingCalendarLinks(input: {
 /**
  * The pre-composed `{{ical}}` block for the booking-confirmed body: complete
  * lines the admin body editor can place but not reformat, per the
- * email-messages guide's block-token convention. Never empty — every
- * confirmed booking has dates — so the token needs no OPTIONAL declaration.
+ * email-messages guide's block-token convention. The lead-in line carries no
+ * trailing colon — the clean-body guards read a colon-terminated line as a
+ * dangling label. The sender renders the token EMPTY when link building fails
+ * (it fails open on this decoration), which is why `ical` is declared in
+ * OPTIONAL_TEMPLATE_TOKENS.
  */
 export function bookingAddToCalendarBlock(links: BookingCalendarLinks): string {
   return [
-    "Add this stay to your calendar:",
+    "Add this stay to your calendar",
     `Calendar file (.ics): ${links.icsUrl}`,
     `Google Calendar: ${links.googleUrl}`,
     `Outlook: ${links.outlookUrl}`,
