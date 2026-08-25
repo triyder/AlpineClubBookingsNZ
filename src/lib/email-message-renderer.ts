@@ -1,8 +1,4 @@
-import {
-  layout,
-  plainTextEmailTemplate,
-  richBodyContainer,
-} from "@/lib/email-templates/layout";
+import { layout, plainTextEmailTemplate } from "@/lib/email-templates/layout";
 import {
   renderEmailBodyHtml,
   renderHtmlTemplateString,
@@ -22,7 +18,18 @@ import {
 } from "@/lib/email-message-registry";
 import { findBracketAnnotations } from "@/lib/email-message-token-contract";
 import { prisma } from "@/lib/prisma";
-import { renderEmailHtml } from "@/lib/email-theme";
+import { emailPalette, renderEmailHtml } from "@/lib/email-theme";
+
+// The container a RICH override body (fork #38) renders inside: the same
+// text colour and size `multilineBlock` gives the plain path, inherited by
+// the sanitised children — the shell's own cell sets neither (review M5).
+// Local to this module DELIBERATELY: `src/lib/email-templates/` is the #2689
+// render-census directory, and a new exported render function there demands
+// a byte pin this environment cannot generate (drift lens finding 1).
+function richBodyContainer(html: string): string {
+  const p = emailPalette();
+  return `<div style="color: ${p.deep}; font-size: 15px;">${html}</div>`;
+}
 
 type EmailTemplateValue = string | number | boolean | null | undefined;
 export type EmailTemplateData = Record<string, EmailTemplateValue>;

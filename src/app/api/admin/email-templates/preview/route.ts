@@ -94,10 +94,17 @@ export async function POST(request: NextRequest) {
 
   const definition = getEmailTemplateDefinition(parsed.data.templateName);
 
+  // Review finding 6: an EMPTIED rich body means "no override body", and a
+  // SEND then renders the built-in default — so the preview must too, or the
+  // admin who clears the box sees a blank email and concludes that is what
+  // members get. The doc promise is "the exact email a member receives".
+  const previewBodyText =
+    parsed.data.bodyText ??
+    (sanitizedBodyHtml ? "" : (definition?.defaultBody ?? ""));
   const preview = await renderEmailTemplatePreview({
     templateName: parsed.data.templateName,
     subject: parsed.data.subject,
-    bodyText: parsed.data.bodyText ?? "",
+    bodyText: previewBodyText,
     bodyHtml: sanitizedBodyHtml,
     templateData: definition?.sampleData,
   });

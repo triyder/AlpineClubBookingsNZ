@@ -168,18 +168,6 @@ export function multilineBlock(text: string): string {
   return `<div style="margin: 0 0 12px 0; color: ${p.deep}; font-size: 15px; line-height: 1.6; white-space: pre-wrap;">${text}</div>`;
 }
 
-/**
- * The container a RICH override body (fork #38) renders inside: the same
- * text colour and size `multilineBlock` gives the plain path, inherited by
- * the sanitised children — the shell's own cell sets neither (review finding
- * M5), so without this a rich body would render in each mail client's
- * default face.
- */
-export function richBodyContainer(html: string): string {
-  const p = emailPalette();
-  return `<div style="color: ${p.deep}; font-size: 15px;">${html}</div>`;
-}
-
 export function muted(text: string): string {
   const p = emailPalette();
   return `<p style="margin: 0 0 8px 0; color: ${p.ridge}; font-size: 13px; line-height: 1.5;">${text}</p>`;

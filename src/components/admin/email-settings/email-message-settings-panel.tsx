@@ -916,11 +916,24 @@ export function EmailMessageSettingsPanel() {
                   />
                 ) : null}
                 {currentTemplate.staleContent.bodyDiffersFromDefault ? (
-                  <TemplateDiffBlock
-                    label="Body differences"
-                    saved={currentTemplate.override.bodyText ?? ""}
-                    current={currentTemplate.defaultBody}
-                  />
+                  isSameText(
+                    currentTemplate.override.bodyText ?? "",
+                    currentTemplate.defaultBody,
+                  ) ? (
+                    // Fork #38 (drift lens 7): the wording matches the
+                    // built-in text and only the FORMATTING differs — a text
+                    // diff would show nothing, so say what the difference is.
+                    <p className="text-sm text-muted-foreground">
+                      The difference is formatting only — the wording matches
+                      the built-in text. Use Preview to see how it renders.
+                    </p>
+                  ) : (
+                    <TemplateDiffBlock
+                      label="Body differences"
+                      saved={currentTemplate.override.bodyText ?? ""}
+                      current={currentTemplate.defaultBody}
+                    />
+                  )
                 ) : null}
               </div>
             ) : null}

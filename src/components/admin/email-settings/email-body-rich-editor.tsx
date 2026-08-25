@@ -6,6 +6,7 @@ import {
   AlignLeft,
   AlignRight,
   Bold,
+  Heading2,
   Italic,
   List,
   ListOrdered,
@@ -25,7 +26,7 @@ import { sanitiseEmailBodyHtml } from "@/lib/email-body-html";
  * WHAT THIS PRODUCES IS NOT TRUSTED: the server sanitises on save against
  * `email-body-html.ts` and again at render, and that policy is the control.
  * The toolbar deliberately offers only what the policy keeps —
- * bold/italic/underline, lists, alignment. No colours, fonts, sizes, images
+ * bold/italic/underline, a heading, lists, alignment. No colours, fonts, sizes, images
  * or links: emails stay on the club theme in every mail client. `{{token}}`
  * markers are ordinary text in here; type them (or re-use the chips above
  * the editor) exactly as in the old plain editor.
@@ -47,20 +48,28 @@ export function EmailBodyRichEditor({
 }) {
   const editorRef = useRef<HTMLDivElement | null>(null);
   const savedRange = useRef<Range | null>(null);
-  // The seed value the editor was mounted/reseeded with; innerHTML is only
-  // written when the PARENT changes value (template switch, reset), never on
-  // the editor's own keystrokes — rewriting innerHTML mid-edit moves the
-  // caret to the start.
+  // What THIS editor last reported upward. Distinguishes "value changed
+  // because of my own keystroke" (skip the reseed, keep the caret) from
+  // "value changed externally" — a template switch, a reset, or load()
+  // returning the server's SANITISED copy after a save. The external case
+  // reseeds unconditionally, which is what keeps the surface truthful:
+  // content the save stripped (a pasted image, a colour) disappears from the
+  // screen too, instead of lingering as something the admin believes was
+  // stored (drift lens finding 5 — the old sanitise-equality guard
+  // suppressed exactly that correction).
+  const lastEmitted = useRef<string | null>(null);
   const [seed, setSeed] = useState(() => sanitiseEmailBodyHtml(value));
 
   useEffect(() => {
     const editor = editorRef.current;
     if (!editor) return;
+    if (lastEmitted.current !== null && value === lastEmitted.current) return;
     const safe = sanitiseEmailBodyHtml(value);
-    if (editor.innerHTML !== safe && safe !== sanitiseEmailBodyHtml(editor.innerHTML)) {
+    if (editor.innerHTML !== safe) {
       editor.innerHTML = safe;
       setSeed(safe);
     }
+    lastEmitted.current = null;
   }, [value]);
 
   const saveSelection = useCallback(() => {
@@ -89,11 +98,39 @@ export function EmailBodyRichEditor({
   }, []);
 
   const emit = useCallback(() => {
-    onChange(editorRef.current?.innerHTML ?? "");
+    const html = editorRef.current?.innerHTML ?? "";
+    lastEmitted.current = html;
+    onChange(html);
   }, [onChange]);
 
+  // Paste arrives sanitised, so disallowed markup never even ENTERS the
+  // editing surface — the guide promise that pasted colours, fonts and
+  // pictures are dropped is then true of the screen, not only of storage
+  // (drift lens finding 5).
+  const handlePaste = useCallback(
+    (event: React.ClipboardEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      const richClip = event.clipboardData.getData("text/html");
+      if (richClip) {
+        document.execCommand(
+          "insertHTML",
+          false,
+          sanitiseEmailBodyHtml(richClip),
+        );
+      } else {
+        document.execCommand(
+          "insertText",
+          false,
+          event.clipboardData.getData("text/plain"),
+        );
+      }
+      emit();
+    },
+    [emit],
+  );
+
   const run = useCallback(
-    (command: string) => {
+    (command: string, commandValue?: string) => {
       if (disabled) return;
       editorRef.current?.focus();
       restoreSelection();
@@ -101,19 +138,40 @@ export function EmailBodyRichEditor({
       // tags (<b>, <i>, <u>) the formats survive the sanitiser's allowlist;
       // as style spans they would be stripped by our own policy.
       document.execCommand("styleWithCSS", false, "false");
-      document.execCommand(command, false);
+      document.execCommand(command, false, commandValue);
       emit();
     },
     [disabled, emit, restoreSelection],
   );
 
-  const controls: Array<{ label: string; icon: React.ReactNode; command: string }> = [
+  // Heading toggle (drift lens finding 8): without this, the <h2> the
+  // lossless upgrade preserves would be content nobody could recreate.
+  const toggleHeading = useCallback(() => {
+    const selection = window.getSelection();
+    const anchor = selection ? selection.anchorNode : null;
+    const element =
+      anchor instanceof Element ? anchor : anchor ? anchor.parentElement : null;
+    const inHeading = Boolean(element && element.closest("h2"));
+    run("formatBlock", inHeading ? "<p>" : "<h2>");
+  }, [run]);
+
+  const controls: Array<{
+    label: string;
+    icon: React.ReactNode;
+    command?: string;
+    special?: "heading";
+  }> = [
     { label: "Bold", icon: <Bold className="h-4 w-4" />, command: "bold" },
     { label: "Italic", icon: <Italic className="h-4 w-4" />, command: "italic" },
     {
       label: "Underline",
       icon: <Underline className="h-4 w-4" />,
       command: "underline",
+    },
+    {
+      label: "Heading",
+      icon: <Heading2 className="h-4 w-4" />,
+      special: "heading",
     },
     {
       label: "Bullet list",
@@ -147,7 +205,7 @@ export function EmailBodyRichEditor({
       <div className="flex flex-wrap items-center gap-1 border-b p-1">
         {controls.map((control) => (
           <Button
-            key={control.command}
+            key={control.label}
             type="button"
             size="sm"
             variant="outline"
@@ -160,7 +218,8 @@ export function EmailBodyRichEditor({
               // click ever fires; preventing it keeps the caret in place.
               event.preventDefault();
               saveSelection();
-              run(control.command);
+              if (control.special === "heading") toggleHeading();
+              else if (control.command) run(control.command);
             }}
           >
             {control.icon}
@@ -177,9 +236,15 @@ export function EmailBodyRichEditor({
         role="textbox"
         aria-multiline="true"
         aria-label={ariaLabel}
+        aria-readonly={disabled || undefined}
         contentEditable={!disabled}
         suppressContentEditableWarning
-        className="min-h-72 px-3 py-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className={
+          disabled
+            ? "min-h-72 cursor-not-allowed bg-muted px-3 py-2 text-sm opacity-60"
+            : "min-h-72 px-3 py-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        }
+        onPaste={handlePaste}
         onInput={emit}
         onBlur={saveSelection}
         onKeyUp={saveSelection}

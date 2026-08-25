@@ -42,9 +42,16 @@ const TEXT_ALIGN_VALUES = [/^left$/, /^right$/, /^center$/];
 
 const SAVE_OPTIONS: sanitizeHtml.IOptions = {
   allowedTags: EMAIL_BODY_TAGS,
+  // Every BLOCK tag may carry the alignment the toolbar writes onto it —
+  // review finding 4: with p/div only, centring a heading or a list item
+  // saved successfully and silently arrived left-aligned.
   allowedAttributes: {
     p: ["style"],
     div: ["style"],
+    h2: ["style"],
+    ul: ["style"],
+    ol: ["style"],
+    li: ["style"],
   },
   allowedStyles: {
     "*": { "text-align": TEXT_ALIGN_VALUES },
@@ -93,6 +100,10 @@ export function emailBodyHtmlToText(html: string): string {
   const withBreaks = html
     .replace(/<\/(p|h2)>/gi, "\n\n")
     .replace(/<\/(div|li)>/gi, "\n")
+    // The same "- " marker the sent text/plain part gives list items
+    // (htmlToPlainText), so the derived text and the delivered plain part
+    // read the same way (drift lens one-liner).
+    .replace(/<li[^>]*>/gi, "- ")
     .replace(/<br\s*\/?>/gi, "\n");
   const text = sanitizeHtml(withBreaks, {
     allowedTags: [],

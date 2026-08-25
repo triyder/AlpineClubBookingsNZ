@@ -17,6 +17,7 @@ import {
 } from "@/lib/email-message-token-contract";
 import {
   emailBodyHtmlToText,
+  plainTextToEmailBodyHtml,
   sanitiseEmailBodyHtml,
 } from "@/lib/email-body-html";
 import { validateEmailTemplateContent } from "@/lib/email-message-renderer";
@@ -325,8 +326,22 @@ export async function GET() {
     const subjectDiffersFromDefault =
       storedSubject !== null &&
       !isSameText(storedSubject, definition.defaultSubject);
+    // Fork #38 (drift lens finding 7): a formatting-only rich save derives
+    // text byte-identical to the default, but the row still renders through
+    // a different path and looks different to members — that IS a
+    // difference. Compare the rich body against the default's lossless
+    // upgrade, so an untouched re-save (which produces exactly that upgrade)
+    // stays "no difference".
+    const storedBodyHtml = override.bodyHtml?.trim() ? override.bodyHtml : null;
+    const bodyFormattingDiffersFromDefault =
+      storedBodyHtml !== null &&
+      !isSameText(
+        storedBodyHtml,
+        sanitiseEmailBodyHtml(plainTextToEmailBodyHtml(definition.defaultBody)),
+      );
     const bodyDiffersFromDefault =
-      storedBody !== null && !isSameText(storedBody, definition.defaultBody);
+      (storedBody !== null && !isSameText(storedBody, definition.defaultBody)) ||
+      bodyFormattingDiffersFromDefault;
     // Guard 4, run over the SAVED OVERRIDE rather than over a shipped default:
     // render every token the sender can supply empty as empty and see which
     // lines come out as a bare label. Both declaration tables are used —
@@ -547,6 +562,26 @@ export async function PUT(request: NextRequest) {
   // old textarea always has.
   const sanitizedBodyHtml = derivedCandidateText ? sanitizedCandidate : sanitizedCandidate === undefined ? undefined : null;
   const derivedBodyText = derivedCandidateText || null;
+  // The derived text honours the same 10k cap the plain schema enforces one
+  // branch above — the bodyText COLUMN's contract must not depend on which
+  // path wrote the row (drift lens one-liner).
+  if (derivedBodyText && derivedBodyText.length > 10_000) {
+    return NextResponse.json(
+      {
+        error:
+          "Invalid email template",
+        issues: [
+          {
+            code: "body_too_long",
+            field: "bodyText",
+            message:
+              "The body is too long — its plain-text form must stay within 10,000 characters.",
+          },
+        ],
+      },
+      { status: 400 },
+    );
+  }
 
   const validation = validateEmailTemplateContent({
     templateName: parsed.data.templateName,

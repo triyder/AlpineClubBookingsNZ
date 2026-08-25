@@ -41,6 +41,18 @@ describe("sanitiseEmailBodyHtml", () => {
     ).toBe('<div style="text-align:right">x</div>');
   });
 
+  it("keeps alignment on headings and list items too (drift lens 4)", () => {
+    // The toolbar offers alignment on whatever block holds the caret; a
+    // centred heading must not save successfully and arrive left-aligned.
+    expect(
+      sanitiseEmailBodyHtml(
+        '<h2 style="text-align:center">Booking Confirmed</h2><ul><li style="text-align:right">one</li></ul>',
+      ),
+    ).toBe(
+      '<h2 style="text-align:center">Booking Confirmed</h2><ul><li style="text-align:right">one</li></ul>',
+    );
+  });
+
   it("leaves {{token}} markers untouched as text", () => {
     expect(sanitiseEmailBodyHtml("<p>Hi {{firstName}}</p>")).toBe(
       "<p>Hi {{firstName}}</p>",
@@ -122,11 +134,11 @@ describe("plainTextToEmailBodyHtml", () => {
 });
 
 describe("emailBodyHtmlToText", () => {
-  it("keeps block structure as line structure, tokens intact — paragraphs are blank-line blocks", () => {
+  it("keeps block structure as line structure, tokens intact — list items carry the text/plain '- ' marker", () => {
     expect(
       emailBodyHtmlToText(
         "<p>Hi <b>{{firstName}}</b></p><ul><li>one</li><li>two</li></ul><p>Bye</p>",
       ),
-    ).toBe("Hi {{firstName}}\n\none\ntwo\nBye");
+    ).toBe("Hi {{firstName}}\n\n- one\n- two\nBye");
   });
 });

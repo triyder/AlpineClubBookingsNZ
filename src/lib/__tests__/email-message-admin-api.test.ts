@@ -1133,6 +1133,36 @@ describe("admin email message APIs", () => {
     expect(upsert.update.bodyText).toBeNull();
   });
 
+  it("refuses a rich body whose derived text exceeds the plain 10k cap — the column contract is path-independent", async () => {
+    const response = await putEmailTemplate(
+      request("/api/admin/email-templates", {
+        templateName: "booking-confirmed",
+        subject: "Booking Confirmed - {{CLUB_LODGE_NAME}}",
+        bodyHtml: `<p>{{CLUB_LODGE_TRAVEL_NOTE}}{{doorCodeNote}}{{promoSummary}}{{paymentOutcome}}${"x".repeat(10_500)}</p>`,
+      }),
+    );
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(JSON.stringify(body.issues)).toContain("body_too_long");
+  });
+
+  it("previews an EMPTIED rich body as the built-in default — exactly what a send would render (drift lens 6)", async () => {
+    const definition = getEmailTemplateDefinition("booking-confirmed");
+    if (!definition) throw new Error("missing booking-confirmed");
+    const previewResponse = await previewEmailTemplate(
+      postRequest("/api/admin/email-templates/preview", {
+        templateName: "booking-confirmed",
+        subject: definition.defaultSubject,
+        bodyHtml: "<p><br /></p>",
+      }),
+    );
+    expect(previewResponse.status).toBe(200);
+    const preview = await previewResponse.json();
+    // The default body's own heading proves the fallback rendered.
+    expect(preview.html).toContain("Booking Confirmed");
+    expect(preview.html).toContain("How to get to the lodge");
+  });
+
   it("a plain bodyText save clears any stored rich body, so it cannot be shadowed", async () => {
     const definition = getEmailTemplateDefinition("booking-confirmed");
     if (!definition) throw new Error("missing booking-confirmed");
