@@ -16,10 +16,6 @@
 import { escapeHtml } from "./escape";
 import { CLUB_NAME } from "@/config/club-identity";
 import { getAppBaseUrl, sanitizeEmailHref } from "@/lib/app-url";
-import {
-  applyInlineMarkdownLite,
-  classifyMarkdownLiteLine,
-} from "@/lib/email-markdown-lite";
 import { EMAIL_DEFAULT_FROM_NAME } from "@/lib/email-message-settings";
 import { SUPPORT_EMAIL } from "@/lib/email-sender";
 import { emailPalette } from "@/lib/email-theme";
@@ -170,97 +166,6 @@ export function plainTextEmailTemplate(bodyText: string): string {
 export function multilineBlock(text: string): string {
   const p = emailPalette();
   return `<div style="margin: 0 0 12px 0; color: ${p.deep}; font-size: 15px; line-height: 1.6; white-space: pre-wrap;">${text}</div>`;
-}
-
-/**
- * The markdown-lite twin of `plainTextEmailTemplate` (fork #38): same shell,
- * same first-block-becomes-the-heading convention, but body blocks pass
- * through the tiny formatting vocabulary — `**bold**`, `*italic*`,
- * `# `/`## ` section headings and `- ` bullets. Selected per override by the
- * stored `bodyMarkdown` flag; a body containing NO syntax renders the exact
- * shape `plainTextEmailTemplate` produces, which is what keeps a re-saved
- * unformatted body visually unchanged. Kept in this module deliberately —
- * one layout, one set of blocks (#2689) — with the pure line/inline
- * transforms in @/lib/email-markdown-lite for testing without the shell.
- */
-export function markdownLiteEmailTemplate(bodyText: string): string {
-  const blocks = bodyText
-    .split(/\n{2,}/)
-    .map((block) => block.trim())
-    .filter(Boolean);
-  const [firstBlock, ...rest] = blocks;
-  const headingHtml = firstBlock ? heading(escapeHtml(firstBlock)) : "";
-  const bodyHtml = rest.length > 0
-    ? rest.map((block) => markdownLiteBlock(block)).join("")
-    : "";
-
-  return layout(`
-    ${headingHtml}
-    ${bodyHtml}
-  `);
-}
-
-function markdownLiteSectionHeading(level: 2 | 3, html: string): string {
-  const p = emailPalette();
-  return level === 2
-    ? `<h2 style="margin: 20px 0 10px 0; color: ${p.charcoal}; font-size: 19px; font-weight: 700; line-height: 1.3;">${html}</h2>`
-    : `<h3 style="margin: 16px 0 8px 0; color: ${p.charcoal}; font-size: 16px; font-weight: 700; line-height: 1.3;">${html}</h3>`;
-}
-
-function markdownLiteBlock(block: string): string {
-  const p = emailPalette();
-  // Classification runs on ESCAPED lines; escaping touches none of the
-  // marker characters, and per-line escaping joined with \n is byte-equal to
-  // escaping the whole block, which is what makes the no-syntax fast path
-  // identical to `multilineBlock(escapeHtml(block))`.
-  const lines = block
-    .split("\n")
-    .map((line) => classifyMarkdownLiteLine(escapeHtml(line)));
-
-  const segments: string[] = [];
-  let textRun: string[] = [];
-  let bullets: string[] = [];
-  const flushText = () => {
-    if (textRun.length > 0) {
-      segments.push(
-        multilineBlock(textRun.map(applyInlineMarkdownLite).join("\n")),
-      );
-      textRun = [];
-    }
-  };
-  const flushBullets = () => {
-    if (bullets.length > 0) {
-      const items = bullets
-        .map(
-          (item) =>
-            `<li style="margin: 0 0 4px 0;">${applyInlineMarkdownLite(item)}</li>`,
-        )
-        .join("");
-      segments.push(
-        `<ul style="margin: 0 0 12px 0; padding-left: 22px; color: ${p.deep}; font-size: 15px; line-height: 1.6;">${items}</ul>`,
-      );
-      bullets = [];
-    }
-  };
-
-  for (const line of lines) {
-    if (line.kind === "bullet") {
-      flushText();
-      bullets.push(line.text);
-    } else if (line.kind === "heading") {
-      flushText();
-      flushBullets();
-      segments.push(
-        markdownLiteSectionHeading(line.level, applyInlineMarkdownLite(line.text)),
-      );
-    } else {
-      flushBullets();
-      textRun.push(line.text);
-    }
-  }
-  flushText();
-  flushBullets();
-  return segments.join("");
 }
 
 export function muted(text: string): string {

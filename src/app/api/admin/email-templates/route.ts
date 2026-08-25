@@ -15,6 +15,10 @@ import {
   findDanglingDefaultLines,
   findUnconditionalLines,
 } from "@/lib/email-message-token-contract";
+import {
+  emailBodyHtmlToText,
+  sanitiseEmailBodyHtml,
+} from "@/lib/email-body-html";
 import { validateEmailTemplateContent } from "@/lib/email-message-renderer";
 import { prisma } from "@/lib/prisma";
 import { isSameText } from "@/lib/text-diff";
@@ -24,8 +28,8 @@ interface EmailTemplateOverrideRecord {
   templateName: string;
   subject: string | null;
   bodyText: string | null;
-  // Fork #38: optional so a pre-migration row reads as false.
-  bodyMarkdown?: boolean | null;
+  // Fork #38: optional so a pre-migration row reads as absent.
+  bodyHtml?: string | null;
   updatedAt: Date;
   updatedByMemberId: string | null;
 }
@@ -35,15 +39,20 @@ const templateUpdateSchema = z
     templateName: z.string().trim().min(1),
     subject: z.string().trim().max(500).nullable().optional(),
     bodyText: z.string().trim().max(10000).nullable().optional(),
-    // Fork #38: the editor sends true so its bodies render the markdown-lite
-    // vocabulary. OMITTED preserves the row's stored value (false on create),
-    // so a scripted save written before this feature keeps plain rendering.
-    bodyMarkdown: z.boolean().optional(),
+    // Fork #38: the rich-editor body. Sanitised server-side before storage;
+    // bodyText is DERIVED from it on save so audit, diffs and validation
+    // keep operating on text. A save that provides bodyText WITHOUT
+    // bodyHtml clears any stored bodyHtml — the text becomes authoritative,
+    // so a stale rich body can never shadow a scripted plain save.
+    bodyHtml: z.string().trim().max(20000).nullable().optional(),
   })
   .strict()
   .refine(
-    (value) => value.subject !== undefined || value.bodyText !== undefined,
-    "A subject or bodyText update is required",
+    (value) =>
+      value.subject !== undefined ||
+      value.bodyText !== undefined ||
+      value.bodyHtml !== undefined,
+    "A subject, bodyText or bodyHtml update is required",
   );
 
 async function loadOverrides() {
@@ -147,7 +156,7 @@ function serializeOverride(override: EmailTemplateOverrideRecord) {
   return {
     subject: override.subject,
     bodyText: override.bodyText,
-    bodyMarkdown: override.bodyMarkdown ?? false,
+    bodyHtml: override.bodyHtml ?? null,
     updatedAt: override.updatedAt.toISOString(),
     updatedByMemberId: override.updatedByMemberId,
   };
@@ -516,10 +525,25 @@ export async function PUT(request: NextRequest) {
     return NextResponse.json({ error: "Unknown email template" }, { status: 400 });
   }
 
+  // Fork #38: a rich body is sanitised FIRST, then its derived text is what
+  // every existing rule validates — so token and content rules read the body
+  // the way a member will, and nothing outside the policy survives to be
+  // validated at all. An empty-after-sanitise rich body degrades to the
+  // provided/absent bodyText exactly like no rich body at all.
+  const sanitizedBodyHtml =
+    parsed.data.bodyHtml === undefined
+      ? undefined
+      : parsed.data.bodyHtml
+        ? sanitiseEmailBodyHtml(parsed.data.bodyHtml) || null
+        : null;
+  const derivedBodyText = sanitizedBodyHtml
+    ? emailBodyHtmlToText(sanitizedBodyHtml)
+    : null;
+
   const validation = validateEmailTemplateContent({
     templateName: parsed.data.templateName,
     subject: parsed.data.subject ?? "",
-    bodyText: parsed.data.bodyText ?? "",
+    bodyText: derivedBodyText ?? parsed.data.bodyText ?? "",
   });
   if (!validation.valid) {
     return NextResponse.json(
@@ -544,12 +568,12 @@ export async function PUT(request: NextRequest) {
 
   const update = {
     subject: parsed.data.subject || null,
-    bodyText: parsed.data.bodyText || null,
-    // Only written when the caller states it; an omitted flag preserves the
-    // stored value so legacy bodies are never reinterpreted (fork #38).
-    ...(parsed.data.bodyMarkdown === undefined
-      ? {}
-      : { bodyMarkdown: parsed.data.bodyMarkdown }),
+    // A rich save stores its DERIVED text; a plain save stores its own text
+    // AND clears any stored rich body so the text cannot be shadowed.
+    bodyText: sanitizedBodyHtml
+      ? derivedBodyText || null
+      : parsed.data.bodyText || null,
+    bodyHtml: sanitizedBodyHtml ?? null,
     updatedByMemberId: session.user.id,
   };
   const before = await prisma.emailTemplateOverride.findUnique({

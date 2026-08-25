@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { Eye, GitCompareArrows, RotateCcw, Save } from "lucide-react";
-import { MarkdownLiteToolbar } from "@/components/admin/email-settings/markdown-lite-toolbar";
+import { EmailBodyRichEditor } from "@/components/admin/email-settings/email-body-rich-editor";
+import { plainTextToEmailBodyHtml } from "@/lib/email-body-html";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -44,6 +45,8 @@ interface EmailSettings {
 interface TemplateOverride {
   subject: string | null;
   bodyText: string | null;
+  // Fork #38: the rich-editor body; null on rows saved before the feature.
+  bodyHtml?: string | null;
   updatedAt: string | null;
   updatedByMemberId: string | null;
 }
@@ -157,6 +160,16 @@ export function requiredTokenSentence(
 // picker ("Booking Confirmed") is already in the same payload. Falls back to
 // the key for a STALE override — a row whose template no longer exists has no
 // label, and the key is the only thing an operator can act on.
+// Fork #38: what the rich editor should hold for a template — the saved rich
+// body verbatim, or the lossless paragraph upgrade of the saved plain text /
+// built-in default. Pure, so the dirty check and the load paths agree.
+function editorHtmlFor(template: TemplateDefinition): string {
+  if (template.override?.bodyHtml) return template.override.bodyHtml;
+  return plainTextToEmailBodyHtml(
+    template.override?.bodyText ?? template.defaultBody,
+  );
+}
+
 function templateLabel(
   templates: TemplateDefinition[],
   templateName: string,
@@ -287,9 +300,10 @@ export function EmailMessageSettingsPanel() {
   const [templates, setTemplates] = useState<TemplateDefinition[]>([]);
   const [selectedTemplate, setSelectedTemplate] = useState("");
   const [subject, setSubject] = useState("");
-  const [bodyText, setBodyText] = useState("");
-  // Fork #38: the markdown-lite toolbar edits the plain text at the cursor.
-  const bodyTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  // Fork #38: the body EDITING state is the rich editor's HTML. A legacy
+  // plain-text override (or the built-in default) is upgraded losslessly for
+  // editing via plainTextToEmailBodyHtml; nothing is stored until save.
+  const [bodyHtml, setBodyHtml] = useState("");
   const [previewHtml, setPreviewHtml] = useState("");
   const [previewSubject, setPreviewSubject] = useState("");
   const [staleOverrideCount, setStaleOverrideCount] = useState(0);
@@ -350,12 +364,11 @@ export function EmailMessageSettingsPanel() {
     if (!currentTemplate) return false;
     const savedSubject =
       currentTemplate.override?.subject ?? currentTemplate.defaultSubject;
-    const savedBody =
-      currentTemplate.override?.bodyText ?? currentTemplate.defaultBody;
+    const savedEditorHtml = editorHtmlFor(currentTemplate);
     return (
-      !isSameText(subject, savedSubject) || !isSameText(bodyText, savedBody)
+      !isSameText(subject, savedSubject) || !isSameText(bodyHtml, savedEditorHtml)
     );
-  }, [bodyText, currentTemplate, subject]);
+  }, [bodyHtml, currentTemplate, subject]);
 
   async function load() {
     setLoading(true);
@@ -433,7 +446,7 @@ export function EmailMessageSettingsPanel() {
       const selected = nextTemplates.find((template) => template.key === firstTemplate);
       if (selected) {
         setSubject(selected.override?.subject ?? selected.defaultSubject);
-        setBodyText(selected.override?.bodyText ?? selected.defaultBody);
+        setBodyHtml(editorHtmlFor(selected));
       }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to load email settings");
@@ -451,7 +464,7 @@ export function EmailMessageSettingsPanel() {
     const template = templates.find((entry) => entry.key === key);
     setSelectedTemplate(key);
     setSubject(template?.override?.subject ?? template?.defaultSubject ?? "");
-    setBodyText(template?.override?.bodyText ?? template?.defaultBody ?? "");
+    setBodyHtml(template ? editorHtmlFor(template) : "");
     setPreviewHtml("");
     setPreviewSubject("");
     setShowDiff(false);
@@ -499,12 +512,10 @@ export function EmailMessageSettingsPanel() {
         body: JSON.stringify({
           templateName: currentTemplate.key,
           subject,
-          bodyText,
-          // Fork #38: bodies saved from this editor render the markdown-lite
-          // vocabulary. Rows saved before the feature keep plain rendering
-          // until re-saved here — and Preview shows the formatted result
-          // before any save.
-          bodyMarkdown: true,
+          // Fork #38: the rich body. The server sanitises it and derives the
+          // stored plain text from it; rows saved before the feature keep
+          // plain rendering until re-saved here.
+          bodyHtml,
         }),
       });
       const responseBody = await response.json().catch(() => null);
@@ -555,7 +566,7 @@ export function EmailMessageSettingsPanel() {
         throw new Error(responseBody?.error ?? "Failed to reset email template");
       }
       setSubject(currentTemplate.defaultSubject);
-      setBodyText(currentTemplate.defaultBody);
+      setBodyHtml(plainTextToEmailBodyHtml(currentTemplate.defaultBody));
       toast.success("Email template reset");
       await load();
     } catch (error) {
@@ -575,9 +586,8 @@ export function EmailMessageSettingsPanel() {
         body: JSON.stringify({
           templateName: currentTemplate.key,
           subject,
-          bodyText,
-          // Preview with the same renderer a save from this editor will use.
-          bodyMarkdown: true,
+          // Preview through the same sanitise-and-render path a save uses.
+          bodyHtml,
         }),
       });
       const responseBody = await response.json().catch(() => null);
@@ -929,22 +939,13 @@ export function EmailMessageSettingsPanel() {
         </div>
         <div>
           <Label htmlFor="email-template-body">Body</Label>
-          {/* Fork #38: markdown-lite toolbar. Each button edits the plain
-              text at the cursor — storage stays text, and Preview shows the
-              rendered result. */}
-          <MarkdownLiteToolbar
-            textareaRef={bodyTextareaRef}
-            value={bodyText}
-            onChange={setBodyText}
+          {/* Fork #38 (owner decision): rich in-place editing, like the
+              message-board composer. The server's sanitise policy is the
+              control; this surface is convenience. */}
+          <EmailBodyRichEditor
+            value={bodyHtml}
+            onChange={setBodyHtml}
             disabled={!canEdit}
-          />
-          <Textarea
-            id="email-template-body"
-            ref={bodyTextareaRef}
-            className="mt-1 min-h-72 font-mono text-sm"
-            disabled={!canEdit}
-            value={bodyText}
-            onChange={(event) => setBodyText(event.target.value)}
           />
         </div>
 

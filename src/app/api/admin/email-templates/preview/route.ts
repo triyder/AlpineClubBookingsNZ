@@ -5,6 +5,10 @@ import {
   getEmailTemplateDefinition,
 } from "@/lib/email-message-registry";
 import {
+  emailBodyHtmlToText,
+  sanitiseEmailBodyHtml,
+} from "@/lib/email-body-html";
+import {
   renderEmailTemplatePreview,
   validateEmailTemplateContent,
 } from "@/lib/email-message-renderer";
@@ -14,12 +18,17 @@ const previewSchema = z
   .object({
     templateName: z.string().trim().min(1),
     subject: z.string().trim().min(1).max(500),
-    bodyText: z.string().trim().min(1).max(10000),
-    // Fork #38: preview with the markdown-lite renderer when the editor will
-    // save with it, so the admin sees exactly what a member receives.
-    bodyMarkdown: z.boolean().optional(),
+    // Optional since fork #38: a rich preview sends bodyHtml instead.
+    bodyText: z.string().trim().min(1).max(10000).optional(),
+    // Fork #38: the rich-editor body. Sanitised before rendering, exactly as
+    // a save would, so the admin sees what a member receives.
+    bodyHtml: z.string().trim().max(20000).optional(),
   })
-  .strict();
+  .strict()
+  .refine(
+    (value) => Boolean(value.bodyText) || Boolean(value.bodyHtml),
+    "A bodyText or bodyHtml is required",
+  );
 
 export async function POST(request: NextRequest) {
   // Preview renders a template with sample data and performs no mutation, so a
@@ -48,10 +57,17 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Unknown email template" }, { status: 400 });
   }
 
+  // Fork #38: a rich body previews via its sanitised form and validates via
+  // its derived text — the exact pipeline a save-then-send runs.
+  const sanitizedBodyHtml = parsed.data.bodyHtml
+    ? sanitiseEmailBodyHtml(parsed.data.bodyHtml) || undefined
+    : undefined;
   const validation = validateEmailTemplateContent({
     templateName: parsed.data.templateName,
     subject: parsed.data.subject,
-    bodyText: parsed.data.bodyText,
+    bodyText: sanitizedBodyHtml
+      ? emailBodyHtmlToText(sanitizedBodyHtml)
+      : (parsed.data.bodyText ?? ""),
   });
   if (!validation.valid) {
     return NextResponse.json(
@@ -75,8 +91,8 @@ export async function POST(request: NextRequest) {
   const preview = await renderEmailTemplatePreview({
     templateName: parsed.data.templateName,
     subject: parsed.data.subject,
-    bodyText: parsed.data.bodyText,
-    bodyMarkdown: parsed.data.bodyMarkdown,
+    bodyText: parsed.data.bodyText ?? "",
+    bodyHtml: sanitizedBodyHtml,
     templateData: definition?.sampleData,
   });
 

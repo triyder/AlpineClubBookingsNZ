@@ -1,7 +1,8 @@
+import { layout, plainTextEmailTemplate } from "@/lib/email-templates/layout";
 import {
-  markdownLiteEmailTemplate,
-  plainTextEmailTemplate,
-} from "@/lib/email-templates/layout";
+  renderEmailBodyHtml,
+  renderHtmlTemplateString,
+} from "@/lib/email-body-html";
 import {
   applyEmailMessageSettingsToHtml,
   applyEmailMessageSettingsToSubject,
@@ -26,10 +27,10 @@ interface EmailTemplateOverrideRecord {
   templateName: string;
   subject: string | null;
   bodyText: string | null;
-  // Fork #38: true only for bodies saved from the markdown-lite editor.
-  // Optional so a mocked or pre-migration row reads as false — a legacy body
-  // is never reinterpreted.
-  bodyMarkdown?: boolean | null;
+  // Fork #38: the rich-editor body, sanitised before storage. Optional so a
+  // mocked or pre-migration row reads as absent — a legacy body renders
+  // through the plain path unchanged.
+  bodyHtml?: string | null;
   updatedAt?: Date | string | null;
   updatedByMemberId?: string | null;
 }
@@ -792,17 +793,24 @@ export async function prepareEmailMessage({
     overrideApplied = true;
   }
 
+  const overrideBodyHtml = override?.bodyHtml?.trim();
   const overrideBodyText = override?.bodyText?.trim();
-  if (overrideBodyText) {
-    // A stored body override re-renders the whole themed shell, so it goes
-    // through the render gate too (#2900). Fork #38: bodies saved from the
-    // markdown-lite editor render through the formatting twin; every earlier
-    // row has bodyMarkdown false and keeps the plain path byte-for-byte.
-    const renderBody = override?.bodyMarkdown
-      ? markdownLiteEmailTemplate
-      : plainTextEmailTemplate;
+  if (overrideBodyHtml) {
+    // Fork #38: a rich-editor body. Tokens substitute with every VALUE
+    // HTML-escaped, then the final sanitise-and-style pass runs (defence in
+    // depth over the save-time sanitise), inside the same themed shell and
+    // render gate (#2900) as every other body.
     nextHtml = await renderEmailHtml(() =>
-      renderBody(renderTemplateString(overrideBodyText, data)),
+      layout(renderEmailBodyHtml(renderHtmlTemplateString(overrideBodyHtml, data))),
+    );
+    overrideApplied = true;
+    bodyOverrideApplied = true;
+  } else if (overrideBodyText) {
+    // A stored body override re-renders the whole themed shell, so it goes
+    // through the render gate too (#2900). Every row saved before fork #38
+    // lands here and renders byte-for-byte as it always has.
+    nextHtml = await renderEmailHtml(() =>
+      plainTextEmailTemplate(renderTemplateString(overrideBodyText, data)),
     );
     overrideApplied = true;
     bodyOverrideApplied = true;
@@ -824,15 +832,16 @@ export async function renderEmailTemplatePreview({
   templateName,
   subject,
   bodyText,
-  bodyMarkdown,
+  bodyHtml,
   templateData,
 }: {
   templateName: string;
   subject: string;
   bodyText: string;
-  // Fork #38: preview with the same renderer the save will use, so the admin
+  // Fork #38: when the editor is previewing a rich body, it sends the HTML
+  // and the render uses the same path a save-then-send would, so the admin
   // sees formatting exactly as members will receive it.
-  bodyMarkdown?: boolean;
+  bodyHtml?: string;
   templateData?: EmailTemplateData;
 }) {
   const settings = await loadEmailMessageSettings();
@@ -850,11 +859,16 @@ export async function renderEmailTemplatePreview({
     ),
     settings,
   );
+  const trimmedBodyHtml = bodyHtml?.trim();
   const html = applyEmailMessageSettingsToHtml(
     await renderEmailHtml(() =>
-      (bodyMarkdown ? markdownLiteEmailTemplate : plainTextEmailTemplate)(
-        renderTemplateString(bodyText, data),
-      ),
+      trimmedBodyHtml
+        ? layout(
+            renderEmailBodyHtml(
+              renderHtmlTemplateString(trimmedBodyHtml, data),
+            ),
+          )
+        : plainTextEmailTemplate(renderTemplateString(bodyText, data)),
     ),
     settings,
   );
