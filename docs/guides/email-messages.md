@@ -55,6 +55,29 @@ permission area; a view-only support role can read but not save.
    **Save Template**. Use **Restore Default** to drop your override and return to
    the built-in wording.
 
+### Formatting: bold, headings and bullet lists
+
+The body editor understands a small formatting vocabulary (fork #38), with
+toolbar buttons that insert it for you:
+
+- `**bold**` and `*italic*` inside a line
+- `# Heading` or `## Smaller heading` at the start of a line
+- `- ` at the start of each line of a bullet list
+
+Everything else is plain text, exactly as before: there is no link syntax
+(web addresses are written out in full), no images, and typing HTML shows the
+angle brackets literally to the member — it can never become markup. The
+vocabulary is flat: bold cannot contain italic (the inner pair renders and
+the outer asterisks stay visible). Always check **Preview**, which shows the
+formatted result exactly as a member receives it.
+
+Formatting applies only to bodies **saved after this feature arrived**. A
+body saved earlier keeps rendering exactly as it always has — a literal
+asterisk or hash in old wording is not reinterpreted — until you re-save it
+from this editor, and Preview shows you the formatted result before you do.
+The first paragraph of the body is still the email's big heading, with or
+without formatting.
+
 ### There is no "only if" — write lines that always read correctly
 
 The body is plain text with token substitution and **nothing else**. There is no
