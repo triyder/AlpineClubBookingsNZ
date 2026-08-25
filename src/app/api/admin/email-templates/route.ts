@@ -24,6 +24,8 @@ interface EmailTemplateOverrideRecord {
   templateName: string;
   subject: string | null;
   bodyText: string | null;
+  // Fork #38: optional so a pre-migration row reads as false.
+  bodyMarkdown?: boolean | null;
   updatedAt: Date;
   updatedByMemberId: string | null;
 }
@@ -33,6 +35,10 @@ const templateUpdateSchema = z
     templateName: z.string().trim().min(1),
     subject: z.string().trim().max(500).nullable().optional(),
     bodyText: z.string().trim().max(10000).nullable().optional(),
+    // Fork #38: the editor sends true so its bodies render the markdown-lite
+    // vocabulary. OMITTED preserves the row's stored value (false on create),
+    // so a scripted save written before this feature keeps plain rendering.
+    bodyMarkdown: z.boolean().optional(),
   })
   .strict()
   .refine(
@@ -141,6 +147,7 @@ function serializeOverride(override: EmailTemplateOverrideRecord) {
   return {
     subject: override.subject,
     bodyText: override.bodyText,
+    bodyMarkdown: override.bodyMarkdown ?? false,
     updatedAt: override.updatedAt.toISOString(),
     updatedByMemberId: override.updatedByMemberId,
   };
@@ -538,6 +545,11 @@ export async function PUT(request: NextRequest) {
   const update = {
     subject: parsed.data.subject || null,
     bodyText: parsed.data.bodyText || null,
+    // Only written when the caller states it; an omitted flag preserves the
+    // stored value so legacy bodies are never reinterpreted (fork #38).
+    ...(parsed.data.bodyMarkdown === undefined
+      ? {}
+      : { bodyMarkdown: parsed.data.bodyMarkdown }),
     updatedByMemberId: session.user.id,
   };
   const before = await prisma.emailTemplateOverride.findUnique({

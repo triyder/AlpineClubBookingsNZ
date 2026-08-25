@@ -15,6 +15,9 @@ const previewSchema = z
     templateName: z.string().trim().min(1),
     subject: z.string().trim().min(1).max(500),
     bodyText: z.string().trim().min(1).max(10000),
+    // Fork #38: preview with the markdown-lite renderer when the editor will
+    // save with it, so the admin sees exactly what a member receives.
+    bodyMarkdown: z.boolean().optional(),
   })
   .strict();
 
@@ -73,6 +76,7 @@ export async function POST(request: NextRequest) {
     templateName: parsed.data.templateName,
     subject: parsed.data.subject,
     bodyText: parsed.data.bodyText,
+    bodyMarkdown: parsed.data.bodyMarkdown,
     templateData: definition?.sampleData,
   });
 
