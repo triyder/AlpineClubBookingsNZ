@@ -1,4 +1,4 @@
-# File-size allowances for #36 (fork PR — {{ical}} token, fork issue #35)
+# File-size allowances for #37 (fork PR — {{ical}} token, fork issue #35)
 
 Each of these three files is the canonical single home for one facet of a new
 email token, and the token cannot land without touching all three. None of the
