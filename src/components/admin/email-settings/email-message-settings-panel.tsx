@@ -943,6 +943,8 @@ export function EmailMessageSettingsPanel() {
               message-board composer. The server's sanitise policy is the
               control; this surface is convenience. */}
           <EmailBodyRichEditor
+            id="email-template-body"
+            ariaLabel="Body"
             value={bodyHtml}
             onChange={setBodyHtml}
             disabled={!canEdit}

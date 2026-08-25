@@ -34,10 +34,16 @@ export function EmailBodyRichEditor({
   value,
   onChange,
   disabled,
+  id,
+  ariaLabel = "Email body",
 }: {
   value: string;
   onChange: (html: string) => void;
   disabled: boolean;
+  id?: string;
+  /** Accessible name — a contentEditable div is not a labelable control, so
+   * the visible <Label> cannot reach it via htmlFor; this carries the name. */
+  ariaLabel?: string;
 }) {
   const editorRef = useRef<HTMLDivElement | null>(null);
   const savedRange = useRef<Range | null>(null);
@@ -167,9 +173,10 @@ export function EmailBodyRichEditor({
       </div>
       <div
         ref={editorRef}
+        id={id}
         role="textbox"
         aria-multiline="true"
-        aria-label="Email body"
+        aria-label={ariaLabel}
         contentEditable={!disabled}
         suppressContentEditableWarning
         className="min-h-72 px-3 py-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -177,7 +184,10 @@ export function EmailBodyRichEditor({
         onBlur={saveSelection}
         onKeyUp={saveSelection}
         onMouseUp={saveSelection}
-        dangerouslySetInnerHTML={{ __html: seed }}
+        // The seed is ALWAYS the output of sanitiseEmailBodyHtml (mount and
+        // every reseed above), the same policy the server enforces on save
+        // and render — the club-post-editor precedent (#2992).
+        dangerouslySetInnerHTML={{ __html: seed }} /* nosemgrep: typescript.react.security.audit.react-dangerouslysetinnerhtml.react-dangerouslysetinnerhtml */
       />
     </div>
   );
