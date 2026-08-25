@@ -4729,6 +4729,12 @@ model EmailTemplateOverride {
   templateName      String   @unique
   subject           String?
   bodyText          String?
+  // Fork #38: bodies saved from the markdown-lite editor render **bold**,
+  // *italic*, # headings and "- " bullets. False for every row saved before
+  // the feature, so a legacy body containing a literal asterisk or hash is
+  // never reinterpreted until an admin re-saves it (and sees the result in
+  // Preview first). Additive with a default — blue/green safe.
+  bodyMarkdown      Boolean  @default(false)
   updatedByMemberId String?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
