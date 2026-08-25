@@ -23,6 +23,9 @@ import {
   unpaidMoneySummaryRows,
 } from "@/lib/booking-money-lines";
 import { escapeHtml } from "./escape";
+import { sanitizeEmailHref } from "@/lib/app-url";
+import type { BookingCalendarLinks } from "@/lib/calendar-links";
+import { emailPalette } from "@/lib/email-theme";
 import {
   alertBox,
   BASE_URL,
@@ -76,6 +79,19 @@ export function arrivalInstructionsSection({
     ${doorCodeTable}
     ${safeDoorCode ? muted("Please keep the door code private and use the current code when you arrive.") : ""}
   `;
+}
+
+// The HTML twin of the flat {{ical}} block (fork issue #35): one line of
+// three add-to-calendar links. The Google/Outlook targets are cross-origin by
+// nature, so the href sanitiser runs without the same-origin restriction the
+// View Booking button uses.
+function addToCalendarLine(links: BookingCalendarLinks): string {
+  const p = emailPalette();
+  const link = (label: string, url: string) =>
+    `<a href="${escapeHtml(sanitizeEmailHref(url))}" target="_blank" style="color: ${p.deep}; font-weight: 600;">${label}</a>`;
+  return paragraph(
+    `Add this stay to your calendar: ${link("Calendar file (.ics)", links.icsUrl)} &middot; ${link("Google Calendar", links.googleUrl)} &middot; ${link("Outlook", links.outlookUrl)}`,
+  );
 }
 
 export function bookingConfirmedTemplate(
@@ -135,6 +151,10 @@ export function bookingConfirmedTemplate(
        */
       payableOnline: boolean;
     };
+    // Fork issue #35: the add-to-calendar links, built by the sender from the
+    // same stay the flat {{ical}} token describes. Absent when link building
+    // failed (the sender fails open on this decoration) — no line renders.
+    calendarLinks?: BookingCalendarLinks;
   }
 ): string {
   const promoAdjustmentCents = resolvePromoAdjustmentCents(options);
@@ -272,6 +292,7 @@ export function bookingConfirmedTemplate(
       doorCode: options?.doorCode ?? null,
     })}
     ${paragraph("You can view your booking details and manage your stay from your account.")}
+    ${options?.calendarLinks ? addToCalendarLine(options.calendarLinks) : ""}
     ${button("View Booking", BASE_URL + "/bookings")}
   `);
 }

@@ -1,4 +1,9 @@
 import { loadBookingAppliedCredit } from "@/lib/booking-confirmation-credit";
+import {
+  type BookingCalendarLinks,
+  bookingAddToCalendarBlock,
+  bookingCalendarLinks,
+} from "@/lib/calendar-links";
 import logger from "@/lib/logger";
 import {
   bookingBumpedTemplate, bookingCancelledTemplate, bookingConfirmedTemplate,
@@ -331,6 +336,27 @@ export async function sendBookingConfirmedEmail(
     : outstandingBalance
       ? `Booking Total: ${formatMoneyCents(totalCents)}\nPaid: ${formatMoneyCents(outstandingPaidCents)}\n${creditNote}Still Owing: ${formatMoneyCents(outstandingBalance.amountCents)}\n\n${outstandingBalanceNote}`
       : `Total Paid: ${formatMoneyCents(totalCents)}\n${creditNote}\nPayment has been processed successfully.`;
+  // Fork issue #35: the add-to-calendar links and their flat {{ical}} block.
+  // A decoration on the message, so it FAILS OPEN exactly like the applied-
+  // credit read above (#2328's reasoning): the only realistic throw is a
+  // missing auth secret in a misconfigured environment, and that must degrade
+  // to a confirmation without calendar links, never abort the send. An empty
+  // {{ical}} is declared in OPTIONAL_TEMPLATE_TOKENS so the dangling-line
+  // guard proves the default body survives its absence.
+  let calendarLinks: BookingCalendarLinks | undefined;
+  let icalBlock = "";
+  try {
+    calendarLinks = bookingCalendarLinks({
+      stay: { bookingId: bookingContext.bookingId, checkIn, checkOut },
+      lodgeName: settings.lodgeName,
+    });
+    icalBlock = bookingAddToCalendarBlock(calendarLinks);
+  } catch (err) {
+    logger.error(
+      { err, bookingId: bookingContext.bookingId },
+      "Failed to build add-to-calendar links for a booking confirmation; sending without them (fork #35)",
+    );
+  }
   // #2262: the outcome is RETURNED so a caller that promised the admin a
   // receipt can report honestly what became of it (queued vs withheld vs
   // failed) instead of turning a decision into a delivery claim. Existing
@@ -352,6 +378,7 @@ export async function sendBookingConfirmedEmail(
         // #2328: the same figures the {{creditNote}} token above is built from,
         // handed to the hand-built HTML so both render the shared rows.
         appliedCredit,
+        calendarLinks,
       },
     )),
     bookingContext: bookingOwnerEmailContext(
@@ -427,6 +454,9 @@ export async function sendBookingConfirmedEmail(
       // Legacy bare value, still supplied so an existing override that writes
       // its own "Door code: {{doorCode}}" line keeps rendering (#2267).
       doorCode: settings.doorCode ?? "",
+      // Fork issue #35: pre-composed add-to-calendar block; empty only when
+      // link building failed above.
+      ical: icalBlock,
     },
     lodgeId: options?.lodgeId,
   });

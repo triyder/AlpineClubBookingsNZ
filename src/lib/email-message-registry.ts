@@ -1171,6 +1171,19 @@ export function sampleValue(token: string): string {
   // preview shows what a member reads (and shows nothing extra when a club has
   // no door code — the live send renders this token empty).
   if (token === "doorCodeNote") return "Door code: 1234";
+  // Fork issue #35: the whole pre-composed add-to-calendar block, in the exact
+  // shape `bookingAddToCalendarBlock` composes (calendar-links.test.ts asserts
+  // equality with the composer over these fixture URLs, so a wording change
+  // cannot leave a stale sample behind). Hard-coded here rather than composed,
+  // because composing needs the HMAC secret and this module is editor-facing.
+  if (token === "ical") {
+    return [
+      "Add this stay to your calendar:",
+      "Calendar file (.ics): https://bookings.example.org/api/calendar/booking/bkg_example?token=sample",
+      "Google Calendar: https://calendar.google.com/calendar/render?action=TEMPLATE&text=Example+Lodge+stay&dates=20260801/20260806",
+      "Outlook: https://outlook.live.com/calendar/0/deeplink/compose?rru=addevent&allday=true&startdt=2026-08-01&enddt=2026-08-06",
+    ].join("\n");
+  }
   if (token === "expectedArrivalTime") return "16:30";
   // ---------------------------------------------------------------------
   // #2307 (epic #2305, MG2) — the member-guest emails.
