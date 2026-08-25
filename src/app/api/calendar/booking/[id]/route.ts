@@ -4,6 +4,7 @@ import {
   verifyBookingCalendarToken,
 } from "@/lib/calendar-links";
 import { prisma } from "@/lib/prisma";
+import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 
 // Booking states whose stay no longer stands — the calendar file for one of
 // these would put a cancelled or never-held stay in someone's calendar. The
@@ -30,6 +31,14 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const rateLimited = await applyRateLimit(
+    rateLimiters.bookingCalendarDownload,
+    request,
+  );
+  if (rateLimited) {
+    return rateLimited;
+  }
+
   const { id } = await params;
   const token = request.nextUrl.searchParams.get("token");
   if (!id || !token || !verifyBookingCalendarToken(id, token)) {

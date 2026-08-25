@@ -111,6 +111,11 @@ export const explicitPublicApiRoutes = {
     reason:
       "Token-bearing booking request email verification endpoint; returns only non-PII summary fields and is rate limited.",
   },
+  "src/app/api/calendar/booking/[id]/route.ts": {
+    boundary: "public",
+    reason:
+      "Token-bearing .ics download for one booking's stay, linked from the booking-confirmed email's {{ical}} block (fork #35): only an HMAC of the booking id under the app auth secret resolves anything, verified in constant time before any read; the payload is the stay dates and lodge name only (no guest names, money or member ids); cancelled/bumped/soft-deleted bookings and invalid tokens are one indistinguishable 404; GET-only and rate limited.",
+  },
   "src/app/api/school-bookings/confirm-attendees/route.ts": {
     boundary: "public",
     reason:
