@@ -1176,12 +1176,15 @@ export function sampleValue(token: string): string {
   // equality with the composer over these fixture URLs, so a wording change
   // cannot leave a stale sample behind). Hard-coded here rather than composed,
   // because composing needs the HMAC secret and this module is editor-facing.
+  // The fixture URLs are REALISTIC-LENGTH on purpose (review D): an admin
+  // laying out an override against a shortened sample would receive lines far
+  // longer than the preview showed.
   if (token === "ical") {
     return [
       "Add this stay to your calendar",
-      "Calendar file (.ics): https://bookings.example.org/api/calendar/booking/bkg_example?token=sample",
+      "Calendar file (.ics): https://bookings.example.org/api/booking-calendar/bkg_example?token=u3Zn4XhIYQ2p9cTe7wLkR5vBs1oJfD8mAqN6yPxWgE0&exp=1791244800",
       "Google Calendar: https://calendar.google.com/calendar/render?action=TEMPLATE&text=Example+Lodge+stay&dates=20260801/20260806",
-      "Outlook: https://outlook.live.com/calendar/0/deeplink/compose?rru=addevent&allday=true&startdt=2026-08-01&enddt=2026-08-06",
+      "Outlook.com: https://outlook.live.com/calendar/0/deeplink/compose?path=%2Fcalendar%2Faction%2Fcompose&rru=addevent&allday=true&subject=Example+Lodge+stay&startdt=2026-08-01&enddt=2026-08-06",
     ].join("\n");
   }
   if (token === "expectedArrivalTime") return "16:30";
@@ -1985,6 +1988,11 @@ const SENSITIVE_EMAIL_SUBJECT_TOKENS = [
   // #2267: carries the door code itself, so it is subject-forbidden exactly
   // like the bare value.
   "doorCodeNote",
+  // Fork #35 (review A): the composed add-to-calendar block carries the signed
+  // .ics bearer URL itself, so it is subject-forbidden exactly like
+  // {{choreLinkNote}} above — EmailLog persists subjects and mail headers
+  // travel in the clear.
+  "ical",
   "loginUrl",
   "payUrl",
   "pin",

@@ -11,10 +11,17 @@
  * checkout + 1 day.
  *
  * The .ics download URL must work from an email with no signed-in session, so
- * it carries an HMAC of the booking id under the app auth secret — the same
- * sessionless-credential pattern as lodge-display pairing. The token grants
- * exactly one thing: reading one booking's stay dates and lodge name as a
+ * it carries an HMAC under the app auth secret — the same sessionless-
+ * credential pattern as lodge-display pairing, including that pattern's
+ * signed expiry: the `exp` epoch-seconds value is part of the signed message,
+ * so it cannot be extended by tampering, and a forwarded confirmation stops
+ * resolving the booking once the link ages out. The token grants exactly one
+ * thing while it lives: reading one booking's stay dates and lodge name as a
  * calendar file.
+ *
+ * The booking id is the LAST field of the signed message on purpose: no
+ * crafted id or expiry can re-partition the string, so a token minted for one
+ * booking can never verify for another.
  */
 import { createHmac, timingSafeEqual } from "crypto";
 import { getAppBaseUrl } from "@/lib/app-url";
@@ -38,6 +45,13 @@ export interface BookingCalendarLinks {
   outlookUrl: string;
 }
 
+/**
+ * How long past CHECKOUT the .ics download link stays valid. Long enough to
+ * re-download after a post-stay date correction; short enough that a forwarded
+ * or logged confirmation email does not read the booking forever.
+ */
+const DOWNLOAD_LINK_LIFETIME_AFTER_CHECKOUT_DAYS = 60;
+
 function calendarSecret(): string {
   const secret = getAuthSecret();
   if (!secret) {
@@ -48,18 +62,41 @@ function calendarSecret(): string {
   return secret;
 }
 
-export function bookingCalendarToken(bookingId: string): string {
+/** Epoch-seconds expiry minted for a stay's download link. */
+export function bookingCalendarLinkExpiry(stay: BookingCalendarStay): number {
+  const expiresAt = addDaysDateOnly(
+    stay.checkOut,
+    DOWNLOAD_LINK_LIFETIME_AFTER_CHECKOUT_DAYS,
+  );
+  return Math.floor(expiresAt.getTime() / 1000);
+}
+
+export function bookingCalendarToken(
+  bookingId: string,
+  expiresAtSeconds: number,
+): string {
   return createHmac("sha256", calendarSecret())
-    .update(`booking-calendar:${bookingId}`)
+    .update(`booking-calendar:${expiresAtSeconds}:${bookingId}`)
     .digest("base64url");
 }
 
-export function verifyBookingCalendarToken(
-  bookingId: string,
-  token: string,
-): boolean {
-  const expected = Buffer.from(bookingCalendarToken(bookingId));
-  const provided = Buffer.from(token);
+export function verifyBookingCalendarToken(params: {
+  bookingId: string;
+  expiresAtSeconds: number;
+  token: string;
+  /** The verification instant; callers pass `new Date()`. */
+  now: Date;
+}): boolean {
+  if (
+    !Number.isInteger(params.expiresAtSeconds) ||
+    params.now.getTime() >= params.expiresAtSeconds * 1000
+  ) {
+    return false;
+  }
+  const expected = Buffer.from(
+    bookingCalendarToken(params.bookingId, params.expiresAtSeconds),
+  );
+  const provided = Buffer.from(params.token);
   return (
     expected.length === provided.length && timingSafeEqual(expected, provided)
   );
@@ -85,30 +122,40 @@ function stayDates(checkIn: Date, checkOut: Date): StayDates {
 }
 
 /**
- * RFC 5545 TEXT escaping: backslash, semicolon, comma, and newlines.
+ * RFC 5545 TEXT escaping: backslash, semicolon, comma, and line breaks in any
+ * form — CRLF, bare LF, or bare CR — become the literal `\n` sequence.
  */
 function escapeIcsText(value: string): string {
   return value
     .replaceAll("\\", "\\\\")
     .replaceAll(";", "\\;")
     .replaceAll(",", "\\,")
-    .replaceAll(/\r?\n/g, "\\n");
+    .replaceAll(/\r\n|[\r\n]/g, "\\n");
 }
 
 /**
- * RFC 5545 content lines fold at 75 octets. Splitting at 74 characters is
- * conservative for ASCII content; multi-byte lodge names may fold a byte or
- * two early, which every parser accepts.
+ * RFC 5545 content lines fold at 75 OCTETS, so the budget is counted in UTF-8
+ * bytes, not string length — a macron-bearing Māori lodge name costs two bytes
+ * per macron and must fold EARLIER than its character count suggests, not
+ * later. Iterating code points (not code units) means a fold can never split
+ * a surrogate pair into two lone halves.
  */
 function foldIcsLine(line: string): string {
-  if (line.length <= 74) return line;
   const parts: string[] = [];
-  let rest = line;
-  while (rest.length > 74) {
-    parts.push(rest.slice(0, 74));
-    rest = rest.slice(74);
+  let current = "";
+  let currentOctets = 0;
+  for (const char of line) {
+    const charOctets = Buffer.byteLength(char, "utf8");
+    if (currentOctets + charOctets > 74 && current) {
+      parts.push(current);
+      current = char;
+      currentOctets = charOctets;
+    } else {
+      current += char;
+      currentOctets += charOctets;
+    }
   }
-  parts.push(rest);
+  if (current) parts.push(current);
   return parts.join("\r\n ");
 }
 
@@ -123,13 +170,17 @@ function icsTimestamp(instant: Date): string {
 }
 
 /**
- * The .ics document for one stay. The UID is stable per booking, so
- * re-downloading after a date change updates the existing event in the
- * recipient's calendar instead of duplicating it.
+ * The .ics document for one stay. The UID is stable per booking and SEQUENCE
+ * rises with every booking update (it is the epoch-seconds of `updatedAt`),
+ * which together are what make a re-download after a date change UPDATE the
+ * existing event in the recipient's calendar instead of duplicating it or
+ * being ignored as a same-revision duplicate (RFC 5545 §3.8.7.4).
  */
 export function buildBookingIcs(input: {
   stay: BookingCalendarStay;
   lodgeName: string;
+  /** Monotonic per-booking revision; pass epoch-seconds of `updatedAt`. */
+  sequence: number;
   /** DTSTAMP instant; callers pass `new Date()` at generation time. */
   generatedAt: Date;
 }): string {
@@ -146,6 +197,7 @@ export function buildBookingIcs(input: {
     "METHOD:PUBLISH",
     "BEGIN:VEVENT",
     `UID:booking-${input.stay.bookingId}@${host}`,
+    `SEQUENCE:${Math.max(0, Math.floor(input.sequence))}`,
     `DTSTAMP:${icsTimestamp(input.generatedAt)}`,
     `DTSTART;VALUE=DATE:${compactDate(startIso)}`,
     `DTEND;VALUE=DATE:${compactDate(endExclusiveIso)}`,
@@ -160,6 +212,11 @@ export function buildBookingIcs(input: {
   return `${lines.map(foldIcsLine).join("\r\n")}\r\n`;
 }
 
+// The web-calendar URLs carry ONLY the title and the dates — no location or
+// details params. The .ics file is the rich form; here every extra param
+// lengthens a URL that admin override bodies render as unbreakable plain text
+// in a fixed-width email table (the flat {{ical}} block), so the short form
+// is the one that renders acceptably everywhere.
 export function googleCalendarUrl(input: {
   stay: BookingCalendarStay;
   lodgeName: string;
@@ -174,11 +231,6 @@ export function googleCalendarUrl(input: {
   url.searchParams.set(
     "dates",
     `${compactDate(startIso)}/${compactDate(endExclusiveIso)}`,
-  );
-  url.searchParams.set("location", input.lodgeName);
-  url.searchParams.set(
-    "details",
-    `Manage your booking: ${getAppBaseUrl()}/bookings`,
   );
   return url.toString();
 }
@@ -198,16 +250,15 @@ export function outlookCalendarUrl(input: {
   url.searchParams.set("subject", `${input.lodgeName} stay`);
   url.searchParams.set("startdt", startIso);
   url.searchParams.set("enddt", endExclusiveIso);
-  url.searchParams.set("location", input.lodgeName);
-  url.searchParams.set(
-    "body",
-    `Manage your booking: ${getAppBaseUrl()}/bookings`,
-  );
   return url.toString();
 }
 
-export function bookingIcsDownloadUrl(bookingId: string): string {
-  return `${getAppBaseUrl()}/api/calendar/booking/${bookingId}?token=${bookingCalendarToken(bookingId)}`;
+export function bookingIcsDownloadUrl(stay: BookingCalendarStay): string {
+  const expiresAtSeconds = bookingCalendarLinkExpiry(stay);
+  const token = bookingCalendarToken(stay.bookingId, expiresAtSeconds);
+  // /api/booking-calendar, NOT /api/calendar — that prefix is module-gated
+  // behind the eventsCalendar flag, and this link belongs to bookings.
+  return `${getAppBaseUrl()}/api/booking-calendar/${stay.bookingId}?token=${token}&exp=${expiresAtSeconds}`;
 }
 
 export function bookingCalendarLinks(input: {
@@ -215,7 +266,7 @@ export function bookingCalendarLinks(input: {
   lodgeName: string;
 }): BookingCalendarLinks {
   return {
-    icsUrl: bookingIcsDownloadUrl(input.stay.bookingId),
+    icsUrl: bookingIcsDownloadUrl(input.stay),
     googleUrl: googleCalendarUrl(input),
     outlookUrl: outlookCalendarUrl(input),
   };
@@ -227,14 +278,18 @@ export function bookingCalendarLinks(input: {
  * email-messages guide's block-token convention. The lead-in line carries no
  * trailing colon — the clean-body guards read a colon-terminated line as a
  * dangling label. The sender renders the token EMPTY when link building fails
- * (it fails open on this decoration), which is why `ical` is declared in
- * OPTIONAL_TEMPLATE_TOKENS.
+ * or when the recipient's booking-link authority denies placing the booking
+ * id in outbound mail (the same decision that governs `{{bookingUrl}}`),
+ * which is why `ical` is declared in OPTIONAL_TEMPLATE_TOKENS.
  */
 export function bookingAddToCalendarBlock(links: BookingCalendarLinks): string {
   return [
     "Add this stay to your calendar",
     `Calendar file (.ics): ${links.icsUrl}`,
     `Google Calendar: ${links.googleUrl}`,
-    `Outlook: ${links.outlookUrl}`,
+    // "Outlook.com", not "Outlook": the deeplink serves personal Microsoft
+    // accounts only — a work/school (Microsoft 365) reader lands on a
+    // consumer sign-in, so the label must not promise them a working link.
+    `Outlook.com: ${links.outlookUrl}`,
   ].join("\n");
 }

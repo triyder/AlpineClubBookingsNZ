@@ -90,7 +90,10 @@ function addToCalendarLine(links: BookingCalendarLinks): string {
   const link = (label: string, url: string) =>
     `<a href="${escapeHtml(sanitizeEmailHref(url))}" target="_blank" style="color: ${p.deep}; font-weight: 600;">${label}</a>`;
   return paragraph(
-    `Add this stay to your calendar: ${link("Calendar file (.ics)", links.icsUrl)} &middot; ${link("Google Calendar", links.googleUrl)} &middot; ${link("Outlook", links.outlookUrl)}`,
+    // "Outlook.com", not "Outlook": the deeplink serves personal Microsoft
+    // accounts only, and the label must not promise a Microsoft 365
+    // work/school reader a link that lands them on a consumer sign-in.
+    `Add this stay to your calendar: ${link("Calendar file (.ics)", links.icsUrl)} &middot; ${link("Google Calendar", links.googleUrl)} &middot; ${link("Outlook.com", links.outlookUrl)}`,
   );
 }
 
