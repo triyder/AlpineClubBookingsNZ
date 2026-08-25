@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Eye, GitCompareArrows, RotateCcw, Save } from "lucide-react";
+import { MarkdownLiteToolbar } from "@/components/admin/email-settings/markdown-lite-toolbar";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -287,6 +288,8 @@ export function EmailMessageSettingsPanel() {
   const [selectedTemplate, setSelectedTemplate] = useState("");
   const [subject, setSubject] = useState("");
   const [bodyText, setBodyText] = useState("");
+  // Fork #38: the markdown-lite toolbar edits the plain text at the cursor.
+  const bodyTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const [previewHtml, setPreviewHtml] = useState("");
   const [previewSubject, setPreviewSubject] = useState("");
   const [staleOverrideCount, setStaleOverrideCount] = useState(0);
@@ -497,6 +500,11 @@ export function EmailMessageSettingsPanel() {
           templateName: currentTemplate.key,
           subject,
           bodyText,
+          // Fork #38: bodies saved from this editor render the markdown-lite
+          // vocabulary. Rows saved before the feature keep plain rendering
+          // until re-saved here — and Preview shows the formatted result
+          // before any save.
+          bodyMarkdown: true,
         }),
       });
       const responseBody = await response.json().catch(() => null);
@@ -568,6 +576,8 @@ export function EmailMessageSettingsPanel() {
           templateName: currentTemplate.key,
           subject,
           bodyText,
+          // Preview with the same renderer a save from this editor will use.
+          bodyMarkdown: true,
         }),
       });
       const responseBody = await response.json().catch(() => null);
@@ -919,8 +929,18 @@ export function EmailMessageSettingsPanel() {
         </div>
         <div>
           <Label htmlFor="email-template-body">Body</Label>
+          {/* Fork #38: markdown-lite toolbar. Each button edits the plain
+              text at the cursor — storage stays text, and Preview shows the
+              rendered result. */}
+          <MarkdownLiteToolbar
+            textareaRef={bodyTextareaRef}
+            value={bodyText}
+            onChange={setBodyText}
+            disabled={!canEdit}
+          />
           <Textarea
             id="email-template-body"
+            ref={bodyTextareaRef}
             className="mt-1 min-h-72 font-mono text-sm"
             disabled={!canEdit}
             value={bodyText}
