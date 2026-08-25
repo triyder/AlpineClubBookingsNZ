@@ -73,6 +73,15 @@ it — or nothing whatsoever. Put one of those tokens on its own, with no label 
 your own in front of it, and the email reads correctly whether or not the value
 exists.
 
+One of these blocks is several lines at once: **`{{ical}}`** on the Booking
+Confirmed message renders a short add-to-calendar section — a link that
+downloads the stay as a calendar file (`.ics`), plus one-click links for Google
+Calendar and Outlook, each covering the whole stay as all-day entries from
+check-in through checkout day. The links are built per booking by the system
+(the download link carries its own signed key, so it works for a recipient who
+is not signed in). Place the token on a line of its own; like every block
+token, it renders complete lines or nothing at all.
+
 A second, related pair works the other way round: **`{{rebookLabel}}` and
 `{{rebookPath}}`** in the **Booking Update** (bumped) message. That email goes to
 two very different people — a club member whose pending booking lost its beds,

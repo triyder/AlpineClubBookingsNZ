@@ -18,7 +18,11 @@
  */
 import { createHmac, timingSafeEqual } from "crypto";
 import { getAppBaseUrl } from "@/lib/app-url";
-import { addDaysDateOnly, formatDateOnly } from "@/lib/date-only";
+import {
+  addDaysDateOnly,
+  formatDateOnly,
+  formatDateOnlyForTimeZone,
+} from "@/lib/date-only";
 import { getAuthSecret } from "@/lib/runtime-config";
 
 export interface BookingCalendarStay {
@@ -108,8 +112,14 @@ function foldIcsLine(line: string): string {
   return parts.join("\r\n ");
 }
 
+// DTSTAMP is a real UTC instant (RFC 5545 basic form). The calendar-day half
+// goes through the canonical instant encoder pinned to UTC (INV-DATE-019 bans
+// hand-assembled date keys in any spelling); the clock-face half is plain UTC
+// time getters, which no date census restricts.
 function icsTimestamp(instant: Date): string {
-  return `${instant.toISOString().slice(0, 19).replaceAll(/[-:]/g, "")}Z`;
+  const pad = (value: number) => String(value).padStart(2, "0");
+  const utcDay = compactDate(formatDateOnlyForTimeZone(instant, "UTC"));
+  return `${utcDay}T${pad(instant.getUTCHours())}${pad(instant.getUTCMinutes())}${pad(instant.getUTCSeconds())}Z`;
 }
 
 /**
