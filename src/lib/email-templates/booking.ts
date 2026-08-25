@@ -291,8 +291,12 @@ export function bookingConfirmedTemplate(
       travelNote: options?.lodgeTravelNote ?? CLUB_LODGE_TRAVEL_NOTE,
       doorCode: options?.doorCode ?? null,
     })}
-    ${paragraph("You can view your booking details and manage your stay from your account.")}
-    ${options?.calendarLinks ? addToCalendarLine(options.calendarLinks) : ""}
+    ${paragraph("You can view your booking details and manage your stay from your account.")}${
+      // Concatenated (no dedicated template line) so a confirmation WITHOUT
+      // links renders byte-identical to the pre-#35 output — the #2689
+      // equivalence pins hold for every fixture that does not pass links.
+      options?.calendarLinks ? addToCalendarLine(options.calendarLinks) : ""
+    }
     ${button("View Booking", BASE_URL + "/bookings")}
   `);
 }
