@@ -46,6 +46,15 @@ describe("sanitiseEmailBodyHtml", () => {
       "<p>Hi {{firstName}}</p>",
     );
   });
+
+  it("repairs a token split across formatting tags (review H2) — the whole token formats", () => {
+    // A half-selected Ctrl-B: without the repair, extraction JOINS the token
+    // (validation approves it) while the render regex cannot see through the
+    // tags and drops it silently.
+    expect(sanitiseEmailBodyHtml("<p>Hi <b>{{first</b>Name}}</p>")).toBe(
+      "<p>Hi <b>{{firstName}}</b></p>",
+    );
+  });
 });
 
 describe("renderHtmlTemplateString", () => {
@@ -92,10 +101,17 @@ describe("renderEmailBodyHtml", () => {
 });
 
 describe("plainTextToEmailBodyHtml", () => {
-  it("upgrades blocks to paragraphs and inner newlines to <br>, escaped", () => {
+  it("upgrades the first block to the heading, the rest to paragraphs, escaped", () => {
+    // The plain path renders the first block through heading(); the upgrade
+    // preserves that so a no-op re-save keeps its heading (review M5).
     expect(
       plainTextToEmailBodyHtml("Heading\n\nLine one\nLine <two>\n\nBye"),
-    ).toBe("<p>Heading</p><p>Line one<br>Line &lt;two&gt;</p><p>Bye</p>");
+    ).toBe("<h2>Heading</h2><p>Line one<br>Line &lt;two&gt;</p><p>Bye</p>");
+  });
+
+  it("round-trips entity-bearing text losslessly (review M4)", () => {
+    const text = 'Tom & Jerry\n\ngear <5kg and "quotes" & more';
+    expect(emailBodyHtmlToText(plainTextToEmailBodyHtml(text))).toBe(text);
   });
 
   it("round-trips: extracting the upgrade returns the original text", () => {

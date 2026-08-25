@@ -23,6 +23,7 @@ import { escapeHtml } from "@/lib/email-templates/escape";
  */
 
 const EMAIL_BODY_TAGS = [
+  "h2",
   "p",
   "div",
   "br",
@@ -53,9 +54,28 @@ const SAVE_OPTIONS: sanitizeHtml.IOptions = {
   // its words rather than vanishing.
 };
 
+/**
+ * A half-selected Ctrl-B can split a token across tags
+ * (`<b>{{first</b>Name}}`): text extraction JOINS across tags, so validation
+ * would approve a token the render regex (which cannot see through tags)
+ * would silently drop — review finding H2. Repair at the storage boundary:
+ * strip tags INSIDE any `{{…}}` span, then re-sanitise so the tags the
+ * repair unbalanced are closed. The whole token ends up formatted, which is
+ * the sane reading of the author's half-bolding.
+ */
+function repairSplitTokens(html: string): string {
+  return html.replace(/\{\{[^{}]*\}\}/g, (span) =>
+    span.replace(/<[^<>]*>/g, ""),
+  );
+}
+
 export function sanitiseEmailBodyHtml(input: string): string {
   if (typeof input !== "string" || input.trim() === "") return "";
-  return sanitizeHtml(input, SAVE_OPTIONS).trim();
+  const sanitised = sanitizeHtml(input, SAVE_OPTIONS);
+  const repaired = repairSplitTokens(sanitised);
+  return (
+    repaired === sanitised ? sanitised : sanitizeHtml(repaired, SAVE_OPTIONS)
+  ).trim();
 }
 
 /**
@@ -71,16 +91,26 @@ export function emailBodyHtmlToText(html: string): string {
   // validation — read the way the rich body looks. Lines inside a block
   // (<br>, list items, divs) are single newlines.
   const withBreaks = html
-    .replace(/<\/p>/gi, "\n\n")
+    .replace(/<\/(p|h2)>/gi, "\n\n")
     .replace(/<\/(div|li)>/gi, "\n")
     .replace(/<br\s*\/?>/gi, "\n");
   const text = sanitizeHtml(withBreaks, {
     allowedTags: [],
     allowedAttributes: {},
   });
+  // sanitize-html RE-ESCAPES text on output (verified against 2.17.6 — the
+  // club-post comment claiming otherwise is wrong; review finding M4), so
+  // decode the entities it emits or every derived body reads "Tom &amp;
+  // Jerry" in audit rows, diffs and any plain-path fallback. Ampersand LAST,
+  // so "&amp;lt;" decodes to the literal "&lt;" text it was, not to "<".
   return text
     .replace(/\n{3,}/g, "\n\n")
     .replace(/[ \t]+\n/g, "\n")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, "&")
     .trim();
 }
 
@@ -104,6 +134,7 @@ export function renderHtmlTemplateString(
 // Inline spacing mail clients would otherwise not apply — the shell's cell
 // carries the font, colour and size, which these children inherit.
 const RENDER_STYLE: Record<string, string> = {
+  h2: "margin: 0 0 16px 0; font-size: 22px; font-weight: 700; line-height: 1.3;",
   p: "margin: 0 0 12px 0; line-height: 1.6;",
   div: "margin: 0 0 12px 0; line-height: 1.6;",
   ul: "margin: 0 0 12px 0; padding-left: 22px;",
@@ -138,9 +169,11 @@ export function renderEmailBodyHtml(substitutedHtml: string): string {
     allowedStyles: {
       "*": {
         "text-align": TEXT_ALIGN_VALUES,
-        margin: [/^0 0 (?:4|12)px 0$/],
-        "line-height": [/^1\.6$/],
+        margin: [/^0 0 (?:4|12|16)px 0$/],
+        "line-height": [/^1\.[36]$/],
         "padding-left": [/^22px$/],
+        "font-size": [/^22px$/],
+        "font-weight": [/^700$/],
       },
     },
     allowedAttributes: {
@@ -161,7 +194,14 @@ export function plainTextToEmailBodyHtml(bodyText: string): string {
     .split(/\n{2,}/)
     .map((block) => block.trim())
     .filter(Boolean);
+  // The FIRST block becomes an <h2>, because that is what the plain path
+  // renders it as (`plainTextEmailTemplate` → `heading()`) — without this, a
+  // no-op re-save of an untouched body would silently lose its heading
+  // (review finding M5).
   return blocks
-    .map((block) => `<p>${escapeHtml(block).replace(/\n/g, "<br>")}</p>`)
+    .map((block, index) => {
+      const inner = escapeHtml(block).replace(/\n/g, "<br>");
+      return index === 0 ? `<h2>${inner}</h2>` : `<p>${inner}</p>`;
+    })
     .join("");
 }

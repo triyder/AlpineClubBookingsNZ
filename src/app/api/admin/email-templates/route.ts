@@ -530,15 +530,23 @@ export async function PUT(request: NextRequest) {
   // the way a member will, and nothing outside the policy survives to be
   // validated at all. An empty-after-sanitise rich body degrades to the
   // provided/absent bodyText exactly like no rich body at all.
-  const sanitizedBodyHtml =
+  const sanitizedCandidate =
     parsed.data.bodyHtml === undefined
       ? undefined
       : parsed.data.bodyHtml
         ? sanitiseEmailBodyHtml(parsed.data.bodyHtml) || null
         : null;
-  const derivedBodyText = sanitizedBodyHtml
-    ? emailBodyHtmlToText(sanitizedBodyHtml)
+  const derivedCandidateText = sanitizedCandidate
+    ? emailBodyHtmlToText(sanitizedCandidate)
     : null;
+  // Review finding H1: an EMPTIED editor leaves markup with no text
+  // ("<p><br /></p>") — truthy HTML whose derived text is blank. Storing it
+  // would send members a themed shell with NO body while validation's
+  // empty-body exemption waves it through. Blank derived text therefore
+  // means "no rich body at all": the row falls back exactly as clearing the
+  // old textarea always has.
+  const sanitizedBodyHtml = derivedCandidateText ? sanitizedCandidate : sanitizedCandidate === undefined ? undefined : null;
+  const derivedBodyText = derivedCandidateText || null;
 
   const validation = validateEmailTemplateContent({
     templateName: parsed.data.templateName,

@@ -1,4 +1,8 @@
-import { layout, plainTextEmailTemplate } from "@/lib/email-templates/layout";
+import {
+  layout,
+  plainTextEmailTemplate,
+  richBodyContainer,
+} from "@/lib/email-templates/layout";
 import {
   renderEmailBodyHtml,
   renderHtmlTemplateString,
@@ -801,7 +805,11 @@ export async function prepareEmailMessage({
     // depth over the save-time sanitise), inside the same themed shell and
     // render gate (#2900) as every other body.
     nextHtml = await renderEmailHtml(() =>
-      layout(renderEmailBodyHtml(renderHtmlTemplateString(overrideBodyHtml, data))),
+      layout(
+        richBodyContainer(
+          renderEmailBodyHtml(renderHtmlTemplateString(overrideBodyHtml, data)),
+        ),
+      ),
     );
     overrideApplied = true;
     bodyOverrideApplied = true;
@@ -864,8 +872,10 @@ export async function renderEmailTemplatePreview({
     await renderEmailHtml(() =>
       trimmedBodyHtml
         ? layout(
-            renderEmailBodyHtml(
-              renderHtmlTemplateString(trimmedBodyHtml, data),
+            richBodyContainer(
+              renderEmailBodyHtml(
+                renderHtmlTemplateString(trimmedBodyHtml, data),
+              ),
             ),
           )
         : plainTextEmailTemplate(renderTemplateString(bodyText, data)),

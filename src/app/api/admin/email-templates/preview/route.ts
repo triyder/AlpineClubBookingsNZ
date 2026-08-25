@@ -58,10 +58,16 @@ export async function POST(request: NextRequest) {
   }
 
   // Fork #38: a rich body previews via its sanitised form and validates via
-  // its derived text — the exact pipeline a save-then-send runs.
-  const sanitizedBodyHtml = parsed.data.bodyHtml
+  // its derived text — the exact pipeline a save-then-send runs. An emptied
+  // body (markup with no text) previews as NO rich body, mirroring the save
+  // path's H1 rule.
+  const sanitizedCandidate = parsed.data.bodyHtml
     ? sanitiseEmailBodyHtml(parsed.data.bodyHtml) || undefined
     : undefined;
+  const sanitizedBodyHtml =
+    sanitizedCandidate && emailBodyHtmlToText(sanitizedCandidate)
+      ? sanitizedCandidate
+      : undefined;
   const validation = validateEmailTemplateContent({
     templateName: parsed.data.templateName,
     subject: parsed.data.subject,
