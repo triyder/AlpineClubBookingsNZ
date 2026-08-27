@@ -610,20 +610,27 @@ the manual Other Clubs upload and download plus the shared sync-failure row
 started, completed AND failed, because the row written before the attempt is the
 only one guaranteed to survive a restore that dies part-way — which is exactly
 the incident someone would need to reconstruct. And #2780 added the ten
-maintenance-report writers (`lodge` 55 → 65, 443 → 453). From that shared base
-two disjoint additions merged. The Communication Portal (epic #2992) added the
-six club message board moderation writers (`communication` 14 → 20, 453 → 459)
-and the federation work then added the board image upload writer
-(`communication` 20 → 21, 459 → 460). CT-1 (#2989) added the club-timezone
-change record (`admin` 102 → 103) — one writer, because the timezone change is
-a single audited event and a re-save of the unchanged zone deliberately records
-nothing at all — and ENV-SAFETY 1 (#3034) added the environment-safety override
-record (`admin` 103 → 104), again one writer, and again a no-op records
-nothing, because that route's dirty gate counts an absent settings row as
-"override off". Together that is 453 + 7 + 2 = 462, the figure above, and it
-was taken from `npm run audit:census` on the merged tree rather than by adding
-one branch's delta to the other's total. The category values sum to 461 rather
-than 462 because one site forwards its category rather than naming one.
+maintenance-report writers (`lodge` 55 → 65, 443 → 453). Since then CT-1
+(#2989) added the club-timezone change record (`admin` 102 → 103, 453 → 454) —
+one writer, because the timezone change is a single audited event and a
+re-save of the unchanged zone deliberately records nothing at all. Since then
+ENV-SAFETY 1 (#3034) added the environment-safety override record
+(`admin` 103 → 104, 454 → 455) - again one writer, and again a no-op
+records nothing, because that route's dirty gate counts an absent settings row
+as "override off". That is the figure above, and it was taken from
+`npm run audit:census` on the merged tree rather than by adding one branch's
+delta to the other's total. The category values sum to 454 rather than 455
+because one site forwards its category rather than naming one.
+maintenance-report writers (`lodge` 55 → 65, 443 → 453). And the Communication
+Portal (epic #2992) added the six club message board moderation writers
+(`communication` 14 → 20, 453 → 459). The federation work then added the
+board image upload writer (`communication` 20 → 21, 459 → 460). The upstream
+merge then brought the club-time and environment-safety writers with it
+(`admin` 102 → 104, 460 → 462). That is the figure
+above, and it was taken from `npm run audit:census` on the merged tree rather
+than by adding one branch's delta to the other's total. The category values sum
+to 461 rather than 462 because one site forwards its category rather than
+naming one.
 
 The 22 moves are pinned **per site**, not only by that
 distribution: `REVIEWED_ADMIN_CATEGORIES_2730` in

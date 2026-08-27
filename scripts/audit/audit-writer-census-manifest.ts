@@ -318,11 +318,6 @@ export const AUDIT_CENSUS_TOTALS = {
   // 435, so the merged total is 453. Taken from `npm run audit:census` run on
   // the merged tree rather than by adding one branch's delta to the other's
   // total, which is how a published count goes wrong in a merge.
-  // 453 -> 459 (#2992 merged with main): the six club message board writers
-  // (hide, show, edit, remove, retention settings, manual cleanup). Taken from
-  // `npm run audit:census` on the MERGED tree, by the method the #2780 note
-  // above sets out -- not by adding this branch's delta to main's total.
-  // 459 -> 460 (epic #2992 federation): the board image upload writer.
   // 453 -> 454 (CT-1, #2989): `CLUB_TIME_ZONE_UPDATED`, the one writer on the
   // Full-Admin club-timezone maintenance route. It records the before and after
   // IANA identifier and nothing else — the issue's requirement 6 says in so many
@@ -349,11 +344,15 @@ export const AUDIT_CENSUS_TOTALS = {
   // it does not join `UNCATEGORISED_AUDIT_WRITERS` below. Measured by RUNNING
   // `npx tsx scripts/audit/audit-writer-census.ts` on this tree (455 sites, 2116
   // files scanned), not by adding one to the literal below.
-  // 455 + 460 - 453 = 462 (upstream sync, fork PR): this fork's seven comms
-  // writers and upstream's two configuration writers are DISJOINT additions to
-  // the shared base of 453. Taken from `npm run audit:census` run on the merged
-  // tree, by the method the #2780 note above sets out — not by adding one
-  // branch's delta to the other's total.
+  // 453 -> 459 (#2992 merged with main): the six club message board writers
+  // (hide, show, edit, remove, retention settings, manual cleanup). Taken from
+  // `npm run audit:census` on the MERGED tree, by the method the #2780 note
+  // above sets out -- not by adding this branch's delta to main's total.
+  // 459 -> 460 (epic #2992 federation): the board image upload writer.
+  // 455/460 -> 462 (upstream merge, 25 Aug 2026): both lanes' additions are
+  // disjoint -- upstream's two auditLog.create writers and this branch's seven
+  // communication writers -- and the figure is from `npm run audit:census` on
+  // the MERGED tree, the method this file prescribes.
   writeSites: 462,
   /**
    * Of those, sites whose event object carries no `category` key.

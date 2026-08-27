@@ -466,19 +466,53 @@ const CENSUS_CEILING = {
    * which is zone-free UTC arithmetic and a strictly better state that
    * nonetheless adds an importer.
    *
+   * 213 -> 214 is a file SPLIT, and is the third way to join this list without
+   * changing anything (#3128). `bed-allocation-lifecycle.ts` was over its size
+   * budget; its three write-time re-filters moved verbatim into
+   * `bed-allocation-write-rechecks.ts`, taking with them the
+   * `addDaysDateOnly` / `eachDateOnlyInRange` / `formatDateOnly` import they
+   * already had. One importer became two importers of the same three zone-free
+   * helpers, with no call site added, removed or changed, and neither file
+   * resolves a timezone. That is the "human decision about which direction it
+   * moved and why" this docblock asks for.
+   *
    * So this one is a size-of-surface tracker, not a defect count, and it can
    * legitimately move in either direction. It is `toBe` like the rest, which
    * means a change here fails the suite and asks for a human decision about
    * which direction it moved and why — that is the intended behaviour, not an
    * oversight.
    *
-   * 213 -> 215 (#3108): the booking add-to-calendar feature adds two
-   * importers — `calendar-links.ts` and the `.ics` download route — both of
+   * It moved 213 to 214 in #3128, and that is the benign direction described
+   * above rather than a new site: splitting `buildShiftPreviewResponse` verbatim
+   * out of `modify-quote/route.ts` into `src/lib/booking-shift-preview.ts` moved
+   * three zone-free calls (`addDaysDateOnly`, `eachDateOnlyInRange`,
+   * `parseDateOnly`) into a file of their own, so one importer became two. No
+   * call changed and no zone is consulted on either side of the seam.
+   *
+   * 214 -> 216 (#3108): the booking add-to-calendar feature adds two
+   * importers -- `calendar-links.ts` and the `.ics` download route -- both of
    * which use only the zone-free exports (`parseDateOnly`, `addDaysDateOnly`,
    * `formatDateOnly`) to keep lodge nights calendar days per INV-DATE-001;
    * neither consults a timezone.
+   *
+   * 216 -> 217 since #3128's third split did the same thing as the first again:
+   * the three write-time re-filters moved verbatim out of
+   * `bed-allocation-lifecycle.ts` into `src/lib/bed-allocation-write-rechecks.ts`,
+   * taking `addDaysDateOnly`, `eachDateOnlyInRange` and `formatDateOnly` with
+   * them. Same shape, same reason, no call changed, no zone consulted.
+   *
+   * A WARNING FOR THE NEXT LANE THAT SPLITS A FILE, because this counter caught
+   * nobody and nearly shipped wrong -- twice. Two sibling branches each raised
+   * it 213 -> 214 independently and correctly. The first merged; the second
+   * REBASED CLEANLY, because git saw both sides making the identical edit and
+   * had no conflict to report -- leaving a branch that had added a 215th
+   * importer asserting 214, with a green rebase and no warning anywhere. This
+   * branch then sat at 215 while `main` moved to 216 underneath it. Only
+   * running this suite found either. If you bump this number on a branch,
+   * re-run this file after every rebase or merge onto a moved `main`: a clean
+   * merge is not evidence the count is still right, and neither is arithmetic.
    */
-  dateOnlyImporters: 215,
+  dateOnlyImporters: 217,
   /**
    * `new Date(y, m, d)` — local midnight in the HOST's zone.
    *
@@ -570,17 +604,25 @@ describe("the classes CT-6 closed are at zero, and stay there", () => {
         read(file),
       ),
     );
-    // NINE WHEN CT-6 MEASURED IT, FIVE NOW. #3123 took four: `date-only.ts`
+    // NINE WHEN CT-6 MEASURED IT, FOUR NOW. #3123 took four: `date-only.ts`
     // stopped naming it the moment its six `= APP_TIME_ZONE` defaults were
     // deleted — the adapter had been the single largest reason the environment
     // was reachable at all — and `member-guest-consent-labels.ts` came off when
     // the deferral its own docblock had declared was finally closed.
     //
-    // The five left are structural rather than deferred: the config module that
-    // defines the value, and four modules that legitimately describe the
+    // #3126 took the fifth, `member-merge-field-kinds.ts`, the same way and for
+    // the same reason one level up: the only thing still naming the environment
+    // there was a `= APP_TIME_ZONE` DEFAULT on the renderer, which every
+    // production caller already overrode. Deleting it (`INV-SSOT-003`) left the
+    // file naming the environment nowhere and took its lint-ratchet entry with
+    // it. A default is how the environment reaches callers that never asked for
+    // it, so it is the shape to look for first in whatever remains.
+    //
+    // The four left are structural rather than deferred: the config module that
+    // defines the value, and three modules that legitimately describe the
     // ENVIRONMENT rather than the club. Lowering this further needs a reason
     // beyond tidiness — read each one before assuming it is a leftover.
-    expect(naming, naming.join("\n")).toHaveLength(5);
+    expect(naming, naming.join("\n")).toHaveLength(4);
   });
 
   it("counts the local-midnight constructions no selector can reach", () => {

@@ -1257,15 +1257,14 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // land unpinned for the same reason — categorised at the site, named in none
     // of the four maps. 453 sites measured minus 127 pinned. `pinned` is again
     // unchanged, so no existing classification moved in this merge either.
-    // 326 -> 332 (#2992): the six club message board writers, none of them
-    // per-site pinned.
-    // 326 -> 328 upstream (CT-1 #2989 and ENV-SAFETY #3034): the club-timezone
-    // and environment-safety writers, categorised at the site and named in none
-    // of the four per-site maps, so they land unpinned.
-    // 333 + 328 - 326 = 335 (upstream sync, fork PR): the fork side had moved
-    // on to 333 with the board image upload writer; both sides' writers land
-    // unpinned, and `pinned` is unchanged, which is the point — no existing
-    // classification moved on either side.
+    // 326 -> 327 (CT-1, #2989): the club-timezone writer. Categorised `admin` at
+    // the site and named in none of the four per-site maps, so it lands unpinned
+    // like every other new feature's writer. 454 sites measured minus 127 pinned;
+    // `pinned` is unchanged, which is the point — no existing classification moved.
+    // 327/333 -> 335 (upstream merge, 25 Aug 2026): both lanes' writers are
+    // disjoint and all unpinned — upstream's club-time and environment-safety
+    // writers plus this branch's seven communication writers. 462 sites
+    // measured minus 127 pinned; `pinned` is unchanged on both sides.
     ).toEqual({ pinned: 127, unpinned: 335 });
   });
 
