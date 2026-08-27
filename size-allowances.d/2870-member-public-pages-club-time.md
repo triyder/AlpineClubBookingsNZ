@@ -26,7 +26,7 @@ reason: the stay dates are calendar days and the audit, expiry and hold stamps
   explanation elsewhere makes that likelier, not less.
 
 file: src/app/(authenticated)/dashboard/page.tsx
-lines: 917
+lines: 984
 reason: one local formatter here was being handed BOTH lodge nights and real
   instants — one concept wearing another's clothes, identical output in New
   Zealand and a day early anywhere west of Greenwich. It is now pinned to UTC

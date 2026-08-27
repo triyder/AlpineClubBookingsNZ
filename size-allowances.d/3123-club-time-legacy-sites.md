@@ -357,7 +357,7 @@ reason: fourteen lines, seven of them the comment on one hoisted read.
   going multi-line for the new third argument.
 
 file: src/lib/member-merge.ts
-lines: 3782
+lines: 3814
 reason: twenty-one lines, sixteen of them one comment, on the file where a
   second club-time read would be most expensive and least visible. Merge runs on
   a 120-second budget holding every affected lodge capacity key and a

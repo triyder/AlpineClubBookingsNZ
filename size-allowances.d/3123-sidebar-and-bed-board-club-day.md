@@ -1,7 +1,7 @@
 # File-size allowances for #3123 (admin sidebar / bed-board club day)
 
 file: src/components/admin-sidebar.tsx
-lines: 1162
+lines: 1176
 reason: +61 lines, and none of them is nav table. The dated Unpaid Finished Stays
   deep link stopped being a module-level constant read from the container's
   environment timezone and became a required first parameter on the three

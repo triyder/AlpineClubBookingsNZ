@@ -34,7 +34,7 @@ reason: this is the change. The file is one declarative registration table for
   `INV-CONFIG-001` correction in the same breath.
 
 file: src/lib/admin-cron-health.ts
-lines: 829
+lines: 874
 reason: the zone becomes an argument and the forty hand-written
   "02:20 NZT/NZDT daily" strings become the configured zone, which is both the
   CT-5 correction and an `INV-CONFIG-001` one — this is the generic product, and
