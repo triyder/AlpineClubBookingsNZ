@@ -102,6 +102,7 @@ import {
   sendBookingRequestApprovedEmail,
   sendSplitGuestPaymentLinkEmail,
 } from "@/lib/email";
+import { requireClubTimeZone } from "@/lib/club-time";
 import {
   createPaymentIntentForPaymentLink,
   getPaymentLinkContext,
@@ -1309,6 +1310,82 @@ describe("issueSplitGuestPaymentLink (#1967)", () => {
     );
   });
 
+  /*
+    #3035 review: AN ENVIRONMENT WITHHOLD IS NOT AN UNDELIVERABLE ADDRESS.
+
+    Every non-sent outcome used to fall into `suppressed`, and the route turns
+    that into a 502 reading "your email address is undeliverable" — shown to a
+    MEMBER. On the epic's headline case (a live club upgraded without the
+    declaration) the member's mailbox is perfectly fine and the club has simply
+    not told the software what the installation is. The same file already states
+    that rule for the unreadable-switch case: telling somebody their address is
+    undeliverable when it is not is misinformation, and it points an officer at
+    the wrong diagnosis.
+  */
+  it("reports an undeclared installation as a TRANSIENT failure, not an undeliverable address", async () => {
+    mockedBookingFindUnique
+      .mockResolvedValueOnce(splitChild() as never)
+      .mockResolvedValueOnce({ status: BookingStatus.PENDING } as never);
+    mockedPaymentLinkFindFirst.mockResolvedValue(null);
+    mockedPaymentLinkCreate.mockResolvedValue({ id: "pl-fresh" } as never);
+    vi.mocked(sendSplitGuestPaymentLinkEmail).mockResolvedValueOnce({
+      status: "withheld_for_environment",
+      emailLogId: "log-1",
+      reason: "environment_unknown",
+    } as never);
+
+    const result = await issueSplitGuestPaymentLink("child-1");
+
+    // 503 "try again shortly" rather than 502 "your address is undeliverable".
+    expect(result).toEqual({ outcome: "transient_failure" });
+    // The unreachable link is still revoked, exactly as for every other
+    // non-send: nothing minted may stay active.
+    expect(mockedUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: "pl-fresh", revokedAt: null }),
+      })
+    );
+  });
+
+  it("reports a live site wrongly declaring a capture mailbox as transient too", async () => {
+    mockedBookingFindUnique
+      .mockResolvedValueOnce(splitChild() as never)
+      .mockResolvedValueOnce({ status: BookingStatus.PENDING } as never);
+    mockedPaymentLinkFindFirst.mockResolvedValue(null);
+    mockedPaymentLinkCreate.mockResolvedValue({ id: "pl-fresh" } as never);
+    vi.mocked(sendSplitGuestPaymentLinkEmail).mockResolvedValueOnce({
+      status: "withheld_for_environment",
+      emailLogId: "log-1",
+      reason: "capture_transport_in_production",
+    } as never);
+
+    expect(await issueSplitGuestPaymentLink("child-1")).toEqual({
+      outcome: "transient_failure",
+    });
+  });
+
+  it("reports a confirmed COPY as withheld, which is the deliberate bucket", async () => {
+    /*
+      Not transient: a copy is a copy until somebody re-declares it, so "try again
+      shortly" would be false. `withheld` is the non-transient, no-cause-disclosed
+      bucket the per-booking "No emails" switch already uses.
+    */
+    mockedBookingFindUnique
+      .mockResolvedValueOnce(splitChild() as never)
+      .mockResolvedValueOnce({ status: BookingStatus.PENDING } as never);
+    mockedPaymentLinkFindFirst.mockResolvedValue(null);
+    mockedPaymentLinkCreate.mockResolvedValue({ id: "pl-fresh" } as never);
+    vi.mocked(sendSplitGuestPaymentLinkEmail).mockResolvedValueOnce({
+      status: "withheld_for_environment",
+      emailLogId: "log-1",
+      reason: "environment_non_production",
+    } as never);
+
+    expect(await issueSplitGuestPaymentLink("child-1")).toEqual({
+      outcome: "withheld",
+    });
+  });
+
   it("revokes the just-minted link and rethrows when the email send throws (#1967 FIX-3)", async () => {
     mockedBookingFindUnique
       .mockResolvedValueOnce(splitChild() as never)
@@ -1400,26 +1477,42 @@ describe("mintSplitGuestPaymentLinkIfAbsent (#1967) — real helper against a st
   }
 
   const FUTURE_CHECK_IN = new Date("2026-08-01T00:00:00.000Z");
+  /**
+   * The zone the caller supplies. These tests are about the idempotency
+   * sentinel rather than the boundary, so they pass the zone this deployment's
+   * `APP_TIME_ZONE` already resolves to and their expected instants do not
+   * move. The boundary itself — that it is the club's PERSISTED zone and not
+   * the environment's — is
+   * `payment-link-expiry-club-zone.test.ts`, which is where a divergent zone
+   * belongs; asserting it here as well would only re-pin Auckland.
+   */
+  const CLUB_ZONE = requireClubTimeZone("Pacific/Auckland");
 
   it("mints on the first run and returns null on every later run while the link stays active (real cross-run idempotency)", async () => {
     const { tx, links } = makeStatefulTx();
 
-    const first = await mintSplitGuestPaymentLinkIfAbsent(tx, {
-      id: "child-1",
-      checkIn: FUTURE_CHECK_IN,
-    });
-    const second = await mintSplitGuestPaymentLinkIfAbsent(tx, {
-      id: "child-1",
-      checkIn: FUTURE_CHECK_IN,
-    });
-    const third = await mintSplitGuestPaymentLinkIfAbsent(tx, {
-      id: "child-1",
-      checkIn: FUTURE_CHECK_IN,
-    });
+    const first = await mintSplitGuestPaymentLinkIfAbsent(
+      tx,
+      { id: "child-1", checkIn: FUTURE_CHECK_IN },
+      CLUB_ZONE
+    );
+    const second = await mintSplitGuestPaymentLinkIfAbsent(
+      tx,
+      { id: "child-1", checkIn: FUTURE_CHECK_IN },
+      CLUB_ZONE
+    );
+    const third = await mintSplitGuestPaymentLinkIfAbsent(
+      tx,
+      { id: "child-1", checkIn: FUTURE_CHECK_IN },
+      CLUB_ZONE
+    );
 
     expect(first).toEqual({
       token: expect.any(String),
       paymentLinkId: "pl-1",
+      // The stored instant, returned so the caller's email cannot derive a
+      // different one.
+      expiresAt: links[0].expiresAt,
     });
     expect(second).toBeNull();
     expect(third).toBeNull();
@@ -1440,14 +1533,16 @@ describe("mintSplitGuestPaymentLinkIfAbsent (#1967) — real helper against a st
       },
     ]);
 
-    const minted = await mintSplitGuestPaymentLinkIfAbsent(tx, {
-      id: "child-1",
-      checkIn: FUTURE_CHECK_IN,
-    });
+    const minted = await mintSplitGuestPaymentLinkIfAbsent(
+      tx,
+      { id: "child-1", checkIn: FUTURE_CHECK_IN },
+      CLUB_ZONE
+    );
 
     expect(minted).toEqual({
       token: expect.any(String),
       paymentLinkId: expect.any(String),
+      expiresAt: expect.any(Date),
     });
     // The stale link was revoked in the same locked step, so at most one
     // usable token exists.
@@ -1460,10 +1555,11 @@ describe("mintSplitGuestPaymentLinkIfAbsent (#1967) — real helper against a st
   it("never mints a link that would be born expired (check-in day already over)", async () => {
     const { tx, links } = makeStatefulTx();
 
-    const minted = await mintSplitGuestPaymentLinkIfAbsent(tx, {
-      id: "child-1",
-      checkIn: new Date("2020-01-01T00:00:00.000Z"),
-    });
+    const minted = await mintSplitGuestPaymentLinkIfAbsent(
+      tx,
+      { id: "child-1", checkIn: new Date("2020-01-01T00:00:00.000Z") },
+      CLUB_ZONE
+    );
 
     expect(minted).toBeNull();
     expect(links).toHaveLength(0);

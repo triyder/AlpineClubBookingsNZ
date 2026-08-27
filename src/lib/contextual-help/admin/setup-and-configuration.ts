@@ -2,7 +2,7 @@
  * Help for the "Setup & Configuration" admin section: the guided setup hubs and
  * every settings page they lead to.
  *
- * Section per the sidebar's `navSections`. The pages with no menu entry of
+ * Section per the sidebar's `buildAdminNavSections`. The pages with no menu entry of
  * their own are placed by the hub that links them — membership types, member
  * fields and the subscription lockout under Membership setup; rooms and beds
  * and the booking messages under Bookings setup.
@@ -519,6 +519,41 @@ export const adminSetupAndConfigurationHelpEntries: HelpEntry[] = [
           description:
             "A server-side contact address used before any member-email fallback.",
         },
+      ],
+    ),
+  ),
+  entry(
+    "/admin/club-time",
+    help(
+      "Club Time Zone",
+      "Club Time Zone is the single time zone this club runs on — the place whose clocks and daylight-saving rules the site keeps. Every time the site and its emails show is worked out in it, and so are the dates on invoices and credit notes sent to Xero. Scheduled jobs are the one exception: they keep running on the zone the application started with until it is restarted, and Admin → Health says so while that is outstanding.",
+      [
+        "Check the time zone here before launch, and again if the club ever moves.",
+        "Restart the application after changing it, so the scheduled jobs move onto the new zone as well.",
+        "Choose the named place the club keeps time by, such as Pacific/Auckland, rather than an abbreviation or a fixed offset.",
+        "Read the consequences and tick the acknowledgement before saving; only a Full Admin can change it, and every change is recorded in the audit log with the old and new zone.",
+      ],
+      [
+        {
+          name: "Club time zone",
+          description:
+            "The named place the club keeps time by, stored as an IANA identifier such as Pacific/Auckland. Daylight saving is handled for you, because the name carries the rules for that place.",
+        },
+        {
+          name: "Not the server's time zone",
+          description:
+            "This is a property of the club, not of the machine the site runs on and not of whoever is looking. A member reading the site from another country sees club time, not their own.",
+        },
+        {
+          name: "Last changed",
+          description:
+            "When the time zone was last saved, and who saved it. The name is blank when nobody chose it by hand — the zone recorded automatically on the first start after upgrading has no administrator behind it, and neither does one set by npm run setup at the command line.",
+        },
+      ],
+      [
+        "Changing the time zone does not move anything already recorded. Dates and times in the database stay exactly as they are. What changes is which zone times are written in from then on, and the club-local hour overnight jobs run at — following the note above about TZ while both settings exist.",
+        "Lodge nights keep the calendar dates they already have. A booking for the 14th is still a booking for the 14th.",
+        "Abbreviations such as NZT or EST and fixed offsets such as +12:00 are refused. They name no place, so they carry no daylight-saving rules and would silently drift an hour twice a year.",
       ],
     ),
   ),

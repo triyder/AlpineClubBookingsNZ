@@ -201,14 +201,67 @@ describe("blocking CI wiring", () => {
     // `before` — the previous PR head — so keying on the field instead of on
     // the event would judge only the newest push to a branch and let everything
     // earlier in it through.
+    //
+    // `github.event.created == false` is the other load-bearing half, and it is
+    // newer (#3002). A ref-CREATING push carries `before = 0000…`, which this
+    // gate refuses outright — correctly, there is no "before" to measure. That
+    // was harmless while `push` only meant `main`, which cannot be created;
+    // #3002 put `push: branches: [epic/**]` on this workflow and an epic branch
+    // is created once per epic, so without the guard `verify` is red on the
+    // first push of every epic branch.
     const workflow = readFileSync(
       path.join(REPO_ROOT, ".github/workflows/ci.yml"),
       "utf8",
     );
     const verify = verifyJobSource(workflow);
     expect(verify).toContain(
-      "BUDGET_BASE: ${{ github.event_name == 'push' && github.event.before || 'origin/main' }}",
+      "BUDGET_BASE: ${{ (github.event_name == 'push' && github.event.created == false" +
+        " && !startsWith(github.ref, 'refs/heads/epic/'))" +
+        " && github.event.before || 'origin/main' }}",
     );
+  });
+
+  it("routes a ref-creating push around the base it would refuse", () => {
+    // The guard above, asserted as behaviour rather than as a string: the two
+    // steps that compute a base from a push event must both key on
+    // `github.event.created`, or the branch-creating push of every epic branch
+    // reddens a required check. Named together on purpose — the migration
+    // ledger step got the guard first and the ratchet did not, and a rule only
+    // one of two identical expressions follows is a rule that drifts back.
+    //
+    // Scoped to `*_BASE`, which is a REF handed to a `--base` flag and where
+    // `origin/main` is the sensible substitute. `PUSH_BASE_SHA` is deliberately
+    // outside it: that one is an immutable event SHA, `origin/main` would be a
+    // wrong answer rather than a fallback, and
+    // scripts/ci/check-doc-index-integrity.mjs reads the all-zero itself and
+    // takes the branch point.
+    const workflow = readFileSync(
+      path.join(REPO_ROOT, ".github/workflows/ci.yml"),
+      "utf8",
+    );
+    const pushDerivedBases = workflow.match(/^ +[A-Z_]+_BASE: \$\{\{ .*github\.event\.before.*$/gm) ?? [];
+    expect(pushDerivedBases.length).toBeGreaterThanOrEqual(2);
+    for (const line of pushDerivedBases) {
+      expect(line, `${line.trim()} must skip the all-zero base of a ref-creating push`).toContain(
+        "github.event.created == false",
+      );
+      /*
+        And the second half of the same rule (#2986). A NON-creating push to an
+        integration branch carries `before = the previous epic commit`, against
+        which a landed child's one-shot allowance reads as spent while it is
+        still required against `main` — the base that branch's own pull request
+        is judged on. Measured on epic #2986: 8 findings against the previous
+        epic commit, OK against `origin/main`, identical tree. No allowance file
+        can satisfy both, so an `epic/**` push is judged against `origin/main`.
+        Asserted over every `*_BASE` line for the reason the guard above is:
+        a rule only one of two identical expressions follows drifts back.
+      */
+      expect(
+        line,
+        `${line.trim()} must judge an epic integration branch against origin/main, ` +
+          "not against the previous commit on that branch",
+      ).toContain("!startsWith(github.ref, 'refs/heads/epic/')");
+    }
   });
 
   it("checks out full history in that job, which the computed comparison needs", () => {
@@ -832,6 +885,63 @@ describe("the deliberate escape: a declared allowance", () => {
     expect(second.code).toBe(1);
     expect(second.stderr).toContain("an already-oversized file grew");
     expect(second.stderr).toContain("+100 beyond its ceiling");
+  });
+
+  it("and inert means inert: a merged allowance does not block a later one for the same file", () => {
+    /*
+      The other half of "one-shot", and the half that was broken. Two code paths
+      disagreed about what a merged allowance is. The EFFECT path honoured the
+      contract — an allowance applies only when its own file is in the diff — but
+      the DUPLICATE check read every `.md` in the directory, merged ones
+      included, so the second pull request to grow a file was told:
+
+        src/app/api/admin/reports/route.ts already has an allowance in
+        size-allowances.d/2870-admin-api-club-time.md; one file, one allowance
+
+      naming a file the author does not have in their diff and cannot act on.
+      Measured on the club-time epic branch: 22 files held an allowance and 15 of
+      them came from three already-merged declarations, several on files the
+      remaining groups were about to touch — and one lane had already escaped it
+      by contorting a route back to its exact original line count. This is the
+      case that has to work.
+    */
+    const { repo, base } = overBudgetRepo();
+    repo.write("src/lib/big.ts", 1300);
+    repo.allow("2980-big.md", `file: src/lib/big.ts\nlines: 1300\nreason: ${REASON}\n`);
+    const merged = repo.commit("PR1: grew, with its allowance");
+    expect(captureRun(repo.root, ["--base", base]).code).toBe(0);
+
+    repo.write("src/lib/big.ts", 1400);
+    repo.allow(
+      "2981-big-again.md",
+      `file: src/lib/big.ts\nlines: 1400\nreason: ${REASON}\n`,
+    );
+    repo.commit("PR2: grows it again, with an allowance of its own");
+
+    const second = captureRun(repo.root, ["--base", merged]);
+    expect(second.stderr).toBe("");
+    expect(second.code).toBe(0);
+    expect(second.stdout).toContain("src/lib/big.ts  ->  1400 LOC");
+    expect(second.stdout).toContain(`${ALLOWANCE_DIR}/2981-big-again.md`);
+  });
+
+  it("but two allowances for one file in the SAME change still fail", () => {
+    // The rule the duplicate check exists for, and the reason the fix is
+    // liveness rather than deletion: two live declarations of one file's length
+    // are ambiguous, and ambiguity in a gate's input is how the old ledger
+    // shipped a ceiling the tree already violated.
+    const { repo, base } = overBudgetRepo();
+    repo.write("src/lib/big.ts", 1300);
+    repo.allow("2980-a.md", `file: src/lib/big.ts\nlines: 1300\nreason: ${REASON}\n`);
+    repo.allow("2980-b.md", `file: src/lib/big.ts\nlines: 1300\nreason: ${REASON}\n`);
+    repo.commit("one change, two allowances for one file");
+
+    const result = captureRun(repo.root, ["--base", base]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("UNUSABLE");
+    expect(result.stderr).toContain("already has an allowance in");
+    expect(result.stderr).toContain(`${ALLOWANCE_DIR}/2980-a.md`);
+    expect(result.stderr).toContain(`${ALLOWANCE_DIR}/2980-b.md`);
   });
 
   it("survives into the push-to-main run, which judges the same merge", () => {

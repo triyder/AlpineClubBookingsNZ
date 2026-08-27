@@ -8,6 +8,10 @@ import {
   CLUB_CONTACT_EMAIL,
   clubDomainEmail,
 } from "../src/config/club-identity";
+import { CLUB_TIME_SETTINGS_ID } from "../src/lib/club-time-zone";
+import { requireClubTimeZone } from "../src/lib/club-time";
+import { clubSeasonYear } from "../src/lib/financial-year";
+import { decideClubTimeZoneBackfill } from "../src/lib/config-self-heal-steps";
 import { slugifyLodgeName } from "../src/lib/lodges";
 import { CLUB_CONFIG_LODGE_CAPACITY } from "../src/lib/lodge-capacity";
 import {
@@ -341,6 +345,66 @@ async function main() {
   });
   console.log("Club identity settings seeded (create-only)");
 
+  // DB-first club timezone singleton (CT-1 #2989): store the zone this
+  // installation is EFFECTIVELY using so a freshly seeded database matches a
+  // booted one (the #1984 parity standard) instead of having no stored zone until
+  // first boot. CREATE-ONLY (update: {}) — a re-run must never overwrite the zone
+  // an admin chose on the club time page or the setup wizard. Note this is the
+  // CLUB's timezone, not the container's: once the row exists, moving TZ cannot
+  // move the club's civil time.
+  //
+  // The value comes from `decideClubTimeZoneBackfill()`, which is the SAME
+  // function the boot backfill (`clubTimeZoneSelfHealStep`) calls — so a
+  // seed-created row and a boot-healed row hold byte-identical values by
+  // construction rather than by two files agreeing to call the same resolver the
+  // same way, which is what drifted before (#2989 review). Read its docblock for
+  // why `TZ=GB` records Europe/London, and for why `TZ=UTC` records
+  // Pacific/Auckland while saying so out loud (owner decision, 23 Aug 2026):
+  // `UTC` is no place, so there was nothing to preserve and the club may be up to
+  // thirteen hours from the zone it has just been given.
+  const clubTimeZoneBackfill = decideClubTimeZoneBackfill();
+  await prisma.clubTimeSettings.upsert({
+    where: { id: CLUB_TIME_SETTINGS_ID },
+    update: {},
+    create: {
+      id: CLUB_TIME_SETTINGS_ID,
+      timeZone: clubTimeZoneBackfill.timeZone,
+      // The seed has no admin session, like the boot backfill.
+      updatedByMemberId: null,
+    },
+  });
+  // The season the CLUB is in, from the zone this seed has just written rather than
+  // from the host's month (CT-4 group F1, #2870), resolved ONCE here because three
+  // seeded rows below need it and `ensureDefaultSeasonSubscriptionForNewMember`
+  // requires it rather than defaulting — see its docblock. `clubTimeZoneBackfill` is
+  // create-only, so the row is read back: on a re-seed the stored zone is the club's
+  // real one and the freshly-decided value would be the environment's.
+  const seededClubTimeZone = await prisma.clubTimeSettings.findUnique({
+    where: { id: CLUB_TIME_SETTINGS_ID },
+    select: { timeZone: true },
+  });
+  const seedClubSeasonYear = clubSeasonYear(
+    requireClubTimeZone(
+      seededClubTimeZone?.timeZone ?? clubTimeZoneBackfill.timeZone,
+    ),
+  );
+
+  if (clubTimeZoneBackfill.kind === "defaulted") {
+    console.log(
+      `Club time settings seeded (create-only) as ` +
+        `${clubTimeZoneBackfill.timeZone} BY DEFAULT: TZ / NEXT_PUBLIC_TZ is ` +
+        `"${clubTimeZoneBackfill.raw}", which is not a named place such as ` +
+        `Pacific/Auckland, so there was nothing to preserve. If this club is ` +
+        `somewhere else, set the club's timezone at /admin/club-time (or run ` +
+        `npm run setup); the setup checklist reports it as a warning until ` +
+        `somebody confirms it.`,
+    );
+  } else {
+    console.log(
+      `Club time settings seeded (create-only): ${clubTimeZoneBackfill.timeZone}`,
+    );
+  }
+
   // DB-only lodge capacity parity (#1982): since #1982 removed the runtime
   // club.json capacity fallback, the default lodge's bookable capacity is the
   // DB `LodgeSettings.capacity` — normally backfilled by the boot-time config
@@ -437,7 +501,11 @@ async function main() {
       }),
     });
     // Admin accounts resolve to the NOT_REQUIRED built-in ADMIN type (#2149).
-    await ensureDefaultSeasonSubscriptionForNewMember(prisma, admin);
+    await ensureDefaultSeasonSubscriptionForNewMember(
+      prisma,
+      admin,
+      seedClubSeasonYear,
+    );
     await ensureMemberAccessRolesFromCompatibilityFields(prisma, {
       memberId: admin.id,
       role: admin.role,
@@ -473,7 +541,11 @@ async function main() {
         passwordHash: lodgePasswordHash,
       }),
     });
-    await ensureDefaultSeasonSubscriptionForNewMember(prisma, lodge);
+    await ensureDefaultSeasonSubscriptionForNewMember(
+      prisma,
+      lodge,
+      seedClubSeasonYear,
+    );
     await ensureMemberAccessRolesFromCompatibilityFields(prisma, {
       memberId: lodge.id,
       role: lodge.role,
@@ -491,7 +563,7 @@ async function main() {
   }
 
   const membershipAssignmentBackfill =
-    await backfillCurrentSeasonMembershipAssignments(prisma);
+    await backfillCurrentSeasonMembershipAssignments(prisma, seedClubSeasonYear);
   console.log(
     `Membership types seeded; current-season assignments created: ${membershipAssignmentBackfill.createdCount}`,
   );

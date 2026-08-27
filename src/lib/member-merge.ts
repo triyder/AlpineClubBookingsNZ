@@ -48,6 +48,7 @@ import {
 import { sendAdminPartnerShareSweptAlert } from "@/lib/email";
 import logger from "@/lib/logger";
 import { acquireMemberPartnerLinkLocks } from "@/lib/member-partner-lock";
+import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 
 /**
  * E11 (#1937) — additive, master-wins member profile merge.
@@ -493,6 +494,26 @@ export const MEMBER_MERGE_SNAPSHOT_SCALAR_COLUMNS: readonly string[] = [
   // a status.
   "BookingGuest.consentRespondedByMemberId",
   "MemberGuestSettings.updatedByMemberId",
+
+  // CT-1 (#2989): who last changed the installation's club time zone. The
+  // ordinary settings-audit actor column, identical in kind to
+  // MemberGuestSettings' and MembershipSubscriptionBillingSettings' above, and a
+  // snapshot for the same reason: the audit answer to "who moved this club's
+  // civil time" is the administrator who did it at the time, not whoever later
+  // absorbed their record. The AuditLog row for CLUB_TIME_ZONE_UPDATED is the
+  // full trail; this column is the settings row's own last-writer note.
+  "ClubTimeSettings.updatedByMemberId",
+
+  // ENV-SAFETY 1 (#3034): who last switched the environment-safety override.
+  // The same ordinary settings-audit actor column as ClubTimeSettings' above,
+  // and a snapshot for the same reason: the answer to "who put this installation
+  // into copy mode" is the administrator who did it at the time, not whoever
+  // later absorbed their record. The AuditLog row for
+  // ENVIRONMENT_SAFETY_OVERRIDE_UPDATED is the full trail; this column is the
+  // settings row's own last-writer note. NOT moving it also keeps the merge
+  // incapable of touching a safety setting: this row decides whether real
+  // members can be emailed, and a member merge has no business changing that.
+  "EnvironmentSafetySettings.updatedByMemberId",
 
   // #2243 review sweep — bespoke-named FK-less member-id columns the detector
   // cannot see (their names appear nowhere in the schema as a Member FK column),
@@ -2379,6 +2400,18 @@ export async function executeMemberMerge(params: {
   let sweptShares: SweptPartnerSharedAllocation[] = [];
   let sweptShareMasterName = "";
 
+  // #3123 / INV-LOCK-004 — ONE club day for the whole merge, resolved before
+  // the transaction opens. Merge runs on a 120s budget holding every affected
+  // lodge capacity key and a `Member … FOR UPDATE`; resolving the club's
+  // persisted timezone from inside it would be a `clubTimeSettings.findUnique`
+  // taking a second pooled connection for that entire window. One value also
+  // keeps the four consumers coherent: the lodge derivation that decides what
+  // is LOCKED, the sweep that decides what is REMOVED, and the hosting plan
+  // that is built and then rebuilt under the participant locks and compared
+  // for equality — a plan and a re-plan on two different club days would 409 a
+  // merge that nothing was wrong with.
+  const clubTodayForMerge = await clubTodayDateOnlyInstant();
+
   const result = await client.$transaction(async (tx) => {
     // Policy reconciliation enumerates bookings and inserts required queue rows
     // under this key. Take it before lifecycle locks and hold it through every
@@ -2447,6 +2480,7 @@ export async function executeMemberMerge(params: {
     const partnerShareLodgeIds = await acquireMemberMergePartnerSharedLodgeLocks(
       tx,
       [masterId, loserId],
+      clubTodayForMerge,
     );
 
     // Dual advisory lock in sorted id order (deadlock-free) on the shared
@@ -2603,6 +2637,7 @@ export async function executeMemberMerge(params: {
       {
         masterId,
         capturedLoserOwnedBookingIds: loserOwnedBookingIds,
+        today: clubTodayForMerge,
       },
       tx,
     );
@@ -2623,6 +2658,9 @@ export async function executeMemberMerge(params: {
         {
           masterId,
           capturedLoserOwnedBookingIds: loserOwnedBookingIds,
+          // The SAME club day as the plan above; the two are compared by
+          // fingerprint and a differing day would 409 a sound merge (#3123).
+          today: clubTodayForMerge,
         },
         tx,
       );
@@ -2767,6 +2805,9 @@ export async function executeMemberMerge(params: {
         lockedLodgeIds: partnerShareLodgeIds,
         reason: "members_merged",
         db: tx,
+        // The same day the lodge prefix above was derived from, so the set
+        // that was LOCKED and the rows that are JUDGED cannot disagree.
+        today: clubTodayForMerge,
       });
     } catch (sweepError) {
       if (sweepError instanceof UnlockedPartnerShareLodgeError) {

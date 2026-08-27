@@ -5,6 +5,18 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { EMAIL_FROM } from "@/lib/email-sender";
 import { EMAIL_DEFAULT_FROM_NAME } from "@/lib/email-message-settings";
 import { FALLBACK_LODGE_CAPACITY as LODGE_CAPACITY } from "@/lib/lodge-capacity";
+import { declareEnvironmentRole } from "@/lib/__tests__/helpers/environment-role";
+import { addDaysDateOnly, getTodayDateOnly } from "@/lib/date-only";
+
+/*
+ * The zone the capacity-warning fixtures are built in (#3123).
+ * `cron-capacity-warnings.ts:29` takes its window from
+ * `clubToday(await readClubTimeZoneOutsideRequest())`; this suite mocks no
+ * `ClubTimeSettings` row, so that reader falls back to the environment seed,
+ * `Pacific/Auckland` under test. Zone AUTHORITY is not this file's subject, so
+ * it names the agreeing zone rather than a divergent one.
+ */
+const CLUB_ZONE = "Pacific/Auckland";
 
 // The cron resolves each lodge's own capacity; pin it to the club config
 // total so the fixtures keep their original arithmetic.
@@ -41,6 +53,7 @@ const { mockPrisma, mockTransporter } = vi.hoisted(() => {
     sendMail: vi.fn().mockResolvedValue({ messageId: "msg-456" }),
   };
   const mockPrisma = {
+    environmentSafetySettings: { findUnique: vi.fn().mockResolvedValue(null) },
     // Per-lodge capacity warnings (lodge-scoping contract): one active
     // lodge in these fixtures, preserving the original single-lodge
     // expectations.
@@ -128,6 +141,20 @@ async function flushAsyncEmailSends() {
 // ============================================================================
 // N-08: shouldSendEmail helper
 // ============================================================================
+
+/*
+  #3035 (ENV-SAFETY 2): this suite exercises a real SEND, so it has to say which
+  installation it is pretending to be. `resolveEnvironmentRole()` answers from the
+  APP_ENVIRONMENT_ROLE declaration AND the EnvironmentSafetySettings row, and both
+  are absent by default in the unit suite — a missing Prisma delegate is an
+  UNREADABLE override, not "no override", so the role resolves UNKNOWN and the
+  delivery boundary withholds every message. Declaring production plus a
+  no-override delegate is what makes these tests exercise live behaviour.
+  See src/lib/__tests__/helpers/environment-role.ts.
+*/
+beforeEach(() => {
+  declareEnvironmentRole("production");
+});
 
 describe("N-08: shouldSendEmail", () => {
   beforeEach(() => {
@@ -222,12 +249,17 @@ describe("N-03: checkCapacityWarnings", () => {
   });
 
   it("alerts when days have <= 5 beds remaining", async () => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    const dayAfter = new Date(tomorrow);
-    dayAfter.setDate(dayAfter.getDate() + 1);
+    // #3107: the cron derives its own window from the CLUB day encoded at UTC
+    // midnight. This was `new Date()` + `setHours(0,0,0,0)` - HOST-LOCAL
+    // midnight, a value no `@db.Date` column can hold and one whose UTC instant
+    // moves with the machine running the suite. Building the fixture in the same
+    // zone the cron reads lines it up with the nights it actually asks about, on
+    // any host.
+    const today = getTodayDateOnly(CLUB_ZONE);
+    // `addDaysDateOnly` steps whole UTC days. `setDate` steps the LOCAL date and
+    // carries the local time of day with it, so on a host with a transition in
+    // range it moves the UTC instant by 23 or 25 hours off the day boundary.
+    const dayAfter = addDaysDateOnly(today, 2);
 
     // Create a booking with 25 guests (only 4 beds remaining)
     mockPrisma.booking.findMany.mockResolvedValue([
@@ -253,10 +285,14 @@ describe("N-03: checkCapacityWarnings", () => {
   // a custodian is genuinely unavailable — excluding it would under-fire the
   // warning by the custodian count every night, all season.
   it("counts a custodian bed hold toward fullness, so the warning fires at TRUE fullness", async () => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const dayAfter = new Date(today);
-    dayAfter.setDate(dayAfter.getDate() + 2);
+    // #3107: the cron derives its own window from the CLUB day encoded at UTC
+    // midnight. This was `new Date()` + `setHours(0,0,0,0)` - HOST-LOCAL
+    // midnight, a value no `@db.Date` column can hold and one whose UTC instant
+    // moves with the machine running the suite. Building the fixture in the same
+    // zone the cron reads lines it up with the nights it actually asks about, on
+    // any host.
+    const today = getTodayDateOnly(CLUB_ZONE);
+    const dayAfter = addDaysDateOnly(today, 2);
 
     // One bed above the threshold: LODGE_CAPACITY - 6 booked guests leaves 6
     // free, and the cron only warns at <= 5.

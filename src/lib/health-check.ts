@@ -1,8 +1,12 @@
+import {
+  readEnvironmentRoleDeclaration,
+  type EnvironmentRoleDeclaration,
+} from "@/lib/environment-role-declaration";
 import { prisma } from "@/lib/prisma";
 import { getRuntimeConfigCheck } from "@/lib/runtime-config";
-import { resolveEmailDeliveryConfig } from "@/lib/email-delivery";
 import { countExhaustedPaymentRecoveryOperations } from "@/lib/payment-recovery-health";
 import { getOperationalStripeSecretKey } from "@/lib/stripe-config";
+import { readCronRuntimeZone } from "@/lib/cron-runtime-zone";
 
 interface CheckResult {
   status: "ok" | "error";
@@ -46,6 +50,38 @@ export interface ReadinessHealthReport {
 export interface RuntimeStatusReport {
   cronEnabled: boolean;
   role: string;
+  /**
+   * The zone THIS process registered its scheduled jobs against, or `null` when
+   * it did not register them (CT-5, #2869).
+   *
+   * The admin health page runs on a web slot and the scheduler runs in the cron
+   * leader, so without this the page can only report the club's CONFIGURED zone
+   * — which is a different fact between an admin changing it and the next
+   * restart. See `@/lib/cron-runtime-zone`.
+   */
+  clubTimeZone: string | null;
+  /**
+   * What THIS RUNNING PROCESS parsed out of `APP_ENVIRONMENT_ROLE`
+   * (ENV-SAFETY 1, #3034; epic #2986; INV-CONFIG-003) — the container's own
+   * self-report, which is the only witness that cannot disagree with what the
+   * container actually got.
+   *
+   * THE DECLARATION KIND, NOT THE EFFECTIVE ROLE, and the difference is
+   * load-bearing. A correctly declared production installation whose
+   * administrator has switched the safer override on legitimately RESOLVES
+   * `NON_PRODUCTION`, so a deploy asserting the resolved role would refuse a
+   * legitimate release. The declaration is also the half a deployment owns.
+   * `readEnvironmentRoleDeclaration()` is the pure, database-free parser,
+   * which is what makes it safe to call from a health endpoint at all.
+   *
+   * Both routes that expose this are authenticated — `/api/deploy/runtime-status`
+   * behind `requireCronSecret` and `/api/admin/runtime-status` behind
+   * `requireAdmin` — so the four-value enum sits beside the `role`
+   * (`web-blue` / `cron-leader`) that is already there. It carries no secret:
+   * an `invalid` declaration is reported as `invalid` and the refused value
+   * itself is deliberately NOT included.
+   */
+  environmentRole: EnvironmentRoleDeclaration["kind"];
 }
 
 const CHECK_TIMEOUT_MS = 3000;
@@ -144,23 +180,23 @@ async function checkXero(): Promise<CheckResult> {
   }
 }
 
+/**
+ * Prove the mail provider answers, WITHOUT acquiring anything that could send
+ * (#3035). `verifyEmailTransport` hands back a label and no transport, so this
+ * diagnostic cannot mail a member even by accident, and it needs no delivery
+ * clearance. It does inherit the ambiguous-configuration rule: an installation
+ * that is not confirmed production and sets neither provider flag now reports an
+ * invalid configuration rather than silently connecting to live AWS SES with the
+ * club's own credentials.
+ *
+ * Imported dynamically so a caller of this module does not statically pull
+ * nodemailer into its graph, which is what the previous shape did too.
+ */
 async function checkSmtp(): Promise<CheckResult> {
   const start = Date.now();
   try {
-    const config = resolveEmailDeliveryConfig();
-    if (!config.ok || !config.transportOptions) {
-      return {
-        status: "error",
-        latencyMs: 0,
-        error: `Email delivery config invalid: ${config.issues.join("; ")}`,
-      };
-    }
-
-    const nodemailer = await import("nodemailer");
-    const transporter = nodemailer.default.createTransport(
-      config.transportOptions,
-    );
-    await transporter.verify();
+    const { verifyEmailTransport } = await import("@/lib/email/internal");
+    await verifyEmailTransport();
     return { status: "ok", latencyMs: Date.now() - start };
   } catch (err) {
     return {
@@ -239,6 +275,8 @@ export function getRuntimeStatus(): RuntimeStatusReport {
   return {
     cronEnabled: (process.env.CRON_ENABLED ?? "true").toLowerCase() === "true",
     role: process.env.APP_RUNTIME_ROLE ?? "unknown",
+    clubTimeZone: readCronRuntimeZone(),
+    environmentRole: readEnvironmentRoleDeclaration().kind,
   };
 }
 

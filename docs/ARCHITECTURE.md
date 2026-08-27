@@ -2141,8 +2141,25 @@ empty, whereas the sidebar reveals them only while their queue is non-empty. As
 defence in depth, `getAdminFeatureSearchIndex` fails **closed** — a missing
 permission matrix yields an empty index — even though `getVisibleAdminNavSections`
 keeps its pre-existing fail-open contract. There is no second registry to drift:
-`navSections` remains the single source of truth, optionally enriched with a
-per-entry `keywords` field that only widens palette matching.
+`buildAdminNavSections` remains the single source of truth, optionally enriched
+with a per-entry `keywords` field that only widens palette matching.
+
+**One nav href carries a date, and both surfaces take it from the same place
+(#3123).** The Unpaid Finished Stays entry is a deep link whose `checkOutTo`
+cut-off is the club's own day, so `buildAdminNavSections`, and therefore all three
+of `getVisibleAdminNavSections`, `getAdminFeatureSearchIndex` and
+`getRenderedAdminNavSections`, take that day as a **required first argument**. Both
+the sidebar and the palette obtain it from `useClubTime()` — the same bound kernel
+from the same `ClubTimeProvider` (`INV-CONFIG-002`) — and recompute it per render.
+It was previously a module-level constant read from the container's environment
+timezone, which was wrong twice: it answered from the wrong zone, and a module body
+is evaluated once per bundle load, so the cut-off went stale while the badge count
+beside it was refetched per mount. Inside the sidebar the link href and the badge
+map key are now the same call of the shared helper on the same value in the same
+render, so they cannot describe different days.
+`src/components/__tests__/admin-sidebar-club-time.test.tsx` renders both surfaces
+under one provider and asserts the palette navigates to the exact href the sidebar
+link carries.
 
 `src/lib/token-catalogue.ts` is the client-safe single source of truth for the
 `{{token}}` placeholders supported in admin HTML content (page bodies and lodge
@@ -2166,7 +2183,7 @@ help), while member and public use the hand-distilled corpora in that folder.
 That registry is `index.ts` — the path matching, longest-prefix resolution,
 fallbacks and question attachment — over one entry module per **admin sidebar
 section** (`src/lib/contextual-help/admin/*.ts`, the same sections
-`navSections` shows operators, plus one `appearance-and-website` module split
+`buildAdminNavSections` shows operators, plus one `appearance-and-website` module split
 off Setup & Configuration for size — `/admin/appearance` is an item in that
 section, not a section of its own), plus `types.ts` and
 `booking-status-glossary.ts` as leaves so a client component can take the shape
@@ -3214,3 +3231,29 @@ The environment contract is documented in `.env.example` and
 `.env.staging.example`. Use test or demo service credentials outside production.
 Do not commit real `.env`, database dumps, generated reports, logs, or build
 artifacts.
+
+There is no general "installation settings" model in this schema, and that is a
+deliberate shape rather than an omission: configuration lives in one
+domain-scoped singleton per domain — a model whose `@id` scalar defaults to the
+literal `"default"`, with `updatedByMemberId` and timestamps, and a
+`src/lib/<domain>-settings.ts` reader beside it. `ClubModuleSettings`,
+`ClubIdentitySettings`, `LoginSecuritySetting`, `PublicContentSettings`,
+`MembershipLockoutSettings` and the rest are all that pattern, and
+`src/lib/config-transfer/singleton-models.ts` enumerates them mechanically from
+the schema so a new one cannot join config transfer's blind spot unnoticed. Add a
+new configuration domain as a new singleton of that shape; do not widen an
+existing one whose permission area, nullability contract or fallback chain does
+not match what you are adding.
+
+**The installation's club timezone** is one such singleton, `ClubTimeSettings`,
+and it is the sole civil-time authority for the product (CT-1 #2989,
+`INV-CONFIG-002`). `src/lib/club-time-zone.ts` holds the IANA validation and the
+precedence rule; `src/lib/club-time-zone-settings.ts` is the server-owned reader
+every business caller goes through; `/admin/club-time` is the Full-Admin
+maintenance surface. `TZ` / `NEXT_PUBLIC_TZ` seed it once, at the first boot after
+an upgrade, through `clubTimeZoneSelfHealStep` — which is the one self-heal step
+registered as **not** requiring a primary `config/club.json`, because the value it
+copies comes from the environment rather than from that file. The
+`APP_TIME_ZONE` constant in `src/config/operational.ts` is transitional: epic
+#2988's later children migrate the display call sites off it and CT-6 retires
+it.

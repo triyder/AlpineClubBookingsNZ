@@ -10,7 +10,8 @@ import {
   loadMembershipCancellationSettings,
   type MembershipCancellationXeroContactGroupSetting,
 } from "@/lib/membership-cancellation-settings";
-import { formatDateOnlyForTimeZone } from "@/lib/date-only";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { xeroDocumentDateForClubToday } from "@/lib/xero-provider-dates";
 import { prisma } from "@/lib/prisma";
 import {
   buildXeroIdempotencyKey,
@@ -28,6 +29,7 @@ import {
   stripXeroOrgShortCode,
 } from "@/lib/xero-links";
 import { sendAdminXeroSyncErrorAlert } from "@/lib/email";
+import { requireContainedXeroContactForInvoiceOperation } from "@/lib/xero-contact-containment-proof";
 import logger from "@/lib/logger";
 import {
   callXeroApi,
@@ -637,6 +639,36 @@ export async function createXeroMembershipCancellationCreditNote(
     throw new Error(`No Xero contact available for subscription invoice: ${invoiceId}`);
   }
 
+  /*
+    INV-CONFIG-005 (#3036 review P0-2): THE FIFTH CREDIT-NOTE CREATOR, and the
+    one that does not go through `findOrCreateXeroContact`. It takes its contact
+    from the invoice it is crediting, so on a copy restored from the club's live
+    database the credit note below was raised against a contact nothing on this
+    installation had ever proved contained — which is exactly what this issue's
+    acceptance criteria forbid, and what the other four creators are safe from
+    only because the funnel contains for them.
+
+    NOT MERELY CONSISTENCY. The allocation is sized from Xero's `amountDue` read
+    a moment ago; a concurrent partial payment, or an allocation that fails after
+    the credit note exists, leaves the invoice still outstanding against that
+    contact — and Xero then emails its reminders to whatever address the contact
+    holds, from its own servers, with no API call from here.
+
+    IT NAMES `contactId`, NOT THE MEMBER'S LINK, and the `??` twelve lines above
+    is why that matters: the invoice's contact and the member's current link can
+    differ, and when they do, containing the member's link proves nothing about
+    the contact this credit note lands on. A member merge nulls the loser's link
+    while the loser's invoices keep the loser's contact; the admin re-link route
+    writes a new link while existing invoices keep the old one. Both are ordinary.
+  */
+  await requireContainedXeroContactForInvoiceOperation({
+    resolveXeroContactId: async () => contactId,
+    memberId: subscription.memberId,
+    workflow: "createXeroMembershipCancellationCreditNote",
+    xero,
+    tenantId,
+  });
+
   if (existingCreditLink?.xeroObjectId) {
     await allocateMembershipCancellationCreditNote({
       creditNoteId: existingCreditLink.xeroObjectId,
@@ -715,7 +747,7 @@ export async function createXeroMembershipCancellationCreditNote(
   // the club's calendar day. This file used to truncate the clock to its UTC day
   // through a private `formatDate` helper of its own, which is still yesterday
   // for roughly the first half of every New Zealand day (INV-DATE-019, #2834).
-  const cancellationCreditNoteDate = formatDateOnlyForTimeZone(new Date());
+  const cancellationCreditNoteDate = xeroDocumentDateForClubToday(await readClubTimeZoneOutsideRequest());
 
   const buildCreditNote = (): CreditNote => ({
     type: CreditNote.TypeEnum.ACCRECCREDIT,
@@ -939,7 +971,7 @@ async function allocateMembershipCancellationCreditNote(params: {
   // read ONCE outside the closure: `callXeroApi` re-invokes its callback on
   // every retry attempt, so a read inside it would send a different date on a
   // retry that crossed club midnight, under the same idempotency key.
-  const allocationDate = formatDateOnlyForTimeZone(new Date());
+  const allocationDate = xeroDocumentDateForClubToday(await readClubTimeZoneOutsideRequest());
 
   try {
     const response = await callXeroApi(

@@ -1,3 +1,4 @@
+import addClubTimeSettings from "./20260822010000_add_club_time_settings";
 import addHutLeaderAssignmentSource from "./20260820020000_add_hut_leader_assignment_source";
 import addMemberEmailInheritanceChoice from "./20260813010000_add_member_email_inheritance_choice";
 import backfillBedAllocationAuditCategory from "./20260810020000_backfill_bed_allocation_audit_category";
@@ -5,6 +6,7 @@ import backfillBookingRequestGuestNights from "./20260810010000_backfill_booking
 import clearStarterFooterAffiliations from "./20260802140000_clear_starter_footer_affiliations";
 import clearWaldvogelLodgeAddress from "./20260802110000_clear_waldvogel_lodge_address";
 import contractSubscriptionLockoutDropEnabled from "./20260803010000_contract_subscription_lockout_drop_enabled";
+import narrowCalendarDateColumns from "./20260825010000_narrow_calendar_date_columns";
 import repairLocalMidnightDatesOfBirth from "./20260814010000_repair_local_midnight_dates_of_birth";
 import updateStarterHomeGuestCopy from "./20260802150000_update_starter_home_guest_copy";
 import type { DataMigrationVerification } from "./types";
@@ -36,4 +38,6 @@ export const DATA_MIGRATION_VERIFICATIONS: DataMigrationVerification[] = [
   addMemberEmailInheritanceChoice,
   repairLocalMidnightDatesOfBirth,
   addHutLeaderAssignmentSource,
+  addClubTimeSettings,
+  narrowCalendarDateColumns,
 ];

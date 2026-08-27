@@ -22,7 +22,12 @@ import {
 import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "@/lib/capacity";
 import { bookingHasCapacityOverride } from "@/lib/booking-status";
 import { getDefaultLodgeId } from "@/lib/lodges";
-import { endOfDateOnlyForTimeZone, formatDateOnly } from "@/lib/date-only";
+import { bindClubTime } from "@/lib/club-time";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import {
+  paymentLinkExpiryForCheckIn,
+  type ClubTimeZone,
+} from "@/lib/payment-link-expiry";
 import {
   sendAdminPaymentFailureAlert,
   sendBookingRequestApprovedEmail,
@@ -217,7 +222,13 @@ interface PaymentLinkPayable {
    * page never offers a payment method the club hasn't enabled.
    */
   internetBankingReference?: string;
-  /** NZT end-of-check-in-day expiry, ISO. */
+  /**
+   * The link's hard expiry, ISO. The END OF THE CHECK-IN DAY in the club's
+   * PERSISTED timezone (`payment-link-expiry.ts`, `INV-CONFIG-002`) — not the
+   * container's, and not spelled as an abbreviation, which `INV-CONFIG-002`
+   * forbids and which names one country's zone in a generic product
+   * (`INV-CONFIG-001`). The pay page renders this value in that same zone.
+   */
   expiresAt: string;
 }
 
@@ -262,7 +273,15 @@ export async function getPaymentLinkContext(token: string): Promise<PaymentLinkC
     },
   });
 
+  // The narrative names the day a payment, cancellation or settlement landed
+  // AT THE CLUB, so it is read in the club's persisted zone rather than the
+  // container's (#3123). The runtime reader, not `clubTime()`: this module is
+  // reachable from `src/instrumentation.node.ts`, where `server-only` throws at
+  // import. Its stay dates are @db.Date lodge nights and take no zone.
+  const club = bindClubTime(await readClubTimeZoneOutsideRequest());
+
   const narrative = resolveBookingNarrative({
+    club,
     booking: {
       status: booking.status,
       finalPriceCents: booking.finalPriceCents,
@@ -340,7 +359,9 @@ export async function getPaymentLinkContext(token: string): Promise<PaymentLinkC
  * Re-issue a payment link for an expired-but-payable booking and email the
  * requester a fresh one (the self-service "fresh link" action offered on the
  * expired-link page). Revokes any prior unused links for the booking. The new
- * link expires at the end of the check-in day in NZT.
+ * link expires at the end of the check-in day in the CLUB's persisted timezone
+ * (`payment-link-expiry.ts`), which is where every one of this boundary's four
+ * decisions now reads it from.
  *
  * Returns `emailed: false` when the requester's address is actively
  * suppressed (prior SES bounce/complaint) — nothing was delivered, so the UI
@@ -360,7 +381,9 @@ export async function reissuePaymentLinkForToken(
     throw new PaymentLinkError(NOT_PAYABLE_MESSAGE, 410);
   }
 
-  const expiresAt = endOfDateOnlyForTimeZone(formatDateOnly(booking.checkIn));
+  // Zone read BEFORE the mint transaction, which holds the capacity lock.
+  const clubZone = await readClubTimeZoneOutsideRequest();
+  const expiresAt = paymentLinkExpiryForCheckIn(booking.checkIn, clubZone);
   if (expiresAt.getTime() < Date.now()) {
     throw new PaymentLinkError(
       "These dates have already passed, so a new payment link can't be issued.",
@@ -463,6 +486,23 @@ export async function reissuePaymentLinkForToken(
     logger.warn(
       { bookingId: booking.id, reason: emailOutcome.reason },
       "Fresh payment link issued but the email was withheld by the booking's email gate"
+    );
+    return { emailed: false };
+  }
+
+  if (emailOutcome.status !== "sent") {
+    /*
+      FAIL CLOSED on anything else the mailer returns. This used to enumerate the
+      untransmitted outcomes and then `return { emailed: true }`, which meant the
+      environment-safety withhold added by #3035 would have reported a payment
+      link as emailed when nothing left the building — and so would the next new
+      outcome after it. The member is told the same neutral "we could not email
+      it" as for an undeliverable address; which internal reason applied is never
+      surfaced to them.
+    */
+    logger.warn(
+      { bookingId: booking.id, emailStatus: emailOutcome.status },
+      "Fresh payment link issued but the email was not transmitted"
     );
     return { emailed: false };
   }
@@ -816,10 +856,14 @@ export async function createPaymentIntentForPaymentLink(
 
 /** A freshly minted split-guest link: the raw token (emailable exactly once)
  * plus the row id so a caller whose email fails can revoke THIS link — and
- * only this link — without touching a newer one minted concurrently. */
+ * only this link — without touching a newer one minted concurrently.
+ *
+ * `expiresAt` IS THE STORED INSTANT, handed back so the email that carries the
+ * token states the row's deadline rather than deriving the boundary again. */
 export type MintedSplitGuestPaymentLink = {
   token: string;
   paymentLinkId: string;
+  expiresAt: Date;
 };
 
 /**
@@ -851,7 +895,7 @@ async function mintFreshSplitGuestPaymentLink(
   const created = await tx.paymentLink.create({
     data: { bookingId, tokenHash, expiresAt },
   });
-  return { token, paymentLinkId: created.id };
+  return { token, paymentLinkId: created.id, expiresAt };
 }
 
 /**
@@ -870,14 +914,17 @@ async function mintFreshSplitGuestPaymentLink(
  *
  * DB-only and safe to call inside a capacity-lock transaction; the email MUST
  * be sent by the caller OUTSIDE the transaction. The link expires at the end of
- * the check-in day in NZT, matching the #707/#740 request-origin convention.
+ * the check-in day in the CLUB's persisted zone, matching the #707/#740
+ * request-origin convention. `clubZone` is a PARAMETER because this runs under
+ * the caller's lock — `payment-link-expiry.ts` is why.
  */
 export async function mintSplitGuestPaymentLinkIfAbsent(
   tx: Prisma.TransactionClient,
-  booking: { id: string; checkIn: Date }
+  booking: { id: string; checkIn: Date },
+  clubZone: ClubTimeZone
 ): Promise<MintedSplitGuestPaymentLink | null> {
   const now = new Date();
-  const expiresAt = endOfDateOnlyForTimeZone(formatDateOnly(booking.checkIn));
+  const expiresAt = paymentLinkExpiryForCheckIn(booking.checkIn, clubZone);
   if (expiresAt.getTime() <= now.getTime()) {
     return null;
   }
@@ -1025,6 +1072,12 @@ export async function issueSplitGuestPaymentLink(
     return { outcome: "not_payable" };
   }
 
+  // BEFORE the transaction, which holds the capacity lock, and ONCE, so the
+  // stored instant and the emailed one cannot drift apart. `checkIn` is
+  // immutable, so nothing under the lock can change this value.
+  const clubZone = await readClubTimeZoneOutsideRequest();
+  const expiresAt = paymentLinkExpiryForCheckIn(booking.checkIn, clubZone);
+
   const minted = await prisma.$transaction(
     async (
       tx
@@ -1046,9 +1099,6 @@ export async function issueSplitGuestPaymentLink(
       }
 
       const now = new Date();
-      const expiresAt = endOfDateOnlyForTimeZone(
-        formatDateOnly(booking.checkIn)
-      );
       if (expiresAt.getTime() <= now.getTime()) {
         // The check-in day has ended; a fresh link would be born expired.
         return { kind: "not_payable" };
@@ -1105,7 +1155,7 @@ export async function issueSplitGuestPaymentLink(
       guestCount: booking.guests.length,
       priceCents: booking.finalPriceCents,
       bookingReference: booking.id,
-      expiresAt: endOfDateOnlyForTimeZone(formatDateOnly(booking.checkIn)),
+      expiresAt: minted.expiresAt, // the row's own instant, not a re-derivation
       lodgeId: booking.lodgeId ?? null,
     });
   } catch (err) {
@@ -1149,18 +1199,49 @@ export async function issueSplitGuestPaymentLink(
   }
 
   if (emailOutcome.status !== "sent") {
-    // Suppressed (or placeholder) recipient: nothing was delivered, so the
-    // link must not stay active suppressing every future send (F25, #1885).
+    // Nothing was delivered, so the link must not stay active suppressing every
+    // future send (F25, #1885). Revoked either way; only the OUTCOME differs.
     await revokePaymentLinkById(minted.paymentLinkId).catch((revokeErr) =>
       logger.error(
         { err: revokeErr, bookingId: booking.id, paymentLinkId: minted.paymentLinkId },
-        "Failed to revoke split guest payment link after suppressed email"
+        "Failed to revoke split guest payment link after an undelivered email"
       )
     );
     logger.warn(
-      { bookingId: booking.id, emailStatus: emailOutcome.status },
+      {
+        bookingId: booking.id,
+        emailStatus: emailOutcome.status,
+        emailReason:
+          "reason" in emailOutcome ? emailOutcome.reason : undefined,
+      },
       "Split guest payment link email not delivered; link revoked so a later attempt re-mints"
     );
+
+    /*
+      AN ENVIRONMENT WITHHOLD IS NOT AN UNDELIVERABLE ADDRESS (#3035 review), and
+      bucketing it as `suppressed` was wrong in the most expensive place this
+      epic has. The route turns `suppressed` into a 502 reading "your email
+      address is undeliverable" — shown to a MEMBER — and it does that on the
+      epic's own headline case: a live club upgraded without the declaration.
+      The member's address is perfectly fine, the club has just not told the
+      software what it is; and the same file already states this rule twenty lines
+      above for the unreadable-switch case, where it says in as many words that
+      "this address is undeliverable" is misinformation that points an officer at
+      the wrong diagnosis.
+
+      So the two faults map to `transient_failure` (503, "try again shortly"),
+      which is what they are — they clear the moment a person corrects the
+      deployment — and the confirmed COPY maps to `withheld`, which is the
+      deliberate, non-transient bucket. Neither tells a member anything untrue
+      about their own mailbox.
+    */
+    if (emailOutcome.status === "withheld_for_environment") {
+      return emailOutcome.reason === "environment_non_production"
+        ? { outcome: "withheld" }
+        : { outcome: "transient_failure" };
+    }
+
+    // Suppressed (or placeholder) recipient: the address really is the problem.
     return { outcome: "suppressed" };
   }
 
