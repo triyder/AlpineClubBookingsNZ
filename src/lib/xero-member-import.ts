@@ -72,8 +72,15 @@ async function resolveImportInheritance(
 import logger from "@/lib/logger";
 import { sendPasswordResetEmail } from "./email";
 import { issueActionToken } from "./action-tokens";
-import { getSeasonYear } from "@/lib/utils";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { clubSeasonYear } from "@/lib/financial-year";
+import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { computeAgeTier } from "@/lib/age-tier";
+// From the module that DECLARES it rather than the `age-tier.ts` re-export: it is
+// pure, and suites here mock `@/lib/age-tier` wholesale to control `computeAgeTier`,
+// so pulling the season-start helper through that mock would need every one of them
+// to complete its factory for a function none of them wants to fake.
+import { getSeasonStartDate } from "@/lib/policies/age-tier";
 import {
   membershipTypeAgeExemption,
   type MembershipTypeAgeExemption,
@@ -98,6 +105,7 @@ import {
   type InboundMemberContactPatch,
 } from "./xero-contact-create-recovery";
 import { buildXeroContactUrl } from "./xero-links";
+import { isXeroSandboxContactEmail } from "@/lib/xero-sandbox-contact-email";
 import { upsertXeroObjectLink } from "./xero-sync";
 import {
   DEFAULT_XERO_SYNC_SCOPE,
@@ -227,6 +235,23 @@ async function resolveNewMemberAgeTier(params: {
   mappedTier: AgeTier | null | undefined;
   typeExemption: MembershipTypeAgeExemption | null | undefined;
   dateOfBirth: Date | null;
+  /**
+   * The season start to judge the date of birth against — PASSED IN, not derived
+   * (#2870, correctness review).
+   *
+   * `computeAgeTier` with no reference date resolves the club's zone itself, on the
+   * global client and uncached. This function is called from inside the nested
+   * import loops, so a first import of a few hundred contacts made a
+   * `ClubTimeSettings` query per row.
+   *
+   * The straddle mattered more than the queries. `importMembersFromXeroGroups`
+   * already pins `seasonYear` once for the whole run and uses it for every seasonal
+   * assignment, so a self-resolving age tier meant one import could assign every
+   * member to a pinned season while judging their age band — and therefore their
+   * price band — against a per-row one. An import running across club midnight on
+   * 31 March classified its early and late contacts differently.
+   */
+  seasonStart: Date;
 }): Promise<AgeTier> {
   if (params.typeExemption === "FORCED") {
     return "NOT_APPLICABLE";
@@ -235,7 +260,7 @@ async function resolveNewMemberAgeTier(params: {
     return params.mappedTier;
   }
   if (params.dateOfBirth) {
-    return computeAgeTier(params.dateOfBirth);
+    return computeAgeTier(params.dateOfBirth, params.seasonStart);
   }
   return "ADULT";
 }
@@ -250,7 +275,12 @@ export async function importMembersFromXeroGroups(
   skippedExisting: number;
   linkedExisting: number;
   skippedNoEmail: number;
-  skippedNoEmailDetails: Array<{ name: string; xeroContactId: string }>;
+  skippedNoEmailDetails: Array<{
+    name: string;
+    xeroContactId: string;
+    /** Present only when the contact HAS an address that cannot be used (#3036). */
+    reason?: string;
+  }>;
   skippedArchived: number;
   skippedArchivedDetails: SkippedXeroContactDetail[];
   createdMembers: ImportedXeroMemberDetail[];
@@ -269,7 +299,11 @@ export async function importMembersFromXeroGroups(
   let skippedExisting = 0;
   let linkedExisting = 0;
   let skippedNoEmail = 0;
-  const skippedNoEmailDetails: Array<{ name: string; xeroContactId: string }> = [];
+  const skippedNoEmailDetails: Array<{
+    name: string;
+    xeroContactId: string;
+    reason?: string;
+  }> = [];
   let skippedArchived = 0;
   const skippedArchivedDetails: SkippedXeroContactDetail[] = [];
   const createdMembers: ImportedXeroMemberDetail[] = [];
@@ -280,7 +314,19 @@ export async function importMembersFromXeroGroups(
   const groupsProcessed: string[] = [];
 
   // #2108 accumulators.
-  const seasonYear = getSeasonYear();
+  // ONE read of the club's persisted zone for the whole import. #3123 adds the
+  // club's DAY to the season year it already derived here: the seasonal preview
+  // called once per matched member below needs both, and used to default the day
+  // from the ENVIRONMENT's zone — one uncached `ClubTimeSettings` query per
+  // member, and a long import straddling club midnight judging its first and
+  // last members against different days.
+  const clubZone = await readClubTimeZoneOutsideRequest();
+  const seasonYear = clubSeasonYear(clubZone);
+  const clubTodayDateOnly = dateOnlyInstantOf(clubToday(clubZone));
+  // Derived from the SAME pinned season as every seasonal assignment below, so one
+  // import cannot judge an age tier in one season and assign a membership in
+  // another (#2870).
+  const seasonStart = getSeasonStartDate(seasonYear);
   const adminMemberId = options.adminMemberId;
   const uniqueMembershipTypeIds = Array.from(
     new Set(
@@ -572,11 +618,22 @@ export async function importMembersFromXeroGroups(
           continue;
         }
 
-        if (!contact.emailAddress) {
+        // INV-CONFIG-005 (#3036): a contained address is not an address we may
+        // give a member. It is a hash of somebody's real address on a reserved
+        // domain, written onto the contact because this installation is a copy,
+        // and a Member created from it would look reachable while being able to
+        // receive nothing. So it joins the no-usable-address skip and carries
+        // its own reason, because "no email address" would be false — the
+        // contact has one, it just cannot be used.
+        const containedAddress = isXeroSandboxContactEmail(contact.emailAddress);
+        if (!contact.emailAddress || containedAddress) {
           skippedNoEmail++;
           skippedNoEmailDetails.push({
             name: contactName,
             xeroContactId: contact.contactId,
+            reason: containedAddress
+              ? "This contact's email address was replaced with a non-deliverable one because this installation is a copy. Import it on the club's live site instead."
+              : undefined,
           });
           continue;
         }
@@ -734,6 +791,7 @@ export async function importMembersFromXeroGroups(
             mappedTier: mapping.ageTier,
             typeExemption,
             dateOfBirth: depDob,
+            seasonStart,
           });
           const inheritEmailFromId = await resolveImportInheritance(
             existingPrimary,
@@ -871,6 +929,7 @@ export async function importMembersFromXeroGroups(
           mappedTier: mapping.ageTier,
           typeExemption,
           dateOfBirth,
+          seasonStart,
         });
 
         const member = await prisma.$transaction(async (tx) => {
@@ -1042,6 +1101,8 @@ export async function importMembersFromXeroGroups(
           memberId,
           seasonYear,
           membershipTypeId,
+          now: clubTodayDateOnly,
+          clubCurrentSeasonYear: seasonYear,
         });
         if (previewResult.init?.status && previewResult.init.status >= 400) {
           errors++;

@@ -1259,7 +1259,14 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // unchanged, so no existing classification moved in this merge either.
     // 326 -> 332 (#2992): the six club message board writers, none of them
     // per-site pinned.
-    ).toEqual({ pinned: 127, unpinned: 333 });
+    // 326 -> 328 upstream (CT-1 #2989 and ENV-SAFETY #3034): the club-timezone
+    // and environment-safety writers, categorised at the site and named in none
+    // of the four per-site maps, so they land unpinned.
+    // 333 + 328 - 326 = 335 (upstream sync, fork PR): the fork side had moved
+    // on to 333 with the board image upload writer; both sides' writers land
+    // unpinned, and `pinned` is unchanged, which is the point — no existing
+    // classification moved on either side.
+    ).toEqual({ pinned: 127, unpinned: 335 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {

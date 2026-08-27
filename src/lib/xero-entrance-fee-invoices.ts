@@ -43,9 +43,10 @@ import {
 import {
   addDaysDateOnly,
   formatDateOnly,
-  formatDateOnlyForTimeZone,
   parseDateOnly,
 } from "@/lib/date-only";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { xeroDocumentDateForClubToday } from "@/lib/xero-provider-dates";
 import { buildJoiningFeeNarration } from "./joining-fee-narration";
 import { providerAmountToCents } from "@/lib/money-provider-amount";
 
@@ -338,7 +339,12 @@ export async function createXeroEntranceFeeInvoice(
     const authenticatedXero = xero;
     const authenticatedTenantId = tenantId;
 
-    const contactId = await findOrCreateXeroContact(memberId, options);
+    // #3036 review P1-12: reuse the client built above.
+    const contactId = await findOrCreateXeroContact(memberId, {
+      ...options,
+      xero,
+      tenantId,
+    });
     const incomeMapping = await getResolvedAccountMapping("hutFeesIncome");
     const incomeCode = incomeMapping.code ?? "200";
 
@@ -361,7 +367,7 @@ export async function createXeroEntranceFeeInvoice(
     // instant sits within an hour of club midnight. Read once, outside the
     // closure: `buildInvoice` runs for the recorded `requestPayload` and again
     // per contact-repair attempt, and both must carry the same date.
-    const issueDate = formatDateOnlyForTimeZone(new Date());
+    const issueDate = xeroDocumentDateForClubToday(await readClubTimeZoneOutsideRequest());
     const dueDate = formatDateOnly(addDaysDateOnly(parseDateOnly(issueDate), 30));
 
     const buildInvoice = (resolvedContactId: string): Invoice => ({

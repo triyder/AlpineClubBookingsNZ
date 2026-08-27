@@ -6,6 +6,7 @@ import { getAppBaseUrl } from "../app-url";
 // EMAIL_DEFAULT_FROM_NAME and the envelope equals EMAIL_FROM.
 import { EMAIL_FROM } from "@/lib/email-sender";
 import { EMAIL_DEFAULT_FROM_NAME } from "@/lib/email-message-settings";
+import { declareEnvironmentRole } from "@/lib/__tests__/helpers/environment-role";
 
 // Use vi.hoisted so the mock objects are available at hoist time
 const { mockPrisma, mockTransporter, mockLogger } = vi.hoisted(() => {
@@ -19,6 +20,7 @@ const { mockPrisma, mockTransporter, mockLogger } = vi.hoisted(() => {
     error: vi.fn(),
   };
   const mockPrisma = {
+    environmentSafetySettings: { findUnique: vi.fn().mockResolvedValue(null) },
     emailLog: {
       create: vi.fn().mockResolvedValue({ id: "log-1" }),
       update: vi.fn().mockResolvedValue({}),
@@ -93,6 +95,20 @@ function adminRecipient(
 // ============================================================================
 // N-10: EmailLog tracking in sendEmail
 // ============================================================================
+
+/*
+  #3035 (ENV-SAFETY 2): this suite exercises a real SEND, so it has to say which
+  installation it is pretending to be. `resolveEnvironmentRole()` answers from the
+  APP_ENVIRONMENT_ROLE declaration AND the EnvironmentSafetySettings row, and both
+  are absent by default in the unit suite — a missing Prisma delegate is an
+  UNREADABLE override, not "no override", so the role resolves UNKNOWN and the
+  delivery boundary withholds every message. Declaring production plus a
+  no-override delegate is what makes these tests exercise live behaviour.
+  See src/lib/__tests__/helpers/environment-role.ts.
+*/
+beforeEach(() => {
+  declareEnvironmentRole("production");
+});
 
 describe("N-10: EmailLog tracking", () => {
   beforeEach(() => {
@@ -844,6 +860,22 @@ describe("Admin member request alerts", () => {
 // N-01: Check-in reminders cron
 // ============================================================================
 
+/**
+ * Tomorrow as a `@db.Date` value: exactly UTC midnight, which is the only shape
+ * a date-only column round-trips as. Built from the repository's frozen clock
+ * rather than the wall clock, so it is stable forever.
+ */
+function utcMidnightDaysFromNow(days: number): Date {
+  const now = new Date();
+  return new Date(
+    Date.UTC(
+      now.getUTCFullYear(),
+      now.getUTCMonth(),
+      now.getUTCDate() + days,
+    ),
+  );
+}
+
 describe("N-01: sendCheckinReminders", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -854,9 +886,12 @@ describe("N-01: sendCheckinReminders", () => {
   });
 
   it("sends reminders for confirmed bookings checking in tomorrow", async () => {
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    tomorrow.setHours(0, 0, 0, 0);
+    // `Booking.checkIn` is `@db.Date`, so Prisma hands the cron a Date pinned to
+    // exactly UTC midnight. `setHours(0, 0, 0, 0)` sets HOST-LOCAL midnight,
+    // which on any host east of Greenwich is the previous UTC day at noon — not
+    // a value this column can hold, and the calendar-day formatter now refuses
+    // it outright rather than projecting it (#3113).
+    const tomorrow = utcMidnightDaysFromNow(1);
 
     mockPrisma.booking.findMany.mockResolvedValue([
       {
@@ -881,9 +916,12 @@ describe("N-01: sendCheckinReminders", () => {
   });
 
   it("skips bookings where reminder already sent", async () => {
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    tomorrow.setHours(0, 0, 0, 0);
+    // `Booking.checkIn` is `@db.Date`, so Prisma hands the cron a Date pinned to
+    // exactly UTC midnight. `setHours(0, 0, 0, 0)` sets HOST-LOCAL midnight,
+    // which on any host east of Greenwich is the previous UTC day at noon — not
+    // a value this column can hold, and the calendar-day formatter now refuses
+    // it outright rather than projecting it (#3113).
+    const tomorrow = utcMidnightDaysFromNow(1);
 
     mockPrisma.booking.findMany.mockResolvedValue([
       {

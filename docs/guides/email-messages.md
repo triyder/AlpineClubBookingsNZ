@@ -77,6 +77,22 @@ and the rest as paragraphs, ready to format — nothing changes until you
 save. The Heading toolbar button turns any line into (or back out of) that
 heading style, so the heading is always yours to keep, move or remove.
 
+**Editing the wording never changes a date, a time or a deadline in it.** Every
+date and time a token fills in is worked out before your wording is applied, and
+the built-in wording and a saved override are filled in from the same answer. So
+the two always name the same day and the same moment. If they ever appear not to,
+that is a defect worth reporting rather than something to fix by rewording.
+
+There are two kinds of date in these messages, and the difference matters if you
+are ever comparing what an email said with what a screen shows:
+
+- **A lodge night, a roster date or a season date is a calendar day.** It is the
+  day itself — 1 August is 1 August — so no timezone is involved and none can
+  move it. A club overseas reads the same night the club's own records hold.
+- **A deadline or a timestamp is a moment**, so it is shown in the club's own
+  timezone, the one set under [Club Time Zone](club-time.md). Change that
+  setting and these move; the calendar days above do not.
+
 ### There is no "only if" — write lines that always read correctly
 
 The body substitutes tokens and **nothing else** — whether you write it as
@@ -414,6 +430,8 @@ between the jobs is one sentence rather than a different message:
 | I want the original wording back | An override is in place | Click **Restore Default** for that template |
 | The change didn't reach a lodge-specific value | Lodge name/travel note/door code are per-lodge now | Set them in [Lodges](../multi-lodge/README.md), not here |
 | An email's colours are the platform default rather than our brand | Colours come from [Site Style](site-style.md), not from this page, and that style could not be read when the message was built | Nothing here needs re-saving. Check the server log for the warning that names the saved style as unreadable, and the database's health — see [Site Style](site-style.md) |
+| No email is going out at all, from anywhere | This installation is not the club's live site, or nothing has told it which it is | Nothing on this page is wrong. Open [Environment](environment-role.md): a **copy** deliberately sends nothing, and an installation nobody has declared holds mail back until you declare it. That page also shows how much has been held back |
+| Nothing is going out and this IS the live site | The deployment declares itself the live site *and* declares a local capture mailbox, which cannot both be true | Remove `USE_LOCAL_CAPTURE` (or set it to `false`) and set `USE_AWS_SES` or `USE_SMTP_RELAY` instead. Most held-back messages then go out by themselves; ones carrying a sign-in link, a door code or a payment link keep no stored copy and are listed for a manual re-send — see [Environment](environment-role.md) |
 
 ## Related links
 

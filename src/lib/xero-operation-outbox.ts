@@ -7,7 +7,8 @@ import {
 import { prisma } from "@/lib/prisma";
 import { resolveStripeCashRefundEvidence } from "@/lib/stripe-cash-refund-evidence";
 import { claimXeroSyncOperationToRunning } from "@/lib/xero-operation-claim";
-import { getSeasonYear } from "@/lib/utils";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { clubSeasonYear } from "@/lib/financial-year";
 import {
   buildXeroIdempotencyKey,
   completeXeroSyncOperation,
@@ -99,6 +100,15 @@ import { formatDateOnly } from "@/lib/date-only";
  * a re-drive to collide with, whatever the queue type. `XeroTransientOutageError`
  * has only the pre-HTTP construction site, but is marked and checked the same
  * way for symmetry and to stay safe if a post-HTTP use is ever added.
+ *
+ * `XeroContactEnvironmentUnknownError` (#3036) joins them on the same terms: the
+ * environment-role gate that raises it runs before the request is built, so it
+ * cannot have reached Xero, and it carries the same `preHttp` marker so the
+ * requirement below is a check rather than a courtesy. The state it reports is
+ * transient in exactly the way a re-drive needs — an unreadable
+ * `EnvironmentSafetySettings` row, or a declaration that has since been set — so
+ * an operation refused by it is the clearest case there is of one that belongs
+ * back on PENDING rather than needing a hand requeue.
  */
 function isXeroCooldownRefusal(error: unknown): boolean {
   if (!(error instanceof Error)) {
@@ -106,7 +116,19 @@ function isXeroCooldownRefusal(error: unknown): boolean {
   }
   const isCooldownName =
     error.name === "XeroTransientOutageError" ||
-    error.name === "XeroDailyLimitError";
+    error.name === "XeroDailyLimitError" ||
+    /*
+      #3036: the environment-role gate inside `callXeroApi` refuses a Xero
+      MUTATION while nothing has declared whether this installation is the club's
+      live site or a copy. It sits ahead of `withXeroRetry` and ahead of the
+      usage meter, so its refusal is pre-HTTP by construction and the class
+      carries `preHttp = true` — which is what the requirement below then
+      verifies rather than assumes. Without this name the refusal took the
+      ordinary path, and twelve of fifteen handlers have written `status: FAILED`
+      by that point, leaving never-attempted operations terminally failed: the
+      defect this predicate exists to prevent (#2423 F2).
+    */
+    error.name === "XeroContactEnvironmentUnknownError";
   return (
     isCooldownName && (error as { preHttp?: unknown }).preHttp === true
   );
@@ -163,6 +185,24 @@ export async function enqueueXeroEntranceFeeInvoiceOperation(
     amountCents?: number | null;
     description?: string | null;
     store?: Prisma.TransactionClient;
+    /**
+     * The membership season the joining fee is resolved in. REQUIRED alongside
+     * `store`: the chain below (`getEntranceFeeContext` ->
+     * `resolveMemberJoiningFeeClassification`) would otherwise read the club's
+     * timezone on the global client while the caller's transaction holds its
+     * advisory locks, and that season picks the `JoiningFee` row whose amount
+     * lands on an immutable invoice (#2870, correctness review).
+     */
+    seasonYear?: number;
+    /**
+     * The day the joining fee's schedule window is evaluated on. REQUIRED
+     * alongside `store` for the identical reason as `seasonYear`, and enforced
+     * by `getEntranceFeeContext` (#3123): it selects the `JoiningFee` row whose
+     * `amountCents` lands on an immutable invoice, and resolving it below a
+     * caller's open transaction would read `ClubTimeSettings` on the global
+     * client while that transaction holds its advisory locks.
+     */
+    asOf?: Date;
   }
 ) {
   // Optional transaction client (#1886, F22) so membership approval can write
@@ -196,7 +236,12 @@ export async function enqueueXeroEntranceFeeInvoiceOperation(
     };
   }
 
-  const entranceFee = await getEntranceFeeContext(memberId, db);
+  const entranceFee = await getEntranceFeeContext(
+    memberId,
+    db,
+    options?.seasonYear,
+    options?.asOf,
+  );
 
   // Organisations/schools are exempt from joining fees (owner decision,
   // 2026-07-07) — checked before the amount override so an explicitly
@@ -1989,7 +2034,7 @@ export async function queueApprovedMembershipCancellationXeroOperations(params: 
   participantId: string;
   createdByMemberId?: string;
 }) {
-  const seasonYear = getSeasonYear(new Date());
+  const seasonYear = clubSeasonYear(await readClubTimeZoneOutsideRequest());
   const subscription = await prisma.memberSubscription.findUnique({
     where: {
       memberId_seasonYear: {

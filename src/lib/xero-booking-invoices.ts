@@ -13,7 +13,6 @@ import {
   LineItem,
   LineAmountTypes,
   Payment as XeroPayment,
-  RequestEmpty,
 } from "xero-node";
 import { PaymentSource, PaymentTransactionKind } from "@prisma/client";
 import { prisma } from "./prisma";
@@ -39,6 +38,10 @@ import {
   getAuthenticatedXeroClient,
 } from "./xero-api-client";
 import {
+  resolveXeroInvoiceEmailPolicy,
+  sendXeroInvoiceEmail,
+} from "@/lib/xero-invoice-email";
+import {
   describeGuestRateMembershipLabel,
   getAccountMapping,
   getHutFeeItemCodeMap,
@@ -52,7 +55,10 @@ import {
   retryXeroWriteWithContactRepair,
   type FindOrCreateXeroContactOptions,
 } from "./xero-contacts";
-import { formatDateOnly, formatDateOnlyForTimeZone } from "@/lib/date-only";
+import { formatDateOnly } from "@/lib/date-only";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { xeroDocumentDateForClubToday } from "@/lib/xero-provider-dates";
+import { requireContainedXeroContactForInvoiceOperation } from "@/lib/xero-contact-containment-proof";
 import {
   getBookingInvoiceDueDate,
   getBookingInvoiceIssueDate,
@@ -445,7 +451,13 @@ export async function createXeroInvoiceForBooking(
   const { xero, tenantId } = await getAuthenticatedXeroClient();
 
   // Ensure the member has a Xero contact
-  const contactId = await findOrCreateXeroContact(booking.memberId, options);
+  // #3036 review P1-12: this client was built two lines up, so hand it to the
+  // containment verification rather than making it authenticate a second time.
+  const contactId = await findOrCreateXeroContact(booking.memberId, {
+    ...options,
+    xero,
+    tenantId,
+  });
 
   // Resolve account codes, item codes, and season type
   const [hutFeeMapping, stripeBankCode, hutFeeItemCodeMap] = await Promise.all([
@@ -534,12 +546,17 @@ export async function createXeroInvoiceForBooking(
     lineItems.push(discountLineItem);
   }
 
+  // Read once, outside the closure: `buildInvoice` runs for the recorded
+  // request payload and again on every contact-repair attempt, and both must
+  // carry the same date (CT-5, #2869).
+  const clubZone = await readClubTimeZoneOutsideRequest();
+
   const buildInvoice = (resolvedContactId: string): Invoice => ({
     type: Invoice.TypeEnum.ACCREC,
     contact: { contactID: resolvedContactId },
     lineItems,
     date: getBookingInvoiceIssueDate(booking),
-    dueDate: getBookingInvoiceDueDate(booking),
+    dueDate: getBookingInvoiceDueDate(booking, clubZone),
     reference: `Booking ${bookingId.slice(0, 8)}`,
     status: Invoice.StatusEnum.AUTHORISED,
     lineAmountTypes: LineAmountTypes.Inclusive,
@@ -703,7 +720,7 @@ export async function createXeroInvoiceForBooking(
         // UTC one (INV-DATE-019, #2834). The invoice's own `date`/`dueDate`
         // above are derived from `checkIn` and `createdAt` and were settled on
         // #2697; this payment was the remaining instant in this file.
-        date: formatDateOnlyForTimeZone(new Date()),
+        date: xeroDocumentDateForClubToday(await readClubTimeZoneOutsideRequest()),
         reference: `Stripe ${booking.payment.stripePaymentIntentId ?? "payment"}`,
       };
       const paymentIdempotencyKey = buildXeroIdempotencyKey(
@@ -826,7 +843,45 @@ export async function createXeroInvoiceForBooking(
       );
     }
 
-    if (shouldEmailInvoice && !invoiceEmailWithheld && !invoiceEmailGateUnreadable) {
+    /*
+      Environment-safety boundary (#3035, ENV-SAFETY 2; epic #2986).
+      INV-CONFIG-004. Asking Xero to email the invoice is a send to the member's
+      real address, so it is gated like a message this application sends itself.
+
+      Resolved AFTER the "No emails" gate above, so the club's own decision is
+      still recorded as the club's own decision on a copy, and the environment is
+      only consulted when something would otherwise be transmitted. What a
+      non-allow answer means for the sync operation is decided once, in
+      `resolveXeroInvoiceEmailPolicy` (`xero-invoice-email.ts`), which returns the
+      `logMessage`, the `suppressedForNonProduction` flag and the `error` — or
+      absence of one — that decide whether this operation reports SUCCEEDED or
+      PARTIAL. (An earlier draft of this comment named a
+      `classifyXeroInvoiceEmailWithheld` helper that never existed.)
+
+      NOT AUTOMATICALLY RECOVERABLE, exactly like the unreadable-switch case
+      above: re-driving this workflow short-circuits on `payment.xeroInvoiceId`
+      and never reaches the email block, so the truthful remediation for an
+      unconfirmed role is to declare the role and send that one invoice from Xero
+      by hand.
+    */
+    const invoiceEmailPolicy =
+      shouldEmailInvoice && !invoiceEmailWithheld && !invoiceEmailGateUnreadable
+        ? await resolveXeroInvoiceEmailPolicy()
+        : null;
+    const invoiceEmailWithheldForEnvironment =
+      invoiceEmailPolicy?.kind === "withhold" &&
+      invoiceEmailPolicy.suppressedForNonProduction;
+    if (invoiceEmailPolicy?.kind === "withhold") {
+      const context = { bookingId, invoiceId: createdInvoice.invoiceID };
+      if (invoiceEmailPolicy.error) {
+        invoiceEmailError = invoiceEmailPolicy.error;
+        logger.error(context, invoiceEmailPolicy.logMessage);
+      } else {
+        logger.info(context, invoiceEmailPolicy.logMessage);
+      }
+    }
+
+    if (invoiceEmailPolicy?.kind === "allow") {
       const invoiceEmailIdempotencyKey = buildXeroIdempotencyKey(
         "booking",
         bookingId,
@@ -836,22 +891,16 @@ export async function createXeroInvoiceForBooking(
       );
 
       try {
-        const emailResponse = await callXeroApi(
-          () =>
-            xero.accountingApi.emailInvoice(
-              tenantId,
-              createdInvoice.invoiceID!,
-              new RequestEmpty(),
-              invoiceEmailIdempotencyKey
-            ),
-          {
-            operation: "emailInvoice",
-            resourceType: "INVOICE",
-            workflow: "createXeroInvoiceForBooking",
-            context: `emailInvoice(booking ${bookingId})`,
-          }
-        );
-        invoiceEmailResponseBody = emailResponse.body ?? null;
+        const emailResponse = await sendXeroInvoiceEmail({
+          clearance: invoiceEmailPolicy.clearance,
+          xero,
+          tenantId,
+          invoiceId: createdInvoice.invoiceID!,
+          idempotencyKey: invoiceEmailIdempotencyKey,
+          workflow: "createXeroInvoiceForBooking",
+          context: `emailInvoice(booking ${bookingId})`,
+        });
+        invoiceEmailResponseBody = emailResponse.body;
       } catch (error) {
         invoiceEmailError = error;
         logger.warn(
@@ -903,11 +952,18 @@ export async function createXeroInvoiceForBooking(
         invoiceEmail: invoiceEmailResponseBody,
         invoiceEmailError,
         invoiceEmailSkipped:
-          !shouldEmailInvoice || invoiceEmailWithheld || invoiceEmailGateUnreadable,
+          !shouldEmailInvoice ||
+          invoiceEmailWithheld ||
+          invoiceEmailGateUnreadable ||
+          invoiceEmailPolicy?.kind === "withhold",
         // #2258: a DELIBERATE withhold only. An unreadable switch is a fault and
         // is reported through invoiceEmailError above (status PARTIAL), never
         // here — the two must stay distinguishable to an operator.
         invoiceEmailWithheldByNoEmails: invoiceEmailWithheld,
+        // #3035: the environment-safety suppression, which is a THIRD reason and
+        // must not be read as either of the two above. A confirmed copy did not
+        // email the invoice; nothing failed and nobody asked for silence.
+        invoiceEmailWithheldForEnvironment,
       },
       xeroObjectType: "INVOICE",
       xeroObjectId: createdInvoice.invoiceID,
@@ -1161,6 +1217,29 @@ export async function updateXeroBookingInvoiceForBooking(
       throw new Error(`Xero invoice ${invoiceId} is missing its contact.`);
     }
 
+    /*
+      INV-CONFIG-005 (#3036): this path does NOT go through
+      `findOrCreateXeroContact`, and re-pricing an invoice can RAISE its amount
+      due. On a copy restored from the club's live database the invoice was
+      raised on the live site, so nothing here had ever looked at what its
+      contact holds — and Xero emails invoice reminders for an outstanding
+      AUTHORISED invoice from its own servers, to whatever address that contact
+      holds.
+
+      IT RUNS HERE, below the invoice read, because the contact this update
+      re-sends is `currentInvoice.contact` — not the member's link, which can be a
+      different contact after a merge or an admin re-link. The first version of
+      this check ran at the top of the function against the member's link and
+      therefore proved containment of a contact this update never touches.
+    */
+    await requireContainedXeroContactForInvoiceOperation({
+      resolveXeroContactId: async () => currentInvoice.contact?.contactID,
+      memberId: booking.memberId,
+      workflow: "updateXeroBookingInvoiceForBooking",
+      xero,
+      tenantId,
+    });
+
     const skipReason = getPrimaryInvoiceUpdateSkipReason(currentInvoice);
     if (skipReason) {
       await completeXeroSyncOperation(operationId, {
@@ -1216,7 +1295,9 @@ export async function updateXeroBookingInvoiceForBooking(
       // next time an unrelated edit synced — and the owner decision on #2697 is
       // that already-issued invoices are untouched, with no write-back. Only
       // newly created invoices get the corrected date.
-      dueDate: currentInvoice.dueDate ?? getBookingInvoiceDueDate(booking),
+      dueDate:
+        currentInvoice.dueDate ??
+        getBookingInvoiceDueDate(booking, await readClubTimeZoneOutsideRequest()),
       reference: currentInvoice.reference ?? `Booking ${bookingId.slice(0, 8)}`,
       invoiceNumber: currentInvoice.invoiceNumber,
       lineAmountTypes: currentInvoice.lineAmountTypes ?? LineAmountTypes.Inclusive,

@@ -1,7 +1,6 @@
 import {
   Invoice,
   LineAmountTypes,
-  RequestEmpty,
   type XeroClient,
 } from "xero-node";
 import logger from "@/lib/logger";
@@ -11,9 +10,14 @@ import { findOrCreateXeroContact } from "@/lib/xero-contacts";
 import {
   addDaysDateOnly,
   formatDateOnly,
-  formatDateOnlyForTimeZone,
   parseDateOnly,
 } from "@/lib/date-only";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import {
+  xeroCalendarDate,
+  xeroDocumentDateForClubToday,
+} from "@/lib/xero-provider-dates";
+import { dateOnlyInstantOf } from "@/lib/club-time";
 import { buildXeroInvoiceUrl, stripXeroOrgShortCode } from "@/lib/xero-links";
 import {
   buildXeroIdempotencyKey,
@@ -21,6 +25,10 @@ import {
   startXeroSyncOperation,
 } from "@/lib/xero-sync";
 import { XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE } from "@/lib/xero-operation-outbox-payload";
+import {
+  resolveXeroInvoiceEmailPolicy,
+  sendXeroInvoiceEmail,
+} from "@/lib/xero-invoice-email";
 import { providerAmountToCents } from "@/lib/money-provider-amount";
 
 /**
@@ -53,38 +61,36 @@ function invoiceCents(invoice: Invoice): number | null {
 }
 
 /**
- * Read a date back off a Xero invoice as the calendar day Xero holds.
+ * How many days a Xero invoice allowed between its issue date and its due date.
  *
- * `formatDateOnly` here is deliberate and must NOT become
- * `formatDateOnlyForTimeZone` (#2834). This is not a clock read and not a
- * `DateTime` column: `invoice.date` / `invoice.dueDate` are plain calendar dates
- * on a document Xero already has, and whatever the SDK deserialised them into —
- * a `Date` at midnight, an ISO prefix, a `/Date(…)/` string — encodes that day,
- * so reading it back as a date-only value yields that day, and zone conversion
- * would shift it. A shift here changes `invoiceDueIntervalDays`, so
+ * NO ZONE IS INVOLVED AND NONE MAY BE (#2834). This is not a clock read and not
+ * a `DateTime` column: `invoice.date` / `invoice.dueDate` are plain calendar
+ * dates on a document Xero already has, and whatever the SDK deserialised them
+ * into — a `Date` at midnight, an ISO prefix, a `/Date(…)/` string — encodes
+ * that day, so reading each back as a calendar day yields that day and zone
+ * conversion would shift it. A shift here changes the interval, so
  * `subscriptionInvoiceMatchesSnapshot` stops matching, so a pre-existing invoice
  * stops being adopted: the charge goes to `CONFLICT`/`PROVIDER_MISMATCH` and the
  * member is left unbilled.
+ *
+ * IT USED TO CARRY ITS OWN COPY OF THE BOUNDARY — a private
+ * `normalizeXeroDateOnly` that re-implemented the `Date`, ISO-prefix and
+ * Microsoft-JSON branches by hand (#2869 review). The copy was correct, and
+ * being correct is not the point: a second reader of the same wire shapes is a
+ * second thing to fix when a fifth shape turns up, and it is exactly the
+ * "clone one indirection away from the spelling any census was searching for"
+ * pattern this epic removed elsewhere. `xeroCalendarDate` answers the same day
+ * for every shape the clone handled, additionally accepts a space-separated
+ * `"2019-03-11 00:00:00"`, and refuses an impossible day such as `2026-02-30`
+ * instead of rolling it into March — where the clone would have returned a real
+ * interval computed from a date Xero cannot have sent.
  */
-function normalizeXeroDateOnly(value: unknown): string | null {
-  if (value instanceof Date && !Number.isNaN(value.getTime())) {
-    return formatDateOnly(value);
-  }
-  if (typeof value !== "string") return null;
-  const dateOnly = value.match(/^(\d{4}-\d{2}-\d{2})(?:T|$)/)?.[1];
-  if (dateOnly) return dateOnly;
-  const microsoftJsonMs = value.match(/^\/Date\((-?\d+)(?:[+-]\d{4})?\)\/$/)?.[1];
-  if (!microsoftJsonMs) return null;
-  const parsed = new Date(Number(microsoftJsonMs));
-  return Number.isNaN(parsed.getTime()) ? null : formatDateOnly(parsed);
-}
-
 function invoiceDueIntervalDays(invoice: Invoice): number | null {
-  const issueDate = normalizeXeroDateOnly(invoice.date);
-  const dueDate = normalizeXeroDateOnly(invoice.dueDate);
+  const issueDate = xeroCalendarDate(invoice.date);
+  const dueDate = xeroCalendarDate(invoice.dueDate);
   if (!issueDate || !dueDate) return null;
-  const issueMs = Date.parse(`${issueDate}T00:00:00.000Z`);
-  const dueMs = Date.parse(`${dueDate}T00:00:00.000Z`);
+  const issueMs = dateOnlyInstantOf(issueDate).getTime();
+  const dueMs = dateOnlyInstantOf(dueDate).getTime();
   return (dueMs - issueMs) / (24 * 60 * 60 * 1000);
 }
 
@@ -356,7 +362,7 @@ export async function createXeroMembershipSubscriptionInvoice(input: {
       // whether a pre-existing Xero invoice may be adopted against this
       // immutable charge; adding `dueDays x 24h` to the instant instead would
       // slip an hour across a daylight-saving transition and could move the day.
-      const issueDate = formatDateOnlyForTimeZone(new Date());
+      const issueDate = xeroDocumentDateForClubToday(await readClubTimeZoneOutsideRequest());
       const dueDate = formatDateOnly(
         addDaysDateOnly(parseDateOnly(issueDate), charge.dueDays),
       );
@@ -467,21 +473,57 @@ export async function createXeroMembershipSubscriptionInvoice(input: {
   });
 
   const emailIdempotencyKey = buildXeroIdempotencyKey("membership-charge", charge.id, "invoice-email", invoiceId, "v1");
-  try {
-    const response = await callXeroApi(
-      () => xero.accountingApi.emailInvoice(tenantId, invoiceId!, new RequestEmpty(), emailIdempotencyKey),
-      {
-        operation: "emailInvoice", resourceType: "INVOICE",
-        workflow: "createXeroMembershipSubscriptionInvoice",
-        context: `email subscription invoice ${charge.id}`,
+  /*
+    Environment-safety boundary (#3035, ENV-SAFETY 2; epic #2986).
+    INV-CONFIG-004.
+
+    THE CHARGE IS DELIBERATELY LEFT AT `INVOICE_CREATED` and its
+    `emailAttemptCount` is not touched. `EMAIL_FAILED` would be a lie in both
+    non-allow cases — nothing was attempted, so nothing failed — and this issue
+    forbids moving business state as though a provider call had failed. It is also
+    the more useful state: the admin subscription-billing panel already offers
+    Retry on an `INVOICE_CREATED` charge, so once the role is declared an operator
+    can re-drive it, and the per-invoice idempotency key makes that a no-op rather
+    than a second email if Xero has in fact already sent it.
+  */
+  const emailPolicy = await resolveXeroInvoiceEmailPolicy();
+  if (emailPolicy.kind === "withhold") {
+    const context = { chargeId: charge.id, invoiceId };
+    if (emailPolicy.error) {
+      logger.error(context, emailPolicy.logMessage);
+    } else {
+      logger.info(context, emailPolicy.logMessage);
+    }
+    await completeXeroSyncOperation(input.syncOperationId, {
+      status: emailPolicy.error ? "PARTIAL" : "SUCCEEDED",
+      responsePayload: {
+        invoice: providerInvoice, adopted, email: null,
+        emailError: emailPolicy.error ? emailPolicy.error.message : null,
+        // A THIRD reason distinct from a provider failure and from the club's own
+        // choice: this installation is a confirmed copy.
+        invoiceEmailWithheldForEnvironment: emailPolicy.suppressedForNonProduction,
       },
-    );
+      xeroObjectType: "INVOICE", xeroObjectId: invoiceId, xeroObjectNumber: invoiceNumber,
+      xeroObjectUrl: buildXeroInvoiceUrl(invoiceId),
+    });
+    return invoiceId;
+  }
+  try {
+    const response = await sendXeroInvoiceEmail({
+      clearance: emailPolicy.clearance,
+      xero,
+      tenantId,
+      invoiceId: invoiceId!,
+      idempotencyKey: emailIdempotencyKey,
+      workflow: "createXeroMembershipSubscriptionInvoice",
+      context: `email subscription invoice ${charge.id}`,
+    });
     await prisma.membershipSubscriptionCharge.update({
       where: { id: charge.id },
       data: { status: "EMAILED", emailAttemptCount: { increment: 1 }, emailLastAttemptAt: new Date(), emailSentAt: new Date(), lastErrorCode: null, lastErrorMessage: null },
     });
     await completeXeroSyncOperation(input.syncOperationId, {
-      responsePayload: { invoice: providerInvoice, adopted, email: response.body ?? null },
+      responsePayload: { invoice: providerInvoice, adopted, email: response.body },
       xeroObjectType: "INVOICE", xeroObjectId: invoiceId, xeroObjectNumber: invoiceNumber,
       xeroObjectUrl: buildXeroInvoiceUrl(invoiceId),
     });

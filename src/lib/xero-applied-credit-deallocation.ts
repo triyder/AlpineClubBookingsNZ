@@ -5,7 +5,9 @@ import {
   lockMemberCreditLedger,
 } from "./member-credit";
 import { callXeroApi, getAuthenticatedXeroClient } from "./xero-api-client";
-import { formatDateOnlyForTimeZone } from "@/lib/date-only";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { xeroDocumentDateForClubToday } from "@/lib/xero-provider-dates";
+import { requireContainedXeroContactForInvoiceOperation } from "@/lib/xero-contact-containment-proof";
 import {
   buildXeroIdempotencyKey,
   completeXeroSyncOperation,
@@ -642,6 +644,42 @@ export async function deallocateExcessAppliedCreditForBooking(
     return;
   }
 
+  /*
+    INV-CONFIG-005 (#3036): deallocation REMOVES credit from an invoice, so it
+    raises what is outstanding on it — and Xero emails reminders for an
+    outstanding AUTHORISED invoice to the address on its contact, from its own
+    servers. This path never touches `findOrCreateXeroContact`, so on a copy
+    restored from the club's live database nothing here had ever looked at what
+    that contact holds. Checked at the ENTRY POINT, before the fence or any local
+    claim, so a refusal leaves nothing half-done.
+
+    THE CONTACT IS THE INVOICE'S, and this module never reads the invoice — so it
+    asks. That read is the reason the contact is supplied as a FUNCTION: it runs
+    only after the policy says "contain", so the club's live site still spends
+    nothing at all here. The first version of this check used the member's link
+    instead, which is a different contact after a merge or an admin re-link, and
+    therefore proved containment of a contact whose amount due this operation
+    does not touch.
+  */
+  const invoiceIdForContainment = booking.payment.xeroInvoiceId;
+  await requireContainedXeroContactForInvoiceOperation({
+    resolveXeroContactId: async () => {
+      const { xero, tenantId } = await getAuthenticatedXeroClient();
+      const response = await callXeroApi(
+        () => xero.accountingApi.getInvoice(tenantId, invoiceIdForContainment),
+        {
+          operation: "getInvoice",
+          resourceType: "INVOICE",
+          workflow: "deallocateExcessAppliedCreditForBooking",
+          context: `containment getInvoice(${invoiceIdForContainment})`,
+        }
+      );
+      return response.body.invoices?.[0]?.contact?.contactID;
+    },
+    memberId: booking.memberId,
+    workflow: "deallocateExcessAppliedCreditForBooking",
+  });
+
   const conflicting = await prisma.xeroSyncOperation.findFirst({
     where: {
       id: { not: options.syncOperationId },
@@ -858,7 +896,7 @@ export async function deallocateExcessAppliedCreditForBooking(
         // re-invokes its callback on every retry attempt, so a read inside it
         // would send a different date on a retry that crossed club midnight,
         // under the same idempotency key.
-        const recreatedAllocationDate = formatDateOnlyForTimeZone(new Date());
+        const recreatedAllocationDate = xeroDocumentDateForClubToday(await readClubTimeZoneOutsideRequest());
         await callXeroApi(
           () => xero.accountingApi.createCreditNoteAllocation(
             tenantId,

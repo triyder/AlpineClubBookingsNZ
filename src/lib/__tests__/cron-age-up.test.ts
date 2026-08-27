@@ -47,10 +47,6 @@ vi.mock("../logger", () => ({
   },
 }));
 
-vi.mock("../utils", () => ({
-  getSeasonYear: vi.fn(() => 2026),
-}));
-
 // Best-effort Xero contact-group trigger (E8, #1934): mocked so we can assert
 // it fires after a durable tier flip and never for skipped/handoff members.
 const mockTriggerGroupSync = vi.fn();
@@ -68,6 +64,10 @@ import { AGE_TIER_DEFAULTS, invalidateAgeTierCache } from "../age-tier";
 import { getAuditRetentionExpiresAt } from "../audit";
 import { checkAgeUpMembers } from "../cron-age-up";
 import { withTimeZoneAsync } from "./helpers/timezone";
+import {
+  EMAIL_SENT,
+  emailWithheldForEnvironment,
+} from "@/lib/__tests__/helpers/email-outcomes";
 
 const mockedFindMany = vi.mocked(prisma.member.findMany);
 const mockedMemberFindFirst = vi.mocked(prisma.member.findFirst);
@@ -126,11 +126,19 @@ beforeEach(() => {
   mockTxTokenDeleteMany.mockResolvedValue({ count: 1 });
 });
 
-// Helper: create a date of birth for a given age at season start (April 1 2026)
+/**
+ * A date of birth that reaches exactly `age` at the 1 April 2026 season start,
+ * stored the way every correct writer stores one: the calendar day at UTC
+ * midnight (INV-DATE-024).
+ *
+ * IT USED TO BE `new Date(2026 - age, 3, 1)`, host-local midnight, which
+ * INV-DATE-024 names as the forbidden spelling for this column and which
+ * `computeAge`'s stored-day guard now refuses outright (#3082). Under
+ * `Pacific/Auckland` that fixture was `(D-1)T11:00Z` — not a stored calendar day
+ * at all, and a day early on top.
+ */
 function dobForAge(age: number): Date {
-  // Season start: 2026-04-01
-  // If age 18, born on or before 2008-04-01
-  return new Date(2026 - age, 3, 1); // April 1, (2026 - age)
+  return new Date(`${2026 - age}-04-01T00:00:00.000Z`);
 }
 
 /** A member row as `resolveInheritedEmailSourceId` selects one. */
@@ -241,7 +249,7 @@ describe("checkAgeUpMembers", () => {
       mockedEmailLogFind.mockResolvedValue(null);
       mockedUpdate.mockResolvedValue({} as any);
       mockedCreateToken.mockResolvedValue({} as any);
-      mockedSendEmail.mockResolvedValue(undefined);
+      mockedSendEmail.mockResolvedValue(EMAIL_SENT);
 
       // The upgrade write happens through `member.update`, and reconciliation
       // reads AFTER it — so the fake applies it, exactly as the database would.
@@ -362,7 +370,7 @@ describe("checkAgeUpMembers", () => {
     mockedEmailLogFind.mockResolvedValue(null);
     mockedUpdate.mockResolvedValue({} as any);
     mockedCreateToken.mockResolvedValue({} as any);
-    mockedSendEmail.mockResolvedValue(undefined);
+    mockedSendEmail.mockResolvedValue(EMAIL_SENT);
 
     const result = await checkAgeUpMembers();
 
@@ -467,7 +475,7 @@ describe("checkAgeUpMembers", () => {
     mockedEmailLogFind.mockResolvedValue(null);
     mockedUpdate.mockResolvedValue({} as any);
     mockedCreateToken.mockResolvedValue({} as any);
-    mockedSendEmail.mockResolvedValue(undefined);
+    mockedSendEmail.mockResolvedValue(EMAIL_SENT);
     mockTxMemberFindUnique.mockResolvedValue({
       canLogin: false,
       ageTier: "YOUTH",
@@ -539,7 +547,7 @@ describe("checkAgeUpMembers", () => {
     mockedEmailLogFind.mockResolvedValue(null);
     mockedUpdate.mockResolvedValue({} as any);
     mockedCreateToken.mockResolvedValue({} as any);
-    mockedSendEmail.mockResolvedValue(undefined);
+    mockedSendEmail.mockResolvedValue(EMAIL_SENT);
     // The transaction's own view: a link landed while this member was queued.
     // ONLY the resolved-source column is set, so this test isolates the first
     // half of the disjunction — with `inheritParentEmail`/`parentMemberId` also
@@ -591,7 +599,7 @@ describe("checkAgeUpMembers", () => {
     mockedEmailLogFind.mockResolvedValue(null);
     mockedUpdate.mockResolvedValue({} as any);
     mockedCreateToken.mockResolvedValue({} as any);
-    mockedSendEmail.mockResolvedValue(undefined);
+    mockedSendEmail.mockResolvedValue(EMAIL_SENT);
     mockTxMemberFindUnique.mockResolvedValue({
       canLogin: false,
       ageTier: "YOUTH",
@@ -631,7 +639,7 @@ describe("checkAgeUpMembers", () => {
     mockedEmailLogFind.mockResolvedValue(null);
     mockedUpdate.mockResolvedValue({} as any);
     mockedCreateToken.mockResolvedValue({} as any);
-    mockedSendEmail.mockResolvedValue(undefined);
+    mockedSendEmail.mockResolvedValue(EMAIL_SENT);
     mockTxMemberFindUnique.mockResolvedValue({
       canLogin: false,
       ageTier: "YOUTH",
@@ -716,7 +724,7 @@ describe("checkAgeUpMembers", () => {
     mockedEmailLogFind.mockResolvedValue(null);
     mockedUpdate.mockResolvedValue({} as never);
     mockedCreateToken.mockResolvedValue({} as never);
-    mockedSendEmail.mockResolvedValue(undefined);
+    mockedSendEmail.mockResolvedValue(EMAIL_SENT);
     mockTxMemberFindUnique.mockResolvedValue({
       canLogin: false,
       ageTier: "YOUTH",
@@ -774,7 +782,7 @@ describe("checkAgeUpMembers", () => {
     };
 
     mockedFindMany.mockResolvedValue([member] as any);
-    mockedSendHandoffEmail.mockResolvedValue(undefined);
+    mockedSendHandoffEmail.mockResolvedValue(EMAIL_SENT);
 
     const result = await checkAgeUpMembers();
 
@@ -844,7 +852,7 @@ describe("checkAgeUpMembers", () => {
     };
 
     mockedFindMany.mockResolvedValue([member] as any);
-    mockedSendHandoffEmail.mockResolvedValue(undefined);
+    mockedSendHandoffEmail.mockResolvedValue(EMAIL_SENT);
 
     await checkAgeUpMembers();
 
@@ -891,7 +899,7 @@ describe("checkAgeUpMembers", () => {
         email: "legacy-parent@example.com",
       }),
     });
-    mockedSendHandoffEmail.mockResolvedValue(undefined);
+    mockedSendHandoffEmail.mockResolvedValue(EMAIL_SENT);
 
     const result = await checkAgeUpMembers();
 
@@ -961,7 +969,7 @@ describe("checkAgeUpMembers", () => {
       }),
       nan: familyRow({ id: "nan", email: "nan@example.com" }),
     });
-    mockedSendHandoffEmail.mockResolvedValue(undefined);
+    mockedSendHandoffEmail.mockResolvedValue(EMAIL_SENT);
 
     const result = await checkAgeUpMembers();
 
@@ -1036,7 +1044,7 @@ describe("checkAgeUpMembers", () => {
       firstName: "Alex",
       lastName: "Holder",
     } as any);
-    mockedSendHandoffEmail.mockResolvedValue(undefined);
+    mockedSendHandoffEmail.mockResolvedValue(EMAIL_SENT);
 
     const result = await checkAgeUpMembers();
 
@@ -1098,7 +1106,7 @@ describe("checkAgeUpMembers", () => {
     mockedAuditLogFind
       .mockResolvedValueOnce({ id: "existing-audit" } as any)
       .mockResolvedValueOnce(null);
-    mockedSendHandoffEmail.mockResolvedValue(undefined);
+    mockedSendHandoffEmail.mockResolvedValue(EMAIL_SENT);
 
     const result = await checkAgeUpMembers();
 
@@ -1283,7 +1291,7 @@ describe("checkAgeUpMembers", () => {
     mockedEmailLogFind.mockResolvedValue(null);
     mockedUpdate.mockResolvedValue({} as any);
     mockedCreateToken.mockResolvedValue({} as any);
-    mockedSendEmail.mockResolvedValue(undefined);
+    mockedSendEmail.mockResolvedValue(EMAIL_SENT);
 
     const result = await checkAgeUpMembers();
 
@@ -1308,7 +1316,7 @@ describe("checkAgeUpMembers", () => {
     mockedEmailLogFind.mockResolvedValue(null);
     mockedUpdate.mockResolvedValue({} as any);
     mockedCreateToken.mockResolvedValue({} as any);
-    mockedSendEmail.mockResolvedValue(undefined);
+    mockedSendEmail.mockResolvedValue(EMAIL_SENT);
 
     await checkAgeUpMembers();
 
@@ -1324,7 +1332,19 @@ describe("checkAgeUpMembers", () => {
   it("should query for the correct member criteria", async () => {
     mockedFindMany.mockResolvedValue([]);
 
-    await checkAgeUpMembers();
+    // #2872: the club's own zone is FORCED, not inherited, and without that this
+    // test could not tell the fix from the defect of its day. `getSeasonStartDate`
+    // built HOST-local midnight; the bound had to be the calendar DAY at UTC
+    // midnight. On a UTC runner — which is what CI is — those two are the same
+    // instant, so every assertion below would have passed against a
+    // local-midnight bound as happily as against a correct one.
+    //
+    // #3082 moved the season start itself onto a calendar day, so the two are no
+    // longer different shapes to confuse. The pin STAYS: it is now what proves
+    // the bound cannot be moved by the container at all, and a regression that
+    // reintroduced a host-local read would fail here rather than only on a
+    // behind-Greenwich host (docs/TESTING.md rules 6 and 7).
+    await withTimeZoneAsync("Pacific/Auckland", () => checkAgeUpMembers());
 
     expect(mockedFindMany).toHaveBeenCalledWith({
       where: {
@@ -1360,24 +1380,31 @@ describe("checkAgeUpMembers", () => {
     });
 
     // Verify the cutoff day is 18 years before season start (April 1, 2026),
-    // i.e. April 1, 2008. #2859: the bound is now EXCLUSIVE on the day AFTER
-    // that, so a member born on 1 April 2008 — who turns 18 on season start and
-    // is an adult that season — is inside the candidate set whichever way their
-    // date of birth is encoded.
+    // i.e. April 1, 2008. #2859: the bound is EXCLUSIVE on the day AFTER that,
+    // so a member born on 1 April 2008 — who turns 18 on season start and is an
+    // adult that season — is inside the candidate set.
     const cutoff = (mockedFindMany.mock.calls[0]![0] as any).where.dateOfBirth;
     const cutoffWindowEnd = cutoff.lt as Date;
-    expect(cutoffWindowEnd.getFullYear()).toBe(2008);
-    expect(cutoffWindowEnd.getMonth()).toBe(3); // April
-    expect(cutoffWindowEnd.getDate()).toBe(2);
-    // Exactly the season-start construction plus one day, pinned as an instant
-    // so a widening beyond one day cannot pass. Both sides are built with the
-    // same local-midnight constructor the code uses, so this holds in any
-    // runner zone (docs/TESTING.md rule 6).
-    expect(cutoffWindowEnd.getTime()).toBe(new Date(2008, 3, 2).getTime());
-    // The whole of 1 April 2008 is inside the window, in both encodings: the
-    // UTC-midnight one every correct writer produces, and the local-midnight one
-    // the #2859 migration repairs. Under the club's own Pacific/Auckland pin the
-    // old `lte` bound was 2008-03-31T11:00Z, which excluded the first of these.
+    // #2872: the bound is now a CALENDAR DAY at UTC midnight, not local midnight
+    // on that day, because `Member.dateOfBirth` is `@db.Date` and the adapter
+    // narrows such a bound to its UTC date. Read it with the UTC getters — the
+    // local ones would answer 1 April on a host west of UTC and pass here on the
+    // very shape the change exists to prevent.
+    expect(cutoffWindowEnd.getUTCFullYear()).toBe(2008);
+    expect(cutoffWindowEnd.getUTCMonth()).toBe(3); // April
+    expect(cutoffWindowEnd.getUTCDate()).toBe(2);
+    // Pinned as an exact instant so a widening beyond one day cannot pass, and
+    // as an explicit UTC literal rather than `new Date(2008, 3, 2)` — the
+    // local-midnight constructor no longer describes what the code builds, and
+    // asserting against it would make this test agree with the defect on the
+    // club's own host while failing everywhere else (docs/TESTING.md rule 6).
+    expect(cutoffWindowEnd.toISOString()).toBe("2008-04-02T00:00:00.000Z");
+    // THE POINT OF THE WHOLE BOUND: the entire day of 1 April 2008 is inside the
+    // window. A date of birth is stored at UTC midnight, so this is the row that
+    // the pre-#2859 `lte` instant bound excluded, and that a local-midnight
+    // bound against the now-`@db.Date` column would exclude again — the adapter
+    // would narrow 2008-04-01T11:00Z to the DATE 2008-04-01, making the
+    // comparison `< 2008-04-01` and dropping this member for a whole season.
     expect(new Date("2008-04-01T00:00:00.000Z").getTime()).toBeLessThan(
       cutoffWindowEnd.getTime(),
     );
@@ -1388,14 +1415,15 @@ describe("checkAgeUpMembers", () => {
   // a member's price and whether they may host — and neither was covered.
   //
   // The zone is forced rather than inherited (docs/TESTING.md rules 6 and 7).
-  // Both sides of this comparison are host-local — `getSeasonStartDate` is
-  // `new Date(year, month, 1)` and `computeAge` uses `getFullYear`/`getMonth`/
-  // `getDate` — so the answer depends on the runner. Pinning the club's own zone
-  // makes these assert what production does. Under a host WEST of UTC the
-  // day-after member would be promoted a year early, because UTC midnight is the
-  // previous evening locally: that is a pre-existing `computeAge` defect
-  // (INV-DATE-024 records it), it is unreachable under the Dockerfile's
-  // `TZ=Pacific/Auckland` pin, and it is deliberately not fixed here.
+  //
+  // #3082 IS THE OTHER HALF OF WHAT THIS COMMENT USED TO SAY. It read: "under a
+  // host WEST of UTC the day-after member would be promoted a year early,
+  // because UTC midnight is the previous evening locally: that is a pre-existing
+  // `computeAge` defect (INV-DATE-024 records it) ... and it is deliberately not
+  // fixed here." That was exactly right, and it was measured afterwards at 161
+  // of the 418 zones this runtime knows. It is fixed now — both sides read one
+  // calendar frame — so the second of these two tests runs behind Greenwich as
+  // well, which is where it used to give the wrong answer.
   it("promotes the member born on exactly the season-start anniversary", async () => {
     const member = {
       id: "m-boundary-on",
@@ -1414,7 +1442,7 @@ describe("checkAgeUpMembers", () => {
     mockedEmailLogFind.mockResolvedValue(null);
     mockedUpdate.mockResolvedValue({} as any);
     mockedCreateToken.mockResolvedValue({} as any);
-    mockedSendEmail.mockResolvedValue(undefined);
+    mockedSendEmail.mockResolvedValue(EMAIL_SENT);
 
     const result = await withTimeZoneAsync("Pacific/Auckland", () =>
       checkAgeUpMembers(),
@@ -1465,16 +1493,38 @@ describe("checkAgeUpMembers", () => {
     mockedEmailLogFind.mockResolvedValue(null);
     mockedUpdate.mockResolvedValue({} as any);
     mockedCreateToken.mockResolvedValue({} as any);
-    mockedSendEmail.mockResolvedValue(undefined);
+    mockedSendEmail.mockResolvedValue(EMAIL_SENT);
 
-    const result = await withTimeZoneAsync("Pacific/Auckland", () =>
-      checkAgeUpMembers(),
-    );
+    // BOTH SIDES OF GREENWICH, and the second one is the discriminating half:
+    // this member is the single day of birthdays the retired host-local read
+    // misclassified, and `America/Denver` is where it did it. Before #3082 the
+    // Denver run promoted them HERE — ADULT, their own login, and a different
+    // price band, a season early.
+    //
+    // TRUE OF THIS TEST, AND NOT OF PRODUCTION, which matters because the
+    // difference has already been published once as a defect that never existed.
+    // This suite mocks `prisma.member.findMany`, so it hands the job a candidate
+    // the real prefilter would never have proposed:
+    // `dateOfBirthPrefilterBoundForMinAge` is EXCLUSIVE at
+    // `seasonStart - minAge years` plus one day, and this member is born the day
+    // after that, so a live Denver run never saw them. Swept in
+    // `policies/age-tier.ts`'s module docblock: 27 638 160 admitted candidates
+    // across 418 zones, zero verdict changes. What this test pins is the
+    // AUTHORITY itself, on the exact input the bypassed bound would have
+    // filtered — which is the only place that half of the argument can be stated.
+    for (const hostZone of ["Pacific/Auckland", "America/Denver"]) {
+      mockedUpdate.mockClear();
+      mockedSendEmail.mockClear();
 
-    expect(result.upgraded).toBe(0);
-    expect(result.skipped).toBe(1);
-    expect(mockedUpdate).not.toHaveBeenCalled();
-    expect(mockedSendEmail).not.toHaveBeenCalled();
+      const result = await withTimeZoneAsync(hostZone, () =>
+        checkAgeUpMembers(),
+      );
+
+      expect(result.upgraded, hostZone).toBe(0);
+      expect(result.skipped, hostZone).toBe(1);
+      expect(mockedUpdate, hostZone).not.toHaveBeenCalled();
+      expect(mockedSendEmail, hostZone).not.toHaveBeenCalled();
+    }
   });
 
   it("should use the configured ADULT age tier for cutoff and email data", async () => {
@@ -1522,9 +1572,14 @@ describe("checkAgeUpMembers", () => {
     mockedEmailLogFind.mockResolvedValue(null);
     mockedUpdate.mockResolvedValue({} as any);
     mockedCreateToken.mockResolvedValue({} as any);
-    mockedSendEmail.mockResolvedValue(undefined);
+    mockedSendEmail.mockResolvedValue(EMAIL_SENT);
 
-    const result = await checkAgeUpMembers();
+    // Zone forced for the same reason as the criteria test above (#2872): on a
+    // UTC runner a local-midnight bound and a calendar-day bound are the same
+    // instant, and the cutoff assertions below would not discriminate.
+    const result = await withTimeZoneAsync("Pacific/Auckland", () =>
+      checkAgeUpMembers(),
+    );
 
     expect(result.upgraded).toBe(1);
     const cutoff = (mockedFindMany.mock.calls[0]![0] as any).where.dateOfBirth;
@@ -1532,9 +1587,11 @@ describe("checkAgeUpMembers", () => {
     // an ADULT minimum age of 21 the cutoff day is 1 April 2005, so the window
     // ends at the start of 2 April 2005.
     const cutoffWindowEnd = cutoff.lt as Date;
-    expect(cutoffWindowEnd.getFullYear()).toBe(2005);
-    expect(cutoffWindowEnd.getMonth()).toBe(3);
-    expect(cutoffWindowEnd.getDate()).toBe(2);
+    // UTC getters (#2872): the bound is a calendar day at UTC midnight now that
+    // `Member.dateOfBirth` is `@db.Date`.
+    expect(cutoffWindowEnd.getUTCFullYear()).toBe(2005);
+    expect(cutoffWindowEnd.getUTCMonth()).toBe(3);
+    expect(cutoffWindowEnd.getUTCDate()).toBe(2);
     expect(mockedSendEmail).toHaveBeenCalledWith(
       "adult21@example.com",
       "Alex",
@@ -1606,5 +1663,162 @@ describe("sendAgeUpInvitationEmail", () => {
   it("should be importable and callable", async () => {
     // Verify the function exists and accepts the right params
     expect(typeof sendAgeUpInvitationEmail).toBe("function");
+  });
+});
+
+// --- #3035 (ENV-SAFETY 2): a withheld invitation must not leave a stranded adult
+//
+// THE SHAPE OF THE DEFECT. By the time this cron calls the mailer it has already
+// committed the tier flip, granted `canLogin`, cleared the member's inherited
+// mailbox and minted a single-use invitation token. `sendEmail` RETURNS rather
+// than throws when it withholds, so the `catch`-block rollback never fired and
+// `upgradeResult = null` disarmed it unconditionally.
+//
+// And the harm is PERMANENT, not merely a missed run: the `alreadySent` guard
+// only matches SENT/QUEUED EmailLog rows so it does not block a retry, but the
+// transaction's own re-check sees `canLogin: true` and `ageTier: "ADULT"` and
+// returns null — so every later run counts the member as skipped. They have a
+// login they were never told about, and the reset token expires in a week.
+describe("checkAgeUpMembers environment-safety withholds (#3035)", () => {
+  function agingYouth() {
+    mockedFindMany.mockResolvedValue([
+      {
+        id: "m1",
+        email: "youth@example.com",
+        firstName: "Alice",
+        lastName: "Smith",
+        dateOfBirth: dobForAge(18),
+        inheritEmailFromId: null,
+        inheritEmailFrom: null,
+      },
+    ] as any);
+    mockedEmailLogFind.mockResolvedValue(null);
+    mockedUpdate.mockResolvedValue({} as any);
+    mockedCreateToken.mockResolvedValue({} as any);
+  }
+
+  /** The compensating age-DOWN write, if the cron made one. */
+  function rollbackWrite() {
+    return mockTxMemberUpdateMany.mock.calls.find(
+      (call) =>
+        (call[0] as { data?: { canLogin?: unknown } }).data?.canLogin === false,
+    );
+  }
+
+  it("rolls the upgrade back when the installation's role is unknown", async () => {
+    agingYouth();
+    mockedSendEmail.mockResolvedValue(
+      emailWithheldForEnvironment("environment_unknown"),
+    );
+
+    const result = await checkAgeUpMembers();
+
+    expect(rollbackWrite()?.[0]).toEqual(
+      expect.objectContaining({
+        where: { id: "m1", canLogin: true, ageTier: "ADULT" },
+        data: expect.objectContaining({ canLogin: false, ageTier: "YOUTH" }),
+      }),
+    );
+    // The minted invitation token goes with it — an unusable password-reset token
+    // must not sit in the table for a week.
+    expect(mockTxTokenDeleteMany).toHaveBeenCalled();
+    expect(result.upgraded).toBe(0);
+    expect(result.failed).toBe(1);
+  });
+
+  it("rolls the upgrade back when the live site declares a capture mailbox", async () => {
+    agingYouth();
+    mockedSendEmail.mockResolvedValue(
+      emailWithheldForEnvironment("capture_transport_in_production"),
+    );
+
+    const result = await checkAgeUpMembers();
+
+    expect(rollbackWrite()).toBeDefined();
+    expect(result.failed).toBe(1);
+  });
+
+  it("KEEPS the upgrade on a confirmed copy, so a copy does not age one member up and down forever", async () => {
+    /*
+      Terminal rather than a fault: a copy is a copy until somebody re-declares
+      it. Rolling back there would have a staging box flip the same member up and
+      down on every run, writing a new counted SKIPPED_NON_PRODUCTION row each
+      pass — the number that tells a live club wrongly declared a copy from an
+      idle one (owner decision 1, 23 Aug 2026).
+    */
+    agingYouth();
+    mockedSendEmail.mockResolvedValue(
+      emailWithheldForEnvironment("environment_non_production"),
+    );
+
+    const result = await checkAgeUpMembers();
+
+    expect(rollbackWrite()).toBeUndefined();
+    expect(result.upgraded).toBe(1);
+    expect(result.failed).toBe(0);
+  });
+
+  it("does not write the handoff audit row when the handoff email was withheld", async () => {
+    /*
+      The audit row is the ONLY thing that stops the handoff being attempted
+      again — `hasAgeUpParentEmailHandoffAudit` reads it — so writing it for a
+      message that never went out closes the door on ever asking the parent for
+      this member's own address.
+    */
+    mockedFindMany.mockResolvedValue([
+      {
+        id: "m1",
+        email: "shared@example.com",
+        firstName: "Alice",
+        lastName: "Smith",
+        dateOfBirth: dobForAge(18),
+        inheritEmailFromId: "p1",
+        inheritEmailFrom: {
+          id: "p1",
+          email: "shared@example.com",
+          firstName: "Pat",
+          lastName: "Smith",
+        },
+      },
+    ] as any);
+    mockedAuditLogFind.mockResolvedValue(null);
+    mockedSendHandoffEmail.mockResolvedValue(
+      emailWithheldForEnvironment("environment_unknown"),
+    );
+
+    const result = await checkAgeUpMembers();
+
+    expect(mockedAuditLogCreate).not.toHaveBeenCalled();
+    expect(result.handoff).toBe(0);
+    expect(result.failed).toBe(1);
+    // No login was granted either: the handoff branch returns before the upgrade.
+    expect(mockedUpdate).not.toHaveBeenCalled();
+  });
+
+  it("DOES write the handoff audit row on a confirmed copy, so a copy stops re-attempting it", async () => {
+    mockedFindMany.mockResolvedValue([
+      {
+        id: "m1",
+        email: "shared@example.com",
+        firstName: "Alice",
+        lastName: "Smith",
+        dateOfBirth: dobForAge(18),
+        inheritEmailFromId: "p1",
+        inheritEmailFrom: {
+          id: "p1",
+          email: "shared@example.com",
+          firstName: "Pat",
+          lastName: "Smith",
+        },
+      },
+    ] as any);
+    mockedAuditLogFind.mockResolvedValue(null);
+    mockedSendHandoffEmail.mockResolvedValue(
+      emailWithheldForEnvironment("environment_non_production"),
+    );
+
+    await checkAgeUpMembers();
+
+    expect(mockedAuditLogCreate).toHaveBeenCalled();
   });
 });
