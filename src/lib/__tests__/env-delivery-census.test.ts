@@ -279,12 +279,6 @@ const DELIBERATELY_NOT_DELIVERED: Record<string, string> = {
   // meaningful inside the container -- so delivering it would be the bug.
   POST_IMAGE_HOST_DIR: "host-side only; the container reads POST_IMAGE_DIR",
 
-  // Same shape for the message-board image mount (#2992, fork): the HOST side
-  // of the bind. docker-compose.yml's own comment says the app never sees it
-  // and must never be delivered; the app reads POST_IMAGE_DIR, the mount
-  // target, which IS delivered.
-  POST_IMAGE_HOST_DIR: "host-side only; the container reads POST_IMAGE_DIR",
-
   // A build arg (docker-compose.yml `build.args`), not a runtime variable: the
   // per-release CSP nonce has to be fixed for the life of the image.
   RELEASE_ID: "build arg, baked into the image; see #2352 D1",
