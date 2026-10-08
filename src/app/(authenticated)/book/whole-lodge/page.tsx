@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { auth } from "@/lib/auth";
+import { getMemberCreditBalance } from "@/lib/member-credit";
 import { WholeLodgeRequestForm } from "./_components/whole-lodge-request-form";
 
 export const metadata = {
@@ -13,8 +15,17 @@ export const metadata = {
  * deliberately shows NO availability calendar, NO capacity pre-check, NO price
  * and NO quote. Each of those would answer "is the lodge free that week?", which
  * is the question a member may not be answered (ADR-001 decision 6).
+ *
+ * The one figure it does show is the member's OWN account-credit balance, so
+ * they can ask for it to be put towards the booking if the request is
+ * approved — the same election the ordinary review step offers. It is a fact
+ * about the member, not about the calendar.
  */
-export default function WholeLodgeRequestPage() {
+export default async function WholeLodgeRequestPage() {
+  const session = await auth();
+  const availableCreditCents = session?.user?.id
+    ? await getMemberCreditBalance(session.user.id)
+    : 0;
   return (
     <div className="max-w-2xl space-y-6">
       <div className="space-y-1">
@@ -32,7 +43,7 @@ export default function WholeLodgeRequestPage() {
         </p>
       </div>
 
-      <WholeLodgeRequestForm />
+      <WholeLodgeRequestForm availableCreditCents={availableCreditCents} />
     </div>
   );
 }

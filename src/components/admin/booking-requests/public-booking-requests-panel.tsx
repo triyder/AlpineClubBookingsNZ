@@ -186,6 +186,10 @@ interface PublicBookingRequestData {
   exclusivityRequested: boolean;
   requestedByMemberId: string | null;
   requestedByMemberName: string | null;
+  // The member's ask to put their account credit towards the booking at
+  // approval (member whole-lodge requests only; always false otherwise).
+  // Optional so a stale server payload without the field still renders.
+  applyAccountCredit?: boolean;
   // Null lodgeId means the club's default lodge (pre-multi-lodge rows and
   // single-lodge submissions).
   lodgeId: string | null;
@@ -1341,14 +1345,20 @@ export function PublicBookingRequestsPanel({
           ? data.exclusiveHoldConflicts
           : [];
         // What actually happened to the money, stated plainly (school parity).
-        // The booking is CONFIRMED but unpaid, so the officer needs to know
-        // whether an invoice went out or whether they have to raise it.
+        // The booking is CONFIRMED but (usually) unpaid, so the officer needs
+        // to know where the money stands: left to the member on their booking
+        // page, settled by their credit, invoiced through Xero, or theirs to
+        // invoice by hand.
         const invoiceSentence =
-          data.invoiceMode === "xero"
-            ? " The Xero invoice has been raised and the member has been emailed the amount owing and their payment reference."
-            : data.invoiceMode === "manual"
-              ? " The Xero module is off, so admins have been emailed to invoice the member manually — the member has been told an invoice is coming."
-              : " This approval was an idempotent replay, so no new invoice or email was raised.";
+          data.invoiceMode === "member"
+            ? " The member has been emailed the amount owing and pays from their booking page — by card, with any account credit they asked for already applied, or by switching to internet banking, which raises the Xero invoice then."
+            : data.invoiceMode === "paid"
+              ? " The member's account credit covered the whole price, so the booking is paid and nothing is owing."
+              : data.invoiceMode === "xero"
+                ? " The Xero invoice has been raised and the member has been emailed the amount owing and their payment reference."
+                : data.invoiceMode === "manual"
+                  ? " The Xero module is off, so admins have been emailed to invoice the member manually — the member has been told an invoice is coming."
+                  : " This approval was an idempotent replay, so no new invoice or email was raised.";
         if (conflicts.length > 0) {
           toast.warning(
             `Whole-lodge booking confirmed and the lodge is now held for this group. ${
@@ -2303,6 +2313,7 @@ export function PublicBookingRequestsPanel({
                         <MemberWholeLodgeApprovalFields
                           requestId={request.id}
                           submittedHeadcount={request.guests.length}
+                          applyAccountCredit={request.applyAccountCredit === true}
                           headcount={
                             wholeLodgeHeadcounts[request.id] ??
                             String(request.guests.length)

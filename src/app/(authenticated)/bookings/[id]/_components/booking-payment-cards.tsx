@@ -346,7 +346,15 @@ export function BookingPaymentCards({
                 ) : null}
                 <SwitchToInternetBankingButton
                   bookingId={booking.id}
-                  description={switchToInternetBankingDescription}
+                  // An approved whole-lodge booking is already CONFIRMED and
+                  // held, so the club's configured sentence — which promises
+                  // to confirm the booking once the transfer reconciles —
+                  // would be untrue here. Fixed wording for that one case.
+                  description={
+                    booking.wholeLodgeHold && booking.status === "CONFIRMED"
+                      ? "Prefer to pay by internet banking? We will email a Xero invoice. Your whole-lodge booking stays confirmed while the payment is outstanding."
+                      : switchToInternetBankingDescription
+                  }
                 />
               </>
             )}

@@ -46,6 +46,7 @@ import { CLUB_LODGE_TRAVEL_NOTE } from "@/config/club-identity";
 import {
   bookingBumpedRebookAction,
   bookingPaymentDueNote,
+  type BookingPaymentDueInstruction,
   creditRestoredSentenceTail,
   splitGuestPortionOwnBookingLine,
   type CreditRestoredBasis,
@@ -125,12 +126,9 @@ export function bookingConfirmedTemplate(
     // the alert box says how to pay it. Same template (and therefore the same
     // operator override) as the paid confirmation, exactly as the split-parent
     // `provisionalGuests` variant is (#738).
-    paymentDue?: {
-      /** Internet-banking reference the member must quote (never a bearer token). */
-      reference: string;
-      /** True once the club's accounting system actually emails the invoice. */
-      invoiceEmailed: boolean;
-    };
+    // `payOnline` (no receivable yet: pay from the booking page) or the legacy
+    // reference-plus-invoiceEmailed shape; see `BookingPaymentDueInstruction`.
+    paymentDue?: BookingPaymentDueInstruction;
     // #2397: the booking is settled but NOT in full — an admin recorded a cash
     // / off-Xero payment and said it did not cover an uncollected price
     // increase, so the club took less than the booking is worth and will go on
@@ -261,8 +259,12 @@ export function bookingConfirmedTemplate(
   const paymentDueNote = paymentDue
     ? bookingPaymentDueNote({
         amount: formatCents(unpaidNetting.toTransferCents, format),
-        reference: escapeHtml(paymentDue.reference),
-        invoiceEmailed: paymentDue.invoiceEmailed,
+        ...(paymentDue.payOnline === true
+          ? { payOnline: true as const }
+          : {
+              reference: escapeHtml(paymentDue.reference),
+              invoiceEmailed: paymentDue.invoiceEmailed,
+            }),
         accountCredit: unpaidCreditNoteInput(
           totalCents,
           unpaidNetting,

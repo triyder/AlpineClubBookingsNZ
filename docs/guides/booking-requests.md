@@ -338,6 +338,19 @@ The choice is yours per approval — it is never automatic. A total price overri
 still overrides whichever method you pick. Then click **Approve & hold the whole
 lodge**.
 
+**How the member pays.** With the **Internet Banking payments** and **Xero**
+modules both on, approving does not pick the payment method for the member.
+The booking is confirmed and the lodge is held, and the member is emailed the
+amount owing and sent to their booking page, where they see the same choices
+an ordinary booking offers: pay by card, or **Pay by internet banking instead**,
+which raises the Xero invoice at that moment. If the member ticked **Put my
+account credit towards this booking** on the request, the approval applies as
+much of their credit as the total allows (the queue row tells you they asked),
+and they pay only the remainder; credit that covers the whole price settles the
+booking as paid on the spot. With either module off there is no choice to
+offer, so the approval works as it always did: a pay-on-account receivable is
+created and invoiced through Xero, or admins are emailed to invoice by hand.
+
 **If you link a guest row to a real member account** (#2309). A request's guest
 list is free-text names, but you can attach a place to an actual member so it
 prices at member rates. With the **Add another member as a guest** module on,

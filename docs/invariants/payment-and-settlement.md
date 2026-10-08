@@ -905,10 +905,14 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   carry a provider round-trip in its send path. This is the shape sent whenever
   no applicable credit can be stated, and #2483 leaves it unchanged to the byte.
   **The sentence must not promise that credit WILL be applied.** The one send
-  site (member whole-lodge approval) mints a brand-new booking and writes no
-  `MemberCredit` row, so its `enqueueXeroAppliedCreditAllocationOperation` call
-  always short-circuits and the Xero invoice stays at the full price;
-  reinstating a netting claim requires making the allocation real first. The
+  site (member whole-lodge approval) has two shapes. Its LEGACY receivable
+  (either module off) writes no `MemberCredit` row, so its
+  `enqueueXeroAppliedCreditAllocationOperation` call short-circuits and the
+  Xero invoice stays at the full price. Its member-choice shape (both modules
+  on) mints no receivable and passes `payOnline`: credit the member asked for
+  IS applied at approval via `applyCreditToBooking`, so that note nets locally
+  (INV-PAY-022), naming no reference and no invoice; the Internet Banking
+  switch route raises both, netted, if chosen. The
   sentence is composed by `bookingPaymentDueNote` and rendered from that ONE
   composer by both the hand-built HTML and the `{{paymentDueNote}}` token
   (carried inside `{{paymentOutcome}}`); it rides on an EXISTING token, so an
@@ -964,9 +968,13 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   `sendAdminWholeLodgeManualInvoiceEmail` takes the same ledger read and quotes
   the same figure (`wholeLodgeManualInvoiceAmountCents`). The PENDING receivable
   the conversion writes is the booking's price, which equals that figure only
-  while the path applies no credit — the premise the #2328 module guard pins; a
-  path that ever applies credit here must write the receivable at the effective
-  price too, as `booking-create` already does.
+  while the path applies no credit — and the LEGACY branch (either module off)
+  still applies none, which the #2328 module guard now pins by position: the
+  module's one `applyCreditToBooking` call sits inside the member-choice branch,
+  before the legacy mint. The member-choice branch (fork, booking-fixes) writes
+  NO receivable at approval, so there is no figure for it to get wrong; the
+  receivable is minted later by the Internet Banking switch route at the
+  effective price, from the same ledger read, exactly as `booking-create` does.
 
 ## INV-PAY-023
 
