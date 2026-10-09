@@ -1262,7 +1262,19 @@ kind of booking request; a public or school request always has
 VERIFIED -> APPROVED -> CONVERTED  (officer approves with a priced headcount; a
                                 CONFIRMED booking is created, owned by the
                                 requesting login member, with wholeLodgeHold
-                                stamped by the approving admin)
+                                stamped by the approving admin. With the
+                                Internet Banking and Xero modules both on it
+                                carries NO Payment row: the member pays from
+                                the booking page by card, or switches it to
+                                Internet Banking, which mints the receivable
+                                and raises the invoice then — the same
+                                CONFIRMED -> PAID settlement every card or
+                                IB capture takes. Credit the member asked for
+                                on the request is applied at approval; credit
+                                covering the whole price lands it PAID here.
+                                With either module off, the legacy shape: a
+                                PENDING INTERNET_BANKING Payment row invoiced
+                                post-commit)
 PRICED   -> APPROVED -> CONVERTED  (same transition, defensive: see the note
                                 below — nothing sanctioned puts a member-origin
                                 row in PRICED, and the approval accepts it

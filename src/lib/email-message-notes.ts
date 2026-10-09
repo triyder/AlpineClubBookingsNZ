@@ -430,27 +430,66 @@ export type BookingPaymentDueCredit =
       outcome: "unreconciled";
     };
 
-export function bookingPaymentDueNote({
-  amount,
-  reference,
-  invoiceEmailed,
-  accountCredit,
-}: {
-  /**
-   * What the member must TRANSFER, already formatted as money — "$300.00".
-   * Already net of `accountCredit.creditApplied` when that is supplied.
-   */
-  amount: string;
-  /** Internet-banking reference the member must quote, already escaped. */
-  reference: string;
-  /** TRUE only when an invoice really was raised (the Xero module is on). */
-  invoiceEmailed: boolean;
-  /**
-   * #2483 — present ONLY when the club's own credit ledger says credit is
-   * applied to this booking. Absent renders the #2444 paragraph unchanged.
-   */
-  accountCredit?: BookingPaymentDueCredit;
-}): string {
+/**
+ * HOW an unpaid confirmation asks to be paid (fork, booking-fixes).
+ *
+ * `payOnline`: no receivable exists yet — the member chooses on their booking
+ * page between a card payment and a switch to internet banking (the member
+ * whole-lodge approval with the Internet Banking and Xero modules on). The
+ * note names no reference and no invoice, because neither exists until the
+ * member chooses.
+ *
+ * Otherwise the legacy pay-on-account shape: an internet-banking reference the
+ * member must quote, and whether the invoice really was emailed.
+ */
+export type BookingPaymentDueInstruction =
+  | { payOnline: true }
+  | {
+      payOnline?: false;
+      /** Internet-banking reference the member must quote, already escaped. */
+      reference: string;
+      /** TRUE only when an invoice really was raised (the Xero module is on). */
+      invoiceEmailed: boolean;
+    };
+
+export function bookingPaymentDueNote(
+  input: {
+    /**
+     * What the member must TRANSFER, already formatted as money — "$300.00".
+     * Already net of `accountCredit.creditApplied` when that is supplied.
+     */
+    amount: string;
+    /**
+     * #2483 — present ONLY when the club's own credit ledger says credit is
+     * applied to this booking. Absent renders the #2444 paragraph unchanged.
+     */
+    accountCredit?: BookingPaymentDueCredit;
+  } & BookingPaymentDueInstruction,
+): string {
+  const { amount, accountCredit } = input;
+
+  if (input.payOnline === true) {
+    const howToPay =
+      " Please pay it from your booking page, where you can pay by card or choose to pay by internet banking.";
+    if (!accountCredit) {
+      return (
+        `This booking is confirmed, but payment of ${amount} is still owing.` +
+        howToPay
+      );
+    }
+    if (accountCredit.outcome === "unreconciled") {
+      return "This booking is confirmed. The club is checking its record of the account credit held against this booking and will confirm what, if anything, is left to pay. Please wait to hear from the club before paying anything.";
+    }
+    if (accountCredit.outcome === "covered") {
+      return `This booking is confirmed and there is nothing further to pay — the booking's price of ${accountCredit.bookingTotal} is fully covered by the ${accountCredit.creditApplied} of account credit the club has put towards it.`;
+    }
+    return (
+      `This booking is confirmed, but payment of ${amount} is still owing — the booking's price of ${accountCredit.bookingTotal} less the ${accountCredit.creditApplied} of account credit the club has put towards it.` +
+      howToPay
+    );
+  }
+
+  const { reference, invoiceEmailed } = input;
   const invoiceSentence = invoiceEmailed
     ? " An invoice has been emailed to you separately."
     : " The club will send you an invoice for it.";

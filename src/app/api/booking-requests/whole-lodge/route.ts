@@ -70,6 +70,11 @@ const wholeLodgeRequestSchema = z.object({
     .refine(noCrlf, "Notes cannot contain line breaks")
     .optional()
     .nullable(),
+  // "Put my account credit towards this booking if it is approved." A yes/no,
+  // never an amount: the price is set by the officer at approval, and the
+  // approval applies min(balance, price). Derived from the member's own choice,
+  // so it reveals nothing about the calendar (contract point 3).
+  applyAccountCredit: z.boolean().optional(),
   // The control is visually hidden for one lodge, but the client still sends
   // that sole explicit identity. Unknown scope must never become the default.
   lodgeId: z.string().min(1),
@@ -167,6 +172,7 @@ export async function POST(request: NextRequest) {
       groupDescription: parsed.data.groupDescription,
       notes: parsed.data.notes,
       lodgeId,
+      applyAccountCredit: parsed.data.applyAccountCredit === true,
     });
 
     return NextResponse.json(WHOLE_LODGE_REQUEST_ACCEPTED, { status: 201 });

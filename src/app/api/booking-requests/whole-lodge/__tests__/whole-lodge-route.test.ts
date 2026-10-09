@@ -173,6 +173,23 @@ describe("POST /api/booking-requests/whole-lodge (#2263)", () => {
     );
   });
 
+  it("passes the member's credit election through as a plain yes/no, defaulting to no", async () => {
+    await POST(request({ ...VALID_BODY, applyAccountCredit: true }));
+    expect(h.createMemberWholeLodgeRequest).toHaveBeenLastCalledWith(
+      expect.objectContaining({ applyAccountCredit: true }),
+    );
+
+    await POST(request(VALID_BODY));
+    expect(h.createMemberWholeLodgeRequest).toHaveBeenLastCalledWith(
+      expect.objectContaining({ applyAccountCredit: false }),
+    );
+
+    // Not an amount, and not a string: anything but a boolean is a 422 like
+    // any other malformed field, derived from the payload alone.
+    const response = await POST(request({ ...VALID_BODY, applyAccountCredit: 1200 }));
+    expect(response.status).toBe(422);
+  });
+
   it("checks the session BEFORE anything else, so an anonymous caller cannot even spend a rate-limit token", async () => {
     h.requireActiveSession.mockResolvedValue({
       ok: false,

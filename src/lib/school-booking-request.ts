@@ -108,7 +108,12 @@ import {
 } from "@/lib/member-dietary-booking-writes";
 // #2483: the club's own applied-credit total, so the admin's hand-written
 // invoice asks for the same figure the member's confirmation does.
-import { deriveBookingAppliedCreditCents } from "@/lib/member-credit";
+import {
+  applyCreditToBooking,
+  deriveBookingAppliedCreditCents,
+  getMemberCreditBalance,
+  lockMemberCreditLedger,
+} from "@/lib/member-credit";
 import {
   priceBookingGuests,
   toGroupDiscountConfig,
@@ -2127,12 +2132,18 @@ type ApproveMemberWholeLodgeRequestOutcome =
       priceCents: number;
       guestCount: number;
       /**
-       * Whether the receivable was invoiced through Xero or handed to admins to
-       * invoice by hand. School parity, and the officer's toast says which.
-       * Null on the idempotent replay path: the first approve raised it and this
-       * call raised nothing, so claiming either mode would be a fabrication.
+       * How the money was left. "member": the member chooses on their booking
+       * page — card (with any credit they asked to apply) or a switch to
+       * Internet Banking, which raises the invoice then; nothing was invoiced
+       * by THIS call. "xero" / "manual": the legacy pay-on-account receivable,
+       * invoiced through Xero or handed to admins to invoice by hand, which is
+       * what the approval still does when the Internet Banking or Xero module
+       * is off and the member has no switch to make. "paid": the member's
+       * account credit covered the whole price, so the booking settled at $0.
+       * Null on the idempotent replay path: the first approve did it and this
+       * call did nothing, so claiming any mode would be a fabrication.
        */
-      invoiceMode: "xero" | "manual" | null;
+      invoiceMode: "member" | "paid" | "xero" | "manual" | null;
       /**
        * Existing capacity-holding bookings overlapping the approved booking's
        * nights, computed post-commit. ADMIN-ONLY (ADR-001 decision 6): this
@@ -2157,13 +2168,27 @@ type ApproveMemberWholeLodgeRequestOutcome =
  *   - the booking is created **CONFIRMED**, which is capacity-holding in its own
  *     right (CAPACITY_HOLDING_BOOKING_STATUSES) — no dependence on the PENDING
  *     `originBookingRequest` clause;
- *   - `paymentSource: INTERNET_BANKING` with a PENDING Payment row, so the
- *     finance surfaces see the receivable, and — like every sibling path that
- *     creates one — that receivable is INVOICED post-commit: the Xero invoice
- *     operation plus the #1620 applied-credit allocation when the module is on,
- *     the delivery-locked manual-invoice admin alert when it is off. An unpaid
- *     confirmed booking that nobody was ever asked to invoice is money the club
- *     silently never collects;
+ *   - the MONEY is where the two paths now part (fork, booking-fixes). With
+ *     the Internet Banking AND Xero modules on, the approval leaves the payment
+ *     method to the MEMBER, exactly as an ordinary card booking does: no
+ *     Payment row is minted and nothing is invoiced here. The booking page then
+ *     shows the ordinary Complete Payment card — card payment, with whatever
+ *     account credit the member asked for on the request already applied — and
+ *     the "pay by internet banking instead" switch, which mints the receivable
+ *     and raises the Xero invoice through the one switch route every card
+ *     booking uses (`/api/payments/switch-to-internet-banking`). Credit the
+ *     member asked for is applied inside this transaction, under the member's
+ *     ledger lock, taken AFTER the global and lodge keys (INV-LOCK-002); credit
+ *     that covers the whole price settles the booking PAID at $0 here, as the
+ *     ordinary create path does, because there is no card amount left to mint.
+ *     With either module off there is no switch for the member to make, so the
+ *     approval keeps the LEGACY shape: `paymentSource: INTERNET_BANKING` with a
+ *     PENDING Payment row, so the finance surfaces see the receivable, and —
+ *     like every sibling path that creates one — that receivable is INVOICED
+ *     post-commit: the Xero invoice operation plus the #1620 applied-credit
+ *     allocation when the module is on, the delivery-locked manual-invoice
+ *     admin alert when it is off. An unpaid confirmed booking that nobody was
+ *     ever asked to invoice is money the club silently never collects;
  *   - `hasNonMembers: true`, because the placeholder guests are rated
  *     NON_MEMBER (owner decision OD-A: conservative revenue default; guests
  *     re-rate per-guest through the ordinary booking-modification path as real
@@ -2193,6 +2218,16 @@ export async function approveMemberWholeLodgeRequest(input: {
   // The club's format (#3565), resolved once, before any transaction or
   // lock below — never per amount and never inside a transaction.
   const format = await clubFormatValues();
+  // Whether the member can choose how to pay. The booking page offers the
+  // Internet Banking switch — and the switch route accepts it — only when BOTH
+  // modules are on (`canSwitchToInternetBanking`, booking-detail-payment.ts),
+  // so that is the exact condition under which leaving the method to the
+  // member is honest. Read once, before any lock, like the format above.
+  const [xeroModuleOn, internetBankingModuleOn] = await Promise.all([
+    isEffectiveModuleEnabled("xeroIntegration"),
+    isEffectiveModuleEnabled("internetBankingPayments"),
+  ]);
+  const memberChoosesPaymentMethod = xeroModuleOn && internetBankingModuleOn;
   const initialRequest = await prisma.bookingRequest.findUnique({
     where: { id: input.requestId },
   });
@@ -2394,8 +2429,23 @@ export async function approveMemberWholeLodgeRequest(input: {
     bookingId: string;
     lodgeId: string;
     memberId: string;
-    /** The reference the member must quote on their internet-banking payment. */
-    paymentReference: string;
+    /**
+     * The reference the member must quote on their internet-banking payment.
+     * Null when the member chooses the method on the booking page: no
+     * receivable exists yet, so there is nothing to quote.
+     */
+    paymentReference: string | null;
+    /**
+     * Account credit the member asked for and this approval applied, in cents
+     * (0 when none was asked for, none was held, or the legacy path ran).
+     */
+    appliedCreditCents: number;
+    /**
+     * True when nothing was left to pay at approval — that credit covered the
+     * whole price, or the officer priced the stay at $0 — and the booking is
+     * PAID (member-choice path only).
+     */
+    settledByCredit: boolean;
     /**
      * What the committed booking actually says. On the replay path these are
      * re-read from the row rather than taken from this call's recomputation, so
@@ -2469,11 +2519,12 @@ export async function approveMemberWholeLodgeRequest(input: {
           bookingId: committedConversion.convertedBookingId,
           lodgeId: bookingLodgeId,
           memberId: committedConversion.convertedMemberId,
-          paymentReference:
-            committedBooking?.payment?.reference ??
-            buildInternetBankingPaymentReference(
-              committedConversion.convertedBookingId,
-            ),
+          // Whatever the first approval left: the receivable's reference, or
+          // null where it left the method to the member. Nothing is recomputed
+          // and nothing is sent on a replay, so the value is informational.
+          paymentReference: committedBooking?.payment?.reference ?? null,
+          appliedCreditCents: 0,
+          settledByCredit: false,
           committedPriceCents: committedBooking?.finalPriceCents ?? 0,
           committedGuestCount: committedBooking?._count?.guests ?? 0,
           alreadyConverted: true as const,
@@ -2704,21 +2755,77 @@ export async function approveMemberWholeLodgeRequest(input: {
       // request to another lodge, or change the lodge's setting.
       await reconcileAdultMemberHostingReviewWithSiblings(booking.id, tx);
 
-      // Receivable for the finance surfaces. Pay-on-account via the existing
-      // INTERNET_BANKING source; NO PaymentLink row is created, so no tokenised
-      // payment page exists for this booking. The reference is surfaced to the
-      // member in their confirmation email (post-commit), so it must be captured
-      // here rather than recomputed from an assumption about its shape.
-      const paymentReference = buildInternetBankingPaymentReference(booking.id);
-      await tx.payment.create({
-        data: {
-          bookingId: booking.id,
-          amountCents: totalPriceCents,
-          status: PaymentStatus.PENDING,
-          source: PaymentSource.INTERNET_BANKING,
-          reference: paymentReference,
-        },
-      });
+      let paymentReference: string | null = null;
+      let appliedCreditCents = 0;
+      let settledByCredit = false;
+      if (memberChoosesPaymentMethod) {
+        // The member chooses on the booking page, so NO receivable is minted
+        // here: the Complete Payment card mints the card intent, and the
+        // Internet Banking switch mints the receivable and raises the invoice.
+        // What IS settled here is the credit the member asked for on the
+        // request. Same write as the ordinary create path for a member who
+        // ticked "Apply credit" (`applyCreditToBooking`, booking-create.ts),
+        // under the member's ledger lock, which is the LAST tier: the global
+        // key and the lodge key above were taken first (INV-LOCK-002). The
+        // amount is min(balance, price) because the member elected without
+        // knowing the price; a balance of zero applies nothing and says so in
+        // the audit metadata rather than failing the approval.
+        if (request.applyAccountCredit && totalPriceCents > 0) {
+          await lockMemberCreditLedger(owner.id, tx);
+          const balanceCents = await getMemberCreditBalance(owner.id, tx);
+          appliedCreditCents = Math.max(
+            0,
+            Math.min(balanceCents, totalPriceCents),
+          );
+          if (appliedCreditCents > 0) {
+            await applyCreditToBooking(
+              owner.id,
+              appliedCreditCents,
+              booking.id,
+              tx,
+              format,
+            );
+          }
+        }
+        if (appliedCreditCents === totalPriceCents) {
+          // Nothing left to pay — credit covers the whole price, or the
+          // officer priced the stay at $0 — so there is no card amount to mint
+          // and nothing to invoice. The booking settles here, in the shape the
+          // ordinary create path gives a fully-credit-covered booking (a
+          // SUCCEEDED $0 Payment row and PAID). PAID is capacity-holding, so
+          // the whole-lodge hold is unaffected.
+          await tx.payment.create({
+            data: {
+              bookingId: booking.id,
+              amountCents: 0,
+              creditAppliedCents: appliedCreditCents,
+              status: PaymentStatus.SUCCEEDED,
+            },
+          });
+          await tx.booking.update({
+            where: { id: booking.id },
+            data: { status: BookingStatus.PAID },
+          });
+          settledByCredit = true;
+        }
+      } else {
+        // LEGACY (either module off): receivable for the finance surfaces.
+        // Pay-on-account via the existing INTERNET_BANKING source; NO
+        // PaymentLink row is created, so no tokenised payment page exists for
+        // this booking. The reference is surfaced to the member in their
+        // confirmation email (post-commit), so it must be captured here rather
+        // than recomputed from an assumption about its shape.
+        paymentReference = buildInternetBankingPaymentReference(booking.id);
+        await tx.payment.create({
+          data: {
+            bookingId: booking.id,
+            amountCents: totalPriceCents,
+            status: PaymentStatus.PENDING,
+            source: PaymentSource.INTERNET_BANKING,
+            reference: paymentReference,
+          },
+        });
+      }
 
       await tx.bookingRequest.update({
         where: { id: request.id },
@@ -2740,6 +2847,8 @@ export async function approveMemberWholeLodgeRequest(input: {
         lodgeId: bookingLodgeId,
         memberId: owner.id,
         paymentReference,
+        appliedCreditCents,
+        settledByCredit,
         committedPriceCents: totalPriceCents,
         committedGuestCount: guests.length,
         alreadyConverted: false as const,
@@ -2771,7 +2880,7 @@ export async function approveMemberWholeLodgeRequest(input: {
   // approve never re-emails the member, never re-raises the money-critical
   // invoice, and never re-audits a conversion (#1232).
   let exclusiveHoldConflicts: HoldConflictBooking[] = [];
-  let invoiceMode: "xero" | "manual" | null = null;
+  let invoiceMode: "member" | "paid" | "xero" | "manual" | null = null;
   if (!conversion.alreadyConverted) {
     logAudit({
       action: "booking_request.member_whole_lodge_approved",
@@ -2805,6 +2914,14 @@ export async function approveMemberWholeLodgeRequest(input: {
         checkOut: request.checkOut.toISOString(),
         exclusivityRequested: true,
         wholeLodgeHold: true,
+        // How the money was left (fork, booking-fixes): the member chooses on
+        // the booking page, or the legacy pay-on-account receivable.
+        paymentMethod: memberChoosesPaymentMethod
+          ? "member_choice"
+          : "internet_banking",
+        applyAccountCreditRequested: request.applyAccountCredit,
+        appliedCreditCents: conversion.appliedCreditCents,
+        settledByCredit: conversion.settledByCredit,
       },
     });
 
@@ -2851,11 +2968,19 @@ export async function approveMemberWholeLodgeRequest(input: {
       },
     });
 
-    // Invoice the receivable, exactly as the school path and every other
-    // INTERNET_BANKING creator does. Without this the PENDING Payment row above
-    // is a receivable nobody was ever asked to collect: no Xero invoice, no
-    // admin nudge, and a member who has been told an invoice is coming.
-    if (await isEffectiveModuleEnabled("xeroIntegration")) {
+    if (memberChoosesPaymentMethod) {
+      // Nothing to invoice: there is no receivable. The member's card intent
+      // is minted by the Complete Payment card, and the Internet Banking
+      // switch raises the invoice — plus the #1620 applied-credit allocation
+      // for any credit applied above — through the one switch route every
+      // card booking uses. A fully-credit-covered booking is already PAID.
+      invoiceMode = conversion.settledByCredit ? "paid" : "member";
+    } else if (xeroModuleOn) {
+      // LEGACY: invoice the receivable, exactly as the school path and every
+      // other INTERNET_BANKING creator does. Without this the PENDING Payment
+      // row above is a receivable nobody was ever asked to collect: no Xero
+      // invoice, no admin nudge, and a member who has been told an invoice is
+      // coming.
       invoiceMode = "xero";
       try {
         const queuedInvoice = await enqueueXeroBookingInvoiceOperation(
@@ -2928,7 +3053,11 @@ export async function approveMemberWholeLodgeRequest(input: {
         guestCount: guests.length,
         totalCents: totalPriceCents,
         appliedCreditCents: manualInvoiceCreditCents,
-        paymentReference: conversion.paymentReference,
+        // Always set on this branch (the legacy mint captured it); the
+        // fallback only satisfies the type.
+        paymentReference:
+          conversion.paymentReference ??
+          buildInternetBankingPaymentReference(conversion.bookingId),
       }, format).catch((err) =>
         logger.error(
           { err, bookingId: conversion.bookingId },
@@ -2945,9 +3074,13 @@ export async function approveMemberWholeLodgeRequest(input: {
     //
     // `paymentDue` is what makes it TRUE: this booking is CONFIRMED but nothing
     // has been paid, so the message must not say "Total Paid" or "Payment has
-    // been processed successfully". It states the amount owing and the
-    // internet-banking reference (there is no PaymentLink to send them to), and
-    // it only claims an invoice was emailed when one actually was.
+    // been processed successfully". Where the member chooses the method it
+    // says the amount owing and points at the booking page (`payOnline`); on
+    // the legacy receivable it states the internet-banking reference (there
+    // is no PaymentLink to send them to) and only claims an invoice was emailed
+    // when one actually was. A booking the member's credit settled in full is
+    // PAID, so it gets the ordinary paid confirmation, which reads the applied
+    // credit from the ledger itself (#2328).
     //
     // Sent to the OWNER's live account email, not the request-time snapshot: the
     // booking belongs to a live account whose address may have changed since the
@@ -2973,10 +3106,18 @@ export async function approveMemberWholeLodgeRequest(input: {
       format,
       {
         lodgeId: conversion.lodgeId,
-        paymentDue: {
-          reference: conversion.paymentReference,
-          invoiceEmailed: invoiceMode === "xero",
-        },
+        ...(conversion.settledByCredit
+          ? {}
+          : memberChoosesPaymentMethod
+            ? { paymentDue: { payOnline: true as const } }
+            : {
+                paymentDue: {
+                  reference:
+                    conversion.paymentReference ??
+                    buildInternetBankingPaymentReference(conversion.bookingId),
+                  invoiceEmailed: invoiceMode === "xero",
+                },
+              }),
       },
     ).catch((err) =>
       logger.error(

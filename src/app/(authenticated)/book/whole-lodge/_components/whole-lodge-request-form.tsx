@@ -16,6 +16,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { useClubFormat } from "@/components/club-format-provider";
+import { formatCents } from "@/lib/utils";
 
 type Lodge = { id: string; name: string };
 
@@ -34,7 +36,17 @@ type Lodge = { id: string; name: string };
   around avoiding.
 */
 
-export function WholeLodgeRequestForm() {
+export function WholeLodgeRequestForm({
+  availableCreditCents = 0,
+}: {
+  /**
+   * The member's own account-credit balance, read server-side by the page. It
+   * is the member's OWN figure, not a property of the calendar, so showing it
+   * here keeps the disclosure contract intact. Zero hides the control.
+   */
+  availableCreditCents?: number;
+}) {
+  const format = useClubFormat();
   const [lodges, setLodges] = useState<Lodge[]>([]);
   const [lodgeId, setLodgeId] = useState<string>("");
   const [lodgesLoading, setLodgesLoading] = useState(true);
@@ -44,6 +56,7 @@ export function WholeLodgeRequestForm() {
   const [headcount, setHeadcount] = useState("");
   const [groupDescription, setGroupDescription] = useState("");
   const [notes, setNotes] = useState("");
+  const [applyAccountCredit, setApplyAccountCredit] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sent, setSent] = useState(false);
@@ -105,6 +118,7 @@ export function WholeLodgeRequestForm() {
           groupDescription,
           notes: notes.trim() ? notes : undefined,
           lodgeId,
+          applyAccountCredit: availableCreditCents > 0 && applyAccountCredit,
         }),
       });
       if (!response.ok) {
@@ -275,6 +289,39 @@ export function WholeLodgeRequestForm() {
               booking officer.
             </FieldHint>
           </div>
+
+          {/* The member's credit election, mirroring the "Apply credit to this
+              booking" control on the ordinary review step. The price is not
+              known until the officer prices the approval, so the ask is a
+              yes/no: approval puts up to the balance towards the total, and the
+              member pays the rest by card or internet banking from the booking
+              page. The balance is the member's own figure, read server-side,
+              and says nothing about the calendar. */}
+          {availableCreditCents > 0 && (
+            <div className="rounded-md border border-success/20 bg-success-muted p-4">
+              <p className="mb-2 text-sm text-success">
+                You have{" "}
+                <strong>{formatCents(availableCreditCents, format)}</strong> in
+                account credit
+              </p>
+              <label className="flex cursor-pointer items-center gap-2 text-sm text-success">
+                <input
+                  type="checkbox"
+                  checked={applyAccountCredit}
+                  onChange={(event) =>
+                    setApplyAccountCredit(event.target.checked)
+                  }
+                  className="rounded border-success/40"
+                />
+                Put my account credit towards this booking if it is approved
+              </label>
+              <p className="mt-2 text-xs text-success">
+                If the booking officer approves the request, as much of your
+                credit as the booking costs is applied to it, and you pay any
+                remainder from the booking page.
+              </p>
+            </div>
+          )}
 
           <p className="text-sm text-muted-foreground">
             This is a request, not a booking. Nothing is reserved and nothing is
