@@ -16,8 +16,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useClubFormat } from "@/components/club-format-provider";
-import { formatCents } from "@/lib/utils";
 
 type Lodge = { id: string; name: string };
 
@@ -46,7 +44,6 @@ export function WholeLodgeRequestForm({
    */
   availableCreditCents?: number;
 }) {
-  const format = useClubFormat();
   const [lodges, setLodges] = useState<Lodge[]>([]);
   const [lodgeId, setLodgeId] = useState<string>("");
   const [lodgesLoading, setLodgesLoading] = useState(true);
@@ -295,14 +292,16 @@ export function WholeLodgeRequestForm({
               known until the officer prices the approval, so the ask is a
               yes/no: approval puts up to the balance towards the total, and the
               member pays the rest by card or internet banking from the booking
-              page. The balance is the member's own figure, read server-side,
-              and says nothing about the calendar. */}
+              page. The balance decides only whether the control is offered; the
+              figure itself is NOT printed here. It is the member's own number
+              and says nothing about the calendar, but this page is swept for
+              any "$<digit>" at all (e2e/whole-lodge-request.spec.ts) so that no
+              price can ever creep onto it, and that sweep is worth more than
+              repeating a figure the dashboard already shows. */}
           {availableCreditCents > 0 && (
             <div className="rounded-md border border-success/20 bg-success-muted p-4">
               <p className="mb-2 text-sm text-success">
-                You have{" "}
-                <strong>{formatCents(availableCreditCents, format)}</strong> in
-                account credit
+                You have account credit on your account.
               </p>
               <label className="flex cursor-pointer items-center gap-2 text-sm text-success">
                 <input
