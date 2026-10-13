@@ -140,11 +140,14 @@ own lodge's** entry in the **Other lodges** panel is uploaded to the central
 server and redistributed to every other connected club, where it appears on
 those clubs' pages. That is the lodge's name, location and bed count; its
 **booking officer's name, email and phone**; and the lodge details added
-alongside them — website, how to book, cancellation period, the winter and
-summer season start dates, the nine yes/no facilities (requires a lodge
-custodian, free wifi, quiet room, drying room, shared kitchen, wheelchair
-accessible, breakfast / lunch / dinner included) and the list of amenities with
-their descriptions. The booking-officer email is the committee **role's** shared
+alongside them — the non-member booking page URL, double and single beds, the
+minutes' walk in, room or dormitory, cancellation period, the winter and summer
+season start dates, the eleven yes/no facilities (requires a lodge custodian,
+free wifi, quiet room, drying room, shared kitchen, wheelchair accessible,
+breakfast / lunch / dinner included, ski workshop area, games room), the eight
+**non-member rates** (winter and summer, per person per night, for under 5,
+5–11, 12–17 and 18+), which also appear on the central server's public lodge
+search, and the list of amenities with their descriptions. The booking-officer email is the committee **role's** shared
 address (for example `bookings@yourclub.nz`), never a member's personal one,
 and a member's phone number is shared **only** if your club already publishes it
 on your own committee page. Once the central server is on a release that
@@ -239,8 +242,8 @@ whether they are.** The central server publishes one version number for
 everything it shares — the Other Clubs registry, the message board and the
 push registration — and this site is built for one particular number. The
 setup page shows both, beside the address and the key, under **Server
-software version** ("This site is built for server version 2.1 · Server:
-2.1"): it asks the server once each time you open the page, and again after
+software version** ("This site is built for server version 2.2 · Server:
+2.2"): it asks the server once each time you open the page, and again after
 you save a key or an address. With no API key stored nothing is asked and the
 server's number reads **0**, which is not a mismatch.
 
