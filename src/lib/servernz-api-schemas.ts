@@ -2,11 +2,17 @@ import "server-only";
 import { z } from "zod";
 import {
   amenitiesInputSchema,
-  otherLodgeDataShape,
+  otherLodgeCommonDataShape,
   otherLodgeNameSchema,
   type OtherLodgeAmenity,
+  type OtherLodgeRateField,
   type SerializedOtherLodgeData,
 } from "@/lib/other-lodges";
+import {
+  serverRateWireShape,
+  withRatesFromServer,
+  type ServerRates,
+} from "@/lib/servernz-rate";
 
 /**
  * The Alpine Central Server's WIRE SHAPES, as `servernz-api.ts` validates them
@@ -21,13 +27,16 @@ import {
  * A lodge entry pushed up to the server: every data column (dates as
  * `YYYY-MM-DD`) and the lodge's WHOLE amenity list, which replaces the server's
  * set for that lodge. The server's item schema is `.strict()`, so this must
- * carry exactly the keys it knows — `serializeOtherLodgeData` is the one list.
+ * carry exactly the keys it knows — `serializeOtherLodgeData` is the one list,
+ * except the rates: those leave as the server's dollar keys (`ServerRates`,
+ * from `ratesToServer`), never as this site's `…Cents` columns (#61).
  * `distribute` and provenance are never sent by clients.
  */
-export type OtherLodgeUploadItem = SerializedOtherLodgeData & {
-  name: string;
-  amenities: OtherLodgeAmenity[];
-};
+export type OtherLodgeUploadItem = Omit<SerializedOtherLodgeData, OtherLodgeRateField> &
+  ServerRates & {
+    name: string;
+    amenities: OtherLodgeAmenity[];
+  };
 
 export const uploadResultSchema = z.object({
   created: z.number(),
@@ -51,12 +60,15 @@ export type OtherLodgesUploadResult = z.infer<typeof uploadResultSchema>;
 /**
  * A lodge as the central server sends it, held to the SAME bounds the club's own
  * officer is held to in `PATCH /api/admin/other-lodges/[id]` — literally the same
- * `otherLodgeDataShape` (name 120, location 300, officer name 200, email 320,
+ * `otherLodgeCommonDataShape` (name 120, location 300, officer name 200, email 320,
  * phone 50, bed capacity, double and single beds and minutes' walk each
  * 0..100000, room type `ROOM` or `DORMITORY`, booking page URL 500 and
  * `http(s)` only, cancellation period 200, season starts a real `YYYY-MM-DD`
  * calendar date, at most 50 amenities of name 120 / description 1000 with names
- * unique ignoring case).
+ * unique ignoring case). The rates (#61) are the one difference in FORM, not in
+ * bound: the admin route takes them as integer cents, the server sends dollars,
+ * so they are checked against the same 0..99999.99 here and converted to cents
+ * by `@/lib/servernz-rate` before the row leaves this schema.
  *
  * Matching those bounds is the point. `getPublicOtherLodges()` serves `id + name`
  * on the UNAUTHENTICATED booking-request settings endpoint, which renders on the
@@ -81,14 +93,20 @@ export type OtherLodgesUploadResult = z.infer<typeof uploadResultSchema>;
  * mid-merge, leave the cursor unmoved and re-fail on the same row every pull.
  * Refused here it costs one row, counted in `dropped`, like every other bound.
  */
-export const distributedLodgeSchema = z.object({
-  id: z.string().max(64),
-  name: otherLodgeNameSchema,
-  ...otherLodgeDataShape,
-  /** When present, the lodge's WHOLE amenity set; absent leaves ours alone. */
-  amenities: amenitiesInputSchema.optional(),
-  updatedAt: z.string().max(64),
-});
+export const distributedLodgeSchema = z
+  .object({
+    id: z.string().max(64),
+    name: otherLodgeNameSchema,
+    ...otherLodgeCommonDataShape,
+    // The rates arrive as dollars under the server's names (#61) and leave this
+    // schema as cents under this site's column names: the conversion happens
+    // HERE, at the wire, so nothing downstream ever holds dollars.
+    ...serverRateWireShape,
+    /** When present, the lodge's WHOLE amenity set; absent leaves ours alone. */
+    amenities: amenitiesInputSchema.optional(),
+    updatedAt: z.string().max(64),
+  })
+  .transform(withRatesFromServer);
 
 /** Upper bound on one pull, so a hostile or broken server cannot stream forever. */
 const MAX_LODGES_PER_PULL = 5_000;
