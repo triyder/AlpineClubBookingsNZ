@@ -87,6 +87,17 @@ same **lodge edit** permission as the properties above.
    **always** shown, even while the Member lodge roster module is off, because
    you need to be able to choose how much of a name the roster would show
    before you switch it on. See [Modules](modules.md).
+3. The **Central lodge** card opens `/admin/lodges/[id]/central-lodge`, where you
+   say which lodge in the Alpine Central Server's registry this one is. The
+   central server's public lodge search then asks this site how many beds are
+   free there (one number, never a guest or a booking — see
+   [Connect to the Alpine Central Server](integrations.md#connect-to-the-alpine-central-server)).
+   Only the lodges the central server says your club owns are offered, and one
+   central lodge can be linked to one of your lodges. A club with **one** active
+   lodge that owns **one** central lodge is linked automatically and needs no
+   setting; the card says so. The link is by the central lodge's permanent id,
+   so it survives the lodge being renamed on the central server. It is specific
+   to this site, so it is not part of a configuration export.
 
 ### Deactivate a lodge
 
