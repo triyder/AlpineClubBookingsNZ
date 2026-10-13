@@ -623,7 +623,11 @@ export const AUDIT_CENSUS_TOTALS = {
   // CREATE and DELETE handlers are removed with their `OTHER_LODGE_CREATED`
   // and `OTHER_LODGE_DELETED` writers - a site changes only the lodge the
   // central server says it owns. RE-MEASURED with `npm run audit:census`.
-  writeSites: 497,
+  // 497 -> 498 (#62): `LODGE_CENTRAL_LINK_UPDATED`, written by the new
+  // `/api/admin/lodges/[id]/central-lodge` PUT with the link before and after.
+  // Categorised `admin` at the site and pinned in the lodge-gated keep.
+  // RE-MEASURED with `pnpm run audit:census`.
+  writeSites: 498,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -804,7 +808,8 @@ export const AUDIT_CENSUS_TOTALS = {
     // 137 -> 138 (#3454): the two-factor enrolment / erasure-clear record,
     // awaited on the transaction that changes the second factor.
     // 138 -> 139 (#3792): the refused restored-booking allocation change record.
-    createAuditLog: { total: 139, uncategorised: 0 },
+    // 139 -> 140 (#62): the Central lodge link record.
+    createAuditLog: { total: 140, uncategorised: 0 },
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.
     // Same row, same dedupe keys (`action` + `subjectMemberId` + `outcome`) —
@@ -1134,7 +1139,13 @@ export const AUDIT_CENSUS_TOTALS = {
     // is: installation configuration.
     // 109 -> 107 (#52): `OTHER_LODGE_CREATED` and `OTHER_LODGE_DELETED` are
     // gone with their handlers; `OTHER_LODGE_UPDATED` stays, still `admin`.
-    admin: 107,
+    // 107 -> 108 (#62): `LODGE_CENTRAL_LINK_UPDATED`. A widening of who can
+    // read what by one site, stated rather than counted: `admin` is readable
+    // with `support:view` alone, so the derived weakest-gate total moves by one.
+    // The row carries two central lodge ids and the administrator's id - no
+    // member data - and is `admin` like every writer in the lodge-records
+    // subsystem (INV-PRIV-013).
+    admin: 108,
     // 16 -> 19 (#2581 child 2): `member.password-reset-sent` and
     // `member.setup-invite-sent` (decision 3 — the affected domain is the
     // CREDENTIAL, not the mailing), plus the `member.bulk-set-role` branch
@@ -2615,6 +2626,12 @@ export const LODGE_GATED_ADMIN_CATEGORIES_2765: Readonly<
   // but that writer is in the DISPLAY subsystem, which was #2730's split to
   // close; importing its answer here would open a new split inside this one.
   "src/app/api/admin/lodges/[id]/roster-settings/route.ts::PUT#0": "admin",
+  // The Central lodge link (#62): which lodge in the Alpine Central Server's
+  // registry a local lodge is, written by `/api/admin/lodges/[id]/central-lodge`
+  // PUT, before and after. Classified under INV-PRIV-013's uniformity rule, not
+  // re-decided: a fifth writer in the same lodge-records subsystem, which files
+  // `admin`.
+  "src/app/api/admin/lodges/[id]/central-lodge/route.ts::PUT#0": "admin",
 
   // ─── Work parties (gated `lodge:edit`) ──────────────────────────────────────
   "src/app/api/admin/work-parties/route.ts::POST#0": "admin",
@@ -2697,6 +2714,8 @@ export const LODGE_GATED_ADMIN_ACTIONS_2765: readonly string[] = [
   "LODGE_ACTIVATED",
   "LODGE_DEACTIVATED",
   "LODGE_MEMBER_ROSTER_SETTINGS_UPDATED",
+  // #62: no access-shaped word, so the seven-year retention class (INV-OPS-012).
+  "LODGE_CENTRAL_LINK_UPDATED",
   "workparty.create",
   "workparty.update",
   "workparty.delete",

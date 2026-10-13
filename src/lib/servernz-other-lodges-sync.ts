@@ -230,6 +230,11 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
       "The central server sent an owned-lodge list that failed its bounds; it was ignored and the stored list left as it was",
     );
   }
+  if (pull.ownLodgesRefused) {
+    logger.warn(
+      "The central server sent owned-lodge ids that failed their bounds; they were ignored and the stored ids cleared, so no lodge is answered for until a download carries valid ids",
+    );
+  }
   // Which lodges are OURS for this merge: the list this pull carried, else the
   // stored one; `null` when neither is known. Decides two things per row below.
   const owned = pull.ownLodgeNames ?? settings.otherLodgesOwnedNames;
@@ -362,10 +367,14 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
   // The owned list rides in the same write (#52), and only when the server sent
   // one: `undefined` leaves the stored list alone, so an older server that does
   // not send it cannot clear what a newer one recorded. A name in the list with
-  // no local row is simply absent locally until a download creates it.
+  // no local row is simply absent locally until a download creates it. The
+  // owned IDS (#62) follow the names: names recorded without usable ids (an
+  // older server, or ids refused above) CLEAR the stored ids, so the
+  // availability endpoint never answers on an older list than the names.
   await recordOtherLodgesDownload(
     advancedDownloadCursor(settings.otherLodgesCursor, pull.cursor),
     pull.ownLodgeNames,
+    pull.ownLodges,
   );
   return {
     fetched: pull.count,

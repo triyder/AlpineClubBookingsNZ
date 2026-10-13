@@ -357,8 +357,12 @@ const FIGURES = {
    * and the per-row Delete (three vouched opt-outs) and gains ONE per-row
    * Edit my Lodge, vouched the same way. Net two fewer. MEASURED by re-running
    * this census.
+   *
+   * 370 -> 372 (#62): the Central lodge card's Edit and Save, both
+   * `describeReason={false}` under the card's own section banner. MEASURED by
+   * re-running this census.
    */
-  callSites: 370,
+  callSites: 372,
   /**
    * Those that hand their explanation to a banner, by either rule.
    *
@@ -395,7 +399,8 @@ const FIGURES = {
    * 310 -> 308 (#52): three of the panel's vouched opt-outs go (Add, Edit,
    * Delete) and one arrives (Edit my Lodge).
    */
-  optOuts: 315,
+  // 315 -> 317 (#62): the Central lodge card's two, static opt-outs (below).
+  optOuts: 317,
   /**
    * `describeReason={false}` — needs a banner in the SAME file.
    *
@@ -458,8 +463,11 @@ const FIGURES = {
    *
    * 279 -> 281 (#3416): the school-teacher card's Edit and Save sit in the
    * same file as its section banner.
+   *
+   * 281 -> 283 (#62): the Central lodge card's Edit and Save sit in the same
+   * file as its section banner.
    */
-  staticOptOuts: 281,
+  staticOptOuts: 283,
   /**
    * `describeReason={!ancestorRendersViewOnlyBanner}` — needs a vouch.
    *
@@ -543,8 +551,11 @@ const FIGURES = {
    * 97 -> 98 (#3596): the club currency and locale panel, which #3563 built
    * without one because every visitor was a Full Admin. #3596 gave it a view
    * tier. Mounted in all three of its branches (load failed, loading, loaded).
+   *
+   * 98 -> 99 (#62): the Central lodge card, which keeps its own banner like
+   * the roster card beside it. Mounted in both of its branches.
    */
-  bannerComponents: 98,
+  bannerComponents: 99,
   /**
    * Admin files that render an `AdminViewOnlyNotice` and NO
    * `ViewOnlyActionButton` — the first of the three cases in which the older
