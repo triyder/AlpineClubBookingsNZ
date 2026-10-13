@@ -584,9 +584,9 @@ land.
 manifest moving with it. The numbers this page was written against:
 
 ```
-row-producing sites:  497
+row-producing sites:  498
 uncategorised:        0
-category values: admin 107, booking 107, xero 39, family 35, payment 52,
+category values: admin 108, booking 107, xero 39, family 35, payment 52,
                  lodge 66, account 19, security 25, privacy 21,
                  communication 21, system 4
 ```
@@ -783,6 +783,13 @@ the central server says it owns and never adds to or removes from the shared
 list. `OTHER_LODGE_UPDATED` stays, still `admin` under INV-PRIV-013's rule, so
 the lodge-gated keep shrinks from nineteen pinned sites to seventeen without
 anyone's readership changing.
+
+#62 then added one (`admin` 107 -> 108, 497 -> 498, MEASURED with
+`pnpm run audit:census`): `LODGE_CENTRAL_LINK_UPDATED`, the record that an
+administrator linked a local lodge to its lodge on the Alpine Central Server.
+`admin` under INV-PRIV-013's rule, like every writer in the lodge-records
+subsystem, so the lodge-gated keep grows from seventeen pinned sites to
+eighteen; the row names two central lodge ids and the administrator, no member.
 
 #3498 then added one more (`payment` 45 -> 46, 483 -> 484, MEASURED with
 `npm run audit:census` on that branch rather than added to the literal):

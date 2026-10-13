@@ -647,7 +647,15 @@ const CENSUS_CEILING = {
    */
   // #3413: booking-request-pending-adult-reservations uses only zone-free
   // lodge-night helpers. Re-measured by this suite on the composed branch.
-  dateOnlyImporters: 229,
+  // 229 -> 231 (#62): two importers, both the zone-free direction.
+  // `central-availability.ts` lists a stay's date-only lodge nights
+  // (`eachDateOnlyInRange`) and keys the member calendar's map by them
+  // (`formatDateOnly`); the availability route validates and parses the posted
+  // `yyyy-MM-dd` strings (`isDateOnlyString`, `parseDateOnly`) and bounds the
+  // stay (`addDaysDateOnly`). Neither takes a `timeZone`; the club's today comes
+  // from `club-time` (`clubTodayDateOnlyInstant`), not this adapter.
+  // Re-measured by RUNNING this suite on this tree.
+  dateOnlyImporters: 231,
   /**
    * `new Date(y, m, d)` — local midnight in the HOST's zone.
    *
