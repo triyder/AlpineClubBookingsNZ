@@ -1,13 +1,11 @@
 import "server-only";
+import { Prisma } from "@prisma/client";
+import { ownedNamesAsLocal, usableCentralId } from "@/lib/other-lodge-central-id";
 import {
   OTHER_LODGE_DATA_SELECT,
   omitRateFields,
-  otherLodgeAmenitiesDiffer,
   otherLodgeAmenitiesSelect,
-  otherLodgeDataColumns,
-  otherLodgeDataDiffers,
   ownsOtherLodge,
-  replaceOtherLodgeAmenities,
   serializeOtherLodgeAmenities,
   serializeOtherLodgeData,
 } from "@/lib/other-lodges";
@@ -18,13 +16,22 @@ import {
   pullOtherLodges,
   type OtherLodgesUploadResult,
 } from "@/lib/servernz-api";
+import {
+  localNamesByCentralId,
+  mergeDistributedLodge,
+  type MergeOutcome,
+  type NameConflict,
+} from "@/lib/servernz-other-lodges-merge";
+import { readServerNzApiKeyStamp } from "@/lib/servernz-config";
 import { ratesToServer } from "@/lib/servernz-rate";
 import {
   advancedDownloadCursor,
   overlappedRequestCursor,
 } from "@/lib/servernz-cursor-overlap";
 import {
+  SERVERNZ_SETTINGS_ID,
   loadServerNzSettings,
+  lockServerNzSettings,
   recordOtherLodgesUpload,
   recordOtherLodgesDownload,
 } from "@/lib/servernz-settings";
@@ -33,7 +40,8 @@ import {
  * Sync the local "Other lodges" registry (the club's Other Clubs details) with
  * the Alpine Central Server. Upload pushes this club's entries up; download
  * pulls the centrally-distributed set down and merges it into the local
- * registry, keyed by the unique lodge name.
+ * registry, keyed by the central server's permanent lodge id once known and by
+ * the unique lodge name before that (#64, `@/lib/servernz-other-lodges-merge`).
  */
 
 export interface UploadSummary extends OtherLodgesUploadResult {
@@ -89,7 +97,7 @@ export async function uploadOtherClubsToServer(): Promise<UploadSummary> {
 
   const changed = await prisma.otherLodge.findMany({
     where: since ? { updatedAt: { gt: since } } : {},
-    select: { name: true, updatedAt: true, ...LODGE_DATA_SELECT },
+    select: { name: true, centralId: true, updatedAt: true, ...LODGE_DATA_SELECT },
     orderBy: { name: "asc" },
   });
   const lodges =
@@ -110,6 +118,9 @@ export async function uploadOtherClubsToServer(): Promise<UploadSummary> {
       const data = serializeOtherLodgeData(l);
       const commonData = omitRateFields(data);
       return {
+        // The central id, once known (#64, API 2.3): the server matches the
+        // item by it, so a name changed here renames the lodge there.
+        ...(l.centralId ? { id: l.centralId } : {}),
         name: l.name,
         ...commonData,
         ...ratesToServer(data),
@@ -181,6 +192,15 @@ export interface DownloadSummary {
    * that read and the guarded write.
    */
   keptLocal: number;
+  /** Of `updated`, rows renamed in place to the server's new name (#64). */
+  renamed: number;
+  /**
+   * Lodges renamed on the server whose new name another local lodge holds
+   * (#64): `lodge` is the local name — everything else was applied and the old
+   * name kept — or `null` for a lodge new here, which was not added. `wanted`
+   * is the server's name.
+   */
+  nameConflicts: NameConflict[];
   /** Rows the server sent that failed validation and were discarded. */
   dropped: number;
 }
@@ -193,36 +213,33 @@ export interface DownloadSummary {
  * `@/lib/servernz-cursor-overlap`) — and a fetched row is only written when
  * its data — any data column, or its amenity list — actually differs from the
  * local copy, so an unchanged row keeps its `updatedAt` and is never needlessly
- * re-uploaded. Keyed by unique lodge name. A field the server did not send is
- * left alone rather than cleared. A lodge's amenity set is replaced whole, in
- * one transaction with the lodge row, after the pull has finished.
+ * re-uploaded. A field the server did not send is left alone rather than
+ * cleared. A lodge's amenity set is replaced whole, in one transaction with the
+ * lodge row, after the pull has finished.
  *
- * TWO rules keep `updatedAt` honest as a sync signal, because the upload
- * watermark is derived from it:
- *
- *  1. A server-sourced write carries the SERVER's `updatedAt`, not `now()`.
- *     Prisma's `@updatedAt` would otherwise stamp the moment we wrote it, which
- *     re-presents a row we merely received as a local edit — and the next
- *     upload dutifully sends it back. (The server reports identical content as
- *     `unchanged`, so that echo settles after one redundant round trip rather
- *     than running forever; it is still a lie about when the row last changed,
- *     and the watermark is built on that field.)
- *
- *  2. A remote row OLDER than the local copy is not applied. Upload runs before
- *     download in the same pass, so an admin editing a row in between would
- *     otherwise have their edit overwritten by the copy the server was already
- *     holding — and, with rule 1, the stale value would then look authoritative.
- *     Newest-timestamp-wins keeps the club's own fresh edit and lets the next
- *     upload carry it.
+ * Each lodge is merged by `mergeDistributedLodge` (`@/lib/servernz-other-lodges-merge`):
+ * which row it is (central id, else name), the rename rules (#64), and the two
+ * rules that keep `updatedAt` honest as the upload watermark's signal.
  */
 export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
   const settings = await loadServerNzSettings();
+  // The connection this download is for (#64): checked again under the lock
+  // before anything is recorded.
+  const connection = await readServerNzApiKeyStamp();
   // Ask from one overlap BEFORE the stored cursor, where the stored cursor is
   // an instant — see `@/lib/servernz-cursor-overlap` for why the repeat is deliberate,
   // why removing it re-opens a permanent skip, and what an opaque cursor means.
   // The stored cursor itself is untouched here.
+  //
+  // Until a whole-registry download has merged to the end (#64: a site just
+  // upgraded, a new connection, or a keying download that failed part-way),
+  // every download asks for the WHOLE registry instead, so every row is
+  // matched by name once and keyed — not only the lodges that happen to change.
+  const wholeRegistry = settings.otherLodgesKeyedAt === null;
   const pull = await pullOtherLodges(
-    overlappedRequestCursor(settings.otherLodgesCursor, OVERLAP_SYNC_LABEL),
+    wholeRegistry
+      ? null
+      : overlappedRequestCursor(settings.otherLodgesCursor, OVERLAP_SYNC_LABEL),
   );
 
   if (pull.ownLodgeNamesRefused) {
@@ -243,117 +260,64 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
   let updated = 0;
   let unchanged = 0;
   let keptLocal = 0;
-  // The pull has COMPLETED before this loop starts, so no transaction below is
-  // ever held open across the central server's HTTP call.
-  for (const lodge of pull.lodges) {
-    const existing = await prisma.otherLodge.findUnique({
-      where: { name: lodge.name },
-      select: { id: true, updatedAt: true, ...LODGE_DATA_SELECT },
-    });
-    // Only the fields the server SENT: a field it omitted is absent here, so a
-    // server that does not yet carry it leaves the local value alone.
-    const data = otherLodgeDataColumns(lodge);
-    // Another club's lodge, once the owned list is known. Its booking officer's
-    // PHONE is never stored here (#52): a current server does not send it, and
-    // one that still does is overridden to null so the number does not land in
-    // this club's database — the one deliberate exception to "a field the
-    // server did not send is left alone", because what it would leave alone is
-    // a number an earlier download stored. The row is written only when
-    // something differs, so a row already at null is not touched for this.
-    const theirs = owned !== null && !ownsOtherLodge(owned, lodge.name);
-    if (theirs) data.bookingOfficerPhone = null;
-    // `undefined` when the server sent no amenity list at all — also "leave
-    // ours alone", never "the lodge has none".
-    const amenities = lodge.amenities;
-
-    // The server's own timestamp for this row. An unparseable value falls back to
-    // `null`, which means "let Prisma stamp it" — worse than the server's answer
-    // but better than refusing the row.
-    const remoteUpdatedAt = Number.isNaN(Date.parse(lodge.updatedAt))
-      ? null
-      : new Date(lodge.updatedAt);
-    const stamp = remoteUpdatedAt ? { updatedAt: remoteUpdatedAt } : {};
-
-    if (!existing) {
-      // Upsert, not create: `name` is unique and this read-then-write is not
-      // atomic, so a concurrent writer (an admin pressing Download while the
-      // 03:00 cron runs, or the two directions of a manual double-click) can
-      // insert the same name in the gap and turn a plain create into a P2002
-      // that aborts the whole merge part-way — after some rows were written and
-      // before the cursor advanced, so the next run re-fetches from the old
-      // cursor. The upsert lets the loser of that race fall through to the same
-      // update it would have made, and stays correct when it wins. The amenity
-      // replacement rides in the same transaction and is keyed on the unique
-      // (lodge, name), so the loser converges on the same set too.
-      await prisma.$transaction(async (tx) => {
-        const row = await tx.otherLodge.upsert({
-          where: { name: lodge.name },
-          create: { name: lodge.name, ...data, ...stamp },
-          update: { ...data, ...stamp },
-          select: { id: true },
-        });
-        if (amenities) await replaceOtherLodgeAmenities(tx, row.id, amenities);
-      });
-      created++;
-      continue;
-    }
-
-    // Amenities are part of "differs": a lodge whose only change is its amenity
-    // list is still a changed lodge, and still carries the server's timestamp.
-    const amenitiesChanged =
-      amenities !== undefined &&
-      otherLodgeAmenitiesDiffer(existing.amenities, amenities);
-    if (!otherLodgeDataDiffers(data, existing) && !amenitiesChanged) {
-      unchanged++;
-      continue;
-    }
-
-    // Rule 2: a local edit made after the server's copy wins and is left to the
-    // next upload. Equal timestamps apply the remote, so a server correction
-    // issued in the same instant is not silently dropped. ONLY for a lodge this
-    // club may edit (#52): another club's lodge has no local edit to protect —
-    // nothing here can write one, and the next upload would not carry it — so
-    // the server's copy is authoritative whatever the local timestamp says
-    // (a stale server-stamped row, or a pre-#52 local edit). The guarded
-    // `updateMany` below still applies: it is what makes the write safe against
-    // a concurrent download of the same row, not a rule about who wins.
-    if (!theirs && remoteUpdatedAt && existing.updatedAt > remoteUpdatedAt) {
-      keptLocal++;
-      continue;
-    }
-
-    // One transaction for the lodge row and its amenities, so they change
-    // together or not at all. The lodge row is ALWAYS written, even when only
-    // the amenities changed: that write is what carries the server's
-    // `updatedAt` onto the row (rule 1) — an amenity-only change that left the
-    // row's timestamp alone would be re-presented as a local edit and echoed
-    // back on the next upload.
-    //
-    // The row write is GUARDED on the `updatedAt` we read above, and it comes
-    // FIRST. Rule 2 was decided on a read taken outside this transaction; an
-    // admin can save an edit between that read and this write, and an unguarded
-    // update would overwrite it and then stamp the row with the server's OLDER
-    // timestamp — below the upload watermark, so the admin's edit would never be
-    // sent. A guarded `updateMany` matches only the row as we read it: a miss is
-    // the local edit winning after all (keptLocal, nothing written, amenities
-    // untouched), exactly as if rule 2 had seen it. The same write also takes the
-    // row's lock for the rest of the transaction, so a concurrent amenity
-    // replacement on this lodge queues behind it rather than interleaving.
-    const applied = await prisma.$transaction(async (tx) => {
-      const claimed = await tx.otherLodge.updateMany({
-        where: { id: existing.id, updatedAt: existing.updatedAt },
-        // Rule 1: carry the server's timestamp rather than letting `@updatedAt`
-        // stamp now(), so this row is not re-uploaded as though we had edited it.
-        data: { ...data, ...stamp },
-      });
-      if (claimed.count !== 1) return false;
-      if (amenitiesChanged && amenities) {
-        await replaceOtherLodgeAmenities(tx, existing.id, amenities);
-      }
-      return true;
-    });
-    if (applied) updated++;
+  let renamed = 0;
+  const nameConflicts: NameConflict[] = [];
+  // Whether every local row this download touched ended keyed: the marker is
+  // set only then. A dropped row or a pulled lodge with no usable id could
+  // leave a row the server DOES list unkeyed, and so wrongly marked "not
+  // found". A name conflict does not block it: a renamed row is already keyed,
+  // and a refused new lodge has no local row to mark.
+  let everyLodgeKeyed =
+    pull.dropped === 0 && pull.lodges.every((l) => usableCentralId(l.id) !== null);
+  const count = (outcome: Exclude<MergeOutcome, { kind: "deferred" }>) => {
+    if (outcome.nameConflict) nameConflicts.push(outcome.nameConflict);
+    if (outcome.kind === "conflict") return;
+    if (outcome.notKeyed) everyLodgeKeyed = false;
+    if (outcome.kind === "created") created++;
+    else if (outcome.kind === "updated") updated++;
+    else if (outcome.kind === "unchanged") unchanged++;
     else keptLocal++;
+    if (outcome.renamed) renamed++;
+  };
+  // The pull has COMPLETED before this loop starts, so no transaction below is
+  // ever held open across the central server's HTTP call. A lodge whose name
+  // is held here by another row is DEFERRED (#64). The deferred lodges are
+  // retried for as long as a pass settles at least one of them — which settles
+  // a chain of renames of any length, whatever order the pull sent them in —
+  // and then once more as the FINAL pass, which reports what still collides
+  // rather than losing it silently.
+  // A whole download names every id the server has, which is what lets the
+  // merge tell a stale id (another server's, or a deleted lodge's) from a
+  // different lodge holding a name — but only when the pull dropped nothing: a
+  // dropped row's id is the server's yet absent here, and its local row must
+  // not be taken over by another lodge with its old name.
+  const knownIds =
+    wholeRegistry && pull.dropped === 0
+      ? new Set(pull.lodges.flatMap((l) => usableCentralId(l.id) ?? []))
+      : null;
+  let pending = pull.lodges;
+  for (;;) {
+    const next: typeof pull.lodges = [];
+    for (const lodge of pending) {
+      const outcome = await mergeDistributedLodge(lodge, owned, false, knownIds);
+      if (outcome.kind === "deferred") next.push(lodge);
+      else count(outcome);
+    }
+    if (next.length === 0 || next.length === pending.length) {
+      pending = next;
+      break;
+    }
+    pending = next;
+  }
+  for (const lodge of pending) {
+    const outcome = await mergeDistributedLodge(lodge, owned, true, knownIds);
+    if (outcome.kind !== "deferred") count(outcome);
+  }
+  if (nameConflicts.length > 0) {
+    logger.warn(
+      { lodges: nameConflicts },
+      "Lodges renamed on the central server could not take their new name here: another local lodge holds it",
+    );
   }
 
   // The durable watermark is the SERVER's returned cursor, never the overlapped
@@ -371,17 +335,91 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
   // owned IDS (#62) follow the names: names recorded without usable ids (an
   // older server, or ids refused above) CLEAR the stored ids, so the
   // availability endpoint never answers on an older list than the names.
-  await recordOtherLodgesDownload(
-    advancedDownloadCursor(settings.otherLodgesCursor, pull.cursor),
-    pull.ownLodgeNames,
-    pull.ownLodges,
-  );
+  //
+  // The NAMES are stored as this site names them (#64): a lodge renamed here
+  // keeps its local name until the server accepts the rename, and every "may
+  // this lodge be changed here?" check reads the list by local name. Each owned
+  // id — this pull's, else the stored ones when this pull's were refused — is
+  // mapped to its local row's name, read under the settings row's lock, which an
+  // admin's rename also takes: neither can write back a list computed before the
+  // other committed.
+  //
+  // A whole-registry download that got this far, with no row dropped by the
+  // pull's bounds and none left unkeyed, keyed the registry: the marker is set
+  // and later downloads are incremental again. Otherwise the next download is
+  // a whole one again.
+  //
+  // Under the lock the CONNECTION is read again — the server address and the
+  // API key's stamp: a download that started before an administrator pointed
+  // this site at a different server or replaced its key (which forgets the
+  // connection's answers, the marker included) records NOTHING, so it cannot
+  // write the old connection's cursor, owned list or marker back.
+  //
+  // A clean whole download also FORGETS every central id the server no longer
+  // lists (another server's after an address change, or a lodge deleted
+  // there), so such a row uploads by name again and is marked "not found".
+  // Raw, so `updatedAt` stays put: a forgotten id is not an edit.
+  const recorded = await prisma.$transaction(async (tx) => {
+    await lockServerNzSettings(tx);
+    const current = await tx.serverNzSettings.findUnique({
+      where: { id: SERVERNZ_SETTINGS_ID },
+      select: { baseUrl: true, otherLodgesCursor: true, otherLodgesKeyedAt: true },
+    });
+    if ((current?.baseUrl ?? null) !== settings.baseUrl) return false;
+    if ((await readServerNzApiKeyStamp(tx)) !== connection) return false;
+    // Another download recorded since this one started (the button and the
+    // nightly pass can overlap until #66): its answer is newer, so this one
+    // records nothing rather than write an older cursor back or forget ids
+    // that download has just keyed.
+    if (
+      (current?.otherLodgesCursor ?? null) !== settings.otherLodgesCursor ||
+      (current?.otherLodgesKeyedAt?.toISOString() ?? null) !== settings.otherLodgesKeyedAt
+    ) {
+      return false;
+    }
+    const keyed = wholeRegistry && everyLodgeKeyed;
+    if (keyed && knownIds !== null) {
+      // One bound parameter per id (`Prisma.join`), as the rest of the code
+      // base binds lists; an empty registry lists none, so every id goes.
+      await tx.$executeRaw(
+        knownIds.size === 0
+          ? Prisma.sql`UPDATE "OtherLodge" SET "centralId" = NULL WHERE "centralId" IS NOT NULL`
+          : Prisma.sql`UPDATE "OtherLodge" SET "centralId" = NULL WHERE "centralId" IS NOT NULL AND "centralId" NOT IN (${Prisma.join([...knownIds])})`,
+      );
+    }
+    const ownedIds = pull.ownLodges ?? settings.otherLodgesOwnedLodges ?? [];
+    const ownLodgeNames =
+      pull.ownLodgeNames === undefined
+        ? undefined
+        : ownedNamesAsLocal(
+            pull.ownLodgeNames,
+            ownedIds,
+            await localNamesByCentralId(
+              ownedIds.map((l) => l.id),
+              tx,
+            ),
+          );
+    await recordOtherLodgesDownload(
+      advancedDownloadCursor(settings.otherLodgesCursor, pull.cursor),
+      ownLodgeNames,
+      pull.ownLodges,
+      { keyed, db: tx },
+    );
+    return true;
+  });
+  if (!recorded) {
+    logger.warn(
+      "The Alpine Central Server connection changed, or another Other lodges download recorded first, while this one ran; nothing from it was recorded",
+    );
+  }
   return {
     fetched: pull.count,
     created,
     updated,
     unchanged,
     keptLocal,
+    renamed,
+    nameConflicts,
     dropped: pull.dropped,
   };
 }

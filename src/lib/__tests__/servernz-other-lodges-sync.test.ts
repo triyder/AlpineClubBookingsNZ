@@ -1,9 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { Prisma } from "@prisma/client";
 
 // ── Mocks ──────────────────────────────────────────────────────────────────
 
 const mockFindMany = vi.fn();
 const mockFindUnique = vi.fn();
+const mockExecuteRaw = vi.fn();
+const mockSettingsRow = vi.fn();
 const mockUpsert = vi.fn();
 const mockUpdateMany = vi.fn();
 const mockAmenityDeleteMany = vi.fn();
@@ -24,6 +27,9 @@ vi.mock("@/lib/prisma", () => {
       upsert: (...args: unknown[]) => mockAmenityUpsert(...args),
     },
     $transaction: (fn: (tx: unknown) => Promise<unknown>) => fn(prisma),
+    $executeRaw: (...args: unknown[]) => mockExecuteRaw(...args),
+    // The record step re-reads the address under the settings lock (#64).
+    serverNzSettings: { findUnique: (...args: unknown[]) => mockSettingsRow(...args) },
   };
   return { prisma };
 });
@@ -34,6 +40,11 @@ const mockPullOtherLodges = vi.fn();
 vi.mock("@/lib/servernz-api", () => ({
   uploadOtherLodges: (...args: unknown[]) => mockUploadOtherLodges(...args),
   pullOtherLodges: (...args: unknown[]) => mockPullOtherLodges(...args),
+}));
+
+const mockKeyStamp = vi.fn();
+vi.mock("@/lib/servernz-config", () => ({
+  readServerNzApiKeyStamp: (...args: unknown[]) => mockKeyStamp(...args),
 }));
 
 const mockLoggerWarn = vi.fn();
@@ -50,11 +61,25 @@ vi.mock("@/lib/logger", () => ({
 const mockLoadSettings = vi.fn();
 const mockRecordUpload = vi.fn();
 const mockRecordDownload = vi.fn();
+// The record step's options (#64: the keyed marker and the transaction client)
+// land here, so the cursor-and-owned-list assertions above them stay exact.
+const mockRecordOptions = vi.fn();
+const mockLockSettings = vi.fn();
 
 vi.mock("@/lib/servernz-settings", () => ({
+  SERVERNZ_SETTINGS_ID: "default",
   loadServerNzSettings: (...args: unknown[]) => mockLoadSettings(...args),
   recordOtherLodgesUpload: (...args: unknown[]) => mockRecordUpload(...args),
-  recordOtherLodgesDownload: (...args: unknown[]) => mockRecordDownload(...args),
+  recordOtherLodgesDownload: (
+    cursor: unknown,
+    names: unknown,
+    lodges: unknown,
+    options: unknown,
+  ) => {
+    mockRecordOptions(options);
+    return mockRecordDownload(cursor, names, lodges);
+  },
+  lockServerNzSettings: (...args: unknown[]) => mockLockSettings(...args),
 }));
 
 import {
@@ -74,6 +99,9 @@ const SETTINGS = {
   otherLodgesOwnedNames: null as string[] | null,
   otherLodgesOwnedNamesAt: null as string | null,
   otherLodgesOwnedNamesUnreadable: false,
+  otherLodgesOwnedLodges: null as Array<{ id: string; name: string }> | null,
+  // Keyed already (#64), so downloads are incremental unless a test says not.
+  otherLodgesKeyedAt: "2026-08-01T00:00:00.000Z" as string | null,
 };
 
 /** A row as the central server sends it. */
@@ -176,7 +204,24 @@ function remoteLodge(name: string, over: Record<string, unknown> = {}) {
 beforeEach(() => {
   vi.clearAllMocks();
   mockLoadSettings.mockResolvedValue({ ...SETTINGS });
-  mockUpsert.mockResolvedValue({ id: "ol_new" });
+  // The create arm: the row comes back keyed by whatever id it was created with.
+  mockUpsert.mockImplementation(async (args: { create: { centralId?: string | null } }) => ({
+    id: "ol_new",
+    centralId: args.create.centralId ?? null,
+  }));
+  mockLockSettings.mockResolvedValue(undefined);
+  // Under the lock, the row reads back as this download loaded it, unless a
+  // test says another writer got there first.
+  mockSettingsRow.mockImplementation(async () => {
+    const loaded = await mockLoadSettings();
+    return {
+      baseUrl: loaded.baseUrl,
+      otherLodgesCursor: loaded.otherLodgesCursor,
+      otherLodgesKeyedAt: loaded.otherLodgesKeyedAt ? new Date(loaded.otherLodgesKeyedAt) : null,
+    };
+  });
+  mockKeyStamp.mockResolvedValue("2026-10-01T00:00:00.000Z");
+  mockExecuteRaw.mockResolvedValue(0);
   mockUpdateMany.mockResolvedValue({ count: 1 });
   mockAmenityDeleteMany.mockResolvedValue({ count: 0 });
   mockAmenityUpsert.mockResolvedValue({});
@@ -250,6 +295,8 @@ describe("downloadOtherClubsFromServer", () => {
       updated: 0,
       unchanged: 0,
       keptLocal: 0,
+      renamed: 0,
+      nameConflicts: [],
       dropped: 0,
     });
   });
@@ -1353,5 +1400,516 @@ describe("own lodges only: the review fixes (#52)", () => {
 
     expect(mockLoggerWarn).toHaveBeenCalledWith(expect.stringMatching(/failed its bounds/i));
     expect(mockRecordDownload).toHaveBeenCalledWith("c-608", undefined, undefined);
+  });
+});
+
+// ── Central id (#64) ───────────────────────────────────────────────────────
+
+describe("download keyed by the central server's lodge id (#64)", () => {
+  type Row = Omit<ReturnType<typeof localCopyOf>, "bookingOfficerPhone"> & {
+    bookingOfficerPhone: string | null;
+    name: string;
+    centralId: string | null;
+  };
+
+  /**
+   * A tiny registry the merge reads and writes through the mocks, so renames,
+   * chains and collisions behave as the unique indexes make them behave.
+   */
+  function registry(initial: Row[]) {
+    const rows = initial.map((r) => ({ ...r }));
+    const unique = () =>
+      new Prisma.PrismaClientKnownRequestError("Unique constraint failed", {
+        code: "P2002",
+        clientVersion: "test",
+      });
+    mockFindUnique.mockImplementation(async ({ where }: { where: Record<string, string> }) => {
+      const found = rows.find((r) =>
+        where.centralId !== undefined ? r.centralId === where.centralId : r.name === where.name,
+      );
+      return found ? { ...found } : null;
+    });
+    mockUpdateMany.mockImplementation(
+      async ({ where, data }: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
+        const target = rows.find(
+          (r) =>
+            r.id === where.id &&
+            (where.updatedAt === undefined ||
+              r.updatedAt.getTime() === (where.updatedAt as Date).getTime()) &&
+            (where.centralId === undefined || r.centralId === where.centralId),
+        );
+        if (!target) return { count: 0 };
+        if (typeof data.name === "string" && rows.some((r) => r !== target && r.name === data.name)) {
+          throw unique();
+        }
+        Object.assign(target, data);
+        return { count: 1 };
+      },
+    );
+    mockFindMany.mockImplementation(async ({ where }: { where?: { centralId?: { in: string[] } } }) =>
+      rows.filter((r) => r.centralId !== null && (where?.centralId?.in ?? []).includes(r.centralId)),
+    );
+    return rows;
+  }
+
+  const row = (id: string, name: string, centralId: string | null): Row => ({
+    ...localCopyOf(id, "2026-08-01T00:00:00.000Z"),
+    name,
+    centralId,
+  });
+
+  function pull(lodges: unknown[], over: Record<string, unknown> = {}) {
+    mockPullOtherLodges.mockResolvedValue({
+      lodges,
+      count: lodges.length,
+      cursor: "c-640",
+      dropped: 0,
+      ownLodgeNames: ["Our Lodge"],
+      ownLodges: [{ id: "c-ours", name: "Our Lodge" }],
+      ...over,
+    });
+  }
+
+  it("renames another club's lodge IN PLACE when the server renamed it, keeping the row", async () => {
+    const rows = registry([row("ol_1", "Old Name", "c-1")]);
+    pull([remoteLodge("New Name", { id: "c-1" })]);
+
+    const result = await downloadOtherClubsFromServer();
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ id: "ol_1", name: "New Name", centralId: "c-1" });
+    expect(mockUpsert).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ updated: 1, renamed: 1, created: 0, nameConflicts: [] });
+  });
+
+  it("never renames THIS club's own lodge from a download", async () => {
+    const rows = registry([row("ol_9", "Our New Name", "c-ours")]);
+    pull([remoteLodge("Our Lodge", { id: "c-ours", bedCapacity: 30 })]);
+
+    await downloadOtherClubsFromServer();
+
+    expect(rows[0]).toMatchObject({ name: "Our New Name", bedCapacity: 30 });
+  });
+
+  it("stores the owned list under this site's names, mapped by id after the merge", async () => {
+    registry([row("ol_9", "Our New Name", "c-ours")]);
+    pull([]);
+
+    await downloadOtherClubsFromServer();
+
+    expect(mockRecordDownload).toHaveBeenCalledWith(
+      "c-640",
+      ["Our New Name"],
+      [{ id: "c-ours", name: "Our Lodge" }],
+    );
+  });
+
+  it("keys a row matched by name once (the backfill), without moving its updatedAt", async () => {
+    // Another club's lodge, so its phone is never stored: none here either.
+    const rows = registry([{ ...row("ol_1", "Aorangi Ski Club", null), bookingOfficerPhone: null }]);
+    pull([remoteLodge("Aorangi Ski Club", { id: "c-1" })]);
+
+    const result = await downloadOtherClubsFromServer();
+
+    expect(rows[0].centralId).toBe("c-1");
+    expect(rows[0].updatedAt).toEqual(new Date("2026-08-01T00:00:00.000Z"));
+    // Identical data otherwise: keyed, and still counted unchanged.
+    expect(result).toMatchObject({ unchanged: 1, updated: 0 });
+  });
+
+  it("keys our own row even when a newer local edit keeps its data", async () => {
+    const rows = registry([
+      {
+        ...row("ol_9", "Our Lodge", null),
+        updatedAt: new Date("2026-09-01T00:00:00.000Z"),
+        bedCapacity: 2,
+      },
+    ]);
+    pull([remoteLodge("Our Lodge", { id: "c-ours" })]);
+
+    const result = await downloadOtherClubsFromServer();
+
+    expect(rows[0]).toMatchObject({ centralId: "c-ours", bedCapacity: 2 });
+    expect(result.keptLocal).toBe(1);
+  });
+
+  it("settles a chain of renames in one pull (A becomes B while B becomes C)", async () => {
+    const rows = registry([row("ol_a", "Alpha", "c-a"), row("ol_b", "Beta", "c-b")]);
+    pull([remoteLodge("Beta", { id: "c-a" }), remoteLodge("Gamma", { id: "c-b" })]);
+
+    const result = await downloadOtherClubsFromServer();
+
+    expect(rows.map((r) => [r.id, r.name])).toEqual([
+      ["ol_a", "Beta"],
+      ["ol_b", "Gamma"],
+    ]);
+    expect(result).toMatchObject({ renamed: 2, nameConflicts: [] });
+  });
+
+  it("applies everything but the name when the new name is still held, and reports it", async () => {
+    // A stale local row (no central id) still holds the name.
+    const rows = registry([row("ol_1", "Old Name", "c-1"), row("ol_x", "New Name", null)]);
+    pull([remoteLodge("New Name", { id: "c-1", bedCapacity: 40 })]);
+
+    const result = await downloadOtherClubsFromServer();
+
+    expect(rows[0]).toMatchObject({ name: "Old Name", bedCapacity: 40 });
+    expect(result).toMatchObject({ updated: 1, renamed: 0, nameConflicts: [{ lodge: "Old Name", wanted: "New Name" }] });
+    expect(mockLoggerWarn).toHaveBeenCalledWith(
+      { lodges: [{ lodge: "Old Name", wanted: "New Name" }] },
+      expect.stringMatching(/could not take their new name/i),
+    );
+  });
+
+  it("does not weld a NEW lodge onto a row another central lodge holds by name", async () => {
+    const rows = registry([row("ol_1", "Shared Name", "c-1")]);
+    pull([remoteLodge("Shared Name", { id: "c-2" })]);
+
+    const result = await downloadOtherClubsFromServer();
+
+    expect(mockUpsert).not.toHaveBeenCalled();
+    expect(rows).toEqual([expect.objectContaining({ id: "ol_1", centralId: "c-1" })]);
+    expect(result).toMatchObject({ created: 0, updated: 0, nameConflicts: [{ lodge: null, wanted: "Shared Name" }] });
+  });
+
+  it("reports a rename that loses a race for the name (P2002) instead of failing the pull", async () => {
+    const rows = registry([row("ol_1", "Old Name", "c-1")]);
+    const realUpdate = mockUpdateMany.getMockImplementation()!;
+    mockUpdateMany.mockImplementation(async (args: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
+      const name = args.data.name;
+      if (typeof name === "string" && !rows.some((r) => r.name === name)) {
+        rows.push(row("ol_late", name, null)); // another writer got there first
+      }
+      return realUpdate(args);
+    });
+    pull([remoteLodge("New Name", { id: "c-1" })]);
+
+    const result = await downloadOtherClubsFromServer();
+
+    expect(result.nameConflicts).toEqual([{ lodge: "Old Name", wanted: "New Name" }]);
+    expect(mockRecordDownload).toHaveBeenCalled();
+  });
+
+  it("creates a new lodge WITH its central id", async () => {
+    registry([]);
+    pull([remoteLodge("Brand New Lodge", { id: "c-new" })]);
+
+    await downloadOtherClubsFromServer();
+
+    expect(mockUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ name: "Brand New Lodge", centralId: "c-new" }),
+      }),
+    );
+  });
+
+  it.each([
+    ["no id", {}],
+    ["an empty id", { id: "" }],
+    ["a padded id", { id: " c-1 " }],
+  ])("matches a lodge with %s by name, as before #64", async (_l, over) => {
+    const rows = registry([row("ol_1", "Aorangi Ski Club", null)]);
+    pull([remoteLodge("Aorangi Ski Club", { ...over, bedCapacity: 50 })]);
+
+    await downloadOtherClubsFromServer();
+
+    expect(rows[0]).toMatchObject({ centralId: null, bedCapacity: 50 });
+    expect(mockFindUnique.mock.calls.every(([a]) => a.where.centralId === undefined)).toBe(true);
+  });
+
+  it("asks for the WHOLE registry until a whole download has merged, then marks it keyed", async () => {
+    registry([]);
+    mockLoadSettings.mockResolvedValue({
+      ...SETTINGS,
+      otherLodgesCursor: "2026-08-14T00:00:00.000Z",
+      otherLodgesKeyedAt: null,
+    });
+    pull([]);
+
+    await downloadOtherClubsFromServer();
+
+    expect(mockPullOtherLodges).toHaveBeenCalledWith(null);
+    expect(mockRecordOptions).toHaveBeenCalledWith(expect.objectContaining({ keyed: true }));
+  });
+
+  it("does NOT mark the registry keyed when the whole download fails part-way, so the next one repeats it", async () => {
+    registry([row("ol_1", "Aorangi Ski Club", null)]);
+    mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesKeyedAt: null });
+    mockUpdateMany.mockRejectedValueOnce(new Error("connection lost"));
+    pull([remoteLodge("Aorangi Ski Club", { id: "c-1" })]);
+
+    await expect(downloadOtherClubsFromServer()).rejects.toThrow("connection lost");
+
+    expect(mockRecordDownload).not.toHaveBeenCalled();
+    expect(mockRecordOptions).not.toHaveBeenCalled();
+  });
+
+  it("pulls incrementally once keyed, and does not re-mark it", async () => {
+    registry([]);
+    mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesCursor: "c-opaque" });
+    pull([]);
+
+    await downloadOtherClubsFromServer();
+
+    expect(mockPullOtherLodges).toHaveBeenCalledWith("c-opaque");
+    expect(mockRecordOptions).toHaveBeenCalledWith(expect.objectContaining({ keyed: false }));
+  });
+
+  it("settles a THREE-step chain whatever order the pull sends it in", async () => {
+    const rows = registry([
+      row("ol_1", "A Lodge", "c-1"),
+      row("ol_2", "B Lodge", "c-2"),
+      row("ol_3", "C Lodge", "c-3"),
+    ]);
+    // Sorted by the new name, as the server sends it: each blocks the one before.
+    pull([
+      remoteLodge("B Lodge", { id: "c-1" }),
+      remoteLodge("C Lodge", { id: "c-2" }),
+      remoteLodge("D Lodge", { id: "c-3" }),
+    ]);
+
+    const result = await downloadOtherClubsFromServer();
+
+    expect(rows.map((r) => r.name)).toEqual(["B Lodge", "C Lodge", "D Lodge"]);
+    expect(result).toMatchObject({ renamed: 3, nameConflicts: [] });
+  });
+
+  it("does not key a row an admin saved since the read, and keeps their edit", async () => {
+    const rows = registry([row("ol_9", "Our Lodge", null)]);
+    const realFind = mockFindUnique.getMockImplementation()!;
+    let reads = 0;
+    mockFindUnique.mockImplementation(async (args: { where: Record<string, string> }) => {
+      const found = await realFind(args);
+      // The admin's save lands right after every read of the row.
+      if (found && found.id === "ol_9" && reads++ < 10) {
+        rows[0].updatedAt = new Date(rows[0].updatedAt.getTime() + 60_000);
+        rows[0].bedCapacity = 99;
+      }
+      return found;
+    });
+    pull([remoteLodge("Our Lodge", { id: "c-ours" })]);
+
+    await downloadOtherClubsFromServer();
+
+    expect(rows[0].bedCapacity).toBe(99);
+    // Never rewound below the admin's stamp.
+    expect(rows[0].updatedAt.getTime()).toBeGreaterThan(new Date("2026-08-01T00:00:00.000Z").getTime());
+  });
+
+  it("maps owned names by the STORED ids when this pull's ids were refused", async () => {
+    registry([row("ol_9", "Our New Name", "c-ours")]);
+    mockLoadSettings.mockResolvedValue({
+      ...SETTINGS,
+      otherLodgesOwnedLodges: [{ id: "c-ours", name: "Our Lodge" }],
+    });
+    pull([], { ownLodges: undefined, ownLodgesRefused: true });
+
+    await downloadOtherClubsFromServer();
+
+    expect(mockRecordDownload).toHaveBeenCalledWith("c-640", ["Our New Name"], undefined);
+  });
+
+  it("records the owned list under the settings lock, inside one transaction", async () => {
+    registry([]);
+    pull([]);
+
+    await downloadOtherClubsFromServer();
+
+    expect(mockLockSettings).toHaveBeenCalledTimes(1);
+    expect(mockLockSettings.mock.invocationCallOrder[0]).toBeLessThan(
+      mockRecordDownload.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("re-keys a row whose id a WHOLE download shows is stale, instead of refusing the name", async () => {
+    // Keyed by another server's id, which this server's whole registry lacks.
+    const rows = registry([row("ol_1", "Aorangi Ski Club", "old-server-7")]);
+    mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesKeyedAt: null });
+    pull([remoteLodge("Aorangi Ski Club", { id: "c-1" })]);
+
+    const result = await downloadOtherClubsFromServer();
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].centralId).toBe("c-1");
+    expect(result.nameConflicts).toEqual([]);
+    expect(mockRecordOptions).toHaveBeenCalledWith(expect.objectContaining({ keyed: true }));
+  });
+
+  it("still refuses a name held by a row whose id the whole download DOES list", async () => {
+    // A brand-new lodge c-2 wants the name of ol_1, which the server lists as c-1.
+    const rows = registry([row("ol_1", "Shared Name", "c-1")]);
+    mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesKeyedAt: null });
+    pull([remoteLodge("Shared Name", { id: "c-2" }), remoteLodge("Shared Name", { id: "c-1" })]);
+
+    const result = await downloadOtherClubsFromServer();
+
+    expect(rows).toEqual([expect.objectContaining({ id: "ol_1", centralId: "c-1" })]);
+    expect(mockUpsert).not.toHaveBeenCalled();
+    expect(result.nameConflicts).toEqual([{ lodge: null, wanted: "Shared Name" }]);
+  });
+
+  it("does not mark the registry keyed when the whole download dropped a row", async () => {
+    registry([]);
+    mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesKeyedAt: null });
+    pull([], { dropped: 1 });
+
+    await downloadOtherClubsFromServer();
+
+    expect(mockRecordOptions).toHaveBeenCalledWith(expect.objectContaining({ keyed: false }));
+  });
+
+  it("still marks the registry keyed when the only problem is a refused NEW lodge (no local row to mislabel)", async () => {
+    registry([row("ol_1", "Shared Name", "c-1")]);
+    mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesKeyedAt: null });
+    pull([remoteLodge("Shared Name", { id: "c-2" }), remoteLodge("Shared Name", { id: "c-1" })]);
+
+    await downloadOtherClubsFromServer();
+
+    expect(mockRecordOptions).toHaveBeenCalledWith(expect.objectContaining({ keyed: true }));
+  });
+
+  it("does not mark the registry keyed when a pulled lodge carried no usable id", async () => {
+    registry([row("ol_1", "Aorangi Ski Club", null)]);
+    mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesKeyedAt: null });
+    pull([remoteLodge("Aorangi Ski Club", { id: "" })]);
+
+    await downloadOtherClubsFromServer();
+
+    expect(mockRecordOptions).toHaveBeenCalledWith(expect.objectContaining({ keyed: false }));
+  });
+
+  it("never treats an id as stale when the whole download DROPPED a row (it may be that row's)", async () => {
+    // ol_X is keyed c-9; c-9's row failed the bounds and was dropped, and a
+    // different lodge c-10 now has its old name. Not welded.
+    const rows = registry([row("ol_X", "Ruapehu Lodge", "c-9")]);
+    mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesKeyedAt: null });
+    pull([remoteLodge("Ruapehu Lodge", { id: "c-10" })], { dropped: 1 });
+
+    const result = await downloadOtherClubsFromServer();
+
+    expect(rows[0].centralId).toBe("c-9");
+    expect(result.nameConflicts).toEqual([{ lodge: null, wanted: "Ruapehu Lodge" }]);
+    expect(mockExecuteRaw).not.toHaveBeenCalled();
+  });
+
+  it("forgets, on a clean whole download, every central id the server no longer lists", async () => {
+    registry([row("ol_1", "Aorangi Ski Club", "c-1")]);
+    mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesKeyedAt: null });
+    pull([remoteLodge("Aorangi Ski Club", { id: "c-1" })]);
+
+    await downloadOtherClubsFromServer();
+
+    expect(mockExecuteRaw).toHaveBeenCalledTimes(1);
+    const [query] = mockExecuteRaw.mock.calls[0] as [Prisma.Sql];
+    expect(query.sql).toBe(
+      'UPDATE "OtherLodge" SET "centralId" = NULL WHERE "centralId" IS NOT NULL AND "centralId" NOT IN (?)',
+    );
+    expect(query.values).toEqual(["c-1"]);
+  });
+
+  it("forgets every id when a clean whole download lists no lodge at all", async () => {
+    registry([]);
+    mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesKeyedAt: null });
+    pull([]);
+
+    await downloadOtherClubsFromServer();
+
+    const [query] = mockExecuteRaw.mock.calls[0] as [Prisma.Sql];
+    expect(query.sql).toBe('UPDATE "OtherLodge" SET "centralId" = NULL WHERE "centralId" IS NOT NULL');
+    expect(query.values).toEqual([]);
+  });
+
+  it("records NOTHING when another download recorded first (its answer is newer)", async () => {
+    registry([]);
+    mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesKeyedAt: null, otherLodgesCursor: "c-1" });
+    mockSettingsRow.mockResolvedValue({
+      baseUrl: SETTINGS.baseUrl,
+      otherLodgesCursor: "c-2",
+      otherLodgesKeyedAt: new Date("2026-10-14T00:00:00.000Z"),
+    });
+    pull([]);
+
+    await downloadOtherClubsFromServer();
+
+    expect(mockRecordDownload).not.toHaveBeenCalled();
+    expect(mockExecuteRaw).not.toHaveBeenCalled();
+  });
+
+  it("forgets nothing on an incremental download", async () => {
+    registry([]);
+    pull([]);
+
+    await downloadOtherClubsFromServer();
+
+    expect(mockExecuteRaw).not.toHaveBeenCalled();
+  });
+
+  it("records NOTHING when the API key was replaced while the download ran", async () => {
+    registry([]);
+    mockKeyStamp
+      .mockResolvedValueOnce("2026-10-01T00:00:00.000Z")
+      .mockResolvedValueOnce("2026-10-14T09:00:00.000Z");
+    pull([]);
+
+    await downloadOtherClubsFromServer();
+
+    expect(mockRecordDownload).not.toHaveBeenCalled();
+    expect(mockLoggerWarn).toHaveBeenCalledWith(expect.stringMatching(/connection changed/i));
+  });
+
+  it("does not count a create that landed on a row inserted in the gap as keyed", async () => {
+    registry([]);
+    mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesKeyedAt: null });
+    mockUpsert.mockResolvedValue({ id: "ol_gap", centralId: null });
+    pull([remoteLodge("Brand New Lodge", { id: "c-new" })]);
+
+    await downloadOtherClubsFromServer();
+
+    expect(mockRecordOptions).toHaveBeenCalledWith(expect.objectContaining({ keyed: false }));
+  });
+
+  it("records NOTHING when the server address changed while the download ran", async () => {
+    registry([]);
+    mockSettingsRow.mockResolvedValue({ baseUrl: "https://other-central.test" });
+    pull([]);
+
+    await downloadOtherClubsFromServer();
+
+    expect(mockRecordDownload).not.toHaveBeenCalled();
+    expect(mockLoggerWarn).toHaveBeenCalledWith(expect.stringMatching(/connection changed/i));
+  });
+
+  it("names a conflicting lodge by its LOCAL name and the name it should have", async () => {
+    registry([row("ol_1", "Old Name", "c-1"), row("ol_x", "New Name", null)]);
+    pull([remoteLodge("New Name", { id: "c-1" })]);
+
+    const result = await downloadOtherClubsFromServer();
+
+    expect(result.nameConflicts).toEqual([{ lodge: "Old Name", wanted: "New Name" }]);
+  });
+});
+
+describe("upload carries the central id (#64, API 2.3)", () => {
+  it("sends `id` for a keyed row and leaves it out for an unkeyed one", async () => {
+    mockFindMany.mockResolvedValue([
+      { ...localCopyOf("ol_1", "2026-08-01T00:00:00.000Z"), name: "Keyed", centralId: "c-1" },
+      { ...localCopyOf("ol_2", "2026-08-01T00:00:00.000Z"), name: "Unkeyed", centralId: null },
+    ]);
+    mockUploadOtherLodges.mockResolvedValue({
+      created: 0,
+      updated: 2,
+      unchanged: 0,
+      skipped: 0,
+      results: [],
+    });
+
+    await uploadOtherClubsToServer();
+
+    const [[items]] = mockUploadOtherLodges.mock.calls;
+    expect(items[0]).toMatchObject({ id: "c-1", name: "Keyed" });
+    expect(items[1]).not.toHaveProperty("id");
+    expect(mockFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({ select: expect.objectContaining({ centralId: true }) }),
+    );
   });
 });

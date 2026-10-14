@@ -217,6 +217,37 @@ your own copy was edited more recently — then yours is kept and sent up on the
 next upload. A field the server does not send is left exactly as you had it.
 Season start dates travel as calendar dates and are never shifted by time zone.
 
+**Lodges are matched by the central server's permanent lodge id**, not by
+name, so a lodge renamed there is renamed here in place: its bookings and
+booking requests stay attached to it. Your own lodge keeps the name you give it
+here; a download never renames it, and an upload sends your new name with the
+id so the server renames its lodge (server API 2.3). The first download after
+this site is upgraded asks for the whole registry once and matches every lodge
+by name, which fills in the ids; after that downloads are incremental again.
+
+- **A new name another lodge here already has.** The rest of the lodge's
+  details are applied, it keeps its old name, and the **Download** message names
+  it, with the name it should have. A lodge new to this site whose name is
+  already used here is not added, and is named the same way. Either is tried
+  again when the central server next sends a change to that lodge.
+- **A lodge the central server does not list.** Until a full download has
+  finished, every download asks for the whole registry (so one that fails
+  part-way is simply repeated). After it, a lodge that never got an id is one
+  the server did not list, usually a duplicate left behind by a rename before
+  this change, or a lodge deleted there. The Other lodges panel marks it **Not
+  found on the Alpine Central Server**, with how many bookings and booking
+  requests still refer to it, so you can decide what to do. Nothing removes it
+  automatically.
+- **A new central server address or API key** makes the next download fetch
+  the whole registry again. A lodge whose id that server does not list is
+  matched by name and takes the id it does list. An id still not listed after
+  that download is forgotten, so your own lodge is uploaded by name again and
+  another club's is marked **Not found**. A download that was running while
+  the address or key changed records nothing.
+- **Your lodge's name is yours.** If the central server's administrator renames
+  your own lodge, this site keeps the name you gave it, and your next upload
+  of that lodge sets it back on the server.
+
 1. Enable the **Alpine Central Server** module on [Modules](modules.md). With the
    module off the setup page is not reachable and the nightly sync does not run,
    so this is your off switch as well as your on switch.
@@ -242,8 +273,8 @@ whether they are.** The central server publishes one version number for
 everything it shares — the Other Clubs registry, the message board and the
 push registration — and this site is built for one particular number. The
 setup page shows both, beside the address and the key, under **Server
-software version** ("This site is built for server version 2.2 · Server:
-2.2"): it asks the server once each time you open the page, and again after
+software version** ("This site is built for server version 2.3 · Server:
+2.3"): it asks the server once each time you open the page, and again after
 you save a key or an address. With no API key stored nothing is asked and the
 server's number reads **0**, which is not a mismatch.
 

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import type { Prisma } from "@prisma/client";
+import { Prisma as PrismaErrors, type Prisma } from "@prisma/client";
 import { z } from "zod";
 import {
   buildStructuredAuditLogCreateArgs,
@@ -13,24 +13,30 @@ import {
   otherLodgeDataShape,
   otherLodgeNameSchema,
   otherLodgeSelect,
+  canRenameOtherLodge,
   ownsOtherLodge,
   replaceOtherLodgeAmenities,
   serializeOtherLodge,
   serializeOtherLodgeForAdmin,
 } from "@/lib/other-lodges";
 import { prisma } from "@/lib/prisma";
-import { loadServerNzSettings } from "@/lib/servernz-settings";
+import { renameInOwnedNames } from "@/lib/other-lodge-central-id";
+import { loadServerNzSettings, renameOwnedOtherLodgeName } from "@/lib/servernz-settings";
 import { requireAdmin } from "@/lib/session-guards";
 
 const paramsSchema = z.object({ id: z.string().min(1) });
 
+/** A rename whose row changed name between our read and our write. */
+class RenameRaced extends Error {}
+
 // Strict: an unknown key is a 400, so every data column has to be named in the
 // shared `otherLodgeDataShape` (the one field list) to be accepted here. A key
 // left out leaves that column alone; `amenities`, when present, replaces the
-// lodge's whole set. `name` may be sent (the panel sends the whole form) but it
-// must equal the stored name: the central server matches lodges BY NAME, so a
-// rename here would not rename the lodge there — it would create a second one
-// and strand the first (#52).
+// lodge's whole set. `name` may be sent (the panel sends the whole form); a
+// DIFFERENT name renames the lodge (#64), but only once the row carries the
+// central server's id: the upload then sends that id, and the server renames
+// its lodge. Before the id is known a new name would reach the server as a
+// second lodge and strand the first (#52), so it is refused.
 const patchSchema = z
   .object({
     name: otherLodgeNameSchema.optional(),
@@ -107,18 +113,21 @@ export async function PATCH(
       { status: 403 },
     );
   }
-  if (parsed.data.name !== undefined && parsed.data.name.trim() !== existing.name) {
+  const newName = parsed.data.name?.trim();
+  const renameTo = newName !== undefined && newName !== existing.name ? newName : null;
+  if (renameTo !== null && !canRenameOtherLodge(owned, existing)) {
     return NextResponse.json(
       {
         error:
-          "The lodge name cannot be changed here: the central server matches lodges by name, so a new name would create a second lodge there.",
+          "This lodge can be renamed after the next Download from the Alpine Central Server. Run Download, then try again.",
       },
       { status: 400 },
     );
   }
 
-  const data: Prisma.OtherLodgeUpdateInput = {
+  const data: Prisma.OtherLodgeUpdateManyMutationInput = {
     ...otherLodgeDataColumns(parsed.data),
+    ...(renameTo !== null ? { name: renameTo } : {}),
   };
   const changedFields = Object.keys(data);
 
@@ -134,38 +143,68 @@ export async function PATCH(
     return NextResponse.json({ otherLodge: serializeOtherLodgeForAdmin(existing, owned) });
   }
 
+  // An amenity-only edit changes no column on the lodge row, so `@updatedAt`
+  // would not fire — and the central-server upload watermark is keyed on this
+  // column, so the edit would never be sent. Moved explicitly.
+  if (amenitiesChanged) data.updatedAt = new Date();
+
+  // A plain edit is one write. With amenities or a rename, one transaction:
+  // the lodge row FIRST (its lock makes a concurrent amenity replacement of the
+  // same lodge — the nightly download, an admin's Download button — queue
+  // behind this one rather than interleave), then the amenities, then, for a
+  // rename, the stored owned list, so the lodge never stops being this site's
+  // own between the two writes (#64). The response is re-read after it lands.
   let updated;
-  if (amenitiesChanged && amenities) {
-    // Moved explicitly: an amenity-only edit changes no column on the lodge
-    // row, so `@updatedAt` would not fire — and the central-server upload
-    // watermark is keyed on this column, so the edit would never be sent.
-    data.updatedAt = new Date();
-    // One transaction so the lodge row and its amenities change together, and
-    // the LODGE ROW IS WRITTEN FIRST: that update holds the row's lock for the
-    // rest of the transaction, so a concurrent replacement of the same lodge's
-    // amenities (the nightly download, an admin's Download button) queues
-    // behind this one instead of interleaving its deletes and upserts with
-    // ours and leaving a stale row behind. The response is re-read after the
-    // amenities land, so it shows the set that was saved.
-    updated = await prisma.$transaction(async (tx) => {
-      await tx.otherLodge.update({
-        where: { id: existing.id },
-        data,
-        select: { id: true },
-      });
-      await replaceOtherLodgeAmenities(tx, existing.id, amenities);
-      return tx.otherLodge.findUniqueOrThrow({
-        where: { id: existing.id },
-        select: otherLodgeSelect,
-      });
-    });
-  } else {
-    updated = await prisma.otherLodge.update({
-      where: { id: existing.id },
-      data,
-      select: otherLodgeSelect,
-    });
+  try {
+    updated =
+      amenitiesChanged || renameTo !== null
+        ? await prisma.$transaction(async (tx) => {
+            if (renameTo !== null) {
+              // Guarded on the name read above: two renames at once must not
+              // both pass, or the owned list would follow the wrong one.
+              const claimed = await tx.otherLodge.updateMany({
+                where: { id: existing.id, name: existing.name },
+                data,
+              });
+              if (claimed.count !== 1) throw new RenameRaced();
+            } else {
+              await tx.otherLodge.update({ where: { id: existing.id }, data, select: { id: true } });
+            }
+            if (amenitiesChanged && amenities) {
+              await replaceOtherLodgeAmenities(tx, existing.id, amenities);
+            }
+            if (renameTo !== null) await renameOwnedOtherLodgeName(tx, existing.name, renameTo);
+            return tx.otherLodge.findUniqueOrThrow({
+              where: { id: existing.id },
+              select: otherLodgeSelect,
+            });
+          })
+        : await prisma.otherLodge.update({
+            where: { id: existing.id },
+            data,
+            select: otherLodgeSelect,
+          });
+  } catch (error) {
+    if (error instanceof RenameRaced) {
+      return NextResponse.json(
+        { error: "This lodge was changed by someone else just now. Reload and try again." },
+        { status: 409 },
+      );
+    }
+    if (
+      renameTo !== null &&
+      error instanceof PrismaErrors.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    ) {
+      return NextResponse.json(
+        { error: `Another lodge is already named "${renameTo}".` },
+        { status: 409 },
+      );
+    }
+    throw error;
   }
+  const ownedAfter =
+    renameTo !== null && owned !== null ? renameInOwnedNames(owned, existing.name, renameTo) : owned;
 
   await prisma.auditLog.create(
     buildStructuredAuditLogCreateArgs({
@@ -185,5 +224,5 @@ export async function PATCH(
     }),
   );
 
-  return NextResponse.json({ otherLodge: serializeOtherLodgeForAdmin(updated, owned) });
+  return NextResponse.json({ otherLodge: serializeOtherLodgeForAdmin(updated, ownedAfter) });
 }

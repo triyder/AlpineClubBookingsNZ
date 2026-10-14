@@ -5207,6 +5207,12 @@ model Lodge {
 model OtherLodge {
   id                  String   @id @default(cuid())
   name                String   @unique
+  // The Alpine Central Server's PERMANENT id for this lodge (#64): the key the
+  // download merges by, so a lodge renamed there is renamed here in place, and
+  // the id an owned lodge is uploaded under (server API 2.3). Null until a
+  // download has matched the row by name once; a row still null after a whole
+  // registry download is one the central server no longer has.
+  centralId           String?  @unique @db.VarChar(64)
   location            String?  @db.VarChar(300)
   bookingOfficerName  String?  @db.VarChar(200)
   bookingOfficerEmail String?  @db.VarChar(320)
@@ -5327,6 +5333,12 @@ model ServerNzSettings {
   // does not send it), [] = owns none. Read by the "Central lodge" setting and
   // the availability endpoint, which link by id because a name can change.
   otherLodgesOwnedLodges  Json?
+  // When a WHOLE-registry download last merged to the end (#64): until then
+  // every download asks for the whole registry, so every Other lodges row is
+  // matched by name once and keyed by its central id, and a row still unkeyed
+  // after it is one the server does not list. NULL = not yet (a site just
+  // upgraded, or a connection forgotten); a failed download leaves it NULL.
+  otherLodgesKeyedAt      DateTime?
 
   // Shared item: the cross-club message board (epic #2992). The cursor is the
   // pair the server's /api/v1/feed/sync hands back — an updatedAt instant plus

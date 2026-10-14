@@ -3,11 +3,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   findUnique: vi.fn(),
   upsert: vi.fn(),
+  executeRaw: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     serverNzSettings: { findUnique: mocks.findUnique, upsert: mocks.upsert },
+    $executeRaw: mocks.executeRaw,
   },
 }));
 
@@ -22,6 +24,7 @@ import {
   readOwnedCentralLodges,
   recordOtherLodgesDownload,
   recordServerVersionCheck,
+  renameOwnedOtherLodgeName,
   validateCentralServerBaseUrl,
 } from "@/lib/servernz-settings";
 
@@ -43,6 +46,7 @@ describe("loadServerNzSettings", () => {
       otherLodgesOwnedNamesAt: null,
       otherLodgesOwnedNamesUnreadable: false,
       otherLodgesOwnedLodges: null,
+      otherLodgesKeyedAt: null,
       serverVersion: null,
       serverVersionCheckedAt: null,
     });
@@ -186,6 +190,8 @@ describe("the server's reported API version (#49)", () => {
       otherLodgesOwnedNames: Prisma.DbNull,
       otherLodgesOwnedNamesAt: null,
       otherLodgesOwnedLodges: Prisma.DbNull,
+      // A new connection keys the registry again with a whole download (#64).
+      otherLodgesKeyedAt: null,
       serverVersion: null,
       serverVersionCheckedAt: null,
     });
@@ -308,3 +314,67 @@ describe("the owned lodge list (#52)", () => {
     expect(args.create).not.toHaveProperty("otherLodgesOwnedNames");
   });
 });
+
+describe("renameOwnedOtherLodgeName (#64)", () => {
+  function tx(stored: unknown) {
+    const update = vi.fn().mockResolvedValue({});
+    const findUnique = vi.fn().mockResolvedValue({ otherLodgesOwnedNames: stored });
+    const executeRaw = vi.fn().mockResolvedValue(1);
+    const db = { serverNzSettings: { findUnique, update }, $executeRaw: executeRaw };
+    return { db: db as never, update, findUnique, executeRaw };
+  }
+
+  it("locks the settings row BEFORE reading the list it rewrites", async () => {
+    const { db, findUnique, executeRaw } = tx(["A"]);
+    await renameOwnedOtherLodgeName(db, "A", "B");
+    expect(executeRaw).toHaveBeenCalledTimes(1);
+    expect(String(executeRaw.mock.calls[0][0].join("?"))).toMatch(/FOR UPDATE/);
+    expect(executeRaw.mock.invocationCallOrder[0]).toBeLessThan(findUnique.mock.invocationCallOrder[0]);
+  });
+
+  it("moves the renamed lodge's name in the stored owned list, through the caller's client", async () => {
+    const { db, update } = tx(["Tararua Lodge", "Annex"]);
+    await renameOwnedOtherLodgeName(db, "Tararua Lodge", "Tararua Alpine Lodge");
+    expect(update).toHaveBeenCalledWith({
+      where: { id: SERVERNZ_SETTINGS_ID },
+      data: { otherLodgesOwnedNames: ["Tararua Alpine Lodge", "Annex"] },
+    });
+    expect(mocks.upsert).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["never told", null],
+    ["unreadable", "not a list"],
+  ])("leaves a list that is %s alone", async (_label, stored) => {
+    const { db, update } = tx(stored);
+    await renameOwnedOtherLodgeName(db, "A", "B");
+    expect(update).not.toHaveBeenCalled();
+  });
+});
+
+describe("recordOtherLodgesDownload: the keyed marker (#64)", () => {
+  it("sets otherLodgesKeyedAt only when told the whole registry merged", async () => {
+    await recordOtherLodgesDownload("c-1", undefined, undefined, { keyed: true });
+    expect(mocks.upsert.mock.calls[0][0].update.otherLodgesKeyedAt).toBeInstanceOf(Date);
+    await recordOtherLodgesDownload("c-2");
+    expect(mocks.upsert.mock.calls[1][0].update).not.toHaveProperty("otherLodgesKeyedAt");
+  });
+
+  it("writes through the caller's transaction client when given one", async () => {
+    const upsert = vi.fn().mockResolvedValue({});
+    await recordOtherLodgesDownload("c-3", undefined, undefined, {
+      db: { serverNzSettings: { upsert } } as never,
+    });
+    expect(upsert).toHaveBeenCalledTimes(1);
+    expect(mocks.upsert).not.toHaveBeenCalled();
+  });
+
+  it("reads the marker back", async () => {
+    mocks.findUnique.mockResolvedValue({
+      id: SERVERNZ_SETTINGS_ID,
+      otherLodgesKeyedAt: new Date("2026-10-14T00:00:00.000Z"),
+    });
+    expect((await loadServerNzSettings()).otherLodgesKeyedAt).toBe("2026-10-14T00:00:00.000Z");
+  });
+});
+
