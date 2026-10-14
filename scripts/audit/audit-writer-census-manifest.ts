@@ -627,7 +627,11 @@ export const AUDIT_CENSUS_TOTALS = {
   // `/api/admin/lodges/[id]/central-lodge` PUT with the link before and after.
   // Categorised `admin` at the site and pinned in the lodge-gated keep.
   // RE-MEASURED with `pnpm run audit:census`.
-  writeSites: 498,
+  // 498 -> 499 (#58): `OTHER_LODGE_REMOVED`, written by the new
+  // `/api/admin/other-lodges/[id]/remove` POST with the removed row. Categorised
+  // `admin` at the site and pinned in the lodge-gated keep beside the registry's
+  // update. RE-MEASURED with `pnpm run audit:census`.
+  writeSites: 499,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -845,7 +849,9 @@ export const AUDIT_CENSUS_TOTALS = {
     // 76 -> 77 (#3566): the AI spend rate CLEAR, in the club-format route's
     // transaction beside the writer above, in the same form.
     // 77 -> 75 (#52): the two removed other-lodges writers above.
-    "auditLog.create": { total: 75, uncategorised: 0 },
+    // 75 -> 76 (#58): the Other lodges removal of a row the central server does
+    // not list, in the same form as the registry's update.
+    "auditLog.create": { total: 76, uncategorised: 0 },
   },
   /**
    * Literal category values written, and by how many sites. The three `membership`
@@ -1145,7 +1151,11 @@ export const AUDIT_CENSUS_TOTALS = {
     // The row carries two central lodge ids and the administrator's id - no
     // member data - and is `admin` like every writer in the lodge-records
     // subsystem (INV-PRIV-013).
-    admin: 108,
+    // 108 -> 109 (#58): `OTHER_LODGE_REMOVED`, one more `admin` site and so one
+    // more readable with `support:view` alone, stated rather than counted. The
+    // row is the removed Other lodges entry (a lodge's public details and its
+    // booking officer's contact, which the registry already holds), no member.
+    admin: 109,
     // 16 -> 19 (#2581 child 2): `member.password-reset-sent` and
     // `member.setup-invite-sent` (decision 3 — the affected domain is the
     // CREDENTIAL, not the mailing), plus the `member.bulk-set-role` branch
@@ -2647,6 +2657,9 @@ export const LODGE_GATED_ADMIN_CATEGORIES_2765: Readonly<
   // next change is deliberate. #52 removed the create and delete handlers (a
   // site changes only its own lodge), so of the trio only the update remains.
   "src/app/api/admin/other-lodges/[id]/route.ts::PATCH#0": "admin",
+  // #58: removing a row the central server does not list, gated `lodge:edit`,
+  // in the same registry, so `admin` by the same rule.
+  "src/app/api/admin/other-lodges/[id]/remove/route.ts::POST#0": "admin",
 };
 
 /**
@@ -2720,6 +2733,8 @@ export const LODGE_GATED_ADMIN_ACTIONS_2765: readonly string[] = [
   "workparty.update",
   "workparty.delete",
   "OTHER_LODGE_UPDATED",
+  // #58: no access-shaped word, so the seven-year retention class (INV-OPS-012).
+  "OTHER_LODGE_REMOVED",
 ];
 
 /**
