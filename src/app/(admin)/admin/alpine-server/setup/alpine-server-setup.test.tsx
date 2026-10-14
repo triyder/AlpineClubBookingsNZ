@@ -214,3 +214,34 @@ describe("AlpineServerSetup Download summary (#64)", () => {
     expect(message.className).toMatch(/text-success-11/);
   });
 });
+
+describe("AlpineServerSetup when another sync is running (#66)", () => {
+  it.each(["upload", "download"])("shows the route's message when %s is refused because a sync is running", async (direction) => {
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (String(url).includes("/api/admin/alpine-server/version")) {
+        return { ok: true, status: 200, json: async () => ({ status: "match", serverVersion: "2.3", expected: "2.3", checkedAt: null, couldNotCheck: false, missingBaseUrl: false }) };
+      }
+      if (String(url).includes(`/other-lodges/${direction}`) && init?.method === "POST") {
+        return {
+          ok: false,
+          status: 409,
+          json: async () => ({
+            error: "Another sync with the Alpine Central Server is running (the nightly sync, or a press in another window). Try again in a minute; if it was cut off by a restart, it clears within 15 minutes.",
+            code: "sync-already-running",
+          }),
+        };
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    render(<AlpineServerSetup initialState={initial()} />);
+    fireEvent.click(screen.getByRole("button", { name: new RegExp(`^${direction}$`, "i") }));
+
+    const message = await screen.findByText(/another sync with the alpine central server is running/i);
+    expect(message.textContent).toMatch(/try again in a minute/i);
+    // A notice, not an error: nothing failed.
+    expect(message.className).toMatch(/text-warning-11/);
+    expect(message.className).not.toMatch(/text-destructive/);
+    // Not mistaken for the version pause.
+    expect(screen.queryByTestId("server-version-mismatch")).toBeNull();
+  });
+});
