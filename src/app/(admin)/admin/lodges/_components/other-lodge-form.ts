@@ -1,4 +1,4 @@
-import { isHttpUrl } from "@/lib/http-url";
+import { isSafeHttpUrl, SAFE_HTTP_URL_MESSAGE } from "@/lib/http-url";
 import { parseDecimalDollarsToCents } from "@/lib/money-input";
 import { formatCentsPlain } from "@/lib/utils";
 import {
@@ -218,6 +218,12 @@ export function formPayload(form: OtherLodgeFormState): OtherLodgePayload {
  * copy of its rules, so "needs a name", "unique ignoring case" and the per-lodge
  * cap can only ever disagree with the server by not being run.
  */
+/** A booking page address the central server would refuse (#55); blank is fine. */
+export function siteUrlBroken(value: string): boolean {
+  const address = value.trim();
+  return address !== "" && !isSafeHttpUrl(address);
+}
+
 export function formProblem(form: OtherLodgeFormState): string | null {
   // The name is editable for a lodge that can be renamed (#64) and read-only,
   // so always the stored one, otherwise; either way it must be there and fit.
@@ -249,9 +255,9 @@ export function formProblem(form: OtherLodgeFormState): string | null {
     }
   }
   const siteUrl = form.text.siteUrl.trim();
-  if (siteUrl && !isHttpUrl(siteUrl)) {
-    return "The non-member booking page URL must start with http:// or https://.";
-  }
+  // The central server's stricter rule (#55): an address it would refuse is
+  // refused here, at the form, rather than failing the next upload.
+  if (siteUrlBroken(siteUrl)) return SAFE_HTTP_URL_MESSAGE;
   const amenities = amenitiesInputSchema.safeParse(formPayload(form).amenities);
   if (!amenities.success) {
     const [issue] = amenities.error.issues;

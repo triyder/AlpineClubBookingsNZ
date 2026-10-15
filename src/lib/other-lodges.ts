@@ -408,6 +408,9 @@ export const otherLodgeCommonDataShape = {
     .optional(),
   ...wholeNumberShape,
   roomType: z.enum(OTHER_LODGE_ROOM_TYPES).nullable().optional(),
+  // Held to http(s) only, because the PULL shares this shape: a lodge the
+  // server already holds with an odd address still arrives (shown as text).
+  // The admin edit is held to the stricter rule (#55, its PATCH route).
   siteUrl: z.preprocess(
     blankToNull,
     boundedText(OTHER_LODGE_BOUNDS.siteUrl)

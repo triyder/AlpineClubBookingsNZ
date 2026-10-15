@@ -902,3 +902,60 @@ describe("Other lodges: hiding a lodge the central server does not list (#58)", 
     expect(fetchMock.mock.calls.filter(([, init]) => !init?.method || init.method === "GET").length).toBeGreaterThan(getsBefore);
   });
 });
+
+describe("Other lodges: the booking page address (#55)", () => {
+  const withSiteUrl = (siteUrl: string): AdminOtherLodgesResponse => ({
+    ...oneOwned(),
+    otherLodges: [lodge({ siteUrl }), theirs()],
+  });
+
+  it("links an ordinary address", async () => {
+    stubFetch(withSiteUrl("https://tararua.test/book"));
+    await renderPanel();
+    expect(screen.getByRole("link", { name: "https://tararua.test/book" }).getAttribute("href")).toBe(
+      "https://tararua.test/book",
+    );
+  });
+
+  it("shows an address the central server would refuse as plain text, never a link", async () => {
+    stubFetch(withSiteUrl("https://tararua.test@evil.test"));
+    await renderPanel();
+    expect(screen.getByText("https://tararua.test@evil.test").closest("a")).toBeNull();
+  });
+
+  it("flags a saved odd address as soon as the form opens, and refuses to save it", async () => {
+    stubFetch(withSiteUrl("https://tararua.test@evil.test"));
+    await renderPanel();
+    fireEvent.click(editMyLodge());
+    const dialog = await screen.findByRole("dialog");
+    const field = within(dialog).getByLabelText("Non-member booking page URL");
+    const note = within(dialog).getByTestId("site-url-note");
+    expect(field.getAttribute("aria-describedby")).toBe(note.id);
+    expect(field.getAttribute("aria-invalid")).toBe("true");
+    expect(note.textContent).toMatch(/no spaces, no backslashes, and no @ before the site.s name/);
+
+    fireEvent.click(within(dialog).getByRole("button", { name: /^save$/i }));
+    expect((await within(dialog).findByRole("alert")).textContent).toMatch(/no @ before the site.s name/);
+    expect(fetchMock.mock.calls.every(([, init]) => !init?.method || init.method === "GET")).toBe(true);
+
+    // Fixed: the note clears.
+    fireEvent.change(field, { target: { value: "https://tararua.test/book" } });
+    expect(within(dialog).getByTestId("site-url-note").textContent).toBe("");
+    expect(field.getAttribute("aria-invalid")).toBeNull();
+  });
+
+  it("does not judge a NEW address while it is typed; Save says what is wrong", async () => {
+    stubFetch(withSiteUrl(""));
+    await renderPanel();
+    fireEvent.click(editMyLodge());
+    const dialog = await screen.findByRole("dialog");
+    const field = within(dialog).getByLabelText("Non-member booking page URL");
+    fireEvent.change(field, { target: { value: "https://tara" } });
+    fireEvent.change(field, { target: { value: "https://tararua.test@evil.test" } });
+    expect(within(dialog).getByTestId("site-url-note").textContent).toBe("");
+    expect(field.getAttribute("aria-invalid")).toBeNull();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: /^save$/i }));
+    expect((await within(dialog).findByRole("alert")).textContent).toMatch(/no @ before the site.s name/);
+  });
+});

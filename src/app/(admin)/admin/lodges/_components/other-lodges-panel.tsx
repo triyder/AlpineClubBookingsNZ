@@ -34,7 +34,8 @@ import {
   ADMIN_FORBIDDEN_SAVE_REASON,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
-import { isHttpUrl } from "@/lib/http-url";
+import { isSafeHttpUrl } from "@/lib/http-url";
+import { OtherLodgeSiteUrlNote, SITE_URL_NOTE_ID } from "./other-lodge-site-url-note";
 import {
   AMENITIES_PER_LODGE_MAX,
   OTHER_LODGE_BOUNDS,
@@ -51,6 +52,7 @@ import {
   FACILITY_LABELS,
   ROOM_TYPE_CHOICES,
   TEXT_FIELDS,
+  siteUrlBroken,
   TEXT_FIELD_NAMES,
   WHOLE_NUMBER_FIELDS,
   WHOLE_NUMBER_FIELD_NAMES,
@@ -231,6 +233,8 @@ export function OtherLodgesPanel({
   const hiding = useHideUnlistedLodge({ reload: () => loadLodges(), afterHide: () => headingRef.current?.focus() });
   const showForm = editingId !== null;
   const editingLodge = lodges.find((l) => l.id === editingId);
+  // An odd address the lodge was SAVED with (#55), flagged as the form opens.
+  const siteUrlFlagged = siteUrlBroken(form.text.siteUrl) && form.text.siteUrl.trim() === (editingLodge?.siteUrl ?? "").trim();
   // The owned rows actually ON SCREEN. A name the server lists that has no
   // local row yet (not downloaded) has no button, so the label counts what the
   // administrator can see: "Edit my Lodge" when one row is theirs, the lodge's
@@ -321,6 +325,8 @@ export function OtherLodgesPanel({
                     type={TEXT_FIELDS[field].type}
                     placeholder={TEXT_FIELDS[field].placeholder}
                     maxLength={TEXT_FIELDS[field].maxLength}
+                    aria-describedby={field === "siteUrl" ? SITE_URL_NOTE_ID : undefined}
+                    aria-invalid={field === "siteUrl" && siteUrlFlagged ? true : undefined}
                     value={form.text[field]}
                     onChange={(event) =>
                       setForm((prev) => ({
@@ -329,6 +335,7 @@ export function OtherLodgesPanel({
                       }))
                     }
                   />
+                  {field === "siteUrl" ? <OtherLodgeSiteUrlNote flagged={siteUrlFlagged} /> : null}
                 </div>
               ))}
               {WHOLE_NUMBER_FIELD_NAMES.map((field) => (
@@ -640,9 +647,9 @@ export function OtherLodgesPanel({
                         )}
                       </TableCell>
                       <TableCell className="text-muted-foreground">
-                        {/* A link only for an http(s) address, which is all the
-                            API accepts; anything else is shown as plain text. */}
-                        {lodge.siteUrl && isHttpUrl(lodge.siteUrl) ? (
+                        {/* A link only for an address that passes the central
+                            server's stricter rule (#55); anything else is text. */}
+                        {lodge.siteUrl && isSafeHttpUrl(lodge.siteUrl) ? (
                           <a
                             href={lodge.siteUrl}
                             target="_blank"
