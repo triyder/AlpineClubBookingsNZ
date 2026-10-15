@@ -165,9 +165,8 @@ what to check before you enable the item.
 operator maps one or more lodge names to the connection your site uses. The
 server sends that list with every download, this site records it, and from then
 on only those lodges are uploaded and only those can be edited in the Other
-lodges panel. Until the first download from a server that sends the list, the
-panel is read-only and the upload keeps its older behaviour of sending every
-changed entry (so a club on an older central server loses nothing). A server
+lodges panel. Until the first download records the list, the panel is
+read-only and nothing is uploaded. A server
 that does not send the list leaves the recorded one as it was, and so does a
 server that sends a list this site cannot accept (too many names, or a name
 longer than a lodge name may be): the lodges still download and the sync
@@ -231,11 +230,10 @@ id so the server renames its lodge (server API 2.3). The first download after
 this site is upgraded asks for the whole registry once and matches every lodge
 by name, which fills in the ids; after that downloads are incremental again.
 
-- **A new name another lodge here already has.** The rest of the lodge's
-  details are applied, it keeps its old name, and the **Download** message names
-  it, with the name it should have. A lodge new to this site whose name is
-  already used here is not added, and is named the same way. Either is tried
-  again when the central server next sends a change to that lodge.
+- **A new name another lodge here already has** is simply taken: two lodges may
+  share a name (server API 2.5). A lodge the central server sends without its
+  id, whose name several lodges here share, is not added, because there is no
+  telling which it is; the **Download** message names it.
 - **A lodge the central server does not list.** Until a full download has
   finished, every download asks for the whole registry (so one that fails
   part-way is simply repeated). After it, a lodge that never got an id is one
@@ -254,17 +252,25 @@ by name, which fills in the ids; after that downloads are incremental again.
   under **Central lodge** is unlinked, and the download writes one audit record
   naming what it hid. A server that sends no deletions hides nothing here.
   Hiding is not undone.
-- **Two lodges may share a name.** The central id is what tells them apart. A
-  hidden lodge keeps its name for the bookings that name it, and never stops a
-  live lodge of the same name from arriving or being renamed to it. On a site
+- **Two lodges may share a name** (server API 2.5). The central id is what
+  tells them apart: which lodge is yours is decided by its id, so renaming it
+  here keeps it yours, and a lodge of another club with the same name is never
+  merged into it. Where a lodge is chosen from a list (the booking-request
+  form, the visiting-club rate picker and **Central lodge**), two lodges of the
+  same name show their location too, for example "Ruapehu Lodge (Whakapapa)".
+  Your lodge is uploaded only once a **Download** has linked it to the central
+  server, so it always goes up under its id. A hidden lodge keeps
+  its name for the bookings that name it, and never stops a live lodge of the
+  same name from arriving or being renamed to it. On a site
   upgrading straight to this release, a lodge the server deleted before this
   site was matched to its ids shows as **Not found on the Alpine Central
   Server** rather than being hidden automatically; **Hide** it by hand.
 - **A new central server address or API key** makes the next download fetch
   the whole registry again. A lodge whose id that server does not list is
   matched by name and takes the id it does list. An id still not listed after
-  that download is forgotten, so your own lodge is uploaded by name again and
-  another club's is marked **Not found**. A download that was running while
+  that download is forgotten, so your own lodge is neither uploaded nor
+  editable until a later download links it again, and another club's is
+  marked **Not found**. A download that was running while
   the address or key changed records nothing.
 - **Your lodge's name is yours.** If the central server's administrator renames
   your own lodge, this site keeps the name you gave it, and your next upload

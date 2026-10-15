@@ -79,9 +79,8 @@ function shownServerVersion(apiKeySet: boolean, stored: string | null): string {
 
 /**
  * The Download result in one line. Renames (#64) are counted, and a lodge the
- * central server renamed to a name another lodge here already has is named —
- * by its name HERE, with the name it should have — because it keeps its old
- * name (or, for a lodge new to this site, is not added) until that is resolved.
+ * download could not place is named (#69): one sent without an id whose name
+ * several lodges here share, or a new one whose id a concurrent download held.
  */
 function downloadSummaryText(data: {
   fetched: number;
@@ -94,11 +93,9 @@ function downloadSummaryText(data: {
 }): string {
   const entries = `${data.fetched} ${data.fetched === 1 ? "entry" : "entries"}`;
   const renamed = data.renamed ? ` (${data.renamed} renamed)` : "";
-  const conflicts = (data.nameConflicts ?? []).map((c) =>
-    c.lodge === null ? `"${c.wanted}" (a new lodge, not added)` : `"${c.lodge}" (should be "${c.wanted}")`,
-  );
+  const conflicts = (data.nameConflicts ?? []).map((c) => `"${c.wanted}"`);
   const conflictText = conflicts.length
-    ? ` The central server's name is already used by another lodge here, so these kept their name: ${conflicts.join(", ")}.`
+    ? ` Not added, because they could not be matched to one lodge here (the next Download tries again): ${conflicts.join(", ")}.`
     : "";
   // Lodges the central server deleted (#58): hidden here, kept for the
   // bookings and requests that name them.
@@ -287,7 +284,13 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
         }
         throw new Error(data?.error ?? `Failed to ${direction}`);
       }
-      if (direction === "upload") {
+      if (direction === "upload" && data.ownedUnknown) {
+        // Nothing was sent or recorded (#69): the last-upload time stays.
+        setMessage({
+          kind: "warn",
+          text: "Nothing uploaded: press Download first, so this site knows which lodge is yours.",
+        });
+      } else if (direction === "upload") {
         setLastUpload(new Date().toISOString());
         setMessage({
           kind: "ok",
