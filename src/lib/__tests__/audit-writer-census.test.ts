@@ -1005,7 +1005,7 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // Eight files from #2765's fifteen sites, plus #2749's other-lodges item
     // route file (its list route lost its only writer in #52), plus #2942's
     // roster-settings route file, plus #62's central-lodge route file and #58's
-    // other-lodges remove route file.
+    // other-lodges hide route file.
     expect(files.filter((file) => gateOf(file) === "lodge")).toHaveLength(12);
     expect(files.filter((file) => gateOf(file) === "other")).toEqual([]);
 

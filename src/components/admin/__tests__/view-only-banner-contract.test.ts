@@ -362,7 +362,7 @@ const FIGURES = {
    * `describeReason={false}` under the card's own section banner. MEASURED by
    * re-running this census.
    *
-   * 372 -> 373 (#58): the Other lodges panel's Remove, render-site vouched by
+   * 372 -> 373 (#58): the Other lodges panel's Hide, render-site vouched by
    * the Lodges page like the panel's Edit my Lodge. MEASURED by re-running.
    */
   callSites: 373,
@@ -403,7 +403,7 @@ const FIGURES = {
    * Delete) and one arrives (Edit my Lodge).
    */
   // 315 -> 317 (#62): the Central lodge card's two, static opt-outs (below).
-  // 317 -> 318 (#58): the Other lodges panel's Remove, a vouched opt-out.
+  // 317 -> 318 (#58): the Other lodges panel's Hide, a vouched opt-out.
   optOuts: 318,
   /**
    * `describeReason={false}` — needs a banner in the SAME file.
@@ -492,7 +492,7 @@ const FIGURES = {
    * 36 -> 34 (#52): the Other lodges panel's Add/Edit/Delete go and Edit my
    * Lodge arrives, all render-site vouched by the Lodges page; 31 -> 29 there.
    *
-   * 34 -> 35 (#58): the panel's Remove, render-site vouched; 29 -> 30 there.
+   * 34 -> 35 (#58): the panel's Hide, render-site vouched; 29 -> 30 there.
    */
   vouchedOptOuts: 35,
   /** …of the vouched: proved at a parent's own JSX render site (#2168). */
