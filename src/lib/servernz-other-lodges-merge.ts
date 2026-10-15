@@ -9,6 +9,7 @@ import {
   otherLodgeDataDiffers,
   ownsOtherLodge,
   replaceOtherLodgeAmenities,
+  visibleOtherLodgeWhere,
 } from "@/lib/other-lodges";
 import { prisma } from "@/lib/prisma";
 import type { OtherLodgesPullResult } from "@/lib/servernz-api";
@@ -57,6 +58,7 @@ const MERGE_SELECT = {
   id: true,
   name: true,
   centralId: true,
+  hiddenAt: true,
   updatedAt: true,
   ...OTHER_LODGE_DATA_SELECT,
   amenities: otherLodgeAmenitiesSelect,
@@ -113,8 +115,11 @@ export async function mergeDistributedLodge(
     : null;
   let existing = byId;
   if (!existing) {
-    const byName = await prisma.otherLodge.findUnique({
-      where: { name: lodge.name },
+    // Among VISIBLE lodges only (#58): a hidden lodge is a deleted one kept for
+    // the bookings that name it, never matched to another lodge — names are
+    // unique among visible lodges alone, so a live lodge may share its name.
+    const byName = await prisma.otherLodge.findFirst({
+      where: { name: lodge.name, ...visibleOtherLodgeWhere },
       select: MERGE_SELECT,
     });
     // The name is held here by a DIFFERENT central lodge: one renamed away on
@@ -153,34 +158,27 @@ export async function mergeDistributedLodge(
   const stamp = remoteUpdatedAt ? { updatedAt: remoteUpdatedAt } : {};
 
   if (!existing) {
-    // Upsert, not create: `name` is unique and this read-then-write is not
-    // atomic, so a concurrent writer (an admin pressing Download while the
-    // 03:00 cron runs) can insert the same name in the gap; the upsert lets the
-    // loser fall through to the same update. The amenity replacement rides in
-    // the same transaction, keyed on the unique (lodge, name).
-    let keyedAs: string | null = centralId;
+    // A plain create; the amenity set rides in the same transaction. This
+    // read-then-write is not atomic, so a concurrent writer (an admin pressing
+    // Download while the 03:00 cron runs) can create the same visible name or
+    // central id in the gap: the unique index refuses this one, and the lodge
+    // is retried after the rest of the pull, when the lookups above find the
+    // row that writer made and merge into it.
     try {
-      keyedAs = await prisma.$transaction(async (tx) => {
-        const row = await tx.otherLodge.upsert({
-          where: { name: lodge.name },
-          create: { name: lodge.name, centralId, ...data, ...stamp },
-          update: { ...data, ...stamp },
-          select: { id: true, centralId: true },
+      await prisma.$transaction(async (tx) => {
+        const row = await tx.otherLodge.create({
+          data: { name: lodge.name, centralId, ...data, ...stamp },
+          select: { id: true },
         });
         if (amenities) await replaceOtherLodgeAmenities(tx, row.id, amenities);
-        return row.centralId;
       });
     } catch (error) {
-      // The id is held by a row a concurrent download just wrote.
       if (!isUniqueViolation(error)) throw error;
       return final
         ? { kind: "conflict", nameConflict: { lodge: null, wanted: lodge.name } }
         : { kind: "deferred" };
     }
-    // The upsert took its update arm (a concurrent writer inserted the name in
-    // the gap): that row is not keyed by this lodge's id. Reported, so the
-    // registry is not marked keyed and the next whole download keys it.
-    return { kind: "created", notKeyed: centralId !== null && keyedAs !== centralId };
+    return { kind: "created" };
   }
 
   const row = existing;
@@ -200,7 +198,7 @@ export async function mergeDistributedLodge(
       keyed = (
         await prisma.otherLodge.updateMany({
           // `row.centralId` is null, or a stale id a whole download disowned.
-          where: { id: row.id, centralId: row.centralId, updatedAt: row.updatedAt },
+          where: { id: row.id, centralId: row.centralId, updatedAt: row.updatedAt, hiddenAt: null },
           data: { centralId, updatedAt: row.updatedAt },
         })
       ).count;
@@ -215,8 +213,9 @@ export async function mergeDistributedLodge(
   let renameTo = theirs && byId !== null && row.name !== lodge.name ? lodge.name : null;
   let nameConflict: NameConflict | undefined;
   if (renameTo !== null) {
-    const holder = await prisma.otherLodge.findUnique({
-      where: { name: renameTo },
+    // Held only by a VISIBLE lodge (#58): a hidden one may share the name.
+    const holder = await prisma.otherLodge.findFirst({
+      where: { name: renameTo, ...visibleOtherLodgeWhere },
       select: { id: true },
     });
     if (holder) {
@@ -251,7 +250,7 @@ export async function mergeDistributedLodge(
   try {
     applied = await prisma.$transaction(async (tx) => {
       const claimed = await tx.otherLodge.updateMany({
-        where: { id: row.id, updatedAt: row.updatedAt },
+        where: { id: row.id, updatedAt: row.updatedAt, hiddenAt: null },
         data: { ...data, ...stamp, ...(renameTo !== null ? { name: renameTo } : {}) },
       });
       if (claimed.count !== 1) return false;
@@ -284,4 +283,32 @@ export async function localNamesByCentralId(
   return new Map(
     rows.flatMap((row) => (row.centralId ? [[row.centralId, row.name] as const] : [])),
   );
+}
+
+/**
+ * The central server deleted the lodge with this central id (#58, API 2.4,
+ * owner decision): the local row is HIDDEN, never removed. It keeps its data
+ * and its central id, so every booking and booking request that names it keeps
+ * it, and it leaves the Other lodges list and every drop-down. Any club lodge
+ * linked to it (#62) is unlinked. Returns the lodge's name when this call hid it
+ * (`null` when there is no such row, or it was already hidden: a repeated
+ * deletion is a no-op), and how many club lodges it unlinked. Raw, so `updatedAt`
+ * stays put: hiding is not an edit to upload.
+ */
+export async function hideDeletedLodge(
+  centralId: string,
+): Promise<{ hidden: string | null; unlinked: number }> {
+  // A club lodge LINKED to the deleted central lodge (#62's "Central lodge")
+  // points at nothing now: the link is cleared, so the one-lodge default can
+  // link it to a successor. Raw, like the hide: not an administrator's edit.
+  const unlinked = await prisma.$executeRaw`UPDATE "Lodge" SET "centralLodgeId" = NULL WHERE "centralLodgeId" = ${centralId}`;
+  const row = await prisma.otherLodge.findUnique({
+    where: { centralId },
+    select: { id: true, name: true, hiddenAt: true },
+  });
+  if (!row || row.hiddenAt) return { hidden: null, unlinked };
+  // The instant is the app's, as an administrator's Hide stamps it: the
+  // database's NOW() would be read in its own time zone.
+  const hidden = await prisma.$executeRaw`UPDATE "OtherLodge" SET "hiddenAt" = ${new Date()} WHERE "id" = ${row.id} AND "centralId" = ${centralId} AND "hiddenAt" IS NULL`;
+  return { hidden: hidden === 1 ? row.name : null, unlinked };
 }

@@ -584,10 +584,10 @@ land.
 manifest moving with it. The numbers this page was written against:
 
 ```
-row-producing sites:  498
+row-producing sites:  500
 uncategorised:        0
-category values: admin 108, booking 107, xero 39, family 35, payment 52,
-                 lodge 66, account 19, security 25, privacy 21,
+category values: admin 109, booking 107, xero 39, family 35, payment 52,
+                 lodge 67, account 19, security 25, privacy 21,
                  communication 21, system 4
 ```
 
@@ -790,6 +790,18 @@ administrator linked a local lodge to its lodge on the Alpine Central Server.
 `admin` under INV-PRIV-013's rule, like every writer in the lodge-records
 subsystem, so the lodge-gated keep grows from seventeen pinned sites to
 eighteen; the row names two central lodge ids and the administrator, no member.
+
+#58 then added one more (`admin` 108 -> 109, 498 -> 499, MEASURED with
+`pnpm run audit:census`): `OTHER_LODGE_HIDDEN`, the record that an
+administrator hid an Other lodges row the Alpine Central Server does not list.
+`admin` under INV-PRIV-013's rule, beside the registry's update, so the
+lodge-gated keep grows from eighteen pinned sites to nineteen; the row names
+the lodge by id and name only, no member.
+
+#58 also added the download's own record of the lodges it hid because the
+central server deleted them (`alpine_server.other_lodges.hidden`, `lodge`
+66 -> 67, 499 -> 500, MEASURED): lodge names and a count of unlinked club
+lodges, no member. A library writer, so it joins no keep.
 
 #3498 then added one more (`payment` 45 -> 46, 483 -> 484, MEASURED with
 `npm run audit:census` on that branch rather than added to the literal):

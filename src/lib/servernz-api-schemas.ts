@@ -1,6 +1,7 @@
 import "server-only";
 import { z } from "zod";
 import {
+  centralLodgeIdSchema,
   amenitiesInputSchema,
   otherLodgeCommonDataShape,
   otherLodgeNameSchema,
@@ -115,6 +116,13 @@ export const distributedLodgeSchema = z
 /** Upper bound on one pull, so a hostile or broken server cannot stream forever. */
 const MAX_LODGES_PER_PULL = 5_000;
 
+/**
+ * Upper bound on one pull's deletions (#58). Deletions are never undone, and a
+ * whole-registry pull carries all of them, so the list only grows: bounded
+ * apart from, and well above, the live lodges.
+ */
+const MAX_DELETED_LODGES_PER_PULL = 100_000;
+
 // No exported alias for a single distributed lodge: nothing names one on its
 // own, and callers reach them through `OtherLodgesPullResult["lodges"]`.
 //
@@ -142,6 +150,17 @@ export const pullEnvelopeSchema = z.object({
   // The same lodges with their permanent ids (server API 2.2, #62), validated
   // on its own like the names, for the same reason.
   ownLodges: z.unknown().optional(),
+  // Lodges deleted on the server since `since` (API 2.4, #58), or every one on
+  // a whole-registry pull, so its bound is its own and far above the registry's:
+  // an over-long list fails the pull (and the cursor stays) rather than being
+  // cut short; each entry is validated on its own below.
+  deletedLodges: z.array(z.unknown()).max(MAX_DELETED_LODGES_PER_PULL).optional(),
+});
+
+/** One deletion as the server sends it (API 2.4): the lodge's central id. */
+export const deletedLodgeSchema = z.object({
+  id: centralLodgeIdSchema,
+  deletedAt: z.string().max(64),
 });
 
 export interface OtherLodgesPullResult {
@@ -165,6 +184,12 @@ export interface OtherLodgesPullResult {
   ownLodges: OwnedCentralLodge[] | undefined;
   /** True when the server sent `ownLodges` and it failed its bounds. */
   ownLodgesRefused: boolean;
+  /**
+   * The central ids of lodges deleted on the server (#58, API 2.4), or
+   * `undefined` when the server did not send the list (an older release),
+   * which hides nothing here. An entry that failed its bounds is left out.
+   */
+  deletedLodgeIds: string[] | undefined;
 }
 
 /** The column's VarChar(16): the bound on any version string taken off the wire. */

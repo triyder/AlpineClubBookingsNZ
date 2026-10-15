@@ -90,6 +90,7 @@ function downloadSummaryText(data: {
   unchanged?: number;
   renamed?: number;
   nameConflicts?: Array<{ lodge: string | null; wanted: string }>;
+  hiddenLodges?: string[];
 }): string {
   const entries = `${data.fetched} ${data.fetched === 1 ? "entry" : "entries"}`;
   const renamed = data.renamed ? ` (${data.renamed} renamed)` : "";
@@ -99,7 +100,13 @@ function downloadSummaryText(data: {
   const conflictText = conflicts.length
     ? ` The central server's name is already used by another lodge here, so these kept their name: ${conflicts.join(", ")}.`
     : "";
-  return `Downloaded ${entries}: ${data.created} added, ${data.updated} updated${renamed}, ${data.unchanged ?? 0} unchanged.${conflictText}`;
+  // Lodges the central server deleted (#58): hidden here, kept for the
+  // bookings and requests that name them.
+  const hidden = data.hiddenLodges ?? [];
+  const hiddenText = hidden.length
+    ? ` Deleted on the central server, so hidden here: ${hidden.map((n) => `"${n}"`).join(", ")}.`
+    : "";
+  return `Downloaded ${entries}: ${data.created} added, ${data.updated} updated${renamed}, ${data.unchanged ?? 0} unchanged.${conflictText}${hiddenText}`;
 }
 
 export function AlpineServerSetup({ initialState }: { initialState: InitialState }) {

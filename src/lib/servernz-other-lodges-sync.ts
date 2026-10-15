@@ -8,7 +8,9 @@ import {
   ownsOtherLodge,
   serializeOtherLodgeAmenities,
   serializeOtherLodgeData,
+  visibleOtherLodgeWhere,
 } from "@/lib/other-lodges";
+import { createAuditLog } from "@/lib/audit";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import {
@@ -18,6 +20,7 @@ import {
 } from "@/lib/servernz-api";
 import {
   localNamesByCentralId,
+  hideDeletedLodge,
   mergeDistributedLodge,
   type MergeOutcome,
   type NameConflict,
@@ -95,8 +98,9 @@ export async function uploadOtherClubsToServer(): Promise<UploadSummary> {
     : null;
   const owned = settings.otherLodgesOwnedNames;
 
+  // A hidden lodge (#58) is never uploaded: it is a deleted lodge kept here.
   const changed = await prisma.otherLodge.findMany({
-    where: since ? { updatedAt: { gt: since } } : {},
+    where: { ...visibleOtherLodgeWhere, ...(since ? { updatedAt: { gt: since } } : {}) },
     select: { name: true, centralId: true, updatedAt: true, ...LODGE_DATA_SELECT },
     orderBy: { name: "asc" },
   });
@@ -201,6 +205,12 @@ export interface DownloadSummary {
    * is the server's name.
    */
   nameConflicts: NameConflict[];
+  /**
+   * Lodges the central server deleted that this download HID here (#58), by
+   * name: kept for the bookings and requests that name them, and gone from
+   * the lists and drop-downs.
+   */
+  hiddenLodges: string[];
   /** Rows the server sent that failed validation and were discarded. */
   dropped: number;
 }
@@ -256,6 +266,37 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
   // stored one; `null` when neither is known. Decides two things per row below.
   const owned = pull.ownLodgeNames ?? settings.otherLodgesOwnedNames;
 
+  // Lodges the server DELETED (#58, API 2.4) are hidden here FIRST, and a
+  // pulled lodge the server also reports deleted (its reads are not one
+  // snapshot) is left out of the merge, so it ends hidden. Hidden, never
+  // removed (owner decision): the row stays for the bookings and requests that
+  // name it. A server that sends no list hides nothing.
+  const deletedIds = new Set(pull.deletedLodgeIds ?? []);
+  const hiddenLodges: string[] = [];
+  let unlinkedLodges = 0;
+  for (const centralId of deletedIds) {
+    const outcome = await hideDeletedLodge(centralId);
+    if (outcome.hidden !== null) hiddenLodges.push(outcome.hidden);
+    unlinkedLodges += outcome.unlinked;
+  }
+  // One record of what the download hid and unlinked, written HERE so the
+  // nightly pass and the Download button leave the same trail (an
+  // administrator's own Central lodge change is audited too).
+  if (hiddenLodges.length > 0 || unlinkedLodges > 0) {
+    await createAuditLog({
+      action: "alpine_server.other_lodges.hidden",
+      category: "lodge",
+      severity: "info",
+      outcome: "success",
+      summary: "Lodges deleted on the Alpine Central Server were hidden",
+      details: `hidden ${hiddenLodges.length}${hiddenLodges.length ? ` (${hiddenLodges.join(", ")})` : ""}; club lodges unlinked from them ${unlinkedLodges}`,
+    });
+  }
+  const lodges = pull.lodges.filter((l) => {
+    const id = usableCentralId(l.id);
+    return id === null || !deletedIds.has(id);
+  });
+
   let created = 0;
   let updated = 0;
   let unchanged = 0;
@@ -268,7 +309,7 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
   // found". A name conflict does not block it: a renamed row is already keyed,
   // and a refused new lodge has no local row to mark.
   let everyLodgeKeyed =
-    pull.dropped === 0 && pull.lodges.every((l) => usableCentralId(l.id) !== null);
+    pull.dropped === 0 && lodges.every((l) => usableCentralId(l.id) !== null);
   const count = (outcome: Exclude<MergeOutcome, { kind: "deferred" }>) => {
     if (outcome.nameConflict) nameConflicts.push(outcome.nameConflict);
     if (outcome.kind === "conflict") return;
@@ -293,11 +334,11 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
   // not be taken over by another lodge with its old name.
   const knownIds =
     wholeRegistry && pull.dropped === 0
-      ? new Set(pull.lodges.flatMap((l) => usableCentralId(l.id) ?? []))
+      ? new Set(lodges.flatMap((l) => usableCentralId(l.id) ?? []))
       : null;
-  let pending = pull.lodges;
+  let pending = lodges;
   for (;;) {
-    const next: typeof pull.lodges = [];
+    const next: typeof lodges = [];
     for (const lodge of pending) {
       const outcome = await mergeDistributedLodge(lodge, owned, false, knownIds);
       if (outcome.kind === "deferred") next.push(lodge);
@@ -379,13 +420,21 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
       return false;
     }
     const keyed = wholeRegistry && everyLodgeKeyed;
+    // A club lodge linked to a deleted central lodge in the moments since the
+    // hide above (an administrator's Central lodge save) is unlinked again, now
+    // that the owned list recorded below no longer names it (#58).
+    if (deletedIds.size > 0) {
+      await tx.$executeRaw(
+        Prisma.sql`UPDATE "Lodge" SET "centralLodgeId" = NULL WHERE "centralLodgeId" IN (${Prisma.join([...deletedIds])})`,
+      );
+    }
     if (keyed && knownIds !== null) {
       // One bound parameter per id (`Prisma.join`), as the rest of the code
       // base binds lists; an empty registry lists none, so every id goes.
       await tx.$executeRaw(
         knownIds.size === 0
-          ? Prisma.sql`UPDATE "OtherLodge" SET "centralId" = NULL WHERE "centralId" IS NOT NULL`
-          : Prisma.sql`UPDATE "OtherLodge" SET "centralId" = NULL WHERE "centralId" IS NOT NULL AND "centralId" NOT IN (${Prisma.join([...knownIds])})`,
+          ? Prisma.sql`UPDATE "OtherLodge" SET "centralId" = NULL WHERE "centralId" IS NOT NULL AND "hiddenAt" IS NULL`
+          : Prisma.sql`UPDATE "OtherLodge" SET "centralId" = NULL WHERE "centralId" IS NOT NULL AND "hiddenAt" IS NULL AND "centralId" NOT IN (${Prisma.join([...knownIds])})`,
       );
     }
     const ownedIds = pull.ownLodges ?? settings.otherLodgesOwnedLodges ?? [];
@@ -421,6 +470,7 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
     keptLocal,
     renamed,
     nameConflicts,
+    hiddenLodges,
     dropped: pull.dropped,
   };
 }

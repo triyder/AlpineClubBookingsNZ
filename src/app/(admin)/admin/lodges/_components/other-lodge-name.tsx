@@ -2,7 +2,7 @@
 
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { OTHER_LODGE_BOUNDS, type OtherLodgeReferences } from "@/lib/other-lodges";
+import { OTHER_LODGE_BOUNDS, type AdminOtherLodge, type OtherLodgeReferences } from "@/lib/other-lodges";
 
 /**
  * The lodge's name in the Other lodges editor (#64). Editable once the lodge
@@ -39,27 +39,50 @@ export function OtherLodgeNameField({
   );
 }
 
+/** Nothing here refers to the lodge. */
+const isUnreferenced = (references: OtherLodgeReferences) =>
+  references.bookings + references.bookingRequests === 0;
+
 const plural = (count: number, one: string, many: string) =>
   `${count} ${count === 1 ? one : many}`;
 
 /**
- * The note under a lodge the last whole-registry download did not match (#64):
- * usually a duplicate left by a rename before #64, or a lodge deleted there.
- * Says what still cites it, so an administrator can assess it; nothing removes
- * it here.
+ * The note under a lodge the central server does not list (#64): usually a
+ * duplicate left by a rename before #64, or a lodge deleted there before it
+ * told clubs about deletions. Says what still cites it, so an administrator can
+ * assess it and Hide it (#58); hiding keeps it for those bookings and requests.
  */
 export function NotOnCentralServerNote({ references }: { references: OtherLodgeReferences }) {
-  const cited =
-    references.bookings + references.bookingRequests === 0
-      ? "Nothing here refers to it."
-      : `Referred to by ${plural(references.bookings, "booking", "bookings")} and ${plural(
-          references.bookingRequests,
-          "booking request",
-          "booking requests",
-        )}.`;
+  const cited = isUnreferenced(references)
+    ? "Nothing here refers to it."
+    : `Referred to by ${plural(references.bookings, "booking", "bookings")} and ${plural(
+        references.bookingRequests,
+        "booking request",
+        "booking requests",
+      )}.`;
   return (
     <div className="text-xs text-warning-11">
       Not found on the Alpine Central Server. {cited}
     </div>
+  );
+}
+
+/**
+ * The Name cell of the Other lodges list: the name, the "not found" note when
+ * the central server does not list the lodge (#64), and the amenity count.
+ */
+export function OtherLodgeNameCell({ lodge }: { lodge: AdminOtherLodge }) {
+  return (
+    <>
+      <div className="font-medium">{lodge.name}</div>
+      {lodge.notOnCentralServer ? (
+        <NotOnCentralServerNote references={lodge.notOnCentralServer} />
+      ) : null}
+      {lodge.amenities.length > 0 ? (
+        <div className="text-xs text-muted-foreground">
+          {plural(lodge.amenities.length, "amenity", "amenities")}
+        </div>
+      ) : null}
+    </>
   );
 }

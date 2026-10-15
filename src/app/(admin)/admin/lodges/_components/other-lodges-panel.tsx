@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Building, Pencil, Plus, X } from "lucide-react";
+import { Building, EyeOff, Pencil, Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -61,7 +61,8 @@ import {
   type OtherLodgeFormState,
   type OtherLodgeRecord,
 } from "./other-lodge-form";
-import { NotOnCentralServerNote, OtherLodgeNameField } from "./other-lodge-name";
+import { OtherLodgeNameCell, OtherLodgeNameField } from "./other-lodge-name";
+import { useHideUnlistedLodge } from "./other-lodge-hide";
 import { OtherLodgeRateGrid } from "./other-lodge-rate-grid";
 
 export function OtherLodgesPanel({
@@ -137,6 +138,7 @@ export function OtherLodgesPanel({
   const openerRef = useRef<HTMLElement | null>(null);
 
   function startEdit(lodge: OtherLodgeRecord, opener: HTMLElement) {
+    hiding.clearMessage();
     openerRef.current = opener;
     setEditingId(lodge.id);
     setForm(formFromLodge(lodge));
@@ -224,6 +226,8 @@ export function OtherLodgesPanel({
     }
   }
 
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const hiding = useHideUnlistedLodge({ reload: () => loadLodges(), afterHide: () => headingRef.current?.focus() });
   const showForm = editingId !== null;
   const editingLodge = lodges.find((l) => l.id === editingId);
   // The owned rows actually ON SCREEN. A name the server lists that has no
@@ -238,8 +242,9 @@ export function OtherLodgesPanel({
 
   return (
     <div className="space-y-4">
+      {hiding.confirmDialog}
       <div>
-        <h2 className="text-xl font-semibold">Other lodges</h2>
+        <h2 ref={headingRef} tabIndex={-1} className="text-xl font-semibold">Other lodges</h2>
         <p className="text-sm text-muted-foreground">
           Details of other clubs&apos; lodges the club recognises. Their names
           will be offered to non-members when they indicate they are a member
@@ -252,7 +257,8 @@ export function OtherLodgesPanel({
           error is shown inside it, directly above Save and Cancel (the form is
           long, and Save is where the administrator's attention is when it
           fails). This one is for everything outside it: a list that could not
-          load. */}
+          load. A Hide reports in its own line, announced, below it (#58). */}
+      <p role="status" className={`text-sm ${hiding.message?.kind === "ok" ? "text-success-11" : "text-destructive"}`}>{hiding.message?.text}</p>
       {error && !showForm ? (
         <p className="text-sm text-destructive" role="alert">
           {error}
@@ -604,17 +610,12 @@ export function OtherLodgesPanel({
                   {lodges.map((lodge) => (
                     <TableRow key={lodge.id}>
                       <TableCell>
-                        <div className="font-medium">{lodge.name}</div>
+                        <OtherLodgeNameCell lodge={lodge} />
                         {lodge.notOnCentralServer ? (
-                          <NotOnCentralServerNote references={lodge.notOnCentralServer} />
-                        ) : null}
-                        {lodge.amenities.length > 0 ? (
-                          <div className="text-xs text-muted-foreground">
-                            {lodge.amenities.length}{" "}
-                            {lodge.amenities.length === 1
-                              ? "amenity"
-                              : "amenities"}
-                          </div>
+                          <ViewOnlyActionButton canEdit={canEdit} describeReason={!ancestorRendersViewOnlyBanner} variant="outline" size="sm" className="mt-1" onClick={() => void hiding.hide(lodge)} disabled={hiding.hidingId !== null} aria-label={`${hiding.hidingId === lodge.id ? "Hiding" : "Hide"} ${lodge.name}`}>
+                            <EyeOff className="mr-2 h-4 w-4" />
+                            {hiding.hidingId === lodge.id ? "Hiding…" : "Hide"}
+                          </ViewOnlyActionButton>
                         ) : null}
                       </TableCell>
                       <TableCell className="text-muted-foreground">

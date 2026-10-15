@@ -46,6 +46,8 @@ vi.mock("@/lib/prisma", () => {
     otherLodge: {
       findMany: mocks.findMany,
       findUnique: mocks.findUnique,
+      // The PATCH reads a VISIBLE lodge by id (#58), with findFirst.
+      findFirst: mocks.findUnique,
       findUniqueOrThrow: mocks.findUniqueOrThrow,
       update: mocks.update,
       updateMany: mocks.updateMany,
@@ -208,6 +210,12 @@ describe("GET /api/admin/other-lodges marks lodges the central server no longer 
     expect(data.otherLodges[0]).not.toHaveProperty("notOnCentralServer");
     expect(data.otherLodges[1].notOnCentralServer).toEqual({ bookings: 2, bookingRequests: 1 });
     expect(mocks.findMany.mock.calls[1][0].where).toEqual({ id: { in: ["ol-old"] } });
+  });
+
+  it("never lists a HIDDEN lodge (#58): it is kept only for the bookings that name it", async () => {
+    mocks.findMany.mockResolvedValueOnce([record()]);
+    await GET();
+    expect(mocks.findMany.mock.calls[0][0].where).toEqual({ hiddenAt: null });
   });
 
   it("marks nothing until a whole download has keyed the registry, even with keyed rows", async () => {
@@ -415,6 +423,14 @@ describe("PATCH /api/admin/other-lodges/[id]", () => {
       params("ol-1"),
     );
     expect(response.status).toBe(403);
+    expect(mocks.update).not.toHaveBeenCalled();
+  });
+
+  it("will not edit a HIDDEN lodge (#58): it reads only visible lodges", async () => {
+    mocks.findUnique.mockResolvedValue(null);
+    const response = await PATCH(jsonRequest("PATCH", { bedCapacity: 12 }), params("ol-1"));
+    expect(response.status).toBe(404);
+    expect(mocks.findUnique.mock.calls[0][0].where).toEqual({ id: "ol-1", hiddenAt: null });
     expect(mocks.update).not.toHaveBeenCalled();
   });
 
