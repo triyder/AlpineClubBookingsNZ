@@ -584,10 +584,10 @@ land.
 manifest moving with it. The numbers this page was written against:
 
 ```
-row-producing sites:  500
+row-producing sites:  501
 uncategorised:        0
 category values: admin 109, booking 107, xero 39, family 35, payment 52,
-                 lodge 67, account 19, security 25, privacy 21,
+                 lodge 68, account 19, security 25, privacy 21,
                  communication 21, system 4
 ```
 
@@ -802,6 +802,11 @@ the lodge by id and name only, no member.
 central server deleted them (`alpine_server.other_lodges.hidden`, `lodge`
 66 -> 67, 499 -> 500, MEASURED): lodge names and a count of unlinked club
 lodges, no member. A library writer, so it joins no keep.
+
+#77 added the record that this club's own Other lodge was refilled from its
+Fees page (`OTHER_LODGE_RATES_FROM_FEES`, `lodge` 67 -> 68, 500 -> 501,
+MEASURED): the lodge, the trigger and the fields that changed, no member. A
+library writer, so it joins no keep.
 
 #3498 then added one more (`payment` 45 -> 46, 483 -> 484, MEASURED with
 `npm run audit:census` on that branch rather than added to the literal):
