@@ -636,7 +636,11 @@ export const AUDIT_CENSUS_TOTALS = {
   // the club lodges it unlinked from them; written inside the download so the
   // nightly pass and the Download button share it. `lodge`, like the Download
   // record beside it. RE-MEASURED with `pnpm run audit:census`.
-  writeSites: 500,
+  // 500 -> 501 (#77): `OTHER_LODGE_RATES_FROM_FEES`, written when this club's
+  // own Other lodge is refilled from its Fees page (non-member rates and
+  // season dates; no member data). `lodge`, from `other-lodge-fees-sync.ts`,
+  // whichever trigger runs it. RE-MEASURED with `pnpm run audit:census`.
+  writeSites: 501,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -819,7 +823,8 @@ export const AUDIT_CENSUS_TOTALS = {
     // 138 -> 139 (#3792): the refused restored-booking allocation change record.
     // 139 -> 140 (#62): the Central lodge link record.
     // 140 -> 141 (#58): the download's record of the lodges it hid.
-    createAuditLog: { total: 141, uncategorised: 0 },
+    // 141 -> 142 (#77): the Fees-page refill of this club's own Other lodge.
+    createAuditLog: { total: 142, uncategorised: 0 },
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.
     // Same row, same dedupe keys (`action` + `subjectMemberId` + `outcome`) —
@@ -1243,7 +1248,9 @@ export const AUDIT_CENSUS_TOTALS = {
     // hold lodge access, so nobody gains a read.
     // 66 -> 67 (#58): the download's record of the lodges it hid (lodge names
     // and a count, no member), `lodge` like the Download record it sits beside.
-    lodge: 67,
+    // 67 -> 68 (#77): the record of this club's own Other lodge being filled
+    // from its Fees page (rates and dates, no member), `lodge` likewise.
+    lodge: 68,
     // 19 -> 34 (#2581 child 2): the fifteen Xero settings, mapping, replay and
     // retry writers. `xero` is `support` plus `finance`.
     //
