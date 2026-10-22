@@ -2,7 +2,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import {
+  LEGACY_POSIX_RULE_NAMES,
+  runtimeCanonicalName,
+  runtimeLinksToAPlace,
+  withLegacyNamesUnlinked,
+} from "@/lib/__tests__/helpers/legacy-posix-rule-zones";
 import { captureHostTimeZone } from "@/lib/__tests__/helpers/timezone";
+import { CLUB_TIME_ZONE_FALLBACK } from "@/lib/club-time-zone";
 import { decideClubTimeZoneBackfill } from "@/lib/config-self-heal-steps";
 import { decideEnvironmentRole } from "@/lib/environment-role";
 import type { EnvironmentRoleDeclaration } from "@/lib/environment-role-declaration";
@@ -1662,7 +1669,6 @@ describe("setup-readiness club timezone (CT-1, #2989)", () => {
   it.each([
     ["GB", "Europe/London"],
     ["NZ-CHAT", "Pacific/Chatham"],
-    ["EST5EDT", "America/New_York"],
   ])(
     "does not contradict itself about the fallback when TZ=%s is a legacy alias",
     (raw, expected) => {
@@ -1690,6 +1696,56 @@ describe("setup-readiness club timezone (CT-1, #2989)", () => {
       );
       // And the raw spelling is still shown, so the interpretation is visible.
       expect(text).toContain(raw);
+    },
+  );
+
+  // A rule set is not a place, so this is the one case where that sentence is
+  // TRUE and both halves of the step agree on it.
+  function expectRuleZoneNamedAsNoPlace(raw: string): void {
+    pinEnvironmentZone(raw);
+
+    const check = clubTimeZoneCheck({
+      ...completeDatabase,
+      clubTimeZone: "NZT",
+    });
+    const text = `${check.message} ${check.details.join(" ")}`;
+
+    expect(check.status).toBe("blocked");
+    expect(text).toContain(raw);
+    expect(text).toContain(CLUB_TIME_ZONE_FALLBACK);
+    expect(text).toMatch(/is not a named place either/i);
+  }
+
+  it.each(LEGACY_POSIX_RULE_NAMES)(
+    "names the place TZ=%s links to where this runtime links it to one, and says plainly that the default applies where the runtime makes it a rule zone of its own (tzdata 2026d)",
+    (raw) => {
+      if (!runtimeLinksToAPlace(raw)) {
+        expectRuleZoneNamedAsNoPlace(raw);
+        return;
+      }
+      pinEnvironmentZone(raw);
+
+      const check = clubTimeZoneCheck({
+        ...completeDatabase,
+        clubTimeZone: "NZT",
+      });
+      const text = `${check.message} ${check.details.join(" ")}`;
+
+      expect(check.status).toBe("blocked");
+      expect(text).toContain(runtimeCanonicalName(raw) as string);
+      // The raw spelling is still shown, and the contradiction is not.
+      expect(text).toContain(raw);
+      expect(text).not.toMatch(/is not a named place either/i);
+      expect(text).not.toMatch(
+        /built-in New Zealand default applies until the club's timezone is set again/i,
+      );
+    },
+  );
+
+  it.each(LEGACY_POSIX_RULE_NAMES)(
+    "on every Node: with the runtime standing in for tzdata 2026d, TZ=%s is named as no place beside the default",
+    async (raw) => {
+      await withLegacyNamesUnlinked(() => expectRuleZoneNamedAsNoPlace(raw));
     },
   );
 
