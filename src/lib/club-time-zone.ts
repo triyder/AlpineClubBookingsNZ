@@ -151,20 +151,27 @@ export function normaliseClubTimeZone(
  * place was kept. tzdata 2026d (Node 24.22.1) made them POSIX rule zones of
  * their own again — US federal rules, no place — so the runtime now names them
  * as themselves, the shape rule refuses that, and they join the residual class
- * below: a deployment on `TZ=EST5EDT` records nothing and the checklist names
- * the value. That is the right answer on that runtime, for the same reason
- * `Etc/GMT+5` gets it: a rule set is not a place. Nothing here pins one
+ * below: this function returns `null` for `TZ=EST5EDT`, and the callers treat
+ * it as they treat `UTC` — the default is recorded with `defaulted` provenance,
+ * the boot log warns BY DEFAULT naming the value, and the checklist reports the
+ * step as a warning. That is the right answer on that runtime, for the same
+ * reason `Etc/GMT+5` gets it: a rule set is not a place. Nothing here pins one
  * reading, and the suite asks the runtime which applies before asserting.
  *
  * The residual class returns `null` and MUST NOT be substituted: `UTC`, `GMT`,
  * `Zulu`, `Universal`, `UCT`, `Greenwich` and `Etc/UTC` all canonicalise to
  * `UTC`, and `Etc/GMT±N` / `SystemV/*` to themselves. No place on earth has those
  * as its civil time, so there is nothing to preserve and every candidate would be
- * a guess. The callers therefore record nothing at all and leave the setup
- * checklist blocked naming the refused value, which satisfies both requirement 2
- * (never invent a zone for a configured install) and requirement 3 (never store a
- * fixed offset), and matches `INV-CONFIG-001`'s rule that an unconfigured state
- * is visible where an operator has to act.
+ * a guess. What the callers do with that `null` is the owner's decision of
+ * 23 Aug 2026 on #2989, recorded at `decideClubTimeZoneBackfill`: a zone is
+ * ALWAYS recorded, so they write `CLUB_TIME_ZONE_FALLBACK` with `defaulted`
+ * provenance rather than leaving the row empty — and defaulting is not silence:
+ * the boot backfill warns BY DEFAULT naming the refused value, the seed prints
+ * the same, and the setup checklist reports the step as a WARNING asking for
+ * confirmation rather than a clean "complete". That keeps requirement 3 (never
+ * store a fixed offset) and `INV-CONFIG-001`'s rule that an unconfigured state
+ * is visible where an operator has to act; requirement 2 (back-fill the zone in
+ * use) cannot be met for a value that names no place, and the warning says so.
  */
 export function normaliseClubTimeZoneForPreservation(
   value: string | null | undefined,
