@@ -65,6 +65,7 @@ import {
   LEGACY_POSIX_RULE_NAMES,
   runtimeCanonicalName,
   runtimeLinksToAPlace,
+  withLegacyNamesUnlinked,
 } from "@/lib/__tests__/helpers/legacy-posix-rule-zones";
 import { captureHostTimeZone } from "@/lib/__tests__/helpers/timezone";
 import {
@@ -150,22 +151,41 @@ describe("decideClubTimeZoneBackfill", () => {
     },
   );
 
+  // tzdata >= 2026d: a rule set is not a place, so there is nothing to
+  // preserve — and the caller is told it DEFAULTED, raw value and all.
+  function expectDefaultedForRuleZone(raw: string): void {
+    pinEnvironmentZone(raw);
+    expect(decideClubTimeZoneBackfill()).toEqual({
+      kind: "defaulted",
+      timeZone: CLUB_TIME_ZONE_FALLBACK,
+      raw,
+    });
+  }
+
   it.each(LEGACY_POSIX_RULE_NAMES)(
     "preserves TZ=%s where this runtime links it to a place, and defaults where the runtime makes it a rule zone of its own (tzdata 2026d)",
     (raw) => {
-      pinEnvironmentZone(raw);
-
-      const decision = decideClubTimeZoneBackfill();
-
-      if (runtimeLinksToAPlace(raw)) {
-        // tzdata <= 2026c: a link to a place, kept like `US/Pacific` above.
-        expect(decision).toEqual({ kind: "preserved", timeZone: runtimeCanonicalName(raw), raw });
-        expect(isValidClubTimeZone(decision.timeZone)).toBe(true);
-      } else {
-        // tzdata >= 2026d: a rule set is not a place, so there is nothing to
-        // preserve — and the caller is told it DEFAULTED, raw value and all.
-        expect(decision).toEqual({ kind: "defaulted", timeZone: CLUB_TIME_ZONE_FALLBACK, raw });
+      if (!runtimeLinksToAPlace(raw)) {
+        expectDefaultedForRuleZone(raw);
+        return;
       }
+      // tzdata <= 2026c: a link to a place, kept like `US/Pacific` above.
+      pinEnvironmentZone(raw);
+      const decision = decideClubTimeZoneBackfill();
+      expect(decision).toEqual({
+        kind: "preserved",
+        timeZone: runtimeCanonicalName(raw),
+        raw,
+      });
+      expect(isValidClubTimeZone(decision.timeZone)).toBe(true);
+      expect(decision.timeZone).not.toBe(CLUB_TIME_ZONE_FALLBACK);
+    },
+  );
+
+  it.each(LEGACY_POSIX_RULE_NAMES)(
+    "on every Node: with the runtime standing in for tzdata 2026d, TZ=%s defaults and says so",
+    async (raw) => {
+      await withLegacyNamesUnlinked(() => expectDefaultedForRuleZone(raw));
     },
   );
 

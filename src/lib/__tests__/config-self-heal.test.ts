@@ -25,6 +25,7 @@ import {
   LEGACY_POSIX_RULE_NAMES,
   runtimeCanonicalName,
   runtimeLinksToAPlace,
+  withLegacyNamesUnlinked,
 } from "@/lib/__tests__/helpers/legacy-posix-rule-zones";
 import { captureHostTimeZone } from "@/lib/__tests__/helpers/timezone";
 import {
@@ -2025,9 +2026,38 @@ describe("clubTimeZoneSelfHealStep — the upgrade keeps the zone already in use
     },
   );
 
+  // A rule set is not a place: nothing to preserve, so the default is written
+  // and the boot log says BY DEFAULT, naming the raw value.
+  async function expectDefaultWrittenForRuleZone(raw: string): Promise<void> {
+    pinEnvironmentZone(raw);
+    const { rows, db } = makeClubTimeDb();
+
+    const summary = await runConfigSelfHeal({
+      db,
+      steps: [clubTimeZoneSelfHealStep],
+      log: silentLog,
+      provenance: "primary",
+    });
+
+    expect(summary.healed).toBe(1);
+    expect(rows.get("default")).toEqual({
+      id: "default",
+      timeZone: CLUB_TIME_ZONE_FALLBACK,
+      updatedByMemberId: null,
+    });
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ environmentTimeZone: raw }),
+      expect.stringContaining("BY DEFAULT"),
+    );
+  }
+
   it.each(LEGACY_POSIX_RULE_NAMES)(
     "records the place TZ=%s names where this runtime links it to one, and the default — warned about — where the runtime makes it a rule zone of its own (tzdata 2026d)",
     async (raw) => {
+      if (!runtimeLinksToAPlace(raw)) {
+        await expectDefaultWrittenForRuleZone(raw);
+        return;
+      }
       pinEnvironmentZone(raw);
       const { rows, db } = makeClubTimeDb();
 
@@ -2039,18 +2069,22 @@ describe("clubTimeZoneSelfHealStep — the upgrade keeps the zone already in use
       });
 
       expect(summary.healed).toBe(1);
-      if (runtimeLinksToAPlace(raw)) {
-        expect(rows.get("default")).toMatchObject({ timeZone: runtimeCanonicalName(raw) });
-        expect(mockLogger.warn).not.toHaveBeenCalled();
-      } else {
-        // A rule set is not a place: nothing to preserve, so the default is
-        // written and the boot log says BY DEFAULT, naming the raw value.
-        expect(rows.get("default")).toMatchObject({ timeZone: CLUB_TIME_ZONE_FALLBACK });
-        expect(mockLogger.warn).toHaveBeenCalledWith(
-          expect.objectContaining({ environmentTimeZone: raw }),
-          expect.stringContaining("BY DEFAULT"),
-        );
-      }
+      expect(rows.get("default")).toEqual({
+        id: "default",
+        timeZone: runtimeCanonicalName(raw),
+        updatedByMemberId: null,
+      });
+      expect(rows.get("default")).not.toMatchObject({
+        timeZone: CLUB_TIME_ZONE_FALLBACK,
+      });
+      expect(mockLogger.warn).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(LEGACY_POSIX_RULE_NAMES)(
+    "on every Node: with the runtime standing in for tzdata 2026d, TZ=%s writes the default and warns BY DEFAULT",
+    async (raw) => {
+      await withLegacyNamesUnlinked(() => expectDefaultWrittenForRuleZone(raw));
     },
   );
 

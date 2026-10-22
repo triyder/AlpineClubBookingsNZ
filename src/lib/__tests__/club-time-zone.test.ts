@@ -1,9 +1,10 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import {
   LEGACY_POSIX_RULE_NAMES,
   runtimeCanonicalName,
   runtimeLinksToAPlace,
+  withLegacyNamesUnlinked,
 } from "@/lib/__tests__/helpers/legacy-posix-rule-zones";
 import {
   CLUB_TIME_ZONE_FALLBACK,
@@ -260,42 +261,20 @@ describe("normaliseClubTimeZoneForPreservation — keeps the zone a deployment a
     },
   );
 
-  it("refuses a legacy POSIX-rule name the runtime keeps as its own zone, recording nothing", () => {
+  it("refuses a legacy POSIX-rule name the runtime keeps as its own zone, recording nothing", async () => {
     // The tzdata >= 2026d branch above, made to run on EVERY runtime: the
-    // constructor is stood in for so that `EST5EDT` resolves to itself, which
-    // is exactly what Node 24.22.1 reports. A plain `function`, not an arrow,
-    // because it is called with `new`; everything but that one zone is
-    // delegated to the real formatter untouched.
-    const RealDateTimeFormat = Intl.DateTimeFormat;
-    function RuleZoneDateTimeFormat(
-      locales?: Intl.LocalesArgument,
-      options?: Intl.DateTimeFormatOptions,
-    ): Intl.DateTimeFormat {
-      const real = new RealDateTimeFormat(locales, options);
-      if (options?.timeZone !== "EST5EDT") return real;
-      return {
-        ...real,
-        resolvedOptions: () => ({
-          ...real.resolvedOptions(),
-          timeZone: "EST5EDT",
-        }),
-      } as Intl.DateTimeFormat;
-    }
-    const spy = vi
-      .spyOn(Intl, "DateTimeFormat")
-      .mockImplementation(
-        RuleZoneDateTimeFormat as unknown as typeof Intl.DateTimeFormat,
-      );
-    try {
+    // shared stand-in makes `EST5EDT` resolve to itself, which is exactly what
+    // Node 24.22.1 reports.
+    const before = runtimeCanonicalName("EST5EDT");
+    await withLegacyNamesUnlinked(() => {
       expect(runtimeCanonicalName("EST5EDT")).toBe("EST5EDT");
       expect(normaliseClubTimeZoneForPreservation("EST5EDT")).toBeNull();
       // And the environment leg falls to the documented default rather than
       // inventing a place for a rule set.
       expect(resolveClubTimeZone(null, "EST5EDT")).toBe(CLUB_TIME_ZONE_FALLBACK);
-    } finally {
-      spy.mockRestore();
-    }
-    expect(Intl.DateTimeFormat).toBe(RealDateTimeFormat);
+    });
+    // The real constructor is back, so the next case sees this runtime again.
+    expect(runtimeCanonicalName("EST5EDT")).toBe(before);
   });
 
   it("returns a real IANA zone unchanged", () => {
