@@ -31,7 +31,7 @@
   },
   "reviewedInputs": {
     "pnpm-workspace.yaml": "460e0a1b8449537f9e4ebb261a61a30f84d1e024fa0cd5e00f67b7c71596aef1",
-    "pnpm-lock.yaml": "323f27c67a89e097fabc03e86d353d9231b76d1165aacaecca1e212977a3c208"
+    "pnpm-lock.yaml": "392f43f32ec0ba5c83cfd9565fa9b1dfea6255bd075b28a0cecf159b9f1068c8"
   },
   "scope": "This mitigation covers ONLY the braces@3.0.3 package that pnpm installs and audits, on the path above. Nine further copies of braces are compiled into other packages' own files, where no pnpm patch reaches and pnpm audit cannot see them; they are known, unpatched and out of reach of this record, and are listed below. The reachability trace at https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3843#issuecomment-5966944832 found that none of them can receive input from outside the club's own developers and build, which is the condition the owner's second decision set for this record.",
   "knownUncoveredCopies": [
