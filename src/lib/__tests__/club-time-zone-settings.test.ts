@@ -9,6 +9,12 @@ import {
   type Mock,
 } from "vitest";
 
+import {
+  LEGACY_POSIX_RULE_NAMES,
+  runtimeCanonicalName,
+  runtimeLinksToAPlace,
+  withLegacyNamesUnlinked,
+} from "@/lib/__tests__/helpers/legacy-posix-rule-zones";
 import { captureHostTimeZone } from "@/lib/__tests__/helpers/timezone";
 
 /**
@@ -219,7 +225,6 @@ describe("resolveClubTimeZoneWithSource", () => {
   it.each([
     ["GB", "Europe/London"],
     ["NZ-CHAT", "Pacific/Chatham"],
-    ["EST5EDT", "America/New_York"],
   ])(
     "reports 'environment', not 'default', when TZ=%s is a legacy alias for %s",
     async (raw, expected) => {
@@ -242,6 +247,43 @@ describe("resolveClubTimeZoneWithSource", () => {
       expect(resolved.timeZone).toBe(expected);
       expect(resolved.source).toBe("environment");
       expect(resolved.persisted).toBeNull();
+    },
+  );
+  // A rule set is not a place: the value is the default, and the provenance
+  // beside it says so rather than contradicting it.
+  async function expectDefaultProvenanceForRuleZone(raw: string): Promise<void> {
+    process.env.TZ = raw;
+    findUnique.mockResolvedValue(null);
+
+    const resolved = await resolveClubTimeZoneWithSource();
+
+    expect(resolved.timeZone).toBe(CLUB_TIME_ZONE_FALLBACK);
+    expect(resolved.source).toBe("default");
+    expect(resolved.persisted).toBeNull();
+  }
+
+  it.each(LEGACY_POSIX_RULE_NAMES)(
+    "reports 'environment' for TZ=%s where this runtime links it to a place, and 'default' where it does not (tzdata 2026d)",
+    async (raw) => {
+      if (!runtimeLinksToAPlace(raw)) {
+        await expectDefaultProvenanceForRuleZone(raw);
+        return;
+      }
+      process.env.TZ = raw;
+      findUnique.mockResolvedValue(null);
+
+      const resolved = await resolveClubTimeZoneWithSource();
+
+      expect(resolved.timeZone).toBe(runtimeCanonicalName(raw));
+      expect(resolved.source).toBe("environment");
+      expect(resolved.persisted).toBeNull();
+    },
+  );
+
+  it.each(LEGACY_POSIX_RULE_NAMES)(
+    "on every Node: with the runtime standing in for tzdata 2026d, TZ=%s reports 'default' beside the default",
+    async (raw) => {
+      await withLegacyNamesUnlinked(() => expectDefaultProvenanceForRuleZone(raw));
     },
   );
 
