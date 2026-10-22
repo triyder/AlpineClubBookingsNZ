@@ -21,6 +21,11 @@ const { mockLogger } = vi.hoisted(() => ({
 vi.mock("@/lib/logger", () => ({ default: mockLogger }));
 
 import { clubConfig } from "@/config/club";
+import {
+  LEGACY_POSIX_RULE_NAMES,
+  runtimeCanonicalName,
+  runtimeLinksToAPlace,
+} from "@/lib/__tests__/helpers/legacy-posix-rule-zones";
 import { captureHostTimeZone } from "@/lib/__tests__/helpers/timezone";
 import {
   CLUB_CURRENCY_FALLBACK,
@@ -1985,11 +1990,11 @@ describe("clubTimeZoneSelfHealStep — the upgrade keeps the zone already in use
   });
 
   it.each([
-    // The 36 aliases that resolve to a real location. `GB` is the common one on
-    // a Debian host; `NZ-CHAT` is the one that would move a club by 45 minutes.
+    // The aliases that resolve to a real location (36 on tzdata up to 2026c).
+    // `GB` is the common one on a Debian host; `NZ-CHAT` is the one that would
+    // move a club by 45 minutes.
     ["GB", "Europe/London"],
     ["NZ-CHAT", "Pacific/Chatham"],
-    ["EST5EDT", "America/New_York"],
   ])(
     "records the place TZ=%s actually names (%s) rather than the New Zealand default",
     async (raw, expected) => {
@@ -2017,6 +2022,35 @@ describe("clubTimeZoneSelfHealStep — the upgrade keeps the zone already in use
       expect(rows.get("default")).not.toMatchObject({
         timeZone: CLUB_TIME_ZONE_FALLBACK,
       });
+    },
+  );
+
+  it.each(LEGACY_POSIX_RULE_NAMES)(
+    "records the place TZ=%s names where this runtime links it to one, and the default — warned about — where the runtime makes it a rule zone of its own (tzdata 2026d)",
+    async (raw) => {
+      pinEnvironmentZone(raw);
+      const { rows, db } = makeClubTimeDb();
+
+      const summary = await runConfigSelfHeal({
+        db,
+        steps: [clubTimeZoneSelfHealStep],
+        log: silentLog,
+        provenance: "primary",
+      });
+
+      expect(summary.healed).toBe(1);
+      if (runtimeLinksToAPlace(raw)) {
+        expect(rows.get("default")).toMatchObject({ timeZone: runtimeCanonicalName(raw) });
+        expect(mockLogger.warn).not.toHaveBeenCalled();
+      } else {
+        // A rule set is not a place: nothing to preserve, so the default is
+        // written and the boot log says BY DEFAULT, naming the raw value.
+        expect(rows.get("default")).toMatchObject({ timeZone: CLUB_TIME_ZONE_FALLBACK });
+        expect(mockLogger.warn).toHaveBeenCalledWith(
+          expect.objectContaining({ environmentTimeZone: raw }),
+          expect.stringContaining("BY DEFAULT"),
+        );
+      }
     },
   );
 

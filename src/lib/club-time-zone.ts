@@ -135,7 +135,7 @@ export function normaliseClubTimeZone(
  * years, and refusing it does not undo that; it substitutes
  * `Pacific/Auckland` and moves the club.
  *
- * Measured on Node 24.15.0: forty-one `TZ` values that work perfectly today
+ * Measured on Node 24.15.0 (tzdata up to 2026c): forty-one `TZ` values that work perfectly today
  * (`Intl` accepts them, so `APP_TIME_ZONE` formats correctly) are refused by the
  * validator — `GB`, `NZ`, `NZ-CHAT`, `EST5EDT`, `PST8PDT`, `Japan`, `Israel`,
  * `W-SU`, `Navajo` and the rest. **Thirty-six of them canonicalise to a genuine

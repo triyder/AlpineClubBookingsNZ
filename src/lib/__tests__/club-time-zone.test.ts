@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  LEGACY_POSIX_RULE_NAMES,
+  runtimeCanonicalName,
+  runtimeLinksToAPlace,
+} from "@/lib/__tests__/helpers/legacy-posix-rule-zones";
+import {
   CLUB_TIME_ZONE_FALLBACK,
   CLUB_TIME_ZONE_MAX_LENGTH,
   isValidClubTimeZone,
@@ -202,35 +207,6 @@ function sameCivilTime(left: string, right: string): boolean {
   return [WINTER_NORTH, SUMMER_NORTH].every(
     (instant) => civilTimeAt(left, instant) === civilTimeAt(right, instant),
   );
-}
-
-/**
- * The legacy POSIX-rule names, whose meaning the tz database changed under us.
- *
- * Until tzdata 2026c `EST5EDT` and `PST8PDT` were links to `America/New_York` and
- * `America/Los_Angeles`, so the runtime canonicalised them to a place and the
- * preservation rule kept it. tzdata 2026d (shipped in Node 24.22.1) made them
- * rule zones of their own again — US federal rules, no place — so the runtime
- * names them as themselves and the preservation rule refuses them exactly as it
- * refuses `Etc/GMT+5`, recording nothing. Both are the designed answer; which
- * one applies is the runtime's call, so every case below asks it first rather
- * than pinning the reading of whichever Node happens to run the suite.
- */
-const LEGACY_POSIX_RULE_NAMES = ["EST5EDT", "PST8PDT"] as const;
-
-/** What this runtime's tz database canonicalises `zone` to, or null if unknown. */
-function runtimeCanonicalName(zone: string): string | null {
-  try {
-    return new Intl.DateTimeFormat("en-NZ", { timeZone: zone }).resolvedOptions()
-      .timeZone;
-  } catch {
-    return null;
-  }
-}
-
-/** True when this runtime links `zone` to a place (a slash-separated location). */
-function runtimeLinksToAPlace(zone: string): boolean {
-  return runtimeCanonicalName(zone)?.includes("/") ?? false;
 }
 
 describe("normaliseClubTimeZoneForPreservation — keeps the zone a deployment already runs on", () => {

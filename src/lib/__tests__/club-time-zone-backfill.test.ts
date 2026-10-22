@@ -61,6 +61,11 @@ vi.mock("@/lib/xero-token-store", () => ({
   getXeroTokenReadability: vi.fn(async () => "readable"),
 }));
 
+import {
+  LEGACY_POSIX_RULE_NAMES,
+  runtimeCanonicalName,
+  runtimeLinksToAPlace,
+} from "@/lib/__tests__/helpers/legacy-posix-rule-zones";
 import { captureHostTimeZone } from "@/lib/__tests__/helpers/timezone";
 import {
   CLUB_TIME_ZONE_FALLBACK,
@@ -128,7 +133,7 @@ describe("decideClubTimeZoneBackfill", () => {
     expect(decision).toEqual({ kind: "preserved", timeZone: expected, raw });
   });
 
-  it.each(["EST5EDT", "PST8PDT", "US/Pacific", "W-SU", "Navajo"])(
+  it.each(["US/Pacific", "W-SU", "Navajo"])(
     "records a real place for the alias TZ=%s",
     (raw) => {
       // Property-only: which location ICU calls canonical for these is version
@@ -142,6 +147,25 @@ describe("decideClubTimeZoneBackfill", () => {
       expect(decision.kind).toBe("preserved");
       expect(isValidClubTimeZone(decision.timeZone)).toBe(true);
       expect(decision.timeZone).not.toBe(CLUB_TIME_ZONE_FALLBACK);
+    },
+  );
+
+  it.each(LEGACY_POSIX_RULE_NAMES)(
+    "preserves TZ=%s where this runtime links it to a place, and defaults where the runtime makes it a rule zone of its own (tzdata 2026d)",
+    (raw) => {
+      pinEnvironmentZone(raw);
+
+      const decision = decideClubTimeZoneBackfill();
+
+      if (runtimeLinksToAPlace(raw)) {
+        // tzdata <= 2026c: a link to a place, kept like `US/Pacific` above.
+        expect(decision).toEqual({ kind: "preserved", timeZone: runtimeCanonicalName(raw), raw });
+        expect(isValidClubTimeZone(decision.timeZone)).toBe(true);
+      } else {
+        // tzdata >= 2026d: a rule set is not a place, so there is nothing to
+        // preserve — and the caller is told it DEFAULTED, raw value and all.
+        expect(decision).toEqual({ kind: "defaulted", timeZone: CLUB_TIME_ZONE_FALLBACK, raw });
+      }
     },
   );
 
