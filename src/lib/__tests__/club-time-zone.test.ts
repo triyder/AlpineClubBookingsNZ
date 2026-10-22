@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   CLUB_TIME_ZONE_FALLBACK,
@@ -204,6 +204,35 @@ function sameCivilTime(left: string, right: string): boolean {
   );
 }
 
+/**
+ * The legacy POSIX-rule names, whose meaning the tz database changed under us.
+ *
+ * Until tzdata 2026c `EST5EDT` and `PST8PDT` were links to `America/New_York` and
+ * `America/Los_Angeles`, so the runtime canonicalised them to a place and the
+ * preservation rule kept it. tzdata 2026d (shipped in Node 24.22.1) made them
+ * rule zones of their own again — US federal rules, no place — so the runtime
+ * names them as themselves and the preservation rule refuses them exactly as it
+ * refuses `Etc/GMT+5`, recording nothing. Both are the designed answer; which
+ * one applies is the runtime's call, so every case below asks it first rather
+ * than pinning the reading of whichever Node happens to run the suite.
+ */
+const LEGACY_POSIX_RULE_NAMES = ["EST5EDT", "PST8PDT"] as const;
+
+/** What this runtime's tz database canonicalises `zone` to, or null if unknown. */
+function runtimeCanonicalName(zone: string): string | null {
+  try {
+    return new Intl.DateTimeFormat("en-NZ", { timeZone: zone }).resolvedOptions()
+      .timeZone;
+  } catch {
+    return null;
+  }
+}
+
+/** True when this runtime links `zone` to a place (a slash-separated location). */
+function runtimeLinksToAPlace(zone: string): boolean {
+  return runtimeCanonicalName(zone)?.includes("/") ?? false;
+}
+
 describe("normaliseClubTimeZoneForPreservation — keeps the zone a deployment already runs on", () => {
   it.each([
     // The stable half: these four aliases resolve to the same location on every
@@ -216,7 +245,7 @@ describe("normaliseClubTimeZoneForPreservation — keeps the zone a deployment a
     expect(normaliseClubTimeZoneForPreservation(raw)).toBe(expected);
   });
 
-  it.each(["GB", "NZ", "NZ-CHAT", "EST5EDT", "PST8PDT", "Japan", "US/Pacific"])(
+  it.each(["GB", "NZ", "NZ-CHAT", "Japan", "US/Pacific"])(
     "accepts %s, and what it returns is a real place keeping the same civil time",
     (raw) => {
       const preserved = normaliseClubTimeZoneForPreservation(raw);
@@ -231,6 +260,67 @@ describe("normaliseClubTimeZoneForPreservation — keeps the zone a deployment a
       expect(normaliseClubTimeZoneForPreservation(preserved)).toBe(preserved);
     },
   );
+
+  it.each(LEGACY_POSIX_RULE_NAMES)(
+    "keeps %s as the place this runtime links it to, or refuses it where the runtime makes it a rule zone of its own (tzdata 2026d)",
+    (raw) => {
+      const canonical = runtimeCanonicalName(raw);
+      const preserved = normaliseClubTimeZoneForPreservation(raw);
+
+      // Every runtime knows the name; they differ only in what it MEANS.
+      expect(canonical).not.toBeNull();
+      if (runtimeLinksToAPlace(raw)) {
+        // tzdata <= 2026c: a link to a place, kept exactly like `GB` above.
+        expect(preserved).toBe(canonical);
+        expect(isValidClubTimeZone(preserved)).toBe(true);
+        expect(sameCivilTime(raw, preserved as string)).toBe(true);
+        expect(normaliseClubTimeZoneForPreservation(preserved)).toBe(preserved);
+      } else {
+        // tzdata >= 2026d: the runtime names it as itself — a rule set, not a
+        // place — so there is nothing to preserve and nothing may be guessed.
+        expect(canonical).toBe(raw);
+        expect(preserved).toBeNull();
+      }
+    },
+  );
+
+  it("refuses a legacy POSIX-rule name the runtime keeps as its own zone, recording nothing", () => {
+    // The tzdata >= 2026d branch above, made to run on EVERY runtime: the
+    // constructor is stood in for so that `EST5EDT` resolves to itself, which
+    // is exactly what Node 24.22.1 reports. A plain `function`, not an arrow,
+    // because it is called with `new`; everything but that one zone is
+    // delegated to the real formatter untouched.
+    const RealDateTimeFormat = Intl.DateTimeFormat;
+    function RuleZoneDateTimeFormat(
+      locales?: Intl.LocalesArgument,
+      options?: Intl.DateTimeFormatOptions,
+    ): Intl.DateTimeFormat {
+      const real = new RealDateTimeFormat(locales, options);
+      if (options?.timeZone !== "EST5EDT") return real;
+      return {
+        ...real,
+        resolvedOptions: () => ({
+          ...real.resolvedOptions(),
+          timeZone: "EST5EDT",
+        }),
+      } as Intl.DateTimeFormat;
+    }
+    const spy = vi
+      .spyOn(Intl, "DateTimeFormat")
+      .mockImplementation(
+        RuleZoneDateTimeFormat as unknown as typeof Intl.DateTimeFormat,
+      );
+    try {
+      expect(runtimeCanonicalName("EST5EDT")).toBe("EST5EDT");
+      expect(normaliseClubTimeZoneForPreservation("EST5EDT")).toBeNull();
+      // And the environment leg falls to the documented default rather than
+      // inventing a place for a rule set.
+      expect(resolveClubTimeZone(null, "EST5EDT")).toBe(CLUB_TIME_ZONE_FALLBACK);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(Intl.DateTimeFormat).toBe(RealDateTimeFormat);
+  });
 
   it("returns a real IANA zone unchanged", () => {
     for (const zone of [
@@ -288,7 +378,7 @@ describe("normaliseClubTimeZoneForPreservation — keeps the zone a deployment a
 });
 
 describe("the two validators differ EXACTLY as designed", () => {
-  it.each(["GB", "NZ", "NZ-CHAT", "EST5EDT", "PST8PDT", "Japan"])(
+  it.each(["GB", "NZ", "NZ-CHAT", "Japan"])(
     "refuses %s as operator input and preserves it as an existing deployment's zone",
     (value) => {
       // THIS ASYMMETRY IS THE FIX. The left-hand side is why an operator cannot
@@ -298,6 +388,18 @@ describe("the two validators differ EXACTLY as designed", () => {
       // being moved to New Zealand by its own upgrade.
       expect(normaliseClubTimeZone(value)).toBeNull();
       expect(normaliseClubTimeZoneForPreservation(value)).not.toBeNull();
+    },
+  );
+
+  it.each(LEGACY_POSIX_RULE_NAMES)(
+    "refuses %s as operator input on every runtime, and preserves it only where the runtime links it to a place",
+    (value) => {
+      // The left-hand side never depends on the tz database: a POSIX rule
+      // string names no place whether or not this runtime links it to one.
+      expect(normaliseClubTimeZone(value)).toBeNull();
+      expect(normaliseClubTimeZoneForPreservation(value)).toBe(
+        runtimeLinksToAPlace(value) ? runtimeCanonicalName(value) : null,
+      );
     },
   );
 
@@ -391,7 +493,6 @@ describe("resolveClubTimeZone — persisted beats environment beats default", ()
   it.each([
     ["GB", "Europe/London"],
     ["NZ-CHAT", "Pacific/Chatham"],
-    ["EST5EDT", "America/New_York"],
     ["NZ", "Pacific/Auckland"],
     ["Japan", "Asia/Tokyo"],
   ])(
@@ -404,7 +505,8 @@ describe("resolveClubTimeZone — persisted beats environment beats default", ()
         Every other case in this describe passes an environment value that both
         normalisers answer identically — a canonical zone, or something they both
         refuse — so all of them stay green if that leg reverts to
-        `normaliseClubTimeZone`. These five are the ones that discriminate: the
+        `normaliseClubTimeZone`. These four (and the legacy POSIX-rule case
+        below, on a runtime that still links it) are the ones that discriminate: the
         strict validator refuses each of them outright and this function would
         then return `Pacific/Auckland`, while the deployment carries on keeping
         London, Chatham or Tokyo time and the boot backfill is about to record
@@ -417,6 +519,21 @@ describe("resolveClubTimeZone — persisted beats environment beats default", ()
       // assertion above cannot be satisfied by both rules agreeing.
       expect(normaliseClubTimeZone(raw)).toBeNull();
       expect(normaliseClubTimeZoneForPreservation(raw)).toBe(expected);
+    },
+  );
+
+  it.each(LEGACY_POSIX_RULE_NAMES)(
+    "PRESERVES the environment leg for TZ=%s where this runtime links it to a place, and falls to the default where it does not",
+    (raw) => {
+      // The strict validator refuses the spelling on every runtime, so the
+      // place can only have come through the preservation rule.
+      expect(normaliseClubTimeZone(raw)).toBeNull();
+      if (runtimeLinksToAPlace(raw)) {
+        expect(resolveClubTimeZone(null, raw)).toBe(runtimeCanonicalName(raw));
+      } else {
+        // tzdata >= 2026d: a rule set is not a place; nothing is invented.
+        expect(resolveClubTimeZone(null, raw)).toBe(CLUB_TIME_ZONE_FALLBACK);
+      }
     },
   );
 
