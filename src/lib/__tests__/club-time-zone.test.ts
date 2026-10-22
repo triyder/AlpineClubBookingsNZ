@@ -265,7 +265,7 @@ describe("normaliseClubTimeZoneForPreservation — keeps the zone a deployment a
     // The tzdata >= 2026d branch above, made to run on EVERY runtime: the
     // shared stand-in makes `EST5EDT` resolve to itself, which is exactly what
     // Node 24.22.1 reports.
-    const before = runtimeCanonicalName("EST5EDT");
+    const RealDateTimeFormat = Intl.DateTimeFormat;
     await withLegacyNamesUnlinked(() => {
       expect(runtimeCanonicalName("EST5EDT")).toBe("EST5EDT");
       expect(normaliseClubTimeZoneForPreservation("EST5EDT")).toBeNull();
@@ -273,8 +273,19 @@ describe("normaliseClubTimeZoneForPreservation — keeps the zone a deployment a
       // inventing a place for a rule set.
       expect(resolveClubTimeZone(null, "EST5EDT")).toBe(CLUB_TIME_ZONE_FALLBACK);
     });
-    // The real constructor is back, so the next case sees this runtime again.
-    expect(runtimeCanonicalName("EST5EDT")).toBe(before);
+    // The real constructor is back — by identity, which holds on every tz
+    // database — so the next case sees this runtime again.
+    expect(Intl.DateTimeFormat).toBe(RealDateTimeFormat);
+  });
+
+  it("puts the real constructor back even when the stood-in case throws", async () => {
+    const RealDateTimeFormat = Intl.DateTimeFormat;
+    await expect(
+      withLegacyNamesUnlinked(() => {
+        throw new Error("the case failed");
+      }),
+    ).rejects.toThrow("the case failed");
+    expect(Intl.DateTimeFormat).toBe(RealDateTimeFormat);
   });
 
   it("returns a real IANA zone unchanged", () => {

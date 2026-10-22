@@ -6,5 +6,5 @@
   Node build a test shard drew). Nothing changes for a club: the timezone rule
   still keeps the place a deployment already runs on and still refuses a name
   that is not a place. The suite now asks the runtime which reading applies
-  before asserting, and one case stands in the runtime so the newer reading
-  is exercised on every Node.
+  before asserting, and each suite has a case that stands in the runtime so
+  the newer reading is exercised on every Node.
