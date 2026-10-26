@@ -58,13 +58,55 @@ import { getEnvironmentRole, type EnvironmentRole } from "@/lib/environment-role
  * Declare what this suite's installation is.
  *
  * Uses `vi.stubEnv`, so it is undone by `vi.unstubAllEnvs()` and by vitest's own
- * teardown — a suite cannot leak a production declaration into the next file.
+ * teardown at the end of the FILE. A separate test file therefore cannot leak a
+ * production declaration into the next one — but the race harness imports some
+ * forty suites into one file, where nothing undoes it until all of them have
+ * run (#4107): there, use {@link declareEnvironmentRoleForSuite}.
  * Call it in `beforeEach`, AFTER any `vi.unstubAllEnvs()` the suite already does.
  */
 export function declareEnvironmentRole(
   value: "production" | "non-production" | (string & {}),
 ): void {
   vi.stubEnv(ENVIRONMENT_ROLE_ENV_VAR, value);
+}
+
+/** What {@link declareEnvironmentRoleForSuite} found, and what puts it back. */
+export interface SuiteEnvironmentRoleDeclaration {
+  /** The variable as the suite found it; `undefined` when it was unset. */
+  readonly before: string | undefined;
+  /** Put the variable back exactly as it was found. Safe to call twice. */
+  restore(): void;
+}
+
+/**
+ * Declare the role for ONE suite of a shared harness, and get back the means to
+ * undo exactly that (#4013).
+ *
+ * The real-PostgreSQL race harness imports some forty suites into one file
+ * (`concurrency-lock-races.realdb.test.ts`), so "the next file" never comes:
+ * a declaration made in one suite's `beforeAll` is still there for every suite
+ * after it. {@link declareEnvironmentRole} is the wrong tool there twice over —
+ * nothing unstubs it until the whole file ends, and `vi.unstubAllEnvs()` would
+ * also undo every other suite's stubs. This writes the one variable and puts
+ * back the one variable. Call it in `beforeAll`, call `restore()` in a `finally`
+ * in the matching `afterAll`, and add a describe AFTER the suite that asserts
+ * the variable equals `before` again, so a missed restore fails by name rather
+ * than arming whichever suite runs next.
+ */
+export function declareEnvironmentRoleForSuite(
+  // Only the safe declaration: a shared harness pretending to be the club's
+  // live site would arm every send and Xero write for the suites after it.
+  value: "non-production",
+): SuiteEnvironmentRoleDeclaration {
+  const before = process.env[ENVIRONMENT_ROLE_ENV_VAR];
+  process.env[ENVIRONMENT_ROLE_ENV_VAR] = value;
+  return {
+    before,
+    restore() {
+      if (before === undefined) delete process.env[ENVIRONMENT_ROLE_ENV_VAR];
+      else process.env[ENVIRONMENT_ROLE_ENV_VAR] = before;
+    },
+  };
 }
 
 /** Remove the declaration, so the role resolves UNKNOWN on that half. */

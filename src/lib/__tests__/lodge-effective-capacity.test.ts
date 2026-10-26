@@ -332,6 +332,9 @@ describe("the effective-capacity rule has one home (INV-SSOT-001)", () => {
     "src/app/api/admin/lodge-settings/route.ts",
     "src/components/admin/lodge-capacity-card.tsx",
     "src/components/admin/lodge-capacity-guidance.tsx",
+    // #4199: the bound on a request list that carries a booking's whole party is
+    // the most a lodge can be configured to hold (`BOOKING_PARTY_GUESTS_MAX`).
+    "src/lib/booking-guest-stay-range-input.ts",
     // #3407: a config import validates a bundle's capacity with the same bounds.
     "src/lib/config-transfer/categories/lodge-capacity.ts",
     "src/lib/lodge-capacity.ts",

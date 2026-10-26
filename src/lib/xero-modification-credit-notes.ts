@@ -40,7 +40,15 @@ import {
 } from "@/lib/xero-refund-method";
 import { resolveModificationDocumentLineItems } from "@/lib/xero-modification-line-items";
 import { XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE } from "@/lib/xero-operation-outbox-payload";
-import { reviewTaskKeyParts } from "@/lib/xero-review-task-key";
+import { isUnpaidAskBilledOffsetNoteScope, reviewTaskKeyParts } from "@/lib/xero-review-task-key";
+import {
+  awaitsMissingOwnNote,
+  BILLED_OFFSET_AWAITING_OWN_NOTE_CODE,
+  BILLED_OFFSET_OWN_NOTE_MISSING_MESSAGE,
+  BILLED_OFFSET_OWN_NOTE_WAIT_MS,
+  isOwnModificationNoteOperation,
+  queuedOwnNoteExpected,
+} from "@/lib/unpaid-ask-billed-offset-order";
 import {
   findUnconvergedAppliedCreditDeallocation,
   needsOperatorXeroRetry,
@@ -151,6 +159,22 @@ export async function createXeroCreditNoteForModification(params: {
       if (syncOperationId) await failXeroSyncOperation(syncOperationId, failed);
       throw failed;
     }
+  }
+
+  // #3954 round 6: a reduction's billed-offset note is raised AFTER the edit's
+  // own note on the same anchor, never before it: while that note is still
+  // queued or running, this one waits and the outbox returns it to PENDING.
+  // Round 7: and while the edit expects one that is not queued yet, up to an
+  // age limit (`unpaid-ask-billed-offset-order.ts`).
+  if (bookingModificationId && isUnpaidAskBilledOffsetNoteScope(reviewTaskId)) {
+    const ownNote = await findQueuedOwnModificationNote(bookingModificationId);
+    if (ownNote) {
+      throw new XeroAppliedCreditOperationBusyError(
+        `Billed-offset credit note waits for modification ${bookingModificationId}'s own credit note ${ownNote.id} (${ownNote.status})`,
+        ownNote.status,
+      );
+    }
+    if (syncOperationId) await waitForExpectedOwnNote(bookingModificationId, syncOperationId);
   }
 
   const { xero, tenantId } = await getAuthenticatedXeroClient();
@@ -444,4 +468,63 @@ export async function createXeroCreditNoteForModification(params: {
     await failXeroSyncOperation(operationId!, error);
     throw error;
   }
+}
+
+/**
+ * The edit's OWN (unscoped) modification credit note, while it is still queued
+ * or running (#3954 round 6) - either kind, by the one definition
+ * (`isOwnModificationNoteOperation`, round 8).
+ */
+async function findQueuedOwnModificationNote(
+  bookingModificationId: string,
+): Promise<{ id: string; status: string } | null> {
+  const operations = await prisma.xeroSyncOperation.findMany({
+    where: {
+      direction: "OUTBOUND",
+      entityType: "CREDIT_NOTE",
+      operationType: "CREATE",
+      localModel: "BookingModification",
+      localId: bookingModificationId,
+      status: { in: ["PENDING", "RUNNING"] },
+    },
+    select: { id: true, status: true, entityType: true, operationType: true, queueType: true, requestPayload: true },
+  });
+  return operations.find(isOwnModificationNoteOperation) ?? null;
+}
+
+/**
+ * #3954 round 7: a billed-offset note whose edit expects an own note waits
+ * until an own-note operation or link exists - returned to PENDING by the
+ * outbox - and, past `BILLED_OFFSET_OWN_NOTE_WAIT_MS`, fails for a person
+ * (`awaitsMissingOwnNote`). Only the outbox's own run waits: an operator's
+ * retry carries no operation of its own here and raises the note.
+ */
+async function waitForExpectedOwnNote(bookingModificationId: string, syncOperationId: string): Promise<void> {
+  const queued = await prisma.xeroSyncOperation.findUnique({
+    where: { id: syncOperationId },
+    select: { requestPayload: true, createdAt: true },
+  });
+  if (!queued || !queuedOwnNoteExpected(queued)) return;
+  const [operations, links] = await Promise.all([
+    prisma.xeroSyncOperation.findMany({
+      where: { localModel: "BookingModification", localId: bookingModificationId, entityType: "CREDIT_NOTE", operationType: "CREATE" },
+      select: { entityType: true, operationType: true, queueType: true, status: true, requestPayload: true },
+    }),
+    prisma.xeroObjectLink.findMany({
+      where: { localModel: "BookingModification", localId: bookingModificationId, xeroObjectType: "CREDIT_NOTE", active: true },
+      select: { xeroObjectType: true, role: true, active: true, metadata: true },
+    }),
+  ]);
+  if (!awaitsMissingOwnNote(queued, { operations, links })) return;
+  if (Date.now() - queued.createdAt.getTime() < BILLED_OFFSET_OWN_NOTE_WAIT_MS) {
+    // Round 8: coded, so the outbox looks at it again only every few minutes.
+    throw new XeroAppliedCreditOperationBusyError(
+      `Billed-offset credit note waits for modification ${bookingModificationId}'s own credit note, which is not queued yet`,
+      "PENDING",
+      BILLED_OFFSET_AWAITING_OWN_NOTE_CODE,
+    );
+  }
+  const failed = new Error(BILLED_OFFSET_OWN_NOTE_MISSING_MESSAGE);
+  await failXeroSyncOperation(syncOperationId, failed);
+  throw failed;
 }

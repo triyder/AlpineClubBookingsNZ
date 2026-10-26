@@ -13,14 +13,16 @@ import { recordBookingEvent } from "@/lib/booking-events";
 import { recordManualRefundTaskClosureAudit } from "@/lib/manual-refund-task-audit";
 import { hasIssuedPrimaryXeroInvoice } from "@/lib/booking-payment-state";
 import { isNonNegativeIntegerCents } from "@/lib/edit-financial-review-context";
-import { chooseEditReviewSettlementRoute, executeEditReviewSettlement, type EditReviewSettlementRoute } from "@/lib/edit-financial-review-settlement";
+import { chooseEditReviewSettlementRoute, executeEditReviewSettlement, queueEditReviewChargeInvoiceInTransaction, type EditReviewSettlementRoute } from "@/lib/edit-financial-review-settlement";
 import { giveBackCancelledShareCredit, writeEditReviewAccountCredit, type EditReviewAccountCreditOutcome } from "@/lib/edit-financial-review-account-credit";
 import { cancelledBookingRefundInvoiceId, queueCancelledBookingHandBackNoteInTransaction, queueRefundRequestCreditNoteInTransaction, refundMethodForEditReviewRoute } from "@/lib/edit-financial-review-xero-leg";
+import { applyGroupSettlementMirrorRefund, isBankTransferHandBackRoute } from "@/lib/group-settlement-mirror-hand-back"; // #3949
 import { MANUAL_PAYMENT_NOTE_MAX, normaliseManualPaymentNote } from "@/lib/manual-subscription-payment";
 import { requireMemberCreditRecipient } from "@/lib/member-credit";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
 import { enqueueEditFinancialReviewRefundRecovery } from "@/lib/payment-recovery";
 import { applyLocalRefundAllocation } from "@/lib/payment-transactions";
+import { readCapacityRaceStripeRefundedForTask } from "@/lib/capacity-race-refunded-total-correction";
 // A settlement write's refusal, as the operator reads it (#3827 split it out).
 import { settlementWriteRefusal } from "@/lib/manual-refund-task-settlement-refusal";
 import { prisma } from "@/lib/prisma";
@@ -29,16 +31,18 @@ import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 // #3195: the $0 refusal is said by the settle SCREEN as well as thrown here, and
 // this module is `server-only` - so the sentence lives in a client-safe home and
 // both read it (`INV-SSOT`).
-import { zeroCompletionRefusal } from "@/lib/manual-refund-task-copy";
+import { editRefundHandBackDismissAfterCancelMessage, zeroCompletionRefusal } from "@/lib/manual-refund-task-copy";
+import { recordBankRefundVoidAnswerInTransaction } from "@/lib/bank-refund-void-answer";
+import { isBankRefundVoidFollowUpTask } from "@/lib/bank-refund-void-follow-up-key";
 import {
-  EDIT_REFUND_HAND_BACK_DISMISS_AFTER_CANCEL_MESSAGE,
-  isEditRefundHandBackTask,
+  isCancelCardShortfallTask, isEditRefundHandBackTask,
   isNonCancellationHandBackTask,
   refundRequestIdOfHandBack,
   isPartPaymentReviewTask,
   nonCancellationHandBackCompletedSnapshot,
   manualRefundTaskSettlementRefusal,
 } from "@/lib/manual-refund-task-settlement-rules";
+import { groupOrganiserHandBackRefusal, isGroupOrganiserHandBackTask } from "@/lib/group-organiser-hand-back-rules";
 // #3498: what a settle MAY repair is the plan module's; the writes are the store's.
 import { planStoredNightPriceRepair } from "@/lib/stored-night-price-repair-plan";
 import { recordReviewClosurePricing } from "@/lib/stored-night-price-repair-store";
@@ -124,10 +128,8 @@ export async function resolveManualRefundTask(
       400
     );
   }
-  const confirmedAmountCents =
-    resolution === "completed" ? input.confirmedAmountCents : null;
-  const requestedDirection =
-    resolution === "completed" ? (input.direction ?? null) : null;
+  const confirmedAmountCents = resolution === "completed" ? input.confirmedAmountCents : null;
+  const requestedDirection = resolution === "completed" ? (input.direction ?? null) : null;
   if (
     confirmedAmountCents !== null &&
     !isNonNegativeIntegerCents(confirmedAmountCents)
@@ -146,7 +148,8 @@ export async function resolveManualRefundTask(
   // and (#3635) the day a kept late capture's Xero receipt is dated.
   const clubZone = await readClubTimeZoneOutsideRequest();
   const todayAtClub = clubToday(clubZone);
-  const result = await prisma.$transaction(async (tx) => {
+  const capacityRaceStripe = resolution === "completed" ? await readCapacityRaceStripeRefundedForTask(taskId) : null; // #4154 review (M1): a provider call, so here, bounded
+  const { chargeInvoice, ...result } = await prisma.$transaction(async (tx) => { // #3947: chargeInvoice is internal, never returned
     // #3740 (concurrency F1): only the immutable `kind` is read unlocked. An
     // edit review takes lock(1) as this transaction's FIRST lock (INV-LOCK-002)
     // and only then reads what picks its money route, so nothing that route
@@ -161,14 +164,9 @@ export async function resolveManualRefundTask(
     // cannot commit between the two reads, which would count the same money
     // as neither refunded nor promised. Its occurrence key, like its kind, is
     // written once at creation and never again.
-    const head = await tx.manualRefundTask.findUnique({
-      where: { id: taskId },
-      select: { kind: true, occurrenceKey: true },
-    });
-    if (
-      head?.kind === ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW ||
-      (head !== null && isNonCancellationHandBackTask(head))
-    ) {
+    const head = await tx.manualRefundTask.findUnique({ where: { id: taskId }, select: { kind: true, occurrenceKey: true } });
+    // #4042 (`INV-PAY-124`): so does a group organiser's, which later joiners' shares grow under it.
+    if (head?.kind === ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW || (head !== null && (isNonCancellationHandBackTask(head) || isGroupOrganiserHandBackTask(head)))) {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
     }
     const task = await tx.manualRefundTask.findUnique({
@@ -198,13 +196,10 @@ export async function resolveManualRefundTask(
     // settled by paying it. The cancel counted it as going back; dismissing it
     // now would leave the cancellation's kept figure wrong. Read under lock(1)
     // (taken above for this kind), which a paid cancel also holds.
-    if (
-      resolution === "dismissed" &&
-      isEditRefundHandBackTask(task) &&
-      task.booking.status === BookingStatus.CANCELLED
-    ) {
-      throw new ManualBookingPaymentError(EDIT_REFUND_HAND_BACK_DISMISS_AFTER_CANCEL_MESSAGE, 409);
+    if (resolution === "dismissed" && isEditRefundHandBackTask(task) && task.booking.status === BookingStatus.CANCELLED) {
+      throw new ManualBookingPaymentError(editRefundHandBackDismissAfterCancelMessage(task.booking), 409); // #3949: names the organiser on a group child
     }
+    const groupRefusal = groupOrganiserHandBackRefusal(task, resolution, confirmedAmountCents, format); if (groupRefusal) throw new ManualBookingPaymentError(groupRefusal, 409); // #4042
 
     const isEditReview = task.kind === ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW;
 
@@ -328,7 +323,7 @@ export async function resolveManualRefundTask(
           handedBackInCash:
             input.resolution === "completed" && input.handedBackInCash === true,
           club: { zone: clubZone, format },
-          store: tx,
+          store: tx, actingMemberId, capacityRace: { stripe: capacityRaceStripe, invoiced: cancelledBookingRefundInvoiceId(task) !== null }, // #4154 review M1, M4
         })
       : null;
     // #3835: what actually goes back - by card or by hand, netted against a cancellation.
@@ -405,7 +400,7 @@ export async function resolveManualRefundTask(
           await applyLocalRefundAllocation({
             paymentId: settlementRoute.paymentId,
             amountCents: settlementRoute.refundCents,
-            store: tx,
+            store: tx, preferTransactionIds: settlementRoute.cardShortfall?.preferTransactionIds, onlyTransactionIds: settlementRoute.cardShortfall?.onlyTransactionIds, // #4097, #4154
           });
         }
         // `account-credit` is written by the closure's re-price below, once the
@@ -439,6 +434,7 @@ export async function resolveManualRefundTask(
             store: tx,
           });
         }
+        else if (settlementRoute.kind === "group-settlement-mirror") await applyGroupSettlementMirrorRefund({ route: settlementRoute, store: tx }); // #3949: onto a group child's mirror, under its Payment row
         else if (settlementRoute.kind === "stripe-refund" && settlementRoute.refundCents > 0) {
           await enqueueEditFinancialReviewRefundRecovery({
             bookingId: task.bookingId,
@@ -450,17 +446,17 @@ export async function resolveManualRefundTask(
           });
         }
       } catch (error) {
-        throw settlementWriteRefusal(error);
+        throw settlementWriteRefusal(error, settlementRoute);
       }
       // #3599: the money the club handed back by hand, on the booking ledger.
-      if (settlementRoute.kind === "local-allocation" && settlementRoute.refundCents > 0) {
+      if (isBankTransferHandBackRoute(settlementRoute) && settlementRoute.refundCents > 0) {
         await postHandBackLedgerLine({
           bookingId: task.bookingId,
           lodgeId: task.booking.lodgeId,
           manualRefundTaskId: task.id,
           amountCents: settlementRoute.refundCents,
           refundMethod: refundMethodForEditReviewRoute(settlementRoute),
-          paymentSource: task.payment?.source ?? null,
+          paymentSource: task.payment?.source ?? null, cardShortfall: isCancelCardShortfallTask(task), // #4097
           officerMemberId: actingMemberId,
           store: tx,
         });
@@ -471,6 +467,8 @@ export async function resolveManualRefundTask(
       }
       // #3880: its Xero note on a cancelled booking commits, or rolls back, with it.
       await queueCancelledBookingHandBackNoteInTransaction({ task, route: settlementRoute, actingMemberId, store: tx });
+      // #4162: a re-confirmed bank refund's answer (refused when missing or misplaced): its fresh note, or the hand-made note it tracks.
+      await recordBankRefundVoidAnswerInTransaction({ task, route: settlementRoute, answer: input.resolution === "completed" ? (input.bankRefundVoidAnswer ?? null) : null, actingMemberId, store: tx });
     }
 
     // #3635 (`INV-PAY-110`): DISMISSED keeps the money, recorded in Xero from
@@ -537,14 +535,14 @@ export async function resolveManualRefundTask(
         resolution,
         note: trimmedNote,
         todayAtClub,
-        hasIssuedXeroInvoice,
+        hasIssuedXeroInvoice, paymentLinkRead: task.booking.payment ?? null, // #3980 r2 F4: the re-price claims this read
         settlementRoute,
         settlementAmountCents: settledCents,
         settlementDirection: settlement ? settlementDirection : null,
         store: tx,
       });
     }
-
+    const chargeInvoice = settlement ? await queueEditReviewChargeInvoiceInTransaction({ bookingId: task.bookingId, route: settlementRoute, hasIssuedXeroInvoice, createdByMemberId: actingMemberId, store: tx }) : null; // #3947: the invoice route's invoice, queued LAST - its anchor key after every other lock
     await recordManualRefundTaskClosureAudit({
       task,
       resolution,
@@ -553,6 +551,7 @@ export async function resolveManualRefundTask(
       settlement,
       settlementRoute,
       settlementDirection,
+      bankRefundVoidAnswer: input.resolution === "completed" ? (input.bankRefundVoidAnswer ?? null) : null,
       store: tx,
     });
 
@@ -602,7 +601,8 @@ export async function resolveManualRefundTask(
        * rather than `REFUNDED` - the member got credit, not their money back.
        */
       recordedRefund:
-        settlement && settlementRoute?.kind === "local-allocation" && settlementRoute.refundCents > 0
+        // #4162: not a re-confirmed bank refund's - its money moved once, and the member is not told again (Q3).
+        settlement && isBankTransferHandBackRoute(settlementRoute) && settlementRoute.refundCents > 0 && !isBankRefundVoidFollowUpTask(task)
           ? { amountCents: settlementRoute.refundCents }
           : null,
       /**
@@ -644,7 +644,7 @@ export async function resolveManualRefundTask(
         resolution === "completed"
           ? ManualRefundTaskStatus.COMPLETED
           : ManualRefundTaskStatus.DISMISSED,
-      keptLateCaptureXeroPlan,
+      keptLateCaptureXeroPlan, chargeInvoice, // #3947: the invoice route's queued invoice
     };
   });
 
@@ -672,7 +672,7 @@ export async function resolveManualRefundTask(
    * there" is one question; this module is the DOOR - validate, claim, audit -
    * and it ends at the commit.
    */
-  const { stripeRefundId, additionalPaymentIntentId } =
+  const { stripeRefundId, additionalPaymentIntentId, chargeBookingCancelled } =
     await executeEditReviewSettlement({
       bookingId: result.bookingId,
       taskId: result.taskId,
@@ -686,12 +686,12 @@ export async function resolveManualRefundTask(
       cancellationHandBackInvoiceId: result.cancellationHandBackInvoiceId,
       nonCancellationHandBack: result.nonCancellationHandBack,
       refundRequestId: result.refundRequestId,
-      format,
+      format, chargeInvoice,
     });
 
   // #3635: the kept capture's Xero record, after the commit; never returned.
   const { keptLateCaptureXeroPlan, ...closed } = result;
   await finishKeptLateCaptureXeroRecord(keptLateCaptureXeroPlan);
 
-  return { ...closed, stripeRefundId, additionalPaymentIntentId };
+  return { ...closed, stripeRefundId, additionalPaymentIntentId, chargeBookingCancelled };
 }

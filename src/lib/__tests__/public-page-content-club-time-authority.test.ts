@@ -80,6 +80,7 @@ import {
   loadPublicCancellationPolicy,
   loadPublicJoiningFees,
 } from "@/lib/public-page-content-tokens";
+import { loadPublicFirstYearCosts } from "@/lib/public-first-year-costs";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const CLUB_DAY_UTC_MIDNIGHT = "2026-06-30T00:00:00.000Z";
@@ -153,6 +154,13 @@ describe("public content loaders take today from the club, not the container (#3
     expect(feeWindowBound("annualFees").toISOString()).toBe(
       CLUB_DAY_UTC_MIDNIGHT,
     );
+  });
+
+  it("bounds the first-year-cost joining and annual windows on the club's day, at UTC midnight (#4295)", async () => {
+    await loadPublicFirstYearCosts(CLUB_FORMAT_TEST);
+
+    expect(feeWindowBound("joiningFees").toISOString()).toBe(CLUB_DAY_UTC_MIDNIGHT);
+    expect(feeWindowBound("annualFees").toISOString()).toBe(CLUB_DAY_UTC_MIDNIGHT);
   });
 
   it("keeps a booking period that is still in force on the club's day", async () => {

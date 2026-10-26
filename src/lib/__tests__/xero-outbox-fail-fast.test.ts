@@ -130,6 +130,8 @@ vi.mock("@/lib/prisma", () => ({
     membershipSubscriptionCharge: {
       findUnique: mocks.chargeFindUnique,
       update: mocks.chargeUpdate,
+      // #4098: the failure handler's charge write is a status-guarded updateMany.
+      updateMany: mocks.chargeUpdate,
     },
   },
 }));
@@ -287,6 +289,7 @@ describe("outbox processor fail-fast for all queue types (#1354)", () => {
         succeeded: 0,
         failed: 0,
         skipped: 1,
+        cooldownDeferred: 1,
       });
       // The handler self-failed once; the outbox must NOT fail it again.
       expect(mocks.failXeroSyncOperation).toHaveBeenCalledTimes(1);
@@ -346,6 +349,7 @@ describe("outbox processor fail-fast for all queue types (#1354)", () => {
         succeeded: 0,
         failed: 0,
         skipped: 1,
+        cooldownDeferred: 1,
       });
       expect(mocks.failXeroSyncOperation).not.toHaveBeenCalled();
       // The subscription-charge exposure below the cooldown branch must NOT run
@@ -389,6 +393,7 @@ describe("outbox processor fail-fast for all queue types (#1354)", () => {
       succeeded: 0,
       failed: 0,
       skipped: 1,
+      cooldownDeferred: 1,
     });
     const row = mocks.rows.get("op_refund_1");
     expect(row?.status).toBe("PENDING");
@@ -452,5 +457,47 @@ describe("outbox processor fail-fast for all queue types (#1354)", () => {
 
     expect(result).toMatchObject({ found: 1, failed: 1, skipped: 0 });
     expect(mocks.rows.get("op_refund_1")?.status).toBe("FAILED");
+  });
+});
+
+// #2147 / #4098: when a subscription invoice attempt fails, the handler exposes
+// the error on the charge by sending it back to QUEUED / EMAIL_FAILED. A charge
+// that needs no invoice — VOIDED, or NOT_REQUIRED because an officer closed it
+// as already paid — must never come back as retryable work.
+describe("a failed subscription invoice never reopens a charge that needs no invoice (#4098)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.rows.clear();
+    mocks.failXeroSyncOperation.mockImplementation(async (operationId: string) => {
+      const row = mocks.rows.get(operationId);
+      if (row) {
+        row.status = "FAILED";
+        row.completedAt = new Date();
+      }
+    });
+    mocks.chargeUpdate.mockResolvedValue({ count: 1 });
+    mocks.createXeroMembershipSubscriptionInvoice.mockRejectedValue(new Error("Xero is down"));
+  });
+
+  it.each(["NOT_REQUIRED", "VOIDED"])("leaves a %s charge as it is", async (status) => {
+    queueOneSubscriptionOperation();
+    mocks.chargeFindUnique.mockResolvedValue({ status, billingBasis: "PER_MEMBER", xeroInvoiceId: null });
+
+    await processQueuedXeroOutboxOperations({ limit: 1 });
+
+    expect(mocks.chargeUpdate).not.toHaveBeenCalled();
+    expect(mocks.rows.get("op_sub_1")?.status).toBe("FAILED");
+  });
+
+  it("control: exposes the error on a live charge, guarded so a close landing after the read still stands", async () => {
+    queueOneSubscriptionOperation();
+    mocks.chargeFindUnique.mockResolvedValue({ status: "PROCESSING", billingBasis: "PER_MEMBER", xeroInvoiceId: null });
+
+    await processQueuedXeroOutboxOperations({ limit: 1 });
+
+    expect(mocks.chargeUpdate).toHaveBeenCalledWith({
+      where: { id: "charge_1", status: { notIn: ["NOT_REQUIRED", "VOIDED"] } },
+      data: expect.objectContaining({ status: "QUEUED", lastErrorCode: "XERO_FAILED", lastErrorMessage: "Xero is down" }),
+    });
   });
 });

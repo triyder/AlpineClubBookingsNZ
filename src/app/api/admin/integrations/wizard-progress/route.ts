@@ -1,14 +1,11 @@
 import "server-only";
 
-import { NextResponse } from "next/server";
-import { z } from "zod";
-
-import { parseJsonRequestBody } from "@/lib/api-json";
 import { requireAdmin } from "@/lib/session-guards";
 import {
-  getIntegrationWizardProgress,
-  saveIntegrationWizardProgress,
-} from "@/lib/integration-wizard-progress";
+  answerWizardProgressGet,
+  answerWizardProgressPost,
+} from "@/lib/integration-wizard-progress-http";
+import { WIZARD_PROGRESS_ROUTES } from "@/lib/integration-wizard-progress-routes";
 
 // Cursor persistence for the reusable guided-provider setup shell (#2080).
 //
@@ -29,9 +26,10 @@ import {
 // live server truth, so a clobbered cursor can only change which step opens
 // first. The wizard UI states this in plain English on every step.
 //
-// Allowlist of wizard ids the shell may persist. Keeps arbitrary rows out and
+// Allowlist of wizard ids this route may persist. Keeps arbitrary rows out and
 // mirrors the provider namespace. C4/C5 add "stripe" / "google"; "display" is
-// the Lodge Display guided setup wizard (#2249).
+// the Lodge Display guided setup wizard (#2249). The Backups wizard ("backup")
+// has its own route under the support area (#4409).
 //
 // "display" deliberately does NOT widen this route's finance gate (owner
 // decision, 28 Jul 2026). A lodge-area admin without finance access therefore
@@ -42,61 +40,23 @@ import {
 // the cursor writable would hand every lodge admin write access to a route that
 // also governs the Xero/Stripe/Google cursors, which is a far worse trade for a
 // resume hint.
-const ALLOWED_WIZARD_IDS = ["xero", "stripe", "google", "display"] as const;
-type AllowedWizardId = (typeof ALLOWED_WIZARD_IDS)[number];
-
-function isAllowedWizardId(value: string): value is AllowedWizardId {
-  return (ALLOWED_WIZARD_IDS as readonly string[]).includes(value);
-}
+// The ids this route stores live in `WIZARD_PROGRESS_ROUTES` (one map shared
+// with the client hook and the backups route, #4409); the handling after the
+// gate is shared too (`integration-wizard-progress-http.ts`).
+const WIZARD_IDS = WIZARD_PROGRESS_ROUTES.integrations.wizardIds;
 
 export async function GET(request: Request) {
   const guard = await requireAdmin({
     permission: { area: "finance", level: "view" },
   });
   if (!guard.ok) return guard.response;
-
-  const wizardId = new URL(request.url).searchParams.get("wizardId") ?? "";
-  if (!isAllowedWizardId(wizardId)) {
-    return NextResponse.json({ error: "Unknown wizard." }, { status: 400 });
-  }
-
-  const progress = await getIntegrationWizardProgress(wizardId);
-  return NextResponse.json({ wizardId, progress });
+  return answerWizardProgressGet(request, WIZARD_IDS);
 }
-
-const bodySchema = z.object({
-  wizardId: z.string().min(1).max(64),
-  currentStepId: z.string().min(1).max(64),
-  completedStepIds: z.array(z.string().min(1).max(64)).max(32),
-});
 
 export async function POST(request: Request) {
   const guard = await requireAdmin({
     permission: { area: "finance", level: "edit" },
   });
   if (!guard.ok) return guard.response;
-
-  const json = await parseJsonRequestBody(request);
-  if (!json.ok) return json.response;
-  const parsed = bodySchema.safeParse(json.body);
-  if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Invalid request", details: parsed.error.flatten() },
-      { status: 400 },
-    );
-  }
-
-  const { wizardId, currentStepId, completedStepIds } = parsed.data;
-  if (!isAllowedWizardId(wizardId)) {
-    return NextResponse.json({ error: "Unknown wizard." }, { status: 400 });
-  }
-
-  const progress = await saveIntegrationWizardProgress({
-    wizardId,
-    currentStepId,
-    completedStepIds,
-    updatedByMemberId: guard.session.user.id,
-  });
-
-  return NextResponse.json({ ok: true, wizardId, progress });
+  return answerWizardProgressPost(request, WIZARD_IDS, guard.session.user.id);
 }

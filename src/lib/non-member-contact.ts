@@ -27,6 +27,7 @@
  * Money stays in integer cents and dates stay NZ date-only elsewhere; this
  * module only creates the owner record.
  */
+import { exactContains } from "@/lib/prisma-exact-prefix";
 import { randomBytes } from "crypto";
 import { hash } from "bcryptjs";
 import { AgeTier, Prisma, Role } from "@prisma/client";
@@ -131,11 +132,11 @@ export async function suggestNonMemberContacts(
     // Exact email equality is the duplicate case we target; `contains` also
     // surfaces the match as the officer is still typing.
     or.push({ email: { equals: email, mode: "insensitive" } });
-    or.push({ email: { contains: email, mode: "insensitive" } });
+    or.push({ email: exactContains(email, "insensitive") });
   }
   if (name.length >= 2) {
-    or.push({ firstName: { contains: name, mode: "insensitive" } });
-    or.push({ lastName: { contains: name, mode: "insensitive" } });
+    or.push({ firstName: exactContains(name, "insensitive") });
+    or.push({ lastName: exactContains(name, "insensitive") });
   }
   if (or.length === 0) return [];
 

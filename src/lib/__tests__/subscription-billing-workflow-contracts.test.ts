@@ -4,6 +4,8 @@ import { Invoice, LineAmountTypes } from "xero-node";
 const mocks = vi.hoisted(() => ({
   chargeFind: vi.fn(),
   chargeUpdate: vi.fn(),
+  txChargeUpdateMany: vi.fn(),
+  txChargeFindUnique: vi.fn(),
   memberSubscriptionUpdateMany: vi.fn(),
   linkUpsert: vi.fn(),
   transaction: vi.fn(),
@@ -18,7 +20,8 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     environmentSafetySettings: { findUnique: vi.fn().mockResolvedValue(null) },
-    membershipSubscriptionCharge: { findUnique: mocks.chargeFind, update: mocks.chargeUpdate },
+    // #4098: the already-paid conflict write is a status-guarded updateMany.
+    membershipSubscriptionCharge: { findUnique: mocks.chargeFind, update: mocks.chargeUpdate, updateMany: mocks.chargeUpdate },
     memberSubscription: { updateMany: mocks.memberSubscriptionUpdateMany },
     xeroObjectLink: { upsert: mocks.linkUpsert },
     $transaction: mocks.transaction,
@@ -105,6 +108,8 @@ describe("subscription invoice delivery behavior", () => {
     mocks.events.length = 0;
     mocks.findContact.mockResolvedValue("contact-1");
     mocks.memberSubscriptionUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.txChargeUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.chargeUpdate.mockResolvedValue({ count: 1 });
     mocks.getInvoices.mockResolvedValue({ body: { invoices: [] } });
     mocks.createInvoices.mockImplementation(async () => {
       mocks.events.push("create");
@@ -117,7 +122,7 @@ describe("subscription invoice delivery behavior", () => {
     mocks.transaction.mockImplementation(async (callback: (tx: unknown) => unknown) => {
       mocks.events.push("persist");
       return callback({
-        membershipSubscriptionCharge: { update: vi.fn() },
+        membershipSubscriptionCharge: { updateMany: mocks.txChargeUpdateMany, findUnique: mocks.txChargeFindUnique },
         memberSubscription: { updateMany: mocks.memberSubscriptionUpdateMany },
         xeroObjectLink: { upsert: mocks.linkUpsert },
       });
@@ -258,6 +263,161 @@ describe("subscription invoice delivery behavior", () => {
     expect(mocks.complete).toHaveBeenCalledWith("op-1", expect.objectContaining({
       responsePayload: expect.objectContaining({ conflict: "SUBSCRIPTION_ALREADY_PAID", manuallyMarkedPaid: true }),
     }));
+    // #4098: the write cannot reopen a charge an officer closed meanwhile.
+    expect(mocks.chargeUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "charge-1", status: { notIn: ["NOT_REQUIRED", "VOIDED"] } },
+    }));
+    // #4098: the message names the real choices, not a "resolve" action that
+    // never existed.
+    expect(mocks.chargeUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        lastErrorMessage: "Covered subscription is already PAID (Cash Payer); no Xero invoice was created. Close it as already paid on the Subscriptions page, or reverse the payment (Mark as unpaid on the subscription, or void it in Xero) and Retry.",
+      }),
+    }));
+  });
+
+  it("tells a partly paid charge to reverse the payment or finish paying, not to close (#4098)", async () => {
+    // The worker conflicts when ANY covered subscription is PAID, but the close
+    // needs EVERY one paid, so a partly paid charge is told how to finish it.
+    mocks.chargeFind.mockResolvedValue(charge({
+      coverage: [
+        { memberName: "Cash Payer", subscription: { id: "subscription-1", status: "PAID", manuallyMarkedPaidAt: new Date("2026-07-01T00:00:00.000Z") } },
+        { memberName: "Still Owing", subscription: { id: "subscription-2", status: "NOT_INVOICED", manuallyMarkedPaidAt: null } },
+      ],
+    }));
+
+    await createXeroMembershipSubscriptionInvoice({ chargeId: "charge-1", syncOperationId: "op-1" });
+
+    expect(mocks.createInvoices).not.toHaveBeenCalled();
+    expect(mocks.chargeUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        status: "CONFLICT",
+        lastErrorMessage: "Covered subscription is already PAID (Cash Payer); no Xero invoice was created. Not every covered subscription is paid (or not required), so it can't be closed as paid. Either record the remaining payments and then close it, or reverse every payment recorded for it (Mark as unpaid on the subscription, or void it in Xero) and then Retry to invoice the whole charge.",
+      }),
+    }));
+  });
+
+  it("offers the close when the only other covered member is exempt (NOT_REQUIRED) — owner decision on #4110", async () => {
+    mocks.chargeFind.mockResolvedValue(charge({
+      coverage: [
+        { memberName: "Cash Payer", releasedAt: null, subscription: { id: "subscription-1", status: "PAID", manuallyMarkedPaidAt: new Date("2026-07-01T00:00:00.000Z") } },
+        { memberName: "Cub Exempt", releasedAt: null, subscription: { id: "subscription-2", status: "NOT_REQUIRED", manuallyMarkedPaidAt: null } },
+      ],
+    }));
+
+    await createXeroMembershipSubscriptionInvoice({ chargeId: "charge-1", syncOperationId: "op-1" });
+
+    expect(mocks.createInvoices).not.toHaveBeenCalled();
+    expect(mocks.chargeUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        lastErrorMessage: expect.stringContaining("Close it as already paid on the Subscriptions page"),
+      }),
+    }));
+  });
+
+  it("records the invoice with a status-guarded write, and emails through guarded writes too (#4098 review)", async () => {
+    mocks.chargeFind.mockResolvedValue(charge());
+
+    await createXeroMembershipSubscriptionInvoice({ chargeId: "charge-1", syncOperationId: "op-1" });
+
+    const liveOnly = { id: "charge-1", status: { notIn: ["NOT_REQUIRED", "VOIDED"] } };
+    expect(mocks.txChargeUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: liveOnly,
+      data: expect.objectContaining({ status: "INVOICE_CREATED", xeroInvoiceId: "invoice-1" }),
+    }));
+    expect(mocks.chargeUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      where: liveOnly,
+      data: expect.objectContaining({ status: "EMAILED" }),
+    }));
+  });
+
+  it("a close landing while the invoice was in Xero leaves a stray to void, written in the same transaction: nothing linked, nothing downgraded, no email (#4098 review)", async () => {
+    // RUNNING -> close -> success: the worker read the charge QUEUED, Xero raised
+    // the invoice, and by the time it records it the officer has closed the
+    // charge, so the guarded INVOICE_CREATED write matches nothing.
+    mocks.chargeFind.mockResolvedValue(charge());
+    mocks.txChargeUpdateMany.mockResolvedValueOnce({ count: 0 }).mockResolvedValueOnce({ count: 1 });
+    mocks.txChargeFindUnique.mockResolvedValue({ status: "NOT_REQUIRED", billingBasis: "PER_MEMBER" });
+
+    const result = await createXeroMembershipSubscriptionInvoice({ chargeId: "charge-1", syncOperationId: "op-1" });
+
+    expect(result).toBeNull();
+    expect(mocks.createInvoices).toHaveBeenCalledTimes(1);
+    expect(mocks.memberSubscriptionUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.linkUpsert).not.toHaveBeenCalled();
+    expect(mocks.emailInvoice).not.toHaveBeenCalled();
+    // The stray marker is the SECOND write inside the recording transaction
+    // (crash-safe with the lost claim), and nothing is written outside it.
+    expect(mocks.chargeUpdate).not.toHaveBeenCalled();
+    expect(mocks.txChargeUpdateMany).toHaveBeenNthCalledWith(2, {
+      where: { id: "charge-1", status: "NOT_REQUIRED" },
+      data: {
+        lastErrorCode: "STRAY_INVOICE_AFTER_CLOSE",
+        lastErrorMessage: expect.stringMatching(/^This charge was closed as already paid while Xero invoice INV-1 was being raised for it\. .*Void it in Xero promptly: until then the membership sync may attach it to the recipient's subscription\. This note stays on the closed charge as the record/),
+      },
+    });
+    expect(mocks.complete).toHaveBeenCalledWith("op-1", expect.objectContaining({
+      status: "PARTIAL",
+      responsePayload: expect.objectContaining({ conflict: "STRAY_INVOICE_AFTER_CLOSE", email: null }),
+      xeroObjectId: "invoice-1",
+      xeroObjectNumber: "INV-1",
+    }));
+  });
+
+  it("a charge VOIDED while the attempt was in Xero is finished, not marked a stray (#4098 review)", async () => {
+    mocks.chargeFind.mockResolvedValue(charge());
+    mocks.txChargeUpdateMany.mockResolvedValueOnce({ count: 0 });
+    mocks.txChargeFindUnique.mockResolvedValue({ status: "VOIDED", billingBasis: "PER_MEMBER" });
+
+    await createXeroMembershipSubscriptionInvoice({ chargeId: "charge-1", syncOperationId: "op-1" });
+
+    expect(mocks.txChargeUpdateMany).toHaveBeenCalledTimes(1);
+    expect(mocks.emailInvoice).not.toHaveBeenCalled();
+    expect(mocks.complete).toHaveBeenCalledWith("op-1", { responsePayload: { skipped: true, reason: "VOIDED" } });
+  });
+
+  it("a resume of an invoice the charge already held is finished, not marked a stray, when the charge was voided meanwhile (#4098 review)", async () => {
+    // Resume path: the charge already carries its invoice (email retry), so this
+    // attempt raised nothing new. The void sync voided it in Xero meanwhile.
+    mocks.chargeFind.mockResolvedValue(charge({
+      xeroInvoiceId: "invoice-1", xeroInvoiceNumber: "INV-1", invoicePersistedAt: new Date("2026-07-13T00:00:00.000Z"),
+    }));
+    mocks.getInvoices.mockResolvedValue({ body: { invoices: [providerInvoice()] } });
+    mocks.txChargeUpdateMany.mockResolvedValueOnce({ count: 0 });
+    mocks.txChargeFindUnique.mockResolvedValue({ status: "VOIDED", billingBasis: "PER_MEMBER" });
+
+    await createXeroMembershipSubscriptionInvoice({ chargeId: "charge-1", syncOperationId: "op-1" });
+
+    expect(mocks.createInvoices).not.toHaveBeenCalled();
+    expect(mocks.txChargeUpdateMany).toHaveBeenCalledTimes(1);
+    expect(mocks.emailInvoice).not.toHaveBeenCalled();
+    expect(mocks.complete).toHaveBeenCalledWith("op-1", { responsePayload: { skipped: true, reason: "VOIDED" } });
+  });
+
+  it("a resume never marks a stray even if it reads the charge closed: it raised no new invoice (#4098 review)", async () => {
+    mocks.chargeFind.mockResolvedValue(charge({
+      xeroInvoiceId: "invoice-1", xeroInvoiceNumber: "INV-1", invoicePersistedAt: new Date("2026-07-13T00:00:00.000Z"),
+    }));
+    mocks.txChargeUpdateMany.mockResolvedValueOnce({ count: 0 });
+    mocks.txChargeFindUnique.mockResolvedValue({ status: "NOT_REQUIRED", billingBasis: "PER_MEMBER" });
+
+    await createXeroMembershipSubscriptionInvoice({ chargeId: "charge-1", syncOperationId: "op-1" });
+
+    expect(mocks.txChargeUpdateMany).toHaveBeenCalledTimes(1);
+    expect(mocks.complete).toHaveBeenCalledWith("op-1", { responsePayload: { skipped: true, reason: "NOT_REQUIRED" } });
+  });
+
+  it("skips a charge an officer closed as already paid, with no provider call (#4098)", async () => {
+    mocks.chargeFind.mockResolvedValue(charge({ status: "NOT_REQUIRED" }));
+
+    const result = await createXeroMembershipSubscriptionInvoice({ chargeId: "charge-1", syncOperationId: "op-1" });
+
+    expect(result).toBeNull();
+    expect(mocks.findContact).not.toHaveBeenCalled();
+    expect(mocks.getInvoices).not.toHaveBeenCalled();
+    expect(mocks.createInvoices).not.toHaveBeenCalled();
+    expect(mocks.chargeUpdate).not.toHaveBeenCalled();
+    expect(mocks.complete).toHaveBeenCalledWith("op-1", { responsePayload: { skipped: true, reason: "NOT_REQUIRED" } });
   });
 
   it("resume path still delivers an already-minted invoice but the coverage write is fenced against PAID rows (#1944)", async () => {

@@ -1,6 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  focusConnectedTarget,
+  MAIN_REGION_SELECTOR,
+  RETURN_FOCUS_REGION_SELECTOR,
+} from "@/hooks/use-scroll-to-feedback";
 import { Alert } from "@/components/ui/alert";
 import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
 import { Button } from "@/components/ui/button";
@@ -58,15 +63,6 @@ function currentReturnFocusTarget(explicitTarget?: HTMLElement | null) {
   return active;
 }
 
-function focusConnectedTarget(target: HTMLElement | null) {
-  if (!target?.isConnected) return false;
-  const hadTabIndex = target.hasAttribute("tabindex");
-  if (!hadTabIndex && target.tabIndex < 0) target.setAttribute("tabindex", "-1");
-  target.focus({ preventScroll: true });
-  if (!hadTabIndex) target.removeAttribute("tabindex");
-  return document.activeElement === target;
-}
-
 /** One stable entry point for pointer, keyboard, and menu move requests. */
 export function useBedAllocationMoveDialog(
   options: UseBedAllocationMoveDialogOptions,
@@ -116,9 +112,8 @@ export function useBedAllocationMoveDialog(
       returnFocusRef.current = returnTarget;
       focusAllocationIdRef.current = nextAnchor.allocationId;
       fallbackFocusRef.current =
-        returnTarget?.closest<HTMLElement>(
-          "section, [role='region'], main, [role='main']",
-        ) ?? document.querySelector<HTMLElement>("main, [role='main']");
+        returnTarget?.closest<HTMLElement>(RETURN_FOCUS_REGION_SELECTOR) ??
+        document.querySelector<HTMLElement>(MAIN_REGION_SELECTOR);
       setAssertiveAnnouncement("");
       setPoliteAnnouncement(
         `Move options opened for ${nextTarget.guestName} to ${nextTarget.destinationLabel}.`,

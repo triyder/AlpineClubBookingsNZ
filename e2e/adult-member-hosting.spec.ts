@@ -13,11 +13,8 @@ import {
 import { E2E_ADMIN, ROLE_PERSONAS, WAITLISTER } from "./helpers/fixtures";
 import { overrideModules, setModuleSettings } from "./helpers/modules";
 import { cancelMemberBookingsOnDate } from "./helpers/reset";
-import { stayWindowForAttempt } from "./helpers/stay-dates";
-// #3232: the linked move needs a SECOND window derived from this spec's own, and
-// the seeded season bands to check it against. Both are the single sources the
-// rest of the date space already uses (prisma/e2e-fixtures.ts).
-import { SEEDED_SEASONS, shiftDateOnly } from "../prisma/e2e-fixtures";
+import { linkedMoveStayWindows, stayWindowForAttempt } from "./helpers/stay-dates";
+import { shiftDateOnly } from "../prisma/e2e-fixtures";
 
 /**
  * #2569 / #2576 / #2597 — the adult-member hosting rule end to end against the
@@ -859,36 +856,18 @@ test("same-owner cover can be removed with authority and restored by another act
  * moving the one carrying the adult was refused for stranding the other, and
  * moving the other was refused by the same rule from the other end.
  *
- * DATES ARE COUNTED FROM THIS SPEC'S OWN WINDOW and are deliberately NOT Mondays.
- * Every `stayWindow` index in the suite is a Monday, so a Thursday pair cannot
- * collide with another spec's band however the bases are reallocated — see
- * `e2e-stay-window-disjointness.test.ts` for why an unverifiable disjointness
- * claim is not good enough here. Both windows are asserted to fall inside a
- * seeded season, so a run date that pushed one into the season gap fails loudly
- * with the reason instead of failing as an out-of-season price.
+ * The linked pair is selected from this attempt's own Monday window, skipping
+ * seeded booking nights and season gaps for BOTH two-night stays. Its occupied
+ * Thursday/Friday nights also stay clear of the suite's Monday/Tuesday windows;
+ * the fixture-night regression suite sweeps this contract across run dates and
+ * retries rather than relying on weekday alignment alone.
  */
 test("moving one booking offers to move the other, and both really move (#3232)", async ({}, testInfo) => {
   test.setTimeout(180_000);
 
-  // Thursday-to-Saturday, and the same again a week later: two nights each, both
-  // clear of every Monday window in the suite.
-  const start = shiftDateOnly(WINDOW.checkIn, 3);
-  const target = shiftDateOnly(WINDOW.checkIn, 10);
-  const inSeason = (checkIn: string) => {
-    const nights = [checkIn, shiftDateOnly(checkIn, 1)];
-    return SEEDED_SEASONS.some((season) =>
-      nights.every((night) => night >= season.start && night <= season.end),
-    );
-  };
-  for (const window of [start, target]) {
-    expect(
-      inSeason(window),
-      `the linked-move window ${window} must fall inside a seeded season - it ` +
-        `is derived from this spec's stay window (${WINDOW.checkIn}), so a run ` +
-        `date that pushes it into the ~30-day season gap needs the base index ` +
-        `moved rather than this assertion relaxed. See docs/E2E_PLAYWRIGHT.md.`,
-    ).toBe(true);
-  }
+  const pair = linkedMoveStayWindows(WINDOW);
+  const start = pair.start.checkIn;
+  const target = pair.target.checkIn;
 
   await setClubHostingPolicy({
     mode: "ENFORCED",

@@ -30,7 +30,12 @@
 import type { ManualRefundTaskKind } from "@prisma/client";
 
 import type { ClubFormat } from "@/lib/club-format";
-import { manualRefundTaskKindAllowsSettlement } from "@/lib/manual-refund-task-settlement-rules";
+import { bankTransferRefundPayee, type BankTransferRefundPayee } from "@/lib/group-organiser-paid";
+import {
+  EDIT_REFUND_HAND_BACK_DISMISS_AFTER_CANCEL_MESSAGE,
+  EDIT_REFUND_HAND_BACK_REOPEN_AFTER_CANCEL_MESSAGE,
+  manualRefundTaskKindAllowsSettlement,
+} from "@/lib/manual-refund-task-settlement-rules";
 import { formatCents } from "@/lib/utils";
 import type { EditReviewStillOwedPreview } from "@/lib/edit-financial-review-still-owed";
 
@@ -124,6 +129,18 @@ const NOTHING_FURTHER_RETURNED =
   "Nothing further was credited or refunded: the booking's cancellation had already returned this share to the member.";
 
 /**
+ * #4272: a charge whose booking was cancelled after the completion committed.
+ * Nothing was asked of the member and nothing will be retried; the uncollected
+ * share is in the audit log (`settleCancelledEditReviewCharge`), written now or
+ * by an earlier record.
+ */
+export const CHARGE_BOOKING_CANCELLED_COMPLETION =
+  "The booking was cancelled before the request for payment could be raised, so the member has not been asked for this. Collect it another way. A record of the amount still owed has been added to the audit log.";
+/** #4272: the same, when earlier records already cover what is still owed. */
+export const CHARGE_BOOKING_CANCELLED_ALREADY_RECORDED_COMPLETION =
+  "The booking was cancelled before the request for payment could be raised, so the member has not been asked for this. Collect it another way. The amount still owed is already recorded in the audit log, so no new record was added.";
+
+/**
  * What the operator is told a completion actually did.
  *
  * One sentence per route, because the four outcomes are materially different
@@ -147,6 +164,9 @@ export function completionMessage(result: {
   accountCredit?: { givenBackCents: number; mintedCents: number } | null;
   /** #3835: the share the officer typed, beside what a cancelled booking still owed. */
   amountCents?: number | null;
+  /** #4272: the booking was cancelled before the charge's request was raised;
+   * `recorded` is whether this completion wrote the uncollected-share record. */
+  chargeBookingCancelled?: { recorded: boolean };
 }, format: ClubFormat) {
   const amended = result.amountAmended ? " at the confirmed amount" : "";
   // #3835: on a cancelled booking, the applied-credit part of what was still owed went back as credit.
@@ -172,6 +192,11 @@ export function completionMessage(result: {
     case "charge-on-invoice":
       return `Added to this booking's invoice for the member to pay${amended}.`;
     case "charge-as-payment-request":
+      if (result.chargeBookingCancelled) {
+        return result.chargeBookingCancelled.recorded
+          ? CHARGE_BOOKING_CANCELLED_COMPLETION
+          : CHARGE_BOOKING_CANCELLED_ALREADY_RECORDED_COMPLETION;
+      }
       return result.additionalPaymentIntentId
         ? `The member has been asked to pay this${amended}. It is on the booking as an additional payment and they will be reminded until it is paid.`
         : "The request for payment could not be raised just now. It has been recorded and will be retried automatically — check this booking's payment history before asking the member another way.";
@@ -227,6 +252,39 @@ export function completionSummary(shape: CompletionSettlementShape): string {
 }
 
 /**
+ * #4317 (owner decision on #4302; review rounds 3 and 6 wording): the officer's
+ * warning on an OPEN edit review one of whose MOVED guests was removed from the
+ * booking after the review was raised (`editFinancialReviewGuestsRemovedSinceRaised`).
+ * The removal credited that guest's STORED total, which a parked edit never
+ * changed (`INV-MOD-040`): it still held the nights the edit gave back, and
+ * never held the nights it added. So settling could credit given-back nights
+ * again, or charge for added nights the guest no longer holds - each strand is
+ * warned in the direction it moved, a mixed one in both. The review may still
+ * hold money owed for another guest, so it asks for a check, not a dismissal.
+ *
+ * The guest is named the way the settle card's evidence block names it - its
+ * ordinal on a several-guest item, and its stored total - because the payload
+ * carries no guest id and the guest's row is gone.
+ */
+export function reviewGuestRemovedSinceRaisedWarning(
+  guest: { ordinal: string | null; guestTotalCents: number | null; gaveNightsBack: boolean; addedNights: boolean },
+  format: ClubFormat,
+): string {
+  const who = guest.ordinal ?? "This review's guest";
+  const stored =
+    guest.guestTotalCents !== null ? `, stored at ${formatCents(guest.guestTotalCents, format)},` : "";
+  const risks = [
+    ...(guest.gaveNightsBack
+      ? ["the nights this change gave back were already credited with this guest's stored total, so settling could credit those nights again"]
+      : []),
+    ...(guest.addedNights
+      ? ["the nights this change added were never part of this guest's stored total, so settling could charge for nights this guest no longer holds"]
+      : []),
+  ];
+  return `${who}${stored} was removed from the booking after this review was raised. Check Xero and the booking before settling: ${risks.join("; and ")}.`;
+}
+
+/**
  * #3191: the second half of the receipt, when the officer also said what the
  * booking's unpriced nights sold for.
  *
@@ -236,33 +294,19 @@ export function completionSummary(shape: CompletionSettlementShape): string {
  * DISMISSAL, which those sentences never describe. Empty when nothing was
  * recorded, which is the ordinary case.
  *
- * It says what the officer gained, not what was written: not being sent back for
- * review is the outcome they were promised when they filled the boxes in, and it
- * is the thing they would otherwise have to take on trust.
- *
- * IT CLAIMS THE STRAND AND NOT THE BOOKING. One edit raises one review task per
- * unreadable guest strand, so settling the first of two writes guest one's
- * nights and leaves guest two's blank - and "this booking will not be sent for
- * review again" would be a receipt disproved by the next edit. Overstating it
- * here is worse than overstating it anywhere else on this screen, because not
- * coming back is the entire thing #3191 promises.
- *
- * THE SECOND SENTENCE IS CONDITIONAL, and it has to be written as one (#3191 fix
- * round). "Another guest on the same booking still can" presupposes a guest who
- * does not exist on a single-guest booking, which is most of them. Whether one
- * exists is not something this message can know - the projection the screen
- * receives deliberately carries no strand id and no party - so the sentence
- * states the rule ("if there is one") rather than asserting the guest. Gating it
- * on a real count would mean a second query on the settle path to change one
- * clause, which is not a trade worth making for copy that is already true.
+ * IT CLAIMS THE GUEST AND NOT THE BOOKING: one review names one guest's nights.
+ * It used to add that those nights would no longer send the booking back for
+ * review, and that another guest's blanks still could. #4317 (epic #4302) prices
+ * every edit from stored data, so no edit sends a booking for review any more
+ * and that promise is true of every booking; it is dropped rather than kept as a
+ * gain the officer did not make. This receipt goes with the settle screen in
+ * wave C.
  */
 export function nightPricesRecordedMessage(count: number): string {
   if (count === 0) return "";
-  const tail =
-    ", so this guest's nights will not send this booking back for review again. If another guest on the same booking has unpriced nights, theirs still can.";
   return count === 1
-    ? ` One night's price was recorded${tail}`
-    : ` ${count} nights' prices were recorded${tail}`;
+    ? " One night's price was recorded for this guest."
+    : ` ${count} nights' prices were recorded for this guest.`;
 }
 
 /**
@@ -326,4 +370,68 @@ export function stillOwedNoticeText(preview: EditReviewStillOwedPreview | null, 
   }
   const then = split ?? { "hand-back": `hand back ${owed}, not the full share`, card: `${owed} will be refunded to the card`, "account-credit": `${owed} will be credited` }[route];
   return `Only ${owed} of the ${formatCents(shareCents, format)} share is still owed after the booking's cancellation - ${then}.`;
+}
+
+/**
+ * #3827, #3949 (`INV-PAY-137`): THE REASON LINE of an edit's refund hand-back
+ * (`INV-PAY-117`) and of an approved appeal's (`INV-PAY-118`), as the finance
+ * queue shows it - naming who the bank transfer goes to. A joiner's booking the
+ * group organiser paid for by internet banking is refunded to the ORGANISER
+ * (owner decision on #3949, 21 Oct 2026), never to the joiner, so the officer
+ * paying it must be told whose account to send it to. The member wording is
+ * exactly what it was.
+ */
+export function editRefundHandBackReason({ bookingId, editLabel, payee }: { bookingId: string; editLabel: string; payee: BankTransferRefundPayee }): string {
+  return payee === "organiser"
+    ? `Booking ${bookingId} lowered by a ${editLabel}; the group organiser paid for it by internet banking, so the club refunds the difference to the group organiser by bank transfer.`
+    : `Booking ${bookingId} lowered by a ${editLabel}; paid by internet banking or by hand, so the club refunds the difference by bank transfer (#3827).`;
+}
+
+export function refundRequestHandBackReason({ bookingId, payee }: { bookingId: string; payee: BankTransferRefundPayee }): string {
+  return payee === "organiser"
+    ? `Refund appeal approved on booking ${bookingId}; the group organiser paid for it by internet banking, so the club refunds this to the group organiser by bank transfer.`
+    : `Refund appeal approved on booking ${bookingId}; not paid by card, so the club refunds this by bank transfer (#3827).`;
+}
+
+/**
+ * #3949 (`INV-PAY-137`): the two refusals `INV-PAY-117` gives an edit refund
+ * hand-back once its booking is cancelled (dismissing an open one, reopening a
+ * dismissed one), on the booking as the door read it. On a joiner's booking the
+ * group organiser paid for by internet banking they name the organiser, whose
+ * money it is (`bankTransferRefundPayee`); the rule is unchanged, because the
+ * group cancel nets an open edit refund out of the organiser's refund just as a
+ * member's cancel does. The member wording is exactly what it was.
+ */
+type PayeeBooking = Parameters<typeof bankTransferRefundPayee>[0];
+
+export function editRefundHandBackDismissAfterCancelMessage(booking: PayeeBooking): string {
+  return bankTransferRefundPayee(booking) === "organiser"
+    ? "This group booking has been cancelled since this edit refund was raised, and the cancellation's refund to the group organiser was worked out on the basis that this money goes back to the organiser. Send it to the organiser and mark it paid back. If the club has decided not to pay it, that changes the cancellation's own figures, so take it to the treasurer to correct the cancelled booking rather than dismissing the task here."
+    : EDIT_REFUND_HAND_BACK_DISMISS_AFTER_CANCEL_MESSAGE;
+}
+
+export function editRefundHandBackReopenAfterCancelMessage(booking: PayeeBooking): string {
+  return bankTransferRefundPayee(booking) === "organiser"
+    ? "This group booking has been cancelled since this edit refund was dismissed, and the cancellation's refund to the group organiser was worked out without it. Putting it back on the queue would promise the organiser money the cancellation already accounted for. If more is owed, raise it against the cancelled booking, for example as a refund appeal."
+    : EDIT_REFUND_HAND_BACK_REOPEN_AFTER_CANCEL_MESSAGE;
+}
+
+/**
+ * B5 (#2262), #3949 (owner decision, 22 Oct 2026): THE REASON LINE of a paid
+ * cancellation's hand-back task. A cash settlement's refund goes back to the
+ * member; a joiner's own cancel of a place the group organiser paid for by
+ * internet banking goes back to the ORGANISER by bank transfer, named when
+ * known (review round 4). Officer-facing, so it cites no issue numbers. The
+ * member wording is exactly what it was.
+ */
+export function cancellationHandBackReason({ bookingId, refundPercentage, payee, organiserName = null }: {
+  bookingId: string;
+  refundPercentage: number;
+  payee: BankTransferRefundPayee;
+  /** The organiser it is repaid to, named in the line (`bookingOwnerName` of the organiser's booking). */
+  organiserName?: string | null;
+}): string {
+  return payee === "organiser"
+    ? `Booking ${bookingId} cancelled by its joiner; the group organiser${organiserName ? ` (${organiserName})` : ""} paid for it by internet banking, so the club refunds ${refundPercentage}% (under the policy in effect at the time, on the card refund tiers) to the group organiser by bank transfer.`
+    : `Booking ${bookingId} cancelled — cash/manual settlement, refund by hand (${refundPercentage}% under the policy in effect at the time).`;
 }

@@ -93,6 +93,7 @@ const houseDay = (zone: string) =>
 
 function rows(): Array<{ label: string; value: string }> {
   return bookingModificationSummaryRows({
+    addedGuests: [],
     oldCheckIn: OLD_CHECK_IN,
     oldCheckOut: OLD_CHECK_OUT,
     newCheckIn: NEW_CHECK_IN,
@@ -171,6 +172,7 @@ describe("the modification rows name the stored nights, under every zone", () =>
     await withPersistedZone("Pacific/Honolulu");
 
     const unchanged = bookingModificationSummaryRows({
+      addedGuests: [],
       oldCheckIn: OLD_CHECK_IN,
       oldCheckOut: OLD_CHECK_OUT,
       newCheckIn: OLD_CHECK_IN,
@@ -193,6 +195,7 @@ describe("the modification rows name the stored nights, under every zone", () =>
 
     expect(() =>
       bookingModificationSummaryRows({
+        addedGuests: [],
         oldCheckIn: new Date("2026-08-01T11:30:00.000Z"),
         oldCheckOut: OLD_CHECK_OUT,
         newCheckIn: NEW_CHECK_IN,

@@ -14,6 +14,7 @@ import { resolveGuestRateMembershipTypes, resolveMembershipTypePoliciesForMember
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import { planAcceptedSchoolHeldPrices, readAcceptedSchoolTerms } from "@/lib/school-pending-adult-price-plan";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
+import { PrimaryInvoiceRaisedDuringEditError, writeEditOnPayment } from "@/lib/booking-primary-invoice-claim";
 
 /** Replace accepted anonymous slots with real names without changing the deal. */
 export async function resolveAcceptedSchoolPendingAdults(input: {
@@ -55,7 +56,11 @@ export async function resolveAcceptedSchoolPendingAdults(input: {
     const request = await tx.bookingRequest.findUnique({ where: { id: input.requestId } });
     const hold = await tx.booking.findUnique({
       where: { id: locator.heldBookingId! },
-      include: { guests: { select: { id: true, memberId: true, firstName: true, lastName: true, ageTier: true, stayStart: true, stayEnd: true, priceCents: true, nights: { select: { id: true, stayDate: true, priceCents: true } } } } },
+      include: {
+        guests: { select: { id: true, memberId: true, firstName: true, lastName: true, ageTier: true, stayStart: true, stayEnd: true, priceCents: true, nights: { select: { id: true, stayDate: true, priceCents: true } } } },
+        // #3980 review C4: the invoice link the re-price claims (`writeEditOnPayment`).
+        payment: { select: { id: true, xeroInvoiceId: true } },
+      },
     });
     if (!request || request.type !== "SCHOOL" || request.status !== BookingRequestStatus.ACCEPTED ||
         request.version !== input.expectedVersion || request.heldBookingId !== locator.heldBookingId ||
@@ -193,6 +198,14 @@ export async function resolveAcceptedSchoolPendingAdults(input: {
       totalPriceCents, discountCents: 0, promoAdjustmentCents: 0,
       finalPriceCents: bookingFinalPriceCents({ totalPriceCents, promoAdjustmentCents: 0 }),
     } });
+    // #3980 review C4 (`INV-PAY-136`): a re-price that read no primary invoice
+    // link claims it on the payment row, as an edit does; refused if it moved.
+    await writeEditOnPayment(tx, { payment: hold.payment, changeFeeCents: 0 }).catch((err: unknown) => {
+      if (err instanceof PrimaryInvoiceRaisedDuringEditError) {
+        throw new BookingRequestError("This booking's invoice was being raised while the adults were being named, so nothing was changed. Please try again in a moment.", 409);
+      }
+      throw err;
+    });
     // Match the held-booking and approval writers' immutable rate-type snapshot.
     // The accepted cents stay fixed; these adults have no member identity.
     const ratedTeachers = await resolveGuestRateMembershipTypes(tx, {

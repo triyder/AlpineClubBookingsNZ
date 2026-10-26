@@ -4,6 +4,11 @@
 // subset. Import xero source modules directly (no @/lib/xero facade, #1208).
 import { Prisma } from "@prisma/client";
 import type { XeroOperationRetryMeta } from "@/lib/xero-operation-retry";
+import type { PaidAnotherWayXeroNote } from "@/lib/manual-refund-task-settlement-rules";
+import type { PaidAnotherWayReceiptState } from "@/lib/paid-another-way-receipt-note";
+import type { PaidBackRefundRequest } from "@/lib/xero-inbound/refund-request-paid-back";
+import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
+import type { AdditionalCaptureReceiptEvidence } from "./xero-booking-repair-additional-capture";
 
 export const XERO_BOOKING_REPAIR_FINDING_CODES = [
   "MISSING_PRIMARY_INVOICE",
@@ -18,10 +23,31 @@ export const XERO_BOOKING_REPAIR_FINDING_CODES = [
   // #3635: a late capture a treasurer kept on a cancelled booking, whose
   // booking payment Xero has no invoice for.
   "KEPT_LATE_CAPTURE_WITHOUT_XERO_INVOICE",
+  // #3953 (`INV-PAY-139`): a change's card capture no Xero invoice records.
+  "ADDITIONAL_CAPTURE_NOT_RECORDED_IN_XERO",
   // #3635 round-3 R5: a kept capture an officer recorded by hand in Xero was
   // refunded; the app raises no note for it, so an officer records the refund
   // by hand too. Report-only, never actionable.
   "KEPT_LATE_CAPTURE_REFUND_RECORD_BY_HAND",
+  // #3924 round 7 (money M2, `INV-PAY-122`): a late capture whose approved
+  // refund was closed as paid another way, and whose Xero receipt - which the
+  // close's bank-transfer note waits for - failed or was never queued.
+  "PAID_ANOTHER_WAY_LATE_CAPTURE_WITHOUT_XERO_RECEIPT",
+  // #3924 round 8 (owner, 8 Oct 2026: "Raise a refund note for all"): that
+  // close's receipt is in Xero - a change's invoice sent after the close, or
+  // a receipt row that failed after its link - and its note was never queued.
+  "PAID_ANOTHER_WAY_REFUND_NOTE_NOT_QUEUED",
+  // #3924 round 9: that close's receipt - the change invoice or the late
+  // charge's own receipt - was resolved by hand in Xero after the close, so
+  // the app raises no note for it; an officer records by hand the share of
+  // the close's bank-transfer refund its own notes do not cover. Report-only;
+  // not raised once any note row of the close exists (round 10).
+  "PAID_ANOTHER_WAY_REFUND_NOTE_RECORD_BY_HAND",
+  // #3924 round 12: a late capture's card refunds that no note will answer -
+  // its receipt is the app's invoice in Xero, but its row was resolved by
+  // hand, so every card-refund path reads it so - and that no record-by-hand
+  // finding above names. Report-only.
+  "LATE_CAPTURE_CARD_REFUND_RECORD_BY_HAND",
   "BLOCKED_BY_XERO_OPERATION",
   "XERO_LINK_MISMATCH",
   "XERO_AMOUNT_MISMATCH",
@@ -42,6 +68,9 @@ export const XERO_BOOKING_REPAIR_FINDING_CODES = [
   // #3836: a credit-only card booking's invoice with its applied credit never
   // allocated (raised before #3836). Queues the one allocation engine.
   "UNALLOCATED_APPLIED_CREDIT",
+  // #4231 (`INV-PAY-118`): a refund request paid back before the booking had
+  // an invoice, whose own note was therefore never queued. Queues it.
+  "REFUND_REQUEST_NOTE_NOT_QUEUED",
 ] as const;
 
 export type XeroBookingRepairFindingCode =
@@ -54,6 +83,8 @@ export const XERO_BOOKING_REPAIR_ACTION_TYPES = [
   "QUEUE_MODIFICATION_CREDIT_NOTE",
   "QUEUE_ACCOUNT_CREDIT_NOTE",
   "QUEUE_REFUND_CREDIT_NOTE",
+  // #4231: a refund request's OWN note, keyed by the request (`INV-PAY-118`).
+  "QUEUE_REFUND_REQUEST_CREDIT_NOTE",
   "QUEUE_CREDIT_NOTE_ALLOCATION",
   "REQUEUE_XERO_OPERATION",
   "SYNC_PAYMENT_PRIMARY_INVOICE_FIELD",
@@ -64,6 +95,10 @@ export const XERO_BOOKING_REPAIR_ACTION_TYPES = [
   "AUTO_REFUND_LATE_CAPTURED_PAYMENT",
   // #3635: the invoice, paid from Stripe, recording a kept late capture.
   "QUEUE_KEPT_LATE_CAPTURE_INVOICE",
+  // #3953: that capture's receipt, which reads Xero before it records anything.
+  "QUEUE_ADDITIONAL_CAPTURE_RECEIPT",
+  // #3924 round 8: a paid-another-way close's note, once its receipt is in Xero.
+  "QUEUE_PAID_ANOTHER_WAY_REFUND_NOTE",
   // #3548: operator-applied only (`--apply-action`), through the one settle.
   "SETTLE_REFUND_CREDIT_NOTE",
   // #3836: the applied-credit allocation operation, as booking creation queues it.
@@ -233,9 +268,7 @@ export const bookingRepairSelect = Prisma.validator<Prisma.BookingSelect>()({
       // #3635: only a Stripe payment's refund gap is read (the note-eligible cash).
       source: true,
       transactions: {
-        orderBy: {
-          createdAt: "asc",
-        },
+        orderBy: [...LEDGER_ROWS_OLDEST_FIRST],
         select: {
           id: true,
           paymentId: true,
@@ -249,7 +282,10 @@ export const bookingRepairSelect = Prisma.validator<Prisma.BookingSelect>()({
           reason: true,
           // #3528: a withdrawn charge request must not plan a new invoice.
           withdrawnAt: true,
+          // #3953: the change a captured ask pays for, which its receipt reads.
+          bookingModificationId: true,
           createdAt: true,
+          insertionSeq: true,
           updatedAt: true,
         },
       },
@@ -440,6 +476,8 @@ export interface BookingClassificationContext {
    * reads the same evidence as the hardening report.
    */
   paymentRefundPaymentLinks: XeroObjectLinkRecord[];
+  /** `INV-ADDPAY-041`: refund notes a link records VOIDED/DELETED, active or not - never a conflict or a field backfill. */
+  cancelledRefundNoteIds: ReadonlySet<string>;
   bookingLinks: XeroObjectLinkRecord[];
   modificationLinksById: Map<string, XeroObjectLinkRecord[]>;
   paymentOperations: XeroOperationRecord[];
@@ -452,6 +490,14 @@ export interface BookingClassificationContext {
    * the late-capture finding must not offer to refund it.
    */
   lateCaptureApprovalIntentIds: Set<string>;
+  /** #3953: this booking's change captures in Xero (`loadAdditionalCaptureReceiptEvidence`); absent, none to check. */
+  additionalCaptureReceipts?: AdditionalCaptureReceiptEvidence;
+  /**
+   * #4104 (#4128 review C5): by charge, the cents a card refund Stripe failed
+   * later is still owed by a row of its own. The late-capture finding leaves
+   * them out, as it leaves out a capture an approval task owns. Absent, none.
+   */
+  failedLaterOwedCentsByTransactionId?: Map<string, number>;
   /**
    * #3635: of those, the ones a treasurer KEPT (task DISMISSED), by intent: the
    * task and the Xero rows anchored on it. A kept booking payment is recorded
@@ -469,7 +515,39 @@ export interface BookingClassificationContext {
    */
   lateCaptureTasks: Map<
     string,
-    { taskId: string; status: string; operations: XeroOperationRecord[] }
+    {
+      taskId: string;
+      status: string;
+      operations: XeroOperationRecord[];
+      /**
+       * #3924 round 7 (money M2): how the close of this APPROVED capture's card
+       * refund as paid another way is recorded in Xero, and when the task was
+       * raised (the capture day its receipt is dated from). Absent when it was
+       * never closed so. Set after the load (`withPaidAnotherWayCloses`).
+       */
+      paidAnotherWayClose?: {
+        xeroRefundNote: PaidAnotherWayXeroNote;
+        raisedAt: Date;
+        /**
+         * #3924 round 8: for a close whose note waits for the receipt, where
+         * the receipt and the note stand (`readPaidAnotherWayReceiptState`).
+         * Round 11: for every close of an approved capture, whatever its plan.
+         */
+        receiptState?: PaidAnotherWayReceiptState;
+        /**
+         * #3924 round 9: in the club's format, for the report-only finding
+         * that asks an officer to record a refund by hand - round 11: what is
+         * left to record (`PaidAnotherWayReceiptState.recordByHandCents`).
+         */
+        amountLabel?: string;
+        /**
+         * #3924 round 14: in the club's format, a card note sent to Xero
+         * without a reply may already answer
+         * (`PaidAnotherWayReceiptState.cardNoteMayBeInXeroCents`).
+         */
+        cardNoteMayBeInXeroLabel?: string;
+      };
+    }
   >;
   /**
    * #3643 F2: the payments on this booking the organisation late-cash arm
@@ -477,6 +555,25 @@ export interface BookingClassificationContext {
    * note it means cash arrived and no clearing note is owed.
    */
   cancelledBookingHandBackPaymentIds: Set<string>;
+  /**
+   * #4215 (`INV-PAY-118`): the refund requests this booking's payment paid
+   * back (`readPaidBackRefundRequests`). Their cash no cancellation note
+   * answers; each has its own note, which the repair tool may offer (#4231). The inbound recount reads
+   * the same rows.
+   */
+  paidBackRefundRequests: Array<PaidBackRefundRequest & { amountLabel?: string }>;
+  /**
+   * #4231: whether this booking's payment ever had a refund note linked
+   * (`REFUND_CREDIT_NOTE`), active or not (`refundNoteSetsForPayments`, the
+   * same read as `cancelledRefundNoteIds`).
+   */
+  everRefundNoteLinked: boolean;
+  /**
+   * #3924 rounds 12-13: by intent, a late capture's card refunds no note will
+   * answer (`readLateCaptureCardRefundsByHand`), in cents and the club's format,
+   * for the kept invoice's and the card's record-by-hand findings. Set after the load.
+   */
+  lateCaptureCardRefundsByHand?: Map<string, LateCaptureCardRefundsByHandEntry>;
   /**
    * #3635: the refund cents a note may still answer for a cancelled booking's
    * payment, any source (#3880 round 3), through `readRefundCreditNoteGap`, or
@@ -538,6 +635,12 @@ export interface BookingClassificationContext {
    * repaired before this map existed.
    */
   openEditReviewChargeIntentRecoveryModificationIds: Set<string>;
+  /**
+   * #3954 review round 4: ordinary edits whose additional-intent recovery is
+   * still open - for a reduction, its smaller re-issued ask not yet minted, so
+   * the invoice that mint raises is deferred, not missing.
+   */
+  openAdditionalIntentRecoveryModificationIds: Set<string>;
 }
 
 export interface MutableFinding {
@@ -547,4 +650,16 @@ export interface MutableFinding {
   safeToAutoApply: boolean;
   details: Record<string, unknown>;
   actionKeys: string[];
+}
+
+/**
+ * #3924 rounds 12-14: one late capture's card refunds no note will answer
+ * (`cents`), and apart those a card note sent to Xero without a reply may
+ * already answer (`mayBeInXeroCents`), each in the club's format.
+ */
+export interface LateCaptureCardRefundsByHandEntry {
+  cents: number;
+  amountLabel: string;
+  mayBeInXeroCents: number;
+  mayBeInXeroLabel: string;
 }

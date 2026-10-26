@@ -31,6 +31,20 @@ export async function unallocatedAppliedCreditCentsByBooking(
 }
 
 /**
+ * The same predicate for one booking: THE figure the allocation engine
+ * (`allocateAppliedCreditForBooking`) allocates, and the one the primary
+ * invoice's Stripe cash is capped by so that allocation always fits
+ * (`cardSettleAppliedCreditCents`, #3955 round 5, finding 2). Reading the
+ * payment's `creditAppliedCents` mirror instead would let the two part.
+ */
+export async function unallocatedAppliedCents(
+  bookingId: string,
+  db: Pick<Prisma.TransactionClient, "memberCredit"> = prisma,
+): Promise<number> {
+  return (await unallocatedAppliedCreditCentsByBooking([bookingId], db)).get(bookingId) ?? 0;
+}
+
+/**
  * #3836 (H1): whether the cancel has settled this booking's applied credit -
  * the booking is CANCELLED, or a restore row names it, AND its payment holds no
  * captured money (`paymentHasCaptureEvidence`). Such an invoice is answered by
@@ -52,7 +66,7 @@ export async function appliedCreditSettledByCancel(
       select: {
         status: true,
         payment: {
-          select: { id: true, bookingId: true, source: true, status: true, amountCents: true, refundedAmountCents: true, transactions: { select: { status: true } } },
+          select: { id: true, bookingId: true, source: true, status: true, amountCents: true, refundedAmountCents: true, transactions: { select: { status: true } }, booking: { select: { organiserSettled: true, parentBookingId: true } } }, // #3949
         },
       },
     }),

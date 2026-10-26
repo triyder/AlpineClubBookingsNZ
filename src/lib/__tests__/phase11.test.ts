@@ -14,8 +14,8 @@ import { NextRequest } from "next/server";
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     member: { count: vi.fn() },
-    xeroToken: {
-      findFirst: vi.fn(),
+    xeroConnection: {
+      findUnique: vi.fn(),
     },
     xeroAccountMapping: {
       findUnique: vi.fn(),
@@ -64,8 +64,8 @@ import { GET as getChartOfAccounts } from "@/app/api/admin/xero/chart-of-account
 import { GET as getXeroItems } from "@/app/api/admin/xero/items/route";
 
 const mockPrisma = prisma as unknown as {
-  xeroToken: {
-    findFirst: ReturnType<typeof vi.fn>;
+  xeroConnection: {
+    findUnique: ReturnType<typeof vi.fn>;
   };
   xeroAccountMapping: {
     findUnique: ReturnType<typeof vi.fn>;
@@ -325,7 +325,7 @@ describe("GET /api/admin/xero/chart-of-accounts", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockAuth.mockResolvedValue(adminSession());
-    mockPrisma.xeroToken.findFirst.mockResolvedValue({ tenantId: "tenant-1" });
+    mockPrisma.xeroConnection.findUnique.mockResolvedValue({ tenantId: "tenant-1", expiresAt: new Date() });
     mockPrisma.xeroAdminCache.findUnique.mockResolvedValue(null);
     mockPrisma.xeroAdminCache.upsert.mockResolvedValue({});
     clearChartOfAccountsCache();
@@ -460,7 +460,7 @@ describe("GET /api/admin/xero/items", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockAuth.mockResolvedValue(adminSession());
-    mockPrisma.xeroToken.findFirst.mockResolvedValue({ tenantId: "tenant-1" });
+    mockPrisma.xeroConnection.findUnique.mockResolvedValue({ tenantId: "tenant-1", expiresAt: new Date() });
     mockPrisma.xeroAdminCache.findUnique.mockResolvedValue(null);
     mockPrisma.xeroAdminCache.upsert.mockResolvedValue({});
     clearItemsCache();

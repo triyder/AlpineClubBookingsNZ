@@ -55,6 +55,7 @@ const helpers: WizardStepHelpers = {
   optional: false,
   acknowledged: false,
   skip: vi.fn(),
+  reportSaving: vi.fn(),
   // Required, and typed as the literal `true` (#2324): the shell always renders
   // the view-only banner above a step body.
   ancestorRendersViewOnlyBanner: true,
@@ -202,5 +203,20 @@ describe("Stripe WebhookStep how-to-verify hint (#3975)", () => {
       "Signing secret saved.",
     );
     expect(screen.getAllByText(FALLBACK_RE)).toHaveLength(1);
+  });
+});
+
+/*
+  #4104 — the events the endpoint must send come from the one shared list, so
+  the wizard, DEPLOYMENT.md and the dispatcher cannot disagree.
+*/
+describe("Stripe WebhookStep lists the events to send (#4104)", () => {
+  it("shows every event of the shared list, refund.failed among them", async () => {
+    const { STRIPE_WEBHOOK_EVENT_TYPES } = await import("@/lib/stripe-webhook-events");
+    render(<WebhookStep context={makeContext()} helpers={helpers} />);
+    const list = screen.getByRole("list", { name: "Stripe events to send" });
+    const shown = Array.from(list.querySelectorAll("code")).map((code) => code.textContent);
+    expect(shown).toEqual([...STRIPE_WEBHOOK_EVENT_TYPES]);
+    expect(shown).toContain("refund.failed");
   });
 });

@@ -8,12 +8,22 @@
 import { describe, expect, it } from "vitest";
 
 import { planConfirmationChargeLines } from "@/lib/booking-ledger-confirmation-posting";
-import { groupChildHandBacksFromRows, planGroupChildLines } from "@/lib/booking-ledger-group-child-plan";
+import {
+  groupChildHandBacksFromRows,
+  mirrorPlanShareWritten,
+  organiserCardAppealRefundsFromRows,
+  organiserChildRefundEvidenceFromRows,
+  planGroupChildLines,
+} from "@/lib/booking-ledger-group-child-plan";
+import { organiserChildCommittedRefundFrom } from "@/lib/group-settlement-refund-plan";
 import { planGroupSettlementRefundLine, planGroupSettlementShareLines } from "@/lib/booking-ledger-group-settlement-posting";
 import { planCancellationChargeLines } from "@/lib/booking-ledger-cancellation-posting";
 import { refundKey } from "@/lib/booking-ledger-posting-keys";
 import { isPaymentRecoveryOperationInFlight } from "@/lib/payment-recovery-constants";
-import { buildOrganiserChildCancellationRefundKey } from "@/lib/payment-recovery-keys";
+import {
+  buildOrganiserChildAppealRefundKey,
+  buildOrganiserChildCancellationRefundKey,
+} from "@/lib/payment-recovery-keys";
 import { summarizeBookingLedgerCensus } from "@/lib/booking-ledger-projection-census-report";
 import { evaluateBookingLedgerIdentities } from "@/lib/booking-ledger-projection-census";
 import { plannedGroupChildLines } from "@/lib/booking-ledger-projection-census-group";
@@ -102,6 +112,7 @@ function settledChild(source: "STRIPE" | "INTERNET_BANKING"): { row: BookingLedg
       recoveryOperations: [],
       cancellation: null,
       groupSettlement: { id: "gs1", source, status: "SUCCEEDED", amountCents: 4_500, stripePaymentIntentId: source === "STRIPE" ? PI : null, refundPlan: null, refundRecoveryInFlight: false },
+      appeals: [],
       groupChild: null,
       lines: toLines([...charges, ...share]),
     },
@@ -323,6 +334,7 @@ function backPostedCancelledChild(debt: Pick<Op, "status" | "attempts" | "nextRe
   if (cancellation.kind !== "lines") throw new Error("expected cancellation lines");
   return {
     ...offLedgerCancelledChild(4_500, debt),
+    appeals: [],
     groupChild: null,
     lines: [...row.lines, ...toLines(cancellation.postings)],
   };
@@ -346,6 +358,22 @@ describe("K1: a FAILED refund the runner will retry is in flight; an exhausted o
     const exhausted = evaluateBookingLedgerIdentities(backPostedCancelledChild(EXHAUSTED));
     expect(exhausted.identities.find((result) => result.identity === "PRICE")).toMatchObject({ status: "DISAGREE", deltaCents: 4_500 });
     expect(census([backPostedCancelledChild(EXHAUSTED)]).verdict).toBe("GATE_CLOSED");
+  });
+
+  it("MUTATION (#4120): an appeal's pending debt to the organiser's card is not the cancel's in-flight refund", () => {
+    // The cancel's $45 debt in flight, and a $10 appeal approved after it, its debt not yet made.
+    const subject = backPostedCancelledChild(PENDING);
+    const withAppeal: BookingLedgerCensusRow = {
+      ...subject,
+      recoveryOperations: [...subject.recoveryOperations, { ...childDebt(1_000, PENDING), idempotencyKey: buildOrganiserChildAppealRefundKey("rr1") }],
+    };
+    const result = evaluateBookingLedgerIdentities(withAppeal);
+    expect(result.identities.find((identity) => identity.identity === "PRICE")).toMatchObject({
+      status: "CLASSIFIED",
+      deltaCents: 4_500,
+      explainedBy: [{ name: "IN_FLIGHT_REFUND", cents: 4_500 }],
+    });
+    expect(result.identities.filter((identity) => identity.status === "DISAGREE")).toEqual([]);
   });
 });
 
@@ -405,12 +433,13 @@ describe("sync lens F1: a refund appeal approved after the organiser cancel leav
   const settlement = { id: "gs1", source: "INTERNET_BANKING" as const, amountCents: 4_500, stripePaymentIntentId: null, refundPlan: { [B]: 2_250 } };
   const child = { id: B, lodgeId: "l1", status: "CANCELLED" as const, cancelledWithoutSnapshot: true };
   const siblings = [{ id: B, lodgeId: "l1", payment: { amountCents: 4_500, status: "PARTIALLY_REFUNDED", source: "INTERNET_BANKING" as const } }];
-  const task = (status: "OPEN" | "COMPLETED" | "DISMISSED", occurrenceKey: string, amountCents: number) => ({
-    kind: "CANCELLED_BOOKING_HAND_BACK" as const,
+  const task = (status: "OPEN" | "COMPLETED" | "DISMISSED", occurrenceKey: string | null, amountCents: number, kind: "CANCELLED_BOOKING_HAND_BACK" | "EDIT_FINANCIAL_REVIEW" = "CANCELLED_BOOKING_HAND_BACK") => ({
+    kind,
     status,
     occurrenceKey,
     paymentId: "pay-1",
     amountCents,
+    settlementDirection: kind === "EDIT_FINANCIAL_REVIEW" && status === "COMPLETED" ? ("REFUND_TO_MEMBER" as const) : null,
   });
   const kept = (refundedAmountCents: number, tasks: ReturnType<typeof task>[]) => {
     const plan = planGroupChildLines({
@@ -420,6 +449,7 @@ describe("sync lens F1: a refund appeal approved after the organiser cancel leav
       perChildCommittedRefundCents: null,
       payment: { status: "PARTIALLY_REFUNDED", source: "INTERNET_BANKING", amountCents: 4_500, refundedAmountCents },
       handBacks: groupChildHandBacksFromRows("pay-1", tasks),
+      appealRefunds: { recordedCents: 0, committedCents: 0 },
     });
     if (plan?.kind !== "plan") throw new Error("expected a plan");
     return plan.cancellationKeptCents;
@@ -447,6 +477,61 @@ describe("sync lens F1: a refund appeal approved after the organiser cancel leav
     expect(kept(1_000, [task("COMPLETED", appeal, 1_000)])).toBe(2_250);
   });
 
+  // #3949 (`INV-PAY-137`): an IB child's paid-back edit hand-back is in `refundedAmountCents` too,
+  // so it no longer says the plan's share is written; only what is above the paid-back hand-backs does.
+  it("#3949: a paid-back edit hand-back never stands in for an unwritten mirror either", () => {
+    const edit = "edit-refund-hand-back:m1";
+    // Only the $10 hand-back is on the mirror: the plan's $22.50 is still added to what goes back.
+    expect(kept(1_000, [task("COMPLETED", edit, 1_000)])).toBe(1_250);
+    // Hand-back paid before the cancel, plan sized net of it and written beside it: kept the same.
+    expect(kept(3_250, [task("COMPLETED", edit, 1_000)])).toBe(1_250);
+    const handBacks = groupChildHandBacksFromRows("pay-1", [task("COMPLETED", edit, 1_000), task("COMPLETED", appeal, 500)]);
+    expect(handBacks.completedOtherMirrorWritesCents).toBe(1_000);
+    expect(mirrorPlanShareWritten(1_500, handBacks)).toBe(false);
+    expect(mirrorPlanShareWritten(1_501, handBacks)).toBe(true);
+    // And the plan's refund line is posted only once its share is on the mirror.
+    const planRefund = (refundedAmountCents: number) => {
+      const plan = planGroupChildLines({
+        child,
+        settlement,
+        siblings,
+        perChildCommittedRefundCents: null,
+        payment: { status: "PARTIALLY_REFUNDED", source: "INTERNET_BANKING", amountCents: 4_500, refundedAmountCents },
+        handBacks: groupChildHandBacksFromRows("pay-1", [task("COMPLETED", edit, 1_000)]),
+        appealRefunds: { recordedCents: 0, committedCents: 0 },
+      });
+      if (plan?.kind !== "plan") throw new Error("expected a plan");
+      return plan.postings.filter((posting) => posting.kind === "BANK_REFUND").map((posting) => posting.unitCents);
+    };
+    expect(planRefund(1_000)).toEqual([]);
+    expect(planRefund(3_250)).toEqual([2_250]);
+  });
+
+  it("review round 3: a review's refund and a joiner cancel's hand-back are mirror writes too, and a child the cancel never claimed plans no refund", () => {
+    const writes = groupChildHandBacksFromRows("pay-1", [
+      task("COMPLETED", null, 700),
+      task("COMPLETED", null, 300, "EDIT_FINANCIAL_REVIEW"),
+      task("DISMISSED", null, 900),
+      { ...task("COMPLETED", null, 400, "EDIT_FINANCIAL_REVIEW"), settlementDirection: "CHARGE_TO_MEMBER" as never },
+    ]);
+    expect(writes.completedOtherMirrorWritesCents).toBe(1_000);
+    expect(mirrorPlanShareWritten(1_000, writes)).toBe(false);
+    // A child its member cancelled (a snapshot), or a live one mid-cancel, holds no plan refund line however much is on its mirror.
+    for (const unclaimed of [{ ...child, cancelledWithoutSnapshot: false }, { ...child, status: "PAID" as const, cancelledWithoutSnapshot: false }]) {
+      const plan = planGroupChildLines({
+        child: unclaimed as never,
+        settlement,
+        siblings,
+        perChildCommittedRefundCents: null,
+        payment: { status: "PARTIALLY_REFUNDED", source: "INTERNET_BANKING", amountCents: 4_500, refundedAmountCents: 3_250 },
+        handBacks: groupChildHandBacksFromRows("pay-1", []),
+        appealRefunds: { recordedCents: 0, committedCents: 0 },
+      });
+      if (plan?.kind !== "plan") throw new Error("expected a plan");
+      expect(plan.postings.filter((posting) => posting.kind === "BANK_REFUND")).toEqual([]);
+    }
+  });
+
   it("the census plans the same, and once the back-post posts it the child agrees: no in-flight or dismissed hand-back to acknowledge", () => {
     const { row } = settledChild("INTERNET_BANKING");
     for (const status of ["OPEN", "DISMISSED"] as const) {
@@ -468,5 +553,101 @@ describe("sync lens F1: a refund appeal approved after the organiser cancel leav
         posted.identities.map((identity) => [identity.identity, identity.status === "NOT_APPLICABLE" ? "NOT_APPLICABLE" : "AGREE"]),
       );
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #3956: an appeal refunded to the organiser's card is not the cancel's either
+// ---------------------------------------------------------------------------
+
+describe("#3956: an appeal refunded to the organiser's card leaves the planned kept figure alone (INV-PAY-123)", () => {
+  // A $45 card child under #3653's per-child plan: the organiser cancel's 50%
+  // debt refunded $22.50 and the club kept $22.50. The joiner then appeals and
+  // the admin approves $10, refunded out of the combined payment by its own debt.
+  const settlement = { id: "gs1", source: "STRIPE" as const, amountCents: 4_500, stripePaymentIntentId: PI, refundPlan: { perChildRefunds: { [B]: 2_250 } } };
+  const child = { id: B, lodgeId: "l1", status: "CANCELLED" as const, cancelledWithoutSnapshot: true };
+  const siblings = [{ id: B, lodgeId: "l1", payment: { amountCents: 4_500, status: "PARTIALLY_REFUNDED", source: "STRIPE" as const } }];
+  const debt = (idempotencyKey: string, amountCents: number, status: string) => ({
+    idempotencyKey,
+    amountCents,
+    status,
+    paymentId: "pay-1",
+    paymentIntentId: PI,
+  });
+  const cancelDebt = debt(buildOrganiserChildCancellationRefundKey("gs1", B), 2_250, "SUCCEEDED");
+  const appealKey = buildOrganiserChildAppealRefundKey("rr1");
+
+  /** What the back-post and the census both hand the planner, from the child's rows. */
+  function kept(refundedAmountCents: number, operations: ReturnType<typeof debt>[], recorded: number[]) {
+    const refunds = recorded.map((amountCents) => ({ status: "succeeded", amountCents }));
+    const plan = planGroupChildLines({
+      child,
+      settlement,
+      siblings,
+      perChildCommittedRefundCents: organiserChildCommittedRefundFrom(
+        refundedAmountCents,
+        organiserChildRefundEvidenceFromRows({ paymentId: "pay-1", paymentIntentId: PI, refunds, operations }),
+      ),
+      payment: { status: "PARTIALLY_REFUNDED", source: "STRIPE", amountCents: 4_500, refundedAmountCents },
+      handBacks: groupChildHandBacksFromRows("pay-1", []),
+      appealRefunds: organiserCardAppealRefundsFromRows({ paymentId: "pay-1", paymentIntentId: PI, operations }),
+    });
+    if (plan?.kind !== "plan") throw new Error("expected a plan");
+    return plan.cancellationKeptCents;
+  }
+
+  it("kept stays the cancel's $22.50 with no appeal, the appeal owed, or the appeal refunded", () => {
+    expect(kept(2_250, [cancelDebt], [2_250])).toBe(2_250);
+    for (const status of ["PENDING", "PROCESSING", "FAILED"]) {
+      expect(kept(2_250, [cancelDebt, debt(appealKey, 1_000, status)], [2_250]), status).toBe(2_250);
+    }
+    // Refunded: the executor moved the mirror and wrote the refund row.
+    expect(kept(3_250, [cancelDebt, debt(appealKey, 1_000, "SUCCEEDED")], [2_250, 1_000])).toBe(2_250);
+  });
+
+  it("under a pre-#3653 card mirror plan, a refunded appeal is not the mirror: kept and the plan refund line stand", () => {
+    // The settlement stayed PARTIALLY_REFUNDED, so it still holds money and an appeal can reserve against it.
+    const mirror = { ...settlement, refundPlan: { [B]: 2_250 } };
+    const operations = [debt(appealKey, 1_000, "SUCCEEDED")];
+    const plan = (refundedAmountCents: number) => {
+      const planned = planGroupChildLines({
+        child,
+        settlement: mirror,
+        siblings,
+        perChildCommittedRefundCents: null,
+        payment: { status: "PARTIALLY_REFUNDED", source: "STRIPE", amountCents: 4_500, refundedAmountCents },
+        handBacks: groupChildHandBacksFromRows("pay-1", []),
+        appealRefunds: organiserCardAppealRefundsFromRows({ paymentId: "pay-1", paymentIntentId: PI, operations }),
+      });
+      if (planned?.kind !== "plan") throw new Error("expected a plan");
+      return planned;
+    };
+    // Mirror written ($22.50), then the $10 appeal: kept is still the cancel's.
+    expect(plan(3_250).cancellationKeptCents).toBe(2_250);
+    expect(plan(3_250).steps).toContain("group plan refund (2250)");
+    // Mirror never written: the appeal's $10 does not stand in for it, so the
+    // plan's line is still the replay's to post, and its share still counts.
+    const unwritten = plan(1_000);
+    expect(unwritten.cancellationKeptCents).toBe(2_250);
+    expect(unwritten.steps).toEqual(["group share (4500)"]);
+  });
+
+  it("reads only this payment's appeal debts on this intent, and counts made ones as recorded", () => {
+    const operations = [
+      cancelDebt,
+      debt(appealKey, 1_000, "SUCCEEDED"),
+      debt(buildOrganiserChildAppealRefundKey("rr2"), 500, "PENDING"),
+      { ...debt(buildOrganiserChildAppealRefundKey("rr3"), 700, "PENDING"), paymentId: "pay-other" },
+      { ...debt(buildOrganiserChildAppealRefundKey("rr4"), 900, "PENDING"), paymentIntentId: "pi-other" },
+    ];
+    expect(organiserCardAppealRefundsFromRows({ paymentId: "pay-1", paymentIntentId: PI, operations })).toEqual({
+      recordedCents: 1_000,
+      committedCents: 1_500,
+    });
+    // An Internet Banking settlement has no intent, so no appeal debt is its.
+    expect(organiserCardAppealRefundsFromRows({ paymentId: "pay-1", paymentIntentId: null, operations })).toEqual({
+      recordedCents: 0,
+      committedCents: 0,
+    });
   });
 });

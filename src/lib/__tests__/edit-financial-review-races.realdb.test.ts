@@ -771,6 +771,145 @@ let observerClient: PrismaClient;
     });
 
     /**
+     * #3947 (owner decision 22 Oct 2026, option 2): A REVIEW CHARGE'S INVOICE
+     * COMMITS WITH ITS SHARE.
+     *
+     * On the `invoice` route the supplementary invoice IS the ask. Queued after
+     * the commit, it left a window in which share A was COMPLETED and its edit
+     * had no invoice in the outbox; share B of the same edit, chosen in that
+     * window on a booking the card could now be asked of, read no invoice still
+     * coming and asked the card for the edit's total beside the invoice that then
+     * went out. The invoice is now queued INSIDE A's completion, so that window
+     * does not exist: A cannot commit until its invoice is in the outbox.
+     *
+     * FORCED: a third connection holds the production per-anchor key, A is
+     * started and proven queued behind it, and an observer reads A's task and
+     * the edit's outbox in ONE statement. Queued after the commit (the old
+     * shape), that statement sees A COMPLETED with nothing queued - the window.
+     * Then B is completed right after A, on a booking re-shaped to a credit-paid
+     * card payment, and must join A's invoice rather than take the card.
+     */
+    it("#3947 FORCES the post-commit window shut: share A cannot commit before its invoice is queued, and share B chosen right after joins it", async () => {
+      await clearReviewRunState();
+      await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: BOOKING_ID } });
+      await prisma.paymentRecoveryOperation.deleteMany({ where: { bookingId: BOOKING_ID } });
+
+      const shareA = await raiseInOwnTransaction();
+      // A second strand of the SAME edit, so its own task with its own key.
+      const shareB = await prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+        return raiseEditFinancialReviewTask({
+          ...raiseInput(),
+          occurrence: { ...occurrence(), surrenderedNightDates: ["2026-08-02" as CalendarDate] },
+          store: tx,
+        });
+      });
+      expect(shareB.taskId).not.toBe(shareA.taskId);
+
+      const lockHeld = deferred();
+      const releaseLock = deferred();
+      let holderPid = 0;
+      let holderError: unknown;
+      const holder = lockHolderClient
+        .$transaction(
+          async (tx) => {
+            const rows = await tx.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid()::int AS pid`;
+            holderPid = rows[0]?.pid ?? 0;
+            await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('xero-supplementary-invoice'), hashtext(${MODIFICATION_ID}))`;
+            lockHeld.resolve();
+            await releaseLock.promise;
+          },
+          { maxWait: 5_000, timeout: 10_000 },
+        )
+        .catch((error: unknown) => {
+          holderError = error;
+          lockHeld.resolve();
+        });
+      await lockHeld.promise;
+      if (holderError) {
+        throw new Error(`The lock-holder connection could not hold the supplementary-invoice key: ${String(holderError)}`);
+      }
+
+      const charge = (taskId: string, confirmedAmountCents: number) =>
+        resolveManualRefundTask({
+          taskId,
+          resolution: "completed",
+          note: "Two extra nights, priced from the rate card.",
+          actingMemberId: MEMBER_ID,
+          confirmedAmountCents,
+          direction: "CHARGE_TO_MEMBER",
+          recordedNightPrices: null,
+        }, CLUB_FORMAT_TEST);
+
+      const completeA = charge(shareA.taskId, 6000);
+      let windowSeen: { status: string; ops: number } | undefined;
+      try {
+        await waitForBlockedBy(
+          holderPid,
+          1,
+          "Share A's invoice never reached the per-anchor supplementary-invoice key, so it is no longer queued " +
+            "through the enqueue's own decision (docs/CONCURRENCY_AND_LOCKING.md, INV-PAY-069).",
+        );
+        // ONE statement, so the two facts are read from one snapshot.
+        const rows = await observerClient.$queryRaw<Array<{ status: string; ops: number }>>`
+          SELECT
+            (SELECT status::text FROM "ManualRefundTask" WHERE id = ${shareA.taskId}) AS status,
+            (SELECT COUNT(*)::int FROM "XeroSyncOperation"
+              WHERE "localModel" = 'BookingModification' AND "localId" = ${MODIFICATION_ID}
+                AND "queueType" = 'SUPPLEMENTARY_INVOICE') AS ops`;
+        windowSeen = rows[0];
+      } finally {
+        releaseLock.resolve();
+        await holder;
+      }
+      const resultA = await completeA;
+
+      // THE WINDOW: while A's invoice could not be queued, A had not committed.
+      // The old shape reads { status: "COMPLETED", ops: 0 } here.
+      expect(windowSeen).toEqual({ status: "OPEN", ops: 0 });
+      expect(resultA.additionalPaymentIntentId).toBeNull();
+
+      const invoiceOps = () =>
+        prisma.xeroSyncOperation.findMany({
+          where: { localModel: "BookingModification", localId: MODIFICATION_ID, queueType: "SUPPLEMENTARY_INVOICE" },
+          select: { id: true, status: true, requestPayload: true },
+        });
+      const afterA = await invoiceOps();
+      expect(afterA).toHaveLength(1);
+      expect((afterA[0].requestPayload as { priceDiffCents: number }).priceDiffCents).toBe(6000);
+
+      // Right after A: the booking is now one the card COULD be asked of (paid
+      // wholly with credit), so only A's queued invoice keeps B off the card.
+      await prisma.payment.update({
+        where: { id: PAYMENT_ID },
+        data: { source: "STRIPE", status: "SUCCEEDED", amountCents: 0 },
+      });
+      try {
+        const resultB = await charge(shareB.taskId, 4000);
+
+        expect(resultB.additionalPaymentIntentId).toBeNull();
+        const cardAsks = await prisma.paymentTransaction.count({
+          where: { paymentId: PAYMENT_ID, kind: "ADDITIONAL" },
+        });
+        expect(cardAsks).toBe(0);
+        expect(await prisma.paymentRecoveryOperation.count({ where: { bookingId: BOOKING_ID } })).toBe(0);
+        // ONE invoice for the edit, raised to both shares.
+        const afterB = await invoiceOps();
+        expect(afterB).toHaveLength(1);
+        expect(afterB[0].id).toBe(afterA[0].id);
+        expect((afterB[0].requestPayload as { priceDiffCents: number }).priceDiffCents).toBe(10000);
+      } finally {
+        await prisma.payment.update({
+          where: { id: PAYMENT_ID },
+          data: { source: "INTERNET_BANKING", status: "PENDING", amountCents: 20000 },
+        });
+        await clearReviewRunState();
+        await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: BOOKING_ID } });
+        await prisma.paymentRecoveryOperation.deleteMany({ where: { bookingId: BOOKING_ID } });
+      }
+    });
+
+    /**
      * #3641 (`INV-PAY-104`): A REVIVED INVOICE AND A FRESH ENQUEUE NEVER BOTH GO
      * OUT. A late capture re-queues the supplementary invoice the reaper retired
      * from that same row, while a settlement (or the repair tool) may be queueing

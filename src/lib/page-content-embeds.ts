@@ -32,6 +32,7 @@ import {
   type PublicFeeGroup,
   type PublicFeeTable,
 } from "@/lib/public-page-content-tokens";
+import { loadPublicFirstYearCosts } from "@/lib/public-first-year-costs";
 import { resolveFeeTokenParameters } from "@/lib/token-parameters";
 import { clubFormatValues } from "@/lib/club-format-server";
 import type { ClubFormat } from "@/lib/club-format";
@@ -54,7 +55,7 @@ export type EmbeddedBodyPart =
   | { type: "skifield-whakapapa" }
   | { type: "photo-gallery"; images: PhotoGalleryImage[] }
   | { type: "photo-slideshow"; images: PhotoGalleryImage[] }
-  // Three fee embeds (#1933, E7). {{membership-types}} is a deprecated alias of
+  // Fee embeds (#1933, E7). {{membership-types}} is a deprecated alias of
   // {{annual-fees}} and {{entrance-fees}} of {{joining-fees}} — the aliases
   // resolve to the same part/renderer. Joining and annual fees share the
   // grouped definition-list view model; hut fees carry the tabular
@@ -62,6 +63,9 @@ export type EmbeddedBodyPart =
   | { type: "hut-fees"; tables: PublicFeeTable[] }
   | { type: "joining-fees"; groups: PublicFeeGroup[] }
   | { type: "annual-fees"; groups: PublicFeeGroup[] }
+  // #4295: joining fee + first-year subscription per membership type and tier;
+  // same grouped view model, so it shares the fee-group renderer.
+  | { type: "first-year-costs"; groups: PublicFeeGroup[] }
   | { type: "booking-policy-summary"; policy: PublicBookingPolicy | null }
   | { type: "cancellation-policy"; policy: PublicCancellationPolicy | null };
 
@@ -530,6 +534,9 @@ export async function buildEmbeddedBody(contentHtml: string) {
       // {{membership-types}} is a deprecated alias of {{annual-fees}}.
       const feeParams = resolveFeeTokenParameters(parsed.parameter);
       parts.push({ type: "annual-fees", groups: await loadPublicAnnualFees(format, { typeKey: feeParams.type, components: feeParams.components }) });
+    } else if (parsed.token === "first-year-costs") {
+      const feeParams = resolveFeeTokenParameters(parsed.parameter);
+      parts.push({ type: "first-year-costs", groups: await loadPublicFirstYearCosts(format, { typeKey: feeParams.type }) });
     } else if (parsed.token === "joining-fees" || parsed.token === "entrance-fees") {
       // {{entrance-fees}} is a deprecated alias of {{joining-fees}}.
       const feeParams = resolveFeeTokenParameters(parsed.parameter);

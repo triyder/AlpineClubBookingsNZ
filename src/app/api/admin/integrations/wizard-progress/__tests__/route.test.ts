@@ -140,6 +140,14 @@ describe("POST wizard-progress", () => {
     );
   });
 
+  it("#4409: refuses the Backups wizard, whose cursor lives on its own support route", async () => {
+    const read = await get("http://localhost/api/admin/integrations/wizard-progress?wizardId=backup");
+    expect(read.status).toBe(400);
+    const write = await post({ wizardId: "backup", currentStepId: "x", completedStepIds: [] });
+    expect(write.status).toBe(400);
+    expect(mocks.saveProgress).not.toHaveBeenCalled();
+  });
+
   it("403s when the guard rejects", async () => {
     mocks.requireAdmin.mockResolvedValue({
       ok: false,

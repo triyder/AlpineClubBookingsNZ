@@ -883,6 +883,27 @@ describe("DELETE /api/admin/page-content", () => {
   // First review, finding 3. The footer's link lists are admin-authored under the
   // same `content` permission and render on every public page, so a report that
   // could not see them told the officer "nothing points at it" when something did.
+  it("checks page and footer references using a literal path (#4190)", async () => {
+    mocks.pageContentFindUnique.mockResolvedValue({ ...probeRow, path: "/trip_%\\reports" });
+    const response = await DELETE(jsonRequest("DELETE", { id: "page-1" }));
+    expect(response.status).toBe(200);
+    expect(mocks.pageContentFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        id: { not: "page-1" },
+        OR: [
+          { contentHtml: { contains: "/trip\\_\\%\\\\reports" } },
+          { headerText: { contains: "/trip\\_\\%\\\\reports" } },
+        ],
+      },
+    }));
+    expect(mocks.siteContentFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        key: { in: [...SITE_CONTENT_KEYS] },
+        contentHtml: { contains: "/trip\\_\\%\\\\reports" },
+      },
+    }));
+  });
+
   it("reports the footer sections that link to the deleted address", async () => {
     mocks.siteContentFindMany.mockResolvedValue([
       { key: "FOOTER_QUICK_LINKS" },

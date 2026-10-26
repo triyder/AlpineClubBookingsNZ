@@ -62,6 +62,8 @@ const JAVASCRIPT_VITEST_TESTS = [
   "scripts/ci/dependency-mitigation.test.mjs",
   "scripts/ci/check-doc-index-integrity.test.mjs",
   "scripts/ci/check-pr-body.test.mjs",
+  // #4053 tests the PR-body gates' file input (`pr-body.mjs`), a `.mjs` tool.
+  "scripts/ci/pr-body-file.test.mjs",
   "scripts/ci/check-pr-changelog-fragment.test.mjs",
   "scripts/ci/check-pr-concurrency-declaration.test.mjs",
   "scripts/ci/check-prerendered-script-nonces.test.mjs",
@@ -69,6 +71,10 @@ const JAVASCRIPT_VITEST_TESTS = [
   "scripts/ci/check-website-prerender-manifest.test.mjs",
   "scripts/ci/check-website-render-modes.test.mjs",
   "scripts/ci/check-workflow-suite-checkout-depth.test.mjs",
+  // #4397: the E2E scope and shard helpers run under bare node in CI, so
+  // their suites stay JavaScript under the same convention.
+  "scripts/ci/e2e-scope.test.mjs",
+  "scripts/ci/e2e-spec-shard.test.mjs",
   // #3721: the suite of the `.mjs` hand-sync description tool, which runs
   // before any install alongside the renderer it extends.
   "scripts/ci/epic-sync-body.test.mjs",
@@ -79,6 +85,10 @@ const JAVASCRIPT_VITEST_TESTS = [
   // deliberately remains JavaScript under the same convention.
   "scripts/ci/run-fast-censuses.test.mjs",
   "scripts/ci/server-only-boundary-selftest.test.mjs",
+  "scripts/ci/wait-for-run-artifacts.test.mjs",
+  // ALP-4 (#4024): the fragility audit is a set of bare-node `.mjs` tools;
+  // their shared suite stays JavaScript under the same convention.
+  "scripts/audit/fragility.test.mjs",
   "scripts/issue-thread.test.mjs",
   "scripts/release/compile-changelog.test.mjs",
   // #3673: the `.mjs` worktree-removal tool's own suite; it stays JavaScript

@@ -18,11 +18,10 @@ import {
   type XeroObjectLinkRecord,
   type XeroOperationRecord,
 } from "./xero-booking-repair-types";
-import {
-  buildBookingCancellationRefundIdempotencyKey,
-  buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey,
-  isEditFinancialReviewAdditionalIntentRecoveryKey,
-} from "./payment-recovery-keys";
+import { buildBookingCancellationRefundIdempotencyKey } from "./payment-recovery-keys";
+import { loadFailedLaterOwedCents } from "./xero-booking-repair-failed-later";
+import { readPaidBackRefundRequests } from "@/lib/xero-inbound/refund-request-paid-back";
+import { groupOpenIntentRecoveriesByBooking, intentRecoveryKeyMaps } from "./xero-booking-repair-intent-recoveries";
 import { unallocatedAppliedCreditCentsByBooking } from "@/lib/xero-applied-credit-ledger-state";
 import {
   editReviewChargeShareTaskSelect,
@@ -31,6 +30,7 @@ import {
   type EditReviewChargeShareRow,
 } from "@/lib/edit-financial-review-charge-shape";
 import logger from "@/lib/logger";
+import { loadAdditionalCaptureReceiptEvidence } from "./xero-booking-repair-additional-capture";
 import type { RepairDependencies } from "./xero-booking-repair-deps";
 import { makeLocalKey, parseRepairScopeDay } from "./xero-booking-repair-utils";
 import {
@@ -47,6 +47,7 @@ import {
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { isPartPaymentReviewTask, NOT_NON_CANCELLATION_HAND_BACK_WHERE } from "@/lib/manual-refund-task-settlement-rules";
 import { refundPaymentLinkWhere } from "@/lib/xero-refund-note-settlement";
+import { refundNoteSetsForPayments } from "@/lib/xero-refund-note-status";
 
 /** A settled edit-review charge share, carrying the booking it was raised on. */
 type EditReviewChargeShareRecord = EditReviewChargeShareRow & {
@@ -259,20 +260,8 @@ export async function loadAuditData(
     });
   }
 
-  /**
-   * The recovery key each loaded edit would have written had its intent mint
-   * failed, so the query below matches by EXACT key and reads the anchor back
-   * out of this map rather than by slicing a prefix off a string - the mistake
-   * `bookingModificationIdForAdditionalIntentRecoveryKey` documents.
-   */
-  const modificationIdByIntentRecoveryKey = new Map<string, string>(
-    modificationIds.map((modificationId) => [
-      buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey(
-        modificationId
-      ),
-      modificationId,
-    ])
-  );
+  // #3187 / #3954: the exact recovery keys each loaded edit would have written.
+  const intentRecoveryKeys = intentRecoveryKeyMaps(modificationIds);
 
   const [
     links,
@@ -353,13 +342,13 @@ export async function loadAuditData(
     // at all - "deferred, not short". The repair tool has to be able to tell
     // that state from the internet-banking route, which looks identical from the
     // ledger (no request row) and needs the opposite answer.
-    modificationIdByIntentRecoveryKey.size > 0
+    intentRecoveryKeys.review.size > 0
       ? deps.prisma.paymentRecoveryOperation.findMany({
           where: {
             type: PaymentRecoveryOperationType.CREATE_ADDITIONAL_PAYMENT_INTENT,
             status: { in: [...OPEN_PAYMENT_RECOVERY_STATUSES] },
             idempotencyKey: {
-              in: [...modificationIdByIntentRecoveryKey.keys()],
+              in: [...intentRecoveryKeys.review.keys(), ...intentRecoveryKeys.ordinary.keys()],
             },
           },
           select: { bookingId: true, idempotencyKey: true },
@@ -441,6 +430,9 @@ export async function loadAuditData(
           [] as Array<{ appliedToBookingId: string; _sum: { amountCents: number | null } }>
         ),
   ]);
+  const failedLaterOwedByPaymentId = await loadFailedLaterOwedCents(deps, paymentIds);
+  // #4215 (`INV-PAY-118`): the one reader the inbound recount uses too.
+  const paidBackRefundRequests = await readPaidBackRefundRequests(paymentIds, deps.prisma);
   const unallocatedAppliedCreditByBookingId = await unallocatedAppliedCreditCentsByBooking(bookingIds, deps.prisma);
   const allocatedAppliedCreditByBookingId = new Map(
     appliedCreditAllocations.map((row) => [
@@ -458,6 +450,9 @@ export async function loadAuditData(
         })
       : [];
 
+  // #4091: refund notes Xero voided, active or not (`paymentLinks` holds active links only).
+  // #4231: one read gives the voided notes and the payments ever refund-noted.
+  const { cancelled: cancelledRefundNoteIds, notedPaymentIds: refundNotedPaymentIds } = await refundNoteSetsForPayments(paymentIds, deps.prisma);
   const linksByLocalKey = new Map<string, XeroObjectLinkRecord[]>();
   for (const link of links) {
     const key = makeLocalKey(link.localModel, link.localId);
@@ -496,34 +491,7 @@ export async function loadAuditData(
     editReviewChargeSharesByBookingId.set(share.bookingId, list);
   }
 
-  /**
-   * Per BOOKING again, and for the same reason as the shares above: a recovery
-   * row is joined to its edit through a key, and a key naming a modification on
-   * a DIFFERENT booking must not defer this one's repair.
-   */
-  const editReviewChargeIntentRecoveriesByBookingId = new Map<
-    string,
-    Set<string>
-  >();
-  for (const recovery of editReviewChargeIntentRecoveries) {
-    // Redundant with the exact-key `in` filter above, and deliberately kept: if
-    // that query is ever widened, an ORDINARY edit's recovery row must not be
-    // read as a review charge's. Fail closed rather than defer the wrong edit.
-    if (!isEditFinancialReviewAdditionalIntentRecoveryKey(recovery.idempotencyKey)) {
-      continue;
-    }
-    const modificationId = modificationIdByIntentRecoveryKey.get(
-      recovery.idempotencyKey
-    );
-    if (!modificationId) {
-      continue;
-    }
-    const anchors =
-      editReviewChargeIntentRecoveriesByBookingId.get(recovery.bookingId) ??
-      new Set<string>();
-    anchors.add(modificationId);
-    editReviewChargeIntentRecoveriesByBookingId.set(recovery.bookingId, anchors);
-  }
+  const openIntentRecoveries = groupOpenIntentRecoveriesByBooking(editReviewChargeIntentRecoveries, intentRecoveryKeys);
 
   const approvalIntentIdsByBookingId = new Map<string, Set<string>>();
   const lateCaptureTasksByBookingId = new Map<string, Map<string, { id: string; status: string }>>();
@@ -582,7 +550,8 @@ export async function loadAuditData(
         bookingId: booking.id,
         refundedAmountCents: payment.refundedAmountCents,
       });
-      refundNoteUncoveredCentsByPaymentId.set(payment.id, gap.uncoveredCents);
+      // #3924 round 8: a CARD note's ask, so a close's own bank cash is left out.
+      refundNoteUncoveredCentsByPaymentId.set(payment.id, gap.uncoveredCents - gap.paidAnotherWayUncoveredCents);
     } catch (err) {
       logger.warn({ err, paymentId: payment.id }, "Could not read a payment's refund-note gap; sizing from the refunded total");
     }
@@ -624,11 +593,16 @@ export async function loadAuditData(
     operationsByLocalKey.set(key, list);
   }
 
+  // #3953: the change captures each booking's Xero records hold, or do not.
+  const additionalCaptureReceipts = await loadAdditionalCaptureReceiptEvidence(deps.prisma, bookings);
+
   return bookings.map<BookingClassificationContext>((booking) => ({
     booking,
+    additionalCaptureReceipts: additionalCaptureReceipts.get(booking.id),
     paymentLinks: booking.payment
       ? linksByLocalKey.get(makeLocalKey("Payment", booking.payment.id)) ?? []
       : [],
+    cancelledRefundNoteIds,
     paymentRefundPaymentLinks: booking.payment
       ? refundPaymentLinks.filter((link) => link.localModel === "Payment" && link.localId === booking.payment!.id)
       : [],
@@ -653,6 +627,8 @@ export async function loadAuditData(
       cancellationRecoveryByBookingId.get(booking.id) ?? [],
     lateCaptureApprovalIntentIds:
       approvalIntentIdsByBookingId.get(booking.id) ?? new Set<string>(),
+    failedLaterOwedCentsByTransactionId:
+      (booking.payment ? failedLaterOwedByPaymentId.get(booking.payment.id) : undefined) ?? new Map<string, number>(),
     keptLateCaptures: new Map(
       [...(keptApprovalsByBookingId.get(booking.id) ?? new Map<string, { id: string; createdAt: Date }>())].map(
         ([paymentIntentId, task]) => [
@@ -679,6 +655,8 @@ export async function loadAuditData(
     ),
     cancelledBookingHandBackPaymentIds:
       handBackPaymentIdsByBookingId.get(booking.id) ?? new Set<string>(),
+    paidBackRefundRequests: paidBackRefundRequests.filter((request) => request.paymentId === booking.payment?.id),
+    everRefundNoteLinked: booking.payment ? refundNotedPaymentIds.has(booking.payment.id) : false,
     refundNoteUncoveredCents: booking.payment
       ? refundNoteUncoveredCentsByPaymentId.get(booking.payment.id) ?? null
       : null,
@@ -693,7 +671,8 @@ export async function loadAuditData(
       allocatedAppliedCreditByBookingId.get(booking.id) ?? 0,
     unallocatedAppliedCreditCents: unallocatedAppliedCreditByBookingId.get(booking.id) ?? 0,
     openEditReviewChargeIntentRecoveryModificationIds:
-      editReviewChargeIntentRecoveriesByBookingId.get(booking.id) ??
-      new Set<string>(),
+      openIntentRecoveries.review.get(booking.id) ?? new Set<string>(),
+    openAdditionalIntentRecoveryModificationIds:
+      openIntentRecoveries.ordinary.get(booking.id) ?? new Set<string>(),
   }));
 }

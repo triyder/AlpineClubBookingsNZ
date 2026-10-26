@@ -19,7 +19,15 @@
  * transition is never rolled back purely because its narrative event failed.
  */
 import { BookingEventType, Prisma } from "@prisma/client";
+import {
+  CAPACITY_RACE_REFUND_EVENT_REASON,
+  cancelCardRefundEventReason,
+  isCancelCardRefundEvent,
+  MADE_BEFORE_PAID_ANOTHER_WAY_SNAPSHOT,
+} from "@/lib/cancel-card-refund-event-reason";
+import type { ClubFormat } from "@/lib/club-format";
 import type { CancellationLedgerSnapshot } from "@/lib/paid-cancellation-event";
+import { parsePaidCancellationDecisionSnapshot } from "@/lib/cancellation-settled-money";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 import {
@@ -55,6 +63,17 @@ export interface CancellationEventSnapshot {
    * the credit figures it rests on. Absent on cancellations before #3611.
    */
   ledger?: CancellationLedgerSnapshot;
+  /**
+   * #4097 (`INV-PAY-129`): a card cancel whose card refund plan carried less
+   * than the refund due - the card's part, the part owed by bank transfer, and
+   * the part the club checks first. Absent otherwise.
+   */
+  cardShortfall?: { cardCents: number; bankCents: number; checkCents: number };
+  /**
+   * #4125: the system cancelled it, not the member - the dates filled up while
+   * payment was completing (the capacity race). Absent on a member's cancel.
+   */
+  cancelledBecause?: "capacity_race";
 }
 
 /** Frozen bump facts stored on a BUMPED event. */
@@ -97,7 +116,10 @@ type BookingEventClient = Pick<typeof prisma, "bookingEvent">;
  * paid-path CANCELLED snapshot (`writePaidCancellationEvent`, #3639,
  * `INV-PAY-106`), so the cancel cannot commit without its decision, and
  * #3672's group payer-switch marker (`releaseUnpaidJoinersToMemberPaysInTx`,
- * `INV-PAY-109`), which must commit or roll back with the switch.
+ * `INV-PAY-109`), which must commit or roll back with the switch, and the
+ * REFUNDED event of a capacity race's or a member cancel's card refund
+ * (`closeRefundRowRecordingEvent`, #4125, #4145), which commits with the
+ * recovery row's close that records the refund made.
  */
 export async function recordBookingEvent(
   input: RecordBookingEventInput,
@@ -121,6 +143,126 @@ export async function recordBookingEvent(
       "Failed to record booking event"
     );
   }
+}
+
+/**
+ * #4125: the reason of the capacity race's refund, made - inline or by the
+ * recovery runner. Its home is the pure module the narrative reads (`INV-SSOT`).
+ */
+export { CAPACITY_RACE_REFUND_EVENT_REASON };
+
+/**
+ * #4125, #4145 (`INV-PAY-134`): a pre-persisted card refund, made - its
+ * recovery row's close and the REFUNDED event the member's narrative reads as
+ * the cancellation's settlement, in ONE transaction, so a crash between them
+ * cannot lose the event. `close` is the status-guarded move to `SUCCEEDED` (true when THIS
+ * close moved the row) - the door's own after its inline attempt, or the
+ * recovery runner's (`payment-recovery.ts`). The event is written only when it
+ * did, dated by that close and for the amount actually refunded (the frozen
+ * plan's total), so it lands EXACTLY ONCE across the two; a closed row is
+ * never reopened (`card-refund-failed-later.ts`). A decision record, not
+ * narrative: the insert is NOT swallowed, so a failed one rolls the close
+ * back, the row stays open, and the runner's replay - answered by Stripe with
+ * the original refunds - closes it and records it. Two doors use it: the
+ * capacity race (`closeCapacityRaceRefundRecordingEvent`) and the member's
+ * cancel's own close (`booking_cancel_refund_recovery_<booking>`); the
+ * runner's close of that row records it the same way
+ * (`closeCancellationRefundAfterReplay`).
+ */
+export async function closeRefundRowRecordingEvent(
+  input: { bookingId: string; amountCents: number; actorMemberId: string | null; reason: string },
+  close: (tx: Prisma.TransactionClient) => Promise<boolean>
+): Promise<boolean> {
+  return prisma.$transaction(async (tx) => {
+    if (!(await close(tx))) return false;
+    await recordRefundRowEvent(tx, input);
+    return true;
+  });
+}
+
+/**
+ * The REFUNDED event a card refund row's close writes (`INV-SSOT`): the close
+ * that made it (`closeRefundRowRecordingEvent`), or a "Paid another way" close
+ * for the slices Stripe had made first - dated by Stripe's latest refund and
+ * marked so (`MADE_BEFORE_PAID_ANOTHER_WAY_SNAPSHOT`, #4145).
+ */
+export async function recordRefundRowEvent(
+  tx: Pick<Prisma.TransactionClient, "bookingEvent">,
+  input: { bookingId: string; amountCents: number; actorMemberId: string | null; reason: string; occurredAt?: Date; madeBeforePaidAnotherWay?: boolean },
+): Promise<void> {
+  await tx.bookingEvent.create({
+    data: {
+      bookingId: input.bookingId,
+      type: BookingEventType.REFUNDED,
+      occurredAt: input.occurredAt,
+      actorMemberId: input.actorMemberId,
+      amountCents: input.amountCents,
+      reason: input.reason,
+      snapshot: input.madeBeforePaidAnotherWay ? { ...MADE_BEFORE_PAID_ANOTHER_WAY_SNAPSHOT } : Prisma.JsonNull,
+    },
+  });
+}
+
+/** #4125: the capacity race's close, recording its REFUNDED event as above. */
+export function closeCapacityRaceRefundRecordingEvent(
+  input: { bookingId: string; amountCents: number; actorMemberId: string | null },
+  close: (tx: Prisma.TransactionClient) => Promise<boolean>
+): Promise<boolean> {
+  return closeRefundRowRecordingEvent({ ...input, reason: CAPACITY_RACE_REFUND_EVENT_REASON }, close);
+}
+
+/** Where a member cancel's card refund event is read and written: the base client or a transaction. */
+type CancelEventStore = Pick<Prisma.TransactionClient, "bookingEvent">;
+
+/**
+ * #4145: the REFUNDED event of a member cancel's card refund, for `amountCents`
+ * of it - its reason the cancel's own (`cancelCardRefundEventReason`), from
+ * the figures the cancel's CANCELLED snapshot froze (`writePaidCancellationEvent`),
+ * said as a part on a card refund shortfall's card part, or for the slices made
+ * before the rest was paid another way (`madeBeforePaidAnotherWay`: dated by
+ * Stripe's refund and marked so). A cancel with no such snapshot
+ * (one made before #3639) is named by its amount. Writes nothing - and says so -
+ * when the booking already has one: a cancel made before #4145 wrote its event
+ * up front, whatever became of the refund (the deploy boundary).
+ */
+export async function recordCancelCardRefundEvent(
+  store: CancelEventStore,
+  input: { bookingId: string; amountCents: number; actorMemberId: string | null; madeBeforePaidAnotherWay: boolean; format: ClubFormat; occurredAt?: Date },
+): Promise<boolean> {
+  const events = await store.bookingEvent.findMany({
+    where: { bookingId: input.bookingId, type: { in: [BookingEventType.CANCELLED, BookingEventType.REFUNDED] } },
+    orderBy: { occurredAt: "desc" },
+    select: { type: true, reason: true, snapshot: true },
+  });
+  if (events.some(isCancelCardRefundEvent)) return false;
+  const snapshot = events
+    .map((event) => (event.type === BookingEventType.CANCELLED ? parsePaidCancellationDecisionSnapshot(event.snapshot) : null))
+    .find((each) => each?.refundMethod === "card");
+  const reason = cancelCardRefundEventReason({
+    cardRefundCents: input.amountCents,
+    policy: snapshot ? { refundPercentage: snapshot.refundPercentage, refundAmountCents: snapshot.settledAmountCents } : null,
+    shortfall: input.madeBeforePaidAnotherWay || Boolean(snapshot?.cardShortfall),
+    format: input.format,
+  });
+  await recordRefundRowEvent(store, { ...input, reason });
+  return true;
+}
+
+/**
+ * #4145: the recovery runner's close of a member cancel's card refund row,
+ * recording its REFUNDED event (`recordCancelCardRefundEvent`) in the close's
+ * own transaction, as `closeRefundRowRecordingEvent` does: no member drove it.
+ * The row closes whether or not the event is written.
+ */
+export async function closeCancellationRefundAfterReplay(
+  { bookingId, amountCents, format }: { bookingId: string; amountCents: number; format: ClubFormat },
+  close: (tx: Prisma.TransactionClient) => Promise<boolean>
+): Promise<boolean> {
+  return prisma.$transaction(async (tx) => {
+    if (!(await close(tx))) return false;
+    await recordCancelCardRefundEvent(tx, { bookingId, amountCents, actorMemberId: null, madeBeforePaidAnotherWay: false, format });
+    return true;
+  });
 }
 
 /**

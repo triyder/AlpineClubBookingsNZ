@@ -83,7 +83,7 @@ const db = vi.hoisted(() => {
     bookingDefaults: { findUnique: nothing },
     groupDiscountSetting: { findUnique: nothing },
     membershipCancellationSetting: { findUnique: nothing },
-    xeroToken: { findFirst: nothing },
+    xeroConnection: { findUnique: nothing },
     // #2717 added a READ of the mapping rows to this snapshot, so the step can
     // name a fallback-bearing key that is unset. This case is about rate
     // coverage and asserts nothing about mappings, so an empty list is the

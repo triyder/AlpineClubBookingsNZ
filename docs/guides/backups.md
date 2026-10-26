@@ -62,6 +62,11 @@ has four steps and gates each one until it is satisfied:
    **Verified** badge showing the uploaded object's S3 key and size — proof the
    whole path works end to end.
 
+The wizard remembers which step you were on, so leaving and coming back opens
+where you left off (#4409). It is one position for the whole install, shared by
+every admin, and only a hint: each step still checks its own gate against the
+live settings. Support view reads the position; Support edit saves it.
+
 If a deployment still has legacy `BACKUP_*` environment variables set, step 1
 shows a migration callout naming the values to re-enter (bucket, region, access
 key ID, secret access key) and listing the variables to remove afterwards.

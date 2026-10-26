@@ -6,7 +6,7 @@ import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 import type { BookingPriceRebaseDeclineReason } from "@/lib/booking-money-reconciliation";
 import { recalculateBookingPromo } from "@/lib/booking-guest-removal-service";
 import type { CalendarDate } from "@/lib/club-time";
-import { readStrandNightPrices } from "@/lib/booking-strand-night-prices";
+import { valuedStrandNightPrices } from "@/lib/edit-night-valuation";
 import { recordBookingNightAdjustments } from "@/lib/night-adjustment-write";
 import {
   BOOKING_MONEY_BUILD_UP_INVARIANT,
@@ -16,6 +16,7 @@ import {
   type BookingMoneyBuildUpSelection,
 } from "@/lib/booking-money-build-up";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
+import { PrimaryInvoiceRaisedDuringEditError, writeEditOnPayment } from "@/lib/booking-primary-invoice-claim";
 import type { ClubFormat } from "@/lib/club-format";
 
 /**
@@ -88,27 +89,16 @@ import type { ClubFormat } from "@/lib/club-format";
  * closure repaired nothing, which is an ordinary answer rather than a missing
  * input.
  *
- * ## THE DECLINE IS WHAT MAKES RE-PRICING ON ANY CLOSE SAFE
+ * ## EVERY CLOSURE RE-BASES SINCE #4317
  *
- * A sum of strands is only as good as the strands. `INV-MOD-028` requires every
- * night to be valued from exact, reconciling stored evidence, so this writer
- * REFUSES TO RE-BASE AT ALL unless every surviving strand reconciles - every
- * strand has night rows, every row carries usable money, and each strand's rows
- * sum to its stored total. Anything less would assert a booking total built from
- * strands the system has said it cannot value, which is a worse lie than the
- * stale one. Where the evidence is not there the totals stay exactly as the park
- * left them.
- *
- * THAT IS THE HALF THE TRIGGER MOVE DEPENDS ON, and shape 2 above is exactly
- * why: a strand with no night rows is unreadable, so the closure that used to
- * offer it no boxes now reaches this writer and DECLINES rather than inventing a
- * figure from a strand carrying money and no evidence. Shape 1 re-prices,
- * because every strand that survives it does reconcile.
- *
- * D2 - the officer must record the night prices before a review whose price
- * boxes ARE offered may be closed - is what stops the decline being the common
- * case. It is enforced where the boxes are decided, in
- * `stored-night-price-repair-store.ts`, not here.
+ * Until #4317 this writer declined unless every surviving strand reconciled
+ * exactly, leaving the parked headline frozen. Under owner decision D1 every
+ * night has a value (`valueStrandNights`, `INV-MOD-028`), so the promotion is
+ * re-decided over valued nights and the headline is re-based to the sum of the
+ * guests' stored totals, which is D5's rule: a closure never leaves a frozen
+ * headline for the next edit to inherit (#4317 review H1). It still declines
+ * for a booking with no guests, and for a negative stored guest total, which
+ * the database forbids (D11).
  *
  * ## The promotion FOLLOWS THE STRANDS, and that is a correctness rule
  *
@@ -178,6 +168,10 @@ export const REBASE_STRAND_NOT_ON_BOOKING_MESSAGE =
 export const REBASE_RACED_MESSAGE =
   "This booking's price changed while you were closing the review, so nothing was saved. Reload the page and check the booking before trying again.";
 
+/** #3980 review C4: the primary invoice was linked while the review re-priced the booking. */
+export const REBASE_INVOICE_RAISED_MESSAGE =
+  "This booking's invoice was being raised while you were closing the review, so nothing was saved. Please try again in a moment.";
+
 /**
  * The assertion that must never fire. It is not a refusal an operator can act
  * on, so it is deliberately not a `ManualBookingPaymentError`: reaching it means
@@ -202,9 +196,10 @@ export type BookingPriceRebase = {
 /**
  * Why a re-base wrote nothing, where that is an answer rather than a failure.
  *
- * `strand-evidence-unreadable`: at least one surviving strand cannot be read
- * back as exact, reconciling stored evidence, so there is nothing sound to
- * re-base from and the totals are left exactly as the park set them.
+ * `strand-evidence-unreadable`: a surviving strand carries a negative stored
+ * total (D11, which the database forbids) or the build-up's base cannot be read,
+ * so the totals are left as they are. Before #4317 it also meant a strand whose
+ * rows did not reconcile exactly; those are now valued and re-based.
  *
  * `no-surviving-strands`: the booking came back with no guests at all. Summing
  * them would ZERO the headline outright, which is the shape the strand guard
@@ -272,6 +267,8 @@ export function rebaseChangedTheBooking(rebase: BookingPriceRebase): boolean {
 }
 
 const REBASE_BOOKING_INCLUDE = {
+  // #3980 review C4: the invoice link the re-price claims (`writeEditOnPayment`).
+  payment: { select: { id: true, xeroInvoiceId: true } },
   promoRedemptions: {
     include: {
       guestTargets: { select: { bookingGuestId: true } },
@@ -291,7 +288,10 @@ const REBASE_BOOKING_INCLUDE = {
       isMember: true,
       // #3827 (D-3813-4): a guest still awaiting acceptance takes no code.
       consentStatus: true,
-      nights: { select: { stayDate: true, priceCents: true } },
+      // #4317 review H1: the envelope and provenance `valueStrandNights` reads.
+      stayStart: true,
+      stayEnd: true,
+      nights: { select: { stayDate: true, priceCents: true, priceSource: true } },
     },
   },
 } as const;
@@ -308,6 +308,7 @@ export async function rebaseBookingPriceFromStrands({
   todayAtClub,
   store,
   format,
+  paymentLinkRead,
 }: {
   bookingId: string;
   /**
@@ -335,6 +336,15 @@ export async function rebaseBookingPriceFromStrands({
    * transaction, like `todayAtClub` above.
    */
   format: ClubFormat;
+  /**
+   * #3980 review round 2 F4: the invoice link the CALLER read, under its own
+   * locks - the review closure's, which also decided whether an issued invoice
+   * needs correcting. The re-price claims against that read, so a link saved
+   * between the two reads refuses the closure (409) rather than letting both
+   * the claim and the closure's invoice-divergence check pass it by. Absent,
+   * this function's own read is used.
+   */
+  paymentLinkRead?: { id: string; xeroInvoiceId: string | null } | null;
 }): Promise<BookingPriceRebaseOutcome> {
   const booking = await store.booking.findUnique({
     where: { id: bookingId },
@@ -388,9 +398,13 @@ export async function rebaseBookingPriceFromStrands({
     };
   }
 
-  const strandNights = readStrandNightPrices(booking.guests);
+  // #4317 review H1 (epic #4302, owner decisions D1 and D5): every strand's
+  // nights are VALUED (`valueStrandNights`, `INV-MOD-028`), so a closure always
+  // re-bases the headline to the sum of its guests rather than leaving a frozen
+  // one behind for the next edit to inherit. A negative stored total, which the
+  // database forbids (D11), is the one shape still declined.
   if (
-    strandNights === null ||
+    booking.guests.some((guest) => guest.priceCents < 0) ||
     currentMoneyBuildUpSelection.source === "BASE_EVIDENCE_UNKNOWN"
   ) {
     return {
@@ -400,6 +414,7 @@ export async function rebaseBookingPriceFromStrands({
     };
   }
 
+  const strandNights = valuedStrandNightPrices(booking.guests, booking);
   const newTotalPriceCents = booking.guests.reduce(
     (sum, guest) => sum + guest.priceCents,
     0,
@@ -487,6 +502,25 @@ export async function rebaseBookingPriceFromStrands({
   });
   if (rebased.count !== 1) {
     throw new ManualBookingPaymentError(REBASE_RACED_MESSAGE, 409);
+  }
+  // #3980 review C4 (`INV-PAY-136`): a re-price that read no primary invoice
+  // link claims it on the payment row, as an edit does, so it never lands
+  // after the invoice create's link save unseen. It writes no history row and
+  // so anchors nothing: a gap it leaves while a create is in flight is billed
+  // only where an edit that landed in the same window anchors the gap, and is
+  // otherwise the treasurer's Xero Operations task (round 2 F1).
+  if (verifiedNewFinalPriceCents !== booking.finalPriceCents) {
+    try {
+      await writeEditOnPayment(store, {
+        payment: paymentLinkRead === undefined ? booking.payment : paymentLinkRead,
+        changeFeeCents: 0,
+      });
+    } catch (err) {
+      if (err instanceof PrimaryInvoiceRaisedDuringEditError) {
+        throw new ManualBookingPaymentError(REBASE_INVOICE_RAISED_MESSAGE, 409);
+      }
+      throw err;
+    }
   }
 
   return {

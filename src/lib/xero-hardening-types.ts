@@ -155,6 +155,27 @@ export interface XeroCanonicalLinkCleanupResult {
    * link stamped per-refund (#3880). Observability only; the name predates #3880.
    */
   preservedStripeRefundCreditNoteLinks: number;
+  /**
+   * #4161: active refund-note mirrors whose recorded Xero status is
+   * VOIDED/DELETED, counted before any write. Each is healed through the link
+   * write, which also releases a payment pointer naming it; the healed ones
+   * are included in `deactivatedLinks`, `deactivatedLinkIds` and the
+   * refund-note category.
+   */
+  cancelledRefundCreditNoteMirrors: number;
+  /** #4161: of those, the ones this run healed (a re-check or a deferral writes nothing). */
+  healedCancelledRefundCreditNoteMirrors: number;
+  /**
+   * #4192: INACTIVE refund-note mirrors recorded VOIDED/DELETED that their own
+   * payment's pointer still names (the old direct flip), counted before any
+   * write, and how many pointers this run released. Not counted as deactivated.
+   */
+  pointedInactiveCancelledRefundNoteMirrors: number;
+  releasedInactiveRefundNotePointers: number;
+  /** Heals left for the next run because a credit-note create may still mint on the payment. */
+  deferredRefundNoteHealLinkIds: string[];
+  /** Heals whose write failed; the cron records the task FAILURE and the next run retries them. */
+  failedRefundNoteHealLinkIds: string[];
   byCategory: {
     memberContacts: number;
     paymentInvoices: number;

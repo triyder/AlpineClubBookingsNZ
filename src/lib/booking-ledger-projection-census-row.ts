@@ -80,6 +80,8 @@ export type BookingLedgerCensusRow = {
     reason: string | null;
     withdrawnAt: Date | null;
     createdAt: Date;
+    /** #4132: the ledger's tiebreak, so "the latest" row of a kind is the one inserted last. */
+    insertionSeq: number;
   }>;
   refunds: ReadonlyArray<{
     id: string;
@@ -129,6 +131,8 @@ export type BookingLedgerCensusRow = {
     attempts: number;
     nextRetryAt: Date | null;
     amountCents: number;
+    /** #4117: the frozen plan, whose slices marked made are not in flight (`cardRefundOperationUnmadeCents`). */
+    allocationPlan?: unknown;
     idempotencyKey: string;
     paymentId: string;
     paymentIntentId: string;
@@ -138,7 +142,25 @@ export type BookingLedgerCensusRow = {
    * the refund it decided and, since #3611, the kept figure it froze for the
    * ledger. Null where there is none.
    */
-  cancellation: { refundMethod: string | null; settledAmountCents: number | null; keptCents: number | null } | null;
+  cancellation: {
+    refundMethod: string | null;
+    settledAmountCents: number | null;
+    keptCents: number | null;
+    /**
+     * #4147: a capacity race's cancel (`cancelledBecause`, #4125) - what was
+     * paid and what was retained, as its snapshot froze them. Its
+     * `settledAmountCents` is the refund PLAN's total, not what is due back.
+     * Absent on any other cancel, and on a capacity race written before #4125.
+     */
+    capacityRace?: { paidAmountCents: number; retainedAmountCents: number };
+  } | null;
+  /**
+   * #4120: the booking's APPROVED refund appeals, each with what it has
+   * refunded so far as the refund-requests screen reads it
+   * (`readApprovedAppealOutcomes`, `approvedAppealRefundedCents`) - by card or
+   * by its own completed hand-back. A declined or pending request is not here.
+   */
+  appeals: ReadonlyArray<{ id: string; refundedCents: number }>;
   /**
    * #3854: for a child its group organiser settled, the group's settlement —
    * what its `GROUP_SETTLEMENT` lines were posted from — and whether the

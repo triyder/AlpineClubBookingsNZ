@@ -89,7 +89,22 @@ idempotent — retrying the same work never double-charges.
    then treated as done and is never retried or recreated automatically,
    though the repair tool still lists it for information. You cannot resolve
    one while a retry of it is running, or an applied-credit allocation at all
-   (retry those).
+   (retry those). If you later void a card refund's credit note in Xero, even
+   one you resolved, don't replace it by hand: the app raises a fresh one
+   overnight (#4250).
+   Choosing **Failed** under **Status** also picks **Active only** under
+   **Failure**, so a row that was repaired later, superseded or marked resolved
+   stops crowding out the ones that still need you. A line above the list says
+   how many are hidden; **Show them** (or **All failures** in the **Failure**
+   selector) brings them back, and they stay as the audit trail. Only the view
+   changes, never a row's status. A saved link that carries just the Failed
+   status still shows every failed row (#4220).
+   A failed operation (and the booking page's invoice warning) says **why** in
+   plain English: what happened, what it means for the club, and **What to do**,
+   including whether the app tries again by itself. Xero's own wording and the
+   stored error code sit under **Show technical details**; quote those when you
+   ask for help. When the reason is hidden for privacy, or is one the app does not
+   recognise, the explanation says so instead of guessing (#4278).
    **Inbound Events** lists stored webhooks with a per-event **Replay**. Each
    queue has its own **Reset** for filters and page; it keeps the current section,
    the sibling queue's URL state, and unrelated URL context.
@@ -253,6 +268,36 @@ one button that reaches Xero at all only asks it a question.
    invite emails; **Repair Canonical Links** and **Scan for Duplicates & Family
    Groups** clean up the link ledger.
 
+### Subscribe to Xero webhooks, including credit notes
+
+This app does not register webhook events. In the Xero developer portal
+(**My Apps → your app → Webhooks**), paste the delivery URL from **Xero Setup →
+Webhooks**, then tick **Invoices**, **Contacts**, and **Credit Notes**. Credit
+Notes is what tells this app when a credit note is created, updated, or voided.
+Save the webhook, copy its signing key into the setup wizard, and **Verify**.
+Without the Credit Notes tick, a void made in Xero stays invisible here until
+something else reads that note.
+
+### A credit note used or un-used in Xero
+
+When the treasurer uses a member's credit note in Xero directly (an offset against an
+invoice that is not a booking's, or a payment made against it) the app notices
+without anyone using the credit first. Within about 15 minutes of the change, once
+the note has been left alone for two minutes, the credit the note funded is written
+down so it is no longer offered to the member, and an **Admin Adjustment** row
+appears on the member's credit history: "credit used in Xero outside the app,
+removed". The member's balance goes down by that amount and they are not emailed. If
+you undo the use in Xero, a second row gives the credit back. Credit that a booking
+has already been given is left alone here: it is released, and the booking's invoice
+left unpaid in Xero, only if Xero then refuses it (see the troubleshooting row).
+
+Each change has an audit entry (`xero.credit_note.outside_spend_mirrored` or
+`xero.credit_note.outside_spend_restored`). A note voided or deleted in Xero is never
+changed automatically; it is reported to the error log for an officer to look at.
+Operators can switch the writes off with no deploy
+([how](../xero/ARCHITECTURE.md#the-inbound-credit-note-mirror-4270)); while off, the log
+says what it would have done.
+
 ### Manage auto-grouping (Xero member grouping)
 
 1. **Xero member grouping** (`/admin/xero/member-grouping`, also linked from the
@@ -294,9 +339,16 @@ one button that reaches Xero at all only asks it a question.
 | The Connect step shows the organisation as **"the last organisation we saw"** rather than a green tick | The name came from cache because the live re-check failed — most often because the club revoked this app inside Xero's own **Connected apps** screen, which leaves the stored connection looking healthy | Treat the name as unconfirmed. Follow the warning above it: usually disconnect and connect again, re-authorising the app in Xero |
 | Operations/events are read-only ("… can view Xero operations but cannot retry…") | Your finance role is view-only | Ask a finance-edit admin |
 | An outbound operation is stuck **Failed** | A push failed and needs a replay (or was fixed directly in Xero) | **Retry in background**, or **Resolve (fixed in Xero)** with a reason |
+| **Resolve (fixed in Xero)** on a failed refund credit note asks for a credit note number, or refuses the one you typed | The app records which Xero credit note stands for that refund, so one note never records two refunds (#4421) | Type the number of the note you made for this refund, as Xero shows it (for example `CN-0123`). It must be approved or paid, for the amount the box shows and the booking's Xero contact (the member's, or the organisation's), allocated to no other invoice, and not already recorded here; the box says which check failed. If a retry of the job ran meanwhile, wait for it and check Xero first ([Payments guide](payments.md#resolve-a-refund-credit-note-xero-could-not-raise)) |
+| **Resolve (fixed in Xero)** on a failed refund credit note says the app cannot read its amount | The job's stored amount is unreadable, so no note can be checked against it, and **Retry** refuses it too (#4421) | Use **Mark non-replayable** on it (it stops re-runs; the row stays listed) and ask the treasurer what Xero needs for that refund. Don't also make a credit note by hand |
+| **Resolve (fixed in Xero)** on a failed refund credit note says a later run already made its note | A retry of it, or another run of the same note, already raised its credit note in Xero (#4421) | Nothing to resolve: that note records the refund. Don't make another by hand; if you did, ask the treasurer whether to void it. If that earlier note was later voided in Xero, follow the voided-note task on the treasurer's refund list instead |
+| An allocation is **Failed** with `CREDIT_NOTE_SPENT_OUTSIDE_APP`: "the credit note this allocation needs has only $X left in Xero; it was used outside the app" | The credit note was used in Xero directly (an offset, a payment made against it, a manual allocation) and the app was not told, so it tried to apply credit Xero no longer has. Xero refused the allocation, so nothing changed in Xero | **A booking's applied-credit allocation fixes itself**: the app writes the used credit down, stops counting it as applied to the booking, and closes the failed rows, which leave Active failures labelled "Closed: credit used outside the app". The member's credit balance does not change. The released amount is now unpaid on the booking's invoice in Xero, which is where to collect it from (Xero's receivables); the booking page in the app does not show a balance for a booking that was already paid, and an email asking the member to pay follows in a later release. A failure recorded before this release clears the same way when you **Retry in background** on the booking's applied-credit allocation (or its invoice, on a card booking). **Any other credit-note allocation** (for example a booking change's credit note) still fails and stays: if the use in Xero was a mistake, reverse it there and **Retry in background**. A retry that fails with the same message on an applied-credit allocation means something the app could not account for is involved (for example the credit was used on one of the club's own invoices, which the normal sync handles, or the note is shared by several credits): leave it and ask for help. If you reverse the use in Xero **after** the app has converged, the app gives the credit back by itself within about 15 minutes (see "A credit note used or un-used in Xero") |
+| A Xero sync alert says **the refunds Xero accounts for on a bank-transfer payment add up to less than the refunds the club recorded on it** | Xero is short a refund credit note for money the club has paid back. The alert names the payment, its booking and, when Xero gave one, the credit note whose change raised it. The app kept its own record of the refunds | The alert's advice, in its own words: "A refund on this payment may have no Xero credit note of its own: a later refund can be counted under the payment's first refund note instead of getting its own. Check the booking's invoice in Xero and raise a credit note by hand only for a refund whose credit note was never raised. Never raise one by hand for a refund whose credit note was voided in Xero: a voided note is handled on the treasurer's refund list or on Stuck States, and once it has been answered there, any replacement note comes from that answer." Open the booking's invoice in Xero and compare its refund credit notes with the refunds on the booking. A note you raise by hand is not linked to the payment in the app, so the alert can come back when the payment's other notes change in Xero: check your note is there and carry on. The payment's refunded total stays at the club's own record unless an older version had already lowered it; see [the deploy note](../xero/ARCHITECTURE.md#a-later-refund-folded-into-the-first-note-4230) |
+| A credit note voided in Xero still looks live here | The Xero app is not subscribed to Credit Notes, or the void was delivered before credit-note events were reconciled | In the Xero developer portal (**My Apps → your app → Webhooks**), tick **Credit Notes** as well as Invoices and Contacts. Then open **Inbound Events**, filter Category to CREDITNOTE, and **Replay** the void. A later void is recorded on its own. A payment's voided refund note is then switched off, whatever the payment, and the payment's refunded total is recounted. Replaying the same void again recounts it again and does not undo or re-adopt anything, though it may send the refund divergence alert again. A refund request's own voided note is switched off too, but moves no refunded total. An internet-banking payment's voided refund is then handled each night as [Voided bank-transfer refund notes](../xero/ARCHITECTURE.md#voided-bank-transfer-refund-notes-4162) describes |
 | A membership subscription invoice operation is **Failed** with "Membership subscription charge not found: [REDACTED]" | A fault before this release (#3971): the job lost the charge it was meant to invoice, so the member was never invoiced | Press **Retry in background** on the row. It goes back to the queue and the next Xero run invoices and emails the member; check the charge in [Subscriptions](subscriptions.md) afterwards. If one charge has several failed rows, only the newest offers the button; the older ones are superseded and need nothing, and show as repaired once it succeeds |
 | An operation is stuck **Running** with no Retry button | Its run stopped without finishing it — a worker was interrupted, or (before this release) a requeue failed early | After 15 minutes the row shows **Mark failed**. Use it, fix the cause named in the error, then **Retry in background** |
 | A **REQUEUE** row says "not marked replayable" | A requeue is never replayed itself. Its error names the original operation and says where that operation now stands | Find the original operation it names. If it is back to **Failed**, fix the cause and requeue it again |
+| A **REVIEW** operation, `PRIMARY_INVOICE_OVERBILLED` or `PRIMARY_INVOICE_UNDERBILLED`, says a booking's primary invoice bills more or less than the booking is worth | The booking was changed in the seconds its first Xero invoice was being raised (#3980, `INV-PAY-136`). A shortfall is normally billed automatically on a supplementary invoice; this task appears when the invoice bills too much, or when no change could carry the shortfall. The message says by how much and, for an overcharge, how the change was settled (refund paid out, account credit, an unpaid request reduced) | Check the invoice in Xero. For an overcharge, raise a credit note for the amount if one is due, keeping in mind any refund already paid out; for a shortfall, bill it. Then **Resolve (fixed in Xero)**. **Retry** is not available: there is nothing for the app to resend |
 | A booking is under **Failed** operations but not under **Missing invoices** | Its invoice reached Xero before a later step of the same operation failed; the list reads the club's invoice records, not the operation's status | Nothing to raise — do not **Trigger All Missing** for it. Open the booking to see which step is outstanding, then **Retry in background** or **Resolve (fixed in Xero)** on the operation |
 | A booking-invoice operation here is **Failed**, part-finished, or stuck **Running**, and you want to know which booking it belongs to | These rows are stored against the payment, not the booking, so the booking is not obvious from this screen | The booking says it itself: a full admin opening that booking sees a warning naming what Xero does and does not have, with a link back to this screen. **Retry in background** or **Resolve (fixed in Xero)** on the operation clears the warning, without touching the booking, the payment or the invoice |
 | A member's grouping looks wrong | The mode/rules changed but existing members were not re-grouped automatically | Run the **dry-run diff**, then **bulk re-sync** per the [runbook](../XERO_MEMBER_GROUPING_RUNBOOK.md) |

@@ -111,6 +111,7 @@ import {
 import { bookingOwner } from "@/lib/booking-owner";
 import { isPaidLikeBookingStatus } from "@/lib/booking-status";
 import { handsBackByHand } from "@/lib/manual-refund-hand-back-route";
+import { isCancelCardShortfallTask } from "@/lib/manual-refund-task-settlement-rules";
 import { acquireLodgeCapacityLock } from "@/lib/lodge-capacity-lock";
 import { deriveBookingAppliedCreditCents, lockMemberCreditLedger } from "@/lib/member-credit";
 import { cancellationKeptCents } from "@/lib/cancellation-kept";
@@ -216,6 +217,7 @@ const BOOKING_SELECT = {
     select: {
       id: true,
       kind: true,
+      occurrenceKey: true,
       status: true,
       amountCents: true,
       settlementDirection: true,
@@ -520,7 +522,8 @@ async function backPostBooking(tx: Tx, bookingId: string): Promise<BookingBackPo
 
   // Hand-backs: a completed task the resolver sends by hand, on its own rule
   // (`handsBackByHand`, shared with `chooseEditReviewSettlementRoute`). The
-  // poster itself declines a card payment's, whose money went back on the card.
+  // poster itself declines a card payment's, whose money went back on the card
+  // - except a cancellation's card refund shortfall, which went by bank (#4097).
   for (const task of booking.manualRefundTasks) {
     const byHand =
       task.status === "COMPLETED" &&
@@ -536,6 +539,7 @@ async function backPostBooking(tx: Tx, bookingId: string): Promise<BookingBackPo
       amountCents: task.amountCents ?? 0,
       refundMethod: "internet-banking",
       paymentSource: task.payment?.source ?? null,
+      cardShortfall: isCancelCardShortfallTask(task), // #4097
       officerMemberId: task.completedByMemberId!,
       store: tx,
     });

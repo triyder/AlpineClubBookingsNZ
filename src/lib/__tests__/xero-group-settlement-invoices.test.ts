@@ -102,6 +102,7 @@ vi.mock("xero-node", () => ({
   RequestEmpty: class {},
 }));
 
+const handBackAggregate = vi.hoisted(() => vi.fn<(args: unknown) => Promise<{ _sum: { amountCents: number | null } }>>(async () => ({ _sum: { amountCents: null } })));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     environmentSafetySettings: {
@@ -117,6 +118,8 @@ vi.mock("@/lib/prisma", () => ({
     emailLog: { create: mocks.emailLogCreate },
     season: { findFirst: vi.fn().mockResolvedValue(null) },
     xeroSyncOperation: { update: vi.fn() },
+    // #4042: the organiser's hand-back the blocked VOID alert points at; none by default.
+    manualRefundTask: { aggregate: handBackAggregate },
   },
 }));
 
@@ -1219,8 +1222,60 @@ describe("the bound-invoice rule in the create worker (#3642)", () => {
 
     expect(mocks.accountingApi.updateInvoice).not.toHaveBeenCalled();
     expect(mocks.alert.mock.calls[0][0].errorMessage).toMatch(/cancelled/);
+    expect(mocks.alert.mock.calls[0][0].errorMessage).toMatch(/Refund or credit the organiser in Xero/);
   });
 
+  it("#4042: a cancelled, settled Internet Banking group's paid invoice sends the treasurer to the hand-back task, names no figure, whatever the task holds yet", async () => {
+    mocks.settlementFindUnique.mockResolvedValue({
+      id: "settle-1",
+      xeroInvoiceId: "inv-old",
+      xeroInvoiceNumber: "INV-OLD",
+      stripePaymentIntentId: null,
+      status: "SUCCEEDED",
+      groupBooking: { status: GroupBookingStatus.CANCELLED },
+    });
+    mocks.accountingApi.getInvoice.mockResolvedValue({
+      body: { invoices: [{ invoiceID: "inv-old", status: "PAID", amountPaid: 90 }] },
+    });
+    const messages: string[] = [];
+    // The task absent, partial (one joiner's share) and complete: the wording never depends on it.
+    for (const amountCents of [null, 2250, 4500]) {
+      handBackAggregate.mockResolvedValue({ _sum: { amountCents } });
+      mocks.alert.mockClear();
+      await voidXeroInvoiceForCancelledGroupSettlement("settle-1", { syncOperationId: "void-op-1" });
+      messages.push(mocks.alert.mock.calls[0][0].errorMessage as string);
+    }
+
+    expect(new Set(messages).size).toBe(1);
+    const [message] = messages;
+    expect(message).toMatch(/tracked by the hand-back task on the payments board's Money to settle queue, which shows the total and grows as each joiner's cancellation completes: pay the organiser what the task shows/);
+    expect(message).toMatch(/raise a credit note on this invoice for the amount you repaid and record the refund against that credit note/);
+    // A cancel from before #4042 raised no task: the treasurer is sent to the bookings, never told nothing is owed.
+    expect(message).toMatch(/if no hand-back task appears, check the joiners' cancelled bookings for refunds recorded to the organiser/);
+    expect(message).not.toMatch(/repays the organiser nothing/);
+    expect(message).not.toMatch(/Refund or credit the organiser in Xero/);
+    // No figure but the invoice's own paid amount.
+    expect(message.match(/\$[\d,.]+/g)).toEqual(["$90.00"]);
+    expect(handBackAggregate).not.toHaveBeenCalled();
+  });
+
+  it("#4042: a card group, or an Internet Banking group never settled, keeps the old wording", async () => {
+    mocks.accountingApi.getInvoice.mockResolvedValue({
+      body: { invoices: [{ invoiceID: "inv-old", status: "AUTHORISED", amountPaid: 40 }] },
+    });
+    for (const settlement of [{ stripePaymentIntentId: "pi_1", status: "SUCCEEDED" }, { stripePaymentIntentId: null, status: "PENDING" }]) {
+      mocks.settlementFindUnique.mockResolvedValue({
+        id: "settle-1",
+        xeroInvoiceId: "inv-old",
+        xeroInvoiceNumber: "INV-OLD",
+        ...settlement,
+        groupBooking: { status: GroupBookingStatus.CANCELLED },
+      });
+      mocks.alert.mockClear();
+      await voidXeroInvoiceForCancelledGroupSettlement("settle-1", { syncOperationId: "void-op-1" });
+      expect(mocks.alert.mock.calls[0][0].errorMessage).toMatch(/Refund or credit the organiser in Xero\.$/);
+    }
+  });
 
   it("releases the binding, alerts once and says so when a joiner's stored prices cannot make the invoice (#3642 D2)", async () => {
     const { buildInvoiceLineItems } = await import("@/lib/xero-booking-invoices");

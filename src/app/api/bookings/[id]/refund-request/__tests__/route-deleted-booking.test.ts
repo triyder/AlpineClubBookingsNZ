@@ -50,6 +50,8 @@ vi.mock("@/lib/prisma", () => ({
     // no late-cash credit.
     manualRefundTask: { aggregate: async () => ({ _sum: { amountCents: null } }) },
     memberCredit: { aggregate: async () => ({ _sum: { amountCents: null } }) },
+    // #4124: no open card-refund debt on the payment.
+    payment: { findUnique: async () => null },
   },
 }));
 vi.mock("@/lib/audit", () => ({

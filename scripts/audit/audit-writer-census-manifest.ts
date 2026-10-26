@@ -619,10 +619,71 @@ export const AUDIT_CENSUS_TOTALS = {
   // member-guest finder's lookups. Both disjoint from #3792's and #3653's, so the
   // composed figure is all four. RE-MEASURED with `pnpm run audit:census` on the
   // tree composed by #3829.
+  // 499 -> 500 (#3819): `LODGE_SETTINGS_UPDATED` from the new
+  // `/api/admin/lodge-settings/school-hut-leaders` PUT, recording one lodge's
+  // "Who can be hut leader for school bookings" before and after. Categorised
+  // `admin` at the site like its sibling lodge-settings writer, and pinned in
+  // `LODGE_GATED_ADMIN_CATEGORIES_2765` under INV-PRIV-013's uniformity rule.
+  // RE-MEASURED with `pnpm run audit:census`.
   // 499 -> 497 (#52, other-lodges central-server sync): the other-lodges
   // CREATE and DELETE handlers are removed with their `OTHER_LODGE_CREATED`
   // and `OTHER_LODGE_DELETED` writers - a site changes only the lodge the
   // central server says it owns. RE-MEASURED with `npm run audit:census`.
+  // 497 -> 498 (#3750): the executed approval of a LOCKED_PERIOD change request
+  // on a finished stay (`booking-change-request.approve`, with `executed: true`),
+  // one `logAudit` in `src/lib/booking-change-request-admin-decision.ts`,
+  // categorised `booking` like the acknowledgement it sits beside. RE-MEASURED
+  // with `pnpm run audit:census`.
+  // 498 -> 499 (#3372, composed with #52 and #3750): `booking-payment.card-refund.paid-another-way`,
+  // the treasurer closing a card refund Stripe gave up on, awaited on the
+  // close's own transaction under `payment`.
+  // 499 -> 500 (#3372, owner 9 Oct 2026): `booking-payment.card-refund.paid-twice-resolved`,
+  // the treasurer marking a refund paid back twice as sorted out, on the
+  // write's own transaction under `payment`. RE-MEASURED.
+  // 500/498 -> 499 (hand sync of `main` f1ecdb5ff into epic #3789): #3819's
+  // one addition, #52's two removals and #3750's one addition are all
+  // disjoint. RE-MEASURED with `pnpm run audit:census` on the composed tree,
+  // never added together.
+  // 499/500 -> 501 (sync of `main` 0ff7e6d46 into epic #3789, #3821): #3819's
+  // one site and #3372's two are disjoint. RE-MEASURED with
+  // `pnpm run audit:census` on the composed tree, never added together.
+  // Hand sync of `main` f3b6c008b (epic #3789): the same additions arrived again,
+  // disjoint; 501 RE-MEASURED on the merged tree.
+  // 501 -> 502 (#4098): `membership-subscription-billing.close-already-paid`,
+  // an officer closing a subscription charge whose members had already paid,
+  // awaited on the close's own transaction under `payment`. RE-MEASURED with
+  // `pnpm run audit:census`.
+  // 502 -> 503 (#4104 review, CL3): `booking-payment.card-refund.failed-later-not-resent`,
+  // a card refund Stripe failed later that the app did not make for the
+  // booking, awaited on the ledger writer's transaction under `payment`.
+  // RE-MEASURED with `pnpm run audit:census`.
+  // 503 -> 503 (#4149): the two late-capture handlers'
+  // `booking.payment.refunded_after_cancellation` writers became ONE shared
+  // writer (`reportAutomaticLateCaptureRefund`, -1), and the lost-record
+  // recovery adds `booking.payment.auto_refund_record_recovered` (+1).
+  // RE-MEASURED with `pnpm run audit:census`.
+  // 503 -> 504 (#4170, folded into #4149): a `charge.refunded` on a marked late
+  // capture refunded outside the app writes
+  // `booking.payment.late_capture_refunded_outside_app`. RE-MEASURED.
+  // 504 -> 505 (#4154, owner decision on #4154): `booking-payment.capacity-race.refunded-total-corrected`,
+  // the guarded recalculation of a capacity race's card charge before its hand-back, awaited on the
+  // completion's own transaction under `payment`. RE-MEASURED with `pnpm run audit:census`.
+  // 505 -> 507 (#4162): `booking-payment.bank-refund.void-undone` (the nightly
+  // undo of a voided bank-transfer refund note) and `.void-answered` (a person's
+  // answer on Stuck States), both awaited on their transaction under `payment`.
+  // RE-MEASURED with `pnpm run audit:census`.
+  // 507 -> 508 (#4219): `xero.credit_note.spent_outside_app_converged`, the credit-ledger
+  // convergence written with the awaited `createAuditLog` inside its own transaction, under `xero`.
+  // 508 -> 509 (#4338): `xero.credit_note.spent_outside_app_attempt_closed`, a concurrent attempt's
+  // failed allocation closed by the converge, awaited in the same transaction, under `xero`.
+  // RE-MEASURED with `pnpm run audit:census`.
+  // 509 -> 514 (#4253): the released-credit request's five rows, all awaited `createAuditLog`:
+  // `payment.credit_release_ask.raised`, `.not_raised` and `.closed_paid_in_xero` (written at two
+  // sites) under `payment`, and `xero.credit_release_payment.recorded` under `xero`.
+  // RE-MEASURED with `pnpm run audit:census`.
+  // 514 -> 516 (#4270): `xero.credit_note.outside_spend_mirrored` and `.outside_spend_restored`, the
+  // inbound credit-note mirror's rows, awaited `createAuditLog` inside its own transaction, under `xero`.
+  // RE-MEASURED with `pnpm run audit:census`.
   // 497 -> 498 (#62): `LODGE_CENTRAL_LINK_UPDATED`, written by the new
   // `/api/admin/lodges/[id]/central-lodge` PUT with the link before and after.
   // Categorised `admin` at the site and pinned in the lodge-gated keep.
@@ -640,7 +701,7 @@ export const AUDIT_CENSUS_TOTALS = {
   // own Other lodge is refilled from its Fees page (non-member rates and
   // season dates; no member data). `lodge`, from `other-lodge-fees-sync.ts`,
   // whichever trigger runs it. RE-MEASURED with `pnpm run audit:census`.
-  writeSites: 501,
+  writeSites: 520, // RE-MEASURED with `pnpm run audit:census` on the fork's sync of thatskiff33 main (#89, 26 Oct 2026): the fork's four central-server sites (#62, #58 x2, #77) and upstream's are disjoint files, composed, never added.
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -662,7 +723,12 @@ export const AUDIT_CENSUS_TOTALS = {
    * anything, because there was nothing to declare with: what a member read was
    * decided by whether the `details` column happened to parse as JSON.
    */
-  memberFacingSites: 6,
+  // 6 -> 7 (#3750): the executed change-request approval, which publishes the
+  // same `adminNotes` the acknowledgement path does for the same action — the
+  // blueprint the owner approved keeps `memberDisclosure` "exactly as it is
+  // today" (INV-PRIV-018), so this is the existing disclosure at a second site,
+  // not a widening.
+  memberFacingSites: 7,
   /**
    * Of those, sites whose declaration the census cannot read, pinned per site in
    * `APPROVED_FORWARDED_MEMBER_DISCLOSURE_SITES_2695` with the reason each is
@@ -733,7 +799,12 @@ export const AUDIT_CENSUS_TOTALS = {
     // 270 -> 271 (#3653 fix round): the organiser child refund recovery record,
     // above. RE-MEASURED with `pnpm run audit:census`.
     // 271 -> 272 (#3827, composed by #3829): the guest-acceptance re-price record, above.
-    logAudit: { total: 272, uncategorised: 0 },
+    // 272 -> 273 (#3750): the executed change-request approval, above. `logAudit`
+    // because it is written after the approval has committed.
+    // 273 -> 273 (#4149): the two handlers' refund entries, one shared writer,
+    // and the lost-record recovery's own entry.
+    // 273 -> 274 (#4170): the refunded-outside-the-app entry.
+    logAudit: { total: 274, uncategorised: 0 },
     // 101 -> 102 (#2627): the deletion-approval release, above.
     // 102 -> 104 (#2595): the two reviewed-move writes, above.
     // 104 -> 105 (#2649): the return-to-waitlist repair, above.
@@ -821,10 +892,29 @@ export const AUDIT_CENSUS_TOTALS = {
     // 137 -> 138 (#3454): the two-factor enrolment / erasure-clear record,
     // awaited on the transaction that changes the second factor.
     // 138 -> 139 (#3792): the refused restored-booking allocation change record.
+    // 139 -> 140 (#3372): the paid-another-way close of a dead card refund,
+    // awaited on the close's transaction so the row commits with the money.
+    // 140 -> 141 (#3372, owner 9 Oct 2026): a paid-twice row marked Resolved,
+    // awaited on the transaction that writes the resolution.
+    // 139 -> 140 (#3819): the school hut-leader kinds PUT, through
+    // `createAuditLog` like the lodge-settings route beside it.
+    // 140/141 -> 142 (sync of `main` 0ff7e6d46 into epic #3789, #3821):
+    // #3819's one and #3372's two are disjoint. RE-MEASURED on the composed tree.
+    // 142 -> 143 (#4098): the close of an already-paid subscription charge,
+    // awaited on the close's transaction so the row commits with the status.
+    // 143 -> 144 (#4104 review, CL3): a failed-later card refund not re-sent,
+    // awaited on the ledger writer's transaction so the row commits with it.
+    // 144 -> 145 (#4154): a capacity race's charge corrected before its hand-back,
+    // awaited on the completion's transaction so the row commits with the correction.
+    // 145 -> 147 (#4162): the two voided-note writers.
+    // 147 -> 148 (#4219): the credit-note convergence's own row, in its transaction.
+    // 148 -> 149 (#4338): its close of a concurrent attempt's failed allocation, in the same transaction.
+    // 149 -> 154 (#4253): the released-credit request's five rows, above.
+    // 154 -> 156 (#4270): the credit-note mirror's two rows, in its transaction.
     // 139 -> 140 (#62): the Central lodge link record.
     // 140 -> 141 (#58): the download's record of the lodges it hid.
     // 141 -> 142 (#77): the Fees-page refill of this club's own Other lodge.
-    createAuditLog: { total: 142, uncategorised: 0 },
+    createAuditLog: { total: 159, uncategorised: 0 }, // RE-MEASURED with `pnpm run audit:census` on the fork's sync of thatskiff33 main (#89, 26 Oct 2026): the fork's four central-server sites (#62, #58 x2, #77) and upstream's are disjoint files, composed, never added.
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.
     // Same row, same dedupe keys (`action` + `subjectMemberId` + `outcome`) —
@@ -954,7 +1044,9 @@ export const AUDIT_CENSUS_TOTALS = {
     // `main`) and RE-MEASURED with `pnpm run audit:census`: 106.
     // 106 -> 107 (#3827, composed by #3829): the guest-acceptance re-price record — a booking's
     // money changing, read by booking officers like every `booking.modify.*`.
-    booking: 107,
+    // 107 -> 108 (#3750): the executed change-request approval, `booking` like
+    // the acknowledgement of the same action.
+    booking: 108,
     // 16 -> 33 (#2581 child 2): the seventeen money writers — subscription
     // billing, member credit, fee configuration, saved-card charges and the five
     // Stripe webhook outcomes. `payment` is `support` plus `finance`, the
@@ -1012,7 +1104,25 @@ export const AUDIT_CENSUS_TOTALS = {
     // made and withheld, read by the same people.
     // 49 -> 51 (#3639): the held late capture and its approved refund.
     // 51 -> 52 (#3639 review): the setting-change record.
-    payment: 52,
+    // 52 -> 53 (#3372): the paid-another-way close of a dead card refund - a
+    // refund the club settled outside Stripe, read by the people who reconcile
+    // its money, beside the hand-back completion it mirrors.
+    // 53 -> 54 (#3372, owner 9 Oct 2026): a paid-twice row marked Resolved -
+    // the treasurer's note on money paid back twice, read by the same people.
+    // 54 -> 55 (#4098): a subscription charge closed as already paid - the
+    // officer and reason beside the billing actions the same people read.
+    // 55 -> 56 (#4104 review, CL3): a card refund Stripe failed later that the
+    // app did not make for the booking - read by the people who reconcile it.
+    // 56 -> 56 (#4149): the two handlers' refund entries, one shared writer,
+    // and the lost-record recovery's own entry, read by the same people.
+    // 56 -> 57 (#4170): the refunded-outside-the-app entry, read by the same people.
+    // 57 -> 58 (#4154): a capacity race's card charge corrected to its refund
+    // rows before its hand-back - the payment's figures, read by the same people.
+    // 58 -> 60 (#4162): a voided bank-transfer refund note undone, and one
+    // answered by a person - the payment's figures, read by the same people.
+    // 60 -> 64 (#4253): a released-credit request raised, not raised, and closed because Xero shows
+    // the invoice paid (at ask time and by the sweep) - the payment's figures, read by the same people.
+    payment: 64,
     // 27 -> 34 (#2581 child 2): the five family-group writers and the two
     // dependants writers. Both dependants writers also moved off a hand-built
     // Prisma literal and onto the audit boundary in the same change.
@@ -1154,8 +1264,13 @@ export const AUDIT_CENSUS_TOTALS = {
     // of the administrator whose currency change cleared it - no member data -
     // and is `admin` for the reason its sibling AI_SPEND_CURRENCY_RATE_UPDATED
     // is: installation configuration.
+    // 109 -> 110 (#3819): the school hut-leader kinds PUT. `admin` is readable
+    // with support:view alone, so the weakest-gate set widens by one lodge
+    // configuration row, the same audience as its sibling lodge-settings write.
     // 109 -> 107 (#52): `OTHER_LODGE_CREATED` and `OTHER_LODGE_DELETED` are
     // gone with their handlers; `OTHER_LODGE_UPDATED` stays, still `admin`.
+    // 110/107 -> 108 (hand sync of `main` f1ecdb5ff into epic #3789): #3819's
+    // one and #52's two removals are disjoint. RE-MEASURED on the composed tree.
     // 107 -> 108 (#62): `LODGE_CENTRAL_LINK_UPDATED`. A widening of who can
     // read what by one site, stated rather than counted: `admin` is readable
     // with `support:view` alone, so the derived weakest-gate total moves by one.
@@ -1166,7 +1281,7 @@ export const AUDIT_CENSUS_TOTALS = {
     // more readable with `support:view` alone, stated rather than counted. The
     // row names the hidden Other lodges entry by id and name only - never its
     // booking officer's contact - and no member.
-    admin: 109,
+    admin: 110, // RE-MEASURED with `pnpm run audit:census` on the fork's sync of thatskiff33 main (#89, 26 Oct 2026): the fork's four central-server sites (#62, #58 x2, #77) and upstream's are disjoint files, composed, never added.
     // 16 -> 19 (#2581 child 2): `member.password-reset-sent` and
     // `member.setup-invite-sent` (decision 3 — the affected domain is the
     // CREDENTIAL, not the mailing), plus the `member.bulk-set-role` branch
@@ -1265,7 +1380,17 @@ export const AUDIT_CENSUS_TOTALS = {
     // 38 -> 39 (#3792): `xero.allocation.restored-booking-change-refused`,
     // beside the inbound reconcile's other `xero` rows. Nobody's readership
     // changes.
-    xero: 39,
+    //
+    // 39 -> 40 (#4219): `xero.credit_note.spent_outside_app_converged`, beside the other
+    // `xero` rows. Nobody's readership changes.
+    //
+    // 40 -> 41 (#4338): `xero.credit_note.spent_outside_app_attempt_closed`, the same
+    // converge's close of a concurrent attempt's failed row. Nobody's readership changes.
+    // 41 -> 42 (#4253): `xero.credit_release_payment.recorded`, beside the other `xero` rows.
+    // Nobody's readership changes.
+    // 42 -> 44 (#4270): `xero.credit_note.outside_spend_mirrored` and `.outside_spend_restored`.
+    // Nobody's readership changes.
+    xero: 44,
     // 12 -> 14 (#2581 child 2): `BULK_COMMUNICATION_SENT` and
     // `EMAIL_SUPPRESSION_CLEARED`. Safe only BECAUSE child 1 moved
     // `communication` out of the support-only system entry into the membership
@@ -1433,26 +1558,18 @@ export const APPLIED_AUDIT_CATEGORIES: Readonly<Record<string, string>> = {
   "src/lib/member-credit.ts::reviewAdminAdjustmentRequest.result#0": "payment",
   "src/lib/member-credit.ts::reviewAdminAdjustmentRequest.result#1": "payment",
   "src/lib/membership-subscription-billing.ts::confirmSubscriptionBillingPreview#0": "payment",
-  // #2760 INSERTED A WRITER AHEAD OF THE ONE THAT USED TO BE `#0` HERE, which is
-  // the renumbering hazard this file's header warns about: `#0` was
-  // `booking.payment.refunded_after_cancellation` and became
-  // `booking.payment.auto_refund_record_failed`, with the refund row pushed to
-  // `#1`. Both are `payment`, so the identity pin would have passed while silently
-  // meaning something else — which is why #2760 listed BOTH ordinals.
-  //
-  // #2773 MOVED THAT WRITER OUT AGAIN, so `#0` HERE HAS REVERTED TO MEANING
-  // `booking.payment.refunded_after_cancellation` AND `#1` NO LONGER EXISTS. Said
-  // out loud because it is the same hazard in reverse and it is just as silent: the
-  // category never changed, so nothing in this map could have caught it. The writer
-  // now lives at `recordAutomaticLateCaptureRefund` below, shared by BOTH
-  // late-capture handlers — the whole point of #2773 is that there is one
-  // implementation of this record rather than a copy per handler.
-  "src/lib/stripe-webhook-service.ts::handleCancelledBookingAdditionalPaymentSucceeded#0": "payment",
-  // Untouched by #2773, and worth stating because the sibling above moved: this
-  // handler gained NO audit write. Its record failure is audited by the shared
-  // epilogue, not inline, so `#0` still means
-  // `booking.payment.refunded_after_cancellation` exactly as it did before #2760.
-  "src/lib/stripe-webhook-service.ts::handleCancelledBookingPaymentSucceeded#0": "payment",
+  // #4149 MOVED BOTH HANDLERS' `booking.payment.refunded_after_cancellation`
+  // WRITERS into one shared writer, so neither handler writes an audit row of
+  // its own any more and both `#0` identities are gone (#2760 and #2773 had
+  // each renumbered them; their history is in git). The delivery that refunded
+  // writes it, and the lost-record recovery only when that delivery died first.
+  "src/lib/late-capture-record-recovery.ts::reportAutomaticLateCaptureRefund#0": "payment",
+  // #4149: the recovery's own `booking.payment.auto_refund_record_recovered`
+  // entry, beside it. A booking id in `targetId` and no member column, as above.
+  "src/lib/late-capture-record-recovery.ts::recoverLostLateCaptureRecord#0": "payment",
+  // #4170: a marked late capture refunded outside the app, named rather than
+  // noted. A booking id in `targetId` and no member column, as above.
+  "src/lib/late-capture-unrecorded-refunds.ts::readUnrecordedLateCaptureRefund#0": "payment",
   /*
     #2773 / #2774 — the three write sites of the shared late-capture epilogue,
     pinned on arrival rather than left unlisted.
@@ -2636,6 +2753,9 @@ export const LODGE_GATED_ADMIN_CATEGORIES_2765: Readonly<
   "src/app/api/admin/lodge-instructions/route.ts::PUT#0": "admin",
   "src/app/api/admin/lodge-instructions/route.ts::PUT#1": "admin",
   "src/app/api/admin/lodge-settings/route.ts::PUT#0": "admin",
+  // "Who can be hut leader for school bookings" (#3819): a second writer in the
+  // lodge-settings subsystem, classified under INV-PRIV-013's uniformity rule.
+  "src/app/api/admin/lodge-settings/school-hut-leaders/route.ts::PUT#0": "admin",
 
   // ─── The `LODGE_*` lodge records themselves (gated `lodge:edit`) ────────────
   // `LODGE_DISPLAY_CONFIG_UPDATED` moved to `lodge` in #2730 and these did not,
@@ -2966,28 +3086,33 @@ export const AUDIT_WRITER_WRAPPERS: Readonly<
  * `auditLog` statements that do not produce a row, and are therefore approved
  * NOT to carry a category.
  *
- * Today these are the three retention statements only: the archive `updateMany`,
- * the prune `deleteMany`, and the request-data anonymisation `updateMany`. They
- * mutate or remove rows that already have whatever category they were written
- * with, so "why does this not set a category" has an answer, and the answer is
- * recorded here rather than assumed by a scan that skips non-`create` methods.
+ * Today these are the three retention statements only: the archive move's
+ * `deleteMany`, the prune `deleteMany`, and the request-data anonymisation
+ * `updateMany`. They mutate or remove rows that already have whatever category
+ * they were written with, so "why does this not set a category" has an answer,
+ * and the answer is recorded here rather than assumed by a scan that skips
+ * non-`create` methods.
  *
  * A new entry here is a hand-written mutation of the platform's audit trail and
  * needs the same scrutiny as a new writer.
  */
 export const APPROVED_NON_PRODUCING_AUDIT_DML: Readonly<Record<string, string>> = {
   "src/lib/audit-retention.ts::archiveEligibleAuditLogs#0":
-    "Retention archive: stamps `archivedAt` on rows past their archive threshold.",
+    // Corrected in #3939: this statement never stamped `archivedAt`. It
+    // `deleteMany`s, by id, the rows the archive step has just copied into
+    // `AuditLogArchive`, so it completes a move, not a loss.
+    "Retention archive: deletes from the main table the rows past their archive " +
+      "threshold that were just copied to the archive database (a move).",
   "src/lib/audit-retention.ts::pruneExpiredAuditLogs#0":
-    // Corrected in #2581 child 2, because this change is what makes it matter:
-    // `incidentPreserved` is NOT in the prune predicate. It guards only
-    // `anonymizeExpiredAuditRequestData` and the archive's request-data copy, so
-    // there is no per-row exemption from deletion. Every one of the 83 sites this
-    // change classifies lands in `critical`, whose branch is `createdAt < cutoff`
-    // AND `expiresAt < now` — unconditional at seven years.
+    // Corrected again in #3939 (owner decision, 11 Oct 2026): a row with
+    // `incidentPreserved` set must ALSO be ten years past its `createdAt`, so it
+    // goes at the later of its normal rule and that cap. Before #3939 the flag
+    // guarded only `anonymizeExpiredAuditRequestData` and the archive's
+    // request-data copy, and a preserved row was deleted at its expiry (for
+    // `critical`, at seven years).
     "Retention prune: deletes rows past `expiresAt` (for `critical`, also past " +
-      "the seven-year `createdAt` cutoff). There is no incident-preservation " +
-      "exemption from this statement.",
+      "the seven-year `createdAt` cutoff); an `incidentPreserved` row must also " +
+      "be ten years past its `createdAt` (#3939).",
   "src/lib/audit-retention.ts::anonymizeExpiredAuditRequestData#0":
     "Retention anonymisation: clears `ipAddress`/`userAgent` on rows past the request-data window.",
 };
@@ -3101,6 +3226,13 @@ export const MEMBER_FACING_AUDIT_WRITERS_2695: Readonly<
   // verbatim, which is what makes an edit to either branch a visible diff here.
   "src/app/api/admin/booking-change-requests/[id]/route.ts::PATCH#0":
     "(dynamic) parsed.data.status === \"APPROVED\" ? \"booking-change-request.approve\" : \"booking-change-request.reject\"",
+  // #3750: the SAME decision when the stay has finished and approving applies
+  // the request. PUBLISHES: the officer's `adminNotes`, and nothing when there
+  // is none — the acknowledgement's disclosure for the same action, kept as it
+  // is today by the owner-approved blueprint (INV-PRIV-018). `internalNotes`
+  // never reaches the row; only `internalNoteRecorded` does.
+  "src/lib/booking-change-request-admin-decision.ts::runFinishedStayApproval#0":
+    "booking-change-request.approve",
   // PUBLISHES: `adminNotes`, which a refusal cannot omit — the route rejects a
   // refusal without one — and which `notifyMemberOfRefusal` emails as well.
   "src/app/api/admin/booking-exception-requests/[id]/route.ts::PATCH#0":

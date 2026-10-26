@@ -217,10 +217,10 @@ export function MemberGuestSettingsCard({
     <div>
       {viewOnlyBanner}
       {feedback}
-      <Card>
+      <Card {...section.sectionRegionProps}>
         <CardHeader className="flex flex-row items-start justify-between gap-3">
           <div>
-            <CardTitle>Member guests</CardTitle>
+            <CardTitle {...section.titleProps}>Member guests</CardTitle>
             <CardDescription>
               Lets a member add another club member — outside their own family
               group — as a guest on their booking.
@@ -233,6 +233,7 @@ export function MemberGuestSettingsCard({
               variant="outline"
               size="sm"
               onClick={section.startEditing}
+              {...section.editTriggerProps}
             >
               Edit
             </ViewOnlyActionButton>

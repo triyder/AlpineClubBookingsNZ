@@ -2,8 +2,9 @@
 # Writes the `.env.staging` file every CI job that drives the E2E compose stack
 # needs, and refuses to write one carrying a live Stripe key.
 #
-# ONE HOME, because there are now three callers (`e2e.yml` → `playwright` and
-# `multi-lodge`, and `e2e-rollover-proof.yml`) and the file they need is
+# ONE HOME, because there are three callers (`e2e.yml` → `e2e-db`, the
+# `.github/actions/e2e-run` action every browser job uses, #4397, and
+# `e2e-rollover-proof.yml`) and the file they need is
 # identical in every value. It used to be a copied heredoc per job; the two
 # copies were byte-identical in their values and had already drifted in their
 # comments, which is how the next difference would have gone unnoticed

@@ -959,6 +959,37 @@ describe("the party and the member links keyed to it move together", () => {
     expect(claimData().linkedGuestMembers).toBeUndefined();
   });
 
+  it("measures availability with the kept links and a null for every pending adult (#3789/#3821)", async () => {
+    // The party is unchanged, so Bea's link survives and her range carries
+    // her member (a ticked custodian on the booking counts once); the two
+    // pending adults take beds too, as nobody in particular.
+    vi.stubEnv("PENDING_SCHOOL_ADULTS_ENABLED", "1");
+    vi.stubEnv("BLUE_GREEN_OLD_APP_AND_WORKERS_STOPPED", "1");
+    try {
+      stubRequest(twoTeacherRow());
+      await correctBookingRequest(
+        schoolInput({
+          school: {
+            ...schoolInput().school!,
+            schoolName: "Tokora Primary School",
+            teachers: [
+              { firstName: "Ann", lastName: "Baker", email: "ann@example.test" },
+              { firstName: "Bea", lastName: "Cole", email: "bea@example.test" },
+            ],
+            childCounts: { CHILD: 1 },
+            pendingAdultCount: 2,
+          },
+        }),
+      );
+      const ranges = (checkCapacityForGuestRanges as ReturnType<typeof vi.fn>).mock.calls[0][3] as Array<{
+        memberId: string | null;
+      }>;
+      expect(ranges.map((range) => range.memberId)).toEqual([null, "member-42", null, null, null]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("records the cleared links on the audit row", async () => {
     stubRequest(twoTeacherRow());
     await correctBookingRequest(droppedTeacherInput());

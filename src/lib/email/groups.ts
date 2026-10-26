@@ -6,9 +6,11 @@ import {
   groupJoinPaySelfTemplate,
   groupJoinReleasedTemplate,
   groupJoinSettledTemplate,
+  groupOrganiserJoinerRefundTemplate,
   groupSettlementExpiredTemplate,
   groupSettlementReceiptTemplate,
 } from "@/lib/email-templates/groups";
+import { organiserJoinerAppealRefundSentence } from "@/lib/booking-modified-email-copy";
 import { CLUB_NAME } from "@/config/club-identity";
 import { formatCents as formatMoneyCents } from "@/lib/utils";
 import { sendEmail } from "./core";
@@ -272,6 +274,46 @@ export async function sendGroupJoinCancelledEmail(params: {
     templateData: {
       firstName: params.firstName,
       organiserName: params.organiserName,
+      checkIn: emailCalendarDay(params.checkIn),
+      checkOut: emailCalendarDay(params.checkOut),
+    },
+  });
+}
+
+/**
+ * #3956 (`INV-PAY-123`): the organiser's notice that a joiner's approved refund
+ * appeal is being refunded to the card they paid for the group with. Scoped to
+ * the organiser's own booking, so its "No emails" switch withholds it.
+ */
+export async function sendGroupOrganiserJoinerRefundEmail(params: {
+  bookingContext: BookingEmailSourceContext;
+  email: string;
+  firstName: string;
+  joinerName: string;
+  amountCents: number;
+  checkIn: Date;
+  checkOut: Date;
+},
+  format: ClubFormat,
+) {
+  const amount = formatMoneyCents(params.amountCents, format);
+  await sendEmail({
+    to: params.email,
+    subject: `A refund to your card for your group booking — ${CLUB_NAME}`,
+    html: await renderEmailHtml(() => groupOrganiserJoinerRefundTemplate({
+      firstName: params.firstName,
+      joinerName: params.joinerName,
+      amountCents: params.amountCents,
+      checkIn: params.checkIn,
+      checkOut: params.checkOut,
+    }, format)),
+    bookingContext: classifyBookingOwnerContext(params.bookingContext),
+    templateName: "group-organiser-joiner-refund",
+    templateData: {
+      firstName: params.firstName,
+      joinerName: params.joinerName,
+      amount,
+      refundSentence: organiserJoinerAppealRefundSentence(amount, params.joinerName),
       checkIn: emailCalendarDay(params.checkIn),
       checkOut: emailCalendarDay(params.checkOut),
     },

@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen } from "@/lib/__tests__/support/club-time-render";
+import { fireEvent, render, screen, waitFor, within } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EditBookingPanel } from "@/components/edit-booking-panel";
+import { CHANGE_REQUEST_DATES_OUTSIDE_NIGHTS_MESSAGE } from "@/lib/booking-change-request-guests";
 
 // #2124: on an in-progress stay the change-dates UI must keep the original
 // (past) check-in fixed and let the member extend the check-out night by night
@@ -106,6 +107,46 @@ afterEach(() => {
 });
 
 describe("EditBookingPanel — in-progress date extension (#2124)", () => {
+  it("sends the edited dates with the card quote and the same proposal on submission (#4090)", async () => {
+    const baseFetch = global.fetch;
+    let quoted: Record<string, unknown> | undefined;
+    let submitted: Record<string, unknown> | undefined;
+    global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/modify-quote")) {
+        return jsonResponse({ error: "This booking is locked" }, 400);
+      }
+      if (url.endsWith("/change-requests/quote")) {
+        quoted = JSON.parse(String(init?.body));
+        return jsonResponse({ error: CHANGE_REQUEST_DATES_OUTSIDE_NIGHTS_MESSAGE }, 400);
+      }
+      if (url.endsWith("/change-requests")) {
+        submitted = JSON.parse(String(init?.body));
+        return jsonResponse({ error: CHANGE_REQUEST_DATES_OUTSIDE_NIGHTS_MESSAGE }, 400);
+      }
+      return baseFetch(input, init);
+    }) as typeof fetch;
+    render(<EditBookingPanel booking={inProgressBooking()} onDone={vi.fn()} />);
+
+    fireEvent.change(screen.getByLabelText("Check-out"), { target: { value: "2026-08-19" } });
+    await screen.findByText("This booking is locked");
+    const card = within(screen.getByText("Admin Request").parentElement!.parentElement!);
+    fireEvent.change(card.getByLabelText("First name"), { target: { value: "Ari" } });
+    fireEvent.change(card.getByLabelText("Last name"), { target: { value: "Visitor" } });
+    fireEvent.change(card.getByLabelText("Age"), { target: { value: "CHILD" } });
+    fireEvent.click(card.getByRole("button", { name: "Add guest" }));
+    await card.findByText(CHANGE_REQUEST_DATES_OUTSIDE_NIGHTS_MESSAGE);
+    expect(quoted).toMatchObject({
+      editorChanges: { checkOut: "2026-08-19" },
+      addGuests: [{ firstName: "Ari", stayStart: "2026-08-14", stayEnd: "2026-08-18" }],
+    });
+    expect(card.queryByText(/Estimated price for these guests/)).not.toBeInTheDocument();
+
+    fireEvent.click(card.getByRole("button", { name: "Request Admin Review" }));
+    await waitFor(() => expect(submitted).toBeDefined());
+    expect(submitted).toMatchObject({ checkOut: "2026-08-19", addGuests: quoted!.addGuests });
+  });
+
   it("renders the check-in fixed at the original past date", () => {
     render(
       <EditBookingPanel booking={inProgressBooking()} onDone={vi.fn()} />,

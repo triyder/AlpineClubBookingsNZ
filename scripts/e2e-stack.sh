@@ -5,6 +5,12 @@
 #   scripts/e2e-stack.sh run       # run the Playwright suite against the stack
 #   scripts/e2e-stack.sh test      # prepare + run
 #   scripts/e2e-stack.sh down      # stop the stack and remove its volumes
+#   scripts/e2e-stack.sh snapshot <file>   # CI: migrate + seed once, dump to <file>
+#
+# With E2E_DB_SNAPSHOT=<file>, `prepare` restores that dump (and its fixture
+# date) instead of migrating and seeding: CI seeds once per run and every shard
+# restores the same database in seconds (#4397; the demo seed alone took five
+# minutes per job). Unset, `prepare` is unchanged.
 #
 # Configuration comes from an env file (default .env.staging; override with
 # E2E_ENV_FILE). Copy .env.staging.example and keep placeholder provider keys —
@@ -69,16 +75,8 @@ compose() {
     -f docker-compose.yml -f docker-compose.staging.yml "$@"
 }
 
-prepare() {
-  # `prepare` and `run` are separate CI steps/processes. Capture one club day
-  # before any seed and persist it for Playwright, so club midnight cannot move
-  # a Monday-aligned fixture to a different week between them (#3702).
-  unset E2E_FIXTURE_TODAY_NZ
-  E2E_FIXTURE_TODAY_NZ="$(pnpm exec tsx scripts/e2e-fixture-today.ts)"
-  export E2E_FIXTURE_TODAY_NZ
-  mkdir -p .artifacts
-  printf '%s\n' "$E2E_FIXTURE_TODAY_NZ" > "$FIXTURE_DATE_FILE"
-
+# Postgres up, the schema empty, and this host's Prisma client generated.
+reset_database() {
   echo "==> Starting staging postgres (host port ${STAGING_POSTGRES_PORT})"
   compose up -d --wait postgres
 
@@ -88,7 +86,10 @@ prepare() {
 
   echo "==> Generating Prisma client"
   DATABASE_URL="$HOST_DATABASE_URL" pnpm exec prisma generate
+}
 
+# The single-lodge database every journey starts from.
+seed_database() {
   echo "==> Applying migrations"
   DATABASE_URL="$HOST_DATABASE_URL" pnpm exec prisma migrate deploy
 
@@ -103,7 +104,21 @@ prepare() {
 
   echo "==> Enabling the modules the E2E journeys need"
   DATABASE_URL="$HOST_DATABASE_URL" pnpm exec tsx e2e/setup/enable-e2e-modules.ts
+}
 
+prepare() {
+  if [[ -n "${E2E_DB_SNAPSHOT:-}" ]]; then
+    restore_snapshot "$E2E_DB_SNAPSHOT"
+  else
+    capture_fixture_date
+    reset_database
+    seed_database
+  fi
+
+  # Never part of `seed_database`, so never inside a CI snapshot: the dump is
+  # a public-repo artifact, and the store's key derives from the env file's
+  # committed AUTH_SECRET (#4397). Seeded here, on each stack, from the job's
+  # own secrets.
   echo "==> Seeding Stripe test-mode credentials into the encrypted store (#2082; no-op unless test keys are set)"
   DATABASE_URL="$HOST_DATABASE_URL" pnpm exec tsx --conditions=react-server e2e/setup/seed-stripe-credentials.ts
 
@@ -122,6 +137,45 @@ prepare() {
     compose up -d --build --wait app
   fi
   echo "==> Stack ready"
+}
+
+# `prepare` and `run` are separate CI steps/processes. Capture one club day
+# before any seed and persist it for Playwright, so club midnight cannot move
+# a Monday-aligned fixture to a different week between them (#3702).
+capture_fixture_date() {
+  unset E2E_FIXTURE_TODAY_NZ
+  E2E_FIXTURE_TODAY_NZ="$(pnpm exec tsx scripts/e2e-fixture-today.ts)"
+  export E2E_FIXTURE_TODAY_NZ
+  mkdir -p .artifacts
+  printf '%s\n' "$E2E_FIXTURE_TODAY_NZ" > "$FIXTURE_DATE_FILE"
+}
+
+snapshot() {
+  local out="$1"
+  capture_fixture_date
+  reset_database
+  seed_database
+  echo "==> Dumping the seeded database to $out"
+  mkdir -p "$(dirname "$out")"
+  compose exec -T postgres pg_dump -U tac -d tacbookings --format=custom --no-owner > "$out"
+  cp "$FIXTURE_DATE_FILE" "$out.fixture-date"
+}
+
+restore_snapshot() {
+  local dump="$1"
+  if [[ ! -s "$dump" || ! -s "$dump.fixture-date" ]]; then
+    echo "E2E_DB_SNAPSHOT=$dump: the dump or its fixture date is missing." >&2
+    exit 1
+  fi
+  # The snapshot's day, never today's: its seeded fixtures are aligned to it,
+  # and the seeds still to run here (the second lodge) must align to it too.
+  mkdir -p .artifacts
+  cp "$dump.fixture-date" "$FIXTURE_DATE_FILE"
+  IFS= read -r E2E_FIXTURE_TODAY_NZ < "$FIXTURE_DATE_FILE"
+  export E2E_FIXTURE_TODAY_NZ
+  reset_database
+  echo "==> Restoring the seeded database from $dump"
+  compose exec -T postgres pg_restore -U tac -d tacbookings --no-owner --exit-on-error < "$dump"
 }
 
 run() {
@@ -150,6 +204,13 @@ case "${1:-}" in
     shift
     run "$@"
     ;;
+  snapshot)
+    if [[ -z "${2:-}" ]]; then
+      echo "Usage: scripts/e2e-stack.sh snapshot <file>" >&2
+      exit 1
+    fi
+    snapshot "$2"
+    ;;
   test)
     shift
     prepare
@@ -160,7 +221,7 @@ case "${1:-}" in
     rm -f "$FIXTURE_DATE_FILE"
     ;;
   *)
-    echo "Usage: $0 {prepare|run|test|down} [playwright args]" >&2
+    echo "Usage: $0 {prepare|run|test|down|snapshot <file>} [playwright args]" >&2
     exit 1
     ;;
 esac

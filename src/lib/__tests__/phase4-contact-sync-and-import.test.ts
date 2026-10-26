@@ -1,18 +1,4 @@
-import { createCipheriv } from "crypto";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-
-const TEST_KEY =
-  "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-
-function encryptForTest(plaintext: string) {
-  const key = Buffer.from(TEST_KEY, "hex");
-  const iv = Buffer.alloc(16, 7);
-  const cipher = createCipheriv("aes-256-gcm", key, iv);
-  let encrypted = cipher.update(plaintext, "utf8", "hex");
-  encrypted += cipher.final("hex");
-  const authTag = cipher.getAuthTag();
-  return `${iv.toString("hex")}:${authTag.toString("hex")}:${encrypted}`;
-}
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {
   const accountingApi = {
@@ -32,11 +18,15 @@ const mocks = vi.hoisted(() => {
     completeXeroSyncOperation: vi.fn(),
     failXeroSyncOperation: vi.fn(),
     prisma: {
-      xeroToken: {
-        findFirst: vi.fn(),
+      // #3806 R2: the token store reads the connection row and the
+      // credential-store token set; `mockXeroConnection` points both at a fixture.
+      xeroConnection: {
+        findUnique: vi.fn(),
       },
-      // #3454: the token store reads its credential-store copy too; none here,
-      // so these suites keep exercising the pre-upgrade XeroToken row.
+      // The previous release's lease, which a waiting refresh also honours.
+      xeroToken: {
+        findFirst: vi.fn(async () => null),
+      },
       integrationCredential: {
         findUnique: vi.fn(async () => null),
       },
@@ -210,9 +200,8 @@ vi.mock("xero-node", () => ({
   Address: { AddressTypeEnum: { STREET: "STREET", POBOX: "POBOX" } },
 }));
 
-// DB-only Xero resolution (#2079): the token key must equal TEST_KEY so the
-// encryptForTest fixtures round-trip, and the operational config must resolve
-// without integration-credential DB rows.
+// DB-only Xero resolution (#2079): the operational config must resolve without
+// integration-credential DB rows.
 vi.mock("@/lib/xero-config", async (importOriginal) => {
   const actual = (await importOriginal()) as typeof import("@/lib/xero-config");
   return {
@@ -224,11 +213,6 @@ vi.mock("@/lib/xero-config", async (importOriginal) => {
       scopes: [...actual.XERO_REQUIRED_REPORT_OAUTH_SCOPES],
       httpTimeout: 10_000,
     }),
-    getOperationalXeroEncryptionKey: vi
-      .fn()
-      .mockResolvedValue(
-        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-      ),
   };
 });
 
@@ -248,23 +232,37 @@ import {
   expectEnvironmentRolePremise,
 } from "@/lib/__tests__/helpers/environment-role";
 import { toXeroSandboxContactEmail } from "@/lib/xero-sandbox-contact-email";
+import {
+  connectedXeroFixture,
+  ensureStrongTestAuthSecret,
+  mockXeroConnection,
+} from "@/lib/__tests__/helpers/xero-connected-mock";
+
+let restoreAuthSecret: () => void = () => {};
+beforeAll(() => {
+  restoreAuthSecret = ensureStrongTestAuthSecret();
+});
+afterAll(() => {
+  restoreAuthSecret();
+});
 
 describe("Phase 4 contact sync and cached import", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.stubEnv("XERO_ENCRYPTION_KEY", TEST_KEY);
     // The club's LIVE site, where #3036's containment is the identity function
     // and every payload below is what it always was.
     declareEnvironmentRole("production");
     mocks.prisma.environmentSafetySettings.findUnique.mockResolvedValue(null);
 
-    mocks.prisma.xeroToken.findFirst.mockResolvedValue({
-      id: "token_1",
-      accessToken: encryptForTest("access-token"),
-      refreshToken: encryptForTest("refresh-token"),
-      expiresAt: new Date("2099-01-01T00:00:00.000Z"),
-      tenantId: "tenant_1",
-    });
+    mockXeroConnection(
+      mocks.prisma,
+      connectedXeroFixture({
+        accessToken: "access-token",
+        refreshToken: "refresh-token",
+        expiresAt: new Date("2099-01-01T00:00:00.000Z"),
+        tenantId: "tenant_1",
+      }),
+    );
     mocks.prisma.xeroSyncCursor.upsert.mockResolvedValue({});
     mocks.prisma.xeroContactCache.upsert.mockResolvedValue({});
     mocks.prisma.xeroContactCache.findMany.mockResolvedValue([]);
@@ -850,7 +848,7 @@ describe("Phase 4 contact sync and cached import", () => {
       passwordHash: "not-deleted",
       xeroContactId: "contact_1",
     });
-    mocks.prisma.xeroToken.findFirst.mockRejectedValueOnce(
+    mocks.prisma.xeroConnection.findUnique.mockRejectedValueOnce(
       new Error("authentication unavailable"),
     );
 

@@ -1,3 +1,4 @@
+import { XERO_ACTIVE_OPERATION_STATUSES } from "./xero-active-operation-statuses";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { startXeroSyncOperation } from "@/lib/xero-sync";
@@ -38,7 +39,7 @@ async function enqueueGroupSettlementInvoiceVoid(
       operationType: "UPDATE",
       localModel: "GroupBookingSettlement",
       localId: params.settlementId,
-      status: { in: ["PENDING", "RUNNING", "WAITING_PAYMENT"] },
+      status: { in: [...XERO_ACTIVE_OPERATION_STATUSES] },
     },
     orderBy: { createdAt: "desc" },
   });

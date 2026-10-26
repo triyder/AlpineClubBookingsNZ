@@ -1,4 +1,6 @@
-import type { PaymentStatus } from "@prisma/client";
+import { PaymentSource, PaymentTransactionKind, type PaymentStatus } from "@prisma/client";
+import { prisma } from "@/lib/prisma";
+import { CAPTURED_TRANSACTION_STATUS_LIST } from "@/lib/payment-transaction-status";
 import logger from "@/lib/logger";
 // The check-in-dated-update condition is shared with the Xero period
 // lock-date guard (#1729) via a dependency-free module so the guard can never
@@ -151,6 +153,15 @@ export interface ClassifyXeroBookingEditSettlementInput {
    * notes would credit the joiner's invoice twice for one refund.
    */
   organiserChildRefundOwnsCreditNote?: boolean;
+  /**
+   * #3979: whether any Internet Banking PRIMARY receipt of the payment was
+   * captured. When given it decides the #3536 invoice correction instead of the
+   * aggregate `originalPaymentStatus`, which reads as captured for a payment
+   * whose card capture was refunded before it moved to Internet Banking
+   * (#1765) although its invoice was never paid. The queue reads it when the
+   * aggregate alone would refuse the correction.
+   */
+  internetBankingReceiptCaptured?: boolean;
 }
 
 export interface QueueXeroBookingEditSettlementInput
@@ -243,7 +254,7 @@ export function classifyXeroBookingEditSettlement(
         input.refundMethod == null &&
         input.refundedThroughStripe === false &&
         input.originalPaymentStatus != null &&
-        !originalInvoiceUnsafe;
+        !(input.internetBankingReceiptCaptured ?? originalInvoiceUnsafe);
       const refundMethod = correctsUnpaidInvoice
         ? undefined
         : (input.refundMethod ??
@@ -329,10 +340,49 @@ async function queueGiveBackNote(input: QueueXeroBookingEditSettlementInput, cen
   await kickQueuedXeroOperation(queued);
 }
 
+/**
+ * #3979: the only state in which the aggregate payment status can wrongly
+ * refuse an invoice correction - a reduction whose money is not a Stripe
+ * refund, on a payment whose aggregate reads captured. Only then is the
+ * receipt itself read.
+ */
+function mayCorrectDespiteCapturedAggregate(input: ClassifyXeroBookingEditSettlementInput): boolean {
+  return (
+    input.internetBankingReceiptCaptured === undefined &&
+    input.hasIssuedXeroInvoice &&
+    input.priceDiffCents + (input.changeFeeCents ?? 0) < 0 &&
+    input.refundMethod == null &&
+    input.refundedThroughStripe === false &&
+    // A refunded aggregate is the #1765 shape: a card capture refunded before
+    // the switch, with the bank receipt possibly never captured. A SUCCEEDED
+    // aggregate whose money is not a Stripe refund is a captured bank receipt
+    // (or an officer's cash), so nothing needs reading.
+    (input.originalPaymentStatus === "REFUNDED" || input.originalPaymentStatus === "PARTIALLY_REFUNDED")
+  );
+}
+
+/** Whether any Internet Banking PRIMARY receipt of the booking's payment was captured. */
+async function readInternetBankingReceiptCaptured(bookingId: string): Promise<boolean> {
+  const captured = await prisma.paymentTransaction.findFirst({
+    where: {
+      payment: { bookingId },
+      kind: PaymentTransactionKind.PRIMARY,
+      source: PaymentSource.INTERNET_BANKING,
+      status: { in: [...CAPTURED_TRANSACTION_STATUS_LIST] },
+    },
+    select: { id: true },
+  });
+  return captured !== null;
+}
+
 export async function queueXeroBookingEditSettlement(
   input: QueueXeroBookingEditSettlementInput
 ): Promise<XeroBookingEditSettlementResult> {
-  const decision = classifyXeroBookingEditSettlement(input);
+  const decision = classifyXeroBookingEditSettlement(
+    mayCorrectDespiteCapturedAggregate(input)
+      ? { ...input, internetBankingReceiptCaptured: await readInternetBankingReceiptCaptured(input.bookingId) }
+      : input,
+  );
   let supplementaryInvoice: XeroSupplementaryInvoiceEnqueueOutcome = "none";
 
   if (decision.financialAction.type === "primary-invoice") {
@@ -479,8 +529,13 @@ export interface CompleteDeferredXeroSupplementaryInvoiceInput {
  * DIFFERENT question - "does this booking have a primary invoice NOW" - and on a
  * booking whose primary invoice was still queued when the edit committed the two
  * answers differ. There the edit classified `none` and queued nothing, correctly,
- * because the primary invoice reads the booking's CURRENT state when the worker
- * finally mints it and therefore bills the edit itself. A replay deriving `true`
+ * because the edit settled against the primary invoice (#3980, `INV-PAY-136`):
+ * committed before the create read the booking, the invoice bills it itself;
+ * committed after that read but before the link was saved, the create bills
+ * the difference on a supplementary invoice anchored on the edit, or raises a
+ * Xero Operations task for a reduction (`queuePrimaryInvoiceWorthGap`); and an
+ * edit arriving after the link is refused by its claim on the payment row
+ * (`claimPrimaryInvoiceStillUnlinked`) and retried against the invoice. A replay deriving `true`
  * would add a supplementary invoice on top of that, and the club would record
  * more income than the booking is worth plus a receivable nobody owes. So the
  * caller freezes the value on the recovery row (`PaymentRecoveryOperation.

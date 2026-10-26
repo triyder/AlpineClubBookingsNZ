@@ -23,7 +23,7 @@ describe("findUnconvergedAppliedCreditDeallocation", () => {
         localId: "payment-1",
         queueType: "APPLIED_CREDIT_DEALLOCATION",
         status: {
-          in: ["PENDING", "RUNNING", "FAILED", "PARTIAL", "WAITING_PAYMENT"],
+          in: ["PENDING", "RUNNING", "WAITING_PAYMENT", "FAILED", "PARTIAL"],
         },
       },
       select: { id: true, status: true },
@@ -69,7 +69,7 @@ describe("assertNoAppliedCreditDeallocationFence", () => {
         localId: "payment-1",
         queueType: "APPLIED_CREDIT_DEALLOCATION",
         status: {
-          in: ["PENDING", "RUNNING", "FAILED", "PARTIAL", "WAITING_PAYMENT"],
+          in: ["PENDING", "RUNNING", "WAITING_PAYMENT", "FAILED", "PARTIAL"],
         },
       },
       select: { id: true, status: true, requestPayload: true },

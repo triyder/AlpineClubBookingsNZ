@@ -153,6 +153,11 @@ const REQUIRED_TOKEN_GUIDANCE: Record<string, string> = {
     "this email must tell members how to get into the lodge — keep {{doorCodeNote}}, or write your own label around the bare {{doorCode}} value",
   refundSentence:
     "this email must tell the member how their refund reaches them — keep {{refundSentence}}, which says whether it goes back to their card or by bank transfer from the club (a fixed sentence around {{amount}} is wrong for one of the two)",
+  // #4042, #4097: the one alert for three hand-backs - a cash booking cancelled, an
+  // organiser's Internet Banking group cancelled (refunds already booked), and a
+  // card cancel whose card refund could not carry all of the refund due.
+  handBackNote:
+    "this email is sent for three different hand-backs — a cash booking that was cancelled, a group paid by Internet Banking that its organiser cancelled, whose joiners' refunds are already recorded, and a card booking whose card refund could not carry all of the refund due, part of which may need checking before anything is paid — so it must keep {{handBackNote}}, which explains whichever one it is. Wording typed in by hand would tell the treasurer the wrong thing for two of the three",
 };
 
 // #2774: the same plain-English treatment for the SUBJECT requirements. Naming a
@@ -162,6 +167,8 @@ const REQUIRED_TOKEN_GUIDANCE: Record<string, string> = {
 const REQUIRED_SUBJECT_TOKEN_GUIDANCE: Record<string, string> = {
   handBackConflictLabel:
     "this email is sent in two opposite directions — a refund that was withheld, and one that may have paid a member twice — so its subject must keep {{handBackConflictLabel}}, which fills in whichever happened. A subject with the wording typed in by hand would title every double payment as a withheld refund",
+  handBackLabel:
+    "this email is sent for a cancelled cash booking, a cancelled group paid by Internet Banking, and a card booking whose card refund fell short, so its subject must keep {{handBackLabel}}, which names whichever it is. A subject typed in by hand would title the other two as whichever one it names",
 };
 
 /**

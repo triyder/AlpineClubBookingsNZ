@@ -242,8 +242,19 @@ reversals included, so an edit's slice is what that edit changed. **Sum or
 nothing**: the lines must add up to `priceDiffCents + changeFeeCents`, and a
 night with no live line, a live line at a different price, or any other
 disagreement posts nothing and is logged for C4 (#3583) to count (its census
-names it coverage, `UNPOSTED_EDIT`). Only a
-booking already confirmed on the ledger posts (§4.1a), asked under `lock(1)`.
+names it coverage, `UNPOSTED_EDIT`). Since #4317 the before side is each night's
+`INV-MOD-028` value (`pricingSideFromStoredGuests`), the figure the edit priced
+with. An edit posts only where every night it reverses has exactly one live
+single-night line at that value: a strand whose rows reconcile (R1) does,
+whatever their provenance. A strand valued by a split (R2 or R3) differs from
+the lines its confirmation posted, and a night whose blank row confirmation
+skipped has no live line, so those edits post NOTHING (`LIVE_LINE_DISAGREES`,
+`NO_LIVE_LINE`) - never a wrong line. Each such edit is an `UNPOSTED_EDIT` gap,
+and **every one closes the cut-over gate**, where a park posted nothing and
+raised none. `booking-money:census` counts the bookings an edit would leave so
+(`ledgerNightValues`, #4317 review M3); wave B's re-base (D5) re-posts their
+lines. Only a booking already confirmed on the ledger posts (§4.1a), asked under
+`lock(1)`.
 The planner is `booking-ledger-modification-posting.ts`; the writer calls are in
 `booking-ledger-modification-sync.ts` (`INV-MONEY-036`).
 
@@ -334,7 +345,7 @@ proves the ledger was in step rather than assuming it. The completion takes
 | Whole-lodge / officer flat price (`INV-MONEY-004`) | the same `GUEST_NIGHT` lines from the night rows the rebase wrote; a flat price that does not divide is a `GUEST_NIGHT` per strand at the rebased strand figure (`INV-MOD-038`) | `CONFIRMATION` | same |
 | Booking edited and priced (four doors + batch, `INV-MOD-044`) | per guest-night, all or nothing (the rule above); a `PROMOTION` reversal + re-post when the promo delta is non-zero; a `CHANGE_FEE` (+) when the edit charged one | `MODIFICATION` / modification id | the four edit services and the batch path, in the transaction that already writes `priceLines` (`INV-MOD-058`) |
 | Admin date shift (`adminShiftBookingDates`, #3741) | the same per-night rule: each old-date night's live line reversed, each new-date night posted at the same figure, netting to the row's zero; both sides read as written rows, since a shift sells nothing | `MODIFICATION` / the `ADMIN_DATE_SHIFT` row | `adminShiftBookingDates`, under the `lock(1)` it takes first |
-| Booking edited and **parked** (`INV-MOD-040`) | **nothing** — a parked edit writes structure, never an amount; the lines post when the review closes | — | — |
+| Booking edited and **parked** before #4317 (`INV-MOD-040`) | **nothing** — a parked edit wrote structure, never an amount; the lines post when the review closes. Since #4317 no edit parks: every edit is the priced row above | — | — |
 | Booking cancelled — member or admin cancel (all four `cancelBooking` branches), the linked provisional child, the internet banking hold-expiry release, a group organiser's settled children, the settle's capacity void, the late internet banking capacity cancel, and `cron-confirm-pending`'s three hold-window cancels | the rule above. Only the paid `cancelBooking` branch (and the unpaid branch's tiered credit on a captured, refunded-whole payment, #3809) and a group organiser's settled children keep anything; every other path keeps nothing and posts reversals only. A settled child keeps its share less every refund made or owed on it (#3854; before #3854 it held no settlement line and kept nothing) | `CANCELLATION` / booking id | each cancel path, in the claim transaction that flips the booking `CANCELLED`, under its `lock(1)` |
 | Review closed by re-pricing (`INV-MOD-055`) — the admin price rebase (`booking-review-price-rebase.ts`), whose only caller is the closure | reversal of every live `GUEST_NIGHT` the re-price changed + re-post at the new figure, and the promotion likewise — all or nothing against the re-base's movement of the final price; **nothing** where the re-base declines or writes no history row | `MODIFICATION` / the `PRICE_REBASE` history row the re-base writes (both money components zero) | the closure (`recordReviewClosurePricing`), under the completion's `lock(1)` |
 
@@ -392,14 +403,14 @@ the database makes — and its lines cascade with it.)
 | Event today | Lines posted | Anchor | Writer |
 | --- | --- | --- | --- |
 | Card capture, PRIMARY or ADDITIONAL (`INV-PAY-055`, `INV-PAY-081`) | `CARD_CAPTURE` (+) for the captured amount, `method = CARD` | `PAYMENT_TRANSACTION` | the Stripe webhook / recovery settle, inside the fenced claim |
-| Internet Banking invoice paid (`INV-PAY-015`, `INV-PAY-026`) | `BANK_RECEIPT` (+) for the cash evidenced, `method = INTERNET_BANKING` | `PAYMENT_TRANSACTION` | the inbound Xero reconciler's settle |
+| Internet Banking invoice paid (`INV-PAY-015`, `INV-PAY-026`) | `BANK_RECEIPT` (+) for the cash evidenced, `method = INTERNET_BANKING` — since #3979 the PRIMARY row carries the cash the invoice collected, not the figure it was born with (`INV-PAY-125`) | `PAYMENT_TRANSACTION` | the inbound Xero reconciler's settle |
 | Account credit applied at confirmation (`INV-PAY-002`, `INV-PAY-024`) | `CREDIT_APPLIED` (+), `method = ACCOUNT_CREDIT`, linked to the `BOOKING_APPLIED` `MemberCredit` row; a clamp give-back (a positive applied row) posts a negative one, and so does a credit-paid booking's review share, which goes through that same `giveBackAppliedCredit` (#3791, `INV-PAY-113`), and its ordinary price reduction (#3809, `INV-MOD-011`) | `MEMBER_CREDIT` | every writer of the row, through `syncBookingLedgerCredits` |
 | Manual mark-paid (`INV-PAY-001`, `INV-PAY-038`) | `CASH_RECORDED` (+), `method = CASH`, `postedByMemberId` = the officer | `PAYMENT_TRANSACTION` | the mark-paid settle |
 | Mark-paid reversal (`INV-PAY-045`) | reversal of the `CASH_RECORDED` line | `PAYMENT_TRANSACTION` | the reversal |
 | Card refund — cancellation tier, reduction, superseded payment, duplicate capture (`INV-MOD-011`, `INV-PAY-043`, `INV-PAY-065`) | `CARD_REFUND` (−), `method = CARD` | `PAYMENT_REFUND` | converges from the `PaymentRefund` row once it records the refund (see above: the debt is durable before the provider call, `INV-ADDPAY-018`; the ledger line follows the answer) |
 | Cancellation credited to account (`CANCELLATION_REFUND`) | `CREDIT_ISSUED` (−), `method = ACCOUNT_CREDIT`, linked to the credit row | `MEMBER_CREDIT` | every writer of the row (the cancel paths and the Xero inbound credit mints), through `syncBookingLedgerCredits` |
 | Reduction credited to account (`BOOKING_MODIFICATION_REFUND`) | `CREDIT_ISSUED` (−), `method = ACCOUNT_CREDIT` | `MEMBER_CREDIT` | `createBookingModificationCredit`, through `syncBookingLedgerCredits` |
-| Hand-back completed on the `local-allocation` route — an IB/cash cancellation (`CANCELLED_BOOKING_HAND_BACK`, #3529), or a review refund the club sends back itself — on a payment that is not a card payment | `BANK_REFUND` (−), `method = INTERNET_BANKING` by #3529's wording decision (`refundMethodForEditReviewRoute`, `INV-PAY-101`), `postedByMemberId` = the officer. A legacy task on a card capture posts none: that money goes back on the card and posts `CARD_REFUND` from its refund row | `REVIEW_TASK` | `manual-refund-task-resolution.ts` |
+| Hand-back completed on the `local-allocation` route — an IB/cash cancellation (`CANCELLED_BOOKING_HAND_BACK`, #3529), or a review refund the club sends back itself — on a payment that is not a card payment | `BANK_REFUND` (−), `method = INTERNET_BANKING` by #3529's wording decision (`refundMethodForEditReviewRoute`, `INV-PAY-101`), `postedByMemberId` = the officer. A legacy task on a card capture posts none: that money goes back on the card and posts `CARD_REFUND` from its refund row. A card refund shortfall's part (`INV-PAY-129`) - a card cancellation's, or a capacity race's part to check (`INV-PAY-135`) - does post one on the card payment, since that money went back by hand | `REVIEW_TASK` | `manual-refund-task-resolution.ts` |
 | Applied credit restored on cancellation (`INV-PAY-019`) | `CREDIT_ISSUED` (−) for exactly what was restored — **not** a reversal of the `CREDIT_APPLIED` line, because the restore is tiered (see above) | `CANCELLATION` (the booking) | `restoreCreditFromBooking`, through `syncBookingLedgerCredits` |
 | A group organiser's settlement paid — card capture, or the combined Internet Banking invoice's inbound reconcile (#3854) | per child it paid: the child's confirmation lines (§5.1, fenced per booking), and its share — the child's own `finalPriceCents`, never a split of the total — as `CARD_CAPTURE` (`method = CARD`) or `BANK_RECEIPT` (`method = INTERNET_BANKING`), keyed `groupSettlementShareKey`; sum or nothing against what the settlement collected | `GROUP_SETTLEMENT` / settlement id | `settleConfirmedChildrenAndNotify`, in the claim that flips the children PAID, under its `lock(1)` and the children's lodge keys, through `postGroupSettlementLedgerLines`; for a child settled before #3854, the back-post (§6), through the same planner and key |
 | Organiser cancel's frozen mirror plan (`refundPlan`, #1236): a card plan frozen before #3653, or an Internet Banking settlement's | `CARD_REFUND` or `BANK_REFUND` (−) for the child's planned share, beside the mirror that records it, keyed `groupSettlementRefundKey` — only where this settlement's share is on the child's ledger, so a child settled before #3854 waits for the back-post to post share, refund and kept together | `GROUP_SETTLEMENT` / settlement id | the organiser cancel's per-child claim, and the plan's recovery replay (`executeGroupSettlementRefundPlan`) for a refund that failed inline, and the back-post (§6) for a mirror written before #3854 — one key, so only one posts |
@@ -418,8 +429,8 @@ the database makes — and its lines cascade with it.)
 | Late capture on a deleted booking (`INV-ADDPAY-036`) | `CARD_CAPTURE` (+) as any capture; the task that queues it for a person is the instrument | `PAYMENT_TRANSACTION` | the webhook |
 
 **Which money a closure's lines record (#3582) — decided at booking grain, never per task.**
-One parked edit can raise several `EDIT_FINANCIAL_REVIEW` tasks (one per strand
-it moved), and every closure re-bases the WHOLE booking from its strands
+One parked edit could raise several `EDIT_FINANCIAL_REVIEW` tasks before #4317
+(one per strand it moved), and every closure re-bases the WHOLE booking from its strands
 (`INV-MOD-055`). So the first sibling's re-price already carries every
 sibling's money, and a rule decided per task counts it twice. The rule, applied
 by `planReviewClosureShareLines` after the closure's re-price rows (§5.1):
@@ -591,11 +602,45 @@ and `V3_LEGACY_HAND_BACK` — the last
 two on the refunded column only, since on `owed(b)` they are money the ledger
 is missing; `CHANGE_FEE_REVERSED_BY_CANCELLATION`;
 `RETAINED_REVIEW_SHARE` (§5.3); and a cancelled booking's `IN_FLIGHT_HAND_BACK`,
-`IN_FLIGHT_REFUND`, `V5_PLANNED_REFUND_SHORT` and `D2_DISMISSED_HAND_BACK`. A
-refund is in flight while the recovery runner will still make it — pending,
+`IN_FLIGHT_REFUND`, `V5_PLANNED_REFUND_SHORT`, `D2_DISMISSED_HAND_BACK` and
+`REFUND_APPEAL_PAID` (#4120). That last is a refund appeal paid back after the
+cancel: it returns more than the cancel kept and no charge line says so. It is
+sized from each approved appeal's own outcome as the refund-requests screen
+reads it (`readApprovedAppealOutcomes`, `approvedAppealRefundedCents`), by
+card (its own, or the group organiser's, #3956) or by its own completed
+hand-back, and never from the lines. An appeal's hand-back is never the
+cancel's in-flight or dismissed one, nor is its card refund still retrying the
+cancel's in-flight refund, because the cancel never netted either. An unpaid,
+dismissed or declined appeal explains nothing, nor does one paid for a
+different amount than the ledger shows. The class checks a booking's total
+against its appeals' outcomes, not which ledger lines are the appeal's. An
+appeal's card refund closed as paid another way counts only what was paid
+back: a part close's unpaid rest is read from the close's task as not refunded
+(`cardRefundClosedUnpaidCents`). One case it cannot classify, left a
+disagreement for an officer to look at: a card payment whose refund plan
+covers less than the approved amount refunds only the planned part; once that
+refund succeeds (or when nothing could be planned) no record holds the rest,
+so the outcome reads the whole approved amount and PRICE disagrees by the
+unplanned part — the drift `INV-PAY-118` logs at approval. A refund is in flight while the recovery runner will still make it — pending,
 processing, or failed with a retry scheduled and attempts left
 (`isPaymentRecoveryOperationInFlight`, #3854 K1); an exhausted one is not, and
 the money it owes back is a disagreement.
+`V5_PLANNED_REFUND_SHORT` is a card cancel's refund plan short of the refund
+due. The plan is the cancel's own card refund rows: a member's cancel's one
+row, or a capacity race's, one per intent (`isBookingCancelCardRefundRecoveryKey`,
+the rule the booking page reads them by, #4147). The refund due is the
+CANCELLED snapshot's settled figure, except on a capacity race: since #4125
+that figure is the plan's total, so what it owes back is all it did not
+retain (`paidAmountCents` less `retainedAmountCents`), but never more than the
+ledger captured. A charge the payment's records never captured never reaches
+`owed(b)`, so V5 does not name it; `CAPTURED` reports that gap. A capacity
+race whose plan fell short of what was captured, or was empty, is named for
+the rest with the detail `capacity race`, and one whose refund is dead
+disagrees, like any other. Since #4154 the rest is a hand-back task to check,
+raised with the cancel (`INV-PAY-135`): marked paid back, it posts the
+`BANK_REFUND` line a card refund shortfall's part posts (`INV-PAY-129`), so
+the booking agrees; open or dismissed, nothing is posted and V5 still names
+the rest, the dismissal's note saying how it was settled.
 `AMBIGUOUS_REVIEW_GIVE_BACK` is a booking whose review give-back rows
 the census cannot attribute to their tasks (below the review-line paragraph).
 `KNOWN_DEFECT_HISTORY` finds bookings #3791, #3792 or #1641's shape damaged,
@@ -636,7 +681,8 @@ coverage gaps, zero integrity findings and no booking in a class that holds
 the gate, every other class acknowledged by the owner on #3583 — instance by
 instance, to the cent, in the acknowledgement file, save
 `GROUP_SETTLEMENT_OFF_LEDGER`, which the owner decided is listed only (and
-which names only a child whose planned lines agree) — because a
+which names only a child whose planned lines agree), and `REFUND_APPEAL_PAID`,
+listed only too (owner decision on #4075) — because a
 literal zero is not reachable on a live history (in-flight refunds and the
 classes above are expected states). A disagreement is a poster bug, fixed and
 re-run. It
@@ -813,7 +859,7 @@ No row is "unknown". Codes:
 | 005, 023–027 | U | promo caps count `PromoRedemption`/allocation rows, which stay the promo authority; the `PROMOTION` line is their posting |
 | 006 | L | "reconcile back to cent-based ledger records" becomes literal: every Stripe/Xero amount is a line's `amountCents` |
 | 007 | L | an `ADJUSTMENT` line requires `postedByMemberId` and a narration; approval stays on `AdminCreditAdjustmentRequest` |
-| 028 | L | a `GUEST_NIGHT` line posts one per priced night row, an inexact strand's included (#3583 decision A: a strand-sized line fails `isSingleNightLine`, so no later closure could post); provenance stays on the night row, and an edit still refuses to price an inexact night (`INV-MOD-028`) |
+| 028 | L | a `GUEST_NIGHT` line posts one per priced night row, an inexact strand's included (#3583 decision A: a strand-sized line fails `isSingleNightLine`, so no later closure could post); provenance stays on the night row, and since #4317 an edit values every night by `INV-MOD-028`, whatever its provenance |
 | 029 | L | `PROMOTION` line = the promo build-up; unknown posts nothing and the census reports the gap, never zero |
 | 030 | U | reader discipline; the ledger readers follow it |
 | 031 | L | the verdict becomes the census's per-booking result (§6, §8) |
@@ -867,13 +913,13 @@ No row is "unknown". Codes:
 | 005, 006, 026 | L | locked nights are `GUEST_NIGHT` lines that a re-post preserves (same unit, same tier); only reversed lines reprice |
 | 007, 008, 009, 010, 027, 029–035 | U | rates, eligibility, snapshots |
 | 011, 012 | L | a reduction posts a reversal; the refund/credit line follows the tier; "over-consumed slice" is Σ `CREDIT_APPLIED` − `charged(b)` |
-| 013 | L | a parked modification posts nothing (§5.1) |
+| 013 | L | a modification parked before #4317 posted nothing (§5.1) |
 | 014, 015, 016, 017 | U | Xero credit-note allocation mechanics (`MemberCreditNoteAllocation` stays) |
 | 018 | U | lifecycle transitions |
 | 028, 036, 037, 045–048, 051–054 | L | the night row stays the sold-price authority; the line posts from it; a blank posts nothing; the repair store's writes reverse-and-re-post |
 | 038 | C | three consumers of a re-based strand read one line set |
 | 039 | L | whole-guest vs individual-night evidence decides the grain a strand posts at (§7 C1) |
-| 040, 041, 042, 043, 044 | U | what parking writes and discloses |
+| 040, 041, 042, 043, 044 | U | since #4317 every edit door prices and posts as §5.1; parking is legacy |
 | 049 | L | during an open review the pre-edit lines stand; `owed(b)` is the pre-edit figure |
 | 050 | U | the placeholder link and the other-club tick |
 | 055 | L | closing re-prices = reversal + re-post from strands, or declines (posts nothing) |
@@ -935,8 +981,8 @@ Taken here, on the evidence above:
 - **Account credit stays in `MemberCredit`**; the booking ledger posts the
   booking-side leg and links the row (`INV-PAY-019`).
 - **Night rows stay the sold-price authority** until C7, and after it: a
-  `GUEST_NIGHT` line is a posting of a night row, so `INV-MOD-028`'s evidence
-  discipline is unchanged.
+  `GUEST_NIGHT` line is a posting of a night row. Since #4317 an edit values
+  those rows by `INV-MOD-028` and its lines post the values (§5.1).
 
 Owner decisions (#3532, 23 Sep 2026):
 

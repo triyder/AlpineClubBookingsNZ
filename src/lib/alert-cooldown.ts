@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { exactPrefix } from "@/lib/prisma-exact-prefix";
 import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
 
 /**
@@ -153,7 +154,7 @@ export async function listOwedAlertKeys({
 }): Promise<string[]> {
   const rows = await store.alertCooldown.findMany({
     where: {
-      key: { startsWith: prefix },
+      key: exactPrefix(prefix),
       lastAlertedAt: { lte: new Date(now.getTime() - retryAfterMs) },
     },
     select: { key: true },

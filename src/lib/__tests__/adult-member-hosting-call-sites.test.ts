@@ -1696,7 +1696,7 @@ describe("the same-owner refusal and the escalation seam (#2576 §6, §8, §9)",
       "src/app/api/admin/bookings/[id]/confirm-pending-guests/route.ts",
     );
     const adminZero = adminConfirm.slice(
-      adminConfirm.indexOf("if (booking.finalPriceCents === 0)"),
+      adminConfirm.indexOf("if (savedCardChargeCents(booking) === 0)"),
       adminConfirm.indexOf("// No saved payment method"),
     );
     expect(adminZero).toContain(
@@ -1707,7 +1707,7 @@ describe("the same-owner refusal and the escalation seam (#2576 §6, §8, §9)",
 
     const cron = readRepoCode("src/lib/cron-confirm-pending.ts");
     const cronZero = cron.slice(
-      cron.indexOf("if (booking.finalPriceCents === 0)"),
+      cron.indexOf("if (savedCardChargeCents(booking) === 0)"),
       cron.indexOf("const savedPayment = savedPaymentMethodForBooking"),
     );
     expect(cronZero).toContain("enqueueOwnHostingCoverageReevaluation(");

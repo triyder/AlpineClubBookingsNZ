@@ -60,20 +60,33 @@ never above `xhigh`.
 
 ## Setting model and effort
 
-- **Claude Code.** The `Agent` tool takes a `model`; effort comes from the role
-  definition or is inherited. The repository's role definitions in
-  [`.claude/agents/`](../../.claude/agents/) set both — `implementor`,
-  `reviewer` and `explorer` — and a per-call `model` overrides the role's.
-  Per-model effort defaults live in each user's `settings.json`
-  (`modelSettings`).
-- **Codex.** [`.codex/config.toml`](../../.codex/config.toml) sets the
-  subagent default, and [`.codex/agents/`](../../.codex/agents/) holds the
-  same three roles. Override at launch with `-m <model>` and
-  `-c model_reasoning_effort=<level>`. The profiles in
-  [`codex/profiles`](codex/profiles/README.md) set only sandbox, network and
-  approval.
-- Check the effective model where the runtime shows it, and report any
-  substitution.
+What a subagent actually runs on, first match wins:
+
+- **Claude Code.**
+  1. a `model` or `effort` passed on the `Agent` call;
+  2. the role definition in [`.claude/agents/`](../../.claude/agents/):
+     `implementor` and `reviewer` set both model and effort, `explorer` sets
+     only its model;
+  3. otherwise the main session's model, and for effort the user's
+     per-model default (`modelSettings` in `settings.json`) or the session's.
+
+  A launch with no role (`general-purpose`, a fork) takes step 3 for both.
+- **Codex.**
+  1. launch flags, `-m <model>` and `-c model_reasoning_effort=<level>`;
+  2. the role file in [`.codex/agents/`](../../.codex/agents/), which sets both
+     model and effort for all three roles;
+  3. the `[agents]` subagent default in
+     [`.codex/config.toml`](../../.codex/config.toml), read only in a trusted
+     project;
+  4. otherwise the session's own.
+
+  The profiles in [`codex/profiles`](codex/profiles/README.md) set only
+  sandbox, network and approval.
+
+A role default is a starting point, not a requirement. Choose per task as
+`AGENTS.md` → "Model selection" says, state the choice on the launch, and
+never exceed `xhigh` whichever source sets it. Check the effective model
+where the runtime shows it, and report any substitution.
 
 ## Sources
 

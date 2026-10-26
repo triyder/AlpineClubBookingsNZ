@@ -1,24 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
-import { bookingOwner } from "@/lib/booking-owner";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { addDaysDateOnly, formatDateOnly, isDateOnlyString, parseDateOnly } from "@/lib/date-only";
-import { OPERATIONAL_STAY_BOOKING_STATUSES } from "@/lib/booking-status";
 import { OPERATIONALLY_PRESENT_GUEST_WHERE } from "@/lib/member-guest-consent";
 import { resolveOptionalActiveLodgeId } from "@/lib/lodges";
 import { getGuestBedNightKeys } from "@/lib/booking-guest-stay-ranges";
+import { loadHutLeaderNightCover, memberMayLeadNight } from "@/lib/hut-leader-night-cover";
+import {
+  hutLeaderStayBookingWhere,
+  hutLeaderStayNightKeys,
+  type HutLeaderMemberStay as MemberStay,
+} from "@/lib/hut-leader-stayed-nights";
 
-type MemberStay = {
-  checkIn: Date;
-  checkOut: Date;
-  stayStart?: Date | null;
-  stayEnd?: Date | null;
-  nights?: Array<{ stayDate: Date }> | null;
-};
+/** One guest stay, with the booking it is on (#3819: school or not). */
+type StayOnBooking = MemberStay & { bookingId: string };
 
 /**
  * GET /api/admin/hut-leaders/eligible-members?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD&lodgeId=...
- * Returns adult members who have paid/operational bookings overlapping the given date range,
+ * Returns adult members who are guests on paid/operational bookings overlapping the date range,
  * at the required lodge, along with their booking dates and suggested assignment dates.
  */
 export async function GET(req: NextRequest) {
@@ -59,16 +58,13 @@ export async function GET(req: NextRequest) {
       // Owner decision D-12 (#2307): the picker offers the officer members who
       // will actually be at the lodge. A member whose consent to being added as
       // a guest is still PENDING is not operationally present, so their guest
-      // row does not make them a hut-leader candidate. Booking OWNERS are
-      // collected separately below and are not guest rows, so they are
-      // unaffected — a booker is never a consent subject on their own booking.
+      // row does not make them a hut-leader candidate. An owner's own guest row
+      // carries no consent (a booker is never a consent subject on their own
+      // booking), so it passes.
       ...OPERATIONALLY_PRESENT_GUEST_WHERE,
-      booking: {
-        lodgeId,
-        status: { in: [...OPERATIONAL_STAY_BOOKING_STATUSES] },
-        checkIn: { lte: rangeEnd },
-        checkOut: { gt: rangeStart },
-      },
+      // The same bookings the manual create/edit stay check reads (#3817), so
+      // a member offered here is a member the create accepts.
+      booking: hutLeaderStayBookingWhere({ lodgeId, rangeStart, rangeEnd }),
       member: {
         active: true,
         accessRoles: { some: { role: "USER" } },
@@ -91,7 +87,7 @@ export async function GET(req: NextRequest) {
         },
       },
       booking: {
-        select: { checkIn: true, checkOut: true },
+        select: { id: true, checkIn: true, checkOut: true },
       },
     },
   });
@@ -111,12 +107,13 @@ export async function GET(req: NextRequest) {
      * `bookings[0]` as its seed without an assertion or a refusal for a state
      * that cannot occur (#2801).
      */
-    bookings: [MemberStay, ...MemberStay[]];
+    bookings: [StayOnBooking, ...StayOnBooking[]];
   }>();
 
   for (const g of guests) {
     if (!g.memberId || !g.member || !g.member.active) continue;
-    const guestStay: MemberStay = {
+    const guestStay: StayOnBooking = {
+      bookingId: g.booking.id,
       checkIn: g.booking.checkIn,
       checkOut: g.booking.checkOut,
       stayStart: g.stayStart,
@@ -148,85 +145,10 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // Also include booking owners who are adults
-  const bookings = await prisma.booking.findMany({
-    where: {
-      lodgeId,
-      status: { in: [...OPERATIONAL_STAY_BOOKING_STATUSES] },
-      checkIn: { lte: rangeEnd },
-      checkOut: { gt: rangeStart },
-      member: {
-        active: true,
-        ageTier: "ADULT",
-        accessRoles: { some: { role: "USER" } },
-      },
-    },
-    select: {
-      checkIn: true,
-      checkOut: true,
-      guests: {
-        select: {
-          memberId: true,
-          stayStart: true,
-          stayEnd: true,
-          nights: { select: { stayDate: true } },
-        },
-      },
-      member: {
-        select: {
-          id: true,
-          firstName: true,
-          lastName: true,
-          email: true,
-          active: true,
-          ageTier: true,
-          hutLeaderEligible: true,
-          hutLeaderEligibleAt: true,
-        },
-      },
-      // #3369: the owner may be an Organisation; bookingOwner() reads both.
-      organisation: { select: { name: true, email: true } },
-    },
-  });
-
-  for (const b of bookings) {
-    if (!bookingOwner(b).member.active || bookingOwner(b).member.ageTier !== "ADULT") continue;
-    const ownerGuest = b.guests.find((guest) => guest.memberId === bookingOwner(b).member.id);
-    const ownerStay: MemberStay = {
-      checkIn: b.checkIn,
-      checkOut: b.checkOut,
-      stayStart: ownerGuest?.stayStart,
-      stayEnd: ownerGuest?.stayEnd,
-      nights: ownerGuest?.nights,
-    };
-    const ownerNightKey = getGuestBedNightKeys(ownerStay, ownerStay).join(",");
-    // #3369: hut-leader eligibility is a MEMBER's, so a booking owned by an
-    // organisation contributes no candidate. Its teacher is a member in their
-    // own right and reaches this list through their own booking or assignment.
-    const ownerMemberId = bookingOwner(b).member.id;
-    if (!ownerMemberId) continue;
-    const existing = memberBookings.get(ownerMemberId);
-    if (existing) {
-      if (
-        !existing.bookings.some(
-          (booking) =>
-            getGuestBedNightKeys(booking, booking).join(",") === ownerNightKey,
-        )
-      ) {
-        existing.bookings.push(ownerStay);
-      }
-    } else {
-      memberBookings.set(ownerMemberId, {
-        id: ownerMemberId,
-        firstName: bookingOwner(b).member.firstName,
-        lastName: bookingOwner(b).member.lastName,
-        email: bookingOwner(b).member.email,
-        hutLeaderEligible: Boolean(bookingOwner(b).member.hutLeaderEligible),
-        hutLeaderEligibleAt: bookingOwner(b).member.hutLeaderEligibleAt ?? null,
-        bookings: [ownerStay],
-      });
-    }
-  }
+  // Booking OWNERS are not collected separately: a member counts as staying
+  // only on nights they are a guest, and owning a booking they are not on does
+  // not count (owner decision on #3820, 3 Oct 2026). An owner who is on their
+  // own booking is found above, through their guest row.
 
   // Widen the coverage query window to span every member's actual stay, so an
   // assignment that starts before rangeStart (or ends after rangeEnd) is still
@@ -252,27 +174,39 @@ export async function GET(req: NextRequest) {
   const coverageWindowEnd =
     latestStayEnd.getTime() > rangeEnd.getTime() ? latestStayEnd : rangeEnd;
 
-  // Existing hut-leader assignments overlapping the widened window. We reuse the
-  // inclusive covered model from getUnassignedHutLeaderDates (the amber "Upcoming
-  // Dates Without…" panel) so suggestions never point at a night that already has
-  // a leader. Suggested ranges therefore abut existing assignments (never overlap
-  // by more than the 1-day handover boundary the POST route already allows), so
-  // they are always safely POST-able.
-  const coverageAssignments = await prisma.hutLeaderAssignment.findMany({
-    where: { lodgeId, startDate: { lte: coverageWindowEnd }, endDate: { gte: coverageWindowStart } },
-    select: { startDate: true, endDate: true },
+  // Which nights in the widened window already have a leader, read through the
+  // ONE coverage helper the amber "Upcoming nights with no … staying" panel
+  // uses (#3818, `INV-DATE-031`): a night is covered when an assignment claims it AND its
+  // leader is staying that night. Suggestions therefore never point at a night
+  // that already has a leader on site. A night whose assignment's leader is not
+  // there (a row stamped through its leader's checkout day) reads as uncovered,
+  // so a suggestion may start on it. For that common shape the overlap is the
+  // one handover day the POST route allows; a longer stale row is still refused
+  // by the POST route's overlap check, which stays the authority.
+  const coverage = await loadHutLeaderNightCover(prisma, {
+    scope: { kind: "lodge", lodgeId },
+    from: coverageWindowStart,
+    to: coverageWindowEnd,
   });
-
-  // Inclusive covered-night predicate — matches isDateCovered in
-  // src/lib/hut-leader-coverage.ts.
-  const isNightCovered = (d: Date) =>
-    coverageAssignments.some(
-      (a) => a.startDate.getTime() <= d.getTime() && a.endDate.getTime() >= d.getTime(),
+  const isNightCovered = (d: Date) => coverage.isCovered(lodgeId, d);
+  // #3819: on a school night only a ticked kind counts, so a member whose kind
+  // (on the school booking, or staying separately) is unticked can lead none
+  // of it. Such a night is never offered to them: a row they could not cover
+  // would also block, by overlap, the ticked leader an officer adds next.
+  const mayLeadNight = (stays: readonly StayOnBooking[], night: Date) => {
+    const key = formatDateOnly(night);
+    const stay = stays.find((candidate) =>
+      getGuestBedNightKeys(candidate, candidate).includes(key),
     );
+    return stay
+      ? memberMayLeadNight(coverage, { lodgeId, night, stayBookingId: stay.bookingId })
+      : false;
+  };
 
   const members = Array.from(memberBookings.values())
     .map((m) => {
-      // Find earliest checkIn and latest checkOut (the member's overall stay span).
+      // Find earliest checkIn and latest checkOut (the member's overall booking
+      // span, shown as the booking dates — never offered as an assignment end).
       const earliestCheckIn = m.bookings.reduce((min, b) => b.checkIn < min ? b.checkIn : min, m.bookings[0].checkIn);
       const latestCheckOut = m.bookings.reduce((max, b) => b.checkOut > max ? b.checkOut : max, m.bookings[0].checkOut);
 
@@ -280,32 +214,30 @@ export async function GET(req: NextRequest) {
       // half-open [checkIn, checkOut) day range of each booking. checkOut is the
       // departure morning, NOT an occupied night — this matches every occupancy
       // computation in the repo (getBookingStatsByLodge / getUnassignedHutLeaderDates,
-      // which feed the amber "Upcoming Dates Without…" panel on this same page).
+      // which feed the amber "Upcoming nights with no … staying" panel on this
+      // same page).
       // Only real stay nights count — gap nights between two disjoint bookings do not.
-      const stayNightsByTime = new Map<number, Date>();
-      for (const b of m.bookings) {
-        for (const key of getGuestBedNightKeys(b, b)) {
-          const d = parseDateOnly(key);
-          stayNightsByTime.set(d.getTime(), d);
-        }
-      }
-      const stayNights = Array.from(stayNightsByTime.values()).sort(
-        (a, b) => a.getTime() - b.getTime(),
-      );
+      const stayNights = hutLeaderStayNightKeys(m.bookings).map(parseDateOnly);
 
       // The first uncovered night, read once, with the rest of the run behind
       // it. Its absence IS "fully covered" — the same one condition the count
       // expressed, now in a form the compiler can follow (#2801).
-      const uncoveredNights = stayNights.filter((d) => !isNightCovered(d));
+      const allUncovered = stayNights.filter((d) => !isNightCovered(d));
+      const uncoveredNights = allUncovered.filter((d) => mayLeadNight(m.bookings, d));
       const [firstUncoveredNight, ...laterUncoveredNights] = uncoveredNights;
       const uncoveredNightCount = uncoveredNights.length;
+      // Uncovered school-group nights this lodge does not accept this member
+      // for (#3819), shown on the suggestion so the officer knows why.
+      const schoolNightsNotAccepted = allUncovered.length - uncoveredNights.length;
       const fullyCovered = firstUncoveredNight === undefined;
 
       // Suggested range = the first contiguous run of uncovered nights. If the
-      // member is fully covered, fall back to their overall stay span (fields
-      // stay present; the UI disables Confirm for fully-covered members).
-      let suggestedStart = earliestCheckIn;
-      let suggestedEnd = latestCheckOut;
+      // member is fully covered, fall back to their first and LAST NIGHT STAYED
+      // (fields stay present; the UI disables Confirm for fully-covered
+      // members). Never the check-out day, which is a morning, not a night the
+      // create would accept (#3817).
+      let suggestedStart = stayNights[0] ?? earliestCheckIn;
+      let suggestedEnd = stayNights[stayNights.length - 1] ?? suggestedStart;
       if (firstUncoveredNight !== undefined) {
         suggestedStart = firstUncoveredNight;
         suggestedEnd = firstUncoveredNight;
@@ -331,6 +263,7 @@ export async function GET(req: NextRequest) {
         suggestedStartDate: formatDateOnly(suggestedStart),
         suggestedEndDate: formatDateOnly(suggestedEnd),
         uncoveredNightCount,
+        schoolNightsNotAccepted,
         fullyCovered,
       };
     })

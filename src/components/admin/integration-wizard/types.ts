@@ -44,6 +44,16 @@ export interface WizardStepHelpers {
    */
   skip: () => void;
   /**
+   * #4410: tell the shell this step's save is in flight (`true` when it starts,
+   * `false` in its `finally`). While it is, the shell disables Continue and
+   * every other step in the stepper, because a step can already count as
+   * verified before its writes land: a credential Replace is verified by the
+   * pair already stored, and an operator who continued to Connect let the late
+   * write reset the connection the OAuth callback had just made. Every step
+   * that saves must report it (pinned by `wizard-step-save-reporting.test.ts`).
+   */
+  reportSaving: (saving: boolean) => void;
+  /**
    * The shell's VOUCH that it renders an `AdminViewOnlySectionBanner` above this
    * step body — in every branch, loading included (#2324).
    *

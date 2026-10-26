@@ -23,8 +23,15 @@ import {
 } from "@/lib/xero-operation-queue";
 import { prisma } from "@/lib/prisma";
 import { enqueueXeroKeptLateCaptureInvoiceOperation } from "@/lib/xero-kept-late-capture-invoice";
+import { enqueueAdditionalCaptureReceiptOperation } from "@/lib/additional-capture-receipt-enqueue";
+import {
+  queueWaitingPaidAnotherWayNote,
+  readPaidAnotherWayReceiptState,
+} from "@/lib/paid-another-way-receipt-note";
 import { recordAndNoteRepairedLateCaptureRefunds } from "@/lib/late-capture-repair-refund-record";
+import { readLateCaptureCardRefundsByHand } from "@/lib/late-capture-card-refund-by-hand";
 import { readRefundCreditNoteGap } from "@/lib/xero-admin-health";
+import { enqueueXeroRefundRequestCreditNoteOperation } from "@/lib/xero-refund-request-credit-note-outbox";
 import { upsertXeroObjectLink } from "@/lib/xero-sync";
 import { finishRefundCreditNoteSettlement } from "@/lib/xero-refund-note-settlement";
 import { isXeroConnected } from "@/lib/xero-token-store";
@@ -39,10 +46,14 @@ export type RepairDependencies = {
   enqueueXeroBookingInvoiceUpdateOperation: typeof enqueueXeroBookingInvoiceUpdateOperation;
   // #3635: a kept late capture's own invoice, anchored on its approval task.
   enqueueXeroKeptLateCaptureInvoiceOperation: typeof enqueueXeroKeptLateCaptureInvoiceOperation;
+  // #3953: a change's card capture's own receipt, keyed by its intent.
+  enqueueAdditionalCaptureReceiptOperation: typeof enqueueAdditionalCaptureReceiptOperation;
   enqueueXeroSupplementaryInvoiceOperation: typeof enqueueXeroSupplementaryInvoiceOperation;
   enqueueXeroModificationCreditNoteOperation: typeof enqueueXeroModificationCreditNoteOperation;
   enqueueXeroAccountCreditNoteOperation: typeof enqueueXeroAccountCreditNoteOperation;
   enqueueXeroRefundCreditNoteOperation: typeof enqueueXeroRefundCreditNoteOperation;
+  // #4231 (`INV-PAY-118`): a refund request's own note, keyed by the request.
+  enqueueXeroRefundRequestCreditNoteOperation: typeof enqueueXeroRefundRequestCreditNoteOperation;
   enqueueXeroCreditNoteAllocationOperation: typeof enqueueXeroCreditNoteAllocationOperation;
   // #3836: an unallocated credit-only card invoice's allocation.
   enqueueXeroAppliedCreditAllocationOperation: typeof enqueueXeroAppliedCreditAllocationOperation;
@@ -68,6 +79,12 @@ export type RepairDependencies = {
   readRefundCreditNoteGap: typeof readRefundCreditNoteGap;
   // #3548: the one read-back-then-settle, for the operator-applied settle.
   finishRefundCreditNoteSettlement: typeof finishRefundCreditNoteSettlement;
+  // #3924 round 8: a waiting paid-another-way close's receipt and note, and
+  // the one note step that queues it once the receipt is in Xero.
+  readPaidAnotherWayReceiptState: typeof readPaidAnotherWayReceiptState;
+  queueWaitingPaidAnotherWayNote: typeof queueWaitingPaidAnotherWayNote;
+  // #3924 round 12: a late capture's card refunds no note will answer.
+  readLateCaptureCardRefundsByHand: typeof readLateCaptureCardRefundsByHand;
 };
 
 const defaultDependencies: RepairDependencies = {
@@ -75,10 +92,12 @@ const defaultDependencies: RepairDependencies = {
   enqueueXeroBookingInvoiceOperation,
   enqueueXeroBookingInvoiceUpdateOperation,
   enqueueXeroKeptLateCaptureInvoiceOperation,
+  enqueueAdditionalCaptureReceiptOperation,
   enqueueXeroSupplementaryInvoiceOperation,
   enqueueXeroModificationCreditNoteOperation,
   enqueueXeroAccountCreditNoteOperation,
   enqueueXeroRefundCreditNoteOperation,
+  enqueueXeroRefundRequestCreditNoteOperation,
   enqueueXeroCreditNoteAllocationOperation,
   enqueueXeroAppliedCreditAllocationOperation,
   enqueueXeroSyncOperationRetry,
@@ -94,6 +113,9 @@ const defaultDependencies: RepairDependencies = {
   recordAndNoteRepairedLateCaptureRefunds,
   readRefundCreditNoteGap,
   finishRefundCreditNoteSettlement,
+  readPaidAnotherWayReceiptState,
+  queueWaitingPaidAnotherWayNote,
+  readLateCaptureCardRefundsByHand,
 };
 
 export function getDependencies(overrides?: Partial<RepairDependencies>): RepairDependencies {

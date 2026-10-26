@@ -19,6 +19,7 @@ export function AddedGuestRow({
   perGuestDatesEnabled,
   checkIn,
   checkOut,
+  stayStartMax,
   onUpdateRange,
   onRemove,
 }: {
@@ -27,6 +28,8 @@ export function AddedGuestRow({
   perGuestDatesEnabled: boolean;
   checkIn: string;
   checkOut: string;
+  /** #4030 review S3: the latest Date In this row may take, when narrower than the stay. */
+  stayStartMax?: string;
   onUpdateRange: (field: "stayStart" | "stayEnd", value: string) => void;
   onRemove: () => void;
 }) {
@@ -59,7 +62,9 @@ export function AddedGuestRow({
                 type="date"
                 value={guest.stayStart ?? checkIn}
                 min={checkIn}
-                max={shiftDateOnly(guest.stayEnd ?? checkOut, -1)}
+                max={[shiftDateOnly(guest.stayEnd ?? checkOut, -1), stayStartMax]
+                  .filter((value): value is string => Boolean(value))
+                  .sort()[0]}
                 onChange={(e) => onUpdateRange("stayStart", e.target.value)}
               />
             </div>

@@ -4,6 +4,7 @@ import { useEffect, type Dispatch, type RefObject, type SetStateAction } from "r
 import type { GuestData } from "@/components/guest-form";
 import type { PromoResult } from "@/components/promo-code-input";
 import { promoCodeListEntries, validatePromoCodeList } from "@/components/promo-code-list-client";
+import { promoPreviewGuestBody } from "@/components/promo-preview-guest";
 import type { PriceQuote } from "../_components/types";
 
 /**
@@ -94,13 +95,7 @@ export function useWorkingBeeDiscount({
         workPartyEventId: selectedWorkPartyEventId,
         checkIn,
         checkOut,
-        guests: reviewGuestPayload.map((g) => ({
-          ageTier: g.ageTier,
-          isMember: g.isMember,
-          ...(g.memberId ? { memberId: g.memberId } : {}),
-          ...(g.stayStart ? { stayStart: g.stayStart } : {}),
-          ...(g.stayEnd ? { stayEnd: g.stayEnd } : {}),
-        })),
+        guests: reviewGuestPayload.map((g) => promoPreviewGuestBody(g)),
       }),
     })
       .then(async (res) => {

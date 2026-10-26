@@ -1,3 +1,4 @@
+import { readRefundsAndCreditsOwed } from "@/lib/refunds-and-credits-owed";
 import {
   BookingStatus,
   PaymentStatus,
@@ -34,6 +35,7 @@ import {
   summarizeBookingMoneyReconciliations,
   type BookingMoneyReconciliationSummary,
 } from "@/lib/booking-money-reconciliation";
+import { isCapturedPaymentStatus } from "@/lib/booking-payment-state";
 import { type CollectedCashSummary } from "@/lib/payment-net-collected";
 
 export const MAX_FINANCE_BOOKING_METRICS_WINDOW_DAYS = 366;
@@ -139,6 +141,10 @@ const netCollectedPaymentSelect = Prisma.validator<Prisma.PaymentSelect>()({
   },
 });
 
+type NetCollectedCandidate = Prisma.PaymentGetPayload<{
+  select: typeof netCollectedPaymentSelect;
+}>;
+
 /**
  * How many booking ids to name in the ledger-gap alarm. Enough to act on,
  * bounded so one bad import cannot flood the log.
@@ -178,6 +184,14 @@ export interface FinanceBookingMetricsQuery {
   // deliberate, reporting-only exception to the "never sum across lodges"
   // scoping rule (see docs/multi-lodge/scoping-contract).
   lodgeId?: string | null;
+  /**
+   * #3372 (owner, 7 Oct 2026): read "Refunds owed" and "Credits owed" into the
+   * payment summary. They are as at today and club-wide, the same for every
+   * window, so a page that asks for several windows (the finance dashboard's
+   * comparison, the pricing view) reads them once: only the request that shows
+   * them sets this. Left out, both are null.
+   */
+  includeRefundsAndCreditsOwed?: boolean;
 }
 
 interface FinanceBookingMetricsWindow {
@@ -280,16 +294,31 @@ interface FinanceBookingMetricsPaymentSummary {
   additionalLedgerGapCents: number;
   additionalLedgerGapBookings: number;
   refundedCents: number;
-  /** Cancelled bookings' open hand-back refunds, taken off at once (#3372, 3 Oct 2026). */
+  /** Open hand-back refunds, taken off at once (#3372, 3 and 7 Oct 2026). */
   handBackOwedCents: number;
+  /** Card refunds not yet paid by Stripe, taken off at once (#3372, 7 Oct 2026). */
+  cardRefundOwedCents: number;
+  /** Late card charges awaiting the treasurer, taken off until kept (#3372, 7 Oct 2026). */
+  lateCaptureOwedCents: number;
+  /** A cancelled booking's late bank-transfer cash credited back (#3372). */
+  lateCashCreditedCents: number;
   /** Applied account credit cancellations kept (#3372 owner decision, 3 Oct 2026). */
   keptCreditCents: number;
   /**
    * `summarizeCollectedCash`'s figure: `capturedGrossCents - refundedCents -
-   * handBackOwedCents + keptCreditCents`, each payment netted on its own. Never sums the gross
-   * and additional columns — see `capturedGrossCents` (#2408).
+   * handBackOwedCents - cardRefundOwedCents - lateCaptureOwedCents -
+   * lateCashCreditedCents + keptCreditCents`, each payment netted on its own.
+   * Never sums the gross and additional columns — see `capturedGrossCents`
+   * (#2408).
    */
   netCollectedCents: number;
+  /**
+   * #3372 (owner, 7 Oct 2026): beside Net Collected, as at today and
+   * club-wide - NOT narrowed by the window or lodge (`readRefundsAndCreditsOwed`).
+   * Null unless the request set `includeRefundsAndCreditsOwed`.
+   */
+  refundsOwedCents: number | null;
+  creditsOwedCents: number | null;
   creditAppliedCents: number;
   changeFeeCents: number;
 }
@@ -412,8 +441,13 @@ function createZeroPaymentSummary(): FinanceBookingMetricsPaymentSummary {
     additionalLedgerGapBookings: 0,
     refundedCents: 0,
     handBackOwedCents: 0,
+    cardRefundOwedCents: 0,
+    lateCaptureOwedCents: 0,
+    lateCashCreditedCents: 0,
     keptCreditCents: 0,
     netCollectedCents: 0,
+    refundsOwedCents: null,
+    creditsOwedCents: null,
     creditAppliedCents: 0,
     changeFeeCents: 0,
   };
@@ -713,6 +747,9 @@ function summarizePayments(
   summary.capturedGrossCents = collectedCash.capturedGrossCents;
   summary.refundedCents = collectedCash.refundedCents;
   summary.handBackOwedCents = collectedCash.handBackOwedCents;
+  summary.cardRefundOwedCents = collectedCash.cardRefundOwedCents;
+  summary.lateCaptureOwedCents = collectedCash.lateCaptureOwedCents;
+  summary.lateCashCreditedCents = collectedCash.lateCashCreditedCents;
   summary.keptCreditCents = collectedCash.keptCreditCents;
   summary.netCollectedCents = collectedCash.netCollectedCents;
   summary.additionalLedgerGapCents = ledgerGap.additionalLedgerGapCents;
@@ -751,7 +788,12 @@ function summarizePayments(
       summary.outstandingAdditionalBookings += 1;
     }
     summary.creditAppliedCents += payment.creditAppliedCents;
-    summary.changeFeeCents += payment.changeFeeCents;
+    // #3955 review F9: a change fee is income once the money that pays it is
+    // in. A fee added to what an UNPAID booking owes (#3750) is recorded on
+    // its payment before anything is captured, so it counts only from capture.
+    if (isCapturedPaymentStatus(payment.status)) {
+      summary.changeFeeCents += payment.changeFeeCents;
+    }
   }
 
   if (ledgerGap.bookingIds.length > 0) {
@@ -1255,8 +1297,9 @@ export async function getFinanceBookingMetrics(
         checkOut: { gt: w.fromDate },
       })),
     } : null;
-  const [bookings, netCollectedCandidates] = stayOverlapWhere
-      ? await Promise.all([
+  const [[bookings, netCollectedCandidates], owed] = await Promise.all([
+    stayOverlapWhere
+      ? Promise.all([
           prisma.booking.findMany({
             where: { ...stayOverlapWhere, ...buildBookingDeletedWhere("hide"), status: { in: getStatusFilter(query) } },
             orderBy: [{ checkIn: "asc" }, { id: "asc" }],
@@ -1267,7 +1310,11 @@ export async function getFinanceBookingMetrics(
             select: netCollectedPaymentSelect,
           }),
         ])
-      : [[], []];
+      : Promise.resolve<[BookingMetricsRecord[], NetCollectedCandidate[]]>([[], []]),
+    // #3372 (owner, 7 Oct 2026): as at today, club-wide - not the window's;
+    // read once per page (`includeRefundsAndCreditsOwed`).
+    query.includeRefundsAndCreditsOwed ? readRefundsAndCreditsOwed() : Promise.resolve(null),
+  ]);
   const contributingBookingIds = new Set<string>();
   const realized = realizedWindow
     ? buildRealizedMetrics(
@@ -1294,11 +1341,15 @@ export async function getFinanceBookingMetrics(
   const { collected, ledgerGap } = summarizeNetCollectedWithLedgerGap(
     netCollectedCandidates.filter(staysInAWindow),
   );
-  const paymentSummary = summarizePayments(
-    bookings.filter((booking) => contributingBookingIds.has(booking.id)),
-    collected,
-    ledgerGap,
-  );
+  const paymentSummary = {
+    ...summarizePayments(
+      bookings.filter((booking) => contributingBookingIds.has(booking.id)),
+      collected,
+      ledgerGap,
+    ),
+    refundsOwedCents: owed?.refundsOwedCents ?? null,
+    creditsOwedCents: owed?.creditsOwedCents ?? null,
+  };
   const contributingBookings = bookings.filter((booking) =>
     contributingBookingIds.has(booking.id),
   );

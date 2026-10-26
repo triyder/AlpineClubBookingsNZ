@@ -88,6 +88,16 @@ describe("member guest lookup excludes erased accounts (#3542)", () => {
     });
   });
 
+  it("matches a typed name prefix literally, so `%%` cannot list the whole roll (#4146)", async () => {
+    findMany.mockResolvedValue([]);
+
+    await searchMemberGuestCandidatesByName({ q: "%_", settings: SETTINGS });
+
+    const where = JSON.stringify(findMany.mock.calls[0]?.[0]?.where);
+    expect(where).toContain(JSON.stringify({ firstName: { startsWith: "\\%\\_", mode: "insensitive" } }));
+    expect(where).toContain(JSON.stringify({ lastName: { startsWith: "\\%\\_", mode: "insensitive" } }));
+  });
+
   it("keeps the deletion prefilter when a two-token name adds its own AND", async () => {
     findMany.mockResolvedValue([]);
 

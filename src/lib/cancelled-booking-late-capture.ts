@@ -1,6 +1,5 @@
 import {
   ManualRefundTaskStatus,
-  PaymentRecoveryOperationType,
   PaymentStatus,
 } from "@prisma/client";
 import { logAudit } from "@/lib/audit";
@@ -13,16 +12,18 @@ import {
   sendAdminLateCaptureHandBackConflictAlert,
 } from "@/lib/email";
 import logger from "@/lib/logger";
+import { sendAdminAlertOnceEver } from "@/lib/admin-alert-once";
+import { UNMUTEABLE_ALERT_SENT } from "@/lib/email/admin-alert-send-result";
 import { prisma } from "@/lib/prisma";
 import type { ClubFormat } from "@/lib/club-format";
 import {
   classifyCaptureOnCancelledBooking,
-  isLateCaptureHandlerWrite,
   type CancellationRefundDecisionEvidence,
   type CancelledBookingCaptureVerdict,
 } from "@/lib/cancellation-settled-money";
 import { buildBookingCancellationRefundIdempotencyKey } from "@/lib/payment-recovery-keys";
 import { findPaymentTransactionByIntentId } from "@/lib/payment-transactions";
+import { readCaptureLandedAfterCancellation } from "@/lib/late-capture-landed-after";
 import {
   captureRefundState,
   isCapturedTransactionStatus,
@@ -66,10 +67,10 @@ import {
  * already decided, or a capture already handed back, neither of which the
  * member is still owed by this path. The only gate on a genuine late capture is
  * the club's own setting (owner decision 26 Sep 2026, `INV-PAY-106`), which
- * lives in `late-capture-refund-hold.ts`. The
- * `booking.payment.refunded_after_cancellation` audit entry also stays in each
- * handler: it carries handler-specific detail, and moving it would renumber census
- * ordinals for no gain.
+ * lives in `late-capture-refund-hold.ts`. The handlers' ordered use of these
+ * pieces - record, `booking.payment.refunded_after_cancellation` entry, alert,
+ * Xero note - is `finishAutomaticLateCaptureRefund` since #4149, beside the
+ * recovery that writes a row a delivery lost (`late-capture-record-recovery.ts`).
  *
  * WHY THE EPILOGUE IS TWO FUNCTIONS AND NOT ONE. The record write must be
  * AWAITED — an un-awaited database write in a route handler can be killed when the
@@ -113,6 +114,8 @@ async function classifyNoticeOnCancelledBooking(params: {
   transactionStatus: PaymentStatus | null;
   /** What Stripe still holds of the capture, when it has been part refunded. */
   heldCents: number | null;
+  /** Whether any of the capture has been refunded (#4149). */
+  anyRefunded: boolean;
 }> {
   const captureRow = await findPaymentTransactionByIntentId({
     paymentIntentId: params.paymentIntentId,
@@ -122,20 +125,15 @@ async function classifyNoticeOnCancelledBooking(params: {
       verdict: "late_capture",
       transactionStatus: captureRow?.status ?? null,
       heldCents: null,
+      anyRefunded: false,
     };
   }
-  const handlerWrite = isLateCaptureHandlerWrite(captureRow.reason);
-  const [evidence, cancelIntentOperation] = await Promise.all([
+  const [evidence, capturedAfterCancellation] = await Promise.all([
     loadCancellationRefundDecisionEvidence(params.bookingId),
-    handlerWrite
-      ? Promise.resolve(null)
-      : prisma.paymentRecoveryOperation.findFirst({
-          where: {
-            type: PaymentRecoveryOperationType.CANCEL_PAYMENT_INTENT,
-            paymentIntentId: params.paymentIntentId,
-          },
-          select: { id: true },
-        }),
+    readCaptureLandedAfterCancellation({
+      paymentIntentId: params.paymentIntentId,
+      reason: captureRow.reason,
+    }),
   ]);
   return {
     verdict: classifyCaptureOnCancelledBooking(
@@ -143,12 +141,13 @@ async function classifyNoticeOnCancelledBooking(params: {
         status: captureRow.status,
         amountCents: captureRow.amountCents,
         refundedAmountCents: captureRow.refundedAmountCents,
-        capturedAfterCancellation: handlerWrite || cancelIntentOperation !== null,
+        capturedAfterCancellation,
       },
       evidence
     ),
     transactionStatus: captureRow.status,
     heldCents: captureRefundState(captureRow).heldCents,
+    anyRefunded: captureRefundState(captureRow).anyRefunded,
   };
 }
 
@@ -219,18 +218,36 @@ function reportAcknowledgedLateNotice(params: {
  * without writing, refunding or alerting; `false` for a genuine late capture,
  * which the handler refunds exactly as before. Awaited, so the audit write is
  * queued before the webhook answers.
+ *
+ * #4149: an already-refunded capture may be one whose automatic refund went out
+ * while its record did not (a crash, or a lost record write answered 500).
+ * `recoverLostRecord` is asked first; when it writes the record
+ * (`recoverLostLateCaptureRecord`), that is the notice's answer and no
+ * acknowledgement is written beside it. A refunded CHANGE payment is asked too
+ * when the verdict is `settled_by_cancellation`: its handler's own capture
+ * write stamps no late marker (the row's reason names the change), so with no
+ * cancel claim on its intent its refunded capture reads as money the cancel
+ * settled, and only Stripe's refund metadata tells the late-capture door's
+ * refund apart.
  */
 export async function acknowledgeSettledLateNotice(params: {
   bookingId: string;
   paymentId: string;
   paymentIntent: { id: string; amount: number };
   captureKind: CancelledBookingLateCaptureKind;
+  recoverLostRecord?: () => Promise<boolean>;
 }): Promise<boolean> {
   const notice = await classifyNoticeOnCancelledBooking({
     bookingId: params.bookingId,
     paymentIntentId: params.paymentIntent.id,
   });
   if (notice.verdict === "late_capture") return false;
+  const mayHaveLostRecord =
+    notice.verdict === "already_refunded" ||
+    (params.captureKind === "modification" && notice.anyRefunded);
+  if (mayHaveLostRecord && params.recoverLostRecord && (await params.recoverLostRecord())) {
+    return true;
+  }
   reportAcknowledgedLateNotice({
     bookingId: params.bookingId,
     paymentId: params.paymentId,
@@ -304,6 +321,13 @@ export type LateCaptureRecordOutcome = {
    */
   recorded: boolean;
   /**
+   * #4149: the record writer's own answer - `false` when this call closed or
+   * created the row, `"self"` when its row was already there, `"hand-resolved"`
+   * when an operator's was. Only the lost-record recovery reads it: it writes
+   * its entry for a row it wrote itself, never for one another writer had.
+   */
+  alreadyRecorded: false | "self" | "hand-resolved";
+  /**
    * `true` when an operator's hand-`COMPLETED` row was found AFTER the refund —
    * #2774's residual window, where their completion landed inside the caller's own
    * Stripe round trip and the member has therefore probably been paid twice.
@@ -336,13 +360,13 @@ export type LateCaptureRecordOutcome = {
  *
  * STILL EXACTLY ONE NOTIFICATION FOR THE EVENT (`INV-ADDPAY-037`). This alert
  * REPLACES the auto-refund alert on this path: the caller returns immediately
- * after it, so the two are mutually exclusive. As with its sibling, a Stripe
- * REDELIVERY of the same event can re-send it — accepted and documented in the
- * registry's frequency note for the same reason it is there: a duplicate says the
- * same true thing twice, whereas deduping would make a redelivery after a FAILED
- * send silent, on a money notification that must not be silenceable — the owner's
- * #2761 ruling (10 Aug 2026), which the orchestrator extended to this alert under
- * #2774 (`INV-ADDPAY-039`'s authority line).
+ * after it, so the two are mutually exclusive. Nothing was refunded, so a Stripe
+ * REDELIVERY of the same event reaches the fence again and re-sends it; that is
+ * accepted and documented in the registry's frequency note, because a duplicate
+ * says the same true thing twice, whereas deduping would make a redelivery after a
+ * FAILED send silent, on a money notification that must not be silenceable — the
+ * owner's #2761 ruling (10 Aug 2026), which the orchestrator extended to this alert
+ * under #2774 (`INV-ADDPAY-039`'s authority line). Its sibling is not deduped either.
  *
  * NO PARTIAL TOP-UP REFUND, DELIBERATELY. The hand-back's amount is carried into
  * both the audit row and the mail so a person can see whether it covered the whole
@@ -443,9 +467,9 @@ export async function reportWithheldLateCaptureRefund(params: {
  *
  * WHY A FAILURE FALLS BACK RATHER THAN THROWING, unlike the #2774 fence. By the
  * time this runs the money is already back with the member. The population picks
- * one sentence and one paragraph of copy; losing the bookkeeping row over it — a
- * 500 replays the whole refund path — would trade a wrong adjective for a lost
- * record. The stale value can only ever be the *less* alarming of the two, so the
+ * one sentence and one paragraph of copy; holding the bookkeeping row back over it
+ * until a redelivery would trade a wrong adjective for a late record. The stale
+ * value can only ever be the *less* alarming of the two, so the
  * failure mode is an under-stated alert on an event that is still reported, and it
  * is logged at ERROR.
  */
@@ -479,15 +503,16 @@ async function resolveLateCaptureBookingDeleted(capture: {
  * caller has already refunded at Stripe and this is the only row that says so on
  * an operator surface.
  *
- * IT MAY NEVER FAIL THE WEBHOOK, which is why the catch is here rather than left
- * to the call site. The money is already back with the member and a 500 would
- * replay the whole refund path for a bookkeeping row. But a swallowed failure is
- * unrecoverable — Stripe never redelivers a 200, and nothing else in the tree ever
- * writes that row — so the catch writes
- * `booking.payment.auto_refund_record_failed` at `severity: "critical"`. That audit
- * row is the ONLY surface a lost record appears on, and it is the surface the
+ * IT NEVER THROWS, which is why the catch is here rather than left to the call
+ * site: the caller decides what a lost record means. The catch writes
+ * `booking.payment.auto_refund_record_failed` at `severity: "critical"` — the one
+ * surface a lost record appears on until it is written, and the surface the
  * finance card itself names as permanent. This is `INV-ADDPAY-037`'s second named
- * exception; removing it or downgrading it to a log line breaks the rule.
+ * exception; removing it or downgrading it to a log line breaks the rule. Since
+ * #4149 the webhook's epilogue (`finishAutomaticLateCaptureRefund`) still writes
+ * the refund entry and sends the alert on `recorded: false`, then answers 500: a
+ * replay no longer refunds again (#3639), and Stripe's redelivery - or the
+ * nightly self-heal - writes the missing row once.
  *
  * THE OUTCOME IT RETURNS IS NOT DECORATION. `handCompletedAfterRefund` is #2774's
  * residual-window detector: the fence read this capture's hand-back task as
@@ -506,6 +531,8 @@ async function resolveLateCaptureBookingDeleted(capture: {
  */
 export async function recordAutomaticLateCaptureRefund(
   capture: CancelledBookingLateCapture,
+  /** #4149: a record written late is dated the Stripe refund's day. */
+  options: { completedAt?: Date } = {},
 ): Promise<LateCaptureRecordOutcome> {
   const bookingDeleted = await resolveLateCaptureBookingDeleted(capture);
 
@@ -517,10 +544,12 @@ export async function recordAutomaticLateCaptureRefund(
       amountCents: capture.amountCents,
       bookingDeleted,
       captureKind: capture.captureKind,
+      completedAt: options.completedAt,
     });
     return {
       bookingDeleted,
       recorded: true,
+      alreadyRecorded: outcome.alreadyRecorded,
       handCompletedAfterRefund:
         outcome.existingStatus === ManualRefundTaskStatus.COMPLETED,
     };
@@ -550,7 +579,7 @@ export async function recordAutomaticLateCaptureRefund(
         error: taskErr instanceof Error ? taskErr.message : String(taskErr),
       }),
     });
-    return { bookingDeleted, recorded: false, handCompletedAfterRefund: false };
+    return { bookingDeleted, recorded: false, alreadyRecorded: false, handCompletedAfterRefund: false };
   }
 }
 
@@ -574,13 +603,26 @@ export async function recordAutomaticLateCaptureRefund(
  * read from the row only on the fenced path, and re-reading it here would add a
  * query to the residual case for a figure a reader can get from the payment. The
  * booking id and the payment intent id are printed, which is how the row is found.
+ *
+ * #4149: the double-payment arm's EMAIL is claimed once ever per capture
+ * (`lateCaptureDoubleRefundAlertKey`), whichever path finds it - this writer at
+ * refund time or the lost-record recovery later - and the claim, not the entry,
+ * is the gate: a send that throws gives the claim back and the next finder
+ * sends it. The `critical` entry is written for every detection, outside the
+ * claim, so each finding is on the record.
  */
+/** The once-ever claim of a capture's double-payment escalation (#4149). */
+export function lateCaptureDoubleRefundAlertKey(paymentIntentId: string): string {
+  return `late-capture-double-refund:${paymentIntentId}`;
+}
+
 export async function announceAutomaticLateCaptureRefund(
   capture: CancelledBookingLateCapture,
   outcome: LateCaptureRecordOutcome,
   format: ClubFormat,
 ): Promise<void> {
   if (outcome.handCompletedAfterRefund) {
+    // Every detection is recorded; only the email is claimed once ever (#4149).
     logAudit({
       action: "booking.payment.late_capture_double_refund_suspected",
       category: "payment",
@@ -609,18 +651,26 @@ export async function announceAutomaticLateCaptureRefund(
       },
       "An operator hand-completed this refund task while Stripe was refunding the same capture; the member may have been paid twice (#2774)",
     );
-    await sendAdminLateCaptureHandBackConflictAlert({
-      memberName: capture.memberName,
-      checkIn: capture.checkIn,
-      checkOut: capture.checkOut,
-      amountCents: capture.amountCents,
-      paymentIntentId: capture.paymentIntentId,
-      bookingId: capture.bookingId,
-      bookingDeleted: outcome.bookingDeleted,
-      captureKind: capture.captureKind,
-      handBackAmountCents: null,
-      refundSent: true,
-    }, format);
+    await sendAdminAlertOnceEver({
+      key: lateCaptureDoubleRefundAlertKey(capture.paymentIntentId),
+      label: "late-capture double refund alert",
+      context: { bookingId: capture.bookingId, paymentIntentId: capture.paymentIntentId },
+      send: async () => {
+        await sendAdminLateCaptureHandBackConflictAlert({
+          memberName: capture.memberName,
+          checkIn: capture.checkIn,
+          checkOut: capture.checkOut,
+          amountCents: capture.amountCents,
+          paymentIntentId: capture.paymentIntentId,
+          bookingId: capture.bookingId,
+          bookingDeleted: outcome.bookingDeleted,
+          captureKind: capture.captureKind,
+          handBackAmountCents: null,
+          refundSent: true,
+        }, format);
+        return UNMUTEABLE_ALERT_SENT;
+      },
+    });
     return;
   }
 

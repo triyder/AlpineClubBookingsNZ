@@ -26,6 +26,10 @@ import {
   type ToggleSection,
 } from "./shared"
 import { xeroSectionId } from "./types"
+import {
+  XERO_INBOUND_EVENT_CATEGORY_FILTERS,
+  xeroInboundCategoryFilterValue,
+} from "@/lib/xero-webhook-categories"
 import type { XeroInboundEvent } from "./types"
 
 export function InboundEventsPanel({
@@ -83,7 +87,9 @@ export function InboundEventsPanel({
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
   const [statusFilter, setStatusFilter] = useState(searchParams.get("inStatus") || "all")
-  const [categoryFilter, setCategoryFilter] = useState(searchParams.get("inEventCategory") || "all")
+  const [categoryFilter, setCategoryFilter] = useState(
+    xeroInboundCategoryFilterValue(searchParams.get("inEventCategory")),
+  )
   const [localModelFilter, setLocalModelFilter] = useState(searchParams.get("inLocalModel") || "all")
   const [localIdFilter, setLocalIdFilter] = useState(searchParams.get("inLocalId") || "")
   const [resourceIdFilter, setResourceIdFilter] = useState(searchParams.get("inResourceId") || "")
@@ -278,7 +284,7 @@ export function InboundEventsPanel({
         </details>
         <div className="flex flex-col gap-3 md:flex-row md:items-center">
           <FilterSelect label="Status" value={statusFilter} onValueChange={(value) => { setStatusFilter(value); resetPage() }} values={["all", "FAILED", "RECEIVED", "PROCESSING", "PROCESSED"]} />
-          <FilterSelect label="Category" value={categoryFilter} onValueChange={(value) => { setCategoryFilter(value); resetPage() }} values={["all", "CONTACT", "INVOICE", "PAYMENT", "CREDIT_NOTE"]} />
+          <FilterSelect label="Category" value={categoryFilter} onValueChange={(value) => { setCategoryFilter(value); resetPage() }} values={[...XERO_INBOUND_EVENT_CATEGORY_FILTERS]} />
           <FilterSelect label="Local Model" value={localModelFilter} onValueChange={(value) => { setLocalModelFilter(value); resetPage() }} values={["all", "Member", "Booking", "Payment", "BookingModification", "MemberSubscription"]} />
           <DatasetResetButton disabled={isDatasetDefault} onReset={resetDataset} />
         </div>

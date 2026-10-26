@@ -24,9 +24,25 @@ const h = vi.hoisted(() => ({
   sendBookingModifiedEmail: vi.fn(),
   logAudit: vi.fn(),
   giveBackPaidReductionCredit: vi.fn(),
+  // #4057: the organiser child refund's debt, looked up and re-read after commit.
+  recoveryFindUnique: vi.fn(),
+  runPaymentRecoveryOperationNow: vi.fn(),
+  // #4070: the member's own-card refund, and the recovery it queues when Stripe could not make it.
+  refundPaymentTransactions: vi.fn(),
+  enqueueBookingModificationRefundRecovery: vi.fn(),
+  realExecuteBookingModificationRefund: undefined as unknown as (typeof import("@/lib/booking-modification-settlement"))["executeBookingModificationRefund"],
 }));
 
-vi.mock("@/lib/prisma", () => ({ prisma: {} }));
+vi.mock("@/lib/prisma", () => ({ prisma: { paymentRecoveryOperation: { findUnique: h.recoveryFindUnique } } }));
+vi.mock("@/lib/payment-recovery", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/payment-recovery")),
+  runPaymentRecoveryOperationNow: h.runPaymentRecoveryOperationNow,
+  enqueueBookingModificationRefundRecovery: h.enqueueBookingModificationRefundRecovery,
+}));
+vi.mock("@/lib/payment-transactions", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/payment-transactions")),
+  refundPaymentTransactions: h.refundPaymentTransactions,
+}));
 vi.mock("@/lib/logger", () => ({
   default: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
@@ -59,11 +75,17 @@ vi.mock("@/lib/member-credit", async (importOriginal) => ({
   clampAppliedCreditToBookingPrice: h.clampAppliedCreditToBookingPrice,
   lockMemberCreditLedger: h.lockMemberCreditLedger,
 }));
-vi.mock("@/lib/booking-modification-settlement", async (importOriginal) => ({
-  ...((await importOriginal()) as typeof import("@/lib/booking-modification-settlement")),
-  executeBookingModificationRefund: h.executeBookingModificationRefund,
-  drainSupersededPrimaryIntents: vi.fn(),
-}));
+vi.mock("@/lib/booking-modification-settlement", async (importOriginal) => {
+  const real = (await importOriginal()) as typeof import("@/lib/booking-modification-settlement");
+  h.realExecuteBookingModificationRefund = real.executeBookingModificationRefund;
+  return {
+    ...real,
+    executeBookingModificationRefund: h.executeBookingModificationRefund,
+    drainSupersededPrimaryIntents: vi.fn(),
+    // Real by default; round 9 answers it once to retire the re-issued ask.
+    createModificationAdditionalPaymentIntent: vi.fn(real.createModificationAdditionalPaymentIntent),
+  };
+});
 vi.mock("@/lib/xero-booking-edit-settlement", () => ({
   queueXeroBookingEditSettlement: h.queueXeroBookingEditSettlement,
 }));
@@ -85,8 +107,13 @@ import {
   settleGuestAcceptanceRepriceAfterCommit,
 } from "@/lib/booking-guest-acceptance-reprice";
 import { applyPaymentAdjustments } from "@/lib/booking-modify-settlement";
+import { createModificationAdditionalPaymentIntent } from "@/lib/booking-modification-settlement";
+import { noReductionAgainstUnpaidAsk } from "@/lib/additional-ask-reduction";
+import { reissueUnpaidAdditionalAsk } from "@/lib/additional-payment-ask";
 import { requireCalendarDate } from "@/lib/club-time";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { ORGANISER_REFUND_DEBT_STATES, primeOrganiserRefundDebt } from "./support/organiser-refund-debt-reread";
+import { expectQueuedOnce, OWN_CARD_REFUND_STATES, primeOwnCardRefund } from "./support/own-card-refund-outcome";
 
 const TODAY = requireCalendarDate("2026-07-01");
 const N1 = new Date("2026-08-01T00:00:00.000Z");
@@ -137,7 +164,10 @@ function tx(loaded: ReturnType<typeof booking>) {
       update: vi.fn(async () => loaded),
     },
     bookingModification: { create: vi.fn(async () => ({ id: "mod-1" })) },
-    payment: { update: vi.fn() },
+    // #3980: an acceptance that read no invoice link claims the payment row.
+    payment: { update: vi.fn(), updateMany: vi.fn(async () => ({ count: 1 })) },
+    // #3954: no increase is waiting on its mint's recovery for a reduction to net off.
+    paymentRecoveryOperation: { findMany: vi.fn(async () => []) },
     manualRefundTask: { aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })), createMany: vi.fn(async () => ({ count: 1 })) },
   };
 }
@@ -180,6 +210,7 @@ beforeEach(() => {
     clearDraftExpiresAt: false,
   }));
   h.deriveBookingAppliedCreditCents.mockResolvedValue(0);
+  h.executeBookingModificationRefund.mockResolvedValue({ stripeRefundId: undefined, refundDestination: "own" });
   decides(-6000);
 });
 
@@ -237,7 +268,7 @@ describe("the full reduction goes back the way it was paid (D-3813-5)", () => {
     // Read under the member's ledger lock, then returned by the edit's own clamp.
     expect(h.lockMemberCreditLedger).toHaveBeenCalledWith("ann", expect.anything());
     expect(h.clampAppliedCreditToBookingPrice).toHaveBeenCalledWith(
-      expect.objectContaining({ memberId: "ann", bookingId: "booking-1", newFinalPriceCents: 26000 }),
+      expect.objectContaining({ memberId: "ann", bookingId: "booking-1", newWorthCents: 26000 }),
       expect.anything(),
     );
     // The payment's mirror follows the ledger (INV-PAY-024).
@@ -296,6 +327,49 @@ describe("a settled booking's price is never raised by an acceptance (A3)", () =
     expect(result).toEqual({ repriced: false, reason: "INCREASE_NEEDS_COLLECTION" });
     expect(h.persistRepricedPromotions).not.toHaveBeenCalled();
   });
+
+  it("MUTATION (#3502): a credit-paid ($0) CONFIRMED booking - not paid-like, no invoice - is refused too", async () => {
+    // Neither `hasCapturedPayment` ($0) nor the paid-like status (CONFIRMED) nor
+    // an issued invoice catches this one; only `canAskCardForIncrease` does.
+    // Without it the increase would reach `applyPaymentAdjustments`, which now
+    // sizes a card ask for it, and this path never mints one.
+    decides(2000);
+    const result = await accept(
+      booking({
+        status: "CONFIRMED",
+        payment: { ...booking().payment, amountCents: 0, creditAppliedCents: 32000, xeroInvoiceId: null },
+      }),
+    );
+    expect(result).toEqual({ repriced: false, reason: "INCREASE_NEEDS_COLLECTION" });
+    expect(h.persistRepricedPromotions).not.toHaveBeenCalled();
+  });
+});
+
+describe("#4317 a booking whose rows cannot price each night is re-priced, not skipped", () => {
+  it("re-decides the code over the valued nights: Ann's blank night is worth the $100 her total leaves it", async () => {
+    // Ann holds one sold $100 night and one BLANK against a stored $200. Until
+    // #4317 the acceptance skipped the booking (`STRANDS_UNREADABLE`); R2 now
+    // values the blank at $100, so the promotion is re-decided over $320 again.
+    const loaded = booking();
+    loaded.guests[0] = {
+      ...loaded.guests[0]!,
+      nights: [
+        { stayDate: N1, priceCents: 10000, priceSource: "SOLD" },
+        { stayDate: N2, priceCents: null as unknown as number, priceSource: "UNKNOWN" },
+      ],
+    };
+    const result = await accept(loaded);
+
+    expect(result).toMatchObject({ repriced: true, priceDiffCents: -6000 });
+    const call = h.priceStoredBookingPromotions.mock.calls[0]?.[1] as {
+      guests: Array<{ bookingGuestId: string; perNightRates: number[]; nightDates: Date[] }>;
+    };
+    expect(call.guests.map((guest) => [guest.bookingGuestId, guest.perNightRates])).toEqual([
+      ["g-ann", [10000, 10000]],
+      ["g-cara", [6000, 6000]],
+    ]);
+    expect(call.guests[0]!.nightDates).toEqual([N1, N2]);
+  });
 });
 
 describe("only the member edit door for a stay yet to start re-prices (A4)", () => {
@@ -315,7 +389,7 @@ describe("after commit: the card refund, the Xero correction, the email and the 
   it("does what an ordinary edit's reduction does", async () => {
     const reprice = await accept(booking());
     if (!reprice.repriced) throw new Error("expected a re-price");
-    h.executeBookingModificationRefund.mockResolvedValue("re_1");
+    h.executeBookingModificationRefund.mockResolvedValue({ stripeRefundId: "re_1", refundDestination: "own" });
     h.sendBookingModifiedEmail.mockResolvedValue(undefined);
 
     await settleGuestAcceptanceRepriceAfterCommit({
@@ -353,6 +427,57 @@ describe("after commit: the card refund, the Xero correction, the email and the 
         subjectMemberId: "ann",
       }),
     );
+  });
+
+  // #4070: the real refund helper; the email says the member's own-card refund
+  // was made only when Stripe made it, and one it could not make is queued.
+  it.each(OWN_CARD_REFUND_STATES)("the email's refund destination: $label -> $destination (#4070)", async ({ answer, queued, destination }) => {
+    const reprice = await accept(booking());
+    if (!reprice.repriced) throw new Error("expected a re-price");
+    h.executeBookingModificationRefund.mockImplementation(h.realExecuteBookingModificationRefund);
+    h.enqueueBookingModificationRefundRecovery.mockResolvedValue({ id: "op-refund" });
+    primeOwnCardRefund(h.refundPaymentTransactions, answer);
+    h.sendBookingModifiedEmail.mockResolvedValue(undefined);
+
+    await settleGuestAcceptanceRepriceAfterCommit({ bookingId: "booking-1", actorMemberId: "cara", reprice, format: CLUB_FORMAT_TEST });
+
+    expect(h.refundPaymentTransactions).toHaveBeenCalledWith(expect.objectContaining({ paymentId: "pay-1", amountCents: 6000 }));
+    expectQueuedOnce(h.enqueueBookingModificationRefundRecovery, queued, 6000);
+    expect(h.sendBookingModifiedEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ refundAmountCents: 6000, refundDestination: destination, refundByBankTransfer: null }),
+      CLUB_FORMAT_TEST,
+    );
+  });
+});
+
+// #3954 round 9: the re-issued ask is named as due only while it is live - the
+// same liveness that withholds its client secret.
+describe("the email names a re-issued ask only while it is live", () => {
+  async function emailedAdditionalCents(additionalAskRetired: boolean): Promise<number> {
+    const reprice = await accept(booking());
+    if (!reprice.repriced) throw new Error("expected a re-price");
+    h.executeBookingModificationRefund.mockResolvedValue({ stripeRefundId: undefined, refundDestination: "own" });
+    h.sendBookingModifiedEmail.mockResolvedValue(undefined);
+    vi.mocked(createModificationAdditionalPaymentIntent).mockResolvedValueOnce({
+      additionalPaymentClientSecret: additionalAskRetired ? undefined : "secret",
+      additionalPaymentIntentId: "pi_reissued",
+      additionalAskRetired,
+    });
+    await settleGuestAcceptanceRepriceAfterCommit({
+      bookingId: "booking-1",
+      actorMemberId: "cara",
+      reprice: { ...reprice, additionalAsk: reissueUnpaidAdditionalAsk({ askLeftCents: 3000 }) },
+      format: CLUB_FORMAT_TEST,
+    });
+    return h.sendBookingModifiedEmail.mock.calls.at(-1)?.[0].additionalAmountCents;
+  }
+
+  it("a live re-issue is named", async () => {
+    expect(await emailedAdditionalCents(false)).toBe(3000);
+  });
+
+  it("MUTATION (round 9): a re-issue a later reduction retired is not", async () => {
+    expect(await emailedAdditionalCents(true)).toBe(0);
   });
 });
 
@@ -409,9 +534,12 @@ describe("an internet-banking reduction asks the treasurer to send it back (D-38
     });
     if (!reprice.repriced) throw new Error("expected a re-price");
     h.sendBookingModifiedEmail.mockResolvedValue(undefined);
+    // #4070: the real refund helper; no Stripe refund runs, so the member's own wording stands.
+    h.executeBookingModificationRefund.mockImplementation(h.realExecuteBookingModificationRefund);
     await settleGuestAcceptanceRepriceAfterCommit({ bookingId: "booking-1", actorMemberId: "cara", reprice, format: CLUB_FORMAT_TEST });
+    expect(h.refundPaymentTransactions).not.toHaveBeenCalled();
     expect(h.sendBookingModifiedEmail).toHaveBeenCalledWith(
-      expect.objectContaining({ refundAmountCents: 6000, refundByBankTransfer: true }),
+      expect.objectContaining({ refundAmountCents: 6000, refundByBankTransfer: "member", refundDestination: "own" }),
       CLUB_FORMAT_TEST,
     );
   });
@@ -430,7 +558,7 @@ describe("an internet-banking reduction asks the treasurer to send it back (D-38
     h.sendBookingModifiedEmail.mockResolvedValue(undefined);
     await settleGuestAcceptanceRepriceAfterCommit({ bookingId: "booking-1", actorMemberId: "cara", reprice, format: CLUB_FORMAT_TEST });
     expect(h.sendBookingModifiedEmail).toHaveBeenCalledWith(
-      expect.objectContaining({ refundByBankTransfer: false }),
+      expect.objectContaining({ refundByBankTransfer: null }),
       CLUB_FORMAT_TEST,
     );
   });
@@ -464,7 +592,7 @@ describe("a split payment gets the WHOLE reduction back: cash first, then credit
     });
     expect(h.lockMemberCreditLedger).toHaveBeenCalledWith("ann", expect.anything());
     expect(h.clampAppliedCreditToBookingPrice).toHaveBeenCalledWith(
-      expect.objectContaining({ memberId: "ann", newFinalPriceCents: 26000 }),
+      expect.objectContaining({ memberId: "ann", newWorthCents: 26000 }),
       expect.anything(),
     );
     expect(client.payment.update).toHaveBeenCalledWith({ where: { id: "pay-1" }, data: { creditAppliedCents: 26000 } });
@@ -493,6 +621,46 @@ describe("a split payment gets the WHOLE reduction back: cash first, then credit
     // $100 on the card, $80 already refunded by an earlier change: $20 left.
     const { result } = await acceptSplit({ amountCents: 10000, refundedAmountCents: 8000, creditAppliedCents: 30000 }, 30000);
     expect(result).toMatchObject({ repriced: true, refundAmountCents: 2000, accountCreditAmountCents: 4000 });
+  });
+
+  it("#3955 round 3: a change fee the card already paid keeps no credit back — the credit is netted to the PRICE", async () => {
+    // $20 on the card plus $300 of credit pay the $320 price; an earlier edit's
+    // $15 change fee was paid by an additional card charge and is recorded on
+    // the payment. The credit pays none of that fee, so the clamp nets it to
+    // the new price: the whole $40 credit share comes back.
+    h.deriveBookingAppliedCreditCents.mockResolvedValue(30000);
+    h.clampAppliedCreditToBookingPrice.mockImplementation(
+      async ({ newWorthCents }: { newWorthCents: number }) => ({
+        appliedCreditCents: newWorthCents,
+        refundedExcessCents: 30000 - newWorthCents,
+      }),
+    );
+    const client = tx(
+      booking({
+        payment: {
+          ...booking().payment,
+          amountCents: 2000,
+          additionalAmountCents: 1500,
+          // Paid: the fee's additional charge was captured (#3954 reads an
+          // unpaid one as an ask a reduction is set against).
+          additionalPaymentStatus: "SUCCEEDED",
+          changeFeeCents: 1500,
+          creditAppliedCents: 30000,
+        },
+      }),
+    );
+    const result = await repriceBookingAfterGuestAcceptance(client as never, {
+      bookingId: "booking-1",
+      acceptedGuestId: "g-cara",
+      actorMemberId: "cara",
+      todayAtClub: TODAY,
+      format: CLUB_FORMAT_TEST,
+    });
+    expect(result).toMatchObject({ repriced: true, refundAmountCents: 2000, accountCreditAmountCents: 4000 });
+    expect(h.clampAppliedCreditToBookingPrice).toHaveBeenCalledWith(
+      expect.objectContaining({ memberId: "ann", newWorthCents: 26000 }),
+      expect.anything(),
+    );
   });
 
   it("is refused, moving no code, when the cash left and the credit do not make up the price", async () => {
@@ -544,6 +712,8 @@ describe("cash an earlier edit already promised back is not refunded again (#382
         OR: [
           { occurrenceKey: { startsWith: "edit-refund-hand-back:" } },
           { occurrenceKey: { startsWith: "refund-request-hand-back:" } },
+          { occurrenceKey: { startsWith: "card-refund-paid-another-way:" } },
+          { occurrenceKey: { startsWith: "bank-refund-void:" } },
         ],
       }),
       _sum: { amountCents: true },
@@ -574,7 +744,7 @@ describe("the credit share comes back once, untiered, on the acceptance only (#3
 
   it("an ordinary edit's reduction still takes #3809's give-back; only the caller's flag skips it", async () => {
     const creditPaid = booking({ payment: { ...booking().payment, amountCents: 0, creditAppliedCents: 32000 } });
-    const args = { booking: creditPaid as never, priceDiffCents: -6000, changeFeeCents: 0, todayAtClub: TODAY, format: CLUB_FORMAT_TEST };
+    const args = { booking: creditPaid as never, priceDiffCents: -6000, changeFeeCents: 0, reduction: noReductionAgainstUnpaidAsk(-6000), todayAtClub: TODAY, format: CLUB_FORMAT_TEST };
     h.giveBackPaidReductionCredit.mockResolvedValueOnce({ basisCents: 6000, givenBackCents: 3000 });
     const ordinary = await applyPaymentAdjustments(tx(creditPaid) as never, args);
     expect(h.giveBackPaidReductionCredit).toHaveBeenCalledTimes(1);
@@ -635,6 +805,32 @@ describe("an organiser-paid child's reduction goes back to the organiser's card,
     );
     expect(h.queueXeroBookingEditSettlement).toHaveBeenCalledWith(
       expect.objectContaining({ organiserChildRefundOwnsCreditNote: true }),
+    );
+  });
+
+  // #4057: the real refund helper runs the debt and re-reads it; the email says
+  // the refund was made only when the debt says so.
+  it.each(ORGANISER_REFUND_DEBT_STATES)("the email's refund destination: debt $label -> $destination (#4057)", async ({ lookupThrows, reread, runs, destination }) => {
+    const { client } = organiserChild(SETTLEMENT);
+    const result = await acceptChild(client);
+    h.executeBookingModificationRefund.mockImplementation(h.realExecuteBookingModificationRefund);
+    h.runPaymentRecoveryOperationNow.mockResolvedValue("succeeded");
+    h.sendBookingModifiedEmail.mockResolvedValue(undefined);
+    primeOrganiserRefundDebt(h.recoveryFindUnique, { bookingModificationId: "mod-1", debtId: "debt-1", lookupThrows, reread });
+
+    await settleGuestAcceptanceRepriceAfterCommit({
+      bookingId: "booking-1",
+      actorMemberId: "cara",
+      reprice: result as Extract<typeof result, { repriced: true }>,
+      format: CLUB_FORMAT_TEST,
+    });
+
+    // A lookup that throws leaves nothing to run; the debt stays owed.
+    if (runs) expect(h.runPaymentRecoveryOperationNow).toHaveBeenCalledWith("debt-1", CLUB_FORMAT_TEST);
+    else expect(h.runPaymentRecoveryOperationNow).not.toHaveBeenCalledWith("debt-1", expect.anything());
+    expect(h.sendBookingModifiedEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ refundAmountCents: 6000, refundDestination: destination }),
+      CLUB_FORMAT_TEST,
     );
   });
 

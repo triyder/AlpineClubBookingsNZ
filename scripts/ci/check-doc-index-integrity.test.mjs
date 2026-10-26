@@ -1460,7 +1460,11 @@ describe("tracked citation source extensions", () => {
     // its delta as lines and every reader reads those rows.
     // Moved up again by #3029, which shipped INV-MOD-059: a booking guest's
     // dietary/allergy value is a snapshot seeded once and carried by identity.
-    const planted = "INV-MOD-060";
+    // Moved up again by #4036, which shipped INV-MOD-060: an ordinary price
+    // ask's door and its recovery replay send one Stripe request.
+    // Moved up again by #4101, which shipped INV-MOD-061: an edit's card refund
+    // and its recovery replay send one Stripe request.
+    const planted = "INV-MOD-062";
     // The precondition the fixture rests on. When this fails, `planted` has been
     // taken by a real invariant: move it up one, and no further.
     expect(files.get("docs/DOMAIN_INVARIANTS.md")).not.toContain(planted);

@@ -594,6 +594,8 @@ export async function finishRefundCreditNoteSettlement(input: {
   recordOnly?: boolean;
   /** #3827 (D-3813-8): see `refundCreditNoteCompletion`. */
   refundRequestId?: string | null;
+  /** #4256: the row is a retry's claim from this instant; complete onto that claim only. */
+  onlyIfRunningSince?: Date;
 }): Promise<RefundNoteSettlementOutcome> {
   const settled = await settleRefundNoteFromXero(input);
   await completeXeroSyncOperation(
@@ -610,7 +612,9 @@ export async function finishRefundCreditNoteSettlement(input: {
       extraResponse: { interruptedAttemptCompleted: true },
       refundRequestId: input.refundRequestId,
     }),
-    settled.outcome.refundPaymentErr ? { keepSucceeded: true } : undefined,
+    input.onlyIfRunningSince
+      ? { onlyIfRunningSince: input.onlyIfRunningSince }
+      : settled.outcome.refundPaymentErr ? { keepSucceeded: true } : undefined,
   );
   return settled.outcome;
 }

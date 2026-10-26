@@ -1,5 +1,10 @@
 import { loadBookingAppliedCredit } from "@/lib/booking-confirmation-credit";
-import { bookingModifiedRefundSentence } from "@/lib/booking-modified-email-copy";
+import {
+  bookingCancelledRefundSentence,
+  type BookingCancelledRefundMethod,
+  type BookingModifiedRefundDestination,
+  bookingModifiedRefundSentence,
+} from "@/lib/booking-modified-email-copy";
 import { resolveBookingEmailLink } from "@/lib/booking-email-authority";
 import {
   type BookingCalendarLinks,
@@ -24,7 +29,7 @@ import {
 import {
   type AppliedCreditSummary,
   appliedCreditSummaryRows,
-  bookingModificationSummaryRows,
+  bookingModificationSummaryRows, type BookingModificationAddedGuest,
   bookingModificationTypeLabel,
   promoAdjustmentSummaryRows,
   resolvePromoAdjustmentCents,
@@ -35,6 +40,7 @@ import {
 } from "@/lib/booking-money-lines";
 import {
   additionalPaymentReminderTemplate,
+  creditReleasedPaymentRequestTemplate,
   checkinReminderTemplate,
   preArrivalReminderTemplate,
   wholeLodgeGuestNamesReminderTemplate,
@@ -52,9 +58,12 @@ import {
   wholeLodgeGuestNamesUrgencyNote,
 } from "../email-message-notes";
 import { CLUB_NAME } from "@/config/club-identity";
+import {
+  CREDIT_RELEASE_ASK_REASON,
+} from "@/lib/credit-release-ask-keys";
 import { EMAIL_DEFAULT_LODGE_NAME } from "@/lib/email-message-settings";
 import { financialReviewNote } from "@/lib/booking-financial-review-copy";
-import { appliedCreditGiveBackNote } from "@/lib/booking-credit-give-back-copy";
+import { appliedCreditGiveBackNote, unpaidAskCancelledNote } from "@/lib/booking-credit-give-back-copy";
 import { supersededPaymentRefundedTemplate } from "@/lib/email-templates/refunds";
 import { supersededRefundOwingSentence } from "@/lib/superseded-additional-refund-event";
 import { formatCents as formatMoneyCents } from "@/lib/utils";
@@ -68,6 +77,7 @@ import {
 import { renderEmailHtml } from "@/lib/email-theme";
 import { emailCalendarDay, emailClubDate, emailClubDateTime } from "@/lib/email-templates-club-time";
 import type { ClubFormat } from "@/lib/club-format";
+import type { BankTransferRefundPayee } from "@/lib/group-organiser-paid";
 import type { PromoCodeAdjustment } from "@/lib/booking-promo-redemptions";
 
 /**
@@ -836,13 +846,17 @@ export async function sendBookingCancelledEmail(
   refundCents: number,
   /** The club's format (#3565); see sendBookingConfirmedEmail. */
   format: ClubFormat,
-  // B5 (#2262): "manual" — a cash / off-Xero settlement handed back by a person.
-  refundMethod: "card" | "credit" | "manual" = "card",
+  // B5 (#2262) "manual", #3973 the organiser's refunds: see `BookingCancelledRefundMethod`.
+  refundMethod: BookingCancelledRefundMethod = "card",
   creditRestoredCents: number = 0,
   // Booking's lodge (multi-lodge phase 8): see sendBookingConfirmedEmail.
   lodgeId?: string | null,
   // #3792: "in-full" for a cancel the member did not choose (capacity, hold expiry).
   creditRestoredBasis: CreditRestoredBasis = "cancellation-policy",
+  // #3973: the amount the refund line names when the refund is the group's; `{{refundAmount}}` stays this booking's.
+  refundSentenceCents: number = refundCents,
+  // #4097: the parts of an own-card refund its card refund could not carry; the refund line names each.
+  shortfall: { bankCents: number; checkCents: number } = { bankCents: 0, checkCents: 0 },
 ) {
   await sendEmail({
     to: email,
@@ -856,6 +870,8 @@ export async function sendBookingCancelledEmail(
       refundMethod,
       creditRestoredCents,
       creditRestoredBasis,
+      refundSentenceCents,
+      shortfall,
     )),
     bookingContext: bookingOwnerEmailContext(bookingContext.bookingId, bookingContext.recipientMemberId),
     templateName: "booking-cancelled",
@@ -864,14 +880,10 @@ export async function sendBookingCancelledEmail(
       checkIn: emailCalendarDay(checkIn),
       checkOut: emailCalendarDay(checkOut),
       refundAmount: formatMoneyCents(refundCents, format),
-      refundMessage:
-        refundCents > 0 && refundMethod === "manual"
-          ? `You paid for this booking in cash or by bank transfer, so there is no card payment to reverse. The club will arrange your refund of ${formatMoneyCents(refundCents, format)} directly and will be in touch.`
-          : refundCents > 0 && refundMethod === "credit"
-            ? `A credit of ${formatMoneyCents(refundCents, format)} has been added to your account for future bookings.`
-            : refundCents > 0
-              ? `A refund of ${formatMoneyCents(refundCents, format)} has been processed to your original payment method.`
-              : "No refund was applicable based on the cancellation policy.",
+      refundMessage: bookingCancelledRefundSentence(refundSentenceCents, formatMoneyCents(refundSentenceCents, format), refundMethod, {
+        ...shortfall,
+        formatAmount: (cents) => formatMoneyCents(cents, format),
+      }),
       // #1164 / D7: applied account credit is restored subject to the same
       // cancellation policy as the card slice. Empty when nothing was restored
       // so the override body renders no line (mirrors the refundMessage token).
@@ -1331,19 +1343,30 @@ export async function sendAdditionalPaymentReminderEmail(params: {
   checkOut: Date;
   requestedOn: Date;
   lodgeId?: string | null;
+  /**
+   * #4253: the unpaid request's cause (its ledger `reason`). A request for credit
+   * that was used elsewhere in the club's accounts is worded as that, never as
+   * "a change to your booking increased the total" (`INV-ADDPAY-045`).
+   */
+  askReason?: string | null;
 },
   format: ClubFormat,
 ) {
+  const creditRelease = params.askReason === CREDIT_RELEASE_ASK_REASON;
   // Returns the outcome rather than swallowing it (#2350): both callers write a
   // stamp BEFORE sending, and that stamp is also the 60-minute cooldown, so a
   // withheld/suppressed/placeholder send — which returns, it does not throw —
   // must not be mistaken for a delivered one.
   return sendEmail({
     to: params.email,
-    subject: `Payment Still Needed - ${EMAIL_DEFAULT_LODGE_NAME}`,
-    html: await renderEmailHtml(() => additionalPaymentReminderTemplate(params, format)),
+    subject: creditRelease
+      ? "Payment needed for your lodge booking"
+      : `Payment Still Needed - ${EMAIL_DEFAULT_LODGE_NAME}`,
+    html: await renderEmailHtml(() =>
+      creditRelease ? creditReleasedPaymentRequestTemplate(params, format) : additionalPaymentReminderTemplate(params, format),
+    ),
     bookingContext: bookingOwnerEmailContext(params.bookingId, params.recipientMemberId),
-    templateName: "additional-payment-reminder",
+    templateName: creditRelease ? "credit-released-payment-request" : "additional-payment-reminder",
     templateData: {
       firstName: params.firstName,
       additionalAmount: formatMoneyCents(params.additionalAmountCents, format),
@@ -1388,6 +1411,12 @@ export async function sendBookingModifiedEmail(params: {
    */
   appliedCreditGivenBackCents: number;
   additionalAmountCents: number;
+  /**
+   * #3954: this edit's price drop cancelled the member's unpaid additional payment
+   * outright (`unpaidAskOffsetCents > 0` and nothing re-issued). REQUIRED, as
+   * `financialReviewPending` is: every sender answers it.
+   */
+  unpaidAskCancelled: boolean;
   additionalPaymentMethod?: "STRIPE" | "INTERNET_BANKING";
   paymentReference?: string | null;
   xeroInvoiceNumber?: string | null;
@@ -1412,6 +1441,7 @@ export async function sendBookingModifiedEmail(params: {
    * question would be asking them to answer `null` by hand.
    */
   promoChangeNotAppliedNote?: string | null;
+  addedGuests: ReadonlyArray<BookingModificationAddedGuest>; // #4030: named in the change rows; `[]` = nobody
   /**
    * #3033 (epic #2797): this change saved and its refund or credit could not be
    * worked out from stored history, so the club is deciding it.
@@ -1427,15 +1457,14 @@ export async function sendBookingModifiedEmail(params: {
    * instead (`INV-SSOT`, "prefer unrepresentable over policed").
    */
   financialReviewPending: boolean;
-  /** #3916: the refund went to the group organiser's card (#3653). REQUIRED, like `financialReviewPending`;
-   * the settlement's own `result.organiserChildRefund !== null`, never recomputed. */
-  refundReturnedToOrganiser: boolean;
+  /** #3916, #4057: REQUIRED; the answer `executeBookingModificationRefund` gives after the refund ran, never recomputed. */
+  refundDestination: BookingModifiedRefundDestination;
   /**
    * #3827 (D-3813-6, `INV-PAY-117`): the refund is a bank transfer the club
    * still has to send. REQUIRED, as `financialReviewPending` is; the template's
-   * own field says why.
+   * own field says why. #3949: who it goes to, member or group organiser.
    */
-  refundByBankTransfer: boolean;
+  refundByBankTransfer: BankTransferRefundPayee | null;
   // Booking's lodge (multi-lodge phase 8): see sendBookingConfirmedEmail.
   lodgeId?: string | null;
 },
@@ -1495,7 +1524,7 @@ export async function sendBookingModifiedEmail(params: {
           bookingModifiedRefundSentence(
             formatMoneyCents(params.refundAmountCents, format),
             params.refundByBankTransfer,
-            params.refundReturnedToOrganiser,
+            params.refundDestination,
           ),
           accountCreditAmountCents > 0
             ? `Account credit of ${formatMoneyCents(accountCreditAmountCents, format)} has been added for future bookings.`
@@ -1511,7 +1540,8 @@ export async function sendBookingModifiedEmail(params: {
   // #3809: true beside a card refund on a booking paid by card and credit, so
   // composed with the settlement note rather than one of its arms.
   const giveBackNote = appliedCreditGiveBackNote(params.appliedCreditGivenBackCents, format);
-  const paymentNote = [reviewNote, settlementNote, giveBackNote].filter(Boolean).join(" ");
+  const askCancelledNote = unpaidAskCancelledNote(params.unpaidAskCancelled);
+  const paymentNote = [reviewNote, settlementNote, giveBackNote, askCancelledNote].filter(Boolean).join(" ");
 
   await sendEmail({
     to: params.email,

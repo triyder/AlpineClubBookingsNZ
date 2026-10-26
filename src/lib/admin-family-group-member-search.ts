@@ -1,3 +1,4 @@
+import { exactContains } from "@/lib/prisma-exact-prefix";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
@@ -80,18 +81,18 @@ function buildTextSearchCondition(query: string): Prisma.MemberWhereInput {
 
   return {
     OR: [
-      { firstName: { contains: query, mode: "insensitive" } },
-      { lastName: { contains: query, mode: "insensitive" } },
-      { email: { contains: query, mode: "insensitive" } },
+      { firstName: exactContains(query, "insensitive") },
+      { lastName: exactContains(query, "insensitive") },
+      { email: exactContains(query, "insensitive") },
       ...(terms.length > 1
         ? [
             {
               AND: terms.map(
                 (term): Prisma.MemberWhereInput => ({
                   OR: [
-                    { firstName: { contains: term, mode: "insensitive" } },
-                    { lastName: { contains: term, mode: "insensitive" } },
-                    { email: { contains: term, mode: "insensitive" } },
+                    { firstName: exactContains(term, "insensitive") },
+                    { lastName: exactContains(term, "insensitive") },
+                    { email: exactContains(term, "insensitive") },
                   ],
                 })
               ),

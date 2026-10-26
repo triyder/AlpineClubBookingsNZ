@@ -27,6 +27,7 @@ import type { Prisma } from "@prisma/client";
 import {
   groupChildHandBacksFromRows,
   needsPerChildCommittedRefund,
+  organiserCardAppealRefundsFromRows,
   planGroupChildLines,
   type GroupChildPlan,
 } from "@/lib/booking-ledger-group-child-plan";
@@ -65,5 +66,10 @@ export async function planGroupChildBackPost(
         ? await organiserChildCommittedRefundCents(tx, payment, settlement.stripePaymentIntentId)
         : null,
     handBacks: groupChildHandBacksFromRows(payment.id, args.census.tasks),
+    appealRefunds: organiserCardAppealRefundsFromRows({
+      paymentId: payment.id,
+      paymentIntentId: settlement.stripePaymentIntentId,
+      operations: args.census.recoveryOperations,
+    }),
   });
 }

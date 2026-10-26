@@ -1,3 +1,4 @@
+import { exactContains } from "@/lib/prisma-exact-prefix";
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { MAPPABLE_CONTACT_ROLES } from "@/lib/booking-request";
@@ -53,9 +54,9 @@ export async function GET(
   if (q.length >= 2) {
     match = {
       OR: [
-        { email: { contains: q, mode: "insensitive" } },
-        { firstName: { contains: q, mode: "insensitive" } },
-        { lastName: { contains: q, mode: "insensitive" } },
+        { email: exactContains(q, "insensitive") },
+        { firstName: exactContains(q, "insensitive") },
+        { lastName: exactContains(q, "insensitive") },
       ],
     };
   } else {
@@ -72,8 +73,8 @@ export async function GET(
       OR: [
         { email: { equals: request.contactEmail, mode: "insensitive" } },
         ...nameNeedles.flatMap((needle) => [
-          { firstName: { contains: needle, mode: "insensitive" } as const },
-          { lastName: { contains: needle, mode: "insensitive" } as const },
+          { firstName: exactContains(needle, "insensitive") },
+          { lastName: exactContains(needle, "insensitive") },
         ]),
       ],
     };

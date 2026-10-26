@@ -41,6 +41,24 @@ export function collectPrismaErrorText(error: unknown): string {
   return collect(error, 0).join("\n");
 }
 
+/**
+ * Exact SQLSTATE 55P03 (`lock_not_available`: a `NOWAIT` lock that was held,
+ * or a `lock_timeout`) for direct pg and nested Prisma adapter errors.
+ */
+export function isPostgresLockNotAvailable(
+  error: unknown,
+  depth = 0,
+): boolean {
+  if (depth > 5 || !error || typeof error !== "object") return false;
+  const candidate = error as Record<string, unknown>;
+  if (candidate.code === "55P03" || candidate.originalCode === "55P03") {
+    return true;
+  }
+  return ["meta", "driverAdapterError", "cause"].some((key) =>
+    isPostgresLockNotAvailable(candidate[key], depth + 1),
+  );
+}
+
 export function isPrismaUniqueConstraintError(error: unknown) {
   return hasPrismaErrorCode(error, "P2002");
 }

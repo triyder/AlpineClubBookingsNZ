@@ -14,7 +14,11 @@ import {
 import {
   BookingGuestRemovalError,
   removeBookingGuestInTransaction,
+  type RemoveBookingGuestResult,
 } from "@/lib/booking-guest-removal-service";
+import { createModificationAdditionalPaymentIntent } from "@/lib/booking-modification-settlement";
+import { AdditionalAskChangedDuringReductionError } from "@/lib/additional-ask-reduction-error";
+import { GroupCancelInProgressError } from "@/lib/group-cancel-in-progress";
 import {
   familyAdultDelegateResolver,
   resolveDelegateAnswerRecipients,
@@ -36,7 +40,7 @@ import type {
   MemberGuestDelegateAnswer,
   MemberGuestStillOnBookingReason,
 } from "@/lib/member-guest-email-notes";
-import { paidByOrganiserCard } from "@/lib/group-organiser-paid";
+import { paidByOrganiser } from "@/lib/group-organiser-paid";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import {
@@ -118,8 +122,8 @@ export type MemberGuestConsentOutcome =
    * email quotes it to the booking owner, so a second calculation here would be a
    * second chance to tell them the wrong number.
    */
-  | { outcome: "DECLINED"; removed: true; creditCents: number; xeroSettlement?: GuestRemovalXeroSettlement }
-  | { outcome: "EXPIRED"; removed: true; creditCents: number; xeroSettlement?: GuestRemovalXeroSettlement }
+  | { outcome: "DECLINED"; removed: true; creditCents: number; xeroSettlement?: GuestRemovalXeroSettlement; askRetirement?: RemoveBookingGuestResult }
+  | { outcome: "EXPIRED"; removed: true; creditCents: number; xeroSettlement?: GuestRemovalXeroSettlement; askRetirement?: RemoveBookingGuestResult }
   /** Claimed, but the guest is still on the booking and an admin must act. */
   | {
       outcome: "BLOCKED";
@@ -224,8 +228,17 @@ export function classifyConsentRemovalRefusal(
  * be thrown. Anything else (a `TypeError`, a lost connection) is NOT a refusal and
  * must keep propagating: marking a row terminal on the strength of a bug would put
  * it on an operator's list with a meaningless reason.
+ *
+ * #3954 review round 4: NOR IS A RACE. `AdditionalAskChangedDuringReductionError`
+ * is an `ApiError`, but it says the booking's unpaid card ask moved while the
+ * removal's reduction was being saved - the member paid it, or a retry claimed
+ * its mint - and a moment later the same removal goes through. Read as a
+ * refusal it would mark the row BLOCKED for good and hold the bed for an
+ * operator; propagated, the claim rolls back to PENDING and the member's
+ * retry, or the next sweep, removes the guest. #3949: so is a group cancel part-way through (`GroupCancelInProgressError`).
  */
 function consentRemovalRefusalMessage(err: unknown): string | null {
+  if (err instanceof AdditionalAskChangedDuringReductionError || err instanceof GroupCancelInProgressError) return null;
   if (
     err instanceof BookingGuestRemovalError ||
     err instanceof ApiError ||
@@ -347,7 +360,12 @@ async function removeClaimedConsentGuest(
     /** The club's format (#3565), resolved with `today` and for the same reason. */
     format: ClubFormat;
   },
-): Promise<{ removed: true; creditCents: number; xeroSettlement: GuestRemovalXeroSettlement }> {
+): Promise<{
+  removed: true;
+  creditCents: number;
+  xeroSettlement: GuestRemovalXeroSettlement;
+  askRetirement: RemoveBookingGuestResult | undefined;
+}> {
   try {
     const result = await removeBookingGuestInTransaction({
       tx,
@@ -371,6 +389,13 @@ async function removeClaimedConsentGuest(
       removed: true,
       creditCents: (result.accountCreditAmountCents ?? 0) + result.appliedCreditGivenBackCents,
       xeroSettlement: guestRemovalXeroSettlement(result),
+      // #3954: the unpaid ask this removal's reduction retired, for after commit
+      // - its intents to cancel, or a smaller ask to mint; an ask whose failed
+      // mint the reduction netted off leaves only the second.
+      askRetirement:
+        result.retiredAdditionalAsks.length > 0 || result.additionalAsk.reissuesUnpaidAsk
+          ? result
+          : undefined,
     };
   } catch (err) {
     const refusal = consentRemovalRefusalMessage(err);
@@ -643,6 +668,7 @@ export async function respondToMemberGuestConsent(params: {
         removed: true,
         creditCents: removal.creditCents,
         xeroSettlement: removal.xeroSettlement,
+        askRetirement: removal.askRetirement,
       } as const;
     });
   } catch (err) {
@@ -765,11 +791,10 @@ export async function expireMemberGuestConsent(params: {
         // writing it here would attribute to them an act they did not take.
         actorMemberId: expiryActorMemberId,
         kind: "CONSENT_EXPIRY",
-        // #3653: D-15's credit election is the OWNER's account. A booking the
-        // group organiser paid for by card has one disposition instead - the
-        // organiser's card - and electing credit there is refused, which would
-        // leave the lapsed guest on the booking for ever. It falls through.
-        ...(paidByOrganiserCard(guest.booking) ? {} : { settlementMethod: "credit" as const }),
+        // #3653: D-15's credit election is the OWNER's account. One the group organiser paid for, by card or (#3949)
+        // Internet Banking, has one disposition instead - back to the organiser - and electing credit there is
+        // refused, which would leave the lapsed guest on the booking for ever. It falls through.
+        ...(paidByOrganiser(guest.booking) ? {} : { settlementMethod: "credit" as const }),
         today: clubTodayDateOnly,
         format,
       });
@@ -779,6 +804,7 @@ export async function expireMemberGuestConsent(params: {
         removed: true,
         creditCents: removal.creditCents,
         xeroSettlement: removal.xeroSettlement,
+        askRetirement: removal.askRetirement,
       } as const;
     });
   } catch (err) {
@@ -928,11 +954,32 @@ export async function finaliseMemberGuestConsentTransition(params: {
   // Xero hears of it exactly as of any other guest removal, through the same
   // leg, or its invoice keeps the old price and the give-back's deallocation
   // leaves an amount due the app does not have. Best-effort, after the commit.
+  // #3954: a removal whose reduction retired an unpaid ask cancels it at Stripe
+  // now and re-issues what is left, as the DELETE door does. Best-effort: the
+  // cancellations are queued durably and a failed mint keeps its recovery row.
+  let reissuedIntentId: string | null = null;
+  if ((outcome.outcome === "DECLINED" || outcome.outcome === "EXPIRED") && outcome.askRetirement) {
+    reissuedIntentId = await createModificationAdditionalPaymentIntent({
+      format,
+      bookingId,
+      result: outcome.askRetirement,
+      door: "guestConsentRemoval",
+      failureMessage: "Failed to re-issue an unpaid additional PaymentIntent after a member-guest consent removal",
+    })
+      .then((mint) => mint.additionalPaymentIntentId ?? null)
+      .catch((err) => {
+        logger.error({ err, bookingId, guestId }, "Failed to settle the asks a member-guest consent removal retired");
+        return null;
+      });
+  }
+
   if ((outcome.outcome === "DECLINED" || outcome.outcome === "EXPIRED") && outcome.xeroSettlement) {
     try {
       await queueGuestRemovalXeroSettlement(outcome.xeroSettlement, {
         createdByMemberId: actorMemberId ?? undefined,
-        additionalPaymentIntentId: null,
+        // #3980 review round 2 F3: the re-issued ask it minted, as the DELETE
+        // door passes its own, so a supplementary invoice waits on its payment.
+        additionalPaymentIntentId: reissuedIntentId,
       });
     } catch (err) {
       logger.error({ err, bookingId, guestId }, "Failed to queue Xero settlement for a member-guest consent removal");

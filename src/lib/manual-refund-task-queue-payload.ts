@@ -1,4 +1,5 @@
 import {
+  editFinancialReviewGuestsRemovedSinceRaised,
   parseEditFinancialReviewContext,
   toEditFinancialReviewEvidence,
   type EditFinancialReviewEvidence,
@@ -6,10 +7,16 @@ import {
 import { bookingOwner } from "@/lib/booking-owner";
 import { editReviewRefundIsPaidBackByHand } from "@/lib/booking-payment-state";
 import {
+  cancelCardShortfallPart,
   isEditRefundHandBackTask,
   isPartPaymentReviewTask,
   isRefundRequestHandBackTask,
 } from "@/lib/manual-refund-task-settlement-rules";
+import { isBankRefundVoidFollowUpTask } from "@/lib/bank-refund-void-follow-up-key";
+import { isGroupOrganiserHandBackTask } from "@/lib/group-organiser-hand-back-rules";
+import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
+import { isGroupSettlementMirrorHandBackKind, reviewRefundGoesToGroupOrganiser } from "@/lib/group-settlement-mirror-kinds";
+import { readBankRefundVoidFollowUpContext } from "@/lib/bank-refund-void-follow-up-copy";
 import type { QueueRepairableStrand } from "@/lib/stored-night-price-repair-queue";
 
 /**
@@ -49,9 +56,12 @@ export const OPEN_TASK_REFUND_PAYMENT_SELECT = {
 } as const;
 export const OPEN_TASK_BOOKING_PAYMENT_SELECT = {
   status: true,
+  organiserSettled: true, parentBookingId: true, // #3949: whether the group organiser paid for it
   payment: {
     select: { id: true, status: true, amountCents: true, refundedAmountCents: true, source: true },
   },
+  // #4317: the guests as they stand, ids only, for `reviewGuestsRemovedSinceRaised`.
+  guests: { select: { id: true } },
 } as const;
 
 /** An OPEN row the operator has to settle by hand. */
@@ -85,6 +95,9 @@ export type OpenManualRefundTaskRow = {
   booking: QueueBookingSummary & {
     /** #3536: `OPEN_TASK_BOOKING_PAYMENT_SELECT`. */
     status: string;
+    /** #3949: the same select - whether the group organiser paid for it (`paidByOrganiserInternetBanking`). */
+    organiserSettled: boolean;
+    parentBookingId: string | null;
     payment: {
       id: string;
       status: string;
@@ -100,6 +113,12 @@ export type OpenManualRefundTaskRow = {
      */
     memberId: string | null;
     deletedAt: Date | null;
+    /**
+     * #4317: the booking's guests as they stand, for
+     * `reviewGuestsRemovedSinceRaised`. Optional so a caller that does not read
+     * them gets no warning rather than a false one.
+     */
+    guests?: ReadonlyArray<{ id: string }>;
   };
 };
 
@@ -167,6 +186,37 @@ export type OpenManualRefundTaskPayload = {
    */
   refundRequestHandBack: boolean;
   /**
+   * #3949 (`INV-PAY-137`): either of those two, or the joiner's own cancellation's
+   * hand-back (`isGroupSettlementMirrorHandBackKind`), or a review whose refund
+   * the chooser sends there (`reviewRefundGoesToGroupOrganiser`), on a joiner's booking the
+   * group organiser paid for by Internet Banking, so the money goes back to the
+   * ORGANISER (`paidByOrganiserInternetBanking`), never to the joiner.
+   */
+  paidToGroupOrganiser: boolean;
+  /**
+   * #4042 (`INV-PAY-124`): an organiser cancelled a group paid by Internet
+   * Banking, and the club repays the joiners' refunds to the organiser. The
+   * cancel already booked those refunds, so the cash sentence does not fit it.
+   */
+  groupOrganiserHandBack: boolean;
+  /**
+   * #4097 (`INV-PAY-129`): a card cancellation whose card refund carried less
+   * than the refund due. `cardShortfallHandBack`: the part the payment's
+   * non-card charges hold, refunded by bank transfer. `cardShortfallCheck`: the
+   * rest, which the payment's records show already refunded or nothing holds,
+   * checked before paying. The booking was paid by card, so the cash sentence
+   * fits neither.
+   */
+  cardShortfallHandBack: boolean;
+  cardShortfallCheck: boolean;
+  /**
+   * #4162 (`INV-ADDPAY-042`): a bank refund back on the list because Xero
+   * voided the credit note that recorded it. The card asks one question - has
+   * the money gone to the member? - and completes only on one of its two
+   * answers. Null on every other task.
+   */
+  bankRefundVoidFollowUp: { voidedCreditNoteNumber: string | null; voidedAt: string } | null;
+  /**
    * #3643 (`INV-PAY-108`, ORCHESTRATOR DECISION 3): on a review, when the inbound
    * Xero sync learned the invoice was reported PAID and the invoice's cash then.
    * Nothing was credited or handed back for it; the treasurer decides. The
@@ -188,6 +238,21 @@ export type OpenManualRefundTaskPayload = {
   viewerOwnsBooking: boolean;
   reviewEvidence: EditFinancialReviewEvidence | null;
   reviewEvidenceUnreadable: boolean;
+  /**
+   * #4317 (owner decision on #4302): the guests whose nights this review's edit
+   * moved and who were removed from the booking after it was raised, credited
+   * their stored total. Named by their place among the item's strands (the
+   * evidence block's "Guest N of M") and stored total, with which way their
+   * nights moved; no id crosses the wire. Empty on a hand-back, and where the
+   * booking's guests were not read.
+   */
+  reviewGuestsRemovedSinceRaised: Array<{
+    strandIndex: number;
+    strandCount: number;
+    guestTotalCents: number | null;
+    gaveNightsBack: boolean;
+    addedNights: boolean;
+  }>;
   /**
    * #3191: the nights whose stored price is blank, and the two totals the
    * officer's figures have to reconcile against. EMPTY when there is nothing
@@ -238,7 +303,12 @@ export function toOpenManualRefundTaskPayload(
   viewerMemberId: string | null | undefined,
   unpricedNights: readonly QueueRepairableStrand[],
 ): OpenManualRefundTaskPayload {
-  const reviewContext = parseEditFinancialReviewContext(task.reviewContext);
+  // #4042: a group organiser's hand-back keeps its joiners' shares there, not review evidence.
+  const groupHandBack = isGroupOrganiserHandBackTask(task);
+  // #4162: a re-confirmed bank refund keeps its void's facts there, not review evidence.
+  const followUp = isBankRefundVoidFollowUpTask(task) ? readBankRefundVoidFollowUpContext(task.reviewContext) : null;
+  const ownContext = groupHandBack || isBankRefundVoidFollowUpTask(task);
+  const reviewContext = ownContext ? null : parseEditFinancialReviewContext(task.reviewContext);
 
   return {
     id: task.id,
@@ -250,6 +320,16 @@ export function toOpenManualRefundTaskPayload(
     partPaymentReview: isPartPaymentReviewTask(task),
     editRefundHandBack: isEditRefundHandBackTask(task),
     refundRequestHandBack: isRefundRequestHandBackTask(task),
+    paidToGroupOrganiser:
+      task.kind === "EDIT_FINANCIAL_REVIEW"
+        ? reviewRefundGoesToGroupOrganiser(task) // review round 3: the chooser's own test
+        : isGroupSettlementMirrorHandBackKind(task) && paidByOrganiserInternetBanking(task.booking),
+    groupOrganiserHandBack: groupHandBack,
+    cardShortfallHandBack: cancelCardShortfallPart(task) === "bank",
+    cardShortfallCheck: cancelCardShortfallPart(task) === "check",
+    bankRefundVoidFollowUp: followUp
+      ? { voidedCreditNoteNumber: followUp.voidedCreditNoteNumber, voidedAt: followUp.voidedAt }
+      : null,
     partPaymentReviewXeroPaid:
       isPartPaymentReviewTask(task) &&
       task.partPaymentReviewXeroPaidAt &&
@@ -294,7 +374,26 @@ export function toOpenManualRefundTaskPayload(
       destroyed is unreadable, rather than silently see a task with no evidence
       section and assume none was ever taken.
     */
-    reviewEvidenceUnreadable: task.reviewContext !== null && !reviewContext,
+    reviewEvidenceUnreadable: !ownContext && task.reviewContext !== null && !reviewContext,
+    /*
+      #4317 (owner decision on #4302): a guest this review names came off the
+      booking after it was raised, credited its stored total, so settling the
+      review could credit given-back nights again or charge for added ones. Only
+      on a review whose booking guests were read; never on a hand-back.
+    */
+    reviewGuestsRemovedSinceRaised:
+      task.kind === "EDIT_FINANCIAL_REVIEW" && reviewContext !== null && task.booking.guests !== undefined
+        ? editFinancialReviewGuestsRemovedSinceRaised(
+            reviewContext,
+            new Set(task.booking.guests.map((guest) => guest.id)),
+          ).map((guest) => ({
+            strandIndex: guest.strandIndex,
+            strandCount: guest.strandCount,
+            guestTotalCents: guest.guestTotalCents,
+            gaveNightsBack: guest.gaveNightsBack,
+            addedNights: guest.addedNights,
+          }))
+        : [],
     unpricedNights,
   };
 }

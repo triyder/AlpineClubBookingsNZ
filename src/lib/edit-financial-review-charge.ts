@@ -5,11 +5,17 @@ import {
   PaymentStatus,
 } from "@prisma/client";
 
-import { hasCapturedPayment } from "@/lib/booking-payment-state";
-import { paidByOrganiserCard } from "@/lib/group-organiser-paid";
+import {
+  canAskCardForReviewCharge,
+  refusesReviewChargeForCancellation,
+} from "@/lib/booking-payment-state";
+import { paidByOrganiserCard, paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import {
   REVIEW_CHARGE_ANCHOR_MISSING_MESSAGE,
+  REVIEW_CHARGE_BOOKING_CANCELLED_MESSAGE,
+  REVIEW_CHARGE_BOOKING_CANCELLED_ORGANISER_MESSAGE,
   REVIEW_CHARGE_NO_INSTRUMENT_MESSAGE,
+  REVIEW_CHARGE_ORGANISER_PAID_BY_BANK_MESSAGE,
   REVIEW_CHARGE_ORGANISER_PAID_MESSAGE,
   REVIEW_CHARGE_REQUEST_ALREADY_PAID_MESSAGE,
   REVIEW_CHARGE_REQUEST_CLOSED_MESSAGE,
@@ -17,17 +23,30 @@ import {
 import {
   findEditReviewChargeRequest,
   hasIssuedSupplementaryInvoice,
+  recordShortEditReviewChargeInvoice,
   sumEditReviewChargeSharesCents,
   type EditReviewChargeStore,
 } from "@/lib/edit-financial-review-charge-request";
 import {
   syncEditFinancialReviewChargeRequest,
   type EditReviewChargeMember,
+  type EditReviewChargeSyncOutcome,
 } from "@/lib/edit-financial-review-charge-sync";
 import logger from "@/lib/logger";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
 import { enqueueEditFinancialReviewChargeRecovery } from "@/lib/payment-recovery";
 import { isCapturedTransactionStatus } from "@/lib/payment-transactions";
+import {
+  resolvedSupplementaryInvoiceOperationsWhere,
+  supplementaryInvoiceStillComingWhere,
+} from "@/lib/xero-supplementary-invoice-statuses";
+import {
+  enqueueEditReviewChargeInvoiceInTransaction,
+  kickQueuedXeroOutboxOperationsIfConnected,
+  type XeroSupplementaryInvoiceEnqueueOutcome,
+} from "@/lib/xero-operation-outbox";
+import type { Prisma } from "@prisma/client";
+import type { EditReviewSettlementRoute } from "@/lib/edit-financial-review-settlement";
 import type { ClubFormat } from "@/lib/club-format";
 
 // #3402: the sync moved to its own module with the raise claim around it;
@@ -130,8 +149,10 @@ export type EditReviewChargeRoute =
   | {
       kind: "additional-charge";
       /**
-       * The booking has a CAPTURED card payment, so an additional PaymentIntent
-       * is minted against it - or, when this edit already has one, raised to the
+       * The booking's payment is one the card may be asked against
+       * (`canAskCardForReviewCharge`: captured by card, or a settled booking
+       * paid wholly with credit, #3947), so an additional PaymentIntent is
+       * minted against it - or, when this edit already has one, raised to the
        * new total.
        */
       collectVia: "stripe";
@@ -179,8 +200,12 @@ export async function chooseEditReviewChargeRoute({
   store,
 }: {
   bookingModificationId: string | null;
-  /** #3653: whether the group organiser paid for this booking (`paidByOrganiserCard`). */
-  booking: { organiserSettled: boolean; parentBookingId: string | null };
+  /**
+   * #3653, #3949: whether the group organiser paid for this booking (`paidByOrganiserCard`,
+   * `paidByOrganiserInternetBanking`). #3947: and its `status`, half of the card question
+   * (`canAskCardForReviewCharge`), and the whole of the cancelled-booking refusal (#4272).
+   */
+  booking: { status: string; organiserSettled: boolean; parentBookingId: string | null };
   bookingPayment: {
     id: string;
     status: string;
@@ -204,6 +229,24 @@ export async function chooseEditReviewChargeRoute({
       409,
     );
   }
+  // #4272 (owner decision 21 Oct 2026): a CANCELLED booking is refused before
+  // any route is chosen, and before every other refusal that reads its payment:
+  // the cancellation is what makes every instrument wrong. A card ask on it is
+  // one the member cannot pay (`INV-ADDPAY-023`), and the recovery replay skips
+  // it, so asking here would leave the inline path and the replay disagreeing.
+  // The helper the card question asks refuses it too, so a cancellation landing
+  // after this commit stops the sync's mint as well.
+  if (refusesReviewChargeForCancellation(booking)) {
+    // A joiner the organiser settled, by card or internet banking, is pointed
+    // at the organiser, as the organiser-paid refusal below does.
+    const organiserSettledJoiner = booking.organiserSettled && booking.parentBookingId != null;
+    throw new ManualBookingPaymentError(
+      organiserSettledJoiner
+        ? REVIEW_CHARGE_BOOKING_CANCELLED_ORGANISER_MESSAGE
+        : REVIEW_CHARGE_BOOKING_CANCELLED_MESSAGE,
+      409,
+    );
+  }
   // #3653 (`INV-PAY-114`): the organiser paid for this booking by card. Its
   // payment mirror is a slice of the organiser's combined payment, so a card
   // ask would charge the joiner's own card and an invoice would bill the joiner;
@@ -211,16 +254,26 @@ export async function chooseEditReviewChargeRoute({
   if (paidByOrganiserCard({ ...booking, payment: bookingPayment })) {
     throw new ManualBookingPaymentError(REVIEW_CHARGE_ORGANISER_PAID_MESSAGE, 409);
   }
-  // The same test `applyPaymentAdjustments` uses to decide whether an ordinary
-  // price increase mints an intent: a CAPTURED payment whose source is the card.
-  // `Payment.source` alone is not enough - its schema DEFAULT is STRIPE, so a
-  // hand-settled booking carries it with nothing captured behind it. A MEMBER is
-  // part of the test rather than a fallback: minting needs somebody to bill, and
-  // a booking with none has no card route - it falls to the invoice route, or to
-  // the no-instrument refusal below.
+  // #3949: so is one the organiser paid for by Internet Banking - refused in the organiser's words, before the
+  // no-instrument refusal below would answer it in general ones.
+  if (paidByOrganiserInternetBanking({ ...booking, payment: bookingPayment })) {
+    throw new ManualBookingPaymentError(REVIEW_CHARGE_ORGANISER_PAID_BY_BANK_MESSAGE, 409);
+  }
+  // #3947 (owner decision 15 Oct 2026): the review charge's ONE card question,
+  // which the sync's mint asks again after the commit - so the two cannot
+  // disagree and strand the debt on a replay that never raises. It is the
+  // edit doors' `canAskCardForIncrease` (#3502), so a booking paid wholly with
+  // credit - a $0 SUCCEEDED card payment - is asked by card, Xero or not; plus
+  // the captured-card test this path used before, for a booking outside the
+  // settled statuses other than a cancelled one (refused above; the helper's
+  // docblock says why the clause stays). `Payment.source` alone
+  // is not enough - its schema DEFAULT is STRIPE, so a hand-settled booking
+  // carries it with nothing captured behind it. A MEMBER is part of the test
+  // rather than a fallback: minting needs somebody to bill, and a booking with
+  // none has no card route - it falls to the invoice route, or to the
+  // no-instrument refusal below.
   const canChargeCard =
-    hasCapturedPayment(bookingPayment) &&
-    bookingPayment?.source === PaymentSource.STRIPE &&
+    canAskCardForReviewCharge({ status: booking.status, payment: bookingPayment }) &&
     Boolean(member);
   // An ISSUED Xero invoice is the other instrument. It has to be ISSUED rather
   // than merely possible - with no invoice to add to,
@@ -262,14 +315,43 @@ export async function chooseEditReviewChargeRoute({
       );
     }
   }
-  if (await hasIssuedSupplementaryInvoice({ bookingModificationId, store })) {
+  // #3947 review: ONE INSTRUMENT PER EDIT. A share of an edit whose earlier
+  // share took the `invoice` route - its supplementary invoice still coming
+  // (queued, being sent, or failed and not resolved), and no card request for
+  // this edit - stays on that route, so the Xero leg bills both shares on the
+  // one invoice. Taking the card here would mint an ask for the edit's whole
+  // total beside an invoice that bills at least the earlier share: the member
+  // billed twice. Before #3947 a credit-paid booking's shares all took the
+  // invoice route; this is the transition #3947 opens. A card-route edit's own
+  // invoice always has a card request beside it (the leg defers it until one
+  // exists), so it never reaches this check.
+  //
+  // READ BEFORE THE "already issued" check below, and the order is the
+  // guarantee (round 4, concurrency F1). These are two READ COMMITTED
+  // statements, and the outbox worker moves a row from still-coming to issued
+  // (SUCCEEDED and its link) in ONE commit, under neither `lock(1)` nor the
+  // anchor key. Read this way round, every such row is seen by one of the two:
+  // still coming at the first read, or already issued by the second, which
+  // refuses. The other way round, a commit landing between them reads "no
+  // invoice issued" and then "nothing coming", and the share takes the card
+  // beside the invoice just sent. An officer's resolve-in-Xero mark moves a
+  // FAILED row the same one way (coming -> resolved), so the same order holds;
+  // the one mark that moves BACK - withdrawn by the resolve route because a
+  // retry of the row is running - leaves that retry on the anchor, which the
+  // still-coming read counts as coming in every state of the mark (round 5).
+  const joinsQueuedInvoice =
+    canChargeCard &&
+    existing === null &&
+    hasIssuedXeroInvoice &&
+    (await hasReviewChargeInvoiceStillComing({ bookingModificationId, store }));
+  if (await isReviewChargeInvoiceDone({ bookingModificationId, store })) {
     throw new ManualBookingPaymentError(
       REVIEW_CHARGE_REQUEST_CLOSED_MESSAGE,
       409,
     );
   }
 
-  if (canChargeCard && bookingPayment && member) {
+  if (canChargeCard && !joinsQueuedInvoice && bookingPayment && member) {
     return {
       kind: "additional-charge",
       collectVia: "stripe",
@@ -305,6 +387,176 @@ export async function chooseEditReviewChargeRoute({
 
 
 /**
+ * #3947: whether this edit's supplementary invoice is DONE, so no further share
+ * may join it or be asked beside it: issued (an active `SUPPLEMENTARY_INVOICE`
+ * link, `hasIssuedSupplementaryInvoice`, #3170) or - round 4, money F1 - made by
+ * hand in Xero after its operation failed, which an officer records by marking
+ * the row resolved (`INV-INT-025`: done, never re-sent and never minted beside).
+ * Treating that row as "not coming" sent a later share to the card for the
+ * edit's whole total beside the hand-made invoice.
+ */
+async function isReviewChargeInvoiceDone({
+  bookingModificationId,
+  store,
+}: {
+  bookingModificationId: string;
+  store: EditReviewChargeStore;
+}): Promise<boolean> {
+  if (await hasIssuedSupplementaryInvoice({ bookingModificationId, store })) return true;
+  const resolved = await store.xeroSyncOperation.findFirst({
+    where: resolvedSupplementaryInvoiceOperationsWhere({
+      localModel: "BookingModification",
+      localId: bookingModificationId,
+    }),
+    select: { id: true },
+  });
+  return resolved !== null;
+}
+
+/**
+ * #3947 review: whether this edit's supplementary invoice is still coming
+ * (`supplementaryInvoiceStillComingWhere`): the enqueue's own outstanding read
+ * (round 2: `RUNNING` included, which the restate's narrower set missed) plus a
+ * FAILED row nobody has resolved, which a Requeue would still send. Asked on
+ * the chooser's transaction.
+ */
+async function hasReviewChargeInvoiceStillComing({
+  bookingModificationId,
+  store,
+}: {
+  bookingModificationId: string;
+  store: EditReviewChargeStore;
+}): Promise<boolean> {
+  const queued = await store.xeroSyncOperation.findFirst({
+    where: supplementaryInvoiceStillComingWhere({
+      localModel: "BookingModification",
+      localId: bookingModificationId,
+    }),
+    select: { id: true },
+  });
+  return queued !== null;
+}
+
+/** #3947: the invoice route's invoice, as queued inside the completion's transaction. */
+export type QueuedEditReviewChargeInvoice = {
+  queueOperationId: string | null;
+  outcome: XeroSupplementaryInvoiceEnqueueOutcome;
+  /** The edit's combined total the invoice was asked to bill. */
+  totalCents: number;
+};
+
+/**
+ * #3947 (owner decision 22 Oct 2026, option 2): THE `invoice` ROUTE'S INVOICE IS
+ * QUEUED INSIDE THE COMPLETION'S TRANSACTION, the in-transaction outbox pattern
+ * the refund notes use (`queueRefundRequestCreditNoteInTransaction`,
+ * `queueCancelledBookingHandBackNoteInTransaction`).
+ *
+ * WHY. On this route the supplementary invoice IS the ask. Queued after the
+ * commit, it left a window in which the share was COMPLETED and its edit had no
+ * invoice in the outbox, so a second share of the same edit, chosen in that
+ * window, read no invoice still coming and took the card: a card ask for the
+ * edit's total beside the invoice that then went out. Queued here, the invoice
+ * commits with the share, and the next share - serialised behind this one on
+ * `lock(1)` - always sees it (`supplementaryInvoiceStillComingWhere`).
+ *
+ * WHAT. The decision every caller of the enqueue makes (link-check ->
+ * queued-check -> raise-or-create, under the per-anchor key), for the edit's
+ * combined total re-derived on THIS transaction, which already holds this share's
+ * claim. It replaces, for this route only, the post-commit restate-then-enqueue
+ * in `dispatchEditReviewXeroSettlement`; the ordinary edit path's
+ * `queueXeroBookingEditSettlement` is untouched.
+ *
+ * LOCK ORDER. Called LAST in the completion's transaction, after every other
+ * lock it takes: `lock(1)` -> ... -> the per-anchor supplementary-invoice key.
+ * Nothing holding that key takes another, so no cycle (`INV-LOCK-002`,
+ * docs/CONCURRENCY_AND_LOCKING.md). No provider call: only the outbox row is
+ * written here, and `finishEditReviewChargeInvoice` kicks it after the commit.
+ *
+ * A write that fails here rolls the completion back and leaves the task OPEN,
+ * which is the point of the pattern: the share never commits without its ask.
+ */
+export async function queueEditReviewChargeInvoiceInTransaction({
+  bookingId,
+  route,
+  hasIssuedXeroInvoice,
+  createdByMemberId,
+  store,
+}: {
+  bookingId: string;
+  route: EditReviewSettlementRoute | null;
+  hasIssuedXeroInvoice: boolean;
+  createdByMemberId: string;
+  store: Prisma.TransactionClient;
+}): Promise<QueuedEditReviewChargeInvoice | null> {
+  // The `invoice` route reaches here only with an issued primary invoice (the
+  // chooser refuses otherwise); the guard keeps the ordinary dispatch's own
+  // rule that an edit with no primary invoice has nothing to supplement.
+  if (route?.kind !== "additional-charge" || route.collectVia !== "invoice" || !hasIssuedXeroInvoice) {
+    return null;
+  }
+  const totalCents = await sumEditReviewChargeSharesCents({
+    bookingId,
+    bookingModificationId: route.bookingModificationId,
+    store,
+  });
+  if (totalCents <= 0) return null;
+  const queued = await enqueueEditReviewChargeInvoiceInTransaction(
+    { bookingId, bookingModificationId: route.bookingModificationId, totalCents, createdByMemberId },
+    store,
+  );
+  return { queueOperationId: queued.queueOperationId, outcome: queued.outcome, totalCents };
+}
+
+/**
+ * #3947: after the commit, what the post-commit dispatch used to do once its
+ * enqueue answered: start the outbox, and record a share the invoice could not
+ * take (`recordShortEditReviewChargeInvoice`, the one function that decides what
+ * is short - a second ask for `short-sent`, a recorded shortfall for
+ * `short-in-flight`, nothing for `covers-total`). Best-effort, as that leg was: a
+ * Xero outage must not undo a completion whose ask is already durable.
+ */
+export async function finishEditReviewChargeInvoice({
+  queued,
+  bookingId,
+  taskId,
+  bookingModificationId,
+  shareCents,
+  memberId,
+  actingMemberId,
+  format,
+}: {
+  queued: QueuedEditReviewChargeInvoice;
+  bookingId: string;
+  taskId: string;
+  bookingModificationId: string;
+  shareCents: number | null;
+  memberId: string | null;
+  actingMemberId: string;
+  format: ClubFormat;
+}): Promise<void> {
+  if (queued.queueOperationId) {
+    // Fire-and-forget, as the dispatch it replaces was (round 4, money F2): the
+    // kick can reach Xero, and the officer's request must not wait on it.
+    void kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 }).catch((err) =>
+      logger.error({ err, bookingId, taskId }, "Failed to kick the Xero outbox after a review charge's invoice was queued"),
+    );
+  }
+  await recordShortEditReviewChargeInvoice({
+    outcome: queued.outcome,
+    bookingId,
+    format,
+    bookingModificationId,
+    reviewTaskId: taskId,
+    shareCents,
+    memberId,
+    totalCents: queued.totalCents,
+    createdByMemberId: actingMemberId,
+  }).catch((err) =>
+    logger.error({ err, bookingId, taskId }, "Failed to record a review charge share its queued invoice could not take"),
+  );
+}
+
+/**
  * Raise the request, AFTER the caller's transaction has committed - the same
  * placement the refund side uses, and for the same reason: the Stripe call is a
  * provider round trip and the locking guide forbids one inside a transaction.
@@ -322,7 +574,14 @@ export async function executeEditReviewCharge({
   taskId: string;
   route: EditReviewChargeRoute;
   format: ClubFormat; // #3565: resolved before any transaction by the caller
-}): Promise<{ paymentIntentId: string | null; totalCents: number }> {
+}): Promise<{
+  paymentIntentId: string | null;
+  totalCents: number;
+  /** The sync's answer on the card route (#4272: `booking-cancelled` asks nothing). */
+  outcome?: EditReviewChargeSyncOutcome;
+  /** #4272: on `booking-cancelled`, whether that run wrote the uncollected-share record. */
+  recordedUncollected?: boolean;
+}> {
   // Derived here as well as inside the sync, because BOTH arms need it and the
   // failure arm needs it after the sync has thrown: the supplementary Xero
   // invoice the caller queues must bill the whole edit rather than this one share

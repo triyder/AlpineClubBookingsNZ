@@ -6,6 +6,7 @@ import {
   type AuditCategory,
 } from "./audit-categories";
 import { readDeclaredMemberText } from "./audit-member-disclosure";
+import { exactContains, exactPrefix } from "./prisma-exact-prefix"; // #4165: legacy action names are literal
 import {
   isReservedDetailKey,
   recoverTruncatedStructuredDetail,
@@ -159,12 +160,10 @@ function getAuditLogSubjectMemberId(
   return null;
 }
 
-function actionStartsWith(prefix: string): Prisma.AuditLogWhereInput {
-  return { action: { startsWith: prefix } };
-}
+const actionStartsWith = (prefix: string): Prisma.AuditLogWhereInput => ({ action: exactPrefix(prefix) });
 
 function actionContains(value: string): Prisma.AuditLogWhereInput {
-  return { action: { contains: value } };
+  return { action: exactContains(value) };
 }
 
 const LEGACY_AUDIT_CATEGORY_ACTION_FILTERS: Record<
@@ -213,6 +212,7 @@ const LEGACY_AUDIT_CATEGORY_ACTION_FILTERS: Record<
   xero: [
     actionStartsWith("XERO_"),
     actionStartsWith("xero_"),
+    actionStartsWith("xero."), // #4165: once reached only through `xero_`'s wildcard `_`
     actionContains("XERO"),
   ],
   communication: [

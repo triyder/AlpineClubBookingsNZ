@@ -268,20 +268,15 @@ describe("what the operator is told afterwards", () => {
       { params },
     );
     const body = (await response.json()) as { message: string };
-    expect(body.message).toContain("2 nights' prices were recorded");
     /*
-      #3191 fix round: the receipt claims THIS GUEST'S nights, not the booking.
-      One edit raises one review per unreadable guest strand, so settling the
-      first of two leaves the second blank - and "this booking will not be sent
-      for review again" would be a promise the next edit disproves, on the one
-      promise this whole epic is about.
+      The receipt claims THIS GUEST'S nights, not the booking (#3191 fix round).
+      Since #4317 no edit sends a booking for review, so it no longer promises
+      that, nor that another guest's blanks still can (#4317).
     */
     expect(body.message).toContain(
-      "this guest's nights will not send this booking back for review again",
+      "2 nights' prices were recorded for this guest.",
     );
-    expect(body.message).toContain(
-      "If another guest on the same booking has unpriced nights",
-    );
+    expect(body.message).not.toContain("for review again");
   });
 
   it("says nothing extra when no nights were recorded", async () => {
@@ -361,5 +356,25 @@ describe("the officer's cash-or-bank answer on a hand-settled refund (#3536)", (
     );
     expect(response.status).toBe(400);
     expect(mocks.resolveManualRefundTask).not.toHaveBeenCalled();
+  });
+});
+
+// #4042 (`INV-PAY-124`): a group organiser's hand-back completion that does not
+// say the total it was shown reaches the door as null, and the door's refusal
+// is what the officer reads.
+describe("a group organiser's hand-back marked paid back without the total it was shown", () => {
+  it("passes no amount through as null, and answers with the door's 409 and its sentence", async () => {
+    const { ManualBookingPaymentError } = await import("@/lib/manual-refund-task-resolution");
+    const refusal = "This repayment's total grows as each joiner's place is cancelled, so it is marked paid back at the total the screen shows. Refresh the page and try again.";
+    mocks.resolveManualRefundTask.mockRejectedValueOnce(new ManualBookingPaymentError(refusal, 409));
+
+    const response = await POST(request({ resolution: "completed", confirmed: true, note: null }), { params });
+
+    expect(mocks.resolveManualRefundTask).toHaveBeenLastCalledWith(
+      expect.objectContaining({ resolution: "completed", confirmedAmountCents: null }),
+      CLUB_FORMAT_TEST,
+    );
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: refusal });
   });
 });

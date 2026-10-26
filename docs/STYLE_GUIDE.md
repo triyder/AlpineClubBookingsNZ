@@ -213,6 +213,19 @@ lockers, seasons), where there is no clean `Admin → X` path. Even then, say
 explicitly how the page is reached. Do not copy a justified exception as the
 template.
 
+## Routing rows and ids
+
+These rules come from `AGENTS.md` → "Reading the rest of the docs":
+
+- Add a row to the `AGENTS.md` routing table for any doc an agent must reach.
+- Cite invariant ids, never line numbers. A guard names the id it enforces in
+  its failure message.
+- Fix an anchor whenever its heading changes.
+
+`pnpm run docs:indexcheck` checks ids, family routing, link targets and
+reachability, and `pnpm run docs:linkcheck` checks anchors. Neither checks
+that a row points to the right place, so read the target before adding one.
+
 ## Linking rules
 
 The docs form a navigable graph, not a flat folder. Three invariants:

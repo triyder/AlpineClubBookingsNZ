@@ -1,3 +1,4 @@
+import { exactContains } from "@/lib/prisma-exact-prefix";
 import type { Prisma } from "@prisma/client";
 import { z } from "zod";
 import {
@@ -126,12 +127,12 @@ function buildAuditTextSearchWhere(
 
   return {
     OR: [
-      { action: { contains: search, mode: "insensitive" } },
-      { summary: { contains: search, mode: "insensitive" } },
-      { details: { contains: search, mode: "insensitive" } },
-      { requestId: { contains: search, mode: "insensitive" } },
-      { entityId: { contains: search, mode: "insensitive" } },
-      { targetId: { contains: search, mode: "insensitive" } },
+      { action: exactContains(search, "insensitive") },
+      { summary: exactContains(search, "insensitive") },
+      { details: exactContains(search, "insensitive") },
+      { requestId: exactContains(search, "insensitive") },
+      { entityId: exactContains(search, "insensitive") },
+      { targetId: exactContains(search, "insensitive") },
     ],
   };
 }

@@ -1288,6 +1288,7 @@ describe("the price a partial promotion produces reaches every surface unchanged
 
     // The confirmation/modification email's own rows.
     const rows = bookingModificationSummaryRows({
+      addedGuests: [],
       oldCheckIn: new Date("2026-08-01T00:00:00Z"),
       oldCheckOut: new Date("2026-08-03T00:00:00Z"),
       newCheckIn: new Date("2026-08-01T00:00:00Z"),
@@ -1366,6 +1367,7 @@ describe("the price a partial promotion produces reaches every surface unchanged
 
   it("adds no promo row to a modification email that left nobody out", () => {
     const rows = bookingModificationSummaryRows({
+      addedGuests: [],
       oldCheckIn: new Date("2026-08-01T00:00:00Z"),
       oldCheckOut: new Date("2026-08-03T00:00:00Z"),
       newCheckIn: new Date("2026-08-01T00:00:00Z"),

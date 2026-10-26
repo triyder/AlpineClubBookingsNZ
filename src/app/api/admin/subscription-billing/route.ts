@@ -19,6 +19,11 @@ import { requireAdmin } from "@/lib/session-guards";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import { refreshFinancialYearConfig } from "@/lib/financial-year-server";
 import { enqueueMembershipSubscriptionChargeOperation } from "@/lib/xero-subscription-invoices";
+import {
+  closeAlreadyPaidSubscriptionCharge,
+  CloseAlreadyPaidChargeError,
+} from "@/lib/membership-subscription-charge-close";
+import { CLOSE_ALREADY_PAID_REASON_MAX } from "@/lib/subscription-charge-already-paid";
 
 const querySchema = z.object({
   seasonYear: z.coerce.number().int().min(2020).max(2040).optional(),
@@ -33,6 +38,13 @@ const mutationSchema = z.discriminatedUnion("action", [
     confirmed: z.literal(true),
   }).strict(),
   z.object({ action: z.literal("RETRY_CHARGE"), chargeId: z.string().min(1) }).strict(),
+  // #4098: close a charge in CONFLICT because every subscription it covers is
+  // already PAID. Finance edit (the POST guard); the reason is required.
+  z.object({
+    action: z.literal("CLOSE_ALREADY_PAID"),
+    chargeId: z.string().min(1),
+    reason: z.string().trim().min(1).max(CLOSE_ALREADY_PAID_REASON_MAX),
+  }).strict(),
   // #2148 (D2): edit-gated preview refresh. Reconciles stale persisted
   // exceptions (auto-resolves any OPEN row the fresh whole-club preview no
   // longer regenerates) and returns the refreshed billing data. The read-only
@@ -83,7 +95,9 @@ async function loadBillingData(seasonYear: number, decisionDate: Date) {
       where: { seasonYear },
       orderBy: { createdAt: "desc" },
       take: 100,
-      include: { coverage: { select: { memberId: true, memberName: true } } },
+      // #4098: releasedAt and the subscription's status let the panel offer Close
+      // only when every ACTIVE covered subscription is settled (PAID or NOT_REQUIRED).
+      include: { coverage: { select: { memberId: true, memberName: true, releasedAt: true, subscription: { select: { status: true } } } } },
     }),
     prisma.membershipBillingException.findMany({
       where: { seasonYear, status: "OPEN" },
@@ -190,6 +204,17 @@ export async function POST(request: Request) {
         memberId: guard.session.user.id,
         targetId: parsed.data.chargeId,
         details: JSON.stringify(result),
+      });
+      invalidate();
+      return NextResponse.json({ success: true, ...result });
+    }
+    if (parsed.data.action === "CLOSE_ALREADY_PAID") {
+      // The service writes its own audit row inside the close's transaction,
+      // and none for an idempotent repeat.
+      const result = await closeAlreadyPaidSubscriptionCharge({
+        chargeId: parsed.data.chargeId,
+        reason: parsed.data.reason,
+        actorMemberId: guard.session.user.id,
       });
       invalidate();
       return NextResponse.json({ success: true, ...result });
@@ -324,6 +349,9 @@ export async function POST(request: Request) {
   } catch (error) {
     if (error instanceof SubscriptionBillingError) {
       return NextResponse.json({ error: error.message }, { status: 409 });
+    }
+    if (error instanceof CloseAlreadyPaidChargeError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
     }
     logger.error({ err: error }, "Subscription billing action failed");
     return NextResponse.json(

@@ -180,6 +180,16 @@ export async function voidCancelledGroupSettlementInvoice(params: {
 }
 
 /**
+ * #4042 (`INV-PAY-124`): a cancelled Internet Banking group's paid invoice. The
+ * organiser is repaid what the cancellation policy gives back, through the
+ * hand-back task, so the alert sends the treasurer there and names no figure:
+ * the task holds the total, and the invoice's paid amount is not what is owed.
+ */
+function groupHandBackVoidRefusal(invoiceId: string, money: string): string {
+  return `The group was cancelled, but its combined invoice ${invoiceId} has ${money}, so it was not voided. The organiser's repayment is tracked by the hand-back task on the payments board's Money to settle queue, which shows the total and grows as each joiner's cancellation completes: pay the organiser what the task shows (if no hand-back task appears, check the joiners' cancelled bookings for refunds recorded to the organiser). In Xero, raise a credit note on this invoice for the amount you repaid and record the refund against that credit note.`;
+}
+
+/**
  * The shared first step of both VOID handlers: an invoice already voided
  * completes quietly, and one carrying money completes with one operator alert
  * instead of a VOID Xero would refuse. Returns true when the caller should
@@ -190,6 +200,8 @@ async function voidStillNeeded(params: {
   invoiceId: string;
   syncOperationId: string;
   reason: "cancel" | "abandon";
+  /** #4042: a cancelled, settled Internet Banking group, repaid through its hand-back task. */
+  internetBanking?: boolean;
 }): Promise<boolean> {
   const state = await readGroupSettlementInvoiceState(
     params.invoiceId,
@@ -239,7 +251,9 @@ async function voidStillNeeded(params: {
       invoiceId: params.invoiceId,
       errorMessage:
         params.reason === "cancel"
-          ? `The group was cancelled, but its combined invoice ${params.invoiceId} has ${money}, so it was not voided. Refund or credit the organiser in Xero.`
+          ? params.internetBanking
+            ? groupHandBackVoidRefusal(params.invoiceId, money)
+            : `The group was cancelled, but its combined invoice ${params.invoiceId} has ${money}, so it was not voided. Refund or credit the organiser in Xero.`
           : `The group's settlement stopped using its combined invoice ${params.invoiceId} (it lapsed or was replaced), but the invoice has ${money}, so it was not voided. No bookings were settled from it; refund the organiser, or apply the money to the group's current bill by hand.`,
     },
     format
@@ -265,6 +279,8 @@ export async function voidXeroInvoiceForCancelledGroupSettlement(
       id: true,
       xeroInvoiceId: true,
       xeroInvoiceNumber: true,
+      stripePaymentIntentId: true,
+      status: true,
       groupBooking: { select: { status: true } },
     },
   });
@@ -283,6 +299,8 @@ export async function voidXeroInvoiceForCancelledGroupSettlement(
       invoiceId: settlement.xeroInvoiceId,
       syncOperationId: options.syncOperationId,
       reason: "cancel",
+      // A SETTLED Internet Banking group: its cancel repays the organiser through the hand-back task.
+      internetBanking: !settlement.stripePaymentIntentId && settlement.status === "SUCCEEDED",
     }))
   ) {
     return;

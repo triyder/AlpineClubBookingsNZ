@@ -1,3 +1,4 @@
+import { exactContains } from "@/lib/prisma-exact-prefix";
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
@@ -125,9 +126,9 @@ export async function GET(req: NextRequest) {
   if (q) {
     andConditions.push({
       OR: [
-        { firstName: { contains: q, mode: "insensitive" } },
-        { lastName: { contains: q, mode: "insensitive" } },
-        { email: { contains: q, mode: "insensitive" } },
+        { firstName: exactContains(q, "insensitive") },
+        { lastName: exactContains(q, "insensitive") },
+        { email: exactContains(q, "insensitive") },
       ],
     });
   }

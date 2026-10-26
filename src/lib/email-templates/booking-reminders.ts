@@ -159,6 +159,40 @@ export function additionalPaymentReminderTemplate(params: {
 }
 
 /**
+ * #4253: the request to pay for credit that was applied to a booking and then used
+ * elsewhere in the club's accounts. It is NOT the "a change to your booking
+ * increased the total" reminder: nothing about the stay changed, so that sentence
+ * would tell the member something false. Sent when the request is raised and on the
+ * additional-payment reminder schedule after it; the body is the one the owner
+ * approved, and the same four facts are required of an override.
+ */
+export function creditReleasedPaymentRequestTemplate(params: {
+  firstName: string;
+  additionalAmountCents: number;
+  checkIn: Date;
+  checkOut: Date;
+  requestedOn: Date;
+},
+  format: ClubFormat,
+): string {
+  return layout(`
+    ${heading("Payment Needed")}
+    ${paragraph("Hi " + escapeHtml(params.firstName) + ", the account credit applied to your booking was used elsewhere in the club's accounts, so " + escapeHtml(formatCents(params.additionalAmountCents, format)) + " of your booking has not been paid.")}
+    ${infoTable([
+      { label: "Amount still to pay", value: formatCents(params.additionalAmountCents, format) },
+      { label: "Requested on", value: emailClubDate(params.requestedOn) },
+      { label: "Check-in", value: emailCalendarDay(params.checkIn) },
+      { label: "Check-out", value: emailCalendarDay(params.checkOut) },
+    ])}
+    ${alertBox(
+      "Open your booking to pay by card. If you have already paid, or think this is wrong, contact the club.",
+      "warning",
+    )}
+    ${button("Pay Now", BASE_URL + "/bookings")}
+  `);
+}
+
+/**
  * #2550 — member-facing reminder that a whole-lodge booking's party is still
  * "Guest 1..N".
  *

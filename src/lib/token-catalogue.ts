@@ -205,6 +205,22 @@ export const HTML_TOKEN_CATALOGUE: readonly HtmlTokenDefinition[] = [
     contexts: ["page-content-body"],
   },
   {
+    token: "first-year-costs",
+    kind: "embed",
+    description:
+      "Shows what it costs to join: the current joining fee plus the first year's annual subscription, as one total per publicly-listed membership type and age tier. Requires both the Joining fees and Annual membership fees visibility opt-ins.",
+    example: "{{first-year-costs}}",
+    notes:
+      "Totals are worked out from the same dated fee schedules the invoicing uses, so " +
+      "they change by themselves when a schedule takes effect. A type with no annual fee " +
+      "set is left out rather than shown at its joining fee alone. Optional parameter: " +
+      "type= limits to one publicly-listed membership type.",
+    allowsParameter: true,
+    parameterExample: "{{first-year-costs:type=family}}",
+    allowsLegacySingleBrace: false,
+    contexts: ["page-content-body"],
+  },
+  {
     token: "entrance-fees",
     kind: "embed",
     description: "Deprecated alias of {{joining-fees}} — renders identically. Prefer {{joining-fees}} in new content.",

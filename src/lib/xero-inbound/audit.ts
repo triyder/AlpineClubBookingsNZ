@@ -25,8 +25,13 @@ function dedupeXeroAuditLocalLinks(
   return Array.from(seen.values());
 }
 
+/** Links store CREDIT_NOTE. A webhook category CREDITNOTE is the same document. */
+function auditObjectType(xeroObjectType: string): string {
+  return xeroObjectType.trim().toUpperCase() === "CREDITNOTE" ? "CREDIT_NOTE" : xeroObjectType;
+}
+
 function getXeroAuditSummary(xeroObjectType: string) {
-  switch (xeroObjectType) {
+  switch (auditObjectType(xeroObjectType)) {
     case "CONTACT":
       return "Xero contact reconciled";
     case "INVOICE":
@@ -44,7 +49,7 @@ function getXeroAuditSummary(xeroObjectType: string) {
 }
 
 function getXeroAuditAction(xeroObjectType: string) {
-  return `xero.${xeroObjectType.toLowerCase()}.reconciled`;
+  return `xero.${auditObjectType(xeroObjectType).toLowerCase()}.reconciled`;
 }
 
 async function resolveXeroAuditSubjects(links: XeroAuditLocalLink[]) {

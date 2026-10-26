@@ -16,6 +16,7 @@ const h = vi.hoisted(() => ({
   resolvePolicies: vi.fn(),
   parseQuoteOptions: vi.fn(),
   resolveRates: vi.fn(),
+  paymentClaim: vi.fn(),
   lockOrder: [] as string[],
 }));
 
@@ -31,6 +32,8 @@ vi.mock("@/lib/prisma", () => ({
       createMany: h.reservationCreateMany,
     },
     member: { findMany: h.memberFindMany },
+    // #3980 review C4: the re-price's claim on an unlinked primary invoice.
+    payment: { updateMany: h.paymentClaim, update: vi.fn() },
     $executeRaw: vi.fn(async () => { h.lockOrder.push("global"); }),
     $transaction: vi.fn(async (callback) => callback((await import("@/lib/prisma")).prisma)),
   },
@@ -144,6 +147,29 @@ describe("accepted school pending-adult identity resolution", () => {
     }));
     expect(h.reservationDeleteMany).toHaveBeenCalledOnce();
     expect(h.reservationCreateMany).not.toHaveBeenCalled();
+  });
+
+  it("#3980 review C4: the re-price claims an unlinked primary invoice, and is refused if the link moved", async () => {
+    h.bookingFindUnique.mockReset();
+    h.bookingFindUnique
+      .mockResolvedValueOnce({ lodgeId: "lodge-1" })
+      .mockResolvedValueOnce({ ...hold, payment: { id: "payment-1", xeroInvoiceId: null } });
+    h.paymentClaim.mockResolvedValueOnce({ count: 1 });
+    await expect(command()).resolves.toEqual({ pendingAdultCount: 0, version: 5 });
+    expect(h.paymentClaim).toHaveBeenCalledWith({
+      where: { id: "payment-1", xeroInvoiceId: null },
+      data: { changeFeeCents: { increment: 0 } },
+    });
+
+    h.bookingRequestFindUnique.mockResolvedValueOnce({ heldBookingId: "hold-1" }).mockResolvedValueOnce(acceptedRequest);
+    h.bookingFindUnique
+      .mockResolvedValueOnce({ lodgeId: "lodge-1" })
+      .mockResolvedValueOnce({ ...hold, payment: { id: "payment-1", xeroInvoiceId: null } });
+    h.paymentClaim.mockResolvedValueOnce({ count: 0 });
+    await expect(command()).rejects.toMatchObject({
+      status: 409,
+      message: expect.stringContaining("invoice was being raised while the adults were being named"),
+    });
   });
 
   it("has no guest or reservation side effects when the version claim loses", async () => {

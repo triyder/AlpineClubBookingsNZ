@@ -13,7 +13,11 @@
  * sender does live in `src/lib/email/booking.ts` — booking-scoped, so the
  * per-booking "No emails" switch withholds it.
  */
-import { refundRequestApprovedRefundSentence } from "@/lib/booking-modified-email-copy";
+import type { BankTransferRefundPayee } from "@/lib/group-organiser-paid";
+import {
+  refundRequestApprovedRefundSentence,
+  type OrganiserCardAppealRefund,
+} from "@/lib/booking-modified-email-copy";
 import { supersededRefundOwingSentence } from "@/lib/superseded-additional-refund-event";
 
 import { escapeHtml } from "./escape";
@@ -66,6 +70,10 @@ export function refundRequestApprovedTemplate(data: {
    * transfer (an officer task), 0 when a card refund carries all of it.
    */
   bankTransferCents: number;
+  /** #3956: the refund goes to the group organiser's card - made or on its way; null otherwise. */
+  organiserCardRefund?: OrganiserCardAppealRefund | null;
+  /** #3949: who the bank-transfer part goes to; the member when absent. */
+  bankTransferPayee?: BankTransferRefundPayee;
   adminNotes: string | null;
   checkIn: Date;
   checkOut: Date;
@@ -77,7 +85,13 @@ export function refundRequestApprovedTemplate(data: {
     headingText: "Refund Appeal Approved",
     outcomeSentence:
       "Your refund appeal for your booking (" + emailCalendarDay(data.checkIn) + " - " + emailCalendarDay(data.checkOut) + ") has been approved. " +
-      refundRequestApprovedRefundSentence(data.amountCents ?? 0, data.bankTransferCents, (cents) => formatCents(cents, format)),
+      refundRequestApprovedRefundSentence(
+        data.amountCents ?? 0,
+        data.bankTransferCents,
+        (cents) => formatCents(cents, format),
+        data.organiserCardRefund ?? null,
+        data.bankTransferPayee ?? "member",
+      ),
     outcomeTone: "success",
     adminNotes: data.adminNotes,
   });

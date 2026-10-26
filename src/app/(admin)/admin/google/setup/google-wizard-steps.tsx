@@ -10,7 +10,7 @@ import { FieldHint, useFieldHint } from "@/components/ui/field-hint";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { signIn } from "next-auth/react";
-import { CopyField } from "@/components/admin/integration-wizard";
+import { CopyField, useStepSaving } from "@/components/admin/integration-wizard";
 import type { WizardStepHelpers } from "@/components/admin/integration-wizard";
 import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
 import { ADMIN_FULL_ADMIN_ONLY_ACTION_REASON } from "@/hooks/use-admin-area-edit-access";
@@ -151,7 +151,7 @@ export function CredentialsStep({
   const clientSecretHint = useFieldHint();
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
-  const [saving, setSaving] = useState(false);
+  const [saving, setSaving] = useStepSaving(helpers);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 

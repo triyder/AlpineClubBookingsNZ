@@ -116,9 +116,9 @@ export function ClubPostRetentionSection({
   // THE FRAME: banner and both feedback regions render in every state, so the
   // section is never mounted together with an already-populated alert.
   return (
-    <Card>
+    <Card {...section.sectionRegionProps}>
       <CardHeader>
-        <CardTitle className="text-lg">Retention</CardTitle>
+        <CardTitle {...section.titleProps} className="text-lg">Retention</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
         <AdminViewOnlySectionBanner canEdit={canEdit}>
@@ -193,6 +193,7 @@ export function ClubPostRetentionSection({
               size="sm"
               variant="outline"
               onClick={() => section.startEditing()}
+              {...section.editTriggerProps}
             >
               Edit
             </ViewOnlyActionButton>

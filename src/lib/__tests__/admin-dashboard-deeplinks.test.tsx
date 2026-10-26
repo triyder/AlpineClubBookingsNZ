@@ -3,6 +3,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    // #3372 (owner, 7 Oct 2026): Refunds owed / Credits owed, as at today.
+    manualRefundTask: { findMany: vi.fn(async (): Promise<unknown[]> => []) },
+    memberCredit: { groupBy: vi.fn(async (): Promise<unknown[]> => []) },
+    // #3372 (7 Oct 2026): card refunds not yet paid, for "Refunds owed".
+    paymentRecoveryOperation: { findMany: vi.fn(async (): Promise<unknown[]> => []) },
     // The club-time delegate. `loadPersistedClubTimeSettings` returns `null`
     // when it is ABSENT, and the page then falls back to the environment — the
     // very defect CT-4 removes, silently, with nothing able to tell. Every test
@@ -34,7 +39,8 @@ vi.mock("@/lib/auth", () => ({
 // production about when a lodge name is shown (#2917).
 vi.mock("@/lib/hut-leader-coverage", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/hut-leader-coverage")),
-  getUnassignedHutLeaderDates: vi.fn(),
+  // #3818: the amber card and "Handovers this week" come from one read.
+  getHutLeaderDashboardCoverage: vi.fn(),
 }));
 
 // The Bed Allocation card needs the module on as well as the permission (#3841).
@@ -53,11 +59,14 @@ import {
 import { addDaysDateOnly, formatDateOnly, getTodayDateOnly } from "@/lib/date-only";
 import { ENVIRONMENT_CLUB_ZONE } from "@/lib/__tests__/helpers/environment-club-zone";
 import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone";
-import { getUnassignedHutLeaderDates } from "@/lib/hut-leader-coverage";
+import {
+  getHutLeaderDashboardCoverage,
+} from "@/lib/hut-leader-coverage";
 import { prisma } from "@/lib/prisma";
 import {
   netCollectedBookingSelect,
   netCollectedCaptureEvidenceSelect,
+  netCollectedCardRefundSelect,
 } from "@/lib/additional-ledger-gap";
 
 function mockDashboardCounts({
@@ -113,7 +122,10 @@ function mockDashboardCounts({
   vi.mocked(prisma.bookingChangeRequest.count).mockResolvedValue(
     pendingBookingChangeRequests,
   );
-  vi.mocked(getUnassignedHutLeaderDates).mockResolvedValue([]);
+  vi.mocked(getHutLeaderDashboardCoverage).mockResolvedValue({
+    unassignedDates: [],
+    handovers: [],
+  });
   // Single-lodge club: this suite asserts hrefs, not lodge copy (#2917).
   vi.mocked(prisma.lodge.count).mockResolvedValue(1);
 }
@@ -434,10 +446,9 @@ describe("admin dashboard deep links", () => {
       dropped. A default that silently works is exactly the kind of omission no
       other assertion on this page can see (CT-4, #2870).
     */
-    expect(vi.mocked(getUnassignedHutLeaderDates)).toHaveBeenCalledWith({
-      scope: { kind: "all" },
-      today: clubToday,
-    });
+    expect(vi.mocked(getHutLeaderDashboardCoverage)).toHaveBeenCalledWith(
+      expect.objectContaining({ scope: { kind: "all" }, today: clubToday }),
+    );
 
     /*
       THE MONTH BOUNDS ARE NOT THE ENVIRONMENT'S EITHER — the same negative the
@@ -476,6 +487,7 @@ describe("admin dashboard deep links", () => {
           amountCents: true,
           refundedAmountCents: true,
           ...netCollectedCaptureEvidenceSelect,
+          ...netCollectedCardRefundSelect,
           booking: { select: netCollectedBookingSelect },
         },
         where: {

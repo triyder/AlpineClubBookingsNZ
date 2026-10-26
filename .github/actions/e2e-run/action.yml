@@ -1,0 +1,116 @@
+name: Run one E2E browser slice
+description: >
+  Load this run's app image and seeded database, prepare a stack from them and
+  run one slice of the Playwright suite on it (#4397). One definition for the
+  three jobs that run browsers: `Playwright E2E` (shard 1), the `E2E shard`
+  matrix (shards 2 and 3) and `E2E multi-lodge`. The job sets E2E_SHARD,
+  E2E_MULTI_LODGE, APP_IMAGE and the Stripe test secrets as env; a composite
+  action cannot read secrets itself.
+
+inputs:
+  needed:
+    description: The job's `e2e-scope.mjs` answer. Every step runs unless it is exactly 'false'.
+    required: true
+  wait-for-artifacts:
+    description: >
+      'true' for a REQUIRED job, which may not use `needs:` (a skipped required
+      check counts as passing): it waits here for the image and database
+      artifacts instead, failing at once if their jobs fail.
+    required: true
+  github-token:
+    description: Token for the artifact wait (actions:read).
+    required: false
+    default: ""
+  playwright-args:
+    description: Extra arguments for `scripts/e2e-stack.sh run`.
+    required: false
+    default: ""
+  report-name:
+    description: Name of the uploaded Playwright report artifact.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    # Before loading the image and preparing the stack: finding the browser
+    # broken afterwards wastes both. Cached, so usually seconds.
+    - name: Install Playwright browsers
+      if: inputs.needed != 'false'
+      uses: ./.github/actions/playwright-browsers
+
+    # One home for the stack's env file (INV-SSOT). Deterministic, so the
+    # restored database signs in and decrypts exactly as it was seeded.
+    - name: Write staging env file
+      if: inputs.needed != 'false'
+      shell: bash
+      run: bash scripts/ci/write-e2e-staging-env.sh
+
+    - name: Reclaim runner disk before loading the image
+      if: inputs.needed != 'false'
+      shell: bash
+      run: bash scripts/ci/reclaim-runner-disk.sh
+
+    - name: Wait for this run's image and seeded database
+      if: inputs.needed != 'false' && inputs.wait-for-artifacts == 'true'
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+      run: >-
+        node scripts/ci/wait-for-run-artifacts.mjs
+        --artifact "e2e-app-image-${{ github.run_id }}"
+        --artifact "e2e-seeded-db-${{ github.run_id }}"
+        --upstream "E2E app image" --upstream "E2E seeded database"
+        --max-wait-minutes 45
+
+    - name: Download the app image
+      if: inputs.needed != 'false'
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      with:
+        name: e2e-app-image-${{ github.run_id }}
+        path: .artifacts/e2e-inputs
+
+    - name: Download the seeded database
+      if: inputs.needed != 'false'
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      with:
+        name: e2e-seeded-db-${{ github.run_id }}
+        path: .artifacts/e2e-inputs
+
+    # pipefail (`shell: bash`), so a broken archive fails here.
+    - name: Load the app image
+      if: inputs.needed != 'false'
+      shell: bash
+      run: zstd -dc .artifacts/e2e-inputs/app-image.tar.zst | docker load
+
+    - name: Prepare the stack from the seeded database
+      if: inputs.needed != 'false'
+      shell: bash
+      env:
+        E2E_SKIP_APP_BUILD: "1"
+        E2E_DB_SNAPSHOT: .artifacts/e2e-inputs/e2e-db.dump
+      run: bash scripts/e2e-stack.sh prepare
+
+    - name: Run Playwright
+      if: inputs.needed != 'false'
+      shell: bash
+      run: bash scripts/e2e-stack.sh run ${{ inputs.playwright-args }}
+
+    - name: Upload Playwright report
+      if: always() && inputs.needed != 'false'
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      with:
+        name: ${{ inputs.report-name }}
+        path: playwright-report/
+        if-no-files-found: ignore
+
+    - name: Show app logs on failure
+      if: failure() && inputs.needed != 'false'
+      shell: bash
+      run: |
+        docker compose --env-file .env.staging -p tacbookings-staging \
+          -f docker-compose.yml -f docker-compose.staging.yml logs app | tail -200
+
+    - name: Tear down stack
+      if: always() && inputs.needed != 'false'
+      shell: bash
+      run: bash scripts/e2e-stack.sh down

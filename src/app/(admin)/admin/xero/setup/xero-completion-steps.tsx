@@ -12,7 +12,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { CopyField } from "@/components/admin/integration-wizard";
+import { CopyField, useStepSaving } from "@/components/admin/integration-wizard";
 import type { WizardStepHelpers } from "@/components/admin/integration-wizard";
 import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
 import { ADMIN_FULL_ADMIN_ONLY_ACTION_REASON } from "@/hooks/use-admin-area-edit-access";
@@ -86,7 +86,7 @@ export function WebhooksStep({
   const keySet = context.credentials.webhook_key.set;
 
   const [webhookKey, setWebhookKey] = useState("");
-  const [saving, setSaving] = useState(false);
+  const [saving, setSaving] = useStepSaving(helpers);
   const [verifying, setVerifying] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -182,10 +182,11 @@ export function WebhooksStep({
           Webhooks (optional)
         </h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Webhooks let Xero tell the app the moment an invoice is paid or a
-          contact changes, so payment status updates in real time. Without them
-          the scheduled sync still catches everything up on its next run — so you
-          can Skip this now and finish it later.
+          Webhooks let Xero tell the app the moment an invoice is paid, a
+          contact changes, or a credit note is updated or voided, so those
+          changes land here in real time. Without them the scheduled sync still
+          catches everything up on its next run — so you can Skip this now and
+          finish it later.
         </p>
       </div>
 
@@ -223,7 +224,7 @@ export function WebhooksStep({
             label="Webhook delivery URL"
             value={context.webhookDeliveryUrl}
             emptyHint="Set NEXTAUTH_URL so the delivery URL can be derived"
-            description="In Xero (My Apps → your app → Webhooks), paste this as the delivery URL, then subscribe to the Invoices and Contacts events."
+            description="In Xero (My Apps → your app → Webhooks), paste this as the delivery URL, then tick Invoices, Contacts, and Credit Notes. This app does not register those events itself. Credit Notes is what records a void."
           />
 
           {canWrite === false ? (

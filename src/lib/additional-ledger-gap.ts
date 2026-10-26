@@ -1,5 +1,6 @@
 import { PaymentStatus, PaymentTransactionKind, Prisma } from "@prisma/client";
 
+import { CARD_REFUND_OPERATION_WHERE } from "@/lib/open-card-refund-owed";
 import { netCollectedScopedPayments, summarizeCollectedCash, type CollectedCashSummary, type NetCollectedPaymentRow } from "@/lib/payment-net-collected";
 import {
   CAPTURED_TRANSACTION_STATUS_LIST,
@@ -100,6 +101,7 @@ export const netCollectedBookingSelect = Prisma.validator<Prisma.BookingSelect>(
   // read - and judged in code (`getNetCollectedPaymentParts`), the one home of
   // which rows count; no `where` here, so the query cannot disagree with it.
   status: true,
+  organiserSettled: true, parentBookingId: true, // #3949: an IB organiser child's settle mirror is money taken
   creditsApplied: { select: { type: true, amountCents: true } },
   creditsFromCancellation: {
     // `description` for a restore written before the marker existed
@@ -112,6 +114,8 @@ export const netCollectedBookingSelect = Prisma.validator<Prisma.BookingSelect>(
       kind: true,
       amountCents: true,
       partPaymentReviewPaymentId: true,
+      // #4042: marks a group organiser's hand-back, which is not this booking's.
+      occurrenceKey: true,
     },
   },
 });
@@ -136,8 +140,39 @@ export const netCollectedCaptureEvidenceSelect = Prisma.validator<Prisma.Payment
   },
 });
 
+/**
+ * #3372 (owner, 7 Oct 2026: "count in both"): a payment's card refund
+ * operations, and the refunds already recorded on it to net the open ones
+ * against (`openCardRefundOwedCents`). Closed operations are loaded too, so a
+ * refund one of them sent is never taken as an open one's progress (#3924
+ * money review, F2). Every Net Collected select spreads it (the payments board
+ * merges its own `refunds` columns in), and so does the "Refunds owed" read, so
+ * the two figures read the same rows. The `where` is an optimisation; the rule
+ * re-checks the type.
+ */
+export const netCollectedCardRefundSelect = Prisma.validator<Prisma.PaymentSelect>()({
+  recoveryOperations: {
+    where: CARD_REFUND_OPERATION_WHERE,
+    select: {
+      id: true,
+      type: true,
+      status: true,
+      idempotencyKey: true,
+      amountCents: true,
+      allocationPlan: true,
+      paymentTransactionId: true,
+      createdAt: true,
+      succeededAt: true,
+    },
+  },
+  refunds: {
+    select: { stripeRefundId: true, paymentTransactionId: true, amountCents: true, status: true, createdAt: true, stripeCreatedAt: true },
+  },
+});
+
 export const netCollectedPaymentSelect = Prisma.validator<Prisma.PaymentSelect>()({
   ...netCollectedCaptureEvidenceSelect,
+  ...netCollectedCardRefundSelect,
   bookingId: true,
   status: true,
   amountCents: true,

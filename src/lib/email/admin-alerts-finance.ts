@@ -24,9 +24,16 @@ import {
   lateCaptureAutoRefundOutcomeParagraph,
   lateCaptureHandBackConflictOutcomeParagraph,
   lateCaptureHandBackConflictSubjectLabel,
+  manualRefundTaskAlertAmountLabel,
+  manualRefundTaskAlertHeading,
+  manualRefundTaskAlertLabel,
+  manualRefundTaskAlertNote,
+  manualRefundTaskAlertRecipientLabel,
+  type ManualRefundTaskAlertSituation,
 } from "../email-message-notes";
 import { CLUB_BOOKINGS_NAME } from "@/config/club-identity";
 import { formatCents as formatMoneyCents } from "@/lib/utils";
+import { adminAlertSendOutcome, type AdminAlertSendOutcome } from "./admin-alert-send-result";
 import { applyXeroOrgShortCode } from "@/lib/xero-links";
 import { getXeroOrgShortCode } from "@/lib/xero-link-short-code";
 import { stampXeroOrganisation } from "./admin-alert-xero-links";
@@ -397,8 +404,14 @@ export async function sendAdminManualSettlementConflictAlert(data: {
 
 /**
  * B5 (#2262): a cash-settled booking was cancelled, so the refund has to be
- * paid back by hand. Admin audience (exempt from the #2258 switch); the durable
- * ManualRefundTask row is the record, this is the nudge.
+ * paid back by hand - or (#4042, `situation`) an organiser cancelled a group
+ * paid by Internet Banking, and the club repays the organiser - or (#4097) a
+ * card booking was cancelled and its card refund could not carry all of the
+ * refund due, so the rest is to refund by bank transfer or to check first.
+ * Admin audience (exempt from the #2258 switch); the durable ManualRefundTask
+ * rows are the record, this is the nudge. A customised text body without
+ * {{handBackNote}} sends its own wording for all three situations (stated in
+ * docs/guides/payments.md).
  */
 export async function sendAdminManualRefundTaskAlert(data: {
   memberName: string;
@@ -407,17 +420,26 @@ export async function sendAdminManualRefundTaskAlert(data: {
   refundAmountCents: number;
   bookingId: string;
   reason: string;
+  /** #4042: absent for the cash cancel (#2262), which every caller before it was. */
+  situation?: ManualRefundTaskAlertSituation;
 },
   format: ClubFormat,
-) {
+): Promise<AdminAlertSendOutcome> {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
   const reviewUrl = `${baseUrl}/admin/payments`;
+  const situation = data.situation ?? "cash-cancellation";
 
-  await sendToAdmins({
-    subject: `Manual refund needed — cash booking cancelled: ${data.memberName}`,
+  // #4042: the outcome, so the group alert is recorded as sent only when it was.
+  const result = await sendToAdmins({
+    subject: `Manual refund needed — ${manualRefundTaskAlertLabel(situation)}: ${data.memberName}`,
     html: await renderEmailHtml(() => adminManualRefundTaskTemplate({ ...data, reviewUrl }, format)),
     templateName: "admin-manual-refund-task",
     templateData: {
+      handBackLabel: manualRefundTaskAlertLabel(situation),
+      handBackHeading: manualRefundTaskAlertHeading(situation),
+      handBackAmountLabel: manualRefundTaskAlertAmountLabel(situation),
+      handBackNote: manualRefundTaskAlertNote(situation),
+      handBackRecipientLabel: manualRefundTaskAlertRecipientLabel(situation),
       memberName: data.memberName,
       checkIn: emailCalendarDay(data.checkIn),
       checkOut: emailCalendarDay(data.checkOut),
@@ -428,6 +450,7 @@ export async function sendAdminManualRefundTaskAlert(data: {
     },
     preferenceKey: "adminPaymentFailure",
   });
+  return adminAlertSendOutcome(result);
 }
 
 // N-05: Admin alert - Xero sync error. Returns `sendToAdmins`' result so a

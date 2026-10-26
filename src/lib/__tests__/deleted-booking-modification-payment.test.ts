@@ -552,6 +552,30 @@ describe("recordAutomaticCancelledBookingRefundTask (#2700 close, #2760 write)",
     expect(created.data.completedAt).toBeInstanceOf(Date);
   });
 
+  it("dates a record written late by the day the caller names, on both the close and the create (#4149)", async () => {
+    const refundedOn = new Date("2026-06-25T03:00:00.000Z");
+    const late = (closedCount: number) => {
+      mocks.manualRefundTaskUpdateMany.mockResolvedValueOnce({ count: closedCount });
+      return recordAutomaticCancelledBookingRefundTask({
+        bookingId: BOOKING_ID,
+        paymentId: PAYMENT_ID,
+        paymentIntentId: INTENT_ID,
+        amountCents: AMOUNT_CENTS,
+        bookingDeleted: true,
+        captureKind: "modification",
+        completedAt: refundedOn,
+      });
+    };
+
+    await late(1);
+    const closed = mocks.manualRefundTaskUpdateMany.mock.calls.at(-1)?.[0] as { data: Record<string, unknown> };
+    expect(closed.data.completedAt).toEqual(refundedOn);
+
+    await late(0);
+    const created = mocks.manualRefundTaskCreate.mock.calls.at(-1)?.[0] as { data: Record<string, unknown> };
+    expect(created.data.completedAt).toEqual(refundedOn);
+  });
+
   it("stores the deleted-population sentence for a deleted booking", async () => {
     mocks.manualRefundTaskUpdateMany.mockResolvedValue({ count: 0 });
 

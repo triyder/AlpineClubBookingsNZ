@@ -3,6 +3,7 @@
 import { fireEvent, render, screen } from "@/lib/__tests__/support/club-time-render";
 import { describe, expect, it, vi } from "vitest";
 import { OperationItem } from "@/app/(admin)/admin/xero/_components/operations-panel";
+import { resolveDialogDescription } from "@/app/(admin)/admin/xero/_components/resolve-dialog-copy";
 import type { XeroOperation } from "@/app/(admin)/admin/xero/_components/types";
 
 function makeOperation(overrides: Partial<XeroOperation> = {}): XeroOperation {
@@ -41,6 +42,9 @@ function makeOperation(overrides: Partial<XeroOperation> = {}): XeroOperation {
     failureStateReason: null,
     failureRootKey: null,
     staleRunning: false,
+    resolveAsksCreditNoteNumber: false,
+    resolveCreditNoteAmountCents: null,
+    resolveRefusal: null,
     ...overrides,
   };
 }
@@ -103,6 +107,33 @@ describe("OperationItem summary + raw toggle", () => {
   });
 });
 
+describe("OperationItem failure explanation (#4278)", () => {
+  const overAllocation =
+    "Credit Note cannot be allocated as the allocation amount is greater than the amount remaining on the Credit Note";
+
+  it("explains a failed row in plain English, with the stored text behind a disclosure", () => {
+    const { container } = renderItem(
+      makeOperation({ status: "FAILED", entityType: "ALLOCATION", lastErrorCode: "400", lastErrorMessage: overAllocation }),
+    );
+
+    expect(screen.getByText(/less credit left than the app expected/)).toBeDefined();
+    expect(screen.getByText("What to do:")).toBeDefined();
+    expect(container.querySelector("[data-xero-failure-kind='CREDIT_TOO_LOW']")).not.toBeNull();
+
+    const details = container.querySelector("details");
+    expect(details?.open).toBe(false);
+    expect(details?.textContent).toContain("Show technical details");
+    expect(details?.textContent).toContain("allocation amount is greater than the amount remaining");
+  });
+
+  it("still shows something useful when the stored detail is hidden", () => {
+    const { container } = renderItem(
+      makeOperation({ status: "FAILED", lastErrorCode: "400", lastErrorMessage: "[REDACTED]" }),
+    );
+    expect(container.querySelector("[data-xero-failure-kind='DETAIL_HIDDEN']")).not.toBeNull();
+  });
+});
+
 describe("OperationItem Mark failed (#3462)", () => {
   it("offers Mark failed on a stale running operation and calls it", () => {
     const onMarkFailed = vi.fn();
@@ -127,5 +158,17 @@ describe("OperationItem Mark failed (#3462)", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Mark failed" }));
     expect(onMarkFailed).not.toHaveBeenCalled();
+  });
+});
+
+describe("the resolve dialog's text (#4250, owner decision 21 Oct 2026)", () => {
+  it("tells an officer resolving a credit note not to replace a voided card refund note by hand", () => {
+    expect(resolveDialogDescription("CREDIT_NOTE")).toContain(
+      "If you later void a card refund's credit note in Xero, don't make a replacement by hand: the app raises a fresh one overnight.",
+    );
+  });
+
+  it("says nothing about credit notes when resolving anything else", () => {
+    expect(resolveDialogDescription("INVOICE")).toBe("How was this resolved in Xero? This drops it off the active failure list.");
   });
 });

@@ -142,7 +142,7 @@ const {
     // snapshot and statement timeout. Present on both doubles because it is a
     // `tx` read; the first version of that code used the global client instead.
     clubTimeSettings: { findUnique: vi.fn() },
-    xeroToken: { findFirst: vi.fn() },
+    xeroConnection: { findUnique: vi.fn() },
     $executeRaw: vi.fn(),
     $transaction: vi.fn(),
   };
@@ -172,7 +172,7 @@ const {
     memberInduction: prismaMock.memberInduction,
     membershipLockoutSettings: prismaMock.membershipLockoutSettings,
     clubTimeSettings: prismaMock.clubTimeSettings,
-    xeroToken: prismaMock.xeroToken,
+    xeroConnection: prismaMock.xeroConnection,
     $executeRaw: prismaMock.$executeRaw,
   };
   return {
@@ -1256,7 +1256,7 @@ beforeEach(() => {
   prismaMock.membershipLockoutSettings.findUnique.mockResolvedValue({
     financialYearEndMonthOverride: DEFAULT_FINANCIAL_YEAR_END_MONTH,
   });
-  prismaMock.xeroToken.findFirst.mockResolvedValue(null);
+  prismaMock.xeroConnection.findUnique.mockResolvedValue(null);
   prismaMock.clubTimeSettings.findUnique.mockResolvedValue({
     timeZone: "Pacific/Auckland",
   });
@@ -3769,7 +3769,7 @@ describe("member eligibility: the season year is the SEASON's, not the calendar'
     prismaMock.membershipLockoutSettings.findUnique.mockResolvedValue({
       financialYearEndMonthOverride: null,
     });
-    prismaMock.xeroToken.findFirst.mockResolvedValue(null);
+    prismaMock.xeroConnection.findUnique.mockResolvedValue(null);
     seedMember({});
     await expect(eligibilityRow()).resolves.toMatchObject({
       season_year: 2026,
@@ -3786,7 +3786,7 @@ describe("member eligibility: the season year is the SEASON's, not the calendar'
     await expect(
       readMemberEligibilityEvidence({ memberId: MEMBER_ID }),
     ).rejects.toThrow("settings database unavailable");
-    expect(prismaMock.xeroToken.findFirst).not.toHaveBeenCalled();
+    expect(prismaMock.xeroConnection.findUnique).not.toHaveBeenCalled();
     expect(resolveMembershipTypePolicyForMemberMock).not.toHaveBeenCalled();
   });
 
@@ -3795,7 +3795,10 @@ describe("member eligibility: the season year is the SEASON's, not the calendar'
     prismaMock.membershipLockoutSettings.findUnique.mockResolvedValue({
       financialYearEndMonthOverride: null,
     });
-    prismaMock.xeroToken.findFirst.mockResolvedValue({ id: "xero-token" });
+    prismaMock.xeroConnection.findUnique.mockResolvedValue({
+      tenantId: "tenant-1",
+      expiresAt: new Date("2027-01-01T00:00:00.000Z"),
+    });
     seedMember({});
     await expect(
       readMemberEligibilityEvidence({ memberId: MEMBER_ID }),
@@ -3808,7 +3811,10 @@ describe("member eligibility: the season year is the SEASON's, not the calendar'
     prismaMock.membershipLockoutSettings.findUnique.mockResolvedValue({
       financialYearEndMonthOverride: 13,
     });
-    prismaMock.xeroToken.findFirst.mockResolvedValue({ id: "xero-token" });
+    prismaMock.xeroConnection.findUnique.mockResolvedValue({
+      tenantId: "tenant-1",
+      expiresAt: new Date("2027-01-01T00:00:00.000Z"),
+    });
     seedMember({});
     await expect(
       readMemberEligibilityEvidence({ memberId: MEMBER_ID }),
@@ -3821,7 +3827,7 @@ describe("member eligibility: the season year is the SEASON's, not the calendar'
     prismaMock.membershipLockoutSettings.findUnique.mockResolvedValue({
       financialYearEndMonthOverride: 13,
     });
-    prismaMock.xeroToken.findFirst.mockResolvedValue(null);
+    prismaMock.xeroConnection.findUnique.mockResolvedValue(null);
     seedMember({});
     await expect(eligibilityRow()).resolves.toMatchObject({
       season_year: 2026,
@@ -3923,7 +3929,10 @@ describe("booking block state: the season comes from STORED state, not the proce
     prismaMock.membershipLockoutSettings.findUnique.mockResolvedValue({
       financialYearEndMonthOverride: null,
     });
-    prismaMock.xeroToken.findFirst.mockResolvedValue({ id: "xero-token" });
+    prismaMock.xeroConnection.findUnique.mockResolvedValue({
+      tenantId: "tenant-1",
+      expiresAt: new Date("2027-01-01T00:00:00.000Z"),
+    });
     seedSeasonBoundaryBooking();
     await expect(
       readBookingBlockStateEvidence({ bookingId: BOOKING_ID }),
@@ -3950,7 +3959,7 @@ describe("booking block state: the season comes from STORED state, not the proce
     prismaMock.membershipLockoutSettings.findUnique.mockResolvedValue({
       financialYearEndMonthOverride: null,
     });
-    prismaMock.xeroToken.findFirst.mockResolvedValue(null);
+    prismaMock.xeroConnection.findUnique.mockResolvedValue(null);
     seedSeasonBoundaryBooking();
     await blockStateRow();
     expect(seasonsPassed()).toEqual({ nonHosting: 2026, hosting: 2026 });
@@ -3977,14 +3986,17 @@ describe("booking block state: the season comes from STORED state, not the proce
       prismaMock.membershipLockoutSettings.findUnique.mockResolvedValue({
         financialYearEndMonthOverride: null,
       });
-      prismaMock.xeroToken.findFirst.mockResolvedValue({ id: "xero-token" });
+      prismaMock.xeroConnection.findUnique.mockResolvedValue({
+        tenantId: "tenant-1",
+        expiresAt: new Date("2027-01-01T00:00:00.000Z"),
+      });
       seedSeasonBoundaryBooking(scenario);
       const row = await blockStateRow();
       expect(row.booking_id).toBe(BOOKING_ID);
       expect(
         prismaMock.membershipLockoutSettings.findUnique,
       ).not.toHaveBeenCalled();
-      expect(prismaMock.xeroToken.findFirst).not.toHaveBeenCalled();
+      expect(prismaMock.xeroConnection.findUnique).not.toHaveBeenCalled();
     },
   );
 

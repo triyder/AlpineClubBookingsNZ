@@ -105,8 +105,8 @@ function zeroed<K extends string, V>(keys: readonly K[], make: () => V): Record<
  * zero unclassified, unacknowledged disagreements, zero coverage gaps, zero
  * integrity findings, no unacknowledged booking in a class that holds it, and
  * every other class acknowledged by the owner — instance by instance, to the
- * cent — save `GROUP_SETTLEMENT_OFF_LEDGER`, which the owner decided is listed
- * only (`classGateRule`).
+ * cent — save `GROUP_SETTLEMENT_OFF_LEDGER` and `REFUND_APPEAL_PAID` (#4075),
+ * which the owner decided are listed only (`classGateRule`).
  */
 export function summarizeBookingLedgerCensus(
   evaluations: readonly BookingLedgerEvaluation[],

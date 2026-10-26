@@ -1,8 +1,10 @@
 /**
  * Operational Xero configuration — DB-only resolution (#2079).
  *
- * Xero client id/secret, the webhook key, and the wrapped token-encryption key
- * all live ONLY in the encrypted IntegrationCredential store. The legacy
+ * Xero client id/secret and the webhook key live ONLY in the encrypted
+ * IntegrationCredential store. (The wrapped token-encryption key that used to
+ * sit beside them was retired by #3806 R2, when the `XeroToken` ciphertext it
+ * protected stopped being written; the token store deletes a leftover row.) The legacy
  * `XERO_*` credential env vars are no longer read for operation — they are
  * detected and flagged for removal (see detectLegacyProviderEnv). The OAuth
  * redirect URI derives from NEXTAUTH_URL (no localhost fallback).
@@ -11,14 +13,8 @@
  * key derivation itself stays synchronous.
  */
 
-import { randomBytes } from "crypto";
-import {
-  getIntegrationCredentialValue,
-  resolveIntegrationCredential,
-} from "@/lib/integration-credentials";
-import { ensureGeneratedCredential } from "@/lib/integration-credential-generate";
+import { getIntegrationCredentialValue } from "@/lib/integration-credentials";
 import { readEnvironmentRoleDeclaration } from "@/lib/environment-role-declaration";
-import { XERO_TOKEN_KEY_LABEL } from "@/lib/integration-crypto";
 
 function readEnv(name: string): string | undefined {
   const value = process.env[name]?.trim();
@@ -30,7 +26,6 @@ export const XERO_CREDENTIAL_KEYS = {
   clientId: "client_id",
   clientSecret: "client_secret",
   webhookKey: "webhook_key",
-  tokenKey: "token_key",
 } as const;
 
 export const XERO_REPORT_OAUTH_SCOPES = {
@@ -185,51 +180,6 @@ export async function getOperationalXeroConfig(): Promise<OperationalXeroConfig>
     scopes: [...OPERATIONAL_XERO_OAUTH_SCOPES],
     httpTimeout: getXeroHttpTimeoutMs(),
   };
-}
-
-/**
- * The operational Xero token-encryption key (64-hex / 32 bytes) used by
- * xero-token-store to encrypt OAuth tokens at rest. It is a random 32-byte key
- * WRAPPED under the HKDF-derived `xero-token-key:v1` key and stored in the
- * credential table — so `XERO_ENCRYPTION_KEY` no longer exists.
- *
- * Auto-generates on first use when the strength gate permits (the very act of
- * encrypting/decrypting Xero tokens means Xero is in use); returns `undefined`
- * when the gate blocks — token-key generation NO-OPS, it never throws. When the
- * key is unreadable after an auth-secret change it is replaced with a fresh one
- * so a reconnect can proceed (the tokens it protected are already unrecoverable
- * by design — no silent import of the dropped env key).
- */
-export async function getOperationalXeroEncryptionKey(): Promise<
-  string | undefined
-> {
-  const value = await ensureGeneratedCredential({
-    provider: XERO_PROVIDER,
-    key: XERO_CREDENTIAL_KEYS.tokenKey,
-    label: XERO_TOKEN_KEY_LABEL,
-    generate: () => randomBytes(32).toString("hex"),
-    actor: { kind: "system", actor: "xero-token-key-generation" },
-  });
-  return value ?? undefined;
-}
-
-/**
- * Read the stored Xero token-encryption key WITHOUT ever generating one. For
- * side-effect-free status/readiness checks (a status read must never mutate the
- * DB, unlike getOperationalXeroEncryptionKey which regenerates a dead key).
- * Returns `undefined` when the key is missing OR unreadable (auth secret
- * changed) — the caller then reports the tokens as needing re-entry. The value
- * is only ever used server-side to test-decrypt a token row; it is never
- * returned to a client.
- */
-export async function peekOperationalXeroEncryptionKey(): Promise<
-  string | undefined
-> {
-  const resolution = await resolveIntegrationCredential(
-    XERO_PROVIDER,
-    XERO_CREDENTIAL_KEYS.tokenKey,
-  );
-  return resolution.status === "configured" ? resolution.value : undefined;
 }
 
 /**

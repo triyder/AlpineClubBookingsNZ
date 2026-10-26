@@ -110,6 +110,17 @@ const GENERICISE_LODGE_COPY_MIGRATION_PATH = join(
   "migration.sql",
 );
 
+// Issue #4031: guarded update that corrects section 7's audit-log retention
+// schedule. It supersedes #1945 as the authoritative writer of the current
+// privacy seed text; #1945 still writes the current Terms and FAQ.
+const PRIVACY_AUDIT_RETENTION_MIGRATION_PATH = join(
+  process.cwd(),
+  "prisma",
+  "migrations",
+  "20261119010000_correct_starter_privacy_audit_retention",
+  "migration.sql",
+);
+
 // Previous starter FAQ contentHtml (flat <h3>/<p> pairs), replaced by the
 // accordion update migration. Extracted verbatim from the policy-pages
 // backfill so the update migration's WHERE guard provably matches what that
@@ -275,13 +286,17 @@ describe("starter page content backfill migration", () => {
     GENERICISE_LODGE_COPY_MIGRATION_PATH,
     "utf8",
   );
+  const privacyAuditRetentionSql = readFileSync(
+    PRIVACY_AUDIT_RETENTION_MIGRATION_PATH,
+    "utf8",
+  );
   // Comments stripped: #2431's header quotes the new hero in prose, and this
   // suite's job is to prove a STATEMENT writes each current seed value.
   const homeGuestCopySql = statementsOnly(
     readFileSync(HOME_GUEST_COPY_MIGRATION_PATH, "utf8"),
   );
   const allInsertSql = `${insertSql}\n${backfill404Sql}\n${policyPagesSql}\n${bookingRequestsSql}\n${schoolBookingsSql}`;
-  const combinedSql = `${allInsertSql}\n${updateSql}\n${faqUpdateSql}\n${privacyUpdateSql}\n${nonMemberHoldCopyUpdateSql}\n${genericiseLodgeCopySql}\n${homeGuestCopySql}`;
+  const combinedSql = `${allInsertSql}\n${updateSql}\n${faqUpdateSql}\n${privacyUpdateSql}\n${nonMemberHoldCopyUpdateSql}\n${genericiseLodgeCopySql}\n${privacyAuditRetentionSql}\n${homeGuestCopySql}`;
 
   it("inserts exactly the starter pages defined for the seed", () => {
     const insertedIds = [
@@ -647,12 +662,53 @@ describe("starter lodge-copy genericise update migration (#1945)", () => {
   });
 
   it("writes the current club-agnostic, token-driven seed copy", () => {
-    for (const slug of ["privacy", "terms", "faq"]) {
+    // Privacy's current seed is written by the #4031 migration, which guards
+    // on exactly the privacy text this one writes (asserted there).
+    for (const slug of ["terms", "faq"]) {
       const page = starterPageContent.find((p) => p.slug === slug);
       expect(page, `expected starter page ${slug}`).toBeDefined();
       expect(sql).toContain(page!.contentHtml);
     }
     expect(sql).toContain("{{lodge-name}}");
     expect(sql).toContain("updatedAt");
+  });
+});
+
+describe("starter privacy audit-retention update migration (#4031)", () => {
+  const sql = readFileSync(PRIVACY_AUDIT_RETENTION_MIGRATION_PATH, "utf8");
+  const genericiseSql = readFileSync(GENERICISE_LODGE_COPY_MIGRATION_PATH, "utf8");
+
+  it("only updates the privacy row, and never inserts or deletes", () => {
+    expect(sql).toMatch(/UPDATE\s+"PageContent"/);
+    expect(sql).not.toMatch(/\bDELETE\b/i);
+    expect(sql).not.toMatch(/\bINSERT\b/i);
+    expect(statementsOnly(sql).match(/UPDATE\s+"PageContent"/g)).toHaveLength(1);
+    expect(sql).toContain(`"slug" = ${sqlQuote("privacy")}`);
+  });
+
+  it("guards the update on the exact privacy text #1945 wrote, so edited rows are untouched", () => {
+    const previous = sql.match(/\$previous\$([\s\S]*?)\$previous\$/)?.[1];
+    expect(previous).toBe(nthCmsBlock(genericiseSql, 1));
+  });
+
+  it("writes the current privacy seed copy, with the real audit-log schedule", () => {
+    const page = starterPageContent.find((p) => p.slug === "privacy");
+    expect(page).toBeDefined();
+    expect(nthCmsBlock(sql, 1)).toBe(page!.contentHtml);
+    expect(page!.contentHtml).not.toContain("Retained for 90 days, then automatically pruned");
+    expect(page!.contentHtml).toContain("at least 10 years");
+    expect(sql).toContain("updatedAt");
+  });
+
+  it("bumps the header's Last updated date only where the header is still the starter one", () => {
+    // 17 Oct 2026 decision: the starter header (written once, by the policy
+    // backfill) moves to the seed's header; any other header is kept.
+    const page = starterPageContent.find((p) => p.slug === "privacy");
+    const policyPagesSql = readFileSync(POLICY_PAGES_MIGRATION_PATH, "utf8");
+    const previousHeader = page!.headerText.replace("Last updated 17 October 2026", "Last updated 1 April 2026");
+    expect(policyPagesSql).toContain(sqlQuote(previousHeader));
+    expect(statementsOnly(sql)).toContain(`WHEN "headerText" = ${sqlQuote(previousHeader)}`);
+    expect(statementsOnly(sql)).toContain(`THEN ${sqlQuote(page!.headerText)}`);
+    expect(statementsOnly(sql)).toContain(`ELSE "headerText"`);
   });
 });

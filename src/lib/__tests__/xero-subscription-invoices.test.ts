@@ -10,7 +10,7 @@ const enqueueMocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
-    membershipSubscriptionCharge: { findUnique: enqueueMocks.chargeFindUnique, update: enqueueMocks.chargeUpdate },
+    membershipSubscriptionCharge: { findUnique: enqueueMocks.chargeFindUnique, updateMany: enqueueMocks.chargeUpdate },
     xeroSyncOperation: { findFirst: enqueueMocks.operationFindFirst },
   },
 }));
@@ -49,6 +49,38 @@ describe("enqueueMembershipSubscriptionChargeOperation ignores VOIDED charges (#
     const result = await enqueueMembershipSubscriptionChargeOperation("charge-live");
     expect(result.queueOperationId).toBe("op-1");
     expect(enqueueMocks.startOperation).toHaveBeenCalledTimes(1);
+  });
+
+  it("no-ops a charge an officer closed as already paid (#4098)", async () => {
+    enqueueMocks.chargeFindUnique.mockResolvedValue({
+      id: "charge-closed", status: "NOT_REQUIRED", billingBasis: "PER_MEMBER", xeroInvoiceId: null, emailSentAt: null,
+    });
+    const result = await enqueueMembershipSubscriptionChargeOperation("charge-closed");
+    expect(result).toEqual({ queueOperationId: null, message: "No subscription invoice work is required." });
+    expect(enqueueMocks.startOperation).not.toHaveBeenCalled();
+    expect(enqueueMocks.chargeUpdate).not.toHaveBeenCalled();
+  });
+
+  it("reports no work, not \"queued\", when a close won the race to its status write (#4098 review)", async () => {
+    enqueueMocks.chargeFindUnique.mockResolvedValue({
+      id: "charge-conflict", status: "CONFLICT", billingBasis: "PER_MEMBER", xeroInvoiceId: null, emailSentAt: null,
+    });
+    enqueueMocks.chargeUpdate.mockResolvedValue({ count: 0 });
+    await expect(enqueueMembershipSubscriptionChargeOperation("charge-conflict")).resolves.toEqual({
+      queueOperationId: null,
+      message: "No subscription invoice work is required.",
+    });
+  });
+
+  it("guards its status write, so a close landing after the read keeps the charge closed (#4098)", async () => {
+    enqueueMocks.chargeFindUnique.mockResolvedValue({
+      id: "charge-conflict", status: "CONFLICT", billingBasis: "PER_MEMBER", xeroInvoiceId: null, emailSentAt: null,
+    });
+    await enqueueMembershipSubscriptionChargeOperation("charge-conflict");
+    expect(enqueueMocks.chargeUpdate).toHaveBeenCalledWith({
+      where: { id: "charge-conflict", status: { notIn: ["NOT_REQUIRED", "VOIDED"] } },
+      data: { status: "QUEUED", lastErrorCode: null, lastErrorMessage: null },
+    });
   });
 });
 

@@ -7,6 +7,7 @@
 import type { PaymentStatus, Prisma } from "@prisma/client";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
+import { SUPERSEDED_INTENT_OPERATION_TYPES } from "@/lib/superseded-intent-ownership";
 import { isLateCaptureRefundedBookingStatus } from "@/lib/additional-payment-chase";
 import {
   decideLateCapture,
@@ -25,6 +26,9 @@ import {
   lockSupplementaryInvoiceAnchor,
   releaseWaitingSupplementaryInvoiceOperations,
 } from "@/lib/xero-operation-outbox";
+import { enqueueAdditionalCaptureReceiptOperation } from "@/lib/additional-capture-receipt-enqueue";
+import { anchorCaptureHasReceipt } from "@/lib/additional-capture-receipt-link";
+import { asRecord } from "@/lib/xero-json";
 
 /**
  * The code the reaper stamps on an operation it retires, and the ONLY code the
@@ -63,6 +67,14 @@ export type CapturedAdditionalPaymentXeroOutcome =
   | "already-released"
   /** No supplementary invoice was ever parked on this intent (no issued primary invoice, or Xero not in use). */
   | "none-queued"
+  /**
+   * #3953 (`INV-PAY-139`): none was parked, and the booking's primary invoice
+   * exists, so the capture's own receipt was queued by this call
+   * (`enqueueAdditionalCaptureReceiptOperation`). Counted in `released`, so
+   * every caller kicks the outbox for it; a replay finds it queued and
+   * answers `already-released`.
+   */
+  | "receipt-queued"
   /** Issuing the invoice was not safe, so an officer was told instead, by this call. */
   | "alerted"
   /** An earlier capture of this intent already told an officer; nothing new. */
@@ -130,7 +142,7 @@ export async function lateCaptureRefundState(params: {
       ? (await prisma.paymentRecoveryOperation.findFirst({
           where: {
             paymentIntentId: params.paymentIntentId,
-            type: { in: ["CANCEL_PAYMENT_INTENT", "REFUND_SUPERSEDED_PAYMENT"] },
+            type: { in: [...SUPERSEDED_INTENT_OPERATION_TYPES] },
           },
           select: { id: true },
         })) !== null
@@ -240,7 +252,7 @@ export async function releaseXeroSupplementaryInvoiceForCapturedPaymentIntent(
     select: {
       status: true,
       amountCents: true,
-      payment: { select: { booking: { select: { status: true } } } },
+      payment: { select: { bookingId: true, booking: { select: { status: true } } } },
     },
   });
   const transaction: CapturedTransaction = captured
@@ -326,6 +338,7 @@ export async function releaseXeroSupplementaryInvoiceForCapturedPaymentIntent(
         .map((row) => row.id),
       paymentIntentId,
       transaction,
+      bookingId: captured?.payment?.bookingId ?? null,
     });
     if (verdict.outcome === "requeued") {
       requeuedIds.push(newest.id);
@@ -369,6 +382,15 @@ export async function releaseXeroSupplementaryInvoiceForCapturedPaymentIntent(
         { paymentIntentId },
         "Captured additional payment has no Xero supplementary invoice parked on it",
       );
+      // #3953: nothing waits on this capture, so its own receipt records it
+      // against the invoice that bills it - once, whoever calls first.
+      const receipt = await enqueueAdditionalCaptureReceiptOperation(paymentIntentId);
+      if (receipt.outcome === "queued") {
+        return { released: released + 1, queueOperationIds: [...queueOperationIds, receipt.queueOperationId], outcome: "receipt-queued" };
+      }
+      if (receipt.outcome === "already-queued") {
+        return { released, queueOperationIds, outcome: "already-released" };
+      }
     }
     outcome = alreadyReleased ? "already-released" : "none-queued";
   }
@@ -434,6 +456,7 @@ async function requeueRetiredSupplementaryInvoiceOperation({
   supersededIds,
   paymentIntentId,
   transaction,
+  bookingId,
 }: {
   operation: {
     id: string;
@@ -445,6 +468,8 @@ async function requeueRetiredSupplementaryInvoiceOperation({
   supersededIds: string[];
   paymentIntentId: string;
   transaction: CapturedTransaction;
+  /** The capture's booking, for its receipt check (#3953); null with no capture. */
+  bookingId: string | null;
 }): Promise<
   | { outcome: "requeued" }
   | { outcome: "already" }
@@ -545,6 +570,19 @@ async function requeueRetiredSupplementaryInvoiceOperation({
         : { outcome: "already" as const };
     }
 
+    // #3953 round 8 (`INV-PAY-139`): the capture's own receipt may already
+    // record it - linked, RUNNING or with a decision stored, which it stores
+    // under this same anchor lock - so the invoice is revived unpaid there:
+    // it still bills the change, and the capture has one recorder.
+    const payload = asRecord(operation.requestPayload) ?? {};
+    const unpaid =
+      bookingId !== null &&
+      payload.recordPayment !== false &&
+      (await anchorCaptureHasReceipt(tx, {
+        bookingId,
+        bookingModificationId: operation.localModel === "BookingModification" ? anchorId : null,
+        paymentIntentId,
+      }));
     const revived = await tx.xeroSyncOperation.updateMany({
       where: {
         id: operation.id,
@@ -552,6 +590,7 @@ async function requeueRetiredSupplementaryInvoiceOperation({
         lastErrorCode: STALE_WAITING_PAYMENT_ERROR_CODE,
       },
       data: {
+        ...(unpaid ? { requestPayload: { ...payload, recordPayment: false } as Prisma.InputJsonObject } : {}),
         status: "PENDING",
         startedAt: null,
         completedAt: null,

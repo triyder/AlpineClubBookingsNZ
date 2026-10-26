@@ -244,6 +244,14 @@ const PURE_CALLEES = [
   // whenever they are handed one (`withStoreTransaction`) - the cancel claim's,
   // with `lock(1)` held - so they resolve no club day at all.
   "src/lib/payment-transactions.ts",
+  // #4217: the saved-card attempt's settle, a ledger-row writer that takes the
+  // Payment row first - in the caller's locked release transaction, or a short
+  // one of its own (`withStoreTransaction`). It resolves no club day.
+  "src/lib/saved-card-charge-settle.ts",
+  // #4162: the unwind of a voided bank-transfer refund note's allocation, run on
+  // the nightly follow-up's transaction under `lock(1)` and the Payment row
+  // (`withStoreTransaction`). It resolves no club day.
+  "src/lib/refund-allocation-unwind.ts",
 ] as const;
 
 /**
@@ -485,6 +493,18 @@ const TRANSACTION_OPENERS = [
   // that composes a credential write with the token destruction it causes.
   "withCredentialTransaction(",
   "withXeroVerifyReset(",
+  // #3954 round 4: the door's re-issue mint and the recovery runner's claim
+  // hold each write their caller's rows inside their fenced transaction.
+  "writeReissuedAskUnderRecovery(",
+  "holdAdditionalIntentRecoveryClaim(",
+  // #4125, #4145: a card refund row's close runs its caller's close callback in
+  // the transaction that also writes the REFUNDED event - the generic helper,
+  // the capacity race's and the member cancel runner's.
+  "closeRefundRowRecordingEvent(",
+  "closeCapacityRaceRefundRecordingEvent(",
+  "closeCancellationRefundAfterReplay(",
+  // #4285 review 7: one read-only snapshot, run around its caller's reads.
+  "withReadOnlySnapshot(",
 ] as const;
 
 /**

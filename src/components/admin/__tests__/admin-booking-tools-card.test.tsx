@@ -60,7 +60,7 @@ function renderCard(features: FeatureFlags, overrides: CardProps = {}) {
       paymentId={null}
       showConfirmPendingGuests={false}
       hasSavedPaymentMethod={false}
-      finalPriceCents={10000}
+      savedCardChargeCents={10000}
       features={features}
       {...overrides}
     />,

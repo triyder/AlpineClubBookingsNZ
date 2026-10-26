@@ -7,6 +7,8 @@
  * imports the Prisma client.
  */
 
+import type { BookingCancelledRefundMethod } from "@/lib/booking-modified-email-copy";
+
 /**
  * The settlement's frozen plan, in the shape #3653 writes:
  * `{ perChildRefunds: { childId: cents } }`. The children sit one level down
@@ -73,6 +75,36 @@ export function isMirrorRefundPlan(settlement: { refundPlan: unknown; stripePaym
 }
 
 /**
+ * What a pre-#3653 group cancel's ONE combined Stripe refund still has to send,
+ * in cents - the replay's own rule (`executeGroupSettlementRefundPlan`) and THE
+ * ONE spelling of it (`INV-SSOT`; #3956 round 3): while the settlement is still
+ * `SUCCEEDED` on a Stripe intent, the whole `{childId: cents}` plan is still to
+ * send; once it reads REFUNDED or PARTIALLY_REFUNDED the refund went, and a
+ * FAILED or PENDING settlement, one with no card intent, or an empty plan (a
+ * #3653 per-child plan reads empty) sends nothing. The club-wide "Refunds owed"
+ * line sums it (`legacyGroupSettlementRefundOwedCents`); the refund appeal
+ * waits on it (`mirrorPlanRefundUnmade`).
+ */
+export function legacyGroupSettlementRefundUnsentCents(settlement: {
+  status: string;
+  stripePaymentIntentId: string | null;
+  refundPlan: unknown;
+}): number {
+  if (settlement.status !== "SUCCEEDED" || !settlement.stripePaymentIntentId) return 0;
+  let unsentCents = 0;
+  for (const cents of deserializeRefundPlan(settlement.refundPlan).values()) unsentCents += cents;
+  return unsentCents;
+}
+
+/**
+ * #3956 review F1: is a pre-#3653 plan's ONE combined refund still to be made?
+ * It is when it has anything left to send (`legacyGroupSettlementRefundUnsentCents`).
+ */
+export function mirrorPlanRefundUnmade(settlement: { status: string; refundPlan: unknown; stripePaymentIntentId: string | null }): boolean {
+  return legacyGroupSettlementRefundUnsentCents(settlement) > 0;
+}
+
+/**
  * What a card organiser's settlement since #3653 has already handed back, or
  * still owes, on one child — the figure a cancellation of the child tiers from.
  * The ONE formula (`INV-SSOT`; #3854 F1): the larger of the child's stored
@@ -91,4 +123,29 @@ export type OrganiserChildRefundEvidence = {
 
 export function organiserChildCommittedRefundFrom(refundedAmountCents: number, evidence: OrganiserChildRefundEvidence): number {
   return Math.max(refundedAmountCents, evidence.recordedRefundCents) + evidence.childOwedCents;
+}
+
+/**
+ * #3973: what a joiner's "Booking Cancelled" email says about the refund when
+ * the organiser cancels the group. The joiner paid nothing, so no sentence may
+ * name "your original payment method". Reads the organiser cancel's own
+ * answers and never re-derives money: `refundForChild` is a refund made (a card
+ * settlement's Stripe refund, or an Internet Banking plan the club repays by
+ * hand); `owedForChild` a #3653 per-child refund Stripe has not made yet; and a
+ * card plan frozen before #3653 whose combined refund failed this run leaves
+ * the child's planned share owed (`refundForChild` cleared, the plan kept).
+ * With none of these the policy refunded nothing, or nothing was paid.
+ * `refundCents` is `{{refundAmount}}`, what it was before #3973 (the refund
+ * made); `sentenceCents` the amount the refund line names.
+ */
+export function organiserCancelJoinerEmailRefund(input: {
+  refundForChild: number;
+  owedForChild: number;
+  plannedRefundCents: number;
+  cardSettlement: boolean;
+}): { refundCents: number; sentenceCents: number; refundMethod: BookingCancelledRefundMethod } {
+  const made = input.refundForChild;
+  if (made > 0) return { refundCents: made, sentenceCents: made, refundMethod: input.cardSettlement ? "organiser_card" : "organiser_by_hand" };
+  const owed = input.owedForChild > 0 ? input.owedForChild : input.cardSettlement ? input.plannedRefundCents : 0;
+  return { refundCents: 0, sentenceCents: owed, refundMethod: owed > 0 ? "organiser_card_pending" : "card" };
 }

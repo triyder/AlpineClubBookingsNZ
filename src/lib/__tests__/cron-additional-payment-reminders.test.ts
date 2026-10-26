@@ -49,6 +49,7 @@ vi.mock("@/lib/email-suppression", () => ({
 }));
 vi.mock("@/lib/logger", () => ({ default: mockLogger }));
 
+import { CREDIT_RELEASE_ASK_REASON } from "@/lib/credit-release-ask-keys";
 import { sendAdditionalPaymentReminders } from "@/lib/cron-additional-payment-reminders";
 import {
   declareEnvironmentRole,
@@ -124,6 +125,34 @@ describe("sendAdditionalPaymentReminders", () => {
     vi.useRealTimers();
   });
 
+  it("sends a credit-release request's first email at once, naming its cause (#4253)", async () => {
+    // Raised an hour ago: an ordinary extra would wait three days.
+    const raised = new Date("2026-10-10T21:00:00.000Z");
+    mockPrisma.booking.findMany.mockResolvedValue([
+      booking({ payment: { transactions: [{ createdAt: raised, reason: CREDIT_RELEASE_ASK_REASON }] } }),
+    ]);
+
+    const result = await sendAdditionalPaymentReminders();
+
+    expect(result.initialSentBookingIds).toEqual(["booking-1"]);
+    expect(mockSendAdditionalPaymentReminderEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ requestedOn: raised, askReason: CREDIT_RELEASE_ASK_REASON }),
+      CLUB_FORMAT_TEST,
+    );
+  });
+
+  it("still waits three days before the first email about an ordinary extra", async () => {
+    const raised = new Date("2026-10-10T21:00:00.000Z");
+    mockPrisma.booking.findMany.mockResolvedValue([
+      booking({ payment: { transactions: [{ createdAt: raised, reason: null }] } }),
+    ]);
+
+    const result = await sendAdditionalPaymentReminders();
+
+    expect(result.initialSentBookingIds).toEqual([]);
+    expect(mockSendAdditionalPaymentReminderEmail).not.toHaveBeenCalled();
+  });
+
   it("only considers owing bookings whose stay has not finished", async () => {
     await sendAdditionalPaymentReminders();
 
@@ -158,6 +187,7 @@ describe("sendAdditionalPaymentReminders", () => {
       checkOut: new Date("2026-11-03T00:00:00.000Z"),
       requestedOn: EPISODE_STARTED_AT,
       lodgeId: "lodge-1",
+      askReason: null,
     }, CLUB_FORMAT_TEST);
     expect(result.initialSentBookingIds).toEqual(["booking-1"]);
     expect(result.finalSentBookingIds).toEqual([]);

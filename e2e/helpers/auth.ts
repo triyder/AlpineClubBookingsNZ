@@ -119,7 +119,7 @@ export async function submitLoginForm(
   await page.getByRole("button", { name: "Sign in" }).click();
   // Password sign-in always continues somewhere: the two-factor gate, a forced
   // password change, or the post-login destination.
-  await page.waitForURL(/\/(login\/(enroll|verify)|change-password|dashboard)/);
+  await page.waitForURL((url) => url.pathname !== "/login", { timeout: 15_000 });
 }
 
 // Completes TOTP enrollment on /login/enroll: reads the on-page manual setup
@@ -161,6 +161,41 @@ async function verifyTotp(page: Page, secret: string): Promise<void> {
   await page.waitForURL((url) => !url.pathname.startsWith("/login"));
 }
 
+type LoginState = "enroll" | "verify" | "authenticated" | "unexpected" | "pending";
+
+// A destination URL can precede the protected layout's two-factor redirect.
+// NavBar's brand mark only renders after the member/admin/finance layout gate;
+// the lodge layout likewise gates its kiosk before rendering it. Neither mark
+// exists on the public login layout, even while its old DOM is still visible.
+async function waitForLoginState(page: Page): Promise<Exclude<LoginState, "pending">> {
+  let state: LoginState = "pending";
+  await expect.poll(async () => {
+    const pathname = new URL(page.url()).pathname;
+    if (pathname === "/login/enroll" || pathname === "/login/verify") {
+      const challenge = pathname === "/login/enroll" ? "enroll" : "verify";
+      const marker = challenge === "enroll"
+        ? page.getByRole("heading", { name: "Set up two-factor authentication", exact: true })
+        : page.getByText("Verify your sign-in", { exact: true }).filter({ visible: true }).first();
+      state = await marker.isVisible()
+        ? challenge
+        : "pending";
+    } else if (pathname.startsWith("/login") || pathname === "/change-password") {
+      state = "unexpected";
+    } else {
+      state = await page.locator(".app-brand-mark, .theme-aware-kiosk")
+        .filter({ visible: true }).first().isVisible()
+        ? "authenticated"
+        : "pending";
+    }
+    return state;
+  }, {
+    message: "Sign-in never reached a visible two-factor challenge or authenticated destination",
+    timeout: 15_000,
+  }).not.toBe("pending");
+  if (state === "pending") throw new Error("Sign-in did not settle");
+  return state;
+}
+
 // Signs a persona in and clears whatever two-factor step the server demands,
 // leaving the browser on the post-login destination WITHOUT asserting it is
 // /dashboard. Scoped-role personas (finance/lodge/admin officers) can land
@@ -175,9 +210,10 @@ export async function loginPersona(
 ): Promise<void> {
   await submitLoginForm(page, email, DEMO_PASSWORD, clientIp);
 
-  if (page.url().includes("/login/enroll")) {
+  const state = await waitForLoginState(page);
+  if (state === "enroll") {
     await enrollTotp(page, email);
-  } else if (page.url().includes("/login/verify")) {
+  } else if (state === "verify") {
     const stored = readStoredTwoFactor(email);
     if (!stored) {
       throw new Error(
@@ -186,6 +222,18 @@ export async function loginPersona(
       );
     }
     await verifyTotp(page, stored.secret);
+  } else if (state === "unexpected") {
+    throw new Error(`Sign-in reached an unexpected destination: ${page.url()}`);
+  }
+
+  if (state !== "authenticated") {
+    // Re-enter the destination through its server auth gate after the challenge.
+    // Client navigation can leave an empty streamed shell after the cookie changes.
+    await page.goto(page.url());
+  }
+
+  if (state !== "authenticated" && await waitForLoginState(page) !== "authenticated") {
+    throw new Error(`Sign-in did not complete at an authenticated destination: ${page.url()}`);
   }
 }
 
@@ -194,21 +242,7 @@ export async function loginPersona(
 // e2e/.auth so later logins in the same run (and re-runs without a database
 // reset) can verify. Used only by auth.setup.ts for personas.booker.
 export async function signIn(page: Page, persona: Persona): Promise<void> {
-  await submitLoginForm(page, persona.email);
-
-  if (page.url().includes("/login/enroll")) {
-    await enrollTotp(page, persona.email);
-  } else if (page.url().includes("/login/verify")) {
-    const stored = readStoredTwoFactor(persona.email);
-    if (!stored) {
-      throw new Error(
-        `${persona.email} is already enrolled in two-factor auth but no TOTP secret ` +
-          "is stored under e2e/.auth. Reset and reseed the E2E database " +
-          "(pnpm run test:e2e:prepare) or restore the stored secret.",
-      );
-    }
-    await verifyTotp(page, stored.secret);
-  }
+  await loginPersona(page, persona.email);
 
   // Alice (personas.booker) is seeded financeAccessLevel: "MANAGER"
   // (prisma/demo-seed.ts), which maps to the FINANCE_ADMIN access role whose

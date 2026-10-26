@@ -36,6 +36,7 @@ const mockMemberFindUnique = vi.fn();
 const mockAuditCreate = vi.fn();
 const mockUpsertPaymentIntentTransaction = vi.fn();
 const mockRefundPaymentTransactions = vi.fn();
+const mockEnqueueBookingModificationRefundRecovery = vi.fn();
 const mockFindPaymentTransactionByIntentId = vi.fn();
 const mockMarkPaymentIntentTransactionSucceeded = vi.fn();
 const mockMarkPaymentIntentTransactionFailed = vi.fn();
@@ -44,6 +45,7 @@ const mockQueueSupersededPaymentIntentRefundRecovery = vi.fn();
 // #3341: the ADDITIONAL supersede runs for REAL (`INV-OPS-015`). These are its
 // I/O: the ledger read of the asks it retires, and the durable cancel it queues.
 const mockPaymentTransactionFindMany = vi.fn();
+const mockRecoveryOperationFindUnique = vi.fn<(...args: unknown[]) => Promise<unknown>>(async () => null);
 const mockEnqueuePaymentIntentCancellationRecovery = vi.fn();
 const mockQueueSupersededPrimaryIntentCancellations = vi.fn();
 const mockEnqueueXeroBookingInvoiceOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_booking", message: "queued" });
@@ -64,6 +66,8 @@ vi.mock("@/lib/booking-ledger-modification-sync", () => ({
 }));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    // #4217: the ledger writers lock the Payment row first.
+    $executeRaw: vi.fn(async () => 0),
     $transaction: (...args: unknown[]) => {
       const fn = args[0];
       if (typeof fn === "function") return (mockTransaction as any)(fn);
@@ -87,6 +91,13 @@ vi.mock("@/lib/prisma", () => ({
     // #3032: the pending-review fence reads this under the booking-edit locks.
     // Empty by default - no financial review is open - so every pre-#3032 test
     // asserts exactly what it asserted before.
+    // #3954: no increase is waiting on its mint's recovery for a reduction to net off.
+    // Final review: a re-issuing door reads its recovery back after commit
+    // (`readReissuedAskRecovery`); none by default.
+    paymentRecoveryOperation: {
+      findMany: vi.fn(async () => []),
+      findUnique: (...args: unknown[]) => mockRecoveryOperationFindUnique(...args),
+    },
     manualRefundTask: {
       // #3827 (`INV-PAY-117`): no open edit refund hand-back on file.
       aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })),
@@ -119,7 +130,11 @@ vi.mock("@/lib/prisma", () => ({
     // The real supersede reads the GLOBAL client for the live ADDITIONAL asks it
     // is about to retire. Empty by default because the default fixture carries
     // no earlier ask; the #3244 carry case below puts its unpaid row here.
-    paymentTransaction: { findMany: mockPaymentTransactionFindMany },
+    paymentTransaction: {
+      findMany: mockPaymentTransactionFindMany,
+      // #3954 round 7: the door re-reads its new intent (`isMintedAskStillLive`).
+      findUnique: vi.fn().mockResolvedValue({ status: "PENDING", withdrawnAt: null }),
+    },
   },
 }));
 
@@ -255,6 +270,9 @@ vi.mock("@/lib/payment-recovery", () => ({
   enqueuePaymentIntentCancellationRecovery: (...args: unknown[]) =>
     mockEnqueuePaymentIntentCancellationRecovery(...args),
   runPaymentRecoveryOperationNow: vi.fn().mockResolvedValue("succeeded"),
+  // #4070: what an own-card refund the Stripe call could not make still owes.
+  enqueueBookingModificationRefundRecovery: (...args: unknown[]) =>
+    mockEnqueueBookingModificationRefundRecovery(...args),
   completeCanceledSupersededPaymentIntentRecovery: (...args: unknown[]) =>
     mockCompleteCanceledSupersededPaymentIntentRecovery(...args),
   queueSupersededPaymentIntentRefundRecovery: (...args: unknown[]) =>
@@ -309,6 +327,8 @@ import {
   recordingBookingDouble,
 } from "@/lib/__tests__/support/hosting-participant-fence-double";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { ORGANISER_REFUND_DEBT_STATES, primeOrganiserRefundDebt } from "./support/organiser-refund-debt-reread";
+import { expectQueuedOnce, OWN_CARD_REFUND_STATES, primeOwnCardRefund } from "./support/own-card-refund-outcome";
 import { UNSUPPORTED_CHARGE_CURRENCY_MEMBER_BODY } from "@/lib/stripe-charge-currency";
 import {
   ADDITIONAL_PAYMENT_ALREADY_MADE_CODE,
@@ -316,6 +336,7 @@ import {
   PAYMENT_PROCESSING_CODE,
 } from "@/lib/payment-recovery-contract";
 import { stripeIdempotencyKeyForAskAmount } from "@/lib/payment-recovery-keys";
+import { NEGATIVE_STORED_GUEST_TOTAL_MESSAGE } from "@/lib/edit-night-valuation";
 
 const mockedAuth = vi.mocked(auth);
 const mockedCalcDualRefund = vi.mocked(calculateDualRefundAmounts);
@@ -349,7 +370,7 @@ function makeSession() {
 const FIXED_NOW = new Date("2026-07-15T00:00:00.000Z"); // NZ 2026-07-15 12:00
 
 function makeBooking(overrides: Record<string, unknown> = {}) {
-  return {
+  const booking = {
     id: "bk1",
     memberId: "m1",
     // Booking.lodgeId is NOT NULL in the schema, so a real row always carries
@@ -373,7 +394,11 @@ function makeBooking(overrides: Record<string, unknown> = {}) {
         ageTier: "ADULT",
         isMember: true,
         memberId: "m1",
-        priceCents: 5000,
+        // #4317 review H1: the guest's stored total IS the booking's $100
+        // headline, as every writer stores them. It used to be $50 under a $100
+        // headline, a gap the edit doors now carry forward rather than settle,
+        // which would have moved every increase below by $50.
+        priceCents: 10000,
         /*
           #2675: with an ACTIVE hosting mode on the tx double below, the
           reconciler's EVALUATOR now runs against this row rather than bailing
@@ -386,14 +411,14 @@ function makeBooking(overrides: Record<string, unknown> = {}) {
           "no nights". Empty is the honest value for this fixture: it persists no
           `BookingGuestNight` rows, so the evaluator falls back to the guest's own
           stayStart..stayEnd envelope. It is also inert for the date path, whose
-          `lockedNightPricesForGuest` reads the same field and already treated the
+          `valuedNightLocksForGuest` reads the same field and already treated the
           absent one as "this guest locked no prices".
         */
         stayStart: new Date("2026-08-01"),
         stayEnd: new Date("2026-08-03"),
         /*
           #3166: the two nights this guest holds, carrying what they were sold
-          for and summing to the stored 5000. The date path is now judged on
+          for and summing to the stored 10000. The date path is now judged on
           exact stored sold-price evidence, so an EMPTY list is a strand with no
           readable history at all and every date change on it PARKS for financial
           review — which is the gate working, not the settlement question this
@@ -401,8 +426,8 @@ function makeBooking(overrides: Record<string, unknown> = {}) {
           this deliberately below.
         */
         nights: [
-          { stayDate: new Date("2026-08-01"), priceCents: 2500, priceSource: "SOLD" },
-          { stayDate: new Date("2026-08-02"), priceCents: 2500, priceSource: "SOLD" },
+          { stayDate: new Date("2026-08-01"), priceCents: 5000, priceSource: "SOLD" },
+          { stayDate: new Date("2026-08-02"), priceCents: 5000, priceSource: "SOLD" },
         ],
         // No consent was ever needed for an ordinary guest, and `null` is one of
         // the two values `isOperationallyPresentConsent` treats as present (D-12).
@@ -437,6 +462,25 @@ function makeBooking(overrides: Record<string, unknown> = {}) {
     promoRedemptions: [],
     ...overrides,
   };
+  // #4317 review H1: an overridden headline is a booking whose guest is priced
+  // to match, as every writer stores them. The edit doors now carry any gap
+  // between the two forward rather than settle it, so a fixture that moved the
+  // headline alone would be modelling a frozen headline it never meant to.
+  if (typeof overrides.totalPriceCents === "number" && !("guests" in overrides)) {
+    const total = overrides.totalPriceCents;
+    const [guest] = booking.guests;
+    booking.guests = [
+      {
+        ...guest,
+        priceCents: total,
+        nights: [
+          { stayDate: new Date("2026-08-01"), priceCents: total - Math.floor(total / 2), priceSource: "SOLD" },
+          { stayDate: new Date("2026-08-02"), priceCents: Math.floor(total / 2), priceSource: "SOLD" },
+        ],
+      },
+    ];
+  }
+  return booking;
 }
 
 function makeTx(booking: ReturnType<typeof makeBooking>) {
@@ -544,6 +588,8 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
     // #3032: the pending-review fence reads this under the booking-edit locks.
     // Empty by default - no financial review is open - so every pre-#3032 test
     // asserts exactly what it asserted before.
+    // #3954: no increase is waiting on its mint's recovery for a reduction to net off.
+    paymentRecoveryOperation: { findMany: vi.fn(async () => []) },
     manualRefundTask: {
       // #3827 (`INV-PAY-117`): no open edit refund hand-back on file.
       aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })),
@@ -564,7 +610,8 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
     },
     bookingModification: { create: vi.fn().mockResolvedValue({ id: "mod1" }) },
     bookingRequest: { findFirst: vi.fn().mockResolvedValue(null) },
-    payment: { update: vi.fn().mockResolvedValue({}) },
+    // #3980: an edit that read no invoice link claims the payment row.
+    payment: { update: vi.fn().mockResolvedValue({}), updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
     season: {
       findMany: vi.fn().mockResolvedValue([{
         id: "s1",
@@ -706,6 +753,113 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
     ]);
   });
 
+  // #3954 round 9: the door withholds the secret of an ask a reduction retired
+  // before it was offered; its email must not name that ask as due either.
+  it("MUTATION (round 9): an increase whose ask a reduction retired is not named as due, and offers no secret", async () => {
+    const tx = makeTx(makeBooking());
+    mockedAuth.mockResolvedValue(makeSession() as any);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockedCheckCapacity.mockResolvedValue({ available: true, availableBeds: 20 } as any);
+    mockedCalcPrice.mockReturnValue({ totalPriceCents: 15000, guests: [{ priceCents: 15000, perNightCents: [7500, 7500] }] } as any);
+    mockedCalcChangeFee.mockReturnValue({ feeCents: 0, fromTierRefundPct: 0, toTierRefundPct: 0 });
+    mockedCreatePaymentIntent.mockResolvedValue({ id: "pi_additional", client_secret: "s", currency: "nzd" } as any);
+    mockPaymentUpdate.mockResolvedValue({});
+    const { prisma } = await import("@/lib/prisma");
+    vi.mocked(prisma.paymentTransaction.findUnique).mockResolvedValueOnce({ status: "FAILED", withdrawnAt: new Date("2026-07-01T00:00:00.000Z") } as never);
+
+    const res = await PUT(
+      new NextRequest("http://localhost/api/bookings/bk1/modify-dates", { method: "PUT", body: JSON.stringify({ checkIn: "2026-08-05", checkOut: "2026-08-08" }) }),
+      { params: Promise.resolve({ id: "bk1" }) },
+    );
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(mockedCreatePaymentIntent).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 5000 }));
+    expect(data.additionalPaymentClientSecret).toBeNull();
+    const { sendBookingModifiedEmail } = await import("@/lib/email");
+    expect(sendBookingModifiedEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ additionalAmountCents: 0, additionalPaymentMethod: undefined }),
+      expect.anything(),
+    );
+  });
+
+  // #3954 final review (R1/R2): this date change (R1) shrinks a $50 unpaid ask
+  // to $30 and re-issues it; a later reduction (R2) nets that waiting re-issue
+  // off before R1's door mints it. R2's own email told the member, so R1's must
+  // not name the $30 as due.
+  it("MUTATION (final review): a re-issue a later reduction netted off before the door minted it is named as $0", async () => {
+    const booking = makeBooking({
+      totalPriceCents: 15000,
+      finalPriceCents: 15000,
+      payment: {
+        ...makeBooking().payment,
+        additionalPaymentIntentId: "pi_ask",
+        additionalAmountCents: 5000,
+        additionalPaymentStatus: "PENDING",
+      },
+    });
+    const askRow = {
+      id: "txn_ask",
+      kind: "ADDITIONAL",
+      source: "STRIPE",
+      status: "PENDING",
+      reason: "guest_add_price_increase",
+      amountCents: 5000,
+      carriedAskCents: 0,
+      stripePaymentIntentId: "pi_ask",
+      createdAt: new Date("2026-06-20T00:00:00.000Z"),
+      hadIssuedXeroInvoice: true,
+    };
+    const tx = Object.assign(makeTx(booking), {
+      paymentTransaction: {
+        findMany: vi.fn(async (args: { where?: { kind?: unknown } }) => (args?.where?.kind === "PRIMARY" ? [] : [askRow])),
+        updateMany: vi.fn(async () => ({ count: 1 })),
+      },
+      xeroSyncOperation: { findMany: vi.fn(async () => []), updateMany: vi.fn(async () => ({ count: 0 })) },
+    });
+    Object.assign(tx.bookingModification, { findMany: vi.fn(async () => [{ id: "mod_increase" }]) });
+    Object.assign(tx.payment, { findUnique: vi.fn(async () => null) });
+    mockedAuth.mockResolvedValue(makeSession() as any);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockedCheckCapacity.mockResolvedValue({ available: true, availableBeds: 20 } as any);
+    mockedCalcPrice.mockReturnValue({ totalPriceCents: 13000, guests: [{ priceCents: 13000, perNightCents: [6500, 6500] }] } as any);
+    mockedCalcChangeFee.mockReturnValue({ feeCents: 0, fromTierRefundPct: 0, toTierRefundPct: 0 });
+    mockPaymentUpdate.mockResolvedValue({});
+    const { PENDING_ASK_NETTED_BY_REDUCTION_NOTE } = await import("@/lib/additional-ask-recovery-close");
+    mockRecoveryOperationFindUnique.mockImplementation(async () => ({
+      id: "op_reissue",
+      status: "SUCCEEDED",
+      attempts: 0,
+      processingStartedAt: null,
+      paymentIntentId: "mod_reissued_ask_mod1",
+      amountCents: 3000,
+      createdAt: new Date("2026-07-15T00:00:00.000Z"),
+      lastError: PENDING_ASK_NETTED_BY_REDUCTION_NOTE,
+    }));
+
+    try {
+      const res = await PUT(
+        new NextRequest("http://localhost/api/bookings/bk1/modify-dates", { method: "PUT", body: JSON.stringify({ checkIn: "2026-08-05", checkOut: "2026-08-07" }) }),
+        { params: Promise.resolve({ id: "bk1" }) },
+      );
+      const data = await res.json();
+
+      expect(res.status).toBe(200);
+      // The edit re-issued $30 of the $50 ask, which R2 netted off before this door minted it.
+      expect(data.additionalAmountCents).toBe(3000);
+      expect(mockedCreatePaymentIntent).not.toHaveBeenCalled();
+      expect(data.additionalPaymentClientSecret).toBeNull();
+      const { sendBookingModifiedEmail } = await import("@/lib/email");
+      expect(sendBookingModifiedEmail).toHaveBeenCalledWith(
+        expect.objectContaining({ additionalAmountCents: 0, additionalPaymentMethod: undefined }),
+        expect.anything(),
+      );
+    } finally {
+      mockRecoveryOperationFindUnique.mockReset();
+      mockRecoveryOperationFindUnique.mockResolvedValue(null);
+    }
+  });
+
   it("creates additional PaymentIntent and returns clientSecret when price increases", async () => {
     const booking = makeBooking();
     const tx = makeTx(booking);
@@ -844,6 +998,110 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
     );
   });
 
+  /*
+    #3502 (owner decision, 6 Oct 2026): a booking paid wholly with credit is a
+    $0 SUCCEEDED card-source payment with no intent and, at a club without
+    Xero, no invoice. The date door used to ask `hasCapturedPayment` and send
+    the increase to a supplementary invoice that does not exist - nobody was
+    billed. It now asks the member's card, Xero or not.
+  */
+  function zeroDollarPayment(xeroInvoiceId: string | null) {
+    return {
+      id: "p1",
+      bookingId: "bk1",
+      amountCents: 0,
+      source: "STRIPE",
+      status: "SUCCEEDED",
+      stripePaymentIntentId: null,
+      stripeCustomerId: null,
+      xeroInvoiceId,
+      refundedAmountCents: 0,
+      creditAppliedCents: 10000,
+      changeFeeCents: 0,
+      additionalPaymentIntentId: null,
+      additionalAmountCents: 0,
+      additionalPaymentStatus: null,
+    };
+  }
+
+  async function growZeroDollarBooking(xeroInvoiceId: string | null) {
+    const booking = makeBooking({ status: "PAID", payment: zeroDollarPayment(xeroInvoiceId) });
+    const tx = makeTx(booking);
+    mockedAuth.mockResolvedValue(makeSession() as any);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockedCheckCapacity.mockResolvedValue({ available: true, availableBeds: 20 } as any);
+    mockedCalcPrice.mockReturnValue({
+      totalPriceCents: 15000,
+      guests: [{ priceCents: 15000, perNightCents: [7500, 7500] }],
+    } as any);
+    // A $10 change fee, so the fee half of the ask is pinned too.
+    mockedCalcChangeFee.mockReturnValue({ feeCents: 1000, fromTierRefundPct: 50, toTierRefundPct: 100 });
+    mockedFindOrCreateCustomer.mockResolvedValue({ id: "cus_new" } as any);
+    // #4036: no stored customer, so the door reads the owner after commit and
+    // resolves the customer as the recovery runner does (`readAskMintPayment`).
+    mockPaymentFindUnique.mockResolvedValue({
+      ...zeroDollarPayment(xeroInvoiceId),
+      booking: {
+        organisationId: null,
+        member: { id: "m1", email: "alice@test.com", firstName: "Alice", lastName: "Smith" },
+        organisation: null,
+      },
+    });
+    mockedCreatePaymentIntent.mockResolvedValue({
+      id: "pi_zero_extra",
+      client_secret: "zero_extra_secret", currency: "nzd",
+    } as any);
+    mockMemberFindUnique.mockResolvedValue({ active: true, email: "alice@test.com", firstName: "Alice" });
+
+    const req = new NextRequest("http://localhost/api/bookings/bk1/modify-dates", {
+      method: "PUT",
+      body: JSON.stringify({ checkIn: "2026-08-05", checkOut: "2026-08-08" }),
+    });
+    const res = await PUT(req, { params: Promise.resolve({ id: "bk1" }) });
+    return { res, data: await res.json(), tx };
+  }
+
+  it("asks a credit-paid ($0) booking's card for the increase with Xero off (#3502)", async () => {
+    const { res, data, tx } = await growZeroDollarBooking(null);
+
+    expect(res.status).toBe(200);
+    // +$50 price and the $10 fee: the figure, not merely "some intent".
+    expect(data.additionalAmountCents).toBe(6000);
+    expect(data.additionalPaymentClientSecret).toBe("zero_extra_secret");
+    // No original intent or customer to reuse: a fresh customer, a fresh intent.
+    expect(mockedFindOrCreateCustomer).toHaveBeenCalled();
+    expect(mockedCreatePaymentIntent).toHaveBeenCalledWith(
+      expect.objectContaining({ amountCents: 6000, customerId: "cus_new" }),
+    );
+    // #3980: no invoice link was read, so the fee rides the edit's claim on the row.
+    expect(tx.payment.updateMany).toHaveBeenCalledWith({
+      where: { id: "p1", xeroInvoiceId: null },
+      data: { changeFeeCents: { increment: 1000 } },
+    });
+    await Promise.resolve();
+    // No invoice exists, so nothing goes to Xero as a supplementary invoice.
+    expect(mockEnqueueXeroSupplementaryInvoiceOperation).not.toHaveBeenCalled();
+  });
+
+  it("with an issued invoice, the supplementary invoice waits for that card payment (#3502)", async () => {
+    const { res, data } = await growZeroDollarBooking("inv_primary");
+
+    expect(res.status).toBe(200);
+    expect(data.additionalAmountCents).toBe(6000);
+    expect(mockedCreatePaymentIntent).toHaveBeenCalledWith(
+      expect.objectContaining({ amountCents: 6000 }),
+    );
+    await Promise.resolve();
+    expect(mockEnqueueXeroSupplementaryInvoiceOperation).toHaveBeenCalledWith(
+      expect.objectContaining({ bookingId: "bk1", priceDiffCents: 5000, changeFeeCents: 1000 }),
+      expect.objectContaining({
+        paymentIntentId: "pi_zero_extra",
+        waitForConfirmedAdditionalPayment: true,
+        recordPayment: true,
+      }),
+    );
+  });
+
   it("processes refund for price decrease (no additional PI created)", async () => {
     const booking = makeBooking();
     const tx = makeTx(booking);
@@ -948,6 +1206,106 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
     );
   });
 
+  // #4057: a joiner's booking the group organiser paid for by card refunds the
+  // reduction to the ORGANISER's card through its debt. The real refund helper
+  // runs that debt and re-reads it after commit; the email says the refund was
+  // made only when the debt says so.
+  it.each(ORGANISER_REFUND_DEBT_STATES)("an organiser child's date reduction emails refund destination: debt $label -> $destination (#4057)", async ({ lookupThrows, reread, runs, destination }) => {
+    const booking = makeBooking({ organiserSettled: true, parentBookingId: "organiser_bk" });
+    const tx = makeTx(booking) as ReturnType<typeof makeTx> & Record<string, unknown>;
+    Object.assign(tx, {
+      groupBookingSettlement: {
+        findFirst: vi.fn().mockResolvedValue({
+          id: "settlement_1",
+          stripePaymentIntentId: "pi_combined",
+          amountCents: 20000,
+          status: "SUCCEEDED",
+          refundPlan: null,
+        }),
+      },
+      paymentRefund: { aggregate: vi.fn().mockResolvedValue({ _sum: { amountCents: null } }) },
+      paymentRecoveryOperation: {
+        findUnique: vi.fn().mockResolvedValue(null),
+        findMany: vi.fn().mockResolvedValue([]),
+        create: vi.fn().mockResolvedValue({ id: "op_child", amountCents: 3000 }),
+      },
+    });
+    mockedAuth.mockResolvedValue(makeSession() as any);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockedCheckCapacity.mockResolvedValue({ available: true, availableBeds: 20 } as any);
+    mockedCalcPrice.mockReturnValue({
+      totalPriceCents: 7000, // price decreased from 10000
+      guests: [{ priceCents: 7000, perNightCents: [3500] }],
+    } as any);
+    mockedCalcChangeFee.mockReturnValue({ feeCents: 0, fromTierRefundPct: 0, toTierRefundPct: 0 });
+    mockPaymentUpdate.mockResolvedValue({});
+    mockMemberFindUnique.mockResolvedValue({ active: true, email: "alice@test.com", firstName: "Alice" });
+    primeOrganiserRefundDebt(mockRecoveryOperationFindUnique, { bookingModificationId: "mod1", debtId: "op_child", lookupThrows, reread });
+
+    try {
+      const res = await PUT(
+        new NextRequest("http://localhost/api/bookings/bk1/modify-dates", {
+          method: "PUT",
+          // No settlement method: the organiser's card is the only disposition.
+          body: JSON.stringify({ checkOut: "2026-08-02" }),
+        }),
+        { params: Promise.resolve({ id: "bk1" }) },
+      );
+
+      expect(res.status).toBe(200);
+      expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
+      const { runPaymentRecoveryOperationNow } = await import("@/lib/payment-recovery");
+      // A lookup that throws leaves nothing to run; the debt stays owed.
+      if (runs) expect(runPaymentRecoveryOperationNow).toHaveBeenCalledWith("op_child", expect.anything());
+      else expect(runPaymentRecoveryOperationNow).not.toHaveBeenCalledWith("op_child", expect.anything());
+      const { sendBookingModifiedEmail } = await import("@/lib/email");
+      expect(sendBookingModifiedEmail).toHaveBeenCalledWith(
+        expect.objectContaining({ refundAmountCents: 3000, refundDestination: destination }),
+        expect.anything(),
+      );
+    } finally {
+      mockRecoveryOperationFindUnique.mockReset();
+      mockRecoveryOperationFindUnique.mockResolvedValue(null);
+    }
+  });
+
+  // #4070: a reduction refunded to the member's own card. The email says the
+  // refund was made only when Stripe made it; one the Stripe call could not
+  // make is queued for the recovery runner and on its way.
+  it.each(OWN_CARD_REFUND_STATES)("an own-card date reduction emails refund destination: $label -> $destination (#4070)", async ({ answer, queued, destination }) => {
+    const booking = makeBooking();
+    const tx = makeTx(booking);
+    mockedAuth.mockResolvedValue(makeSession() as any);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockedCheckCapacity.mockResolvedValue({ available: true, availableBeds: 20 } as any);
+    mockedCalcPrice.mockReturnValue({
+      totalPriceCents: 7000, // price decreased from 10000
+      guests: [{ priceCents: 7000, perNightCents: [3500] }],
+    } as any);
+    mockedCalcChangeFee.mockReturnValue({ feeCents: 0, fromTierRefundPct: 0, toTierRefundPct: 0 });
+    mockPaymentUpdate.mockResolvedValue({});
+    mockMemberFindUnique.mockResolvedValue({ active: true, email: "alice@test.com", firstName: "Alice" });
+    mockEnqueueBookingModificationRefundRecovery.mockResolvedValue({ id: "op_refund" });
+    primeOwnCardRefund(mockRefundPaymentTransactions, answer);
+
+    const res = await PUT(
+      new NextRequest("http://localhost/api/bookings/bk1/modify-dates", {
+        method: "PUT",
+        body: JSON.stringify({ checkOut: "2026-08-02", settlementMethod: "card" }),
+      }),
+      { params: Promise.resolve({ id: "bk1" }) },
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockRefundPaymentTransactions).toHaveBeenCalledWith(expect.objectContaining({ paymentId: "p1", amountCents: 3000 }));
+    expectQueuedOnce(mockEnqueueBookingModificationRefundRecovery, queued, 3000);
+    const { sendBookingModifiedEmail } = await import("@/lib/email");
+    expect(sendBookingModifiedEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ refundAmountCents: 3000, refundDestination: destination, refundByBankTransfer: null }),
+      expect.anything(),
+    );
+  });
+
   it("does not send Internet Banking date reductions to Stripe refund recovery", async () => {
     const booking = makeBooking({
       payment: {
@@ -995,7 +1353,8 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
     });
     const { sendBookingModifiedEmail } = await import("@/lib/email");
     expect(sendBookingModifiedEmail).toHaveBeenCalledWith(
-      expect.objectContaining({ refundAmountCents: 3000, refundByBankTransfer: true }),
+      // #4070: no Stripe refund ran, so the member's own wording stands.
+      expect.objectContaining({ refundAmountCents: 3000, refundByBankTransfer: "member", refundDestination: "own" }),
       expect.anything(),
     );
 
@@ -1247,9 +1606,14 @@ describe("POST /api/bookings/[id]/guests — price increase", () => {
                 ageTier: "ADULT",
                 isMember: true,
                 rateMembershipTypeId: null,
+                // #4317: the after side is VALUED like the before side, so the
+                // re-read carries the stored total and envelope it values with.
+                priceCents: 5000,
+                stayStart: new Date("2026-08-01"),
+                stayEnd: new Date("2026-08-03"),
                 nights: [
-                  { stayDate: new Date("2026-08-01"), priceCents: 2500 },
-                  { stayDate: new Date("2026-08-02"), priceCents: 2500 },
+                  { stayDate: new Date("2026-08-01"), priceCents: 2500, priceSource: "SOLD" },
+                  { stayDate: new Date("2026-08-02"), priceCents: 2500, priceSource: "SOLD" },
                 ],
               },
               {
@@ -1259,9 +1623,12 @@ describe("POST /api/bookings/[id]/guests — price increase", () => {
                 ageTier: "ADULT",
                 isMember: true,
                 rateMembershipTypeId: "rt-member",
+                priceCents: 10000,
+                stayStart: new Date("2026-08-01"),
+                stayEnd: new Date("2026-08-03"),
                 nights: [
-                  { stayDate: new Date("2026-08-01"), priceCents: 5000 },
-                  { stayDate: new Date("2026-08-02"), priceCents: 5000 },
+                  { stayDate: new Date("2026-08-01"), priceCents: 5000, priceSource: "SOLD" },
+                  { stayDate: new Date("2026-08-02"), priceCents: 5000, priceSource: "SOLD" },
                 ],
               },
             ]
@@ -1307,6 +1674,73 @@ describe("POST /api/bookings/[id]/guests — price increase", () => {
         amountCents: 10000,
       }),
     ]);
+  });
+
+  it("MUTATION (round 9): a guest add whose ask a reduction retired is not named as due, and offers no secret", async () => {
+    const tx = makeTx(makeBooking());
+    mockedAuth.mockResolvedValue(makeSession() as any);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockedCheckCapacityForGuestRanges.mockResolvedValue({ available: true, minAvailable: 20, nightDetails: [] } as any);
+    mockedCalcPrice.mockImplementation((_ci, _co, guests) => ({
+      totalPriceCents: guests.length === 1 ? 10000 : 20000,
+      guests: guests.map(() => ({ priceCents: 10000, perNightCents: [5000, 5000] })),
+    } as any));
+    mockedCreatePaymentIntent.mockResolvedValue({ id: "pi_guest_extra", client_secret: "guest_extra_secret", currency: "nzd" } as any);
+    mockPaymentUpdate.mockResolvedValue({});
+    mockMemberFindUnique.mockResolvedValue({ active: true, email: "alice@test.com", firstName: "Alice" });
+    const { prisma } = await import("@/lib/prisma");
+    vi.mocked(prisma.paymentTransaction.findUnique).mockResolvedValueOnce({ status: "FAILED", withdrawnAt: new Date("2026-07-01T00:00:00.000Z") } as never);
+
+    const res = await POST(
+      new NextRequest("http://localhost/api/bookings/bk1/guests", {
+        method: "POST",
+        body: JSON.stringify({ guests: [{ firstName: "Bob", lastName: "Jones", ageTier: "ADULT", isMember: true }] }),
+      }),
+      { params: Promise.resolve({ id: "bk1" }) },
+    );
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(mockedCreatePaymentIntent).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 10000 }));
+    expect(data.additionalPaymentClientSecret).toBeNull();
+    const { sendBookingModifiedEmail } = await import("@/lib/email");
+    expect(sendBookingModifiedEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ additionalAmountCents: 0, additionalPaymentMethod: undefined }),
+      expect.anything(),
+    );
+  });
+
+  it("#3949 review round 6: refuses a guest add on a place the organiser paid by Internet Banking while the group cancel is part-way through (409)", async () => {
+    const booking = makeBooking({
+      organiserSettled: true,
+      parentBookingId: "organiser_bk",
+      payment: { ...makeBooking().payment, source: "INTERNET_BANKING" },
+    });
+    const tx = makeTx(booking);
+    // The organiser's group is CANCELLED and this child not yet claimed.
+    (tx as any).groupBooking = { findUnique: vi.fn().mockResolvedValue({ status: "CANCELLED" }) };
+    mockedAuth.mockResolvedValue(makeSession() as any);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockedCheckCapacityForGuestRanges.mockResolvedValue({ available: true, minAvailable: 20, nightDetails: [] } as any);
+    mockedCalcPrice.mockImplementation((_ci, _co, guests) => ({
+      totalPriceCents: guests.length === 1 ? 10000 : 20000,
+      guests: guests.map(() => ({ priceCents: 10000, perNightCents: [5000, 5000] })),
+    } as any));
+    mockMemberFindUnique.mockResolvedValue({ active: true, email: "alice@test.com", firstName: "Alice" });
+    const { GROUP_CANCEL_IN_PROGRESS_PRICE_MESSAGE } = await import("@/lib/group-cancel-in-progress");
+
+    const res = await POST(
+      new NextRequest("http://localhost/api/bookings/bk1/guests", {
+        method: "POST",
+        body: JSON.stringify({ guests: [{ firstName: "Bob", lastName: "Jones", ageTier: "ADULT", isMember: true }] }),
+      }),
+      { params: Promise.resolve({ id: "bk1" }) },
+    );
+
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toBe(GROUP_CANCEL_IN_PROGRESS_PRICE_MESSAGE);
+    expect(tx.bookingModification.create).not.toHaveBeenCalled();
+    expect(mockedCreatePaymentIntent).not.toHaveBeenCalled();
   });
 
   it("creates additional PaymentIntent when adding guest to CONFIRMED booking", async () => {
@@ -1610,6 +2044,60 @@ describe("POST /api/bookings/[id]/guests — price increase", () => {
     expect(data.additionalPaymentClientSecret).toBe("guest_extra_secret");
     expect(mockedCreatePaymentIntent).toHaveBeenCalledWith(
       expect.objectContaining({ amountCents: 20000 }),
+    );
+  });
+
+  it("with an issued invoice, a ZERO-DOLLAR booking's supplementary invoice waits for the card payment (#3502)", async () => {
+    const booking = makeBooking({
+      totalPriceCents: 0,
+      finalPriceCents: 0,
+      payment: {
+        ...partlyRefundedPayment,
+        status: "SUCCEEDED",
+        amountCents: 0,
+        refundedAmountCents: 0,
+        stripePaymentIntentId: null,
+        xeroInvoiceId: "inv_primary",
+      },
+    });
+    const tx = makeTx(booking);
+    mockedAuth.mockResolvedValue(makeSession() as any);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockedCheckCapacityForGuestRanges.mockResolvedValue({ available: true, minAvailable: 20, nightDetails: [] } as any);
+    mockedCalcPrice.mockImplementation((_ci, _co, guests) => ({
+      totalPriceCents: guests.length === 1 ? 10000 : 20000,
+      guests: guests.map(() => ({ priceCents: 10000, perNightCents: [5000, 5000] })),
+    } as any));
+    mockedCreatePaymentIntent.mockResolvedValue({
+      id: "pi_guest_extra",
+      client_secret: "guest_extra_secret", currency: "nzd",
+    } as any);
+    mockMemberFindUnique.mockResolvedValue({ active: true, email: "alice@test.com", firstName: "Alice" });
+
+    const req = new NextRequest("http://localhost/api/bookings/bk1/guests", {
+      method: "POST",
+      body: JSON.stringify({
+        guests: [{ firstName: "Bob", lastName: "Jones", ageTier: "ADULT", isMember: true }],
+      }),
+    });
+    const res = await POST(req, { params: Promise.resolve({ id: "bk1" }) });
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.additionalAmountCents).toBe(20000);
+    expect(mockedCreatePaymentIntent).toHaveBeenCalledWith(
+      expect.objectContaining({ amountCents: 20000 }),
+    );
+    await Promise.resolve();
+    // Billed once: the invoice records the card payment rather than billing
+    // the member a second time.
+    expect(mockEnqueueXeroSupplementaryInvoiceOperation).toHaveBeenCalledWith(
+      expect.objectContaining({ bookingId: "bk1", priceDiffCents: 20000 }),
+      expect.objectContaining({
+        paymentIntentId: "pi_guest_extra",
+        waitForConfirmedAdditionalPayment: true,
+        recordPayment: true,
+      }),
     );
   });
 });
@@ -2494,41 +2982,70 @@ describe("GET /api/bookings/[id]/additional-payment-secret", () => {
 });
 
 // ============================================================================
-// #3166 (epic #2797): the date path stops repairing a blank into a guess
+// #4317 (epic #4302): the date path prices a blank night from stored data
 // ============================================================================
 
 /**
- * `modifyBookingDates` reads night prices through the LENIENT
- * `lockedNightPricesForGuest`, so a night whose stored price is blank gets no
- * lock, is repriced at today's rate, and — before #3166 — was written back into
- * `BookingGuestNight.priceCents` as a real integer.
- *
- * The only thing standing in front of that was the pending-review fence, which
- * fires only while a review task is still OPEN. And **nothing ever clears a
- * blank**: settling a review writes an amount to the task, never a price to the
- * night row. So the first date change after a review closed silently converted
- * "not known" into a number, and wrote that number into the very column the next
- * edit reads as evidence.
- *
- * #3170 is what makes blanks storable in the first place, so this cannot be a
- * later problem: it arrives with the same release.
+ * `modifyBookingDates` locks every night a guest holds at its VALUED figure
+ * (`valuedNightLocksForGuest`, `INV-MOD-028`), so a blank night is neither
+ * repriced at today's rate nor written back as NULL: it carries what the
+ * guest's stored total has left for it (R2). #3166 parked these date changes;
+ * #4317 prices them. Only nights the new range adds price at today's rate.
  */
-describe("#3166 modify-dates parks rather than repricing an unreadable night", () => {
+describe("#4317 modify-dates prices a blank night from the guest's stored total", () => {
   let PUT: typeof import("@/app/api/bookings/[id]/modify-dates/route").PUT;
 
   /**
-   * The booking from the finding: two nights, one priced and one BLANK. That is
-   * exactly what a parked edit leaves behind under #3170 — the row exists and
-   * says the price is not known — and the fence that used to cover it is gone
-   * the moment the review is settled.
+   * Two nights, one sold at $25 and one BLANK, against a stored $50. That is
+   * what a parked edit left behind before #4317. R2 values the blank at $25.
    */
   function bookingWithABlankNight() {
-    const booking = makeBooking();
+    const booking = makeBooking({ totalPriceCents: 5000, finalPriceCents: 5000 });
     (booking.guests as Array<Record<string, unknown>>)[0].nights = [
       { stayDate: new Date("2026-08-01"), priceCents: 2500, priceSource: "SOLD" },
       { stayDate: new Date("2026-08-02"), priceCents: null, priceSource: "UNKNOWN" },
     ];
     return booking;
+  }
+
+  /**
+   * The pricing engine's own lock rule, at today's $75 a night: a night with a
+   * lock keeps it, any other is today's rate. Mocked so the door is measured,
+   * not the engine — and so a lock the door fails to pass shows up as $75.
+   */
+  function pricesAtTodaysRateHonouringLocks(
+    _checkIn: Date,
+    _checkOut: Date,
+    guests: Array<{
+      nights?: ReadonlyArray<Date> | null;
+      lockedNightPrices?: ReadonlyArray<{ stayDate: Date | string; priceCents: number }> | null;
+    }>,
+  ) {
+    const key = (value: Date | string) =>
+      typeof value === "string" ? value.slice(0, 10) : value.toISOString().slice(0, 10);
+    const breakdowns = guests.map((guest) => {
+      const locks = new Map(
+        (guest.lockedNightPrices ?? []).map((lock) => [key(lock.stayDate), lock.priceCents]),
+      );
+      const nightDates: Date[] = [];
+      if (guest.nights && guest.nights.length > 0) {
+        nightDates.push(...guest.nights);
+      } else {
+        for (let night = new Date(_checkIn); night < _checkOut; night = new Date(night.getTime() + 86_400_000)) {
+          nightDates.push(night);
+        }
+      }
+      const perNightCents = nightDates.map((night) => locks.get(key(night)) ?? 7500);
+      return {
+        priceCents: perNightCents.reduce((sum, cents) => sum + cents, 0),
+        perNightCents,
+        nightDates,
+      };
+    });
+    return {
+      totalPriceCents: breakdowns.reduce((sum, guest) => sum + guest.priceCents, 0),
+      guests: breakdowns,
+    };
   }
 
   beforeEach(async () => {
@@ -2551,164 +3068,139 @@ describe("#3166 modify-dates parks rather than repricing an unreadable night", (
       toTierRefundPct: 0,
     });
     mockPaymentUpdate.mockResolvedValue({});
+    mockedCalcPrice.mockImplementation(pricesAtTodaysRateHonouringLocks as never);
     const mod = await import("@/app/api/bookings/[id]/modify-dates/route");
     PUT = mod.PUT;
   });
 
-  function moveTheDates() {
+  function moveTheDates(checkIn: string, checkOut: string) {
     return PUT(
       new NextRequest("http://localhost/api/bookings/bk1/modify-dates", {
         method: "PUT",
-        body: JSON.stringify({ checkIn: "2026-08-05", checkOut: "2026-08-07" }),
+        body: JSON.stringify({ checkIn, checkOut }),
       }),
       { params: Promise.resolve({ id: "bk1" }) },
     );
   }
 
-  it("never writes an integer over a blank night — it writes NULL and keeps the readable row", async () => {
-    // THE NAMED TEST for the second half of #3166. Remove the gate and the two
-    // nights below come back as 7500 apiece: today's rate, for a night nobody
-    // priced, in the column the next edit trusts.
+  function writtenRows(tx: ReturnType<typeof makeTx>) {
+    return (
+      tx.bookingGuestNight.createMany.mock.calls[0][0] as {
+        data: Array<{ stayDate: Date; priceCents: number | null; priceSource: string }>;
+      }
+    ).data.map((row) => ({
+      date: row.stayDate.toISOString().slice(0, 10),
+      priceCents: row.priceCents,
+      priceSource: row.priceSource,
+    }));
+  }
+
+  it("T7: keeps the sold night at $25, values the blank night at $25, and buys the new night at today's $75", async () => {
     const tx = makeTx(bookingWithABlankNight());
     mockTransaction.mockImplementation((fn: any) => fn(tx));
-    mockedCalcPrice.mockReturnValue({
-      totalPriceCents: 15000,
-      guests: [
-        {
-          priceCents: 15000,
-          perNightCents: [7500, 7500],
-          nightDates: [new Date("2026-08-05"), new Date("2026-08-06")],
-        },
-      ],
-    } as any);
 
-    const res = await moveTheDates();
+    // 1 Aug is kept; 2 Aug (the blank) is kept; 3 Aug is new.
+    const res = await moveTheDates("2026-08-01", "2026-08-04");
     expect(res.status).toBe(200);
 
-    const rows = (
-      tx.bookingGuestNight.createMany.mock.calls[0][0] as {
-        data: Array<{ stayDate: Date; priceCents: number | null }>;
-      }
-    ).data;
-    // The stay MOVED, so neither night matches a stored one and both are
-    // unknown. Not 7500, and — just as importantly — not 0.
-    expect(rows.map((row) => row.priceCents)).toEqual([null, null]);
-    expect(rows).toHaveLength(2);
-  });
-
-  it("keeps a night the moved range still covers at the price it was sold for", async () => {
-    // The counterpart, and the reason the vector is built from the STORED map
-    // rather than blanked wholesale: a date change that overlaps the old stay
-    // keeps the nights it overlaps, and those carry real money. Blanking a row
-    // the club CAN account for would be its own kind of damage.
-    const tx = makeTx(bookingWithABlankNight());
-    mockTransaction.mockImplementation((fn: any) => fn(tx));
-    mockedCalcPrice.mockReturnValue({
-      totalPriceCents: 22500,
-      guests: [
-        {
-          priceCents: 22500,
-          perNightCents: [7500, 7500, 7500],
-          nightDates: [
-            new Date("2026-08-01"),
-            new Date("2026-08-02"),
-            new Date("2026-08-03"),
-          ],
-        },
-      ],
-    } as any);
-
-    const res = await PUT(
-      new NextRequest("http://localhost/api/bookings/bk1/modify-dates", {
-        method: "PUT",
-        // 1 Aug is kept; 2 Aug (the blank) stays blank and 3 Aug is new.
-        body: JSON.stringify({ checkIn: "2026-08-01", checkOut: "2026-08-04" }),
-      }),
-      { params: Promise.resolve({ id: "bk1" }) },
-    );
-    expect(res.status).toBe(200);
-
-    const rows = (
-      tx.bookingGuestNight.createMany.mock.calls[0][0] as {
-        data: Array<{ stayDate: Date; priceCents: number | null }>;
-      }
-    ).data;
-    expect(
-      rows.map((row) => ({
-        date: row.stayDate.toISOString().slice(0, 10),
-        priceCents: row.priceCents,
-      })),
-    ).toEqual([
-      { date: "2026-08-01", priceCents: 2500 },
-      { date: "2026-08-02", priceCents: null },
-      { date: "2026-08-03", priceCents: null },
+    expect(writtenRows(tx)).toEqual([
+      { date: "2026-08-01", priceCents: 2500, priceSource: "SOLD" },
+      { date: "2026-08-02", priceCents: 2500, priceSource: "EVEN_SPLIT" },
+      { date: "2026-08-03", priceCents: 7500, priceSource: "SOLD" },
     ]);
+    // Never NULL, and never 0.
+    expect(writtenRows(tx).every((row) => typeof row.priceCents === "number" && row.priceCents > 0)).toBe(true);
+    expect(tx.manualRefundTask.create).not.toHaveBeenCalled();
   });
 
-  it("moves no money and raises one review task", async () => {
+  it("T5: a whole-stay move gives back both valued nights and buys the new ones fresh, raising nothing", async () => {
     const tx = makeTx(bookingWithABlankNight());
     mockTransaction.mockImplementation((fn: any) => fn(tx));
-    mockedCalcPrice.mockReturnValue({
-      totalPriceCents: 15000,
-      guests: [
-        {
-          priceCents: 15000,
-          perNightCents: [7500, 7500],
-          nightDates: [new Date("2026-08-05"), new Date("2026-08-06")],
-        },
-      ],
-    } as any);
 
-    const res = await moveTheDates();
+    const res = await moveTheDates("2026-08-05", "2026-08-07");
     const data = await res.json();
-
-    // The dates moved.
     expect(res.status).toBe(200);
+
+    // The stay MOVED, so no night matches a stored one: both are bought now.
+    expect(writtenRows(tx)).toEqual([
+      { date: "2026-08-05", priceCents: 7500, priceSource: "SOLD" },
+      { date: "2026-08-06", priceCents: 7500, priceSource: "SOLD" },
+    ]);
+    // The guest's $50 (worth $25 + $25) is given back and $150 bought: the
+    // guest goes to $150, and the booking's total is the strands' $150.
+    expect(tx.bookingGuest.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ priceCents: 15000 }) }),
+    );
     expect(tx.booking.update).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({
-          // And every stored money figure is written back exactly as it was.
-          totalPriceCents: 10000,
-          finalPriceCents: 10000,
-        }),
+        data: expect.objectContaining({ totalPriceCents: 15000, finalPriceCents: 15000 }),
       }),
     );
-    // Each of these is a separate money door, and the park closes all of them.
-    expect(data.priceDiffCents).toBe(0);
-    expect(data.changeFeeCents).toBe(0);
-    expect(mockedCreatePaymentIntent).not.toHaveBeenCalled();
-    expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
-
-    expect(tx.manualRefundTask.create).toHaveBeenCalledTimes(1);
-    const raised = tx.manualRefundTask.create.mock.calls[0][0] as {
-      data: { raisedAmountCents: number | null; kind: string };
-    };
-    expect(raised.data.kind).toBe("EDIT_FINANCIAL_REVIEW");
-    expect(raised.data.raisedAmountCents).toBeNull();
+    // From a $50 headline, a $100 increase.
+    expect(data.priceDiffCents).toBe(10000);
+    expect(tx.manualRefundTask.create).not.toHaveBeenCalled();
   });
 
-  it("CONTROL: the same date change on a fully readable booking still reprices and settles", async () => {
-    // Without this every case above would pass against a gate that parked EVERY
-    // date change — a worse defect than the one being fixed, and invisible from
-    // the assertions alone.
-    const tx = makeTx(makeBooking());
+  it("H1: a headline a parked edit froze keeps its gap; the move charges only its own $100", async () => {
+    // The same $50 guest, under a $100 headline a parked edit left frozen
+    // (the $50 gap is money an open or declined review still holds). The move
+    // buys $150 for a guest stored at $50, so it changes the guests by +$100.
+    // Read as the bare sum of the guests, the new total would be $150 and the
+    // edit would charge $50, settling the frozen $50 as a refund nobody asked
+    // for (#4317 review H1). Carried forward, the total is $200 and the edit
+    // charges exactly its own $100.
+    const booking = bookingWithABlankNight();
+    booking.totalPriceCents = 10000;
+    booking.finalPriceCents = 10000;
+    const tx = makeTx(booking);
     mockTransaction.mockImplementation((fn: any) => fn(tx));
-    mockedCalcPrice.mockReturnValue({
-      totalPriceCents: 15000,
-      guests: [
-        {
-          priceCents: 15000,
-          perNightCents: [7500, 7500],
-          nightDates: [new Date("2026-08-05"), new Date("2026-08-06")],
-        },
-      ],
-    } as any);
     mockedCreatePaymentIntent.mockResolvedValue({
       id: "pi_additional",
       client_secret: "pi_additional_secret_xxx", currency: "nzd",
     } as any);
 
-    const res = await moveTheDates();
+    const res = await moveTheDates("2026-08-05", "2026-08-07");
+    const data = await res.json();
+    expect(res.status).toBe(200);
+
+    expect(tx.bookingGuest.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ priceCents: 15000 }) }),
+    );
+    expect(tx.booking.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ totalPriceCents: 20000, finalPriceCents: 20000 }),
+      }),
+    );
+    expect(data.priceDiffCents).toBe(10000);
+  });
+
+  it("D11: a negative stored guest total refuses the date change, writing nothing (#4317 review M2)", async () => {
+    // Unreachable on a live database (`BookingGuest_price_nonnegative`, which no
+    // row has ever failed). Pricing one would have to write the negative figure
+    // back, which that constraint rejects, so the door refuses before any write.
+    const booking = makeBooking({ totalPriceCents: -500, finalPriceCents: -500 });
+    const tx = makeTx(booking);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+
+    const res = await moveTheDates("2026-08-01", "2026-08-04");
+    const data = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(data.error).toBe(NEGATIVE_STORED_GUEST_TOTAL_MESSAGE);
+    expect(tx.bookingGuestNight.createMany).not.toHaveBeenCalled();
+    expect(tx.bookingGuest.update).not.toHaveBeenCalled();
+    expect(tx.booking.update).not.toHaveBeenCalled();
+  });
+
+  it("CONTROL: the same date change on a fully readable booking prices the same way", async () => {
+    const tx = makeTx(makeBooking());
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockedCreatePaymentIntent.mockResolvedValue({
+      id: "pi_additional",
+      client_secret: "pi_additional_secret_xxx", currency: "nzd",
+    } as any);
+
+    const res = await moveTheDates("2026-08-05", "2026-08-07");
     const data = await res.json();
 
     expect(res.status).toBe(200);

@@ -23,7 +23,7 @@ const db = vi.hoisted(() => {
     bookingDefaults: { findUnique: nothing },
     groupDiscountSetting: { findUnique: nothing },
     membershipCancellationSetting: { findUnique: nothing },
-    xeroToken: { findFirst: nothing },
+    xeroConnection: { findUnique: nothing },
     xeroAccountMapping: {
       count: async () => 1,
       findMany: async (args: { where?: { key?: { in?: string[] } } }) => {

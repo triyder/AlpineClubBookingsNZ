@@ -145,7 +145,9 @@ vi.mock("@/lib/member-guest-probe-guard", () => ({
   MemberGuestAddThrottledError: class extends Error {},
   startMemberGuestRefusalClock: () => 0,
 }));
-vi.mock("@/lib/booking-guest-stay-range-input", () => ({
+// The request schema's shared shapes stay real (#4199); only these are stubbed.
+vi.mock("@/lib/booking-guest-stay-range-input", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/booking-guest-stay-range-input")),
   normalizeGuestStayRanges: h.normalizeGuestStayRanges,
   BookingGuestStayRangeValidationError: class extends Error {},
 }));

@@ -93,7 +93,7 @@ Per ADR-001 sequencing, across several PRs:
   `BLUE_GREEN_MIGRATION_POLICY.md`.
 
 **Risk: High (schema/migrations on booking-critical tables). Merges on the
-`AGENTS.md` merge gate with the lenses its risk requires.**
+`AGENTS.md` merge gate with the lenses chosen for its risk.**
 
 ## Phase 3 — Capacity, pricing, and booking-transaction core
 
@@ -174,7 +174,7 @@ Implementation decisions beyond the plan text:
   can book every active lodge.
 
 **Risk: High (auth boundaries). Merges on the `AGENTS.md` merge gate with the
-lenses its risk requires.**
+lenses chosen for its risk.**
 
 ## Phase 5 — Chores and roster
 

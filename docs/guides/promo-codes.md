@@ -130,6 +130,35 @@ and stored as integer cents; dates are NZ date-only lodge nights.
    **Reset** — clears it; after that the `-partial` in the file's name is what
    tells you the file is short.
 
+### Which nights a code discounts
+
+A code discounts the nights each guest actually stays. When a booking uses the
+night-by-night grid, a guest can stay, say, the 10th and 12th but not the 11th;
+the promo code box, on a new booking and on a booking's edit panel, then works
+the discount out on those two nights, the same nights the price summary and the
+save charge (#4199). A guest given their own Date In and Date Out with the grid
+off is discounted over that whole continuous stay.
+
+### What the promo code box shows on a booking's edit panel
+
+On a booking's edit panel the box works the discount out on the same prices as
+the price summary and the save (#4202). A night a guest already holds keeps the
+price it was sold at, and only a night the edit adds is priced at today's
+rates. So if the club's rates have changed since the booking was made, the
+discount in the box is worked out on what the guests actually paid, and matches
+the summary.
+
+A night whose sold price the booking does not record is valued the same way in
+both, from the guest's stored total (see
+[Bookings — How a booking change is priced](bookings.md#how-a-booking-change-is-priced)).
+
+The box also follows the changes an officer makes on the panel, as the summary
+does: ticking or unticking a guest as another club's member, or linking a
+placeholder guest to a member, re-prices that guest's whole stay in the box
+too. On a school's booking, a code that benefits the person who made the booking
+is refused in the box with the same message the summary gives, because a school
+holds no member entitlement.
+
 ### What happens when a booking is edited and the code has run out
 
 A promotion's usage limits are enforced again every time a booking is repriced —
@@ -174,6 +203,16 @@ Two consequences to expect:
 - If a code is completely used up and nobody on the booking was benefiting from
   it, the edit removes the code from the booking rather than pretending it still
   applies. Nobody loses anything, because nobody had anything.
+
+### What happens to a code when a stay already under way is changed
+
+A booking whose stay has started is never re-priced for its codes: every code it
+carries is kept exactly as it was, even one that has since expired, been
+switched off or used up, and nobody is asked about it again. If a change during
+the stay leaves less to pay than the codes took off, their discount shrinks to
+what is left, so the stay costs nothing and its price never rises for being
+shortened (the club's normal change fee still applies). The redemptions report
+then shows the smaller figure.
 
 ### Several codes on one booking
 

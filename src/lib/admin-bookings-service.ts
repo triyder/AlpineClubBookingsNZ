@@ -1,3 +1,4 @@
+import { exactContains } from "@/lib/prisma-exact-prefix";
 import { BookingStatus, type Prisma } from "@prisma/client";
 import { z } from "zod";
 import {
@@ -637,9 +638,9 @@ function buildBookingWhere(
             is: {
               AND: queryTerms.map((term) => ({
                 OR: [
-                  { firstName: { contains: term, mode: "insensitive" } },
-                  { lastName: { contains: term, mode: "insensitive" } },
-                  { email: { contains: term, mode: "insensitive" } },
+                  { firstName: exactContains(term, "insensitive") },
+                  { lastName: exactContains(term, "insensitive") },
+                  { email: exactContains(term, "insensitive") },
                 ],
               })),
             },
@@ -650,8 +651,8 @@ function buildBookingWhere(
             is: {
               AND: queryTerms.map((term) => ({
                 OR: [
-                  { name: { contains: term, mode: "insensitive" } },
-                  { email: { contains: term, mode: "insensitive" } },
+                  { name: exactContains(term, "insensitive") },
+                  { email: exactContains(term, "insensitive") },
                 ],
               })),
             },

@@ -44,9 +44,13 @@ const mocks = vi.hoisted(() => ({
   warn: vi.fn(),
 }));
 
-vi.mock("@/lib/prisma", () => ({
-  prisma: {
+vi.mock("@/lib/prisma", () => {
+  const client = {
     booking: { findUnique: (...a: unknown[]) => mocks.bookingFindUnique(...a) },
+    // #3980 review M1: the create's read is one snapshot, with the marked edits.
+    bookingModification: { findMany: async () => [] },
+    // #3953: and the captures its cash figure holds.
+    paymentTransaction: { findMany: async () => [] },
     payment: { findUnique: (...a: unknown[]) => mocks.paymentFindUnique(...a) },
     season: { findFirst: (...a: unknown[]) => mocks.seasonFindFirst(...a) },
     xeroObjectLink: {
@@ -57,8 +61,9 @@ vi.mock("@/lib/prisma", () => ({
       findUnique: (...a: unknown[]) => mocks.xeroSyncOperationFindUnique(...a),
       update: (...a: unknown[]) => mocks.xeroSyncOperationUpdate(...a),
     },
-  },
-}));
+  };
+  return { prisma: { ...client, $transaction: async (run: (tx: typeof client) => unknown) => run(client) } };
+});
 
 vi.mock("@/lib/logger", () => ({
   default: {

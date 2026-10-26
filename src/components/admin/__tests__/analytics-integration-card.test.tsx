@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -140,6 +141,31 @@ describe("the card itself", () => {
     const chip = await screen.findByTestId("analytics-integration-status");
     expect(chip.textContent).toBe(ANALYTICS_STATUS_LABELS[status]);
     expect(screen.getByRole("button", { name: buttonLabel })).toBeTruthy();
+  });
+});
+
+describe("Edit inside the dialog (#4115)", () => {
+  it("leaves focus in the dialog, not on the card hidden behind it", async () => {
+    await openDialog();
+    const dialog = await screen.findByRole("dialog");
+    const edit = await screen.findByRole("button", { name: "Edit" });
+    // The card is the section's region, but the modal hides it.
+    const card = screen.getByRole("region", { name: "Google Analytics", hidden: true });
+    expect(card.closest('[aria-hidden="true"]')).not.toBeNull();
+
+    // A keyboard user: Edit holds focus, and pressing it unmounts it.
+    edit.focus();
+    fireEvent.click(edit);
+    await screen.findByRole("button", { name: "Cancel" });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    // The shared reveal would have focused the aria-hidden card; it stands
+    // aside and the dialog's own focus scope keeps focus inside the dialog.
+    expect(document.activeElement).not.toBe(card);
+    expect(card.contains(document.activeElement)).toBe(false);
+    expect(dialog.contains(document.activeElement)).toBe(true);
   });
 });
 

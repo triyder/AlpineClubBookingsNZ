@@ -31,6 +31,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 
 import { realElapsedMs } from "@/lib/__tests__/helpers/clock";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { stripeRaceHooks as stripeHooks } from "./support/stripe-race-double";
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
 const RACE_DB_URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
@@ -55,25 +56,13 @@ const BEFORE_ALL_TIMEOUT_MS = 60_000;
  * hook. Every other suite the #1881 harness imports alongside this file sees the
  * REAL functions, because a `vi.mock` here is registered for the whole harness
  * process and must therefore be a pass-through by default.
+ *
+ * The one shared double (`support/stripe-race-double.ts`): the LAST file to
+ * register a factory wins, so every realdb file registers this same one.
  */
-const stripeHooks = vi.hoisted(() => ({
-  update: null as null | ((id: string, amountCents: number) => Promise<unknown>),
-  get: null as null | ((id: string) => Promise<unknown>),
-}));
-vi.mock("@/lib/stripe", async (importOriginal) => {
-  const actual = (await importOriginal()) as typeof import("@/lib/stripe");
-  return {
-    ...actual,
-    updatePaymentIntentAmount: (id: string, amountCents: number) =>
-      stripeHooks.update
-        ? stripeHooks.update(id, amountCents)
-        : actual.updatePaymentIntentAmount(id, amountCents),
-    getPaymentIntent: ((...args: Parameters<typeof actual.getPaymentIntent>) =>
-      stripeHooks.get
-        ? stripeHooks.get(args[0])
-        : actual.getPaymentIntent(...args)) as typeof actual.getPaymentIntent,
-  };
-});
+vi.mock("@/lib/stripe", async (importOriginal) =>
+  (await import("./support/stripe-race-double")).stripeRaceDouble(await importOriginal()),
+);
 
 /** Standalone fail-closed copy: importing this file must not register another suite. */
 export function assertSafeReviewChargeClaimRaceDbUrl(url: string): void {

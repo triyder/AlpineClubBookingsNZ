@@ -15,6 +15,7 @@ import {
 // failed at 5052ms cold, which is the profile of the two suites AGENTS.md
 // records as timing out under parallel CI load.
 import { applyPaymentAdjustments } from "@/lib/booking-modify-settlement";
+import { noReductionAgainstUnpaidAsk } from "@/lib/additional-ask-reduction";
 
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 vi.mock("@/lib/logger", () => ({
@@ -273,6 +274,7 @@ describe("the settlement the first three doors share", () => {
         } as never,
         priceDiffCents: 12_500,
         changeFeeCents: 0,
+        reduction: noReductionAgainstUnpaidAsk(12_500),
         todayAtClub: "2026-07-01" as never,
         format: {} as never,
       },
@@ -458,25 +460,88 @@ describe("no edit door states the rule a second time", () => {
     ).toEqual([]);
   });
 
-  it("the guest-add door reaches the captured-payment home directly", () => {
-    // It asks the STATUS half, `isCapturedPaymentStatus`, not the whole of
-    // `hasCapturedPayment` — deliberately, and this pin is where that is
-    // recorded. The full predicate also requires `amountCents > 0`, and a
-    // zero-dollar booking (credit, or a 100% promo) carries `amountCents: 0`
-    // with a SUCCEEDED status. Using it here would stop asking that member for
-    // an added guest's price, because the Xero arm cannot cover them when the
-    // integration is off — a NEW under-collection at the very door this issue
-    // exists to stop under-collecting at. Both #3244 reviews found it.
+  it("every edit door asks the one increase question (#3502)", () => {
+    // #3244 had the guest-add door ask the STATUS half, `isCapturedPaymentStatus`,
+    // rather than `hasCapturedPayment`, whose `amountCents > 0` clause stops a
+    // zero-dollar booking (credit, or a 100% promo: `{ amountCents: 0, SUCCEEDED }`)
+    // being asked for an added guest's price. #3502 (owner decision, 6 Oct 2026)
+    // named that answer `canAskCardForIncrease` and gave it to the other three
+    // doors through `applyPaymentAdjustments`, so the guest-add door now asks
+    // the helper instead of holding its own copy.
     const source = read(GUEST_ADD_ROUTE);
     expect(source).toMatch(
-      /import\s*\{[^}]*\bisCapturedPaymentStatus\b[^}]*\}\s*from\s*"@\/lib\/booking-payment-state"/,
+      /import\s*\{[^}]*\bcanAskCardForIncrease\b[^}]*\}\s*from\s*"@\/lib\/booking-payment-state"/,
     );
-    expect(source).toMatch(/isCapturedPaymentStatus\(booking\.payment\?\.status/);
+    expect(source).toMatch(/canAskCardForIncrease\(booking\)/);
     expect(
       source,
       `The guest-add door must not adopt the amount clause without a ` +
         `decision: it silently stops collecting from zero-dollar bookings.`,
     ).not.toMatch(/hasCapturedPayment\(/);
+    const settlement = read("src/lib/booking-modify-settlement.ts");
+    expect(
+      settlement,
+      `applyPaymentAdjustments must ask canAskCardForIncrease for an increase ` +
+        `(#3502), or a credit-paid booking that grows is billed to nobody ` +
+        `at the batch, date and removal doors.`,
+    ).toMatch(/canAskCardForIncrease\(booking\)/);
+  });
+
+  it("both edit-review charge sites ask the one review-charge question (#3947)", () => {
+    // INV-PAY-047 / INV-PAY-112. An officer's settled review charge decides
+    // "card or not" TWICE: the route chooser before the claim, and the sync's
+    // mint after the commit (which the recovery replay re-enters). Both used
+    // to ask `hasCapturedPayment`, so a credit-paid ($0) booking was refused or
+    // invoiced; fixing only the chooser would route it to the card and then
+    // mint nothing, leaving a replay that reports `not-raised` until FAILED.
+    const sites = [
+      {
+        file: "src/lib/edit-financial-review-charge.ts",
+        call: /canAskCardForReviewCharge\(\{\s*status:\s*booking\.status,\s*payment:\s*bookingPayment\s*\}\)/,
+      },
+      {
+        file: "src/lib/edit-financial-review-charge-sync.ts",
+        call: /hasSucceededPayment:\s*canAskCardForReviewCharge\(\{\s*status:\s*payment\?\.booking\.status\s*\?\?\s*"",\s*payment,?\s*\}\)/,
+      },
+    ];
+    for (const { file, call } of sites) {
+      const source = read(file);
+      expect(
+        source,
+        `INV-PAY-047 (#3947): ${file} must import canAskCardForReviewCharge from booking-payment-state.`,
+      ).toMatch(
+        /import\s*\{[^}]*\bcanAskCardForReviewCharge\b[^}]*\}\s*from\s*"@\/lib\/booking-payment-state"/,
+      );
+      expect(
+        source,
+        `INV-PAY-047 (#3947): ${file} must decide the card with canAskCardForReviewCharge, ` +
+          `or the chooser and the mint disagree on a credit-paid booking.`,
+      ).toMatch(call);
+      expect(
+        source,
+        `INV-PAY-047 (#3947): ${file} must not ask hasCapturedPayment for the charge: ` +
+          `its amount clause answers "no card" for a booking paid wholly with credit.`,
+      ).not.toMatch(/\bhasCapturedPayment\(/);
+    }
+
+    // The helper IS the edit doors' increase question plus the captured-card
+    // test this path had before, so it can only add the credit-paid shape.
+    const home = read("src/lib/booking-payment-state.ts");
+    const body = home.match(
+      /export function canAskCardForReviewCharge\([\s\S]*?\n\}\n/,
+    )?.[0];
+    expect(body, "canAskCardForReviewCharge is missing from booking-payment-state.ts").toBeDefined();
+    expect(body).toMatch(/canAskCardForIncrease\(booking\)\s*\|\|/);
+
+    // And nothing else asks it: a third caller is a third answer to review.
+    expect(
+      filesMentioning(sourceFilesUnder("src"), /\bcanAskCardForReviewCharge\b/),
+      `INV-PAY-047 (#3947): the set of files asking canAskCardForReviewCharge changed. ` +
+        `It is the review charge's question only; an edit door asks canAskCardForIncrease.`,
+    ).toEqual([
+      "src/lib/booking-payment-state.ts",
+      ...sites.map((site) => site.file),
+    ].sort());
   });
 
   it("every file that reaches applyPaymentAdjustments is one of the doors above", () => {
@@ -502,6 +567,73 @@ describe("no edit door states the rule a second time", () => {
     expect(read(SETTLEMENT_MODULE)).toMatch(
       /hasIssuedXeroInvoice\s*=\s*hasIssuedPrimaryXeroInvoice\(booking\)/,
     );
+  });
+
+  it("INV-PAY-120: every file that settles an edit reads the unpaid ask exactly ONCE, and nothing else reads it raw (#3954 round 4)", () => {
+    // Two reads in one transaction split when the member's capture lands
+    // between them: options sized on the ask, a save that no longer sees it.
+    // Each settling door reads it once and hands the one value to everything.
+    const settlers = filesMentioning(
+      sourceFilesUnder("src").filter((file) => file !== SETTLEMENT_MODULE),
+      /\bapplyPaymentAdjustments\(/,
+    );
+    expect(settlers.length).toBeGreaterThan(0);
+    const reads = Object.fromEntries(
+      [...settlers, "src/app/api/bookings/[id]/modify-quote/route.ts"].map((file) => [
+        file,
+        (read(file).match(/\breadReductionAgainstUnpaidAsk\(/g) ?? []).length,
+      ]),
+    );
+    expect(
+      Object.entries(reads).filter(([, count]) => count !== 1),
+      "INV-PAY-120: each of these must call readReductionAgainstUnpaidAsk exactly once and pass that value to the options and the save.",
+    ).toEqual([]);
+    const rawReaders = filesMentioning(
+      sourceFilesUnder("src").filter((file) => file !== "src/lib/additional-ask-reduction.ts"),
+      /\breadUnpaidPriceAsk\(/,
+    );
+    expect(
+      rawReaders,
+      "INV-PAY-120: read the ask through readReductionAgainstUnpaidAsk, which carries the net it was read for.",
+    ).toEqual([]);
+  });
+
+  it("INV-PAY-120: every edit door that sizes an increase's ask folds in a reduction's waiting re-issue (#3954 round 4)", () => {
+    const sizers = filesMentioning(
+      sourceFilesUnder("src").filter(
+        (file) => !["src/lib/additional-payment-ask.ts", "src/lib/additional-ask-recovery-replay.ts"].includes(file),
+      ),
+      /\bsizeAdditionalAsk\(/,
+    );
+    expect(sizers.length).toBeGreaterThan(0);
+    // Round 6: the fold is kept (for the edit's history) and its cents sized in.
+    expect(
+      sizers.filter(
+        (file) =>
+          !/foldedReissuedAsks = await foldWaitingReissuedAsks\(/.test(read(file)) ||
+          !/waitingReissuedAskCents:\s*foldedReissuedAsks\.cents/.test(read(file)),
+      ),
+      "INV-PAY-120: fold with foldedReissuedAsks = await foldWaitingReissuedAsks(tx, booking) and pass waitingReissuedAskCents: foldedReissuedAsks.cents, or the increase's mint overtakes a waiting re-issue and its money is lost.",
+    ).toEqual([]);
+    // ...and records what it folded on its history row, or its replay loses it.
+    expect(
+      sizers.filter((file) => !/\bunpaidAskOffsetHistory\(|\bfoldedReissuedAsks,/.test(read(file))),
+      "INV-PAY-120 (round 6): record the fold on the increase's history (unpaidAskOffsetHistory), or a failed mint's replay asks without the re-issue.",
+    ).toEqual([]);
+  });
+
+  it("INV-PAY-120: every door that records a reduction's unpaid-ask offset makes its re-issued ask and its billed offset's note durable in the same transaction (#3954 rounds 4 and 5)", () => {
+    // Round 6: a door that only FOLDS (the guest add, which never reduces)
+    // records its history with NO_UNPAID_ASK_SETTLEMENT and has no offset to follow up.
+    const recorders = filesMentioning(
+      sourceFilesUnder("src").filter((file) => file !== "src/lib/unpaid-ask-offset-marker.ts"),
+      /\bunpaidAskOffsetHistory\(/,
+    ).filter((file) => /\bunpaidAskOffsetHistory\((?!\{\s*\.\.\.NO_UNPAID_ASK_SETTLEMENT)/.test(read(file)));
+    expect(recorders.length).toBeGreaterThan(0);
+    expect(
+      recorders.filter((file) => (read(file).match(/\bqueueReductionAskFollowUps\(/g) ?? []).length !== 1),
+      "INV-PAY-120: call queueReductionAskFollowUps once, after the BookingModification row exists, or a process dying after commit loses the re-issued ask or the credit note for an offset the primary invoice had billed.",
+    ).toEqual([]);
   });
 });
 

@@ -7,7 +7,7 @@ This document defines how the finance dashboard connects to Xero.
 Finance reporting uses the single operational Xero connection that bookings, payments, and subscriptions already use. There is no separate finance Xero OAuth app, connection, or persistence boundary.
 
 - The finance sync authenticates with `getAuthenticatedXeroClient` from `src/lib/xero-api-client.ts`, bound for finance use through `createFinanceXeroSyncConnection` in `src/lib/finance-sync-service.ts`.
-- Operational tokens persist through the existing `XeroToken` table. There is no `FinanceXeroToken` table.
+- Operational tokens persist in the encrypted credential store (`xero-oauth` / `token-set`, #3454), and the connection in `XeroConnection` (#3806). There is no `FinanceXeroToken` table.
 - The Xero connection is managed from `/admin/xero`. There is no finance-specific connect, callback, status, or disconnect flow.
 
 ## Config Changes
@@ -28,4 +28,4 @@ There are no finance-specific:
 - token encryption keys or key rotation
 - token tables or API-usage metering tables
 
-Operational Xero code keeps using the existing `XERO_*` env names and the operational `XeroToken` store.
+Operational Xero code keeps using the operational connection and its token store (`src/lib/xero-token-store.ts`).

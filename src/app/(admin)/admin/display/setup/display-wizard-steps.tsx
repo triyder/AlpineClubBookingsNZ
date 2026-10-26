@@ -9,7 +9,7 @@ import { FieldHint, useFieldHint } from "@/components/ui/field-hint";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { CopyField } from "@/components/admin/integration-wizard";
+import { CopyField, useStepSaving } from "@/components/admin/integration-wizard";
 import type { WizardStepHelpers } from "@/components/admin/integration-wizard";
 import {
   ADMIN_FORBIDDEN_SAVE_REASON,
@@ -243,7 +243,7 @@ interface ModuleSettingsPayload {
  */
 export function ModuleStep({ context, helpers }: StepProps) {
   const canEditModules = useAdminAreaEditAccess("support");
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useStepSaving(helpers);
   const [message, setMessage] = useState<string | null>(null);
 
   async function turnOn() {
@@ -689,7 +689,7 @@ export function ConfigStep({
   const saved = context.lodgeConfig;
   const [values, setValues] = useState<Record<string, string>>({});
   const [notice, setNotice] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useStepSaving(helpers);
   const [message, setMessage] = useState<string | null>(null);
 
   // Re-seed the form whenever the loaded lodge changes (including a lodge swap
@@ -879,7 +879,7 @@ export function PairStep({
   const deviceNameHint = useFieldHint();
   const [deviceName, setDeviceName] = useState("");
   const [code, setCode] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useStepSaving(helpers);
   const [message, setMessage] = useState<string | null>(null);
   const [bindWarning, setBindWarning] = useState<string | null>(null);
   const [armedLocally, setArmedLocally] = useState(false);

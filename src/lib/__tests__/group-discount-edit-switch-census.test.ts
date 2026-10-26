@@ -238,6 +238,13 @@ const MAPPER_CALL_SITES = [
     editCalls: 1,
     what: "the modify-quote preview, which must resolve the same value the save path charges (#1095) or the member is quoted a discount the save then refuses",
   },
+  {
+    file: "src/lib/booking-change-request-estimate.ts",
+    kind: "edit",
+    creationCalls: 0,
+    editCalls: 1,
+    what: "#4030: the estimate on a member's locked-period change request for the guests it adds. Approving such a request on a finished stay is an edit through `calculateModifiedPricing`, which resolves the gated value, so the estimate must too or it quotes a discount the approval then refuses",
+  },
 
   // ------------------------------------------------------- either, by request
   {

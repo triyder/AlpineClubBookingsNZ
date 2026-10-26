@@ -65,6 +65,10 @@ description = "The repeating-hex placeholder used for AUTH_SECRET/NEXTAUTH_SECRE
 regexes = ['''^(?:0123456789abcdef){4}$''']
 
 [[allowlists]]
+description = "The fabricated temporary AUTH_SECRET used only by the #4164 teardown failure fixtures. This readable label replaces no real credential and encrypts or signs nothing; the tests only verify that their saved environment value is restored. Forgive this exact literal, including its existing historical commit, without exempting any path or credential shape."
+regexes = ['''^race-4164-temporary-secret$''']
+
+[[allowlists]]
 description = "The three Stripe TEST-mode placeholders this repository writes down, as exact literals: the diagnostics knowledge-bundle fixtures, the Playwright environment's publishable placeholder, and the booking-payment wrapper's fixture key. Any OTHER Stripe test key still fails the gate — `sk_test_` is a real test-mode credential and only these three named strings are forgiven. Live keys (`sk_live_`, `pk_live_`, `rk_live_`) are never allowlisted by shape. 51 findings across history."
 regexes = [
   '''^sk_test_placeholder$''',
@@ -86,6 +90,10 @@ regexes = [
   '''^9a13b0af-7ffc-451b-a50b-81f6fb8630f4$''',
   '''^26822a78-5929-4471-889f-b49f7c88914d$''',
 ]
+
+[[allowlists]]
+description = "The readable idempotency-key label the #4285 race test gives its fabricated unplanned card-refund recovery row in `completed-redelivery.realdb.test.ts`. A test's own label for a row it created: it authorises nothing and names no credential. This exact literal is forgiven, including its existing historical commit, without exempting any path or shape."
+regexes = ['''^race-4285-unplanned-refund$''']
 
 [[allowlists]]
 description = "A readable snake_case fixture id used as the idempotency key in the pending-charge confirmation tests. Not a UUID and not a credential — it is a test's own label for a row it created."
@@ -134,6 +142,18 @@ regexes = ['''^bbbd2b447299d6f849655b881b1c8978b9904a229223e00ae25c6964f5c062cb$
 [[allowlists]]
 description = "The `idempotencyKey` of the fixture `MembershipSubscriptionCharge` the #3971 real-PostgreSQL proof seeds (`src/lib/__tests__/xero-subscription-invoice-retry.realdb.test.ts`). It is a unique-column value for a throwaway row in the disposable race database and authorises nothing. `generic-api-key` fires on the `idempotencyKey` identifier, not the value. The literal is forgiven because commit 6664bf772 in the PR's history carries the line, and this file's header rules out fingerprints. Only this exact literal is forgiven."
 regexes = ['''^race-3971-charge-key$''']
+
+[[allowlists]]
+description = "The `idempotencyKey` of the fixture `MembershipSubscriptionCharge` the #4098 real-PostgreSQL proof seeds (`src/lib/__tests__/membership-subscription-charge-close.realdb.test.ts`). It is a unique-column value for a throwaway row in the disposable race database and authorises nothing. `generic-api-key` fires on the `idempotencyKey` identifier, not the value. The literal is forgiven because commit e98867fe6 in the PR's history carries the line, and this file's header rules out fingerprints. Only this exact literal is forgiven."
+regexes = ['''^race-4098-charge-key$''']
+
+[[allowlists]]
+description = "The `idempotencyKey` of a fixture `PaymentRecoveryOperation` the #4131 real-PostgreSQL proof seeded (`src/lib/__tests__/late-capture-own-charge-refund.realdb.test.ts`, a sibling cancel row). It is a unique-column value for a throwaway row in the disposable race database and authorises nothing. `generic-api-key` fires on the `idempotencyKey` identifier, not the value. The line was later removed, but commit af92f13ee in the PR's history carries it, and this file's header rules out fingerprints. Only this exact literal is forgiven."
+regexes = ['''^race-4131-cancel-sibling$''']
+
+[[allowlists]]
+description = "The `idempotencyKey` of a fixture row that the #4110 real-PostgreSQL proof seeds (`src/lib/__tests__/membership-family-rebill.realdb.test.ts`), for a second live family charge in the disposable race database. It is a unique-column value for a throwaway row and authorises nothing. `generic-api-key` fires on the `idempotencyKey` identifier, not on the value. Only this exact literal is forgiven."
+regexes = ['''^race-4110-second-live-key$''']
 
 # ---------------------------------------------------------------------------
 # Repository-owned rules

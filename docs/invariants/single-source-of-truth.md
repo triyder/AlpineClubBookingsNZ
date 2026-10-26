@@ -345,7 +345,7 @@ are permanent: never renumbered, never reused.
   `INV-OPS` fact is the real risk, because the eleventh nobody tightened is the one
   that connects to something real. This change converged its own caller only.
 - **`src/lib/__tests__/support/strip-comments.ts` is the canonical
-  `stripComments`, and since #3164 a lint rule enforces it.** 114 test files, five test
+  `stripComments`, and since #3164 a lint rule enforces it.** 126 test files, five test
   helpers and one CI script import it, and `ssot/no-local-comment-stripper` in
   `eslint.config.mjs` reports a second scanner as it is written rather than
   twelve minutes later in CI. **Use it; do not write a second.** The figure was
@@ -538,3 +538,32 @@ that module's docblock.
   A reviewer's job; no guard claims otherwise.
 - **Measure all three site lists by running the census** — one restated by hand
   has already drifted (`INV-SSOT-004`).
+
+## INV-SSOT-006
+Every Prisma `startsWith` or `contains` whose operand carries an id or text a
+person typed uses `exactPrefix(prefix)` or `exactContains(value)` from
+`src/lib/prisma-exact-prefix.ts`, never a bare filter. Case-insensitive searches
+use `exactContains(value, "insensitive")`. URL/path reference checks use the
+case-sensitive default. #4146, #4165, #4190.
+
+- **Why one helper.** Prisma sends these filters as SQL `LIKE`/`ILIKE` without
+  escaping their operands: `_` matches one character, `%` any run, and `\`
+  escapes the next character. A recovery-key prefix could take another
+  booking's row; a search for `john_smith` could find `johnXsmith`; a URL could
+  falsely appear referenced. Both helpers share one escape function.
+- **The premise is pinned.** `prisma-exact-prefix.realdb.test.ts` checks literal
+  matches and decoys, including case-insensitive searches and all three
+  metacharacters. Contrast cases fail if Prisma starts escaping on its own,
+  which would double-escape these helpers.
+- **A census keeps it one.** `prisma-exact-prefix-census.test.ts` reads `src/`
+  and rejects dynamic bare `startsWith:` and `contains:` operands unless an
+  allow-list entry explains why the value carries no id or input. It rejects
+  shorthand and computed properties and checks for stale exceptions. Bare
+  string literals and UPPER_SNAKE constants pass: the census judges spelling,
+  not value, so reviewers must check they need no escaping.
+- **Visibility uses it too.** Audit category filters use exact helpers even
+  for fixed fragments. `audit-legacy-filter-exact-prefix.test.ts` replays known
+  actions to prove category and member-timeline compatibility.
+- **Scope the query as well where an indexed column allows.** An exact prefix
+  still matches a longer id beginning with the same id and delimiter; the
+  duplicate-capture lookup also scopes by `bookingId`.

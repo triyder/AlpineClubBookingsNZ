@@ -697,21 +697,22 @@ What one member may learn about another from the lodge roster (#2942).
   string, nothing in a `title`, `aria-label` or `data-*`. The select's whole key
   set is pinned, because no denylist can safely forbid a bare `id`. No per-night
   occupancy total is returned.
-- **Consulting is not disclosing.** `wholeLodgeHold` is read, because it
-  decides whether a party is listed; it never reaches the payload.
+- **Consulting is not disclosing.** `wholeLodgeHold` (is a party listed?) and
+  a guest's `memberId` (is this guest the custodian?) are read and never reach
+  the payload.
 - **Whose name may appear.** Individual names only where
   `namesAllowedForBooking` allows, reduced by `reduceName` at
   `Lodge.rosterNameGranularity` (null means `FULL_NAME`, decision D2 —
   deliberately not the lobby display's default). A booking containing a minor
   names NOBODY in it, judged over the whole booking rather than the nights on
   screen.
-- **No per-member opt-out** (decision D3). The module default and the dial bound
-  that.
-- **A custodian is SHOWN, not concealed** (owner decision, 15 Sep 2026). Their
-  bed is an ordinary occupied bed on the calendar, so once the roster gives a
-  head count that concealment only made them the unexplained difference between
-  two screens. A minor custodian is never named, and naming is all-or-nothing,
-  so nobody is identified by elimination.
+- **No per-member opt-out** (decision D3); the module default and the dial
+  bound that.
+- **A custodian is SHOWN, not concealed** (owner decision, 15 Sep 2026):
+  concealment made them the unexplained difference between two screens. A
+  custodian who also books is listed once, as custodian, on their custodian
+  nights (13 Oct 2026). A minor custodian is never named, and naming is
+  all-or-nothing, so nobody is identified by elimination.
 - **Held nights are SHOWN** (owner decision, 6 Oct 2026, #3474), via
   `getLodgeHeldNights`, as "reserved for a private booking"; the party gets no
   row, neither named nor counted. Reverses ADR-001 decision 6, roster only.
@@ -804,7 +805,7 @@ and a member acts only on their own.
    field a value fits into, and the store calls no logger (`INV-PRIV-011`).
 7. **The proof is mechanical, over every DIRECT CALL.**
    `credential-actor-census.test.ts` walks the tree, and also allows writes to
-   the `XeroToken` mirror only from the token store; `two-factor-secret-census.test.ts`
+   the old `XeroToken` row only from the token store; `two-factor-secret-census.test.ts`
    pins every second-factor writer, nested relation writes included; its
    docblock lists the shapes no walk sees (spreads, computed keys, raw SQL). Scanner tests prove seeded bypasses are
    reported. A wrapper hides its callers soundly: it requires an actor.

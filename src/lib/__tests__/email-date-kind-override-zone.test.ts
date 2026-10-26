@@ -321,6 +321,7 @@ const SENDERS: readonly Sender[] = [
         checkOut: CHECK_OUT,
         guestCount: 2,
         priceCents: 12_000,
+        amountDueCents: 12_000,
         bookingReference: "bk_1",
         expiresAt: INSTANT,
       }, CLUB_FORMAT_TEST),
@@ -344,6 +345,7 @@ const SENDERS: readonly Sender[] = [
         checkOut: CHECK_OUT,
         guestCount: 2,
         priceCents: 12_000,
+        amountDueCents: 12_000,
         bookingReference: "bk_1",
         expiresAt: INSTANT,
       }, CLUB_FORMAT_TEST),
@@ -387,6 +389,29 @@ const SENDERS: readonly Sender[] = [
         checkIn: CHECK_IN,
         checkOut: CHECK_OUT,
         requestedOn: INSTANT,
+      }, CLUB_FORMAT_TEST),
+    days: [
+      { key: "checkIn", iso: CHECK_IN_ISO },
+      { key: "checkOut", iso: CHECK_OUT_ISO },
+    ],
+    instants: [],
+    instantDays: [{ key: "requestedOn", iso: INSTANT_ISO }],
+  },
+  {
+    templateName: "credit-released-payment-request",
+    label:
+      "the released-credit payment request (#4253), which mixes stored nights with an instant rendered as a bare day",
+    send: () =>
+      sendAdditionalPaymentReminderEmail({
+        bookingId: "bk_1",
+        recipientMemberId: "mem_1",
+        email: "tara@example.test",
+        firstName: "Tara",
+        additionalAmountCents: 4_500,
+        checkIn: CHECK_IN,
+        checkOut: CHECK_OUT,
+        requestedOn: INSTANT,
+        askReason: "credit_released_outside_app",
       }, CLUB_FORMAT_TEST),
     days: [
       { key: "checkIn", iso: CHECK_IN_ISO },

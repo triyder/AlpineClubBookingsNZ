@@ -65,6 +65,7 @@ describe("token catalogue contents", () => {
       "hut-fees",
       "joining-fees",
       "annual-fees",
+      "first-year-costs",
       // Deprecated aliases (#1933, E7): render identically to their new names.
       "entrance-fees",
       "membership-types",

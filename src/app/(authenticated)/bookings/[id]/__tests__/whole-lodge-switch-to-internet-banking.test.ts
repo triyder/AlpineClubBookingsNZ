@@ -47,6 +47,7 @@ function booking(overrides: Record<string, unknown> = {}) {
     payment: null,
     creditsFromCancellation: [],
     refundRequests: [],
+    manualRefundTasks: [], // read by upstream's Net Collected cash parts (#3811)
     parentBooking: null,
     deletedAt: null,
     ...overrides,
@@ -76,6 +77,8 @@ describe("the booking page's pay doors on an approved whole-lodge booking", () =
   it("opens the Complete Payment card and the Internet Banking switch", () => {
     const payment = resolveBookingDetailPayment({
       booking: booking(),
+      // #3991 (upstream): the page's one ledger read of applied credit, now part of the input.
+      amountOwed: { owedCents: 30000, dueCents: 30000, appliedCreditCents: 0 },
       modules: modulesOn,
       viewer: ownerViewer,
       access: liveAccess,
@@ -96,8 +99,13 @@ describe("the booking page's pay doors on an approved whole-lodge booking", () =
           refundedAmountCents: 0,
           creditAppliedCents: 0,
           transactions: [],
+          // read by upstream's card-refund and appeal-ceiling readers (#4124, #3827)
+          recoveryOperations: [],
+          refunds: [],
         },
       }),
+      // #3991 (upstream): the page's one ledger read of applied credit, now part of the input.
+      amountOwed: { owedCents: 30000, dueCents: 30000, appliedCreditCents: 0 },
       modules: modulesOn,
       viewer: ownerViewer,
       access: liveAccess,
@@ -111,6 +119,8 @@ describe("the booking page's pay doors on an approved whole-lodge booking", () =
   it("keeps the switch closed on a CONFIRMED booking without a hold, and with either module off", () => {
     const noHold = resolveBookingDetailPayment({
       booking: booking({ wholeLodgeHold: false }),
+      // #3991 (upstream): the page's one ledger read of applied credit, now part of the input.
+      amountOwed: { owedCents: 30000, dueCents: 30000, appliedCreditCents: 0 },
       modules: modulesOn,
       viewer: ownerViewer,
       access: liveAccess,
@@ -124,6 +134,8 @@ describe("the booking page's pay doors on an approved whole-lodge booking", () =
     ]) {
       const payment = resolveBookingDetailPayment({
         booking: booking(),
+        // #3991 (upstream): the page's one ledger read of applied credit, now part of the input.
+        amountOwed: { owedCents: 30000, dueCents: 30000, appliedCreditCents: 0 },
         modules: modules as unknown as typeof modulesOn,
         viewer: ownerViewer,
         access: liveAccess,
@@ -136,6 +148,8 @@ describe("the booking page's pay doors on an approved whole-lodge booking", () =
   it("never offers the switch to a non-owner admin viewing the booking", () => {
     const payment = resolveBookingDetailPayment({
       booking: booking(),
+      // #3991 (upstream): the page's one ledger read of applied credit, now part of the input.
+      amountOwed: { owedCents: 30000, dueCents: 30000, appliedCreditCents: 0 },
       modules: modulesOn,
       viewer: {
         canManageBooking: false,

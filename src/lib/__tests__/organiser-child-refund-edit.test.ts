@@ -7,12 +7,15 @@ import { describe, expect, it, vi } from "vitest";
 import { requireCalendarDate } from "@/lib/club-time";
 import {
   applyPaymentAdjustments,
+  calculateFullReductionSettlementOptions,
   calculateModificationSettlementOptions,
   organiserChildChargeRefusal,
 } from "@/lib/booking-modify-settlement";
-import { paymentEligibleForPaidCancelPath } from "@/lib/booking-cancel";
+import { paymentEligibleForPaidCancelPath, paymentHasCaptureEvidence } from "@/lib/booking-cancel";
 import { ORGANISER_CHILD_CHARGE_REFUSAL } from "@/lib/group-organiser-paid";
+import { GROUP_CANCEL_IN_PROGRESS_PRICE_MESSAGE, organiserBankChildPriceChangeRefusal } from "@/lib/group-cancel-in-progress";
 import type { BookingModificationSettlementOptions } from "@/lib/booking-modify-settlement";
+import { noReductionAgainstUnpaidAsk } from "@/lib/additional-ask-reduction";
 import type { LoadedBookingForModify } from "@/lib/booking-modify-validation";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
@@ -69,15 +72,21 @@ const ORGANISER_OPTIONS: BookingModificationSettlementOptions = {
   daysUntilCheckIn: 30,
   requiresSettlementMethod: false,
   returnsToOrganiser: true,
+  organiserRefundByBankTransfer: false,
 };
 
-function txWithSettlement(settlement: Record<string, unknown> | null) {
+function txWithSettlement(settlement: Record<string, unknown> | null, groupStatus = "OPEN") {
   return {
-    payment: { update: vi.fn().mockResolvedValue({}) },
+    // #3980: an edit that read no invoice link claims the payment row.
+    payment: { update: vi.fn().mockResolvedValue({}), updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
+    // #3949 review round 5: the organiser's group, read by the mid-cancel price-change refusal.
+    groupBooking: { findUnique: vi.fn(async () => ({ status: groupStatus })) },
     groupBookingSettlement: { findFirst: vi.fn().mockResolvedValue(settlement) },
     // #3809: no applied credit, so a reduction gives none back.
     memberCredit: { aggregate: vi.fn().mockResolvedValue({ _sum: { amountCents: null } }) },
     // #3827 (composed by #3829): no open by-hand refund task on file.
+    // #3954: no increase is waiting on its mint's recovery for a reduction to net off.
+    paymentRecoveryOperation: { findMany: vi.fn(async () => []) },
     manualRefundTask: { aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })) },
   } as unknown as Parameters<typeof applyPaymentAdjustments>[0];
 }
@@ -93,7 +102,7 @@ const CARD_SETTLEMENT = {
 describe("an organiser child's reduction at the edit door (#3653)", () => {
   it("returns the reduction to the organiser's card from the combined payment, with no method chosen", async () => {
     const tx = txWithSettlement(CARD_SETTLEMENT);
-    const result = await applyPaymentAdjustments(tx, {
+    const result = await applyPaymentAdjustments(tx, { reduction: noReductionAgainstUnpaidAsk(-1500),
       ...SETTLEMENT_DAY,
       booking: child(),
       priceDiffCents: -1500,
@@ -111,7 +120,7 @@ describe("an organiser child's reduction at the edit door (#3653)", () => {
 
   it("refuses account credit for a booking the organiser paid for, before the edit commits", async () => {
     await expect(
-      applyPaymentAdjustments(txWithSettlement(CARD_SETTLEMENT), {
+      applyPaymentAdjustments(txWithSettlement(CARD_SETTLEMENT), { reduction: noReductionAgainstUnpaidAsk(-1500),
         ...SETTLEMENT_DAY,
         booking: child(),
         priceDiffCents: -1500,
@@ -125,7 +134,7 @@ describe("an organiser child's reduction at the edit door (#3653)", () => {
   it("refuses the reduction when the organiser's card payment is gone or fully refunded", async () => {
     for (const settlement of [null, { ...CARD_SETTLEMENT, status: PaymentStatus.REFUNDED }]) {
       await expect(
-        applyPaymentAdjustments(txWithSettlement(settlement), {
+        applyPaymentAdjustments(txWithSettlement(settlement), { reduction: noReductionAgainstUnpaidAsk(-1500),
           ...SETTLEMENT_DAY,
           booking: child(),
           priceDiffCents: -1500,
@@ -138,7 +147,7 @@ describe("an organiser child's reduction at the edit door (#3653)", () => {
 
   it("leaves an ordinary booking's refund on the ordinary path", async () => {
     const tx = txWithSettlement(CARD_SETTLEMENT);
-    const result = await applyPaymentAdjustments(tx, {
+    const result = await applyPaymentAdjustments(tx, { reduction: noReductionAgainstUnpaidAsk(-1500),
       ...SETTLEMENT_DAY,
       booking: child({ organiserSettled: false, parentBookingId: null }),
       priceDiffCents: -1500,
@@ -153,6 +162,8 @@ describe("an organiser child's reduction at the edit door (#3653)", () => {
   /** A policy db for `calculateModificationSettlementOptions`: one 100% card, 100% credit tier. */
   const POLICY_DB = {
     // #3827 (composed by #3829): no open by-hand refund task on file.
+    // #3954: no increase is waiting on its mint's recovery for a reduction to net off.
+    paymentRecoveryOperation: { findMany: vi.fn(async () => []) },
     manualRefundTask: { aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })) },
     lodge: { findFirst: vi.fn().mockResolvedValue({ id: "lodge_1" }) },
     bookingPeriod: { findFirst: vi.fn().mockResolvedValue(null), findMany: vi.fn().mockResolvedValue([]) },
@@ -174,43 +185,84 @@ describe("an organiser child's reduction at the edit door (#3653)", () => {
 
   it("quotes the organiser's card only for a child the organiser paid for BY CARD", async () => {
     const todayAtClub = requireCalendarDate("2026-07-01");
-    const card = await calculateModificationSettlementOptions({
+    const card = await calculateModificationSettlementOptions({ reduction: noReductionAgainstUnpaidAsk(-1500),
       booking: child(),
       netChargeCents: -1500,
       db: POLICY_DB,
       todayAtClub,
     });
-    expect(card).toMatchObject({ returnsToOrganiser: true, requiresSettlementMethod: false, accountCreditAmountCents: 0 });
+    expect(card).toMatchObject({ returnsToOrganiser: true, organiserRefundByBankTransfer: false, requiresSettlementMethod: false, accountCreditAmountCents: 0 });
 
-    // An organiser who settled by Internet Banking moved no card money: the
-    // child keeps the ordinary choice it had before #3653 (#3642 owns that
-    // group settlement), and is never quoted a refund to a card.
-    const ib = await calculateModificationSettlementOptions({
+    // #3949 review round 5: an organiser who settled by Internet Banking has the
+    // same one disposition - back to the organiser, by a bank-transfer hand-back,
+    // on the card tier - and never the joiner's account credit.
+    const ib = await calculateModificationSettlementOptions({ reduction: noReductionAgainstUnpaidAsk(-1500),
       booking: ibChild(),
       netChargeCents: -1500,
       db: POLICY_DB,
       todayAtClub,
     });
-    expect(ib).toMatchObject({ returnsToOrganiser: false, requiresSettlementMethod: true, accountCreditAmountCents: 1500 });
+    expect(ib).toMatchObject({ returnsToOrganiser: true, organiserRefundByBankTransfer: true, requiresSettlementMethod: false, accountCreditAmountCents: 0, accountCreditPercentage: 0 });
+    expect(ib?.cardRefundAmountCents).toBe(card?.cardRefundAmountCents);
+    // The untiered options (a guest's acceptance) answer the same way.
+    const full = calculateFullReductionSettlementOptions({ booking: ibChild(), netChargeCents: -1500, refundableCashCents: 4500, todayAtClub });
+    expect(full).toMatchObject({ returnsToOrganiser: true, organiserRefundByBankTransfer: true, requiresSettlementMethod: false, accountCreditAmountCents: 0, cardRefundAmountCents: 1500 });
   });
 
-  it("leaves an Internet Banking organiser child's reduction off the organiser's card", async () => {
-    const tx = txWithSettlement(CARD_SETTLEMENT);
-    const result = await applyPaymentAdjustments(tx, {
+  it("#3949 review round 5: an Internet Banking organiser child's reduction goes to the organiser by hand - never a card, never the joiner's credit", async () => {
+    const IB_OPTIONS = { ...ORGANISER_OPTIONS, organiserRefundByBankTransfer: true };
+    const result = await applyPaymentAdjustments(txWithSettlement(CARD_SETTLEMENT), { reduction: noReductionAgainstUnpaidAsk(-1500),
       ...SETTLEMENT_DAY,
       booking: ibChild(),
       priceDiffCents: -1500,
       changeFeeCents: 0,
-      settlementOptions: {
-        ...ORGANISER_OPTIONS,
-        accountCreditAmountCents: 1500,
-        returnsToOrganiser: false,
-        requiresSettlementMethod: true,
-      },
-      settlementMethod: "credit",
+      settlementOptions: IB_OPTIONS,
     });
-    expect(result.organiserChildRefund).toBeNull();
-    expect(result.accountCreditAmountCents).toBe(1500);
+    // No Stripe refund and no organiser card reservation: the door raises the
+    // organiser's bank-transfer hand-back for `refundAmountCents`
+    // (`raiseEditRefundHandBackIfOwed`, payee the organiser).
+    expect(result).toMatchObject({ refundAmountCents: 1500, accountCreditAmountCents: 0, pendingRefundAmountCents: 0, hasSucceededPayment: false, organiserChildRefund: null });
+
+    // Electing credit is refused, as on the card twin.
+    await expect(
+      applyPaymentAdjustments(txWithSettlement(CARD_SETTLEMENT), { reduction: noReductionAgainstUnpaidAsk(-1500),
+        ...SETTLEMENT_DAY,
+        booking: ibChild(),
+        priceDiffCents: -1500,
+        changeFeeCents: 0,
+        settlementOptions: IB_OPTIONS,
+        settlementMethod: "credit",
+      }),
+    ).rejects.toMatchObject({ status: 400, message: expect.stringContaining("cannot be held as account credit") });
+  });
+
+  it("#3949 review round 5: no price change of an Internet Banking organiser child while the group cancel is part-way through, whatever settlement was chosen", async () => {
+    for (const [priceDiffCents, settlementMethod] of [[-1500, "credit"], [-1500, "card"], [-1500, undefined], [1000, undefined]] as const) {
+      await expect(
+        applyPaymentAdjustments(txWithSettlement(null, "CANCELLED"), { reduction: noReductionAgainstUnpaidAsk(priceDiffCents),
+          ...SETTLEMENT_DAY,
+          booking: ibChild(),
+          priceDiffCents,
+          changeFeeCents: 0,
+          settlementOptions: priceDiffCents < 0 ? { ...ORGANISER_OPTIONS, organiserRefundByBankTransfer: true } : null,
+          ...(settlementMethod ? { settlementMethod } : {}),
+        }),
+        `${priceDiffCents} ${settlementMethod}`,
+      ).rejects.toMatchObject({ status: 409, message: GROUP_CANCEL_IN_PROGRESS_PRICE_MESSAGE });
+    }
+    // Review round 6: each part on its own - a $20 cut with a $20 change fee nets to nothing but is still refused.
+    await expect(
+      applyPaymentAdjustments(txWithSettlement(null, "CANCELLED"), { reduction: noReductionAgainstUnpaidAsk(0),
+        ...SETTLEMENT_DAY, booking: ibChild(), priceDiffCents: -2000, changeFeeCents: 2000 }),
+    ).rejects.toMatchObject({ status: 409, message: GROUP_CANCEL_IN_PROGRESS_PRICE_MESSAGE });
+    // Once the cancel has claimed the child, or on a live group, it is not this refusal's to answer.
+    await expect(
+      applyPaymentAdjustments(txWithSettlement(null, "OPEN"), { reduction: noReductionAgainstUnpaidAsk(1000), ...SETTLEMENT_DAY, booking: ibChild(), priceDiffCents: 1000, changeFeeCents: 0 }),
+    ).resolves.toBeDefined();
+    // Nor is a card-paid child's: its refunds are reserved on the organiser's card, under its own rules.
+    await expect(
+      applyPaymentAdjustments(txWithSettlement(CARD_SETTLEMENT, "CANCELLED"), { reduction: noReductionAgainstUnpaidAsk(-1500), ...SETTLEMENT_DAY, booking: child(), priceDiffCents: -1500, changeFeeCents: 0, settlementOptions: ORGANISER_OPTIONS }),
+    ).resolves.toBeDefined();
   });
 
   it("refuses a price increase on a child the organiser paid for by card, before the edit commits", async () => {
@@ -219,7 +271,7 @@ describe("an organiser child's reduction at the edit door (#3653)", () => {
     // refunded total - the 10000 paid / 4000 refunded / +1000 sequence that
     // re-promised the 4000 to a later cancellation.
     await expect(
-      applyPaymentAdjustments(txWithSettlement(CARD_SETTLEMENT), {
+      applyPaymentAdjustments(txWithSettlement(CARD_SETTLEMENT), { reduction: noReductionAgainstUnpaidAsk(1000),
         ...SETTLEMENT_DAY,
         booking: child(),
         priceDiffCents: 1000,
@@ -228,7 +280,7 @@ describe("an organiser child's reduction at the edit door (#3653)", () => {
     ).rejects.toBeInstanceOf(OrganiserChildRefundRefusedError);
 
     // The Internet Banking child keeps its supplementary-invoice path.
-    const ib = await applyPaymentAdjustments(txWithSettlement(null), {
+    const ib = await applyPaymentAdjustments(txWithSettlement(null), { reduction: noReductionAgainstUnpaidAsk(1000),
       ...SETTLEMENT_DAY,
       booking: ibChild(),
       priceDiffCents: 1000,
@@ -253,6 +305,21 @@ describe("an organiser child's reduction at the edit door (#3653)", () => {
     expect(quote).toContain("chargeRefusal: organiserChildChargeRefusal({ booking, netChargeCents }),");
   });
 
+  it("#3949 review round 6: the quote shows the mid-group-cancel refusal the save would meet, from the save's own answer", async () => {
+    const store = (groupStatus: string) => ({ groupBooking: { findUnique: vi.fn(async () => ({ status: groupStatus })) } }) as never;
+    const change = { priceDiffCents: -1500, changeFeeCents: 0 };
+    expect(await organiserBankChildPriceChangeRefusal(store("CANCELLED"), ibChild(), change)).toBe(GROUP_CANCEL_IN_PROGRESS_PRICE_MESSAGE);
+    expect(await organiserBankChildPriceChangeRefusal(store("CANCELLED"), ibChild(), { priceDiffCents: -2000, changeFeeCents: 2000 })).toBe(GROUP_CANCEL_IN_PROGRESS_PRICE_MESSAGE);
+    expect(await organiserBankChildPriceChangeRefusal(store("CANCELLED"), ibChild(), { priceDiffCents: 0, changeFeeCents: 0 })).toBeNull();
+    expect(await organiserBankChildPriceChangeRefusal(store("OPEN"), ibChild(), change)).toBeNull();
+    expect(await organiserBankChildPriceChangeRefusal(store("CANCELLED"), child(), change)).toBeNull();
+    // The quote answers with that function, and the edit panel keeps Save off while it is set.
+    const quote = readFileSync(resolve(REPO_ROOT, "src/app/api/bookings/[id]/modify-quote/route.ts"), "utf8");
+    expect(quote).toContain("priceChangeRefusal: await organiserBankChildPriceChangeRefusal(prisma, booking, { priceDiffCents, changeFeeCents })");
+    const panel = readFileSync(resolve(REPO_ROOT, "src/components/edit-booking-panel.tsx"), "utf8");
+    expect(panel).toContain("Boolean(quote.priceChangeRefusal)");
+  });
+
   it("a joiner's organiser-card booking a reduction partly refunded still takes the paid cancel path (fix round 2, F1)", async () => {
     // The executor writes an organiser child's refunds onto its mirror; the
     // child has NO transaction row. Without the organiser rule the gate asks the
@@ -264,6 +331,8 @@ describe("an organiser child's reduction at the edit door (#3653)", () => {
       id: "payment_1",
       status: PaymentStatus.PARTIALLY_REFUNDED,
       source: PaymentSource.STRIPE,
+      // The mirror the pre-ledger STRIPE half of the capture evidence would trust; this gate never does (#1491).
+      refundedAmountCents: 1_000,
     };
     await expect(
       paymentEligibleForPaidCancelPath(
@@ -278,7 +347,9 @@ describe("an organiser child's reduction at the edit door (#3653)", () => {
         noLedger,
       ),
     ).resolves.toBe(false);
-    // An Internet Banking organiser child is not paid by card: ledger rules.
+    // #3949 review H1: nor does one the organiser paid for by Internet Banking, whose
+    // mirror a paid-back hand-back left partly refunded: read as unpaid, the cancel
+    // would flip the organiser's share FAILED.
     await expect(
       paymentEligibleForPaidCancelPath(
         {
@@ -286,6 +357,13 @@ describe("an organiser child's reduction at the edit door (#3653)", () => {
           parentBookingId: "organiser_booking",
           payment: { ...partlyRefunded, source: PaymentSource.INTERNET_BANKING },
         },
+        noLedger,
+      ),
+    ).resolves.toBe(true);
+    // An ordinary Internet Banking booking in that shape is still the ledger's to answer.
+    await expect(
+      paymentEligibleForPaidCancelPath(
+        { organiserSettled: false, parentBookingId: null, payment: { ...partlyRefunded, source: PaymentSource.INTERNET_BANKING } },
         noLedger,
       ),
     ).resolves.toBe(false);
@@ -296,6 +374,21 @@ describe("an organiser child's reduction at the edit door (#3653)", () => {
         noLedger,
       ),
     ).resolves.toBe(false);
+  });
+
+  it("#3949 review H1: an Internet Banking organiser child's mirror is capture evidence, refunded in full or not; an ordinary one's is not", async () => {
+    const noLedger = { paymentTransaction: { findFirst: vi.fn().mockResolvedValue(null) } } as unknown as Parameters<typeof paymentHasCaptureEvidence>[1];
+    const child = (status: PaymentStatus, organiserSettled = true) => ({
+      organiserSettled,
+      parentBookingId: organiserSettled ? "organiser_booking" : null,
+      payment: { id: "payment_1", source: PaymentSource.INTERNET_BANKING, status, refundedAmountCents: 1500 },
+    });
+    for (const status of [PaymentStatus.SUCCEEDED, PaymentStatus.PARTIALLY_REFUNDED, PaymentStatus.REFUNDED]) {
+      await expect(paymentHasCaptureEvidence(child(status), noLedger), status).resolves.toBe(true);
+    }
+    await expect(paymentHasCaptureEvidence(child(PaymentStatus.PENDING), noLedger)).resolves.toBe(false);
+    // The folded never-paid Internet Banking mirror (#3630) is still not cash.
+    await expect(paymentHasCaptureEvidence(child(PaymentStatus.PARTIALLY_REFUNDED, false), noLedger)).resolves.toBe(false);
   });
 
   it("every door that settles an edit through applyPaymentAdjustments writes the child's refund debt before it commits", () => {

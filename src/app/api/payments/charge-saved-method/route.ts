@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { handOffSupersededCaptureAfterRefusal } from "@/lib/superseded-paid-intent";
 import { bookingOwner } from "@/lib/booking-owner";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { isHostingCoverageParticipantRetry } from "@/lib/adult-member-hosting-queue-participants";
@@ -31,6 +32,7 @@ import {
 } from "@/lib/capacity";
 import { bookingHasCapacityOverride } from "@/lib/booking-status";
 import { reusableSavedPaymentMethodOnRow } from "@/lib/saved-payment-method";
+import { savedCardChargeCents } from "@/lib/booking-payment-state";
 import {
   beginSavedCardChargeAttempt,
   SAVED_CARD_CHARGE_REASON,
@@ -43,7 +45,7 @@ import {
   type SavedCardChargeAnswer,
 } from "@/lib/saved-card-charge-settle";
 import { hasAdminAccess } from "@/lib/access-roles";
-import { PAYMENT_RECEIVED_STATUS_UNCONFIRMED_BODY } from "@/lib/payment-recovery-contract";
+import { PAYMENT_RECEIVED_STATUS_UNCONFIRMED_BODY, SUPERSEDED_CHARGE_NOT_SETTLED_BODY } from "@/lib/payment-recovery-contract";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { chargeCurrencyRefusal, UNSUPPORTED_CHARGE_CURRENCY_ADMIN_MESSAGE as CURRENCY_REFUSED } from "@/lib/stripe-charge-currency";
 
@@ -208,6 +210,10 @@ export async function POST(request: NextRequest) {
             status: 409,
           };
         }
+        // #4399 (`INV-PAY-119`): worth $0 is refused before any claim; the cron and confirm-pending-guests confirm it free.
+        if (savedCardChargeCents(locked) === 0) {
+          return { error: "This booking has nothing to charge - confirm it with Confirm pending guests, or wait for its hold deadline." as const, status: 409 };
+        }
         const capacity = await checkCapacityForGuestRanges(
           lodgeId,
           locked.checkIn,
@@ -256,10 +262,13 @@ export async function POST(request: NextRequest) {
             ? { actorMemberId: session.user.id }
             : {}),
         });
+        // #4357 (`INV-PAY-119`): the booking's worth, as the cron charges it -
+        // a change fee recorded on this unsettled payment is collected too.
+        const chargeCents = savedCardChargeCents(locked);
         const attempt = await beginSavedCardChargeAttempt(tx, {
           paymentId: locked.payment.id,
           bookingId,
-          amountCents: locked.finalPriceCents,
+          amountCents: chargeCents,
           card: lockedCard,
           reason: SAVED_CARD_CHARGE_REASON.chargeSavedMethodRoute,
         });
@@ -268,7 +277,7 @@ export async function POST(request: NextRequest) {
           attempt,
           card: lockedCard,
           paymentId: locked.payment.id,
-          amountCents: locked.finalPriceCents,
+          amountCents: chargeCents,
         };
       });
 
@@ -290,11 +299,13 @@ export async function POST(request: NextRequest) {
           },
           "charge-saved-method: refused to charge (#3267)"
         );
+        // #4300: a superseded capture with no refund started yet is handed off now.
+        await handOffSupersededCaptureAfterRefusal(claimErr);
         sendAdminPaymentFailureAlert({
           memberName,
           checkIn: booking.checkIn,
           checkOut: booking.checkOut,
-          amountCents: booking.finalPriceCents,
+          amountCents: savedCardChargeCents(booking),
           errorMessage: claimErr.message,
           paymentIntentId: claimErr.paymentIntentId ?? "N/A",
         }, format).catch((alertErr) =>
@@ -424,16 +435,15 @@ export async function POST(request: NextRequest) {
         checkOut: booking.checkOut,
         amountCents: paymentIntent.amount,
       };
-      // Record the capture on the attempt row BEFORE reconciliation, so a
-      // promotion failure can always be finished by the Stripe webhook, which
-      // finds the row by intent id. Non-fatal: reconciliation upserts the
-      // identical row.
+      // Record the capture BEFORE reconciliation, so the webhook (finding the row by intent id) can always finish a failed
+      // promotion; non-fatal, reconciliation upserts the same row. #4285 review: `newlyCaptured` means new money, not a replay.
+      let recordedByCaller = false;
       try {
-        await settleSavedCardChargeAttempt({
+        ({ newlyCaptured: recordedByCaller } = await settleSavedCardChargeAttempt({
           attemptRowId: claim.attempt.attemptRowId,
           paymentId,
           paymentIntent,
-        });
+        }));
       } catch (recordError) {
         logger.error(
           { err: recordError, bookingId, paymentIntentId: paymentIntent.id },
@@ -442,7 +452,7 @@ export async function POST(request: NextRequest) {
       }
       const reconciliation = await markBookingPaymentSucceeded({
         format,
-        bookingId,
+        bookingId, recordedByCaller,
         paymentIntentId: paymentIntent.id,
         amountCents: paymentIntent.amount,
         paymentMethodId:
@@ -462,6 +472,13 @@ export async function POST(request: NextRequest) {
           },
           { status: 409 }
         );
+      }
+
+      // #4300 (`INV-PAY-138`): superseded, so going back; nothing paid, so the claim is released.
+      if (reconciliation.outcome === "superseded_capture") {
+        claimReleaser = null;
+        await releaseChargeClaim().catch((err) => logger.error({ err, bookingId }, "Could not release the claim of a refused superseded charge (#4300)"));
+        return NextResponse.json({ success: false, ...SUPERSEDED_CHARGE_NOT_SETTLED_BODY, paymentIntentId: paymentIntent.id }, { status: 409 });
       }
 
       finalCapacityClaimed = true;

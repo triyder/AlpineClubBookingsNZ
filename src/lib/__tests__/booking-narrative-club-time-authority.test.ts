@@ -58,6 +58,7 @@ function booking(overrides: Partial<NarrativeBooking> = {}): NarrativeBooking {
   return {
     status: "PAID",
     finalPriceCents: 12000,
+    amountOwed: { owedCents: 12000, dueCents: 12000, appliedCreditCents: 0 },
     checkIn: CHECK_IN,
     checkOut: CHECK_OUT,
     firstName: "Sam",

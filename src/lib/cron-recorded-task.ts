@@ -21,9 +21,10 @@ type RecordedCronTaskOutcome<T> =
  * rethrow the original error, or wrap it).
  *
  * `onFailure` runs BEFORE the FAILURE row is written (the general and payments
- * runners page Sentry there). `statusFor`/`summaryFor` let a runner derive the
- * row from the result (the Xero runner records SKIPPED; a task may attach a
- * `warning` that admin cron health surfaces).
+ * runners page Sentry there). `statusFor`/`summaryFor`/`errorFor` let a runner
+ * derive the row from the result (the Xero runner records SKIPPED; a task may
+ * attach a `warning` that admin cron health surfaces; a task that returns its
+ * partial failure, the Xero link cleanup since #4161, names it in `error`).
  */
 export async function runRecordedCronTask<T>({
   jobName,
@@ -31,6 +32,7 @@ export async function runRecordedCronTask<T>({
   recordCronRun = recordCronJobRunSafe,
   statusFor = () => "SUCCESS",
   summaryFor = (result) => result,
+  errorFor,
   onFailure,
 }: {
   jobName: string;
@@ -38,6 +40,7 @@ export async function runRecordedCronTask<T>({
   recordCronRun?: (input: RecordCronJobRunInput) => Promise<void> | void;
   statusFor?: (result: T) => CronJobRunStatus;
   summaryFor?: (result: T) => unknown;
+  errorFor?: (result: T) => string | null;
   onFailure?: (error: unknown, message: string) => void;
 }): Promise<RecordedCronTaskOutcome<T>> {
   const startedAt = new Date();
@@ -48,6 +51,7 @@ export async function runRecordedCronTask<T>({
       startedAt,
       status: statusFor(result),
       resultSummary: summaryFor(result),
+      ...(errorFor ? { error: errorFor(result) } : {}),
     });
     return { ok: true, result };
   } catch (error) {

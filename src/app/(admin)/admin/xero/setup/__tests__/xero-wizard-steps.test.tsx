@@ -66,6 +66,7 @@ const helpers: WizardStepHelpers = {
   optional: false,
   acknowledged: false,
   skip: vi.fn(),
+  reportSaving: vi.fn(),
   // Required, and typed as the literal `true` (#2324): the shell always renders
   // the view-only banner above a step body.
   ancestorRendersViewOnlyBanner: true,
@@ -161,5 +162,12 @@ describe("Xero WebhooksStep Full-Admin notice is tri-state (#2324)", () => {
     expect(
       (screen.getByLabelText(/Webhooks key/i) as HTMLInputElement).disabled,
     ).toBe(false);
+  });
+
+  it("tells the operator to subscribe to Credit Notes as well as Invoices and Contacts", () => {
+    render(<WebhooksStep context={makeContext()} helpers={helpers} />);
+    expect(
+      screen.getByText(/tick Invoices, Contacts, and Credit Notes/i),
+    ).toBeTruthy();
   });
 });

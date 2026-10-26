@@ -71,6 +71,8 @@ vi.mock("@/lib/prisma", () => ({
       create: vi.fn().mockResolvedValue({ id: "emaillog-1" }),
     },
     bookingEvent: { findMany: vi.fn().mockResolvedValue([]) },
+    // #4058: the pay-link email quotes what is owed, which reads applied credit.
+    memberCredit: { aggregate: async () => ({ _sum: { amountCents: null } }) },
     lodge: { findFirst: vi.fn().mockResolvedValue({ id: "lodge-1" }) },
     $transaction: mocks.transaction,
     $executeRaw: vi.fn(),

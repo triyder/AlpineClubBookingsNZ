@@ -113,7 +113,8 @@ import {
  * is a fixed enum the writer chooses rather than provider text.
  *
  * And `lastErrorMessage` is read ONLY on a `FAILED` row, because
- * `completeXeroSyncOperation` never clears it. A row that failed, was retried,
+ * `completeXeroSyncOperation` never clears it on `PARTIAL` (it does on
+ * `SUCCEEDED`, #4049). A row that failed, was retried,
  * and came back `PARTIAL` still carries the previous attempt's message — so
  * showing it beside a partial result would describe the wrong event with
  * authority.
@@ -190,6 +191,8 @@ interface BookingInvoiceSyncFaultShape {
   invoiceNumber: string | null;
   /** Redacted operator-facing reason; `null` unless the row is `FAILED`. */
   reason: string | null;
+  /** The row's `lastErrorCode`, read with `reason` (#4278) so the two are explained together. */
+  reasonCode?: string | null;
   /** The single affordance offered for this fault. */
   action: BookingInvoiceSyncAction;
 }
@@ -368,6 +371,7 @@ export function classifyBookingInvoiceSyncFault(
     invoiceReachedXero,
     invoiceNumber,
     reason,
+    reasonCode: reason ? operation.lastErrorCode : null,
     action: resolveAction(kind, retryMeta),
   });
 

@@ -3,6 +3,7 @@ import { storageStatePath } from "./helpers/auth";
 import { E2E_ADMIN } from "./helpers/fixtures";
 import { overrideModules, setModuleSettings, type ModuleSettings } from "./helpers/modules";
 import { resetXeroSetupWizard } from "./helpers/reset";
+import { wizardCursorSave } from "./helpers/wizard-cursor";
 
 // Kept in lockstep with MOCK_XERO_ORG_NAME in src/lib/xero-mock-endpoint.ts,
 // which the gated mock organisation endpoint returns. Duplicated as a literal
@@ -79,11 +80,24 @@ test("operator reaches Connected to <Org> entirely in-app", async () => {
   await page
     .getByRole("button", { name: /(save|replace) credentials/i })
     .click();
+  // Wait for THIS save to finish, not for standing state (#4014, as the
+  // completion spec has since #2302). On the Replace path "Both credentials
+  // stored" and an enabled Continue are already on screen before the click, so
+  // asserting only those let this spec reach Connect while the save was still
+  // writing. The save is two sequential writes, and every credential write
+  // resets the Xero connection by design (#3454): in E2E run 37830486574 the
+  // client-secret write committed AFTER the OAuth callback and disconnected the
+  // organisation the spec was about to confirm. The success banner is written
+  // only once both writes have returned OK.
+  await expect(
+    page.getByRole("status").getByText(/Credentials saved/i),
+  ).toBeVisible();
 
   // Verified: both credentials now show "Set ✓" and Continue enables.
   await expect(page.getByText(/Both credentials stored/i)).toBeVisible();
   const continueBtn = page.getByRole("button", { name: "Continue" });
   await expect(continueBtn).toBeEnabled();
+  const connectCursorSaved = wizardCursorSave(page, "xero", "connect");
   await continueBtn.click();
 
   // Step 3 — connect: the OAuth flow round-trips through the mock and returns to
@@ -91,6 +105,9 @@ test("operator reaches Connected to <Org> entirely in-app", async () => {
   await expect(
     page.getByRole("heading", { name: /connect to xero/i }),
   ).toBeVisible();
+  // The post-OAuth page resumes on the step the server has stored, so leave
+  // only once the wizard has saved that it is on Connect (#4014).
+  expect((await connectCursorSaved).ok()).toBeTruthy();
   await page.getByRole("button", { name: /^Connect Xero$/ }).click();
 
   // Back on the wizard after the mock OAuth round-trip: right-org confirmation.

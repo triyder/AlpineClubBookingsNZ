@@ -129,7 +129,7 @@ describe("DELETE /api/admin/image-library/[id]", () => {
 
   it("permits deletion of a referenced image and reports which pages use it", async () => {
     mocks.mediaImageFindFirst.mockResolvedValue({
-      id: "img-1",
+      id: "img_%\\1",
       filename: "hero.jpg",
     });
     mocks.pageContentFindMany.mockResolvedValue([
@@ -137,8 +137,8 @@ describe("DELETE /api/admin/image-library/[id]", () => {
       { slug: "about" },
     ]);
 
-    const response = await DELETE(deleteRequest("img-1"), {
-      params: Promise.resolve({ id: "img-1" }),
+    const response = await DELETE(deleteRequest("img_%\\1"), {
+      params: Promise.resolve({ id: "img_%\\1" }),
     });
     const body = await response.json();
 
@@ -148,15 +148,15 @@ describe("DELETE /api/admin/image-library/[id]", () => {
       referencedBySlugs: ["home", "about"],
     });
     expect(mocks.mediaImageDeleteMany).toHaveBeenCalledWith({
-      where: { id: "img-1", kind: "CONTENT" },
+      where: { id: "img_%\\1", kind: "CONTENT" },
     });
 
     expect(mocks.pageContentFindMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: {
           OR: [
-            { contentHtml: { contains: "/api/images/img-1" } },
-            { headerText: { contains: "/api/images/img-1" } },
+            { contentHtml: { contains: "/api/images/img\\_\\%\\\\1" } },
+            { headerText: { contains: "/api/images/img\\_\\%\\\\1" } },
           ],
         },
       }),

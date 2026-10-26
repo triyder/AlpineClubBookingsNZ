@@ -5,6 +5,90 @@ import {
   parseDateOnly,
 } from "@/lib/date-only";
 import { storedDateOnly } from "@/lib/stored-calendar-day";
+import { MAX_CONFIGURED_LODGE_CAPACITY } from "@/lib/lodge-effective-capacity";
+import { z } from "zod";
+
+/** What a member is told about a night that is not a real day (#4088). */
+export const GUEST_NIGHT_INVALID_MESSAGE =
+  "One of the nights chosen isn't a valid date. Please choose the nights again.";
+
+/**
+ * A guest's explicit night set (#713) as a request carries it: `yyyy-mm-dd`
+ * nights, at most a year of them. The one request shape for `nights`, shared by
+ * the booking-policy exception doors and the locked-period change request
+ * (#4088), and by create, quote and the promo preview (#4199), because zod
+ * STRIPS a key a schema does not declare: a door that
+ * forgot `nights` silently turned a guest's chosen nights into the whole stay
+ * (#2562 review, #4088). What the nights MEAN is still decided only by
+ * `normalizeGuestStayRange` below.
+ */
+export const guestNightListSchema = z
+  .array(z.string().refine(isDateOnlyString, { message: GUEST_NIGHT_INVALID_MESSAGE }))
+  .max(370);
+
+/**
+ * One guest's stay as a request carries it (#4199): Date In and Date Out, or the
+ * grid's night set, which wins. THE one declaration, spread into every door
+ * that names guests (`...guestStayFieldsSchema.shape`), so no door can declare
+ * the bounds and forget `nights` — the silent "whole stay" this file's
+ * `guestNightListSchema` exists to stop. What the fields MEAN is decided only
+ * by `normalizeGuestStayRange`.
+ */
+export const guestStayFieldsSchema = z.object({
+  stayStart: z.string().optional(),
+  stayEnd: z.string().optional(),
+  nights: guestNightListSchema.optional(),
+});
+
+/**
+ * The bound on a list of CHANGES (#4199): the guests one request adds, removes
+ * or renames (`addGuests`, `removeGuestIds`, `guestUpdates`, the officer's and
+ * the change request's added guests, the add-guests route), and a new
+ * booking's party (create and the new-booking exception door), which has always
+ * been 200. Far above any real change, so a hostile payload cannot turn a
+ * per-guest loop into an unbounded one. Never put it on a list that carries a
+ * live booking's WHOLE party: see `BOOKING_PARTY_GUESTS_MAX`.
+ */
+export const BOOKING_REQUEST_GUESTS_MAX = 200;
+
+/** What a member is told when a list of changes passes that bound (#4199). */
+export const GUEST_CHANGE_LIST_TOO_LONG_MESSAGE = `A request can add or change at most ${BOOKING_REQUEST_GUESTS_MAX} guests. Please make the change in smaller steps.`;
+
+/** That bound with its wording, for `.max(...GUEST_CHANGE_LIST_BOUND)` on a list of changes. */
+export const GUEST_CHANGE_LIST_BOUND = [BOOKING_REQUEST_GUESTS_MAX, GUEST_CHANGE_LIST_TOO_LONG_MESSAGE] as const;
+
+/**
+ * The bound on a list that carries a live booking's WHOLE party (#4199): every
+ * guest's stay on a grid or range-mode edit (`guestStayRanges` on modify, the
+ * modify quote, the exception and change-request doors), the promo preview's
+ * and the quote's `guests`, and the guest ids and indexes chosen from that
+ * party. A booking can outgrow 200 guests through add-guest calls at a lodge
+ * that holds more, so these are bounded by the most a lodge can be configured
+ * to hold — never below what a booking can legitimately carry.
+ */
+export const BOOKING_PARTY_GUESTS_MAX = MAX_CONFIGURED_LODGE_CAPACITY;
+
+/** The member-worded refusals every door that names guests can give (#4199). */
+export const GUEST_REQUEST_MEMBER_WORDED_MESSAGES: readonly string[] = [
+  GUEST_NIGHT_INVALID_MESSAGE,
+  GUEST_CHANGE_LIST_TOO_LONG_MESSAGE,
+];
+
+/**
+ * The `error` a door answers when its request schema refuses (#4088, #4199): a
+ * refusal written for the member — a night that is not a real day, or a list of
+ * changes that is too long, by default — is said in their terms; anything else
+ * keeps the door's own `fallback`, with the details beside it. Matched on the
+ * exact message, so no other failure is reported as one of these.
+ */
+export function guestRequestSchemaError(
+  error: z.ZodError,
+  fallback: string,
+  memberWorded: readonly string[] = GUEST_REQUEST_MEMBER_WORDED_MESSAGES,
+): string {
+  const worded = memberWorded.find((message) => error.issues.some((issue) => issue.message === message));
+  return worded ?? fallback;
+}
 
 export type BookingGuestStayRangeInput = {
   stayStart?: Date | string | null;

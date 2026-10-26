@@ -65,6 +65,16 @@ vi.mock("@/lib/prisma", () => ({
     clubTimeSettings: { findUnique: mocks.clubTimeSettingsFindUnique },
     // #3809: no edit of these bookings ran through the give-back, so no cap.
     bookingModification: { findFirst: vi.fn().mockResolvedValue(null) },
+    // #4119: the card plan the preview sizes, in its read-only snapshot - one card charge for the whole $400.00, so the card carries any refund.
+    $transaction: async (run: (tx: unknown) => unknown) => run({
+      $executeRaw: async () => 0,
+      payment: {
+        findUnique: async () => ({
+          status: "SUCCEEDED", amountCents: 40_000, refundedAmountCents: 0, stripePaymentIntentId: null, additionalPaymentIntentId: null,
+          transactions: [{ id: "txn-1", source: "STRIPE", stripePaymentIntentId: "pi_1", status: "SUCCEEDED", amountCents: 40_000, refundedAmountCents: 0, createdAt: new Date("2026-06-01T00:00:00.000Z") }],
+        }),
+      },
+    }),
   },
 }));
 vi.mock("@/lib/cancellation", () => ({

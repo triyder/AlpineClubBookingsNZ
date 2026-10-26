@@ -35,15 +35,22 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+// Club identity follows the staged settings model (#3976): the fields are
+// read-only until Edit, so each write opens the section first.
 async function setClubNameOverride(page: Page, value: string): Promise<void> {
   const nameInput = page.locator("#club-identity-name");
   await expect(nameInput).toBeVisible();
+  await page
+    .getByRole("region", { name: "Club identity" })
+    .getByRole("button", { name: "Edit", exact: true })
+    .click();
+  await expect(nameInput).toBeEnabled();
   await nameInput.fill(value);
   await expect(nameInput).toHaveValue(value);
 }
 
-// Clicks Save and waits for the PUT itself (not the transient sonner toast),
-// so we know the server-side revalidation + sync-prime have completed before
+// Clicks Save and waits for the PUT itself (not the success message), so we
+// know the server-side revalidation + sync-prime have completed before
 // we probe the public site.
 async function saveClubIdentity(page: Page): Promise<void> {
   const [response] = await Promise.all([

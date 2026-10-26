@@ -14,7 +14,8 @@
  * - scalar equality, including `null` (IS NULL) and `Date` compared by instant;
  * - the scalar filter object: `equals`, `not` (nested: `not: null`,
  *   `not: { in }`), `in`, `notIn`, `lt`, `lte`, `gt`, `gte`, `startsWith`,
- *   `contains`;
+ *   `contains` — the last two as the unescaped SQL `LIKE` Prisma sends, so `_`
+ *   and `%` are wildcards and a backslash escapes (#4165);
  * - the logical keys `AND`, `OR`, `NOT`, each accepting one clause or a list;
  * - relation filters: to-one `is` / `isNot` (`is: null` is "no related row"),
  *   to-many `some` / `none`, and Prisma's to-one shorthand
@@ -33,7 +34,11 @@
  * operand, and any comparison inside a logical `NOT`, THROW when they meet a
  * NULL column rather than answer either way. `null` / `not: null` (IS NULL / IS
  * NOT NULL) and the relation negations `isNot` / `none` (NOT EXISTS) are
- * two-valued in SQL too and stay ordinary.
+ * two-valued in SQL too and stay ordinary. An `OR` follows SQL's three-valued
+ * rule: any true clause makes it true even when another clause is unknown, so
+ * `OR: [{ severity: null }, { severity: { not: "critical" } }]` holds on a NULL
+ * severity whichever way round it is written; an `OR` with no true clause and an
+ * unknown one is itself unknown and throws like a bare negation.
  *
  * WHAT IT REFUSES, LOUDLY. It THROWS, naming the operator and the column, on: a
  * filter operator it does not implement (`mode`, `every`, `has`, …), a column
@@ -156,14 +161,64 @@ function toList(condition: unknown): WhereInput[] {
   return (Array.isArray(condition) ? condition : [condition]) as WhereInput[];
 }
 
+/**
+ * The evaluator's "unknown": a negation met a NULL column. It is its own class
+ * so an `OR` can tell it from a real failure (an unsupported operator) and
+ * apply SQL's three-valued rule, where any true clause settles the OR.
+ */
+class NullUnderNegationError extends Error {}
+
 function nullUnderNegation(label: string, operator: string, at: string): never {
-  throw new Error(
+  throw new NullUnderNegationError(
     `${label}: \`${operator}\` on ${at} met a NULL column. PostgreSQL evaluates a ` +
       "negated comparison over NULL to unknown and EXCLUDES the row, where a " +
       "two-valued evaluator would include it; give the fixture row an explicit " +
       "value, or compare with `null` / `not: null` (IS NULL / IS NOT NULL), which " +
       "are two-valued in SQL too.",
   );
+}
+
+/**
+ * `startsWith` / `contains` as the SQL Prisma sends for them (#4165). Prisma
+ * (7.10, PostgreSQL) writes `LIKE operand || '%'` and `LIKE '%' || operand ||
+ * '%'` WITHOUT escaping the operand, so its `_` matches any one character, its
+ * `%` any run, and a backslash makes the next character literal (PostgreSQL's
+ * default `LIKE` escape) — which is how `exactPrefix` asks for a literal match.
+ * Reading the operand as plain text would answer the opposite way on both: a
+ * bare `"xero_"` would miss the `xero.` row PostgreSQL returns, and an escaped
+ * `"MEMBERSHIP\\_APPLICATION"` would miss the row it is written to find.
+ * Case-sensitive, as `LIKE` is (`mode: "insensitive"` is unmodelled and throws).
+ * `prisma-exact-prefix.realdb.test.ts` and `audit-query-exact-prefix.realdb.test.ts`
+ * pin the PostgreSQL side of this.
+ */
+function likePattern(operand: string, operator: string): RegExp {
+  // The whole pattern Prisma sends, so an operand's trailing backslash escapes
+  // Prisma's own `%` as PostgreSQL reads it: `startsWith: "a\\"` is `LIKE 'a\%'`,
+  // which matches exactly `a%`.
+  const pattern = operator === "startsWith" ? `${operand}%` : `%${operand}%`;
+  // By character, not UTF-16 unit: PostgreSQL's `_` is one character, so the
+  // regex runs with `u` and the pattern is split the same way.
+  const chars = Array.from(pattern);
+  let body = "";
+  for (let index = 0; index < chars.length; index += 1) {
+    const char = chars[index];
+    if (char === "\\" && index + 1 < chars.length) {
+      index += 1;
+      body += escapeRegExp(chars[index]);
+    } else if (char === "_") {
+      body += ".";
+    } else if (char === "%") {
+      body += ".*";
+    } else {
+      body += escapeRegExp(char);
+    }
+  }
+  return new RegExp(`^${body}$`, "su");
+}
+
+/** A literal character in a `u`-flag regex, where `-` and `/` must not be escaped. */
+function escapeRegExp(char: string): string {
+  return char.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 /**
@@ -244,11 +299,7 @@ function matchesScalar(
           return false;
         }
         if (typeof actual !== "string") return false;
-        const holds =
-          operator === "startsWith"
-            ? actual.startsWith(operand as string)
-            : actual.includes(operand as string);
-        if (!holds) return false;
+        if (!likePattern(operand as string, operator).test(actual)) return false;
         break;
       }
       default:
@@ -350,6 +401,31 @@ export function matchesWhere(
   return evaluate(row as WhereRow, where, options, false);
 }
 
+/**
+ * `OR` as SQL's three-valued logic: true if ANY clause is true, even when
+ * another is unknown (a negation over NULL), whatever order they are written in.
+ * Only when no clause is true and one is unknown is the OR itself unknown, and
+ * that still throws — the same refusal a bare negation over NULL gets.
+ */
+function matchesAny(
+  clauses: WhereInput[],
+  record: WhereRow,
+  options: MatchesWhereOptions,
+  negated: boolean,
+): boolean {
+  let unknown: NullUnderNegationError | undefined;
+  for (const clause of clauses) {
+    try {
+      if (evaluate(record, clause, options, negated)) return true;
+    } catch (error) {
+      if (!(error instanceof NullUnderNegationError)) throw error;
+      unknown ??= error;
+    }
+  }
+  if (unknown) throw unknown;
+  return false;
+}
+
 function evaluate(
   record: WhereRow,
   where: WhereInput | undefined | null,
@@ -367,8 +443,7 @@ function evaluate(
       continue;
     }
     if (key === "OR") {
-      if (!toList(condition).some((clause) => evaluate(record, clause, options, negated)))
-        return false;
+      if (!matchesAny(toList(condition), record, options, negated)) return false;
       continue;
     }
     if (key === "NOT") {

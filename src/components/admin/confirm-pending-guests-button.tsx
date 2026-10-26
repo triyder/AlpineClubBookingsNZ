@@ -22,7 +22,11 @@ import {
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { formatCents } from "@/lib/utils";
 import { FocusedActionError } from "@/components/focused-action-error";
-import { isPaymentReceivedFinalisationPending } from "@/lib/payment-recovery-contract";
+import {
+  isPaymentReceivedFinalisationPending,
+  isSupersededChargeNotSettled,
+  SUPERSEDED_CHARGE_NOT_SETTLED_MESSAGE,
+} from "@/lib/payment-recovery-contract";
 import { useClubFormat } from "@/components/club-format-provider";
 
 const CAPTURED_CARD_RECOVERY_MESSAGE =
@@ -30,7 +34,7 @@ const CAPTURED_CARD_RECOVERY_MESSAGE =
 const CANCELLED_REFUND_RECOVERY_MESSAGE =
   "The booking was cancelled because lodge capacity was no longer available. The saved-card charge was captured, but its refund could not be confirmed and automatic refund recovery is pending. Do not charge again. Reload the booking and check the refund status; contact the lodge administrator if it is not confirmed.";
 
-type PaymentRecoveryKind = "finalisation-pending" | "refund-pending";
+type PaymentRecoveryKind = "finalisation-pending" | "refund-pending" | "charge-returning";
 
 function isCancelledRefundRecovery(value: unknown): boolean {
   if (!value || typeof value !== "object") return false;
@@ -46,7 +50,13 @@ function isCancelledRefundRecovery(value: unknown): boolean {
 interface ConfirmPendingGuestsButtonProps {
   bookingId: string;
   hasSavedPaymentMethod: boolean;
-  finalPriceCents: number;
+  /**
+   * What the route charges the saved card: the booking's worth,
+   * `savedCardChargeCents` (#4357, `INV-PAY-119`) - its price plus a change fee
+   * recorded on its payment - so the dialog quotes the figure the card is
+   * charged, and "no charge" means the route will charge nothing.
+   */
+  savedCardChargeCents: number;
   /**
    * #2259 honesty rule: the booking's "No emails" switch. With it on, the
    * confirmation email is withheld by the mailer whatever is chosen here, so
@@ -59,7 +69,7 @@ interface ConfirmPendingGuestsButtonProps {
 export function ConfirmPendingGuestsButton({
   bookingId,
   hasSavedPaymentMethod,
-  finalPriceCents,
+  savedCardChargeCents,
   noEmails = false,
 }: ConfirmPendingGuestsButtonProps) {
   const format = useClubFormat();
@@ -81,7 +91,7 @@ export function ConfirmPendingGuestsButton({
   // Mirror the server's branch order: a zero-dollar booking is confirmed at no
   // charge regardless of a card on file; otherwise a saved card is charged, and
   // without one the booking moves to payment-owed.
-  const isZeroDollar = finalPriceCents === 0;
+  const isZeroDollar = savedCardChargeCents === 0;
   const willCharge = !isZeroDollar && hasSavedPaymentMethod;
   // #1769b honesty rule: the confirmation email sends when the booking becomes
   // PAID — the zero-dollar (paid_zero) and charged-card (paid_charged) paths.
@@ -91,7 +101,7 @@ export function ConfirmPendingGuestsButton({
   const consequence = isZeroDollar
     ? "This will confirm the booking at no charge."
     : hasSavedPaymentMethod
-      ? `The member's saved card will be charged ${formatCents(finalPriceCents, format)}.`
+      ? `The member's saved card will be charged ${formatCents(savedCardChargeCents, format)}.`
       : "This will move the booking to payment-owed (no card on file).";
 
   function showActionError(message: string) {
@@ -156,6 +166,16 @@ export function ConfirmPendingGuestsButton({
         router.refresh();
         return;
       }
+      // #4300 (`INV-PAY-138`): before the finalisation check - this charge is
+      // going back and the booking still owes, never "charged, do not charge again".
+      if (isSupersededChargeNotSettled(data)) {
+        setPaymentRecoveryKind("charge-returning");
+        showActionError(SUPERSEDED_CHARGE_NOT_SETTLED_MESSAGE);
+        toast.error(SUPERSEDED_CHARGE_NOT_SETTLED_MESSAGE);
+        setConfirming(false);
+        router.refresh();
+        return;
+      }
       if (isPaymentReceivedFinalisationPending(data)) {
         setPaymentRecoveryKind("finalisation-pending");
         showActionError(CAPTURED_CARD_RECOVERY_MESSAGE);
@@ -214,7 +234,7 @@ export function ConfirmPendingGuestsButton({
           {isZeroDollar
             ? " There is no charge for this booking."
             : hasSavedPaymentMethod
-              ? ` The member's saved card will be charged ${formatCents(finalPriceCents, format)}.`
+              ? ` The member's saved card will be charged ${formatCents(savedCardChargeCents, format)}.`
               : " There is no saved card, so the booking will move to payment-owed for payment to be arranged separately."}
         </p>
         <FocusedActionError
@@ -226,7 +246,9 @@ export function ConfirmPendingGuestsButton({
               ? "Booking cancelled - refund recovery pending"
               : paymentRecoveryKind === "finalisation-pending"
                 ? "Saved card charged - finalisation unconfirmed"
-                : undefined
+                : paymentRecoveryKind === "charge-returning"
+                  ? "Charge being returned - booking still owes"
+                  : undefined
           }
           action={
             paymentRecoveryKind ? (

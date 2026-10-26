@@ -30,6 +30,16 @@ vi.mock("@/lib/prisma", () => ({
     // The applied rows hold $150; no edit ran through #3809's give-back, so no cap.
     memberCredit: { aggregate: async () => ({ _sum: { amountCents: -LEDGER_APPLIED_CENTS } }) },
     bookingModification: { findMany: async () => [], findFirst: async () => null },
+    // #4119: the card plan the preview sizes, in its read-only snapshot - the $50.00 card charge, so the card carries the refund.
+    $transaction: async (run: (tx: unknown) => unknown) => run({
+      $executeRaw: async () => 0,
+      payment: {
+        findUnique: async () => ({
+          status: "SUCCEEDED", amountCents: 5_000, refundedAmountCents: 0, stripePaymentIntentId: null, additionalPaymentIntentId: null,
+          transactions: [{ id: "txn-1", source: "STRIPE", stripePaymentIntentId: "pi_1", status: "SUCCEEDED", amountCents: 5_000, refundedAmountCents: 0, createdAt: new Date("2026-06-01T00:00:00.000Z") }],
+        }),
+      },
+    }),
   },
 }));
 vi.mock("@/lib/cancellation", async (importOriginal) => ({

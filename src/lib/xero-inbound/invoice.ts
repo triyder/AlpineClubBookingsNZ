@@ -17,11 +17,12 @@ import {
 import { type XeroObjectLinkInput, upsertXeroObjectLink } from "@/lib/xero-sync";
 import { type IncrementalInvoiceReconciliationResult, type IncrementalMembershipReconciliationResult } from "./types";
 import { buildXeroPaymentDisplayNumber } from "./amounts";
-import { dedupeResolvedXeroObjectLinks, dedupeXeroObjectLinks, getDerivedInboundPaymentRole, recoverBookingScopedLinksFromOutboundOperations } from "./object-links";
+import { dedupeResolvedXeroObjectLinks, dedupeXeroObjectLinks, getDerivedInboundPaymentRole, PRIMARY_INVOICE_CASH_ALLOCATIONS_KEY, recoverBookingScopedLinksFromOutboundOperations } from "./object-links";
 import { writeXeroInboundAuditLogs } from "./audit";
 import { resolveMemberIdsForContact } from "./contact";
 import { refreshLinkedSubscriptionsForInvoice, syncLinkedPaymentInvoiceMetadata } from "./payment";
 import { syncGroupSettlementForPaidInvoice, syncInternetBankingPaymentsForPaidInvoice } from "./invoice-paid-effects";
+
 import type { ClubFormat } from "@/lib/club-format";
 import { clubFormatValues } from "@/lib/club-format-server";
 
@@ -107,6 +108,11 @@ export async function reconcileXeroInvoice(
     ...recoveredBookingScopedLinks,
   ]);
 
+  // #3979: an invoice paid by an applied overpayment or prepayment leaves no
+  // payment record to link, so its primary-invoice link says so: the settled-
+  // cash audit cannot judge such a receipt from local data.
+  const cashAllocationCount =
+    (invoice.overpayments?.length ?? 0) + (invoice.prepayments?.length ?? 0);
   for (const link of relatedLinks) {
     await upsertXeroObjectLink({
       localModel: link.localModel,
@@ -115,6 +121,9 @@ export async function reconcileXeroInvoice(
       xeroObjectId: invoice.invoiceID,
       xeroObjectNumber: invoice.invoiceNumber ?? null,
       xeroObjectUrl: invoiceUrl,
+      ...(cashAllocationCount > 0 && link.role === "PRIMARY_INVOICE"
+        ? { metadata: { [PRIMARY_INVOICE_CASH_ALLOCATIONS_KEY]: cashAllocationCount }, mergeMetadata: true }
+        : {}),
       role: link.role,
     });
   }

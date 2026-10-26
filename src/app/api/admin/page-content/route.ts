@@ -1,3 +1,4 @@
+import { exactContains } from "@/lib/prisma-exact-prefix";
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
@@ -660,8 +661,8 @@ export async function DELETE(request: NextRequest) {
       where: {
         id: { not: existing.id },
         OR: [
-          { contentHtml: { contains: existing.path } },
-          { headerText: { contains: existing.path } },
+          { contentHtml: exactContains(existing.path) },
+          { headerText: exactContains(existing.path) },
         ],
       },
       select: { slug: true },
@@ -670,7 +671,7 @@ export async function DELETE(request: NextRequest) {
     prisma.siteContent.findMany({
       where: {
         key: { in: [...SITE_CONTENT_KEYS] },
-        contentHtml: { contains: existing.path },
+        contentHtml: exactContains(existing.path),
       },
       select: { key: true },
       orderBy: { key: "asc" },

@@ -121,7 +121,6 @@ vi.mock("@/lib/booking-modify", async () => {
     isMemberWholeLodgeBooking: vi.fn().mockResolvedValue(false),
     resolveGuestMemberLinks: vi.fn().mockReturnValue([]),
     resolveGuestNameUpdates: vi.fn().mockReturnValue([]),
-    lockedNightPricesForGuest: vi.fn().mockReturnValue(null),
     // #3531: the route reaches the reader through this wrapper; the null it
     // answers is exactly what the reader stub above answers.
     editedGuestPricingLocks: vi.fn().mockReturnValue({ lockedNightPrices: null }),
@@ -511,3 +510,195 @@ describe("POST /api/bookings/[id]/modify-quote — one-code fields on a several-
   });
 });
 
+
+/*
+  #4197 — the breakdown adds up to `priceDiffCents` with promotions too. The
+  difference is measured from the stored final price, which carries the
+  booking's previous promo adjustment, so the breakdown reverses that
+  adjustment whether its code is kept or removed.
+*/
+describe("POST /api/bookings/[id]/modify-quote — the breakdown sums with promotions (#4197)", () => {
+  /** Aroha's draft carrying one code, SPRING10, at -$25.00. */
+  function oneCodeDraft() {
+    return {
+      ...memberDraft(),
+      discountCents: 2_500,
+      promoAdjustmentCents: -2_500,
+      finalPriceCents: 17_500,
+      promoRedemptions: [
+        {
+          id: "r-a",
+          promoCodeId: "pc-a",
+          applicationOrder: 0,
+          priceAdjustmentCents: -2_500,
+          guestTargets: [],
+          promoCode: { id: "pc-a", code: "SPRING10", internal: false, assignments: [], lodges: [] },
+        },
+      ],
+    };
+  }
+
+  /** The promo engine adjusts the price by `cents` for whichever code it runs. */
+  function engineAdjusts(cents: number) {
+    h.validateAndCalculatePromoDiscount.mockResolvedValue({
+      beneficiaryMemberIds: [],
+      selectedGuestIndexes: [0],
+      discount: {
+        discountCents: -cents,
+        priceAdjustmentCents: cents,
+        freeNightsUsed: 0,
+        eligibleGuestCount: 1,
+        allocations: [],
+        targets: [],
+        adjustmentTargets: [],
+      },
+    });
+  }
+
+  /** The stay as stored: two nights at their locked $100.00. */
+  function pricesTheStoredStay() {
+    h.priceGuests.mockResolvedValue({
+      totalPriceCents: 20_000,
+      guests: [
+        {
+          priceCents: 20_000,
+          perNightCents: [10_000, 10_000],
+          nightDates: [D("2026-08-14"), D("2026-08-15")],
+        },
+      ],
+    });
+  }
+
+  async function quote(body: Record<string, unknown>) {
+    const res = await POST(req(body), { params });
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    const lines = json.itemizedChanges as Array<{ label: string; amountCents: number }>;
+    expect(lines.reduce((sum, line) => sum + line.amountCents, 0)).toBe(json.priceDiffCents);
+    return json;
+  }
+
+  it("a kept code re-priced on a longer stay: one net line", async () => {
+    h.bookingFindUnique.mockResolvedValue(oneCodeDraft());
+    engineAdjusts(-3_000);
+
+    const body = await quote({ checkOut: "2026-08-17" });
+
+    // $300.00 - $30.00 against the stored $175.00.
+    expect(body.priceDiffCents).toBe(9_500);
+    expect(body.itemizedChanges).toEqual([
+      { label: "Date change: 2 nights → 3 nights", amountCents: 10_000 },
+      { label: "Promo 'SPRING10' (re-priced)", amountCents: -500 },
+    ]);
+  });
+
+  it("a removed code: its previous adjustment reversed, and nothing else", async () => {
+    h.bookingFindUnique.mockResolvedValue(oneCodeDraft());
+    pricesTheStoredStay();
+
+    const body = await quote({ removePromoCode: true });
+
+    expect(body.priceDiffCents).toBe(2_500);
+    expect(body.itemizedChanges).toEqual([
+      { label: "Removed promo 'SPRING10'", amountCents: 2_500 },
+    ]);
+    expect(h.validateAndCalculatePromoDiscount).not.toHaveBeenCalled();
+  });
+
+  it("a newly applied code on a booking with none: its line alone", async () => {
+    h.promoCodeFindUnique.mockResolvedValue(MATES50_ROW);
+    engineAdjusts(-5_000);
+
+    const body = await quote({ promoCode: "MATES50", checkOut: "2026-08-17" });
+
+    expect(body.priceDiffCents).toBe(5_000);
+    expect(body.itemizedChanges).toEqual([
+      { label: "Date change: 2 nights → 3 nights", amountCents: 10_000 },
+      { label: "Promo 'MATES50'", amountCents: -5_000 },
+    ]);
+  });
+
+  it("a new code replacing the stored one: the new line, and the old one reversed", async () => {
+    h.bookingFindUnique.mockResolvedValue(oneCodeDraft());
+    h.promoCodeFindUnique.mockResolvedValue(MATES50_ROW);
+    pricesTheStoredStay();
+    engineAdjusts(-5_000);
+
+    const body = await quote({ promoCode: "MATES50" });
+
+    expect(body.priceDiffCents).toBe(-2_500);
+    expect(body.itemizedChanges).toEqual([
+      { label: "Promo 'MATES50'", amountCents: -5_000 },
+      { label: "Previous promo 'SPRING10' reversed", amountCents: 2_500 },
+    ]);
+  });
+
+  it("a kept code that re-prices to the same amount adds no promo line", async () => {
+    h.bookingFindUnique.mockResolvedValue(oneCodeDraft());
+    pricesTheStoredStay();
+    engineAdjusts(-2_500);
+
+    const body = await quote({ checkOut: "2026-08-16" });
+
+    expect(body.priceDiffCents).toBe(0);
+    expect(body.itemizedChanges).toEqual([]);
+  });
+
+  it("a kept code that lapses reads as removed", async () => {
+    h.bookingFindUnique.mockResolvedValue(oneCodeDraft());
+    h.validateAndCalculatePromoDiscount.mockResolvedValue({
+      error: "This promo code has expired",
+      beneficiaryMemberIds: [],
+    });
+
+    const body = await quote({ checkOut: "2026-08-17" });
+
+    expect(body.promoStillValid).toBe(false);
+    expect(body.priceDiffCents).toBe(30_000 - 17_500);
+    expect(body.itemizedChanges).toEqual([
+      { label: "Date change: 2 nights → 3 nights", amountCents: 10_000 },
+      { label: "Removed promo 'SPRING10'", amountCents: 2_500 },
+    ]);
+  });
+
+  it("a refused code keeps the stored promotion in the totals, with no promo line", async () => {
+    // The save refuses the whole edit, which leaves SPRING10 where it is, so the
+    // preview keeps it too; the promo card shows `promoValidation.error`.
+    h.bookingFindUnique.mockResolvedValue(oneCodeDraft());
+    h.promoCodeFindUnique.mockResolvedValue(null);
+    pricesTheStoredStay();
+
+    const body = await quote({ promoCode: "NOPE" });
+
+    expect(body.promoValidation).toEqual({ valid: false, error: "Promo code not found" });
+    expect(body.newPromoAdjustmentCents).toBe(-2_500);
+    expect(body.newDiscountCents).toBe(2_500);
+    expect(body.priceDiffCents).toBe(0);
+    expect(body.itemizedChanges).toEqual([]);
+  });
+
+  it("a refused code beside a date change: the date line alone, the stored promotion kept", async () => {
+    h.bookingFindUnique.mockResolvedValue(oneCodeDraft());
+    h.promoCodeFindUnique.mockResolvedValue(null);
+
+    const body = await quote({ promoCode: "NOPE", checkOut: "2026-08-17" });
+
+    expect(body.priceDiffCents).toBe(10_000);
+    expect(body.itemizedChanges).toEqual([
+      { label: "Date change: 2 nights → 3 nights", amountCents: 10_000 },
+    ]);
+  });
+
+  it("a kept code that now discounts nothing is re-priced, not removed", async () => {
+    h.bookingFindUnique.mockResolvedValue(oneCodeDraft());
+    pricesTheStoredStay();
+    engineAdjusts(0);
+
+    const body = await quote({ checkOut: "2026-08-16" });
+
+    expect(body.priceDiffCents).toBe(2_500);
+    expect(body.itemizedChanges).toEqual([
+      { label: "Promo 'SPRING10' (re-priced)", amountCents: 2_500 },
+    ]);
+  });
+});

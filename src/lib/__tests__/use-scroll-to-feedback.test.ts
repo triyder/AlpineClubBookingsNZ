@@ -1,12 +1,19 @@
 // @vitest-environment jsdom
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { renderHook } from "@testing-library/react";
+import type { RefObject } from "react";
 import {
+  captureFocusReturn,
+  focusConnectedTarget,
   getNearestScrollContainer,
   resolveScrollBehavior,
+  returnFocus,
   revealEditor,
   scrollToError,
   scrollToTop,
+  useReturnAttention,
+  type FocusReturnAnchor,
 } from "@/hooks/use-scroll-to-feedback";
 
 function stubReducedMotion(matches: boolean) {
@@ -240,6 +247,113 @@ describe("use-scroll-to-feedback", () => {
     expect(() => revealEditor({ current: null })).not.toThrow();
     expect(() => scrollToError(null)).not.toThrow();
     expect(() => scrollToTop(undefined)).not.toThrow();
+  });
+
+  describe("returning focus (#4087)", () => {
+    function mountEditButton() {
+      const region = document.createElement("div");
+      region.setAttribute("data-return-focus-region", "r1");
+      const heading = document.createElement("h2");
+      heading.textContent = "Group discount";
+      const header = document.createElement("div");
+      const edit = document.createElement("button");
+      edit.textContent = "Edit";
+      edit.setAttribute("data-return-focus-trigger", "r1edit");
+      header.append(heading, edit);
+      region.append(header);
+      document.body.append(region);
+      return { region, header, edit };
+    }
+
+    it("records nothing when nothing is focused and no marker is given", () => {
+      mountEditButton();
+      expect(captureFocusReturn()).toBeNull();
+    });
+
+    it("returns to the marked replacement, moving only as far as it must", () => {
+      const { header, edit } = mountEditButton();
+      edit.focus();
+      const anchor = captureFocusReturn({ triggerId: "r1edit", regionId: "r1" });
+      edit.remove();
+      const replacement = document.createElement("button");
+      replacement.textContent = "Edit";
+      replacement.setAttribute("data-return-focus-trigger", "r1edit");
+      replacement.scrollIntoView = vi.fn();
+      header.append(replacement);
+
+      returnFocus(anchor);
+
+      expect(document.activeElement).toBe(replacement);
+      expect(replacement.scrollIntoView).toHaveBeenCalledWith({
+        behavior: "smooth",
+        block: "nearest",
+      });
+      // `nearest` can land a target at the top edge: it gets the clearance.
+      expect(replacement.style.scrollMarginTop).toBe("5rem");
+    });
+
+    it("falls through to the marked region when focus does not land, writing no name into the DOM", () => {
+      const { region, edit } = mountEditButton();
+      edit.focus();
+      const anchor = captureFocusReturn({ triggerId: "r1edit", regionId: "r1" });
+      edit.blur();
+      // Mounted, but refuses focus.
+      edit.disabled = true;
+
+      returnFocus(anchor);
+
+      expect(document.activeElement).toBe(region);
+      // Naming is the section's job (`regionProps` / `titleProps`), not the
+      // primitive's.
+      expect(region.hasAttribute("role")).toBe(false);
+      expect(region.hasAttribute("aria-labelledby")).toBe(false);
+    });
+
+    it("moves nothing while focus is anywhere but the page", () => {
+      const { edit } = mountEditButton();
+      const other = document.createElement("input");
+      document.body.append(other);
+      edit.focus();
+      const anchor = captureFocusReturn();
+      other.focus();
+
+      returnFocus(anchor);
+
+      expect(document.activeElement).toBe(other);
+    });
+
+    it("leaves no tabindex behind on a shared dialog-style focus, and reports a refusal", () => {
+      const target = document.createElement("div");
+      document.body.append(target);
+      expect(focusConnectedTarget(target)).toBe(true);
+      expect(target.hasAttribute("tabindex")).toBe(false);
+
+      const disabled = document.createElement("button");
+      disabled.disabled = true;
+      document.body.append(disabled);
+      expect(focusConnectedTarget(disabled)).toBe(false);
+      expect(focusConnectedTarget(null)).toBe(false);
+    });
+
+    it("consumes the anchor, so a close with no fresh open moves nothing", () => {
+      const { edit } = mountEditButton();
+      edit.focus();
+      const anchor: RefObject<FocusReturnAnchor | null> = {
+        current: captureFocusReturn(),
+      };
+      edit.blur();
+
+      const { rerender } = renderHook(
+        ({ key }: { key: number }) => useReturnAttention(anchor, key),
+        { initialProps: { key: 1 } },
+      );
+      expect(document.activeElement).toBe(edit);
+      expect(anchor.current).toBeNull();
+
+      edit.blur();
+      rerender({ key: 2 });
+      expect(document.activeElement).toBe(document.body);
+    });
   });
 
   describe("reduced motion", () => {

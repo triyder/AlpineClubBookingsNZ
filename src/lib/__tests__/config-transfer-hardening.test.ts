@@ -121,7 +121,7 @@ function lodgeDb(overrides?: {
     },
     lodgeInstruction: { findMany: vi.fn().mockResolvedValue([]) },
     choreTemplate: { findMany: vi.fn().mockResolvedValue([]) },
-    xeroToken: { findFirst: vi.fn().mockResolvedValue(null) },
+    xeroConnection: { findUnique: vi.fn().mockResolvedValue(null) },
   } as unknown as ReadDb;
 }
 
@@ -229,7 +229,7 @@ function pagesDb(existingPages: Array<Record<string, unknown>>): ReadDb {
     pageContent: { findMany: vi.fn().mockResolvedValue(existingPages) },
     siteContent: { findMany: vi.fn().mockResolvedValue([]) },
     clubTheme: { findUnique: vi.fn().mockResolvedValue(null) },
-    xeroToken: { findFirst: vi.fn().mockResolvedValue(null) },
+    xeroConnection: { findUnique: vi.fn().mockResolvedValue(null) },
   } as unknown as ReadDb;
 }
 
@@ -617,7 +617,7 @@ function enumStrictSiteDb(): { db: ReadDb; siteFindMany: ReturnType<typeof vi.fn
     pageContent: { findMany: vi.fn().mockResolvedValue([]) },
     siteContent: { findMany: siteFindMany },
     clubTheme: { findUnique: vi.fn().mockResolvedValue(null) },
-    xeroToken: { findFirst: vi.fn().mockResolvedValue(null) },
+    xeroConnection: { findUnique: vi.fn().mockResolvedValue(null) },
   } as unknown as ReadDb;
   return { db, siteFindMany };
 }
@@ -827,7 +827,7 @@ describe("xero item identity is null-honest", () => {
           { id: "mt-full", key: "FULL", bookingBehavior: "MEMBER_RATE", ageGroupsApply: false },
         ]),
       },
-      xeroToken: { findFirst: vi.fn().mockResolvedValue(null) },
+      xeroConnection: { findUnique: vi.fn().mockResolvedValue(null) },
     } as unknown as ReadDb;
     const zip = bundleOf(
       [
@@ -868,10 +868,10 @@ describe("xero target-org binding", () => {
         xeroAccountMapping: { findMany: vi.fn().mockResolvedValue([]) },
         xeroItemCodeMapping: { findMany: vi.fn().mockResolvedValue([]) },
         membershipType: { findMany: vi.fn().mockResolvedValue([]) },
-        xeroToken: {
-          findFirst: vi
+        xeroConnection: {
+          findUnique: vi
             .fn()
-            .mockResolvedValue(tenantId ? { tenantId } : null),
+            .mockResolvedValue(tenantId ? { tenantId, expiresAt: new Date() } : null),
         },
       }) as unknown as ReadDb;
 
@@ -954,7 +954,7 @@ describe("media plan validation", () => {
       siteContent: { findMany: vi.fn().mockResolvedValue([]) },
       clubTheme: { findUnique: vi.fn().mockResolvedValue(null) },
       mediaImage: { findMany: vi.fn().mockResolvedValue([]) },
-      xeroToken: { findFirst: vi.fn().mockResolvedValue(null) },
+      xeroConnection: { findUnique: vi.fn().mockResolvedValue(null) },
     } as unknown as ReadDb;
     const plan = await buildImportPlan(db, zip, { format: CLUB_FORMAT_TEST, mode: "merge" });
     expect(plan.errors.join(" ")).toMatch(/over the .*image limit/i);
@@ -1167,7 +1167,7 @@ describe("import-side category selection", () => {
         xeroAccountMapping: { findMany: vi.fn().mockResolvedValue([]) },
         xeroItemCodeMapping: { findMany: vi.fn().mockResolvedValue([]) },
         membershipType: { findMany: vi.fn().mockResolvedValue([]) },
-        xeroToken: { findFirst: vi.fn().mockResolvedValue(null) },
+        xeroConnection: { findUnique: vi.fn().mockResolvedValue(null) },
       }) as unknown as ReadDb;
 
     const all = await buildImportPlan(db(), zip, { format: CLUB_FORMAT_TEST, mode: "merge" });

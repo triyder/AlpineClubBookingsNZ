@@ -260,10 +260,17 @@ export const STRIPE_IDEMPOTENCY_KEY_LIFETIME_MS = 24 * 60 * 60 * 1000;
  * child's refund replay reads before it asks Stripe again, because Stripe keeps
  * an idempotency key for only 24 hours.
  */
-export async function listRefundsForPaymentIntent(paymentIntentId: string): Promise<Stripe.Refund[]> {
+export async function listRefundsForPaymentIntent(
+  paymentIntentId: string,
+  /** #4149: a bounded read with no retries (a webhook's or a nightly sweep's), as `retrieveRefund`'s is. Omitted, the request is unchanged. */
+  options?: { timeoutMs: number },
+): Promise<Stripe.Refund[]> {
   const stripe = await getStripe();
   const refunds: Stripe.Refund[] = [];
-  for await (const refund of stripe.refunds.list({ payment_intent: paymentIntentId, limit: 100 })) {
+  const list = options
+    ? stripe.refunds.list({ payment_intent: paymentIntentId, limit: 100 }, { timeout: options.timeoutMs, maxNetworkRetries: 0 })
+    : stripe.refunds.list({ payment_intent: paymentIntentId, limit: 100 });
+  for await (const refund of list) {
     refunds.push(refund);
   }
   return refunds;
@@ -273,9 +280,14 @@ export async function listRefundsForPaymentIntent(paymentIntentId: string): Prom
  * #3653: one refund, read back by Stripe's id - how the payments cron learns
  * that an organiser child refund Stripe accepted as `pending` later failed.
  */
-export async function retrieveRefund(refundId: string): Promise<Stripe.Refund> {
+export async function retrieveRefund(
+  refundId: string,
+  /** #4104: a background sweep bounds its read, as `getPaymentIntent`'s does (#3641). Omitted, the request is unchanged. */
+  options?: { timeoutMs: number },
+): Promise<Stripe.Refund> {
   const stripe = await getStripe();
-  return stripe.refunds.retrieve(refundId);
+  if (!options) return stripe.refunds.retrieve(refundId);
+  return stripe.refunds.retrieve(refundId, {}, { timeout: options.timeoutMs, maxNetworkRetries: 0 });
 }
 
 /**
@@ -297,6 +309,122 @@ export async function getPaymentIntent(
     options.expand ? { expand: options.expand } : {},
     { timeout: options.timeoutMs, maxNetworkRetries: 0 }
   );
+}
+
+/**
+ * #3954 review round 6: the intent an earlier request minted under an
+ * idempotency key whose replay Stripe refused (`idempotency_error`). Stripe
+ * cannot look an intent up by its key, so the minter stamps the key into the
+ * intent's metadata and this finds it by that stamp. A list, not the search
+ * API, because a list is read-after-write consistent; bounded to the intents
+ * created since `createdSince` and to `maxScanned` of them per scan.
+ *
+ * Round 8: by `customerId` first - the list is newest first across the whole
+ * account, so a busy club's other intents could fill `maxScanned` before the
+ * one sought is reached - THEN, not found there, across the account with no
+ * customer filter. The earlier request may have named a different customer
+ * than this caller resolved (the reason the row records the customer the found
+ * intent carries), and a customer filter alone would never find it.
+ */
+export async function findRecentPaymentIntentByMetadata({
+  metadataKey,
+  metadataValue,
+  createdSince,
+  customerId,
+  maxScanned = 1000,
+}: {
+  metadataKey: string;
+  metadataValue: string;
+  createdSince: Date;
+  /** The customer this caller would mint for: scanned first, never only. */
+  customerId?: string;
+  maxScanned?: number;
+}): Promise<Stripe.PaymentIntent | null> {
+  const stripe = await getStripe();
+  const scan = async (customer: string | undefined): Promise<Stripe.PaymentIntent | null> => {
+    let found: Stripe.PaymentIntent | null = null;
+    await scanRecentPaymentIntents(stripe, { customer, createdSince, maxScanned }, (intent) => {
+      if (intent.metadata?.[metadataKey] !== metadataValue) return false;
+      found = intent;
+      return true;
+    });
+    return found;
+  };
+  return (customerId ? await scan(customerId) : null) ?? (await scan(undefined));
+}
+
+/**
+ * #4036: EVERY recent intent `matches` accepts - for a caller that has no key
+ * stamped in the metadata to look for and so must tell one candidate from
+ * several (`mintOrdinaryAskIntent`). The same bounded scans as
+ * {@link findRecentPaymentIntentByMetadata}, but BOTH of them, merged: the
+ * customer's own intents (reliable however busy the account) and the
+ * account's (where an intent minted for another customer is), so a match under
+ * this customer never hides a second one under another.
+ *
+ * `complete` is false when either scan stopped at `maxScanned` with intents it
+ * never read: the list may then be missing a second match, and a caller that
+ * must know there is exactly one cannot rely on it (#4036 review).
+ */
+export async function listRecentPaymentIntentsMatching({
+  matches,
+  createdSince,
+  createdUntil,
+  customerId,
+  maxScanned = 1000,
+}: {
+  matches: (intent: Stripe.PaymentIntent) => boolean;
+  createdSince: Date;
+  /** #4079: no intent created after this is read, so later ones never fill the bound. */
+  createdUntil?: Date;
+  /** The customer this caller would mint for: scanned as well as the account. */
+  customerId?: string;
+  maxScanned?: number;
+}): Promise<{ intents: Stripe.PaymentIntent[]; complete: boolean }> {
+  const stripe = await getStripe();
+  const found = new Map<string, Stripe.PaymentIntent>();
+  let complete = true;
+  for (const customer of customerId ? [customerId, undefined] : [undefined]) {
+    const scan = await scanRecentPaymentIntents(stripe, { customer, createdSince, createdUntil, maxScanned }, (intent) => {
+      if (matches(intent)) found.set(intent.id, intent);
+      return false;
+    });
+    if (scan.truncated) complete = false;
+  }
+  return { intents: [...found.values()], complete };
+}
+
+/**
+ * The one bounded scan of recent intents both finders read: newest first, those
+ * created since `createdSince` (and, given `createdUntil`, no later), at most
+ * `maxScanned` that `visit` did not stop on. `visit` returns true to stop. `truncated` says the scan gave up at
+ * `maxScanned` - older matching intents may exist unread - rather than reading
+ * every intent in the window or being stopped by `visit`.
+ */
+async function scanRecentPaymentIntents(
+  stripe: Stripe,
+  {
+    customer,
+    createdSince,
+    createdUntil,
+    maxScanned,
+  }: { customer: string | undefined; createdSince: Date; createdUntil?: Date; maxScanned: number },
+  visit: (intent: Stripe.PaymentIntent) => boolean,
+): Promise<{ truncated: boolean }> {
+  let scanned = 0;
+  for await (const intent of stripe.paymentIntents.list({
+    ...(customer ? { customer } : {}),
+    created: {
+      gte: Math.floor(createdSince.getTime() / 1000),
+      ...(createdUntil ? { lte: Math.floor(createdUntil.getTime() / 1000) } : {}),
+    },
+    limit: 100,
+  })) {
+    if (visit(intent)) return { truncated: false };
+    scanned += 1;
+    if (scanned >= maxScanned) return { truncated: true };
+  }
+  return { truncated: false };
 }
 
 /**
@@ -459,6 +587,15 @@ export async function cancelSetupIntentIfCancellable(
 }
 
 /**
+ * How old a webhook signature's timestamp may be, in seconds, before the event
+ * is refused as a possible replay. Stripe's own default is 300, but it is passed
+ * explicitly because stripe-node 23 changed what an omitted or zero tolerance
+ * means in `verifyHeader`, and a later major could do the same to
+ * `constructEvent` (#4029). 0 would SKIP the check, so it must stay positive.
+ */
+export const STRIPE_WEBHOOK_TOLERANCE_SECONDS = 300;
+
+/**
  * Construct and verify a Stripe webhook event.
  *
  * NOTE (#2082): the export NAME `constructWebhookEvent` is intentionally
@@ -474,5 +611,10 @@ export async function constructWebhookEvent(
   webhookSecret: string
 ): Promise<Stripe.Event> {
   const stripe = await getStripe();
-  return stripe.webhooks.constructEvent(payload, signature, webhookSecret);
+  return stripe.webhooks.constructEvent(
+    payload,
+    signature,
+    webhookSecret,
+    STRIPE_WEBHOOK_TOLERANCE_SECONDS
+  );
 }

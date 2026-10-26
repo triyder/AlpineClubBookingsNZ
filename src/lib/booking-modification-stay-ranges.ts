@@ -93,6 +93,27 @@ export interface ResolvedModificationStayRanges<Guest extends LiveGuestStayRow> 
   added: NormalizedBookingGuestStayRange[];
 }
 
+/**
+ * The resolved range of the added guest at `index` of `expected` (#2800,
+ * `INV-MOD`). `added` lists every added guest in input order; if a caller's
+ * list falls out of step with it there is nothing safe to put in its place —
+ * an invented envelope would write, or price, nights the request never asked
+ * for — so it refuses rather than guessing.
+ */
+export function resolvedAddedGuestRange(
+  added: ReadonlyArray<NormalizedBookingGuestStayRange>,
+  index: number,
+  expected: number,
+): NormalizedBookingGuestStayRange {
+  const range = added[index];
+  if (range === undefined) {
+    throw new Error(
+      `Added guest ${index + 1} of ${expected} has no resolved stay range (${added.length} resolved).`,
+    );
+  }
+  return range;
+}
+
 function hasStayRangeValue(value: Date | string | null | undefined): boolean {
   if (value instanceof Date) return true;
   if (typeof value === "string") return value.trim() !== "";
@@ -114,6 +135,25 @@ export function deltaHasStayRangeInputs(input: StayRangeDeltaInput): boolean {
     (input.guestStayRanges?.some(entryHasStayRange) ?? false) ||
     (input.addGuests?.some(entryHasStayRange) ?? false)
   );
+}
+
+/**
+ * Which of a delta's `guestStayRanges` entries applies to each guest: THE rule,
+ * shared by the planner below and every surface that predicts it (#4157). A
+ * delta may name one guest more than once, and the LAST entry for a guest is
+ * the one applied; an earlier one is ignored.
+ *
+ * The planner applies it to the list it is given. A change request hands the
+ * planner only its applied entries — both dates, or a night set
+ * (`isAppliedChangeRequestRange`) — so every change-request surface (the submit
+ * checks, the kept nights, the officer's card) takes the last entry AFTER that
+ * filter, which is the entry approval applies. Judging any other entry
+ * describes or alters one approval never reads.
+ */
+export function effectiveStayRangeByGuest<Entry extends { guestId: string }>(
+  entries: ReadonlyArray<Entry> | null | undefined,
+): Map<string, Entry> {
+  return new Map((entries ?? []).map((entry) => [entry.guestId, entry]));
 }
 
 function toDate(value: Date | string | null | undefined, fallback: Date): Date {
@@ -214,9 +254,7 @@ export function resolveModificationStayRanges<Guest extends LiveGuestStayRow>(ar
     args.requested?.checkOut ?? toDate(args.input.checkOut, bookingCheckOut);
 
   const removeSet = new Set(args.input.removeGuestIds ?? []);
-  const rangeByGuestId = new Map(
-    (args.input.guestStayRanges ?? []).map((range) => [range.guestId, range]),
-  );
+  const rangeByGuestId = effectiveStayRangeByGuest(args.input.guestStayRanges);
   const remainingGuests = args.guests.filter((guest) => !removeSet.has(guest.id));
   const addGuests = args.input.addGuests ?? [];
 

@@ -21,7 +21,8 @@ import {
   toIsoDate,
 } from "./xero-booking-repair-utils";
 import { unsettledRefundNoteRows } from "@/lib/xero-refund-note-unsettled";
-import { isRefundRequestNoteOperation } from "@/lib/refund-request-credit-note";
+import { isRefundRequestNoteOperation, readRefundRequestIdFromOperation } from "@/lib/refund-request-credit-note";
+import { refundRequestNoteVoidedWithNoLive } from "@/lib/xero-refund-note-status";
 import { isResolvedInXero } from "@/lib/xero-operation-resolution";
 import { toRetryableOperationMatch } from "./xero-booking-repair-object-resolution";
 
@@ -110,7 +111,8 @@ export function addResolvedInXeroFinding(
  * one read-back-then-settle. A part-settled note's remainder is settled in
  * Xero by hand; its action then only reads the note back and records it, never
  * paying. `refundPaymentLinks` are the payment's `REFUND_PAYMENT` links active
- * or not (`refundPaymentLinkWhere`), the evidence the report reads too.
+ * or not (`refundPaymentLinkWhere`), the evidence the report reads too;
+ * `paymentLinks` are its active links (#4195).
  */
 export function addUnsettledRefundCreditNoteFindings(
   findings: MutableFinding[],
@@ -118,6 +120,7 @@ export function addUnsettledRefundCreditNoteFindings(
   bookingId: string,
   refundPaymentLinks: XeroObjectLinkRecord[],
   paymentOperations: XeroOperationRecord[],
+  paymentLinks: XeroObjectLinkRecord[],
 ) {
   for (const row of unsettledRefundNoteRows(paymentOperations, refundPaymentLinks)) {
     const partSettled = row.kind === "part-settled";
@@ -155,12 +158,17 @@ export function addUnsettledRefundCreditNoteFindings(
     ) {
       continue;
     }
-    const match = toRetryableOperationMatch(operation);
+    // #4195, #4214 (owner decision): once Xero voided the request's own note
+    // and nothing live replaces it, an officer decides - no Retry, never auto.
+    const voided = refundRequestNoteVoidedWithNoLive(readRefundRequestIdFromOperation(operation)!, paymentOperations, paymentLinks);
+    const match = voided ? null : toRetryableOperationMatch(operation);
     const actionKeys = match ? [addAction(actionMap, buildRetryAction(bookingId, match)).key] : [];
     addFinding(findings, {
       code: "BLOCKED_BY_XERO_OPERATION",
       severity: "warning",
-      summary: match
+      summary: voided
+        ? "A refund request's Xero refund credit note was voided in Xero and nothing live replaces it. An officer decides whether to raise a fresh note (Xero Operations, #4214); this tool never raises one."
+        : match
         ? "A refund request's Xero refund credit note failed or did not finish. Retry it to raise the note for the amount paid back."
         : "A refund request's Xero refund credit note failed or did not finish, and cannot be retried here. Raise it by hand in Xero.",
       safeToAutoApply: Boolean(match),

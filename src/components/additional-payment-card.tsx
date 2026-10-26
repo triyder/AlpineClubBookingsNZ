@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatCents } from "@/lib/utils";
@@ -11,6 +11,13 @@ import {
   isAdditionalPaymentAlreadyMade,
   isPaymentProcessing,
 } from "@/lib/payment-recovery-contract";
+
+/** The same secret-response projection that drives the form (`INV-ADDPAY-023`). */
+export type AdditionalPaymentCardDisplay =
+  | { kind: "loading" }
+  | { kind: "payable"; amountCents: number }
+  | { kind: "paid" | "processing"; message: string }
+  | { kind: "unavailable" };
 
 interface AdditionalPaymentCardProps {
   bookingId: string;
@@ -26,6 +33,7 @@ interface AdditionalPaymentCardProps {
    * browser kept the FIRST edit's client secret - and confirmed it.
    */
   additionalAmountCents: number;
+  onDisplayChange?: (display: AdditionalPaymentCardDisplay) => void;
 }
 
 /**
@@ -35,6 +43,7 @@ interface AdditionalPaymentCardProps {
 export function AdditionalPaymentCard({
   bookingId,
   additionalAmountCents,
+  onDisplayChange,
 }: AdditionalPaymentCardProps) {
   const format = useClubFormat();
   const router = useRouter();
@@ -50,6 +59,12 @@ export function AdditionalPaymentCard({
   const [notice, setNotice] = useState<
     { kind: "paid" | "processing"; message: string } | null
   >(null);
+  const display = useMemo<AdditionalPaymentCardDisplay>(() => paymentComplete
+    ? { kind: "paid", message: "Your additional payment has been processed." }
+    : notice ?? (loading ? { kind: "loading" } : clientSecret && askAmountCents !== null
+      ? { kind: "payable", amountCents: askAmountCents } : { kind: "unavailable" }),
+  [paymentComplete, notice, loading, clientSecret, askAmountCents]);
+  useEffect(() => { onDisplayChange?.(display); }, [onDisplayChange, display]);
 
   useEffect(() => {
     let active = true;
@@ -146,7 +161,7 @@ export function AdditionalPaymentCard({
         {paymentComplete ? (
           <div className="rounded-md bg-success-3 p-4 text-sm text-success-11">
             <p className="font-medium">Payment successful!</p>
-            <p className="mt-1">Your additional payment has been processed.</p>
+            <p className="mt-1">{display.kind === "paid" ? display.message : null}</p>
           </div>
         ) : notice ? (
           <div

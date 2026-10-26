@@ -1,11 +1,9 @@
-import { PaymentTransactionKind } from "@prisma/client";
-import { bookingOwner } from "@/lib/booking-owner";
 import {
   announceAutomaticLateCaptureRefund,
   recordAutomaticLateCaptureRefund,
-  type CancelledBookingLateCapture,
 } from "@/lib/cancelled-booking-late-capture";
 import type { ClubFormat } from "@/lib/club-format";
+import { describeLateCaptureFromBooking } from "@/lib/late-capture-record-recovery";
 import { noteLateCaptureRefunds } from "@/lib/late-capture-refund-credit-note";
 import { readLateCaptureXeroReceipt } from "@/lib/late-capture-xero-receipt";
 import logger from "@/lib/logger";
@@ -96,18 +94,13 @@ export async function recordAndNoteRepairedLateCaptureRefunds(params: {
       where: { paymentId, stripePaymentIntentId: paymentIntentId },
       select: { kind: true },
     });
-    const capture: CancelledBookingLateCapture = {
+    const capture = describeLateCaptureFromBooking(booking, {
       bookingId,
       paymentId,
       paymentIntentId,
       amountCents,
-      memberName: readMemberName(booking),
-      checkIn: booking?.checkIn ?? new Date(0),
-      checkOut: booking?.checkOut ?? new Date(0),
-      openingDeletedAt: booking?.deletedAt ?? null,
-      captureKind:
-        transaction?.kind === PaymentTransactionKind.ADDITIONAL ? "modification" : "primary",
-    };
+      transactionKind: transaction?.kind ?? null,
+    });
     const record = await recordAutomaticLateCaptureRefund(capture);
     if (!record.recorded) {
       outcome.recordFailed.push(paymentIntentId);
@@ -141,21 +134,4 @@ export async function recordAndNoteRepairedLateCaptureRefunds(params: {
     }
   }
   return outcome;
-}
-
-function readMemberName(
-  booking: {
-    memberId: string | null;
-    member: { firstName: string; lastName: string } | null;
-    organisation: { name: string; email: string | null } | null;
-  } | null,
-): string {
-  if (!booking) return "unknown member";
-  try {
-    const owner = bookingOwner(booking);
-    return `${owner.member.firstName} ${owner.member.lastName}`.trim();
-  } catch (err) {
-    logger.warn({ err }, "Repaired late-capture refund has no readable booking owner");
-    return "unknown member";
-  }
 }

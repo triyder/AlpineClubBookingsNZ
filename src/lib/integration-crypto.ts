@@ -11,7 +11,7 @@
  *   real `crypto.hkdfSync` here. We reuse two-factor's GCM *storage format*
  *   (version:iv:authTag:ciphertext hex tuple) and its per-write random IV, and
  *   nothing else. The HKDF info-label namespace here
- *   (`integration-credential:v1`, `xero-token-key:v1`) is disjoint from
+ *   (`integration-credential:v1`; `xero-token-key:v1` until #3806 R2) is disjoint from
  *   two-factor's SHA256 concat labels (`:two-factor-secret:v1`,
  *   `:two-factor-code:v1`), so the two schemes coexist with fully independent
  *   derived keys.
@@ -52,13 +52,16 @@ const KEY_LENGTH = 32;
  */
 const HKDF_SALT = Buffer.from("acb:integration-credential:hkdf-salt:v1", "utf8");
 
-/** Enumerated, versioned HKDF info labels. Namespaces stay disjoint. */
+/**
+ * Enumerated, versioned HKDF info labels. Namespaces stay disjoint.
+ *
+ * RETIRED, never to be reused: `xero-token-key:v1`, the wrapped Xero token key's
+ * label (#3806 R2 stopped writing the ciphertext it protected). A leftover row
+ * still decrypts, because a decrypt derives from the label stored on the row.
+ */
 export const INTEGRATION_CREDENTIAL_LABEL = "integration-credential:v1";
-export const XERO_TOKEN_KEY_LABEL = "xero-token-key:v1";
 
-export type IntegrationLabelVersion =
-  | typeof INTEGRATION_CREDENTIAL_LABEL
-  | typeof XERO_TOKEN_KEY_LABEL;
+export type IntegrationLabelVersion = typeof INTEGRATION_CREDENTIAL_LABEL;
 
 export type AuthSecretSource = "AUTH_SECRET" | "NEXTAUTH_SECRET";
 

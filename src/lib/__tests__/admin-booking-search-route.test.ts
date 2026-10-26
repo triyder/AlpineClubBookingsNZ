@@ -64,6 +64,20 @@ describe("Admin booking search route", () => {
     expect(mocks.prisma.booking.findMany).not.toHaveBeenCalled();
   });
 
+  it("matches a typed booking id prefix literally, so `_` or `%` is not a wildcard (#4146)", async () => {
+    mocks.prisma.booking.findMany.mockResolvedValue([]);
+
+    await searchBookings(new NextRequest("http://localhost/api/admin/bookings/search?q=cm_1%25"));
+
+    expect(mocks.prisma.booking.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          OR: expect.arrayContaining([{ id: { startsWith: "cm\\_1\\%" } }]),
+        }),
+      }),
+    );
+  });
+
   it("searches bookings by booking reference number", async () => {
     mocks.prisma.booking.findMany.mockResolvedValue([
       {

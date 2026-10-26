@@ -340,8 +340,9 @@ invariants hold in addition to every #2365/#2524/#2525 invariant above:
   (`src/lib/booking-modification-stay-ranges.ts`) is called by
   `resolveTargetDates`, by `prepareGuestPlan`, by the freeze, and — since #2563 —
   by the modification PREVIEW (`POST /api/bookings/[id]/modify-quote`), which
-  until then assembled its own copy of the same rules. Four surfaces, one
-  implementation: the price a member is quoted, the party an officer approves and
+  until then assembled its own copy of the same rules, by the change-request
+  route since #4030, and by the edit's promo preview since #4199. Six
+  surfaces, one implementation: the price a member is quoted, the party an officer approves and
   the party the save writes are the same arithmetic, and the route keeps only the
   presentation half (mapping the resolver's structured range error onto its 400
   body, with the resolver's own wording so preview and save refuse identically).

@@ -21,7 +21,9 @@
  * WHAT COUNTS AS A SITE. Three ways to mutate a stored credential:
  *
  *  1. `setIntegrationCredential(params)`     — the store's upsert/CAS writer
- *  2. `ensureGeneratedCredential(params)`    — the store's create-only generator
+ *  2. `ensureGeneratedCredential(params)`    — a create-only generator (its one
+ *     caller, the wrapped Xero token key, and the module were retired by #3806
+ *     R2; the name stays recognised so a reintroduced one is still a site)
  *  3. `deleteIntegrationCredential(params)`  — the store's remover
  *
  * and the in-transaction forms of 1 and 3 (`…InTransaction(params)`, #3454),
@@ -89,13 +91,13 @@ import {
  *
  * This is an exemption from the one check that can see a writer which skips the
  * store, so adding a module here is a reviewed change and the contract test pins
- * the count. Three today: the store, the compare-and-set claim, and the
- * create-only generator.
+ * the count. Two today: the store and the compare-and-set claim. (The
+ * create-only generator was the third until #3806 R2 retired the wrapped Xero
+ * token key, its only caller, and the module with it.)
  */
 export const CREDENTIAL_BOUNDARY_MODULES = [
   "src/lib/integration-credentials.ts",
   "src/lib/integration-credential-claim.ts",
-  "src/lib/integration-credential-generate.ts",
 ] as const;
 
 /** The mutators every credential writer must go through. */

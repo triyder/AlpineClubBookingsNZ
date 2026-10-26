@@ -40,10 +40,20 @@ import { buildXeroIdempotencyKey } from "@/lib/xero-sync";
  * correlation key or a Xero idempotency key with the invoice it follows - which
  * is what stops the two being taken for one another in either direction.
  */
-export type XeroSupplementaryInvoiceAnchorModel =
-  | "BookingModification"
-  | "Booking"
-  | "ManualRefundTask";
+const KEY_PREFIX_BY_ANCHOR = { BookingModification: "booking-mod", Booking: "booking", ManualRefundTask: "review-task" } as const;
+export type XeroSupplementaryInvoiceAnchorModel = keyof typeof KEY_PREFIX_BY_ANCHOR;
+
+function supplementaryInvoiceKeyParts(localModel: XeroSupplementaryInvoiceAnchorModel, localId: string) {
+  return [KEY_PREFIX_BY_ANCHOR[localModel], localId,
+    localModel === "ManualRefundTask" ? "supplementary-shortfall-invoice" : "supplementary-invoice"] as const;
+}
+
+/** Recognise a legacy operation through the same anchor/kind prefix its writer mints. */
+export function isXeroSupplementaryInvoiceKeyForAnchor(key: string | null, localModel: string | null, localId: string | null): boolean {
+  if (!key || !localModel || !localId || !Object.hasOwn(KEY_PREFIX_BY_ANCHOR, localModel)) return false;
+  const prefix = buildXeroIdempotencyKey(...supplementaryInvoiceKeyParts(localModel as XeroSupplementaryInvoiceAnchorModel, localId));
+  return key.startsWith(`${prefix}:`);
+}
 
 export function buildXeroSupplementaryInvoiceKey({
   localModel,
@@ -57,18 +67,10 @@ export function buildXeroSupplementaryInvoiceKey({
   changeFeeCents: number;
 }): string {
   return buildXeroIdempotencyKey(
-    localModel === "BookingModification"
-      ? "booking-mod"
-      : localModel === "ManualRefundTask"
-        ? "review-task"
-        : "booking",
-    localId,
     // A DIFFERENT segment, not only a different id: the second ask is a
     // different kind of document to a person reading an operation row, and a key
     // that only differed in the id would read as the same invoice re-keyed.
-    localModel === "ManualRefundTask"
-      ? "supplementary-shortfall-invoice"
-      : "supplementary-invoice",
+    ...supplementaryInvoiceKeyParts(localModel, localId),
     priceDiffCents,
     changeFeeCents,
     "v1"

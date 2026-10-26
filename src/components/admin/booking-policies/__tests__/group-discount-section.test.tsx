@@ -19,6 +19,7 @@ vi.mock("@/hooks/use-admin-area-edit-access", () => ({
 
 import { GroupDiscountSection } from "../group-discount-section";
 import { ADMIN_VIEW_ONLY_SECTION_HEADING } from "@/components/admin/view-only-action";
+import { expectToHoldFocus } from "@/lib/__tests__/helpers/focus";
 
 // Reference implementation of the canonical settings-section pattern (#2136).
 // The hook suite covers the draft/snapshot mechanics; this covers THIS card's
@@ -227,6 +228,41 @@ describe("GroupDiscountSection (#2136)", () => {
     // The server said the club has switched later edits off; the form must show
     // the server's answer, not the draft's (#2770).
     expect(applyToEditsBox().checked).toBe(false);
+  });
+
+  it("Edit moves keyboard focus to the first field it enabled (#4115)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify(LOADED), { status: 200 })),
+    );
+    await renderLoaded();
+    // Loading the section moves nothing.
+    expect(document.activeElement).toBe(document.body);
+
+    // A keyboard user: Edit holds focus, and pressing it unmounts it. This
+    // section has no reveal wiring of its own; the shared hook moves focus.
+    const edit = screen.getByRole("button", { name: "Edit" });
+    edit.focus();
+    fireEvent.click(edit);
+
+    await expectToHoldFocus(enabledBox());
+  });
+
+  it("a view-only admin's disabled Edit opens nothing and moves no focus (#4115)", async () => {
+    hookMock.canEdit = false;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify(LOADED), { status: 200 })),
+    );
+    await renderLoaded();
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+
+    await expectToHoldFocus(document.body);
+    expect(enabledBox().disabled).toBe(true);
+    expect(
+      screen.queryByRole("button", { name: "Save Group Discount" }),
+    ).toBeNull();
   });
 
   it("canEdit=false disables Edit and shows the view-only notice", async () => {

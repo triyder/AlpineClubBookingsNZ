@@ -248,10 +248,10 @@ export function MaintenanceQuestionsSection() {
     <div>
       {viewOnlyBanner}
       {feedback}
-      <Card>
+      <Card {...section.sectionRegionProps}>
         <CardHeader className="flex flex-row items-start justify-between gap-3">
           <div>
-            <CardTitle>What the form asks</CardTitle>
+            <CardTitle {...section.titleProps}>What the form asks</CardTitle>
             <CardDescription>
               Both the members&apos; form and the QR one ask these, in this order,
               after &quot;what needs fixing?&quot;. Up to {MAX_MAINTENANCE_QUESTIONS}.
@@ -264,6 +264,7 @@ export function MaintenanceQuestionsSection() {
               variant="outline"
               size="sm"
               onClick={section.startEditing}
+              {...section.editTriggerProps}
             >
               Edit
             </ViewOnlyActionButton>

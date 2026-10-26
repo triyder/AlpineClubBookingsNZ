@@ -1,7 +1,8 @@
 import { type Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
-import { buildXeroContactUrl, buildXeroInvoiceUrl } from "@/lib/xero-links";
+import { buildXeroObjectUrl } from "@/lib/xero-links";
+import { canonicalXeroWebhookEventCategory } from "@/lib/xero-webhook-categories";
 import { completeXeroSyncOperation, failXeroSyncOperation, startXeroSyncOperation } from "@/lib/xero-sync";
 import { redactSensitiveText } from "@/lib/redact-sensitive-json";
 import { isStaleProcessingXeroInboundEvent } from "@/lib/xero-stale-operations";
@@ -50,6 +51,21 @@ function buildInboundXeroObjectType(eventCategory: string | null): string | null
   return normalized || null;
 }
 
+function inboundEventObjectUrl(
+  event: Pick<StoredXeroInboundEvent, "eventCategory" | "resourceId">,
+): string | null {
+  if (!event.resourceId) {
+    return null;
+  }
+
+  const category = canonicalXeroWebhookEventCategory(event.eventCategory);
+  if (category === "CONTACT" || category === "INVOICE" || category === "CREDITNOTE") {
+    return buildXeroObjectUrl(category, event.resourceId);
+  }
+
+  return null;
+}
+
 async function processXeroInboundEvent(
   event: StoredXeroInboundEvent,
   format: ClubFormat,
@@ -62,16 +78,28 @@ async function processXeroInboundEvent(
     };
   }
 
-  switch (event.eventCategory) {
+  // Xero's wire value for a credit note is CREDITNOTE. canonicalXeroWebhookEventCategory
+  // also accepts the historical CREDIT_NOTE spelling so a row already stored
+  // that way still reconciles.
+  switch (canonicalXeroWebhookEventCategory(event.eventCategory)) {
     case "CONTACT":
       return reconcileXeroContact(event.resourceId);
     case "INVOICE":
       return reconcileXeroInvoice(event.resourceId, format);
     case "PAYMENT":
       return reconcileXeroPayment(event.resourceId);
-    case "CREDIT_NOTE":
+    case "CREDITNOTE":
       return reconcileXeroCreditNote(event.resourceId);
     default:
+      logger.warn(
+        {
+          inboundEventId: event.id,
+          eventCategory: event.eventCategory,
+          eventType: event.eventType,
+          resourceId: event.resourceId,
+        },
+        "No inbound reconciliation handler for Xero webhook category",
+      );
       return {
         handled: false,
         kind: event.eventCategory ?? "UNKNOWN",
@@ -246,12 +274,7 @@ export async function processStoredXeroInboundEvents(options?: {
         responsePayload: reconcileResult,
         xeroObjectType: buildInboundXeroObjectType(event.eventCategory),
         xeroObjectId: event.resourceId,
-        xeroObjectUrl:
-          event.eventCategory === "CONTACT" && event.resourceId
-            ? buildXeroContactUrl(event.resourceId)
-            : event.eventCategory === "INVOICE" && event.resourceId
-              ? buildXeroInvoiceUrl(event.resourceId)
-              : null,
+        xeroObjectUrl: inboundEventObjectUrl(event),
       });
       await markStoredInboundEventProcessed(event.id);
       result.succeeded += 1;

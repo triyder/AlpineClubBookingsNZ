@@ -1,8 +1,77 @@
+import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { posix, resolve } from "node:path";
 
 function readRepoFile(path: string): string {
   return readFileSync(resolve(process.cwd(), path), "utf8");
+}
+
+// Codex's default `project_doc_max_bytes`. `.codex/config.toml` raises it, but
+// only for a trusted project, so the default is the budget every launch gets.
+const CODEX_DEFAULT_BUDGET = 32_768;
+// #3905 decision 4: the root starts at or under 24 KiB, leaving the rest of
+// the budget for nested files. Raising it to the ceiling is an owner call.
+const ROOT_INITIAL_TARGET = 24_576;
+const INSTRUCTION_FILE = /(?:^|\/)AGENTS(?:\.override)?\.md$/;
+
+/**
+ * Each directory holding an instruction file, with the combined bytes Codex
+ * loads when started there: one file per directory from the root down, an
+ * `AGENTS.override.md` taking its directory's place. Returns the chains over
+ * the default budget as `"<dir>: <bytes> bytes"` (the root is `""`).
+ */
+function oversizedInstructionChains(sizes: ReadonlyMap<string, number>): string[] {
+  const perDirectory = new Map<string, number>();
+  for (const [path, bytes] of sizes) {
+    const dir = posix.dirname(path) === "." ? "" : posix.dirname(path);
+    if (path.endsWith("AGENTS.override.md") || !perDirectory.has(dir)) perDirectory.set(dir, bytes);
+  }
+  const oversized: string[] = [];
+  for (const dir of perDirectory.keys()) {
+    const ancestors = dir === "" ? [""] : ["", ...dir.split("/").map((_, i, parts) => parts.slice(0, i + 1).join("/"))];
+    const total = ancestors.reduce((sum, ancestor) => sum + (perDirectory.get(ancestor) ?? 0), 0);
+    if (total > CODEX_DEFAULT_BUDGET) oversized.push(`${dir}: ${total} bytes`);
+  }
+  return oversized;
+}
+
+/**
+ * Clauses that make a number of review lenses or reviewers mandatory. Each
+ * count before "lens(es)", "reviewer(s)" or "reviews" (up to three words
+ * between) is judged only by the phrase that governs it: the words back to the
+ * nearest comma or conjunction ("and", "but", "after", "when"…), and forward
+ * to the next one. It is flagged when that phrase carries a mandatory word
+ * ("must", "gets", "use"…), ends in a label or table cell, or says "is/are
+ * required" after the count, unless the same phrase is permissive ("may
+ * use"), negated ("No task requires") or past ("formerly got"). So an
+ * unrelated "must not edit" or "the old rule was removed" earlier in the
+ * sentence neither clears nor triggers it. A tripwire, not a parser: clauses
+ * split at . ; ! ? and —.
+ */
+function fixedLensCounts(text: string): string[] {
+  const countedNoun =
+    /\b(?:one|two|three|four|five|a single|a second|a third|\d+)[\s-]+(?:[\w-]+\s+){0,3}?(?:lens(?:es)?|reviewers?|reviews|review agents?)\b/gi;
+  const boundary = /,|\b(?:and|but|or|while|when|after|before|then|unless|if|so)\b/i;
+  const mandatory =
+    /\b(?:must|shall|always|gets?|requires?|required|needs?|uses?|runs?|dispatch(?:es)?|at least|minimum(?: of)?|mandatory|compulsory)\b|[:|]\s*$/i;
+  const requiredAfter = /^\s*(?:are|is)\s+(?:required|mandatory|compulsory|needed)\b/i;
+  const permissive = /\b(?:may|might|can|could|optionally)\b/i;
+  const negation = /\b(?:no|not|never|nor|without|none|zero|neither)\b|n't\b/i;
+  const historical = /\b(?:formerly|previously|used to|was|were|removed|retired|replaced|earlier|old)\b/i;
+  return text
+    .replace(/\s+/g, " ")
+    .split(/[.;!?]\s|\s—\s/)
+    .filter((clause) => {
+      // "never fewer than two" sets a floor, so it reads as "at least two".
+      const normalised = clause.replace(/\b(?:never|no|not)\s+(?:fewer|less)\s+than\b/gi, "at least");
+      return [...normalised.matchAll(countedNoun)].some((match) => {
+        const governing = normalised.slice(0, match.index).split(boundary).pop() ?? "";
+        const following = normalised.slice(match.index + match[0].length).split(boundary)[0] ?? "";
+        if (permissive.test(governing) || negation.test(governing) || historical.test(governing)) return false;
+        return mandatory.test(governing) || requiredAfter.test(following);
+      });
+    })
+    .map((clause) => clause.trim());
 }
 
 describe("repository agent workflow contract", () => {
@@ -34,15 +103,161 @@ describe("repository agent workflow contract", () => {
     const bytes = Buffer.byteLength(readRepoFile("AGENTS.md"), "utf8");
     expect(
       bytes,
-      `AGENTS.md is ${bytes} bytes; Codex reads only the first 32,768 by default. ` +
+      `AGENTS.md is ${bytes} bytes; Codex reads only the first ${CODEX_DEFAULT_BUDGET} by default. ` +
         "Move detail to a routed document instead of growing the core.",
-    ).toBeLessThanOrEqual(32_768);
+    ).toBeLessThanOrEqual(CODEX_DEFAULT_BUDGET);
+    expect(
+      bytes,
+      `AGENTS.md is ${bytes} bytes, over the ${ROOT_INITIAL_TARGET}-byte starting size (#3905 decision 4). ` +
+        "Move detail to a routed document instead of growing the core.",
+    ).toBeLessThanOrEqual(ROOT_INITIAL_TARGET);
 
     const agents = readRepoFile("AGENTS.md");
     // A session can see whether the import worked; the core tells it to look.
     expect(agents).toContain("/context");
     // The full invariant index is looked up, not read in full every session.
     expect(agents).toMatch(/grep -n "INV-[A-Z]+-\d{3}" docs\/DOMAIN_INVARIANTS\.md/);
+  });
+
+  /*
+    #3905 decision 4: the root's ceiling alone does not prove Codex reads every
+    rule. Codex concatenates one instruction file per directory from the repo
+    root down to where it starts (AGENTS.override.md replacing AGENTS.md in the
+    same directory) and stops at the combined budget, so a nested file under a
+    root near the ceiling is silently truncated. Every chain must fit.
+  */
+  it("keeps every combined Codex instruction chain within the default budget", () => {
+    const tracked = execFileSync("git", ["ls-files", "-z"], { encoding: "utf8" }).split("\0");
+    const sizes = new Map(
+      tracked
+        .filter((path) => INSTRUCTION_FILE.test(path))
+        .map((path) => [path, Buffer.byteLength(readRepoFile(path), "utf8")] as const),
+    );
+    expect(sizes.has("AGENTS.md")).toBe(true);
+    expect(oversizedInstructionChains(sizes)).toEqual([]);
+  });
+
+  it("measures instruction chains the way Codex loads them", () => {
+    // Positive: a root alone at the ceiling fits; a nested file fits beside a small root.
+    expect(oversizedInstructionChains(new Map([["AGENTS.md", CODEX_DEFAULT_BUDGET]]))).toEqual([]);
+    expect(
+      oversizedInstructionChains(new Map([["AGENTS.md", 24_000], ["docs/AGENTS.md", 8_000]])),
+    ).toEqual([]);
+    // Negative: the root fits on its own but the nested chain does not.
+    expect(
+      oversizedInstructionChains(new Map([["AGENTS.md", 30_000], ["src/lib/AGENTS.md", 3_000]])),
+    ).toEqual(["src/lib: 33000 bytes"]);
+    // An override replaces its directory's AGENTS.md rather than adding to it…
+    expect(
+      oversizedInstructionChains(
+        new Map([["AGENTS.md", 30_000], ["AGENTS.override.md", 2_000], ["src/AGENTS.md", 2_000]]),
+      ),
+    ).toEqual([]);
+    // …but an oversized override is still caught, even beside a small AGENTS.md
+    // (which would pass if the override were ignored).
+    expect(oversizedInstructionChains(new Map([["AGENTS.override.md", 40_000]]))).toEqual([": 40000 bytes"]);
+    expect(
+      oversizedInstructionChains(new Map([["AGENTS.md", 2_000], ["AGENTS.override.md", 40_000]])),
+    ).toEqual([": 40000 bytes"]);
+  });
+
+  /*
+    #3905 CP1: coordination is on demand. State lives on GitHub and in git, no
+    model-powered supervisor runs between tasks, and a reservation never times
+    out into someone else's hands. Reviewer counts are the lane's choice (owner
+    decision 3): no fixed count may come back into the core or the guides.
+  */
+  it("keeps coordination on demand, reservations held and lens counts discretionary", () => {
+    const agents = readRepoFile("AGENTS.md").replace(/\s+/g, " ");
+    const coordination = readRepoFile("docs/agents/COORDINATION.md").replace(/\s+/g, " ");
+    expect(agents).toContain("no model-powered supervisor runs between tasks");
+    expect(agents).toContain("Reservations hold until released");
+    expect(agents).toContain("Never take over, push to, reset or rebase another lane's branch or worktree");
+    expect(agents).toContain("Unknown occupancy is not a free slot.");
+    expect(agents).toContain("no fixed count (owner decision, #3905)");
+    expect(agents).toContain("an issue never grows on its own");
+    expect(coordination).toContain("never runs as a recurring loop, a scheduled wakeup or a standing supervisor");
+    expect(coordination).toContain("not a `thatskiff33` comment");
+
+    const routingRow = readRepoFile("AGENTS.md")
+      .split("\n")
+      .find((line) => line.startsWith("| Coordinating lanes"));
+    expect(routingRow).toContain("(docs/agents/COORDINATION.md)");
+
+    // Every agent guide, the reviewer roles and the PR template: the places a
+    // fixed count would come back.
+    const agentDocs = execFileSync("git", ["ls-files", "-z", "docs/agents/**.md"], { encoding: "utf8" })
+      .split("\0")
+      .filter(Boolean);
+    expect(agentDocs).toContain("docs/agents/COORDINATION.md");
+    for (const path of [
+      "AGENTS.md",
+      ...agentDocs,
+      ".claude/agents/reviewer.md",
+      ".codex/agents/reviewer.toml",
+      ".github/pull_request_template.md",
+    ]) {
+      expect(fixedLensCounts(readRepoFile(path)), path).toEqual([]);
+    }
+  });
+
+  // #4392 (owner decision, 26 Oct 2026): a Sekreton lane writes as its app and
+  // runs the whole pipeline itself; its text is agent text, never owner authority.
+  it("names sekreton[bot] as an agent identity whose lane runs the whole pipeline", () => {
+    const agents = readRepoFile("AGENTS.md").replace(/\s+/g, " ");
+    const coordination = readRepoFile("docs/agents/COORDINATION.md").replace(/\s+/g, " ");
+    const issueWorkflow = readRepoFile("docs/agents/ISSUE_WORKFLOW.md").replace(/\s+/g, " ");
+    expect(agents).toContain("agents are `thatskiff33-agents` or `sekreton[bot]`, the owner is `thatskiff33`");
+    expect(issueWorkflow).toContain("its text is never owner authorisation");
+    expect(coordination).toContain("runs the whole pipeline itself");
+    expect(coordination).toContain("Another lane finishes a Sekreton PR only when the owner reassigns it on the issue");
+    expect(coordination).toContain("never as a push to its branch");
+  });
+
+  it("recognises a fixed reviewer count however it is worded", () => {
+    // The wording CP1 removed, close variants, and the two the independent
+    // review of #4379 showed the first detector missed, are caught…
+    for (const mandatoryCount of [
+      "Critical work gets three distinct lenses; standard work two",
+      "docs-only work gets one lens",
+      "dispatch at least 2 review lenses",
+      "requires two reviewers",
+      "Use two reviewers for every PR",
+      "Critical work must have three review lenses",
+      "Every money PR needs at least two independent reviews",
+      "Always run a single reviewer on docs work",
+      "Critical work must have three lenses, not two",
+      "Critical work: three lenses",
+      "| Critical | 3 lenses |",
+      "Money work gets a three-lens review",
+      "Two lenses are required for schema work",
+      "Auth work requires two additional lenses",
+      "Run never fewer than two lenses on money work",
+      // The delta review of #4379 (CP1-R1): history and negation elsewhere in
+      // the sentence must not hide a requirement.
+      "After the old rule was removed, critical work must use three reviewers",
+      "Reviewers must not edit files and must use two lenses",
+      "If a PR touches money, it must use two reviewers",
+    ]) {
+      expect(fixedLensCounts(mandatoryCount), mandatoryCount).toEqual([mandatoryCount.split(";")[0]]);
+    }
+    // …while negations, discretion, history and one lens's brief are not.
+    for (const notMandatory of [
+      "No task requires two reviewers",
+      "There is no rule that work must get three lenses",
+      "A lane never needs two reviewers by default",
+      "Critical work formerly got three distinct lenses; that rule was removed",
+      "The old rule required three lenses for critical work",
+      "picks how many further lenses, and which",
+      "`INV-SSOT` is in one review's brief on every PR",
+      "found independently by two lenses",
+      "zero further lenses is allowed when justified",
+      // CP1-R1: permission is not a requirement.
+      "A lane may use two reviewers when useful",
+      "Critical work could use three lenses if the change is subtle",
+    ]) {
+      expect(fixedLensCounts(notMandatory), notMandatory).toEqual([]);
+    }
   });
 
   it("keeps the safety-critical rules in the always-read core", () => {

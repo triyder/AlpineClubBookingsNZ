@@ -507,11 +507,11 @@ function S3BackupCard({
   const editingDisabled = !section.editing || section.saving;
 
   return (
-    <Card>
+    <Card {...section.sectionRegionProps}>
       <CardHeader>
         <div className="flex items-center justify-between">
           <div>
-            <CardTitle>AWS S3 Backup</CardTitle>
+            <CardTitle {...section.titleProps}>AWS S3 Backup</CardTitle>
             <CardDescription>
               The enabled switch and retention are operational settings; the S3
               destination and credentials are Full-Admin only.
@@ -523,7 +523,7 @@ function S3BackupCard({
               describeReason={false}
               variant="outline"
               size="sm"
-              onClick={section.startEditing}
+              onClick={section.startEditing} {...section.editTriggerProps}
             >
               Edit
             </ViewOnlyActionButton>

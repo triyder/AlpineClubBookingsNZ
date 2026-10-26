@@ -4,12 +4,13 @@ import type { CalendarDate } from "@/lib/club-time";
 
 import { addDaysDateOnly, parseDateOnly } from "@/lib/date-only";
 import { storedDateOnly } from "@/lib/stored-calendar-day";
-import { checkCapacityForGuestRanges } from "@/lib/capacity";
+import { checkCapacityForGuestRanges, type CapacityProposedGuest } from "@/lib/capacity";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
 import { MEMBER_ACCESS_ROLE_SELECT } from "@/lib/access-role-definitions";
 import { resolveHostingCoverageIncidents } from "@/lib/adult-member-hosting-coverage-incidents";
 import { recordAdultMemberHostingReviewDecision } from "@/lib/adult-member-hosting-review";
 import { createConfirmedBooking } from "@/lib/booking-create";
+import { readBookingAmountOwed } from "@/lib/booking-amount-owed";
 import {
   modifyBookingBatch,
   type BatchModificationPreTransaction,
@@ -43,7 +44,6 @@ import {
   DEFAULT_BOOKING_PAYMENT_METHOD,
   type BookingPaymentMethod,
 } from "@/lib/booking-payment-methods";
-import type { GuestStayRange } from "@/lib/booking-guest-stay-ranges";
 import type { PrismaTransactionClient } from "@/lib/db-transaction";
 import type { BookingModificationSettlementMethod } from "@/lib/booking-modify-validation";
 import type { HostingCoverageOverrideInput } from "@/lib/adult-member-hosting-same-owner";
@@ -187,8 +187,8 @@ function approvalDependantIdentityRefusal(
 const BOOKABLE_AGE_TIERS = new Set<string>(BOOKABLE_AGE_TIER_VALUES);
 
 /** The proposed party as capacity-engine guest ranges (explicit night sets). */
-function proposedGuestRanges(party: ProposalParty): GuestStayRange[] {
-  return party.guests.map((guest) => ({ nights: [...guest.nights] }));
+function proposedGuestRanges(party: ProposalParty): CapacityProposedGuest[] {
+  return party.guests.map((guest) => ({ nights: [...guest.nights], memberId: guest.memberId }));
 }
 
 /**
@@ -682,7 +682,7 @@ export function buildPolicyExceptionApprovalHooks(
           // #3369: the owner may be an Organisation; bookingOwner() reads both.
           organisation: { select: { name: true, email: true } },
           guests: { select: { id: true } },
-          payment: { select: { status: true } },
+          payment: { select: { status: true, changeFeeCents: true } },
         },
       });
       // #3369: ONE home for "is there an address to send to?".
@@ -691,9 +691,8 @@ export function buildPolicyExceptionApprovalHooks(
       // the hand-written chain here used to spell for itself.
       const ownerEmail = booking ? bookingOwnerEmail(booking) : null;
       if (!booking || !ownerEmail) return;
-      // What is still owed: the whole price unless the create already settled it
-      // ($0 / fully credit-covered bookings reach PAID or CONFIRMED and send
-      // their own confirmation).
+      // What is still owed (#4058, `INV-PAY-119`): nothing once the create
+      // settled it; else what the pay step asks, through the one home.
       const settled =
         booking.status === "PAID" ||
         booking.status === "CONFIRMED" ||
@@ -711,7 +710,7 @@ export function buildPolicyExceptionApprovalHooks(
           checkIn: booking.checkIn,
           checkOut: booking.checkOut,
           guestCount: booking.guests.length,
-          amountDueCents: settled ? 0 : booking.finalPriceCents,
+          amountDueCents: settled ? 0 : (await readBookingAmountOwed(booking)).dueCents,
           adminNotes: context.adminNotes ?? null,
           lodgeId: booking.lodgeId,
         },

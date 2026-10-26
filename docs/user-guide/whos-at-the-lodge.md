@@ -49,7 +49,11 @@ the adults beside a family label would identify the child by association.
 **A custodian on duty is listed too.** If someone is staying as the lodge
 custodian, they appear with the nights they are there, marked as the custodian.
 That is deliberate: you should be able to see at a glance whether someone is
-looking after the place, rather than having to work it out.
+looking after the place, rather than having to work it out. A custodian who
+has also booked a stay is listed once, as the custodian, on the nights they are
+on duty; the rest of their booking is listed as usual. On nights the whole
+lodge is privately booked, the custodian is still named beside the reserved
+line.
 
 **Nights the whole lodge is privately booked say so.** If somebody has hired
 the entire lodge, those nights appear as **Reserved for a private booking**.

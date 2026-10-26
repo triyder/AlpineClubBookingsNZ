@@ -373,9 +373,6 @@ export async function getBookingRequestSettings(db: Pick<typeof prisma, "booking
     quoteReminderLeadDays:
       record?.quoteReminderLeadDays ??
       DEFAULT_BOOKING_REQUEST_SETTINGS.quoteReminderLeadDays,
-    assignSchoolTeachersAsHutLeaders:
-      record?.assignSchoolTeachersAsHutLeaders ??
-      DEFAULT_BOOKING_REQUEST_SETTINGS.assignSchoolTeachersAsHutLeaders,
     attendeeConfirmationLeadDays:
       record?.attendeeConfirmationLeadDays ??
       DEFAULT_BOOKING_REQUEST_SETTINGS.attendeeConfirmationLeadDays,
@@ -494,7 +491,6 @@ export async function updateBookingRequestSettings(input: {
   showPricingToNonMembers: boolean;
   quoteResponseTtlDays: number;
   quoteReminderLeadDays: number;
-  assignSchoolTeachersAsHutLeaders: boolean;
   attendeeConfirmationLeadDays: number;
   attendeeConfirmationReminderDays: number;
   adminMemberId: string;
@@ -506,7 +502,6 @@ export async function updateBookingRequestSettings(input: {
       showPricingToNonMembers: input.showPricingToNonMembers,
       quoteResponseTtlDays: input.quoteResponseTtlDays,
       quoteReminderLeadDays: input.quoteReminderLeadDays,
-      assignSchoolTeachersAsHutLeaders: input.assignSchoolTeachersAsHutLeaders,
       attendeeConfirmationLeadDays: input.attendeeConfirmationLeadDays,
       attendeeConfirmationReminderDays: input.attendeeConfirmationReminderDays,
       updatedByMemberId: input.adminMemberId,
@@ -515,7 +510,6 @@ export async function updateBookingRequestSettings(input: {
       showPricingToNonMembers: input.showPricingToNonMembers,
       quoteResponseTtlDays: input.quoteResponseTtlDays,
       quoteReminderLeadDays: input.quoteReminderLeadDays,
-      assignSchoolTeachersAsHutLeaders: input.assignSchoolTeachersAsHutLeaders,
       attendeeConfirmationLeadDays: input.attendeeConfirmationLeadDays,
       attendeeConfirmationReminderDays: input.attendeeConfirmationReminderDays,
       updatedByMemberId: input.adminMemberId,
@@ -535,7 +529,6 @@ export async function updateBookingRequestSettings(input: {
       showPricingToNonMembers: input.showPricingToNonMembers,
       quoteResponseTtlDays: input.quoteResponseTtlDays,
       quoteReminderLeadDays: input.quoteReminderLeadDays,
-      assignSchoolTeachersAsHutLeaders: input.assignSchoolTeachersAsHutLeaders,
     },
   });
 
@@ -557,7 +550,6 @@ export async function updateBookingRequestSettings(input: {
     showPricingToNonMembers: settings.showPricingToNonMembers,
     quoteResponseTtlDays: settings.quoteResponseTtlDays,
     quoteReminderLeadDays: settings.quoteReminderLeadDays,
-    assignSchoolTeachersAsHutLeaders: settings.assignSchoolTeachersAsHutLeaders,
     attendeeConfirmationLeadDays: settings.attendeeConfirmationLeadDays,
     attendeeConfirmationReminderDays: settings.attendeeConfirmationReminderDays,
   };
@@ -2007,8 +1999,8 @@ export async function reassignHeldBookingGuests(
    * ## It cannot overwrite a `NULL` night price, because a hold can never carry
    * one — which is why `INV-MOD-028` does not fence it
    *
-   * A blank night price — "sold price not known" (#3170) — is written by ONE
-   * thing: a parked edit. A hold is created `AWAITING_REVIEW`
+   * A blank night price — "sold price not known" (#3170) — was written by ONE
+   * thing, a parked edit, and since #4317 by nothing. A hold is created `AWAITING_REVIEW`
    * (`holdBookingRequestSlots`, `booking-request-quotes.ts`) and both callers of
    * this function refuse unless the held booking is still in that status. And
    * `AWAITING_REVIEW` is in neither `ADMIN_FUTURE_EDIT_STATUSES` nor
@@ -2362,6 +2354,11 @@ export async function approveBookingRequest(input: {
       // contact was substituted (issue #1255 residual-risk decision 1); drives a
       // post-commit admin alert.
       let ownerSubstitution: OwnerSubstitution | null = null;
+      // The party both branches capacity-check, with each linked member.
+      const capacityRanges = guests.map((_guest, index) => ({
+        stayStart: request.checkIn, stayEnd: request.checkOut,
+        memberId: linkedMembers.get(index) ?? null,
+      }));
 
       if (held) {
         // Re-validate the held owner at conversion (issue #1255 residual-risk
@@ -2412,6 +2409,19 @@ export async function approveBookingRequest(input: {
             substituteMemberId: substitute.id,
             reason: err.message,
           };
+        }
+
+        // Re-check the NEW guest list, excluding the held booking, before the
+        // swap (#3817 review; the school path's F6 re-check, #1352): a guest's
+        // `memberId` waives a ticked custodian's space (`INV-DATE-030`), so a
+        // re-quote moving that link off the custodian adds a person. Under the
+        // locks above; the sentinel rolls the APPROVED claim back.
+        const heldCapacity = await checkCapacityForGuestRanges(
+          requestLodgeId, request.checkIn, request.checkOut, capacityRanges, held.id, tx
+        );
+        if (!heldCapacity.available) {
+          capacityFullNights = getCapacityFullNights(heldCapacity.nightDetails);
+          throw new Error("CAPACITY_EXCEEDED_SENTINEL");
         }
 
         // Preserve the held booking's beds across the guest swap (issue #1254):
@@ -2468,10 +2478,6 @@ export async function approveBookingRequest(input: {
         booking = { id: held.id };
         member = { id: ownerId };
       } else {
-        const capacityRanges = guests.map(() => ({
-          stayStart: request.checkIn,
-          stayEnd: request.checkOut,
-        }));
         const capacity = await checkCapacityForGuestRanges(
           requestLodgeId,
           request.checkIn,
@@ -2715,6 +2721,9 @@ export async function approveBookingRequest(input: {
         guestCount: guests.length,
         lodgeId: conversion.lodgeId,
         priceCents,
+        // A new Payment row (no recorded fee) on a booking no credit election
+        // has reached yet, so what is owed is the price (#4058).
+        amountDueCents: priceCents,
         bookingReference: conversion.bookingId,
         expiresAt: paymentLinkExpiresAt,
       }, format);

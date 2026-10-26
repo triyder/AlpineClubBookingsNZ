@@ -114,6 +114,7 @@ describe("resendAdditionalPaymentEmail", () => {
       checkOut: new Date("2026-11-03T00:00:00.000Z"),
       requestedOn: RAISED_AT,
       lodgeId: "lodge-1",
+      askReason: null,
     }, CLUB_FORMAT_TEST);
     // Writes the SAME stamp the automatic day-three nudge writes, which is what
     // stops the two arriving one after the other.

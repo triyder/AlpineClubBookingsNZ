@@ -1,6 +1,7 @@
 // Xero object resolution across local fields, links, and past operations for
 // the booking-vs-Xero repair tool. Extracted verbatim from
 // xero-booking-repair.ts (#1208 item 2).
+import { XERO_ACTIVE_OPERATION_STATUSES } from "./xero-active-operation-statuses";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import { getXeroOperationRetryMeta } from "@/lib/xero-operation-retry";
 import { isResolvedInXero } from "@/lib/xero-operation-resolution";
@@ -170,7 +171,7 @@ export function getBlockingOperation(
     (operation) =>
       operation.entityType === entityType &&
       operation.operationType === operationType &&
-      ["FAILED", "PARTIAL", "PENDING", "RUNNING", "WAITING_PAYMENT"].includes(
+      ["FAILED", "PARTIAL", ...XERO_ACTIVE_OPERATION_STATUSES].includes(
         operation.status
       ) &&
       isAdmissibleRepairOperation(operation, options?.payloadQueueType)

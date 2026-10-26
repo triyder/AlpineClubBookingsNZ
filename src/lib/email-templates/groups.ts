@@ -17,6 +17,7 @@ import {
 import { CLUB_NAME } from "@/config/club-identity";
 import { emailCalendarDay } from "@/lib/email-templates-club-time";
 import type { ClubFormat } from "@/lib/club-format";
+import { organiserJoinerAppealRefundSentence } from "@/lib/booking-modified-email-copy";
 
 export function groupSettlementReceiptTemplate(data: {
   firstName: string;
@@ -144,5 +145,30 @@ export function groupJoinCancelledTemplate(data: {
     ])}
     ${paragraph("If you still want to come, you can make your own booking for these dates — or talk to the organiser about starting a fresh group trip.")}
     ${supportContactSentence("If you have any questions, contact the club at ")}
+  `);
+}
+
+/**
+ * #3956 (`INV-PAY-123`): the organiser's notice that a joiner's approved refund
+ * appeal is being refunded to the card they paid for the group with.
+ */
+export function groupOrganiserJoinerRefundTemplate(data: {
+  firstName: string;
+  joinerName: string;
+  amountCents: number;
+  checkIn: Date;
+  checkOut: Date;
+},
+  format: ClubFormat,
+): string {
+  return layout(`
+    ${heading("Refund to Your Card")}
+    ${paragraph("Hi " + escapeHtml(data.firstName) + ",")}
+    ${paragraph(escapeHtml(organiserJoinerAppealRefundSentence(formatCents(data.amountCents, format), data.joinerName)))}
+    ${infoTable([
+      { label: "Check-in", value: emailCalendarDay(data.checkIn) },
+      { label: "Check-out", value: emailCalendarDay(data.checkOut) },
+    ])}
+    ${supportContactSentence("If you have questions, contact the club at ")}
   `);
 }

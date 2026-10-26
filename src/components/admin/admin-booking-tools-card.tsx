@@ -73,7 +73,7 @@ export function AdminBookingToolsCard({
   paymentId,
   showConfirmPendingGuests,
   hasSavedPaymentMethod,
-  finalPriceCents,
+  savedCardChargeCents,
   providerMismatches = [],
   financialReviewWarnings = [],
   features,
@@ -109,7 +109,7 @@ export function AdminBookingToolsCard({
   paymentId: string | null;
   showConfirmPendingGuests: boolean;
   hasSavedPaymentMethod: boolean;
-  finalPriceCents: number;
+  savedCardChargeCents: number;
   providerMismatches?: BookingProviderMismatch[];
   /**
    * #3033: money on this booking is held for review — the stay change saved,
@@ -367,7 +367,7 @@ export function AdminBookingToolsCard({
         <ConfirmPendingGuestsButton
           bookingId={bookingId}
           hasSavedPaymentMethod={hasSavedPaymentMethod}
-          finalPriceCents={finalPriceCents}
+          savedCardChargeCents={savedCardChargeCents}
           // #2259 honesty rule: with the switch on there is no email choice to
           // offer, so the dialog states that instead of asking.
           noEmails={noEmails?.noEmails ?? false}

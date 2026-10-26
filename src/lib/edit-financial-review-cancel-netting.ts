@@ -18,17 +18,19 @@ import { CLAIMABLE_PAYMENT_RECOVERY_STATUSES, NON_TERMINAL_PAYMENT_RECOVERY_STAT
 import { MAX_PAYMENT_RECOVERY_ATTEMPTS } from "@/lib/payment-recovery-constants";
 import { clubCalendarDateOf, type ClubTimeZone } from "@/lib/club-time";
 import {
+  REVIEW_CANCELLATION_ORGANISER_PAID_BY_BANK_MESSAGE,
   REVIEW_CANCELLATION_ORGANISER_PAID_MESSAGE,
   REVIEW_CANCELLATION_REFUND_UNREPRODUCIBLE_MESSAGE,
   reviewRefundOverPromisedMessage,
 } from "@/lib/edit-financial-review-refund-refusals";
 import { editReviewHandBackLinesWhere } from "@/lib/edit-financial-review-charge-shape";
-import { paidByOrganiserCard } from "@/lib/group-organiser-paid";
+import { paidByOrganiserCard, paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import type { ClubFormat } from "@/lib/club-format";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
 import {
   buildBookingCancellationRefundIdempotencyKey,
   buildEditFinancialReviewRefundRecoveryIdempotencyKey,
+  CARD_REFUND_FAILED_LATER_RECOVERY_PREFIX,
 } from "@/lib/payment-recovery-keys";
 
 /**
@@ -268,7 +270,10 @@ export async function capturedShareOwedAfterCancellation({
     where: { id: bookingId },
     select: { organiserSettled: true, parentBookingId: true, payment: { select: { source: true } } },
   });
+  // #3949 review: so is one the organiser paid for by Internet Banking - its cancellation froze no figures to net
+  // against, and no part of its share may become the joiner's credit (`INV-PAY-137`).
   if (paidByOrganiserCard(owner)) throw new ManualBookingPaymentError(REVIEW_CANCELLATION_ORGANISER_PAID_MESSAGE, 409);
+  if (paidByOrganiserInternetBanking(owner)) throw new ManualBookingPaymentError(REVIEW_CANCELLATION_ORGANISER_PAID_BY_BANK_MESSAGE, 409);
   const cancelled = await store.bookingEvent.findFirst({
     where: { bookingId, type: BookingEventType.CANCELLED },
     orderBy: { occurredAt: "desc" },
@@ -388,6 +393,11 @@ async function settledSinceCancellation({
   });
   if (siblings.length === 0) return { sharesCents: 0, captureReturnedCents: 0 };
   const ids = siblings.map((task) => task.id);
+  // Each sibling's card refund counts at its full raised amount, even one the
+  // treasurer closed as paid another way for less (#3372, owner, 8 Oct 2026:
+  // "Difference is gone"): a part close is final, the difference is owed
+  // nowhere, and this share pays exactly its own part - as the cancellation's
+  // own refund counts at its frozen figure however it was paid back.
   const refunded = await store.paymentRecoveryOperation.aggregate({
     where: { idempotencyKey: { in: ids.map((id) => buildEditFinancialReviewRefundRecoveryIdempotencyKey(id)) } },
     _sum: { amountCents: true },
@@ -440,7 +450,8 @@ export function reviewsSettledAfterCancelWhere({
 
 /**
  * #3835: card refunds already promised out of this payment and not yet made -
- * the cancellation's and earlier reviews' frozen Stripe debts that have not
+ * the cancellation's, earlier reviews' and refunds owed again after Stripe
+ * failed them (#4104) - frozen Stripe debts that have not
  * SUCCEEDED and are still being retried. A debt that is dead (no next retry, or
  * its attempts spent - the recovery module's rule) is a person's to settle, and once they refund by hand the payment's
  * refunded total already says so, so it is not counted twice. A debt partly
@@ -463,6 +474,8 @@ async function unfinishedCardRefundDebts(
       OR: [
         { idempotencyKey: buildBookingCancellationRefundIdempotencyKey(bookingId) },
         { idempotencyKey: { startsWith: buildEditFinancialReviewRefundRecoveryIdempotencyKey("") } },
+        // #4104: a refund Stripe accepted and failed later, owed again.
+        { idempotencyKey: { startsWith: CARD_REFUND_FAILED_LATER_RECOVERY_PREFIX } },
       ],
     },
     _sum: { amountCents: true },

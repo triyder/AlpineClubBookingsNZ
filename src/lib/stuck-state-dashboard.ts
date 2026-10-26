@@ -1,3 +1,4 @@
+import { countBankRefundVoidsToAnswer } from "@/lib/bank-refund-void-follow-up";
 import type { FeatureFlags } from "@/config/schema";
 import { CLUB_HUT_LEADER_LABEL } from "@/config/club-identity";
 import { bookingOwner } from "@/lib/booking-owner";
@@ -23,7 +24,7 @@ import { countUnconfirmedSchoolAttendeeLists } from "@/lib/school-attendee-confi
 import { loadHutLeaderLookaheadDays } from "@/lib/lodge-settings";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { SETTLEMENT_MARKER_EVENT_REASONS } from "@/lib/manual-settlement-reversal-event";
-import { MAX_PAYMENT_RECOVERY_ATTEMPTS } from "@/lib/payment-recovery-constants";
+import { MAX_PAYMENT_RECOVERY_ATTEMPTS, PAYMENT_RECOVERY_EXHAUSTED_WHERE } from "@/lib/payment-recovery-constants";
 import { prisma } from "@/lib/prisma";
 import { formatBookingReference } from "@/lib/booking-reference";
 import { getBedAllocationDashboard } from "@/lib/bed-allocation-board";
@@ -148,6 +149,8 @@ export interface StuckStateDashboardDependencies {
    * Prisma client and this module's injected `db` is a narrowed shape.
    */
   countActiveLodges: () => Promise<number>;
+  /** #4162: how many voided bank refund notes wait for a person (`countBankRefundVoidsToAnswer`). */
+  countBankRefundVoidsToAnswer: () => Promise<number>;
 }
 
 const DOMAIN_LABELS: Record<StuckStateDomain, string> = {
@@ -192,6 +195,7 @@ const defaultDependencies: StuckStateDashboardDependencies = {
   getUnassignedHutLeaderDates,
   loadHutLeaderLookaheadDays,
   countActiveLodges: () => countActiveLodges(prisma),
+  countBankRefundVoidsToAnswer,
 };
 
 function plural(count: number, singular: string, pluralForm = `${singular}s`) {
@@ -317,7 +321,7 @@ function buildPaymentItems(items: StuckStateItem[], counts: {
     summary: `${counts.exhaustedFailed} payment recovery ${plural(
       counts.exhaustedFailed,
       "operation",
-    )} reached ${MAX_PAYMENT_RECOVERY_ATTEMPTS} attempts and need manual reconciliation.`,
+    )} reached ${MAX_PAYMENT_RECOVERY_ATTEMPTS} attempts, or stopped on a failure a retry cannot fix, and need manual reconciliation. A card refund among them that the member was paid another way can be closed under "Card refunds Stripe gave up on" on this page (Finance view).`,
   });
   addItem(items, {
     id: "payment-recovery-stale-processing",
@@ -779,7 +783,7 @@ async function addLodgeItems(
     summary: `${unassignedDates.length} upcoming ${plural(
       unassignedDates.length,
       unassignedNoun,
-    )} in the next ${hutLeaderLookaheadDays} days with bookings have no ${CLUB_HUT_LEADER_LABEL.toLowerCase()} assigned.`,
+    )} in the next ${hutLeaderLookaheadDays} days with guests have no ${CLUB_HUT_LEADER_LABEL.toLowerCase()} who counts.`,
   });
   addItem(items, {
     id: "lodge-open-issue-reports",
@@ -855,12 +859,8 @@ async function getPaymentCounts(
     overduePending,
     cancelledUnrecordedRefunds,
   ] = await Promise.all([
-    deps.db.paymentRecoveryOperation.count({
-      where: {
-        status: "FAILED",
-        attempts: { gte: MAX_PAYMENT_RECOVERY_ATTEMPTS },
-      },
-    }),
+    // #4104: a card refund raised dead is PENDING with its attempts spent.
+    deps.db.paymentRecoveryOperation.count({ where: PAYMENT_RECOVERY_EXHAUSTED_WHERE }),
     deps.db.paymentRecoveryOperation.count({
       where: {
         status: "PROCESSING",
@@ -871,6 +871,7 @@ async function getPaymentCounts(
       where: {
         status: "PENDING",
         nextRetryAt: { lte: pendingOverdueThreshold },
+        attempts: { lt: MAX_PAYMENT_RECOVERY_ATTEMPTS },
       },
     }),
     // #1349 (F2) crash-window detector: a CANCELLED booking that kept a fully
@@ -951,6 +952,8 @@ export async function getStuckStateDashboard(input?: {
    * names rather than leaking the membership roll.
    */
   viewerCanViewMembership?: boolean;
+  /** #4162: the caller holds finance:view (the voided bank refund notes' panel); false links that item to /admin/xero. */
+  viewerCanViewFinance?: boolean;
 }): Promise<StuckStateDashboard> {
   const deps = {
     ...defaultDependencies,
@@ -1120,6 +1123,19 @@ export async function getStuckStateDashboard(input?: {
 
   if (isModuleEnabled(modules, "xeroIntegration")) {
     addXeroItems(items, await deps.getXeroAdminHealthSnapshot());
+    // #4162 (`INV-ADDPAY-042`): voided bank refund notes the nightly follow-up
+    // could not match to one refund; a person answers each on this page.
+    const bankRefundVoidsToAnswer = await deps.countBankRefundVoidsToAnswer();
+    addItem(items, {
+      id: "xero-bank-refund-voids-to-answer",
+      domain: "xero",
+      title: "Voided bank refund notes to answer",
+      severity: "warning",
+      owner: "Finance",
+      count: bankRefundVoidsToAnswer,
+      href: input?.viewerCanViewFinance ? "/admin/stuck-states#bank-refund-voids" : "/admin/xero",
+      summary: `${bankRefundVoidsToAnswer} bank ${plural(bankRefundVoidsToAnswer, "refund")} had ${bankRefundVoidsToAnswer === 1 ? "its" : "their"} Xero credit note voided, and the app could not tell which refund the note recorded (or another note has held it back for over a week). Pick the refund on this page and the app takes it back out of the records for the treasurer to re-confirm.`,
+    });
   }
 
   if (isModuleEnabled(modules, "waitlist")) {

@@ -146,6 +146,16 @@ export const FINANCIAL_REVIEW_AMOUNT_PREDATES_THE_CHANGE =
   "This amount does not yet reflect the change you made to this booking.";
 
 /**
+ * #3991: the same disclosure beside "nothing left to pay", where there is no
+ * figure for {@link FINANCIAL_REVIEW_AMOUNT_PREDATES_THE_CHANGE}'s "This amount"
+ * to point at. It still carries "the change you made", so the clauses composed
+ * after it ("that change") have something to refer back to, and it promises
+ * nothing about which way the change will go.
+ */
+export const FINANCIAL_REVIEW_NOTHING_TO_PAY_PREDATES_THE_CHANGE =
+  "That does not yet take account of the change you made to this booking.";
+
+/**
  * The club closes the loop; the member does not have to chase it — the ONE
  * wording of that promise, in its two terminations.
  *

@@ -225,6 +225,36 @@ export function stayWindow(index: number): StayWindow {
   );
 }
 
+/** Two Thursday–Saturday stays for the linked move, a week apart.
+ * Walk from this attempt's Monday, reserving BOTH pairs against fixture nights
+ * and season gaps. Thursday/Friday nights stay clear of every Monday window.
+ */
+export function linkedMoveStayWindows(window: Pick<StayWindow, "checkIn">): {
+  start: StayWindow;
+  target: StayWindow;
+} {
+  if (dayOfWeek(window.checkIn) !== 1) {
+    throw new Error("linked move requires a Monday stay-window anchor");
+  }
+  for (let week = 0; week < 200; week += 1) {
+    const pair = [3, 10].map((offset) => {
+      const checkIn = shiftDateOnly(window.checkIn, offset + week * 7);
+      return {
+        checkIn,
+        checkOut: shiftDateOnly(checkIn, 2),
+        nights: [checkIn, shiftDateOnly(checkIn, 1)],
+      };
+    });
+    if (pair.every((stay) =>
+      isWindowInSeededSeason(stay.nights) &&
+      !stay.nights.some((night) => RESERVED_FIXTURE_NIGHTS.has(night)),
+    )) {
+      return { start: must(pair[0], "linked move start"), target: must(pair[1], "linked move target") };
+    }
+  }
+  throw new Error(`No seeded-season linked-move pair after ${window.checkIn}`);
+}
+
 // Index offset between one attempt of a test and the next (#2302).
 //
 // Chosen so `stayWindowForAttempt` maps attempt 0/1/2 of a spec onto three
@@ -234,11 +264,11 @@ export function stayWindow(index: number): StayWindow {
 //
 // Two ceilings bound this stride, and BOTH must be re-checked before it (or a
 // base index) is raised:
-//  - Seeded seasons. They cover 67–73 usable Mondays from the first window,
+//  - Seeded seasons. They cover 66–73 usable Mondays from the first window,
 //    depending on the weekday of the run date (winter runs to +239 days, summer
 //    from +270 to +599 — see SEEDED_SEASONS — less the Mondays whose nights a
 //    seeded booking holds, #4002). The highest index in use today (base 28
-//    attempt 2 = 60, at most ≈ +550 days) therefore has at least 6 Mondays of
+//    attempt 2 = 60, at most ≈ +550 days) therefore has at least 5 Mondays of
 //    headroom; stayWindow still throws loudly if a run date ever changes that.
 //  - Calendar month hops. A spec reaches these dates by clicking the booking
 //    calendar's "Next ›" one month at a time, bounded by MAX_MONTH_HOPS in

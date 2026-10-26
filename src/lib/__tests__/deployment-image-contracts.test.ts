@@ -938,7 +938,6 @@ describe("package manager contract (#3673)", () => {
     });
     expect(parsed.map(({ name, allowed }) => `${name}=${allowed}`)).toEqual([
       "@prisma/engines=true",
-      "@sentry/cli=true",
       "core-js=false",
       "esbuild=true",
       "prisma=true",
@@ -1053,6 +1052,12 @@ describe("package manager contract (#3673)", () => {
     const firstPnpm = builder.search(/^RUN pnpm\b/m);
     expect(firstPnpm).toBeGreaterThan(-1);
     expect(builder.indexOf("COPY --from=deps /app/patches")).toBeLessThan(firstPnpm);
+    // #4028: node_modules and patches/ are separate cached layers, so a partial
+    // cache hit can pair a fresh patch with an older install; the builder pins
+    // the patch dates to the epoch, after restoring them and before any `pnpm run`.
+    const pinDates = builder.search(/^RUN find patches -type f -exec touch -d @0 \{\} \+$/m);
+    expect(pinDates).toBeGreaterThan(builder.indexOf("COPY --from=deps /app/patches"));
+    expect(pinDates).toBeLessThan(firstPnpm);
     expect(dockerfile).not.toMatch(/\bnpm ci\b|package-lock\.json/);
     // npm is used once, to install pnpm, and then removed in the SAME layer, so
     // the builder and migrate images carry pnpm and no npm/npx.

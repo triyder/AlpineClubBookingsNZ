@@ -348,48 +348,37 @@ export function getAdminCronJobDefinitions(
       },
       globalDisabledReason
     ),
-    defineCronJob(
-      {
-        jobName: "payment-recovery",
-        label: "Stripe payment recovery",
-        schedule: "*/15 * * * *",
-        timezone: clubTimeZone,
-        expectedLocalTime: `Every 15 minutes in ${clubTimeZone}`,
-        staleAfterMinutes: FIFTEEN_MINUTE_STALE_AFTER_MINUTES,
-      },
-      globalDisabledReason
+    // The 15-minute payments cycle (`payments-cron-runner`, #3663): each task is
+    // recorded under its own name so a missing run is visible. #3635 re-announces
+    // an OPEN held late-capture payment nobody has been told about; #4285 review
+    // delivers an owed alert for a card payment kept on a paid booking that
+    // nothing else paid for.
+    ...([
+      ["payment-recovery", "Stripe payment recovery"],
+      ["internet-banking-hold-release", "Expired Internet Banking hold release"],
+      ["xero-waiting-invoice-reaper", "Stale waiting Xero invoice reaper"],
+      ["late-capture-held-alert", "Held late payment alert"],
+      ["duplicate-capture-kept-alert", "Kept card payment alert"],
+    ] as const).map(([jobName, label]) =>
+      defineCronJob(
+        {
+          jobName,
+          label,
+          schedule: "*/15 * * * *",
+          timezone: clubTimeZone,
+          expectedLocalTime: `Every 15 minutes in ${clubTimeZone}`,
+          staleAfterMinutes: FIFTEEN_MINUTE_STALE_AFTER_MINUTES,
+        },
+        globalDisabledReason
+      )
     ),
     defineCronJob(
       {
-        // #3663. A task of the 15-minute payments cycle (`payments-cron-runner`),
-        // recorded under its own name so a missing release is visible.
-        jobName: "internet-banking-hold-release",
-        label: "Expired Internet Banking hold release",
-        schedule: "*/15 * * * *",
-        timezone: clubTimeZone,
-        expectedLocalTime: `Every 15 minutes in ${clubTimeZone}`,
-        staleAfterMinutes: FIFTEEN_MINUTE_STALE_AFTER_MINUTES,
-      },
-      globalDisabledReason
-    ),
-    defineCronJob(
-      {
-        // #3663. The third task of the same 15-minute payments cycle.
-        jobName: "xero-waiting-invoice-reaper",
-        label: "Stale waiting Xero invoice reaper",
-        schedule: "*/15 * * * *",
-        timezone: clubTimeZone,
-        expectedLocalTime: `Every 15 minutes in ${clubTimeZone}`,
-        staleAfterMinutes: FIFTEEN_MINUTE_STALE_AFTER_MINUTES,
-      },
-      globalDisabledReason
-    ),
-    defineCronJob(
-      {
-        // #3635. The fourth task of the same cycle: re-announces an OPEN held
-        // late-capture payment whose alert nobody has received yet.
-        jobName: "late-capture-held-alert",
-        label: "Held late payment alert",
+        // #4253. The sixth task of the same cycle: asks members for credit released
+        // after a credit note was spent in Xero, records the card payment in Xero,
+        // and closes a request Xero shows paid.
+        jobName: "credit-release-asks",
+        label: "Released credit payment requests",
         schedule: "*/15 * * * *",
         timezone: clubTimeZone,
         expectedLocalTime: `Every 15 minutes in ${clubTimeZone}`,
@@ -435,6 +424,18 @@ export function getAdminCronJobDefinitions(
     ),
     defineCronJob(
       {
+        // #4162: runs in the link cleanup's slot, right after it.
+        jobName: "xero-bank-refund-void-follow-up",
+        label: "Voided bank-transfer refund notes",
+        schedule: "25 2 * * *",
+        timezone: clubTimeZone,
+        expectedLocalTime: `02:25 daily in ${clubTimeZone}`,
+        staleAfterMinutes: DAILY_STALE_AFTER_MINUTES,
+      },
+      globalDisabledReason
+    ),
+    defineCronJob(
+      {
         jobName: "xero-reconciliation-report",
         label: "Xero reconciliation report",
         schedule: "35 2 * * *",
@@ -470,6 +471,18 @@ export function getAdminCronJobDefinitions(
       {
         jobName: "xero-operation-replay",
         label: "Xero operation replay",
+        schedule: "*/15 * * * *",
+        timezone: clubTimeZone,
+        expectedLocalTime: `Every 15 minutes in ${clubTimeZone}`,
+        staleAfterMinutes: FIFTEEN_MINUTE_STALE_AFTER_MINUTES,
+      },
+      globalDisabledReason
+    ),
+    defineCronJob(
+      {
+        // #4270: runs in the inbound reconcile's slot, right after it.
+        jobName: "xero-credit-note-outside-spend-mirror",
+        label: "Credit notes used in Xero",
         schedule: "*/15 * * * *",
         timezone: clubTimeZone,
         expectedLocalTime: `Every 15 minutes in ${clubTimeZone}`,

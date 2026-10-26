@@ -159,6 +159,50 @@ export function asSecondInstrumentSettlementConflictSnapshot(
 }
 
 /**
+ * #3979 (`INV-PAY-125`): the inbound settle recorded a booking's bank transfer,
+ * but the figure needs a person: it kept the stored amount because the
+ * invoice's cash was not this payment's alone, or the cash is not what the
+ * booking owes. Written in the settle's own transaction, so the record commits
+ * with the receipt; the admin alert follows the commit and is recorded here
+ * once sent. Cancels nothing.
+ */
+export const IB_SETTLEMENT_FIGURE_CHECK_EVENT_KIND = "ib_settlement_figure_check" as const;
+
+export const IB_SETTLEMENT_FIGURE_CHECK_EVENT_REASON =
+  "Xero reported this booking's bank-transfer invoice paid, but the amount the app recorded needs checking: it kept the stored figure, or the cash is not what the booking owes. The booking was not cancelled.";
+
+export interface IbSettlementFigureCheckEventSnapshot {
+  kind: typeof IB_SETTLEMENT_FIGURE_CHECK_EVENT_KIND;
+  invoiceId: string | null;
+  invoiceNumber: string | null;
+  /** Why the stored figure was kept (`CashSettlementRefusal`), or null when it was not. */
+  refusal: string | null;
+  /** The receipt figure recorded, in integer cents. */
+  recordedCents: number;
+  /** The invoice's cash as Xero reported it, and whether it was read exactly. */
+  cashCents: number;
+  cashComplete: boolean;
+  /** What the booking owes, when the cash disagrees with it; else null. */
+  owedCents: number | null;
+  hasSupplementaryInvoice: boolean;
+  /** When the admin alert was confirmed sent (ISO), or null while it is owed. */
+  alertSentAt: string | null;
+}
+
+export function asIbSettlementFigureCheckSnapshot(
+  value: unknown
+): IbSettlementFigureCheckEventSnapshot | null {
+  if (
+    value &&
+    typeof value === "object" &&
+    (value as { kind?: unknown }).kind === IB_SETTLEMENT_FIGURE_CHECK_EVENT_KIND
+  ) {
+    return value as IbSettlementFigureCheckEventSnapshot;
+  }
+  return null;
+}
+
+/**
  * #3672 (`INV-PAY-109`): the payer switch. An organiser-pays group's
  * settlement was paid without this joiner on the bill, so the booking now pays
  * for itself. Written inside the switch transaction, so every switched joiner
@@ -226,6 +270,12 @@ export const SETTLEMENT_MARKERS = [
     reason: SECOND_INSTRUMENT_SETTLEMENT_CONFLICT_EVENT_REASON,
     adminTitle: "May have been paid twice (card and Xero)",
     tone: "danger",
+  },
+  {
+    kind: IB_SETTLEMENT_FIGURE_CHECK_EVENT_KIND,
+    reason: IB_SETTLEMENT_FIGURE_CHECK_EVENT_REASON,
+    adminTitle: "Bank-transfer amount needs checking",
+    tone: "warning",
   },
   {
     kind: GROUP_JOINER_PAYS_OWN_EVENT_KIND,

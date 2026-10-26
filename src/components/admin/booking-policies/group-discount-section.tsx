@@ -195,16 +195,16 @@ export function GroupDiscountSection() {
         onClearSuccess={() => section.setSuccess("")}
       />
       <div className="space-y-6">
-        <Card>
+        <Card {...section.sectionRegionProps}>
           <CardHeader className="flex flex-row items-center justify-between">
             <div>
-              <CardTitle>Group Discount</CardTitle>
+              <CardTitle {...section.titleProps}>Group Discount</CardTitle>
               <CardDescription>
                 When a booking has enough guests, all guests are charged at member rates.
               </CardDescription>
             </div>
             {!editing && (
-              <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="outline" size="sm" onClick={section.startEditing}>
+              <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="outline" size="sm" {...section.editTriggerProps} onClick={section.startEditing}>
                 Edit
               </ViewOnlyActionButton>
             )}

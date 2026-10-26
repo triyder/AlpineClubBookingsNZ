@@ -254,6 +254,41 @@ classifies it with `pg_catalog.starts_with` against a closed list of prefixes fr
 `payment-recovery-keys.ts` and projects the resulting **code**. The key itself never
 leaves the database, so a future projection bug cannot leak it either.
 
+The catalogue is `RECOVERY_SCENARIO_CATALOGUE` in `finance-recovery-scenarios.ts`: one entry per
+prefix, each with its **code** and a plain-English **label**. Every prefix is imported
+from `payment-recovery-keys.ts`, the one place a recovery key's shape is spelled, so
+the catalogue copies none. The statement and the labels shipped to the model in both
+tools' **description** are generated from it, so they cannot drift. The labels are in
+the description, not the per-result `evidenceScope`, because the scope is written into
+the head of every result block and the labels are about 1,500 of its 8,000 characters:
+in the description they cost a 14-row listing nothing. A key that matches no entry
+projects `other_recovery`, meaning "queued by something this catalogue does not
+recognise". The scenario codes are computed by the query and stored nowhere.
+
+**What the guard covers, and what it does not (#4076).** The finance-pack test holds an
+exact table of every export of `payment-recovery-keys.ts`: each recovery-key builder or
+prefix is mapped to the scenario code it must project, and every other export (Stripe
+keys and metadata, parsers, predicates, query fragments) is listed with its reason. An
+export in neither table fails the test, naming #4076, so a new recovery key cannot land
+unlabelled and a new non-recovery export has to say so. It also fails when a catalogue
+entry has no export, or when a prefix is spelled differently from its export. The guard
+sees only what `payment-recovery-keys.ts` exports: a recovery key built inline in another
+module is invisible to it, which is why the keys that used to be private to
+`payment-recovery.ts` now live in `payment-recovery-keys.ts`, and a recovery key must be
+built there. Because the statement is a `CASE`, the first matching prefix wins, so a
+longer prefix must come before a shorter one it starts with; the test pins that too.
+
+Two `payment_recovery_` refunds are easy to confuse and are not the same thing:
+`payment_recovery_refund_` is the refund of a card payment made on a payment request
+that had already been cancelled or replaced (`superseded_payment_refund`), whereas
+`payment_recovery_modification_refund_` is a booking edit's refund
+(`booking_modification_refund`).
+
+On the refund-state tool the other three kinds carry a fixed `scenarioCode`:
+`hand_back_required` on a `manual_refund_task`, `member_requested` on a `refund_appeal`,
+and null on a `stripe_refund`. These are constants of the entry kind, not a diagnosis;
+the tool description says so.
+
 ## What is never returned
 
 Four classes, and they are not merely unprojected — with the two exceptions argued
@@ -548,7 +583,7 @@ under `admin`, which this tool cannot read; and the audit category is optional, 
 row recorded with **no** category is matched by no diagnostics tool at all. **82**
 production write paths used to record that way, several of them money-adjacent
 (subscription billing, member-credit adjustments, fee configuration); #2676
-classified all 82 at the source, so the census now reads **501 write sites and zero
+classified all 82 at the source, so the census now reads **520 write sites and zero
 uncategorised** and no *new* finance audit row is born invisible to this tool. Rows
 written before that runtime deployed still carry no category, and back-filling them
 is a separate data change that has not run — so for historical events an empty

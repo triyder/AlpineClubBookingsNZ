@@ -214,6 +214,8 @@ x-app-environment: &app-environment
   XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH: ${XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH:-false}
   XERO_ENABLE_LIVE_MEMBER_GROUP_LOOKUPS: ${XERO_ENABLE_LIVE_MEMBER_GROUP_LOOKUPS:-false}
   XERO_ENABLE_AUTOLOAD_XERO_CONTACT_GROUPS: ${XERO_ENABLE_AUTOLOAD_XERO_CONTACT_GROUPS:-false}
+  # #4162: report-only until set true (run `pnpm run xero:bank-refund-void-count` first).
+  XERO_ENABLE_BANK_REFUND_VOID_WRITES: ${XERO_ENABLE_BANK_REFUND_VOID_WRITES:-false}
   # First-boot seed for the club's currency and locale (src/lib/club-format-env.ts):
   # copied once into the recorded setting, then never read again; unset falls back
   # to NZD / en-NZ. The NEXT_PUBLIC_* twins are not read at all (#3567). Club time
@@ -234,6 +236,21 @@ x-app-environment: &app-environment
   # src/lib/config-transfer/bootstrap-import.ts, which no-ops on an empty value.
   # A container path, so it also needs a mount; empty disables it.
   CONFIG_BUNDLE_IMPORT_PATH: ${CONFIG_BUNDLE_IMPORT_PATH:-}
+  # The #3413 pending-school-adult write gate, src/lib/pending-school-adults-gate.ts
+  # (#3964). Admissions open only when BOTH are exactly `1`; empty, `true` or
+  # anything else keeps the gate closed, so the empty defaults are the safe,
+  # disabled state. Before #3964 neither was named here, so the runbook step
+  # that sets them changed nothing inside the container and the feature could
+  # never be switched on. To switch the gate on, put BOTH lines, each exactly `1`,
+  # in the project `.env` and re-run the deploy, as
+  # docs/PRODUCTION_UPGRADE_RUNBOOK.md's #3413 section says. `.env` is the only
+  # source: the production deploy refuses a shell PENDING_SCHOOL_ADULTS_ENABLED
+  # that differs from `.env`, and never exports its shell
+  # BLUE_GREEN_OLD_APP_AND_WORKERS_STOPPED to Compose, because that shell value
+  # is the migration validator's acknowledgement for one deploy, not the app's
+  # (#4027).
+  PENDING_SCHOOL_ADULTS_ENABLED: ${PENDING_SCHOOL_ADULTS_ENABLED:-}
+  BLUE_GREEN_OLD_APP_AND_WORKERS_STOPPED: ${BLUE_GREEN_OLD_APP_AND_WORKERS_STOPPED:-}
 
 x-app-service: &app-service
   image: ${APP_IMAGE:-${COMPOSE_PROJECT_NAME:-tacbookings}-app:local}

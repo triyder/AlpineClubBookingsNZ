@@ -50,7 +50,7 @@ function targetDb(existingPages: Array<Record<string, unknown>>): ReadDb {
     },
     siteContent: { findUnique: vi.fn().mockResolvedValue(null) },
     clubTheme: { findUnique: vi.fn().mockResolvedValue(null) },
-    xeroToken: { findFirst: vi.fn().mockResolvedValue(null) },
+    xeroConnection: { findUnique: vi.fn().mockResolvedValue(null) },
   } as unknown as ReadDb;
 }
 

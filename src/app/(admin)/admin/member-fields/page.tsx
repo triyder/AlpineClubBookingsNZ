@@ -20,10 +20,7 @@ import {
   type MemberFieldKey,
   type MemberFieldsSettingsValues,
 } from "@/config/member-fields";
-import {
-  useActionAttention,
-  useRevealAttention,
-} from "@/hooks/use-scroll-to-feedback";
+import { useActionAttention } from "@/hooks/use-scroll-to-feedback";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import {
   ForbiddenSaveError,
@@ -78,7 +75,6 @@ function toDraft(settings: Partial<MemberFieldsSettingsValues> | undefined) {
 export default function AdminMemberFieldsPage() {
   const pageRef = useRef<HTMLDivElement>(null);
   const feedbackRef = useRef<HTMLDivElement>(null);
-  const sectionRef = useRef<HTMLDivElement>(null);
   // Member fields live under the membership area (the write route enforces
   // membership:edit), so gate the editor on that area (#1940).
   const canEdit = useAdminAreaEditAccess("membership");
@@ -130,9 +126,6 @@ export default function AdminMemberFieldsPage() {
     success,
     successTarget: pageRef,
   });
-  // Edit unmounts the button that held focus; bring the section into view
-  // only when the admin asked to edit (#2934).
-  useRevealAttention(sectionRef, section.editRequestKey);
 
   const fields = useMemo(
     () => MEMBER_FIELD_KEYS.map((key) => MEMBER_FIELD_DEFINITIONS[key]),
@@ -174,11 +167,11 @@ export default function AdminMemberFieldsPage() {
   return (
     <div>
       {viewOnlyBanner}
-      <div ref={pageRef} className="space-y-8">
+      <div {...section.sectionRegionProps} ref={pageRef} className="space-y-8">
         <BackLink href="/admin/membership-setup" label="Membership & Members" />
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-foreground">Member fields</h1>
+            <h1 {...section.titleProps} className="text-2xl font-bold text-foreground">Member fields</h1>
             <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
               Choose which optional member fields the club collects and displays.
               Turn a field off to avoid collecting data the club does not need.
@@ -203,6 +196,7 @@ export default function AdminMemberFieldsPage() {
                 variant="outline"
                 aria-label="Edit member fields"
                 onClick={section.startEditing}
+                {...section.editTriggerProps}
                 disabled={draft === null}
               >
                 <Pencil className="mr-2 h-4 w-4" />
@@ -268,7 +262,7 @@ export default function AdminMemberFieldsPage() {
           </div>
         </div>
 
-        <div ref={sectionRef} className="grid gap-4 xl:grid-cols-2">
+        <div className="grid gap-4 xl:grid-cols-2">
           {fields.map((field) => {
             const checkboxId = `member-field-${field.key}`;
             const enabled = draft?.[field.key] ?? false;

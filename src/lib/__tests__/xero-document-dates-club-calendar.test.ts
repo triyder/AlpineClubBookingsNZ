@@ -59,6 +59,8 @@ const mocks = vi.hoisted(() => ({
   creditNoteAllocationGroupBy: vi.fn(),
   creditNoteAllocationUpsert: vi.fn(),
   creditNoteAllocationFindUnique: vi.fn(),
+  // #4013: the committed slices a retry must keep; none in these runs.
+  creditNoteAllocationFindMany: vi.fn(async () => []),
   lockMemberCreditLedger: vi.fn(),
   assertNoAppliedCreditDeallocationFence: vi.fn(),
   xeroObjectLinkFindFirst: vi.fn(),
@@ -128,6 +130,7 @@ vi.mock("@/lib/prisma", () => ({
       groupBy: mocks.creditNoteAllocationGroupBy,
       upsert: mocks.creditNoteAllocationUpsert,
       findUnique: mocks.creditNoteAllocationFindUnique,
+      findMany: mocks.creditNoteAllocationFindMany,
     },
     xeroSyncOperation: { update: mocks.xeroSyncOperationUpdate },
     membershipSubscriptionCharge: {
@@ -683,6 +686,7 @@ describe.each(CLUB_DAY_CASES)(
             groupBy: mocks.creditNoteAllocationGroupBy,
             upsert: mocks.creditNoteAllocationUpsert,
             findUnique: mocks.creditNoteAllocationFindUnique,
+            findMany: mocks.creditNoteAllocationFindMany,
           },
         }),
       );

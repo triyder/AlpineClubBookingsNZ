@@ -15,6 +15,7 @@
  * a double beside somebody else's partner, with no `MemberPartnerLink`. A mock
  * cannot establish either, because neither is a property of the mock.
  */
+import { assertSafeRaceDbUrl } from "./support/race-db-url";
 import {
   afterAll,
   afterEach,
@@ -58,34 +59,6 @@ let reconcileBedAllocationsForBooking: typeof import("@/lib/bed-allocation-lifec
 
 let moduleSettingsExisted = false;
 let previousBedAllocationModuleEnabled: boolean | null = null;
-
-/** Standalone fail-closed copy: importing this file must not run it anywhere else. */
-function assertSafeSharedDoubleDbUrl(url: string): void {
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    throw new Error(
-      "Shared-double real-database proofs need a valid CONCURRENCY_RACE_DATABASE_URL.",
-    );
-  }
-  const port = Number.parseInt(parsed.port, 10);
-  if (!Number.isFinite(port) || port === 5432 || port < 55442) {
-    throw new Error(
-      `Refusing to run shared-double proofs against port ${parsed.port || "(none)"}: use a throwaway PostgreSQL on 55442+ (never 5432).`,
-    );
-  }
-  const host = parsed.hostname.toLowerCase();
-  if (!["localhost", "127.0.0.1", "::1", "[::1]"].includes(host)) {
-    throw new Error("Shared-double proof database must be loopback-only.");
-  }
-  const databaseName = decodeURIComponent(parsed.pathname.replace(/^\//, ""));
-  if (!databaseName.startsWith("concurrency_race_")) {
-    throw new Error(
-      `Refusing to run shared-double proofs against database "${databaseName}": use a dedicated concurrency_race_* database.`,
-    );
-  }
-}
 
 async function clearFixtures(): Promise<void> {
   await prisma.auditLog.deleteMany({
@@ -170,7 +143,7 @@ async function allocationsOnBed(bedId: string) {
 if (RUN) {
   describe("shared double beds through the lifecycle auto-allocator (#2656)", () => {
     beforeAll(async () => {
-      assertSafeSharedDoubleDbUrl(RACE_DB_URL);
+      assertSafeRaceDbUrl(RACE_DB_URL, "bed-allocation shared-double"); // #4142: the one shared guard (INV-SSOT-001)
       process.env.DATABASE_URL = RACE_DB_URL;
       ({ prisma } = await import("@/lib/prisma"));
       ({ reconcileBedAllocationsForBooking } = await import(

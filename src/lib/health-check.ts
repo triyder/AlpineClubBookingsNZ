@@ -3,9 +3,10 @@ import {
   type EnvironmentRoleDeclaration,
 } from "@/lib/environment-role-declaration";
 import { prisma } from "@/lib/prisma";
-import { XERO_TOKEN_ROW_ORDER } from "@/lib/xero-token-row-order";
+import { readXeroConnection } from "@/lib/xero-connection";
 import { getRuntimeConfigCheck } from "@/lib/runtime-config";
 import { countExhaustedPaymentRecoveryOperations } from "@/lib/payment-recovery-health";
+import { PAYMENT_RECOVERY_CLAIMABLE_LATER_WHERE } from "@/lib/payment-recovery-constants";
 import { getOperationalStripeSecretKey } from "@/lib/stripe-config";
 import { readCronRuntimeZone } from "@/lib/cron-runtime-zone";
 
@@ -153,10 +154,7 @@ async function checkStripe(): Promise<CheckResult> {
 async function checkXero(): Promise<CheckResult> {
   const start = Date.now();
   try {
-    const token = await withTimeout(
-      prisma.xeroToken.findFirst({ orderBy: XERO_TOKEN_ROW_ORDER }),
-      CHECK_TIMEOUT_MS,
-    );
+    const token = await withTimeout(readXeroConnection(), CHECK_TIMEOUT_MS);
     if (!token) {
       return {
         status: "error",
@@ -222,6 +220,8 @@ async function checkPaymentRecoveryQueue(): Promise<CheckResult> {
           where: {
             status: "PENDING",
             createdAt: { lt: staleThreshold },
+            // #4104: a dead row is never claimed; it is counted as exhausted.
+            ...PAYMENT_RECOVERY_CLAIMABLE_LATER_WHERE,
           },
         }),
         countExhaustedPaymentRecoveryOperations(),

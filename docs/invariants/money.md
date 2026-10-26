@@ -294,7 +294,9 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   admits a draining-colour officer-repair audit. Provenance decides what a
   night may be read as, not whether the booking ledger posts it: every priced
   night posts one `GUEST_NIGHT` line, an inexact strand's included (#3583,
-  decision A), while an edit still refuses to price an inexact night.
+  decision A). Since #4317 an edit prices every night by the D1 valuation
+  (`INV-MOD-028`), which supersedes the evidence clause above: every usable row,
+  `EVEN_SPLIT` and `UNKNOWN` included, keeps its figure.
 
 ## INV-MONEY-029
 
@@ -308,8 +310,8 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   whose arithmetic is per night; the GUEST for a fixed-amount promotion, which
   is `min(value, guest total)` with no per-night rule. The amount is the
   engine's own figure — the very term its totals were summed from — never
-  translated to a finer grain by a rule. It is a signed delta in integer cents
-  like `priceAdjustmentCents`: negative for a discount, positive where a
+  translated to a finer grain by a rule, bar the one exception below. It is a
+  signed delta in integer cents like `priceAdjustmentCents`: negative for a discount, positive where a
   `SET_PRICE` code raised a night, and `0` where it set a night to exactly its
   rate, a real value. A row's beneficiary is decided in the same
   function and branch that decides the allocation it decomposes
@@ -318,7 +320,7 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   that member's `PromoRedemptionAllocation.priceAdjustmentCents` (an absent
   allocation row means the member received nothing, per `INV-MONEY-005`) and,
   overall, to `PromoRedemption.priceAdjustmentCents`. The one writer of an
-  AMOUNT, `recordBookingNightAdjustments` in `night-adjustment-write.ts`
+  engine AMOUNT, `recordBookingNightAdjustments` in `night-adjustment-write.ts`
   (a member merge only moves or deletes rows and never invents one), enforces
   it at write time and REFUSES BEFORE IT MUTATES — every read and check
   precedes its first write, so a refusal rolls the edit back; the waitlist
@@ -342,7 +344,20 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   mechanical rewrite that moves no money (a name-only correction, an
   in-progress extension, an admin date shift) carries the recorded rows across
   by guest and stay date byte for byte, and where it cannot, leaves the
-  booking's rows absent rather than guess. A member merge that drops a
+  booking's rows absent rather than guess. **The one exception** (owner
+  decision 24 Oct 2026 on #4302; #4317): an in-progress edit capping its
+  carried promotion at the new total scales the rows left on the stay, per
+  redemption and beneficiary, in proportion to their stored amounts,
+  leftover cents on the earliest night, to the capped allocations
+  (`scaleCappedCarriedRows`, via `restoreBookingNightAdjustments`). It writes
+  no row for a code, which reads not known (build-up and Xero promotion lines
+  fall back to the aggregate), where an amount is NOT KNOWN, an allocation
+  lost every row, a beneficiary's rows mix signs, a scaled row would take more
+  than its night's price (a guest row, its guest's total) or raise a night
+  further, or across codes a guest's night or a guest would lose more than it
+  is held at (every code on it; an unpriced night is not measured); and none
+  where the redemptions could not be scaled (`capCarriedPromotionRecords`).
+  A member merge that drops a
   duplicate's colliding allocation deletes that duplicate's rows on the same
   redemption in the same step, so each surviving allocation still matches its
   rows per beneficiary — but the redemption total still carries the dropped
@@ -449,12 +464,10 @@ verified aggregate) and **`INV-MOD-058`** (an edit's stored lines).
   source they used** (#3277, programme #3272; owner-approved D3 blueprint,
   12 September 2026). The caller names its operation because the required grain
   differs: whole-guest removal, and a strand an edit does not touch at all
-  (#3531 D-3531-1, `editStrandEvidenceGrain`), may use a reconciling guest
-  total even when its nights are `EVEN_SPLIT`; a strand an edit moves, one it
-  deliberately reprices with its locks cleared (a #2337 link, an other-lodge
-  tick), and the review re-base need exact individual-night provenance; credit
-  election verifies the booking headline; Xero verifies the booking promotion
-  aggregate.
+  (#3531 D-3531-1), may use a reconciling guest total even when its nights are
+  `EVEN_SPLIT`; since #4317 an edit values every strand it moves, and the
+  legacy review re-base every strand, by `INV-MOD-028`; credit election
+  verifies the booking headline; Xero verifies the booking promotion aggregate.
 
   `selectBookingMoneyBuildUp` returns `STORED`,
   `DERIVED_COMPATIBILITY_FALLBACK`, or `BASE_EVIDENCE_UNKNOWN`, with its reason,
@@ -633,7 +646,10 @@ verified aggregate) and **`INV-MOD-058`** (an edit's stored lines).
   **A hand-back posts `BANK_REFUND`** when a task completes on the
   `local-allocation` route, keyed `handback:<taskId>`, naming the officer, by
   internet banking (#3529's wording decision, `INV-PAY-101`) — except on a
-  card payment, whose refund posts from its refund row.
+  card payment, whose refund posts from its refund row. A card refund closed
+  as paid another way has no refund row, so its close posts the line on its
+  own completed task (`INV-PAY-122`); so does a cancel's card refund
+  shortfall, on its completion (`INV-PAY-129`).
   `booking-ledger-credit-sync.realdb.test.ts` proves the `member-credit.ts`
   writers and the real resolver.
 
@@ -641,10 +657,10 @@ verified aggregate) and **`INV-MOD-058`** (an edit's stored lines).
 
 - **An edit posts its own lines, per guest-night, or none; a review closure
   records one parked edit's money once** (#3582). Rule and reason: design
-  `booking-ledger.md` §5.1 (edits: reversal plus re-post per night, sum or
-  nothing, only on a booking confirmed on the ledger, asked under `lock(1)`;
-  a parked edit posts nothing, `INV-MOD-040`) and §5.3 (a closure's share,
-  decided at booking grain). No review share posts a settlement line
+  `booking-ledger.md` §5.1 (edits: reversal plus re-post per night at its
+  `INV-MOD-028` value, sum or nothing, only on a booking confirmed on the
+  ledger, asked under `lock(1)`; no edit parks since #4317) and §5.3 (a legacy
+  closure's share, decided at booking grain). No review share posts a settlement line
   (`INV-MONEY-034`, `INV-MONEY-035`). Pins:
   `booking-ledger-modification-posting.test.ts`,
   `booking-ledger-modification-sync.test.ts` (two-sibling fixtures per
@@ -679,8 +695,8 @@ verified aggregate) and **`INV-MOD-058`** (an edit's stored lines).
   fee, credit row, capture or refund no live line records. Every class holds
   the gate until the owner's `--acknowledged` file, kept outside the
   repository, names its instance to the cent — `KNOWN_DEFECT_HISTORY` too —
-  except `GROUP_SETTLEMENT_OFF_LEDGER`, listed only (owner decisions,
-  #3583) while #3854's lines agree. A moved figure is stale and still holds. `booking-ledger-projection-census.realdb.test.ts` proves it
+  except `GROUP_SETTLEMENT_OFF_LEDGER` (#3583, while #3854's lines agree) and
+  `REFUND_APPEAL_PAID` (#4075), listed only. A moved figure is stale and still holds. `booking-ledger-projection-census.realdb.test.ts` proves it
   on real-writer bookings.
 
 ## INV-MONEY-006
@@ -697,6 +713,19 @@ check the others.
 ## INV-MONEY-007
 
 - Admin adjustments need audit, approval, and a visible business reason.
+- The one system-written adjustment (#4219; owner decision, 17 Oct 2026): when a
+  credit note was spent in Xero outside the app, the app writes the lot down with a
+  negative `ADMIN_ADJUSTMENT` row and releases the booking's applied credit with a
+  matching row, both marked `outsideSpendConvergedAt`. It has no requester or
+  approver by design (Xero's figure for the note is the decision), but it still has
+  an audit row and a visible business reason, and it moves no member's balance.
+- The same holds for the inbound credit-note mirror (#4270; owner decision, 24 Oct
+  2026): it writes down only the free part of a lot Xero shows spent outside the app
+  and restores it, as a positive row marked and stamped the same way, when Xero shows
+  the spend undone, never more than was written down. Its audit rows are
+  `xero.credit_note.outside_spend_mirrored` and `.outside_spend_restored`. A
+  write-down never takes the member's balance below zero, and the member is not
+  emailed.
 
 ## INV-MONEY-008
 
@@ -859,7 +888,12 @@ check the others.
   carries no Xero invoice link (a write-time fence, so a manual mark-paid
   landing mid-sync is also safe); and `flushMemberSubscriptionHistory` treats a
   manual-PAID row as financial history and never deletes it on contact
-  link/push/unlink. Once a real Xero subscription invoice links to the row,
+  link/push/unlink. An audited finance:edit close (#4098) moves that conflict
+  to `NOT_REQUIRED` only while every covered subscription is settled (`PAID`,
+  or exempt `NOT_REQUIRED`), releasing its coverage claims and bumping
+  `voidGeneration`, so a later payment reversal re-bills that member; a closed
+  family stays billed until then (#4110). Once a real Xero
+  subscription invoice links to the row,
   Xero is authoritative again and the linking write clears the manual
   provenance columns (a row can never read "UNPAID (manual)"). Reversal
   (finance:edit) restores `NOT_INVOICED` (or `UNPAID` on a legacy row with an

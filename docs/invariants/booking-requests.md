@@ -29,14 +29,18 @@ officer surfaces that decide a request on these tables and not just the
 policy-exception one: `BookingChangeRequest` holds both kinds of row, and its
 LOCKED_PERIOD half is decided from a different panel
 (`booking-change-requests-panel.tsx` → `PATCH
-/api/admin/booking-change-requests/[id]`) that writes the same column.
+/api/admin/booking-change-requests/[id]`) that writes the same column. On a
+finished stay that approval also APPLIES the request (#3750), and the two notes
+are written by the same guarded claim that executes it.
 
 ### INV-REQ-002
 
 - `adminNotes` is **member-visible**, on both request tables and for both kinds of
   `BookingChangeRequest` row. It is the decision explanation, written for the
   member: rendered on their own request list, on their booking page under "Change
-  Requests", and interpolated into the approval and refusal emails. Every officer
+  Requests", and interpolated into the policy-exception approval and refusal
+  emails. A `LOCKED_PERIOD` decision sends no email of its own; an executed one
+  (#3750) reaches the member as the ordinary booking-change email. Every officer
   screen labels it as member-visible *before* the decision is submitted, so nobody
   discovers the audience afterwards. A box headed only "Admin notes" over this
   column is a defect — it is what let an officer type a judgement about a member
@@ -263,3 +267,71 @@ invalidates it.
   correction is never refused for it.
 
 Pinned by `src/lib/__tests__/booking-request-corrections.test.ts`.
+
+## Structured locked-period change requests (#4030)
+
+### INV-REQ-011
+
+A `LOCKED_PERIOD` change request names the change it asks for. `POST
+/api/bookings/[id]/change-requests` refuses one that carries no new dates, no
+guest added or removed and no guest's nights (400, `STRUCTURED_CHANGE_REQUIRED`);
+the note and `requestedEffectiveDate` are context, never a change, and a guest's
+two-bound range or grid night set counts only when it changes their nights;
+approval passes every one through (`INV-REQ-012`). All
+guest nights use `normalizeGuestStayRange`. Submission and estimate share
+`requestedDatesIgnoredByNightsRefusal` over the merged editor/card proposal:
+a moved date the nights do not reach is refused. A typed guest named like
+one of the owner's dependants is refused at submit and in the officer's entry by
+`checkOwnDependantIdentityForParty` (`INV-GUEST-019`). The member's
+in-progress request card adds guests with the guest editor's fields, each guest's
+nights inside the stay, and estimates only its non-member guests, counting the
+whole proposed party (never resolving another member's rate).
+
+For an older free-text request on a finished stay, the officer enters the
+described guests. The entry is accepted only
+when approving applies the request, and only for one that names no change;
+it is written into `requestedChanges.requested` (`addGuests`, a summary saying it
+was entered on the member's behalf, and `officerEntry` naming the officer and
+keeping the member's own summary) by the approval's guarded claim, in the
+executor's transaction. A refusal after the claim rolls the entry back with it,
+so no request holds officer-entered guests without the approval that applied
+them. An applying approval carries the figures its check showed; if the edit
+produces others under the locks it is refused and rolled back. It then runs through #3750's path unchanged (`INV-MOD-019`), and the
+approval's audit row lists the guests entered. Guarded by
+`booking-change-request-structured.test.ts`,
+`booking-change-request-grid-nights.test.ts`,
+`booking-change-request-officer-entry.test.ts`,
+`booking-change-request-estimate.test.ts` and
+`booking-change-request-execution.realdb.test.ts`.
+
+### INV-REQ-012
+
+A two-bound guest range in a `LOCKED_PERIOD` change request that only repeats
+the guest's own Date In and Date Out keeps the nights the guest holds (#4157,
+owner decision "Keep their nights"). Range mode cannot express gaps (#713), so
+the member's form sends a gapped guest's own dates back unchanged; applied as
+written, that range put the guest on every night inside it and charged for the
+gaps. `lockedPeriodRequestToBatchInput` passes such a guest as their night
+set, so range mode stays on, even beside an officer's entry.
+Only a moved bound re-spreads the guest; a guest who already holds every night
+is passed by the two bounds. Each guest is judged on the entry approval
+applies: the last with both dates or a night set (`effectiveStayRangeByGuest`);
+a new request naming a guest twice is refused. Whether a request names any
+change is judged on that entry as sent, before the kept nights replace it.
+
+`keptNightsByGuest` decides this from one source, for the executor and for the
+officer's card: the booking's live guest rows (under the executor's locks;
+loaded by the admin list for pending requests only), else the request's
+snapshot. An approval's guarded claim, applying or only acknowledging,
+records the kept nights as
+`requestedChanges.keptNights`, empty when none, a key the older schema strips.
+The card reads a pending request against that source and a declined one
+against its snapshot, listing the kept nights as unchanged; an approval with
+the record exactly as recorded. An approval without it (one before this
+release) is listed as asked with neither mark, and is unchanged only where its snapshot holds night rows. Guarded by
+`booking-change-request-repeated-range.test.ts`,
+`booking-change-request-execution.test.ts`,
+`booking-change-request-officer-entry.test.ts`,
+`booking-change-request-list-officer-entry.test.ts`,
+`booking-change-request-grid-nights.test.ts`, `requested-guest-nights.test.tsx`
+and the realdb cases in `booking-change-request-execution.realdb.test.ts`.

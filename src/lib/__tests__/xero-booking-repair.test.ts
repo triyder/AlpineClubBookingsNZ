@@ -9,6 +9,8 @@ import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { SECOND_INSTRUMENT_SETTLEMENT_CONFLICT_EVENT_KIND } from "@/lib/manual-settlement-reversal-event";
 import { unsettledRefundNoteRows } from "@/lib/xero-refund-note-unsettled";
 import { modificationNoteWording, readModificationNoteWording } from "@/lib/xero-refund-method";
+import { buildEditFinancialReviewChargeReason, buildLateCaptureApprovalRefundRecoveryIdempotencyKey } from "@/lib/payment-recovery-keys";
+import { cardRefundPaidAnotherWayOccurrenceKey } from "@/lib/manual-refund-task-settlement-rules";
 
 function makeBooking(overrides: Record<string, unknown> = {}) {
   return {
@@ -259,6 +261,9 @@ function recomputePaymentSummary(payment: any) {
   );
 }
 
+/** #3924 round 14: a capture's by-hand card refunds - cents alone, or with the share a note sent without a reply may answer. */
+type CardByHand = number | { byHandCents: number; mayBeInXeroCents: number };
+
 function createDependencies(state: {
   bookings: any[];
   links?: any[];
@@ -288,8 +293,37 @@ function createDependencies(state: {
     status?: string;
     createdAt?: Date;
   }[];
+  // #3924 round 7 (money M2): an approved capture's card refund row, and the
+  // record of its close as paid another way.
+  lateCaptureApprovalRefunds?: { id: string; idempotencyKey: string }[];
+  // #4104 (#4128 review C5): card refunds Stripe failed later, owed by rows of their own.
+  failedLaterRows?: { paymentId: string; idempotencyKey: string; allocationPlan: unknown }[];
+  // #4103: the refunds already recorded on a payment, which the late-capture
+  // repair reads for each slice's key generation.
+  paymentRefunds?: { paymentId: string; paymentTransactionId: string | null; amountCents: number; status: string }[];
+  paidAnotherWayCloses?: { kind: string; occurrenceKey: string }[];
+  // #3924 round 8: where that close's receipt and note stand.
+  paidAnotherWayReceipt?: { kind: "none" } | { kind: "resolved-by-hand" } | { kind: "recorded"; invoiceId: string | null };
+  paidAnotherWayNoteAsked?: boolean;
+  paidAnotherWayReceiptLinks?: Array<"invoice" | "payment">;
+  /** #3924 round 9: the close's record, as the receipt state names it. */
+  paidAnotherWayCloseRecord?: { id: string; amountCents: number } | null;
+  /** #3924 round 11: the capture's refunds less the notes naming it. */
+  paidAnotherWayRecordByHandCents?: number;
+  /** #3924 round 14: the capture's card refunds a note sent without a reply may answer. */
+  paidAnotherWayCardNoteMayBeInXeroCents?: number;
+  /**
+   * #3924 round 12: by intent, a late capture's card refunds no note will
+   * answer; round 14: or, as an object, with those a note sent without a reply
+   * may answer.
+   */
+  lateCaptureCardRefundsByHand?: Record<string, CardByHand>;
+  /** #3953: the primary invoice create row carrying its stored link figures. */
+  primaryInvoiceFiguresOperation?: { id: string; requestPayload: unknown } | null;
   // #3643 F2: the organisation late-cash arm's CANCELLED_BOOKING_HAND_BACK tasks.
   handBackTasks?: { bookingId: string; paymentId: string }[];
+  // #4215 (`INV-PAY-118`): refund requests' completed hand-backs, the cash each paid back.
+  paidBackRefundRequests?: { paymentId: string; amountCents: number; refundRequestId?: string }[];
   // #3643 (owner decision 28 Sep 2026): DECISION 2 part-payment review tasks.
   partPaymentReviewTasks?: {
     bookingId: string;
@@ -455,11 +489,43 @@ function createDependencies(state: {
       booking: {
         findMany: vi.fn().mockResolvedValue(state.bookings),
       },
+      // #3953: the edits marked as settled against the primary invoice, which
+      // its gap invoice's anchors are read from - none unless a test says so.
+      bookingModification: { findMany: vi.fn().mockResolvedValue([]) },
       xeroObjectLink: {
-        findMany: vi.fn().mockResolvedValue(links),
+        // A read naming one role gets that role's links only, as the real query does - here the
+        // loader's refund-note read (`refundNoteSetsForPayments`, #4231) and the refund-payment
+        // read (`refundPaymentLinkWhere`). The loader's other reads name no role and get every link.
+        findMany: vi.fn().mockImplementation(async ({ where }: any = {}) =>
+          typeof where?.role === "string" ? links.filter((link: any) => link.role === where.role) : links,
+        ),
+        // #3953: the change's own supplementary invoice link (`readCaptureRecorder`).
+        findFirst: vi.fn().mockImplementation(async ({ where }: any = {}) =>
+          links.find((link: any) =>
+            link.role === where?.role && link.localModel === where?.localModel && link.localId === where?.localId && link.active,
+          ) ?? null,
+        ),
       },
       xeroSyncOperation: {
         findMany: vi.fn().mockResolvedValue(operations),
+        // #3953: the primary invoice's stored figures (none unless a test says
+        // so), and `readCaptureRecorder`'s supplementary-invoice reads, matched
+        // as the real queries match them.
+        findFirst: vi.fn().mockImplementation(async ({ where }: any = {}) => {
+          if (where?.correlationKey) return state.primaryInvoiceFiguresOperation ?? null;
+          const live = operations.filter((op: any) => op.queueType === where?.queueType && op.status !== "CANCELLED");
+          if (where?.localId) return live.find((op: any) => op.localModel === where.localModel && op.localId === where.localId) ?? null;
+          // The intent naming read (`paymentIntentId`), or the gap-coverage read (`coveredPaymentIntentIds`).
+          const intent = where?.requestPayload?.equals ?? where?.requestPayload?.array_contains?.[0];
+          const byCoverage = where?.requestPayload?.path?.[0] === "coveredPaymentIntentIds";
+          return (
+            live.find((op: any) =>
+              byCoverage
+                ? (op.requestPayload?.coveredPaymentIntentIds ?? []).includes(intent)
+                : op.requestPayload?.paymentIntentId === intent,
+            ) ?? null
+          );
+        }),
       },
       // #1491: booking-cancel card-path refund decisions (matched by exact
       // booking_cancel_refund_recovery_<id> keys in the loader).
@@ -470,6 +536,16 @@ function createDependencies(state: {
         // open statuses only. The mock discriminates the way the real table
         // would rather than returning one list to both.
         findMany: vi.fn().mockImplementation(async ({ where }: any) => {
+          // #4104 (#4128 review C5): the unsettled failed-later rows, by key prefix.
+          if (where?.idempotencyKey?.startsWith === "card_refund_failed_later_") {
+            return (state.failedLaterRows ?? []).filter((row) => (where.paymentId?.in ?? []).includes(row.paymentId));
+          }
+          // #3924 round 7: the approval refund rows, by their exact keys.
+          // #4104: asked as an OR with the failed-later rows on the captures' intents.
+          const askedKeys: string[] = where?.idempotencyKey?.in ?? where?.OR?.[0]?.idempotencyKey?.in ?? [];
+          if (where?.type === undefined && askedKeys.some((key) => key.startsWith("late_capture_approval_refund"))) {
+            return (state.lateCaptureApprovalRefunds ?? []).filter((row) => askedKeys.includes(row.idempotencyKey));
+          }
           if (where?.type !== "CREATE_ADDITIONAL_PAYMENT_INTENT") {
             return state.cancellationRefundRecoveryOperations ?? [];
           }
@@ -508,7 +584,13 @@ function createDependencies(state: {
       // #3187: the settled charge shares a parked booking edit's money lives on.
       manualRefundTask: {
         findMany: vi.fn().mockImplementation(async ({ where }: any) =>
-          where?.kind === "CANCELLED_BOOKING_HAND_BACK"
+          where?.occurrenceKey?.in
+            ? (state.paidAnotherWayCloses ?? []).filter((close) => where.occurrenceKey.in.includes(close.occurrenceKey))
+            : where?.occurrenceKey?.startsWith === "refund-request-hand-back:" && where?.status === "COMPLETED"
+            ? (state.paidBackRefundRequests ?? [])
+                .filter((task) => where.paymentId.in.includes(task.paymentId))
+                .map((task) => ({ paymentId: task.paymentId, amountCents: task.amountCents, kind: "CANCELLED_BOOKING_HAND_BACK", occurrenceKey: `refund-request-hand-back:${task.refundRequestId ?? "rr_1"}` }))
+            : where?.kind === "CANCELLED_BOOKING_HAND_BACK"
             ? (state.handBackTasks ?? [])
             : where?.partPaymentReviewPaymentId
               ? (state.partPaymentReviewTasks ?? [])
@@ -524,7 +606,15 @@ function createDependencies(state: {
       // notice; and it applies the same three criteria plus the intent id the
       // real query does, so a test cannot pass on a row the real read would
       // never have returned.
+      paymentRefund: {
+        findMany: vi.fn().mockImplementation(async ({ where }: any) =>
+          (state.paymentRefunds ?? []).filter((refund) => refund.paymentId === where?.paymentId),
+        ),
+      },
       paymentTransaction: {
+        // #4253: the capture's receipt writer asks how much of a capture the credit-release sweep records.
+        findUnique: vi.fn().mockResolvedValue(null),
+        findMany: vi.fn().mockResolvedValue([]),
         findFirst: vi.fn().mockImplementation(async ({ where }: any) => {
           const booking = state.bookings.find(
             (item) => item.id === where?.payment?.bookingId
@@ -585,6 +675,10 @@ function createDependencies(state: {
     }),
     enqueueXeroRefundCreditNoteOperation: vi.fn().mockResolvedValue({
       queueOperationId: "queue_refund_credit",
+      message: "queued",
+    }),
+    enqueueXeroRefundRequestCreditNoteOperation: vi.fn().mockResolvedValue({
+      queueOperationId: "queue_refund_request_credit",
       message: "queued",
     }),
     enqueueXeroAppliedCreditAllocationOperation: vi.fn().mockResolvedValue({
@@ -657,8 +751,38 @@ function createDependencies(state: {
         coveredCents: 0,
         resolvedInXeroCents: 0,
         uncoveredCents: payment.refundedAmountCents,
+        paidAnotherWayUncoveredCents: 0,
       })
     ),
+    // #3924 round 8: a waiting paid-another-way close's receipt and note -
+    // nothing in Xero and no note asked, unless a test says so.
+    readPaidAnotherWayReceiptState: vi.fn().mockImplementation(async () => ({
+      receipt: state.paidAnotherWayReceipt ?? { kind: "none" },
+      close:
+        state.paidAnotherWayCloseRecord === undefined
+          ? { id: "close_1", amountCents: 6000 }
+          : state.paidAnotherWayCloseRecord,
+      noteAsked: state.paidAnotherWayNoteAsked ?? false,
+      invoiceLinked: state.paidAnotherWayReceiptLinks?.includes("invoice") ?? false,
+      paymentLinked: state.paidAnotherWayReceiptLinks?.includes("payment") ?? false,
+      recordByHandCents: state.paidAnotherWayRecordByHandCents ?? 6000,
+      cardNoteMayBeInXeroCents: state.paidAnotherWayCardNoteMayBeInXeroCents ?? 0,
+    })),
+    queueWaitingPaidAnotherWayNote: vi.fn().mockResolvedValue("op_note"),
+    // #3953: a change capture's receipt, queued once.
+    enqueueAdditionalCaptureReceiptOperation: vi.fn().mockResolvedValue({ outcome: "queued", queueOperationId: "op_receipt" }),
+    // #3924 round 12: none, unless a test says so.
+    readLateCaptureCardRefundsByHand: vi
+      .fn()
+      .mockImplementation(
+        async () =>
+          new Map(
+            Object.entries(state.lateCaptureCardRefundsByHand ?? {}).map(([intent, value]) => [
+              intent,
+              typeof value === "number" ? { byHandCents: value, mayBeInXeroCents: 0 } : value,
+            ]),
+          ),
+      ),
   };
 }
 
@@ -713,6 +837,59 @@ describe("runBookingXeroRepair", () => {
     expect(unsettledRefundNoteRows(operations as never, links)).toEqual([]);
   });
 
+  it("MUTATION (INV-ADDPAY-041): a note Xero voided is never offered back into the payment's field", async () => {
+    // The void deactivated the mirror and released the field; the create that
+    // raised the note is still in the history.
+    const noteRow = makeOperation({
+      id: "op_voided", entityType: "CREDIT_NOTE", localModel: "Payment", localId: "payment_1", xeroObjectType: "CREDIT_NOTE", xeroObjectId: "cn_voided",
+      requestPayload: { allocation: { invoiceId: "inv_primary", amount: 20 }, refundMethod: "internet-banking" },
+    });
+    const backfills = async (metadata: Record<string, unknown>) => {
+      const links = [paymentLink({ id: "link_voided", xeroObjectType: "CREDIT_NOTE", xeroObjectId: "cn_voided", role: "REFUND_CREDIT_NOTE", active: false, metadata })];
+      const deps = createDependencies({ bookings: [makeBooking()], links, operations: [noteRow] });
+      vi.mocked(deps.prisma.xeroObjectLink.findMany).mockImplementation((async ({ where }: any) =>
+        links.filter((link) => where?.active === undefined || link.active === where.active)) as never);
+      const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+      return report.passes[0].bookings[0].actions.filter((action) => action.type === "SYNC_PAYMENT_REFUND_CREDIT_NOTE_FIELD");
+    };
+
+    expect(await backfills({ amountCents: 2000, status: "VOIDED" })).toEqual([]);
+    expect(await backfills({ amountCents: 2000, status: "DELETED" })).toEqual([]);
+    // Control: the same history with no recorded void is still backfilled.
+    expect(await backfills({ amountCents: 2000 })).toEqual([
+      expect.objectContaining({ payload: { paymentId: "payment_1", xeroRefundCreditNoteId: "cn_voided" } }),
+    ]);
+  });
+
+  it("MUTATION (INV-ADDPAY-041): a voided note's create beside the reissued note's is no conflict", async () => {
+    const noteRow = (id: string, creditNoteId: string, updatedAt: string) =>
+      makeOperation({
+        id, entityType: "CREDIT_NOTE", localModel: "Payment", localId: "payment_1", xeroObjectType: "CREDIT_NOTE", xeroObjectId: creditNoteId,
+        requestPayload: { allocation: { invoiceId: "inv_primary", amount: 20 }, refundMethod: "card" }, updatedAt: new Date(updatedAt),
+      });
+    const conflictSummary = "Refund credit note references conflict across local fields, links, or past operations.";
+    const summaries = async (voidedMetadata: Record<string, unknown>) => {
+      const booking = makeBooking();
+      Object.assign(booking.payment!, { xeroRefundCreditNoteId: "cn_live" });
+      const links = [
+        paymentLink({ id: "link_voided", xeroObjectType: "CREDIT_NOTE", xeroObjectId: "cn_voided", role: "REFUND_CREDIT_NOTE", active: false, metadata: voidedMetadata }),
+        paymentLink({ id: "link_live", xeroObjectType: "CREDIT_NOTE", xeroObjectId: "cn_live", role: "REFUND_CREDIT_NOTE", metadata: { amountCents: 2000 } }),
+      ];
+      const deps = createDependencies({
+        bookings: [booking], links,
+        operations: [noteRow("op_live", "cn_live", "2026-06-02T00:00:00.000Z"), noteRow("op_voided", "cn_voided", "2026-06-01T00:00:00.000Z")],
+      });
+      vi.mocked(deps.prisma.xeroObjectLink.findMany).mockImplementation((async ({ where }: any) =>
+        links.filter((link) => where?.active === undefined || link.active === where.active)) as never);
+      const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+      return report.passes[0].bookings[0].findings.map((finding) => finding.summary);
+    };
+
+    expect(await summaries({ amountCents: 2000, status: "VOIDED" })).not.toContain(conflictSummary);
+    // Control: unvoided, the two creates still disagree.
+    expect(await summaries({ amountCents: 2000 })).toContain(conflictSummary);
+  });
+
   it("MUTATION (#3880 F1): a bank payment holding only per-refund notes is offered no backfill of its canonical field", async () => {
     // Empty by design: a review's per-refund note is never the payment's one note.
     const reviewNote = (id: string, creditNoteId: string) =>
@@ -749,7 +926,7 @@ describe("runBookingXeroRepair", () => {
       ];
       const deps = createDependencies({ bookings: [cancelledBank()], links });
       // What the one gap reader answers: the per-refund note counts as cover.
-      deps.readRefundCreditNoteGap = vi.fn().mockResolvedValue({ cashRefundCents: 3000, coveredCents: 3000 - uncoveredCents, resolvedInXeroCents: 0, uncoveredCents });
+      deps.readRefundCreditNoteGap = vi.fn().mockResolvedValue({ cashRefundCents: 3000, coveredCents: 3000 - uncoveredCents, resolvedInXeroCents: 0, uncoveredCents, paidAnotherWayUncoveredCents: 0 });
       const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
       return { deps, booking: report.passes[0].bookings[0] };
     };
@@ -781,7 +958,7 @@ describe("runBookingXeroRepair", () => {
         ],
       };
       const deps = createDependencies({ bookings: [withCredit], links });
-      deps.readRefundCreditNoteGap = vi.fn().mockResolvedValue({ cashRefundCents: 3000, coveredCents: 3000, resolvedInXeroCents: 0, uncoveredCents: 0 });
+      deps.readRefundCreditNoteGap = vi.fn().mockResolvedValue({ cashRefundCents: 3000, coveredCents: 3000, resolvedInXeroCents: 0, uncoveredCents: 0, paidAnotherWayUncoveredCents: 0 });
       const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
       expect(report.passes[0].bookings[0].findings.map((finding) => finding.summary)).not.toContain(
         "The booking appears to have a cash cancellation refund, but the missing Xero refund note amount cannot be derived safely from local history.",
@@ -3954,6 +4131,47 @@ describe("runBookingXeroRepair", () => {
     expect(deps.enqueueXeroSupplementaryInvoiceOperation).toHaveBeenCalledTimes(1);
   });
 
+  // #4104 (#4128 review C5): a late capture's refund that Stripe failed later
+  // is owed again by a row of its own; the repair must not offer it as well.
+  it("MUTATION: leaves out of the late-capture refund what a failed-later card refund row still owes", async () => {
+    const transaction = {
+      id: "txn_primary",
+      paymentId: "payment_1",
+      kind: "PRIMARY",
+      source: "STRIPE",
+      stripePaymentIntentId: "pi_primary_captured",
+      amountCents: 10000,
+      refundedAmountCents: 0,
+      status: "SUCCEEDED",
+      paymentMethodId: "pm_123",
+      reason: null,
+      createdAt: new Date("2026-05-01T00:00:00Z"),
+      updatedAt: new Date("2026-05-01T00:00:00Z"),
+    };
+    const booking = makeBooking({
+      status: "CANCELLED",
+      payment: { ...makeBooking().payment, amountCents: 10000, refundedAmountCents: 0, status: "SUCCEEDED", transactions: [transaction] },
+    });
+    const owing = (amountCents: number) =>
+      createDependencies({
+        bookings: [booking],
+        failedLaterRows: [
+          { paymentId: "payment_1", idempotencyKey: "card_refund_failed_later_re_1", allocationPlan: [{ paymentTransactionId: "txn_primary", amountCents }] },
+        ],
+      });
+    const lateCaptureRefund = async (deps: ReturnType<typeof createDependencies>) =>
+      (await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } })).passes[0].bookings[0].actions.find(
+        (action) => action.type === "AUTO_REFUND_LATE_CAPTURED_PAYMENT",
+      );
+
+    expect((await lateCaptureRefund(owing(4000)))?.payload).toMatchObject({
+      refundAmountCents: 6000,
+      allocation: [{ paymentTransactionId: "txn_primary", amountCents: 6000 }],
+    });
+    // All of it owed by the row: nothing is offered.
+    expect(await lateCaptureRefund(owing(10000))).toBeUndefined();
+  });
+
   it("classifies cancelled bookings using per-intent transaction state instead of aggregate payment status", async () => {
     const booking = makeBooking({
       status: "CANCELLED",
@@ -4166,10 +4384,12 @@ describe("runBookingXeroRepair", () => {
       booking: ReturnType<typeof makeBooking>,
       status: string,
       operations: unknown[] = [],
+      lateCaptureCardRefundsByHand?: Record<string, CardByHand>,
     ) => {
       const deps = createDependencies({
         bookings: [booking],
         operations,
+        lateCaptureCardRefundsByHand,
         lateCaptureApprovalTasks: [
           {
             id: "task_kept",
@@ -4190,6 +4410,8 @@ describe("runBookingXeroRepair", () => {
       bookingReport.findings.find(
         (finding) => finding.code === "KEPT_LATE_CAPTURE_WITHOUT_XERO_INVOICE",
       );
+    const byHandOf = (bookingReport: { findings: { code: string }[] }, code: string) =>
+      bookingReport.findings.find((finding) => finding.code === code);
 
     it("queues the kept invoice automatically, for the gross capture, anchored on the task, dated from its raise", async () => {
       const { bookingReport } = await run(keptBooking(), "DISMISSED");
@@ -4319,15 +4541,503 @@ describe("runBookingXeroRepair", () => {
         { refundedAmountCents: 10000, status: "REFUNDED" },
         { refundedAmountCents: 10000, status: "REFUNDED" },
       );
-      const { bookingReport } = await run(refunded, "COMPLETED", [resolved]);
+      // Round 13 (#4039): sized by what no note in Xero answers, as the card-refund reader reads it.
+      const { bookingReport } = await run(refunded, "COMPLETED", [resolved], { pi_kept: 7500 });
       expect(byHand(bookingReport)).toMatchObject({
         severity: "warning",
         safeToAutoApply: false,
-        details: expect.objectContaining({ paymentIntentId: "pi_kept", refundedCents: 10000 }),
+        summary: expect.stringMatching(/record the \$75\.00 refunded by hand in Xero too/),
+        details: expect.objectContaining({ paymentIntentId: "pi_kept", recordByHandCents: 7500, operationId: resolved.id }),
       });
       expect(bookingReport.actions).toEqual([]);
 
       expect(byHand((await run(keptBooking(), "DISMISSED", [resolved])).bookingReport)).toBeUndefined();
+
+      // Round 14: a card note sent without a reply is named apart, to check
+      // in Xero first, and never in the amount to record by hand.
+      const sent = await run(refunded, "COMPLETED", [resolved], { pi_kept: { byHandCents: 2500, mayBeInXeroCents: 5000 } });
+      expect(byHand(sent.bookingReport)).toMatchObject({
+        summary: expect.stringMatching(
+          /record the \$25\.00 refunded by hand in Xero too\. A refund credit note for \$50\.00 refunded to the card may be in Xero: the app tried to send it and cannot tell whether Xero took it\. Check Xero for that credit note first, and record that \$50\.00 by hand only if Xero does not hold it\. This finding is report-only/,
+        ),
+        details: expect.objectContaining({ recordByHandCents: 2500, cardNoteMayBeInXeroCents: 5000 }),
+      });
+    });
+
+    // #3924 round 13 (#4039): a PARTIAL kept row resolved by hand whose
+    // invoice link stays active is still the app's receipt for every
+    // card-refund path, so its refunds get the app's card note - the
+    // card-refund reader names nothing, and nothing says to record them by
+    // hand, however much the capture row says was refunded.
+    it("MUTATION: round 13: a resolved PARTIAL kept row whose link stays active is never told to record its refunds by hand", async () => {
+      const resolvedPartial = {
+        ...keptOperation("PARTIAL"),
+        xeroObjectId: "inv_kept",
+        manuallyResolvedAt: new Date("2026-05-03T00:00:00Z"),
+      };
+      const refunded = keptBooking(
+        { refundedAmountCents: 10000, status: "REFUNDED" },
+        { refundedAmountCents: 10000, status: "REFUNDED" },
+      );
+      const { bookingReport } = await run(refunded, "COMPLETED", [resolvedPartial], {});
+      expect(byHandOf(bookingReport, "KEPT_LATE_CAPTURE_REFUND_RECORD_BY_HAND")).toBeUndefined();
+      expect(byHandOf(bookingReport, "LATE_CAPTURE_CARD_REFUND_RECORD_BY_HAND")).toBeUndefined();
+      expect(bookingReport.actions).toEqual([]);
+    });
+
+    // #3924 round 12: every record-by-hand finding says it keeps appearing.
+    it("round 12: the kept invoice's record-by-hand finding says it keeps appearing, and no card finding repeats it", async () => {
+      const resolvedSent = {
+        ...keptOperation("PARTIAL"),
+        xeroObjectId: "inv_kept",
+        manuallyResolvedAt: new Date("2026-05-03T00:00:00Z"),
+      };
+      const refunded = keptBooking(
+        { refundedAmountCents: 10000, status: "REFUNDED" },
+        { refundedAmountCents: 10000, status: "REFUNDED" },
+      );
+      const { bookingReport } = await run(refunded, "COMPLETED", [resolvedSent], { pi_kept: 10000 });
+      const kept = bookingReport.findings.find((finding) => finding.code === "KEPT_LATE_CAPTURE_REFUND_RECORD_BY_HAND");
+      expect(kept?.summary).toMatch(/keeps appearing after the refund is recorded by hand, which is expected/);
+      expect(bookingReport.findings.find((finding) => finding.code === "LATE_CAPTURE_CARD_REFUND_RECORD_BY_HAND")).toBeUndefined();
+    });
+
+    // #3924 round 12 (F1): an approved capture refunded to the card, whose
+    // change invoice was linked in Xero and then marked resolved as its 409
+    // said - every card-refund path reads it resolved by hand, so no card note
+    // follows and the officer is told to record the card refund by hand.
+    it("MUTATION: round 12: a card-only capture whose receipt is the app's invoice but resolved by hand is reported to record by hand", async () => {
+      const refunded = keptBooking(
+        { refundedAmountCents: 10000, status: "REFUNDED" },
+        { refundedAmountCents: 10000, status: "REFUNDED" },
+      );
+      const { bookingReport, deps } = await run(refunded, "COMPLETED", [], { pi_kept: 10000 });
+      const card = bookingReport.findings.find((finding) => finding.code === "LATE_CAPTURE_CARD_REFUND_RECORD_BY_HAND");
+      expect(card).toMatchObject({
+        severity: "warning",
+        safeToAutoApply: false,
+        details: { paymentId: "payment_1", paymentIntentId: "pi_kept", recordByHandCents: 10000 },
+      });
+      expect(card?.summary).toMatch(/record the \$100\.00 refunded to the card by hand in Xero\. This finding is report-only and keeps appearing/);
+      expect(bookingReport.actions).toEqual([]);
+      expect(deps.readLateCaptureCardRefundsByHand).toHaveBeenCalledWith("payment_1", ["pi_kept"]);
+    });
+
+    // Round 14: a capture whose only card refunds a note sent without a reply
+    // may answer is still named - nothing to record yet, Xero to check first.
+    it("MUTATION: round 14: a card note sent without a reply is named apart, with nothing said to record by hand", async () => {
+      const refunded = keptBooking(
+        { refundedAmountCents: 10000, status: "REFUNDED" },
+        { refundedAmountCents: 10000, status: "REFUNDED" },
+      );
+      const { bookingReport } = await run(refunded, "COMPLETED", [], { pi_kept: { byHandCents: 0, mayBeInXeroCents: 10000 } });
+      const card = bookingReport.findings.find((finding) => finding.code === "LATE_CAPTURE_CARD_REFUND_RECORD_BY_HAND");
+      expect(card).toMatchObject({
+        details: { paymentId: "payment_1", paymentIntentId: "pi_kept", recordByHandCents: 0, cardNoteMayBeInXeroCents: 10000 },
+      });
+      expect(card?.summary).toMatch(
+        /raises no refund note for the card refunds of it\. A refund credit note for \$100\.00 refunded to the card may be in Xero: the app tried to send it and cannot tell whether Xero took it\. Check Xero for that credit note first/,
+      );
+      expect(card?.summary).not.toMatch(/record the \$/);
+    });
+
+    it("round 12: the card finding is read only for a cancelled booking", async () => {
+      const { bookingReport, deps } = await run(
+        makeBooking({ payment: { ...keptBooking().payment } }),
+        "COMPLETED",
+        [],
+        { pi_kept: 10000 },
+      );
+      expect(bookingReport.findings.find((finding) => finding.code === "LATE_CAPTURE_CARD_REFUND_RECORD_BY_HAND")).toBeUndefined();
+      expect(deps.readLateCaptureCardRefundsByHand).not.toHaveBeenCalled();
+    });
+
+    // #3924 round 7 (money M2, `INV-PAY-122`): an APPROVED capture whose card
+    // refund Stripe gave up on and the treasurer closed as paid another way,
+    // with its note waiting for the receipt.
+    describe("a late capture's refund paid another way, waiting for its receipt", () => {
+      const receiptFinding = (report: { findings: { code: string }[] }) =>
+        report.findings.find((finding) => finding.code === "PAID_ANOTHER_WAY_LATE_CAPTURE_WITHOUT_XERO_RECEIPT");
+      const runClosed = async (
+        xeroRefundNote: "now" | "after-receipt" | "none",
+        operations: unknown[] = [],
+        booking = keptBooking(),
+        receiptState: Pick<
+          Parameters<typeof createDependencies>[0],
+          | "paidAnotherWayReceipt"
+          | "paidAnotherWayNoteAsked"
+          | "paidAnotherWayReceiptLinks"
+          | "paidAnotherWayCloseRecord"
+          | "paidAnotherWayRecordByHandCents"
+          | "paidAnotherWayCardNoteMayBeInXeroCents"
+          | "lateCaptureCardRefundsByHand"
+        > = {},
+        apply = false,
+      ) => {
+        const deps = createDependencies({
+          bookings: [booking],
+          operations,
+          ...receiptState,
+          lateCaptureApprovalTasks: [
+            { id: "task_kept", bookingId: booking.id, lateCaptureApprovalIntentId: "pi_kept", status: "COMPLETED", createdAt: RAISED_AT },
+          ],
+          lateCaptureApprovalRefunds: [
+            { id: "op_dead", idempotencyKey: buildLateCaptureApprovalRefundRecoveryIdempotencyKey("pi_kept") },
+          ],
+          paidAnotherWayCloses: [
+            {
+              kind: "CANCELLED_BOOKING_HAND_BACK",
+              occurrenceKey: cardRefundPaidAnotherWayOccurrenceKey("op_dead", { xeroRefundNote }),
+            },
+          ],
+        });
+        const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true }, apply });
+        return Object.assign(report.passes[0].bookings[0], { deps });
+      };
+
+      it("MUTATION: a receipt that FAILED before reaching Xero is retried automatically", async () => {
+        const bookingReport = await runClosed("after-receipt", [keptOperation("FAILED")]);
+        expect(receiptFinding(bookingReport)).toMatchObject({
+          severity: "critical",
+          safeToAutoApply: true,
+          details: expect.objectContaining({ operationId: "op_kept_invoice", manualRefundTaskId: "task_kept" }),
+        });
+        expect(bookingReport.actions.find((a) => a.type === "REQUEUE_XERO_OPERATION")).toMatchObject({
+          safeToAutoApply: true,
+          payload: { operationId: "op_kept_invoice" },
+        });
+      });
+
+      it("MUTATION: a receipt never queued (or withdrawn) is queued automatically, for the gross capture, dated from its raise", async () => {
+        for (const operations of [[], [keptOperation("CANCELLED")]]) {
+          const bookingReport = await runClosed("after-receipt", operations);
+          expect(receiptFinding(bookingReport)).toMatchObject({ safeToAutoApply: true });
+          expect(bookingReport.actions.find((a) => a.type === "QUEUE_KEPT_LATE_CAPTURE_INVOICE")).toMatchObject({
+            safeToAutoApply: true,
+            payload: {
+              manualRefundTaskId: "task_kept",
+              bookingId: "booking_1",
+              paymentIntentId: "pi_kept",
+              capturedCents: 10000,
+              capturedAt: RAISED_AT.toISOString(),
+            },
+          });
+        }
+      });
+
+      it("nothing while the receipt is queued, running or sent, or once an officer resolved it in Xero", async () => {
+        for (const status of ["PENDING", "RUNNING", "SUCCEEDED"]) {
+          expect(receiptFinding(await runClosed("after-receipt", [keptOperation(status)]))).toBeUndefined();
+        }
+        const resolved = { ...keptOperation("FAILED"), manuallyResolvedAt: new Date("2026-05-03T00:00:00Z") };
+        const bookingReport = await runClosed("after-receipt", [resolved]);
+        expect(receiptFinding(bookingReport)).toBeUndefined();
+        expect(bookingReport.actions.find((a) => a.type === "REQUEUE_XERO_OPERATION")).toBeUndefined();
+      });
+
+      it("MUTATION: nothing for a close whose note did not wait for a receipt, or a charge never taken", async () => {
+        expect(receiptFinding(await runClosed("now"))).toBeUndefined();
+        expect(receiptFinding(await runClosed("none"))).toBeUndefined();
+        const never = keptBooking({}, { status: "FAILED" });
+        expect(receiptFinding(await runClosed("after-receipt", [], never))).toBeUndefined();
+      });
+
+      // #3924 round 8 (money review).
+      describe("round 8", () => {
+        const noteFinding = (report: { findings: { code: string }[] }) =>
+          report.findings.find((finding) => finding.code === "PAID_ANOTHER_WAY_REFUND_NOTE_NOT_QUEUED");
+        const inXero = { kind: "recorded", invoiceId: "inv_receipt" } as const;
+
+        it("MUTATION: a receipt in Xero whose note was never queued: the note is queued automatically, through the one note step", async () => {
+          const bookingReport = await runClosed("after-receipt", [], keptBooking(), { paidAnotherWayReceipt: inXero }, true);
+          expect(noteFinding(bookingReport)).toMatchObject({
+            severity: "critical",
+            safeToAutoApply: true,
+            details: expect.objectContaining({ receiptInvoiceId: "inv_receipt", paymentIntentId: "pi_kept" }),
+          });
+          expect(bookingReport.actions.find((a) => a.type === "QUEUE_PAID_ANOTHER_WAY_REFUND_NOTE")).toMatchObject({
+            safeToAutoApply: true,
+            payload: { paymentIntentId: "pi_kept" },
+          });
+          expect(bookingReport.deps.queueWaitingPaidAnotherWayNote).toHaveBeenCalledWith("pi_kept");
+          // Never a second receipt beside the one in Xero.
+          expect(bookingReport.actions.find((a) => a.type === "QUEUE_KEPT_LATE_CAPTURE_INVOICE")).toBeUndefined();
+        });
+
+        it("nothing once the note was asked for", async () => {
+          const bookingReport = await runClosed("after-receipt", [], keptBooking(), {
+            paidAnotherWayReceipt: inXero,
+            paidAnotherWayNoteAsked: true,
+          });
+          expect(noteFinding(bookingReport)).toBeUndefined();
+          expect(receiptFinding(bookingReport)).toBeUndefined();
+        });
+
+        it("MUTATION: a receipt on its way to Xero (a change's invoice) gets no second receipt and no finding: the note follows it", async () => {
+          const bookingReport = await runClosed("after-receipt", [], keptBooking(), {
+            paidAnotherWayReceipt: { kind: "recorded", invoiceId: null },
+          });
+          expect(receiptFinding(bookingReport)).toBeUndefined();
+          expect(noteFinding(bookingReport)).toBeUndefined();
+          expect(bookingReport.actions.find((a) => a.type === "QUEUE_KEPT_LATE_CAPTURE_INVOICE")).toBeUndefined();
+        });
+
+        it("MUTATION: a FAILED receipt whose invoice is linked in Xero says so, and its retry - which sends nothing again - is automatic", async () => {
+          const bookingReport = await runClosed("after-receipt", [keptOperation("FAILED")], keptBooking(), {
+            paidAnotherWayReceipt: inXero,
+            paidAnotherWayReceiptLinks: ["invoice"],
+          });
+          const finding = receiptFinding(bookingReport) as { summary: string; safeToAutoApply: boolean } | undefined;
+          expect(finding?.summary).toMatch(/has its Xero receipt in Xero, but the receipt's operation failed after it was recorded/);
+          expect(finding?.summary).not.toMatch(/before reaching Xero/);
+          expect(bookingReport.actions.find((a) => a.type === "REQUEUE_XERO_OPERATION")).toMatchObject({ safeToAutoApply: true });
+        });
+
+        // #3924 round 9: the change's invoice was resolved by hand in Xero
+        // AFTER the close planned to wait for it, so the note never comes.
+        it("MUTATION: round 9: a receipt resolved by hand after the close asks an officer, report-only, to record the close's refund by hand", async () => {
+          const bookingReport = await runClosed("after-receipt", [], keptBooking(), {
+            paidAnotherWayReceipt: { kind: "resolved-by-hand" },
+          });
+          const finding = bookingReport.findings.find(
+            (candidate) => candidate.code === "PAID_ANOTHER_WAY_REFUND_NOTE_RECORD_BY_HAND",
+          ) as { summary: string; severity: string; safeToAutoApply: boolean; details: Record<string, unknown> } | undefined;
+          expect(finding).toMatchObject({
+            severity: "warning",
+            safeToAutoApply: false,
+            details: expect.objectContaining({ closeRecordId: "close_1", closeAmountCents: 6000, paymentIntentId: "pi_kept" }),
+          });
+          expect(finding?.summary).toMatch(/record the \$60\.00 refunded on it by hand in Xero\. This finding is report-only and keeps appearing/);
+          expect(receiptFinding(bookingReport)).toBeUndefined();
+          expect(noteFinding(bookingReport)).toBeUndefined();
+          expect(bookingReport.actions.find((a) => a.type === "QUEUE_KEPT_LATE_CAPTURE_INVOICE")).toBeUndefined();
+        });
+
+        // #3924 round 10 (finding 1): the finding never asks for a refund
+        // already raised, and names only what is left of the close.
+        it("MUTATION: round 10: a record-by-hand close whose note row exists - resolved by hand included - raises no finding", async () => {
+          const bookingReport = await runClosed("after-receipt", [], keptBooking(), {
+            paidAnotherWayReceipt: { kind: "resolved-by-hand" },
+            paidAnotherWayNoteAsked: true,
+          });
+          expect(
+            bookingReport.findings.find((candidate) => candidate.code === "PAID_ANOTHER_WAY_REFUND_NOTE_RECORD_BY_HAND"),
+          ).toBeUndefined();
+        });
+
+        it("MUTATION: round 10: a receipt PARTIAL then resolved by hand, its note landed, raises no finding", async () => {
+          // The reader answers such a row as recorded against its invoice id
+          // (`readLateCaptureXeroReceipt`), and the note row exists.
+          const bookingReport = await runClosed("after-receipt", [], keptBooking(), {
+            paidAnotherWayReceipt: { kind: "recorded", invoiceId: "inv_change" },
+            paidAnotherWayNoteAsked: true,
+          });
+          expect(bookingReport.findings.filter((f) => f.code.startsWith("PAID_ANOTHER_WAY_"))).toEqual([]);
+          expect(bookingReport.actions).toEqual([]);
+        });
+
+        // Round 11: sized from the capture's refunds less the notes naming it
+        // (`readPaidAnotherWayReceiptState`), as the kept invoice's was.
+        it("MUTATION: round 11: the finding names what is left to record by hand, never what the close paid back in all", async () => {
+          const bookingReport = await runClosed("after-receipt", [], keptBooking(), {
+            paidAnotherWayReceipt: { kind: "resolved-by-hand" },
+            paidAnotherWayRecordByHandCents: 2500,
+          });
+          const finding = bookingReport.findings.find(
+            (candidate) => candidate.code === "PAID_ANOTHER_WAY_REFUND_NOTE_RECORD_BY_HAND",
+          ) as { summary: string; details: Record<string, unknown> } | undefined;
+          expect(finding?.summary).toMatch(/the change invoice or the late charge's own receipt/);
+          expect(finding?.summary).toMatch(/record the \$25\.00 refunded on it by hand in Xero\. This finding is report-only and keeps appearing/);
+          expect(finding?.details).toMatchObject({ closeAmountCents: 6000, recordByHandCents: 2500 });
+        });
+
+        // Round 14: a card note sent without a reply is never in the close's
+        // amount to record by hand, but named apart, to check in Xero first.
+        it("MUTATION: round 14: the close's finding names a card note sent without a reply apart", async () => {
+          const bookingReport = await runClosed("after-receipt", [], keptBooking(), {
+            paidAnotherWayReceipt: { kind: "resolved-by-hand" },
+            paidAnotherWayRecordByHandCents: 6000,
+            paidAnotherWayCardNoteMayBeInXeroCents: 1500,
+          });
+          const finding = bookingReport.findings.find(
+            (candidate) => candidate.code === "PAID_ANOTHER_WAY_REFUND_NOTE_RECORD_BY_HAND",
+          ) as { summary: string; details: Record<string, unknown> } | undefined;
+          expect(finding?.summary).toMatch(
+            /record the \$60\.00 refunded on it by hand in Xero\. A refund credit note for \$15\.00 refunded to the card may be in Xero: the app tried to send it and cannot tell whether Xero took it\. Check Xero for that credit note first/,
+          );
+          expect(finding?.details).toMatchObject({ recordByHandCents: 6000, cardNoteMayBeInXeroCents: 1500 });
+
+          // A $0 close whose only card refund a note sent without a reply may
+          // answer: nothing to record yet, but the capture is still named.
+          const onlySent = await runClosed("after-receipt", [], keptBooking(), {
+            paidAnotherWayReceipt: { kind: "resolved-by-hand" },
+            paidAnotherWayRecordByHandCents: 0,
+            paidAnotherWayCardNoteMayBeInXeroCents: 1500,
+          });
+          const sentOnly = onlySent.findings.find(
+            (candidate) => candidate.code === "PAID_ANOTHER_WAY_REFUND_NOTE_RECORD_BY_HAND",
+          ) as { summary: string } | undefined;
+          expect(sentOnly?.summary).toMatch(
+            /so the app raises no refund note for it\. A refund credit note for \$15\.00 refunded to the card may be in Xero/,
+          );
+          expect(sentOnly?.summary).not.toMatch(/record the \$/);
+        });
+
+        // #3924 round 11 (F1): a kept receipt row resolved by hand, on a
+        // capture whose approved refund was closed as paid another way, is
+        // answered by the close's finding under the paid-another-way verdict -
+        // never by the kept invoice's record-by-hand finding, which would ask
+        // an officer to record by hand a refund whose note the app raises.
+        describe("round 11: a resolved receipt row with a close", () => {
+          const resolvedKept = {
+            ...keptOperation("PARTIAL"),
+            xeroObjectId: "inv_kept",
+            manuallyResolvedAt: new Date("2026-05-03T00:00:00Z"),
+            manuallyResolvedReason: "Payment recorded by hand in Xero",
+          };
+          const refunded = () =>
+            keptBooking(
+              { refundedAmountCents: 10000, status: "REFUNDED" },
+              { refundedAmountCents: 10000, status: "REFUNDED" },
+            );
+          const keptByHand = (report: { findings: { code: string }[] }) =>
+            report.findings.find((finding) => finding.code === "KEPT_LATE_CAPTURE_REFUND_RECORD_BY_HAND");
+          const closeByHand = (report: { findings: { code: string }[] }) =>
+            report.findings.find((finding) => finding.code === "PAID_ANOTHER_WAY_REFUND_NOTE_RECORD_BY_HAND") as
+              | { summary: string; details: Record<string, unknown> }
+              | undefined;
+
+          it("MUTATION: note will follow - resolved after the app sent it: the note is queued, never recorded by hand", async () => {
+            const bookingReport = await runClosed("after-receipt", [resolvedKept], refunded(), {
+              paidAnotherWayReceipt: { kind: "recorded", invoiceId: "inv_kept" },
+            });
+            expect(keptByHand(bookingReport)).toBeUndefined();
+            expect(closeByHand(bookingReport)).toBeUndefined();
+            expect(noteFinding(bookingReport)).toMatchObject({
+              details: expect.objectContaining({ receiptInvoiceId: "inv_kept" }),
+            });
+            expect(bookingReport.actions.find((a) => a.type === "QUEUE_PAID_ANOTHER_WAY_REFUND_NOTE")).toBeDefined();
+            expect(bookingReport.actions.find((a) => a.type === "REQUEUE_XERO_OPERATION")).toBeUndefined();
+          });
+
+          it.each(["now", "none"] as const)(
+            "MUTATION: note will follow - a close planned %s with its receipt in Xero gets no record-by-hand finding",
+            async (plan) => {
+              const bookingReport = await runClosed(plan, [resolvedKept], refunded(), {
+                paidAnotherWayReceipt: { kind: "recorded", invoiceId: "inv_kept" },
+                paidAnotherWayNoteAsked: plan === "now",
+              });
+              expect(keptByHand(bookingReport)).toBeUndefined();
+              expect(closeByHand(bookingReport)).toBeUndefined();
+            },
+          );
+
+          it.each(["after-receipt", "none"] as const)(
+            "MUTATION: record by hand - resolved before the app sent it (close planned %s): the close's finding, sized from the capture's refunds less its notes",
+            async (plan) => {
+              const bookingReport = await runClosed(plan, [{ ...resolvedKept, xeroObjectId: null }], refunded(), {
+                paidAnotherWayReceipt: { kind: "resolved-by-hand" },
+                paidAnotherWayRecordByHandCents: 7000,
+              });
+              expect(keptByHand(bookingReport)).toBeUndefined();
+              expect(closeByHand(bookingReport)?.summary).toMatch(/record the \$70\.00 refunded on it by hand in Xero\. This finding is report-only and keeps appearing/);
+              expect(closeByHand(bookingReport)?.details).toMatchObject({ recordByHandCents: 7000, paymentIntentId: "pi_kept" });
+              expect(bookingReport.actions).toEqual([]);
+            },
+          );
+
+          // #3924 round 12 (F1): the close's note follows the app's invoice,
+          // but the capture's card refunds read it resolved by hand.
+          const cardByHand = (report: { findings: { code: string }[] }) =>
+            report.findings.find((finding) => finding.code === "LATE_CAPTURE_CARD_REFUND_RECORD_BY_HAND") as
+              | { summary: string; details: Record<string, unknown> }
+              | undefined;
+
+          it("MUTATION: round 12: split - the close's note follows, and the card share is reported to record by hand", async () => {
+            const bookingReport = await runClosed("after-receipt", [resolvedKept], refunded(), {
+              paidAnotherWayReceipt: { kind: "recorded", invoiceId: "inv_kept" },
+              lateCaptureCardRefundsByHand: { pi_kept: 4000 },
+            });
+            expect(noteFinding(bookingReport)).toBeDefined();
+            expect(closeByHand(bookingReport)).toBeUndefined();
+            expect(cardByHand(bookingReport)?.details).toMatchObject({ paymentIntentId: "pi_kept", recordByHandCents: 4000 });
+            expect(cardByHand(bookingReport)?.summary).toMatch(/record the \$40\.00 refunded to the card by hand in Xero/);
+          });
+
+          it("round 12: close only - the note follows and nothing is reported to record by hand", async () => {
+            const bookingReport = await runClosed("after-receipt", [resolvedKept], refunded(), {
+              paidAnotherWayReceipt: { kind: "recorded", invoiceId: "inv_kept" },
+            });
+            expect(noteFinding(bookingReport)).toBeDefined();
+            expect(closeByHand(bookingReport)).toBeUndefined();
+            expect(cardByHand(bookingReport)).toBeUndefined();
+          });
+
+          it("MUTATION: round 12: the close's record-by-hand finding already names the card refunds, so no card finding repeats it", async () => {
+            const bookingReport = await runClosed("after-receipt", [{ ...resolvedKept, xeroObjectId: null }], refunded(), {
+              paidAnotherWayReceipt: { kind: "resolved-by-hand" },
+              paidAnotherWayRecordByHandCents: 10000,
+              lateCaptureCardRefundsByHand: { pi_kept: 4000 },
+            });
+            expect(closeByHand(bookingReport)?.summary).toMatch(/keeps appearing after the refund is recorded by hand, which is expected/);
+            expect(cardByHand(bookingReport)).toBeUndefined();
+          });
+
+          it("record by hand - skipped once a note row exists", async () => {
+            const bookingReport = await runClosed("after-receipt", [{ ...resolvedKept, xeroObjectId: null }], refunded(), {
+              paidAnotherWayReceipt: { kind: "resolved-by-hand" },
+              paidAnotherWayNoteAsked: true,
+            });
+            expect(keptByHand(bookingReport)).toBeUndefined();
+            expect(closeByHand(bookingReport)).toBeUndefined();
+          });
+
+          // #3924 round 13 (F2a): the close's finding stands down once a note
+          // row of the close exists, but the capture's card refunds still get
+          // no card note - the card finding names them, once.
+          it("MUTATION: round 13: a close whose note row exists, with card refunds - the card finding names them, once", async () => {
+            const bookingReport = await runClosed("after-receipt", [{ ...resolvedKept, xeroObjectId: null }], refunded(), {
+              paidAnotherWayReceipt: { kind: "resolved-by-hand" },
+              paidAnotherWayNoteAsked: true,
+              lateCaptureCardRefundsByHand: { pi_kept: 4000 },
+            });
+            expect(keptByHand(bookingReport)).toBeUndefined();
+            expect(closeByHand(bookingReport)).toBeUndefined();
+            expect(
+              bookingReport.findings.filter((finding) => finding.code === "LATE_CAPTURE_CARD_REFUND_RECORD_BY_HAND"),
+            ).toEqual([
+              expect.objectContaining({ details: { paymentId: "payment_1", paymentIntentId: "pi_kept", recordByHandCents: 4000 } }),
+            ]);
+          });
+        });
+
+        it("round 10: a capture whose refunds notes already cover raises no record-by-hand finding", async () => {
+          const bookingReport = await runClosed("after-receipt", [], keptBooking(), {
+            paidAnotherWayReceipt: { kind: "resolved-by-hand" },
+            paidAnotherWayRecordByHandCents: 0,
+          });
+          expect(
+            bookingReport.findings.find((candidate) => candidate.code === "PAID_ANOTHER_WAY_REFUND_NOTE_RECORD_BY_HAND"),
+          ).toBeUndefined();
+        });
+
+        it.each([
+          ["its Stripe payment is linked", keptOperation("FAILED"), ["payment"] as Array<"payment">],
+          [
+            "it attempted createInvoices",
+            { ...keptOperation("FAILED"), requestPayload: { ...keptOperation("FAILED").requestPayload, invoices: [{}] } },
+            [] as Array<"payment">,
+          ],
+        ])("MUTATION: a FAILED receipt that may have reached Xero (%s) is never retried automatically, and says to check Xero", async (_when, operation, links) => {
+          const bookingReport = await runClosed("after-receipt", [operation], keptBooking(), {
+            paidAnotherWayReceiptLinks: links,
+          });
+          const finding = receiptFinding(bookingReport) as { summary: string; safeToAutoApply: boolean } | undefined;
+          expect(finding).toMatchObject({ safeToAutoApply: false });
+          expect(finding?.summary).toMatch(/may have reached Xero\. Check Xero for the receipt before retrying it/);
+          expect(bookingReport.actions.find((a) => a.type === "REQUEUE_XERO_OPERATION")).toMatchObject({ safeToAutoApply: false });
+        });
+      });
     });
 
     it("applies it on a transaction of its own, where the enqueue re-reads the task under its lock", async () => {
@@ -4754,6 +5464,7 @@ describe("runBookingXeroRepair", () => {
               paymentMethodId: "pm_123",
               reason: null,
               createdAt: new Date("2026-05-01T00:00:00Z"),
+              insertionSeq: 1,
               updatedAt: new Date("2026-05-01T00:00:00Z"),
             },
             {
@@ -4768,6 +5479,7 @@ describe("runBookingXeroRepair", () => {
               paymentMethodId: null,
               reason: "date_change",
               createdAt: new Date("2026-05-02T00:00:00Z"),
+              insertionSeq: 2,
               updatedAt: new Date("2026-05-02T00:00:00Z"),
             },
           ],
@@ -4815,6 +5527,184 @@ describe("runBookingXeroRepair", () => {
     });
     expect(booking.payment.status).toBe("REFUNDED");
     expect(report.summary.bookingsWithFindings).toBe(0);
+  });
+
+  // #4132 (`INV-PAY-133`): two captures written in one transaction share a
+  // `createdAt`. The pinned allocation is newest first by insertion order, so
+  // the row inserted LAST is refunded first - here the ADDITIONAL, though the
+  // read returns it second (a `createdAt`-only sort keeps the read's order).
+  it("pins a tied pair of late captures newest first by insertion order (#4132)", async () => {
+    const booking = lateCaptureRefundBooking();
+    const tiedAt = new Date("2026-05-01T00:00:00Z");
+    const [primary, additional] = booking.payment.transactions;
+    Object.assign(primary!, { createdAt: tiedAt, insertionSeq: 1 });
+    Object.assign(additional!, { createdAt: tiedAt, insertionSeq: 2 });
+    const deps = createDependencies({ bookings: [booking] });
+
+    await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+      apply: true,
+      applyActionKeys: ["late-capture-refund:booking_1:payment_1:13000"],
+      dependencies: deps,
+      scope: { all: true },
+    });
+
+    expect(deps.refundPaymentTransactions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        allocation: [
+          { paymentTransactionId: "txn_additional", amountCents: 3000 },
+          { paymentTransactionId: "txn_primary", amountCents: 10000 },
+        ],
+      }),
+    );
+  });
+
+  // #4103 (`INV-PAY-130`): Stripe answers a slice `failed` or `canceled`
+  // without throwing. That slice sent nothing back, so it is never recorded or
+  // noted as refunded, and the action fails saying the money is still with the club.
+  describe("a late-capture refund Stripe refuses (#4103)", () => {
+    const KEY = "late-capture-refund:booking_1:payment_1:13000";
+    const answer = (paymentIntentId: string, transactionId: string, amountCents: number, status: string) => ({
+      paymentIntentId,
+      refundId: `re_${paymentIntentId}`,
+      amountCents,
+      status,
+      slice: { paymentTransactionId: transactionId, amountCents },
+    });
+    async function applyWith(refund: ReturnType<typeof vi.fn>) {
+      const deps = createDependencies({ bookings: [lateCaptureRefundBooking()] });
+      deps.refundPaymentTransactions = refund as unknown as typeof deps.refundPaymentTransactions;
+      const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { apply: true, applyActionKeys: [KEY], dependencies: deps, scope: { all: true } });
+      const action = report.passes
+        .flatMap((pass) => pass.bookings.flatMap((bookingReport) => bookingReport.actions))
+        .find((item) => item.key === KEY);
+      const recorded = (deps.recordAndNoteRepairedLateCaptureRefunds as ReturnType<typeof vi.fn>).mock.calls.flatMap(([args]) =>
+        (args as { refunds: { paymentIntentId: string }[] }).refunds.map((each) => each.paymentIntentId),
+      );
+      return { action, recorded };
+    }
+
+    it.each([["failed"], ["canceled"]])("every slice answered %s: nothing recorded or noted, and the action fails naming the refusal", async (status) => {
+      const { action, recorded } = await applyWith(
+        vi.fn().mockResolvedValue({
+          refunds: [answer("pi_additional_captured", "txn_additional", 3000, status), answer("pi_primary_captured", "txn_primary", 10000, status)],
+          totalRefundedAmountCents: 13000,
+        }),
+      );
+
+      expect(recorded).toEqual([]);
+      expect(action?.status).toBe("failed");
+      expect(action?.resultMessage).toMatch(/Stripe refused \$130\.00 .*still owed\. That money is still with the club/);
+      expect(action?.resultMessage).not.toMatch(/^Refunded/);
+    });
+
+    it("one slice made beside one refused: only the made one is recorded, and the action fails naming the refused amount", async () => {
+      const { action, recorded } = await applyWith(
+        vi.fn().mockResolvedValue({
+          refunds: [answer("pi_additional_captured", "txn_additional", 3000, "succeeded"), answer("pi_primary_captured", "txn_primary", 10000, "failed")],
+          totalRefundedAmountCents: 13000,
+        }),
+      );
+
+      expect(recorded).toEqual(["pi_additional_captured"]);
+      expect(action?.status).toBe("failed");
+      expect(action?.resultMessage).toContain("Recorded the refund of pi_additional_captured as the webhook does.");
+      expect(action?.resultMessage).toMatch(/Stripe refused \$100\.00/);
+    });
+
+    it("refused then thrown: the refused slice is not recorded, and the action fails", async () => {
+      const { action, recorded } = await applyWith(
+        vi.fn().mockRejectedValue(
+          new PartialRefundError({
+            format: CLUB_FORMAT_TEST,
+            completedRefundCents: 0,
+            refunds: [answer("pi_additional_captured", "txn_additional", 3000, "failed")],
+            refusedSlices: [{ paymentTransactionId: "txn_additional", amountCents: 3000 }],
+            cause: new Error("network"),
+          }),
+        ),
+      );
+
+      expect(recorded).toEqual([]);
+      expect(action?.status).toBe("failed");
+    });
+
+    it("one made, one refused, then a throw: only the made slice is recorded", async () => {
+      const { action, recorded } = await applyWith(
+        vi.fn().mockRejectedValue(
+          new PartialRefundError({
+            format: CLUB_FORMAT_TEST,
+            completedRefundCents: 3000,
+            refunds: [answer("pi_additional_captured", "txn_additional", 3000, "succeeded"), answer("pi_primary_captured", "txn_primary", 10000, "canceled")],
+            refusedSlices: [{ paymentTransactionId: "txn_primary", amountCents: 10000 }],
+            cause: new Error("network"),
+          }),
+        ),
+      );
+
+      expect(recorded).toEqual(["pi_additional_captured"]);
+      expect(action?.status).toBe("failed");
+    });
+
+    // #4103 (option c): the repair has no row to carry a slice's key generation,
+    // so it reads it from the refusals recorded for that slice. A retry after a
+    // refusal is a fresh request; a lost answer records nothing, so its replay
+    // keeps the key Stripe answers with the original.
+    describe("the retry's key generation follows the refusals recorded for each slice", () => {
+      async function sentAllocation(paymentRefunds: NonNullable<Parameters<typeof createDependencies>[0]["paymentRefunds"]>) {
+        const deps = createDependencies({ bookings: [lateCaptureRefundBooking()], paymentRefunds });
+        await runBookingXeroRepair(CLUB_FORMAT_TEST, { apply: true, applyActionKeys: [KEY], dependencies: deps, scope: { all: true } });
+        return (deps.refundPaymentTransactions as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]?.allocation;
+      }
+      const refusal = (transactionId: string, amountCents: number, status = "failed") => ({ paymentId: "payment_1", paymentTransactionId: transactionId, amountCents, status });
+
+      it("no refusal recorded: every slice keeps its first key", async () => {
+        expect(await sentAllocation([])).toEqual([
+          { paymentTransactionId: "txn_additional", amountCents: 3000 },
+          { paymentTransactionId: "txn_primary", amountCents: 10000 },
+        ]);
+      });
+
+      it("a refusal recorded for one slice moves only that slice to its next key", async () => {
+        expect(await sentAllocation([refusal("txn_primary", 10000)])).toEqual([
+          { paymentTransactionId: "txn_additional", amountCents: 3000 },
+          { paymentTransactionId: "txn_primary", amountCents: 10000, stripeKeySuffix: "refused1" },
+        ]);
+      });
+
+      it("a second refusal moves it on again, never back to a key already refused", async () => {
+        expect(await sentAllocation([refusal("txn_primary", 10000), refusal("txn_primary", 10000, "canceled")])).toEqual([
+          { paymentTransactionId: "txn_additional", amountCents: 3000 },
+          { paymentTransactionId: "txn_primary", amountCents: 10000, stripeKeySuffix: "refused2" },
+        ]);
+      });
+
+      it("a made refund, another payment's refusal, or a refusal of another amount moves nothing", async () => {
+        expect(
+          await sentAllocation([
+            refusal("txn_primary", 10000, "succeeded"),
+            refusal("txn_primary", 10000, "pending"),
+            refusal("txn_primary", 9999),
+            { ...refusal("txn_primary", 10000), paymentId: "payment_other" },
+          ]),
+        ).toEqual([
+          { paymentTransactionId: "txn_additional", amountCents: 3000 },
+          { paymentTransactionId: "txn_primary", amountCents: 10000 },
+        ]);
+      });
+    });
+
+    it("a re-run that Stripe answers with the same refusal records nothing, again", async () => {
+      const refusal = () =>
+        vi.fn().mockResolvedValue({
+          refunds: [answer("pi_additional_captured", "txn_additional", 3000, "failed"), answer("pi_primary_captured", "txn_primary", 10000, "failed")],
+          totalRefundedAmountCents: 13000,
+        });
+      await applyWith(refusal());
+      const { action, recorded } = await applyWith(refusal());
+
+      expect(recorded).toEqual([]);
+      expect(action?.status).toBe("failed");
+    });
   });
 
   it("says it recorded the refund only for the intents whose record was written, and queued only a note that was queued (#3635 N4)", async () => {
@@ -6042,6 +6932,61 @@ describe("runBookingXeroRepair - primary invoice vs edit timing (#3199)", () => 
     expect(deps.enqueueXeroSupplementaryInvoiceOperation).not.toHaveBeenCalled();
   });
 
+  /**
+   * #3980 review R1: an edit that settled against the primary invoice (it read
+   * no invoice link, so it is marked) expects no document of its own - what the
+   * primary invoice missed of it is the create's gap check's. Neither a
+   * supplementary invoice nor "that invoice already bills it" advice.
+   */
+  const MARKED = {
+    newData: {
+      primaryInvoiceSettlement: {
+        settledAgainstPrimaryInvoice: true,
+        refundAmountCents: 0,
+        accountCreditAmountCents: 0,
+        appliedCreditGivenBackCents: 0,
+        unpaidAskOffsetCents: 0,
+      },
+    },
+  };
+
+  it.each([
+    ["before", new Date("2026-05-01T00:00:00Z")],
+    ["after", new Date("2026-05-03T00:00:00Z")],
+  ])("MUTATION #3980: a marked increase expects no supplementary invoice of its own, invoice raised %s it", async (_when, raisedAt) => {
+    const booking = makeBooking({ modifications: [priceIncreaseModification(MARKED)] });
+    const deps = createDependencies({
+      bookings: [booking],
+      operations: [
+        makePrimaryInvoiceCreateOperation({ startedAt: raisedAt, completedAt: raisedAt, createdAt: raisedAt, updatedAt: raisedAt }),
+      ],
+    });
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { apply: true, dependencies: deps, scope: { all: true } });
+    expect(supplementaryInvoiceFinding(report)).toBeUndefined();
+    expect(deps.enqueueXeroSupplementaryInvoiceOperation).not.toHaveBeenCalled();
+  });
+
+  it("MUTATION #3980: a marked reduction expects no modification credit note of its own", async () => {
+    const booking = makeBooking({
+      modifications: [
+        {
+          id: "mod_marked_reduction",
+          bookingId: "booking_1",
+          modificationType: "GUEST_REMOVE",
+          priceDiffCents: -3000,
+          changeFeeCents: 0,
+          createdAt: new Date("2026-05-02T00:00:00Z"),
+          ...MARKED,
+        },
+      ],
+    });
+    const deps = createDependencies({ bookings: [booking], operations: [makePrimaryInvoiceCreateOperation()] });
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { apply: true, dependencies: deps, scope: { all: true } });
+    expect(
+      report.passes[0].bookings[0].findings.find((finding) => finding.code === "MISSING_MODIFICATION_CREDIT_NOTE"),
+    ).toBeUndefined();
+  });
+
   it("reports when NO operation row says the primary invoice was ever raised", async () => {
     const booking = makeBooking({ modifications: [priceIncreaseModification()] });
     const deps = createDependencies({ bookings: [booking] });
@@ -6498,6 +7443,7 @@ describe("the missing-refund-note arm asks only for what a note may answer (#363
       coveredCents: 0,
       resolvedInXeroCents: 0,
       uncoveredCents,
+      paidAnotherWayUncoveredCents: 0,
     });
     const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
       dependencies: deps,
@@ -7094,7 +8040,9 @@ describe("a refund request's own note never answers for the payment's refund not
     actions.filter(
       (action) => action.type !== "SETTLE_REFUND_CREDIT_NOTE" && JSON.stringify(action).includes("cn_request")
     );
-  const run = async (state: { operations: any[]; links?: any[]; payment?: Record<string, unknown> }) => {
+  // #4215: the request's $30, paid back - read from its completed hand-back, as the inbound recount reads it.
+  const paidBack: Array<{ paymentId: string; amountCents: number; refundRequestId?: string }> = [{ paymentId: "payment_1", amountCents: 3000 }];
+  const run = async (state: { operations: any[]; links?: any[]; payment?: Record<string, unknown>; requests?: typeof paidBack }) => {
     const booking = cancelledInternetBanking();
     Object.assign(booking.payment, state.payment ?? {});
     const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
@@ -7102,6 +8050,7 @@ describe("a refund request's own note never answers for the payment's refund not
         bookings: [booking],
         links: state.links ?? [requestLink],
         operations: [makePrimaryInvoiceCreateOperation(), ...state.operations],
+        paidBackRefundRequests: state.requests ?? paidBack,
       }),
       scope: { all: true },
     });
@@ -7155,34 +8104,339 @@ describe("a refund request's own note never answers for the payment's refund not
     expect(actionsNamingRequestNote(booking.actions)).toEqual([]);
   });
 
-  // Review F1 at a19beb492: the refunded total net of each request's own note
-  // is what the cancellation's note answers, so an appeal-only refund is no gap.
+  // Review F1 at a19beb492: the refunded total net of each request's paid-back
+  // cash is what the cancellation's note answers, so an appeal-only refund is
+  // no gap. #4215: that cash is the request's completed hand-back, never its note.
   const ambiguousNote = expect.objectContaining({
     code: "MANUAL_REVIEW_REQUIRED",
     summary: expect.stringContaining("missing Xero refund note amount cannot be derived"),
   });
 
-  it("raises nothing when the request's note answers the whole refunded total", async () => {
+  it("raises nothing when the request's paid-back cash is the whole refunded total", async () => {
     const booking = await run({ operations: [requestNote()], payment: { refundedAmountCents: 3000 } });
     expect(booking.findings).not.toContainEqual(ambiguousNote);
     expect(booking.actions.map((action) => action.type)).not.toContain("QUEUE_REFUND_CREDIT_NOTE");
   });
 
-  it("recovers the request's amount from its link when the payload is gone", async () => {
-    const booking = await run({
-      operations: [requestNote({ requestPayload: null })],
-      payment: { refundedAmountCents: 3000 },
-    });
-    expect(booking.findings).not.toContainEqual(ambiguousNote);
+  // #4231 money lens F1: a request completed before the booking had an
+  // invoice queued no note of its own. Netting only the requests' notes, the
+  // tool sized the cancellation's note to hold the request's cash too
+  // (`INV-PAY-118`), and the inbound recount then counted it twice.
+  it("MUTATION (#4215): a request with no note at all - completed before the invoice - still keeps its cash out of the cancellation's note", async () => {
+    const appealOnly = await run({ operations: [], links: [], payment: { refundedAmountCents: 3000 } });
+    expect(appealOnly.findings).not.toContainEqual(ambiguousNote);
+    expect(appealOnly.actions.map((action) => action.type)).not.toContain("QUEUE_REFUND_CREDIT_NOTE");
+    // Beside the cancellation's own $70: sized by a person, never a $100 note.
+    const beside = await run({ operations: [], links: [] });
+    expect(beside.findings).toContainEqual(ambiguousNote);
+    expect(beside.actions.map((action) => action.type)).not.toContain("QUEUE_REFUND_CREDIT_NOTE");
   });
 
-  it("sends it to review when a request's amount cannot be recovered", async () => {
-    const booking = await run({
-      operations: [requestNote({ requestPayload: { refundRequestId: "rr_1" } })],
-      links: [{ ...requestLink, metadata: { refundRequestId: "rr_1" } }],
-      payment: { refundedAmountCents: 3000 },
+  // #4231 lens F2 (`INV-PAY-118`, D-3813-8): the completion queues a request's
+  // own note only against an invoice, so a request paid back before the
+  // booking had one is credited by nothing else once the invoice exists.
+  describe("#4231: a request paid back before the invoice gets its own note queued", () => {
+    const requestNoteActions = (actions: Array<{ type: string; payload?: unknown }>) =>
+      actions.filter((action) => action.type === "QUEUE_REFUND_REQUEST_CREDIT_NOTE");
+
+    it("MUTATION: offers the request's own note for the cash its completion recorded, keyed by the request - for an officer to confirm", async () => {
+      const booking = await run({ operations: [], links: [], payment: { refundedAmountCents: 3000 } });
+      expect(requestNoteActions(booking.actions)).toEqual([
+        expect.objectContaining({
+          key: "queue:refund-request-credit-note:payment_1:rr_1",
+          // Lens F1/F2: never auto-applied - a credit raised by hand in Xero is invisible here.
+          safeToAutoApply: false,
+          payload: { paymentId: "payment_1", refundRequestId: "rr_1", refundAmountCents: 3000 },
+        }),
+      ]);
+      expect(booking.findings).toContainEqual(
+        expect.objectContaining({
+          code: "REFUND_REQUEST_NOTE_NOT_QUEUED",
+          severity: "critical",
+          safeToAutoApply: false,
+          summary: expect.stringMatching(
+            /^First check this booking's invoice in Xero \(INV-001\) for a credit already raised for this request \(\$30\.00\)\. If there is one, nothing more is needed: do not raise another\..*Refund request rr_1 was paid back.*If no credit for the request exists yet, apply this action by its key/,
+          ),
+          actions: [expect.objectContaining({ key: "queue:refund-request-credit-note:payment_1:rr_1" })],
+        }),
+      );
+      // Never as the cancellation's note.
+      expect(booking.actions.map((action) => action.type)).not.toContain("QUEUE_REFUND_CREDIT_NOTE");
     });
-    expect(booking.findings).toContainEqual(ambiguousNote);
+
+    it("MUTATION (lens F1): --apply alone queues nothing; the officer's --apply-action goes through the request's own enqueue, never the payment's refund note", async () => {
+      const deps = () => {
+        const cancelled = cancelledInternetBanking();
+        Object.assign(cancelled.payment, { refundedAmountCents: 3000 });
+        return createDependencies({
+          bookings: [cancelled],
+          links: [],
+          operations: [makePrimaryInvoiceCreateOperation()],
+          paidBackRefundRequests: paidBack,
+        });
+      };
+
+      const unconfirmed = deps();
+      await runBookingXeroRepair(CLUB_FORMAT_TEST, { apply: true, dependencies: unconfirmed, scope: { all: true } });
+      expect(unconfirmed.enqueueXeroRefundRequestCreditNoteOperation).not.toHaveBeenCalled();
+
+      const confirmed = deps();
+      await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+        apply: true,
+        applyActionKeys: ["queue:refund-request-credit-note:payment_1:rr_1"],
+        dependencies: confirmed,
+        scope: { all: true },
+      });
+      expect(confirmed.enqueueXeroRefundRequestCreditNoteOperation).toHaveBeenCalledWith({ paymentId: "payment_1", refundRequestId: "rr_1", amountCents: 3000 });
+      expect(confirmed.enqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
+    });
+
+    // Lens rounds 2-3: before #4231 the tool, or an officer, could size the
+    // cancellation's note to the whole refunded total with the request's cash
+    // folded in (a $100 note for $70 of cancellation and the request's $30), and
+    // an amount recorded here goes stale once the note is edited in Xero. So any
+    // cancellation refund note at all sends the request to a person, with no
+    // amount read and no action offered.
+    const cancellationNoteOp = (overrides: Record<string, unknown> = {}) =>
+      makeOperation({
+        id: "operation_cancel_note",
+        localModel: "Payment",
+        localId: "payment_1",
+        entityType: "CREDIT_NOTE",
+        operationType: "CREATE",
+        status: "SUCCEEDED",
+        queueType: "REFUND_CREDIT_NOTE",
+        correlationKey: "payment:payment_1:refund-credit-note:v1",
+        idempotencyKey: "payment:payment_1:refund-credit-note:v1",
+        xeroObjectType: "CREDIT_NOTE",
+        xeroObjectId: "cn_cancel",
+        requestPayload: { queueType: "REFUND_CREDIT_NOTE", refundAmountCents: 7000, refundMethod: "internet-banking" },
+        ...overrides,
+      });
+    const cancellationNoteLink = (overrides: Record<string, unknown> = {}) =>
+      paymentLink({ id: "link_cancel_note", xeroObjectType: "CREDIT_NOTE", xeroObjectId: "cn_cancel", role: "REFUND_CREDIT_NOTE", metadata: { amountCents: 7000 }, ...overrides });
+    const personChecksXero = expect.objectContaining({
+      code: "REFUND_REQUEST_NOTE_NOT_QUEUED",
+      severity: "manual_review",
+      safeToAutoApply: false,
+      summary: expect.stringMatching(
+        /^Refund request rr_1 was paid back by bank transfer \(\$30\.00\).*may have a cancellation refund credit note.*may already include the request's \$30\.00\. Two steps, in this order\. First, always compare the cancellation note's lines on this booking's invoice in Xero \(INV-001\) with the cancellation's own refund.*edit the note in place.*never void it\. A note Xero voided, or a create row withdrawn \(CANCELLED\) in Xero Operations, holds nothing; for one still queued or failed there, wait for it or check its amount in Xero Operations before raising anything by hand\. Second, check this booking's invoice in Xero \(INV-001\) for a credit already raised for this request, and raise the request's own credit note by hand in Xero only if none exists yet\./,
+      ),
+    });
+    const expectPerson = (booking: Awaited<ReturnType<typeof run>>) => {
+      expect(requestNoteActions(booking.actions)).toEqual([]);
+      expect(booking.findings).toContainEqual(personChecksXero);
+      // Round 5 (F1): never "nothing more is needed" where a folded note may stand.
+      expect(booking.findings.find((finding) => finding.code === "REFUND_REQUEST_NOTE_NOT_QUEUED")?.summary).not.toContain("nothing more is needed");
+      expect(booking.findings.find((finding) => finding.code === "REFUND_REQUEST_NOTE_NOT_QUEUED")?.details).toEqual({
+        paymentId: "payment_1",
+        refundRequestId: "rr_1",
+        refundAmountCents: 3000,
+      });
+    };
+
+    it("MUTATION (lens F1, probe): a cancellation note with the request's cash folded in gets a person, never a second credit", async () => {
+      expectPerson(
+        await run({
+          operations: [cancellationNoteOp({ requestPayload: { queueType: "REFUND_CREDIT_NOTE", refundAmountCents: 10000 } })],
+          links: [cancellationNoteLink({ metadata: { amountCents: 10000, status: "AUTHORISED" } })],
+          payment: { refundedAmountCents: 10000, xeroRefundCreditNoteId: "cn_cancel" },
+        }),
+      );
+    });
+
+    it("MUTATION (gate: pointer): a payment that names a cancellation note nothing local records gets a person", async () => {
+      expectPerson(await run({ operations: [], links: [], payment: { refundedAmountCents: 10000, xeroRefundCreditNoteId: "cn_by_hand" } }));
+    });
+
+    it("MUTATION (gate: link, active or not): a stale link whose amountCents says the cancellation's own cash gets a person, with no sum read", async () => {
+      expectPerson(await run({ operations: [], links: [cancellationNoteLink()], payment: { refundedAmountCents: 10000 } }));
+      // A link the normaliser or the void deactivated is still a note Xero may hold.
+      expectPerson(await run({ operations: [], links: [cancellationNoteLink({ active: false, metadata: { amountCents: 7000, status: "VOIDED" } })], payment: { refundedAmountCents: 10000 } }));
+    });
+
+    it("MUTATION (gate: create row): a cancellation note's create row alone - FAILED, queued, CANCELLED or a legacy row naming no queue type - gets a person", async () => {
+      for (const overrides of [
+        { status: "FAILED", xeroObjectId: null, xeroObjectType: null },
+        { status: "PENDING", xeroObjectId: null, xeroObjectType: null },
+        { queueType: null, requestPayload: { refundAmountCents: 7000 } },
+        // Lens round 4 (F4): a withdrawn row too - the gate reads no status.
+        { status: "CANCELLED", xeroObjectId: null, xeroObjectType: null },
+      ]) {
+        expectPerson(await run({ operations: [cancellationNoteOp(overrides)], links: [], payment: { refundedAmountCents: 10000 } }));
+      }
+    });
+
+    it("MUTATION (gate: link role): an account-credit note's link is no cancellation note - the request's note is still offered", async () => {
+      const booking = await run({
+        operations: [],
+        links: [paymentLink({ id: "link_account_credit", xeroObjectType: "CREDIT_NOTE", xeroObjectId: "cn_account", role: "ACCOUNT_CREDIT_NOTE", metadata: { amountCents: 2000 } })],
+        payment: { refundedAmountCents: 3000 },
+      });
+      expect(requestNoteActions(booking.actions)).toEqual([expect.objectContaining({ safeToAutoApply: false })]);
+    });
+
+    it("an account-credit note's row, or another request's own note, is no cancellation note: the request's note is still offered", async () => {
+      const accountCredit = await run({
+        operations: [cancellationNoteOp({ queueType: "ACCOUNT_CREDIT_NOTE", requestPayload: { queueType: "ACCOUNT_CREDIT_NOTE", refundAmountCents: 7000 } })],
+        links: [],
+        payment: { refundedAmountCents: 3000 },
+      });
+      expect(requestNoteActions(accountCredit.actions)).toEqual([expect.objectContaining({ safeToAutoApply: false })]);
+      const otherRequest = await run({
+        operations: [requestNote({ id: "operation_other_request", requestPayload: { refundRequestId: "rr_2", refundAmountCents: 2000 }, correlationKey: "payment:payment_1:refund-request-credit-note:rr_2:v1", idempotencyKey: "payment:payment_1:refund-request-credit-note:rr_2:v1" })],
+        links: [],
+        payment: { refundedAmountCents: 5000 },
+      });
+      expect(requestNoteActions(otherRequest.actions).map((action) => action.payload)).toEqual([
+        { paymentId: "payment_1", refundRequestId: "rr_1", refundAmountCents: 3000 },
+      ]);
+    });
+
+    it("MUTATION (#4195, #4214): never for a request with a note row of any status - a voided note is the officer's to re-raise", async () => {
+      for (const status of ["SUCCEEDED", "FAILED", "PARTIAL", "PENDING"]) {
+        const booking = await run({ operations: [requestNote({ status })], links: [], payment: { refundedAmountCents: 3000 } });
+        expect(requestNoteActions(booking.actions)).toEqual([]);
+      }
+      // A row whose payload was lost is still the request's, by its key.
+      const keyOnly = await run({ operations: [requestNote({ requestPayload: null })], links: [], payment: { refundedAmountCents: 3000 } });
+      expect(requestNoteActions(keyOnly.actions)).toEqual([]);
+    });
+
+    it("never for a request whose note is linked with no row", async () => {
+      const booking = await run({ operations: [], links: [requestLink], payment: { refundedAmountCents: 3000 } });
+      expect(requestNoteActions(booking.actions)).toEqual([]);
+    });
+
+    it("never while the booking still has no invoice", async () => {
+      const booking = await run({ operations: [], links: [], payment: { refundedAmountCents: 3000, xeroInvoiceId: null, xeroInvoiceNumber: null } });
+      expect(requestNoteActions(booking.actions)).toEqual([]);
+    });
+
+    it("only the request whose note was never asked for", async () => {
+      const booking = await run({
+        operations: [requestNote()],
+        links: [],
+        payment: { refundedAmountCents: 5000 },
+        requests: [
+          { paymentId: "payment_1", amountCents: 3000, refundRequestId: "rr_1" },
+          { paymentId: "payment_1", amountCents: 2000, refundRequestId: "rr_2" },
+        ],
+      });
+      expect(requestNoteActions(booking.actions).map((action) => action.payload)).toEqual([
+        { paymentId: "payment_1", refundRequestId: "rr_2", refundAmountCents: 2000 },
+      ]);
+    });
+  });
+
+  it("reads no request's note for its amount: a note with no paid-back hand-back moves nothing", async () => {
+    // The cancellation's own $100, and a request's note whose task is not (or no longer) completed.
+    const booking = await run({ operations: [requestNote()], requests: [] });
+    expect(booking.findings).not.toContainEqual(ambiguousNote);
+    expect(booking.actions).toContainEqual(
+      expect.objectContaining({ type: "QUEUE_REFUND_CREDIT_NOTE", payload: expect.objectContaining({ refundAmountCents: 10000 }) }),
+    );
+  });
+
+  it("sums every request paid back on a payment, and never one on another booking's payment in the same sweep", async () => {
+    const withRequests = cancelledInternetBanking();
+    const withoutRequests = cancelledInternetBanking();
+    Object.assign(withoutRequests, { id: "booking_2" });
+    Object.assign(withoutRequests.payment, { id: "payment_2", xeroInvoiceId: "inv_primary_2" });
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+      dependencies: createDependencies({
+        bookings: [withRequests, withoutRequests],
+        links: [],
+        operations: [makePrimaryInvoiceCreateOperation()],
+        paidBackRefundRequests: [
+          { paymentId: "payment_1", amountCents: 6000, refundRequestId: "rr_1" },
+          { paymentId: "payment_1", amountCents: 4000, refundRequestId: "rr_2" },
+        ],
+      }),
+      scope: { all: true },
+    });
+    const [first, second] = report.passes[0].bookings;
+    // Two requests answer the first payment's whole $100: no cancellation note.
+    expect(first.findings).not.toContainEqual(ambiguousNote);
+    expect(first.actions.map((action) => action.type)).not.toContain("QUEUE_REFUND_CREDIT_NOTE");
+    // The second payment's $100 is its cancellation's alone, whatever the first's requests.
+    expect(second.actions).toContainEqual(
+      expect.objectContaining({ type: "QUEUE_REFUND_CREDIT_NOTE", payload: expect.objectContaining({ paymentId: "payment_2", refundAmountCents: 10000 }) }),
+    );
+  });
+
+  // #4195: a request's note Xero voided still answers for that request's cash.
+  // The void moves no refunded total (the inbound recount reads the request's
+  // completed hand-back, #4215), and the request, never the cancellation's
+  // note, raises the replacement (`INV-PAY-118`).
+  it("MUTATION (#4195): a request whose note Xero voided keeps its cash out of the cancellation's note", async () => {
+    // Its mirror is inactive now, so the loader (active links only) never reads it: the row's amount counts.
+    const inactive = await run({ operations: [requestNote()], links: [], payment: { refundedAmountCents: 3000 } });
+    // A mirror left active before #4195 still records VOIDED: with the row's payload gone, its amount counts.
+    const voidedStillActive = { ...requestLink, metadata: { amountCents: 3000, refundRequestId: "rr_1", status: "VOIDED" } };
+    const legacy = await run({ operations: [requestNote({ requestPayload: null })], links: [voidedStillActive], payment: { refundedAmountCents: 3000 } });
+    for (const booking of [inactive, legacy]) {
+      expect(booking.findings).not.toContainEqual(ambiguousNote);
+      expect(booking.actions.map((action) => action.type)).not.toContain("QUEUE_REFUND_CREDIT_NOTE");
+    }
+    // #4215: neither the row nor an active mirror says the amount - the completed hand-back does.
+    const noNoteAmount = await run({ operations: [requestNote({ requestPayload: null })], links: [], payment: { refundedAmountCents: 3000 } });
+    expect(noNoteAmount.findings).not.toContainEqual(ambiguousNote);
+    expect(noNoteAmount.actions.map((action) => action.type)).not.toContain("QUEUE_REFUND_CREDIT_NOTE");
+  });
+
+  // #4195 money lens F1, #4214 (owner decision: the officer re-raises): once
+  // Xero voided the request's own note and nothing live replaces it, a stale
+  // FAILED row gets no Retry, so `--apply` never raises a second live credit
+  // beside the one the treasurer may have raised by hand.
+  describe("#4214: a request whose own note Xero voided is the officer's to re-raise", () => {
+    const failedRow = requestNote({ status: "FAILED", xeroObjectId: null, xeroObjectType: null });
+    // An earlier inline retry raised cn_request on a row of its own.
+    const raisedRow = requestNote({ id: "operation_request_note_retry" });
+    const officerDecides = expect.objectContaining({
+      code: "BLOCKED_BY_XERO_OPERATION",
+      safeToAutoApply: false,
+      actions: [],
+      summary: expect.stringContaining("An officer decides whether to raise a fresh note"),
+    });
+
+    it("MUTATION: --apply raises nothing for a stale FAILED row once the request's note is voided", async () => {
+      const cancelled = cancelledInternetBanking();
+      Object.assign(cancelled.payment, { refundedAmountCents: 3000 });
+      const deps = createDependencies({
+        bookings: [cancelled],
+        // The voided mirror is inactive, so the active-only loader never reads it.
+        links: [],
+        operations: [makePrimaryInvoiceCreateOperation(), failedRow, raisedRow],
+        paidBackRefundRequests: paidBack,
+      });
+
+      const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { apply: true, dependencies: deps, scope: { all: true } });
+
+      const booking = report.passes[0].bookings[0];
+      expect(booking.findings).toContainEqual(officerDecides);
+      expect(booking.actions.map((action) => action.key)).not.toContain("retry:operation_request_note");
+      expect(deps.enqueueXeroSyncOperationRetry).not.toHaveBeenCalled();
+    });
+
+    it("the same for a mirror left active before #4195 that records VOIDED, and for a PARTIAL row naming the voided note", async () => {
+      const voidedStillActive = { ...requestLink, metadata: { amountCents: 3000, refundRequestId: "rr_1", status: "VOIDED" } };
+      const legacy = await run({ operations: [failedRow, raisedRow], links: [voidedStillActive], payment: { refundedAmountCents: 3000 } });
+      expect(legacy.findings).toContainEqual(officerDecides);
+      const partial = await run({ operations: [requestNote({ status: "PARTIAL" })], links: [], payment: { refundedAmountCents: 3000 } });
+      expect(partial.findings).toContainEqual(officerDecides);
+    });
+
+    it("a live own note leaves the Retry as it was", async () => {
+      const booking = await run({ operations: [failedRow, raisedRow], links: [requestLink], payment: { refundedAmountCents: 3000 } });
+      expect(booking.findings).toContainEqual(
+        expect.objectContaining({
+          code: "BLOCKED_BY_XERO_OPERATION",
+          safeToAutoApply: true,
+          actions: [expect.objectContaining({ key: "retry:operation_request_note" })],
+        }),
+      );
+    });
   });
 
   // Review F2 at a19beb492: no other arm reads a request's note, so its own
@@ -7204,5 +8458,823 @@ describe("a refund request's own note never answers for the payment's refund not
     expect(booking.findings.map((finding) => finding.summary)).not.toContainEqual(
       expect.stringContaining("cancelled booking cash refund")
     );
+  });
+});
+
+/**
+ * #3954: a price reduction first cancels or shrinks an earlier increase's
+ * unpaid card ask. The ask never reached Xero (its supplementary invoice waits
+ * on the card payment), so the reduction's own note covers only what it
+ * returned of money paid, and the increase's retired invoice must not be
+ * offered back as a one-click bill for money nobody owes.
+ */
+describe("#3954: a reduction set against an unpaid ask", () => {
+  function reducedAfterUnpaidAsk(
+    priceDiffCents: number,
+    unpaidAskOffsetCents: number,
+    reductionHistory: Record<string, unknown> = {},
+  ) {
+    return makeBooking({
+      modifications: [
+        {
+          id: "mod_increase",
+          bookingId: "booking_1",
+          modificationType: "GUEST_ADD",
+          priceDiffCents: 5000,
+          changeFeeCents: 0,
+          newData: {},
+          createdAt: new Date("2026-05-02T00:00:00Z"),
+        },
+        {
+          id: "mod_reduction",
+          bookingId: "booking_1",
+          modificationType: "GUEST_REMOVE",
+          priceDiffCents,
+          changeFeeCents: 0,
+          newData: { unpaidAskOffsetCents, ...reductionHistory },
+          createdAt: new Date("2026-05-03T00:00:00Z"),
+        },
+      ],
+    });
+  }
+  const retiredSupplementary = () =>
+    makeOperation({
+      id: "operation_retired_supplementary",
+      localModel: "BookingModification",
+      localId: "mod_increase",
+      status: "CANCELLED",
+      queueType: "SUPPLEMENTARY_INVOICE",
+      lastErrorCode: "ADDITIONAL_ASK_RETIRED_BY_REDUCTION",
+      xeroObjectType: null,
+      xeroObjectId: null,
+      requestPayload: { queueType: "SUPPLEMENTARY_INVOICE", paymentIntentId: "pi_ask" },
+    });
+
+  it("MUTATION: expects no note for a reduction the unpaid ask absorbed whole", async () => {
+    const deps = createDependencies({
+      bookings: [reducedAfterUnpaidAsk(-5000, 5000)],
+      operations: [makePrimaryInvoiceCreateOperation(), retiredSupplementary()],
+    });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+
+    const bookingReport = report.passes[0].bookings[0];
+    expect(bookingReport.findings.map((finding) => finding.code)).not.toContain("MISSING_MODIFICATION_CREDIT_NOTE");
+    expect(bookingReport.actions.map((action) => action.type)).not.toContain("QUEUE_MODIFICATION_CREDIT_NOTE");
+  });
+
+  it("sizes a partly absorbed reduction's note on what the ask left", async () => {
+    const deps = createDependencies({
+      bookings: [reducedAfterUnpaidAsk(-8000, 5000)],
+      operations: [makePrimaryInvoiceCreateOperation(), retiredSupplementary()],
+    });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+
+    const finding = report.passes[0].bookings[0].findings.find(
+      (candidate) => candidate.code === "MISSING_MODIFICATION_CREDIT_NOTE",
+    );
+    expect(finding?.details).toMatchObject({ modificationId: "mod_reduction", refundDueCents: 3000 });
+  });
+
+  it("MUTATION: reports a retired invoice NO reduction names for a person, never as a one-click bill", async () => {
+    const deps = createDependencies({
+      bookings: [reducedAfterUnpaidAsk(-5000, 5000)],
+      operations: [makePrimaryInvoiceCreateOperation(), retiredSupplementary()],
+    });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+
+    const bookingReport = report.passes[0].bookings[0];
+    const finding = bookingReport.findings.find((candidate) => candidate.code === "MISSING_SUPPLEMENTARY_INVOICE");
+    expect(finding).toMatchObject({
+      severity: "manual_review",
+      safeToAutoApply: false,
+      details: { modificationId: "mod_increase", retiredBy: "ADDITIONAL_ASK_RETIRED_BY_REDUCTION" },
+    });
+    expect(finding?.summary).toMatch(/supplementary Xero invoice was retired/);
+    expect(bookingReport.actions.map((action) => action.type)).not.toContain("QUEUE_SUPPLEMENTARY_INVOICE");
+  });
+
+  it.each([
+    ["its parked invoice retired", true],
+    ["netted off before its failed mint's retry, with no invoice ever parked", false],
+  ])(
+    "MUTATION (round 4): an increase a reduction names (%s) and cancelled whole raises nothing - it does not sit in manual review for ever",
+    async (_label, parked) => {
+      const deps = createDependencies({
+        bookings: [reducedAfterUnpaidAsk(-5000, 5000, { unpaidAskRetiredModificationIds: ["mod_increase"] })],
+        operations: [makePrimaryInvoiceCreateOperation(), ...(parked ? [retiredSupplementary()] : [])],
+      });
+
+      const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+
+      const bookingReport = report.passes[0].bookings[0];
+      expect(bookingReport.findings.map((finding) => finding.code)).not.toContain("MISSING_SUPPLEMENTARY_INVOICE");
+      expect(bookingReport.actions.map((action) => action.type)).not.toContain("QUEUE_SUPPLEMENTARY_INVOICE");
+    },
+  );
+
+  describe("decision A: the smaller re-issued ask's own invoice", () => {
+    const shrunk = () =>
+      reducedAfterUnpaidAsk(-2000, 2000, { unpaidAskRetiredModificationIds: ["mod_increase"], reissuedAskInvoiceCents: 3000 });
+    const reissueInvoice = (status: string) =>
+      makeOperation({
+        id: "operation_reissue_supplementary",
+        localModel: "BookingModification",
+        localId: "mod_reduction",
+        status,
+        queueType: "SUPPLEMENTARY_INVOICE",
+        xeroObjectType: null,
+        xeroObjectId: null,
+        requestPayload: { queueType: "SUPPLEMENTARY_INVOICE", paymentIntentId: "pi_reissued", priceDiffCents: 3000, changeFeeCents: 0 },
+      });
+
+    it("MUTATION: reports the reduction - not the increase - when the smaller ask has no invoice, with the figure it records", async () => {
+      const deps = createDependencies({
+        bookings: [shrunk()],
+        operations: [makePrimaryInvoiceCreateOperation(), retiredSupplementary()],
+      });
+
+      const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+
+      const findings = report.passes[0].bookings[0].findings.filter((candidate) => candidate.code === "MISSING_SUPPLEMENTARY_INVOICE");
+      expect(findings).toHaveLength(1);
+      expect(findings[0]).toMatchObject({
+        severity: "manual_review",
+        safeToAutoApply: false,
+        details: { modificationId: "mod_reduction", reissuedAskInvoiceCents: 3000 },
+      });
+    });
+
+    it("is satisfied by the invoice queued waiting on the re-issued ask", async () => {
+      const deps = createDependencies({
+        bookings: [shrunk()],
+        operations: [makePrimaryInvoiceCreateOperation(), retiredSupplementary(), reissueInvoice("WAITING_PAYMENT")],
+      });
+
+      const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+
+      expect(report.passes[0].bookings[0].findings.map((finding) => finding.code)).not.toContain("MISSING_SUPPLEMENTARY_INVOICE");
+    });
+
+    it("MUTATION: is deferred while the re-issue's mint is still owed by its recovery", async () => {
+      const { buildAdditionalIntentRecoveryIdempotencyKey } = await import("@/lib/payment-recovery-keys");
+      const deps = createDependencies({
+        bookings: [shrunk()],
+        operations: [makePrimaryInvoiceCreateOperation(), retiredSupplementary()],
+        editReviewChargeIntentRecoveries: [
+          { bookingId: "booking_1", idempotencyKey: buildAdditionalIntentRecoveryIdempotencyKey("mod_reduction"), status: "PENDING" },
+        ],
+      });
+
+      const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+
+      expect(report.passes[0].bookings[0].findings.map((finding) => finding.code)).not.toContain("MISSING_SUPPLEMENTARY_INVOICE");
+    });
+
+    // Round 6: a later increase folded the waiting re-issue into its own ask;
+    // the re-issue's invoice is queued on that increase's intent once it mints.
+    const foldedIntoLaterIncrease = () => {
+      const booking = shrunk();
+      const modifications = booking.modifications as unknown as Array<Record<string, unknown>>;
+      modifications.push({
+        ...modifications[0]!,
+        id: "mod_increase_later",
+        priceDiffCents: 1000,
+        newData: { foldedReissuedAskCents: 3000, foldedReissuedAskModificationIds: ["mod_reduction"] },
+        createdAt: new Date("2026-05-04T00:00:00Z"),
+      });
+      return booking;
+    };
+
+    it.each([
+      ["MUTATION (round 6): is accounted for while the increase that folded it in still waits on its mint", "open"],
+      ["MUTATION (round 6): is accounted for once a later reduction retired that increase's ask in turn", "retired"],
+    ] as const)("%s", async (_label, state) => {
+      const { buildAdditionalIntentRecoveryIdempotencyKey } = await import("@/lib/payment-recovery-keys");
+      const booking = foldedIntoLaterIncrease();
+      if (state === "retired") {
+        const modifications = booking.modifications as unknown as Array<Record<string, unknown>>;
+        modifications.push({
+          ...modifications[1]!,
+          id: "mod_reduction_later",
+          newData: { unpaidAskOffsetCents: 4000, unpaidAskRetiredModificationIds: ["mod_increase_later"] },
+          createdAt: new Date("2026-05-05T00:00:00Z"),
+        });
+      }
+      const deps = createDependencies({
+        bookings: [booking],
+        operations: [makePrimaryInvoiceCreateOperation(), retiredSupplementary()],
+        editReviewChargeIntentRecoveries:
+          state === "open"
+            ? [{ bookingId: "booking_1", idempotencyKey: buildAdditionalIntentRecoveryIdempotencyKey("mod_increase_later"), status: "PENDING" }]
+            : [],
+      });
+
+      const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+
+      const missing = report.passes[0].bookings[0].findings.filter(
+        (finding) => finding.code === "MISSING_SUPPLEMENTARY_INVOICE" && (finding.details as { modificationId?: string }).modificationId === "mod_reduction",
+      );
+      expect(missing).toEqual([]);
+    });
+
+    it("round 6: is reported once the increase that folded it in has minted and still no invoice waits on it", async () => {
+      const deps = createDependencies({
+        bookings: [foldedIntoLaterIncrease()],
+        operations: [makePrimaryInvoiceCreateOperation(), retiredSupplementary()],
+      });
+
+      const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+
+      const missing = report.passes[0].bookings[0].findings.filter(
+        (finding) => finding.code === "MISSING_SUPPLEMENTARY_INVOICE" && (finding.details as { modificationId?: string }).modificationId === "mod_reduction",
+      );
+      expect(missing).toHaveLength(1);
+    });
+  });
+
+  // #3954 round 5 (owner decision 10 Oct 2026, "Auto credit note"): the
+  // offset a primary invoice raised after the increase had billed takes a
+  // scoped invoice-correction note the edit queued; the pass verifies or queues it.
+  const billedOffsetScoped = { reviewTaskId: "unpaid-ask-billed-offset" };
+  const billedOffsetNote = (overrides: Record<string, unknown>) =>
+    makeOperation({
+      id: "op_billed_offset",
+      entityType: "CREDIT_NOTE",
+      operationType: "CREATE",
+      localId: "mod_reduction",
+      queueType: "MODIFICATION_CREDIT_NOTE",
+      xeroObjectType: "CREDIT_NOTE",
+      xeroObjectId: "cn_billed_offset",
+      requestPayload: {
+        queueType: "MODIFICATION_CREDIT_NOTE",
+        bookingModificationId: "mod_reduction",
+        refundAmountCents: 2000,
+        noteWording: "invoice-correction",
+        ...billedOffsetScoped,
+      },
+      ...overrides,
+    });
+  const billedReduction = (priceDiffCents = -2000) =>
+    reducedAfterUnpaidAsk(priceDiffCents, 2000, { unpaidAskRetiredModificationIds: ["mod_increase"], unpaidAskBilledOffsetCents: 2000 });
+
+  it("MUTATION (round 6, F6): an offset whose billing the edit could not establish is reported for a person, never queued as a note", async () => {
+    const deps = createDependencies({
+      bookings: [reducedAfterUnpaidAsk(-2000, 2000, { unpaidAskRetiredModificationIds: ["mod_increase"], unpaidAskBilledOffsetUnsureCents: 2000 })],
+      operations: [makePrimaryInvoiceCreateOperation()],
+    });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+
+    const bookingReport = report.passes[0].bookings[0];
+    expect(bookingReport.findings.find((candidate) => (candidate.details as { billedOffsetUnsureCents?: number }).billedOffsetUnsureCents)).toMatchObject({
+      code: "MISSING_MODIFICATION_CREDIT_NOTE",
+      severity: "manual_review",
+      safeToAutoApply: false,
+      details: { modificationId: "mod_reduction", billedOffsetUnsureCents: 2000 },
+    });
+    expect(bookingReport.actions.map((action) => action.key)).not.toContain("queue:billed-offset-note:mod_reduction");
+  });
+
+  it("MUTATION (round 7, F3): a re-issue invoice the edit could not size is reported for a person beside it, never raised", async () => {
+    const deps = createDependencies({
+      bookings: [reducedAfterUnpaidAsk(-2000, 2000, { unpaidAskRetiredModificationIds: ["mod_increase"], reissuedAskInvoiceUnsureCents: 3000 })],
+      operations: [makePrimaryInvoiceCreateOperation()],
+    });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+
+    const bookingReport = report.passes[0].bookings[0];
+    expect(bookingReport.findings.find((candidate) => (candidate.details as { reissuedAskInvoiceUnsureCents?: number }).reissuedAskInvoiceUnsureCents)).toMatchObject({
+      code: "MISSING_SUPPLEMENTARY_INVOICE",
+      severity: "manual_review",
+      safeToAutoApply: false,
+      details: { modificationId: "mod_reduction", reissuedAskInvoiceUnsureCents: 3000 },
+    });
+  });
+
+  it("MUTATION (round 8, F2): a re-issue a later reduction retired in turn is not reported unsure twice - the later reduction carried it", async () => {
+    const booking = makeBooking({
+      modifications: [
+        ...reducedAfterUnpaidAsk(-2000, 2000, { unpaidAskRetiredModificationIds: ["mod_increase"], reissuedAskInvoiceUnsureCents: 3000 }).modifications,
+        {
+          id: "mod_reduction_later",
+          bookingId: "booking_1",
+          modificationType: "GUEST_REMOVE",
+          priceDiffCents: -1000,
+          changeFeeCents: 0,
+          newData: { unpaidAskOffsetCents: 1000, unpaidAskRetiredModificationIds: ["mod_reduction"] },
+          createdAt: new Date("2026-05-04T00:00:00Z"),
+        },
+      ],
+    });
+    const deps = createDependencies({ bookings: [booking], operations: [makePrimaryInvoiceCreateOperation()] });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+
+    const bookingReport = report.passes[0].bookings[0];
+    expect(
+      bookingReport.findings.some((candidate) => (candidate.details as { reissuedAskInvoiceUnsureCents?: number }).reissuedAskInvoiceUnsureCents),
+    ).toBe(false);
+  });
+
+  it("MUTATION (round 5): queues a lost billed-offset note, scoped and worded as an invoice correction, safe to auto-apply", async () => {
+    const deps = createDependencies({ bookings: [billedReduction()], operations: [makePrimaryInvoiceCreateOperation()] });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { apply: true, dependencies: deps, scope: { all: true } });
+
+    const bookingReport = report.passes[0].bookings[0];
+    expect(bookingReport.findings.find((candidate) => candidate.code === "MISSING_MODIFICATION_CREDIT_NOTE")).toMatchObject({
+      severity: "critical",
+      safeToAutoApply: true,
+      details: { modificationId: "mod_reduction", refundAmountCents: 2000, refundAmountSource: "recorded-billed-offset" },
+    });
+    expect(bookingReport.actions.find((candidate) => candidate.key === "queue:billed-offset-note:mod_reduction")).toMatchObject({
+      type: "QUEUE_MODIFICATION_CREDIT_NOTE",
+      safeToAutoApply: true,
+      payload: { bookingModificationId: "mod_reduction", refundAmountCents: 2000, noteWording: "invoice-correction", ...billedOffsetScoped },
+    });
+    expect(deps.enqueueXeroModificationCreditNoteOperation).toHaveBeenCalledWith(
+      expect.objectContaining({ bookingModificationId: "mod_reduction", refundAmountCents: 2000, noteWording: "invoice-correction", ...billedOffsetScoped }),
+    );
+  });
+
+  it("MUTATION (round 8, F6): a lost billed-offset note of an edit that owes its own note too is queued to wait for that note", async () => {
+    // $30 reduction, $20 of it set against the ask: $10 is the edit's own note.
+    // A history row written before #4049 records no answer: the round-8 reading stands.
+    const deps = createDependencies({ bookings: [billedReduction(-3000)], operations: [makePrimaryInvoiceCreateOperation()] });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { apply: true, dependencies: deps, scope: { all: true } });
+
+    const bookingReport = report.passes[0].bookings[0];
+    expect(bookingReport.actions.find((candidate) => candidate.key === "queue:billed-offset-note:mod_reduction")).toMatchObject({
+      payload: { refundAmountCents: 2000, ...billedOffsetScoped, ownNoteExpected: true },
+    });
+    expect(deps.enqueueXeroModificationCreditNoteOperation).toHaveBeenCalledWith(
+      expect.objectContaining({ refundAmountCents: 2000, ...billedOffsetScoped, ownNoteExpected: true }),
+    );
+  });
+
+  it("MUTATION (round 8, F6): the edit's own answer, recorded on an earlier billed-offset operation, is carried over the repair's reading", async () => {
+    const deps = createDependencies({
+      bookings: [billedReduction(-3000)],
+      operations: [makePrimaryInvoiceCreateOperation(), billedOffsetNote({ status: "CANCELLED", xeroObjectType: null, xeroObjectId: null })],
+    });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+
+    const action = report.passes[0].bookings[0].actions.find((candidate) => candidate.key === "queue:billed-offset-note:mod_reduction");
+    expect(action?.payload).toMatchObject({ refundAmountCents: 2000, ...billedOffsetScoped });
+    expect(action?.payload).not.toHaveProperty("ownNoteExpected");
+  });
+
+  // #4049: the repair reads the edit's own answer from its history row, not
+  // the broader "a reduction note is due". The $30 reduction below leaves $10
+  // after the ask, so the round-8 reading would wait for an own note.
+  const recordedBilledReduction = (ownNoteExpected: boolean, extra: Record<string, unknown> = {}) =>
+    reducedAfterUnpaidAsk(-3000, 2000, {
+      unpaidAskRetiredModificationIds: ["mod_increase"],
+      unpaidAskBilledOffsetCents: 2000,
+      unpaidAskBilledOffsetOwnNoteExpected: ownNoteExpected,
+      ...extra,
+    });
+
+  it.each([
+    ["settled by giving back applied credit, nothing captured", { appliedCreditGiveBack: { basisCents: 1000, givenBackCents: 1000 } }],
+    ["the edit recorded false for another reason, e.g. an organiser's card refund the repair cannot see", {}],
+  ])("MUTATION (#4049): a lost billed-offset note whose edit recorded no own note expected (%s) is queued not to wait", async (_label, extra) => {
+    const deps = createDependencies({ bookings: [recordedBilledReduction(false, extra)], operations: [makePrimaryInvoiceCreateOperation()] });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { apply: true, dependencies: deps, scope: { all: true } });
+
+    const action = report.passes[0].bookings[0].actions.find((candidate) => candidate.key === "queue:billed-offset-note:mod_reduction");
+    expect(action?.payload).toMatchObject({ refundAmountCents: 2000, ...billedOffsetScoped });
+    expect(action?.payload).not.toHaveProperty("ownNoteExpected");
+    const billedOffsetEnqueue = vi
+      .mocked(deps.enqueueXeroModificationCreditNoteOperation)
+      .mock.calls.map(([params]) => params as Record<string, unknown>)
+      .find((params) => params.reviewTaskId === billedOffsetScoped.reviewTaskId);
+    expect(billedOffsetEnqueue).toMatchObject({ refundAmountCents: 2000 });
+    expect(billedOffsetEnqueue).not.toHaveProperty("ownNoteExpected");
+  });
+
+  it("MUTATION (#4049): a lost billed-offset note whose edit recorded an own note expected still waits for it", async () => {
+    const deps = createDependencies({ bookings: [recordedBilledReduction(true)], operations: [makePrimaryInvoiceCreateOperation()] });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { apply: true, dependencies: deps, scope: { all: true } });
+
+    const action = report.passes[0].bookings[0].actions.find((candidate) => candidate.key === "queue:billed-offset-note:mod_reduction");
+    expect(action?.payload).toMatchObject({ refundAmountCents: 2000, ...billedOffsetScoped, ownNoteExpected: true });
+    expect(deps.enqueueXeroModificationCreditNoteOperation).toHaveBeenCalledWith(
+      expect.objectContaining({ refundAmountCents: 2000, ...billedOffsetScoped, ownNoteExpected: true }),
+    );
+  });
+
+  it("MUTATION (#4049): a recorded false outranks a carried true - the note is not held back", async () => {
+    const carriedTrue = billedOffsetNote({
+      status: "CANCELLED",
+      xeroObjectType: null,
+      xeroObjectId: null,
+      requestPayload: {
+        queueType: "MODIFICATION_CREDIT_NOTE",
+        bookingModificationId: "mod_reduction",
+        refundAmountCents: 2000,
+        noteWording: "invoice-correction",
+        ...billedOffsetScoped,
+        ownNoteExpected: true,
+      },
+    });
+    const deps = createDependencies({
+      bookings: [recordedBilledReduction(false)],
+      operations: [makePrimaryInvoiceCreateOperation(), carriedTrue],
+    });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+
+    const action = report.passes[0].bookings[0].actions.find((candidate) => candidate.key === "queue:billed-offset-note:mod_reduction");
+    expect(action).toBeDefined();
+    expect(action?.payload).not.toHaveProperty("ownNoteExpected");
+  });
+
+  it("MUTATION (#4049): the edit's recorded answer outranks one carried on an earlier operation", async () => {
+    const deps = createDependencies({
+      bookings: [recordedBilledReduction(true)],
+      operations: [makePrimaryInvoiceCreateOperation(), billedOffsetNote({ status: "CANCELLED", xeroObjectType: null, xeroObjectId: null })],
+    });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+
+    const action = report.passes[0].bookings[0].actions.find((candidate) => candidate.key === "queue:billed-offset-note:mod_reduction");
+    expect(action?.payload).toMatchObject({ ownNoteExpected: true });
+  });
+
+  it.each([
+    { state: "queued by the edit (PENDING)", status: "PENDING" },
+    { state: "being raised (RUNNING)", status: "RUNNING" },
+    { state: "raised (SUCCEEDED) - the finding clears once it lands", status: "SUCCEEDED" },
+  ])("MUTATION (round 5): a billed-offset note $state answers for itself - nothing reported or queued", async ({ status }) => {
+    const deps = createDependencies({
+      bookings: [billedReduction()],
+      operations: [makePrimaryInvoiceCreateOperation(), billedOffsetNote({ status })],
+    });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { apply: true, dependencies: deps, scope: { all: true } });
+
+    const bookingReport = report.passes[0].bookings[0];
+    expect(bookingReport.findings.map((finding) => finding.code)).not.toContain("MISSING_MODIFICATION_CREDIT_NOTE");
+    expect(bookingReport.findings.map((finding) => finding.code)).not.toContain("BLOCKED_BY_XERO_OPERATION");
+    expect(deps.enqueueXeroModificationCreditNoteOperation).not.toHaveBeenCalled();
+  });
+
+  it("MUTATION (round 5): retries a FAILED billed-offset note rather than queueing a second", async () => {
+    const deps = createDependencies({
+      bookings: [billedReduction()],
+      operations: [makePrimaryInvoiceCreateOperation(), billedOffsetNote({ status: "FAILED", xeroObjectId: null })],
+    });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+
+    const bookingReport = report.passes[0].bookings[0];
+    expect(bookingReport.findings.find((candidate) => candidate.code === "BLOCKED_BY_XERO_OPERATION")).toMatchObject({
+      details: { modificationId: "mod_reduction", operationId: "op_billed_offset" },
+    });
+    expect(bookingReport.actions.map((action) => action.key)).not.toContain("queue:billed-offset-note:mod_reduction");
+  });
+
+  it("MUTATION (round 7, F6): a billed-offset note that stopped waiting for the edit's own note, which never appeared, is a person's to retry - never auto-applied", async () => {
+    const waited = billedOffsetNote({
+      status: "FAILED",
+      xeroObjectId: null,
+      requestPayload: {
+        queueType: "MODIFICATION_CREDIT_NOTE",
+        bookingModificationId: "mod_reduction",
+        refundAmountCents: 2000,
+        noteWording: "invoice-correction",
+        ...billedOffsetScoped,
+        ownNoteExpected: true,
+      },
+    });
+    const deps = createDependencies({ bookings: [billedReduction()], operations: [makePrimaryInvoiceCreateOperation(), waited] });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+
+    const bookingReport = report.passes[0].bookings[0];
+    expect(bookingReport.findings.find((candidate) => candidate.code === "BLOCKED_BY_XERO_OPERATION")).toMatchObject({
+      severity: "manual_review",
+      safeToAutoApply: false,
+      details: { modificationId: "mod_reduction", operationId: "op_billed_offset" },
+    });
+    expect(bookingReport.actions.find((action) => action.key === "retry:op_billed_offset")).toMatchObject({ safeToAutoApply: false });
+  });
+
+  it("MUTATION (round 5): the billed-offset note never stands in for the edit's own note on what the ask left", async () => {
+    // $80 off: $20 of the ask billed by the primary invoice (its note raised),
+    // and the $60 left still owed its own note.
+    const deps = createDependencies({
+      bookings: [reducedAfterUnpaidAsk(-8000, 2000, { unpaidAskRetiredModificationIds: ["mod_increase"], unpaidAskBilledOffsetCents: 2000 })],
+      operations: [makePrimaryInvoiceCreateOperation(), billedOffsetNote({ status: "SUCCEEDED" })],
+    });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+
+    const finding = report.passes[0].bookings[0].findings.find(
+      (candidate) => candidate.code === "MISSING_MODIFICATION_CREDIT_NOTE",
+    );
+    expect(finding?.details).toMatchObject({ modificationId: "mod_reduction", refundDueCents: 6000 });
+  });
+
+  it("expects no billed-offset note where the increase's own invoice was retired instead (none recorded)", async () => {
+    const deps = createDependencies({
+      bookings: [reducedAfterUnpaidAsk(-5000, 5000, { unpaidAskRetiredModificationIds: ["mod_increase"] })],
+      operations: [makePrimaryInvoiceCreateOperation(), retiredSupplementary()],
+    });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+
+    const bookingReport = report.passes[0].bookings[0];
+    expect(bookingReport.actions.map((action) => action.key)).not.toContain("queue:billed-offset-note:mod_reduction");
+    expect(bookingReport.findings.map((finding) => finding.code)).not.toContain("MISSING_MODIFICATION_CREDIT_NOTE");
+  });
+});
+
+/**
+ * #3953 (`INV-PAY-139`): "card payment not recorded in Xero" - a change's card
+ * capture on a booking whose primary invoice exists, that no supplementary
+ * invoice and no receipt of its own records.
+ */
+describe("runBookingXeroRepair - a change's card capture no Xero invoice records (#3953)", () => {
+  const changeCapture = (overrides: Record<string, unknown> = {}) => ({
+    id: "txn_change",
+    paymentId: "payment_1",
+    kind: "ADDITIONAL",
+    source: "STRIPE",
+    stripePaymentIntentId: "pi_change",
+    amountCents: 8000,
+    refundedAmountCents: 0,
+    status: "SUCCEEDED",
+    paymentMethodId: "pm_123",
+    reason: null,
+    withdrawnAt: null,
+    createdAt: new Date("2026-05-03T00:00:00Z"),
+    updatedAt: new Date("2026-05-03T00:00:00Z"),
+    ...overrides,
+  });
+  const bookingWithChangeCapture = (bookingOverrides: Record<string, unknown> = {}) =>
+    makeBooking({
+      payment: { ...makeBooking().payment, amountCents: 18000, transactions: [changeCapture()] },
+      ...bookingOverrides,
+    });
+  const figures = (captured: string[] | undefined) => ({
+    id: "op_primary_create",
+    requestPayload: {
+      primaryInvoiceBilledFee: {
+        xeroInvoiceId: "inv_primary",
+        billedChangeFeeCents: 0,
+        billedTotalCents: 18000,
+        recordedChangeFeeCentsAtLink: 0,
+        primaryInvoiceCashCents: 10000,
+        ...(captured ? { paymentIntentIdsRecordedAtLink: captured } : {}),
+      },
+    },
+  });
+  const run = async (state: { booking?: ReturnType<typeof makeBooking>; operations?: unknown[]; links?: unknown[]; figures?: ReturnType<typeof figures> | null }, apply = false) => {
+    const deps = createDependencies({
+      bookings: [state.booking ?? bookingWithChangeCapture()],
+      operations: state.operations ?? [],
+      links: state.links ?? [],
+      primaryInvoiceFiguresOperation: state.figures === undefined ? figures(["pi_123"]) : state.figures,
+    });
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { apply, dependencies: deps, scope: { all: true } });
+    return { bookingReport: report.passes[0].bookings[0], deps };
+  };
+  const finding = (bookingReport: { findings: Array<{ code: string }> }) =>
+    bookingReport.findings.find((entry) => entry.code === "ADDITIONAL_CAPTURE_NOT_RECORDED_IN_XERO") as
+      | { severity: string; summary: string; safeToAutoApply: boolean; details: Record<string, unknown> }
+      | undefined;
+
+  it("names it and queues the capture's receipt, automatically where the invoice's figures say it was not counted", async () => {
+    const { bookingReport, deps } = await run({});
+
+    expect(finding(bookingReport)).toMatchObject({
+      severity: "critical",
+      safeToAutoApply: true,
+      summary: expect.stringContaining("Card payment not recorded in Xero"),
+      details: { paymentId: "payment_1", paymentIntentId: "pi_change", paymentTransactionId: "txn_change", capturedCents: 8000 },
+    });
+    expect(bookingReport.actions.find((action) => action.type === "QUEUE_ADDITIONAL_CAPTURE_RECEIPT")).toMatchObject({
+      key: "queue:additional-capture-receipt:pi_change",
+      safeToAutoApply: true,
+      payload: { paymentIntentId: "pi_change" },
+    });
+
+    await run({}, true).then(({ deps: applied }) => {
+      expect(applied.enqueueAdditionalCaptureReceiptOperation).toHaveBeenCalledWith("pi_change");
+    });
+    expect(deps.enqueueAdditionalCaptureReceiptOperation).not.toHaveBeenCalled();
+  });
+
+  it("asks an officer to check Xero first where the invoice predates its counted-capture figures", async () => {
+    const { bookingReport } = await run({ figures: figures(undefined) });
+
+    expect(finding(bookingReport)).toMatchObject({
+      severity: "manual_review",
+      safeToAutoApply: false,
+      summary: expect.stringContaining("check Xero first"),
+    });
+  });
+
+  it.each([
+    ["the primary invoice's create counted it", { figures: figures(["pi_123", "pi_change"]) }],
+    [
+      "its receipt's payment is linked",
+      { links: [{ id: "link_receipt", localModel: "PaymentTransaction", localId: "txn_change", xeroObjectType: "PAYMENT", xeroObjectId: "xp_1", role: "ADDITIONAL_CAPTURE_PAYMENT", active: true, metadata: null, createdAt: new Date(), updatedAt: new Date(), xeroObjectNumber: null, xeroObjectUrl: null }] },
+    ],
+    [
+      "a supplementary invoice names the capture",
+      { operations: [makeOperation({ id: "op_supp", queueType: "SUPPLEMENTARY_INVOICE", status: "SUCCEEDED", requestPayload: { queueType: "SUPPLEMENTARY_INVOICE", paymentIntentId: "pi_change" } })] },
+    ],
+    ["the booking is cancelled", { booking: bookingWithChangeCapture({ status: "CANCELLED" }) }],
+    ["the booking has no Xero invoice", { booking: makeBooking({ payment: { ...makeBooking().payment, xeroInvoiceId: null, xeroInvoiceNumber: null, transactions: [changeCapture()] } }) }],
+  ])("raises nothing when %s", async (_label, state) => {
+    const { bookingReport } = await run(state as never);
+    expect(finding(bookingReport)).toBeUndefined();
+    expect(bookingReport.actions.find((action) => action.type === "QUEUE_ADDITIONAL_CAPTURE_RECEIPT")).toBeUndefined();
+  });
+
+  const receiptOperation = (overrides: Record<string, unknown>) =>
+    makeOperation({
+      id: "op_receipt",
+      entityType: "PAYMENT",
+      operationType: "CREATE",
+      localModel: "PaymentTransaction",
+      localId: "txn_change",
+      queueType: "ADDITIONAL_CAPTURE_RECEIPT",
+      xeroObjectType: null,
+      xeroObjectId: null,
+      replayable: true,
+      requestPayload: {
+        queueType: "ADDITIONAL_CAPTURE_RECEIPT",
+        bookingId: "booking_1",
+        paymentId: "payment_1",
+        paymentTransactionId: "txn_change",
+        paymentIntentId: "pi_change",
+      },
+      ...overrides,
+    });
+
+  it("offers a retry of a receipt whose Xero write failed", async () => {
+    const { bookingReport } = await run({ operations: [receiptOperation({ status: "FAILED", lastErrorCode: "500" })] });
+
+    expect(bookingReport.findings.find((entry) => entry.code === "BLOCKED_BY_XERO_OPERATION")).toMatchObject({
+      details: expect.objectContaining({ operationId: "op_receipt", paymentIntentId: "pi_change" }),
+    });
+    expect(finding(bookingReport)).toBeUndefined();
+  });
+
+  it("hands a receipt the worker refused to an officer, never retrying it automatically", async () => {
+    const { bookingReport } = await run({
+      operations: [receiptOperation({ status: "FAILED", lastErrorCode: "ADDITIONAL_CAPTURE_RECEIPT_REFUSED", lastErrorMessage: "nothing due" })],
+    });
+
+    expect(finding(bookingReport)).toMatchObject({ severity: "manual_review", safeToAutoApply: false });
+    expect(bookingReport.actions.some((action) => action.type === "REQUEUE_XERO_OPERATION")).toBe(false);
+  });
+
+  describe("one recorder per capture (review round 1, B)", () => {
+    const changeOnPrimary = {
+      id: "mod_change",
+      bookingId: "booking_1",
+      modificationType: "GUEST_ADD",
+      priceDiffCents: 8000,
+      changeFeeCents: 0,
+      createdAt: new Date("2026-05-02T00:00:00Z"),
+    };
+    const receiptLink = {
+      id: "link_receipt",
+      localModel: "PaymentTransaction",
+      localId: "txn_change",
+      xeroObjectType: "PAYMENT",
+      xeroObjectId: "xp_1",
+      role: "ADDITIONAL_CAPTURE_PAYMENT",
+      active: true,
+      metadata: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      xeroObjectNumber: null,
+      xeroObjectUrl: null,
+    };
+    const withChange = (
+      receipt: "linked" | "queued" | "running" | "planned" | "none",
+      capture: Record<string, unknown> = { bookingModificationId: "mod_change" },
+    ) =>
+      run({
+        booking: makeBooking({
+          payment: { ...makeBooking().payment, amountCents: 18000, transactions: [changeCapture(capture)] },
+          modifications: [changeOnPrimary],
+        }),
+        operations: [
+          makePrimaryInvoiceCreateOperation(),
+          ...(receipt === "none"
+            ? []
+            : [
+                receiptOperation({
+                  status: receipt === "linked" ? "SUCCEEDED" : receipt === "running" ? "RUNNING" : receipt === "planned" ? "FAILED" : "PENDING",
+                  ...(receipt === "planned"
+                    ? {
+                        requestPayload: {
+                          queueType: "ADDITIONAL_CAPTURE_RECEIPT",
+                          bookingId: "booking_1",
+                          paymentId: "payment_1",
+                          paymentTransactionId: "txn_change",
+                          paymentIntentId: "pi_change",
+                          plan: { target: "PRIMARY_INVOICE", invoiceId: "inv_primary", amountCents: 8000, capturedCents: 8000, date: "2026-06-30" },
+                        },
+                      }
+                    : {}),
+                }),
+              ]),
+        ],
+        links: receipt === "linked" ? [receiptLink] : [],
+      });
+
+    it("never reports a capture its change's own supplementary invoice records", async () => {
+      const { bookingReport } = await run({
+        booking: bookingWithChangeCapture({
+          payment: { ...makeBooking().payment, amountCents: 18000, transactions: [changeCapture({ bookingModificationId: "mod_change" })] },
+        }),
+        operations: [
+          makeOperation({ id: "op_change_invoice", queueType: "SUPPLEMENTARY_INVOICE", localModel: "BookingModification", localId: "mod_change", status: "SUCCEEDED", requestPayload: { queueType: "SUPPLEMENTARY_INVOICE", paymentIntentId: null } }),
+        ],
+      });
+      expect(finding(bookingReport)).toBeUndefined();
+    });
+
+    it("never reports a capture a gap invoice's own payment took", async () => {
+      const { bookingReport } = await run({
+        operations: [
+          makeOperation({ id: "op_gap", queueType: "SUPPLEMENTARY_INVOICE", localId: "mod_racing", status: "SUCCEEDED", requestPayload: { queueType: "SUPPLEMENTARY_INVOICE", primaryInvoiceGap: true, coveredPaymentIntentIds: ["pi_change"] } }),
+        ],
+      });
+      expect(finding(bookingReport)).toBeUndefined();
+    });
+
+    it("raises the change's missing supplementary invoice UNPAID where the capture's own receipt records it", async () => {
+      const queueAction = (bookingReport: { actions: Array<{ type: string; payload: Record<string, unknown> }> }) =>
+        bookingReport.actions.find((action) => action.type === "QUEUE_SUPPLEMENTARY_INVOICE");
+      const withReceipt = (await withChange("linked")).bookingReport;
+      expect(queueAction(withReceipt)?.payload).toMatchObject({ bookingModificationId: "mod_change", recordPayment: false });
+      // Control: with no receipt, the enqueue's own default stands.
+      const without = (await withChange("none")).bookingReport;
+      expect(queueAction(without)?.payload).not.toHaveProperty("recordPayment");
+    });
+
+    it("MUTATION round 7: raises it unpaid where an officer's review charge for the change - no stamp, its reason naming the change - has a receipt", async () => {
+      const queueAction = (bookingReport: { actions: Array<{ type: string; payload: Record<string, unknown> }> }) =>
+        bookingReport.actions.find((action) => action.type === "QUEUE_SUPPLEMENTARY_INVOICE");
+      const reviewCharge = { bookingModificationId: null, reason: buildEditFinancialReviewChargeReason("mod_change") };
+      for (const receipt of ["linked", "planned"] as const) {
+        const report = (await withChange(receipt, reviewCharge)).bookingReport;
+        expect(queueAction(report)?.payload).toMatchObject({ bookingModificationId: "mod_change", recordPayment: false });
+      }
+    });
+
+    it("MUTATION round 3 (F1): raises it unpaid only for a receipt that RECORDED the capture, never one still queued or refused", async () => {
+      const queueAction = (bookingReport: { actions: Array<{ type: string; payload: Record<string, unknown> }> }) =>
+        bookingReport.actions.find((action) => action.type === "QUEUE_SUPPLEMENTARY_INVOICE");
+      const queued = (await withChange("queued")).bookingReport;
+      expect(queueAction(queued)?.payload).not.toHaveProperty("recordPayment");
+    });
+
+    it.each(["running", "planned"] as const)(
+      "MUTATION round 4 (1a): raises it unpaid where the capture's receipt may be recording it (%s)",
+      async (receipt) => {
+        const queueAction = (bookingReport: { actions: Array<{ type: string; payload: Record<string, unknown> }> }) =>
+          bookingReport.actions.find((action) => action.type === "QUEUE_SUPPLEMENTARY_INVOICE");
+        const report = (await withChange(receipt)).bookingReport;
+        expect(queueAction(report)?.payload).toMatchObject({ bookingModificationId: "mod_change", recordPayment: false });
+      },
+    );
+
+    it("MUTATION round 3 (F1): still reports a capture whose change's own invoice was raised UNPAID - the receipt records against it", async () => {
+      const { bookingReport } = await run({
+        booking: bookingWithChangeCapture({
+          payment: { ...makeBooking().payment, amountCents: 18000, transactions: [changeCapture({ bookingModificationId: "mod_change" })] },
+        }),
+        operations: [
+          makeOperation({ id: "op_change_invoice", queueType: "SUPPLEMENTARY_INVOICE", localModel: "BookingModification", localId: "mod_change", status: "SUCCEEDED", requestPayload: { queueType: "SUPPLEMENTARY_INVOICE", paymentIntentId: null, recordPayment: false } }),
+        ],
+      });
+      expect(finding(bookingReport)).toMatchObject({ details: expect.objectContaining({ paymentIntentId: "pi_change" }) });
+    });
+  });
+
+  it("raises nothing while the receipt is queued or after it finished", async () => {
+    for (const status of ["PENDING", "RUNNING", "SUCCEEDED", "CANCELLED"]) {
+      const { bookingReport } = await run({ operations: [receiptOperation({ status })] });
+      expect(finding(bookingReport)).toBeUndefined();
+      expect(bookingReport.findings.find((entry) => entry.code === "BLOCKED_BY_XERO_OPERATION")).toBeUndefined();
+    }
   });
 });

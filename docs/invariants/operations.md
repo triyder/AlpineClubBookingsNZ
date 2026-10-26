@@ -25,6 +25,10 @@ rows already written no longer match the code, deploying to production,
 choosing credentials or data for CI and local validation, or mocking a money
 seam in a test that asserts money.
 
+A Prisma `startsWith` is SQL `LIKE` too, and Prisma does not escape it: a
+prefix carrying an id or typed text goes through `exactPrefix`
+(`INV-SSOT-006`).
+
 `INV-OPS-005` to `INV-OPS-011` are the `FamilyGroupMember.role` column drop,
 re-homed here from `membership-lifecycle.md` by #2706: they are migration
 policy — Prisma `@ignore` behaviour, what a generated client can emit, the
@@ -510,14 +514,14 @@ rules first written here. #2765 extended it with the measured-audience half.
   still unreleased and unapplied anywhere. A GENERAL "did a reclassification ship
   without a
   backfill" check is **not available**, and pretending otherwise would be worse
-  than having none: the audit-writer census pins only 128 of its 501 write sites
+  than having none: the audit-writer census pins only 130 of its 520 write sites
   per-site — the union of `APPLIED_AUDIT_CATEGORIES`,
   `REVIEWED_ADMIN_CATEGORIES_2730`, `MEMBER_RECORD_ADMIN_CATEGORIES_2755` and
   `LODGE_GATED_ADMIN_CATEGORIES_2765`, counted rather than added up, and asserted
   by `audit-writer-census.test.ts` so this figure and the copy of it in
   `bed-allocation-audit-category-backfill.test.ts` cannot go stale again —
   deliberately, because pinning all of them would make every feature that records
-  something edit a 400-line literal — so for the other 368 there is no baseline
+  something edit a 400-line literal — so for the other 383 there is no baseline
   a check could compare against, and the category distribution alone cannot see a
   reclassification that another one compensates for. The two `verify` gates that
   can read a pull request parse its BODY, not its diff. So outside the pinned

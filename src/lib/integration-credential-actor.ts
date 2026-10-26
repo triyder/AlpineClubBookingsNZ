@@ -72,8 +72,6 @@ export const CREDENTIAL_SYSTEM_ACTORS = [
   "stripe-webhook-verify",
   /** The shared-post sync registered this install for pushes and stored the issued secret. */
   "servernz-push-registration",
-  /** First use of Xero token encryption auto-generated (or replaced) the wrapped token key. */
-  "xero-token-key-generation",
   /**
    * The Xero access token was near expiry, so the API client spent the refresh
    * token under the shared refresh lease and stored the rotated pair (#3454).
@@ -98,6 +96,10 @@ export const CREDENTIAL_SYSTEM_ACTORS = [
  * it, and a name no writer can produce does not sit in a closed list implying
  * such rows exist. A future background path that genuinely resets a marker with
  * no person behind it adds its name back here, which is a reviewed change.
+ *
+ * `xero-token-key-generation` went the same way (#3806 R2): it named the first
+ * use of the wrapped Xero token key, which R2 retired along with the ciphertext
+ * it protected. Audit rows written before then still carry the name.
  */
 
 export type CredentialSystemActor = (typeof CREDENTIAL_SYSTEM_ACTORS)[number];

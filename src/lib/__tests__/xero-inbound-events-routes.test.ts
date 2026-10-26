@@ -195,6 +195,56 @@ describe("Xero inbound event admin routes", () => {
     });
   });
 
+  it("matches a credit-note link to both CREDITNOTE and CREDIT_NOTE events", async () => {
+    mockPrisma.xeroObjectLink.findMany.mockResolvedValue([
+      { xeroObjectType: "CREDIT_NOTE", xeroObjectId: "cn_1" },
+    ]);
+    mockPrisma.xeroInboundEvent.findMany.mockResolvedValue([]);
+    mockPrisma.xeroInboundEvent.count.mockResolvedValue(0);
+
+    const response = await listInboundEvents(
+      new NextRequest(
+        "http://localhost/api/admin/xero/inbound-events?localModel=Payment&localId=pay_1",
+      ),
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockPrisma.xeroInboundEvent.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          AND: expect.arrayContaining([
+            {
+              OR: [
+                { eventCategory: "CREDITNOTE", resourceId: "cn_1" },
+                { eventCategory: "CREDIT_NOTE", resourceId: "cn_1" },
+              ],
+            },
+          ]),
+        }),
+      }),
+    );
+  });
+
+  it("treats a CREDITNOTE category filter as both stored spellings", async () => {
+    mockPrisma.xeroInboundEvent.findMany.mockResolvedValue([]);
+    mockPrisma.xeroInboundEvent.count.mockResolvedValue(0);
+
+    const response = await listInboundEvents(
+      new NextRequest(
+        "http://localhost/api/admin/xero/inbound-events?eventCategory=CREDIT_NOTE",
+      ),
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockPrisma.xeroInboundEvent.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          eventCategory: { in: ["CREDITNOTE", "CREDIT_NOTE"] },
+        },
+      }),
+    );
+  });
+
   it("replays a stored inbound event and records an audit entry", async () => {
     mockReplayStoredXeroInboundEvent.mockResolvedValue({
       result: {

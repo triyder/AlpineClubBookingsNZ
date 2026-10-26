@@ -31,6 +31,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { AUDIT_CORRELATION_DOMAIN_AREAS } from "@/lib/audit-categories";
+import * as paymentRecoveryKeys from "@/lib/payment-recovery-keys";
 
 import { SELECT_GRANTS } from "../../provision-role";
 import { renderToolResultEvidenceBlock } from "../../render";
@@ -48,6 +49,7 @@ import {
   DIAGNOSTICS_XERO_CONTACT_LINKAGE_TOOL_ID,
   DIAGNOSTICS_XERO_INVOICE_LINKAGE_TOOL_ID,
 } from "../finance-records";
+import { RECOVERY_SCENARIO_CATALOGUE } from "../finance-recovery-scenarios";
 import {
   DIAGNOSTICS_FINANCE_AMOUNT_SEARCH_TOOL_ID,
   DIAGNOSTICS_FINANCE_PAYMENT_SEARCH_TOOL_ID,
@@ -102,6 +104,7 @@ const FINANCE_PACK_MODULES = [
   "finance-shared.ts",
   "finance-search.ts",
   "finance-records.ts",
+  "finance-recovery-scenarios.ts",
   "finance-evidence.ts",
   "finance-state.ts",
 ] as const;
@@ -1083,5 +1086,268 @@ describe("AID-6C finance pack: the blocker catalogue (#2377)", () => {
     // An empty list IS "nothing is blocking". A code for it would let a caller treat
     // the healthy case as a finding.
     expect([...FINANCE_BLOCKER_CODES]).not.toContain("none");
+  });
+});
+
+describe("AID-6C finance pack: the recovery scenario catalogue (#4076)", () => {
+  /** The attempt ledger's statement, which classifies a recovery key by prefix. */
+  const ledger = financeTools.find(
+    (tool) => tool.id === DIAGNOSTICS_PAYMENT_ATTEMPT_LEDGER_TOOL_ID,
+  );
+  const ledgerSql = ledger?.source === "select_only_sql" ? ledger.sql : "";
+
+  /** `[prefix, code]` in the order the `CASE` evaluates them. */
+  const sqlCases = [
+    ...ledgerSql.matchAll(
+      /starts_with\(o\."idempotencyKey", '([^']+)'\) THEN '([^']+)'/g,
+    ),
+  ].map((match) => [match[1], match[2]] as const);
+
+  const codeFor = (key: string) =>
+    sqlCases.find(([prefix]) => key.startsWith(prefix))?.[1] ?? "other_recovery";
+
+  /**
+   * EVERY export of `payment-recovery-keys.ts` is accounted for, by exact name, in
+   * exactly one of the two tables below. Discovery by naming convention was the
+   * first version of this guard and had a blind spot: it could not see a prefix
+   * constant, an inline key, or a builder not named `build...Key`. An export in
+   * neither table fails, so a new recovery key cannot land unlabelled and a new
+   * non-recovery export has to say so.
+   *
+   * RECOVERY_EXPORTS maps an export to the scenario code its key must project: a
+   * string export is a prefix (or whole key) and a function is called with the
+   * placeholder "ID" for every argument and the key it builds is classified.
+   */
+  const RECOVERY_EXPORTS: Record<string, string> = {
+    ADDITIONAL_INTENT_RECOVERY_PREFIX: "additional_payment_intent",
+    BOOKING_CANCELLATION_REFUND_RECOVERY_PREFIX: "booking_cancellation_refund",
+    BOOKING_MODIFICATION_REFUND_RECOVERY_PREFIX: "booking_modification_refund",
+    CAPACITY_CLAIM_FAILED_REFUND_RECOVERY_PREFIX: "capacity_claim_failed_refund",
+    CARD_REFUND_FAILED_LATER_RECOVERY_PREFIX: "card_refund_failed_later",
+    CREDIT_RELEASE_ASK_RECOVERY_PREFIX: "credit_release_ask",
+    DUPLICATE_CAPTURE_REFUND_RECOVERY_PREFIX: "duplicate_capture_refund",
+    EDIT_FINANCIAL_REVIEW_ADDITIONAL_INTENT_RECOVERY_PREFIX:
+      "edit_financial_review_additional_intent",
+    EDIT_FINANCIAL_REVIEW_REFUND_RECOVERY_PREFIX: "edit_financial_review_refund",
+    GROUP_SETTLEMENT_REFUND_RECOVERY_PREFIX: "group_settlement_refund",
+    LATE_CAPTURE_APPROVAL_REFUND_RECOVERY_PREFIX: "late_capture_approval_refund",
+    ORGANISER_CARD_APPEAL_REFUND_KEY_PREFIX: "organiser_card_appeal_refund",
+    ORGANISER_CHILD_REFUND_KEY_PREFIX: "organiser_child_refund",
+    PAYMENT_INTENT_CANCEL_RECOVERY_PREFIX: "payment_intent_cancel",
+    REFUND_REQUEST_REFUND_RECOVERY_PREFIX: "refund_appeal_refund",
+    SUPERSEDED_PAYMENT_REFUND_RECOVERY_PREFIX: "superseded_payment_refund",
+    buildAdditionalIntentRecoveryIdempotencyKey: "additional_payment_intent",
+    buildBookingCancellationRefundIdempotencyKey: "booking_cancellation_refund",
+    buildBookingModificationRefundRecoveryIdempotencyKey:
+      "booking_modification_refund",
+    buildCapacityClaimFailedRefundRecoveryIdempotencyKey:
+      "capacity_claim_failed_refund",
+    buildCapacityClaimFailedRefundRecoveryKeyPrefixForBooking:
+      "capacity_claim_failed_refund",
+    buildCardRefundFailedLaterRecoveryKey: "card_refund_failed_later",
+    buildDuplicateCaptureRefundRecoveryIdempotencyKey: "duplicate_capture_refund",
+    buildDuplicateCaptureRefundRecoveryKeyPrefixForBooking:
+      "duplicate_capture_refund",
+    buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey:
+      "edit_financial_review_additional_intent",
+    buildEditFinancialReviewRefundRecoveryIdempotencyKey:
+      "edit_financial_review_refund",
+    buildGroupSettlementRefundRecoveryIdempotencyKey: "group_settlement_refund",
+    buildLateCaptureApprovalRefundRecoveryIdempotencyKey:
+      "late_capture_approval_refund",
+    buildOrganiserChildAppealRefundKey: "organiser_card_appeal_refund",
+    buildOrganiserChildCancellationRefundKey: "organiser_child_refund",
+    buildOrganiserChildModificationRefundKey: "organiser_child_refund",
+    buildPaymentIntentCancelRecoveryIdempotencyKey: "payment_intent_cancel",
+    buildRefundRequestRefundRecoveryIdempotencyKey: "refund_appeal_refund",
+    buildSupersededPaymentRefundRecoveryIdempotencyKey:
+      "superseded_payment_refund",
+  };
+
+  /**
+   * Exports that are NOT a `PaymentRecoveryOperation` key, each with why: a Stripe
+   * idempotency key or its prefix, Stripe metadata, a parser or predicate over a
+   * key, a query fragment, or a ledger `reason`. A Stripe key such as
+   * `duplicate_capture_refund_...` shares a spelling with a recovery prefix and is
+   * never stored in `PaymentRecoveryOperation."idempotencyKey"`.
+   */
+  const NOT_A_RECOVERY_KEY: Record<string, string> = {
+    CARD_REFUND_FAILED_LATER_REASON: "Stripe refund metadata",
+    SUPERSEDED_PAYMENT_REFUND_METADATA_REASON: "Stripe refund metadata",
+    cardRefundOperationRefundMetadata: "Stripe metadata",
+    cardRefundFailedLaterRefundId: "parser of a mapped key",
+    duplicateCaptureIntentIdForRecoveryKey: "parser of a mapped key",
+    GROUP_SETTLEMENT_REFUND_RECOVERY_WHERE: "query fragment over a mapped prefix",
+    LATE_CAPTURE_REFUND_METADATA_REASON: "Stripe refund metadata",
+    LATE_CAPTURE_REPAIR_REFUND_METADATA_REASON: "Stripe refund metadata (#4170)",
+    ORGANISER_CHILD_REFUND_KEY_WHERE: "query fragment over mapped prefixes",
+    REISSUED_ASK_REASON: "ledger reason",
+    bookingModificationIdForAdditionalIntentRecoveryKey: "parser of a mapped key",
+    bookingModificationRefundReasonForKeyPrefix: "Stripe metadata reason",
+    buildBookingCancellationRefundMetadata: "Stripe metadata",
+    buildBookingModificationRefundMetadata: "Stripe metadata",
+    buildCapacityClaimFailedRefundStripeKeyPrefix: "Stripe idempotency key prefix",
+    buildDuplicateCaptureRefundStripeKeyPrefix: "Stripe idempotency key prefix",
+    buildEditFinancialReviewAdditionalIntentStripeKey: "Stripe idempotency key",
+    buildEditFinancialReviewChargeReason: "ledger reason",
+    buildEditFinancialReviewRefundStripeKeyPrefix: "Stripe idempotency key prefix",
+    buildLegacyModificationRefundStripeKeyPrefix: "Stripe idempotency key prefix (frozen legacy booking-edit refund replay)",
+    buildLateCaptureRefundMetadata: "Stripe metadata",
+    buildLateCaptureRefundStripeKeyPrefix: "Stripe idempotency key prefix",
+    buildReissuedAskStripeIdempotencyKey: "Stripe idempotency key",
+    buildRefundRequestRefundMetadata: "Stripe metadata",
+    buildRefundRequestRefundStripeKeyPrefix: "Stripe idempotency key prefix",
+    groupSettlementIdForRefundRecoveryKey: "parser of a mapped key",
+    isAppealRefundRecoveryKey: "predicate over mapped keys",
+    bookingCancelCardRefundRecoveryWhere: "query fragment over mapped keys",
+    isBookingCancelCardRefundRecoveryKey: "predicate over mapped keys",
+    isEditFinancialReviewAdditionalIntentRecoveryKey: "predicate over a mapped key",
+    isGroupSettlementRefundRecoveryKey: "predicate over a mapped key",
+    isLateCaptureRefundStripeKeyPrefix: "predicate over a Stripe key prefix",
+    isOrganiserChildAppealRefundKey: "predicate over a mapped key",
+    isOrganiserChildRefundKey: "predicate over mapped keys",
+    isRefundRequestRefundRecoveryKey: "predicate over a mapped key",
+    isRefusedRefundKeySuffix: "predicate over a Stripe idempotency key suffix",
+    lateCaptureIntentOfApprovalRefundRecoveryKey: "parser of a mapped key",
+    lateCaptureRefundPaymentIntentId: "parser of a Stripe key prefix",
+    nextRefusedRefundKeySuffix: "Stripe idempotency key suffix",
+    organiserChildRefundReasonForKey: "Stripe metadata reason",
+    refundSliceStripeIdempotencyKey: "Stripe idempotency key",
+    stripeIdempotencyKeyForAskAmount: "Stripe idempotency key",
+  };
+
+  const exportedNames = Object.keys(paymentRecoveryKeys).sort();
+
+  /** What an export classifies as, whether it is a prefix constant or a builder. */
+  const keyOf = (name: string): string => {
+    const value = (paymentRecoveryKeys as Record<string, unknown>)[name];
+    if (typeof value === "string") return value;
+    const builder = value as (...args: string[]) => string;
+    return builder(...Array.from({ length: builder.length }, () => "ID"));
+  };
+
+  it("finds the exports it is meant to guard", () => {
+    // A table that silently matched nothing would pass the guards below vacuously.
+    expect(exportedNames.length).toBeGreaterThanOrEqual(50);
+    expect(sqlCases.length).toBe(RECOVERY_SCENARIO_CATALOGUE.length);
+  });
+
+  it("accounts for every export of payment-recovery-keys.ts, by exact name (#4076, INV-SSOT)", () => {
+    for (const name of exportedNames) {
+      const listed = [name in RECOVERY_EXPORTS, name in NOT_A_RECOVERY_KEY];
+      expect(
+        listed.filter(Boolean).length,
+        `#4076: payment-recovery-keys.ts exports "${name}", which must be listed in ` +
+          `exactly one of RECOVERY_EXPORTS and NOT_A_RECOVERY_KEY (it is in ` +
+          `${listed.filter(Boolean).length}). ` +
+          `A recovery key needs a RECOVERY_EXPORTS entry (its scenario code) and a ` +
+          `RECOVERY_SCENARIO_CATALOGUE entry (finance-recovery-scenarios.ts); anything ` +
+          `else needs a NOT_A_RECOVERY_KEY entry with its reason.`,
+      ).toBe(1);
+    }
+    for (const name of [
+      ...Object.keys(RECOVERY_EXPORTS),
+      ...Object.keys(NOT_A_RECOVERY_KEY),
+    ]) {
+      expect(
+        exportedNames,
+        `#4076: "${name}" is listed here but payment-recovery-keys.ts no longer exports it.`,
+      ).toContain(name);
+    }
+  });
+
+  it("projects every recovery export as its expected scenario code (#4076)", () => {
+    for (const [name, expectedCode] of Object.entries(RECOVERY_EXPORTS)) {
+      const key = keyOf(name);
+      expect(
+        codeFor(key),
+        `#4076: ${name} builds "${key}", which the catalogue projects as ` +
+          `${codeFor(key)}, not ${expectedCode}.`,
+      ).toBe(expectedCode);
+    }
+  });
+
+  it("gives every catalogue entry an export, and spells each prefix exactly as that export does", () => {
+    for (const { prefix, code } of RECOVERY_SCENARIO_CATALOGUE) {
+      const exportsForCode = Object.entries(RECOVERY_EXPORTS).filter(
+        ([, expected]) => expected === code,
+      );
+      expect(
+        exportsForCode.length,
+        `#4076: catalogue code ${code} has no export of payment-recovery-keys.ts mapped to it.`,
+      ).toBeGreaterThan(0);
+      expect(
+        exportsForCode.some(([name]) => keyOf(name) === prefix),
+        `#4076: no string export of payment-recovery-keys.ts equals the ${code} prefix "${prefix}".`,
+      ).toBe(true);
+    }
+  });
+
+  it("maps the key to the first prefix that matches, so a longer prefix is not shadowed", () => {
+    for (const [index, [prefix]] of sqlCases.entries()) {
+      for (const [earlierPrefix, earlierCode] of sqlCases.slice(0, index)) {
+        expect(
+          prefix.startsWith(earlierPrefix),
+          `#4076: "${prefix}" is shadowed by the earlier, shorter prefix ` +
+            `"${earlierPrefix}" (${earlierCode}); the CASE returns the first match.`,
+        ).toBe(false);
+      }
+    }
+  });
+
+  it("keeps the two payment_recovery_ refunds apart: a replaced payment's refund is not a booking edit's (#4076)", () => {
+    expect(
+      codeFor(
+        paymentRecoveryKeys.buildSupersededPaymentRefundRecoveryIdempotencyKey(
+          "t1",
+          "pi_1",
+        ),
+      ),
+    ).toBe("superseded_payment_refund");
+    expect(
+      codeFor(
+        paymentRecoveryKeys.buildBookingModificationRefundRecoveryIdempotencyKey(
+          "m1",
+        ),
+      ),
+    ).toBe("booking_modification_refund");
+  });
+
+  it("lists only refund operations as a refund_execution, never a payment-request cancel (#4076)", () => {
+    const tool = DIAGNOSTICS_TOOLS.find((entry) => entry.id === DIAGNOSTICS_PAYMENT_REFUND_STATE_TOOL_ID);
+    const sql = tool && tool.source === "select_only_sql" ? tool.sql : "";
+    expect(sql).not.toBe("");
+    expect(sql).toContain(`o."type"::text IN ('REFUND_SUPERSEDED_PAYMENT', 'REFUND_BOOKING_MODIFICATION')`);
+    expect(sql).not.toContain("CANCEL_PAYMENT_INTENT");
+  });
+
+  it("ships a plain-English label for every code to the model, on both tools that project one", () => {
+    // In the DESCRIPTION, not the evidenceScope: the scope is written into the head
+    // of every result block, and the gloss is ~1,500 characters of the 8,000-character
+    // block, which cost a 14-row listing five rows (#4076).
+    const tools = [
+      DIAGNOSTICS_PAYMENT_ATTEMPT_LEDGER_TOOL_ID,
+      DIAGNOSTICS_PAYMENT_REFUND_STATE_TOOL_ID,
+    ].map((id) => DIAGNOSTICS_TOOLS.find((tool) => tool.id === id));
+    for (const tool of tools) {
+      expect(tool, "a tool that projects scenarioCode is missing").toBeDefined();
+      for (const { code, label } of RECOVERY_SCENARIO_CATALOGUE) {
+        expect(
+          tool?.description,
+          `${tool?.id}: ${code} has no label in the shipped description`,
+        ).toContain(`${code} is ${label}`);
+      }
+      expect(tool?.description).toContain("other_recovery is a queued recovery");
+      expect(
+        tool?.evidenceScope ?? "",
+        `${tool?.id}: the gloss belongs in the description, not the per-result scope`,
+      ).not.toContain("other_recovery is a queued recovery");
+    }
+  });
+
+  it("keeps the prefixes in the statement exactly as the catalogue spells them", () => {
+    expect(sqlCases).toEqual(
+      RECOVERY_SCENARIO_CATALOGUE.map(({ prefix, code }) => [prefix, code]),
+    );
   });
 });

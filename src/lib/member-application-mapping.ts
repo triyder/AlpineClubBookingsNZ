@@ -1,3 +1,4 @@
+import { exactContains } from "@/lib/prisma-exact-prefix";
 import "server-only";
 
 import { createHmac, timingSafeEqual } from "crypto";
@@ -1010,8 +1011,8 @@ async function suggestCandidates(
   if (firstName && lastName) {
     orClauses.push({
       AND: [
-        { firstName: { contains: firstName, mode: "insensitive" } },
-        { lastName: { contains: lastName, mode: "insensitive" } },
+        { firstName: exactContains(firstName, "insensitive") },
+        { lastName: exactContains(lastName, "insensitive") },
       ],
     });
   }

@@ -257,8 +257,10 @@ export interface SettlementOptions {
   accountCreditPercentage: number;
   daysUntilCheckIn: number;
   requiresSettlementMethod: boolean;
-  /** #3653: paid for by the group organiser; the reduction goes back to their card. */
+  /** #3653, #3949: paid for by the group organiser; the reduction goes back to them. */
   returnsToOrganiser: boolean;
+  /** #3949: by bank transfer, the organiser having paid by Internet Banking; else to their card. */
+  organiserRefundByBankTransfer: boolean;
 }
 
 export interface QuoteResult {
@@ -273,12 +275,24 @@ export interface QuoteResult {
   // #3809: applied credit saving would give back on a paid booking - all of a
   // credit-paid one's tiered reduction, or what a card refund leaves.
   appliedCreditGiveBackCents?: number;
+  // #3954: the part of a reduction that comes off an unpaid additional payment
+  // (cancelling or shrinking it) before anything is refunded or credited.
+  unpaidAskOffsetCents?: number;
+  // #3954 round 4: what is left of that additional payment afterwards - 0 when
+  // the reduction cancels it, so the panel can say what the member still owes.
+  askLeftCents?: number;
   /**
    * #3653: set when the save would refuse this increase because the group
    * organiser paid for the booking by card. The server's sentence, shown
    * verbatim; Save stays off while it is set.
    */
   chargeRefusal?: string | null;
+  /**
+   * #3949: set when the save would refuse ANY price change because the group organiser paid by Internet Banking and
+   * is part-way through cancelling the group. The server's sentence, shown verbatim; no refund is offered and Save
+   * stays off while it is set.
+   */
+  priceChangeRefusal?: string | null;
   // #2266: the member's live credit balance (create-flow quote parity).
   availableCreditCents?: number;
   capacityAvailable: boolean;
@@ -297,14 +311,13 @@ export interface QuoteResult {
   } | null;
   /**
    * #3179: present only when this edit cannot carry the promo-code change the
-   * request is asking for — today, an edit whose money parks for review. The
-   * edit still saves; the promotional part of it does not, and the member is
-   * told so here rather than discovering it on the invoice. The sentence is the
-   * SERVER's and is rendered verbatim.
+   * request is asking for — a stay already under way, which both the quote and
+   * the save refuse outright today, so this is defence in depth. The sentence
+   * is the SERVER's and is rendered verbatim.
    */
   promoChangeNotApplied?: {
     requested: "apply" | "remove";
-    reason: "STAY_IN_PROGRESS" | "AMOUNT_UNDER_REVIEW";
+    reason: "STAY_IN_PROGRESS";
     promoCode: string;
     message: string;
   } | null;
@@ -316,20 +329,6 @@ export interface QuoteResult {
     promoAdjustmentCents?: number;
   } | null;
   itemizedChanges: ItemizedChange[];
-  /**
-   * #3170: this edit's money cannot be read from the booking's own stored
-   * history, so the save will COMMIT the change and park the amount as an open
-   * review task. Every money field above is the booking's stored figure and
-   * every delta is zero — not because zero is the adjustment, but because the
-   * booking's money does not move on this save.
-   */
-  financialReviewRequired?: boolean;
-  /**
-   * The server's own member-facing sentence for the case above, rendered
-   * verbatim. Never re-worded in the panel — see
-   * `EDIT_FINANCIAL_REVIEW_QUOTE_NOTICE`.
-   */
-  financialReviewNotice?: string;
   /**
    * Other Lodges epic: the per-person fees this edit would write, keyed by
    * existing guest id, so each name can show its recalculated fee before the

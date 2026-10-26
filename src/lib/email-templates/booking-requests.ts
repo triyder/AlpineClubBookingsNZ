@@ -53,7 +53,8 @@ export function bookingRequestApprovedTemplate(data: {
   checkIn: Date;
   checkOut: Date;
   guestCount: number;
-  priceCents: number;
+  /** What the pay link asks for now (#4058): price plus fee, less credit. */
+  amountDueCents: number;
   expiresAt: Date;
 },
   format: ClubFormat,
@@ -65,7 +66,7 @@ export function bookingRequestApprovedTemplate(data: {
       { label: "Check-in", value: emailCalendarDay(data.checkIn) },
       { label: "Check-out", value: emailCalendarDay(data.checkOut) },
       { label: "Guests", value: String(data.guestCount) },
-      { label: "Price", value: formatCents(data.priceCents, format) },
+      { label: "Amount due", value: formatCents(data.amountDueCents, format) },
     ])}
     ${paragraph("Use the secure link below to pay and confirm your stay. You can pay by card, or by internet banking using the reference shown on the payment page.")}
     ${button("Pay for My Stay", data.payUrl)}
@@ -107,7 +108,7 @@ export function splitGuestPaymentLinkTemplate(data: {
   checkIn: Date;
   checkOut: Date;
   guestCount: number;
-  priceCents: number;
+  amountDueCents: number;
   expiresAt: Date;
 },
   format: ClubFormat,
@@ -119,7 +120,7 @@ export function splitGuestPaymentLinkTemplate(data: {
       { label: "Check-in", value: emailCalendarDay(data.checkIn) },
       { label: "Check-out", value: emailCalendarDay(data.checkOut) },
       { label: "Guests", value: String(data.guestCount) },
-      { label: "Amount due", value: formatCents(data.priceCents, format) },
+      { label: "Amount due", value: formatCents(data.amountDueCents, format) },
     ])}
     ${paragraph("Use the secure link below to pay. You can pay by card, or by internet banking using the reference shown on the payment page.")}
     ${button("Pay for My Guests", data.payUrl)}

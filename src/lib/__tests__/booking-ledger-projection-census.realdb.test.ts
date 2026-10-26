@@ -19,6 +19,17 @@
  *     named as a hand-back.
  *  4. One rogue line posted through the write door is named: a disagreement
  *     with both figures and the delta, and the line as source drift.
+ *  5. #4120: a card booking cancelled to account credit by the real
+ *     `cancelBooking`, then a refund appeal part-refunded to the card through
+ *     the real refund writer (the rest queued by the real recovery enqueue), is
+ *     `REFUND_APPEAL_PAID` on PRICE for the part made, read through the store's
+ *     own appeal-outcome read; declined, or approved for a different amount,
+ *     it still disagrees. Paid by internet banking instead - settled by the
+ *     real inbound Xero settle, so not marked paid by hand, which the approval
+ *     route refuses - the appeal's own hand-back (the real raiser and
+ *     resolver) is read the same way: nothing while open, `REFUND_APPEAL_PAID`
+ *     once paid back. The approval route itself is not driven: the request is
+ *     written APPROVED and its hand-back raised by the route's own raiser.
  *
  * Ordinary Vitest runs skip the whole file. It reuses the guarded, disposable
  * loopback PostgreSQL `concurrency-lock-races.realdb.test.ts` provisions
@@ -45,7 +56,10 @@ const CARD = "race-3583-card";
 const CREDIT = "race-3583-credit";
 const CASH = "race-3583-cash";
 const LEGACY = "race-3583-legacy";
-const BOOKINGS = [CARD, CREDIT, CASH, LEGACY];
+const APPEAL = "race-3583-appeal";
+const BANK_APPEAL = "race-3583-bank-appeal";
+const BOOKINGS = [CARD, CREDIT, CASH, LEGACY, APPEAL, BANK_APPEAL];
+const BANK_APPEAL_INVOICE = "race-3583-bank-appeal-invoice";
 // A stay well after today, in the policy's one tier.
 const D1 = new Date("2027-08-01T00:00:00.000Z");
 const D2 = new Date("2027-08-02T00:00:00.000Z");
@@ -80,14 +94,21 @@ let censusStore: typeof import("@/lib/booking-ledger-projection-census-store");
 
 async function clean(): Promise<void> {
   const where = { bookingId: { in: BOOKINGS } };
+  const payments = await prisma.payment.findMany({ where, select: { id: true } });
+  const modifications = await prisma.bookingModification.findMany({ where, select: { id: true } });
+  const tasks = await prisma.manualRefundTask.findMany({ where, select: { id: true } });
+  await prisma.xeroSyncOperation.deleteMany({
+    where: { localId: { in: [...BOOKINGS, ...payments.map((p) => p.id), ...modifications.map((m) => m.id), ...tasks.map((t) => t.id)] } },
+  });
+  await prisma.xeroObjectLink.deleteMany({ where: { xeroObjectId: BANK_APPEAL_INVOICE } });
   await prisma.bookingLedgerLine.deleteMany({ where });
   await prisma.bedAllocation.deleteMany({ where });
   await prisma.bookingModification.deleteMany({ where });
+  await prisma.refundRequest.deleteMany({ where });
   await prisma.bookingEvent.deleteMany({ where });
   await prisma.manualRefundTask.deleteMany({ where });
   await prisma.paymentRecoveryOperation.deleteMany({ where });
   await prisma.memberCredit.deleteMany({ where: { memberId: MEMBER_ID } });
-  const payments = await prisma.payment.findMany({ where, select: { id: true } });
   await prisma.paymentRefund.deleteMany({ where: { paymentId: { in: payments.map((p) => p.id) } } });
   await prisma.paymentTransaction.deleteMany({ where: { paymentId: { in: payments.map((p) => p.id) } } });
   await prisma.payment.deleteMany({ where });
@@ -334,5 +355,133 @@ const NOTHING = { disagreements: [], coverage: [], integrity: [], classes: [] };
     await prisma.payment.update({ where: { bookingId: LEGACY }, data: { refundedAmountCents: 10_001 } });
     const corrupted = about(await census(), LEGACY);
     expect(corrupted.disagreements.map((row) => [row.identity, row.deltaCents])).toEqual([["REFUNDED", 10_001]]);
+  }, 120_000);
+
+  it("#4120: a refund appeal refunded to the card after a credit cancel is REFUND_APPEAL_PAID, read through its outcome", async () => {
+    await createBooking(APPEAL, { amountCents: 20_000, source: "STRIPE", intent: "pi_race_3583_appeal" });
+    const { markBookingPaymentSucceeded } = await import("@/lib/payment-reconciliation");
+    const settled = await markBookingPaymentSucceeded({ bookingId: APPEAL, paymentIntentId: "pi_race_3583_appeal", amountCents: 20_000, paymentMethodId: null, format: CLUB_FORMAT_TEST });
+    expect(settled.outcome).toBe("paid");
+    const { cancelBooking } = await import("@/lib/booking-cancel");
+    const cancelled = await cancelBooking(APPEAL, OFFICER_ID, "ADMIN", "127.0.0.1", CLUB_FORMAT_TEST, "credit");
+    expect(cancelled.status).toBe(200);
+    const creditOnly = { ...NOTHING, classes: ["REFUND_MIRROR_CREDIT_ALLOCATION:REFUNDED"] };
+    expect(about(await census(), APPEAL)).toEqual(creditOnly);
+
+    // The appeal, approved for $50 as the review route leaves it when Stripe made $40 of its card
+    // refund inline and refused $10 (#4117): the plan, marked, goes to the real recovery enqueue,
+    // and Stripe's $40 refund is recorded by the real writer.
+    const request = await prisma.refundRequest.create({
+      data: { bookingId: APPEAL, memberId: MEMBER_ID, reason: "race 3583 appeal", requestedAmountCents: 5_000, status: "APPROVED", approvedAmountCents: 5_000, reviewedBy: OFFICER_ID, reviewedAt: new Date("2026-06-20T00:00:00.000Z") },
+      select: { id: true },
+    });
+    const capture = await prisma.paymentTransaction.findFirstOrThrow({ where: { paymentId: `${APPEAL}-payment`, kind: "PRIMARY" }, select: { id: true } });
+    const { enqueueRefundRequestRefundRecovery } = await import("@/lib/payment-recovery");
+    await enqueueRefundRequestRefundRecovery({
+      bookingId: APPEAL,
+      paymentId: `${APPEAL}-payment`,
+      refundRequestId: request.id,
+      amountCents: 5_000,
+      allocationPlan: [
+        { paymentTransactionId: capture.id, amountCents: 4_000, madeRefundId: "re_race_3583_appeal" },
+        { paymentTransactionId: capture.id, amountCents: 1_000, stripeKeySuffix: "refused1" },
+      ],
+      store: prisma,
+    });
+    const { recordStripeRefundsAgainstTransaction } = await import("@/lib/payment-transactions");
+    await recordStripeRefundsAgainstTransaction({
+      paymentId: `${APPEAL}-payment`,
+      paymentTransactionId: capture.id,
+      refunds: [{ id: "re_race_3583_appeal", amount: 4_000, currency: "nzd", status: "succeeded", created: null }],
+      store: prisma,
+    });
+    // $40 refunded, $10 still retrying: the appeal's outcome says $40 went back, and its retry is
+    // not the cancel's in-flight refund.
+    const paid = await census();
+    expect(about(paid, APPEAL)).toEqual({ ...NOTHING, classes: ["REFUND_MIRROR_CREDIT_ALLOCATION:REFUNDED", "REFUND_APPEAL_PAID:PRICE"] });
+    expect(paid.classes.REFUND_APPEAL_PAID.instances.filter((instance) => instance.bookingId === APPEAL)).toEqual([
+      expect.objectContaining({ identity: "PRICE", cents: -4_000 }),
+    ]);
+
+    // Approved for a different amount than the ledger shows: still a disagreement.
+    await prisma.refundRequest.update({ where: { id: request.id }, data: { approvedAmountCents: 5_001 } });
+    expect(about(await census(), APPEAL).disagreements.map((row) => [row.identity, row.deltaCents])).toEqual([["PRICE", -4_000]]);
+
+    // Declined: no approved appeal stands behind the refund, so it disagrees too - even with an
+    // amount on the row that would match (the store reads APPROVED requests only).
+    await prisma.refundRequest.update({ where: { id: request.id }, data: { approvedAmountCents: 4_000, status: "REJECTED" } });
+    expect(about(await census(), APPEAL).disagreements.map((row) => [row.identity, row.deltaCents])).toEqual([["PRICE", -4_000]]);
+  }, 120_000);
+
+  it("#4120: an internet-banking appeal's own hand-back is nothing while open and REFUND_APPEAL_PAID once paid back", async () => {
+    // Paid by a bank transfer Xero reconciled, as the invoice job links it and the inbound settle
+    // records it - not marked paid by hand (`manuallyMarkedPaidAt`), which the approval route refuses.
+    await createBooking(BANK_APPEAL, { amountCents: 20_000, source: "INTERNET_BANKING" });
+    const paymentId = `${BANK_APPEAL}-payment`;
+    await prisma.booking.update({ where: { id: BANK_APPEAL }, data: { status: "CONFIRMED" } });
+    await prisma.payment.update({ where: { id: paymentId }, data: { xeroInvoiceId: BANK_APPEAL_INVOICE, xeroInvoiceNumber: "INV-3583" } });
+    await prisma.paymentTransaction.create({
+      data: { paymentId, kind: "PRIMARY", source: "INTERNET_BANKING", amountCents: 20_000, status: "PENDING", reason: "internet_banking_booking_payment", xeroInvoiceId: BANK_APPEAL_INVOICE, xeroInvoiceNumber: "INV-3583" },
+    });
+    await prisma.xeroObjectLink.create({
+      data: { localModel: "Payment", localId: paymentId, xeroObjectType: "INVOICE", xeroObjectId: BANK_APPEAL_INVOICE, role: "PRIMARY_INVOICE", active: true },
+    });
+    // The inbound settle posts the bank receipt, not the confirmation's charge lines (the back-post's
+    // to post), so they are posted here by the settle's own planner, as the legacy case does.
+    const { planConfirmationChargeLines } = await import("@/lib/booking-ledger-confirmation-posting");
+    const { postBookingLedgerLines } = await import("@/lib/booking-ledger-write");
+    await prisma.$transaction(async (tx) => {
+      const booking = await tx.booking.findUniqueOrThrow({
+        where: { id: BANK_APPEAL },
+        select: {
+          id: true,
+          lodgeId: true,
+          totalPriceCents: true,
+          promoAdjustmentCents: true,
+          guests: { select: { id: true, firstName: true, lastName: true, ageTier: true, rateMembershipTypeId: true, nights: { select: { stayDate: true, priceCents: true } } } },
+        },
+      });
+      await postBookingLedgerLines(tx, planConfirmationChargeLines(booking).postings);
+    });
+    const { syncInternetBankingPaymentsForPaidInvoice } = await import("@/lib/xero-inbound/invoice-paid-effects");
+    const invoice = { invoiceID: BANK_APPEAL_INVOICE, invoiceNumber: "INV-3583", status: "PAID", amountPaid: 200, payments: [{ paymentID: "race-3583-xpay", amount: 200, status: "AUTHORISED" }] };
+    await syncInternetBankingPaymentsForPaidInvoice(invoice as unknown as Parameters<typeof syncInternetBankingPaymentsForPaidInvoice>[0], [paymentId], CLUB_FORMAT_TEST);
+    expect(await prisma.payment.findUniqueOrThrow({ where: { id: paymentId }, select: { status: true, manuallyMarkedPaidAt: true } })).toEqual({ status: "SUCCEEDED", manuallyMarkedPaidAt: null });
+    const { cancelBooking } = await import("@/lib/booking-cancel");
+    // Cancelled to account credit: a hand-back is raised only for money marked paid by hand.
+    expect((await cancelBooking(BANK_APPEAL, OFFICER_ID, "ADMIN", "127.0.0.1", CLUB_FORMAT_TEST, "credit")).status).toBe(200);
+    expect(await prisma.manualRefundTask.count({ where: { bookingId: BANK_APPEAL } })).toBe(0);
+    const { resolveManualRefundTask } = await import("@/lib/manual-refund-task-resolution");
+    const complete = (taskId: string) =>
+      resolveManualRefundTask(
+        { taskId, resolution: "completed", note: null, actingMemberId: OFFICER_ID, confirmedAmountCents: null, direction: "REFUND_TO_MEMBER", recordedNightPrices: null },
+        CLUB_FORMAT_TEST,
+      );
+    const cancelOnly = { ...NOTHING, classes: ["REFUND_MIRROR_CREDIT_ALLOCATION:REFUNDED"] };
+    expect(about(await census(), BANK_APPEAL)).toEqual(cancelOnly);
+
+    // A $40 appeal approved, its hand-back raised by the approval's own writer: open, it moved
+    // nothing, and it is not the cancel's in-flight hand-back.
+    const request = await prisma.refundRequest.create({
+      data: { bookingId: BANK_APPEAL, memberId: MEMBER_ID, reason: "race 3583 bank appeal", requestedAmountCents: 4_000, status: "APPROVED", approvedAmountCents: 4_000, reviewedBy: OFFICER_ID, reviewedAt: new Date("2026-06-20T00:00:00.000Z") },
+      select: { id: true },
+    });
+    const { raiseRefundRequestHandBack } = await import("@/lib/edit-refund-hand-back");
+    expect(await prisma.$transaction((tx) => raiseRefundRequestHandBack(tx, { bookingId: BANK_APPEAL, paymentId: `${BANK_APPEAL}-payment`, refundRequestId: request.id, amountCents: 4_000, booking: { organiserSettled: false, parentBookingId: null, payment: null } }))).toBe(1);
+    expect(about(await census(), BANK_APPEAL)).toEqual(cancelOnly);
+    // PRICE agrees at a zero delta whatever the outcome says, so the outcome is read too: owed, not refunded.
+    const { readApprovedAppealOutcomes } = await import("@/lib/refund-appeal-outcome");
+    const open = await readApprovedAppealOutcomes(prisma, [{ id: request.id, status: "APPROVED", booking: { payment: { id: `${BANK_APPEAL}-payment` } } }]);
+    expect(open.get(request.id)).toMatchObject({ handBackOwedCents: 4_000, handBackDismissedCents: 0 });
+
+    // Paid back by the real resolver: the outcome reads $40 refunded, and PRICE names it.
+    const appealTask = await prisma.manualRefundTask.findFirstOrThrow({ where: { bookingId: BANK_APPEAL, status: "OPEN" }, select: { id: true } });
+    await complete(appealTask.id);
+    const paid = await census();
+    // The paid hand-back raised the refunded total too, which its own mirror class explains.
+    expect(about(paid, BANK_APPEAL)).toEqual({ ...NOTHING, classes: ["REFUND_MIRROR_HAND_BACK:REFUNDED", "REFUND_MIRROR_CREDIT_ALLOCATION:REFUNDED", "REFUND_APPEAL_PAID:PRICE"] });
+    expect(paid.classes.REFUND_APPEAL_PAID.instances.filter((instance) => instance.bookingId === BANK_APPEAL)).toEqual([
+      expect.objectContaining({ identity: "PRICE", cents: -4_000 }),
+    ]);
   }, 120_000);
 });

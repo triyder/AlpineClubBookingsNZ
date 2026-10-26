@@ -94,7 +94,7 @@ is a reviewed edit there), `nodeLinker`, `verifyDepsBeforeRun` and
 `enableGlobalVirtualStore`. `.npmrc` exists for npm only.
 
 **Bumping a package that runs an install script.** The `allowBuilds` packages
-(`@prisma/engines`, `@sentry/cli`, `esbuild`, `prisma`, `unrs-resolver`) are
+(`@prisma/engines`, `esbuild`, `prisma`, `unrs-resolver`) are
 approved at one exact version each. Dependabot groups them, and the packages
 that pull them in, into their own `install-scripts` PR, so the ordinary
 minor-and-patch group is not held up. When a bump fails the install with
@@ -369,11 +369,23 @@ the owner's checklist for rebuilding it.
 | `Migration drift check` | applied | `ci.yml` → `migration-drift` | migrations reproduce `schema.prisma`; real-Postgres lock harnesses |
 | `Data migration verification` | applied | `ci.yml` → `data-migration-verification` | data-rewriting migrations against realistic pre-state |
 | `Static analysis gate` | applied | `ci.yml` → `static-analysis` | Semgrep: four registry packs **plus** `.semgrep/rules/**` and their fixtures |
-| `Playwright E2E` | applied | `e2e.yml` → `playwright` | the browser suite |
-| `E2E multi-lodge` | applied | `e2e.yml` → `multi-lodge` | the multi-lodge browser suite |
+| `Playwright E2E` | applied | `e2e.yml` → `playwright` | the browser suite: runs shard 1 and fails closed unless `E2E shard (2/3)`/`(3/3)` pass (#4397) |
+| `E2E multi-lodge` | applied | `e2e.yml` → `multi-lodge` | the multi-lodge browser suite (#4397: waits for the run's image and database in a step, never `needs:`) |
 | `Secret scan (gitleaks)` | applied | `ci.yml` → `secret-scan` | the PR's own commits, `main`'s history including merge commits, and the checked-out tree (#2686) |
 | `Image security gate (Trivy CRITICAL)` | applied | `ci.yml` → `docker-image-security` | CRITICAL image vulnerabilities. HIGH stays advisory (#2686) |
 | `Dependency audit` | applied | `ci.yml` → `dependency-audit` | `pnpm audit --audit-level=high`. Split out of `verify` (#2946), where a failing audit skipped lint, the ratchet, `prisma generate`, typecheck, knip, `pnpm test` and the build on every branch (#2945) |
+
+**The PR-body gates read the description from a file, never an environment
+variable** (#4053). `verify` writes `.pull_request.body` from
+`$GITHUB_EVENT_PATH` to `$RUNNER_TEMP/pr-body.md` and the two gates open it
+through `PR_BODY_FILE` (`readEventPrBody` in `scripts/ci/pr-body.mjs`), as their
+fallback behind the live body fetched from the pulls API. Linux caps one
+environment string at 128 KiB, so a description past that size (PR #3924 reached
+173 KB) used to stop the runner starting the step's shell ("Argument list too
+long") and turn `verify` red with no finding. Do not reference
+`github.event.pull_request.body` on any non-comment line of a workflow or action;
+`scripts/ci/pr-body-file.test.mjs` fails if it comes back. Keep a long
+description short anyway: link the review history rather than pasting it.
 
 **Adding a required context is a three-step sequence, and doing it out of
 order breaks every open pull request** — whenever a job producing a required
@@ -383,7 +395,8 @@ new names, and a required check that has never reported sits on
 
 1. merge the change that adds or renames the job;
 2. then add that job's context to branch protection;
-3. then rebase every open pull request onto the new `main`, oldest first.
+3. then merge the new `main` into every open pull request branch, oldest first,
+   following [`AGENTS.md` → "Safety"](AGENTS.md#safety) for branch-history handling.
 
 **Between step 1 and step 2 the new context is a red check, not a merge
 block.** Splitting out `Dependency audit` (#2946) opened exactly such a gap:

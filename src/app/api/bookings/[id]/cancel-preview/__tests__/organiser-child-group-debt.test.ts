@@ -138,7 +138,7 @@ describe("cancel preview for a joiner behind the organiser's cancellation of the
   it("quotes no refund of its own, with the cancel's sentence, once the group's cancellation owes this child's refund", async () => {
     mocks.recoveryFindUnique.mockImplementation(async ({ where }: { where: { idempotencyKey: string } }) =>
       where.idempotencyKey === buildOrganiserChildCancellationRefundKey(SETTLEMENT.id, "child-1")
-        ? { id: "debt-group", amountCents: 5_000 }
+        ? { id: "debt-group", amountCents: 5_000, status: "PENDING" }
         : null,
     );
 
@@ -153,10 +153,26 @@ describe("cancel preview for a joiner behind the organiser's cancellation of the
       creditRefundPercentage: 0,
       keptAmountCents: 5_000,
       groupCancellationRefundCents: 5_000,
-      groupCancellationRefundNote: groupCancellationRefundNote(5_000, CLUB_FORMAT_TEST),
+      groupCancellationRefundNote: groupCancellationRefundNote({ amountCents: 5_000, status: "PENDING" }, CLUB_FORMAT_TEST),
       refundMethodForced: "organiser_card",
     });
-    expect(body.groupCancellationRefundNote).toContain("$50.00");
+    expect(body.groupCancellationRefundNote).toBe(
+      "The group organiser's cancellation is already refunding $50.00 for this booking to the organiser's card.",
+    );
+  });
+
+  it("#3973: says the group's cancellation refunded it once that refund has been made", async () => {
+    mocks.recoveryFindUnique.mockImplementation(async ({ where }: { where: { idempotencyKey: string } }) =>
+      where.idempotencyKey === buildOrganiserChildCancellationRefundKey(SETTLEMENT.id, "child-1")
+        ? { id: "debt-group", amountCents: 5_000, status: "SUCCEEDED" }
+        : null,
+    );
+
+    const { body } = await preview();
+
+    expect(body.groupCancellationRefundNote).toBe(
+      "The group organiser's cancellation refunded $50.00 for this booking to the organiser's card.",
+    );
   });
 
   it("tiers the remainder as before when the group's cancellation owes nothing for this child", async () => {

@@ -1,8 +1,12 @@
+import { LATE_CAPTURE_REFUNDED_OUTSIDE_APP_NOTE } from "@/lib/late-capture-outside-app-note";
 import {
   EMAIL_AUDIT_DEFAULTS,
   type EmailAuditTemplateName,
 } from "@/lib/email-message-audit-defaults";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
+import { ibSettlementFigureParagraph } from "@/lib/ib-settlement-figure-note";
+import { duplicateCaptureKeptAction, duplicateCaptureKeptParagraph } from "@/lib/duplicate-capture-kept-note";
+import { supersededCaptureRefusedAction, supersededCaptureRefusedParagraph } from "@/lib/superseded-capture-refused-note";
 import {
   adminSplitSettlementCancelledLeadParagraph,
   adminSplitSettlementUnpaidLeadParagraph,
@@ -10,6 +14,11 @@ import {
   checkoutDayChoreNote,
   duplicateCaptureRefundOutcomeParagraph,
   internetBankingHoldKeptParagraph,
+  manualRefundTaskAlertAmountLabel,
+  manualRefundTaskAlertHeading,
+  manualRefundTaskAlertLabel,
+  manualRefundTaskAlertNote,
+  manualRefundTaskAlertRecipientLabel,
   lateCaptureAutoRefundLeadParagraph,
   lateCaptureHandBackConflictOutcomeParagraph,
   lateCaptureHandBackConflictSubjectLabel,
@@ -19,7 +28,10 @@ import {
 } from "@/lib/email-message-notes";
 import { FALLBACK_LODGE_CAPACITY } from "@/lib/lodge-capacity";
 import { BOOKING_URL_TEMPLATE_NAMES } from "@/lib/booking-email-template-contract";
-import { refundRequestApprovedRefundSentence } from "@/lib/booking-modified-email-copy";
+import {
+  organiserJoinerAppealRefundSentence,
+  refundRequestApprovedRefundSentence,
+} from "@/lib/booking-modified-email-copy";
 
 type EmailTemplateAudience = "member" | "admin" | "system";
 export type NotificationDeliveryModeValue = "always" | "content_only" | "disabled";
@@ -95,6 +107,15 @@ const ADMIN_SYSTEM_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
   // delivery-locked below, because the system refunds nothing on its own and
   // this mail is the only thing that pulls a person to reconcile it.
   "admin-second-instrument-settlement-conflict",
+  // #3979: a bank transfer the inbound settle recorded whose amount needs a
+  // person - the stored figure kept, or the cash not what the booking owes.
+  // Admin audience, unmuteable sender, delivery-locked below, for #3638's reason.
+  "admin-bank-transfer-settlement-figure",
+  // #4211: a card capture the duplicate-capture guard kept on a paid booking with
+  // no usable record of which payment settled it. Same audience, sender and lock.
+  "admin-duplicate-capture-kept",
+  // #4300: a card capture the settle refused as superseded. Same audience, sender and lock.
+  "admin-superseded-capture-refused",
   // #2761: the alert for an automatically refunded late capture on a cancelled
   // booking. Ships to admins, so admin audience — but through the unmuteable
   // sender rather than sendToAdmins, because it reports an automatic MONEY
@@ -109,6 +130,9 @@ const ADMIN_SYSTEM_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
   // audience and the same unmuteable sender, and delivery-locked below: this is
   // the one mail on the path that says money may have left the club twice.
   "admin-late-capture-hand-back-conflict",
+  // #4170: a late capture refunded OUTSIDE the app - no record, no Xero note the
+  // app could raise. Same admin audience, unmuteable sender, delivery-locked below.
+  "admin-late-capture-refunded-outside-app",
   "admin-pending-deadline",
   "admin-booking-bumped",
   "admin-capacity-warning",
@@ -204,11 +228,22 @@ const LOCKED_DELIVERY_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
   // thing that pulls a person to reconcile real money, so it must not be
   // silenceable club-wide any more than its sibling.
   "admin-late-capture-hand-back-conflict",
+  // #4170: the same lock - money left the club with no record the app wrote.
+  "admin-late-capture-refunded-outside-app",
   // #3638: the same lock for the same reason as #2774 — this alert says the
   // club may hold the price twice (a card payment and a Xero payment on one
   // booking), and nothing is refunded or credited automatically, so muting it
   // club-wide would leave the money with nobody to reconcile it.
   "admin-second-instrument-settlement-conflict",
+  // #3979: the same lock - a recorded bank-transfer figure that is wrong sizes
+  // every later refund and credit, and this mail is what pulls a person to check it.
+  "admin-bank-transfer-settlement-figure",
+  // #4211: the same lock - nothing was refunded automatically and the club may
+  // hold the price twice, so muting it would leave the money with nobody.
+  "admin-duplicate-capture-kept",
+  // #4300: the same lock - a payment the member made was not applied, and the
+  // booking may still owe; muting it would leave both with nobody.
+  "admin-superseded-capture-refused",
 ]);
 
 const CONTENT_ONLY_DEFAULT_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
@@ -400,6 +435,8 @@ export const EXTRA_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, strin
   // {{refundSentence}}; it stays allowed so an override saved from the old
   // default keeps validating and rendering.
   "refund-request-approved": ["adminNotes", "amount"],
+  // #3956: the parts the composed {{refundSentence}} is made of, for an override.
+  "group-organiser-joiner-refund": ["amount", "joinerName"],
   "refund-request-declined": ["adminNotes"],
   "age-up-invitation": ["resetUrl", "targetAgeTier", "targetAgeTierMinAge"],
   "age-up-parent-email-handoff": ["targetAgeTier", "targetAgeTierMinAge"],
@@ -471,12 +508,23 @@ const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>
     "checkIn",
     "checkOut",
   ],
+  // #4253: the same four are load-bearing for the same reason - this email asks for
+  // money for a stay, and an override that drops one leaves a demand that cannot be
+  // acted on or checked.
+  "credit-released-payment-request": [
+    "additionalAmount",
+    "requestedOn",
+    "checkIn",
+    "checkOut",
+  ],
   // #3827 (D-3813-7): an approved appeal is refunded to the card OR promised
   // by bank transfer, and only {{refundSentence}} says which. An override
   // saved from the old default ("processed to your original payment method"
   // around {{amount}}) would tell an internet-banking member the wrong thing,
   // so the editor flags it as stale and a re-save must put the token back.
   "refund-request-approved": ["refundSentence"],
+  // #3956: the sentence that says whose card the money goes to, and for whom.
+  "group-organiser-joiner-refund": ["refundSentence"],
   "password-reset": ["token"],
   "admin-password-reset": ["token"],
   "member-setup-invite": ["token"],
@@ -578,7 +626,10 @@ const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>
   // B5 (#2262): memberName identifies the affected member and reviewUrl is the
   // admin action link (the payments board), mirroring the other admin alerts.
   "admin-manual-settlement-conflict": ["memberName", "reviewUrl"],
-  "admin-manual-refund-task": ["memberName", "reviewUrl"],
+  // #4042, #4097: {{handBackNote}} says which hand-back it is - the cash cancel's,
+  // an organiser's Internet Banking group cancel (refunds booked), or a card
+  // cancel whose card refund could not carry all of the refund due.
+  "admin-manual-refund-task": ["memberName", "reviewUrl", "handBackNote"],
   // #3643: {{holdKeptNote}} is the instruction - part-paid, paid in full,
   // unreadable and released-while-unreadable need different next steps.
   "admin-internet-banking-hold-kept": ["memberName", "reviewUrl", "holdKeptNote"],
@@ -593,6 +644,20 @@ const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>
     "secondInstrumentConflictNote",
     "xeroObjectUrl",
   ],
+  // #3979: {{settlementFigureNote}} says what needs a person (the figure kept,
+  // the member over- or under-paid) and who corrects a recorded figure.
+  "admin-bank-transfer-settlement-figure": [
+    "memberName",
+    "reviewUrl",
+    "settlementFigureNote",
+    "xeroObjectUrl",
+  ],
+  // #4211: {{duplicateCaptureKeptNote}} says why nothing was refunded (no record,
+  // or a recorded settler that no longer holds money) and names the other payment.
+  "admin-duplicate-capture-kept": ["memberName", "reviewUrl", "duplicateCaptureKeptNote", "duplicateCaptureKeptAction"],
+  // #4300: {{supersededCaptureNote}} says the payment was not applied and, by the
+  // booking's status, whether it still owes; an override must not drop it.
+  "admin-superseded-capture-refused": ["memberName", "reviewUrl", "supersededCaptureNote", "supersededCaptureAction"],
   // #2761: memberName and reviewUrl as its siblings, plus the two tokens that
   // carry WHICH of the two populations this was. An override that drops
   // {{bookingStateLabel}} or {{refundOutcomeNote}} leaves an operator unable to
@@ -612,6 +677,8 @@ const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>
     "refundOutcomeNote",
     "lateCaptureLeadNote",
   ],
+  // #4170: {{outsideAppRefundNote}} is the instruction - what the app did not do, and when to record it.
+  "admin-late-capture-refunded-outside-app": ["memberName", "paymentIntentId", "amount", "outsideAppRefundNote"],
   // #2774: {{handBackConflictNote}} is the whole message - it is the sentence
   // that says whether the money went out or was withheld. An override that drops
   // it turns a reconciliation notice into an unexplained mention of a booking, on
@@ -736,6 +803,8 @@ const REQUIRED_SUBJECT_TEMPLATE_TOKENS: Partial<
   Record<EmailAuditTemplateName, string[]>
 > = {
   "admin-late-capture-hand-back-conflict": ["handBackConflictLabel"],
+  // #4042: a stored subject naming one situation would title the other's alert.
+  "admin-manual-refund-task": ["handBackLabel"],
 };
 
 /**
@@ -876,7 +945,7 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
   },
   "admin-late-capture-held": {
     triggerSummary:
-      "A card payment went through after its booking was cancelled and the club has a treasurer approve these refunds, so it was held on the payments board instead of refunded",
+      "A card payment went through after its booking was cancelled and was held on the payments board instead of refunded - because the club has a treasurer approve these refunds, or because the card provider refused the automatic refund",
     frequency:
       "Once per late payment held - claim-guarded, so a Stripe redelivery or a retry does not re-send",
   },
@@ -886,10 +955,28 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
     frequency:
       "On the inbound second-instrument check firing — rare; throttled per payment and invoice by a cross-instance cooldown so webhook replays do not re-send",
   },
+  "admin-bank-transfer-settlement-figure": {
+    triggerSummary:
+      "Xero reported a booking's bank-transfer invoice paid, and the app either kept the amount it had recorded instead of the cash the invoice collected, or the cash is not what the booking owes",
+    frequency:
+      "Once per booking and invoice, when the payment is first recorded - the record is written with the payment, and the email is re-sent on a later Xero delivery only if it had not gone out",
+  },
+  "admin-duplicate-capture-kept": {
+    triggerSummary:
+      "A card payment arrived on a booking that was already paid and the app had no usable record of which payment settled it - while another payment on it still held money, because the recorded payment no longer holds money, or (a payment the app had never recorded) with no other payment holding money - so it kept the payment and refunded nothing. The last kind is sent again if undelivered, then saying if the booking was cancelled since (with what the payment still holds) or another payment has arrived",
+    frequency:
+      "On a payment or a repeat of it reaching such a booking - rare; at most once a day per booking and payment, by a cross-instance cooldown given back when the send throws. One for a payment the app had never recorded is owed until delivered, and the 15-minute payments cron sends it an hour on if nothing else does (about a day at worst)",
+  },
+  "admin-superseded-capture-refused": {
+    triggerSummary:
+      "A card payment was taken on a payment that a later change to the booking had replaced, and it reached the booking's settlement, which refused it: the club's superseded-payment refund returns it, and the booking was not marked paid with it",
+    frequency:
+      "Rare - the payment pages and Stripe's notification divert such a payment first; at most once a day per booking and payment, by a cross-instance cooldown given back when the send throws",
+  },
   "admin-manual-refund-task": {
     triggerSummary:
-      "A booking settled in cash (or by an off-Xero bank transfer) was cancelled with a refund owing, so a hand-back task was raised for an admin to pay the member back",
-    frequency: "On cancellation of a cash-settled booking with a non-zero refund",
+      "A booking settled in cash (or by an off-Xero bank transfer) was cancelled with a refund owing, an organiser cancelled a group they paid for by Internet Banking, or a card booking was cancelled and its card refund could not carry all of the refund due, so a hand-back task (or two) was raised for an admin to pay back or check",
+    frequency: "On cancellation of a cash-settled booking with a non-zero refund, once per Internet Banking group an organiser cancels with a refund owed, and once per card cancellation whose card refund falls short",
   },
   "admin-late-capture-auto-refund": {
     // #2773: BOTH handlers send this now, so the summary may not say
@@ -898,25 +985,29 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
     // would tell an admin the other kind sends nothing.
     triggerSummary:
       "Stripe captured a payment after the booking had already been cancelled (deleted or not) - either the booking's own payment or one for a change to it - so the capture was refunded in full automatically and recorded on the payments board",
-    // The frequency sentence used to claim "webhook redeliveries do not
-    // re-send", and that was not true. The record write is idempotent on the
-    // payment intent; this mail is not. A Stripe redelivery re-enters the
-    // handler whenever the first attempt failed AFTER the alert — the COMPLETED
-    // stamp or the webhook log throwing sends the request to the outer catch,
-    // which deletes the lease claim and answers 500 — and a lease takeover after
-    // expiry does the same (`stripe-webhook-service.ts` says outright that a
-    // handler may legitimately run more than once for one event).
+    // The delivery that refunds sends it, even when its record write is lost
+    // (#4149); since #3639 a redelivery after the refund never refunds or sends
+    // again, and the lost-record recovery sends it only when the refunding
+    // delivery died before sending (`late-capture-record-recovery.ts`). Two
+    // deliveries racing one event before either refunded can each send it.
     //
-    // The honest wording is shipped rather than the send being deduped, and that
-    // is a deliberate choice on a money notification: the alert is the event's
-    // ONE notification (`INV-ADDPAY-037`), it is fire-and-forget with a `.catch`
-    // that only logs, and gating it on the record writer's `alreadyRecorded`
-    // outcome would mean a redelivery after a FAILED send is silent — trading a
-    // rare duplicate for a rare silence, on the path where the owner's #2761
-    // decision was that this must not be silenceable. A duplicate says the same
-    // true thing twice; a silence says nothing about money that moved.
+    // That duplicate is shipped rather than deduped, deliberately, on a money
+    // notification: the alert is the event's ONE notification (`INV-ADDPAY-037`),
+    // it is fire-and-forget with a `.catch` that only logs, and gating it on the
+    // record writer's `alreadyRecorded` outcome would make the racing delivery
+    // silent whenever the first one's send FAILED — trading a rare duplicate for
+    // a rare silence, on the path where the owner's #2761 decision was that this
+    // must not be silenceable. A duplicate says the same true thing twice; a
+    // silence says nothing about money that moved. The recovery's own skip reads
+    // the refund-time audit entry, so a send that never happened is never assumed.
     frequency:
-      "On each late capture the webhook refunds automatically — rare; once per payment intent per delivery, and a Stripe redelivery of the same event can re-send it",
+      "On each late capture the webhook refunds automatically — rare; once per refund, sent when the money goes back even if its record is saved later, and two deliveries racing the same event can each send it",
+  },
+  "admin-late-capture-refunded-outside-app": {
+    triggerSummary:
+      "A card payment that went through after its booking was cancelled was refunded outside the app - for example in the Stripe dashboard - so the app holds no record of the refund and raised no Xero credit note for it",
+    frequency:
+      "Once ever per capture - claim-guarded, and raised again by the nightly check if a send failed",
   },
   "admin-late-capture-hand-back-conflict": {
     triggerSummary:
@@ -927,7 +1018,7 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
     // failed after the alert. Deduping it would make a redelivery after a FAILED
     // send silent on money that may have moved twice.
     frequency:
-      "Only when an operator's hand-back and the automatic refund claim the same capture - rare; once per delivery, and a Stripe redelivery of the same event can re-send it",
+      "Only when an operator's hand-back and the automatic refund claim the same capture - rare; a withheld refund's mail once per delivery (a Stripe redelivery can re-send it), a possible double refund's once ever per capture (#4149)",
   },
   "admin-minors-review": {
     triggerSummary:
@@ -1030,6 +1121,12 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
       "A booking change increased the total and the extra amount is still uncollected",
     frequency:
       "Twice per outstanding amount at most — a few days after the change, and once more shortly before check-in — plus any manual re-send an admin triggers from the booking page. The chase stops when the money arrives or the stay ends",
+  },
+  "credit-released-payment-request": {
+    triggerSummary:
+      "Account credit applied to a booking was used elsewhere in the club's accounts, so part of the booking is unpaid again and a card payment was requested",
+    frequency:
+      "Sent when the payment request is raised, then repeated on the booking's additional-payment reminder schedule until the money arrives or the stay ends, plus any manual re-send an admin triggers from the booking page",
   },
   "booking-policy-exception-approved": {
     triggerSummary:
@@ -1145,6 +1242,12 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
   "group-settlement-receipt": {
     triggerSummary: "Organiser-pays combined group payment settled successfully",
     frequency: "One receipt to the organiser per settlement",
+  },
+  "group-organiser-joiner-refund": {
+    triggerSummary:
+      "An admin approved a refund appeal on a joiner's booking the organiser paid for by card, so the refund goes to the organiser's card (#3956)",
+    frequency:
+      "Once per approved appeal, beside the joiner's approval email; withheld when the admin chose not to notify, or the organiser is the joiner",
   },
   "group-join-settled": {
     triggerSummary:
@@ -1478,6 +1581,12 @@ export function sampleValue(token: string): string {
   if (token === "holdKeptNote") {
     return internetBankingHoldKeptParagraph("part-paid");
   }
+  // #4042: previewed as the cash arm, what the shipped default always said.
+  if (token === "handBackNote") return manualRefundTaskAlertNote("cash-cancellation");
+  if (token === "handBackLabel") return manualRefundTaskAlertLabel("cash-cancellation");
+  if (token === "handBackRecipientLabel") return manualRefundTaskAlertRecipientLabel("cash-cancellation");
+  if (token === "handBackHeading") return manualRefundTaskAlertHeading("cash-cancellation");
+  if (token === "handBackAmountLabel") return manualRefundTaskAlertAmountLabel("cash-cancellation");
   if (token === "handBackConflictNote") {
     return lateCaptureHandBackConflictOutcomeParagraph(false);
   }
@@ -1492,6 +1601,21 @@ export function sampleValue(token: string): string {
   if (token === "secondInstrumentConflictNote") {
     return secondInstrumentConflictOutcomeParagraph("settled");
   }
+  // #3979: previewed as the kept-figure arm - the case the alert exists for;
+  // the owed-only arm is the sender's other branch.
+  if (token === "settlementFigureNote") {
+    return ibSettlementFigureParagraph({ keptReason: "folded-refund", owed: null, hasSupplementaryInvoice: false });
+  }
+  if (token === "outsideAppRefundNote") return LATE_CAPTURE_REFUNDED_OUTSIDE_APP_NOTE;
+  // #4211: previewed as the no-record arm, the case every booking paid before
+  // the record existed meets; the released-settler arm is the guard's other reason.
+  if (token === "duplicateCaptureKeptNote") {
+    return duplicateCaptureKeptParagraph({ reason: "not-recorded", otherPaymentIntentId: "pi_example" });
+  }
+  if (token === "duplicateCaptureKeptAction") return duplicateCaptureKeptAction({ otherHoldsMoney: true, reason: "not-recorded" });
+  // #4300: previewed as the still-owing arm, the case a live booking meets.
+  if (token === "supersededCaptureNote") return supersededCaptureRefusedParagraph({ bookingCancelled: false });
+  if (token === "supersededCaptureAction") return supersededCaptureRefusedAction({ bookingCancelled: false });
   if (token === "settlementActionNote") {
     return adminSplitSettlementUnpaidLeadParagraph(false);
   }
@@ -1641,6 +1765,7 @@ export function sampleValue(token: string): string {
   if (token === "s") return "s";
   if (token === "token") return "sample-token";
   if (token === "recipientName") return "Sam Parent";
+  if (token === "joinerName") return "Sam Joiner";
   if (token === "lodgeName") return "Example Mountain Club Lodge";
   if (token === "seasonYear") return "2026";
   if (token === "targetAgeTier") return "ADULT";
@@ -1683,6 +1808,11 @@ const TEMPLATE_SAMPLE_VALUE_OVERRIDES: Partial<
   // src/lib/email/booking.ts). The preview shows what the send does.
   "checkin-reminder": {
     guestLastName: "",
+  },
+  // #3956: the organiser's sentence, not the joiner's card arm the global
+  // {{refundSentence}} sample previews.
+  "group-organiser-joiner-refund": {
+    refundSentence: organiserJoinerAppealRefundSentence("$123.45", "Sam Joiner"),
   },
 };
 
@@ -1769,6 +1899,10 @@ const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   "adminNoteLine",
   "adminNotes",
   "adminNotesLine",
+  // #4058: what a pay-link email asks the member to pay now — the booking's
+  // price plus a recorded change fee, less applied credit. `{{price}}` stays the
+  // booking's own price, so an override written against it keeps its meaning.
+  "amountDue",
   "amountRecordedNote",
   "amount",
   // #3340: what is still owed on the booking AFTER a supersede refund, on both
@@ -1902,6 +2036,8 @@ const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   "issueTotalCount",
   "joinerBookingLinks",
   "joinerCount",
+  // #3956: the joiner whose appeal the organiser's card is refunding.
+  "joinerName",
   "latestErrorMessage",
   "latestErrorNote",
   "localId",
@@ -2016,8 +2152,25 @@ const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   "handBackConflictNote",
   // #3643: why an expired internet banking hold was kept, not released.
   "holdKeptNote",
+  // #4042: which hand-back a manual refund task alert is about - its body
+  // paragraphs, its subject/heading phrase, and whom the money goes back to.
+  "handBackNote",
+  "handBackLabel",
+  "handBackRecipientLabel",
+  "handBackHeading",
+  "handBackAmountLabel",
   // #3638: the second-instrument alert's live-versus-cancelled sentence.
   "secondInstrumentConflictNote",
+  // #3979: the bank-transfer settlement alert's what-needs-a-person sentence.
+  "settlementFigureNote",
+  // #4211: the kept-capture alert's why-nothing-was-refunded sentence.
+  "duplicateCaptureKeptNote",
+  "duplicateCaptureKeptAction",
+  // #4300: the refused-superseded-capture alert's not-applied sentence and its check.
+  "supersededCaptureNote",
+  "supersededCaptureAction",
+  // #4170: the outside-the-app refund alert's instruction.
+  "outsideAppRefundNote",
   // #2774: the same direction as a SUBJECT-length phrase, so the withheld and
   // paid-twice arms cannot collapse into one claim when an admin saves the template
   // — the {{bookingStateLabel}} construction (#2761), plus the subject requirement

@@ -1,8 +1,14 @@
 import Link from "next/link";
 import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
-import { netCollectedBookingSelect, netCollectedCaptureEvidenceSelect } from "@/lib/additional-ledger-gap";
+import {
+  netCollectedBookingSelect,
+  netCollectedCaptureEvidenceSelect,
+  netCollectedCardRefundSelect,
+} from "@/lib/additional-ledger-gap";
 import { formatNetCollectedBreakdown, summarizeCollectedCash } from "@/lib/payment-net-collected";
+import { readRefundsAndCreditsOwed } from "@/lib/refunds-and-credits-owed";
+import { RefundsAndCreditsOwedList } from "@/components/admin/refunds-and-credits-owed";
 import {
   MemberLifecycleAction,
   MemberLifecycleActionRequestStatus,
@@ -36,6 +42,7 @@ import {
   canViewAdminHrefWithMatrix,
   emptyAdminPermissionMatrix,
   getAdminPermissionMatrix,
+  type AdminPermissionMatrix,
 } from "@/lib/admin-permissions";
 import { clubFormat } from "@/lib/club-format-server";
 import { bookingStatusClass, bookingStatusLabel } from "@/lib/status-colors";
@@ -53,16 +60,18 @@ import {
   dateOnlyInstantOf,
   daysInCalendarMonth,
   formatClubDayMonth,
+  requireCalendarDate,
 } from "@/lib/club-time";
 import { clubTime } from "@/lib/club-time/server";
 import { countRosterDaysNeedingChores } from "@/lib/roster-status";
 import { countGuestsAwaitingBed } from "@/lib/bed-allocation-board";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import {
-  coverageLodgeLabel,
   coverageNeedsLodgeContext,
-  getUnassignedHutLeaderDates,
+  getHutLeaderDashboardCoverage,
+  uncoveredNightLabel,
 } from "@/lib/hut-leader-coverage";
+import { HutLeaderHandoversCard } from "@/components/admin/hut-leader-handovers-card";
 import { countActiveLodges } from "@/lib/lodges";
 import { OPEN_DELETION_REQUEST_STATUSES } from "@/lib/deletion-request-decision";
 import {
@@ -83,7 +92,7 @@ import {
 // shape takes none. Reading them through APP_TIME_ZONE was a projection that
 // named the night before for any club behind UTC (INV-DATE-019).
 
-async function getStats() {
+async function getStats(permissionMatrix: Promise<AdminPermissionMatrix>) {
   // CT-4 (#2870): every derivation below now starts from the club's PERSISTED
   // timezone rather than `APP_TIME_ZONE` (INV-CONFIG-002), and the month bounds
   // are calendar arithmetic on a `CalendarDate` rather than string slicing plus
@@ -117,6 +126,7 @@ async function getStats() {
     totalBookings,
     activeBookings,
     netCollectedResult,
+    refundsAndCreditsOwed,
     upcomingCheckIns,
     unpaidFinishedStays,
     unsettledAdditionalFinishedStays,
@@ -129,7 +139,7 @@ async function getStats() {
     pendingDeletionRequests,
     pendingBookingReviews,
     pendingBookingChangeRequests,
-    unassignedHutLeaderDates,
+    { unassignedDates: unassignedHutLeaderDates, handovers: hutLeaderHandovers },
     activeLodgeCount,
     rosterDaysNeedingChores,
     bedGuestsAwaiting,
@@ -161,9 +171,14 @@ async function getStats() {
         refundedAmountCents: true,
         // #3372: a refunded status counts only with capture evidence.
         ...netCollectedCaptureEvidenceSelect,
+        // #3372 (7 Oct 2026): card refunds not yet paid come off straight away.
+        ...netCollectedCardRefundSelect,
         booking: { select: netCollectedBookingSelect },
       },
     }),
+    // #3372 (owner, 7 Oct 2026): beside Net Collected, what is still owed back
+    // as at today - club-wide, not this month's.
+    readRefundsAndCreditsOwed(),
     // Bookings officer card headline (#2091): check-ins in the next 7 days.
     // Uses UPCOMING_CHECK_IN_BOOKING_STATUSES (not the wider
     // ACTIVE_BOOKING_STATUSES) so the count equals the list the card deep links
@@ -257,7 +272,20 @@ async function getStats() {
     // is the same defect CT-4 (#2870) found here wearing a different cause. It
     // also saves the extra settings read the fallback would perform
     // (INV-CONFIG-002).
-    getUnassignedHutLeaderDates({ scope: { kind: "all" }, today }),
+    //
+    // #3818: the amber card and "Handovers this week" (today and the six days
+    // after it) read ONE cover. The handovers, and the names they need, are
+    // read only when the actor can see that card — the same gate the page
+    // applies when rendering it.
+    permissionMatrix.then((matrix) =>
+      getHutLeaderDashboardCoverage({
+        scope: { kind: "all" },
+        today,
+        handovers: canViewAdminHrefWithMatrix(matrix, "/admin/hut-leaders")
+          ? { from: today, to: dateOnlyInstantOf(addCalendarDays(todayKey, 6)) }
+          : null,
+      }),
+    ),
     // Whether this club is multi-lodge, for the ADR-002 Presentation Rule below.
     // Keyed on the CLUB, not on how many lodges happen to be uncovered (#2917
     // review): a two-lodge club whose gaps all sit at one lodge must still be
@@ -302,6 +330,7 @@ async function getStats() {
     totalBookings,
     activeBookings,
     netCollectedThisMonth,
+    refundsAndCreditsOwed,
     upcomingCheckIns,
     unpaidFinishedStays,
     unsettledAdditionalFinishedStays,
@@ -312,13 +341,12 @@ async function getStats() {
     // has more than one active lodge, per the Presentation Rule (ADR-002), so a
     // single-lodge club sees the same bare dates and count as before while a
     // multi-lodge club is never handed a date it cannot place.
-    unassignedDatesWithBookings: unassignedHutLeaderDates.map((item) => {
-      const lodgeLabel = unassignedNamesLodges
-        ? coverageLodgeLabel(item)
-        : null;
-      return lodgeLabel ? `${item.date} (${lodgeLabel})` : item.date;
-    }),
+    // #3818: each entry is a night with no leader STAYING, with its guest
+    // count; the page labels them with the club's date format.
+    unassignedHutLeaderDates,
     unassignedNamesLodges,
+    hutLeaderHandovers,
+    handoversNameLodges: coverageNeedsLodgeContext({ activeLodgeCount, rows: hutLeaderHandovers }),
     pendingRefundAppeals,
     pendingCreditApprovals,
     pendingMembershipCancellations,
@@ -357,11 +385,19 @@ async function getPermissionMatrix() {
 export default async function AdminDashboardPage() {
   // Resolve the stats batch and the actor's permission matrix concurrently —
   // the auth() + member lookup no longer waits on the stats round-trip (#2091).
+  // The matrix promise is shared, so the hut-leader read inside getStats can
+  // skip what this actor cannot see without serialising the two.
+  const permissionMatrixPromise = getPermissionMatrix();
   const [stats, permissionMatrix, money] = await Promise.all([
-    getStats(),
-    getPermissionMatrix(),
+    getStats(permissionMatrixPromise),
+    permissionMatrixPromise,
     clubFormat(),
   ]);
+  const unassignedDatesWithBookings = stats.unassignedHutLeaderDates.map((item) =>
+    uncoveredNightLabel(item, stats.unassignedNamesLodges, (date) =>
+      formatClubDayMonth(requireCalendarDate(date), money.format),
+    ),
+  );
   // #3372: exact cents, never `money.dollars`, here and on the headline - a
   // rounded figure can disagree with the line beneath it by a dollar.
   const netCollectedBreakdown = formatNetCollectedBreakdown(
@@ -574,24 +610,28 @@ export default async function AdminDashboardPage() {
       )}
 
       {/* Hut Leader warning */}
-      {stats.unassignedDatesWithBookings.length > 0 && (
+      {unassignedDatesWithBookings.length > 0 && (
         <Link href="/admin/hut-leaders">
           <Card className="border-warning-6 bg-warning-3 hover:shadow-md transition-shadow cursor-pointer">
             <CardContent className="flex items-start gap-3 pt-5">
               <AlertTriangle className="h-5 w-5 text-warning-11 flex-shrink-0 mt-0.5" />
               <div>
-                <p className="font-medium text-warning-11">{CLUB_HUT_LEADER_LABEL} Assignment Required</p>
+                <p className="font-medium text-warning-11">{stats.unassignedNamesLodges ? "Lodge-nights" : "Nights"} without a {CLUB_HUT_LEADER_LABEL.toLowerCase()} who counts</p>
                 <p className="text-sm text-warning-11 mt-1">
-                  {stats.unassignedDatesWithBookings.length} upcoming{" "}
-                  {stats.unassignedNamesLodges ? "lodge-night" : "date"}
-                  {stats.unassignedDatesWithBookings.length !== 1 ? "s" : ""} with bookings but no {CLUB_HUT_LEADER_LABEL.toLowerCase()} assigned:{" "}
-                  {stats.unassignedDatesWithBookings.slice(0, 5).join(", ")}
-                  {stats.unassignedDatesWithBookings.length > 5 ? ` and ${stats.unassignedDatesWithBookings.length - 5} more` : ""}
+                  {unassignedDatesWithBookings.length} upcoming{" "}
+                  {stats.unassignedNamesLodges ? "lodge-night" : "night"}
+                  {unassignedDatesWithBookings.length !== 1 ? "s" : ""} with guests but no {CLUB_HUT_LEADER_LABEL.toLowerCase()} who counts:{" "}
+                  {unassignedDatesWithBookings.slice(0, 5).join("; ")}
+                  {unassignedDatesWithBookings.length > 5 ? ` and ${unassignedDatesWithBookings.length - 5} more` : ""}
                 </p>
               </div>
             </CardContent>
           </Card>
         </Link>
+      )}
+
+      {canViewHutLeaders && (
+        <HutLeaderHandoversCard handovers={stats.hutLeaderHandovers} nameLodges={stats.handoversNameLodges} format={money.format} />
       )}
 
       {/* Bookings-officer key cards (#2091, D-E1/D-E2): the four surfaces a
@@ -631,16 +671,16 @@ export default async function AdminDashboardPage() {
                 </CardHeader>
                 <CardContent>
                   <div className="text-3xl font-bold">
-                    {stats.unassignedDatesWithBookings.length}
+                    {unassignedDatesWithBookings.length}
                   </div>
                   <p className="text-xs text-muted-foreground mt-1">
                     upcoming{" "}
                     {stats.unassignedNamesLodges ? "lodge-night" : "night"}
-                    {stats.unassignedDatesWithBookings.length === 1
+                    {unassignedDatesWithBookings.length === 1
                       ? ""
                       : "s"}{" "}
-                    with bookings but no{" "}
-                    {CLUB_HUT_LEADER_LABEL.toLowerCase()} assigned
+                    with guests but no{" "}
+                    {CLUB_HUT_LEADER_LABEL.toLowerCase()} staying
                   </p>
                 </CardContent>
               </Card>
@@ -723,7 +763,9 @@ export default async function AdminDashboardPage() {
           {canViewPayments && (
             <Link href="/admin/payments" className="group">
               <Card className="border-border bg-card hover:shadow-sm transition-shadow cursor-pointer">
-                <CardContent className="flex items-center justify-between gap-3 py-4">
+                {/* #3372: on a narrow screen the figures stack under the
+                    title rather than squeezing beside it. */}
+                <CardContent className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
                     <DollarSign className="h-4 w-4 text-muted-foreground" />
                     Net Collected This Month
@@ -733,7 +775,7 @@ export default async function AdminDashboardPage() {
                       exact cents, so the arithmetic on the card adds up. The subline
                       makes no claim about when money arrived: the month is the
                       one each payment record was created in. */}
-                  <div className="text-right">
+                  <div className="sm:text-right">
                     <div className="text-xl font-semibold text-foreground">
                       {money.cents(stats.netCollectedThisMonth.netCollectedCents)}
                     </div>
@@ -745,6 +787,13 @@ export default async function AdminDashboardPage() {
                         {netCollectedBreakdown}
                       </p>
                     )}
+                    {/* #3372 (owner, 7 Oct 2026): still owed back, as at today. */}
+                    <RefundsAndCreditsOwedList
+                      owed={stats.refundsAndCreditsOwed}
+                      formatCents={money.cents}
+                      className="mt-1 flex flex-col sm:items-end"
+                      stacked
+                    />
                   </div>
                 </CardContent>
               </Card>

@@ -17,8 +17,9 @@ do not clash.
 - UI/UX adversarial review
 - Test coverage and drift adversarial review
 - **Single source of truth check — on every reviewed pull request** (#3126).
-  `AGENTS.md` is the authority for review counts: this check goes into one
-  lens's brief on every PR, and becomes a lens of its own only for a
+  `AGENTS.md` is the authority for how lenses are chosen (no fixed count;
+  [`COORDINATION.md`](COORDINATION.md#reviews-choosing-lenses)): this check
+  goes into one review's brief on every PR, and becomes a lens of its own only for a
   substantial new abstraction, rule or refactor. It is never skipped, because
   the defect it looks for is invisible to a reviewer checking a diff against
   its brief: the copy that already exists elsewhere in the tree. The rules are
@@ -48,9 +49,10 @@ do not clash.
 - Subagents must read `AGENTS.md` and the relevant domain docs.
 - Briefs should name the smallest relevant files or section from the local
   [`agent:context` artifact](SCOPED_CONTEXT.md), not attach a repository dump.
-  State the model and reasoning effort in every launch — an unstated model
-  inherits the orchestrator's — and choose them as `AGENTS.md` → "Model
-  selection" and [`MODELS.md`](MODELS.md) describe. The role definitions in
+  State the model and reasoning effort in every launch — unstated, the role
+  file's default applies, or the orchestrator's where the role sets none
+  ([`MODELS.md`](MODELS.md#setting-model-and-effort)) — and choose them as
+  `AGENTS.md` → "Model selection" and `MODELS.md` describe. The role definitions in
   `.claude/agents/` and `.codex/agents/` (`implementor`, `reviewer`,
   `explorer`) carry sensible defaults. When briefing an implementor, include the "Briefing an
   implementor" lines below verbatim.

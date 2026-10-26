@@ -71,13 +71,17 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
     "defaultSubject": "Payment Still Needed - {{CLUB_LODGE_NAME}}",
     "defaultBody": "Payment Still Needed\n\nHi {{firstName}}, a change to your lodge booking increased the total, and the extra amount has not been paid yet.\n\nAmount still to pay: {{additionalAmount}}\nRequested on: {{requestedOn}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\n\nOpen your booking and complete the outstanding payment. If you have already paid, or you think this is wrong, please contact the club.\n\nPay Now: {{BASE_URL}}/bookings"
   },
+  "credit-released-payment-request": {
+    "defaultSubject": "Payment needed for your lodge booking",
+    "defaultBody": "Payment Needed\n\nHi {{firstName}}, the account credit applied to your booking was used elsewhere in the club's accounts, so {{additionalAmount}} of your booking has not been paid.\n\nAmount still to pay: {{additionalAmount}}\nRequested on: {{requestedOn}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\n\nOpen your booking to pay by card. If you have already paid, or think this is wrong, contact the club.\n\nPay Now: {{BASE_URL}}/bookings"
+  },
   "chore-roster": {
     "defaultSubject": "Your chore roster for {{formattedDate}} - {{CLUB_LODGE_NAME}}",
     "defaultBody": "Chore Roster\n\nHi {{guestName}},\n\nHere are your assigned chores for {{formattedDate}} at the lodge:\n\n{{choreListNote}}{{choreLinkNote}}Last person to bed: Check heaters and fire are safe and doors are secure.\n\nThanks for helping keep the lodge running smoothly!"
   },
   "hut-leader-assignment": {
     "defaultSubject": "Your {{CLUB_NAME}} hut leader assignment",
-    "defaultBody": "Hut Leader Assignment\n\nHi {{firstName}}, thanks for taking on hut leader duties for the lodge.\n\nStart date: {{startDate}}\nEnd date: {{endDate}}\nKiosk PIN: {{pin}}\n\nWhen you arrive, open the lodge kiosk and use this PIN to unlock hut leader controls for arrivals, departures, and roster management.\n\nPlease keep this PIN private and share it only with the assigned hut leader team for these dates.\n\nResponsibilities include checking the lodge list, helping guests settle in, marking arrivals and departures, and making sure the daily chore roster is set up and completed.\n\nOpen Lodge View: {{BASE_URL}}/lodge\n\nIf you have any issues accessing the kiosk, please contact a club administrator."
+    "defaultBody": "Hut Leader Assignment\n\nHi {{firstName}}, thanks for taking on hut leader duties for the lodge.\n\nStart date: {{startDate}}\nLast night: {{endDate}}\nKiosk PIN: {{pin}}\n\nWhen you arrive, open the lodge kiosk and use this PIN to unlock hut leader controls for arrivals, departures, and roster management.\n\nPlease keep this PIN private and share it only with the assigned hut leader team for these dates.\n\nResponsibilities include checking the lodge list, helping guests settle in, marking arrivals and departures, and making sure the daily chore roster is set up and completed.\n\nOpen Lodge View: {{BASE_URL}}/lodge\n\nIf you have any issues accessing the kiosk, please contact a club administrator."
   },
   "setup-intent-failed": {
     "defaultSubject": "Card Setup Failed - {{CLUB_LODGE_NAME}}",
@@ -295,17 +299,38 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
     "defaultSubject": "Internet banking hold needs attention: {{memberName}}",
     "defaultBody": "Internet Banking Hold Needs Attention\n\n{{holdKeptNote}}\n\nMember: {{memberName}}\nBooking: {{bookingReference}} ({{bookingId}})\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nHold deadline: {{holdUntil}}\nPaid so far: {{paidAmount}}\nStill owing: {{amountOwing}}\nXero invoice: {{xeroInvoiceNumber}}\nOpen the invoice in Xero: {{xeroObjectUrl}}\n\nView Payments: {{reviewUrl}}"
   },
+  "admin-late-capture-refunded-outside-app": {
+    "defaultSubject": "Late payment refunded outside the app - check Xero: {{memberName}}",
+    "defaultBody": "Late Payment Refunded Outside the App\n\nA card payment that arrived after this booking was cancelled has been refunded outside the app - for example in the Stripe dashboard.\n\n{{outsideAppRefundNote}}\n\nMember: {{memberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nBooking: {{bookingId}}\nAmount refunded: {{amount}}\nStripe reference: {{paymentIntentId}}\n\nView Payments: {{reviewUrl}}"
+  },
   "admin-late-capture-held": {
     "defaultSubject": "Late payment held for approval: {{memberName}}",
-    "defaultBody": "Late Payment Held for Approval\n\nA card payment went through after its booking was cancelled. Your club has a treasurer approve these refunds, so it has NOT been refunded - the money is still with the club.\n\nOpen the refund tasks on the payments board and either refund it to the card (through Stripe) or close it without refunding, with a note - for example, when the cancellation was a mistake.\n\nMember: {{memberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nBooking: {{bookingId}}\nAmount held: {{amount}}\n\nView Payments: {{reviewUrl}}"
+    "defaultBody": "Late Payment Held for Approval\n\nA card payment went through after its booking was cancelled and has NOT been refunded - your club has a treasurer approve these refunds, or the card provider refused the automatic refund - so the money is still with the club.\n\nOpen the refund tasks on the payments board and either refund it to the card (through Stripe) or close it without refunding, with a note - for example, when the cancellation was a mistake.\n\nMember: {{memberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nBooking: {{bookingId}}\nAmount held: {{amount}}\n\nView Payments: {{reviewUrl}}"
   },
   "admin-second-instrument-settlement-conflict": {
     "defaultSubject": "Booking may have been paid twice — card and Xero: {{memberName}}",
     "defaultBody": "Booking May Have Been Paid Twice - Card and Xero\n\nA card payment and an Internet Banking payment have both been recorded against this booking. Nothing was refunded or credited automatically - please reconcile.\n\n{{secondInstrumentConflictNote}}\n\nMember: {{memberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nBooking: {{bookingId}}\nBooking status: {{status}}\nInvoice amount: {{amount}}\nCard payment still held: {{paidAmount}}\nStripe PI: {{paymentIntentId}}\nXero invoice: {{xeroInvoiceNumber}}\nOpen the invoice in Xero: {{xeroObjectUrl}}\n\nOpen Booking: {{bookingUrl}}\nView Payments: {{reviewUrl}}"
   },
+  // #3979 (`INV-PAY-125`): a recorded bank-transfer amount that needs a person.
+  "admin-bank-transfer-settlement-figure": {
+    "defaultSubject": "Bank transfer amount needs checking: {{memberName}}",
+    "defaultBody": "Bank Transfer Amount Needs Checking\n\nXero reports this booking's bank-transfer invoice paid, and the payment has been recorded. The amount needs a person to check it.\n\n{{settlementFigureNote}}\n\nMember: {{memberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nBooking: {{bookingId}}\nAmount recorded: {{amount}}\nCash Xero shows: {{paidAmount}}\nBooking owes: {{amountOwing}}\nXero invoice: {{xeroInvoiceNumber}}\nOpen the invoice in Xero: {{xeroObjectUrl}}\n\nOpen Booking: {{bookingUrl}}\nView Payments: {{reviewUrl}}"
+  },
+  // #4211 (`INV-PAY-043`): a card capture kept on a paid booking with no usable
+  // record of which payment settled it; nothing refunded, a person decides.
+  "admin-duplicate-capture-kept": {
+    "defaultSubject": "Booking may have been paid twice — check by hand: {{memberName}}",
+    "defaultBody": "Booking May Have Been Paid Twice — Check By Hand\n\nA card payment was kept on a booking that was already paid — please check it by hand.\n\n{{duplicateCaptureKeptNote}}\n\n{{duplicateCaptureKeptAction}}\n\nMember: {{memberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nBooking: {{bookingId}}\nStill held by this payment: {{amount}}\nStripe PI: {{paymentIntentId}}\n\nOpen Booking: {{bookingUrl}}\nView Payments: {{reviewUrl}}"
+  },
+  // #4300 (`INV-PAY-138`): a card capture the settle refused because an edit had
+  // replaced the payment it was made on; the superseded machinery returns it.
+  "admin-superseded-capture-refused": {
+    "defaultSubject": "Card payment on a replaced payment — not applied: {{memberName}}",
+    "defaultBody": "Card Payment On A Replaced Payment — Not Applied\n\nA card payment was taken on a payment that a later change to this booking had replaced, so it was not applied to the booking.\n\n{{supersededCaptureNote}}\n\n{{supersededCaptureAction}}\n\nMember: {{memberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nBooking: {{bookingId}}\nPayment not applied: {{amount}}\nStripe PI: {{paymentIntentId}}\n\nOpen Booking: {{bookingUrl}}\nView Payments: {{reviewUrl}}"
+  },
   "admin-manual-refund-task": {
-    "defaultSubject": "Manual refund needed - cash booking cancelled: {{memberName}}",
-    "defaultBody": "Manual Refund Needed - Cash Booking Cancelled\n\nA booking settled in cash (or by an off-Xero bank transfer) has been cancelled. The refund has to be paid back by hand - nothing was refunded automatically.\n\nThe member's cancellation refund has been worked out under the club's normal policy, but there is no card charge to reverse and no Xero invoice to credit, so the system has raised a hand-back task instead of pretending money moved. The member has been told the club will arrange the refund.\n\nPay the member back, then mark the task complete on the payments board so the ledger records the refund. If the member declines it, or it was settled another way, dismiss the task with a note.\n\nMember: {{memberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nBooking: {{bookingId}}\nAmount to refund: {{refundAmount}}\nReason: {{reason}}\n\nView Payments: {{reviewUrl}}"
+    "defaultSubject": "Manual refund needed - {{handBackLabel}}: {{memberName}}",
+    "defaultBody": "{{handBackHeading}}\n\n{{handBackNote}}\n\n{{handBackRecipientLabel}}: {{memberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nBooking: {{bookingId}}\n{{handBackAmountLabel}}: {{refundAmount}}\nReason: {{reason}}\n\nView Payments: {{reviewUrl}}"
   },
   // #2761: the alert for an automatically refunded late capture. Its OWN entry
   // rather than a variant of admin-payment-failure, so an admin's override of the
@@ -432,11 +457,11 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
   },
   "booking-request-approved": {
     "defaultSubject": "Your booking request has been approved — {{CLUB_NAME}}",
-    "defaultBody": "Booking Request Approved\n\nHi {{firstName}}, great news — your booking request has been approved!\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\nTotal: {{price}}\nBooking reference: {{bookingReference}}\n\nPlease complete payment to confirm your booking.\n\nPay Now: {{BASE_URL}}/pay/{{token}}\n\nThis payment link expires on {{expiresAt}}. If it expires before you pay, please contact the club to request a new link."
+    "defaultBody": "Booking Request Approved\n\nHi {{firstName}}, great news — your booking request has been approved!\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\nAmount due: {{amountDue}}\nBooking reference: {{bookingReference}}\n\nPlease complete payment to confirm your booking.\n\nPay Now: {{BASE_URL}}/pay/{{token}}\n\nThis payment link expires on {{expiresAt}}. If it expires before you pay, please contact the club to request a new link."
   },
   "split-guest-payment-link": {
     "defaultSubject": "Pay for your guests to confirm their place — {{CLUB_NAME}}",
-    "defaultBody": "Pay for Your Guests to Confirm Their Place\n\nHi {{firstName}}, your own place is confirmed, but your non-member guests still need to be paid for before we can hold beds for them. There is no card on file for this part of your booking, so please use the secure link below to pay for your guests.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\nAmount due: {{price}}\n\nPay for My Guests: {{BASE_URL}}/pay/{{token}}\n\nUntil payment is received, no beds are held for your guests and their place may be bumped if the lodge fills for these dates.\n\nThis payment link expires on {{expiresAt}}. If you have any questions, just reply to this email or contact the club."
+    "defaultBody": "Pay for Your Guests to Confirm Their Place\n\nHi {{firstName}}, your own place is confirmed, but your non-member guests still need to be paid for before we can hold beds for them. There is no card on file for this part of your booking, so please use the secure link below to pay for your guests.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\nAmount due: {{amountDue}}\n\nPay for My Guests: {{BASE_URL}}/pay/{{token}}\n\nUntil payment is received, no beds are held for your guests and their place may be bumped if the lodge fills for these dates.\n\nThis payment link expires on {{expiresAt}}. If you have any questions, just reply to this email or contact the club."
   },
   "booking-request-quote": {
     "defaultSubject": "Your booking quote is ready — {{CLUB_NAME}}",
@@ -509,6 +534,11 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
   "group-settlement-receipt": {
     "defaultSubject": "Your group booking is settled — {{CLUB_NAME}}",
     "defaultBody": "Your Group Booking Is Settled\n\nHi {{firstName}}, thanks for settling your group's stay at {{CLUB_NAME}}'s lodge. Everyone you are paying for is now confirmed.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nJoiners settled: {{joinerCount}}\nTotal paid: {{total}}\n\nEach joiner has been emailed to confirm their spot. There is nothing more for them to pay.\n\nIf anything looks wrong, contact the club at {{SUPPORT_EMAIL}}."
+  },
+  // #3956 (`INV-PAY-123`): a joiner's approved appeal refunded to the organiser's card.
+  "group-organiser-joiner-refund": {
+    "defaultSubject": "A refund to your card for your group booking — {{CLUB_NAME}}",
+    "defaultBody": "Refund to Your Card\n\nHi {{firstName}},\n\n{{refundSentence}}\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\n\nIf you have questions, contact the club at {{SUPPORT_EMAIL}}."
   },
   "group-join-settled": {
     "defaultSubject": "Your spot is confirmed — {{CLUB_NAME}}",

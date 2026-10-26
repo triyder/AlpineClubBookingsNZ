@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { render } from "@/lib/__tests__/support/club-time-render";
 import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as Sentry from "@sentry/nextjs";
@@ -14,10 +15,38 @@ import {
   PAYMENT_RECEIVED_STATUS_UNCONFIRMED_MESSAGE,
   REFUNDED_CARD_TRANSACTION_REPAYMENT_REQUIRED_BODY,
   REFUNDED_CARD_TRANSACTION_REPAYMENT_REQUIRED_MESSAGE,
+  SUPERSEDED_CARD_PAYMENT_REFUNDING_BODY,
+  SUPERSEDED_CARD_PAYMENT_REFUNDING_MESSAGE,
+  PREVIOUS_PAYMENT_REFUNDING_NOTICE,
   SWITCHED_TO_INTERNET_BANKING_BODY,
   SWITCHED_TO_INTERNET_BANKING_MESSAGE,
 } from "@/lib/payment-recovery-contract";
 import { expectRecoveryAlertToHoldFocus } from "@/lib/__tests__/helpers/focus";
+
+const invalidCapacityRefundFacts = [
+  { label: "confirmed zero plan", capacityRefund: { chargedAmountCents: 12500, plannedRefundCents: 0 } },
+  { label: "fractional charge", capacityRefund: { chargedAmountCents: 12500.5, plannedRefundCents: 9000 } },
+  { label: "fractional refund", capacityRefund: { chargedAmountCents: 12500, plannedRefundCents: 9000.5 } },
+  { label: "negative charge", capacityRefund: { chargedAmountCents: -12500, plannedRefundCents: 9000 } },
+  { label: "negative refund", capacityRefund: { chargedAmountCents: 12500, plannedRefundCents: -9000 } },
+  { label: "unsafe integer charge", capacityRefund: { chargedAmountCents: Number.MAX_SAFE_INTEGER + 1, plannedRefundCents: 9000 } },
+  { label: "missing refund amount", capacityRefund: { chargedAmountCents: 12500 } },
+];
+
+const capacityCancellationCases = [
+  ...invalidCapacityRefundFacts.map(({ label, capacityRefund }) => ({
+    label, capacityRefund, refunded: true,
+    heading: "Booking cancelled - refund needs attention",
+    copy: "The club will be in touch about your refund",
+  })),
+  { label: "full", refunded: true, capacityRefund: { chargedAmountCents: 12500, plannedRefundCents: 12500 }, heading: "Booking cancelled - payment refunded", copy: "$125.00 was refunded to your card" },
+  { label: "partial", refunded: true, capacityRefund: { chargedAmountCents: 12500, plannedRefundCents: 9000 }, heading: "Booking cancelled - refund needs attention", copy: "$90.00 was refunded to your card; the club will be in touch about the remaining $35.00" },
+  { label: "empty plan", refunded: false, capacityRefund: { chargedAmountCents: 12500, plannedRefundCents: 0 }, heading: "Booking cancelled - refund needs attention", copy: "The club will be in touch about your refund" },
+  { label: "failed positive plan", refunded: false, capacityRefund: { chargedAmountCents: 12500, plannedRefundCents: 9000 }, heading: "Booking cancelled - refund needs attention", copy: "The club will be in touch about your refund" },
+  { label: "legacy success without amounts", refunded: true, capacityRefund: undefined, heading: "Booking cancelled - refund needs attention", copy: "The club will be in touch about your refund" },
+  { label: "legacy failure without amounts", refunded: false, capacityRefund: undefined, heading: "Booking cancelled - refund needs attention", copy: "The club will be in touch about your refund" },
+  { label: "invalid amounts", refunded: true, capacityRefund: { chargedAmountCents: 12500, plannedRefundCents: 13000 }, heading: "Booking cancelled - refund needs attention", copy: "The club will be in touch about your refund" },
+];
 
 const fetchMock = vi.fn();
 const scrollIntoView = vi.fn();
@@ -456,16 +485,9 @@ describe("BookingPaymentWrapper", () => {
     await expectRecoveryAlertToHoldFocus(alert);
   });
 
-  it.each([
-    [true, "Booking cancelled - payment refunded", /card payment was refunded/i],
-    [
-      false,
-      "Booking cancelled - refund needs attention",
-      /refund could not be confirmed/i,
-    ],
-  ])(
-    "suppresses payment for an initialization-time cancellation (refunded: %s)",
-    async (refunded, heading, copy) => {
+  it.each(capacityCancellationCases)(
+    "suppresses payment for an initialization-time cancellation ($label)",
+    async ({ refunded, capacityRefund, heading, copy }) => {
       fetchMock.mockResolvedValueOnce({
         ok: false,
         status: 409,
@@ -473,6 +495,7 @@ describe("BookingPaymentWrapper", () => {
           error: "server detail is not rendered",
           status: "CANCELLED",
           refunded,
+          capacityRefund,
         }),
       });
 
@@ -489,6 +512,9 @@ describe("BookingPaymentWrapper", () => {
       const alert = screen.getByRole("alert", { hidden: true });
       await waitFor(() => expect(alert).toHaveTextContent(heading));
       expect(alert).toHaveTextContent(copy);
+      expect(alert).not.toHaveTextContent("Automatic refund recovery is pending");
+      expect(alert).not.toHaveTextContent("the card payment was refunded");
+      if (!refunded) expect(alert).not.toHaveTextContent("was refunded to your card");
       expect(alert).toHaveTextContent(/Do not try another payment/i);
       expect(alert).not.toHaveTextContent("server detail");
       expect(alert).not.toHaveTextContent(/pay later from your booking page/i);
@@ -756,20 +782,112 @@ describe("BookingPaymentWrapper", () => {
     expect(screen.getByText("Payment successful!")).not.toBeNull();
   });
 
-  it.each([
-    [
-      true,
-      "Booking cancelled - payment refunded",
-      /card payment was refunded/i,
-    ],
-    [
-      false,
-      "Booking cancelled - refund needs attention",
-      /Automatic refund recovery is pending/i,
-    ],
-  ])(
-    "retains the cancelled-booking recovery after confirmation (refunded: %s)",
-    async (refunded, heading, copy) => {
+  it("#4300: says a payment on a superseded intent is being refunded, never that the booking is paid", async () => {
+    const onPaymentComplete = vi.fn();
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ clientSecret: "cs_test" }),
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 409,
+        json: async () => ({
+          ...SUPERSEDED_CARD_PAYMENT_REFUNDING_BODY,
+          error: "raw server text must not be shown",
+        }),
+      });
+
+    render(
+      <BookingPaymentWrapper
+        bookingId="booking-1"
+        amountCents={12500}
+        paymentMode="payment"
+        returnUrl="http://localhost/bookings/booking-1"
+        onPaymentComplete={onPaymentComplete}
+      />,
+    );
+    fireEvent.click(await screen.findByText("trigger-success"));
+
+    const alert = screen.getByRole("alert", { hidden: true });
+    await waitFor(() => expect(alert).toHaveTextContent("Card payment being returned"));
+    expect(alert).toHaveTextContent(SUPERSEDED_CARD_PAYMENT_REFUNDING_MESSAGE);
+    expect(alert).not.toHaveTextContent("Payment received");
+    expect(alert).not.toHaveTextContent("raw server text");
+    expect(onPaymentComplete).not.toHaveBeenCalled();
+    // No green "Payment successful!" box beside it, and a way to reload.
+    await waitFor(() => expect(screen.queryByText("Payment successful!")).toBeNull());
+    expect(screen.getByRole("button", { name: "Reload booking", hidden: true })).not.toBeNull();
+  });
+
+  it("#4300: the pay step's own superseded refusal is shown with a reload, and no payment form", async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 409,
+      json: async () => ({ ...SUPERSEDED_CARD_PAYMENT_REFUNDING_BODY, error: "raw server text must not be shown" }),
+    });
+
+    render(
+      <BookingPaymentWrapper
+        bookingId="booking-1"
+        amountCents={12500}
+        paymentMode="payment"
+        returnUrl="http://localhost/bookings/booking-1"
+        onPaymentComplete={vi.fn()}
+      />,
+    );
+
+    const alert = await screen.findByRole("alert", { hidden: true });
+    await waitFor(() => expect(alert).toHaveTextContent(SUPERSEDED_CARD_PAYMENT_REFUNDING_MESSAGE));
+    expect(alert).not.toHaveTextContent("raw server text");
+    expect(screen.queryByText("trigger-success")).toBeNull();
+    expect(screen.getByRole("button", { name: "Reload booking", hidden: true })).not.toBeNull();
+  });
+
+  it("#4300: 'Reload booking' opens the booking's own page, so the /book wizard never loses it", async () => {
+    const assign = vi.fn();
+    const original = window.location;
+    Object.defineProperty(window, "location", { configurable: true, value: { ...original, assign } });
+    try {
+      fetchMock.mockResolvedValueOnce({ ok: false, status: 409, json: async () => SUPERSEDED_CARD_PAYMENT_REFUNDING_BODY });
+      render(
+        <BookingPaymentWrapper bookingId="booking-1" amountCents={12500} paymentMode="payment" returnUrl="http://localhost/book" onPaymentComplete={vi.fn()} />,
+      );
+      fireEvent.click(await screen.findByRole("button", { name: "Reload booking", hidden: true }));
+      expect(assign).toHaveBeenCalledWith("/bookings/booking-1");
+    } finally {
+      Object.defineProperty(window, "location", { configurable: true, value: original });
+    }
+  });
+
+  it("#4300: the pay step's going-back notice is shown beside the fresh form", async () => {
+    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ clientSecret: "cs_test", previousPaymentRefunding: true }) });
+    render(
+      <BookingPaymentWrapper bookingId="booking-1" amountCents={12500} paymentMode="payment" returnUrl="http://localhost/bookings/booking-1" onPaymentComplete={vi.fn()} />,
+    );
+    expect(await screen.findByText(PREVIOUS_PAYMENT_REFUNDING_NOTICE)).not.toBeNull();
+    expect(screen.getByText("trigger-success")).not.toBeNull();
+  });
+
+  it("#4300: a 400 from the confirm route after a card success is never called complete", async () => {
+    const onPaymentComplete = vi.fn();
+    fetchMock
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ clientSecret: "cs_test" }) })
+      .mockResolvedValueOnce({ ok: false, status: 400, json: async () => ({ error: "PaymentIntent does not match booking" }) });
+    render(
+      <BookingPaymentWrapper bookingId="booking-1" amountCents={12500} paymentMode="payment" returnUrl="http://localhost/bookings/booking-1" onPaymentComplete={onPaymentComplete} />,
+    );
+    fireEvent.click(await screen.findByText("trigger-success"));
+    const alert = screen.getByRole("alert", { hidden: true });
+    await waitFor(() => expect(alert).toHaveTextContent("Payment received - check booking status"));
+    expect(alert).toHaveTextContent(PAYMENT_RECEIVED_STATUS_UNCONFIRMED_MESSAGE);
+    expect(alert).not.toHaveTextContent("does not match");
+    expect(onPaymentComplete).not.toHaveBeenCalled();
+  });
+
+  it.each(capacityCancellationCases)(
+    "retains the cancelled-booking recovery after confirmation ($label)",
+    async ({ refunded, capacityRefund, heading, copy }) => {
       const onPaymentComplete = vi.fn();
 
       fetchMock
@@ -784,6 +902,7 @@ describe("BookingPaymentWrapper", () => {
             error: "private provider or database detail",
             status: "CANCELLED",
             refunded,
+          capacityRefund,
           }),
         });
 
@@ -802,6 +921,9 @@ describe("BookingPaymentWrapper", () => {
       const alert = screen.getByRole("alert", { hidden: true });
       await waitFor(() => expect(alert).toHaveTextContent(heading));
       expect(alert).toHaveTextContent(copy);
+      expect(alert).not.toHaveTextContent("Automatic refund recovery is pending");
+      expect(alert).not.toHaveTextContent("the card payment was refunded");
+      if (!refunded) expect(alert).not.toHaveTextContent("was refunded to your card");
       expect(alert).toHaveTextContent(/Do not try another payment/i);
       expect(alert).not.toHaveTextContent("private provider or database detail");
       expect(onPaymentComplete).not.toHaveBeenCalled();

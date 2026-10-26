@@ -94,6 +94,10 @@ import { auditCategoriesForCorrelationDomain } from "@/lib/audit-categories";
 
 import { defineDiagnosticsTool, type DiagnosticsToolEntry } from "../define";
 import {
+  RECOVERY_SCENARIO_GLOSS,
+  RECOVERY_SCENARIO_SQL,
+} from "./finance-recovery-scenarios";
+import {
   EXACT_REFERENCE,
   FINANCE_BYTE_LIMIT,
   FINANCE_DESCRIPTION_TAIL,
@@ -265,36 +269,6 @@ const paymentSummary = defineDiagnosticsTool<PaymentIdArgs>({
 // ---------------------------------------------------------------------------
 
 /**
- * The closed catalogue that turns a `PaymentRecoveryOperation."idempotencyKey"`
- * prefix into a stable SCENARIO code, evaluated in SQL so the key itself is never
- * projected.
- *
- * Every prefix below is copied from `src/lib/payment-recovery-keys.ts` and
- * `src/lib/payment-recovery.ts`, which are the only writers. A key that matches
- * none of them projects `other_recovery`, which is honest: it means the platform
- * queued a recovery this catalogue does not recognise, and reporting an unknown
- * as one of the known scenarios would be worse than reporting it as unknown.
- *
- * WHY THIS MATTERS MORE THAN IT LOOKS. Five different situations enqueue
- * `REFUND_BOOKING_MODIFICATION`: a booking cancellation, an approved refund
- * appeal, a capacity-race auto-refund, a duplicate-capture auto-refund and an
- * actual modification refund. A Finance Officer told "a booking modification
- * refund is pending" when the truth is "a duplicate card capture is being handed
- * back" will look in the wrong place, and the operation type is the only field
- * that would have told them — wrongly.
- */
-const RECOVERY_SCENARIO_SQL = `CASE
-    WHEN pg_catalog.starts_with(o."idempotencyKey", 'booking_cancel_refund_recovery_') THEN 'booking_cancellation_refund'
-    WHEN pg_catalog.starts_with(o."idempotencyKey", 'capacity_claim_failed_refund_recovery_') THEN 'capacity_claim_failed_refund'
-    WHEN pg_catalog.starts_with(o."idempotencyKey", 'duplicate_capture_') THEN 'duplicate_capture_refund'
-    WHEN pg_catalog.starts_with(o."idempotencyKey", 'refund_request_refund_') THEN 'refund_appeal_refund'
-    WHEN pg_catalog.starts_with(o."idempotencyKey", 'payment_recovery_cancel_') THEN 'payment_intent_cancel'
-    WHEN pg_catalog.starts_with(o."idempotencyKey", 'payment_recovery_refund_') THEN 'booking_modification_refund'
-    WHEN pg_catalog.starts_with(o."idempotencyKey", 'payment_recovery_additional_intent_') THEN 'additional_payment_intent'
-    ELSE 'other_recovery'
-  END`;
-
-/**
  * ATTEMPTS, as one timeline across two relations that answer different halves of
  * "what has this platform tried".
  *
@@ -364,9 +338,9 @@ const attemptLedger = defineDiagnosticsTool<PaymentIdArgs>({
   id: DIAGNOSTICS_PAYMENT_ATTEMPT_LEDGER_TOOL_ID,
   source: "select_only_sql",
   label: "Payment attempts and recovery queue",
-  description: `Returns ONE payment's charge attempts and the platform's own pending recovery work, newest first. Two kinds of row: "transaction" is a charge attempt (primary or additional) with its own Stripe PaymentIntent, Xero invoice number, internet-banking reference and amount in cents; "recovery_operation" is a cancel or refund this platform has undertaken to execute at Stripe, with the number of attempts made and a scenario code saying WHY it was queued. A recovery operation with status FAILED and attemptCount 5 is EXHAUSTED — it will not retry on its own and needs an administrator. Use it to see duplicate or failed attempts, an unfinished refund, or an uncollected additional payment. It returns no error text, no Stripe idempotency keys and no operator notes. ${FINANCE_DESCRIPTION_TAIL}`,
+  description: `Returns ONE payment's charge attempts and the platform's own pending recovery work, newest first. Two kinds of row: "transaction" is a charge attempt (primary or additional) with its own Stripe PaymentIntent, Xero invoice number, internet-banking reference and amount in cents; "recovery_operation" is a cancel or refund this platform has undertaken to execute at Stripe, with the number of attempts made and a scenario code saying WHY it was queued. ${RECOVERY_SCENARIO_GLOSS} A recovery operation with status FAILED and attemptCount 5 is EXHAUSTED — it will not retry on its own and needs an administrator. Use it to see duplicate or failed attempts, an unfinished refund, or an uncollected additional payment. It returns no error text, no Stripe idempotency keys and no operator notes. ${FINANCE_DESCRIPTION_TAIL}`,
   requiredAreas: ["finance"],
-  evidenceScope: `The charge attempts and queued recovery operations for ONE payment, at most ${ATTEMPT_LEDGER_ROW_LIMIT} of them, newest first. A recovery operation's scenarioCode comes from the platform's own queue key: several very different situations share the operation type REFUND_BOOKING_MODIFICATION, so report the scenarioCode and NOT the type when you say why a refund is pending. attemptCount is the recovery queue's own counter; a transaction row always shows 0 because charge attempts are not retried by a counter. The maximum recovery attempt count is 5, after which a FAILED operation is exhausted and will never retry. An empty result means EITHER that no payment with that id exists OR that the payment exists and has no attempts or recovery work recorded — this tool cannot tell those apart, and a booking id looks exactly like a payment id, so confirm the id with the payment search or the payment summary before reporting an absence. ${STORED_EVIDENCE_DISCLOSURE}`,
+  evidenceScope: `The charge attempts and queued recovery operations for ONE payment, at most ${ATTEMPT_LEDGER_ROW_LIMIT} of them, newest first. A recovery operation's scenarioCode comes from the platform's own queue key: several very different situations share the operation type REFUND_BOOKING_MODIFICATION, so report the scenarioCode and NOT the type when you say why a refund is pending (the tool description lists what each code means). attemptCount is the recovery queue's own counter; a transaction row always shows 0 because charge attempts are not retried by a counter. The maximum recovery attempt count is 5, after which a FAILED operation is exhausted and will never retry; an operation stopped at once on a failure no retry can fix also shows 5, though it ran fewer times. An empty result means EITHER that no payment with that id exists OR that the payment exists and has no attempts or recovery work recorded — this tool cannot tell those apart, and a booking id looks exactly like a payment id, so confirm the id with the payment search or the payment summary before reporting an absence. ${STORED_EVIDENCE_DISCLOSURE}`,
   argsSchema: paymentIdArgsSchema,
   inputSchema: paymentIdInputSchema,
   sql: ATTEMPT_LEDGER_SQL,
@@ -461,7 +435,7 @@ SELECT
   ${utcInstant('o."createdAt"')} AS occurred_at_utc
 FROM public."PaymentRecoveryOperation" o
 WHERE o."paymentId" = $1::text
-  AND o."type"::text <> 'CREATE_ADDITIONAL_PAYMENT_INTENT'
+  AND o."type"::text IN ('REFUND_SUPERSEDED_PAYMENT', 'REFUND_BOOKING_MODIFICATION')
 UNION ALL
 SELECT
   'manual_refund_task' AS entry_kind,
@@ -505,7 +479,7 @@ const refundState = defineDiagnosticsTool<PaymentIdArgs>({
   id: DIAGNOSTICS_PAYMENT_REFUND_STATE_TOOL_ID,
   source: "select_only_sql",
   label: "Refund state for a payment",
-  description: `Returns every refund record attached to ONE payment, newest first, keeping FOUR different things apart that people all call "the refund". refund_appeal is the member ASKING (PENDING means undecided; approving it does not itself move money). refund_execution is this platform's queued undertaking to refund at Stripe (PENDING or PROCESSING means the money has NOT moved; FAILED at 5 attempts is exhausted and needs an administrator). stripe_refund is a refund Stripe actually performed, with its own id, amount, currency and Stripe status. manual_refund_task is money a HUMAN must hand back because there is no card to refund — OPEN means somebody still owes the member. Never merge these four or report one as another. It returns no refund reasons, no admin notes and no member name. ${FINANCE_DESCRIPTION_TAIL}`,
+  description: `Returns every refund record attached to ONE payment, newest first, keeping FOUR different things apart that people all call "the refund". refund_appeal is the member ASKING (PENDING means undecided; approving it does not itself move money). refund_execution is this platform's queued undertaking to refund at Stripe (PENDING or PROCESSING means the money has NOT moved; FAILED at 5 attempts is exhausted and needs an administrator; its scenarioCode says why it was queued). ${RECOVERY_SCENARIO_GLOSS} stripe_refund is a refund Stripe actually performed, with its own id, amount, currency and Stripe status. manual_refund_task is money a HUMAN must hand back because there is no card to refund — OPEN means somebody still owes the member. scenarioCode on the other kinds is a fixed label, not a diagnosis: hand_back_required on a manual_refund_task (a person must hand the money back), member_requested on a refund_appeal (the member asked for the refund), and null on a stripe_refund. Never merge these four or report one as another. It returns no refund reasons, no admin notes and no member name. ${FINANCE_DESCRIPTION_TAIL}`,
   requiredAreas: ["finance"],
   evidenceScope: `Refund records for ONE payment, at most ${REFUND_STATE_ROW_LIMIT}, newest first. amountCents means the refunded amount on a stripe_refund, the queued amount on a refund_execution, the amount owed on a manual_refund_task, and the amount REQUESTED on a refund_appeal — where secondaryAmountCents is the amount approved. currencyCode is stored only on a Stripe refund; it is never null on a Stripe refund and is the currency Stripe actually refunded in, which is the original charge's own and may differ from the club's current currency. A booking whose payment was settled by hand has no Stripe leg, so its refund appears as a manual_refund_task and NOT as a stripe_refund. An empty result means EITHER that no payment with that id exists OR that the payment exists and no refund of any of the four kinds was ever recorded against it — this tool cannot tell those apart, and a booking id looks exactly like a payment id, so confirm the id with the payment search or the payment summary before reporting that no refund happened. ${STORED_EVIDENCE_DISCLOSURE}`,
   argsSchema: paymentIdArgsSchema,
@@ -1095,7 +1069,7 @@ const FINANCE_AUDIT_ROW_LIMIT = 18;
  * THE CATEGORY FILTER IS THE PERMISSION BOUNDARY, and it carries AID-6A's
  * disclosure with it: an audit row written with NO category is matched by nothing
  * here. #2581's second child classified all 82 previously-uncategorised write
- * sites at the source, so the census now reads 501 write sites and ZERO
+ * sites at the source, so the census now reads 520 write sites and ZERO
  * uncategorised (`scripts/audit/audit-writer-census-manifest.ts`, pinned by
  * `src/lib/__tests__/audit-writer-census.test.ts`) and no NEW row is born
  * invisible here. The gap has stopped growing, not closed: every row written

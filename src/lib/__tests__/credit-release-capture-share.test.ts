@@ -1,0 +1,70 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import { CREDIT_RELEASE_ASK_REASON } from "@/lib/credit-release-ask-keys";
+
+const mocks = vi.hoisted(() => ({ prisma: {} }));
+vi.mock("@/lib/prisma", () => ({ prisma: mocks.prisma }));
+
+import { readCreditReleaseCaptureShare } from "@/lib/credit-release-capture-share";
+
+/*
+  #4253 (`INV-ADDPAY-046`): how much of one capture the credit-release sweep records, so the
+  capture's receipt writer records only the rest. Synthetic amounts only.
+*/
+
+const store = { paymentTransaction: { findUnique: vi.fn(), findMany: vi.fn() } };
+const ask = (over: Record<string, unknown>) => ({
+  id: "row",
+  source: "STRIPE",
+  status: "PENDING",
+  reason: CREDIT_RELEASE_ASK_REASON,
+  amountCents: 4_000,
+  carriedAskCents: 0,
+  withdrawnAt: null,
+  stripePaymentIntentId: "pi_release",
+  ...over,
+});
+
+describe("readCreditReleaseCaptureShare", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    store.paymentTransaction.findUnique.mockResolvedValue({ paymentId: "pay-1" });
+    store.paymentTransaction.findMany.mockResolvedValue([]);
+  });
+
+  it("is nothing for an intent the ledger does not know", async () => {
+    store.paymentTransaction.findUnique.mockResolvedValue(null);
+    await expect(readCreditReleaseCaptureShare("pi_x", store as never)).resolves.toEqual({ ownCents: 0, held: false });
+    expect(store.paymentTransaction.findMany).not.toHaveBeenCalled();
+  });
+
+  it("is the whole capture where a release request was paid itself", async () => {
+    store.paymentTransaction.findMany.mockResolvedValue([ask({ id: "r1", status: "SUCCEEDED" })]);
+    await expect(readCreditReleaseCaptureShare("pi_release", store as never)).resolves.toEqual({ ownCents: 4_000, held: false });
+  });
+
+  it("is only the release's own money where a later edit request absorbed it", async () => {
+    store.paymentTransaction.findMany.mockResolvedValue([
+      ask({ id: "r1" }),
+      ask({ id: "r2", reason: "edit_price_increase", amountCents: 6_500, carriedAskCents: 4_000, status: "SUCCEEDED", stripePaymentIntentId: "pi_edit" }),
+    ]);
+    await expect(readCreditReleaseCaptureShare("pi_edit", store as never)).resolves.toEqual({ ownCents: 4_000, held: false });
+  });
+
+  it("is nothing for a capture that collected no released credit", async () => {
+    store.paymentTransaction.findMany.mockResolvedValue([
+      ask({ id: "r1", reason: "edit_price_increase", status: "SUCCEEDED", stripePaymentIntentId: "pi_edit" }),
+    ]);
+    await expect(readCreditReleaseCaptureShare("pi_edit", store as never)).resolves.toEqual({ ownCents: 0, held: false });
+  });
+
+  it("is held, and records nothing, for a partly refunded capture", async () => {
+    store.paymentTransaction.findMany.mockResolvedValue([ask({ id: "r1", status: "PARTIALLY_REFUNDED" })]);
+    await expect(readCreditReleaseCaptureShare("pi_release", store as never)).resolves.toEqual({ ownCents: 0, held: true });
+  });
+
+  it("reads the payment's ADDITIONAL rows only", async () => {
+    await readCreditReleaseCaptureShare("pi_release", store as never);
+    expect(store.paymentTransaction.findMany.mock.calls[0]![0].where).toEqual({ paymentId: "pay-1", kind: "ADDITIONAL" });
+  });
+});

@@ -3,6 +3,7 @@
 import "@testing-library/jest-dom/vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { expectToHoldFocus } from "@/lib/__tests__/helpers/focus";
 
 // #2307 — the Member guests settings card on Admin › Bookings setup (owner
 // decisions MG2-M-1 and MG2-M-4 as ticked). Three honest states: normal
@@ -219,6 +220,26 @@ describe("MemberGuestSettingsCard", () => {
     );
     // Still fully configurable: Edit is a live control.
     expect(screen.getByRole("button", { name: "Edit" })).toBeEnabled();
+  });
+
+  it("Edit lands on the radio Tab would, the checked one, when \"Just tell them\" is saved (#4115)", async () => {
+    fetchMock.mockImplementation(async () =>
+      jsonResponse({
+        ...PAYLOAD,
+        settings: { ...PAYLOAD.settings, approvalRequired: false },
+      }),
+    );
+    await renderCard();
+    const justTell = screen.getByRole("radio", { name: /Just tell them/ });
+    await waitFor(() => expect(justTell).toBeChecked());
+
+    const edit = screen.getByRole("button", { name: "Edit" });
+    edit.focus();
+    fireEvent.click(edit);
+
+    // "Ask them first" comes first in the document, but Tab skips an
+    // unchecked radio whose group has a checked one — so does the reveal.
+    await expectToHoldFocus(justTell);
   });
 
   it("saves the whole form once Edit is opened, and re-seeds from the response", async () => {

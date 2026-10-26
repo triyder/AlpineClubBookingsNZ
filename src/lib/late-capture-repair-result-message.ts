@@ -1,4 +1,39 @@
+import type { ClubFormat } from "@/lib/club-format";
 import type { RepairedLateCaptureXeroOutcome } from "@/lib/late-capture-repair-refund-record";
+import { isRefusedRefundStatus, refusedRefundAnswerCents } from "@/lib/payment-transaction-status";
+import { refusedRefundMessage } from "@/lib/refused-card-refund-retry";
+
+/**
+ * #4103 (`INV-PAY-130`): the refunds Stripe made. A refused one (`failed` or
+ * `canceled`) sent nothing back, so it is never recorded or noted as refunded.
+ * Each refund carries Stripe's status (`refundPaymentTransactions`); one with
+ * none counts as made, as the ledger counts it.
+ */
+export function madeRepairRefunds<T extends { paymentIntentId: string; status?: string | null }>(refunds: ReadonlyArray<T>): T[] {
+  return refunds.filter((refund) => !isRefusedRefundStatus(refund.status));
+}
+
+/**
+ * #4103: the failed action's message when Stripe refused part of the repair's
+ * refund - what was made and recorded, then what was refused - or null when
+ * nothing was refused. A re-run asks again under a fresh key, read from the
+ * refusals recorded (`sliceAfterRecordedRefusals`).
+ */
+export function describeRefusedRepairedLateCaptureRefund(
+  refunds: ReadonlyArray<{ paymentIntentId: string; refundId?: string | null; amountCents: number; status?: string | null }>,
+  xero: RepairedLateCaptureXeroOutcome,
+  format: ClubFormat,
+): string | null {
+  const refusedCents = refusedRefundAnswerCents(refunds);
+  if (refusedCents <= 0) return null;
+  const made = madeRepairRefunds(refunds);
+  return [
+    made.length > 0 ? describeRepairedLateCaptureRefund(made, xero) : "",
+    `${refusedRefundMessage(refusedCents, format)} That money is still with the club: run the repair again to ask Stripe again, or refund it in the Stripe dashboard.`,
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
 
 /**
  * #3635 (N4): the operator's result message for a repaired late-capture

@@ -6,12 +6,17 @@ import type Stripe from "stripe";
 import type { AdditionalAsk } from "@/lib/additional-payment-ask";
 import { queueSupersededAdditionalIntentCancellations } from "@/lib/booking-payment-cleanup";
 import type { ClubFormat } from "@/lib/club-format";
+import logger from "@/lib/logger";
+import { ADDITIONAL_ASK_INTENT_TYPE } from "@/lib/ordinary-ask-request";
 import { stripeIdempotencyKeyForAskAmount } from "@/lib/payment-recovery-keys";
+import { staleIntentAction } from "@/lib/stale-intent-action";
+import { prisma } from "@/lib/prisma";
 import {
   reconcilePaymentAggregates,
   upsertPaymentIntentTransaction,
 } from "@/lib/payment-transactions";
 import { createPaymentIntent, getPaymentIntent } from "@/lib/stripe";
+import { bookingEndedBeforeAskMint, retireAskOnEndedBooking } from "@/lib/ended-booking-ask-guard";
 import { stripeChargeCurrency } from "@/lib/stripe-charge-currency";
 
 /**
@@ -31,33 +36,6 @@ export function intentCurrencyDiffers(
 }
 
 /**
- * What may be done with an intent in another currency (#3567 re-review), read
- * off Stripe's status — never assumed from the ledger, which lags the webhook:
- *
- * - `reissue`: the member has not paid (`requires_payment_method`,
- *   `requires_confirmation`, `requires_action`). Superseding it is safe.
- * - `in_flight`: `succeeded` or `processing` — the member HAS paid, or is paying,
- *   and the webhook has not landed yet (a 3DS return, a refresh). Re-issuing
- *   would queue the paid intent for cancellation, whose processor finds it
- *   captured and REFUNDS it, and then ask the member to pay again.
- * - `gone`: `canceled` (or `requires_capture`, which this product never asks
- *   for) — nothing to hand back and nothing to re-issue.
- */
-export type StaleIntentAction = "reissue" | "in_flight" | "gone";
-
-const REISSUABLE_STATUSES: ReadonlySet<string> = new Set([
-  "requires_payment_method",
-  "requires_confirmation",
-  "requires_action",
-]);
-
-export function staleIntentAction(intent: Pick<Stripe.PaymentIntent, "status">): StaleIntentAction {
-  if (REISSUABLE_STATUSES.has(intent.status)) return "reissue";
-  if (intent.status === "succeeded" || intent.status === "processing") return "in_flight";
-  return "gone";
-}
-
-/**
  * Re-issue an outstanding ADDITIONAL ask on a new intent in the club's current
  * currency, and supersede the old one — the same three steps, in the same order,
  * as `createModificationAdditionalPaymentIntent`:
@@ -66,12 +44,20 @@ export function staleIntentAction(intent: Pick<Stripe.PaymentIntent, "status">):
  *    the new currency and the amount, so a retry converges on the same new
  *    intent and never collides with the key that minted the old one;
  * 2. write the new intent's ADDITIONAL row FIRST, carrying the same `reason` (a
- *    review-charge request is found by it) and the same carried balance;
+ *    review-charge request is found by it) and the same carried balance - and
+ *    the stale row's provenance (#3954 round 8): its edit's invoice answer and
+ *    the edit itself, which a later reduction reads off the live row;
  * 3. queue every other live ADDITIONAL intent on the payment for cancellation,
  *    which excludes the new one by id, then reconcile the payment so its
  *    additional pointer names the new intent.
  *
  * Stripe calls happen outside any transaction; nothing here takes a lock.
+ *
+ * #4316 (`INV-ADDPAY-044`): it is a mint like the door's, so it runs the door's
+ * two checks. A booking ended (CANCELLED or BUMPED) before the mint gets no new
+ * intent; one ended by a cancel that landed before the row write has the new
+ * intent retired as the cancel retires one. Either way it returns `null`, and
+ * nothing is offered.
  */
 export async function reissueAdditionalIntentInClubCurrency({
   format,
@@ -89,7 +75,8 @@ export async function reissueAdditionalIntentInClubCurrency({
   ask: AdditionalAsk;
   reason: string | null;
   customerId: string | null;
-}): Promise<Stripe.PaymentIntent> {
+}): Promise<Stripe.PaymentIntent | null> {
+  if (await bookingEndedBeforeAskMint(bookingId, null)) return null;
   const currency = stripeChargeCurrency(format);
   const pi = await createPaymentIntent({
     format,
@@ -97,7 +84,7 @@ export async function reissueAdditionalIntentInClubCurrency({
     customerId: customerId ?? undefined,
     metadata: {
       bookingId,
-      type: "modification_additional",
+      type: ADDITIONAL_ASK_INTENT_TYPE,
       reason: reason ?? "modification_additional_currency_reissue",
     },
     idempotencyKey: stripeIdempotencyKeyForAskAmount(
@@ -105,6 +92,22 @@ export async function reissueAdditionalIntentInClubCurrency({
       ask.amountCents,
     ),
   });
+  // #3954 round 8: the same ask, so the same provenance. Read off the stale
+  // row - which the supersede below retires - before the new row is written.
+  // Best-effort: a failed read leaves both unrecorded, which a later
+  // reduction reads as unsure (reported for a person), never as a guess.
+  let stale: { hadIssuedXeroInvoice: boolean | null; bookingModificationId: string | null } | null = null;
+  try {
+    stale = await prisma.paymentTransaction.findUnique({
+      where: { stripePaymentIntentId: staleIntentId },
+      select: { hadIssuedXeroInvoice: true, bookingModificationId: true },
+    });
+  } catch (err) {
+    logger.warn(
+      { err, bookingId, staleIntentId },
+      "Could not read a stale additional ask's provenance for its currency re-issue (#3954); the re-issue records none",
+    );
+  }
   await upsertPaymentIntentTransaction({
     paymentId,
     kind: PaymentTransactionKind.ADDITIONAL,
@@ -114,6 +117,8 @@ export async function reissueAdditionalIntentInClubCurrency({
     status: PaymentStatus.PENDING,
     reason: reason ?? undefined,
     stripeCustomerId: customerId,
+    ...(stale?.hadIssuedXeroInvoice != null ? { hadIssuedXeroInvoice: stale.hadIssuedXeroInvoice } : {}),
+    ...(stale?.bookingModificationId ? { bookingModificationId: stale.bookingModificationId } : {}),
   });
   await queueSupersededAdditionalIntentCancellations({
     format,
@@ -122,6 +127,7 @@ export async function reissueAdditionalIntentInClubCurrency({
     newPaymentIntentId: pi.id,
   });
   await reconcilePaymentAggregates({ paymentId });
+  if (await retireAskOnEndedBooking({ format, bookingId, paymentId, paymentIntentId: pi.id })) return null;
   return pi;
 }
 
@@ -133,6 +139,8 @@ export async function reissueAdditionalIntentInClubCurrency({
  * the club's currency instead, and the old one superseded. The new row keeps the
  * request's `reason`, so the next share finds it. Returns the new intent's id,
  * or `null` when the currency is unchanged and the caller raises as before.
+ * #4316: a booking that ended meanwhile THROWS, with nothing offered: the
+ * caller's debt goes to its recovery row, whose replay takes the cancelled path.
  */
 export async function reissueRaisedAskIfCurrencyChanged(params: {
   format: ClubFormat;
@@ -154,5 +162,8 @@ export async function reissueRaisedAskIfCurrencyChanged(params: {
       : live.customer.id
     : null;
   const reissued = await reissueAdditionalIntentInClubCurrency({ ...params, customerId });
+  if (!reissued) {
+    throw new Error(`Booking ${params.bookingId} ended before its review charge could be re-issued in the club's currency; nothing was offered (#4316)`);
+  }
   return reissued.id;
 }

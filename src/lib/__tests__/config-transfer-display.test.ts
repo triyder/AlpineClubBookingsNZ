@@ -123,7 +123,7 @@ function emptyTargetDb(overrides: Record<string, unknown> = {}): ReadDb {
     choreTemplate: { findMany: vi.fn().mockResolvedValue([]) },
     displayLayout: { findMany: vi.fn().mockResolvedValue([]) },
     displayTemplate: { findMany: vi.fn().mockResolvedValue([]) },
-    xeroToken: { findFirst: vi.fn().mockResolvedValue(null) },
+    xeroConnection: { findUnique: vi.fn().mockResolvedValue(null) },
     ...overrides,
   } as unknown as ReadDb;
 }

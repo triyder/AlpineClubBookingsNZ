@@ -46,8 +46,10 @@ export function LateCaptureRefundSetting({
         cancelled. By default it is refunded to the card straight away. Choose
         treasurer approval to hold it instead: it waits under Payments, in the
         refund tasks, until someone with finance access refunds it to the card
-        or keeps it with a note. This does not change what a cancellation
-        refunds.
+        or keeps it with a note. Whichever you choose, a refund the card
+        provider refuses is never treated as made: it waits there for
+        approval, or is tried again automatically. This does not change
+        what a cancellation refunds.
         {canChange === false
           ? " Only someone with finance edit access can change this setting."
           : null}

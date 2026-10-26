@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { handOffSupersededCaptureAfterRefusal } from "@/lib/superseded-paid-intent";
+import { SUPERSEDED_CHARGE_NOT_SETTLED_BODY } from "@/lib/payment-recovery-contract";
 import { bookingOwner } from "@/lib/booking-owner";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { BookingStatus, PaymentStatus } from "@prisma/client";
@@ -9,12 +11,15 @@ import { prisma } from "@/lib/prisma";
 import { stripeReferenceId } from "@/lib/stripe-references";
 import { readStripeErrorFields } from "@/lib/stripe-errors";
 import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
+import { settledByAnotherCapture } from "@/lib/duplicate-capture-outcome";
 import {
   beginSavedCardChargeAttempt,
   SAVED_CARD_CHARGE_REASON,
   SavedCardChargeRefusedError,
 } from "@/lib/saved-card-charge-attempt";
 import { chargeSavedCardAttempt } from "@/lib/saved-card-charge-request";
+import { savedCardChargeCents } from "@/lib/booking-payment-state";
+import { writeZeroWorthConfirmPayment } from "@/lib/zero-worth-confirm-payment";
 import {
   describeUnsettledPaymentIntent,
   settleSavedCardChargeAttempt,
@@ -210,7 +215,10 @@ export async function POST(
     // PENDING -> PAID (a capacity-holding status) inside that lock. The lodgeId
     // comes from the pre-lock booking snapshot; a booking never changes lodge,
     // so the lock key is stable.
-    if (booking.finalPriceCents === 0) {
+    // #4357 (`INV-PAY-119`): "nothing to charge" is decided on the booking's
+    // worth, the figure the charge branch charges - a change fee recorded on a
+    // $0 booking's payment is still owed - and re-checked under the locks.
+    if (savedCardChargeCents(booking) === 0) {
       const zeroResult = await prisma.$transaction(async (tx) => {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
         // Two-tier protocol (#1881): this branch CLAIMS capacity (PENDING -> a
@@ -228,10 +236,16 @@ export async function POST(
         // capacity-holding status (same-booking TOCTOU).
         const locked = await tx.booking.findUnique({
           where: { id: bookingId },
-          include: { guests: { include: { nights: true } } },
+          include: { guests: { include: { nights: true } }, payment: true },
         });
         if (!locked || locked.status !== BookingStatus.PENDING) {
           return { error: "Booking is no longer pending" as const, status: 409 };
+        }
+        if (savedCardChargeCents(locked) !== 0) {
+          return {
+            error: "This booking's amount changed while you were confirming it - refresh and try again." as const,
+            status: 409,
+          };
         }
 
         const { available, nightDetails } = await checkCapacityForGuestRanges(
@@ -294,6 +308,7 @@ export async function POST(
           cause: "SYSTEM_CHANGE",
           actorMemberId: session.user.id,
         });
+        await writeZeroWorthConfirmPayment(tx, bookingId);
 
         return { ok: true as const };
       });
@@ -315,11 +330,6 @@ export async function POST(
       }
 
       await settleHostingCoverageAfterCommit({ bookingId });
-      await prisma.payment.upsert({
-        where: { bookingId },
-        create: { bookingId, amountCents: 0, status: PaymentStatus.SUCCEEDED },
-        update: { amountCents: 0, status: PaymentStatus.SUCCEEDED },
-      });
       await queueXeroInvoice();
       await audit("paid_zero", false);
       if (notifyMember !== false) {
@@ -330,7 +340,7 @@ export async function POST(
           booking.checkIn,
           booking.checkOut,
           booking.guests.length,
-          booking.finalPriceCents,
+          savedCardChargeCents(booking),
           format,
           promoEmailOptions
         ).catch((err) =>
@@ -491,16 +501,19 @@ export async function POST(
       // neither launder a parent's pm nor resurrect one a concurrent
       // replacement mint just cleared.
       const rowStamp = savedPaymentMethodRowStamp(lockedCard);
+      // #4357 (`INV-PAY-119`): the booking's worth, as the cron charges it - a
+      // change fee recorded on this unsettled payment is collected too.
+      const chargeCents = savedCardChargeCents(locked);
       const payment = await tx.payment.upsert({
         where: { bookingId },
         create: {
           bookingId,
-          amountCents: locked.finalPriceCents,
+          amountCents: chargeCents,
           status: PaymentStatus.PENDING,
           ...rowStamp,
         },
         update: {
-          amountCents: locked.finalPriceCents,
+          amountCents: chargeCents,
           status: PaymentStatus.PENDING,
           ...rowStamp,
         },
@@ -508,7 +521,7 @@ export async function POST(
       const attempt = await beginSavedCardChargeAttempt(tx, {
         paymentId: payment.id,
         bookingId,
-        amountCents: locked.finalPriceCents,
+        amountCents: chargeCents,
         card: lockedCard,
         reason: SAVED_CARD_CHARGE_REASON.adminConfirmPendingGuests,
       });
@@ -517,7 +530,7 @@ export async function POST(
         paymentId: payment.id,
         attempt,
         card: lockedCard,
-        amountCents: locked.finalPriceCents,
+        amountCents: chargeCents,
       };
     });
 
@@ -539,11 +552,13 @@ export async function POST(
           },
           "Admin confirm-pending-guests: refused to charge (#3267)"
         );
+        // #4300: a superseded capture with no refund started yet is handed off now.
+        await handOffSupersededCaptureAfterRefusal(claimErr);
         sendAdminPaymentFailureAlert({
           memberName: `${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`,
           checkIn: booking.checkIn,
           checkOut: booking.checkOut,
-          amountCents: booking.finalPriceCents,
+          amountCents: savedCardChargeCents(booking),
           errorMessage: claimErr.message,
           paymentIntentId: claimErr.paymentIntentId ?? "N/A",
         }, format).catch((alertErr) =>
@@ -750,21 +765,20 @@ export async function POST(
 
     const paymentMethodId = stripeReferenceId(paymentIntent.payment_method);
 
-    // Durably record the captured charge BEFORE reconciliation (#1418).
-    // markBookingPaymentSucceeded writes this same PRIMARY transaction inside
-    // its own transaction, so a throw there rolls the row back — and the
-    // payment_intent.succeeded webhook refuses to act without it ("no primary
-    // payment transaction"), which is exactly how captured money used to go
-    // silent. With the row committed here, the webhook can always finish the
-    // promotion (or route a cancelled booking through the #1350 refund guard).
-    // Since #3267 the row already exists (the attempt); this stamps the intent
-    // and SUCCEEDED onto it.
+    // Durably record the captured charge BEFORE reconciliation (#1418). markBookingPaymentSucceeded writes this
+    // same PRIMARY transaction inside its own transaction, so a throw there rolls the row back — and the
+    // payment_intent.succeeded webhook refuses to act without it ("no primary payment transaction"), which is
+    // exactly how captured money used to go silent. With the row committed here, the webhook can always finish
+    // the promotion (or route a cancelled booking through the #1350 refund guard). Since #3267 the row already
+    // exists (the attempt); this stamps the intent and SUCCEEDED onto it, and (#4285 review) `newlyCaptured`
+    // tells the settle it is new money, not a replay.
+    let recordedByCaller = false;
     try {
-      await settleSavedCardChargeAttempt({
+      ({ newlyCaptured: recordedByCaller } = await settleSavedCardChargeAttempt({
         attemptRowId: claim.attempt.attemptRowId,
         paymentId: claim.paymentId,
         paymentIntent,
-      });
+      }));
     } catch (recordErr) {
       // Non-fatal: reconciliation below upserts the identical row.
       logger.error(
@@ -777,7 +791,7 @@ export async function POST(
     try {
       reconciliation = await markBookingPaymentSucceeded({
         format,
-        bookingId,
+        bookingId, recordedByCaller,
         paymentIntentId: paymentIntent.id,
         amountCents: paymentIntent.amount,
         paymentMethodId,
@@ -842,10 +856,14 @@ export async function POST(
       );
     }
 
-    if (
-      reconciliation.outcome === "duplicate_capture_refunded" ||
-      reconciliation.outcome === "duplicate_capture_refund_failed"
-    ) {
+    // #4300 (`INV-PAY-138`): superseded, so going back; nothing paid, so the claim is released.
+    if (reconciliation.outcome === "superseded_capture") {
+      await releaseChargeClaim().catch((err) => logger.error({ err, bookingId }, "Could not release the claim of a refused superseded charge (#4300)"));
+      await audit("charged_superseded_capture", true);
+      return NextResponse.json(SUPERSEDED_CHARGE_NOT_SETTLED_BODY, { status: 409 });
+    }
+
+    if (settledByAnotherCapture(reconciliation.outcome)) {
       // #1992 — the booking had ALREADY been settled by a different capture
       // (e.g. the member paid an in-flight /pay link intent in the same
       // window), so the charge this route just made was duplicate money. The
@@ -860,13 +878,15 @@ export async function POST(
       return NextResponse.json({
         success: true,
         status: "PAID",
-        charged: false,
+        charged: reconciliation.outcome === "duplicate_capture_kept", // #4211: kept, so it stands charged
         duplicateChargeRefunded:
           reconciliation.outcome === "duplicate_capture_refunded",
         message:
           reconciliation.outcome === "duplicate_capture_refunded"
             ? "The booking was already paid by another payment; this duplicate charge was automatically refunded in full."
-            : "The booking was already paid by another payment; the refund of this duplicate charge failed inline and has been queued for automatic retry. Admins have been alerted.",
+            : reconciliation.outcome === "duplicate_capture_kept"
+              ? "The booking was already paid by another payment, and the app cannot tell which of the payments to keep, so this charge was kept and nothing was refunded. Admins have been asked to check by hand."
+              : "The booking was already paid by another payment; the refund of this duplicate charge failed inline and has been queued for automatic retry. Admins have been alerted.",
       });
     }
 
@@ -904,7 +924,7 @@ export async function POST(
         booking.checkIn,
         booking.checkOut,
         booking.guests.length,
-        booking.finalPriceCents,
+        claim.amountCents,
         format,
         promoEmailOptions
       ).catch((err) =>

@@ -52,25 +52,30 @@ import {
 import type { PromoCoverageNotice } from "@/lib/promo-cap-coverage";
 import { ApiError as SharedApiError } from "@/lib/api-error";
 import { ORGANISER_CHILD_CHARGE_REFUSAL, paidByOrganiserCard } from "@/lib/group-organiser-paid";
+import { refuseOrganiserBankChildPriceChangeInGroupCancel } from "@/lib/group-cancel-in-progress";
 import { logAudit } from "@/lib/audit";
 import { sendBookingModifiedEmail } from "@/lib/email";
 import { bookingHasOpenFinancialReview } from "@/lib/booking-financial-review-visibility";
 import {
-  preCheckInEditEvidence,
-  preCheckInEditStrands,
-} from "@/lib/stored-sold-price-evidence";
+  editedBookingTotalCents,
+  refuseNegativeStoredGuestTotals,
+  valuedNightLocksForGuest,
+  withUnattachedStrandMoney,
+} from "@/lib/edit-night-valuation";
 import {
   assertNoPendingEditFinancialReview,
   EditFinancialReviewPendingError,
 } from "@/lib/edit-financial-review";
-import { raiseParkedEditFinancialReviewTasks } from "@/lib/edit-financial-review-parked-raise";
 import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
 import {
   NO_ADDITIONAL_ASK,
   sizeAdditionalAsk,
   type AdditionalAsk,
 } from "@/lib/additional-payment-ask";
-import { createModificationAdditionalPaymentIntent } from "@/lib/booking-modification-settlement";
+import { foldWaitingReissuedAsks } from "@/lib/additional-ask-reissue";
+import { NO_FOLDED_REISSUED_ASKS, NO_UNPAID_ASK_SETTLEMENT, unpaidAskOffsetHistory, type FoldedReissuedAsks } from "@/lib/unpaid-ask-offset-marker";
+import { primaryInvoiceSettlementHistory, writeEditOnPayment } from "@/lib/booking-primary-invoice-claim";
+import { additionalAmountToName, createModificationAdditionalPaymentIntent } from "@/lib/booking-modification-settlement";
 import logger from "@/lib/logger";
 import { requiredNightPriceCents } from "@/lib/required-price-cents";
 import { z } from "zod";
@@ -118,16 +123,12 @@ import {
   getBookingEditPolicy,
 } from "@/lib/booking-edit-policy";
 import {
+  canAskCardForIncrease,
   hasIssuedPrimaryXeroInvoice,
-  isCapturedPaymentStatus,
-  isSettledBookingStatus,
 } from "@/lib/booking-payment-state";
 import { clubTime } from "@/lib/club-time/server";
 import { dateOnlyInstantOf } from "@/lib/club-time";
-import {
-  assertBookingNotQuotePriced,
-  lockedNightPricesForGuest,
-} from "@/lib/booking-modify";
+import { assertBookingNotQuotePriced } from "@/lib/booking-modify";
 import { reconcileBedAllocationsForBookingWithGlobalLockHeld } from "@/lib/bed-allocation-lifecycle";
 import {
   hostingCoverageActorOptions,
@@ -158,10 +159,10 @@ import { computeModificationPricing } from "@/lib/booking-modification-pricing";
 import {
   loadModificationLinesAuditFields,
   pricingSideFromStoredGuests,
-  pricingSideFromWrittenGuests,
 } from "@/lib/booking-modification-lines";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { lodgeGuestLimitMessage } from "@/lib/lodge-booking-readiness";
+import { GUEST_CHANGE_LIST_BOUND } from "@/lib/booking-guest-stay-range-input";
 
 const addGuestsSchema = z.object({
   guests: z
@@ -174,8 +175,7 @@ const addGuestsSchema = z.object({
         memberId: z.string().min(1).optional(),
       })
     )
-    .min(1)
-    .max(200),
+    .min(1).max(...GUEST_CHANGE_LIST_BOUND),
   // #1769b (#1705 semantics): per-action member-email choice on this
   // dual-actor route. Absent = notify (default); false suppresses the
   // booking-modified email. Only an admin actor may carry it (403 gate
@@ -236,7 +236,7 @@ export async function POST(
   // No party-size check here (#3407 review): the booking, and so its lodge, is
   // not loaded yet, so the only capacity at hand would be the DEFAULT lodge's,
   // which can only refuse wrongly at another lodge. The payload is bounded by
-  // the schema's `.max(200)`; the real rule is the per-lodge check inside the
+  // the schema's `GUEST_CHANGE_LIST_BOUND`; the real rule is the per-lodge check inside the
   // transaction below, under the lodge's capacity lock.
   const { guests: newGuests } = parsed.data;
 
@@ -577,9 +577,9 @@ export async function POST(
         booking.checkOut,
         [
           ...booking.guests,
-          ...normalizedNewGuests.map(() => ({
-            stayStart: booking.checkIn,
-            stayEnd: booking.checkOut,
+          ...normalizedNewGuests.map((guest) => ({
+            stayStart: booking.checkIn, stayEnd: booking.checkOut,
+            memberId: guest.memberId ?? null,
           })),
         ],
         bookingId,
@@ -632,9 +632,10 @@ export async function POST(
           stayStart: g.stayStart,
           stayEnd: g.stayEnd,
           nights: g.nights && g.nights.length > 0 ? g.nights : null,
-          // Existing guests keep their booked nightly prices (#1036): adding
-          // a guest must cost exactly the added guest's own price.
-          lockedNightPrices: lockedNightPricesForGuest(g),
+          // Existing guests keep their valued nightly prices (#1036, #4317
+          // `INV-MOD-028`): adding a guest must cost exactly the added guest's
+          // own price, so every night already held is locked.
+          ...valuedNightLocksForGuest(g, booking),
         })),
         ...newGuestInputs,
       ];
@@ -689,55 +690,11 @@ export async function POST(
           400
         );
       }
-
-      /**
-       * #3166 (epic #2797): THE FOURTH EDIT DOOR, and the reason it needed the
-       * same gate as the other three.
-       *
-       * This route does NOT rewrite an existing strand's night rows, so it is
-       * not the write-back mechanism the epic is mostly about. What it does is
-       * recompute `Booking.totalPriceCents` from a FULL-PARTY pass in which
-       * every existing strand is priced through the LENIENT reader — so a night
-       * whose stored price is blank prices at today's rate, lands in the new
-       * total, and the difference is charged to (or refunded from) the member
-       * as an "additional amount" for a night nobody added.
-       *
-       * Worked through: a strand holding two nights, one stored at $25 and one
-       * blank, with a stored total of $50. Add a guest. The blank night reprices
-       * at today's $75, so the strand contributes $100 instead of $50 and the
-       * member is billed $50 more than the guest they actually added. #3170 is
-       * what makes a blank storable, so this became reachable in the same
-       * release and could not be left for a later one.
-       *
-       * It PARKS, exactly as the batch edit, the date change and the guest
-       * removal do: the guests are created and charged nothing, the booking's
-       * own totals do not move, and ONE OPEN task for the whole add (#3498) asks
-       * a person what this booking is really worth.
-       */
-      const addEvidence = preCheckInEditEvidence({
-        bookingId,
-        booking: { checkIn: booking.checkIn, checkOut: booking.checkOut },
-        // THE SAME ASSEMBLY the modify save, preview and date change use
-        // (`INV-SSOT`). This route changes nobody's nights and removes nobody,
-        // so each strand ends the edit holding exactly the nights the
-        // full-party pass just priced it over.
-        strands: preCheckInEditStrands({
-          bookingGuests: booking.guests,
-          guestsForPricing: booking.guests.map((guest) => ({
-            bookingGuestId: guest.id,
-          })),
-          pricedGuests: fullPriceBreakdown.guests,
-        }),
-      });
-      /**
-       * True when an existing strand's own history cannot account for the
-       * booking's money. From here it withholds every money decision and
-       * nothing else: the guests are still created, still priced at what they
-       * are genuinely being sold for, and still get real night rows — that money
-       * is known. What does not happen is a reprice of the booking, a promotion
-       * recalculation, or an additional charge.
-       */
-      const parked = addEvidence.occurrences !== null;
+      // #4317 (D11, review M2): a negative stored guest total, which the
+      // database forbids, refuses the add; nothing has been written yet.
+      refuseNegativeStoredGuestTotals(logger, { bookingId, site: "guests-add" }, booking.guests);
+      // #4317: a strand holding no night keeps its stored total on itself.
+      fullPriceBreakdown = withUnattachedStrandMoney(fullPriceBreakdown, allGuestsForPricing);
 
       /**
        * The breakdown row for one position of the party pass.
@@ -873,14 +830,10 @@ export async function POST(
         ...newGuestNightRates,
       ];
 
-      // #3166: on a parked add the booking's stored total is written back
-      // unchanged. The guests created above carry their own real prices; what
-      // the booking as a whole is now worth is the question the OPEN task exists
-      // to answer, and a number here would be this route's one chance to answer
-      // it wrongly.
-      const newTotalPriceCents = parked
-        ? booking.totalPriceCents
-        : fullPriceBreakdown.totalPriceCents;
+      // #4317: every existing night is locked at its valued figure, so the
+      // headline moves by exactly the added guests (`INV-MOD-028`), carrying any
+      // gap a parked edit froze into it (review H1, `editedBookingTotalCents`).
+      const newTotalPriceCents = editedBookingTotalCents(booking, fullPriceBreakdown.totalPriceCents);
 
       // Recalculate promo discount
       let newDiscountCents = 0;
@@ -892,15 +845,7 @@ export async function POST(
       // booking carries none.
       let adjustmentTargets: PromoAdjustmentTarget[] = [];
 
-      if (parked) {
-        // The booking's stored promotion figures, written back untouched. A
-        // parked add re-runs no cap and re-allocates nothing — the discount is a
-        // function of a price nobody has worked out yet, and the per-night rates
-        // a cap would read include today's rate for a night this booking cannot
-        // account for.
-        newDiscountCents = booking.discountCents;
-        newPromoAdjustmentCents = booking.promoAdjustmentCents;
-      } else if (promoRedemptions.length > 0) {
+      if (promoRedemptions.length > 0) {
         // #3827: every code the booking carries, through the one re-price,
         // which row-locks each code and re-reads its usage counter before the
         // caps are checked (#2299, INV-MONEY-023). Adding a member guest to an
@@ -933,30 +878,21 @@ export async function POST(
       // #3276: after the last night write and the promotion write, record what
       // the promotion took off every night of every guest the engine priced —
       // the existing guests included, since it re-decided the whole booking.
-      // A PARKED add re-ran nothing, so its new nights stay UNKNOWN.
-      if (!parked) {
-        await recordBookingNightAdjustments(tx, {
-          format,
-          bookingId,
-          guestIds: guestNightRates.map((guest) => guest.bookingGuestId),
-          targets: adjustmentTargets,
-          writer: "the add-guest route",
-        });
-      }
+      await recordBookingNightAdjustments(tx, {
+        format,
+        bookingId,
+        guestIds: guestNightRates.map((guest) => guest.bookingGuestId),
+        targets: adjustmentTargets,
+        writer: "the add-guest route",
+      });
 
-      // #3166: the booking's own stored final price on a parked add, written
-      // back rather than recomposed from the parked figures. The two agree by
-      // construction today, and deriving it would make this line quietly depend
-      // on that agreement holding — `priceDiffCents` is what decides whether an
-      // additional charge is raised below, and it must be zero because the
-      // booking did not move, not because two expressions happened to cancel.
-      const newFinalPriceCents = parked
-        ? booking.finalPriceCents
-        : bookingFinalPriceCents({
-            totalPriceCents: newTotalPriceCents,
-            promoAdjustmentCents: newPromoAdjustmentCents,
-          });
+      const newFinalPriceCents = bookingFinalPriceCents({
+        totalPriceCents: newTotalPriceCents,
+        promoAdjustmentCents: newPromoAdjustmentCents,
+      });
       const priceDiffCents = newFinalPriceCents - booking.finalPriceCents;
+      // #3949 review round 6: settling itself (not through `applyPaymentAdjustments`), it asks the same refusal here.
+      await refuseOrganiserBankChildPriceChangeInGroupCancel(tx, booking, { priceDiffCents, changeFeeCents: 0 });
 
       // Update hasNonMembers
       const addingNonMembers = normalizedNewGuests.some((g) => !g.isMember);
@@ -998,6 +934,7 @@ export async function POST(
       // minting it will absorb. Zero here never mints, so the Xero-only and
       // nothing-owed endings below are safe without remembering to say so.
       let additionalAsk: AdditionalAsk = NO_ADDITIONAL_ASK;
+      let foldedReissuedAsks: FoldedReissuedAsks = NO_FOLDED_REISSUED_ASKS;
       /**
        * #3200: "has the main Xero invoice already been raised?" is asked at four
        * edit doors and DEFINED in one — `hasIssuedPrimaryXeroInvoice`
@@ -1020,28 +957,16 @@ export async function POST(
        * count as paid, so the difference is charged instead of collected from
        * nobody — the reachable defect this issue was filed for.
        *
-       * It asks `isCapturedPaymentStatus`, the STATUS half, rather than the
-       * full `hasCapturedPayment` the other three doors use. That is deliberate
-       * and it is the one place this door differs from them. The full predicate
-       * also requires `amountCents > 0`, and a ZERO-DOLLAR booking — a stay
-       * fully covered by credit or a 100% promo — carries
-       * `{ amountCents: 0, status: SUCCEEDED }`. Using it here would have made
-       * this door stop asking that member for the added guest's price, because
-       * the Xero arm below cannot cover them at a club with the integration off.
-       * That is a NEW under-collection, at the very door this issue exists to
-       * stop under-collecting at, and it was never put to the owner.
-       *
-       * The money IS collectable: the additional-payment mint creates a FRESH
-       * intent and only reuses the Stripe customer (`findOrCreateCustomer` when
-       * there is none), so a null `stripePaymentIntentId` on the zero-dollar row
-       * is no obstacle. The other three doors share that hole; converging onto
-       * it would have been converging onto a defect. Filed separately.
+       * A guest add only ever raises the price, so this door asks the
+       * INCREASE question, `canAskCardForIncrease` — the status half of
+       * `hasCapturedPayment`, without its `amountCents > 0` clause, so a
+       * ZERO-DOLLAR booking (a stay fully covered by credit or a 100% promo,
+       * `{ amountCents: 0, status: SUCCEEDED }`) is still asked for the added
+       * guest's price whether or not Xero is connected. #3502 (owner decision,
+       * 6 Oct 2026) moved the other three doors onto the same answer through
+       * `applyPaymentAdjustments`; this door used to hold its own copy of it.
        */
-      const hasSettledPayment =
-        isSettledBookingStatus(booking.status) &&
-        isCapturedPaymentStatus(booking.payment?.status ?? "");
-      const hasSucceededPayment =
-        hasSettledPayment && booking.payment?.source === PaymentSource.STRIPE;
+      const hasSucceededPayment = canAskCardForIncrease(booking);
       const hasIssuedXeroInvoice = hasIssuedPrimaryXeroInvoice(booking);
 
       /**
@@ -1078,17 +1003,25 @@ export async function POST(
         // exactly as `applyPaymentAdjustments` refuses the other doors' asks.
         throw new ApiError(ORGANISER_CHILD_CHARGE_REFUSAL, 409);
       } else if (hasSucceededPayment && priceDiffCents > 0) {
+        // #3954: a waiting re-issue joins this ask, its recovery closed and the
+        // fold recorded on this edit's history so its replay asks again.
+        foldedReissuedAsks = await foldWaitingReissuedAsks(tx, booking);
         additionalAsk = sizeAdditionalAsk({
           priceDiffCents,
           // A guest add never charges one; the route passes 0 to the Xero
           // settlement and to the member's email for the same reason.
           changeFeeCents: 0,
           payment: booking.payment,
+          waitingReissuedAskCents: foldedReissuedAsks.cents,
         });
         additionalAmountCents = additionalAsk.amountCents;
       } else if (hasIssuedXeroInvoice && priceDiffCents > 0) {
         additionalAmountCents = priceDiffCents;
       }
+
+      // #3980 (`INV-PAY-136`): this door settles for itself, so it makes the edits'
+      // one payment write itself (no fee: an add charges none); 409 if the link moved.
+      const settledAgainstPrimaryInvoice = await writeEditOnPayment(tx, { payment: booking.payment, changeFeeCents: 0 });
 
       // This route only adds guests, so the no-adult rule can only change
       // from flagged → cleared (by adding an adult). When that happens, wipe
@@ -1163,11 +1096,9 @@ export async function POST(
        * #3530: the lines behind `priceDiffCents`. BEFORE is the guest snapshot
        * this transaction loaded, in memory; AFTER is the guest rows the add has
        * just WRITTEN, re-read here so the new guests' identity, category, rate
-       * and night prices are exactly what landed. A parked add stores none.
+       * and night prices are exactly what landed.
        */
-      const { priceLines, sides: pricingSides } = parked
-        ? { priceLines: null, sides: null }
-        : await computeModificationPricing(
+      const { priceLines, sides: pricingSides } = await computeModificationPricing(
             { bookingId, site: "guest-add", promoCodes: { store: tx, before: booking } },
             async () => {
               // The re-read is narration's own I/O and runs INSIDE the guard:
@@ -1181,16 +1112,22 @@ export async function POST(
                   ageTier: true,
                   isMember: true,
                   rateMembershipTypeId: true,
-                  nights: { select: { stayDate: true, priceCents: true } },
+                  priceCents: true,
+                  stayStart: true,
+                  stayEnd: true,
+                  nights: { select: { stayDate: true, priceCents: true, priceSource: true } },
                 },
               });
               const promoCode = bookingPromoCodeLabel(booking);
+              // Both sides VALUED (#4317): an add rewrites no existing guest's
+              // rows, so an existing guest reads the same on each side and
+              // cancels, and the added guests are itemised at what they bought.
               return {
                 before: pricingSideFromStoredGuests(booking.guests, {
                   promoAdjustmentCents: booking.promoAdjustmentCents,
                   promoCode,
                 }),
-                after: pricingSideFromWrittenGuests(writtenGuests, {
+                after: pricingSideFromStoredGuests(writtenGuests, {
                   promoAdjustmentCents: newPromoAdjustmentCents,
                   promoCode: remainingPromoCodeLabel,
                 }),
@@ -1228,6 +1165,9 @@ export async function POST(
             // #2390: the same sentence the member was shown, kept on the
             // booking's own history so the split has an answer later.
             ...(promoCoverage ? { promoCoverageNote: promoCoverage.message } : {}),
+            // #3954 round 6: the waiting re-issues this add folded into its ask.
+            ...unpaidAskOffsetHistory({ ...NO_UNPAID_ASK_SETTLEMENT, foldedReissuedAsks }),
+            ...primaryInvoiceSettlementHistory({ settledAgainstPrimaryInvoice }), // #3980: the gap's anchor
           },
           priceDiffCents,
           changeFeeCents: 0,
@@ -1236,8 +1176,7 @@ export async function POST(
       });
 
       // #3582: the same before and after, per night, on the booking ledger —
-      // under the `lock(1)` this transaction took first. A parked add posts
-      // nothing (`INV-MOD-040`); its review's closure does.
+      // under the `lock(1)` this transaction took first.
       await postModificationLedgerLines({
         store: tx,
         bookingId,
@@ -1247,44 +1186,14 @@ export async function POST(
         site: "guest-add",
       });
 
-      /**
-       * #3166: one OPEN review task per unreadable strand, inside this same
-       * transaction and under the locks it already holds, anchored to the
-       * `BookingModification` this add just wrote — the same anchoring the batch
-       * edit, the date change and the removal use, so a confirmed amount reaches
-       * settlement by one route rather than four.
-       *
-       * The raise ITSELF - the settlement payment id, the strand's member, the
-       * null amount - is `raiseParkedEditFinancialReviewTasks`, stated once
-       * there rather than four times across the four parked doors (`INV-SSOT`).
-       * Skipped entirely when this add priced normally.
-       *
-       * A PURE ADD moves no existing strand's nights, so it always composes to
-       * ONE item however large the party (`parkedEditWorkItems`).
-       */
-      if (addEvidence.occurrences !== null) {
-        await raiseParkedEditFinancialReviewTasks({
-          booking,
-          guests: booking.guests,
-          // The whole point of this door: the guests just added, priced at what
-          // they are genuinely being sold for, against a booking total that is
-          // written back unchanged. That money is owed and nothing else records
-          // it - and on a PURE ADD no existing strand gives back or gains a
-          // night, so the item is raised on strands the edit did not touch and
-          // this figure is the only thing on it naming the money (#3498).
-          addedGuests: createdGuests,
-          occurrences: addEvidence.occurrences,
-          bookingModificationId: bookingModification.id,
-          store: tx,
-        });
-      }
-
       return {
         booking: updatedBooking,
         addedGuests: createdGuests,
         priceDiffCents,
         additionalAmountCents,
         additionalAsk,
+        // An add never lowers the price (#3954 retires asks only on a reduction).
+        retiredAdditionalAsks: [],
         promoRemoved,
         promoCoverage,
         oldGuestCount: booking.guests.length,
@@ -1380,18 +1289,16 @@ export async function POST(
     // to avoid holding the advisory lock). Shared settlement helper (#1096):
     // a transient Stripe failure enqueues a durable recovery operation keyed
     // to this modification instead of only logging.
-    const { additionalPaymentClientSecret, additionalPaymentIntentId } =
-      await createModificationAdditionalPaymentIntent({
-        format,
-        bookingId,
-        // Guest adds never decrease the price, so the shared settlement
-        // context's refund side is always zero here.
-        result: { ...result, pendingRefundAmountCents: 0, organiserChildRefund: null },
-        reason: "guest_add_price_increase",
-        idempotencyKey: `mod_guest_${bookingId}_${result.bookingModificationId}`,
-        failureMessage:
-          "Failed to create additional PaymentIntent for guest addition",
-      });
+    const additionalMint = await createModificationAdditionalPaymentIntent({
+      format,
+      bookingId,
+      // Guest adds never decrease the price, so the shared settlement
+      // context's refund side is always zero here.
+      result: { ...result, pendingRefundAmountCents: 0, organiserChildRefund: null },
+      door: "guestAdd",
+      failureMessage:
+        "Failed to create additional PaymentIntent for guest addition",
+    });
 
     // Audit log. #3530: what the figure is made of, line by line and in dollars.
     const linesAudit = await loadModificationLinesAuditFields(prisma, result.priceLines, logger, format);
@@ -1436,7 +1343,7 @@ export async function POST(
       datesChanged: false,
       requiresAdditionalStripePayment:
         result.hasIssuedXeroInvoice && result.priceDiffCents > 0 && result.hasSucceededPayment,
-      additionalPaymentIntentId,
+      additionalPaymentIntentId: additionalMint.additionalPaymentIntentId,
     }).catch((err) =>
       logger.error({ err, bookingId }, "Failed to queue Xero settlement for guest addition")
     );
@@ -1475,6 +1382,7 @@ export async function POST(
         result.booking.id,
       );
 
+      const namedAdditionalCents = additionalAmountToName(result.additionalAmountCents, additionalMint); // #3954 round 9: never a retired ask
       sendBookingModifiedEmail({
         bookingId: result.booking.id,
         recipientMemberId: result.memberId,
@@ -1492,22 +1400,25 @@ export async function POST(
         changeFeeCents: 0,
         refundAmountCents: 0,
         // Guest adds never decrease the price, so nothing is refunded.
-        refundByBankTransfer: false,
+        refundByBankTransfer: null,
         appliedCreditGivenBackCents: 0,
-        additionalAmountCents: result.additionalAmountCents,
+        additionalAmountCents: namedAdditionalCents,
+        // A guest add only raises a price.
+        unpaidAskCancelled: false,
         additionalPaymentMethod:
-          result.additionalAmountCents > 0 &&
+          namedAdditionalCents > 0 &&
           result.paymentSource === PaymentSource.INTERNET_BANKING
             ? "INTERNET_BANKING"
-            : result.additionalAmountCents > 0 && result.hasSucceededPayment
+            : namedAdditionalCents > 0 && result.hasSucceededPayment
               ? "STRIPE"
               : undefined,
         paymentReference: result.paymentReference,
         xeroInvoiceNumber: result.xeroInvoiceNumber,
         // #2390: same words as the edit preview and the booking history.
         promoCoverageNote: result.promoCoverage?.message ?? null,
+        addedGuests: result.addedGuests, // #4030: named in the change rows
         financialReviewPending,
-        refundReturnedToOrganiser: false,
+        refundDestination: "own",
         lodgeId: result.booking.lodgeId,
       }, format).catch((err) =>
         logger.error({ err, bookingId }, "Failed to send booking modified email")
@@ -1519,7 +1430,7 @@ export async function POST(
       addedGuests: result.addedGuests,
       priceDiffCents: result.priceDiffCents,
       additionalAmountCents: result.additionalAmountCents,
-      additionalPaymentClientSecret: additionalPaymentClientSecret ?? null,
+      additionalPaymentClientSecret: additionalMint.additionalPaymentClientSecret ?? null,
       promoRemoved: result.promoRemoved,
       // #2390: who the promotion still covers, and who it does not. Null unless
       // a usage cap left somebody out.

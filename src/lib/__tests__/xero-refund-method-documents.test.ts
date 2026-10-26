@@ -127,6 +127,8 @@ vi.mock("@/lib/late-capture-xero-receipt", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/late-capture-xero-receipt")),
   findLateCapturePaymentIntents: mocks.findLateCapturePaymentIntents,
   readLateCaptureXeroReceipt: mocks.readLateCaptureXeroReceipt,
+  // Round 11: the close's plan reads the paid-another-way verdict; one mock answers both.
+  readPaidAnotherWayLateCaptureXeroReceipt: mocks.readLateCaptureXeroReceipt,
 }));
 
 vi.mock("@/lib/club-time-zone-runtime", () => ({

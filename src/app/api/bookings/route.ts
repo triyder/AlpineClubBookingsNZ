@@ -122,7 +122,7 @@ import {
   getBookingMemberNightConflictResponse,
 } from "@/lib/booking-member-night-conflicts";
 import {
-  BookingGuestStayRangeValidationError,
+  GUEST_CHANGE_LIST_BOUND, BookingGuestStayRangeValidationError, guestRequestSchemaError, guestStayFieldsSchema,
   normalizeGuestStayRanges,
 } from "@/lib/booking-guest-stay-range-input";
 import { parseJsonRequestBody } from "@/lib/api-json";
@@ -161,16 +161,13 @@ const createBookingSchema = z.object({
         ageTier: bookableAgeTierEnum,
         isMember: z.boolean(),
         memberId: z.string().min(1).optional(),
-        stayStart: z.string().optional(),
-        stayEnd: z.string().optional(),
-        // Explicit included nights for a multi date range stay (issue #713).
-        // When present, the guest stays exactly these nights (may be
-        // non-contiguous) and the booking range auto-expands to cover them.
-        nights: z.array(dateOnlyString).max(370).optional(),
+        // Date In and Date Out, or the night set (#713), which may be
+        // non-contiguous; the booking range auto-expands to cover them (#4199).
+        ...guestStayFieldsSchema.shape,
       })
     )
     .min(1)
-    .max(200),
+    .max(...GUEST_CHANGE_LIST_BOUND),
   // #2721: the booker's answers to "this guest has the same name as your own
   // recorded dependant". One entry per dependant the collision was with, each
   // naming that dependant explicitly — see `booking-dependant-identity.ts` for
@@ -276,7 +273,7 @@ export async function POST(request: NextRequest) {
 
   if (!parsed.success) {
     return NextResponse.json(
-      { error: "Invalid input", details: parsed.error.flatten() },
+      { error: guestRequestSchemaError(parsed.error, "Invalid input"), details: parsed.error.flatten() },
       { status: 400 }
     );
   }

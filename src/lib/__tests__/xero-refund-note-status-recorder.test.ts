@@ -76,6 +76,7 @@ describe("recordStripeRefundNoteLinkStatuses", () => {
                 total: 90,
                 appliedAmount: 90,
                 remainingCredit: 0,
+                updatedDateUTC: new Date("2026-06-30T09:30:00.000Z"),
               }
             : {
                 creditNoteID: "cn_b",
@@ -117,6 +118,8 @@ describe("recordStripeRefundNoteLinkStatuses", () => {
         total: 90,
         appliedAmount: 90,
         remainingCredit: 0,
+        // #4288: the reading's own Xero timestamp, which orders it under the row lock.
+        providerUpdatedAt: "2026-06-30T09:30:00.000Z",
       },
       mergeMetadata: true,
     });
@@ -126,7 +129,8 @@ describe("recordStripeRefundNoteLinkStatuses", () => {
         xeroObjectId: "cn_b",
         xeroObjectNumber: "CN-0002",
         active: false,
-        metadata: expect.objectContaining({ status: "VOIDED" }),
+        // No timestamp from Xero: recorded as null, never a guess.
+        metadata: expect.objectContaining({ status: "VOIDED", providerUpdatedAt: null }),
       })
     );
   });

@@ -871,7 +871,8 @@ describe("the mode is threaded to the money, not re-read inside the locks (#2543
   const THREADED = [
     ["src/lib/booking-create.ts", "input.subscriptionLockoutMode", 3],
     ["src/lib/booking-modify-plan.ts", "subscriptionLockoutMode,", 4],
-    ["src/app/api/bookings/[id]/modify-quote/route.ts", "subscriptionLockoutMode,", 7],
+    // #4197: the breakdown reads the main pass, so its three extra pricing calls went.
+    ["src/app/api/bookings/[id]/modify-quote/route.ts", "subscriptionLockoutMode,", 5],
     ["src/lib/waitlist.ts", "subscriptionLockoutMode,", 2],
   ] as const;
 

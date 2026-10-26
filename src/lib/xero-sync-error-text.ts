@@ -1,3 +1,7 @@
+import { isCreditNoteSpentOutsideAppError } from "@/lib/xero-credit-note-spent-outside-app";
+import { getXeroErrorStatusCode } from "@/lib/xero-error-shape";
+import { redactSensitiveText } from "@/lib/redact-sensitive-json";
+
 /**
  * #3462: THE text of a Xero sync failure, read from whatever was thrown. One
  * home, with one fallback, for the outbox's failure writer and the REQUEUE
@@ -8,4 +12,29 @@ export function xeroSyncErrorText(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (typeof error === "string") return error;
   return "Unknown Xero sync failure";
+}
+
+/**
+ * #4218: the `lastErrorCode` an error names for itself, in place of an HTTP
+ * status. Null for every other error. The operation stays replayable: a retry
+ * sends the allocation again, so it goes through once the credit is restored.
+ */
+export function namedXeroErrorCode(error: unknown): string | null {
+  return isCreditNoteSpentOutsideAppError(error) ? error.code : null;
+}
+
+/**
+ * #4256: the `lastErrorCode` and redacted `lastErrorMessage` a failure records.
+ * One home for `failXeroSyncOperation` and the PARTIAL claim's give-back in
+ * `xero-operation-retry`, so the two never record the same throw differently.
+ */
+export function xeroSyncErrorFields(
+  error: unknown,
+  lastErrorMessage?: string,
+): { lastErrorCode: string | null; lastErrorMessage: string } {
+  const statusCode = getXeroErrorStatusCode(error);
+  return {
+    lastErrorCode: namedXeroErrorCode(error) ?? (statusCode ? String(statusCode) : null),
+    lastErrorMessage: redactSensitiveText(lastErrorMessage ?? xeroSyncErrorText(error)),
+  };
 }

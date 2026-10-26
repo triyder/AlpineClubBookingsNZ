@@ -60,6 +60,7 @@ const page = {
 };
 const parts = [
   { type: "annual-fees" as const, groups: [{ heading: "Annual membership fees", rows: [{ label: "Public membership", fee: { amountCents: 15000, label: "$150.00" } }] }] },
+  { type: "first-year-costs" as const, groups: [{ heading: "Joining fee plus first year's subscription", rows: [{ label: "Adult first year", fee: { amountCents: 39000, label: "$390.00" } }] }] },
   { type: "joining-fees" as const, groups: [{ heading: "Full", rows: [{ label: "Adult", fee: { amountCents: 1000, label: "$10.00" } }] }] },
   { type: "hut-fees" as const, tables: [{ heading: "River Lodge — Winter nightly rates", rowHeading: "Age", columns: ["Full Member"], rows: [{ label: "Adult", cells: [{ amountCents: 4000, label: "$40.00" }] }] }] },
   { type: "booking-policy-summary" as const, policy: { lodge: { name: "River Lodge", slug: "river" }, hold: "Non-member bookings are not held provisionally.", periods: [], minimumStays: [], groupDiscount: null } },
@@ -76,6 +77,8 @@ describe("public PageContent data-token route parity", () => {
   async function expectPublicBlocks(node: React.ReactNode) {
     render(node);
     expect(screen.getByText("Public membership")).toBeTruthy();
+    expect(screen.getByText("Adult first year")).toBeTruthy();
+    expect(screen.getByText("$390.00")).toBeTruthy();
     expect(screen.getByText("$10.00")).toBeTruthy();
     expect(screen.getByText(/River Lodge — Winter/)).toBeTruthy();
     expect(screen.getByText("Non-member bookings are not held provisionally.")).toBeTruthy();
