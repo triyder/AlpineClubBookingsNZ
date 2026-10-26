@@ -15,26 +15,26 @@ reason: the member-choice branch (apply the elected credit, settle at $0
   #2263 owner decision placed in this file on purpose.
 
 file: src/lib/booking-request.ts
-lines: 3081
+lines: 3090
 reason: the request's credit election is one field on the creation write and
   one on the admin serialiser, beside the exclusivity flag it travels with;
   a new module for a boolean would put the request's shape in two places.
 
 file: src/app/api/payments/switch-to-internet-banking/route.ts
-lines: 540
+lines: 557
 reason: the whole-lodge case is a two-line hold exemption and a shared
   status predicate inside the existing lock-ordered switch; a second route
   would duplicate the card-intent retirement and the credit netting it
   must stay in step with.
 
 file: src/components/admin/booking-requests/public-booking-requests-panel.tsx
-lines: 2737
+lines: 2718
 reason: one optional field on the request type, one prop pass-through and
   two toast branches; the panel is the queue's single composition root and
   the #2263 controls already live in their own file beside it.
 
 file: src/lib/email/booking.ts
-lines: 1774
+lines: 1827
 reason: the pay-online shape is a type swap and a spread at the two places
   the sender composes the payment-due note; the composer itself lives in
   email-message-notes.ts, which is where the new wording went.

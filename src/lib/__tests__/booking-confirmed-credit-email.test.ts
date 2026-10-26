@@ -646,7 +646,7 @@ describe("#2328 × #2483 the unpaid branch's live-path premise", () => {
   });
 
   it("applies account credit on that path only where the member chose it, through the shared writer", () => {
-    // THE TRIPWIRE FIRED (fork, booking-fixes). The whole-lodge approval now
+    // THE TRIPWIRE FIRED (#4019). The whole-lodge approval now
     // applies the credit a member asked for on their request — through
     // `applyCreditToBooking`, the one ledger writer the ordinary create path
     // uses — so an unpaid confirmation on that path can carry real netting,

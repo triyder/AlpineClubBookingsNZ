@@ -54,12 +54,11 @@ import {
 import { CLUB_LODGE_TRAVEL_NOTE } from "@/config/club-identity";
 import {
   bookingBumpedRebookAction,
-  bookingPaymentDueNote,
-  type BookingPaymentDueInstruction,
   creditRestoredSentenceTail,
   splitGuestPortionOwnBookingLine,
   type CreditRestoredBasis,
 } from "@/lib/email-message-notes";
+import { bookingPaymentDueNote, type BookingPaymentDueInstruction } from "@/lib/email-payment-due-note";
 import { emailCalendarDay, emailClubDateTime } from "@/lib/email-templates-club-time";
 import type { ClubFormat } from "@/lib/club-format";
 
@@ -136,8 +135,7 @@ export function bookingConfirmedTemplate(
     // the alert box says how to pay it. Same template (and therefore the same
     // operator override) as the paid confirmation, exactly as the split-parent
     // `provisionalGuests` variant is (#738).
-    // `payOnline` (no receivable yet: pay from the booking page) or the legacy
-    // reference-plus-invoiceEmailed shape; see `BookingPaymentDueInstruction`.
+    // `payOnline` (no receivable yet) or the legacy reference shape; see the type.
     paymentDue?: BookingPaymentDueInstruction;
     // #2397: the booking is settled but NOT in full — an admin recorded a cash
     // / off-Xero payment and said it did not cover an uncollected price
