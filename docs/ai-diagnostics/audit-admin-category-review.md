@@ -793,7 +793,7 @@ list. `OTHER_LODGE_UPDATED` stays, still `admin` under INV-PRIV-013's rule, so
 the lodge-gated keep shrinks from nineteen pinned sites to seventeen without
 anyone's readership changing.
 
-The fork (triyder) then added four of its own, measured on its pre-sync tree:
+The fork (triyder) then added four of its own, measured on its pre-sync tree — its own count, not additive to the `main` chain that follows:
 
 #62 then added one (`admin` 107 -> 108, 497 -> 498, MEASURED with
 `pnpm run audit:census`): `LODGE_CENTRAL_LINK_UPDATED`, the record that an
