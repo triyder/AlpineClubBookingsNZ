@@ -141,6 +141,7 @@ import {
 } from "@/lib/xero-credit-notes";
 import { createXeroCreditNoteForModification } from "@/lib/xero-modification-credit-notes";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { xeroClaim } from "@/lib/__tests__/helpers/xero-claim";
 
 const BOOKING_ID = "cmbooking0001xyz";
 const PAYMENT_ID = "cmpayment0001xyz";
@@ -353,13 +354,13 @@ describe("the cash refund note (createXeroCreditNote)", () => {
           createXeroCreditNote(PAYMENT_ID, 2500, {
             refundMethod: "card",
             paymentIntentId: "pi_late",
-            syncOperationId: "op_note",
+            syncOperation: xeroClaim("op_note"),
           }),
         ).resolves.toBe("");
 
         expect(mocks.retryXeroWriteWithContactRepair).not.toHaveBeenCalled();
         expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
-          "op_note",
+          expect.objectContaining({ id: "op_note" }),
           expect.objectContaining({
             responsePayload: expect.objectContaining({ skipped: "late-capture-refund-not-app-recorded", receipt: kind }),
           }),
@@ -451,7 +452,7 @@ describe("the cash refund note (createXeroCreditNote)", () => {
 
     await createXeroCreditNote(PAYMENT_ID, 5000, {
       refundMethod: "internet-banking",
-      syncOperationId: "op_queued",
+      syncOperation: xeroClaim("op_queued"),
     });
 
     expect(mocks.xeroSyncOperationUpdate).toHaveBeenCalledWith(
@@ -468,7 +469,7 @@ describe("the cash refund note (createXeroCreditNote)", () => {
     await createXeroCreditNote(PAYMENT_ID, 5000, {
       refundMethod: "internet-banking",
       noteWording: "cash",
-      syncOperationId: "op_queued",
+      syncOperation: xeroClaim("op_queued"),
     });
 
     const note = builtCreditNote();
@@ -495,7 +496,7 @@ describe("the cash refund note (createXeroCreditNote)", () => {
     await createXeroCreditNote(PAYMENT_ID, 5000, {
       refundMethod: "card",
       noteWording: "cash",
-      syncOperationId: "op_queued",
+      syncOperation: xeroClaim("op_queued"),
     });
 
     expect(builtCreditNote().reference).toBe("Refund against original credit card - Booking cmbookin");
@@ -579,7 +580,7 @@ describe("#3791: a review task's share is a document of its own", () => {
       bookingModificationId: "cmmodification01",
       reviewTaskId: "task-7",
       refundMethod: "account-credit",
-      syncOperationId: "op-note",
+      syncOperation: xeroClaim("op-note"),
     });
 
   it.each(["PENDING", "RUNNING"])("MUTATION: waits, as a transient busy error, while the payment's deallocation is %s - and creates nothing", async (status) => {
@@ -600,7 +601,7 @@ describe("#3791: a review task's share is a document of its own", () => {
 
     expect(error).not.toBeInstanceOf(XeroAppliedCreditOperationBusyError);
     expect((error as Error).message).toContain(`deallocation dealloc-1 is ${status}`);
-    expect(mocks.failXeroSyncOperation).toHaveBeenCalledWith("op-note", error);
+    expect(mocks.failXeroSyncOperation).toHaveBeenCalledWith(expect.objectContaining({ id: "op-note" }), error);
     expect(mocks.retryXeroWriteWithContactRepair).not.toHaveBeenCalled();
   });
 
@@ -655,7 +656,7 @@ describe("#3791: a review task's share is a document of its own", () => {
     await createUnappliedXeroCreditNote(PAYMENT_ID, 1000, CLUB_FORMAT_TEST, {
       bookingModificationId: "cmmodification01",
       reviewTaskId: "task-7",
-      syncOperationId: "op-queued",
+      syncOperation: xeroClaim("op-queued"),
     });
 
     expect(mocks.xeroSyncOperationUpdate).toHaveBeenCalledWith(expect.objectContaining({
@@ -892,13 +893,13 @@ describe("clearing-note allocation across the booking's invoices (#3535)", () =>
         bookingId: BOOKING_ID,
         refundAmountCents: 15000,
         clearsUnpaidInvoice: true,
-        syncOperationId: "op_queued",
+        syncOperation: xeroClaim("op_queued"),
       }),
     ).rejects.toThrow(/owe \$100\.00, less than this \$150\.00 invoice-clearing credit note/);
 
     expect(mocks.retryXeroWriteWithContactRepair).not.toHaveBeenCalled();
     expect(mocks.createCreditNoteAllocation).not.toHaveBeenCalled();
-    expect(mocks.failXeroSyncOperation).toHaveBeenCalledWith("op_queued", expect.any(Error));
+    expect(mocks.failXeroSyncOperation).toHaveBeenCalledWith(expect.objectContaining({ id: "op_queued" }), expect.any(Error));
   });
 
   it("goes PARTIAL with the allocations that landed when a later one is refused", async () => {

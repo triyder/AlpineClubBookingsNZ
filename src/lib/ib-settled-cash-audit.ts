@@ -32,6 +32,11 @@
  * payment record at all (settled before payments were linked), and one whose
  * payment amount cannot be read.
  *
+ * The mark is only as fresh as the invoice's last sync: one last synced before
+ * the sync recorded allocations (#3979, and #4095 for a count of none) carries
+ * no mark either way, so its summed payments may leave an allocation out. Such
+ * a row is still judged, but the report says so (#4095 item 13).
+ *
  * REPORT ONLY - IT NEVER WRITES AND NEVER REPAIRS. It issues typed SELECTs
  * through Prisma (`INV-OPS-001`) and calls no provider. A correction is a
  * database change made by the owner or a developer under the raw-SQL rules
@@ -78,6 +83,8 @@ export interface IbSettledCashRow {
   evidence: IbSettledCashEvidence;
   /** The cash Xero recorded; null unless `evidence` is "payments". */
   cashCents: number | null;
+  /** Whether the invoice's last sync recorded its overpayment and prepayment allocations. */
+  allocationsRecorded: boolean;
 }
 
 export interface IbSettledCashAuditResult {
@@ -106,29 +113,30 @@ type PaymentLink = {
 export function recordedInvoiceCash(
   links: readonly PaymentLink[],
   invoiceId: string,
-): { evidence: IbSettledCashEvidence; cashCents: number | null } {
-  const allocations = links.some(
-    (link) =>
-      link.xeroObjectType === "INVOICE" &&
-      link.xeroObjectId === invoiceId &&
-      link.role === "PRIMARY_INVOICE" &&
-      (readNumber(asRecord(link.metadata)?.[PRIMARY_INVOICE_CASH_ALLOCATIONS_KEY]) ?? 0) > 0,
-  );
-  if (allocations) return { evidence: "allocations", cashCents: null };
+): { evidence: IbSettledCashEvidence; cashCents: number | null; allocationsRecorded: boolean } {
+  const allocationCounts = links
+    .filter(
+      (link) => link.xeroObjectType === "INVOICE" && link.xeroObjectId === invoiceId && link.role === "PRIMARY_INVOICE",
+    )
+    .map((link) => readNumber(asRecord(link.metadata)?.[PRIMARY_INVOICE_CASH_ALLOCATIONS_KEY]));
+  if (allocationCounts.some((count) => (count ?? 0) > 0)) {
+    return { evidence: "allocations", cashCents: null, allocationsRecorded: true };
+  }
+  const allocationsRecorded = allocationCounts.some((count) => count !== null);
   const recorded = links.filter(
     (link) =>
       link.role === INVOICE_PAYMENT_ROLE &&
       readString(asRecord(link.metadata)?.invoiceId) === invoiceId &&
       isRecordedBookingInvoicePayment(link),
   );
-  if (recorded.length === 0) return { evidence: "none", cashCents: null };
+  if (recorded.length === 0) return { evidence: "none", cashCents: null, allocationsRecorded };
   let cashCents = 0;
   for (const link of recorded) {
     const cents = providerAmountToCents(asRecord(link.metadata)?.amount);
-    if (cents === null) return { evidence: "unreadable", cashCents: null };
+    if (cents === null) return { evidence: "unreadable", cashCents: null, allocationsRecorded };
     cashCents += cents;
   }
-  return { evidence: "payments", cashCents };
+  return { evidence: "payments", cashCents, allocationsRecorded };
 }
 
 export async function auditIbSettledCash(db: Pick<typeof prisma, "payment" | "xeroObjectLink"> = prisma): Promise<IbSettledCashAuditResult> {
@@ -209,6 +217,7 @@ export async function auditIbSettledCash(db: Pick<typeof prisma, "payment" | "xe
         rowsRefundedCents,
         evidence: cash.evidence,
         cashCents: cash.cashCents,
+        allocationsRecorded: cash.allocationsRecorded,
       };
       if (payment.refundedAmountCents > rowsRefundedCents) result.folded.push(row);
       if (cash.evidence !== "payments") result.unjudged.push(row);
@@ -217,6 +226,10 @@ export async function auditIbSettledCash(db: Pick<typeof prisma, "payment" | "xe
   }
   return result;
 }
+
+/** Why a row's cash may be short: its invoice was last synced before allocations were recorded. */
+const ALLOCATIONS_UNKNOWN =
+  "last synced before overpayment and prepayment allocations were recorded, so one may be missing from the cash";
 
 const CORRECTION_INSTRUCTION =
   "Correct a receipt and the payment's refunded total TOGETHER - either alone moves the payment's net. The app has no screen for it: it is a database correction made by the owner or a developer under the raw-SQL rules (INV-OPS). Check each invoice in Xero first.";
@@ -236,7 +249,7 @@ export function formatIbSettledCashReport(result: IbSettledCashAuditResult, form
     lines.push("", "Differences (recorded vs cash):");
     for (const row of result.differences) {
       lines.push(
-        `  ${describe(row)}: recorded ${money(row.recordedCents)}, cash ${money(row.cashCents ?? 0)}, payment figure ${money(row.paymentAmountCents)}, refunded ${money(row.refundedAmountCents)}`,
+        `  ${describe(row)}: recorded ${money(row.recordedCents)}, cash ${money(row.cashCents ?? 0)}, payment figure ${money(row.paymentAmountCents)}, refunded ${money(row.refundedAmountCents)}${row.allocationsRecorded ? "" : `; ${ALLOCATIONS_UNKNOWN}`}`,
       );
     }
   }
@@ -255,7 +268,9 @@ export function formatIbSettledCashReport(result: IbSettledCashAuditResult, form
         row.evidence === "allocations"
           ? "paid by an applied overpayment or prepayment, which leaves no payment record"
           : row.evidence === "none"
-            ? "no payment recorded locally - settled before payments were linked"
+            ? row.allocationsRecorded
+              ? "no payment recorded locally - settled before payments were linked"
+              : "no payment recorded locally - settled before payments were linked, or paid by an overpayment or prepayment before allocations were recorded"
             : "a recorded payment's amount cannot be read";
       lines.push(`  ${describe(row)}: recorded ${money(row.recordedCents)}; ${why}`);
     }

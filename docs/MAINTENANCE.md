@@ -2312,7 +2312,9 @@ DATABASE_URL=<non-prod copy> pnpm run payments:audit-ib-settled-cash --json
 A receipt whose invoice was paid by an applied overpayment or prepayment (Xero
 records an allocation, not a payment; the inbound sync marks the primary-invoice
 link), one with no recorded payment, or one whose amount cannot be read is
-listed apart as not judged: check its invoice in Xero. Officer-settled payments
+listed apart as not judged: check its invoice in Xero. An invoice last synced
+before the sync recorded allocations carries no mark, so the report says when a
+difference, or a missing payment, may hide one (#4095). Officer-settled payments
 (`INV-PAY-001`) are left out. **Correcting a row is a database change**: the
 owner or a developer makes it under the raw-SQL rules (`INV-OPS`), and corrects
 the receipt and the payment's refunded total TOGETHER - either alone moves the

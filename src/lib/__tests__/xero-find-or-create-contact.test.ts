@@ -678,7 +678,7 @@ describe("findOrCreateXeroContact", () => {
       data: { xeroContactId: "xero_existing_by_name" },
     });
     expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
-      "op_1",
+      expect.objectContaining({ id: "op_1" }),
       expect.objectContaining({
         xeroObjectType: "CONTACT",
         xeroObjectId: "xero_existing_by_name",

@@ -44,6 +44,7 @@ import {
   SUBSCRIPTION_ALREADY_PAID_CODE,
   subscriptionAlreadyPaidConflictMessage,
 } from "@/lib/subscription-charge-already-paid";
+import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
 
 /**
  * A Xero invoice's total in integer cents, or `null` when it cannot be read.
@@ -264,7 +265,7 @@ async function findExistingByReference(
 
 export async function createXeroMembershipSubscriptionInvoice(input: {
   chargeId: string;
-  syncOperationId: string;
+  syncOperation: XeroOperationClaim;
   createdByMemberId?: string;
 }) {
   const charge = await prisma.membershipSubscriptionCharge.findUnique({
@@ -282,14 +283,14 @@ export async function createXeroMembershipSubscriptionInvoice(input: {
   });
   if (!charge) throw new Error(`Membership subscription charge not found: ${input.chargeId}`);
   if (charge.billingBasis === "NO_INVOICE") {
-    await completeXeroSyncOperation(input.syncOperationId, { responsePayload: { skipped: true, reason: "NO_INVOICE" } });
+    await completeXeroSyncOperation(input.syncOperation, { responsePayload: { skipped: true, reason: "NO_INVOICE" } });
     return null;
   }
   // #2147: skip a VOIDED charge if a stale queued op is drained after the void,
   // and (#4098) a charge an officer closed as already paid. NO_INVOICE returned
   // above, so only the no-invoice statuses reach this skip.
   if (membershipChargeNeedsNoInvoice(charge)) {
-    await completeXeroSyncOperation(input.syncOperationId, { responsePayload: { skipped: true, reason: charge.status } });
+    await completeXeroSyncOperation(input.syncOperation, { responsePayload: { skipped: true, reason: charge.status } });
     return null;
   }
   // #3971: the enqueue's `emailSentAt` fence, again at the claim. A FAILED row
@@ -297,7 +298,7 @@ export async function createXeroMembershipSubscriptionInvoice(input: {
   // attempt for the same charge already invoiced and emailed it; without this
   // the resume path below would ask Xero to email the invoice a second time.
   if (charge.xeroInvoiceId && charge.emailSentAt) {
-    await completeXeroSyncOperation(input.syncOperationId, {
+    await completeXeroSyncOperation(input.syncOperation, {
       responsePayload: { skipped: true, reason: "ALREADY_EMAILED" },
       xeroObjectType: "INVOICE", xeroObjectId: charge.xeroInvoiceId, xeroObjectNumber: charge.xeroInvoiceNumber,
       xeroObjectUrl: buildXeroInvoiceUrl(charge.xeroInvoiceId),
@@ -332,7 +333,7 @@ export async function createXeroMembershipSubscriptionInvoice(input: {
           ),
         },
       });
-      await completeXeroSyncOperation(input.syncOperationId, {
+      await completeXeroSyncOperation(input.syncOperation, {
         status: "SUCCEEDED",
         responsePayload: {
           conflict: SUBSCRIPTION_ALREADY_PAID_CODE,
@@ -360,7 +361,7 @@ export async function createXeroMembershipSubscriptionInvoice(input: {
         lastErrorMessage: "This charge has no immutable subscriptionIncome account mapping snapshot.",
       },
     });
-    await completeXeroSyncOperation(input.syncOperationId, {
+    await completeXeroSyncOperation(input.syncOperation, {
       status: "SUCCEEDED",
       responsePayload: { conflict: "MISSING_MAPPING_SNAPSHOT" },
     });
@@ -405,7 +406,7 @@ export async function createXeroMembershipSubscriptionInvoice(input: {
         where: liveChargeWhere(charge.id),
         data: { status: "CONFLICT", lastErrorCode: "DUPLICATE_REFERENCE", lastErrorMessage: "More than one Xero invoice has this immutable subscription reference." },
       });
-      await completeXeroSyncOperation(input.syncOperationId, { status: "SUCCEEDED", responsePayload: { conflict: "DUPLICATE_REFERENCE", invoiceCount: existing.length } });
+      await completeXeroSyncOperation(input.syncOperation, { status: "SUCCEEDED", responsePayload: { conflict: "DUPLICATE_REFERENCE", invoiceCount: existing.length } });
       return null;
     }
     if (existing[0]) {
@@ -418,7 +419,7 @@ export async function createXeroMembershipSubscriptionInvoice(input: {
           where: liveChargeWhere(charge.id),
           data: { status: "CONFLICT", lastErrorCode: "PROVIDER_MISMATCH", lastErrorMessage: "The existing Xero invoice does not match the immutable charge snapshot. It was not changed." },
         });
-        await completeXeroSyncOperation(input.syncOperationId, { status: "SUCCEEDED", responsePayload: { conflict: "PROVIDER_MISMATCH", invoice: existing[0] } });
+        await completeXeroSyncOperation(input.syncOperation, { status: "SUCCEEDED", responsePayload: { conflict: "PROVIDER_MISMATCH", invoice: existing[0] } });
         return null;
       }
       providerInvoice = existing[0];
@@ -585,7 +586,7 @@ export async function createXeroMembershipSubscriptionInvoice(input: {
       { chargeId: charge.id, invoiceId, invoiceNumber, adopted },
       "Subscription charge was closed while its Xero invoice was being raised; the invoice is a stray to void",
     );
-    await completeXeroSyncOperation(input.syncOperationId, {
+    await completeXeroSyncOperation(input.syncOperation, {
       status: "PARTIAL",
       responsePayload: { conflict: STRAY_INVOICE_AFTER_CLOSE_CODE, invoice: providerInvoice, adopted, email: null },
       xeroObjectType: "INVOICE", xeroObjectId: invoiceId, xeroObjectNumber: invoiceNumber,
@@ -594,7 +595,7 @@ export async function createXeroMembershipSubscriptionInvoice(input: {
     return null;
   }
   if (recorded.kind === "skipped") {
-    await completeXeroSyncOperation(input.syncOperationId, {
+    await completeXeroSyncOperation(input.syncOperation, {
       responsePayload: { skipped: true, reason: recorded.reason },
     });
     return null;
@@ -622,7 +623,7 @@ export async function createXeroMembershipSubscriptionInvoice(input: {
     } else {
       logger.info(context, emailPolicy.logMessage);
     }
-    await completeXeroSyncOperation(input.syncOperationId, {
+    await completeXeroSyncOperation(input.syncOperation, {
       status: emailPolicy.error ? "PARTIAL" : "SUCCEEDED",
       responsePayload: {
         invoice: providerInvoice, adopted, email: null,
@@ -650,7 +651,7 @@ export async function createXeroMembershipSubscriptionInvoice(input: {
       where: liveChargeWhere(charge.id),
       data: { status: "EMAILED", emailAttemptCount: { increment: 1 }, emailLastAttemptAt: new Date(), emailSentAt: new Date(), lastErrorCode: null, lastErrorMessage: null },
     });
-    await completeXeroSyncOperation(input.syncOperationId, {
+    await completeXeroSyncOperation(input.syncOperation, {
       responsePayload: { invoice: providerInvoice, adopted, email: response.body },
       xeroObjectType: "INVOICE", xeroObjectId: invoiceId, xeroObjectNumber: invoiceNumber,
       xeroObjectUrl: buildXeroInvoiceUrl(invoiceId),
@@ -662,7 +663,7 @@ export async function createXeroMembershipSubscriptionInvoice(input: {
       where: liveChargeWhere(charge.id),
       data: { status: "EMAIL_FAILED", emailAttemptCount: { increment: 1 }, emailLastAttemptAt: new Date(), lastErrorCode: "EMAIL_FAILED", lastErrorMessage: message },
     });
-    await completeXeroSyncOperation(input.syncOperationId, {
+    await completeXeroSyncOperation(input.syncOperation, {
       status: "PARTIAL", responsePayload: { invoice: providerInvoice, adopted, emailError: message },
       xeroObjectType: "INVOICE", xeroObjectId: invoiceId, xeroObjectNumber: invoiceNumber,
       xeroObjectUrl: buildXeroInvoiceUrl(invoiceId),

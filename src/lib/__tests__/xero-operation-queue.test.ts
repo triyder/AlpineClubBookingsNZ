@@ -235,7 +235,7 @@ describe("processQueuedXeroOperationRetries", () => {
       requeueOperationId: "queue_1",
     });
     expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
-      "queue_1",
+      expect.objectContaining({ id: "queue_1" }),
       expect.objectContaining({
         status: "SUCCEEDED",
         responsePayload: expect.objectContaining({
@@ -286,7 +286,8 @@ describe("processQueuedXeroOperationRetries", () => {
     });
 
     expect(mocks.updateManyOperation).toHaveBeenLastCalledWith({
-      where: { id: "queue_1", status: "RUNNING" },
+      // #4373: only this REQUEUE run's own claim goes back to PENDING.
+      where: { id: "queue_1", status: "RUNNING", startedAt: expect.any(Date) },
       data: {
         status: "PENDING",
         startedAt: null,
@@ -314,7 +315,7 @@ describe("processQueuedXeroOperationRetries", () => {
 
     expect(mocks.retryXeroSyncOperation).not.toHaveBeenCalled();
     expect(mocks.failXeroSyncOperation).toHaveBeenCalledWith(
-      "queue_1",
+      expect.objectContaining({ id: "queue_1" }),
       expect.objectContaining({
         name: "XeroOperationRetryError",
       })
@@ -338,7 +339,7 @@ describe("processQueuedXeroOperationRetries", () => {
     expect(mocks.findUniqueOperation).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: "op_123" } })
     );
-    expect(mocks.failXeroSyncOperation).toHaveBeenCalledWith("queue_1", refusal, undefined, {
+    expect(mocks.failXeroSyncOperation).toHaveBeenCalledWith(expect.objectContaining({ id: "queue_1" }), refusal, undefined, {
       lastErrorMessage:
         "Retry of Xero operation op_123 (INVOICE CREATE) failed: Matched Xero contact is already linked to another member. The original operation is back to FAILED — fix the cause and requeue it again.",
     });
@@ -405,7 +406,7 @@ describe("processQueuedXeroOperationRetries", () => {
 
     expect(mocks.failXeroSyncOperation).not.toHaveBeenCalled();
     expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
-      "queue_1",
+      expect.objectContaining({ id: "queue_1" }),
       expect.objectContaining({
         status: "CANCELLED",
         responsePayload: expect.objectContaining({
@@ -429,7 +430,7 @@ describe("processQueuedXeroOperationRetries", () => {
 
       expect(mocks.failXeroSyncOperation).not.toHaveBeenCalled();
       expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
-        "queue_1",
+        expect.objectContaining({ id: "queue_1" }),
         expect.objectContaining({
           status: "CANCELLED",
           responsePayload: expect.objectContaining({ originalOperationId: "op_123", skipped: "not-replayable" }),

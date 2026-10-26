@@ -20,14 +20,14 @@
  *    and the payments they record sum to the capture;
  *  - B never paid (the booking is cancelled): nothing is invoiced, both retired;
  *  - B captured before A's cancel lands: A's invoice is released at the move;
- *  - a DECLINED A: carried, never cancelled, and still moved at B's mint;
+ *  - a DECLINED A: cancelled at Stripe at B's mint (#4422), and still moved;
  *  - A -> B -> C: three invoices on C's capture, summing to it;
  *  - the move against a price reduction's retire, both orders, forced on the
  *    anchor's key: the reduction retires and counts A's invoice once;
  *  - the move against the repair pass's enqueue, both orders: one invoice;
  *  - two bank-transfer edits: nothing waits, nothing moves;
- *  - review round: a declined A paid from a stale tab takes its invoice back
- *    (M1); a capture between A and a newer request carries A (C4); the move
+ *  - review round: a declined A left confirmable (superseded before #4422)
+ *    and paid from a stale tab takes its invoice back (M1); a capture between A and a newer request carries A (C4); the move
  *    against the captured carrier's own receipt deciding on the carrier's key,
  *    both orders, one recorder (C2, review 2 F5); B's capture landing while
  *    the move waits on A's key (C5);
@@ -36,7 +36,16 @@
  *    release takes the invoice back paid (F2); A and B both paid and kept,
  *    both orders - each captured dollar recorded once, the double payment
  *    alerted once (F3); a carrier whose receipt is still queued gets A's
- *    invoice unpaid, so its receipt records it rather than standing down (F6).
+ *    invoice unpaid, so its receipt records it rather than standing down (F6);
+ *  - #4422: a declined A's stale-tab capture racing its cancel after B was paid
+ *    and released, the webhook first and the runner first - handed to the
+ *    superseded refund once, both invoices still on B summing to its capture,
+ *    nothing recorded for A and no double-payment alert.
+ *
+ * M1, F2 and F3 prove the take-back for a declined ask no live cancel row owns.
+ * Since #4422 a supersede cancels a declined ask, so they reach that state the
+ * way a booking superseded before #4422 is in it: B's inline cancel of A fails
+ * and A's cancel row is then removed (`supersedeDeclinedAskWithoutCancel`).
  *
  * Envelope: identical to `concurrency-lock-races.realdb.test.ts`, which imports
  * this file; the describe runs ONLY when `RUN_CONCURRENCY_RACE_TESTS=1`,
@@ -312,6 +321,21 @@ function deferred() {
         await prisma.paymentRecoveryOperation.update({ where: { id: row.id }, data: { nextRetryAt: new Date(0) } });
         await runPaymentRecoveryOperationNow(row.id, CLUB_FORMAT_TEST);
       }
+    }
+
+    /**
+     * B supersedes the declined A as a supersede did before #4422: no cancel row
+     * names A and A stays confirmable. A seeded legacy fact - B's inline cancel
+     * of A fails and that row is then removed - so the take-back for a capture
+     * no cancel row owns is still proved.
+     */
+    async function supersedeDeclinedAskWithoutCancel(a: string, mint: () => Promise<string>) {
+      stripe.failCancels = 1;
+      const b = await mint();
+      expect(stripe.failCancels, "B's mint tried to cancel the declined A").toBe(0);
+      await prisma.paymentRecoveryOperation.deleteMany({ where: { bookingId: BOOKING_ID, type: "CANCEL_PAYMENT_INTENT", paymentIntentId: a } });
+      expect(stripe.intents.get(a)?.status).toBe("requires_payment_method");
+      return b;
     }
 
     async function invoices() {
@@ -607,15 +631,22 @@ function deferred() {
       expect((await invoices()).reduce((sum, row) => sum + row.cents, 0)).toBe(await captured(b));
     });
 
-    it("a DECLINED A is carried but never cancelled again: its invoice moves at B's mint all the same", async () => {
+    it("#4422: a DECLINED A is cancelled at Stripe at B's mint, so a stale tab cannot pay it, and its invoice moves all the same", async () => {
       await seedPaidBooking();
       const a = await priceIncrease(MOD_A, A_CENTS);
       await declineCard(a);
-      expect((await prisma.paymentTransaction.findUniqueOrThrow({ where: { stripePaymentIntentId: a } })).status).toBe("FAILED");
+      const declined = await prisma.paymentTransaction.findUniqueOrThrow({ where: { stripePaymentIntentId: a }, select: { status: true, reason: true } });
+      expect(declined.status).toBe("FAILED");
 
       const b = await priceIncrease(MOD_B, B_CENTS);
-      expect(await prisma.paymentRecoveryOperation.count({ where: { bookingId: BOOKING_ID, type: "CANCEL_PAYMENT_INTENT" } })).toBe(0);
+      expect(stripe.intents.get(a)?.status).toBe("canceled");
+      expect(
+        await prisma.paymentRecoveryOperation.findMany({ where: { bookingId: BOOKING_ID, type: "CANCEL_PAYMENT_INTENT" }, select: { paymentIntentId: true, status: true } }),
+      ).toEqual([{ paymentIntentId: a, status: "SUCCEEDED" }]);
+      // The declined row keeps its own record; the supersede's FAILED write is fenced on an open status.
+      expect(await prisma.paymentTransaction.findUniqueOrThrow({ where: { stripePaymentIntentId: a }, select: { status: true, reason: true } })).toEqual(declined);
       expect(await invoiceFor(MOD_A)).toMatchObject({ status: "WAITING_PAYMENT", waitsOn: b, parkedFrom: a });
+      await expect(payWithCard(a)).rejects.toThrow("cannot capture a canceled intent");
 
       await payWithCard(b);
       expect((await invoices()).map((row) => row.status)).toEqual(["PENDING", "PENDING"]);
@@ -649,10 +680,10 @@ function deferred() {
         await seedPaidBooking();
         const a = await priceIncrease(MOD_A, A_CENTS);
         await declineCard(a);
-        const b = await priceIncrease(MOD_B, B_CENTS);
+        const b = await supersedeDeclinedAskWithoutCancel(a, () => priceIncrease(MOD_B, B_CENTS));
         expect(await invoiceFor(MOD_A)).toMatchObject({ waitsOn: b, parkedFrom: a });
 
-        // Never cancelled at Stripe, so the old secret still confirms with another card.
+        // No cancel row names it, so the old secret still confirms with another card.
         await payWithCard(a);
 
         expect(await captured(a)).toBe(A_CENTS);
@@ -700,10 +731,11 @@ function deferred() {
             import("@/lib/additional-capture-xero-receipt"),
             import("@/lib/xero-applied-credit-operation-serialization"),
           ]);
-          expect(await claimXeroSyncOperationToRunning(receipt.id, { localModel: { in: ["PaymentTransaction"] } })).toBe(true);
+          const receiptClaim = await claimXeroSyncOperationToRunning(receipt.id, { localModel: { in: ["PaymentTransaction"] } });
+          expect(receiptClaim).not.toBeNull();
           const runReceipt = () =>
             worker.recordAdditionalCaptureReceipt(
-              { syncOperationId: receipt.id },
+              { syncOperation: receiptClaim! },
               {
                 getAuthenticatedXeroClient: (async () => ({ xero: {}, tenantId: "tenant_race_3403" })) as never,
                 callXeroApi: (async () => ({
@@ -833,7 +865,7 @@ function deferred() {
         const a = await priceIncrease(MOD_A, A_CENTS, { xeroLeg: false });
         await declineCard(a);
         // B has no invoice of its own: its capture is recorded by its own receipt.
-        const b = await priceIncrease(MOD_B, B_CENTS, { xeroLeg: false });
+        const b = await supersedeDeclinedAskWithoutCancel(a, () => priceIncrease(MOD_B, B_CENTS, { xeroLeg: false }));
         await payWithCard(b);
         const [receiptB] = await receiptsFor(b);
         expect(receiptB).toBeDefined();
@@ -876,12 +908,12 @@ function deferred() {
     });
 
     describe("review 2 (9a0c129d4), F3: the superseded ask AND its carrier both paid and kept", () => {
-      /** A declined, its invoice moved onto B, which carries A's balance as well as its own. */
+      /** A declined (and left confirmable), its invoice moved onto B, which carries A's balance as well as its own. */
       async function aCarriedByB() {
         await seedPaidBooking();
         const a = await priceIncrease(MOD_A, A_CENTS);
         await declineCard(a);
-        const b = await priceIncrease(MOD_B, B_CENTS);
+        const b = await supersedeDeclinedAskWithoutCancel(a, () => priceIncrease(MOD_B, B_CENTS));
         expect(await invoiceFor(MOD_A)).toMatchObject({ waitsOn: b, parkedFrom: a });
         return { a, b };
       }
@@ -964,10 +996,11 @@ function deferred() {
           import("@/lib/xero-operation-claim"),
           import("@/lib/additional-capture-xero-receipt"),
         ]);
-        expect(await claimXeroSyncOperationToRunning(receipt!.id, { localModel: { in: ["PaymentTransaction"] } })).toBe(true);
+        const receiptClaim = await claimXeroSyncOperationToRunning(receipt!.id, { localModel: { in: ["PaymentTransaction"] } });
+        expect(receiptClaim).not.toBeNull();
         const sent: Array<{ invoiceId: string; amountCents: number }> = [];
         await worker.recordAdditionalCaptureReceipt(
-          { syncOperationId: receipt!.id },
+          { syncOperation: receiptClaim! },
           {
             getAuthenticatedXeroClient: (async () => ({ xero: {}, tenantId: "tenant_race_3403" })) as never,
             callXeroApi: (async (_call: unknown, meta: { context: string }) => ({
@@ -1085,6 +1118,74 @@ function deferred() {
       it.each(["repair", "move"] as const)("%s first: one invoice for A's change, waiting on B", async (first) => {
         const { a, b } = await race(first);
         expect(await invoiceFor(MOD_A)).toMatchObject({ status: "WAITING_PAYMENT", waitsOn: b, parkedFrom: a, cents: A_CENTS });
+      });
+    });
+
+    /*
+      #4422: B superseded a DECLINED A while Stripe was down for A's cancel, so
+      A's cancel row waits for its retry and A is still confirmable. B is paid
+      and released: A's and B's invoices both record B's capture. Then the
+      member pays A from a stale tab while the cancel runs - Stripe has captured
+      it by the time the runner's cancel arrives. Before #4422 no cancel row
+      named a declined A, so that capture settled as a late capture and took
+      A's invoice back off the already-released B: the member paid twice and
+      B's A_CENTS was recorded nowhere. Now the live row owns it, whichever of
+      the webhook and the runner's hand-off claims it first.
+    */
+    describe("#4422: a declined ask's stale-tab capture racing its cancel, the carrier already paid and released", () => {
+      it.each(["webhook", "runner"] as const)("the %s claims A first: one superseded refund, both invoices stay on B, nothing recorded for A", async (first) => {
+        await seedPaidBooking();
+        const a = await priceIncrease(MOD_A, A_CENTS);
+        await declineCard(a);
+        stripe.failCancels = 1;
+        const b = await priceIncrease(MOD_B, B_CENTS);
+        expect(stripe.intents.get(a)?.status).toBe("requires_payment_method");
+        expect(
+          await prisma.paymentRecoveryOperation.findMany({ where: { bookingId: BOOKING_ID, type: "CANCEL_PAYMENT_INTENT" }, select: { paymentIntentId: true, status: true } }),
+        ).toEqual([{ paymentIntentId: a, status: "FAILED" }]);
+
+        await payWithCard(b);
+        expect((await invoices()).map((row) => [row.change, row.status, row.waitsOn])).toEqual([
+          [MOD_A, "PENDING", b],
+          [MOD_B, "PENDING", b],
+        ]);
+
+        // The stale tab pays A between the runner's read and its cancel.
+        const cancelAtStripe = stripeRaceHooks.cancel!;
+        stripeRaceHooks.cancel = async (id) => {
+          if (id === a) {
+            const intent = stripe.intents.get(a)!;
+            intent.status = "succeeded";
+            intent.payment_method = "pm_race_3403_stale_tab";
+            intent.latest_charge = `ch_${a}`;
+            if (first === "webhook") await deliver("payment_intent.succeeded", a);
+          }
+          return cancelAtStripe(id);
+        };
+        await drainCancels();
+        if (first === "runner") await deliver("payment_intent.succeeded", a);
+
+        expect(await captured(a)).toBe(A_CENTS);
+        expect(
+          await prisma.paymentRecoveryOperation.findMany({
+            where: { bookingId: BOOKING_ID, paymentIntentId: a },
+            orderBy: { type: "asc" },
+            select: { type: true, status: true, amountCents: true },
+          }),
+        ).toEqual([
+          { type: "CANCEL_PAYMENT_INTENT", status: "SUCCEEDED", amountCents: A_CENTS },
+          { type: "REFUND_SUPERSEDED_PAYMENT", status: "PENDING", amountCents: A_CENTS },
+        ]);
+        // B's capture keeps both invoices; A's capture is going back, so nothing records it.
+        const all = await invoices();
+        expect(all.map((row) => [row.change, row.status, row.waitsOn, row.recordPayment])).toEqual([
+          [MOD_A, "PENDING", b, true],
+          [MOD_B, "PENDING", b, true],
+        ]);
+        expect(all.reduce((sum, row) => sum + row.cents, 0)).toBe(await captured(b));
+        expect(await recordersOf(b)).toEqual({ invoicedCents: await captured(b), receipts: 0 });
+        expect(await recordersOf(a)).toEqual({ invoicedCents: 0, receipts: 0 });
+        expect(await paidTwiceAlerts()).toBe(0);
       });
     });
 

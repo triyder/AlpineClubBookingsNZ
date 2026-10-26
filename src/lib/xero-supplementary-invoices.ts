@@ -52,6 +52,7 @@ import {
   resolveModificationDocumentLineItems,
 } from "@/lib/xero-modification-line-items";
 import type { ClubFormat } from "@/lib/club-format";
+import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
 
 export async function createXeroSupplementaryInvoice(params: {
   bookingId: string;
@@ -94,7 +95,7 @@ export async function createXeroSupplementaryInvoice(params: {
   createdByMemberId?: string;
   recordPayment?: boolean;
   repairExistingLink?: boolean;
-  syncOperationId?: string;
+  syncOperation?: XeroOperationClaim;
   /**
    * The club's format (#3565), for any amount a line description renders (a
    * promotion delta reads "reduced by $20.00" on the Xero line). Resolved once
@@ -111,7 +112,7 @@ export async function createXeroSupplementaryInvoice(params: {
     createdByMemberId,
     recordPayment = true,
     repairExistingLink,
-    syncOperationId,
+    syncOperation,
   } = params;
 
   // A supplementary invoice is always for a specific booking MODIFICATION, so it
@@ -133,8 +134,8 @@ export async function createXeroSupplementaryInvoice(params: {
   // operation as skipped rather than billing a gross fee the member never paid.
   const netAmountCents = priceDiffCents + changeFeeCents;
   if (netAmountCents <= 0) {
-    if (syncOperationId) {
-      await completeXeroSyncOperation(syncOperationId, {
+    if (syncOperation) {
+      await completeXeroSyncOperation(syncOperation, {
         responsePayload: {
           skipped: true,
           reason:
@@ -152,8 +153,8 @@ export async function createXeroSupplementaryInvoice(params: {
   });
 
   if (!booking?.payment?.xeroInvoiceId) {
-    if (syncOperationId) {
-      await completeXeroSyncOperation(syncOperationId, {
+    if (syncOperation) {
+      await completeXeroSyncOperation(syncOperation, {
         responsePayload: {
           skipped: true,
           reason: "No original Xero invoice exists for this booking.",
@@ -254,11 +255,11 @@ export async function createXeroSupplementaryInvoice(params: {
   // invoice is unchanged. Read on the outbox path only, stored on the row
   // before the Xero call so a retry never drifts.
   let queuedRequestPayload =
-    syncOperationId
+    syncOperation
       ? asRecord(
           (
             await prisma.xeroSyncOperation.findUnique({
-              where: { id: syncOperationId },
+              where: { id: syncOperation.id },
               select: { requestPayload: true },
             })
           )?.requestPayload,
@@ -268,7 +269,7 @@ export async function createXeroSupplementaryInvoice(params: {
   if (keptCaptureOn && queuedRequestPayload && queuedRequestPayload.keptLateCaptureDay !== keptCaptureOn) {
     queuedRequestPayload = { ...queuedRequestPayload, keptLateCaptureDay: keptCaptureOn };
     await prisma.xeroSyncOperation.update({
-      where: { id: syncOperationId! },
+      where: { id: syncOperation!.id },
       data: { requestPayload: sanitizeForJson(queuedRequestPayload) },
     });
   }
@@ -343,7 +344,8 @@ export async function createXeroSupplementaryInvoice(params: {
    * read - so writing a queued shape onto a row that was never queued would make
    * it look queued to both.
    */
-  let operationId = syncOperationId ?? null;
+  let operationClaim = syncOperation ?? null;
+  let operationId = operationClaim?.id ?? null;
   const buildStoredPayload = (resolvedContactId: string) => ({
     ...(queuedRequestPayload ?? {}),
     invoices: [buildInvoice(resolvedContactId)],
@@ -373,6 +375,7 @@ export async function createXeroSupplementaryInvoice(params: {
       createdByMemberId: createdByMemberId ?? null,
     });
     operationId = operation.id;
+    operationClaim = operation;
   }
 
   let createdInvoiceId: string;
@@ -484,7 +487,7 @@ export async function createXeroSupplementaryInvoice(params: {
       );
     }
 
-    await completeXeroSyncOperation(operationId!, {
+    await completeXeroSyncOperation(operationClaim!, {
       status: paymentError ? "PARTIAL" : "SUCCEEDED",
       responsePayload: {
         invoice: response.body,
@@ -526,7 +529,7 @@ export async function createXeroSupplementaryInvoice(params: {
       ],
     });
   } catch (error) {
-    await failXeroSyncOperation(operationId!, error);
+    await failXeroSyncOperation(operationClaim!, error);
     throw error;
   }
 

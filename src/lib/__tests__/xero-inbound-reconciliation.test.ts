@@ -211,6 +211,11 @@ vi.mock("@/lib/logger", () => ({
   },
 }));
 
+// #4095 (PR #4437 review, L2): the alert the incremental invoice reconciliation
+// raises for a recount nothing retries.
+const xeroSyncErrorAlert = vi.hoisted(() => ({ notifyXeroSyncError: vi.fn() }));
+vi.mock("@/lib/xero-error-alert", () => xeroSyncErrorAlert);
+
 vi.mock("@/lib/xero-applied-credit-allocation-repair", () => ({
   repairLegacyAppliedCreditNoteAllocationsForBooking:
     mocks.repairLegacyAppliedCreditNoteAllocationsForBooking,
@@ -382,6 +387,7 @@ import {
   replayStoredXeroInboundEvent,
   XeroInboundReplayError,
 } from "@/lib/xero-inbound-reconciliation";
+import { runIncrementalInvoiceReconciliation } from "@/lib/xero-inbound/invoice";
 import {
   sendAdminBankTransferSettlementFigureAlert,
   sendAdminPaymentFailureAlert,
@@ -839,7 +845,7 @@ describe("processStoredXeroInboundEvents", () => {
       expect.objectContaining({ store: expect.any(Object) }),
     );
     expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
-      "op_1",
+      expect.objectContaining({ id: "op_1" }),
       expect.objectContaining({
         responsePayload: expect.objectContaining({
           contactGroupsSeen: 1,
@@ -4412,6 +4418,29 @@ describe("processStoredXeroInboundEvents", () => {
       keptReason: "cash-incomplete",
       recordedCents: 12345,
     });
+    // The primary-invoice link records the allocation for the settled-cash audit.
+    expect(mocks.upsertXeroObjectLink).toHaveBeenCalledWith(
+      expect.objectContaining({
+        role: "PRIMARY_INVOICE",
+        metadata: { overpaymentOrPrepaymentAllocations: 1 },
+        mergeMetadata: true,
+      }),
+    );
+  });
+
+  it("clears the primary-invoice allocation count once Xero lists none, so the audit judges the receipt again (#4095 item 9)", async () => {
+    mockPendingInternetBankingInboundEvent({ amountPaid: 123.45 });
+
+    await expect(processStoredXeroInboundEvents()).resolves.toMatchObject({ succeeded: 1, failed: 0 });
+
+    // Written as none, merged over whatever an earlier sync recorded.
+    expect(mocks.upsertXeroObjectLink).toHaveBeenCalledWith(
+      expect.objectContaining({
+        role: "PRIMARY_INVOICE",
+        metadata: { overpaymentOrPrepaymentAllocations: 0 },
+        mergeMetadata: true,
+      }),
+    );
   });
 
   // #3979 (`INV-PAY-125`): the receipt is the cash the paid invoice collected.
@@ -4638,6 +4667,106 @@ describe("processStoredXeroInboundEvents", () => {
         data: expect.objectContaining({ status: "SUCCEEDED" }),
       });
       expect(sendAdminBankTransferSettlementFigureAlert).not.toHaveBeenCalled();
+    });
+
+    /**
+     * $123.45 invoiced, a $23.45 invoice correction applied and synced, $100.00
+     * paid plus an overpayment Xero gives no applied amount for: the cash is
+     * incomplete, so the settle keeps the stored figure. The recount after the
+     * commit (#4095 review, item 2: the inbound recount with no note being
+     * synced) fails on its own read of the payment. The helper's queued reads
+     * are answered by shape instead, so that read never takes one meant for a
+     * later reader. Returns the recount's reads.
+     */
+    async function arrangeKeptSettleWhoseRecountFails(): Promise<unknown[]> {
+      mockPendingInternetBankingInboundEvent({
+        finalPriceCents: 10000,
+        amountPaid: 100.0,
+        invoiceTotal: 123.45,
+        invoiceCreditNotes: [{ creditNoteID: "cn_correction", appliedAmount: 23.45 }],
+        invoiceOverpayments: [{ overpaymentID: "xover_4095", total: 5 }],
+      });
+      mocks.txPaymentTransactionFindMany.mockResolvedValue([primaryRow()]);
+      mocks.paymentTransactionUpdateMany.mockResolvedValue({ count: 1 });
+      mocks.txOperationFindMany.mockResolvedValue([
+        { xeroObjectId: "cn_correction", localModel: "BookingModification", requestPayload: { noteWording: "invoice-correction" } },
+      ]);
+      const linkRead = await mocks.paymentFindMany();
+      const settleRead = await mocks.paymentFindMany();
+      const ownerRead = await mocks.paymentFindMany();
+      mocks.paymentFindMany.mockClear();
+      const recountReads: unknown[] = [];
+      mocks.paymentFindMany.mockImplementation(async (args: { include?: unknown; select?: { updatedAt?: boolean; xeroInvoiceNumber?: boolean } }) => {
+        if (args?.select?.updatedAt) {
+          recountReads.push(args);
+          throw new Error("database went away");
+        }
+        if (args?.include) return settleRead;
+        return args?.select?.xeroInvoiceNumber ? linkRead : ownerRead;
+      });
+      return recountReads;
+    }
+
+    it("MUTATION: the incremental invoice reconciliation alerts a person about an invoice whose kept settle left its recount unwritten, and reports it failed (#4095 review, item 3 and L2)", async () => {
+      const recountReads = await arrangeKeptSettleWhoseRecountFails();
+
+      const result = await runIncrementalInvoiceReconciliation({
+        membershipReconciliation: { changedInvoiceIds: ["inv_ib_gate"] } as never,
+      });
+
+      expect(recountReads).toHaveLength(1);
+      expect(result).toMatchObject({
+        processed: 1,
+        succeeded: 0,
+        failed: 1,
+        errorDetails: [{ invoiceId: "inv_ib_gate", error: expect.stringContaining("correction note(s) cn_correction could not be recounted") }],
+      });
+      // Nothing retries it (the membership cursor has moved on, and no caller
+      // reads `failed`), so a person is told.
+      expect(xeroSyncErrorAlert.notifyXeroSyncError).toHaveBeenCalledTimes(1);
+      expect(xeroSyncErrorAlert.notifyXeroSyncError).toHaveBeenCalledWith({
+        errorType: "refund-ledger-divergence",
+        operation: "incremental-invoice-reconciliation:recount:inv_ib_gate",
+        errorMessage: expect.stringMatching(/correction note\(s\) cn_correction could not be recounted.*Nothing retries it on its own/),
+      });
+    });
+
+    it("MUTATION: a run with two invoices left unrecounted reports both failed and sends one alert naming both, because the hourly alert limit would drop a second (#4095, PR #4437 review round 3, L1)", async () => {
+      await arrangeKeptSettleWhoseRecountFails();
+      // The second invoice reads the same links as the first.
+      mocks.linkFindMany
+        .mockResolvedValueOnce([{ localModel: "Payment", localId: "pay_ib_gate", xeroObjectType: "INVOICE", role: "PRIMARY_INVOICE" }])
+        .mockResolvedValueOnce([]);
+
+      const result = await runIncrementalInvoiceReconciliation({
+        membershipReconciliation: { changedInvoiceIds: ["inv_ib_gate", "inv_ib_gate"] } as never,
+      });
+
+      expect(result).toMatchObject({ processed: 2, succeeded: 0, failed: 2 });
+      expect(xeroSyncErrorAlert.notifyXeroSyncError).toHaveBeenCalledTimes(1);
+      expect(xeroSyncErrorAlert.notifyXeroSyncError).toHaveBeenCalledWith(expect.objectContaining({
+        operation: "incremental-invoice-reconciliation:recount:inv_ib_gate,inv_ib_gate",
+      }));
+    });
+
+    it("recounts an applied correction after a kept settle, and fails the event when the recount could not run, so it is retried (#4095 items 5 and 12)", async () => {
+      const recountReads = await arrangeKeptSettleWhoseRecountFails();
+
+      await expect(processStoredXeroInboundEvents()).resolves.toMatchObject({ succeeded: 0, failed: 1 });
+
+      // The settle committed and kept the stored figure first.
+      expect(mocks.paymentTransactionUpdateMany.mock.calls[0][0].data).not.toHaveProperty("amountCents");
+      expect(vi.mocked(sendAdminBankTransferSettlementFigureAlert).mock.calls[0][0]).toMatchObject({ keptReason: "cash-incomplete" });
+      expect(recountReads).toEqual([expect.objectContaining({ where: { id: { in: ["pay_ib_gate"] } } })]);
+      expect(mocks.inboundUpdate).toHaveBeenCalledWith({
+        where: { id: "evt_ib_gate" },
+        data: expect.objectContaining({
+          status: "FAILED",
+          errorMessage: expect.stringContaining("correction note(s) cn_correction could not be recounted"),
+        }),
+      });
+      // The stored event is retried, so no person is alerted.
+      expect(xeroSyncErrorAlert.notifyXeroSyncError).not.toHaveBeenCalled();
     });
 
     it("keeps a fold the invoice's correction notes do not exactly explain (#3979 review A)", async () => {
@@ -5581,7 +5710,7 @@ describe("processStoredXeroInboundEvents", () => {
       },
     });
     expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
-      "op_1",
+      expect.objectContaining({ id: "op_1" }),
       expect.objectContaining({
         responsePayload: expect.objectContaining({
           matchedAccountCreditPayments: 0,
@@ -5688,7 +5817,7 @@ describe("processStoredXeroInboundEvents", () => {
       }),
     );
     expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
-      "op_1",
+      expect.objectContaining({ id: "op_1" }),
       expect.objectContaining({
         responsePayload: expect.objectContaining({
           handled: true,
@@ -5706,6 +5835,69 @@ describe("processStoredXeroInboundEvents", () => {
       skipped: 1,
     });
     expect(accountingApi.getCreditNote).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails a credit-note event whose refunded-total claim was lost twice, so it is retried rather than left unwritten (#4095 item 6)", async () => {
+    mocks.inboundFindMany.mockResolvedValue([
+      {
+        id: "evt_cn_lost",
+        source: "webhook",
+        eventCategory: "CREDITNOTE",
+        eventType: "UPDATE",
+        resourceId: "cn_lost_1",
+        correlationKey: "corr_cn_lost",
+        payload: { eventCategory: "CREDITNOTE", eventType: "UPDATE", resourceId: "cn_lost_1" },
+      },
+    ]);
+    mocks.processedCreate.mockResolvedValueOnce({ id: "processed_cn_lost" });
+    mocks.linkFindMany.mockResolvedValue([
+      { localModel: "Payment", localId: "pay_lost_1", xeroObjectType: "CREDIT_NOTE", xeroObjectId: "cn_lost_1", role: "REFUND_CREDIT_NOTE", active: true, metadata: { status: "AUTHORISED", total: 50 } },
+    ]);
+    mocks.paymentFindMany.mockResolvedValue([
+      { id: "pay_lost_1", xeroRefundCreditNoteId: "cn_lost_1", amountCents: 5000, refundedAmountCents: 0, status: "SUCCEEDED" },
+    ]);
+    // A concurrent writer moves the row before each claim: both passes lose it.
+    mocks.paymentUpdateMany.mockResolvedValue({ count: 0 });
+    mocks.transaction.mockImplementation(async (callback: (tx: unknown) => Promise<unknown>) =>
+      callback({
+        $executeRaw: vi.fn(async () => 1),
+        xeroObjectLink: { findMany: mocks.linkFindMany },
+        payment: { findFirst: vi.fn(async () => ({ id: "pay_lost_1" })), updateMany: mocks.paymentUpdateMany },
+      }),
+    );
+    mocks.getAuthenticatedXeroClient.mockResolvedValue({
+      xero: {
+        accountingApi: {
+          getCreditNote: vi.fn().mockResolvedValue({
+            body: {
+              creditNotes: [
+                { creditNoteID: "cn_lost_1", creditNoteNumber: "CN-LOST-1", status: "AUTHORISED", total: 50, appliedAmount: 0, remainingCredit: 0, allocations: [], payments: [] },
+              ],
+            },
+          }),
+        },
+      },
+      tenantId: "tenant_1",
+    });
+
+    await expect(processStoredXeroInboundEvents()).resolves.toEqual({
+      found: 1,
+      processed: 1,
+      succeeded: 0,
+      failed: 1,
+      skipped: 0,
+    });
+    expect(mocks.inboundUpdate).toHaveBeenCalledWith({
+      where: { id: "evt_cn_lost" },
+      data: expect.objectContaining({
+        status: "FAILED",
+        errorMessage: expect.stringContaining("payment(s) pay_lost_1 lost its claim twice"),
+      }),
+    });
+    // The links were written first; the retry recounts.
+    expect(mocks.upsertXeroObjectLink).toHaveBeenCalledWith(
+      expect.objectContaining({ localId: "pay_lost_1", xeroObjectId: "cn_lost_1", role: "REFUND_CREDIT_NOTE" }),
+    );
   });
 
   it("logs a webhook category that has no reconciler instead of treating it as handled work", async () => {
@@ -5741,7 +5933,7 @@ describe("processStoredXeroInboundEvents", () => {
       "No inbound reconciliation handler for Xero webhook category",
     );
     expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
-      "op_1",
+      expect.objectContaining({ id: "op_1" }),
       expect.objectContaining({
         responsePayload: expect.objectContaining({
           handled: false,
@@ -5901,7 +6093,7 @@ describe("processStoredXeroInboundEvents", () => {
       },
     });
     expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
-      "op_1",
+      expect.objectContaining({ id: "op_1" }),
       expect.objectContaining({
         responsePayload: expect.objectContaining({
           matchedAccountCreditPayments: 1,
@@ -6097,7 +6289,7 @@ describe("processStoredXeroInboundEvents", () => {
       data: { creditAppliedCents: 0 },
     });
     expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
-      "op_1",
+      expect.objectContaining({ id: "op_1" }),
       expect.objectContaining({
         responsePayload: expect.objectContaining({
           // The fallback opened the applied-credit repair gate for a note with
@@ -6207,7 +6399,7 @@ describe("processStoredXeroInboundEvents", () => {
       },
     });
     expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
-      "op_1",
+      expect.objectContaining({ id: "op_1" }),
       expect.objectContaining({
         responsePayload: expect.objectContaining({
           matchedAccountCreditPayments: 1,
@@ -6311,7 +6503,7 @@ describe("processStoredXeroInboundEvents", () => {
       },
     });
     expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
-      "op_1",
+      expect.objectContaining({ id: "op_1" }),
       expect.objectContaining({
         responsePayload: expect.objectContaining({
           matchedRefundedPayments: 1,
@@ -6523,7 +6715,7 @@ describe("processStoredXeroInboundEvents", () => {
       },
     });
     expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
-      "op_1",
+      expect.objectContaining({ id: "op_1" }),
       expect.objectContaining({
         responsePayload: expect.objectContaining({
           matchedRefundedPayments: 1,
@@ -6675,7 +6867,7 @@ describe("processStoredXeroInboundEvents", () => {
       },
     });
     expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
-      "op_1",
+      expect.objectContaining({ id: "op_1" }),
       expect.objectContaining({
         responsePayload: expect.objectContaining({
           matchedRefundedPayments: 1,

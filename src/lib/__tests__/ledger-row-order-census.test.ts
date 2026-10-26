@@ -84,7 +84,7 @@ const UNORDERED_ROW_SETS: Record<string, string> = {
     "the settlement sync posts one line per captured row and per refund, keyed by the row's id " +
     "(planSettlementLines); the set of lines, not their order, is what is posted.",
   "src/lib/booking-payment-cleanup.ts > queueSupersededAdditionalIntentCancellationRows":
-    "queues a durable cancellation for EVERY superseded pending ADDITIONAL intent; each is keyed by its " +
+    "queues a durable cancellation for EVERY superseded pending or declined ADDITIONAL intent; each is keyed by its " +
     "own intent, so the order only changes the order they are queued in.",
   "src/lib/booking-payment-cleanup.ts > queueSupersededPrimaryIntentCancellations":
     "queues a durable cancellation for EVERY superseded pending PRIMARY intent; each is keyed by its own " +

@@ -87,6 +87,7 @@ import {
   XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE,
   readQueuedOutboxPayload,
 } from "@/lib/xero-operation-outbox-payload";
+import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
 
 /** Stamped on a row withdrawn because the task stopped keeping the money. */
 export const KEPT_LATE_CAPTURE_WITHDRAWN_ERROR_CODE = "KEPT_LATE_CAPTURE_WITHDRAWN";
@@ -430,13 +431,14 @@ const KEPT_LATE_CAPTURE_PROVIDERS: KeptLateCaptureProviderSeam = {
  */
 export async function createXeroKeptLateCaptureInvoice(
   params: {
-    syncOperationId: string;
+    syncOperation: XeroOperationClaim;
     createdByMemberId?: string;
     repairExistingLink?: boolean;
   },
   providers: KeptLateCaptureProviderSeam = KEPT_LATE_CAPTURE_PROVIDERS,
 ): Promise<string | null> {
-  const { syncOperationId } = params;
+  const { syncOperation } = params;
+  const syncOperationId = syncOperation.id;
   const row = await prisma.xeroSyncOperation.findUnique({
     where: { id: syncOperationId },
     select: { requestPayload: true },
@@ -480,7 +482,7 @@ export async function createXeroKeptLateCaptureInvoice(
       if (decision.recordCents > 0) return null;
       const reason = `The kept payment's task is ${task?.status ?? "missing"}, not kept, so no Xero invoice was raised.`;
       await completeXeroSyncOperation(
-        syncOperationId,
+        syncOperation,
         { status: "CANCELLED", responsePayload: { skipped: true, reason } },
         { store: tx },
       );
@@ -639,7 +641,7 @@ export async function createXeroKeptLateCaptureInvoice(
     const { queueWaitingPaidAnotherWayNote } = await import("@/lib/paid-another-way-receipt-note");
     await queueWaitingPaidAnotherWayNote(paymentIntentId);
 
-    await completeXeroSyncOperation(syncOperationId, {
+    await completeXeroSyncOperation(syncOperation, {
       status: paymentError ? "PARTIAL" : "SUCCEEDED",
       responsePayload: { invoice: invoiceBody, paymentId, paymentError },
       xeroObjectType: "INVOICE",
@@ -655,7 +657,7 @@ export async function createXeroKeptLateCaptureInvoice(
     await creditBackLateCaptureRefunds(paymentIntentId);
     return invoiceId;
   } catch (error) {
-    await failXeroSyncOperation(syncOperationId, error);
+    await failXeroSyncOperation(syncOperation, error);
     throw error;
   }
 }

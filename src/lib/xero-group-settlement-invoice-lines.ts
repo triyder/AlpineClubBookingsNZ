@@ -41,6 +41,7 @@ import { completeXeroSyncOperation } from "@/lib/xero-sync";
 import { alertGroupSettlementInvoice } from "@/lib/group-settlement-invoice-alerts";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { formatCents } from "@/lib/utils";
+import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
 
 
 export interface GroupSettlementInvoiceLines {
@@ -163,7 +164,7 @@ export async function buildGroupSettlementInvoiceLines(
 export async function releaseUninvoiceableGroupSettlement(
   settlementId: string,
   amountCents: number,
-  detail: { syncOperationId?: string; childrenCents: number; lineCents: number }
+  detail: { syncOperation?: XeroOperationClaim; childrenCents: number; lineCents: number }
 ): Promise<void> {
   await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
@@ -188,8 +189,8 @@ export async function releaseUninvoiceableGroupSettlement(
     },
     format
   );
-  if (detail.syncOperationId) {
-    await completeXeroSyncOperation(detail.syncOperationId, {
+  if (detail.syncOperation) {
+    await completeXeroSyncOperation(detail.syncOperation, {
       status: "FAILED",
       responsePayload: {
         invoiceLinesDisagreeWithPrices: true,

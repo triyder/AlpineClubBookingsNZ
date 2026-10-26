@@ -41,6 +41,7 @@ import { XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CREDIT_NOTE_TYPE } from "@/lib/xero
 import { providerAmountToCents } from "@/lib/money-provider-amount";
 import { refreshFinancialYearConfig } from "@/lib/financial-year-server";
 import { seasonYearsLabel } from "@/lib/season-label";
+import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
 
 const MEMBERSHIP_CANCELLATION_CREDIT_ROLE = "MEMBERSHIP_CANCELLATION_CREDIT_NOTE";
 const MEMBERSHIP_CANCELLATION_CREDIT_ALLOCATION_ROLE =
@@ -322,7 +323,7 @@ export async function createXeroMembershipCancellationCreditNote(
     requestId: string;
     participantId: string;
     createdByMemberId?: string;
-    syncOperationId?: string;
+    syncOperation?: XeroOperationClaim;
   },
 ): Promise<string | null> {
   const subscription = await prisma.memberSubscription.findUnique({
@@ -343,7 +344,8 @@ export async function createXeroMembershipCancellationCreditNote(
     throw new Error(`Member subscription not found: ${params.subscriptionId}`);
   }
 
-  const operationId = params.syncOperationId ?? null;
+  const operationClaim = params.syncOperation ?? null;
+  const operationId = operationClaim?.id ?? null;
   const shouldCredit =
     (subscription.status === "UNPAID" || subscription.status === "OVERDUE") &&
     Boolean(subscription.xeroInvoiceId);
@@ -414,8 +416,8 @@ export async function createXeroMembershipCancellationCreditNote(
           "Failed to send admin alert for paid membership cancellation",
         ),
       );
-      if (operationId) {
-        await completeXeroSyncOperation(operationId, {
+      if (operationClaim) {
+        await completeXeroSyncOperation(operationClaim, {
           responsePayload: {
             skipped: true,
             reason: "paid_subscription_no_refund",
@@ -464,8 +466,8 @@ export async function createXeroMembershipCancellationCreditNote(
       );
     }
 
-    if (operationId) {
-      await completeXeroSyncOperation(operationId, {
+    if (operationClaim) {
+      await completeXeroSyncOperation(operationClaim, {
         responsePayload: {
           skipped: true,
           reason: "subscription_status_not_creditable",
@@ -538,8 +540,8 @@ export async function createXeroMembershipCancellationCreditNote(
         },
         "Membership cancellation credit note skipped: the subscription invoice also covers members who are staying",
       );
-      if (operationId) {
-        await completeXeroSyncOperation(operationId, {
+      if (operationClaim) {
+        await completeXeroSyncOperation(operationClaim, {
           responsePayload: {
             skipped: true,
             reason: "shared_invoice_covers_remaining_members",
@@ -580,8 +582,8 @@ export async function createXeroMembershipCancellationCreditNote(
         },
         "Membership cancellation credit note skipped: another cancellation already owns the credit for this subscription invoice",
       );
-      if (operationId) {
-        await completeXeroSyncOperation(operationId, {
+      if (operationClaim) {
+        await completeXeroSyncOperation(operationClaim, {
           responsePayload: {
             skipped: true,
             reason: "invoice_credit_claimed_by_other_cancellation",
@@ -615,8 +617,8 @@ export async function createXeroMembershipCancellationCreditNote(
 
   const amountCents = centsFromAmount(invoice.amountDue ?? invoice.total);
   if (amountCents <= 0) {
-    if (operationId) {
-      await completeXeroSyncOperation(operationId, {
+    if (operationClaim) {
+      await completeXeroSyncOperation(operationClaim, {
         responsePayload: {
           skipped: true,
           reason: "invoice_has_no_amount_due",
@@ -678,8 +680,8 @@ export async function createXeroMembershipCancellationCreditNote(
       memberId: subscription.memberId,
       createdByMemberId: params.createdByMemberId,
     });
-    if (operationId) {
-      await completeXeroSyncOperation(operationId, {
+    if (operationClaim) {
+      await completeXeroSyncOperation(operationClaim, {
         responsePayload: {
           existingCreditNoteId: existingCreditLink.xeroObjectId,
           invoiceId,
@@ -771,6 +773,7 @@ export async function createXeroMembershipCancellationCreditNote(
     "v1",
   );
   let creditOperationId = operationId;
+  let creditOperationClaim = operationClaim;
   const requestPayload = {
     queueType: XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CREDIT_NOTE_TYPE,
     subscriptionId: subscription.id,
@@ -801,6 +804,7 @@ export async function createXeroMembershipCancellationCreditNote(
       createdByMemberId: params.createdByMemberId ?? null,
     });
     creditOperationId = operation.id;
+    creditOperationClaim = operation;
   }
 
   try {
@@ -859,7 +863,7 @@ export async function createXeroMembershipCancellationCreditNote(
       allocationError = error;
     }
 
-    await completeXeroSyncOperation(creditOperationId!, {
+    await completeXeroSyncOperation(creditOperationClaim!, {
       status: allocationError ? "PARTIAL" : "SUCCEEDED",
       responsePayload: {
         creditNote: response.body,
@@ -909,7 +913,7 @@ export async function createXeroMembershipCancellationCreditNote(
 
     return createdNote.creditNoteID;
   } catch (error) {
-    await failXeroSyncOperation(creditOperationId!, error);
+    await failXeroSyncOperation(creditOperationClaim!, error);
     throw error;
   }
 }
@@ -1003,7 +1007,7 @@ async function allocateMembershipCancellationCreditNote(params: {
     );
 
     const allocationUrl = buildXeroInvoiceUrl(params.invoiceId);
-    await completeXeroSyncOperation(operation.id, {
+    await completeXeroSyncOperation(operation, {
       responsePayload: response.body,
       xeroObjectType: "ALLOCATION",
       xeroObjectId: allocationId,
@@ -1042,7 +1046,7 @@ async function allocateMembershipCancellationCreditNote(params: {
       ],
     });
   } catch (error) {
-    await failXeroSyncOperation(operation.id, error);
+    await failXeroSyncOperation(operation, error);
     throw error;
   }
 }
@@ -1094,7 +1098,7 @@ export async function syncXeroMembershipCancellationContact(params: {
   requestId: string;
   participantId: string;
   createdByMemberId?: string;
-  syncOperationId?: string;
+  syncOperation?: XeroOperationClaim;
 }) {
   const member = await prisma.member.findUnique({
     where: { id: params.memberId },
@@ -1110,10 +1114,11 @@ export async function syncXeroMembershipCancellationContact(params: {
     throw new Error(`Member not found: ${params.memberId}`);
   }
 
-  const operationId = params.syncOperationId ?? null;
+  const operationClaim = params.syncOperation ?? null;
+  const operationId = operationClaim?.id ?? null;
   if (!member.xeroContactId) {
-    if (operationId) {
-      await completeXeroSyncOperation(operationId, {
+    if (operationClaim) {
+      await completeXeroSyncOperation(operationClaim, {
         responsePayload: {
           skipped: true,
           reason: "member_has_no_xero_contact",
@@ -1197,6 +1202,7 @@ export async function syncXeroMembershipCancellationContact(params: {
     "v2",
   );
   let contactOperationId = operationId;
+  let contactOperationClaim = operationClaim;
   if (contactOperationId) {
     await prisma.xeroSyncOperation.update({
       where: { id: contactOperationId },
@@ -1215,6 +1221,7 @@ export async function syncXeroMembershipCancellationContact(params: {
       createdByMemberId: params.createdByMemberId ?? null,
     });
     contactOperationId = operation.id;
+    contactOperationClaim = operation;
   }
 
   const addedGroupIds: string[] = [];
@@ -1358,7 +1365,7 @@ export async function syncXeroMembershipCancellationContact(params: {
       await refreshXeroContactCachesFromContact(contact);
     }
 
-    await completeXeroSyncOperation(contactOperationId!, {
+    await completeXeroSyncOperation(contactOperationClaim!, {
       responsePayload: {
         addedGroupIds,
         removedGroupIds,
@@ -1393,7 +1400,7 @@ export async function syncXeroMembershipCancellationContact(params: {
       skippedReason: null,
     };
   } catch (error) {
-    await failXeroSyncOperation(contactOperationId!, error);
+    await failXeroSyncOperation(contactOperationClaim!, error);
     throw error;
   }
 }

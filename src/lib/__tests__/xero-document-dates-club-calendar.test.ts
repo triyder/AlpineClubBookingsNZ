@@ -228,6 +228,7 @@ import { createXeroCreditNoteForModification } from "@/lib/xero-modification-cre
 import { createXeroMembershipSubscriptionInvoice } from "@/lib/xero-subscription-invoices";
 import { createXeroSupplementaryInvoice } from "@/lib/xero-supplementary-invoices";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { xeroClaim } from "@/lib/__tests__/helpers/xero-claim";
 
 /**
  * Each case is an instant whose UTC calendar day is the day BEFORE the club's,
@@ -831,7 +832,7 @@ describe.each(CLUB_DAY_CASES)(
       await expect(
         createXeroMembershipSubscriptionInvoice({
           chargeId: "charge_1",
-          syncOperationId: "op_1",
+          syncOperation: xeroClaim("op_1"),
         }),
       ).rejects.toThrow(SENTINEL);
 
@@ -909,7 +910,7 @@ describe("a due date counted in days is counted in CLUB days, not 24-hour blocks
     await expect(
       createXeroMembershipSubscriptionInvoice({
         chargeId: "charge_1",
-        syncOperationId: "op_1",
+        syncOperation: xeroClaim("op_1"),
       }),
     ).rejects.toThrow(SENTINEL);
 

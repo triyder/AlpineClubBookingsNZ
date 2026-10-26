@@ -27,6 +27,7 @@ import {
   upsertXeroObjectLink,
 } from "@/lib/xero-sync";
 import type { Prisma } from "@prisma/client";
+import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
 import {
   callXeroApi,
   getAuthenticatedXeroClient,
@@ -342,7 +343,7 @@ export async function reserveMemberContactUpdateOperation<T>(
 export async function completeMemberContactUpdateOperation(
   memberId: string,
   expectedXeroContactId: string,
-  operationId: string,
+  operation: XeroOperationClaim,
   completion: Parameters<typeof completeXeroSyncOperation>[1],
   db: typeof prisma = prisma,
 ): Promise<void> {
@@ -351,7 +352,7 @@ export async function completeMemberContactUpdateOperation(
     if (locked.xeroContactId !== expectedXeroContactId) {
       throw new XeroContactLinkChangedError();
     }
-    await completeXeroSyncOperation(operationId, completion, { store: tx });
+    await completeXeroSyncOperation(operation, completion, { store: tx });
   });
 }
 
@@ -802,13 +803,13 @@ export async function findOrCreateXeroContact(
         contactId: string;
         linkedVia: "email_match" | "email_match_repair" | "name_match" | "name_match_repair";
         contactName: string | null;
-        operationId: string | null;
+        operation: XeroOperationClaim | null;
         completionInput: Parameters<typeof completeXeroSyncOperation>[1] | null;
       }
     | {
         kind: "created";
         contactId: string;
-        operationId: string;
+        operation: XeroOperationClaim;
         completionInput: Parameters<typeof completeXeroSyncOperation>[1];
       };
   let resolved: ResolvedContact | null = null;
@@ -854,7 +855,7 @@ export async function findOrCreateXeroContact(
         contactId: matchedContact.contactID!,
         linkedVia: options?.repairExistingLink ? "email_match_repair" : "email_match",
         contactName: buildXeroContactDisplayName(matchedContact),
-        operationId: null,
+        operation: null,
         completionInput: null,
       };
     }
@@ -909,7 +910,7 @@ export async function findOrCreateXeroContact(
           contactId: matchedByName.contactID,
           linkedVia: "name_match_repair",
           contactName: buildXeroContactDisplayName(matchedByName),
-          operationId: null,
+          operation: null,
           completionInput: null,
         };
       }
@@ -994,14 +995,14 @@ export async function findOrCreateXeroContact(
       }
 
       await persistProviderCreatedContactProofOrThrow(
-        operation.id,
+        operation,
         createdContact.contactID,
       );
 
       resolved = {
         kind: "created",
         contactId: createdContact.contactID,
-        operationId: operation.id,
+        operation,
         completionInput: {
           responsePayload: response.body,
           xeroObjectType: "CONTACT",
@@ -1037,7 +1038,7 @@ export async function findOrCreateXeroContact(
             memberId,
             originalError: error,
           });
-          await failXeroSyncOperation(operation.id, refusal, {
+          await failXeroSyncOperation(operation, refusal, {
             duplicateCreateError: sanitizeForJson(error),
             refusedRecovery: "name_match_requires_operator_decision",
           });
@@ -1059,7 +1060,7 @@ export async function findOrCreateXeroContact(
                 ? "name_match_repair"
                 : "name_match",
               contactName: buildXeroContactDisplayName(matchedContact),
-              operationId: operation.id,
+              operation,
               completionInput: {
                 responsePayload: {
                   resolution: "linked_existing_contact_by_name",
@@ -1083,7 +1084,7 @@ export async function findOrCreateXeroContact(
             };
           }
         } catch (recoveryError) {
-          await failXeroSyncOperation(operation.id, recoveryError, {
+          await failXeroSyncOperation(operation, recoveryError, {
             duplicateCreateError: sanitizeForJson(error),
             recoveryError: sanitizeForJson(recoveryError),
           });
@@ -1092,7 +1093,7 @@ export async function findOrCreateXeroContact(
       }
 
       if (!resolved) {
-        await failXeroSyncOperation(operation.id, error);
+        await failXeroSyncOperation(operation, error);
         throw error;
       }
     }
@@ -1214,9 +1215,9 @@ export async function findOrCreateXeroContact(
       return { contactId: finalResolved.contactId, wonWrite: true };
     });
   } catch (linkError) {
-    if (finalResolved.operationId) {
+    if (finalResolved.operation) {
       try {
-        await failXeroSyncOperation(finalResolved.operationId, linkError, {
+        await failXeroSyncOperation(finalResolved.operation, linkError, {
           phase: "local_link_after_xero_resolution",
           resolvedContactId: finalResolved.contactId,
           providerContactCreated: finalResolved.kind === "created",
@@ -1236,10 +1237,10 @@ export async function findOrCreateXeroContact(
   // the catch below instead of leaving a SUCCEEDED record for rolled-back
   // state. (linkMatchedXeroContact throws inside the tx when the contact is
   // already linked to another member — that failure path is covered too.)
-  if (finalResolved.operationId && finalResolved.completionInput) {
+  if (finalResolved.operation && finalResolved.completionInput) {
     if (linkOutcome.wonWrite) {
       await completeXeroSyncOperation(
-        finalResolved.operationId,
+        finalResolved.operation,
         finalResolved.completionInput
       );
     } else {
@@ -1251,7 +1252,7 @@ export async function findOrCreateXeroContact(
         },
         "Concurrent resolver linked a different Xero contact first; recording the unlinked resolution"
       );
-      await completeXeroSyncOperation(finalResolved.operationId, {
+      await completeXeroSyncOperation(finalResolved.operation, {
         responsePayload: {
           resolution: "superseded_by_concurrent_link",
           resolvedContactId: finalResolved.contactId,
@@ -1337,9 +1338,10 @@ export class XeroContactCreatePartialSuccessError extends Error {
 }
 
 async function persistProviderCreatedContactProofOrThrow(
-  operationId: string,
+  operation: XeroOperationClaim,
   resolvedContactId: string,
 ): Promise<void> {
+  const operationId = operation.id;
   try {
     await recordProviderCreatedContactPendingLocalLink({
       operationId,
@@ -1347,7 +1349,7 @@ async function persistProviderCreatedContactProofOrThrow(
     });
   } catch (proofError) {
     try {
-      await failXeroSyncOperation(operationId, proofError, {
+      await failXeroSyncOperation(operation, proofError, {
         phase: "local_link_after_xero_resolution",
         resolvedContactId,
         providerContactCreated: true,
@@ -1435,7 +1437,7 @@ export async function createXeroContactForMember(
     }
     createdContactId = createdContact.contactID;
     await persistProviderCreatedContactProofOrThrow(
-      operation.id,
+      operation,
       createdContactId,
     );
     completionInput = {
@@ -1456,7 +1458,7 @@ export async function createXeroContactForMember(
     };
   } catch (error) {
     if (error instanceof XeroContactCreatePartialSuccessError) throw error;
-    await failXeroSyncOperation(operation.id, error);
+    await failXeroSyncOperation(operation, error);
     throw error;
   }
 
@@ -1472,7 +1474,7 @@ export async function createXeroContactForMember(
     });
   } catch (linkError) {
     try {
-      await failXeroSyncOperation(operation.id, linkError, {
+      await failXeroSyncOperation(operation, linkError, {
         phase: "local_link_after_xero_resolution",
         resolvedContactId: createdContactId,
         providerContactCreated: true,
@@ -1492,7 +1494,7 @@ export async function createXeroContactForMember(
 
   // Post-commit op-log close (F7 task 3).
   try {
-    await completeXeroSyncOperation(operation.id, completionInput);
+    await completeXeroSyncOperation(operation, completionInput);
   } catch (completionError) {
     throw new XeroContactCreatePartialSuccessError(
       "LOCAL_MEMBER_LINK_COMMITTED",
@@ -2053,14 +2055,14 @@ export async function updateXeroContact(
       await completeMemberContactUpdateOperation(
         memberId,
         xeroContactId,
-        operation.id,
+        operation,
         completion,
       );
     } else {
-      await completeXeroSyncOperation(operation.id, completion);
+      await completeXeroSyncOperation(operation, completion);
     }
   } catch (error) {
-    await failXeroSyncOperation(operation.id, error);
+    await failXeroSyncOperation(operation, error);
     throw error;
   }
 }

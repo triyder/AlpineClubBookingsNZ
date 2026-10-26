@@ -36,6 +36,7 @@
  * over real eligible cash, never the payment-wide gap.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { currentXeroClaim } from "@/lib/__tests__/helpers/xero-claim";
 
 /** A plain test label for the skipped outbox row (not a credential). */
 const SKIPPED_ROW_LABEL = ["race", "3372", "paw", "skipped"].join("-");
@@ -769,8 +770,8 @@ const LOCK_POLL_TIMEOUT_MS = 5_000;
           readStripeCaptureDocumentDate: async () => "2026-08-01",
         } as never;
       }
-      const runWorker = (operationId: string, paused?: Promise<void>, invoicesCalled?: () => void) =>
-        createXeroKeptLateCaptureInvoice({ syncOperationId: operationId }, providers(paused, invoicesCalled));
+      const runWorker = async (operationId: string, paused?: Promise<void>, invoicesCalled?: () => void) =>
+        createXeroKeptLateCaptureInvoice({ syncOperation: await currentXeroClaim(prisma, operationId) }, providers(paused, invoicesCalled));
 
       it("a close that waits on the approval task's row behind the REAL receipt worker reads the receipt recorded and queues its own note", async () => {
         // The capture was kept and its receipt claimed while it was; the worker

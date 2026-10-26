@@ -51,10 +51,11 @@ import { buildJoiningFeeNarration } from "./joining-fee-narration";
 import { providerAmountToCents } from "@/lib/money-provider-amount";
 import { getClubFormat } from "@/lib/club-format-settings";
 import { formatCents } from "@/lib/utils";
+import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
 
 export interface CreateXeroEntranceFeeInvoiceOptions
   extends FindOrCreateXeroContactOptions {
-  syncOperationId?: string;
+  syncOperation?: XeroOperationClaim;
   precomputedEntranceFee?: EntranceFeeContext;
 }
 
@@ -219,7 +220,8 @@ export async function createXeroEntranceFeeInvoice(
 ): Promise<string | null> {
   const entranceFee = options?.precomputedEntranceFee ?? (await getEntranceFeeContext(memberId));
   const { category, feeMapping } = entranceFee;
-  const queuedOperationId = options?.syncOperationId ?? null;
+  const queuedOperation = options?.syncOperation ?? null;
+  const queuedOperationId = queuedOperation?.id ?? null;
 
   // Organisations/schools are exempt from joining fees (owner decision,
   // 2026-07-07). The fresh tier read also covers replayed operations that
@@ -233,8 +235,8 @@ export async function createXeroEntranceFeeInvoice(
       })
     )?.ageTier === "NOT_APPLICABLE";
   if (entranceFee.exempt || exemptByCurrentTier) {
-    if (queuedOperationId) {
-      await completeXeroSyncOperation(queuedOperationId, {
+    if (queuedOperation) {
+      await completeXeroSyncOperation(queuedOperation, {
         status: "SUCCEEDED",
         responsePayload: {
           skipped: true,
@@ -248,8 +250,8 @@ export async function createXeroEntranceFeeInvoice(
   }
 
   if (!feeMapping.amountCents || feeMapping.amountCents <= 0) {
-    if (queuedOperationId) {
-      await completeXeroSyncOperation(queuedOperationId, {
+    if (queuedOperation) {
+      await completeXeroSyncOperation(queuedOperation, {
         status: "SUCCEEDED",
         responsePayload: {
           skipped: true,
@@ -287,8 +289,8 @@ export async function createXeroEntranceFeeInvoice(
     select: { xeroObjectId: true, xeroObjectNumber: true, xeroObjectUrl: true },
   });
   if (existingLink) {
-    if (queuedOperationId) {
-      await completeXeroSyncOperation(queuedOperationId, {
+    if (queuedOperation) {
+      await completeXeroSyncOperation(queuedOperation, {
         responsePayload: {
           adopted: true,
           reason: "Joining fee invoice already linked for this member.",
@@ -333,6 +335,7 @@ export async function createXeroEntranceFeeInvoice(
   // buildEntranceFeeInvoiceMintIdempotencyKey for the full rationale.
   const mintIdempotencyKey = buildEntranceFeeInvoiceMintIdempotencyKey(memberId);
   let operationId = queuedOperationId;
+  let operationClaim = queuedOperation;
 
   try {
     if (!xero || !tenantId) {
@@ -405,6 +408,7 @@ export async function createXeroEntranceFeeInvoice(
         createdByMemberId: options?.createdByMemberId ?? null,
       });
       operationId = operation.id;
+      operationClaim = operation;
     }
 
     // F21 adopt-by-reference: a crash (or a provider-side idempotency replay)
@@ -485,7 +489,7 @@ export async function createXeroEntranceFeeInvoice(
         operation: `createXeroEntranceFeeInvoice:${memberId}`,
         errorMessage: `Entrance fee for member ${memberId} was NOT billed: ${adoptableCandidates.length} AUTHORISED Xero invoices share reference "${reference}" (invoice ids ${conflictInvoiceIds.join(", ")}). No invoice was minted; manual reconciliation required.`,
       });
-      await completeXeroSyncOperation(operationId!, {
+      await completeXeroSyncOperation(operationClaim!, {
         status: "SUCCEEDED",
         responsePayload: {
           conflict: "DUPLICATE_REFERENCE",
@@ -542,7 +546,7 @@ export async function createXeroEntranceFeeInvoice(
         operation: `createXeroEntranceFeeInvoice:${memberId}`,
         errorMessage: `Entrance fee for member ${memberId} was NOT billed: existing AUTHORISED Xero invoice ${conflictInvoiceId} on reference "${reference}" is ${providerAmountLabel} but the expected fee is ${formatCents(feeAmountCents, format)}. No invoice was minted; manual reconciliation required.`,
       });
-      await completeXeroSyncOperation(operationId!, {
+      await completeXeroSyncOperation(operationClaim!, {
         status: "SUCCEEDED",
         responsePayload: {
           conflict: "PROVIDER_MISMATCH",
@@ -556,7 +560,7 @@ export async function createXeroEntranceFeeInvoice(
 
     const adoptable = adoptableCandidates[0];
     if (adoptable?.invoiceID) {
-      await completeXeroSyncOperation(operationId!, {
+      await completeXeroSyncOperation(operationClaim!, {
         responsePayload: { adopted: true, invoice: adoptable },
         xeroObjectType: "INVOICE",
         xeroObjectId: adoptable.invoiceID,
@@ -623,7 +627,7 @@ export async function createXeroEntranceFeeInvoice(
       throw new Error("Failed to create Xero entrance fee invoice");
     }
 
-    await completeXeroSyncOperation(operationId!, {
+    await completeXeroSyncOperation(operationClaim!, {
       responsePayload: response.body,
       xeroObjectType: "INVOICE",
       xeroObjectId: created.invoiceID,
@@ -655,7 +659,7 @@ export async function createXeroEntranceFeeInvoice(
     return created.invoiceID;
   } catch (error) {
     if (operationId) {
-      await failXeroSyncOperation(operationId, error);
+      await failXeroSyncOperation(operationClaim!, error);
     }
     throw error;
   }

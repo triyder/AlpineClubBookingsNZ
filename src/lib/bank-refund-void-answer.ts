@@ -434,7 +434,18 @@ export async function reconcileHandMadeNoteAfterRecording(
   context: { alertKey: string; recordedFor: string },
 ): Promise<void> {
   try {
-    await reconcileXeroCreditNote(note.creditNoteId);
+    const reconciled = await reconcileXeroCreditNote(note.creditNoteId);
+    // #4095: the re-read itself succeeded, but its refunded-total recount lost
+    // its claim twice and wrote nothing. No stored event stands behind this
+    // call to be retried, so a person is told, as for a failed re-read.
+    if ("recountLeftUnsettled" in reconciled && reconciled.recountLeftUnsettled) {
+      logger.error({ creditNoteId: note.creditNoteId }, reconciled.recountLeftUnsettled);
+      await notifyXeroSyncError({
+        errorType: "refund-ledger-divergence",
+        operation: `${context.alertKey}:recount:${note.creditNoteId}`,
+        errorMessage: `The hand-made Xero credit note ${note.creditNoteNumber} was recorded for ${context.recordedFor}, but the payment's refunded total could not be recounted afterwards: another change to the payment won twice. Nothing retries it on its own; check the payment's refunded total against Xero.`,
+      }).catch(() => undefined);
+    }
   } catch (error) {
     logger.error({ err: error, creditNoteId: note.creditNoteId }, "Could not re-read a hand-made refund credit note after recording it (#4162, #4421)");
     await notifyXeroSyncError({

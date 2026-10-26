@@ -29,6 +29,27 @@ export const NOT_A_XERO_REPAIR_CLAIM = {
 } satisfies Prisma.XeroSyncOperationWhereInput;
 
 /**
+ * #4373 (`INV-INT-029`): the claim an outcome is written under - the row's id
+ * and the `startedAt` its RUNNING claim was stamped with when this caller
+ * started it (`startXeroSyncOperation`'s row) or claimed it
+ * (`claimXeroSyncOperationToRunning`, a retry's claim). A started row is one as
+ * it stands. Null `startedAt`: a caller handed a row no claim holds yet.
+ */
+export interface XeroOperationClaim {
+  readonly id: string;
+  readonly startedAt: Date | null;
+}
+
+/**
+ * #4373: a row that is not RUNNING under another claim. A RUNNING row whose
+ * `startedAt` is not this claim's is a later attempt's (a retry's, after a
+ * stale reset or a failure), and no outcome of this attempt lands there.
+ */
+function notAnotherClaim(claim: XeroOperationClaim): Prisma.XeroSyncOperationWhereInput {
+  return { OR: [{ status: { not: "RUNNING" } }, { startedAt: claim.startedAt }] };
+}
+
+/**
  * #4356 (`INV-INT-029`): the write guard of an outcome (`status`) on an
  * operation row. Two callers can hold one row - a start that loses the insert
  * race is handed the winner's ACTIVE row (#1354) - and each records its own
@@ -37,24 +58,32 @@ export const NOT_A_XERO_REPAIR_CLAIM = {
  * SUCCEEDED or PARTIAL on PARTIAL. Nor does any outcome but SUCCEEDED land on
  * a repair's RUNNING claim (`XERO_REPAIR_CLAIM_RUNNING_CODES`): it would
  * replace the payload the repair reads and make the repair's own give-back
- * lose. A SUCCEEDED write lands on anything; `alsoKeep` keeps one more status
- * out. `onlyIfRunningSince` writes onto that RUNNING claim only, which no
- * recorded outcome is. Null: an unguarded write.
+ * lose. #4373: and no outcome, a success included, lands on a RUNNING row
+ * another claim holds - a late outcome of an earlier attempt never lands on a
+ * retry's claim. A SUCCEEDED write lands on anything else; `alsoKeep` keeps
+ * one more status out. `retryClaim` writes onto this RUNNING claim only, which
+ * no recorded outcome is.
  */
 export function outcomeWriteGuard(
-  operationId: string,
+  claim: XeroOperationClaim,
   status: string,
-  options: { onlyIfRunningSince?: Date; alsoKeep?: string },
-): Prisma.XeroSyncOperationWhereInput | null {
+  options: { retryClaim?: true; alsoKeep?: string },
+): Prisma.XeroSyncOperationWhereInput {
   // An `updateMany` reads an undefined id as no filter at all: never let one through.
-  if (!operationId) throw new Error("A Xero operation outcome needs the operation's id.");
-  if (options.onlyIfRunningSince) return { status: "RUNNING", startedAt: options.onlyIfRunningSince };
-  if (status === "SUCCEEDED") return null;
+  if (!claim.id) throw new Error("A Xero operation outcome needs the operation's id.");
+  if (options.retryClaim) {
+    if (!claim.startedAt) throw new Error("A retry's claim outcome needs the claim's startedAt.");
+    return { status: "RUNNING", startedAt: claim.startedAt };
+  }
+  if (status === "SUCCEEDED") return notAnotherClaim(claim);
   const kept = XERO_RECORDED_SUCCESS_STATUSES.filter((held) => held !== status);
   if (options.alsoKeep) kept.push(options.alsoKeep);
   return {
-    status: kept.length === 1 ? { not: kept[0] } : { notIn: kept },
-    ...NOT_A_XERO_REPAIR_CLAIM,
+    AND: [
+      { status: kept.length === 1 ? { not: kept[0] } : { notIn: kept } },
+      NOT_A_XERO_REPAIR_CLAIM,
+      notAnotherClaim(claim),
+    ],
   };
 }
 
@@ -63,29 +92,50 @@ type OutcomeRowReader = Pick<Prisma.TransactionClient, "xeroSyncOperation">;
 /**
  * A guarded outcome write that matched no row: nothing written, nothing
  * alerted; answers null. A row that is not there at all is said so: an outcome
- * its caller did not guard throws, as the unguarded `update` it was before
- * #4356 did, and a guarded one logs it.
+ * written without `retryClaim` or `keepCancelled` throws, as the unguarded
+ * `update` it was before #4356 did, and one with either logs it.
+ *
+ * #4373 review F1: a success or part-success refused only because a later
+ * claim holds the row RUNNING still records its links (`lateSuccess`): the
+ * Xero object exists, and if that claim then fails it would be recorded
+ * nowhere. The row's status and claim are left as they are, and it is logged
+ * at warn. A refusal for any other reason (INV-INT-029's recorded outcome, a
+ * repair's marker, a retry's own lost claim) still records nothing.
  */
 export async function refusedOutcomeWrite(
   db: OutcomeRowReader,
-  operationId: string,
+  claim: XeroOperationClaim,
   status: string,
-  caller: { onlyIfRunningSince?: Date; keepCancelled?: boolean },
+  caller: { retryClaim?: true; keepCancelled?: boolean },
+  lateSuccess?: { xeroObjectId: string | null; recordLinks: () => Promise<void> },
 ): Promise<null> {
-  const row = await db.xeroSyncOperation.findUnique({ where: { id: operationId }, select: { status: true } });
+  const operationId = claim.id;
+  const row = await db.xeroSyncOperation.findUnique({ where: { id: operationId }, select: { status: true, startedAt: true } });
   if (!row) {
-    if (!caller.onlyIfRunningSince && !caller.keepCancelled) {
+    if (!caller.retryClaim && !caller.keepCancelled) {
       throw new Error(`Xero operation ${operationId} was not found, so its ${status} outcome was not recorded.`);
     }
     logger.warn({ operationId, status }, "Xero operation outcome not recorded: the operation row was not found");
     return null;
   }
-  // A claim-guarded caller reports its own lost claim.
-  if (!caller.onlyIfRunningSince) {
-    logger.info(
-      { operationId, status, heldStatus: row.status },
-      "Xero operation outcome not recorded: the row kept the outcome or claim it holds (INV-INT-029)",
+  // A retry's claim reports its own lost claim.
+  if (caller.retryClaim) return null;
+  if (lateSuccess && holdsRecordedXeroSuccess(status) && heldByAnotherClaim(row, claim)) {
+    await lateSuccess.recordLinks();
+    logger.warn(
+      { operationId, status, xeroObjectId: lateSuccess.xeroObjectId, claimStartedAt: claim.startedAt, heldClaimStartedAt: row.startedAt },
+      "Xero operation outcome not recorded on a later claim's RUNNING row; its Xero links were recorded (INV-INT-029)",
     );
+    return null;
   }
+  logger.info(
+    { operationId, status, heldStatus: row.status },
+    "Xero operation outcome not recorded: the row kept the outcome or claim it holds (INV-INT-029)",
+  );
   return null;
+}
+
+/** #4373: the row is RUNNING under a claim other than this one. */
+function heldByAnotherClaim(row: { status: string; startedAt: Date | null }, claim: XeroOperationClaim): boolean {
+  return row.status === "RUNNING" && (row.startedAt?.getTime() ?? null) !== (claim.startedAt?.getTime() ?? null);
 }

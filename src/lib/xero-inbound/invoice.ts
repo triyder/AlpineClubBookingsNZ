@@ -22,6 +22,7 @@ import { writeXeroInboundAuditLogs } from "./audit";
 import { resolveMemberIdsForContact } from "./contact";
 import { refreshLinkedSubscriptionsForInvoice, syncLinkedPaymentInvoiceMetadata } from "./payment";
 import { syncGroupSettlementForPaidInvoice, syncInternetBankingPaymentsForPaidInvoice } from "./invoice-paid-effects";
+import { alertUnrecountedInvoices, failIfRecountLeftUnsettled, type UnrecountedInvoice } from "./recount-left-unsettled";
 
 import type { ClubFormat } from "@/lib/club-format";
 import { clubFormatValues } from "@/lib/club-format-server";
@@ -110,7 +111,10 @@ export async function reconcileXeroInvoice(
 
   // #3979: an invoice paid by an applied overpayment or prepayment leaves no
   // payment record to link, so its primary-invoice link says so: the settled-
-  // cash audit cannot judge such a receipt from local data.
+  // cash audit cannot judge such a receipt from local data. The count is
+  // written every sync, none included, so an allocation Xero has since removed
+  // clears it, and the audit can tell a recorded none from an older sync's
+  // silence (#4095 items 9 and 13).
   const cashAllocationCount =
     (invoice.overpayments?.length ?? 0) + (invoice.prepayments?.length ?? 0);
   for (const link of relatedLinks) {
@@ -121,7 +125,7 @@ export async function reconcileXeroInvoice(
       xeroObjectId: invoice.invoiceID,
       xeroObjectNumber: invoice.invoiceNumber ?? null,
       xeroObjectUrl: invoiceUrl,
-      ...(cashAllocationCount > 0 && link.role === "PRIMARY_INVOICE"
+      ...(link.role === "PRIMARY_INVOICE"
         ? { metadata: { [PRIMARY_INVOICE_CASH_ALLOCATIONS_KEY]: cashAllocationCount }, mergeMetadata: true }
         : {}),
       role: link.role,
@@ -279,6 +283,13 @@ export async function reconcileXeroInvoice(
     refreshedSubscriptions: refreshedSubscriptions.size,
     relatedLinksUpdated: relatedLinks.length,
     looksLikeSubscriptionInvoice,
+    // #4095: a correction its settle could not recount. A stored event fails on
+    // it and is retried; the incremental invoice reconciliation alerts a person.
+    ...(internetBankingPaymentSync.unrecountedCorrectionNoteIds.length > 0
+      ? {
+          recountLeftUnsettled: `Invoice ${invoice.invoiceID} was settled, but correction note(s) ${internetBankingPaymentSync.unrecountedCorrectionNoteIds.join(", ")} could not be recounted against its receipt.`,
+        }
+      : {}),
   };
 }
 
@@ -300,12 +311,21 @@ export async function runIncrementalInvoiceReconciliation(options: {
   let succeeded = 0;
   let failed = 0;
   const errorDetails: Array<{ invoiceId: string; error: string }> = [];
+  const unrecounted: UnrecountedInvoice[] = [];
 
   for (const invoiceId of changedInvoiceIds) {
     processed += 1;
 
     try {
-      await reconcileXeroInvoice(invoiceId, format, { skipSubscriptionRefresh: true });
+      const reconciled = await reconcileXeroInvoice(invoiceId, format, { skipSubscriptionRefresh: true });
+      // #4095 (PR #4437 review, L2): a recount its settle left unwritten. Unlike
+      // a stored event, nothing retries this invoice: the membership cursor has
+      // already moved past it, and no caller reads `failed`. So a person is
+      // alerted after the loop, and the invoice is reported failed.
+      if ("recountLeftUnsettled" in reconciled && reconciled.recountLeftUnsettled) {
+        unrecounted.push({ invoiceId, message: reconciled.recountLeftUnsettled });
+      }
+      failIfRecountLeftUnsettled(reconciled);
       succeeded += 1;
     } catch (error) {
       failed += 1;
@@ -315,6 +335,8 @@ export async function runIncrementalInvoiceReconciliation(options: {
       });
     }
   }
+
+  await alertUnrecountedInvoices(unrecounted);
 
   return {
     processed,

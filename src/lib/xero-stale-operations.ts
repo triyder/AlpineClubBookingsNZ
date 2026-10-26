@@ -33,7 +33,7 @@ export const XERO_REFUND_NOTE_REPAIR_RUNNING_CODE = "REFUND_NOTE_REPAIR_RUNNING"
 /**
  * #4356 (`INV-INT-029`): the repair claims whose RUNNING row no other caller's
  * PARTIAL, FAILED or CANCELLED outcome may land on (`outcomeWriteGuard`). Each
- * repair completes onto its own claim (`onlyIfRunningSince`), so a late
+ * repair completes onto its own claim (`retryClaim`), so a late
  * outcome from a caller sharing the row would replace the payload the repair
  * reads and make its give-back lose.
  */

@@ -28,6 +28,7 @@ import { repairLegacyAppliedCreditNoteAllocationsForBooking } from "./xero-appli
 import { exactProviderAmountToCents } from "@/lib/money-provider-amount";
 import { getClubFormat } from "@/lib/club-format-settings";
 import { formatCents } from "@/lib/utils";
+import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
 
 const APPLIED_CREDIT_REMAINDER_ALLOCATION_ROLE =
   "APPLIED_CREDIT_REMAINDER_ALLOCATION";
@@ -634,7 +635,7 @@ async function applyLocalGroup(params: {
  */
 export async function deallocateExcessAppliedCreditForBooking(
   bookingId: string,
-  options: { syncOperationId: string }
+  options: { syncOperation: XeroOperationClaim }
 ): Promise<void> {
   const format = await getClubFormat();
   const booking = await prisma.booking.findUnique({
@@ -645,7 +646,7 @@ export async function deallocateExcessAppliedCreditForBooking(
   // bank transfer, or card since #1641 - not internet banking alone. The
   // give-back queues this only where the allocation slices exceed the target.
   if (!booking?.payment || !booking.payment.xeroInvoiceId) {
-    await completeXeroSyncOperation(options.syncOperationId, {
+    await completeXeroSyncOperation(options.syncOperation, {
       responsePayload: { skipped: true, reason: "No allocated booking invoice." },
     });
     return;
@@ -656,7 +657,7 @@ export async function deallocateExcessAppliedCreditForBooking(
   // applied credit in the first place. Resolved once, at the top.
   const creditOwnerMemberId = bookingOwner(booking).memberId;
   if (!creditOwnerMemberId) {
-    await completeXeroSyncOperation(options.syncOperationId, {
+    await completeXeroSyncOperation(options.syncOperation, {
       responsePayload: {
         skipped: true,
         reason: "The booking is owned by an organisation, which holds no member credit.",
@@ -703,7 +704,7 @@ export async function deallocateExcessAppliedCreditForBooking(
 
   const conflicting = await prisma.xeroSyncOperation.findFirst({
     where: {
-      id: { not: options.syncOperationId },
+      id: { not: options.syncOperation.id },
       localModel: "Payment",
       localId: booking.payment.id,
       queueType: {
@@ -732,7 +733,7 @@ export async function deallocateExcessAppliedCreditForBooking(
       await lockMemberCreditLedger(creditLedgerMemberId, tx);
     }
     await assertNoAppliedCreditDeallocationFence(booking.payment!.id, tx, {
-      excludeOperationId: options.syncOperationId,
+      excludeOperationId: options.syncOperation.id,
       allowUncheckpointedPending: true,
     });
     try {
@@ -766,24 +767,24 @@ export async function deallocateExcessAppliedCreditForBooking(
       })),
     };
     const operation = await tx.xeroSyncOperation.findUnique({
-      where: { id: options.syncOperationId },
+      where: { id: options.syncOperation.id },
       select: { requestPayload: true },
     });
     const payload = metadataRecord(operation?.requestPayload) ?? {};
     const storedSnapshot = readStoredSnapshot(payload.ledgerSnapshot);
     if (payload.ledgerSnapshot !== undefined && !storedSnapshot) {
       throw new Error(
-        `Applied-credit deallocation ${options.syncOperationId} has a malformed durable ledger snapshot`,
+        `Applied-credit deallocation ${options.syncOperation.id} has a malformed durable ledger snapshot`,
       );
     }
     if (storedSnapshot && !snapshotsEqual(storedSnapshot, currentSnapshot)) {
       throw new Error(
-        `Applied-credit ledger changed after deallocation snapshot for operation ${options.syncOperationId}; refusing a stale provider target`,
+        `Applied-credit ledger changed after deallocation snapshot for operation ${options.syncOperation.id}; refusing a stale provider target`,
       );
     }
     if (!storedSnapshot) {
       await tx.xeroSyncOperation.update({
-        where: { id: options.syncOperationId },
+        where: { id: options.syncOperation.id },
         data: {
           requestPayload: sanitizeForJson({
             ...payload,
@@ -817,7 +818,7 @@ export async function deallocateExcessAppliedCreditForBooking(
     );
     let providerTotal = provider.reduce((sum, allocation) => sum + allocation.amountCents, 0);
     const operation = await prisma.xeroSyncOperation.findUnique({
-      where: { id: options.syncOperationId },
+      where: { id: options.syncOperation.id },
       select: { requestPayload: true },
     });
     const payload = operation?.requestPayload as Record<string, unknown> | null;
@@ -867,7 +868,7 @@ export async function deallocateExcessAppliedCreditForBooking(
         providerTotal !== group.targetCents;
       if (eventualConsistencyStale) {
         await requeueForEventualConsistency({
-          operationId: options.syncOperationId,
+          operationId: options.syncOperation.id,
           xeroCreditNoteId: group.xeroCreditNoteId,
           detail: `Stale top-of-loop provider allocations for credit note ${group.xeroCreditNoteId}: provider=${formatCents(providerTotal, format)} current=${formatCents(group.currentCents, format)} target=${formatCents(group.targetCents, format)}`,
         });
@@ -879,7 +880,7 @@ export async function deallocateExcessAppliedCreditForBooking(
 
     if (providerTotal !== group.targetCents) {
       await checkpoint({
-        operationId: options.syncOperationId,
+        operationId: options.syncOperation.id,
         bookingId,
         group,
         phase: "BEFORE_DELETE",
@@ -914,7 +915,7 @@ export async function deallocateExcessAppliedCreditForBooking(
         // key expires. syncOperationId is fixed when the operation row is
         // created, so it is stable across crash-retries of the SAME operation
         // (the property we need) yet distinct across separate operations.
-        if (!options.syncOperationId) {
+        if (!options.syncOperation.id) {
           throw new Error(
             `Refusing to build a deallocation-recreate idempotency key without a syncOperationId for credit note ${group.xeroCreditNoteId}: an operation-scoped discriminator is required to avoid cross-operation cache collisions`
           );
@@ -922,7 +923,7 @@ export async function deallocateExcessAppliedCreditForBooking(
         const idempotencyKey = buildXeroIdempotencyKey(
           "credit-note", group.xeroCreditNoteId, "invoice", booking.payment.xeroInvoiceId,
           "deallocation-recreate", group.currentCents, group.targetCents,
-          "op", options.syncOperationId, "v2"
+          "op", options.syncOperation.id, "v2"
         );
         // The recreated allocation is dated on the club's calendar, not the UTC
         // day (INV-DATE-019, #2834), read ONCE outside the closure: `callXeroApi`
@@ -981,7 +982,7 @@ export async function deallocateExcessAppliedCreditForBooking(
           })
         ) {
           await requeueForEventualConsistency({
-            operationId: options.syncOperationId,
+            operationId: options.syncOperation.id,
             xeroCreditNoteId: group.xeroCreditNoteId,
             detail: `Post-recreate verification for ${group.xeroCreditNoteId}: provider=${formatCents(providerTotal, format)} target=${formatCents(group.targetCents, format)}`,
           });
@@ -992,7 +993,7 @@ export async function deallocateExcessAppliedCreditForBooking(
       }
     }
     await checkpoint({
-      operationId: options.syncOperationId,
+      operationId: options.syncOperation.id,
       bookingId,
       group,
       phase: "PROVIDER_VERIFIED",
@@ -1004,7 +1005,7 @@ export async function deallocateExcessAppliedCreditForBooking(
           : "UNREACHABLE",
     });
     await applyLocalGroup({
-      operationId: options.syncOperationId,
+      operationId: options.syncOperation.id,
       bookingId,
       memberId: creditOwnerMemberId,
       paymentId: booking.payment.id,
@@ -1015,7 +1016,7 @@ export async function deallocateExcessAppliedCreditForBooking(
     });
   }
 
-  await completeXeroSyncOperation(options.syncOperationId, {
+  await completeXeroSyncOperation(options.syncOperation, {
     responsePayload: {
       bookingId,
       invoiceId: booking.payment.xeroInvoiceId,

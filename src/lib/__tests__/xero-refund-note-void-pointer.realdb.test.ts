@@ -21,6 +21,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import { realElapsedMs } from "@/lib/__tests__/helpers/clock";
+import { currentXeroClaim } from "@/lib/__tests__/helpers/xero-claim";
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
 const RACE_DB_URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
@@ -409,7 +410,7 @@ let cleanupStaleCanonicalXeroObjectLinks: (typeof import("@/lib/xero-hardening-c
         const row = await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: operationId }, select: { requestPayload: true } });
         const payload = row.requestPayload as { refundAmountCents: number; watermarkCents: number };
         await createXeroCreditNote(PAYMENT_ID, payload.refundAmountCents, {
-          syncOperationId: operationId, watermarkCents: payload.watermarkCents, refundMethod: "internet-banking",
+          syncOperation: await currentXeroClaim(prisma, operationId), watermarkCents: payload.watermarkCents, refundMethod: "internet-banking",
         });
       } finally {
         for (const spy of spies) spy.mockRestore();

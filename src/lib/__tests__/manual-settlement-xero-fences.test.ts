@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { BookingStatus, PaymentSource } from "@prisma/client";
+import { xeroClaim } from "@/lib/__tests__/helpers/xero-claim";
 
 /**
  * B5 (#2262) HIGH #2 — the outbound invoice-mint fence, and the reciprocal
@@ -181,7 +182,7 @@ describe("level 3 — the createXeroInvoiceForBooking handler re-check", () => {
     );
 
     const result = await createXeroInvoiceForBooking("booking-1", {
-      syncOperationId: "op-queued-before-the-settle",
+      syncOperation: xeroClaim("op-queued-before-the-settle"),
     });
 
     expect(result).toBeNull();
@@ -191,7 +192,7 @@ describe("level 3 — the createXeroInvoiceForBooking handler re-check", () => {
     // The operation is closed with a NON-SUCCEEDED terminal status carrying a
     // populated reason, so it is visible to an operator and never replayed.
     expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
-      "op-queued-before-the-settle",
+      expect.objectContaining({ id: "op-queued-before-the-settle" }),
       expect.objectContaining({
         status: "CANCELLED",
         responsePayload: expect.objectContaining({ skipped: true }),
@@ -284,7 +285,7 @@ describe("level 3 — the createXeroInvoiceForBooking handler re-check", () => {
     );
 
     const result = await createXeroInvoiceForBooking("booking-1", {
-      syncOperationId: "op-retry-claimed",
+      syncOperation: xeroClaim("op-retry-claimed"),
     });
 
     expect(result).toBeNull();
@@ -302,7 +303,7 @@ describe("level 3 — the createXeroInvoiceForBooking handler re-check", () => {
     // Nothing reached Xero: no create call, no email.
     expect(mocks.callXeroApi).not.toHaveBeenCalled();
     expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
-      "op-retry-claimed",
+      expect.objectContaining({ id: "op-retry-claimed" }),
       expect.objectContaining({
         status: "CANCELLED",
         responsePayload: expect.objectContaining({ skipped: true }),
@@ -382,7 +383,7 @@ describe("level 3 — the createXeroInvoiceForBooking handler re-check", () => {
     );
 
     const result = await createXeroInvoiceForBooking("booking-1", {
-      syncOperationId: "op-retry-claimed",
+      syncOperation: xeroClaim("op-retry-claimed"),
     });
 
     expect(result).toBe("inv-already");
@@ -403,7 +404,7 @@ describe("level 3 — the createXeroInvoiceForBooking handler re-check", () => {
       },
     });
     expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
-      "op-retry-claimed",
+      expect.objectContaining({ id: "op-retry-claimed" }),
       expect.objectContaining({
         status: "SUCCEEDED",
         xeroObjectId: "inv-already",
@@ -500,7 +501,7 @@ describe("level 3 — the createXeroInvoiceForBooking handler re-check", () => {
 
     await expect(
       createXeroInvoiceForBooking("booking-1", {
-        syncOperationId: "op-retry-claimed",
+        syncOperation: xeroClaim("op-retry-claimed"),
       }),
     ).rejects.toThrow("Xero allocation refused");
 

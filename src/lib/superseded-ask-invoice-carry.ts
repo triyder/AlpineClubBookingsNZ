@@ -23,9 +23,9 @@
  *   (`handoffSucceededSupersededIntentToRefund`, review 2 F1);
  * - every superseding minter, after its cancels and before the new client
  *   secret is returned (`cancelSupersededAdditionalIntentsNow` with the new
- *   intent named), which also covers an A whose card was DECLINED - a FAILED
- *   ask is carried but never cancelled again, so the cancel step never runs
- *   for it;
+ *   intent named), which also covers an A whose card was DECLINED - FAILED,
+ *   so carried at once, though its cancel (#4422) may not finish now (a
+ *   Stripe outage, a backoff) or finished at an earlier supersede;
  * - an edit's Xero leg (`queueXeroBookingEditSettlement`) that parked its
  *   invoice on an ask already FAILED, through
  *   `followSupersededAskInvoicesForIntentSafely`: a leg landing after the
@@ -50,11 +50,16 @@
  *   bills at most its `amountCents`, and what bills changes other than its own
  *   (`captureChangeId`) at most its `carriedAskCents`.
  *
- * A CAPTURE OF THE CARRIED ASK ITSELF (a declined ask is never cancelled at
- * Stripe, so a stale tab can still pay it) takes its invoice back: the
- * late-capture release returns every invoice first parked on that intent to it
- * before it releases (`returnMovedInvoicesToCapturedIntent`), so the capture
- * that paid the change is the one it records.
+ * A CAPTURE OF THE CARRIED ASK ITSELF. Since #4422 a supersede cancels a
+ * declined ask too, so a stale tab's capture of one races a live cancel row and
+ * takes the superseded-capture path - refunded, or held for a treasurer on a
+ * cancelled booking - and its invoice stays on the carrier. Only a capture no
+ * live cancel row owns (a declined ask superseded before #4422, one whose row a
+ * manual mark-paid reversal deleted, or one paid before the superseding minter
+ * committed its row, #4442) settles as a late capture, and that
+ * takes its invoice back: the release returns every invoice first parked on
+ * that intent to it before it releases (`returnMovedInvoicesToCapturedIntent`),
+ * so the capture that paid the change is the one it records.
  *
  * THE WRITE is a status-guarded `updateMany` (`WAITING_PAYMENT`, the intent it
  * waited on, no error code, no resolve mark), so a row a reduction retired, a

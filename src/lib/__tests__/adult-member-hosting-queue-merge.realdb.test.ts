@@ -1741,7 +1741,7 @@ let deletionApprovalWasReleased: (typeof import("@/lib/deletion-request-decision
       await completeMemberContactUpdateOperation(
         IDS.loser,
         "contact-update-before-merge",
-        reservation!.operation.id,
+        reservation!.operation,
         {
           xeroObjectType: "CONTACT",
           xeroObjectId: "contact-update-before-merge",
@@ -1882,7 +1882,7 @@ let deletionApprovalWasReleased: (typeof import("@/lib/deletion-request-decision
       await completeMemberContactUpdateOperation(
         IDS.master,
         "contact-master-authoritative",
-        reserved!.operation.id,
+        reserved!.operation,
         {
           xeroObjectType: "CONTACT",
           xeroObjectId: "contact-master-authoritative",
@@ -1925,7 +1925,7 @@ let deletionApprovalWasReleased: (typeof import("@/lib/deletion-request-decision
       await completeMemberContactUpdateOperation(
         IDS.target,
         "contact-update-before-deletion",
-        reservation!.operation.id,
+        reservation!.operation,
         {
           xeroObjectType: "CONTACT",
           xeroObjectId: "contact-update-before-deletion",

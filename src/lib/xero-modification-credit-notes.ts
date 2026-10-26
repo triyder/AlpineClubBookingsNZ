@@ -61,6 +61,7 @@ import {
   type ClearingAllocationTarget,
 } from "@/lib/xero-clearing-allocations";
 import type { ClubFormat } from "@/lib/club-format";
+import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
 
 /**
  * `refundMethod` is how the reduction went back to the member (`INV-PAY-101`,
@@ -77,7 +78,7 @@ export async function createXeroCreditNoteForModification(params: {
   bookingModificationId?: string;
   createdByMemberId?: string;
   repairExistingLink?: boolean;
-  syncOperationId?: string;
+  syncOperation?: XeroOperationClaim;
   /**
    * #3791: one review task's share of the edit, which scopes the note's Xero
    * idempotency keys to that task (`reviewTaskKeyParts`) and is kept on the
@@ -97,7 +98,7 @@ export async function createXeroCreditNoteForModification(params: {
     bookingModificationId,
     createdByMemberId,
     repairExistingLink,
-    syncOperationId,
+    syncOperation,
   } = params;
   const reviewTaskId = bookingModificationId ? params.reviewTaskId : undefined;
   const recordedReviewTask = reviewTaskId ? { reviewTaskId } : {};
@@ -107,8 +108,8 @@ export async function createXeroCreditNoteForModification(params: {
   const recordedWording = settledModificationNoteWording(params);
 
   if (refundAmountCents <= 0) {
-    if (syncOperationId) {
-      await completeXeroSyncOperation(syncOperationId, {
+    if (syncOperation) {
+      await completeXeroSyncOperation(syncOperation, {
         responsePayload: {
           skipped: true,
           reason: "Refund amount is zero or negative.",
@@ -125,8 +126,8 @@ export async function createXeroCreditNoteForModification(params: {
   });
 
   if (!booking?.payment?.xeroInvoiceId) {
-    if (syncOperationId) {
-      await completeXeroSyncOperation(syncOperationId, {
+    if (syncOperation) {
+      await completeXeroSyncOperation(syncOperation, {
         responsePayload: {
           skipped: true,
           reason: "No original Xero invoice exists for this booking.",
@@ -156,7 +157,7 @@ export async function createXeroCreditNoteForModification(params: {
       const failed = new Error(
         `Modification credit note held: applied-credit deallocation ${deallocation.id} is ${deallocation.status}. Retry that Xero operation first, then retry this note.`,
       );
-      if (syncOperationId) await failXeroSyncOperation(syncOperationId, failed);
+      if (syncOperation) await failXeroSyncOperation(syncOperation, failed);
       throw failed;
     }
   }
@@ -174,7 +175,7 @@ export async function createXeroCreditNoteForModification(params: {
         ownNote.status,
       );
     }
-    if (syncOperationId) await waitForExpectedOwnNote(bookingModificationId, syncOperationId);
+    if (syncOperation) await waitForExpectedOwnNote(bookingModificationId, syncOperation);
   }
 
   const { xero, tenantId } = await getAuthenticatedXeroClient();
@@ -266,8 +267,8 @@ export async function createXeroCreditNoteForModification(params: {
         ]),
       });
     } catch (planError) {
-      if (syncOperationId) {
-        await failXeroSyncOperation(syncOperationId, planError);
+      if (syncOperation) {
+        await failXeroSyncOperation(syncOperation, planError);
       }
       throw planError;
     }
@@ -284,7 +285,8 @@ export async function createXeroCreditNoteForModification(params: {
     refundAmountCents,
     "v1"
   );
-  let operationId = syncOperationId ?? null;
+  let operationClaim = syncOperation ?? null;
+  let operationId = operationClaim?.id ?? null;
   const requestPayload = {
     creditNotes: [buildCreditNote(contactId)],
     invoiceId: originalInvoiceId,
@@ -319,6 +321,7 @@ export async function createXeroCreditNoteForModification(params: {
       createdByMemberId: createdByMemberId ?? null,
     });
     operationId = operation.id;
+    operationClaim = operation;
   }
 
   try {
@@ -448,7 +451,7 @@ export async function createXeroCreditNoteForModification(params: {
     const allocationBody =
       allocationResponses.length === 1 ? allocationResponses[0] : allocationResponses;
 
-    await completeXeroSyncOperation(operationId!, {
+    await completeXeroSyncOperation(operationClaim!, {
       ...(allocationError ? { status: "PARTIAL" as const } : {}),
       responsePayload: allocationError
         ? {
@@ -465,7 +468,7 @@ export async function createXeroCreditNoteForModification(params: {
 
     return createdCreditNoteId;
   } catch (error) {
-    await failXeroSyncOperation(operationId!, error);
+    await failXeroSyncOperation(operationClaim!, error);
     throw error;
   }
 }
@@ -499,9 +502,9 @@ async function findQueuedOwnModificationNote(
  * (`awaitsMissingOwnNote`). Only the outbox's own run waits: an operator's
  * retry carries no operation of its own here and raises the note.
  */
-async function waitForExpectedOwnNote(bookingModificationId: string, syncOperationId: string): Promise<void> {
+async function waitForExpectedOwnNote(bookingModificationId: string, syncOperation: XeroOperationClaim): Promise<void> {
   const queued = await prisma.xeroSyncOperation.findUnique({
-    where: { id: syncOperationId },
+    where: { id: syncOperation.id },
     select: { requestPayload: true, createdAt: true },
   });
   if (!queued || !queuedOwnNoteExpected(queued)) return;
@@ -525,6 +528,6 @@ async function waitForExpectedOwnNote(bookingModificationId: string, syncOperati
     );
   }
   const failed = new Error(BILLED_OFFSET_OWN_NOTE_MISSING_MESSAGE);
-  await failXeroSyncOperation(syncOperationId, failed);
+  await failXeroSyncOperation(syncOperation, failed);
   throw failed;
 }

@@ -111,15 +111,16 @@ import {
 } from "@/lib/xero-primary-invoice-fee-gap";
 import { PRIMARY_INVOICE_NOTHING_LEFT_DUE_REASON } from "@/lib/xero-primary-invoice-fee-at-link";
 import { readBookingForPrimaryInvoice } from "@/lib/xero-primary-invoice-read";
+import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
 
 export interface CreateXeroBookingInvoiceOptions
   extends FindOrCreateXeroContactOptions {
-  syncOperationId?: string;
+  syncOperation?: XeroOperationClaim;
 }
 
 export interface UpdateXeroBookingInvoiceOptions
   extends FindOrCreateXeroContactOptions {
-  syncOperationId?: string;
+  syncOperation?: XeroOperationClaim;
 }
 
 // ---------------------------------------------------------------------------
@@ -383,12 +384,12 @@ export async function createXeroInvoiceForBooking(
   // Skip if invoice already created
   if (booking.payment.xeroInvoiceId) {
     const moneyReconciliation = reconcileBookingMoney(booking);
-    if (options?.syncOperationId) {
+    if (options?.syncOperation) {
       // Replay, not a raise: this operation's invoice already exists, so what
       // is recorded is today's state under its own key. Whatever raise-time
       // verdict the payload already carries is left exactly as it was.
       await enrichClaimedOperationMoneyReconciliation(
-        options.syncOperationId,
+        options.syncOperation.id,
         moneyReconciliation,
         "moneyReconciliationOnReplay",
       );
@@ -421,8 +422,8 @@ export async function createXeroInvoiceForBooking(
     // -> RUNNING before calling in; the outbox claims PENDING -> RUNNING) must
     // not be stranded RUNNING when the invoice already exists: close it
     // SUCCEEDED against the existing invoice so the ops panel reads true.
-    if (options?.syncOperationId) {
-      await completeXeroSyncOperation(options.syncOperationId, {
+    if (options?.syncOperation) {
+      await completeXeroSyncOperation(options.syncOperation, {
         status: "SUCCEEDED",
         responsePayload: {
           skipped: true,
@@ -459,12 +460,12 @@ export async function createXeroInvoiceForBooking(
         bookingId,
         paymentId: booking.payment.id,
         manuallyMarkedPaidAt: booking.payment.manuallyMarkedPaidAt,
-        syncOperationId: options?.syncOperationId ?? null,
+        syncOperationId: options?.syncOperation?.id ?? null,
       },
       skipReason
     );
-    if (options?.syncOperationId) {
-      await completeXeroSyncOperation(options.syncOperationId, {
+    if (options?.syncOperation) {
+      await completeXeroSyncOperation(options.syncOperation, {
         status: "CANCELLED",
         responsePayload: { skipped: true, reason: skipReason },
       });
@@ -484,7 +485,7 @@ export async function createXeroInvoiceForBooking(
     retry that cannot tell a deliberate withhold from a lost flag sends the
     member the very email the officer chose to withhold.
 
-    Read from `options.syncOperationId` — the row a dispatcher CLAIMED — rather
+    Read from `options.syncOperation` — the row a dispatcher CLAIMED — rather
     than from the operation this function may mint for itself a few lines below.
     A self-minted operation has no enqueuer and therefore no instruction, so
     reading it back would be asking a row what we just wrote into it.
@@ -508,11 +509,11 @@ export async function createXeroInvoiceForBooking(
     So `null` here means "no instruction was recorded", which is what every row
     written before #2929 honestly is, and it is treated identically to SEND.
   */
-  const queuedInvoiceEmailInstruction = options?.syncOperationId
+  const queuedInvoiceEmailInstruction = options?.syncOperation?.id
     ? readXeroInvoiceEmailInstruction(
         (
           await prisma.xeroSyncOperation.findUnique({
-            where: { id: options.syncOperationId },
+            where: { id: options.syncOperation.id },
             select: { invoiceEmailDelivery: true },
           })
         )?.invoiceEmailDelivery,
@@ -537,11 +538,11 @@ export async function createXeroInvoiceForBooking(
   );
   const moneyReconciliation = reconcileBookingMoney(booking);
 
-  if (options?.syncOperationId) {
+  if (options?.syncOperation) {
     // The raise path: no invoice exists yet, so this IS the raise-time verdict
     // and it is persisted before the first provider round trip below.
     await enrichClaimedOperationMoneyReconciliation(
-      options.syncOperationId,
+      options.syncOperation.id,
       moneyReconciliation,
       "moneyReconciliation",
     );
@@ -664,7 +665,8 @@ export async function createXeroInvoiceForBooking(
   // booking itself can never be looking for three different strings.
   const invoiceIdempotencyKey =
     buildXeroBookingInvoiceCorrelationKey(bookingId);
-  let operationId = options?.syncOperationId ?? null;
+  let operationClaim = options?.syncOperation ?? null;
+  let operationId = operationClaim?.id ?? null;
   const requestPayload = {
     invoices: [buildInvoice(contactId)],
     moneyBuildUp: promoMoneyBuildUpSelection.historyMetadata,
@@ -692,6 +694,7 @@ export async function createXeroInvoiceForBooking(
       createdByMemberId: options?.createdByMemberId ?? null,
     });
     operationId = operation.id;
+    operationClaim = operation;
   }
 
   // #2262 H3 — provenance RE-ASSERTED after the operation exists, from a fresh
@@ -719,7 +722,7 @@ export async function createXeroInvoiceForBooking(
       },
       lateSkipReason
     );
-    await completeXeroSyncOperation(operationId!, {
+    await completeXeroSyncOperation(operationClaim!, {
       status: "CANCELLED",
       responsePayload: { skipped: true, reason: lateSkipReason },
     });
@@ -1223,7 +1226,7 @@ export async function createXeroInvoiceForBooking(
       options?.createdByMemberId
     );
 
-    await completeXeroSyncOperation(operationId!, {
+    await completeXeroSyncOperation(operationClaim!, {
       status: paymentWriteError || invoiceEmailError ? "PARTIAL" : "SUCCEEDED",
       responsePayload: {
         invoice: response.body,
@@ -1293,7 +1296,7 @@ export async function createXeroInvoiceForBooking(
 
     return createdInvoice.invoiceID;
   } catch (error) {
-    await failXeroSyncOperation(operationId!, error);
+    await failXeroSyncOperation(operationClaim!, error);
     throw error;
   }
 }
@@ -1410,8 +1413,8 @@ export async function updateXeroBookingInvoiceForBooking(
 
   const invoiceId = booking.payment.xeroInvoiceId;
   if (!invoiceId) {
-    if (options?.syncOperationId) {
-      await completeXeroSyncOperation(options.syncOperationId, {
+    if (options?.syncOperation) {
+      await completeXeroSyncOperation(options.syncOperation, {
         responsePayload: {
           skipped: true,
           reason: "No original Xero invoice exists for this booking.",
@@ -1463,7 +1466,8 @@ export async function updateXeroBookingInvoiceForBooking(
     "v1"
   );
 
-  let operationId = options?.syncOperationId ?? null;
+  let operationClaim = options?.syncOperation ?? null;
+  let operationId = operationClaim?.id ?? null;
   if (!operationId) {
     const operation = await startXeroSyncOperation({
       direction: "OUTBOUND",
@@ -1480,6 +1484,7 @@ export async function updateXeroBookingInvoiceForBooking(
       createdByMemberId: options?.createdByMemberId ?? null,
     });
     operationId = operation.id;
+    operationClaim = operation;
   }
 
   try {
@@ -1525,7 +1530,7 @@ export async function updateXeroBookingInvoiceForBooking(
 
     const skipReason = getPrimaryInvoiceUpdateSkipReason(currentInvoice);
     if (skipReason) {
-      await completeXeroSyncOperation(operationId, {
+      await completeXeroSyncOperation(operationClaim!, {
         responsePayload: {
           skipped: true,
           reason: skipReason,
@@ -1616,7 +1621,7 @@ export async function updateXeroBookingInvoiceForBooking(
     );
 
     const updated = response.body.invoices?.[0];
-    await completeXeroSyncOperation(operationId, {
+    await completeXeroSyncOperation(operationClaim!, {
       responsePayload: {
         previousInvoice: currentInvoiceResponse.body,
         invoice: response.body,
@@ -1640,7 +1645,7 @@ export async function updateXeroBookingInvoiceForBooking(
 
     return updated?.invoiceID ?? invoiceId;
   } catch (error) {
-    await failXeroSyncOperation(operationId, error);
+    await failXeroSyncOperation(operationClaim!, error);
     throw error;
   }
 }

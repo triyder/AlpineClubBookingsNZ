@@ -50,6 +50,8 @@ export interface AccountCreditAllocationRepairResult {
 export interface RefundedPaymentBusinessStateRepairResult {
   matchedPayments: number;
   updatedPayments: number;
+  /** #4095: the payments whose claim was lost twice, so nothing was written; absent when none. */
+  unsettledPaymentIds?: string[];
 }
 
 export interface ProcessStoredXeroInboundEventsResult {

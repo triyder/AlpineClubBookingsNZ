@@ -158,15 +158,15 @@ only onto a FAILED or PARTIAL row (a status-guarded `updateMany`, 409 and no
 audit otherwise), so either mark lands before the claim, which then loses with
 no write and no Xero call, or is refused. Two retries of one row: one claims,
 the other gets 409. The repairs complete onto their claim only
-(`completeXeroSyncOperation(..., { onlyIfRunningSince })`), so one finishing
+(`completeXeroSyncOperation(claim, ..., { retryClaim: true })`), so one finishing
 after an operator's Mark failed writes nothing. A throw gives the row back
 guarded on the claim (still RUNNING, still its `startedAt`): FAILED for the
 replay, PARTIAL with its payload for a PARTIAL repair. A PARTIAL repair's claim
 carries `lastErrorCode = PARTIAL_REPAIR_RUNNING`, so if its process dies the
 stale reset and Mark failed return it to PARTIAL rather than FAILED. No
 advisory key and no lock is held across the Xero call. The booking invoice
-replay's own completion (`createXeroInvoiceForBooking`) is not yet guarded on
-the claim. A repair whose process died after its payment was recorded is
+replay hands its claim to `createXeroInvoiceForBooking`, whose completion is
+written under it (#4373). A repair whose process died after its payment was recorded is
 closed by the next retry from the payment's link (live, this invoice, this
 amount), with no second Xero call.
 During a blue/green overlap the old version's stale reset sends a stuck repair
@@ -184,13 +184,31 @@ never lands on SUCCEEDED or PARTIAL, and `completeXeroSyncOperation` guards
 every outcome but SUCCEEDED the same way (PARTIAL only off SUCCEEDED). A
 refused write answers null and raises no repeated-failure alert, so whichever
 order the two calls return in, a recorded success stands. The guard composes
-with the claim guards above: `onlyIfRunningSince` still writes onto its own
-RUNNING claim only, and no other outcome but SUCCEEDED lands on a repair's
-claim, which the PARTIAL repair (`PARTIAL_REPAIR_RUNNING`) and the FAILED
-refund-note repair (`REFUND_NOTE_REPAIR_RUNNING`) mark. A late outcome still
-lands on an unmarked RUNNING claim, such as the booking invoice replay's; that
-limit and its fix, a per-claim `startedAt` token, are #4373. No advisory key,
-row lock or new participant. Proven against real PostgreSQL by
+with the claim guards above: `retryClaim` still writes onto its own RUNNING
+claim only, and no other outcome but SUCCEEDED lands on a repair's claim, which
+the PARTIAL repair (`PARTIAL_REPAIR_RUNNING`) and the FAILED refund-note repair
+(`REFUND_NOTE_REPAIR_RUNNING`) mark.
+
+Since #4373 every outcome also carries the claim it was made under - the
+row's id and the `startedAt` its RUNNING claim was stamped with - from the
+start (`startXeroSyncOperation`'s row), the outbox or REQUEUE claim
+(`claimXeroSyncOperationToRunning` answers it) or a retry's claim
+(`runWithClaimedOriginal`). The writers take it in place of a bare id, so a
+call without one does not compile. No outcome, a success included, lands on a
+RUNNING row whose `startedAt` is another claim's: after a stale reset or a
+failure, the earlier attempt's late outcome is refused on the retry's claim
+(null, no link, no alert, an info log), and the row stays RUNNING for the
+retry and the booking invoice retry's settle-time fence. A refused SUCCEEDED
+or PARTIAL still upserts its `extraLinks` (idempotent) and logs a warning,
+leaving the row's status and claim as they are, so a Xero object the earlier
+attempt created is recorded even if the retry then fails; a refused FAILED or
+CANCELLED writes nothing. The outbox's and the
+REQUEUE queue's hand-backs to PENDING are fenced on their own claim the same
+way. Two claims of one row share a token only if made in the same
+millisecond; a second claim follows the first's failure (after a Xero round
+trip, a pre-HTTP cooldown refusal or a CAS requeue) or its stale reset, each
+many milliseconds after the first was stamped, so that does not happen. No advisory key, row lock,
+schema change or new participant. Proven against real PostgreSQL by
 `xero-shared-operation-outcome.realdb.test.ts`.
 
 ### The Xero token refresh uses a row lease, shared across colours (#3454)
@@ -4131,7 +4149,15 @@ the pre-#4217 code). Now:
   unique violation there rolls it back whole and it runs once more.
 - The Internet Banking settle (#4094) takes it after `lock(1)`, the lodge key
   and the member key, and re-reads the payment's figures under it; its rows are
-  read under it. Its figure logic (#3979, `INV-PAY-126`) is unchanged.
+  read under it. Its figure logic (#3979, `INV-PAY-126`) is unchanged, except
+  that a keep also counts an applied correction already synced there, from
+  link rows it reads plainly (#4095). After it commits, outside every lock, a
+  keep or a replay with an applied correction triggers the lock-free inbound
+  recount (`repairRefundedPaymentBusinessState`, no note of its own), whose
+  claim on the row as read loses to any writer in between; it adds no key.
+  Both run only when exactly one payment matches the invoice
+  (`matchedPayments === 1`): otherwise no payment's share of a correction is
+  known, and neither counts one.
 - A cancellation hand-back's completion decides whether its Xero note stands
   on its own task (#4287, `INV-ADDPAY-043`,
   `cancellationHandBackNotedOnItsOwnRecord`) only after its allocation has
@@ -6070,7 +6096,8 @@ unless the payment's pointer names the note. For a payment holding the note's
 own refund-note row, A decides in one short transaction, inline in the recount:
 the Payment row (`lockPaymentForRefundedTotal`, `FOR NO KEY UPDATE`), then a
 plain re-read of that link row, then the as-read claim, or nothing when the row
-no longer counts (one retry at most; a second is left to the next sync). An
+no longer counts (one retry at most; a second fails the inbound event, which
+is retried after its backoff, #4095). An
 unchanged verdict also checks the payment as read under the lock. No provider
 call runs in it, and it takes no other lock. Its budget is `{ maxWait: 10_000,
 timeout: 30_000 }`, copied from `additional-payment-withdraw.ts`, because the

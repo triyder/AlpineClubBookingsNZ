@@ -697,7 +697,7 @@ export async function syncManagedXeroContactGroupForMember(
     await completeMemberContactOperation(
       memberId,
       member.xeroContactId,
-      operation.id,
+      operation,
       {
         responsePayload: {
           addedGroupIds,
@@ -747,7 +747,7 @@ export async function syncManagedXeroContactGroupForMember(
       );
     }
 
-    await failXeroSyncOperation(operation.id, error);
+    await failXeroSyncOperation(operation, error);
     throw error;
   }
 }

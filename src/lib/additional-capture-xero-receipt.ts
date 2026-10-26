@@ -71,12 +71,7 @@ import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import { asRecord } from "@/lib/xero-json";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { formatCents } from "@/lib/utils";
-import {
-  buildXeroIdempotencyKey,
-  completeXeroSyncOperation,
-  failXeroSyncOperation,
-  sanitizeForJson,
-} from "@/lib/xero-sync";
+import { buildXeroIdempotencyKey, completeXeroSyncOperation, failXeroSyncOperation, sanitizeForJson } from "@/lib/xero-sync";
 import { readCaptureRecorder } from "@/lib/additional-capture-recorder";
 import {
   ADDITIONAL_CAPTURE_RECEIPT_PLANNING_CODE,
@@ -96,6 +91,7 @@ import {
 } from "@/lib/additional-capture-receipt-payload";
 import { XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE } from "@/lib/xero-operation-outbox-payload";
 import type { cardSettleAppliedCreditCents } from "@/lib/xero-primary-invoice-fee-gap";
+import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
 
 /** The payment figures the primary's applied-credit reservation reads. */
 type CardSettlePayment = Parameters<typeof cardSettleAppliedCreditCents>[1];
@@ -270,10 +266,10 @@ function ownPaymentPending(
  * found, or null when it recorded nothing.
  */
 export async function recordAdditionalCaptureReceipt(
-  params: { syncOperationId: string; createdByMemberId?: string },
+  params: { syncOperation: XeroOperationClaim; createdByMemberId?: string },
   providers: AdditionalCaptureReceiptProviders = PROVIDERS,
 ): Promise<string | null> {
-  const operationId = params.syncOperationId;
+  const operationId = params.syncOperation.id;
   const row = await prisma.xeroSyncOperation.findUnique({
     where: { id: operationId },
     select: { requestPayload: true },
@@ -288,7 +284,7 @@ export async function recordAdditionalCaptureReceipt(
   const refuse = async (reason: AdditionalCaptureReceiptRefusal, details: Record<string, unknown> = {}) => {
     const message = `The card payment for this booking change was not recorded in Xero: ${REFUSAL_TEXT[reason]}.`;
     logger.error({ operationId, bookingId, paymentIntentId, reason, ...details }, message);
-    await failXeroSyncOperation(operationId, new Error(message), { refused: reason, ...details }, {
+    await failXeroSyncOperation(params.syncOperation, new Error(message), { refused: reason, ...details }, {
       lastErrorMessage: message,
     });
     await prisma.xeroSyncOperation.updateMany({
@@ -300,7 +296,7 @@ export async function recordAdditionalCaptureReceipt(
   };
   /** Finished with nothing to send: another writer records it, or it is not this app's to record. */
   const standDown = async (status: "SUCCEEDED" | "CANCELLED", skipped: string, details: Record<string, unknown> = {}) => {
-    await completeXeroSyncOperation(operationId, { status, responsePayload: { skipped, ...details } });
+    await completeXeroSyncOperation(params.syncOperation, { status, responsePayload: { skipped, ...details } });
     // A CANCELLED completion keeps its code: the planning stamp is not an error.
     await prisma.xeroSyncOperation.updateMany({
       where: { id: operationId, lastErrorCode: ADDITIONAL_CAPTURE_RECEIPT_PLANNING_CODE },
@@ -320,7 +316,7 @@ export async function recordAdditionalCaptureReceipt(
     select: { xeroObjectId: true },
   });
   if (existingLink) {
-    await completeXeroSyncOperation(operationId, {
+    await completeXeroSyncOperation(params.syncOperation, {
       responsePayload: { alreadyRecorded: true, paymentId: existingLink.xeroObjectId },
       xeroObjectType: "PAYMENT",
       xeroObjectId: existingLink.xeroObjectId,
@@ -336,7 +332,7 @@ export async function recordAdditionalCaptureReceipt(
     return await sendPlannedPayment(plan, Boolean(queued.plan));
   } catch (error) {
     if (error instanceof XeroAppliedCreditOperationBusyError) throw error;
-    await failXeroSyncOperation(operationId, error);
+    await failXeroSyncOperation(params.syncOperation, error);
     throw error;
   }
 
@@ -640,7 +636,7 @@ export async function recordAdditionalCaptureReceipt(
   }): Promise<void> {
     const { plan } = input;
     const unrecordedCents = Math.max(0, plan.capturedCents - plan.amountCents);
-    await completeXeroSyncOperation(operationId, {
+    await completeXeroSyncOperation(params.syncOperation, {
       responsePayload: { paymentId: input.paymentId, plan, recoveredExisting: input.recoveredExisting, unrecordedCents },
       xeroObjectType: "PAYMENT",
       xeroObjectId: input.paymentId,

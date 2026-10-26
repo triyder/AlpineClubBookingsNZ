@@ -233,6 +233,7 @@ import { allocateCreditNoteToInvoice } from "@/lib/xero-credit-notes";
 import { convergedForNamedFailure } from "@/lib/xero-applied-credit-spent-outside-app";
 import { CreditNoteSpentOutsideAppError } from "@/lib/xero-credit-note-spent-outside-app";
 import { completeXeroSyncOperation } from "@/lib/xero-sync";
+import { xeroClaim } from "@/lib/__tests__/helpers/xero-claim";
 
 const TEST_FORMAT = { currencyCode: "NZD", locale: "en-NZ" };
 const planAppliedCreditAllocation = (lots: AppliedCreditLot[], cents: number) =>
@@ -520,7 +521,7 @@ describe("allocateAppliedCreditForBooking (#1620 handler retry idempotency)", ()
 
     // Attempt 1 fails.
     await expect(
-      allocateAppliedCreditForBooking("b1", { syncOperationId: "op1" }),
+      allocateAppliedCreditForBooking("b1", { syncOperation: xeroClaim("op1") }),
     ).rejects.toThrow(/transient/);
     // The join row committed on attempt 1.
     expect(h.state.joinRows).toHaveLength(1);
@@ -531,7 +532,7 @@ describe("allocateAppliedCreditForBooking (#1620 handler retry idempotency)", ()
     // re-plan must exclude b1's own committed join row, or it would read the lot
     // as consumed and throw a spurious ledger inconsistency (bricking the op).
     await expect(
-      allocateAppliedCreditForBooking("b1", { syncOperationId: "op1" }),
+      allocateAppliedCreditForBooking("b1", { syncOperation: xeroClaim("op1") }),
     ).resolves.toBeUndefined();
 
     // Allocated exactly once more (2 calls total: 1 failed + 1 success) — no
@@ -561,7 +562,7 @@ describe("allocateAppliedCreditForBooking (#1620 handler retry idempotency)", ()
     h.state.deallocationFence = { id: "dealloc-1", status: "RUNNING" };
 
     await expect(
-      allocateAppliedCreditForBooking("b1", { syncOperationId: "allocation-1" }),
+      allocateAppliedCreditForBooking("b1", { syncOperation: xeroClaim("allocation-1") }),
     ).rejects.toThrow("dealloc-1 is RUNNING");
     expect(h.state.joinRows).toHaveLength(0);
     expect(allocateCreditNoteToInvoice).not.toHaveBeenCalled();
@@ -586,13 +587,13 @@ describe("allocateAppliedCreditForBooking (#1620 handler retry idempotency)", ()
       },
     );
 
-    await allocateAppliedCreditForBooking("b1", { syncOperationId: "op1" });
+    await allocateAppliedCreditForBooking("b1", { syncOperation: xeroClaim("op1") });
     expect(allocateCreditNoteToInvoice).toHaveBeenCalledTimes(1);
     expect(h.state.appliedRows[0].xeroCreditNoteId).toBe("cn1");
 
     // Replay after full success: the credit is already stamped, so the handler
     // short-circuits (skip) and performs no further allocation.
-    await allocateAppliedCreditForBooking("b1", { syncOperationId: "op1" });
+    await allocateAppliedCreditForBooking("b1", { syncOperation: xeroClaim("op1") });
     expect(allocateCreditNoteToInvoice).toHaveBeenCalledTimes(1);
     expect(h.state.joinRows).toHaveLength(1);
     // Both runs resolved the op (first: complete, second: skip-complete).
@@ -603,7 +604,7 @@ describe("allocateAppliedCreditForBooking (#1620 handler retry idempotency)", ()
     const groupBy = vi.spyOn(h.prismaStub.memberCredit, "groupBy");
     vi.mocked(allocateCreditNoteToInvoice).mockResolvedValue(undefined);
 
-    await allocateAppliedCreditForBooking("b1", { syncOperationId: "op1" });
+    await allocateAppliedCreditForBooking("b1", { syncOperation: xeroClaim("op1") });
     const findManyCalls = findMany.mock.calls.map((call) => call[0]);
     const groupByCalls = groupBy.mock.calls.map((call) => call[0]);
     findMany.mockRestore();
@@ -631,7 +632,7 @@ describe("allocateAppliedCreditForBooking (#1620 handler retry idempotency)", ()
     const groupBy = vi.spyOn(h.prismaStub.memberCredit, "groupBy").mockImplementation(((args: { where: { outsideSpendConvergedAt?: unknown } }) =>
       args.where.outsideSpendConvergedAt ? [{ xeroCreditNoteId: "cn1", _sum: { amountCents: -1000 } }] : realGroupBy(args as never)) as never);
     try {
-      await allocateAppliedCreditForBooking("b1", { syncOperationId: "op1" });
+      await allocateAppliedCreditForBooking("b1", { syncOperation: xeroClaim("op1") });
     } finally {
       groupBy.mockRestore();
     }
@@ -653,11 +654,11 @@ describe("allocateAppliedCreditForBooking (#1620 handler retry idempotency)", ()
     try {
       // 3000 is applied but only 2500 of the note is left after the write-down: it cannot be covered.
       h.state.appliedRows = [{ appliedToBookingId: "b1", type: "BOOKING_APPLIED", amountCents: -3000, xeroCreditNoteId: null }];
-      await expect(allocateAppliedCreditForBooking("b1", { syncOperationId: "op1" })).rejects.toThrow(/ledger inconsistency/);
+      await expect(allocateAppliedCreditForBooking("b1", { syncOperation: xeroClaim("op1") })).rejects.toThrow(/ledger inconsistency/);
 
       // 2500 is exactly what is left, and all of it is on c2.
       h.state.appliedRows = [{ appliedToBookingId: "b1", type: "BOOKING_APPLIED", amountCents: -2500, xeroCreditNoteId: null }];
-      await allocateAppliedCreditForBooking("b1", { syncOperationId: "op1" });
+      await allocateAppliedCreditForBooking("b1", { syncOperation: xeroClaim("op1") });
       expect(h.state.joinRows.map((row) => [row.memberCreditId, row.amountCents])).toEqual([["c2", 2500]]);
     } finally {
       groupBy.mockRestore();
@@ -670,7 +671,7 @@ describe("allocateAppliedCreditForBooking (#1620 handler retry idempotency)", ()
       args.where.outsideSpendConvergedAt ? [{ xeroCreditNoteId: "cn1", _sum: { amountCents: -1000 } }] : realGroupBy(args as never)) as never);
     try {
       // The lot holds 3000 and 1000 of it was written down, so 3000 of applied credit cannot be covered.
-      await expect(allocateAppliedCreditForBooking("b1", { syncOperationId: "op1" })).rejects.toThrow(/ledger inconsistency/);
+      await expect(allocateAppliedCreditForBooking("b1", { syncOperation: xeroClaim("op1") })).rejects.toThrow(/ledger inconsistency/);
       expect(allocateCreditNoteToInvoice).not.toHaveBeenCalled();
     } finally {
       groupBy.mockRestore();
@@ -684,7 +685,7 @@ describe("allocateAppliedCreditForBooking (#1620 handler retry idempotency)", ()
       vi.mocked(allocateCreditNoteToInvoice).mockRejectedValue(named());
       vi.mocked(convergedForNamedFailure).mockResolvedValue(false);
 
-      await expect(allocateAppliedCreditForBooking("b1", { syncOperationId: "op1" })).rejects.toBeInstanceOf(
+      await expect(allocateAppliedCreditForBooking("b1", { syncOperation: xeroClaim("op1") })).rejects.toBeInstanceOf(
         CreditNoteSpentOutsideAppError,
       );
       expect(allocateCreditNoteToInvoice).toHaveBeenCalledTimes(1);
@@ -695,7 +696,7 @@ describe("allocateAppliedCreditForBooking (#1620 handler retry idempotency)", ()
       vi.mocked(allocateCreditNoteToInvoice).mockRejectedValue(named());
       vi.mocked(convergedForNamedFailure).mockImplementation(async (_error, _bookingId, attempts = 0) => attempts < 3);
 
-      await expect(allocateAppliedCreditForBooking("b1", { syncOperationId: "op1" })).rejects.toBeInstanceOf(
+      await expect(allocateAppliedCreditForBooking("b1", { syncOperation: xeroClaim("op1") })).rejects.toBeInstanceOf(
         CreditNoteSpentOutsideAppError,
       );
 

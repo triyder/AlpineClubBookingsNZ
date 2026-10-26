@@ -8,6 +8,7 @@ import {
 } from "@/lib/xero-contact-home";
 import { buildXeroContactUrl, stripXeroOrgShortCode } from "@/lib/xero-links";
 import { XERO_ORPHANED_STALE_RUNNING_ERROR_CODE } from "@/lib/xero-stale-operations";
+import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
 import {
   completeXeroSyncOperation,
   upsertXeroObjectLink,
@@ -282,7 +283,7 @@ export async function lockMemberForXeroContactLink(
 export async function completeMemberContactOperation(
   memberId: string,
   expectedXeroContactId: string,
-  operationId: string,
+  operation: XeroOperationClaim,
   completion: Parameters<typeof completeXeroSyncOperation>[1],
   db: typeof prisma = prisma,
 ): Promise<void> {
@@ -291,7 +292,7 @@ export async function completeMemberContactOperation(
     if (locked.xeroContactId !== expectedXeroContactId) {
       throw new XeroContactLinkChangedError();
     }
-    await completeXeroSyncOperation(operationId, completion, { store: tx });
+    await completeXeroSyncOperation(operation, completion, { store: tx });
   });
 }
 

@@ -118,6 +118,9 @@ method, scope and finish line for each.
   — the #4239 trace: whether a bank hand-back can reach the nightly card
   self-heal or the repair tool's refund-note action by any route (none does),
   and the edges that rest on reading code.
+- [`../reviews/2026-10-26-4095-triage.md`](../reviews/2026-10-26-4095-triage.md)
+  — the #4095 triage: the bank-transfer settle and refunded-total follow-ups,
+  which were fixed and where, and what is still open.
 - [`../audits/FRAGILITY_AREAS_PROPOSAL.md`](../audits/FRAGILITY_AREAS_PROPOSAL.md)
   — the owner-confirmed business areas for the "bugs that came back" review, with
   raw repeat counts per area and how far to trust each signal.

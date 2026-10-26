@@ -78,6 +78,41 @@ export function getAmountCentsFromAllocationMetadata(metadata: unknown): number 
   return Math.round(amountCents);
 }
 
+/** One application of a credit note: cents it applied, and which allocation that is when known. */
+export type CreditNoteAllocationCents = {
+  creditNoteId: string;
+  appliedCents: number;
+  /**
+   * The allocation's identity within its note, when the caller may hold the
+   * same allocation more than once (the recount's links: one per local object,
+   * and a stale one beside a re-synced one). Entries sharing it are one
+   * allocation and the last given counts. Without it each entry counts.
+   */
+  allocationKey?: string;
+};
+
+/**
+ * #4095 (`INV-PAY-126`, `INV-SSOT`): each credit note's applied cents, summed
+ * across its allocations - a note applied as $60 and $40 counts $100. The one
+ * per-note rule the kept settle (`decideInternetBankingReceiptFigure`) and the
+ * refunded-total recount (`repairRefundedPaymentBusinessState`) both apply.
+ */
+export function sumAppliedCentsByCreditNote(
+  allocations: Iterable<CreditNoteAllocationCents>,
+): Map<string, number> {
+  const keyed = new Map<string, CreditNoteAllocationCents>();
+  const unkeyed: CreditNoteAllocationCents[] = [];
+  for (const allocation of allocations) {
+    if (allocation.allocationKey === undefined) unkeyed.push(allocation);
+    else keyed.set(JSON.stringify([allocation.creditNoteId, allocation.allocationKey]), allocation);
+  }
+  const totals = new Map<string, number>();
+  for (const allocation of [...unkeyed, ...keyed.values()]) {
+    totals.set(allocation.creditNoteId, (totals.get(allocation.creditNoteId) ?? 0) + allocation.appliedCents);
+  }
+  return totals;
+}
+
 export function getRefundContributionCentsFromCreditNoteMetadata(
   metadata: unknown
 ): number | null {

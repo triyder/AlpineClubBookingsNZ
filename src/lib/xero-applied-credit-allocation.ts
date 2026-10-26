@@ -70,6 +70,7 @@ export {
   type PlannedNoteAllocation,
 } from "./xero-applied-credit-plan";
 import { assertPlanKeepsCommittedSlices, CREDIT_LOT_USE_ORDER, planAppliedCreditAllocation, type AppliedCreditLot } from "./xero-applied-credit-plan";
+import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
 
 /**
  * Gather the member's positive credit lots in `CREDIT_LOT_USE_ORDER` (oldest
@@ -299,7 +300,7 @@ async function mintAppliedCreditRemainderNote(params: {
       throw new Error("Failed to mint applied-credit remainder note");
     }
 
-    await completeXeroSyncOperation(operation.id, {
+    await completeXeroSyncOperation(operation, {
       responsePayload: response.body,
       xeroObjectType: "CREDIT_NOTE",
       xeroObjectId: created.creditNoteID,
@@ -318,7 +319,7 @@ async function mintAppliedCreditRemainderNote(params: {
 
     return created.creditNoteID;
   } catch (error) {
-    await failXeroSyncOperation(operation.id, error);
+    await failXeroSyncOperation(operation, error);
     throw error;
   }
 }
@@ -327,9 +328,9 @@ async function mintAppliedCreditRemainderNote(params: {
 // Orchestration handler (outbox op APPLIED_CREDIT_ALLOCATION)
 // ---------------------------------------------------------------------------
 
-async function completeSkip(syncOperationId: string | undefined, reason: string) {
-  if (syncOperationId) {
-    await completeXeroSyncOperation(syncOperationId, {
+async function completeSkip(syncOperation: XeroOperationClaim | undefined, reason: string) {
+  if (syncOperation) {
+    await completeXeroSyncOperation(syncOperation, {
       responsePayload: { skipped: true, reason },
     });
   }
@@ -345,10 +346,11 @@ async function completeSkip(syncOperationId: string | undefined, reason: string)
  */
 export async function allocateAppliedCreditForBooking(
   bookingId: string,
-  options?: { createdByMemberId?: string; syncOperationId?: string; convergeAttempts?: number },
+  options?: { createdByMemberId?: string; syncOperation?: XeroOperationClaim; convergeAttempts?: number },
 ): Promise<void> {
   const format = await getClubFormat();
-  const syncOperationId = options?.syncOperationId;
+  const syncOperation = options?.syncOperation;
+  const syncOperationId = syncOperation?.id;
   const createdByMemberId = options?.createdByMemberId;
 
   const booking = await prisma.booking.findUnique({
@@ -356,7 +358,7 @@ export async function allocateAppliedCreditForBooking(
     include: { payment: true },
   });
   if (!booking?.payment) {
-    await completeSkip(syncOperationId, "No booking or payment.");
+    await completeSkip(syncOperation, "No booking or payment.");
     return;
   }
   // #3369: every write below lands in a MEMBER's credit ledger — the notes, the
@@ -367,7 +369,7 @@ export async function allocateAppliedCreditForBooking(
   const creditOwnerMemberId = bookingOwner(booking).memberId;
   if (!creditOwnerMemberId) {
     await completeSkip(
-      syncOperationId,
+      syncOperation,
       "The booking is owned by an organisation, which holds no member credit.",
     );
     return;
@@ -380,7 +382,7 @@ export async function allocateAppliedCreditForBooking(
 
   const appliedCents = await unallocatedAppliedCents(bookingId, prisma);
   if (appliedCents === 0) {
-    await completeSkip(syncOperationId, "No unallocated applied credit.");
+    await completeSkip(syncOperation, "No unallocated applied credit.");
     return;
   }
   const settledSkipReason =
@@ -389,7 +391,7 @@ export async function allocateAppliedCreditForBooking(
     (await appliedCreditSettledByCancel(bookingId, prisma)) &&
     (await prisma.memberCreditNoteAllocation.count({ where: { appliedToBookingId: bookingId } })) === 0
   ) {
-    await completeSkip(syncOperationId, settledSkipReason);
+    await completeSkip(syncOperation, settledSkipReason);
     return;
   }
 
@@ -470,11 +472,11 @@ export async function allocateAppliedCreditForBooking(
   });
 
   if (!plan) {
-    await completeSkip(syncOperationId, "Applied credit already allocated.");
+    await completeSkip(syncOperation, "Applied credit already allocated.");
     return;
   }
   if (plan.settled && plan.noteAllocations.length === 0 && !plan.remainderNoteId) {
-    await completeSkip(syncOperationId, settledSkipReason);
+    await completeSkip(syncOperation, settledSkipReason);
     return;
   }
 
@@ -654,8 +656,8 @@ export async function allocateAppliedCreditForBooking(
     "Allocated applied credit against the booking invoice (#1620, #1641, #3836)",
   );
 
-  if (syncOperationId) {
-    await completeXeroSyncOperation(syncOperationId, {
+  if (syncOperation) {
+    await completeXeroSyncOperation(syncOperation, {
       responsePayload: {
         bookingId,
         invoiceId,

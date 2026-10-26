@@ -29,6 +29,7 @@
  *   pnpm exec vitest run src/lib/__tests__/membership-subscription-charge-close.realdb.test.ts
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { currentXeroClaim } from "@/lib/__tests__/helpers/xero-claim";
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
 const RACE_DB_URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
@@ -441,7 +442,7 @@ let observerClient: import("@prisma/client").PrismaClient;
         });
         await invoiceAttempt(RETRY_ATTEMPT_ID, "RUNNING", new Date("2026-07-01T00:00:00.000Z"));
         await expect(
-          createXeroMembershipSubscriptionInvoice({ chargeId: CHARGE_ID, syncOperationId: RETRY_ATTEMPT_ID }),
+          createXeroMembershipSubscriptionInvoice({ chargeId: CHARGE_ID, syncOperation: await currentXeroClaim(prisma, RETRY_ATTEMPT_ID) }),
         ).resolves.toBeNull();
         await expect(close()).resolves.toMatchObject({ closed: true });
       };
@@ -451,7 +452,7 @@ let observerClient: import("@prisma/client").PrismaClient;
       const updates = await recordChargeUpdates(() =>
         withFakeXero({ onCreateInvoice }, async (xero) => {
           xeroCalls = xero;
-          outcome = await createXeroMembershipSubscriptionInvoice({ chargeId: CHARGE_ID, syncOperationId: STALE_ATTEMPT_ID });
+          outcome = await createXeroMembershipSubscriptionInvoice({ chargeId: CHARGE_ID, syncOperation: await currentXeroClaim(prisma, STALE_ATTEMPT_ID) });
         }),
       );
 
@@ -520,7 +521,7 @@ let observerClient: import("@prisma/client").PrismaClient;
       let xeroCalls!: { accountingApi: Record<string, ReturnType<typeof vi.fn>> };
       const outcome = await withFakeXero({ onContact }, async (xero) => {
         xeroCalls = xero;
-        return createXeroMembershipSubscriptionInvoice({ chargeId: CHARGE_ID, syncOperationId: RETRY_ATTEMPT_ID });
+        return createXeroMembershipSubscriptionInvoice({ chargeId: CHARGE_ID, syncOperation: await currentXeroClaim(prisma, RETRY_ATTEMPT_ID) });
       });
 
       expect(outcome).toBeNull();
