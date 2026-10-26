@@ -738,7 +738,7 @@ export async function checkMembershipStatus(
         status: "NOT_INVOICED",
       });
 
-      await completeXeroSyncOperation(operation.id, {
+      await completeXeroSyncOperation(operation, {
         responsePayload: {
           fetchedInvoices: invoices.length,
           previousStatus: existingSubscription?.status ?? null,
@@ -781,7 +781,7 @@ export async function checkMembershipStatus(
         seasonYear: year,
         voidedInvoiceId: matchedInvoiceId,
       });
-      await completeXeroSyncOperation(operation.id, {
+      await completeXeroSyncOperation(operation, {
         responsePayload: {
           fetchedInvoices: invoices.length,
           matchedInvoiceId,
@@ -904,7 +904,7 @@ export async function checkMembershipStatus(
         paidAt: status.paidAt ?? null,
       });
       if (!write.written) {
-        await completeXeroSyncOperation(operation.id, {
+        await completeXeroSyncOperation(operation, {
           responsePayload: {
             fetchedInvoices: invoices.length,
             matchedInvoiceId: null,
@@ -922,7 +922,7 @@ export async function checkMembershipStatus(
       }
     }
 
-    await completeXeroSyncOperation(operation.id, {
+    await completeXeroSyncOperation(operation, {
       responsePayload: {
         fetchedInvoices: invoices.length,
         matchedInvoiceId,
@@ -966,7 +966,7 @@ export async function checkMembershipStatus(
       xeroOnlineInvoiceUrl: onlineInvoiceUrl,
     };
   } catch (error) {
-    await failXeroSyncOperation(operation.id, error);
+    await failXeroSyncOperation(operation, error);
     throw error;
   }
 }

@@ -63,6 +63,7 @@ import {
 import { queuedReviewTaskId } from "@/lib/xero-review-task-key";
 import { xeroSyncErrorFields } from "@/lib/xero-sync-error-text";
 import { XERO_PARTIAL_REPAIR_RUNNING_CODE, XERO_REFUND_NOTE_REPAIR_RUNNING_CODE } from "@/lib/xero-stale-operations";
+import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
 
 export const PARTIAL_REPAIR_CLAIM_LOST_MESSAGE =
   "The payment was sent to Xero, but this operation was reset while it ran. Retry it once to close it.";
@@ -371,8 +372,8 @@ export function retryAbandonedItsClaim(error: unknown): boolean {
 
 async function runWithClaimedOriginal<T>(
   operationId: string,
-  // `claimedAt` lets the handler complete onto this claim only (#4256).
-  run: (claimedAt: Date) => Promise<T>,
+  // The claim lets the handler complete onto this claim only (#4256, #4373 `INV-INT-029`).
+  run: (claim: XeroOperationClaim) => Promise<T>,
   // #4256: a PARTIAL repair claims only PARTIAL and stamps its marker code; a
   // throw, or a stale reset of a dead run, gives the row back PARTIAL with its
   // payload, so it stays repairable. #4356: `marker` marks a FAILED repair's claim, of FAILED only.
@@ -401,7 +402,7 @@ async function runWithClaimedOriginal<T>(
     );
   }
   try {
-    return await run(claimedAt);
+    return await run({ id: operationId, startedAt: claimedAt });
   } catch (error) {
     try {
       if (options?.from) {
@@ -411,8 +412,8 @@ async function runWithClaimedOriginal<T>(
           data: { status: "PARTIAL", ...xeroSyncErrorFields(error), completedAt: new Date() },
         });
       } else {
-        const abandoned = await failXeroSyncOperation(operationId, error, undefined, {
-          onlyIfRunningSince: claimedAt,
+        const abandoned = await failXeroSyncOperation({ id: operationId, startedAt: claimedAt }, error, undefined, {
+          retryClaim: true,
         });
         if (abandoned && typeof error === "object" && error !== null) {
           abandonedClaimErrors.add(error);
@@ -917,7 +918,7 @@ async function repairRefundCreditNoteFollowUpActions(
     needsRefundPaymentRepair: boolean;
     refundMethod?: CashRefundMethod;
   },
-  claimedAt: Date, // #4256: the row is this retry's claim; it completes onto it only
+  claim: XeroOperationClaim, // #4256: the row is this retry's claim; it completes onto it only
 ) {
   // #3827 (D-3813-8): a refund request's own note is an allowed extra, never
   // the payment's one refund note, so it never takes the payment's pointer.
@@ -951,7 +952,7 @@ async function repairRefundCreditNoteFollowUpActions(
     // retry's, an officer's), pays only a note nothing settles, under the one
     // note-keyed key, and completes this row PARTIAL if that payment fails.
     const outcome = await xero.finishRefundCreditNoteSettlement({
-      operationId: operation.id,
+      operation: claim,
       paymentId: operation.localId!,
       creditNoteId: repair.creditNoteId,
       creationKeys: [operation.correlationKey, operation.idempotencyKey],
@@ -962,14 +963,14 @@ async function repairRefundCreditNoteFollowUpActions(
         xeroDocumentDateForClubToday(await readClubTimeZoneOutsideRequest()),
       priorResponse,
       refundRequestId,
-      onlyIfRunningSince: claimedAt,
+      retryClaim: true,
     });
     if (outcome.refundPaymentErr) throw outcome.refundPaymentErr;
     return;
   }
 
   await completeXeroSyncOperation(
-    operation.id,
+    claim,
     refundCreditNoteCompletion({
       paymentId: operation.localId!,
       creditNoteId: repair.creditNoteId,
@@ -980,7 +981,7 @@ async function repairRefundCreditNoteFollowUpActions(
       priorResponse,
       refundRequestId,
     }),
-    { onlyIfRunningSince: claimedAt },
+    { retryClaim: true },
   );
 }
 
@@ -1478,7 +1479,7 @@ export async function retryXeroSyncOperation(
       // after the read makes this one write nothing and call Xero for nothing.
       return runWithClaimedOriginal(
         operation.id,
-        async (claimedAt) => {
+        async (claim) => {
           const repair = partialInvoiceRepair;
           // Completes onto this claim only; null when an operator reset the row meanwhile.
           const close = async (
@@ -1487,9 +1488,9 @@ export async function retryXeroSyncOperation(
             lostMessage = PARTIAL_REPAIR_CLAIM_LOST_MESSAGE,
           ) => {
             const closed = await completeXeroSyncOperation(
-              operation.id,
+              claim,
               repairedPartialInvoiceCompletion(operation, repair.invoiceId, paymentOutcome),
-              { onlyIfRunningSince: claimedAt, alert: false },
+              { retryClaim: true, alert: false },
             );
             if (closed) return { message };
             logger.warn({ operationId: operation.id }, "Xero PARTIAL repair finished after its claim was reset; row left as the operator set it");
@@ -1557,7 +1558,7 @@ export async function retryXeroSyncOperation(
       // #4256: claimed like the invoice repair; the shared leg completes the row.
       await runWithClaimedOriginal(
         operation.id,
-        (claimedAt) => repairRefundCreditNoteFollowUpActions(operation, xero, refundCreditNoteRepair, claimedAt),
+        (claim) => repairRefundCreditNoteFollowUpActions(operation, xero, refundCreditNoteRepair, claim),
         { from: "PARTIAL" },
       );
       return { message: "Repaired Xero refund credit note follow-up actions." };
@@ -1679,15 +1680,15 @@ export async function retryXeroSyncOperation(
       // source change — Xero emailing an invoice for cash already collected.
       // The status-fenced claim makes the retry visible to that fence for its
       // whole execution, serialises concurrent retries (count !== 1 -> 409),
-      // and passing syncOperationId through makes completion/abandon reporting
+      // and passing the claim through makes completion/abandon reporting
       // land on THIS row (accurate outbox/ops-panel state instead of a
       // permanently-FAILED row behind a false success message). #3462: the
       // claim and its abandon live in `runWithClaimedOriginal`.
-      const invoiceId = await runWithClaimedOriginal(operation.id, () =>
+      const invoiceId = await runWithClaimedOriginal(operation.id, (claim) =>
         xero.createXeroInvoiceForBooking(bookingId, {
           createdByMemberId,
           repairExistingLink: true,
-          syncOperationId: operation.id,
+          syncOperation: claim,
         }),
       );
       if (invoiceId === null) {
@@ -1831,8 +1832,8 @@ export async function retryXeroSyncOperation(
       const refundCreditNoteRepair = parseRefundCreditNoteRepairInput(operation);
       if (refundCreditNoteRepair) {
         // #4256: claimed like the PARTIAL repair; a throw abandons it to FAILED. #4356: marked (`INV-INT-029`).
-        await runWithClaimedOriginal(operation.id, (claimedAt) =>
-          repairRefundCreditNoteFollowUpActions(operation, xero, refundCreditNoteRepair, claimedAt),
+        await runWithClaimedOriginal(operation.id, (claim) =>
+          repairRefundCreditNoteFollowUpActions(operation, xero, refundCreditNoteRepair, claim),
         { marker: XERO_REFUND_NOTE_REPAIR_RUNNING_CODE });
         return { message: "Repaired Xero refund credit note follow-up actions." };
       }
@@ -2018,7 +2019,8 @@ export async function retryXeroSyncOperation(
         requestId: retryInput.requestId,
         participantId: retryInput.participantId,
         createdByMemberId,
-        syncOperationId: operation.id,
+        // #4373: no claim is taken here; the row as read is the one its outcome may land on (`INV-INT-029`).
+        syncOperation: operation,
       });
       return { message: "Retried Xero membership cancellation credit note creation." };
     }

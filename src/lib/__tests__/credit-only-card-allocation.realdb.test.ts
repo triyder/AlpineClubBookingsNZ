@@ -29,6 +29,7 @@ import { realElapsedMs } from "@/lib/__tests__/helpers/clock";
 import { ENVIRONMENT_ROLE_ENV_VAR } from "@/lib/environment-role-declaration";
 import type { SuiteEnvironmentRoleDeclaration } from "./helpers/environment-role";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { currentXeroClaim } from "@/lib/__tests__/helpers/xero-claim";
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
 const RACE_DB_URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
@@ -338,7 +339,7 @@ let harnessRole: SuiteEnvironmentRoleDeclaration | undefined;
       });
       await prisma.xeroSyncOperation.update({ where: { id: operation.id }, data: { status: "RUNNING" } });
       const { deallocateExcessAppliedCreditForBooking } = await import("@/lib/xero-applied-credit-deallocation");
-      await deallocateExcessAppliedCreditForBooking(BOOKING_ID, { syncOperationId: operation.id });
+      await deallocateExcessAppliedCreditForBooking(BOOKING_ID, { syncOperation: await currentXeroClaim(prisma, operation.id) });
       return Number(operation.correlationKey?.split(":").at(-2));
     }
 
@@ -441,7 +442,7 @@ let harnessRole: SuiteEnvironmentRoleDeclaration | undefined;
       // The outbox worker's handler, as it dispatches the queued row.
       await prisma.xeroSyncOperation.update({ where: { id: queued[0]!.id }, data: { status: "RUNNING" } });
       const { allocateAppliedCreditForBooking } = await import("@/lib/xero-applied-credit-allocation");
-      await allocateAppliedCreditForBooking(BOOKING_ID, { syncOperationId: queued[0]!.id });
+      await allocateAppliedCreditForBooking(BOOKING_ID, { syncOperation: await currentXeroClaim(prisma, queued[0]!.id) });
 
       expect(PRICE_CENTS - allocatedCents()).toBe(await owed());
       expect(xeroCreditCents()).toBe(await credit.getMemberCreditBalance(MEMBER_ID));
@@ -528,7 +529,7 @@ let harnessRole: SuiteEnvironmentRoleDeclaration | undefined;
     async function replayInvoiceOperation(operationId: string) {
       await prisma.xeroSyncOperation.update({ where: { id: operationId }, data: { status: "RUNNING" } });
       const { createXeroInvoiceForBooking } = await import("@/lib/xero-booking-invoices");
-      await createXeroInvoiceForBooking(BOOKING_ID, { syncOperationId: operationId });
+      await createXeroInvoiceForBooking(BOOKING_ID, { syncOperation: await currentXeroClaim(prisma, operationId) });
     }
     const sweepActions = async () => (await repairReport()).passes[0]!.bookings.flatMap((booking) => booking.actions);
     const clearingNoteQueued = async () => (await sweepActions()).some((action) => action.key === `queue:cancelled-open-invoice:${BOOKING_ID}`);
@@ -672,7 +673,7 @@ let harnessRole: SuiteEnvironmentRoleDeclaration | undefined;
       expect(await clearingNoteQueued()).toBe(false);
       await prisma.xeroSyncOperation.update({ where: { id: queued.id }, data: { status: "RUNNING" } });
       const { allocateAppliedCreditForBooking } = await import("@/lib/xero-applied-credit-allocation");
-      await allocateAppliedCreditForBooking(BOOKING_ID, { syncOperationId: queued.id });
+      await allocateAppliedCreditForBooking(BOOKING_ID, { syncOperation: await currentXeroClaim(prisma, queued.id) });
       expect(allocatedCents()).toBe(0);
 
       await repairReport(true);
@@ -718,7 +719,7 @@ let harnessRole: SuiteEnvironmentRoleDeclaration | undefined;
       const { allocateAppliedCreditForBooking } = await import("@/lib/xero-applied-credit-allocation");
       let remainderMintCalls = -1;
       try {
-        await allocateAppliedCreditForBooking(BOOKING_ID, { syncOperationId: queued.queueOperationId! });
+        await allocateAppliedCreditForBooking(BOOKING_ID, { syncOperation: await currentXeroClaim(prisma, queued.queueOperationId!) });
       } finally {
         remainderMintCalls = remainderMint.mock.calls.length;
         remainderMint.mockRestore();

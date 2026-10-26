@@ -254,7 +254,7 @@ async function repairXeroContactNameOrderIfNeeded(input: {
     await completeMemberContactUpdateOperation(
       input.member.id,
       contactId,
-      operation.id,
+      operation,
       {
         responsePayload: response.body,
         xeroObjectType: "CONTACT",
@@ -286,7 +286,7 @@ async function repairXeroContactNameOrderIfNeeded(input: {
 
     return value.repair.name;
   } catch (error) {
-    await failXeroSyncOperation(operation.id, error);
+    await failXeroSyncOperation(operation, error);
     throw error;
   }
 }

@@ -758,7 +758,7 @@ balance of the ask it supersedes.
 
 ```text
 edit raises an ask -> mint the replacement intent
-  -> enqueue CANCEL_PAYMENT_INTENT for every other live ADDITIONAL intent
+  -> enqueue CANCEL_PAYMENT_INTENT for every other live or declined (#4422) ADDITIONAL intent
   -> cancel it SYNCHRONOUSLY, best-effort, BEFORE the new client secret returns
        still cancellable -> transaction FAILED, operation SUCCEEDED
        Stripe already captured it -> handed off to REFUND_SUPERSEDED_PAYMENT
@@ -3797,14 +3797,14 @@ two callers on one row (the hand-off above) each record their own outcome of
   the same keyed Xero call (#4356, INV-INT-029): an outcome never replaces a
   better one. A failure, or a FAILED or CANCELLED completion, never lands on
   SUCCEEDED or PARTIAL; PARTIAL never lands on SUCCEEDED; SUCCEEDED lands on
-  any row. None but SUCCEEDED lands on a repair's marked RUNNING claim unless
-  written onto that claim. A refused write answers null: no link, no
-  repeated-failure alert. Limit (#4373): only claim-guarded completions lose
-  to a late outcome, and both repairs that use them are marked. A late outcome
-  still lands on any other RUNNING row: a plain FAILED retry's claim reads
-  FAILED mid-retry and a second retry may claim it; a new start can be handed
-  a claim row; the row leaves RUNNING, which the booking invoice retry's
-  settle-time fence relies on
+  any row no claim holds. None but SUCCEEDED lands on a repair's marked
+  RUNNING claim unless written onto that claim. Every outcome carries the
+  claim it was made under (its RUNNING row's `startedAt`, #4373), and none, a
+  success included, lands on a RUNNING row another claim holds: a stale-reset
+  or failed attempt's late outcome never lands on the retry's claim, so the
+  row stays RUNNING for the retry and the booking invoice retry's
+  settle-time fence. A refused write answers null: no link, no
+  repeated-failure alert
 worker claims operation -> provider call -> success or retryable failure
 success -> SUCCEEDED clears lastErrorCode and lastErrorMessage, so an earlier
   wait's or failure's code is not shown on it (#4049); PARTIAL keeps them

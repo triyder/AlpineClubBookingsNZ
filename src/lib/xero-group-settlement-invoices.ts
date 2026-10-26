@@ -31,10 +31,7 @@ import {
   startXeroSyncOperation,
   upsertXeroObjectLink,
 } from "@/lib/xero-sync";
-import {
-  callXeroApi,
-  getAuthenticatedXeroClient,
-} from "./xero-api-client";
+import { callXeroApi, getAuthenticatedXeroClient } from "./xero-api-client";
 import {
   reassertXeroInvoiceEmailPolicy,
   resolveXeroInvoiceEmailPolicy,
@@ -67,10 +64,11 @@ import { alertGroupSettlementInvoice } from "@/lib/group-settlement-invoice-aler
 import { clubFormatValues } from "@/lib/club-format-server";
 import { providerAmountToCents } from "@/lib/money-provider-amount";
 import { formatCents } from "@/lib/utils";
+import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
 
 export interface CreateXeroGroupSettlementInvoiceOptions
   extends FindOrCreateXeroContactOptions {
-  syncOperationId?: string;
+  syncOperation?: XeroOperationClaim;
 }
 
 /**
@@ -193,9 +191,9 @@ export async function createXeroInvoiceForGroupSettlement(
           })
         : null;
     // #3642: which attempt this row is, and whether a later one replaced it.
-    const row = options?.syncOperationId
+    const row = options?.syncOperation
       ? await tx.xeroSyncOperation.findUnique({
-          where: { id: options.syncOperationId },
+          where: { id: options.syncOperation.id },
           select: { correlationKey: true },
         })
       : null;
@@ -223,16 +221,16 @@ export async function createXeroInvoiceForGroupSettlement(
           settlementId: settlement.id,
           invoiceId: settlement.xeroInvoiceId,
           invoiceNumber: settlement.xeroInvoiceNumber,
-          syncOperationId: options?.syncOperationId,
+          syncOperation: options?.syncOperation,
         });
       } catch (error) {
-        if (options?.syncOperationId) {
-          await failXeroSyncOperation(options.syncOperationId, error);
+        if (options?.syncOperation) {
+          await failXeroSyncOperation(options.syncOperation, error);
         }
         throw error;
       }
-    } else if (options?.syncOperationId) {
-      await completeXeroSyncOperation(options.syncOperationId, {
+    } else if (options?.syncOperation) {
+      await completeXeroSyncOperation(options.syncOperation, {
         status: "SUCCEEDED",
         responsePayload: { cancelledBeforeInvoiceCreation: true },
       });
@@ -244,8 +242,8 @@ export async function createXeroInvoiceForGroupSettlement(
   // by the reaper, taken over by a card attempt, or replaced by a later attempt
   // after the group changed) raises nothing.
   if (!isGroupSettlementBoundToInvoice(settlement) || initialFence.superseded) {
-    if (options?.syncOperationId) {
-      await completeXeroSyncOperation(options.syncOperationId, {
+    if (options?.syncOperation) {
+      await completeXeroSyncOperation(options.syncOperation, {
         status: "SUCCEEDED",
         responsePayload: initialFence.superseded
           ? { supersededByLaterAttempt: true }
@@ -287,7 +285,7 @@ export async function createXeroInvoiceForGroupSettlement(
     // card payment is no longer refused), the operators are alerted once, and
     // the page says the club will sort it out.
     await releaseUninvoiceableGroupSettlement(settlement.id, settlement.amountCents, {
-      syncOperationId: options?.syncOperationId,
+      syncOperation: options?.syncOperation,
       childrenCents: lines.childrenCents,
       lineCents: lines.lineCents,
     });
@@ -323,12 +321,12 @@ export async function createXeroInvoiceForGroupSettlement(
   // #3642: keyed by attempt, so a retry of this attempt is deduplicated by Xero
   // and a later attempt is never answered with this one's invoice.
   const invoiceIdempotencyKey = groupSettlementInvoiceCreateKey(settlementId, attempt);
-  let operationId = options?.syncOperationId ?? null;
+  let operationClaim = options?.syncOperation ?? null;
   const requestPayload = { invoices: [buildInvoice(contactId)], ...lines.operationRecord };
 
-  if (operationId) {
+  if (operationClaim) {
     await prisma.xeroSyncOperation.update({
-      where: { id: operationId },
+      where: { id: operationClaim.id },
       data: { requestPayload: sanitizeForJson(requestPayload) },
     });
   } else {
@@ -343,7 +341,7 @@ export async function createXeroInvoiceForGroupSettlement(
       requestPayload,
       createdByMemberId: options?.createdByMemberId ?? null,
     });
-    operationId = operation.id;
+    operationClaim = operation;
   }
 
   try {
@@ -351,7 +349,7 @@ export async function createXeroInvoiceForGroupSettlement(
       memberId: organiserMemberId,
       currentContactId: contactId,
       workflow: "createXeroInvoiceForGroupSettlement",
-      operationId: operationId!,
+      operationId: operationClaim!.id,
       repairExistingLink: options?.repairExistingLink,
       createdByMemberId: options?.createdByMemberId,
       buildRequestPayload: (resolvedContactId) => ({
@@ -414,7 +412,7 @@ export async function createXeroInvoiceForGroupSettlement(
           await clubFormatValues()
         );
       }
-      await completeXeroSyncOperation(operationId!, {
+      await completeXeroSyncOperation(operationClaim!, {
         status: cancellationResult.totalMismatch ? "FAILED" : "SUCCEEDED",
         responsePayload: {
           abandonedAfterInvoiceCreation: true,
@@ -435,7 +433,7 @@ export async function createXeroInvoiceForGroupSettlement(
         settlementId: settlement.id,
         invoiceId: createdInvoice.invoiceID,
         invoiceNumber: createdInvoice.invoiceNumber ?? null,
-        syncOperationId: operationId!,
+        syncOperation: operationClaim!,
         createResponse: response.body,
       });
       return null;
@@ -642,7 +640,7 @@ export async function createXeroInvoiceForGroupSettlement(
       if (emailGate.abandoned) {
         // #3642: never emailed. Whoever retired it (the reaper, or a
         // replacement) queued its VOID and deactivated the link written above.
-        await completeXeroSyncOperation(operationId!, {
+        await completeXeroSyncOperation(operationClaim!, {
           status: "SUCCEEDED",
           responsePayload: {
             invoice: response.body,
@@ -661,7 +659,7 @@ export async function createXeroInvoiceForGroupSettlement(
           settlementId: settlement.id,
           invoiceId: createdInvoice.invoiceID,
           invoiceNumber: createdInvoice.invoiceNumber ?? null,
-          syncOperationId: operationId!,
+          syncOperation: operationClaim!,
           createResponse: response.body,
         });
         return null;
@@ -675,7 +673,7 @@ export async function createXeroInvoiceForGroupSettlement(
       );
     }
 
-    await completeXeroSyncOperation(operationId!, {
+    await completeXeroSyncOperation(operationClaim!, {
       status: invoiceEmailError ? "PARTIAL" : "SUCCEEDED",
       responsePayload: {
         invoice: response.body,
@@ -694,7 +692,7 @@ export async function createXeroInvoiceForGroupSettlement(
 
     return createdInvoice.invoiceID;
   } catch (error) {
-    await failXeroSyncOperation(operationId!, error);
+    await failXeroSyncOperation(operationClaim!, error);
     throw error;
   }
 }

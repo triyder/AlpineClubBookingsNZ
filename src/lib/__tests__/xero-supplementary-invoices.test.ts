@@ -112,6 +112,7 @@ import { getXeroOperationRetryMeta } from "@/lib/xero-operation-retry";
 import type { Prisma } from "@prisma/client";
 import { lineTotalCents } from "@/lib/__tests__/helpers";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { xeroClaim } from "@/lib/__tests__/helpers/xero-claim";
 
 describe("createXeroSupplementaryInvoice idempotency-key discriminator (#1234, L2)", () => {
   beforeEach(() => {
@@ -187,7 +188,7 @@ describe("createXeroSupplementaryInvoice idempotency-key discriminator (#1234, L
     expect(enqueued.correlationKey).toBe(enqueued.idempotencyKey);
     // The failed operation is marked failed and the error re-thrown.
     expect(mocks.failXeroSyncOperation).toHaveBeenCalledWith(
-      "op_x",
+      expect.objectContaining({ id: "op_x" }),
       expect.any(Error)
     );
   });
@@ -500,11 +501,11 @@ describe("createXeroSupplementaryInvoice mixed-sign components (#1356)", () => {
       priceDiffCents: -1500,
       changeFeeCents: 1000,
       bookingModificationId: "mod_negative_net",
-      syncOperationId: "op_waiting",
+      syncOperation: xeroClaim("op_waiting"),
     });
 
     expect(invoiceId).toBeNull();
-    expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith("op_waiting", {
+    expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(expect.objectContaining({ id: "op_waiting" }), {
       responsePayload: {
         skipped: true,
         reason: expect.stringContaining("net amount is not positive"),
@@ -749,12 +750,12 @@ describe("a second ask survives a Xero rejection replayably (#3193)", () => {
         bookingModificationId: "mod_123",
         shortfallReviewTaskId: "task_2",
         recordPayment: false,
-        syncOperationId: "op_q",
+        syncOperation: xeroClaim("op_q"),
       }),
     ).rejects.toThrow("Account code 200 has been archived");
 
     expect(mocks.failXeroSyncOperation).toHaveBeenCalledWith(
-      "op_q",
+      expect.objectContaining({ id: "op_q" }),
       expect.any(Error),
     );
     expect(mocks.xeroSyncOperationUpdate).toHaveBeenCalledTimes(1);
@@ -820,7 +821,7 @@ describe("a second ask survives a Xero rejection replayably (#3193)", () => {
         changeFeeCents: 0,
         bookingModificationId: "mod_123",
         recordPayment: true,
-        syncOperationId: "op_q",
+        syncOperation: xeroClaim("op_q"),
       }),
     ).rejects.toThrow("Account code 200 has been archived");
 
@@ -872,7 +873,7 @@ describe("a second ask survives a Xero rejection replayably (#3193)", () => {
         changeFeeCents: 0,
         bookingModificationId: "mod_123",
         recordPayment: true,
-        syncOperationId: "op_q",
+        syncOperation: xeroClaim("op_q"),
       }),
     ).rejects.toThrow("Account code 200 has been archived");
     return mocks.xeroSyncOperationUpdate.mock.calls.map((call) => call[0].data.requestPayload);
@@ -918,7 +919,7 @@ describe("a second ask survives a Xero rejection replayably (#3193)", () => {
       changeFeeCents: 0,
       bookingModificationId: "mod_123",
       recordPayment: true,
-      syncOperationId: "op_q",
+      syncOperation: xeroClaim("op_q"),
     });
 
     expect(createPayments).toHaveBeenCalledTimes(1);
@@ -962,7 +963,7 @@ describe("a second ask survives a Xero rejection replayably (#3193)", () => {
         changeFeeCents: 0,
         bookingModificationId: "mod_123",
         recordPayment: false,
-        syncOperationId: "op_q",
+        syncOperation: xeroClaim("op_q"),
       });
     };
 
@@ -977,7 +978,7 @@ describe("a second ask survives a Xero rejection replayably (#3193)", () => {
       // capture, which an officer's retry now sends back through the outbox -
       // so the capture's receipt (`readLateCaptureXeroReceipt`) reads the invoice.
       expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
-        "op_q",
+        expect.objectContaining({ id: "op_q" }),
         expect.objectContaining({ xeroObjectId: "inv_supp" }),
       );
     });

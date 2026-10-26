@@ -56,9 +56,12 @@ import {
   retirePendingClearingNote,
 } from "@/lib/invoice-clearing-note-evidence";
 import {
+  type AppliedCreditNote,
   decideInternetBankingReceiptFigure,
+  IB_RECEIPT_KEPT_REASON,
   paidInvoiceFacts,
 } from "@/lib/xero-inbound/settle-from-cash";
+import { recountCorrectionsAfterKeptSettle } from "@/lib/xero-inbound/kept-settle-correction-recount";
 import {
   cashSettlementMarkerInTransaction,
   raiseCashSettlementAlert,
@@ -270,6 +273,8 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
     // #3638: inbound cash on the invoice of a booking a card payment had
     // already settled. Counted here as well as raised, like the #2262 fence.
     secondInstrumentSettlementConflicts: 0,
+    // #4095: corrections a kept settle could not recount; the event fails on them.
+    unrecountedCorrectionNoteIds: [] as string[],
   };
 
   if (!invoiceId || !isPaidXeroInvoice(invoice)) {
@@ -447,8 +452,10 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
     // #3979: written inside the transaction, alerted only after it commits.
     // Declared through `as` so the read after the await is not narrowed to null.
     let cashSettlementMarker = null as CashSettlementMarker | null;
+    let correctionNotesToRecount = [] as AppliedCreditNote[];
     const outcome = await prisma.$transaction(async (tx) => {
       cashSettlementMarker = null;
+      correctionNotesToRecount = [];
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
 
       // Pre-lock read: only the lodge key, which is immutable. The booking's
@@ -551,12 +558,14 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
       // when the cash belongs to this payment alone; otherwise the stored
       // figure stays and the operators are told after the commit.
       const receiptFigure = await decideInternetBankingReceiptFigure(tx, {
+        invoiceId,
         payment: fresh,
         cash: invoiceCash,
         matchedPayments: payments.length,
         secondInstrument: secondInstrument !== null,
         invoice: invoiceFacts,
       });
+      if (receiptFigure.plan.kind !== "rewrite") correctionNotesToRecount = receiptFigure.appliedCorrectionNotes;
       const cashSettlementNotice = await readCashSettlementNotice(tx, {
         plan: receiptFigure.plan,
         recordedCents: receiptFigure.receiptCents,
@@ -621,7 +630,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
               reference: fresh.reference ?? undefined,
               amountCents: receiptFigure.receiptCents,
               status: PaymentStatus.SUCCEEDED,
-              reason: receiptFigure.primaryRowWrite.reason ?? "xero_invoice_paid_reconciliation",
+              reason: receiptFigure.primaryRowWrite.reason ?? IB_RECEIPT_KEPT_REASON,
             },
           });
         }
@@ -812,13 +821,13 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           tx,
           matchedBookingIds.filter((id) => id !== settlementPayment.bookingId)
         );
-        const { mintableCents, mintPartial: belowFace, cashUnverified, aggregateCapped } =
-          resolveMintableCents(
-            receiptFigure.receiptCents,
-            invoiceCash,
-            otherMintedCents,
-          );
-        const mintPartial = belowFace || receiptFigure.mixedInvoiceExpectedCents !== null;
+        const mint = resolveMintableCents(
+          receiptFigure.receiptCents,
+          invoiceCash,
+          otherMintedCents,
+        );
+        const { mintableCents, cashUnverified, aggregateCapped } = mint;
+        const mintPartial = receiptFigure.isPartPayment(mint);
 
         // #3643 (`INV-PAY-108`, ORCHESTRATOR DECISION 3): while a part-payment
         // review names this payment, open or closed, neither arm below sizes
@@ -1260,9 +1269,9 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
             );
           // #3979: the receipt's figure as the face, and the invoice side for a
           // mixed invoice, as the already-cancelled arm above.
-          const { mintableCents, mintPartial: belowFace, cashUnverified, aggregateCapped } =
-            resolveMintableCents(receiptFigure.receiptCents, invoiceCash, otherMintedCents);
-          const mintPartial = belowFace || receiptFigure.mixedInvoiceExpectedCents !== null;
+          const mint = resolveMintableCents(receiptFigure.receiptCents, invoiceCash, otherMintedCents);
+          const { mintableCents, cashUnverified, aggregateCapped } = mint;
+          const mintPartial = receiptFigure.isPartPayment(mint);
           if (aggregateCapped) {
             logger.warn(
               { invoiceId, paymentId: fresh.id, bookingId: fresh.bookingId, mintableCents, otherMintedCents, invoiceCashCents: invoiceCash.knownCents },
@@ -1413,6 +1422,11 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
     await settleHostingCoverageAfterCommit({
       bookingId: outcome.payment.bookingId,
     });
+
+    // #4095 (`INV-PAY-126`): a kept receipt holds the stored figure, so a
+    // correction already synced against it is recounted now; a replay recounts
+    // again, so an event retried for one left unrecounted finishes it.
+    result.unrecountedCorrectionNoteIds.push(...(await recountCorrectionsAfterKeptSettle(invoiceId, outcome.payment.id, correctionNotesToRecount)));
 
     // #3979 (`INV-PAY-125`): a kept figure, or cash that disagrees with what
     // the booking owes, is never silent on a booking the settle leaves live:

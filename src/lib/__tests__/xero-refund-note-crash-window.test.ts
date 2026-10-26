@@ -186,19 +186,21 @@ vi.mock("@/lib/xero-sync", async (importOriginal) => {
     }),
     completeXeroSyncOperation: vi.fn(
       async (
-        id: string,
+        claim: { id: string; startedAt: Date | null },
         completion: { status?: string; responsePayload?: unknown; xeroObjectId?: string | null; xeroObjectNumber?: string | null; extraLinks?: Row[] },
-        options?: { onlyIfRunningSince?: Date },
+        options?: { retryClaim?: true },
       ) => {
         if (state.crash === "at-completion") {
           state.crash = null;
           throw CRASH;
         }
-        const row = state.operations.find((operation) => operation.id === id)!;
+        const row = state.operations.find((operation) => operation.id === claim.id)!;
         // #4356 (`INV-INT-029`): a PARTIAL completion never lands on SUCCEEDED.
         if (completion.status === "PARTIAL" && row.status === "SUCCEEDED") return null;
         // #4256: a retry's completion lands only on its own claim.
-        if (options?.onlyIfRunningSince && !(row.status === "RUNNING" && row.startedAt === options.onlyIfRunningSince)) return null;
+        if (options?.retryClaim && !onClaim(row, claim)) return null;
+        // #4373: no outcome lands on another claim's RUNNING row.
+        if (row.status === "RUNNING" && !onClaim(row, claim)) return null;
         Object.assign(row, {
           status: completion.status ?? "SUCCEEDED",
           responsePayload: JSON.parse(JSON.stringify(completion.responsePayload ?? null)),
@@ -208,10 +210,12 @@ vi.mock("@/lib/xero-sync", async (importOriginal) => {
         for (const link of completion.extraLinks ?? []) upsertLink(link);
       },
     ),
-    failXeroSyncOperation: vi.fn(async (id: string, error?: unknown, _payload?: unknown, options?: { onlyIfRunningSince?: Date }) => {
-      const row = state.operations.find((operation) => operation.id === id);
+    failXeroSyncOperation: vi.fn(async (claim: { id: string; startedAt: Date | null }, error?: unknown, _payload?: unknown, options?: { retryClaim?: true }) => {
+      const row = state.operations.find((operation) => operation.id === claim.id);
       // #4256: a retry's abandon lands only on its own claim.
-      if (options?.onlyIfRunningSince && !(row?.status === "RUNNING" && row.startedAt === options.onlyIfRunningSince)) return null;
+      if (options?.retryClaim && !(row && onClaim(row, claim))) return null;
+      // #4373: no outcome lands on another claim's RUNNING row.
+      if (row?.status === "RUNNING" && !onClaim(row, claim)) return null;
       if (row) Object.assign(row, { status: "FAILED", responsePayload: { error: "failed" }, lastErrorMessage: error instanceof Error ? error.message : null });
     }),
     upsertXeroObjectLink: vi.fn(async (link: Row) => upsertLink(link)),
@@ -219,6 +223,12 @@ vi.mock("@/lib/xero-sync", async (importOriginal) => {
     sumCoveredRefundCreditNoteCents: vi.fn(async () => coveredCents()),
   };
 });
+
+/** #4373: the row is RUNNING under this claim (`startedAt` is the claim's token). */
+function onClaim(row: Row, claim: { startedAt: Date | null }) {
+  const startedAt = row.startedAt as Date | null | undefined;
+  return row.status === "RUNNING" && (startedAt?.getTime() ?? null) === (claim.startedAt?.getTime() ?? null);
+}
 
 function coveredCents() {
   return state.links
@@ -496,7 +506,7 @@ function dispatch(id: string) {
   };
   // As the outbox's executor passes them (`xero-operation-outbox.ts`).
   return createXeroCreditNote(PAYMENT_ID, payload.refundAmountCents, {
-    syncOperationId: id,
+    syncOperation: { id, startedAt: row.startedAt as Date },
     watermarkCents: payload.watermarkCents,
     refundMethod: payload.refundMethod,
     ...(payload.reviewTaskId ? { reviewTaskId: payload.reviewTaskId } : {}),

@@ -205,6 +205,7 @@ export async function processQueuedXeroOperationRetries(
   };
 
   for (const queuedOperation of queuedOperations) {
+    // #4373: the claim this REQUEUE row's outcomes are written under (`INV-INT-029`).
     const claimed = await claimQueuedRetryOperation(queuedOperation.id);
     if (!claimed) {
       result.skipped += 1;
@@ -216,7 +217,7 @@ export async function processQueuedXeroOperationRetries(
     const originalOperationId = getQueuedRetryOperationId(queuedOperation);
     if (!originalOperationId) {
       await failXeroSyncOperation(
-        queuedOperation.id,
+        claimed,
         new XeroOperationRetryError(
           "Queued retry payload is missing the original operation id."
         )
@@ -231,7 +232,7 @@ export async function processQueuedXeroOperationRetries(
         requeueOperationId: queuedOperation.id,
       });
 
-      await completeXeroSyncOperation(queuedOperation.id, {
+      await completeXeroSyncOperation(claimed, {
         status: "SUCCEEDED",
         responsePayload: {
           originalOperationId,
@@ -250,7 +251,7 @@ export async function processQueuedXeroOperationRetries(
         // have been withdrawn afterwards, because this very retry was running
         // when the resolve checked - in which case the operation is unresolved
         // and nothing ran.
-        await completeXeroSyncOperation(queuedOperation.id, {
+        await completeXeroSyncOperation(claimed, {
           status: "CANCELLED",
           responsePayload: {
             originalOperationId,
@@ -266,7 +267,7 @@ export async function processQueuedXeroOperationRetries(
         // #4256: an officer marked the operation not replayable (before this
         // retry read it, or before its claim). Nothing ran and there is
         // nothing to requeue, so the queued row is skipped, not failed.
-        await completeXeroSyncOperation(queuedOperation.id, {
+        await completeXeroSyncOperation(claimed, {
           status: "CANCELLED",
           responsePayload: {
             originalOperationId,
@@ -282,7 +283,7 @@ export async function processQueuedXeroOperationRetries(
         // #3880: another refund note on this payment is mid-raise. Nothing ran,
         // so this retry waits its turn in PENDING, reason kept, as the outbox does.
         await prisma.xeroSyncOperation.updateMany({
-          where: { id: queuedOperation.id, status: "RUNNING" },
+          where: { id: queuedOperation.id, status: "RUNNING", startedAt: claimed.startedAt },
           data: { status: "PENDING", startedAt: null, lastErrorCode: null, lastErrorMessage: error.message },
         });
         result.skipped += 1;
@@ -296,7 +297,7 @@ export async function processQueuedXeroOperationRetries(
         },
         "Failed queued Xero operation retry"
       );
-      await failXeroSyncOperation(queuedOperation.id, error, undefined, {
+      await failXeroSyncOperation(claimed, error, undefined, {
         lastErrorMessage: await describeQueuedRetryFailure(originalOperationId, error),
       });
       result.failed += 1;

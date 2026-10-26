@@ -1332,7 +1332,7 @@ function deferred() {
       });
 
       // The retry takes the create's "invoice already exists" exit — twice.
-      await expect(invoices.createXeroInvoiceForBooking(BOOKING_ID, { syncOperationId: operation.id })).resolves.toBe(
+      await expect(invoices.createXeroInvoiceForBooking(BOOKING_ID, { syncOperation: operation })).resolves.toBe(
         invoiceId,
       );
       await expect(invoices.createXeroInvoiceForBooking(BOOKING_ID)).resolves.toBe(invoiceId);
@@ -1418,7 +1418,7 @@ function deferred() {
 
       // The retry's "invoice already exists" exit re-checks from the stored
       // figures: no gap, nothing queued on the correction.
-      await expect(invoices.createXeroInvoiceForBooking(BOOKING_ID, { syncOperationId: operation.id })).resolves.toBe(
+      await expect(invoices.createXeroInvoiceForBooking(BOOKING_ID, { syncOperation: operation })).resolves.toBe(
         invoiceId,
       );
       expect(

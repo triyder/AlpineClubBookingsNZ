@@ -327,7 +327,7 @@ describe("membership charge reconciliation", () => {
       expect.objectContaining({ skipDuplicates: true })
     );
     expect(mocks.completeOperation).toHaveBeenCalledWith(
-      "operation-1",
+      expect.objectContaining({ id: "operation-1" }),
       expect.objectContaining({
         responsePayload: expect.objectContaining({
           nextStatus: "PAID",

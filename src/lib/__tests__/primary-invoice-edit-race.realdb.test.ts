@@ -284,7 +284,7 @@ async function inFlightCreate(release: Promise<void>, reached: () => void) {
   });
   if (!atLink) throw new Error("expected the first save of this link");
   const worthGap = await gap.queuePrimaryInvoiceWorthGap({ bookingId: BOOKING_ID, atLink });
-  await xeroSync.completeXeroSyncOperation(operation.id, { status: "SUCCEEDED", responsePayload: { invoice: INVOICE_ID } });
+  await xeroSync.completeXeroSyncOperation(operation, { status: "SUCCEEDED", responsePayload: { invoice: INVOICE_ID } });
   return { atLink, worthGap, operationId: operation.id };
 }
 

@@ -343,6 +343,7 @@ import { XERO_OUTBOX_QUEUE_TYPES } from "@/lib/xero-operation-outbox-payload";
 import { XeroAppliedCreditOperationBusyError, XeroRefundCreditNoteInFlightError } from "@/lib/xero-applied-credit-operation-serialization";
 import { NOT_A_XERO_REPAIR_CLAIM } from "@/lib/xero-operation-outcome-guard";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { TEST_XERO_CLAIMED_AT, xeroClaim } from "@/lib/__tests__/helpers/xero-claim";
 
 describe("enqueueXeroEntranceFeeInvoiceOperation", () => {
   beforeEach(() => {
@@ -2424,7 +2425,7 @@ describe("processQueuedXeroOutboxOperations", () => {
       })
     );
     expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
-      "op_stale_copy",
+      expect.objectContaining({ id: "op_stale_copy" }),
       expect.objectContaining({
         status: "CANCELLED",
         responsePayload: expect.objectContaining({ resolvedOperationId: "op_resolved_sibling" }),
@@ -2473,7 +2474,7 @@ describe("processQueuedXeroOutboxOperations", () => {
 
     for (const id of ["op_alloc_busy", "op_dealloc_busy"]) {
       expect(mocks.updateManyOperation).toHaveBeenCalledWith({
-        where: { id, status: "RUNNING", ...NOT_A_XERO_REPAIR_CLAIM },
+        where: { id, status: "RUNNING", startedAt: TEST_XERO_CLAIMED_AT, ...NOT_A_XERO_REPAIR_CLAIM },
         data: {
           status: "PENDING",
           startedAt: null,
@@ -2505,7 +2506,7 @@ describe("processQueuedXeroOutboxOperations", () => {
     await processQueuedXeroOutboxOperations({ limit: 5 });
 
     expect(mocks.updateManyOperation).toHaveBeenCalledWith({
-      where: { id: "op_dealloc_waiting", status: "RUNNING", ...NOT_A_XERO_REPAIR_CLAIM },
+      where: { id: "op_dealloc_waiting", status: "RUNNING", startedAt: TEST_XERO_CLAIMED_AT, ...NOT_A_XERO_REPAIR_CLAIM },
       data: expect.objectContaining({ status: "PENDING", lastErrorCode: BILLED_OFFSET_AWAITING_OWN_NOTE_CODE }),
     });
     // The scan leaves such a row out until its recheck is due; every other
@@ -2559,7 +2560,7 @@ describe("processQueuedXeroOutboxOperations", () => {
       skipped: 1,
     });
     expect(mocks.updateManyOperation).toHaveBeenCalledWith({
-      where: { id: "op_dealloc_retry", status: "RUNNING", ...NOT_A_XERO_REPAIR_CLAIM },
+      where: { id: "op_dealloc_retry", status: "RUNNING", startedAt: TEST_XERO_CLAIMED_AT, ...NOT_A_XERO_REPAIR_CLAIM },
       data: {
         status: "PENDING",
         startedAt: null,
@@ -2578,7 +2579,7 @@ describe("processQueuedXeroOutboxOperations", () => {
     expect(mocks.deallocateExcessAppliedCreditForBooking).toHaveBeenCalledTimes(2);
     expect(mocks.deallocateExcessAppliedCreditForBooking).toHaveBeenLastCalledWith(
       "booking_1",
-      { syncOperationId: "op_dealloc_retry" },
+      { syncOperation: xeroClaim("op_dealloc_retry") },
     );
     expect(mocks.failXeroSyncOperation).not.toHaveBeenCalled();
   });
@@ -2609,7 +2610,7 @@ describe("processQueuedXeroOutboxOperations", () => {
 
     expect(mocks.createXeroEntranceFeeInvoice).toHaveBeenCalledWith("member_1", {
       createdByMemberId: "admin_1",
-      syncOperationId: "op_entrance_1",
+      syncOperation: xeroClaim("op_entrance_1"),
       precomputedEntranceFee: {
         category: "ADULT",
         feeMapping: {
@@ -2645,7 +2646,7 @@ describe("processQueuedXeroOutboxOperations", () => {
 
     expect(mocks.createXeroInvoiceForBooking).toHaveBeenCalledWith("booking_1", {
       createdByMemberId: "admin_1",
-      syncOperationId: "op_booking_1",
+      syncOperation: xeroClaim("op_booking_1"),
     });
   });
 
@@ -2676,7 +2677,7 @@ describe("processQueuedXeroOutboxOperations", () => {
       "settle_1",
       {
         createdByMemberId: "admin_1",
-        syncOperationId: "op_settle_1",
+        syncOperation: xeroClaim("op_settle_1"),
       }
     );
   });
@@ -2707,7 +2708,7 @@ describe("processQueuedXeroOutboxOperations", () => {
 
     expect(mocks.updateXeroBookingInvoiceForBooking).toHaveBeenCalledWith("booking_1", {
       createdByMemberId: "admin_1",
-      syncOperationId: "op_booking_update_1",
+      syncOperation: xeroClaim("op_booking_update_1"),
     });
     expect(mocks.updateManyOperation).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -2745,7 +2746,7 @@ describe("processQueuedXeroOutboxOperations", () => {
 
     expect(mocks.createXeroCreditNote).toHaveBeenCalledWith("payment_1", 3000, {
       createdByMemberId: "admin_1",
-      syncOperationId: "op_credit_note_1",
+      syncOperation: xeroClaim("op_credit_note_1"),
       watermarkCents: 8000,
     });
   });
@@ -2773,7 +2774,7 @@ describe("processQueuedXeroOutboxOperations", () => {
 
     expect(mocks.createXeroCreditNote).toHaveBeenCalledWith("payment_1", 4000, {
       createdByMemberId: "admin_1",
-      syncOperationId: "op_request_note_1",
+      syncOperation: xeroClaim("op_request_note_1"),
       watermarkCents: undefined,
       refundMethod: "internet-banking",
       refundRequestId: "req_1",
@@ -2802,7 +2803,7 @@ describe("processQueuedXeroOutboxOperations", () => {
     await processQueuedXeroOutboxOperations({ limit: 5 });
 
     expect(mocks.createXeroCreditNote).toHaveBeenCalledWith("payment_1", 2500, expect.objectContaining({
-      syncOperationId: "op_cash_note_1",
+      syncOperation: xeroClaim("op_cash_note_1"),
       watermarkCents: 3500,
       refundMethod: "internet-banking",
       noteWording: "cash",
@@ -2830,7 +2831,7 @@ describe("processQueuedXeroOutboxOperations", () => {
       skipped: 1,
     });
     expect(mocks.updateManyOperation).toHaveBeenCalledWith({
-      where: { id: "op_hand_back_2", status: "RUNNING", ...NOT_A_XERO_REPAIR_CLAIM },
+      where: { id: "op_hand_back_2", status: "RUNNING", startedAt: TEST_XERO_CLAIMED_AT, ...NOT_A_XERO_REPAIR_CLAIM },
       data: { status: "PENDING", startedAt: null, lastErrorCode: null, lastErrorMessage: expect.stringContaining("op_hand_back_1") },
     });
     expect(mocks.failXeroSyncOperation).not.toHaveBeenCalled();
@@ -2865,12 +2866,12 @@ describe("processQueuedXeroOutboxOperations", () => {
 
     expect(mocks.createXeroCreditNote).toHaveBeenCalledTimes(1);
     expect(mocks.createXeroCreditNote).toHaveBeenCalledWith("payment_1", 5000, {
-      syncOperationId: "op_credit_note_1",
+      syncOperation: xeroClaim("op_credit_note_1"),
       watermarkCents: 5000,
       refundMethod: "card",
     });
     expect(mocks.failXeroSyncOperation).toHaveBeenCalledWith(
-      "op_credit_note_1",
+      expect.objectContaining({ id: "op_credit_note_1" }),
       crash,
       undefined,
       { keepCancelled: true }
@@ -2906,7 +2907,7 @@ describe("processQueuedXeroOutboxOperations", () => {
 
     expect(mocks.createUnappliedXeroCreditNote).toHaveBeenCalledWith("payment_1", 4200, CLUB_FORMAT_TEST, {
       createdByMemberId: "admin_1",
-      syncOperationId: "op_account_credit_1",
+      syncOperation: xeroClaim("op_account_credit_1"),
     });
   });
 
@@ -2946,7 +2947,7 @@ describe("processQueuedXeroOutboxOperations", () => {
       // "absent" has to reach it as absent.
       shortfallReviewTaskId: undefined,
       createdByMemberId: "admin_1",
-      syncOperationId: "op_supplementary_1",
+      syncOperation: xeroClaim("op_supplementary_1"),
       format: CLUB_FORMAT_TEST,
     });
   });
@@ -2997,7 +2998,7 @@ describe("processQueuedXeroOutboxOperations", () => {
       recordPayment: false,
       shortfallReviewTaskId: "task_2",
       createdByMemberId: "admin_1",
-      syncOperationId: "op_second_ask_1",
+      syncOperation: xeroClaim("op_second_ask_1"),
       format: CLUB_FORMAT_TEST,
     });
   });
@@ -3032,7 +3033,7 @@ describe("processQueuedXeroOutboxOperations", () => {
       refundAmountCents: 3200,
       bookingModificationId: "mod_1",
       createdByMemberId: "admin_1",
-      syncOperationId: "op_mod_credit_note_1",
+      syncOperation: xeroClaim("op_mod_credit_note_1"),
       format: CLUB_FORMAT_TEST,
     });
   });
@@ -3065,7 +3066,7 @@ describe("processQueuedXeroOutboxOperations", () => {
         bookingId: "booking_1",
         refundAmountCents: 15000,
         clearsUnpaidInvoice: true,
-        syncOperationId: "op_clearing_1",
+        syncOperation: xeroClaim("op_clearing_1"),
       })
     );
     expect(params).not.toHaveProperty("refundMethod");
@@ -3106,7 +3107,7 @@ describe("processQueuedXeroOutboxOperations", () => {
         localId: "mod_1",
         role: "MODIFICATION_CREDIT_NOTE_ALLOCATION",
         createdByMemberId: "admin_1",
-        syncOperationId: "op_allocation_1",
+        syncOperation: xeroClaim("op_allocation_1"),
       }
     );
   });
@@ -3141,7 +3142,7 @@ describe("processQueuedXeroOutboxOperations", () => {
       requestId: "request_1",
       participantId: "participant_1",
       createdByMemberId: "admin_1",
-      syncOperationId: "op_membership_cancel_credit_1",
+      syncOperation: xeroClaim("op_membership_cancel_credit_1"),
     });
     expect(mocks.updateManyOperation).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -3191,7 +3192,7 @@ describe("processQueuedXeroOutboxOperations", () => {
       requestId: "request_1",
       participantId: "participant_1",
       createdByMemberId: "admin_1",
-      syncOperationId: "op_membership_cancel_contact_1",
+      syncOperation: xeroClaim("op_membership_cancel_contact_1"),
     });
     expect(mocks.updateManyOperation).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -3227,7 +3228,7 @@ describe("processQueuedXeroOutboxOperations", () => {
 
     expect(mocks.createXeroEntranceFeeInvoice).not.toHaveBeenCalled();
     expect(mocks.failXeroSyncOperation).toHaveBeenCalledWith(
-      "op_entrance_1",
+      expect.objectContaining({ id: "op_entrance_1" }),
       expect.objectContaining({
         message: "Queued Xero outbox payload is incomplete.",
       }),
@@ -3668,7 +3669,7 @@ describe("processQueuedXeroOutboxOperations dispatch domain (#1272)", () => {
     expect(mocks.createXeroMembershipSubscriptionInvoice).toHaveBeenCalledWith({
       chargeId: "charge_1",
       createdByMemberId: "admin_1",
-      syncOperationId: "op_subscription_charge_1",
+      syncOperation: xeroClaim("op_subscription_charge_1"),
     });
   });
 
@@ -3695,7 +3696,7 @@ describe("processQueuedXeroOutboxOperations dispatch domain (#1272)", () => {
     expect(mocks.voidXeroInvoiceForAbandonedGroupSettlement).toHaveBeenCalledWith(
       "settle_1",
       "inv_abandoned",
-      { syncOperationId: "op_settle_abandon_1" }
+      { syncOperation: xeroClaim("op_settle_abandon_1") }
     );
     expect(mocks.voidXeroInvoiceForCancelledGroupSettlement).not.toHaveBeenCalled();
 
@@ -3708,7 +3709,7 @@ describe("processQueuedXeroOutboxOperations dispatch domain (#1272)", () => {
 
     expect(mocks.voidXeroInvoiceForCancelledGroupSettlement).toHaveBeenCalledWith(
       "settle_1",
-      { syncOperationId: "op_settle_void_1" }
+      { syncOperation: xeroClaim("op_settle_void_1") }
     );
     expect(mocks.voidXeroInvoiceForAbandonedGroupSettlement).not.toHaveBeenCalled();
   });

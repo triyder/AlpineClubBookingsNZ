@@ -35,6 +35,7 @@ import {
 import { alertGroupSettlementInvoice } from "@/lib/group-settlement-invoice-alerts";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { formatCents } from "@/lib/utils";
+import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
 
 /** What a combined invoice's state in Xero lets the app do with it. */
 export type GroupSettlementInvoiceState =
@@ -126,7 +127,7 @@ export async function voidCancelledGroupSettlementInvoice(params: {
   settlementId: string;
   invoiceId: string;
   invoiceNumber: string | null;
-  syncOperationId?: string;
+  syncOperation?: XeroOperationClaim;
   createResponse?: unknown;
 }): Promise<void> {
   const { xero, tenantId } = await getAuthenticatedXeroClient();
@@ -159,8 +160,8 @@ export async function voidCancelledGroupSettlementInvoice(params: {
     number: params.invoiceNumber,
   });
 
-  if (params.syncOperationId) {
-    await completeXeroSyncOperation(params.syncOperationId, {
+  if (params.syncOperation) {
+    await completeXeroSyncOperation(params.syncOperation, {
       status: "SUCCEEDED",
       responsePayload: {
         cancelledAfterInvoiceCreation: true,
@@ -198,7 +199,7 @@ function groupHandBackVoidRefusal(invoiceId: string, money: string): string {
 async function voidStillNeeded(params: {
   settlementId: string;
   invoiceId: string;
-  syncOperationId: string;
+  syncOperation: XeroOperationClaim;
   reason: "cancel" | "abandon";
   /** #4042: a cancelled, settled Internet Banking group, repaid through its hand-back task. */
   internetBanking?: boolean;
@@ -222,14 +223,14 @@ async function voidStillNeeded(params: {
       },
       await clubFormatValues()
     );
-    await completeXeroSyncOperation(params.syncOperationId, {
+    await completeXeroSyncOperation(params.syncOperation, {
       status: "SUCCEEDED",
       responsePayload: { invoiceNotFoundInXero: true },
     });
     return false;
   }
   if (state.kind === "void") {
-    await completeXeroSyncOperation(params.syncOperationId, {
+    await completeXeroSyncOperation(params.syncOperation, {
       status: "SUCCEEDED",
       responsePayload: { invoiceAlreadyVoid: true, invoiceStatus: state.status },
       xeroObjectType: "INVOICE",
@@ -258,7 +259,7 @@ async function voidStillNeeded(params: {
     },
     format
   );
-  await completeXeroSyncOperation(params.syncOperationId, {
+  await completeXeroSyncOperation(params.syncOperation, {
     status: "SUCCEEDED",
     responsePayload: { invoiceNotVoidedCarriesMoney: true, invoiceState: state },
     xeroObjectType: "INVOICE",
@@ -271,7 +272,7 @@ async function voidStillNeeded(params: {
 /** Replayable outbox handler for the compensating VOID after group cancel. */
 export async function voidXeroInvoiceForCancelledGroupSettlement(
   settlementId: string,
-  options: { syncOperationId: string }
+  options: { syncOperation: XeroOperationClaim }
 ): Promise<void> {
   const settlement = await prisma.groupBookingSettlement.findUnique({
     where: { id: settlementId },
@@ -297,7 +298,7 @@ export async function voidXeroInvoiceForCancelledGroupSettlement(
     !(await voidStillNeeded({
       settlementId: settlement.id,
       invoiceId: settlement.xeroInvoiceId,
-      syncOperationId: options.syncOperationId,
+      syncOperation: options.syncOperation,
       reason: "cancel",
       // A SETTLED Internet Banking group: its cancel repays the organiser through the hand-back task.
       internetBanking: !settlement.stripePaymentIntentId && settlement.status === "SUCCEEDED",
@@ -309,7 +310,7 @@ export async function voidXeroInvoiceForCancelledGroupSettlement(
     settlementId: settlement.id,
     invoiceId: settlement.xeroInvoiceId,
     invoiceNumber: settlement.xeroInvoiceNumber,
-    syncOperationId: options.syncOperationId,
+    syncOperation: options.syncOperation,
   });
 }
 
@@ -324,7 +325,7 @@ export async function voidXeroInvoiceForCancelledGroupSettlement(
 export async function voidXeroInvoiceForAbandonedGroupSettlement(
   settlementId: string,
   xeroInvoiceId: string,
-  options: { syncOperationId: string }
+  options: { syncOperation: XeroOperationClaim }
 ): Promise<void> {
   const settlement = await prisma.groupBookingSettlement.findUnique({
     where: { id: settlementId },
@@ -341,7 +342,7 @@ export async function voidXeroInvoiceForAbandonedGroupSettlement(
       { settlementId, xeroInvoiceId },
       "Refusing to void a group settlement invoice the settlement still points at"
     );
-    await completeXeroSyncOperation(options.syncOperationId, {
+    await completeXeroSyncOperation(options.syncOperation, {
       status: "SUCCEEDED",
       responsePayload: { skippedInvoiceStillLinkedToSettlement: true },
     });
@@ -351,7 +352,7 @@ export async function voidXeroInvoiceForAbandonedGroupSettlement(
     !(await voidStillNeeded({
       settlementId,
       invoiceId: xeroInvoiceId,
-      syncOperationId: options.syncOperationId,
+      syncOperation: options.syncOperation,
       reason: "abandon",
     }))
   ) {
@@ -379,7 +380,7 @@ export async function voidXeroInvoiceForAbandonedGroupSettlement(
       context: `voidInvoice(abandoned group settlement ${settlementId})`,
     }
   );
-  await completeXeroSyncOperation(options.syncOperationId, {
+  await completeXeroSyncOperation(options.syncOperation, {
     status: "SUCCEEDED",
     responsePayload: {
       abandonedBySettlement: true,

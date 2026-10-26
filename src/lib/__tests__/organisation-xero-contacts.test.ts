@@ -362,7 +362,7 @@ describe("#3367: creating the contact is idempotent under replay", () => {
     );
     expect(mocks.tx.organisation.update).not.toHaveBeenCalled();
     expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
-      "op-1",
+      expect.objectContaining({ id: "op-1" }),
       expect.objectContaining({
         responsePayload: expect.objectContaining({
           resolution: "superseded_by_concurrent_link",
@@ -823,7 +823,7 @@ describe("#3367: one Xero contact, one local home (INV-INT-018)", () => {
     // be given is a genuinely unresolved provider operation, and the
     // idempotency key it keeps is what makes a replay converge.
     expect(mocks.failXeroSyncOperation).toHaveBeenCalledWith(
-      "op-1",
+      expect.objectContaining({ id: "op-1" }),
       expect.any(XeroContactTwoHomesError),
       expect.objectContaining({ resolvedContactId: "contact-held-by-member" }),
     );

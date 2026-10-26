@@ -170,7 +170,7 @@ vi.mock("@/lib/xero-sync", () => ({
     return row;
   },
   completeXeroSyncOperation: async (
-    operationId: string,
+    claim: { id: string },
     completion: {
       status?: string;
       extraLinks?: Array<Record<string, unknown>>;
@@ -178,7 +178,7 @@ vi.mock("@/lib/xero-sync", () => ({
       responsePayload?: unknown;
     },
   ) => {
-    const row = h.table("xeroSyncOperation").find((r) => r.id === operationId)!;
+    const row = h.table("xeroSyncOperation").find((r) => r.id === claim.id)!;
     row.status = completion.status ?? "SUCCEEDED";
     row.xeroObjectId = completion.xeroObjectId ?? row.xeroObjectId ?? null;
     row.responsePayload = completion.responsePayload ?? null;
@@ -194,8 +194,8 @@ vi.mock("@/lib/xero-sync", () => ({
   upsertXeroObjectLink: async (link: Record<string, unknown>) => {
     h.writeLinks([link]);
   },
-  failXeroSyncOperation: async (operationId: string) => {
-    const row = h.table("xeroSyncOperation").find((r) => r.id === operationId)!;
+  failXeroSyncOperation: async (claim: { id: string }) => {
+    const row = h.table("xeroSyncOperation").find((r) => r.id === claim.id)!;
     row.status = "FAILED";
   },
 }));
@@ -340,6 +340,7 @@ import { lateCaptureOwnChargeSlice } from "@/lib/late-capture-own-charge-refund"
 import { recordAndNoteRepairedLateCaptureRefunds } from "@/lib/late-capture-repair-refund-record";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import type { ClubTimeZone } from "@/lib/club-time";
+import { xeroClaim } from "@/lib/__tests__/helpers/xero-claim";
 
 const ZONE = "Pacific/Auckland" as ClubTimeZone;
 const CAPTURED_AT = new Date("2026-06-10T01:00:00.000Z"); // 10 Jun at the club
@@ -460,7 +461,7 @@ async function runOutbox() {
     (r) => r.queueType === "KEPT_LATE_CAPTURE_INVOICE" && r.status === "PENDING",
   )) {
     row.status = "RUNNING";
-    await createXeroKeptLateCaptureInvoice({ syncOperationId: row.id }).catch(() => undefined);
+    await createXeroKeptLateCaptureInvoice({ syncOperation: xeroClaim(row.id) }).catch(() => undefined);
   }
   for (const note of h.table("xeroSyncOperation").filter(
     (r) => r.queueType === "REFUND_CREDIT_NOTE" && r.status === "PENDING",
@@ -732,7 +733,7 @@ describe("a kept late capture is counted once in Xero", () => {
     row.status = "RUNNING"; // claimed, not yet at its locked check
     await keep(); // the re-keep waits on the task row, then finds the live RUNNING row
     expect(h.table("xeroSyncOperation").filter((r) => r.queueType === "KEPT_LATE_CAPTURE_INVOICE")).toHaveLength(1);
-    await createXeroKeptLateCaptureInvoice({ syncOperationId: row.id }); // its check now reads DISMISSED
+    await createXeroKeptLateCaptureInvoice({ syncOperation: xeroClaim(row.id) }); // its check now reads DISMISSED
     expect(books()).toEqual({ income: 24000, stripe: 24000, receivable: 0 });
   });
 
@@ -1132,7 +1133,7 @@ describe("round 6: a late charge's refund paid another way - record the receipt,
     const row = h.table("xeroSyncOperation").find((r) => r.queueType === "KEPT_LATE_CAPTURE_INVOICE")!;
     expect(row.status).toBe("PARTIAL");
     row.status = "RUNNING"; // the retry
-    await createXeroKeptLateCaptureInvoice({ syncOperationId: row.id });
+    await createXeroKeptLateCaptureInvoice({ syncOperation: xeroClaim(row.id) });
     await runOutbox();
     // One note, never a second for the retry.
     expect(noteRows()).toHaveLength(1);

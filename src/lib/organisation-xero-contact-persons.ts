@@ -482,14 +482,14 @@ export async function applyOrganisationShapeToAdoptedContact(input: {
       xeroContactId,
       organisationShapeApplied: true,
     });
-    await completeXeroSyncOperation(operation.id, {
+    await completeXeroSyncOperation(operation, {
       responsePayload: response.body,
       xeroObjectType: "CONTACT",
       xeroObjectId: xeroContactId,
       xeroObjectUrl: buildXeroContactUrl(xeroContactId),
     });
   } catch (error) {
-    await failXeroSyncOperation(operation.id, error);
+    await failXeroSyncOperation(operation, error);
     logger.error(
       { err: error, organisationId: organisation.id, xeroContactId },
       "Could not give this school's adopted Xero contact the organisation " +
@@ -669,14 +669,14 @@ export async function refreshOrganisationContactPersons(input: {
       xeroContactId,
       contactPersonsFingerprint: fingerprint,
     });
-    await completeXeroSyncOperation(operation.id, {
+    await completeXeroSyncOperation(operation, {
       responsePayload: response.body,
       xeroObjectType: "CONTACT",
       xeroObjectId: xeroContactId,
       xeroObjectUrl: buildXeroContactUrl(xeroContactId),
     });
   } catch (error) {
-    await failXeroSyncOperation(operation.id, error);
+    await failXeroSyncOperation(operation, error);
     logger.error(
       { err: error, organisationId: organisation.id, xeroContactId },
       "Failed to refresh the contact persons on an organisation's Xero contact",

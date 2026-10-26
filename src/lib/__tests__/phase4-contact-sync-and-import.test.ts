@@ -863,7 +863,7 @@ describe("Phase 4 contact sync and cached import", () => {
     expect(mocks.startXeroSyncOperation).toHaveBeenCalledTimes(1);
     expect(mocks.accountingApi.updateContact).not.toHaveBeenCalled();
     expect(mocks.failXeroSyncOperation).toHaveBeenCalledWith(
-      "op_1",
+      expect.objectContaining({ id: "op_1" }),
       expect.objectContaining({ message: "authentication unavailable" }),
     );
   });
@@ -1415,7 +1415,7 @@ describe("Phase 4 contact sync and cached import", () => {
     );
     expect(mocks.prisma.member.update).not.toHaveBeenCalled();
     expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
-      "op_1",
+      expect.objectContaining({ id: "op_1" }),
       expect.objectContaining({
         xeroObjectType: "CONTACT",
         xeroObjectId: "contact_1",

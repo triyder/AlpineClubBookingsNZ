@@ -178,6 +178,7 @@ import {
   undeclareEnvironmentRole,
 } from "@/lib/__tests__/helpers/environment-role";
 import { xeroSandboxContainmentTarget } from "@/lib/xero-sandbox-contact-email";
+import { xeroClaim } from "@/lib/__tests__/helpers/xero-claim";
 
 function providerNote(amountCents: number, allocationID = "alloc-1") {
   return {
@@ -314,7 +315,7 @@ describe("deallocateExcessAppliedCreditForBooking (#1887 F3)", () => {
       .mockResolvedValueOnce(providerNote(2500, "alloc-new"));
 
     await deallocateExcessAppliedCreditForBooking("booking-1", {
-      syncOperationId: "op-1",
+      syncOperation: xeroClaim("op-1"),
     });
 
     expect(h.operationUpdate).toHaveBeenCalledWith(
@@ -404,7 +405,7 @@ describe("deallocateExcessAppliedCreditForBooking (#1887 F3)", () => {
       })
     );
     expect(h.complete).toHaveBeenCalledWith(
-      "op-1",
+      expect.objectContaining({ id: "op-1" }),
       expect.objectContaining({
         responsePayload: expect.objectContaining({ desiredAppliedCents: 2500 }),
       }),
@@ -469,7 +470,7 @@ describe("deallocateExcessAppliedCreditForBooking (#1887 F3)", () => {
         .mockResolvedValueOnce(providerNote(2500, "alloc-new"));
 
       await deallocateExcessAppliedCreditForBooking("booking-1", {
-        syncOperationId: "op-1",
+        syncOperation: xeroClaim("op-1"),
       });
 
       const [, , body] = h.createCreditNoteAllocation.mock.calls[0];
@@ -498,7 +499,7 @@ describe("deallocateExcessAppliedCreditForBooking (#1887 F3)", () => {
       .mockResolvedValueOnce(providerNote(4000))
       .mockResolvedValueOnce(providerNote(2500, "alloc-new"));
 
-    await deallocateExcessAppliedCreditForBooking("booking-1", { syncOperationId: "op-1" });
+    await deallocateExcessAppliedCreditForBooking("booking-1", { syncOperation: xeroClaim("op-1") });
 
     expect(h.deleteCreditNoteAllocations).toHaveBeenCalled();
     expect(h.createCreditNoteAllocation).toHaveBeenCalled();
@@ -524,7 +525,7 @@ describe("deallocateExcessAppliedCreditForBooking (#1887 F3)", () => {
       h.createCreditNoteAllocation.mockResolvedValue(providerNote(2500));
 
       await deallocateExcessAppliedCreditForBooking("booking-1", {
-        syncOperationId,
+        syncOperation: xeroClaim(syncOperationId),
       });
 
       const call = h.createCreditNoteAllocation.mock.calls.at(-1);
@@ -566,7 +567,7 @@ describe("deallocateExcessAppliedCreditForBooking (#1887 F3)", () => {
       vi.mocked(repairLegacyAppliedCreditNoteAllocationsForBooking).mockRejectedValueOnce(missingProvenance());
       h.tx.xeroSyncOperation.findFirst.mockResolvedValueOnce({ id: "invoice-op" });
 
-      const error = await deallocateExcessAppliedCreditForBooking("booking-1", { syncOperationId: "op-1" }).then(() => null, (e: unknown) => e);
+      const error = await deallocateExcessAppliedCreditForBooking("booking-1", { syncOperation: xeroClaim("op-1") }).then(() => null, (e: unknown) => e);
 
       expect(isXeroAppliedCreditOperationBusyError(error)).toBe(true);
       expect(h.deleteCreditNoteAllocations).not.toHaveBeenCalled();
@@ -578,7 +579,7 @@ describe("deallocateExcessAppliedCreditForBooking (#1887 F3)", () => {
       vi.mocked(repairLegacyAppliedCreditNoteAllocationsForBooking).mockRejectedValueOnce(missingProvenance());
       h.tx.xeroSyncOperation.findFirst.mockResolvedValueOnce(shape === "a bank-transfer payment" ? { id: "invoice-op" } : null);
 
-      const error = await deallocateExcessAppliedCreditForBooking("booking-1", { syncOperationId: "op-1" }).then(() => null, (e: unknown) => e);
+      const error = await deallocateExcessAppliedCreditForBooking("booking-1", { syncOperation: xeroClaim("op-1") }).then(() => null, (e: unknown) => e);
 
       expect(isXeroAppliedCreditOperationBusyError(error)).toBe(false);
       expect((error as Error).message).toMatch(/has no active Xero provenance/);
@@ -602,7 +603,7 @@ describe("deallocateExcessAppliedCreditForBooking (#1887 F3)", () => {
 
     await expect(
       deallocateExcessAppliedCreditForBooking("booking-1", {
-        syncOperationId: "op-1",
+        syncOperation: xeroClaim("op-1"),
       }),
     ).rejects.toThrow("refusing a stale provider target");
     expect(h.getCreditNote).not.toHaveBeenCalled();
@@ -614,7 +615,7 @@ describe("deallocateExcessAppliedCreditForBooking (#1887 F3)", () => {
 
     await expect(
       deallocateExcessAppliedCreditForBooking("booking-1", {
-        syncOperationId: "op-1",
+        syncOperation: xeroClaim("op-1"),
       }),
     ).rejects.toThrow(/Ambiguous Xero allocation total/);
 
@@ -631,7 +632,7 @@ describe("deallocateExcessAppliedCreditForBooking (#1887 F3)", () => {
 
     await expect(
       deallocateExcessAppliedCreditForBooking("booking-1", {
-        syncOperationId: "op-1",
+        syncOperation: xeroClaim("op-1"),
       })
     ).rejects.toThrow(/Ambiguous Xero allocation total/);
 
@@ -656,7 +657,7 @@ describe("deallocateExcessAppliedCreditForBooking (#1887 F3)", () => {
       .mockResolvedValueOnce(providerNote(2500, "alloc-new"));
 
     await deallocateExcessAppliedCreditForBooking("booking-1", {
-      syncOperationId: "op-1",
+      syncOperation: xeroClaim("op-1"),
     });
 
     expect(h.deleteCreditNoteAllocations).toHaveBeenCalledTimes(1);
@@ -684,7 +685,7 @@ describe("deallocateExcessAppliedCreditForBooking (#1887 F3)", () => {
     h.getCreditNote.mockResolvedValue(providerNote(2500, "alloc-recreated"));
 
     await deallocateExcessAppliedCreditForBooking("booking-1", {
-      syncOperationId: "op-1",
+      syncOperation: xeroClaim("op-1"),
     });
 
     expect(h.deleteCreditNoteAllocations).not.toHaveBeenCalled();
@@ -706,7 +707,7 @@ describe("deallocateExcessAppliedCreditForBooking (#1887 F3)", () => {
       .mockResolvedValueOnce(providerNote(2500, "alloc-remainder-new"));
 
     await deallocateExcessAppliedCreditForBooking("booking-1", {
-      syncOperationId: "op-1",
+      syncOperation: xeroClaim("op-1"),
     });
 
     expect(h.linkUpsert).toHaveBeenCalledWith(
@@ -756,7 +757,7 @@ describe("deallocateExcessAppliedCreditForBooking (#1887 F3)", () => {
       .mockResolvedValueOnce(providerNote(1500, "alloc-survivor"));
 
     await deallocateExcessAppliedCreditForBooking("booking-1", {
-      syncOperationId: "op-1",
+      syncOperation: xeroClaim("op-1"),
     });
 
     expect(h.allocationUpdate).toHaveBeenCalledWith({
@@ -782,7 +783,7 @@ describe("deallocateExcessAppliedCreditForBooking (#1887 F3)", () => {
       .mockResolvedValueOnce(providerNote(0));
 
     await deallocateExcessAppliedCreditForBooking("booking-1", {
-      syncOperationId: "op-1",
+      syncOperation: xeroClaim("op-1"),
     });
 
     expect(h.allocationDelete).toHaveBeenCalledWith({ where: { id: "row-1" } });
@@ -798,7 +799,7 @@ describe("deallocateExcessAppliedCreditForBooking (#1887 F3)", () => {
       .mockResolvedValueOnce(providerNote(0));
 
     await deallocateExcessAppliedCreditForBooking("booking-1", {
-      syncOperationId: "op-1",
+      syncOperation: xeroClaim("op-1"),
     });
 
     expect(h.linkUpdateMany).toHaveBeenCalledWith(
@@ -820,7 +821,7 @@ describe("deallocateExcessAppliedCreditForBooking (#1887 F3)", () => {
       .mockResolvedValueOnce(providerNote(2500, "actual-new"));
 
     await deallocateExcessAppliedCreditForBooking("booking-1", {
-      syncOperationId: "op-1",
+      syncOperation: xeroClaim("op-1"),
     });
 
     expect(h.operationUpdate).toHaveBeenCalledWith(
@@ -849,7 +850,7 @@ describe("deallocateExcessAppliedCreditForBooking (#1887 F3)", () => {
       .mockResolvedValueOnce(providerNote(4000, "alloc-1"));
 
     const busyError = await deallocateExcessAppliedCreditForBooking("booking-1", {
-      syncOperationId: "op-1",
+      syncOperation: xeroClaim("op-1"),
     }).catch((err) => err);
     expect(isXeroAppliedCreditOperationBusyError(busyError)).toBe(true);
 
@@ -885,7 +886,7 @@ describe("deallocateExcessAppliedCreditForBooking (#1887 F3)", () => {
     h.getCreditNote.mockResolvedValueOnce(providerNote(2500, "alloc-new"));
 
     await deallocateExcessAppliedCreditForBooking("booking-1", {
-      syncOperationId: "op-1",
+      syncOperation: xeroClaim("op-1"),
     });
 
     expect(h.deleteCreditNoteAllocations).toHaveBeenCalledTimes(1); // no new delete
@@ -900,7 +901,7 @@ describe("deallocateExcessAppliedCreditForBooking (#1887 F3)", () => {
       }),
     );
     expect(h.complete).toHaveBeenCalledWith(
-      "op-1",
+      expect.objectContaining({ id: "op-1" }),
       expect.objectContaining({
         responsePayload: expect.objectContaining({ desiredAppliedCents: 2500 }),
       }),
@@ -946,7 +947,7 @@ describe("deallocateExcessAppliedCreditForBooking (#1887 F3)", () => {
 
     const topOfLoopBusyError = await deallocateExcessAppliedCreditForBooking(
       "booking-1",
-      { syncOperationId: "op-1" },
+      { syncOperation: xeroClaim("op-1") },
     ).catch((err) => err);
     expect(isXeroAppliedCreditOperationBusyError(topOfLoopBusyError)).toBe(true);
 
@@ -965,7 +966,7 @@ describe("deallocateExcessAppliedCreditForBooking (#1887 F3)", () => {
     h.getCreditNote.mockResolvedValueOnce(providerNote(2500, "alloc-new"));
 
     await deallocateExcessAppliedCreditForBooking("booking-1", {
-      syncOperationId: "op-1",
+      syncOperation: xeroClaim("op-1"),
     });
 
     expect(h.allocationUpdate).toHaveBeenCalledWith({
@@ -990,7 +991,7 @@ describe("deallocateExcessAppliedCreditForBooking (#1887 F3)", () => {
       );
 
     const error = await deallocateExcessAppliedCreditForBooking("booking-1", {
-      syncOperationId: "op-1",
+      syncOperation: xeroClaim("op-1"),
     }).catch((err) => err);
 
     expect(error).toBeInstanceOf(Error);
@@ -1038,7 +1039,7 @@ describe("deallocateExcessAppliedCreditForBooking (#1887 F3)", () => {
     );
 
     const error = await deallocateExcessAppliedCreditForBooking("booking-1", {
-      syncOperationId: "op-1",
+      syncOperation: xeroClaim("op-1"),
     }).catch((err) => err);
 
     expect(isXeroAppliedCreditOperationBusyError(error)).toBe(false);
@@ -1086,12 +1087,12 @@ describe("deallocateExcessAppliedCreditForBooking (#1887 F3)", () => {
     );
 
     const busyError = await deallocateExcessAppliedCreditForBooking("booking-1", {
-      syncOperationId: "op-1",
+      syncOperation: xeroClaim("op-1"),
     }).catch((err) => err);
 
     // Under the cap on both notes: transient busy requeue, never terminal.
     expect(isXeroAppliedCreditOperationBusyError(busyError)).toBe(true);
-    // Only cn-1 advanced; cn-2's independent budget is untouched.
+    // Only cn-1 advanced; cn-2's independent budget is untouched.)
     expect(h.operationPayload.current.eventualConsistencyRequeues).toEqual({
       "cn-1": 4,
       "cn-2": 4,
@@ -1181,7 +1182,7 @@ describe("deallocation on a copy contains the contact first (INV-CONFIG-005)", (
     h.createCreditNoteAllocation.mockResolvedValue(providerNote(2500));
 
     await deallocateExcessAppliedCreditForBooking("booking-1", {
-      syncOperationId: "op-1",
+      syncOperation: xeroClaim("op-1"),
     });
 
     expect(h.getContact).toHaveBeenCalledWith("tenant-1", "contact-1");
@@ -1204,7 +1205,7 @@ describe("deallocation on a copy contains the contact first (INV-CONFIG-005)", (
 
     await expect(
       deallocateExcessAppliedCreditForBooking("booking-1", {
-        syncOperationId: "op-1",
+        syncOperation: xeroClaim("op-1"),
       }),
     ).rejects.toThrow(/cannot prove the contact is unable to reach a member/);
     expect(h.deleteCreditNoteAllocations).not.toHaveBeenCalled();
@@ -1229,7 +1230,7 @@ describe("deallocation on a copy contains the contact first (INV-CONFIG-005)", (
 
     await expect(
       deallocateExcessAppliedCreditForBooking("booking-1", {
-        syncOperationId: "op-1",
+        syncOperation: xeroClaim("op-1"),
       }),
     ).rejects.toThrow(/cannot be identified from here/);
     expect(h.deleteCreditNoteAllocations).not.toHaveBeenCalled();
@@ -1273,7 +1274,7 @@ describe("deallocation on a copy contains the contact first (INV-CONFIG-005)", (
     h.createCreditNoteAllocation.mockResolvedValue(providerNote(2500));
 
     await deallocateExcessAppliedCreditForBooking("booking-1", {
-      syncOperationId: "op-1",
+      syncOperation: xeroClaim("op-1"),
     });
 
     expect(h.getContact).toHaveBeenCalledWith("tenant-1", "contact-loser");
@@ -1289,7 +1290,7 @@ describe("deallocation on a copy contains the contact first (INV-CONFIG-005)", (
     await expectEnvironmentRolePremise("UNKNOWN");
     await expect(
       deallocateExcessAppliedCreditForBooking("booking-1", {
-        syncOperationId: "op-1",
+        syncOperation: xeroClaim("op-1"),
       }),
     ).rejects.toThrow(/APP_ENVIRONMENT_ROLE/);
     expect(h.deleteCreditNoteAllocations).not.toHaveBeenCalled();
@@ -1307,7 +1308,7 @@ describe("deallocation on a copy contains the contact first (INV-CONFIG-005)", (
     h.createCreditNoteAllocation.mockResolvedValue(providerNote(2500));
 
     await deallocateExcessAppliedCreditForBooking("booking-1", {
-      syncOperationId: "op-1",
+      syncOperation: xeroClaim("op-1"),
     });
 
     expect(h.getContact).not.toHaveBeenCalled();

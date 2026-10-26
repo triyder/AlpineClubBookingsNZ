@@ -944,6 +944,67 @@ describe("payment recovery worker", () => {
     expect(mockFollowSupersededAskInvoices).toHaveBeenCalledWith({ paymentId: "payment-1" });
   });
 
+  /*
+    #4422: a supersede now also queues a DECLINED ask's cancel. The row is
+    already FAILED (the card failed, not the supersede), and the intent sits in
+    `requires_payment_method`, still confirmable. The runner cancels it at
+    Stripe, leaves the declined row's own record alone (the FAILED write is
+    fenced on an open status, so it matches nothing), moves its invoice and
+    completes. A capture that won the race takes the same hand-off as an open
+    ask's, and the unguarded flip takes the FAILED row to SUCCEEDED.
+  */
+  it("#4422: cancels a DECLINED superseded ask at Stripe and keeps the declined row's own record", async () => {
+    mockFollowSupersededAskInvoices.mockClear();
+    mockReconcilePaymentAggregates.mockClear();
+    mockCancelPaymentIntentIfCancellableWithResult.mockClear();
+    mockPaymentTransactionUpdateMany.mockResolvedValue({ count: 0 });
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result).toMatchObject({ succeeded: 1, failed: 0 });
+    expect(mockCancelPaymentIntentIfCancellableWithResult).toHaveBeenCalledWith("pi_superseded");
+    expect(mockPaymentTransactionUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "txn-1", status: { in: [PaymentStatus.PENDING, PaymentStatus.PROCESSING] } },
+      }),
+    );
+    expect(mockReconcilePaymentAggregates).not.toHaveBeenCalled();
+    expect(mockFollowSupersededAskInvoices).toHaveBeenCalledWith({ paymentId: "payment-1" });
+    expect(mockPaymentRecoveryUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: "recovery-1" }),
+        data: expect.objectContaining({ status: PaymentRecoveryOperationStatus.SUCCEEDED }),
+      }),
+    );
+  });
+
+  it("#4422: a DECLINED superseded ask a stale tab paid first is handed to the superseded refund, never cancelled", async () => {
+    mockFollowSupersededAskInvoices.mockClear();
+    mockPaymentTransactionUpdateMany.mockResolvedValue({ count: 0 });
+    mockCancelPaymentIntentIfCancellableWithResult.mockResolvedValue({
+      canceled: false,
+      paymentIntent: { id: "pi_superseded", status: "succeeded", amount: 6000, payment_method: "pm_123" },
+    });
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result.succeeded).toBe(1);
+    expect(mockPaymentTransactionUpdate).toHaveBeenCalledWith({
+      where: { id: "txn-1" },
+      data: expect.objectContaining({ amountCents: 6000, status: PaymentStatus.SUCCEEDED }),
+    });
+    expect(mockPaymentRecoveryUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { idempotencyKey: "payment_recovery_refund_txn-1_pi_superseded" },
+        create: expect.objectContaining({
+          type: PaymentRecoveryOperationType.REFUND_SUPERSEDED_PAYMENT,
+          amountCents: 6000,
+        }),
+      }),
+    );
+    expect(mockFollowSupersededAskInvoices).toHaveBeenCalledWith({ paymentId: "payment-1" });
+  });
+
   it("does not double-count a previously written refund when the recovery retries", async () => {
     // First attempt scenario: refund partially succeeded in Stripe and the
     // ledger entry was written, but the paymentTransaction row update never

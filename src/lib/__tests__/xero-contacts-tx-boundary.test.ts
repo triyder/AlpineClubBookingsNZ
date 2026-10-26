@@ -231,7 +231,7 @@ describe("findOrCreateXeroContact transaction boundary (#1355)", () => {
     });
     // Op-log completion is post-commit and references the committed contact.
     expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
-      "op-1",
+      expect.objectContaining({ id: "op-1" }),
       expect.objectContaining({ xeroObjectId: "contact-new" })
     );
     expect(
@@ -260,7 +260,7 @@ describe("findOrCreateXeroContact transaction boundary (#1355)", () => {
     // but was superseded locally — never recorded as a plain success with a
     // link it does not have.
     expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
-      "op-1",
+      expect.objectContaining({ id: "op-1" }),
       expect.objectContaining({
         responsePayload: expect.objectContaining({
           resolution: "superseded_by_concurrent_link",
@@ -302,7 +302,7 @@ describe("findOrCreateXeroContact transaction boundary (#1355)", () => {
 
     expect(mocks.completeXeroSyncOperation).not.toHaveBeenCalled();
     expect(mocks.failXeroSyncOperation).toHaveBeenCalledWith(
-      "op-1",
+      expect.objectContaining({ id: "op-1" }),
       expect.objectContaining({ message: "transaction aborted" }),
       expect.objectContaining({
         phase: "local_link_after_xero_resolution",
@@ -367,7 +367,7 @@ describe("findOrCreateXeroContact transaction boundary (#1355)", () => {
     );
 
     expect(mocks.failXeroSyncOperation).toHaveBeenCalledWith(
-      "op-1",
+      expect.objectContaining({ id: "op-1" }),
       expect.objectContaining({ message: "transaction aborted" }),
       expect.objectContaining({
         phase: "local_link_after_xero_resolution",
@@ -534,7 +534,7 @@ describe("requireAuthoritativeMatch (#2939)", () => {
     expect(mocks.getContacts).toHaveBeenCalledTimes(1);
     // And the reserved operation is closed as failed rather than left RUNNING.
     expect(mocks.failXeroSyncOperation).toHaveBeenCalledWith(
-      "op-1",
+      expect.objectContaining({ id: "op-1" }),
       expect.any(XeroContactProviderAnswerUnavailableError),
       expect.objectContaining({
         refusedRecovery: "name_match_requires_operator_decision",

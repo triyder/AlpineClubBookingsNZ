@@ -55,7 +55,8 @@ function bankTransferRefundShortfallMessage(input: {
 export async function floorBankTransferRefundedTotal(input: {
   payment: { id: string; bookingId: string; source: PaymentSource; refundedAmountCents: number };
   xeroDerivedCents: number;
-  creditNoteId: string;
+  /** Null for a recount with no note being synced (#4095). */
+  creditNoteId: string | null;
   /** The reconciled note's number, when Xero gave one: named in the alert so the treasurer can find it. */
   creditNoteNumber?: string | null;
   format: ClubFormat;
@@ -86,7 +87,7 @@ export async function floorBankTransferRefundedTotal(input: {
   );
   await notifyXeroSyncError({
     errorType: "refund-ledger-divergence",
-    operation: `inbound-credit-note-repair:${input.creditNoteId}`,
+    operation: `inbound-credit-note-repair:${input.creditNoteId ?? `recount:${payment.id}`}`,
     errorMessage: bankTransferRefundShortfallMessage({
       paymentId: payment.id,
       bookingId: payment.bookingId,

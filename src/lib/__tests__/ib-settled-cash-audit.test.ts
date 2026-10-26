@@ -18,8 +18,8 @@ function link(localId: string, invoiceId: string, amount: unknown, status = "AUT
 }
 
 /** The primary-invoice link the inbound sync marks when overpayments or prepayments paid it. */
-function allocationsLink(localId: string, invoiceId: string) {
-  return { localId, xeroObjectType: "INVOICE", xeroObjectId: invoiceId, role: "PRIMARY_INVOICE", metadata: { overpaymentOrPrepaymentAllocations: 1 } };
+function allocationsLink(localId: string, invoiceId: string, count = 1) {
+  return { localId, xeroObjectType: "INVOICE", xeroObjectId: invoiceId, role: "PRIMARY_INVOICE", metadata: { overpaymentOrPrepaymentAllocations: count } };
 }
 
 describe("recordedInvoiceCash", () => {
@@ -29,12 +29,29 @@ describe("recordedInvoiceCash", () => {
         [link("p", "inv", 120), link("p", "inv", 80), link("p", "inv", 50, "DELETED"), link("p", "other", 999)],
         "inv",
       ),
-    ).toEqual({ evidence: "payments", cashCents: 20_000 });
+    ).toEqual({ evidence: "payments", cashCents: 20_000, allocationsRecorded: false });
   });
 
   it("says when nothing is recorded, or a figure cannot be read", () => {
-    expect(recordedInvoiceCash([], "inv")).toEqual({ evidence: "none", cashCents: null });
-    expect(recordedInvoiceCash([link("p", "inv", "120.00")], "inv")).toEqual({ evidence: "unreadable", cashCents: null });
+    expect(recordedInvoiceCash([], "inv")).toEqual({ evidence: "none", cashCents: null, allocationsRecorded: false });
+    expect(recordedInvoiceCash([link("p", "inv", "120.00")], "inv")).toEqual({
+      evidence: "unreadable",
+      cashCents: null,
+      allocationsRecorded: false,
+    });
+  });
+
+  it("says whether the invoice's last sync recorded its allocations, a count of none included (#4095 item 13)", () => {
+    expect(recordedInvoiceCash([allocationsLink("p", "inv", 0), link("p", "inv", 120)], "inv")).toEqual({
+      evidence: "payments",
+      cashCents: 12_000,
+      allocationsRecorded: true,
+    });
+    expect(recordedInvoiceCash([allocationsLink("p", "inv", 2), link("p", "inv", 120)], "inv")).toEqual({
+      evidence: "allocations",
+      cashCents: null,
+      allocationsRecorded: true,
+    });
   });
 });
 
@@ -112,6 +129,29 @@ describe("auditIbSettledCash", () => {
     expect(report).toContain("paid by an applied overpayment or prepayment");
     expect(report).toContain("Correct a receipt and the payment's refunded total TOGETHER");
     expect(report).toContain("the owner or a developer");
+  });
+
+  it("says a difference or a missing payment may hide an allocation when the invoice was last synced before they were recorded (#4095 item 13)", async () => {
+    const { store } = db(
+      [receipt("old-sync", 30_000), receipt("new-sync", 30_000), receipt("old-none", 20_000), receipt("new-none", 20_000)],
+      [
+        link("old-sync", "inv-old-sync", 200),
+        allocationsLink("new-sync", "inv-new-sync", 0),
+        link("new-sync", "inv-new-sync", 200),
+        allocationsLink("new-none", "inv-new-none", 0),
+      ],
+    );
+
+    const report = formatIbSettledCashReport(await auditIbSettledCash(store), CLUB_FORMAT_TEST);
+
+    expect(report).toContain(
+      "payment old-sync invoice INV-old-sync: recorded $300.00, cash $200.00, payment figure $300.00, refunded $0.00; last synced before overpayment and prepayment allocations were recorded, so one may be missing from the cash",
+    );
+    expect(report).toContain("payment new-sync invoice INV-new-sync: recorded $300.00, cash $200.00, payment figure $300.00, refunded $0.00\n");
+    expect(report).toContain(
+      "payment old-none invoice INV-old-none: recorded $200.00; no payment recorded locally - settled before payments were linked, or paid by an overpayment or prepayment before allocations were recorded",
+    );
+    expect(report).toMatch(/payment new-none invoice INV-new-none: recorded \$200\.00; no payment recorded locally - settled before payments were linked$/m);
   });
 
   it("reads no links when there is nothing to judge", async () => {

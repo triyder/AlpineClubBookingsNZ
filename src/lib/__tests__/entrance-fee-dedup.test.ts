@@ -83,6 +83,7 @@ import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { createXeroEntranceFeeInvoice } from "@/lib/xero-entrance-fee-invoices";
 import { buildEntranceFeeInvoiceMintIdempotencyKey } from "@/lib/xero-mappings";
+import { xeroClaim } from "@/lib/__tests__/helpers/xero-claim";
 
 const ADULT_FEE = {
   category: "ADULT" as const,
@@ -127,7 +128,7 @@ describe("createXeroEntranceFeeInvoice double-mint guard (F21)", () => {
     } as never);
 
     const result = await createXeroEntranceFeeInvoice("member-1", {
-      syncOperationId: "op-second",
+      syncOperation: xeroClaim("op-second"),
       precomputedEntranceFee: ADULT_FEE,
     });
 
@@ -135,7 +136,7 @@ describe("createXeroEntranceFeeInvoice double-mint guard (F21)", () => {
     // No mint, and Xero was never even contacted.
     expect(mockRetryXeroWriteWithContactRepair).not.toHaveBeenCalled();
     expect(mockGetAuthenticatedXeroClient).not.toHaveBeenCalled();
-    expect(mockCompleteXeroSyncOperation).toHaveBeenCalledWith("op-second", {
+    expect(mockCompleteXeroSyncOperation).toHaveBeenCalledWith(expect.objectContaining({ id: "op-second" }), {
       responsePayload: expect.objectContaining({ adopted: true }),
       xeroObjectType: "INVOICE",
       xeroObjectId: "inv-existing",
@@ -160,7 +161,7 @@ describe("createXeroEntranceFeeInvoice double-mint guard (F21)", () => {
     });
 
     const result = await createXeroEntranceFeeInvoice("member-1", {
-      syncOperationId: "op-second",
+      syncOperation: xeroClaim("op-second"),
       precomputedEntranceFee: ADULT_FEE,
     });
 
@@ -184,7 +185,7 @@ describe("createXeroEntranceFeeInvoice double-mint guard (F21)", () => {
     expect(mockRetryXeroWriteWithContactRepair).not.toHaveBeenCalled();
     // Adoption backfills the durable ENTRANCE_FEE_INVOICE link.
     expect(mockCompleteXeroSyncOperation).toHaveBeenCalledWith(
-      "op-second",
+      expect.objectContaining({ id: "op-second" }),
       expect.objectContaining({
         xeroObjectId: "inv-xero",
         extraLinks: expect.arrayContaining([
@@ -218,7 +219,7 @@ describe("createXeroEntranceFeeInvoice double-mint guard (F21)", () => {
     });
 
     const result = await createXeroEntranceFeeInvoice("member-1", {
-      syncOperationId: "op-post-rename",
+      syncOperation: xeroClaim("op-post-rename"),
       precomputedEntranceFee: ADULT_FEE,
     });
 
@@ -232,7 +233,7 @@ describe("createXeroEntranceFeeInvoice double-mint guard (F21)", () => {
     expect(mockRetryXeroWriteWithContactRepair).not.toHaveBeenCalled();
     expect(createInvoices).not.toHaveBeenCalled();
     expect(mockCompleteXeroSyncOperation).toHaveBeenCalledWith(
-      "op-post-rename",
+      expect.objectContaining({ id: "op-post-rename" }),
       expect.objectContaining({ xeroObjectId: "inv-pre-rename" }),
     );
   });
@@ -279,7 +280,7 @@ describe("createXeroEntranceFeeInvoice double-mint guard (F21)", () => {
     });
 
     const result = await createXeroEntranceFeeInvoice("member-1", {
-      syncOperationId: "op-post-rename",
+      syncOperation: xeroClaim("op-post-rename"),
       precomputedEntranceFee: ADULT_FEE, // new classifier: ADULT, 10000c
     });
 
@@ -298,7 +299,7 @@ describe("createXeroEntranceFeeInvoice double-mint guard (F21)", () => {
     expect(mockRetryXeroWriteWithContactRepair).not.toHaveBeenCalled();
     expect(createInvoices).not.toHaveBeenCalled();
     expect(mockCompleteXeroSyncOperation).toHaveBeenCalledWith(
-      "op-post-rename",
+      expect.objectContaining({ id: "op-post-rename" }),
       expect.objectContaining({
         xeroObjectId: "inv-family-pre-rename",
         extraLinks: expect.arrayContaining([
@@ -328,7 +329,7 @@ describe("createXeroEntranceFeeInvoice double-mint guard (F21)", () => {
     });
 
     await createXeroEntranceFeeInvoice("member-1", {
-      syncOperationId: "op-first",
+      syncOperation: xeroClaim("op-first"),
       precomputedEntranceFee: ADULT_FEE,
     });
 
@@ -371,14 +372,14 @@ describe("createXeroEntranceFeeInvoice double-mint guard (F21)", () => {
     });
 
     const result = await createXeroEntranceFeeInvoice("member-1", {
-      syncOperationId: "op-post-rename",
+      syncOperation: xeroClaim("op-post-rename"),
       precomputedEntranceFee: ADULT_FEE,
     });
 
     expect(result).toBeNull();
     expect(mockRetryXeroWriteWithContactRepair).not.toHaveBeenCalled();
     expect(mockCompleteXeroSyncOperation).toHaveBeenCalledWith(
-      "op-post-rename",
+      expect.objectContaining({ id: "op-post-rename" }),
       expect.objectContaining({
         status: "SUCCEEDED",
         responsePayload: expect.objectContaining({
@@ -408,7 +409,7 @@ describe("createXeroEntranceFeeInvoice double-mint guard (F21)", () => {
     });
 
     const result = await createXeroEntranceFeeInvoice("member-1", {
-      syncOperationId: "op-first",
+      syncOperation: xeroClaim("op-first"),
       precomputedEntranceFee: ADULT_FEE,
     });
 
@@ -416,7 +417,7 @@ describe("createXeroEntranceFeeInvoice double-mint guard (F21)", () => {
     expect(getInvoices).toHaveBeenCalledTimes(1);
     expect(mockRetryXeroWriteWithContactRepair).toHaveBeenCalledTimes(1);
     expect(mockCompleteXeroSyncOperation).toHaveBeenCalledWith(
-      "op-first",
+      expect.objectContaining({ id: "op-first" }),
       expect.objectContaining({ xeroObjectId: "inv-new" }),
     );
   });
@@ -443,7 +444,7 @@ describe("createXeroEntranceFeeInvoice double-mint guard (F21)", () => {
     });
 
     const result = await createXeroEntranceFeeInvoice("member-1", {
-      syncOperationId: "op-second",
+      syncOperation: xeroClaim("op-second"),
       precomputedEntranceFee: ADULT_FEE,
     });
 
@@ -451,7 +452,7 @@ describe("createXeroEntranceFeeInvoice double-mint guard (F21)", () => {
     expect(result).toBe("inv-new");
     expect(mockRetryXeroWriteWithContactRepair).toHaveBeenCalledTimes(1);
     expect(mockCompleteXeroSyncOperation).toHaveBeenCalledWith(
-      "op-second",
+      expect.objectContaining({ id: "op-second" }),
       expect.objectContaining({ xeroObjectId: "inv-new" }),
     );
   });
@@ -474,7 +475,7 @@ describe("createXeroEntranceFeeInvoice double-mint guard (F21)", () => {
     });
 
     const result = await createXeroEntranceFeeInvoice("member-1", {
-      syncOperationId: "op-second",
+      syncOperation: xeroClaim("op-second"),
       precomputedEntranceFee: ADULT_FEE,
     });
 
@@ -503,7 +504,7 @@ describe("createXeroEntranceFeeInvoice double-mint guard (F21)", () => {
     });
 
     const result = await createXeroEntranceFeeInvoice("member-1", {
-      syncOperationId: "op-second",
+      syncOperation: xeroClaim("op-second"),
       precomputedEntranceFee: ADULT_FEE,
     });
 
@@ -511,7 +512,7 @@ describe("createXeroEntranceFeeInvoice double-mint guard (F21)", () => {
     // No mint, and a conflict is surfaced for reconciliation.
     expect(mockRetryXeroWriteWithContactRepair).not.toHaveBeenCalled();
     expect(mockCompleteXeroSyncOperation).toHaveBeenCalledWith(
-      "op-second",
+      expect.objectContaining({ id: "op-second" }),
       expect.objectContaining({
         status: "SUCCEEDED",
         responsePayload: expect.objectContaining({
@@ -559,14 +560,14 @@ describe("createXeroEntranceFeeInvoice double-mint guard (F21)", () => {
     });
 
     const result = await createXeroEntranceFeeInvoice("member-1", {
-      syncOperationId: "op-second",
+      syncOperation: xeroClaim("op-second"),
       precomputedEntranceFee: ADULT_FEE,
     });
 
     expect(result).toBeNull();
     expect(mockRetryXeroWriteWithContactRepair).not.toHaveBeenCalled();
     expect(mockCompleteXeroSyncOperation).toHaveBeenCalledWith(
-      "op-second",
+      expect.objectContaining({ id: "op-second" }),
       expect.objectContaining({
         status: "SUCCEEDED",
         responsePayload: expect.objectContaining({
@@ -627,11 +628,11 @@ describe("createXeroEntranceFeeInvoice double-mint guard (F21)", () => {
     );
 
     await createXeroEntranceFeeInvoice("member-1", {
-      syncOperationId: "op-a",
+      syncOperation: xeroClaim("op-a"),
       precomputedEntranceFee: ADULT_FEE,
     });
     await createXeroEntranceFeeInvoice("member-1", {
-      syncOperationId: "op-b",
+      syncOperation: xeroClaim("op-b"),
       // A different amount override — the enqueue-time dedupe would NOT catch
       // this, but the mint key must still be identical.
       precomputedEntranceFee: {

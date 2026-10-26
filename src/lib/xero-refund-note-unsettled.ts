@@ -205,7 +205,7 @@ export async function applyRefundNoteSettlementRepair(
   }
   const operation = await prisma.xeroSyncOperation.findUnique({
     where: { id: operationId },
-    select: { requestPayload: true, responsePayload: true, correlationKey: true, idempotencyKey: true, xeroObjectId: true },
+    select: { id: true, startedAt: true, requestPayload: true, responsePayload: true, correlationKey: true, idempotencyKey: true, xeroObjectId: true },
   });
   if (!operation || operation.xeroObjectId !== creditNoteId) {
     return { status: "failed", message: `Operation ${operationId} no longer names refund credit note ${creditNoteId}.` };
@@ -234,7 +234,8 @@ export async function applyRefundNoteSettlementRepair(
     payment?.source,
   );
   const outcome = await finish({
-    operationId,
+    // #4373: the row as read; a retry claiming it since makes this write lose (`INV-INT-029`).
+    operation,
     paymentId,
     creditNoteId,
     creationKeys: [operation.correlationKey, operation.idempotencyKey],

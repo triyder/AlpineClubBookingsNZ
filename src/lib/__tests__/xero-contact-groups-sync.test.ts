@@ -266,7 +266,7 @@ describe("syncManagedXeroContactGroupForMember (mode-driven engine)", () => {
     expect(mocks.completeMemberContactOperation).toHaveBeenCalledWith(
       "member_1",
       "contact_1",
-      "op_1",
+      expect.objectContaining({ id: "op_1" }),
       expect.objectContaining({
         responsePayload: expect.objectContaining({
           removedGroupIds: [],
@@ -290,7 +290,7 @@ describe("syncManagedXeroContactGroupForMember (mode-driven engine)", () => {
       Object.assign(new Error("group not found"), { statusCode: 404 }),
     );
     await expect(syncManagedXeroContactGroupForMember("member_1")).rejects.toThrow(/not found/i);
-    expect(mocks.failXeroSyncOperation).toHaveBeenCalledWith("op_1", expect.anything());
+    expect(mocks.failXeroSyncOperation).toHaveBeenCalledWith(expect.objectContaining({ id: "op_1" }), expect.anything());
     expect(mocks.completeMemberContactOperation).not.toHaveBeenCalled();
   });
 });

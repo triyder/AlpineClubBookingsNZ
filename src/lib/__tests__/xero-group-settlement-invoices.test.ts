@@ -198,6 +198,7 @@ import {
   voidXeroInvoiceForAbandonedGroupSettlement,
   voidXeroInvoiceForCancelledGroupSettlement,
 } from "@/lib/xero-group-settlement-invoice-voids";
+import { xeroClaim } from "@/lib/__tests__/helpers/xero-claim";
 
 function settlement(status: GroupBookingStatus) {
   return {
@@ -298,7 +299,7 @@ describe("createXeroInvoiceForGroupSettlement cancellation fence", () => {
 
     await expect(
       createXeroInvoiceForGroupSettlement("settle-1", {
-        syncOperationId: "op-1",
+        syncOperation: xeroClaim("op-1"),
       })
     ).resolves.toBeNull();
 
@@ -306,7 +307,7 @@ describe("createXeroInvoiceForGroupSettlement cancellation fence", () => {
     expect(mocks.enqueueVoid).not.toHaveBeenCalled();
     expect(mocks.accountingApi.emailInvoice).not.toHaveBeenCalled();
     expect(mocks.completeSync).toHaveBeenCalledWith(
-      "op-1",
+      expect.objectContaining({ id: "op-1" }),
       expect.objectContaining({
         status: "SUCCEEDED",
         responsePayload: { cancelledBeforeInvoiceCreation: true },
@@ -321,7 +322,7 @@ describe("createXeroInvoiceForGroupSettlement cancellation fence", () => {
 
     await expect(
       createXeroInvoiceForGroupSettlement("settle-1", {
-        syncOperationId: "op-1",
+        syncOperation: xeroClaim("op-1"),
       })
     ).resolves.toBeNull();
 
@@ -338,7 +339,7 @@ describe("createXeroInvoiceForGroupSettlement cancellation fence", () => {
     );
     expect(mocks.accountingApi.emailInvoice).not.toHaveBeenCalled();
     expect(mocks.completeSync).toHaveBeenCalledWith(
-      "op-1",
+      expect.objectContaining({ id: "op-1" }),
       expect.objectContaining({
         status: "SUCCEEDED",
         responsePayload: expect.objectContaining({
@@ -365,7 +366,7 @@ describe("createXeroInvoiceForGroupSettlement cancellation fence", () => {
 
     await expect(
       createXeroInvoiceForGroupSettlement("settle-1", {
-        syncOperationId: "op-1",
+        syncOperation: xeroClaim("op-1"),
       })
     ).resolves.toBeNull();
 
@@ -382,7 +383,7 @@ describe("createXeroInvoiceForGroupSettlement cancellation fence", () => {
     );
     expect(mocks.accountingApi.emailInvoice).not.toHaveBeenCalled();
     expect(mocks.completeSync).toHaveBeenCalledWith(
-      "op-1",
+      expect.objectContaining({ id: "op-1" }),
       expect.objectContaining({
         status: "SUCCEEDED",
         responsePayload: expect.objectContaining({
@@ -399,10 +400,10 @@ describe("createXeroInvoiceForGroupSettlement cancellation fence", () => {
     );
 
     await voidXeroInvoiceForCancelledGroupSettlement("settle-1", {
-      syncOperationId: "void-op-1",
+      syncOperation: xeroClaim("void-op-1"),
     });
     await voidXeroInvoiceForCancelledGroupSettlement("settle-1", {
-      syncOperationId: "void-op-2",
+      syncOperation: xeroClaim("void-op-2"),
     });
 
     expect(mocks.accountingApi.updateInvoice).toHaveBeenCalledTimes(2);
@@ -412,7 +413,7 @@ describe("createXeroInvoiceForGroupSettlement cancellation fence", () => {
       );
     }
     expect(mocks.completeSync).toHaveBeenCalledWith(
-      "void-op-2",
+      expect.objectContaining({ id: "void-op-2" }),
       expect.objectContaining({ status: "SUCCEEDED" })
     );
   });
@@ -427,7 +428,7 @@ describe("createXeroInvoiceForGroupSettlement cancellation fence", () => {
 
     await expect(
       voidXeroInvoiceForCancelledGroupSettlement("settle-1", {
-        syncOperationId: "void-op-1",
+        syncOperation: xeroClaim("void-op-1"),
       })
     ).rejects.toThrow("Xero unavailable");
     expect(mocks.completeSync).not.toHaveBeenCalled();
@@ -463,7 +464,7 @@ describe("createXeroInvoiceForGroupSettlement cancellation fence", () => {
 
     await expect(
       createXeroInvoiceForGroupSettlement("settle-1", {
-        syncOperationId: "op-1",
+        syncOperation: xeroClaim("op-1"),
       })
     ).resolves.toBe("inv-1");
 
@@ -502,7 +503,7 @@ describe("createXeroInvoiceForGroupSettlement cancellation fence", () => {
 
       await expect(
         createXeroInvoiceForGroupSettlement("settle-1", {
-          syncOperationId: "op-1",
+          syncOperation: xeroClaim("op-1"),
         })
       ).resolves.toBe("inv-1");
 
@@ -529,7 +530,7 @@ describe("createXeroInvoiceForGroupSettlement cancellation fence", () => {
 
       await expect(
         createXeroInvoiceForGroupSettlement("settle-1", {
-          syncOperationId: "op-1",
+          syncOperation: xeroClaim("op-1"),
         })
       ).resolves.toBe("inv-1");
 
@@ -573,7 +574,7 @@ describe("createXeroInvoiceForGroupSettlement cancellation fence", () => {
 
       await expect(
         createXeroInvoiceForGroupSettlement("settle-1", {
-          syncOperationId: "op-1",
+          syncOperation: xeroClaim("op-1"),
         })
       ).resolves.toBe("inv-1");
 
@@ -610,7 +611,7 @@ describe("createXeroInvoiceForGroupSettlement cancellation fence", () => {
 
       await expect(
         createXeroInvoiceForGroupSettlement("settle-1", {
-          syncOperationId: "op-1",
+          syncOperation: xeroClaim("op-1"),
         })
       ).resolves.toBe("inv-1");
 
@@ -629,7 +630,7 @@ describe("createXeroInvoiceForGroupSettlement cancellation fence", () => {
 
       await expect(
         createXeroInvoiceForGroupSettlement("settle-1", {
-          syncOperationId: "op-1",
+          syncOperation: xeroClaim("op-1"),
         })
       ).resolves.toBe("inv-1");
 
@@ -680,7 +681,7 @@ describe("createXeroInvoiceForGroupSettlement cancellation fence", () => {
 
     await expect(
       createXeroInvoiceForGroupSettlement("settle-1", {
-        syncOperationId: "op-1",
+        syncOperation: xeroClaim("op-1"),
       })
     ).resolves.toBe("inv-1");
 
@@ -731,7 +732,7 @@ describe("createXeroInvoiceForGroupSettlement cancellation fence", () => {
 
     await expect(
       createXeroInvoiceForGroupSettlement("settle-1", {
-        syncOperationId: "op-1",
+        syncOperation: xeroClaim("op-1"),
       })
     ).resolves.toBe("inv-1");
 
@@ -771,7 +772,7 @@ describe("createXeroInvoiceForGroupSettlement cancellation fence", () => {
 
     await expect(
       createXeroInvoiceForGroupSettlement("settle-1", {
-        syncOperationId: "op-1",
+        syncOperation: xeroClaim("op-1"),
       })
     ).resolves.toBe("inv-1");
 
@@ -817,7 +818,7 @@ describe("createXeroInvoiceForGroupSettlement cancellation fence", () => {
 
     await expect(
       createXeroInvoiceForGroupSettlement("settle-1", {
-        syncOperationId: "op-1",
+        syncOperation: xeroClaim("op-1"),
       })
     ).resolves.toBeNull();
 
@@ -837,7 +838,7 @@ describe("createXeroInvoiceForGroupSettlement cancellation fence", () => {
       store: mocks.tx,
     });
     expect(mocks.completeSync).toHaveBeenCalledWith(
-      "op-1",
+      expect.objectContaining({ id: "op-1" }),
       expect.objectContaining({
         status: "SUCCEEDED",
         responsePayload: expect.objectContaining({
@@ -909,11 +910,11 @@ describe("the bound-invoice rule in the create worker (#3642)", () => {
     });
 
     await expect(
-      createXeroInvoiceForGroupSettlement("settle-1", { syncOperationId: "op-1" })
+      createXeroInvoiceForGroupSettlement("settle-1", { syncOperation: xeroClaim("op-1") })
     ).resolves.toBeNull();
 
     expect(mocks.accountingApi.createInvoices).not.toHaveBeenCalled();
-    expect(mocks.completeSync).toHaveBeenCalledWith("op-1", {
+    expect(mocks.completeSync).toHaveBeenCalledWith(expect.objectContaining({ id: "op-1" }), {
       status: "SUCCEEDED",
       responsePayload: { settlementNoLongerAwaitingInvoice: true },
     });
@@ -925,7 +926,7 @@ describe("the bound-invoice rule in the create worker (#3642)", () => {
       .mockResolvedValueOnce({ status: "FAILED", groupBooking: { status: GroupBookingStatus.OPEN } });
 
     await expect(
-      createXeroInvoiceForGroupSettlement("settle-1", { syncOperationId: "op-1" })
+      createXeroInvoiceForGroupSettlement("settle-1", { syncOperation: xeroClaim("op-1") })
     ).resolves.toBeNull();
 
     expect(mocks.enqueueAbandonVoid).toHaveBeenCalledWith("settle-1", "inv-1", { store: mocks.tx });
@@ -936,7 +937,7 @@ describe("the bound-invoice rule in the create worker (#3642)", () => {
     expect(mocks.settlementUpdate).not.toHaveBeenCalled();
     expect(mocks.accountingApi.emailInvoice).not.toHaveBeenCalled();
     expect(mocks.completeSync).toHaveBeenCalledWith(
-      "op-1",
+      expect.objectContaining({ id: "op-1" }),
       expect.objectContaining({
         responsePayload: expect.objectContaining({ abandonedAfterInvoiceCreation: true }),
       })
@@ -951,7 +952,7 @@ describe("the bound-invoice rule in the create worker (#3642)", () => {
       .mockResolvedValueOnce(organiserFenceRead({ status: "FAILED" }));
 
     await expect(
-      createXeroInvoiceForGroupSettlement("settle-1", { syncOperationId: "op-1" })
+      createXeroInvoiceForGroupSettlement("settle-1", { syncOperation: xeroClaim("op-1") })
     ).resolves.toBeNull();
 
     expect(mocks.accountingApi.emailInvoice).not.toHaveBeenCalled();
@@ -970,7 +971,7 @@ describe("the bound-invoice rule in the create worker (#3642)", () => {
     ];
     mocks.settlementFindUnique.mockResolvedValue(settlement(GroupBookingStatus.OPEN));
 
-    await createXeroInvoiceForGroupSettlement("settle-1", { syncOperationId: "op-1" });
+    await createXeroInvoiceForGroupSettlement("settle-1", { syncOperation: xeroClaim("op-1") });
 
     expect(mocks.accountingApi.createInvoices).toHaveBeenCalledWith(
       "tenant-1",
@@ -984,7 +985,7 @@ describe("the bound-invoice rule in the create worker (#3642)", () => {
   it("keeps the original key for a settlement's first invoice", async () => {
     mocks.settlementFindUnique.mockResolvedValue(settlement(GroupBookingStatus.OPEN));
 
-    await createXeroInvoiceForGroupSettlement("settle-1", { syncOperationId: "op-1" });
+    await createXeroInvoiceForGroupSettlement("settle-1", { syncOperation: xeroClaim("op-1") });
 
     expect(mocks.accountingApi.createInvoices).toHaveBeenCalledWith(
       "tenant-1",
@@ -999,7 +1000,7 @@ describe("the bound-invoice rule in the create worker (#3642)", () => {
     mocks.settlementFindUnique.mockResolvedValue({ id: "settle-1", xeroInvoiceId: null });
 
     await voidXeroInvoiceForAbandonedGroupSettlement("settle-1", "inv-old", {
-      syncOperationId: "void-op-9",
+      syncOperation: xeroClaim("void-op-9"),
     });
 
     expect(mocks.accountingApi.updateInvoice).toHaveBeenCalledWith(
@@ -1010,7 +1011,7 @@ describe("the bound-invoice rule in the create worker (#3642)", () => {
       "group-settlement:settle-1:invoice-void-after-abandon:inv-old:v1"
     );
     expect(mocks.completeSync).toHaveBeenCalledWith(
-      "void-op-9",
+      expect.objectContaining({ id: "void-op-9" }),
       expect.objectContaining({
         status: "SUCCEEDED",
         responsePayload: expect.objectContaining({ abandonedBySettlement: true }),
@@ -1027,11 +1028,11 @@ describe("the bound-invoice rule in the create worker (#3642)", () => {
     mocks.settlementFindUnique.mockResolvedValue(settlement(GroupBookingStatus.OPEN));
 
     await expect(
-      createXeroInvoiceForGroupSettlement("settle-1", { syncOperationId: "op-1" })
+      createXeroInvoiceForGroupSettlement("settle-1", { syncOperation: xeroClaim("op-1") })
     ).resolves.toBeNull();
 
     expect(mocks.accountingApi.createInvoices).not.toHaveBeenCalled();
-    expect(mocks.completeSync).toHaveBeenCalledWith("op-1", {
+    expect(mocks.completeSync).toHaveBeenCalledWith(expect.objectContaining({ id: "op-1" }), {
       status: "SUCCEEDED",
       responsePayload: { supersededByLaterAttempt: true },
     });
@@ -1055,7 +1056,7 @@ describe("the bound-invoice rule in the create worker (#3642)", () => {
     mocks.settlementFindUnique.mockResolvedValue(settlement(GroupBookingStatus.OPEN));
 
     await expect(
-      createXeroInvoiceForGroupSettlement("settle-1", { syncOperationId: "op-1" })
+      createXeroInvoiceForGroupSettlement("settle-1", { syncOperation: xeroClaim("op-1") })
     ).rejects.toThrow(/no invoice was raised/);
     expect(mocks.accountingApi.createInvoices).not.toHaveBeenCalled();
   });
@@ -1063,7 +1064,7 @@ describe("the bound-invoice rule in the create worker (#3642)", () => {
   it("builds the invoice from CONFIRMED children only, never ones already PAID", async () => {
     mocks.settlementFindUnique.mockResolvedValue(settlement(GroupBookingStatus.OPEN));
 
-    await createXeroInvoiceForGroupSettlement("settle-1", { syncOperationId: "op-1" });
+    await createXeroInvoiceForGroupSettlement("settle-1", { syncOperation: xeroClaim("op-1") });
 
     expect(vi.mocked(prisma.booking.findMany)).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1079,7 +1080,7 @@ describe("the bound-invoice rule in the create worker (#3642)", () => {
       .mockResolvedValueOnce(organiserFenceRead());
 
     await expect(
-      createXeroInvoiceForGroupSettlement("settle-1", { syncOperationId: "op-1" })
+      createXeroInvoiceForGroupSettlement("settle-1", { syncOperation: xeroClaim("op-1") })
     ).resolves.toBe("inv-1");
 
     expect(mocks.settlementUpdate).toHaveBeenCalledWith({
@@ -1101,7 +1102,7 @@ describe("the bound-invoice rule in the create worker (#3642)", () => {
       .mockResolvedValueOnce(organiserFenceRead({ xeroInvoiceId: "inv-other" }));
 
     await expect(
-      createXeroInvoiceForGroupSettlement("settle-1", { syncOperationId: "op-1" })
+      createXeroInvoiceForGroupSettlement("settle-1", { syncOperation: xeroClaim("op-1") })
     ).resolves.toBeNull();
 
     expect(mocks.enqueueAbandonVoid).toHaveBeenCalledWith("settle-1", "inv-1", { store: mocks.tx });
@@ -1124,7 +1125,7 @@ describe("the bound-invoice rule in the create worker (#3642)", () => {
       });
 
     await expect(
-      createXeroInvoiceForGroupSettlement("settle-1", { syncOperationId: "op-1" })
+      createXeroInvoiceForGroupSettlement("settle-1", { syncOperation: xeroClaim("op-1") })
     ).resolves.toBeNull();
 
     expect(mocks.enqueueAbandonVoid).toHaveBeenCalledWith("settle-1", "inv-1", { store: mocks.tx });
@@ -1140,7 +1141,7 @@ describe("the bound-invoice rule in the create worker (#3642)", () => {
       .mockResolvedValueOnce(organiserFenceRead());
 
     await expect(
-      createXeroInvoiceForGroupSettlement("settle-1", { syncOperationId: "op-1" })
+      createXeroInvoiceForGroupSettlement("settle-1", { syncOperation: xeroClaim("op-1") })
     ).resolves.toBeNull();
 
     expect(mocks.enqueueAbandonVoid).toHaveBeenCalledWith("settle-1", "inv-1", { store: mocks.tx });
@@ -1150,7 +1151,7 @@ describe("the bound-invoice rule in the create worker (#3642)", () => {
       expect.anything()
     );
     expect(mocks.completeSync).toHaveBeenCalledWith(
-      "op-1",
+      expect.objectContaining({ id: "op-1" }),
       expect.objectContaining({
         status: "FAILED",
         responsePayload: expect.objectContaining({ invoiceTotalDiffersFromSettlement: true }),
@@ -1165,13 +1166,13 @@ describe("the bound-invoice rule in the create worker (#3642)", () => {
     });
 
     await voidXeroInvoiceForAbandonedGroupSettlement("settle-1", "inv-old", {
-      syncOperationId: "void-op-9",
+      syncOperation: xeroClaim("void-op-9"),
     });
 
     expect(mocks.accountingApi.updateInvoice).not.toHaveBeenCalled();
     expect(mocks.alert).not.toHaveBeenCalled();
     expect(mocks.completeSync).toHaveBeenCalledWith(
-      "void-op-9",
+      expect.objectContaining({ id: "void-op-9" }),
       expect.objectContaining({
         status: "SUCCEEDED",
         responsePayload: expect.objectContaining({ invoiceAlreadyVoid: true }),
@@ -1186,7 +1187,7 @@ describe("the bound-invoice rule in the create worker (#3642)", () => {
     });
 
     await voidXeroInvoiceForAbandonedGroupSettlement("settle-1", "inv-old", {
-      syncOperationId: "void-op-9",
+      syncOperation: xeroClaim("void-op-9"),
     });
 
     expect(mocks.accountingApi.updateInvoice).not.toHaveBeenCalled();
@@ -1197,7 +1198,7 @@ describe("the bound-invoice rule in the create worker (#3642)", () => {
       errorMessage: expect.stringMatching(/\$500\.00 paid/),
     });
     expect(mocks.completeSync).toHaveBeenCalledWith(
-      "void-op-9",
+      expect.objectContaining({ id: "void-op-9" }),
       expect.objectContaining({
         status: "SUCCEEDED",
         responsePayload: expect.objectContaining({ invoiceNotVoidedCarriesMoney: true }),
@@ -1217,7 +1218,7 @@ describe("the bound-invoice rule in the create worker (#3642)", () => {
     });
 
     await voidXeroInvoiceForCancelledGroupSettlement("settle-1", {
-      syncOperationId: "void-op-1",
+      syncOperation: xeroClaim("void-op-1"),
     });
 
     expect(mocks.accountingApi.updateInvoice).not.toHaveBeenCalled();
@@ -1242,7 +1243,7 @@ describe("the bound-invoice rule in the create worker (#3642)", () => {
     for (const amountCents of [null, 2250, 4500]) {
       handBackAggregate.mockResolvedValue({ _sum: { amountCents } });
       mocks.alert.mockClear();
-      await voidXeroInvoiceForCancelledGroupSettlement("settle-1", { syncOperationId: "void-op-1" });
+      await voidXeroInvoiceForCancelledGroupSettlement("settle-1", { syncOperation: xeroClaim("void-op-1") });
       messages.push(mocks.alert.mock.calls[0][0].errorMessage as string);
     }
 
@@ -1272,7 +1273,7 @@ describe("the bound-invoice rule in the create worker (#3642)", () => {
         groupBooking: { status: GroupBookingStatus.CANCELLED },
       });
       mocks.alert.mockClear();
-      await voidXeroInvoiceForCancelledGroupSettlement("settle-1", { syncOperationId: "void-op-1" });
+      await voidXeroInvoiceForCancelledGroupSettlement("settle-1", { syncOperation: xeroClaim("void-op-1") });
       expect(mocks.alert.mock.calls[0][0].errorMessage).toMatch(/Refund or credit the organiser in Xero\.$/);
     }
   });
@@ -1286,7 +1287,7 @@ describe("the bound-invoice rule in the create worker (#3642)", () => {
     mocks.settlementFindUnique.mockResolvedValue(settlement(GroupBookingStatus.OPEN));
 
     await expect(
-      createXeroInvoiceForGroupSettlement("settle-1", { syncOperationId: "op-1" })
+      createXeroInvoiceForGroupSettlement("settle-1", { syncOperation: xeroClaim("op-1") })
     ).resolves.toBeNull();
 
     expect(mocks.accountingApi.createInvoices).not.toHaveBeenCalled();
@@ -1308,7 +1309,7 @@ describe("the bound-invoice rule in the create worker (#3642)", () => {
       expect.anything()
     );
     expect(mocks.completeSync).toHaveBeenCalledWith(
-      "op-1",
+      expect.objectContaining({ id: "op-1" }),
       expect.objectContaining({
         status: "FAILED",
         responsePayload: expect.objectContaining({ invoiceLinesDisagreeWithPrices: true }),
@@ -1324,7 +1325,7 @@ describe("the bound-invoice rule in the create worker (#3642)", () => {
     });
 
     await expect(
-      createXeroInvoiceForGroupSettlement("settle-1", { syncOperationId: "op-1" })
+      createXeroInvoiceForGroupSettlement("settle-1", { syncOperation: xeroClaim("op-1") })
     ).resolves.toBe("inv-raised");
 
     expect(mocks.upsertLink).not.toHaveBeenCalled();
@@ -1338,7 +1339,7 @@ describe("the bound-invoice rule in the create worker (#3642)", () => {
     );
 
     await voidXeroInvoiceForAbandonedGroupSettlement("settle-1", "inv-old", {
-      syncOperationId: "void-op-9",
+      syncOperation: xeroClaim("void-op-9"),
     });
 
     expect(mocks.accountingApi.updateInvoice).not.toHaveBeenCalled();
@@ -1347,7 +1348,7 @@ describe("the bound-invoice rule in the create worker (#3642)", () => {
       expect.anything()
     );
     expect(mocks.completeSync).toHaveBeenCalledWith(
-      "void-op-9",
+      expect.objectContaining({ id: "void-op-9" }),
       expect.objectContaining({
         status: "SUCCEEDED",
         responsePayload: { invoiceNotFoundInXero: true },
@@ -1363,7 +1364,7 @@ describe("the bound-invoice rule in the create worker (#3642)", () => {
 
     await expect(
       voidXeroInvoiceForAbandonedGroupSettlement("settle-1", "inv-old", {
-        syncOperationId: "void-op-9",
+        syncOperation: xeroClaim("void-op-9"),
       })
     ).rejects.toThrow("Service Unavailable");
     expect(mocks.alert).not.toHaveBeenCalled();
@@ -1373,11 +1374,11 @@ describe("the bound-invoice rule in the create worker (#3642)", () => {
     mocks.settlementFindUnique.mockResolvedValue({ id: "settle-1", xeroInvoiceId: "inv-old" });
 
     await voidXeroInvoiceForAbandonedGroupSettlement("settle-1", "inv-old", {
-      syncOperationId: "void-op-9",
+      syncOperation: xeroClaim("void-op-9"),
     });
 
     expect(mocks.accountingApi.updateInvoice).not.toHaveBeenCalled();
-    expect(mocks.completeSync).toHaveBeenCalledWith("void-op-9", {
+    expect(mocks.completeSync).toHaveBeenCalledWith(expect.objectContaining({ id: "void-op-9" }), {
       status: "SUCCEEDED",
       responsePayload: { skippedInvoiceStillLinkedToSettlement: true },
     });

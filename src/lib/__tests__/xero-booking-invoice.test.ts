@@ -327,6 +327,7 @@ import { expectClubTimeZonePremise } from "@/lib/__tests__/helpers/club-time-zon
 import { declareEnvironmentRole } from "@/lib/__tests__/helpers/environment-role";
 import { toXeroSandboxContactEmail } from "@/lib/xero-sandbox-contact-email";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { xeroClaim } from "@/lib/__tests__/helpers/xero-claim";
 
 // #3806 R2: a connected Xero is the connection row plus the credential-store
 // token set, encrypted under a strong test AUTH_SECRET set once for the suite.
@@ -656,7 +657,7 @@ describe("createXeroInvoiceForBooking", () => {
 
   it("#3955 round 3: a gap check that throws after the link is persisted is re-run by the retry", async () => {
     queuePrimaryInvoiceWorthGap.mockRejectedValueOnce(new Error("connection reset"));
-    await expect(createXeroInvoiceForBooking("booking_1", { syncOperationId: "op_1" })).rejects.toThrow(
+    await expect(createXeroInvoiceForBooking("booking_1", { syncOperation: xeroClaim("op_1") })).rejects.toThrow(
       "connection reset",
     );
     expect(mocks.failXeroSyncOperation).toHaveBeenCalled();
@@ -671,7 +672,7 @@ describe("createXeroInvoiceForBooking", () => {
       payment: { ...fixture.payment, xeroInvoiceId: "inv_1", xeroInvoiceNumber: "INV-1" },
     });
     await expect(
-      createXeroInvoiceForBooking("booking_1", { syncOperationId: "op_1", createdByMemberId: "officer_1" }),
+      createXeroInvoiceForBooking("booking_1", { syncOperation: xeroClaim("op_1"), createdByMemberId: "officer_1" }),
     ).resolves.toBe("inv_1");
     expect(mocks.xeroClientInstance.accountingApi.createInvoices).not.toHaveBeenCalled();
     expect(feeGap.recheckPrimaryInvoiceWorthGap).toHaveBeenCalledWith({
@@ -830,7 +831,7 @@ describe("createXeroInvoiceForBooking", () => {
         expect.stringContaining("no change-fee gap invoice takes the remainder"),
       );
       expect(mocks.completeXeroSyncOperation).toHaveBeenLastCalledWith(
-        "op_1",
+        expect.objectContaining({ id: "op_1" }),
         expect.objectContaining({ responsePayload: expect.objectContaining({ primaryInvoiceCashShortfall: shortfall }) }),
       );
 
@@ -848,7 +849,7 @@ describe("createXeroInvoiceForBooking", () => {
         expect.stringContaining("no change-fee gap invoice takes the remainder"),
       );
       expect(mocks.completeXeroSyncOperation).toHaveBeenLastCalledWith(
-        "op_1",
+        expect.objectContaining({ id: "op_1" }),
         expect.objectContaining({ responsePayload: expect.objectContaining({ primaryInvoiceCashShortfall: null }) }),
       );
     });
@@ -870,7 +871,7 @@ describe("createXeroInvoiceForBooking", () => {
         expect.objectContaining({ atLink: expect.objectContaining({ primaryInvoiceCashCents: 8_000 }) }),
       );
       expect(mocks.completeXeroSyncOperation).toHaveBeenLastCalledWith(
-        "op_1",
+        expect.objectContaining({ id: "op_1" }),
         expect.objectContaining({
           extraLinks: expect.arrayContaining([
             expect.objectContaining({ role: "INVOICE_PAYMENT", xeroObjectId: "xpay_1" }),
@@ -907,7 +908,7 @@ describe("createXeroInvoiceForBooking", () => {
       await expect(createXeroInvoiceForBooking("booking_1")).resolves.toBe("inv_1");
       expect(mocks.xeroClientInstance.accountingApi.createPayment).not.toHaveBeenCalled();
       expect(mocks.completeXeroSyncOperation).toHaveBeenLastCalledWith(
-        "op_1",
+        expect.objectContaining({ id: "op_1" }),
         expect.objectContaining({
           responsePayload: expect.objectContaining({ paymentSkipped: false, primaryInvoiceCashShortfall: null }),
           extraLinks: expect.arrayContaining([
@@ -968,7 +969,7 @@ describe("createXeroInvoiceForBooking", () => {
             },
           });
           expect(mocks.completeXeroSyncOperation).toHaveBeenLastCalledWith(
-            "op_1",
+            expect.objectContaining({ id: "op_1" }),
             expect.objectContaining({ status: "PARTIAL" }),
           );
         },
@@ -1007,7 +1008,7 @@ describe("createXeroInvoiceForBooking", () => {
           expect.stringContaining("earlier payment is present on the invoice but not matched by reference"),
         );
         expect(mocks.completeXeroSyncOperation).toHaveBeenLastCalledWith(
-          "op_1",
+          expect.objectContaining({ id: "op_1" }),
           expect.objectContaining({
             responsePayload: expect.objectContaining({
               paymentSkipped: true,
@@ -1032,7 +1033,7 @@ describe("createXeroInvoiceForBooking", () => {
           expect.stringContaining("not matched by reference"),
         );
         expect(mocks.completeXeroSyncOperation).toHaveBeenLastCalledWith(
-          "op_1",
+          expect.objectContaining({ id: "op_1" }),
           expect.objectContaining({
             responsePayload: expect.objectContaining({ paymentSkipped: false }),
           }),
@@ -1051,7 +1052,7 @@ describe("createXeroInvoiceForBooking", () => {
           expect.stringContaining("not matched by reference"),
         );
         expect(mocks.completeXeroSyncOperation).toHaveBeenLastCalledWith(
-          "op_1",
+          expect.objectContaining({ id: "op_1" }),
           expect.objectContaining({
             responsePayload: expect.objectContaining({
               paymentSkipped: true,
@@ -1074,7 +1075,7 @@ describe("createXeroInvoiceForBooking", () => {
       await expect(createXeroInvoiceForBooking("booking_1")).resolves.toBe("inv_1");
       expect(mocks.xeroClientInstance.accountingApi.createPayment).not.toHaveBeenCalled();
       expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
-        "op_1",
+        expect.objectContaining({ id: "op_1" }),
         expect.objectContaining({
           responsePayload: expect.objectContaining({
             paymentSkipped: true,
@@ -1246,7 +1247,7 @@ describe("createXeroInvoiceForBooking", () => {
       },
     });
     expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
-      "op_1",
+      expect.objectContaining({ id: "op_1" }),
       expect.objectContaining({
         status: "SUCCEEDED",
         xeroObjectType: "INVOICE",
@@ -1318,7 +1319,7 @@ describe("createXeroInvoiceForBooking", () => {
     // flag distinguishes it from the ordinary "this source raises no emailed
     // invoice" skip.
     expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
-      "op_1",
+      expect.objectContaining({ id: "op_1" }),
       expect.objectContaining({
         status: "SUCCEEDED",
         responsePayload: expect.objectContaining({
@@ -1381,7 +1382,7 @@ describe("createXeroInvoiceForBooking", () => {
     // Visible and re-drivable: the operation completes PARTIAL with a populated
     // invoiceEmailError, exactly as a failed emailInvoice call would.
     expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
-      "op_1",
+      expect.objectContaining({ id: "op_1" }),
       expect.objectContaining({
         status: "PARTIAL",
         responsePayload: expect.objectContaining({
@@ -1456,7 +1457,7 @@ describe("createXeroInvoiceForBooking", () => {
       // no invoice exists.
       expect(mocks.prisma.payment.updateMany).toHaveBeenCalled();
       expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
-        "op_1",
+        expect.objectContaining({ id: "op_1" }),
         expect.objectContaining({
           status: "SUCCEEDED",
           responsePayload: expect.objectContaining({
@@ -1650,7 +1651,7 @@ describe("createXeroInvoiceForBooking", () => {
       operationSays("WITHHELD_AT_CREATION");
 
       await expect(
-        createXeroInvoiceForBooking("booking_1", { syncOperationId: "op_1" }),
+        createXeroInvoiceForBooking("booking_1", { syncOperation: xeroClaim("op_1") }),
       ).resolves.toBe("inv_1");
 
       // The email, and ONLY the email, is withheld.
@@ -1687,7 +1688,7 @@ describe("createXeroInvoiceForBooking", () => {
       // A deliberate, complete outcome: SUCCEEDED, no error, and reported under
       // its own key so no operator is told the persistent switch is on.
       expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
-        "op_1",
+        expect.objectContaining({ id: "op_1" }),
         expect.objectContaining({ status: "SUCCEEDED" }),
       );
       expect(completionPayload()).toMatchObject({
@@ -1703,7 +1704,7 @@ describe("createXeroInvoiceForBooking", () => {
       operationSays("SEND");
 
       await expect(
-        createXeroInvoiceForBooking("booking_1", { syncOperationId: "op_1" }),
+        createXeroInvoiceForBooking("booking_1", { syncOperation: xeroClaim("op_1") }),
       ).resolves.toBe("inv_1");
 
       expect(
@@ -1725,7 +1726,7 @@ describe("createXeroInvoiceForBooking", () => {
       operationSays(null);
 
       await expect(
-        createXeroInvoiceForBooking("booking_1", { syncOperationId: "op_1" }),
+        createXeroInvoiceForBooking("booking_1", { syncOperation: xeroClaim("op_1") }),
       ).resolves.toBe("inv_1");
 
       expect(
@@ -1744,7 +1745,7 @@ describe("createXeroInvoiceForBooking", () => {
       operationSays("withheld_at_creation");
 
       await expect(
-        createXeroInvoiceForBooking("booking_1", { syncOperationId: "op_1" }),
+        createXeroInvoiceForBooking("booking_1", { syncOperation: xeroClaim("op_1") }),
       ).resolves.toBe("inv_1");
 
       expect(
@@ -1771,7 +1772,7 @@ describe("createXeroInvoiceForBooking", () => {
       operationSays("WITHHELD_AT_CREATION");
 
       await createXeroInvoiceForBooking("booking_1", {
-        syncOperationId: "op_1",
+        syncOperation: xeroClaim("op_1"),
       });
 
       // `prisma.booking` in this file's double has no `update` delegate at all,
@@ -1799,7 +1800,7 @@ describe("createXeroInvoiceForBooking", () => {
       operationSays("WITHHELD_AT_CREATION");
 
       await createXeroInvoiceForBooking("booking_1", {
-        syncOperationId: "op_1",
+        syncOperation: xeroClaim("op_1"),
       });
 
       // It is read from the column, by name.
@@ -1829,7 +1830,7 @@ describe("createXeroInvoiceForBooking", () => {
       );
 
       await createXeroInvoiceForBooking("booking_1", {
-        syncOperationId: "op_1",
+        syncOperation: xeroClaim("op_1"),
       });
 
       expect(
@@ -1865,7 +1866,7 @@ describe("createXeroInvoiceForBooking", () => {
       // The creation-time choice, on a booking whose switch was never used.
       operationSays("WITHHELD_AT_CREATION");
       await createXeroInvoiceForBooking("booking_1", {
-        syncOperationId: "op_1",
+        syncOperation: xeroClaim("op_1"),
       });
 
       // The persistent switch, with no creation-time instruction at all.
@@ -1874,7 +1875,7 @@ describe("createXeroInvoiceForBooking", () => {
         withMoneyBuildUpProjection(internetBankingBooking({ noEmails: true })),
       );
       await createXeroInvoiceForBooking("booking_1", {
-        syncOperationId: "op_1",
+        syncOperation: xeroClaim("op_1"),
       });
 
       expect(mocks.prisma.emailLog.create).toHaveBeenCalledTimes(2);
@@ -1915,7 +1916,7 @@ describe("createXeroInvoiceForBooking", () => {
       // 1. This issue's business-rule suppression.
       operationSays("WITHHELD_AT_CREATION");
       await createXeroInvoiceForBooking("booking_1", {
-        syncOperationId: "op_1",
+        syncOperation: xeroClaim("op_1"),
       });
       const businessRule = await signature();
 
@@ -1936,7 +1937,7 @@ describe("createXeroInvoiceForBooking", () => {
         body: {},
       });
       await createXeroInvoiceForBooking("booking_1", {
-        syncOperationId: "op_1",
+        syncOperation: xeroClaim("op_1"),
       });
       const environmentSafety = await signature();
 
@@ -1949,7 +1950,7 @@ describe("createXeroInvoiceForBooking", () => {
         new Error("503 from Xero"),
       );
       await createXeroInvoiceForBooking("booking_1", {
-        syncOperationId: "op_1",
+        syncOperation: xeroClaim("op_1"),
       });
       const providerFailure = await signature();
 
@@ -1961,7 +1962,7 @@ describe("createXeroInvoiceForBooking", () => {
         body: {},
       });
       await createXeroInvoiceForBooking("booking_1", {
-        syncOperationId: "op_1",
+        syncOperation: xeroClaim("op_1"),
       });
       const ordinarySend = await signature();
 
@@ -2070,7 +2071,7 @@ describe("createXeroInvoiceForBooking", () => {
       },
     });
     expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
-      "op_1",
+      expect.objectContaining({ id: "op_1" }),
       expect.objectContaining({
         status: "SUCCEEDED",
         responsePayload: expect.objectContaining({
@@ -2127,7 +2128,7 @@ describe("createXeroInvoiceForBooking", () => {
       "booking:booking_1:invoice-email:inv_1:v1"
     );
     expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
-      "op_1",
+      expect.objectContaining({ id: "op_1" }),
       expect.objectContaining({
         status: "SUCCEEDED",
         responsePayload: expect.objectContaining({
@@ -2237,7 +2238,7 @@ describe("createXeroInvoiceForBooking", () => {
       "booking:booking_1:invoice-update:inv_1:2026-08-03:2026-08-05:v1"
     );
     expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
-      "op_1",
+      expect.objectContaining({ id: "op_1" }),
       expect.objectContaining({
         xeroObjectType: "INVOICE",
         xeroObjectId: "inv_1",
@@ -3335,7 +3336,7 @@ describe("createXeroInvoiceForBooking", () => {
       expect(xeroPayment.amount).toBe(90);
       expect(xeroPayment.reference).toBe("Stripe pi_repay");
       expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
-        "op_1",
+        expect.objectContaining({ id: "op_1" }),
         expect.objectContaining({
           responsePayload: expect.objectContaining({
             paymentSkipped: false,
@@ -3386,7 +3387,7 @@ describe("createXeroInvoiceForBooking", () => {
         "Captured Stripe cash was fully refunded; no net cash remains to record against the invoice."
       );
       expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
-        "op_1",
+        expect.objectContaining({ id: "op_1" }),
         expect.objectContaining({
           responsePayload: expect.objectContaining({
             paymentSkipped: true,
@@ -3471,7 +3472,7 @@ describe("createXeroInvoiceForBooking", () => {
       }
       // A status that never captured is not a "skipped" payment either.
       expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
-        "op_1",
+        expect.objectContaining({ id: "op_1" }),
         expect.objectContaining({
           responsePayload: expect.objectContaining({
             paymentSkipped: false,
@@ -3556,12 +3557,12 @@ describe("createXeroCreditNoteForModification", () => {
         bookingId: "booking_1",
         refundAmountCents: 3200,
         bookingModificationId: "mod_1",
-        syncOperationId: "op_1",
+        syncOperation: xeroClaim("op_1"),
       })
     ).resolves.toBe("cn_1");
 
     expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
-      "op_1",
+      expect.objectContaining({ id: "op_1" }),
       expect.objectContaining({
         status: "PARTIAL",
         xeroObjectType: "CREDIT_NOTE",
@@ -3599,7 +3600,7 @@ describe("createXeroCreditNoteForModification", () => {
         bookingModificationId: "mod_1",
         reviewTaskId: "unpaid-ask-billed-offset",
         noteWording: "invoice-correction",
-        syncOperationId: "op_billed_offset",
+        syncOperation: xeroClaim("op_billed_offset"),
       });
 
     await expect(call()).rejects.toMatchObject({ name: "XeroAppliedCreditOperationBusyError" });
@@ -3642,7 +3643,7 @@ describe("createXeroCreditNoteForModification", () => {
         bookingModificationId: "mod_1",
         reviewTaskId: "unpaid-ask-billed-offset",
         noteWording: "invoice-correction",
-        syncOperationId: "op_billed_offset",
+        syncOperation: xeroClaim("op_billed_offset"),
       });
 
     // Nothing of the edit's own note exists yet: it waits - coded (round 8),
@@ -3659,7 +3660,7 @@ describe("createXeroCreditNoteForModification", () => {
     mocks.prisma.xeroSyncOperation.findUnique.mockResolvedValueOnce(queuedAt(BILLED_OFFSET_OWN_NOTE_WAIT_MS + 1));
     mocks.prisma.xeroObjectLink.findMany.mockResolvedValueOnce([]);
     await expect(call()).rejects.toThrow(BILLED_OFFSET_OWN_NOTE_MISSING_MESSAGE);
-    expect(mocks.failXeroSyncOperation).toHaveBeenCalledWith("op_billed_offset", expect.any(Error));
+    expect(mocks.failXeroSyncOperation).toHaveBeenCalledWith(expect.objectContaining({ id: "op_billed_offset" }), expect.any(Error));
     expect(mocks.xeroClientInstance.accountingApi.createCreditNotes).not.toHaveBeenCalled();
   });
 
@@ -3679,7 +3680,7 @@ describe("createXeroCreditNoteForModification", () => {
         bookingModificationId: "mod_1",
         reviewTaskId: "unpaid-ask-billed-offset",
         noteWording: "invoice-correction",
-        syncOperationId: "op_billed_offset",
+        syncOperation: xeroClaim("op_billed_offset"),
       }),
     ).resolves.toBe("cn_1");
   });
@@ -3856,7 +3857,7 @@ describe("createXeroCreditNote", () => {
     await expect(
       createXeroCreditNote("pay_1", 3000, {
         watermarkCents: 11000,
-        syncOperationId: "op_delta_1",
+        syncOperation: xeroClaim("op_delta_1"),
       })
     ).resolves.toBe("cn_new");
 
@@ -3935,7 +3936,7 @@ describe("createXeroCreditNote", () => {
       await expect(
         createXeroCreditNote("pay_1", 3000, {
           watermarkCents: 3000,
-          syncOperationId: "op_delta_x",
+          syncOperation: xeroClaim("op_delta_x"),
         })
       ).resolves.toBe("cn_second");
 
@@ -3956,7 +3957,7 @@ describe("createXeroCreditNote", () => {
       );
       // Completion records the execution-time amounts for future coverage math.
       expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
-        "op_delta_x",
+        expect.objectContaining({ id: "op_delta_x" }),
         expect.objectContaining({
           extraLinks: expect.arrayContaining([
             expect.objectContaining({
@@ -3983,7 +3984,7 @@ describe("createXeroCreditNote", () => {
 
       await createXeroCreditNote("pay_1", 5000, {
         watermarkCents: 10000,
-        syncOperationId: "op_delta_x",
+        syncOperation: xeroClaim("op_delta_x"),
       });
 
       expect(mocks.xeroClientInstance.accountingApi.createCreditNotes).toHaveBeenCalledWith(
@@ -4024,7 +4025,7 @@ describe("createXeroCreditNote", () => {
 
       await createXeroCreditNote("pay_1", 2000, {
         watermarkCents: 7000,
-        syncOperationId: "op_delta_x",
+        syncOperation: xeroClaim("op_delta_x"),
       });
 
       expect(mocks.xeroClientInstance.accountingApi.createCreditNotes).not.toHaveBeenCalled();
@@ -4037,7 +4038,7 @@ describe("createXeroCreditNote", () => {
       ]);
 
       await expect(
-        createXeroCreditNote("pay_1", 2000, { watermarkCents: 7000, syncOperationId: "op_delta_x" })
+        createXeroCreditNote("pay_1", 2000, { watermarkCents: 7000, syncOperation: xeroClaim("op_delta_x") })
       ).rejects.toThrow(/no readable amount/);
       expect(mocks.xeroClientInstance.accountingApi.createCreditNotes).not.toHaveBeenCalled();
     });
@@ -4052,7 +4053,7 @@ describe("createXeroCreditNote", () => {
       });
       await createXeroCreditNote("pay_1", 3000, {
         watermarkCents: 3000,
-        syncOperationId: "op_delta_x",
+        syncOperation: xeroClaim("op_delta_x"),
       });
       const firstCall =
         mocks.xeroClientInstance.accountingApi.createCreditNotes.mock.calls[0];
@@ -4073,7 +4074,7 @@ describe("createXeroCreditNote", () => {
       });
       await createXeroCreditNote("pay_1", 5000, {
         watermarkCents: 8000,
-        syncOperationId: "op_delta_x",
+        syncOperation: xeroClaim("op_delta_x"),
       });
       const secondCall =
         mocks.xeroClientInstance.accountingApi.createCreditNotes.mock.calls[1];
@@ -4105,7 +4106,7 @@ describe("createXeroCreditNote", () => {
       await expect(
         createXeroCreditNote("pay_1", 34100, {
           watermarkCents: 34100,
-          syncOperationId: "op_delta_x",
+          syncOperation: xeroClaim("op_delta_x"),
         })
       ).resolves.toBe("");
 
@@ -4116,7 +4117,7 @@ describe("createXeroCreditNote", () => {
         mocks.xeroClientInstance.accountingApi.createPayments
       ).not.toHaveBeenCalled();
       expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
-        "op_delta_x",
+        expect.objectContaining({ id: "op_delta_x" }),
         expect.objectContaining({
           responsePayload: expect.objectContaining({
             skippedNothingUncovered: true,

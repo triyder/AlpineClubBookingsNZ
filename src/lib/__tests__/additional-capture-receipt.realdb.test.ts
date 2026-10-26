@@ -609,7 +609,7 @@ async function untilQueuedBehind(blockerPid: number, target = 1): Promise<number
           });
           if (!claimed) throw new Error(`claim of ${id} lost`);
           return worker.recordAdditionalCaptureReceipt(
-            { syncOperationId: id },
+            { syncOperation: claimed },
             {
               getAuthenticatedXeroClient: async () => {
                 reached.push(id);
@@ -711,7 +711,7 @@ async function untilQueuedBehind(blockerPid: number, target = 1): Promise<number
           });
           if (!claimed) throw new Error(`claim of ${id} lost`);
           return worker.recordAdditionalCaptureReceipt(
-            { syncOperationId: id },
+            { syncOperation: claimed },
             {
               getAuthenticatedXeroClient: async () => {
                 reached.push(id);

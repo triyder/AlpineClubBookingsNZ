@@ -214,7 +214,7 @@ describe("Xero contact/account-deletion lock topology mutation pins (#2597)", ()
       "getAuthenticatedXeroClient()",
       "accountingApi.updateContact(",
       "completeMemberContactUpdateOperation(",
-      "failXeroSyncOperation(operation.id, error)",
+      "failXeroSyncOperation(operation, error)",
     ]);
     const completion = between(
       contactSource,
@@ -223,7 +223,7 @@ describe("Xero contact/account-deletion lock topology mutation pins (#2597)", ()
     );
     expectOrdered(completion, [
       "lockMemberForXeroContactLink(tx, memberId)",
-      "completeXeroSyncOperation(operationId, completion, { store: tx })",
+      "completeXeroSyncOperation(operation, completion, { store: tx })",
     ]);
 
     const genericCompletion = between(
@@ -235,7 +235,7 @@ describe("Xero contact/account-deletion lock topology mutation pins (#2597)", ()
       "db.$transaction",
       "lockMemberForXeroContactLink(tx, memberId)",
       "locked.xeroContactId !== expectedXeroContactId",
-      "completeXeroSyncOperation(operationId, completion, { store: tx })",
+      "completeXeroSyncOperation(operation, completion, { store: tx })",
     ]);
     expect(source("src/lib/xero-contact-groups.ts")).toContain(
       "completeMemberContactOperation(",

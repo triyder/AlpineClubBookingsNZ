@@ -40,6 +40,7 @@ import { CreditNote, type Invoice } from "xero-node";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
+import { realElapsedMs } from "@/lib/__tests__/helpers/clock";
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
 const RACE_DB_URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
@@ -333,6 +334,20 @@ async function settledBeforeThisChange(refundedCents: number): Promise<void> {
   await prisma.booking.update({ where: { id: BOOKING_ID }, data: { status: "PAID" } });
 }
 
+/** The backend ids queued behind `blockerPid` (`pg_blocking_pids`), polled on the real clock. */
+async function untilQueuedBehind(blockerPid: number): Promise<number[]> {
+  const startedAt = process.hrtime.bigint();
+  while (realElapsedMs(startedAt) < 20_000) {
+    const rows = await prisma.$queryRaw<Array<{ pid: number }>>`
+      SELECT pid FROM pg_stat_activity
+      WHERE datname = current_database() AND ${blockerPid}::int = ANY(pg_blocking_pids(pid))
+    `;
+    if (rows.length > 0) return rows.map((row) => row.pid);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`Nothing queued behind backend ${blockerPid}`);
+}
+
 /** The payment's net: what it holds after refunds. */
 async function netCents(): Promise<number> {
   const { payment } = await figures();
@@ -459,6 +474,42 @@ async function cancellationCreditCents(): Promise<number> {
     // The cancel arm's own alert, for the whole cash; never a "partial" one.
   }, 60_000);
 
+  it("A CORRECTION ON A LATE CAPACITY CANCEL: invoice $300 less a $100 invoice-correction note, paid $200: the whole cash is credited, never as a mixed invoice's portion (#4095 item 2)", async () => {
+    await bookAt(30_000, { holdsBeds: false });
+    await raiseInvoice();
+    await editPriceTo(20_000);
+    await queueModificationNote(10_000, { noteWording: "invoice-correction" });
+
+    const result = await settle(20_000, { totalCents: 30_000, appliedNotes: [{ id: NOTE_ID, cents: 10_000 }] });
+
+    expect((await prisma.booking.findUniqueOrThrow({ where: { id: BOOKING_ID }, select: { status: true } })).status).toBe("CANCELLED");
+    expect(await memberCredit.getMemberCreditBalance(MEMBER_ID)).toBe(20_000);
+    // The correction lowered what the invoice asked for: the $200 is all of it.
+    expect(result.partialCashCreditedInternetBankingBookings).toBe(0);
+    const credited = await prisma.bookingEvent.findMany({
+      where: { bookingId: BOOKING_ID, type: "CREDITED" },
+      select: { reason: true },
+    });
+    expect(credited.map((event) => event.reason)).toEqual(["Paid Internet Banking amount held as account credit."]);
+  }, 60_000);
+
+  it("A CORRECTION ON A KEPT LATE CAPACITY CANCEL: the stored $300 kept on incomplete cash, $200 paid against $300 less a $100 correction: never a mixed invoice's portion (#4095 item 2)", async () => {
+    await bookAt(30_000, { holdsBeds: false });
+    await raiseInvoice();
+    await editPriceTo(20_000);
+    await queueModificationNote(10_000, { noteWording: "invoice-correction" });
+
+    const result = await paidEffects.syncInternetBankingPaymentsForPaidInvoice(
+      { ...paidInvoice(20_000, { totalCents: 30_000, appliedNotes: [{ id: NOTE_ID, cents: 10_000 }] }), amountPaid: "degraded" } as unknown as Invoice,
+      [PAYMENT_ID],
+      CLUB_FORMAT_TEST,
+    );
+
+    expect((await prisma.booking.findUniqueOrThrow({ where: { id: BOOKING_ID }, select: { status: true } })).status).toBe("CANCELLED");
+    expect(await memberCredit.getMemberCreditBalance(MEMBER_ID)).toBe(20_000);
+    expect(result.partialCashCreditedInternetBankingBookings).toBe(0);
+  }, 60_000);
+
   it("CONTROL: a rise AFTER the invoice stays on its supplementary invoice, so the primary keeps $200", async () => {
     await bookAt(20_000);
     await raiseInvoice();
@@ -508,6 +559,89 @@ async function cancellationCreditCents(): Promise<number> {
       primary: { amountCents: 20_000, status: "SUCCEEDED" },
       receipts: [20_000],
     });
+  }, 60_000);
+
+  it("A CORRECTION SYNCED BEFORE A KEPT SETTLE: the settle keeps the stored $300 and recounts the correction after its commit, so the net is the $200 of cash, never $300 (#4095 items 5 and 12)", async () => {
+    await bookAt(30_000);
+    await raiseInvoice();
+    await editPriceTo(20_000);
+    await queueModificationNote(10_000, { noteWording: "invoice-correction" });
+
+    // Synced before the transfer: against an uncaptured receipt it counts nothing.
+    await syncNote(10_000);
+    expect((await figures()).payment).toMatchObject({ amountCents: 30_000, refundedAmountCents: 0, status: "PENDING" });
+
+    // Xero's amount paid reads unquantifiable, so the cash is incomplete and the
+    // settle keeps the stored figure, captured at $300.
+    await paidEffects.syncInternetBankingPaymentsForPaidInvoice(
+      { ...paidInvoice(20_000, { totalCents: 30_000, appliedNotes: [{ id: NOTE_ID, cents: 10_000 }] }), amountPaid: "degraded" } as unknown as Invoice,
+      [PAYMENT_ID],
+      CLUB_FORMAT_TEST,
+    );
+    expect(await figures()).toMatchObject({
+      payment: { amountCents: 30_000, refundedAmountCents: 10_000 },
+      primary: { amountCents: 30_000, status: "SUCCEEDED" },
+    });
+    expect(await netCents()).toBe(20_000);
+
+    // The note's own later sync counts it once, not twice.
+    await syncNote(10_000);
+    expect((await figures()).payment).toMatchObject({ amountCents: 30_000, refundedAmountCents: 10_000 });
+  }, 60_000);
+
+  it("A WRITER QUEUED BEHIND A KEPT SETTLE reads the corrected net at its commit, never the stored figure before the recount after it (#4095 review, item 1)", async () => {
+    await bookAt(30_000);
+    await raiseInvoice();
+    await editPriceTo(20_000);
+    await queueModificationNote(10_000, { noteWording: "invoice-correction" });
+    await syncNote(10_000);
+
+    // Hold the receipt row, so the settle stops at its receipt write with the
+    // Payment row (`lockPaymentForRefundedTotal`) already taken.
+    let releaseReceipt!: () => void;
+    const receiptHeld = new Promise<void>((resolve) => {
+      releaseReceipt = resolve;
+    });
+    let holderPid = 0;
+    const holder = prisma.$transaction(
+      async (tx) => {
+        holderPid = (await tx.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid() AS pid`)[0].pid;
+        await tx.$queryRaw`SELECT id FROM "PaymentTransaction" WHERE id = ${PRIMARY_ID} FOR UPDATE`;
+        await receiptHeld;
+      },
+      { maxWait: 10_000, timeout: 60_000 },
+    );
+    const startedAt = process.hrtime.bigint();
+    while (holderPid === 0 && realElapsedMs(startedAt) < 10_000) await new Promise((resolve) => setTimeout(resolve, 10));
+
+    const settling = paidEffects.syncInternetBankingPaymentsForPaidInvoice(
+      { ...paidInvoice(20_000, { totalCents: 30_000, appliedNotes: [{ id: NOTE_ID, cents: 10_000 }] }), amountPaid: "degraded" } as unknown as Invoice,
+      [PAYMENT_ID],
+      CLUB_FORMAT_TEST,
+    );
+    try {
+      const [settlePid] = await untilQueuedBehind(holderPid);
+
+      // A writer queued on the settle's Payment row, as a cancel queues on its
+      // locks: its read is answered the moment the settle commits, before the
+      // recount after the commit can run.
+      const queuedRead = prisma.$transaction(
+        async (tx) =>
+          (await tx.$queryRaw<Array<{ refundedAmountCents: number }>>`
+            SELECT "refundedAmountCents" FROM "Payment" WHERE id = ${PAYMENT_ID} FOR UPDATE
+          `)[0].refundedAmountCents,
+        { maxWait: 10_000, timeout: 60_000 },
+      );
+      await untilQueuedBehind(settlePid);
+      releaseReceipt();
+
+      expect(await queuedRead).toBe(10_000);
+    } finally {
+      releaseReceipt();
+      await holder;
+      await settling;
+    }
+    expect(await netCents()).toBe(20_000);
   }, 60_000);
 
   it("A NOTE WORDED AS A REFUND still counts as refunded, so the settle keeps the stored figure rather than count the reduction twice", async () => {

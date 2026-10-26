@@ -49,8 +49,9 @@ export const INVOICE_PAYMENT_ROLE = "INVOICE_PAYMENT";
 /**
  * #3979: the primary-invoice link's metadata key recording that the invoice
  * was paid, wholly or partly, by applied overpayments or prepayments - which
- * Xero records as allocations, leaving no payment to link. The inbound invoice
- * sync writes it; the settled-cash audit reads it.
+ * Xero records as allocations, leaving no payment to link: their count, 0 once
+ * there are none (#4095). The inbound invoice sync writes it every sync; the
+ * settled-cash audit reads it, and a link without it was last synced before.
  */
 export const PRIMARY_INVOICE_CASH_ALLOCATIONS_KEY = "overpaymentOrPrepaymentAllocations";
 export const SUPPLEMENTARY_INVOICE_PAYMENT_ROLE = "SUPPLEMENTARY_INVOICE_PAYMENT";

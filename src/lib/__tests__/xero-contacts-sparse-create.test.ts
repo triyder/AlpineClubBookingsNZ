@@ -494,7 +494,7 @@ describe("createXeroContactForMember payload hygiene (#2089)", () => {
       originalError: linkFailure,
     });
     expect(mocks.failXeroSyncOperation).toHaveBeenCalledWith(
-      "op-1",
+      expect.objectContaining({ id: "op-1" }),
       linkFailure,
       expect.objectContaining({
         phase: "local_link_after_xero_resolution",
@@ -559,7 +559,7 @@ describe("createXeroContactForMember payload hygiene (#2089)", () => {
     expect(mocks.startXeroSyncOperation).toHaveBeenCalled();
     expect(mocks.recordProviderCreatedContactPendingLocalLink).toHaveBeenCalled();
     expect(mocks.failXeroSyncOperation).toHaveBeenCalledWith(
-      "op-1",
+      expect.objectContaining({ id: "op-1" }),
       proofFailure,
       expect.objectContaining({
         providerContactCreated: true,

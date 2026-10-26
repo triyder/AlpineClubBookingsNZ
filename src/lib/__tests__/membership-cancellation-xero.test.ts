@@ -136,6 +136,7 @@ import {
 } from "@/lib/membership-cancellation-xero";
 import { frozenTestNow } from "@/lib/__tests__/helpers/clock";
 import { expectClubTimeZonePremise } from "@/lib/__tests__/helpers/club-time-zone";
+import { xeroClaim } from "@/lib/__tests__/helpers/xero-claim";
 
 function xeroClient() {
   return {
@@ -238,7 +239,7 @@ describe("membership cancellation Xero operations", () => {
         requestId: "request_1",
         participantId: "participant_1",
         createdByMemberId: "admin_1",
-        syncOperationId: "op_1",
+        syncOperation: xeroClaim("op_1"),
       }),
     ).resolves.toBe("cn_1");
 
@@ -268,7 +269,7 @@ describe("membership cancellation Xero operations", () => {
       "credit-note:cn_1:membership-cancellation:invoice:inv_sub_1:12345:v1",
     );
     expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
-      "op_1",
+      expect.objectContaining({ id: "op_1" }),
       expect.objectContaining({
         status: "SUCCEEDED",
         xeroObjectType: "CREDIT_NOTE",
@@ -375,7 +376,7 @@ describe("membership cancellation Xero operations", () => {
           subscriptionId: "sub_1",
           requestId: "request_1",
           participantId: "participant_1",
-          syncOperationId: "op_1",
+          syncOperation: xeroClaim("op_1"),
         }),
       ).resolves.toBe("cn_1");
 
@@ -418,7 +419,7 @@ describe("membership cancellation Xero operations", () => {
         subscriptionId: "sub_1",
         requestId: "request_1",
         participantId: "participant_1",
-        syncOperationId: "op_1",
+        syncOperation: xeroClaim("op_1"),
       }),
     ).resolves.toBeNull();
 
@@ -431,7 +432,7 @@ describe("membership cancellation Xero operations", () => {
       }),
     );
     expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
-      "op_1",
+      expect.objectContaining({ id: "op_1" }),
       expect.objectContaining({
         responsePayload: expect.objectContaining({
           skipped: true,
@@ -490,7 +491,7 @@ describe("membership cancellation Xero operations", () => {
           subscriptionId: "sub_1",
           requestId: "request_1",
           participantId: "participant_1",
-          syncOperationId: "op_1",
+          syncOperation: xeroClaim("op_1"),
         }),
       ).resolves.toBe("cn_1");
 
@@ -522,7 +523,7 @@ describe("membership cancellation Xero operations", () => {
           subscriptionId: "sub_1",
           requestId: "request_1",
           participantId: "participant_1",
-          syncOperationId: "op_1",
+          syncOperation: xeroClaim("op_1"),
         }),
       ).resolves.toBeNull();
 
@@ -532,7 +533,7 @@ describe("membership cancellation Xero operations", () => {
       expect(mocks.getAuthenticatedXeroClient).not.toHaveBeenCalled();
       expect(mocks.getInvoice).not.toHaveBeenCalled();
       expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
-        "op_1",
+        expect.objectContaining({ id: "op_1" }),
         expect.objectContaining({
           responsePayload: expect.objectContaining({
             skipped: true,
@@ -569,7 +570,7 @@ describe("membership cancellation Xero operations", () => {
           subscriptionId: "sub_1",
           requestId: "request_1",
           participantId: "participant_1",
-          syncOperationId: "op_1",
+          syncOperation: xeroClaim("op_1"),
         }),
       ).resolves.toBeNull();
 
@@ -578,7 +579,7 @@ describe("membership cancellation Xero operations", () => {
       expect(mocks.createCreditNotes).not.toHaveBeenCalled();
       expect(mocks.createCreditNoteAllocation).not.toHaveBeenCalled();
       expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
-        "op_1",
+        expect.objectContaining({ id: "op_1" }),
         expect.objectContaining({
           responsePayload: expect.objectContaining({
             skipped: true,
@@ -599,7 +600,7 @@ describe("membership cancellation Xero operations", () => {
           subscriptionId: "sub_1",
           requestId: "request_1",
           participantId: "participant_1",
-          syncOperationId: "op_1",
+          syncOperation: xeroClaim("op_1"),
         }),
       ).resolves.toBe("cn_1");
 
@@ -633,7 +634,7 @@ describe("membership cancellation Xero operations", () => {
           subscriptionId: "sub_1",
           requestId: "request_1",
           participantId: "participant_1",
-          syncOperationId: "op_1",
+          syncOperation: xeroClaim("op_1"),
         }),
       ).resolves.toBe("cn_1");
     });
@@ -648,7 +649,7 @@ describe("membership cancellation Xero operations", () => {
         subscriptionId: "sub_1",
         requestId: "request_1",
         participantId: "participant_1",
-        syncOperationId: "op_1",
+        syncOperation: xeroClaim("op_1"),
       });
 
       // Claiming here would fence the sibling who WILL legitimately credit it.
@@ -688,7 +689,7 @@ describe("membership cancellation Xero operations", () => {
           subscriptionId: "sub_c",
           requestId: "request_1",
           participantId: "participant_3",
-          syncOperationId: "op_3",
+          syncOperation: xeroClaim("op_3"),
         }),
       ).resolves.toBeNull();
 
@@ -699,7 +700,7 @@ describe("membership cancellation Xero operations", () => {
         }),
       );
       expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
-        "op_3",
+        expect.objectContaining({ id: "op_3" }),
         expect.objectContaining({
           responsePayload: expect.objectContaining({
             skipped: true,
@@ -740,7 +741,7 @@ describe("membership cancellation Xero operations", () => {
         subscriptionId: "sub_c",
         requestId: "request_1",
         participantId: "participant_3",
-        syncOperationId: "op_3",
+        syncOperation: xeroClaim("op_3"),
       });
 
       expect(mocks.sendAdminXeroSyncErrorAlert).not.toHaveBeenCalled();
@@ -767,7 +768,7 @@ describe("membership cancellation Xero operations", () => {
         subscriptionId: "sub_c",
         requestId: "request_1",
         participantId: "participant_3",
-        syncOperationId: "op_3",
+        syncOperation: xeroClaim("op_3"),
       });
 
       expect(mocks.sendAdminXeroSyncErrorAlert).toHaveBeenCalledWith(
@@ -790,7 +791,7 @@ describe("membership cancellation Xero operations", () => {
             subscriptionId: "sub_1",
             requestId: "request_1",
             participantId: "participant_1",
-            syncOperationId: "op_1",
+            syncOperation: xeroClaim("op_1"),
           }),
         ).resolves.toBeNull();
       }
@@ -810,7 +811,7 @@ describe("membership cancellation Xero operations", () => {
           subscriptionId: "sub_1",
           requestId: "request_1",
           participantId: "participant_1",
-          syncOperationId: "op_1",
+          syncOperation: xeroClaim("op_1"),
         }),
       ).resolves.toBeNull();
 
@@ -823,7 +824,7 @@ describe("membership cancellation Xero operations", () => {
           subscriptionId: "sub_1",
           requestId: "request_1",
           participantId: "participant_1",
-          syncOperationId: "op_1",
+          syncOperation: xeroClaim("op_1"),
         }),
       ).resolves.toBe("cn_1");
 
@@ -853,7 +854,7 @@ describe("membership cancellation Xero operations", () => {
           subscriptionId: "sub_1",
           requestId: "request_1",
           participantId: "participant_1",
-          syncOperationId: "op_1",
+          syncOperation: xeroClaim("op_1"),
         }),
       ).resolves.toBe("cn_existing");
 
@@ -921,7 +922,7 @@ describe("membership cancellation Xero operations", () => {
         requestId: "request_1",
         participantId: "participant_1",
         createdByMemberId: "admin_1",
-        syncOperationId: "op_1",
+        syncOperation: xeroClaim("op_1"),
       }),
     ).resolves.toEqual({
       memberId: "member_1",
@@ -994,7 +995,7 @@ describe("membership cancellation Xero operations", () => {
         memberId: "member_1",
         requestId: "request_1",
         participantId: "participant_1",
-        syncOperationId: "op_1",
+        syncOperation: xeroClaim("op_1"),
       }),
     ).rejects.toThrow(/credit note/i);
 
@@ -1004,7 +1005,7 @@ describe("membership cancellation Xero operations", () => {
     expect(mocks.createContactGroupContacts).not.toHaveBeenCalled();
     // Operation is failed so it is retried after the credit note posts.
     expect(mocks.failXeroSyncOperation).toHaveBeenCalledWith(
-      "op_1",
+      expect.objectContaining({ id: "op_1" }),
       expect.any(Error),
     );
   });
@@ -1050,7 +1051,7 @@ describe("membership cancellation Xero operations", () => {
         memberId: "member_1",
         requestId: "request_1",
         participantId: "participant_1",
-        syncOperationId: "op_1",
+        syncOperation: xeroClaim("op_1"),
       });
 
       expect(mocks.loadInvoiceBlockers).toHaveBeenCalledWith(["member_1"], {
@@ -1089,7 +1090,7 @@ describe("membership cancellation Xero operations", () => {
           memberId: "member_1",
           requestId: "request_1",
           participantId: "participant_1",
-          syncOperationId: "op_1",
+          syncOperation: xeroClaim("op_1"),
         }),
       ).rejects.toThrow(/INV-0042/);
 
@@ -1097,7 +1098,7 @@ describe("membership cancellation Xero operations", () => {
       // invoice is paid, credited or voided — rather than being abandoned.
       expect(mocks.updateContact).not.toHaveBeenCalled();
       expect(mocks.failXeroSyncOperation).toHaveBeenCalledWith(
-        "op_1",
+        expect.objectContaining({ id: "op_1" }),
         expect.any(Error),
       );
     });
@@ -1118,7 +1119,7 @@ describe("membership cancellation Xero operations", () => {
           memberId: "member_1",
           requestId: "request_1",
           participantId: "participant_1",
-          syncOperationId: "op_1",
+          syncOperation: xeroClaim("op_1"),
         }),
       ).rejects.toThrow(/Xero is not connected/);
 
@@ -1138,7 +1139,7 @@ describe("membership cancellation Xero operations", () => {
         memberId: "member_1",
         requestId: "request_1",
         participantId: "participant_1",
-        syncOperationId: "op_1",
+        syncOperation: xeroClaim("op_1"),
       });
 
       expect(mocks.loadInvoiceBlockers).not.toHaveBeenCalled();
@@ -1178,7 +1179,7 @@ describe("membership cancellation Xero operations", () => {
         memberId: "member_1",
         requestId: "request_1",
         participantId: "participant_1",
-        syncOperationId: "op_1",
+        syncOperation: xeroClaim("op_1"),
       }),
     ).resolves.toEqual({
       memberId: "member_1",
@@ -1272,7 +1273,7 @@ describe("membership cancellation Xero operations", () => {
           requestId: "request_1",
           participantId: "participant_1",
           createdByMemberId: "admin_1",
-          syncOperationId: "op_1",
+          syncOperation: xeroClaim("op_1"),
         }),
       ).resolves.toBe("cn_1");
 
@@ -1341,7 +1342,7 @@ describe("membership cancellation Xero operations", () => {
           requestId: "request_1",
           participantId: "participant_1",
           createdByMemberId: "admin_1",
-          syncOperationId: "op_1",
+          syncOperation: xeroClaim("op_1"),
         }),
       ).resolves.toBe("cn_1");
 
@@ -1367,7 +1368,7 @@ describe("membership cancellation Xero operations", () => {
           requestId: "request_1",
           participantId: "participant_1",
           createdByMemberId: "admin_1",
-          syncOperationId: "op_1",
+          syncOperation: xeroClaim("op_1"),
         }),
       ).rejects.toThrow(/cannot prove the contact is unable to reach a member/);
       expect(mocks.createCreditNotes).not.toHaveBeenCalled();
@@ -1384,7 +1385,7 @@ describe("membership cancellation Xero operations", () => {
           requestId: "request_1",
           participantId: "participant_1",
           createdByMemberId: "admin_1",
-          syncOperationId: "op_1",
+          syncOperation: xeroClaim("op_1"),
         }),
       ).rejects.toThrow(/APP_ENVIRONMENT_ROLE/);
       expect(mocks.createCreditNotes).not.toHaveBeenCalled();
@@ -1400,7 +1401,7 @@ describe("membership cancellation Xero operations", () => {
           requestId: "request_1",
           participantId: "participant_1",
           createdByMemberId: "admin_1",
-          syncOperationId: "op_1",
+          syncOperation: xeroClaim("op_1"),
         }),
       ).resolves.toBe("cn_1");
 

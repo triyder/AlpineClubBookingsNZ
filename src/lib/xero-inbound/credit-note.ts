@@ -448,6 +448,13 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
   return {
     handled: true,
     kind: "CREDIT_NOTE",
+    // #4095: a refunded total whose claim was lost twice was left unwritten; a
+    // stored event fails on it after every write above, so it is retried.
+    ...(refundedPaymentRepair.unsettledPaymentIds
+      ? {
+          recountLeftUnsettled: `The refunded total of payment(s) ${refundedPaymentRepair.unsettledPaymentIds.join(", ")} lost its claim twice to a concurrent writer while credit note ${creditNote.creditNoteID} was synced; the event is retried to recount it.`,
+        }
+      : {}),
     resourceId: creditNote.creditNoteID,
     creditNoteNumber: creditNote.creditNoteNumber ?? null,
     matchedPayments: paymentCandidates.length,

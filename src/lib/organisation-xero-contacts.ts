@@ -346,11 +346,11 @@ export async function findOrCreateXeroContactForOrganisation(
     // member holds. Note there is deliberately NO email search anywhere on this
     // path — see the module docblock.
     if (error instanceof XeroDailyLimitError) {
-      await failXeroSyncOperation(operation.id, error);
+      await failXeroSyncOperation(operation, error);
       throw error;
     }
     if (!isDuplicateActiveXeroContactNameError(error)) {
-      await failXeroSyncOperation(operation.id, error);
+      await failXeroSyncOperation(operation, error);
       throw error;
     }
     try {
@@ -365,7 +365,7 @@ export async function findOrCreateXeroContactForOrganisation(
           "findOrCreateXeroContactForOrganisation duplicate-name recovery",
       });
       if (!matched?.contactID) {
-        await failXeroSyncOperation(operation.id, error);
+        await failXeroSyncOperation(operation, error);
         throw error;
       }
       resolved = { contactId: matched.contactID, linkedVia: "name_match" };
@@ -376,7 +376,7 @@ export async function findOrCreateXeroContactForOrganisation(
         duplicateCreateError: sanitizeForJson(error),
       };
     } catch (recoveryError) {
-      await failXeroSyncOperation(operation.id, recoveryError, {
+      await failXeroSyncOperation(operation, recoveryError, {
         duplicateCreateError: sanitizeForJson(error),
         recoveryError: sanitizeForJson(recoveryError),
       });
@@ -389,7 +389,7 @@ export async function findOrCreateXeroContactForOrganisation(
     const failure = new OrganisationXeroContactError(
       `Failed to resolve a Xero contact for organisation ${organisationId}`,
     );
-    await failXeroSyncOperation(operation.id, failure);
+    await failXeroSyncOperation(operation, failure);
     throw failure;
   }
 
@@ -505,7 +505,7 @@ export async function findOrCreateXeroContactForOrganisation(
     // converges on the same contact rather than minting a second, and the
     // caller's invoice fails rather than being raised against a customer
     // nobody chose.
-    await failXeroSyncOperation(operation.id, linkError, {
+    await failXeroSyncOperation(operation, linkError, {
       phase: "local_link_after_xero_resolution",
       resolvedContactId: finalResolved.contactId,
       providerContactCreated: finalResolved.linkedVia === "created",
@@ -528,7 +528,7 @@ export async function findOrCreateXeroContactForOrganisation(
           "to the school (#3367, INV-INT-020). Nothing changed in Xero.",
       );
     }
-    await completeXeroSyncOperation(operation.id, {
+    await completeXeroSyncOperation(operation, {
       responsePayload: transferredFrom
         ? { ...(completionPayload as object), transferredFrom }
         : completionPayload,
@@ -555,7 +555,7 @@ export async function findOrCreateXeroContactForOrganisation(
       },
       "Concurrent resolver linked a different Xero contact to this organisation first",
     );
-    await completeXeroSyncOperation(operation.id, {
+    await completeXeroSyncOperation(operation, {
       responsePayload: {
         resolution: "superseded_by_concurrent_link",
         resolvedContactId: finalResolved.contactId,

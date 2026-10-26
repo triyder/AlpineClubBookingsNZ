@@ -48,6 +48,7 @@ vi.mock("@/lib/logger", () => ({ default: { warn: vi.fn(), info: vi.fn(), error:
 
 import { createXeroMembershipSubscriptionInvoice } from "@/lib/xero-subscription-invoices";
 import { declareEnvironmentRole } from "@/lib/__tests__/helpers/environment-role";
+import { xeroClaim } from "@/lib/__tests__/helpers/xero-claim";
 
 function charge(overrides: Record<string, unknown> = {}) {
   return {
@@ -139,7 +140,7 @@ describe("subscription invoice delivery behavior", () => {
       }));
     mocks.emailInvoice.mockRejectedValueOnce(new Error("mail unavailable")).mockResolvedValueOnce({ body: {} });
 
-    await createXeroMembershipSubscriptionInvoice({ chargeId: "charge-1", syncOperationId: "op-1" });
+    await createXeroMembershipSubscriptionInvoice({ chargeId: "charge-1", syncOperation: xeroClaim("op-1") });
     expect(mocks.events.slice(0, 2)).toEqual(["create", "persist"]);
     expect(mocks.transaction.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.emailInvoice.mock.invocationCallOrder[0]
@@ -148,11 +149,11 @@ describe("subscription invoice delivery behavior", () => {
       data: expect.objectContaining({ status: "EMAIL_FAILED", lastErrorCode: "EMAIL_FAILED" }),
     }));
 
-    await createXeroMembershipSubscriptionInvoice({ chargeId: "charge-1", syncOperationId: "op-2" });
+    await createXeroMembershipSubscriptionInvoice({ chargeId: "charge-1", syncOperation: xeroClaim("op-2") });
     expect(mocks.createInvoices).toHaveBeenCalledTimes(1);
     expect(mocks.getInvoices).toHaveBeenCalledTimes(1);
     expect(mocks.emailInvoice).toHaveBeenCalledTimes(2);
-    expect(mocks.complete).toHaveBeenLastCalledWith("op-2", expect.objectContaining({ xeroObjectId: "invoice-1" }));
+    expect(mocks.complete).toHaveBeenLastCalledWith(expect.objectContaining({ id: "op-2" }), expect.objectContaining({ xeroObjectId: "invoice-1" }));
   });
 
   // #3971: a FAILED row retried from Xero Operations can be claimed after
@@ -166,14 +167,14 @@ describe("subscription invoice delivery behavior", () => {
     }));
 
     await expect(
-      createXeroMembershipSubscriptionInvoice({ chargeId: "charge-1", syncOperationId: "op-3" }),
+      createXeroMembershipSubscriptionInvoice({ chargeId: "charge-1", syncOperation: xeroClaim("op-3") }),
     ).resolves.toBe("invoice-1");
 
     expect(mocks.getInvoices).not.toHaveBeenCalled();
     expect(mocks.createInvoices).not.toHaveBeenCalled();
     expect(mocks.emailInvoice).not.toHaveBeenCalled();
     expect(mocks.chargeUpdate).not.toHaveBeenCalled();
-    expect(mocks.complete).toHaveBeenCalledWith("op-3", expect.objectContaining({
+    expect(mocks.complete).toHaveBeenCalledWith(expect.objectContaining({ id: "op-3" }), expect.objectContaining({
       responsePayload: { skipped: true, reason: "ALREADY_EMAILED" },
       xeroObjectId: "invoice-1",
     }));
@@ -182,7 +183,7 @@ describe("subscription invoice delivery behavior", () => {
   it("adopts and emails an exact AUTHORISED invoice", async () => {
     mocks.chargeFind.mockResolvedValue(charge());
     mocks.getInvoices.mockResolvedValue({ body: { invoices: [providerInvoice()] } });
-    await createXeroMembershipSubscriptionInvoice({ chargeId: "charge-1", syncOperationId: "op-1" });
+    await createXeroMembershipSubscriptionInvoice({ chargeId: "charge-1", syncOperation: xeroClaim("op-1") });
     expect(mocks.createInvoices).not.toHaveBeenCalled();
     expect(mocks.emailInvoice).toHaveBeenCalledWith("tenant-1", "invoice-1", expect.anything(), expect.any(String));
     expect(mocks.events[0]).toBe("persist");
@@ -202,7 +203,7 @@ describe("subscription invoice delivery behavior", () => {
     mocks.chargeFind.mockResolvedValue(charge());
     mocks.getInvoices.mockResolvedValue({ body: { invoices: [providerInvoice()] } });
 
-    await createXeroMembershipSubscriptionInvoice({ chargeId: "charge-1", syncOperationId: "op-1" });
+    await createXeroMembershipSubscriptionInvoice({ chargeId: "charge-1", syncOperation: xeroClaim("op-1") });
 
     expect(mocks.emailInvoice).not.toHaveBeenCalled();
     for (const call of mocks.chargeUpdate.mock.calls) {
@@ -211,7 +212,7 @@ describe("subscription invoice delivery behavior", () => {
       expect(call[0].data).not.toHaveProperty("emailAttemptCount");
     }
     // Nothing failed, so nothing is reported as a failure.
-    expect(mocks.complete).toHaveBeenLastCalledWith("op-1", expect.objectContaining({
+    expect(mocks.complete).toHaveBeenLastCalledWith(expect.objectContaining({ id: "op-1" }), expect.objectContaining({
       status: "SUCCEEDED",
       responsePayload: expect.objectContaining({
         emailError: null,
@@ -225,13 +226,13 @@ describe("subscription invoice delivery behavior", () => {
     mocks.chargeFind.mockResolvedValue(charge());
     mocks.getInvoices.mockResolvedValue({ body: { invoices: [providerInvoice()] } });
 
-    await createXeroMembershipSubscriptionInvoice({ chargeId: "charge-1", syncOperationId: "op-1" });
+    await createXeroMembershipSubscriptionInvoice({ chargeId: "charge-1", syncOperation: xeroClaim("op-1") });
 
     expect(mocks.emailInvoice).not.toHaveBeenCalled();
     for (const call of mocks.chargeUpdate.mock.calls) {
       expect(call[0].data.status).not.toBe("EMAIL_FAILED");
     }
-    expect(mocks.complete).toHaveBeenLastCalledWith("op-1", expect.objectContaining({
+    expect(mocks.complete).toHaveBeenLastCalledWith(expect.objectContaining({ id: "op-1" }), expect.objectContaining({
       status: "PARTIAL",
       responsePayload: expect.objectContaining({
         emailError: expect.any(String),
@@ -250,7 +251,7 @@ describe("subscription invoice delivery behavior", () => {
       }],
     }));
 
-    const result = await createXeroMembershipSubscriptionInvoice({ chargeId: "charge-1", syncOperationId: "op-1" });
+    const result = await createXeroMembershipSubscriptionInvoice({ chargeId: "charge-1", syncOperation: xeroClaim("op-1") });
 
     expect(result).toBeNull();
     expect(mocks.getInvoices).not.toHaveBeenCalled();
@@ -260,7 +261,7 @@ describe("subscription invoice delivery behavior", () => {
     expect(mocks.chargeUpdate).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ status: "CONFLICT", lastErrorCode: "SUBSCRIPTION_ALREADY_PAID" }),
     }));
-    expect(mocks.complete).toHaveBeenCalledWith("op-1", expect.objectContaining({
+    expect(mocks.complete).toHaveBeenCalledWith(expect.objectContaining({ id: "op-1" }), expect.objectContaining({
       responsePayload: expect.objectContaining({ conflict: "SUBSCRIPTION_ALREADY_PAID", manuallyMarkedPaid: true }),
     }));
     // #4098: the write cannot reopen a charge an officer closed meanwhile.
@@ -286,7 +287,7 @@ describe("subscription invoice delivery behavior", () => {
       ],
     }));
 
-    await createXeroMembershipSubscriptionInvoice({ chargeId: "charge-1", syncOperationId: "op-1" });
+    await createXeroMembershipSubscriptionInvoice({ chargeId: "charge-1", syncOperation: xeroClaim("op-1") });
 
     expect(mocks.createInvoices).not.toHaveBeenCalled();
     expect(mocks.chargeUpdate).toHaveBeenCalledWith(expect.objectContaining({
@@ -305,7 +306,7 @@ describe("subscription invoice delivery behavior", () => {
       ],
     }));
 
-    await createXeroMembershipSubscriptionInvoice({ chargeId: "charge-1", syncOperationId: "op-1" });
+    await createXeroMembershipSubscriptionInvoice({ chargeId: "charge-1", syncOperation: xeroClaim("op-1") });
 
     expect(mocks.createInvoices).not.toHaveBeenCalled();
     expect(mocks.chargeUpdate).toHaveBeenCalledWith(expect.objectContaining({
@@ -318,7 +319,7 @@ describe("subscription invoice delivery behavior", () => {
   it("records the invoice with a status-guarded write, and emails through guarded writes too (#4098 review)", async () => {
     mocks.chargeFind.mockResolvedValue(charge());
 
-    await createXeroMembershipSubscriptionInvoice({ chargeId: "charge-1", syncOperationId: "op-1" });
+    await createXeroMembershipSubscriptionInvoice({ chargeId: "charge-1", syncOperation: xeroClaim("op-1") });
 
     const liveOnly = { id: "charge-1", status: { notIn: ["NOT_REQUIRED", "VOIDED"] } };
     expect(mocks.txChargeUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
@@ -339,7 +340,7 @@ describe("subscription invoice delivery behavior", () => {
     mocks.txChargeUpdateMany.mockResolvedValueOnce({ count: 0 }).mockResolvedValueOnce({ count: 1 });
     mocks.txChargeFindUnique.mockResolvedValue({ status: "NOT_REQUIRED", billingBasis: "PER_MEMBER" });
 
-    const result = await createXeroMembershipSubscriptionInvoice({ chargeId: "charge-1", syncOperationId: "op-1" });
+    const result = await createXeroMembershipSubscriptionInvoice({ chargeId: "charge-1", syncOperation: xeroClaim("op-1") });
 
     expect(result).toBeNull();
     expect(mocks.createInvoices).toHaveBeenCalledTimes(1);
@@ -356,7 +357,7 @@ describe("subscription invoice delivery behavior", () => {
         lastErrorMessage: expect.stringMatching(/^This charge was closed as already paid while Xero invoice INV-1 was being raised for it\. .*Void it in Xero promptly: until then the membership sync may attach it to the recipient's subscription\. This note stays on the closed charge as the record/),
       },
     });
-    expect(mocks.complete).toHaveBeenCalledWith("op-1", expect.objectContaining({
+    expect(mocks.complete).toHaveBeenCalledWith(expect.objectContaining({ id: "op-1" }), expect.objectContaining({
       status: "PARTIAL",
       responsePayload: expect.objectContaining({ conflict: "STRAY_INVOICE_AFTER_CLOSE", email: null }),
       xeroObjectId: "invoice-1",
@@ -369,11 +370,11 @@ describe("subscription invoice delivery behavior", () => {
     mocks.txChargeUpdateMany.mockResolvedValueOnce({ count: 0 });
     mocks.txChargeFindUnique.mockResolvedValue({ status: "VOIDED", billingBasis: "PER_MEMBER" });
 
-    await createXeroMembershipSubscriptionInvoice({ chargeId: "charge-1", syncOperationId: "op-1" });
+    await createXeroMembershipSubscriptionInvoice({ chargeId: "charge-1", syncOperation: xeroClaim("op-1") });
 
     expect(mocks.txChargeUpdateMany).toHaveBeenCalledTimes(1);
     expect(mocks.emailInvoice).not.toHaveBeenCalled();
-    expect(mocks.complete).toHaveBeenCalledWith("op-1", { responsePayload: { skipped: true, reason: "VOIDED" } });
+    expect(mocks.complete).toHaveBeenCalledWith(expect.objectContaining({ id: "op-1" }), { responsePayload: { skipped: true, reason: "VOIDED" } });
   });
 
   it("a resume of an invoice the charge already held is finished, not marked a stray, when the charge was voided meanwhile (#4098 review)", async () => {
@@ -386,12 +387,12 @@ describe("subscription invoice delivery behavior", () => {
     mocks.txChargeUpdateMany.mockResolvedValueOnce({ count: 0 });
     mocks.txChargeFindUnique.mockResolvedValue({ status: "VOIDED", billingBasis: "PER_MEMBER" });
 
-    await createXeroMembershipSubscriptionInvoice({ chargeId: "charge-1", syncOperationId: "op-1" });
+    await createXeroMembershipSubscriptionInvoice({ chargeId: "charge-1", syncOperation: xeroClaim("op-1") });
 
     expect(mocks.createInvoices).not.toHaveBeenCalled();
     expect(mocks.txChargeUpdateMany).toHaveBeenCalledTimes(1);
     expect(mocks.emailInvoice).not.toHaveBeenCalled();
-    expect(mocks.complete).toHaveBeenCalledWith("op-1", { responsePayload: { skipped: true, reason: "VOIDED" } });
+    expect(mocks.complete).toHaveBeenCalledWith(expect.objectContaining({ id: "op-1" }), { responsePayload: { skipped: true, reason: "VOIDED" } });
   });
 
   it("a resume never marks a stray even if it reads the charge closed: it raised no new invoice (#4098 review)", async () => {
@@ -401,23 +402,23 @@ describe("subscription invoice delivery behavior", () => {
     mocks.txChargeUpdateMany.mockResolvedValueOnce({ count: 0 });
     mocks.txChargeFindUnique.mockResolvedValue({ status: "NOT_REQUIRED", billingBasis: "PER_MEMBER" });
 
-    await createXeroMembershipSubscriptionInvoice({ chargeId: "charge-1", syncOperationId: "op-1" });
+    await createXeroMembershipSubscriptionInvoice({ chargeId: "charge-1", syncOperation: xeroClaim("op-1") });
 
     expect(mocks.txChargeUpdateMany).toHaveBeenCalledTimes(1);
-    expect(mocks.complete).toHaveBeenCalledWith("op-1", { responsePayload: { skipped: true, reason: "NOT_REQUIRED" } });
+    expect(mocks.complete).toHaveBeenCalledWith(expect.objectContaining({ id: "op-1" }), { responsePayload: { skipped: true, reason: "NOT_REQUIRED" } });
   });
 
   it("skips a charge an officer closed as already paid, with no provider call (#4098)", async () => {
     mocks.chargeFind.mockResolvedValue(charge({ status: "NOT_REQUIRED" }));
 
-    const result = await createXeroMembershipSubscriptionInvoice({ chargeId: "charge-1", syncOperationId: "op-1" });
+    const result = await createXeroMembershipSubscriptionInvoice({ chargeId: "charge-1", syncOperation: xeroClaim("op-1") });
 
     expect(result).toBeNull();
     expect(mocks.findContact).not.toHaveBeenCalled();
     expect(mocks.getInvoices).not.toHaveBeenCalled();
     expect(mocks.createInvoices).not.toHaveBeenCalled();
     expect(mocks.chargeUpdate).not.toHaveBeenCalled();
-    expect(mocks.complete).toHaveBeenCalledWith("op-1", { responsePayload: { skipped: true, reason: "NOT_REQUIRED" } });
+    expect(mocks.complete).toHaveBeenCalledWith(expect.objectContaining({ id: "op-1" }), { responsePayload: { skipped: true, reason: "NOT_REQUIRED" } });
   });
 
   it("resume path still delivers an already-minted invoice but the coverage write is fenced against PAID rows (#1944)", async () => {
@@ -435,7 +436,7 @@ describe("subscription invoice delivery behavior", () => {
     }));
     mocks.memberSubscriptionUpdateMany.mockResolvedValue({ count: 0 });
 
-    await createXeroMembershipSubscriptionInvoice({ chargeId: "charge-1", syncOperationId: "op-1" });
+    await createXeroMembershipSubscriptionInvoice({ chargeId: "charge-1", syncOperation: xeroClaim("op-1") });
 
     expect(mocks.createInvoices).not.toHaveBeenCalled();
     expect(mocks.memberSubscriptionUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
@@ -452,7 +453,7 @@ describe("subscription invoice delivery behavior", () => {
   ])("records provider conflict for %s without rewriting or emailing", async (_label, invoice) => {
     mocks.chargeFind.mockResolvedValue(charge());
     mocks.getInvoices.mockResolvedValue({ body: { invoices: [invoice] } });
-    await createXeroMembershipSubscriptionInvoice({ chargeId: "charge-1", syncOperationId: "op-1" });
+    await createXeroMembershipSubscriptionInvoice({ chargeId: "charge-1", syncOperation: xeroClaim("op-1") });
     expect(mocks.createInvoices).not.toHaveBeenCalled();
     expect(mocks.emailInvoice).not.toHaveBeenCalled();
     expect(mocks.chargeUpdate).toHaveBeenCalledWith(expect.objectContaining({

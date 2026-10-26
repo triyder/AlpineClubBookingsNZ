@@ -398,8 +398,8 @@ let retry: typeof import("@/lib/xero-operation-retry");
       const original = sync.completeXeroSyncOperation;
       const hang = vi
         .spyOn(sync, "completeXeroSyncOperation")
-        .mockImplementation(((id: string, ...rest: Parameters<typeof original> extends [string, ...infer R] ? R : never) =>
-          id === OPERATION_ID ? new Promise(() => {}) : original(id, ...rest)) as typeof original);
+        .mockImplementation(((claim: Parameters<typeof original>[0], ...rest: Parameters<typeof original> extends [unknown, ...infer R] ? R : never) =>
+          claim.id === OPERATION_ID ? new Promise(() => {}) : original(claim, ...rest)) as typeof original);
       void retry.retryXeroSyncOperation(OPERATION_ID, CLUB_FORMAT_TEST).catch(() => {});
 
       const started = process.hrtime.bigint();

@@ -28,7 +28,7 @@ describe("INV-PAY-140: the superseded-invoice carry proof stays wired into CI (#
       "A -> B -> B captured: both invoices go out, each for its own amount, and their payments sum to the capture",
       "B never paid: nothing is invoiced, and when the booking is cancelled both invoices are retired",
       "B captured before A's cancel lands: A's invoice is released at the move",
-      "a DECLINED A is carried but never cancelled again: its invoice moves at B's mint all the same",
+      "#4422: a DECLINED A is cancelled at Stripe at B's mint, so a stale tab cannot pay it, and its invoice moves all the same",
       "A -> B -> C: three invoices on C's capture, each its own, summing to it",
       "the reduction first, the move queued on A's anchor: A's invoice is retired, counted once, and never moved",
       "the move first: the reduction still retires A's invoice off B and reads it as A's own money, once",
@@ -45,6 +45,8 @@ describe("INV-PAY-140: the superseded-invoice carry proof stays wired into CI (#
       "the carrier first: its invoices record all of B; A's own capture is recorded by its own receipt, never stood down",
       "the ask first: A's invoice comes back and records A; B's own invoice records only B's own amount, and an officer is told once that B paid A's change again",
       "a carrier with no invoice of its own whose receipt is still queued: the move writes A's invoice unpaid, so B's receipt records B instead of standing down",
+      "#4422: a declined ask's stale-tab capture racing its cancel, the carrier already paid and released",
+      "the %s claims A first: one superseded refund, both invoices stay on B, nothing recorded for A",
     ]) {
       expect(suite).toContain(proof);
     }

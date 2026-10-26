@@ -158,7 +158,7 @@ export async function createXeroPaymentForInvoice(
       throw new Error("Failed to create Xero payment");
     }
 
-    await completeXeroSyncOperation(operation.id, {
+    await completeXeroSyncOperation(operation, {
       responsePayload: response.body,
       xeroObjectType: "PAYMENT",
       xeroObjectId: createdPayment.paymentID,
@@ -178,7 +178,7 @@ export async function createXeroPaymentForInvoice(
 
     return createdPayment.paymentID;
   } catch (error) {
-    await failXeroSyncOperation(operation.id, error);
+    await failXeroSyncOperation(operation, error);
     throw error;
   }
 }

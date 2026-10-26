@@ -4,6 +4,7 @@ import logger from "@/lib/logger";
 import { buildXeroObjectUrl } from "@/lib/xero-links";
 import { canonicalXeroWebhookEventCategory } from "@/lib/xero-webhook-categories";
 import { completeXeroSyncOperation, failXeroSyncOperation, startXeroSyncOperation } from "@/lib/xero-sync";
+import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
 import { redactSensitiveText } from "@/lib/redact-sensitive-json";
 import { isStaleProcessingXeroInboundEvent } from "@/lib/xero-stale-operations";
 import { type ProcessStoredXeroInboundEventsResult, type RunXeroInboundReconciliationCycleResult, type StoredXeroInboundEvent, XeroInboundReplayError } from "./types";
@@ -13,6 +14,7 @@ import { reconcileXeroContact } from "./contact";
 import { reconcileXeroPayment } from "./payment";
 import { reconcileXeroInvoice, runIncrementalInvoiceReconciliation } from "./invoice";
 import { reconcileXeroCreditNote } from "./credit-note";
+import { failIfRecountLeftUnsettled } from "./recount-left-unsettled";
 import type { ClubFormat } from "@/lib/club-format";
 import { clubFormatValues } from "@/lib/club-format-server";
 
@@ -85,11 +87,11 @@ async function processXeroInboundEvent(
     case "CONTACT":
       return reconcileXeroContact(event.resourceId);
     case "INVOICE":
-      return reconcileXeroInvoice(event.resourceId, format);
+      return failIfRecountLeftUnsettled(await reconcileXeroInvoice(event.resourceId, format));
     case "PAYMENT":
       return reconcileXeroPayment(event.resourceId);
     case "CREDITNOTE":
-      return reconcileXeroCreditNote(event.resourceId);
+      return failIfRecountLeftUnsettled(await reconcileXeroCreditNote(event.resourceId));
     default:
       logger.warn(
         {
@@ -256,7 +258,7 @@ export async function processStoredXeroInboundEvents(options?: {
       continue;
     }
 
-    let operationId: string | null = null;
+    let claim: XeroOperationClaim | null = null;
 
     try {
       const operation = await startXeroSyncOperation({
@@ -267,10 +269,10 @@ export async function processStoredXeroInboundEvents(options?: {
         replayable: true,
         requestPayload: event.payload,
       });
-      operationId = operation.id;
+      claim = operation;
 
       const reconcileResult = await processXeroInboundEvent(event, format);
-      await completeXeroSyncOperation(operationId, {
+      await completeXeroSyncOperation(operation, {
         responsePayload: reconcileResult,
         xeroObjectType: buildInboundXeroObjectType(event.eventCategory),
         xeroObjectId: event.resourceId,
@@ -293,8 +295,8 @@ export async function processStoredXeroInboundEvents(options?: {
         "Failed to process stored Xero inbound event; automatic retry is deferred"
       );
 
-      if (operationId) {
-        await failXeroSyncOperation(operationId, error);
+      if (claim) {
+        await failXeroSyncOperation(claim, error);
       }
       await markStoredInboundEventFailed(event.id, error);
       await releaseProcessedWebhookEventClaim(event);

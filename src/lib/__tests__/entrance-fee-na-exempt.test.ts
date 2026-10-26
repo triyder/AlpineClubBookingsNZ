@@ -55,6 +55,7 @@ import {
 } from "@/lib/xero-mappings";
 import { createXeroEntranceFeeInvoice } from "@/lib/xero-entrance-fee-invoices";
 import { enqueueXeroEntranceFeeInvoiceOperation } from "@/lib/xero-operation-outbox";
+import { xeroClaim } from "@/lib/__tests__/helpers/xero-claim";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -126,11 +127,11 @@ describe("createXeroEntranceFeeInvoice exemption", () => {
     } as never);
 
     const result = await createXeroEntranceFeeInvoice("org1", {
-      syncOperationId: "op-1",
+      syncOperation: xeroClaim("op-1"),
     });
 
     expect(result).toBeNull();
-    expect(mockCompleteXeroSyncOperation).toHaveBeenCalledWith("op-1", {
+    expect(mockCompleteXeroSyncOperation).toHaveBeenCalledWith(expect.objectContaining({ id: "op-1" }), {
       status: "SUCCEEDED",
       responsePayload: expect.objectContaining({
         skipped: true,
@@ -147,7 +148,7 @@ describe("createXeroEntranceFeeInvoice exemption", () => {
     } as never);
 
     const result = await createXeroEntranceFeeInvoice("org1", {
-      syncOperationId: "op-2",
+      syncOperation: xeroClaim("op-2"),
       precomputedEntranceFee: {
         category: "ADULT",
         feeMapping: { itemCode: "ENTRANCE", amountCents: 10000 },
@@ -155,7 +156,7 @@ describe("createXeroEntranceFeeInvoice exemption", () => {
     });
 
     expect(result).toBeNull();
-    expect(mockCompleteXeroSyncOperation).toHaveBeenCalledWith("op-2", {
+    expect(mockCompleteXeroSyncOperation).toHaveBeenCalledWith(expect.objectContaining({ id: "op-2" }), {
       status: "SUCCEEDED",
       responsePayload: expect.objectContaining({
         skipped: true,

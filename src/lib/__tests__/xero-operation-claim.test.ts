@@ -72,12 +72,13 @@ describe("claimXeroSyncOperationToRunning", () => {
     });
   });
 
-  it("claims the row when exactly one PENDING row matched", async () => {
+  it("MUTATION (#4373): claims the row when exactly one PENDING row matched, and answers the claim it stamped", async () => {
     mocks.updateMany.mockResolvedValue({ count: 1 });
 
-    await expect(
-      claimXeroSyncOperationToRunning("op_1", { operationType: "REQUEUE" }),
-    ).resolves.toBe(true);
+    const claim = await claimXeroSyncOperationToRunning("op_1", { operationType: "REQUEUE" });
+    expect(claim).toEqual({ id: "op_1", startedAt: FROZEN_NOW });
+    // The token the outcome is fenced on is the very `startedAt` the claim wrote.
+    expect(claim!.startedAt).toBe(mocks.updateMany.mock.calls[0][0].data.startedAt);
   });
 
   it("does not claim when the row was already taken (lost single-flight race)", async () => {
@@ -85,14 +86,14 @@ describe("claimXeroSyncOperationToRunning", () => {
 
     await expect(
       claimXeroSyncOperationToRunning("op_1", { operationType: "REQUEUE" }),
-    ).resolves.toBe(false);
+    ).resolves.toBeNull();
   });
 
-  it("returns false for any count that is not exactly one", async () => {
+  it("returns null for any count that is not exactly one", async () => {
     mocks.updateMany.mockResolvedValue({ count: 2 });
 
     await expect(
       claimXeroSyncOperationToRunning("op_1", { operationType: "REQUEUE" }),
-    ).resolves.toBe(false);
+    ).resolves.toBeNull();
   });
 });

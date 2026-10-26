@@ -37,7 +37,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
-import { realElapsedMs } from "./helpers/clock";
+import { FROZEN_TEST_CLOCK_BASE_ISO, realElapsedMs } from "./helpers/clock";
 import { assertSafeRaceDbUrl } from "./support/race-db-url";
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
@@ -277,7 +277,7 @@ let sync: typeof import("@/lib/xero-sync");
 
       // L's late failure, as its invoice create's catch writes it.
       await expect(
-        sync.failXeroSyncOperation(PARTIAL_OPERATION_ID, new Error("Xero 409: a request with this key is in progress")),
+        sync.failXeroSyncOperation({ id: PARTIAL_OPERATION_ID, startedAt: null }, new Error("Xero 409: a request with this key is in progress")),
       ).resolves.toBeNull();
       expect(await readPartial()).toMatchObject({ status: "RUNNING", lastErrorCode: "PARTIAL_REPAIR_RUNNING" });
       expect(repeatedFailureAlert).not.toHaveBeenCalled();
@@ -300,7 +300,7 @@ let sync: typeof import("@/lib/xero-sync");
     // Review: the composed `where` (the marker OR beside status) against real
     // PostgreSQL. A refund-note repair's claim refuses a late failure from a
     // caller that does not hold it; the claim's own write, guarded by its
-    // `onlyIfRunningSince`, still lands.
+    // `retryClaim`, still lands.
     it("MUTATION: a late failure never lands on a refund-note repair's claim, while the claim's own guarded write does", async () => {
       const claimedAt = new Date("2026-07-01T00:00:00.000Z");
       await prisma.xeroSyncOperation.create({
@@ -321,14 +321,14 @@ let sync: typeof import("@/lib/xero-sync");
       const readClaim = () => prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: REFUND_NOTE_OPERATION_ID } });
 
       await expect(
-        sync.failXeroSyncOperation(REFUND_NOTE_OPERATION_ID, new Error("Xero 409: a request with this key is in progress")),
+        sync.failXeroSyncOperation({ id: REFUND_NOTE_OPERATION_ID, startedAt: null }, new Error("Xero 409: a request with this key is in progress")),
       ).resolves.toBeNull();
       expect(await readClaim()).toMatchObject({ status: "RUNNING", lastErrorCode: "REFUND_NOTE_REPAIR_RUNNING", completedAt: null });
       expect(repeatedFailureAlert).not.toHaveBeenCalled();
 
       await expect(
-        sync.failXeroSyncOperation(REFUND_NOTE_OPERATION_ID, new Error("Xero 503 on the refund note"), undefined, {
-          onlyIfRunningSince: claimedAt,
+        sync.failXeroSyncOperation({ id: REFUND_NOTE_OPERATION_ID, startedAt: claimedAt }, new Error("Xero 503 on the refund note"), undefined, {
+          retryClaim: true,
         }),
       ).resolves.toMatchObject({ id: REFUND_NOTE_OPERATION_ID, status: "FAILED" });
       expect(await readClaim()).toMatchObject({ status: "FAILED", lastErrorMessage: expect.stringContaining("Xero 503 on the refund note") });
@@ -345,7 +345,7 @@ let sync: typeof import("@/lib/xero-sync");
       const linkBefore = await prisma.xeroObjectLink.findFirstOrThrow({ where: { localId: LOCAL_ID, xeroObjectType: "PAYMENT" } });
 
       await expect(
-        sync.completeXeroSyncOperation(succeeded!.id, {
+        sync.completeXeroSyncOperation(succeeded!, {
           status: "PARTIAL",
           responsePayload: { payment: null },
           xeroObjectType: "PAYMENT",
@@ -369,6 +369,148 @@ let sync: typeof import("@/lib/xero-sync");
       expect(await countedFailures()).toBe(0);
       expect(repeatedFailureAlert).not.toHaveBeenCalled();
       expect(await prisma.xeroObjectLink.findMany({ where: { localId: LOCAL_ID, xeroObjectType: "PAYMENT" } })).toEqual([linkBefore]);
+    });
+
+    // #4373: every outcome is written under the claim it was made under (its
+    // RUNNING row's `startedAt`), so an earlier attempt's late outcome never
+    // lands on a later retry's claim. The retry's claim is the status-guarded
+    // write `runWithClaimedOriginal` makes (FAILED -> RUNNING, a new
+    // `startedAt`), reproduced here because the helper is module-private; its
+    // outcome goes through the real writer under that claim, as the replay's
+    // handler writes it. The clock moves between claims: tests freeze `Date`.
+    describe("#4373: an earlier attempt's late outcome never lands on a retry's claim", () => {
+      const at = (minutes: number) => new Date(new Date(FROZEN_TEST_CLOCK_BASE_ISO).getTime() + minutes * 60_000);
+
+      async function retryClaims(operationId: string) {
+        const startedAt = new Date();
+        const claimed = await prisma.xeroSyncOperation.updateMany({
+          where: { id: operationId, status: { in: ["FAILED", "PARTIAL"] }, manuallyResolvedAt: null, replayable: true },
+          data: { status: "RUNNING", startedAt },
+        });
+        expect(claimed.count).toBe(1);
+        return { id: operationId, startedAt };
+      }
+
+      // Pinned here, not assumed: the shared race harness can leave the clock moved.
+      beforeEach(() => {
+        vi.setSystemTime(at(0));
+      });
+
+      afterEach(() => {
+        vi.setSystemTime(new Date(FROZEN_TEST_CLOCK_BASE_ISO));
+      });
+
+      it("MUTATION: attempt 1 is reset stale and retried; its late failure is refused, and the retry's own outcome lands", async () => {
+        const a1Call = scripted({ error: "Xero 503 after a long stall" });
+        script = [a1Call];
+        const a1 = pay();
+        void a1.catch(() => undefined);
+        await waitFor(a1Call.started.promise, "attempt 1's Xero call");
+        const [running] = await rows();
+        expect(running).toMatchObject({ status: "RUNNING", startedAt: at(0) });
+
+        // An officer's Mark failed of the stuck row, then a retry's claim.
+        vi.setSystemTime(at(16));
+        const stale = await import("@/lib/xero-stale-operations");
+        await expect(stale.markStaleRunningXeroOperationFailed(running!.id, async () => undefined, at(16))).resolves.toMatchObject({
+          outcome: "marked",
+        });
+        vi.setSystemTime(at(17));
+        const retryClaim = await retryClaims(running!.id);
+
+        a1Call.gate.resolve();
+        await expect(a1).rejects.toThrow("Xero 503 after a long stall");
+        const held = await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: running!.id } });
+        // The claim keeps the reset's completedAt; a landed failure would have stamped at(17).
+        expect(held).toMatchObject({ status: "RUNNING", startedAt: at(17), completedAt: at(16) });
+        expect(held.lastErrorMessage ?? "").not.toContain("long stall");
+        expect(repeatedFailureAlert).not.toHaveBeenCalled();
+
+        await expect(
+          sync.completeXeroSyncOperation(retryClaim, {
+            responsePayload: { payment: "race-4373-xero-payment-retry" },
+            xeroObjectType: "PAYMENT",
+            xeroObjectId: "race-4373-xero-payment-retry",
+          }),
+        ).resolves.toMatchObject({ status: "SUCCEEDED", xeroObjectId: "race-4373-xero-payment-retry" });
+        expect(await countedFailures()).toBe(0);
+      });
+
+      // Review F1: the refused success's Xero payment still has its link, so a
+      // retry that then fails leaves it recorded somewhere.
+      it("MUTATION: attempt 1's late success is refused on the retry's claim but still records its link, and the retry's own failure lands", async () => {
+        const a1Call = scripted({ paymentId: "race-4373-xero-payment-late" });
+        script = [a1Call];
+        const a1 = pay();
+        void a1.catch(() => undefined);
+        await waitFor(a1Call.started.promise, "attempt 1's Xero call");
+        const [running] = await rows();
+
+        vi.setSystemTime(at(16));
+        const stale = await import("@/lib/xero-stale-operations");
+        await stale.markStaleRunningXeroOperationFailed(running!.id, async () => undefined, at(16));
+        vi.setSystemTime(at(17));
+        const retryClaim = await retryClaims(running!.id);
+
+        a1Call.gate.resolve();
+        await a1;
+        expect(await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: running!.id } })).toMatchObject({
+          status: "RUNNING",
+          startedAt: at(17),
+          xeroObjectId: null,
+        });
+        const lateLink = () => prisma.xeroObjectLink.findMany({ where: { localId: LOCAL_ID, xeroObjectType: "PAYMENT" } });
+        expect((await lateLink()).map((link) => [link.xeroObjectId, link.role, link.active])).toEqual([
+          ["race-4373-xero-payment-late", "STRIPE_PAYMENT", true],
+        ]);
+
+        await expect(sync.failXeroSyncOperation(retryClaim, new Error("Xero 503 on the retry"))).resolves.toMatchObject({
+          status: "FAILED",
+          lastErrorMessage: expect.stringContaining("Xero 503 on the retry"),
+        });
+        // The retry's failure stands as its status; the late payment stays recorded.
+        expect(await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: running!.id } })).toMatchObject({
+          status: "FAILED",
+          xeroObjectId: null,
+        });
+        expect(await lateLink()).toHaveLength(1);
+      });
+
+      // The issue's own case: W fails, a retry claims the row while L's call is
+      // in flight, and L's failure would have turned the retry's claim FAILED.
+      it("MUTATION: W fails, a retry claims the row, L's late failure is refused, and the retry completes", async () => {
+        const wCall = scripted({ error: "Xero 429: rate limit exceeded" });
+        const lCall = scripted({ error: "Xero 409: a request with this idempotency key is already being processed" });
+        const { w, l, operationId } = await startBothOnOneRow(wCall, lCall);
+
+        wCall.gate.resolve();
+        await expect(w).rejects.toThrow("Xero 429");
+        expect(await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: operationId } })).toMatchObject({ status: "FAILED" });
+        expect(repeatedFailureAlert).toHaveBeenCalledTimes(1);
+
+        vi.setSystemTime(at(1));
+        const retryClaim = await retryClaims(operationId);
+        lCall.gate.resolve();
+        await expect(l).rejects.toThrow("Xero 409");
+        expect(await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: operationId } })).toMatchObject({
+          status: "RUNNING",
+          startedAt: at(1),
+        });
+        expect(repeatedFailureAlert).toHaveBeenCalledTimes(1);
+
+        await expect(
+          sync.completeXeroSyncOperation(retryClaim, {
+            xeroObjectType: "PAYMENT",
+            xeroObjectId: "race-4373-xero-payment-retry",
+            extraLinks: [
+              { localModel: "Payment", localId: LOCAL_ID, xeroObjectType: "PAYMENT", xeroObjectId: "race-4373-xero-payment-retry", role: "STRIPE_PAYMENT" },
+            ],
+          }),
+        ).resolves.toMatchObject({ status: "SUCCEEDED" });
+        expect(await countedFailures()).toBe(0);
+        const link = await prisma.xeroObjectLink.findFirst({ where: { localId: LOCAL_ID, xeroObjectType: "PAYMENT" } });
+        expect(link?.xeroObjectId).toBe("race-4373-xero-payment-retry");
+      });
     });
   },
 );

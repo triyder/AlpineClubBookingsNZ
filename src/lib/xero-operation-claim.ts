@@ -1,5 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
 
 /**
  * Atomically claim a single PENDING `XeroSyncOperation` row to RUNNING (#1272).
@@ -14,6 +15,10 @@ import { prisma } from "@/lib/prisma";
  * financial effect. The precondition and the RUNNING transition (with the four
  * error/timestamp resets) MUST stay identical for every caller; only the
  * caller-specific predicate differs and is supplied via `guard`.
+ *
+ * #4373: answers the claim - the row's id and the `startedAt` this claim
+ * stamped - which the claimer's outcome is written under (`INV-INT-029`), or
+ * null when the claim was lost.
  */
 export async function claimXeroSyncOperationToRunning(
   operationId: string,
@@ -24,7 +29,8 @@ export async function claimXeroSyncOperationToRunning(
   // row and double-process). AND/OR/NOT nesting remains an unused escape hatch,
   // so this stops the realistic accidental foot-gun, not every theoretical one.
   guard: Omit<Prisma.XeroSyncOperationWhereInput, "id" | "status">,
-): Promise<boolean> {
+): Promise<XeroOperationClaim | null> {
+  const startedAt = new Date();
   const result = await prisma.xeroSyncOperation.updateMany({
     where: {
       id: operationId,
@@ -33,12 +39,12 @@ export async function claimXeroSyncOperationToRunning(
     },
     data: {
       status: "RUNNING",
-      startedAt: new Date(),
+      startedAt,
       completedAt: null,
       lastErrorCode: null,
       lastErrorMessage: null,
     },
   });
 
-  return result.count === 1;
+  return result.count === 1 ? { id: operationId, startedAt } : null;
 }
