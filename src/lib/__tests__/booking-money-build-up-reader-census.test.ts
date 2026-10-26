@@ -57,7 +57,9 @@ const NAMED_READERS: Record<string, ReaderSite> = {
     resolutions: 1,
     operation: "CREDIT_ELECTION",
     historySink: /moneyBuildUp:\s*moneyBuildUpSelection\.historyMetadata/,
-    amountSink: /const verifiedFinalPriceCents = d3CompatibleBookingMoneyBuildUpCents\([\s\S]{0,100}moneyBuildUpSelection[\s\S]{0,800}verifiedFinalPriceCents - alreadyAppliedCents/,
+    // #3955 round 3 (`INV-PAY-119`): the verified price is what the election's
+    // cap — what the booking owes — is computed from.
+    amountSink: /const verifiedFinalPriceCents = d3CompatibleBookingMoneyBuildUpCents\([\s\S]{0,100}moneyBuildUpSelection[\s\S]{0,1000}bookingAmountOwedCents\(\{\s*finalPriceCents: verifiedFinalPriceCents,/,
   },
   "src/lib/xero-booking-invoices.ts": {
     reads: 1,
@@ -133,9 +135,11 @@ describe("#3277 canonical stored-money reader census", () => {
     before(credit, "const moneyBuildUpSelection", "await tx.booking.updateMany");
 
     const xero = productionCode("src/lib/xero-booking-invoices.ts");
-    before(xero, "const booking = await prisma.booking.findUnique", "bookingMoneyBuildUpFromProjection(booking");
+    // #3980 review M1: the create's read is one snapshot, in its own module.
+    const xeroRead = productionCode("src/lib/xero-primary-invoice-read.ts");
+    before(xero, "await readBookingForPrimaryInvoice(bookingId)", "bookingMoneyBuildUpFromProjection(booking");
     before(xero, "bookingMoneyBuildUpFromProjection(booking", "getAuthenticatedXeroClient()");
-    expect(xero).toMatch(
+    expect(xeroRead).toMatch(
       /promoRedemptions:\s*\{\s*include:\s*\{\s*promoCode:\s*true,\s*allocations:\s*true\s*\}\s*\}[\s\S]{0,80}nightAdjustments:\s*true/,
     );
     expect(xero).not.toContain("readBookingMoneyBuildUp(prisma");

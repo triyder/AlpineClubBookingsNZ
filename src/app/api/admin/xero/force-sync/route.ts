@@ -5,6 +5,7 @@ import { z } from "zod";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
+import { exactPrefix } from "@/lib/prisma-exact-prefix";
 import { requireAdmin } from "@/lib/session-guards";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import { getXeroOrgShortCode } from "@/lib/xero-link-short-code";
@@ -76,9 +77,8 @@ async function resolveMember(query: string) {
 
   const matches = await prisma.member.findMany({
     where: {
-      id: {
-        startsWith: query,
-      },
+      // #4146: an id typed with `_` or `%` is text, not a pattern that could resolve another record.
+      id: exactPrefix(query),
     },
     select: {
       id: true,
@@ -103,9 +103,8 @@ async function resolveMember(query: string) {
 async function resolveBooking(query: string) {
   const matches = await prisma.booking.findMany({
     where: {
-      id: {
-        startsWith: query,
-      },
+      // #4146: an id typed with `_` or `%` is text, not a pattern that could resolve another record.
+      id: exactPrefix(query),
     },
     select: {
       id: true,

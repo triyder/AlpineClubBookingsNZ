@@ -6,6 +6,7 @@ import { AlertTriangle, CheckCircle2, Loader2 } from "lucide-react";
 import { FieldHint, useFieldHint } from "@/components/ui/field-hint";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useStepSaving } from "@/components/admin/integration-wizard";
 import type { WizardStepHelpers } from "@/components/admin/integration-wizard";
 import {
   ViewOnlyActionButton,
@@ -152,7 +153,7 @@ export function CredentialsStep({
 }) {
   const [accessKeyId, setAccessKeyId] = useState("");
   const [secretAccessKey, setSecretAccessKey] = useState("");
-  const [saving, setSaving] = useState(false);
+  const [saving, setSaving] = useStepSaving(helpers);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
@@ -290,7 +291,7 @@ export function DestinationStep({
   const regionHint = useFieldHint();
   const [bucket, setBucket] = useState(context.bucket ?? "");
   const [region, setRegion] = useState(context.region);
-  const [saving, setSaving] = useState(false);
+  const [saving, setSaving] = useStepSaving(helpers);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
@@ -403,7 +404,7 @@ export function OperationalStep({
 } & AncestorViewOnlyBannerProps) {
   const [enabled, setEnabled] = useState(context.enabled);
   const [retentionDays, setRetentionDays] = useState(context.retentionDays);
-  const [saving, setSaving] = useState(false);
+  const [saving, setSaving] = useStepSaving(helpers);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 

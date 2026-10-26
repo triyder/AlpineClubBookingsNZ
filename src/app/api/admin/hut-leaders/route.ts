@@ -17,15 +17,23 @@ import { acquireLodgeCapacityLock } from "@/lib/capacity";
 import { getAuditRequestContext } from "@/lib/audit";
 import { recordHutLeaderAssignmentAudit } from "@/lib/hut-leader-assignment-audit";
 import { findHutLeaderOverlapRefusal } from "@/lib/hut-leader-overlap-guard";
+import { readHutLeaderSchoolNightsWarning } from "@/lib/hut-leader-school-nights-warning";
 import {
   recordWholeLodgeHoldAmendment,
   type WholeLodgeHoldAmendment,
 } from "@/lib/custodian-assignment";
 import { validateCustodianBedHoldAndHoldAmendment } from "@/lib/hut-leader-assignment-service";
 import { custodianBedHoldErrorResponse } from "@/lib/custodian-assignment-routes";
-import { isMinorAgeTier } from "@/lib/custodian-occupancy";
+import { isCustodianOccupancy, isMinorAgeTier } from "@/lib/custodian-occupancy";
 import { isEffectiveModuleEnabled } from "@/lib/admin-modules";
 import { HutLeaderAssignmentSource } from "@prisma/client";
+import {
+  assertHutLeaderNightsStayed,
+  findHutLeaderStayRefusal,
+  hutLeaderStayRefusalBody,
+  HutLeaderNightsNotStayedError,
+  isHutLeaderStayCheckExempt,
+} from "@/lib/hut-leader-stayed-nights";
 
 const createSchema = z.object({
   memberId: z.string().min(1),
@@ -36,6 +44,8 @@ const createSchema = z.object({
   // default "No bed — role only", which behaves exactly as it did before this
   // feature and has zero capacity effect.
   bedId: z.string().min(1).nullable().optional(),
+  // #3817: the "Custodian (lives on site)" tick. Absent is false.
+  isCustodian: z.boolean().optional(),
   // #1668-style explicit override of the over-capacity warning.
   confirmOverCapacity: z.boolean().optional(),
   // #2698 ordering case: the officer's EXPLICIT acceptance that holding this
@@ -89,6 +99,8 @@ export async function GET(req: NextRequest) {
   });
 
   return NextResponse.json({
+    // #3817: the page offers "Hold a bed" only while bed allocation is on.
+    bedAllocationEnabled: await isEffectiveModuleEnabled("bedAllocation"),
     assignments: assignments.map((a) => ({
       id: a.id,
       memberId: a.memberId,
@@ -103,6 +115,10 @@ export async function GET(req: NextRequest) {
       bedId: a.bedId,
       bedName: a.bed?.name ?? null,
       bedRoomName: a.bed?.room.name ?? null,
+      // #3817: the custodian tick, so the table can say so.
+      isCustodian: a.isCustodian,
+      // #3821: a teacher row is never offered the custodian tick.
+      source: a.source,
     })),
   });
 }
@@ -174,6 +190,22 @@ export async function POST(req: NextRequest) {
   const newStart = parseDateOnly(parsed.data.startDate);
   const newEnd = parseDateOnly(parsed.data.endDate);
 
+  // Custodian bed hold (#2286): a bed can only mean anything while the
+  // bed-allocation module is on — rooms and beds exist only under it.
+  const bedId = parsed.data.bedId ?? null;
+  // #3817: a role-only, non-custodian assignment claims only nights the member
+  // stays here; a held bed or the custodian tick exempts it (INV-DATE-030).
+  // Re-asked under the lock.
+  const isCustodian = parsed.data.isCustodian === true;
+  // #3821: the proposed row, so a custodian is judged on the school nights it
+  // covers. The overlap guard's custodian note says why.
+  const overlapCandidate = {
+    memberId: member.id,
+    bedId,
+    isCustodian,
+    source: HutLeaderAssignmentSource.MANUAL,
+  };
+
   // The cheap pre-lock ask, through the SAME predicate the locked re-read
   // below uses, so the two can never disagree about what an overlap is.
   const earlyOverlap = await findHutLeaderOverlapRefusal(prisma, {
@@ -182,14 +214,19 @@ export async function POST(req: NextRequest) {
     endDate: newEnd,
     // #2926: a DELIBERATE officer action, so the teacher carve-out applies.
     allowOverlappingSchoolRows: true,
+    candidate: overlapCandidate,
   });
   if (earlyOverlap) {
     return NextResponse.json({ error: earlyOverlap.error }, { status: 409 });
   }
-
-  // Custodian bed hold (#2286): a bed can only mean anything while the
-  // bed-allocation module is on — rooms and beds exist only under it.
-  const bedId = parsed.data.bedId ?? null;
+  const stayExempt = isHutLeaderStayCheckExempt({
+    bedId,
+    isCustodian,
+    source: HutLeaderAssignmentSource.MANUAL,
+  });
+  const stayAsk = { memberId: member.id, lodgeId, startDate: newStart, endDate: newEnd };
+  const earlyStay = stayExempt ? null : await findHutLeaderStayRefusal(prisma, stayAsk);
+  if (earlyStay) return NextResponse.json(hutLeaderStayRefusalBody(earlyStay), { status: 409 });
   if (bedId && !(await isEffectiveModuleEnabled("bedAllocation"))) {
     return NextResponse.json(
       {
@@ -213,8 +250,10 @@ export async function POST(req: NextRequest) {
   // and credit-restore — while no amendment is possible at all, because a
   // bedless assignment narrows nothing. The bed is already derived above, so
   // this costs no read.
+  // #3817: a ticked custodian takes a space out of a hold's set just as a bed
+  // does, so it may be the involved occupant instead of a bed.
   const amendRequested =
-    parsed.data.amendOverlappingHolds === true && bedId !== null;
+    parsed.data.amendOverlappingHolds === true && isCustodianOccupancy({ bedId, isCustodian });
 
   try {
     const pin = generateHutLeaderPin();
@@ -272,17 +311,22 @@ export async function POST(req: NextRequest) {
         endDate: newEnd,
         // #2926: a DELIBERATE officer action, so the teacher carve-out applies.
         allowOverlappingSchoolRows: true,
+        candidate: overlapCandidate,
       });
       if (lockedOverlap) throw new HutLeaderOverlapError(lockedOverlap.error);
+
+      if (!stayExempt) await assertHutLeaderNightsStayed(tx, { ...stayAsk, lodgeId: lockedLodgeId });
 
       // The hard bed refusals, then the #2698 ordering question — in that
       // order, and shared with the edit so the two cannot drift. Declining
       // throws, which rolls this whole transaction back: "no partial durable
       // state" is the transaction, not a cleanup path.
       let amendments: WholeLodgeHoldAmendment[] = [];
-      if (bedId) {
+      if (isCustodianOccupancy({ bedId, isCustodian })) {
         amendments = await validateCustodianBedHoldAndHoldAmendment(tx, {
           bedId,
+          isCustodian,
+          memberId: parsed.data.memberId,
           lodgeId: lockedLodgeId,
           startDate: newStart,
           endDate: newEnd,
@@ -300,6 +344,7 @@ export async function POST(req: NextRequest) {
           // #2926: an officer put this leader here. Stamped rather than left
           // to the column default so the census reads it off the call site.
           source: HutLeaderAssignmentSource.MANUAL,
+          isCustodian,
           ...(bedId ? { bedId } : {}),
         },
       });
@@ -313,12 +358,13 @@ export async function POST(req: NextRequest) {
         startDate: newStart,
         endDate: newEnd,
         bedId,
+        isCustodian,
         requestId: auditRequest?.id,
         ipAddress: auditRequest?.ipAddress,
         userAgent: auditRequest?.userAgent,
       });
 
-      if (bedId && amendments.length > 0) {
+      if (amendments.length > 0) {
         // Same transaction as the create above: accept writes both facts or
         // neither (#2698, "one logical atomic audited action").
         await recordWholeLodgeHoldAmendment(tx, {
@@ -332,10 +378,9 @@ export async function POST(req: NextRequest) {
           userAgent: auditRequest?.userAgent,
         });
       }
-      return { assignment, member: lockedMember, amendments };
+      return { assignment, member: lockedMember, amendments, lodgeId: lockedLodgeId };
     });
     const { assignment } = created;
-
     let emailSent = true;
     try {
       await sendHutLeaderAssignmentEmail({
@@ -359,24 +404,40 @@ export async function POST(req: NextRequest) {
       "Hut leader assignment created"
     );
 
+    // #3821: advisory, read after the commit (shared with the edit).
+    const schoolNightsWarning = await readHutLeaderSchoolNightsWarning(prisma, {
+      id: assignment.id,
+      memberId: created.member.id,
+      lodgeId: created.lodgeId,
+      startDate: newStart,
+      endDate: newEnd,
+      source: HutLeaderAssignmentSource.MANUAL,
+      bedId,
+      isCustodian,
+    });
+
     return NextResponse.json(
       {
         id: assignment.id,
         emailSent,
-        // #2286 privacy guard: a minor holding a bed is never individually
+        // #2286 privacy guard: a minor custodian (bed or tick, #3817) is never individually
         // named on the lobby TV (the display contract forbids it at every
         // granularity), so the screen shows the role word alone. Tell the admin
         // now rather than letting them expect a name that will never appear.
         minorCustodianWarning:
-          bedId && isMinorAgeTier(created.member.ageTier)
+          isCustodianOccupancy({ bedId, isCustodian }) && isMinorAgeTier(created.member.ageTier)
             ? "This member is a minor, so the lodge screen will show the custodian role only and never their name."
             : null,
+        schoolNightsWarning,
       },
       { status: 201 }
     );
   } catch (err) {
     if (err instanceof HutLeaderOverlapError) {
       return NextResponse.json({ error: err.message }, { status: 409 });
+    }
+    if (err instanceof HutLeaderNightsNotStayedError) {
+      return NextResponse.json(hutLeaderStayRefusalBody(err.refusal), { status: 409 });
     }
     if (err instanceof Error && err.message === "LOCKED_LODGE_NOT_ACTIVE") {
       return NextResponse.json(

@@ -38,17 +38,102 @@ import {
   buildPassReport,
 } from "./xero-booking-repair-passes";
 import { createCountMap } from "./xero-booking-repair-utils";
+import { getCapturedRepairTransactions } from "./xero-booking-repair-payments";
+import { readLateCaptureRefundsPaidAnotherWay } from "@/lib/late-capture-paid-another-way";
 import type { ClubFormat } from "@/lib/club-format";
+import { formatCents } from "@/lib/utils";
+import { labelPaidBackRefundRequests } from "./xero-booking-repair-request-notes";
 
 const MAX_APPLY_PASSES = 3;
+
+/**
+ * #3924 round 7 (money M2, `INV-PAY-122`): each APPROVED capture's close of its
+ * card refund as paid another way, on its approval task's entry, for the
+ * receipt finding (`PAID_ANOTHER_WAY_LATE_CAPTURE_WITHOUT_XERO_RECEIPT`).
+ * Round 8: with, for a close whose note waits for the receipt, where the
+ * receipt and the note stand (`PAID_ANOTHER_WAY_REFUND_NOTE_NOT_QUEUED`).
+ * Round 9: and the close's amount in the club's format
+ * (`PAID_ANOTHER_WAY_REFUND_NOTE_RECORD_BY_HAND`). Round 11: for every close
+ * of an approved capture, and the amount is what is left to record by hand.
+ */
+async function withPaidAnotherWayCloses(
+  contexts: Awaited<ReturnType<typeof loadAuditData>>,
+  deps: RepairDependencies,
+  format: ClubFormat,
+) {
+  const approved = contexts.flatMap((context) =>
+    [...context.lateCaptureTasks].filter(([, task]) => task.status === "COMPLETED").map(([intent]) => intent),
+  );
+  const closes = await readLateCaptureRefundsPaidAnotherWay(approved, deps.prisma);
+  for (const context of contexts) {
+    for (const [intent, task] of context.lateCaptureTasks) {
+      const close = closes.get(intent);
+      if (!close) continue;
+      if (task.status !== "COMPLETED") {
+        task.paidAnotherWayClose = close;
+        continue;
+      }
+      // Round 11: every approved capture's close, whatever its plan - the
+      // close's finding, not the kept invoice's, answers its capture.
+      const receiptState = await deps.readPaidAnotherWayReceiptState(intent);
+      task.paidAnotherWayClose = {
+        ...close,
+        receiptState,
+        // Round 9: named in the club's format by the record-by-hand finding;
+        // round 11: what is left to record by hand.
+        amountLabel: formatCents(receiptState.recordByHandCents, format),
+        // Round 14: named apart, to check in Xero first.
+        cardNoteMayBeInXeroLabel: formatCents(receiptState.cardNoteMayBeInXeroCents, format),
+      };
+    }
+  }
+  return contexts;
+}
+
+/**
+ * #3924 round 12 (`LATE_CAPTURE_CARD_REFUND_RECORD_BY_HAND`): on a cancelled
+ * booking, each late capture's card refunds no note will answer
+ * (`readLateCaptureCardRefundsByHand`), named in the club's format - round
+ * 14: with, apart, those a card note sent without a reply may answer.
+ */
+async function withLateCaptureCardRefundsByHand(
+  contexts: Awaited<ReturnType<typeof loadAuditData>>,
+  deps: RepairDependencies,
+  format: ClubFormat,
+) {
+  for (const context of contexts) {
+    const payment = context.booking.payment;
+    if (context.booking.status !== "CANCELLED" || !payment) continue;
+    const intents = getCapturedRepairTransactions(payment).flatMap((transaction) =>
+      transaction.stripePaymentIntentId ? [transaction.stripePaymentIntentId] : [],
+    );
+    if (intents.length === 0) continue;
+    const byHand = await deps.readLateCaptureCardRefundsByHand(payment.id, intents);
+    context.lateCaptureCardRefundsByHand = new Map(
+      [...byHand].map(([intent, { byHandCents, mayBeInXeroCents }]) => [
+        intent,
+        {
+          cents: byHandCents,
+          amountLabel: formatCents(byHandCents, format),
+          mayBeInXeroCents,
+          mayBeInXeroLabel: formatCents(mayBeInXeroCents, format),
+        },
+      ]),
+    );
+  }
+  return contexts;
+}
 
 async function runSinglePass(
   pass: number,
   scope: BookingXeroRepairScope,
-  deps: RepairDependencies
+  deps: RepairDependencies,
+  format: ClubFormat,
 ) {
-  const contexts = await loadAuditData(scope, deps);
-  const bookings = contexts.map((context) => classifyBookingContext(context));
+  const loaded = await withPaidAnotherWayCloses(await loadAuditData(scope, deps), deps, format);
+  const contexts = await withLateCaptureCardRefundsByHand(loaded, deps, format);
+  // #4231: each paid-back request's amount in the club's format, for its finding.
+  const bookings = contexts.map((context) => classifyBookingContext(labelPaidBackRefundRequests(context, format)));
   return buildPassReport(pass, bookings);
 }
 
@@ -77,7 +162,7 @@ export async function runBookingXeroRepair(
   const maxPasses = apply ? MAX_APPLY_PASSES : 1;
 
   for (let pass = 1; pass <= maxPasses; pass += 1) {
-    const passReport = await runSinglePass(pass, scope, deps);
+    const passReport = await runSinglePass(pass, scope, deps, format);
     passes.push(passReport);
 
     if (!apply) {

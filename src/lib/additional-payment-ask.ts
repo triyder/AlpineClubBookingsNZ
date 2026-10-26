@@ -72,7 +72,10 @@
  * edit transaction, the census guard, the operator CLI and the tests all import
  * it.
  */
-import { isAdditionalAmountUncollected } from "@/lib/additional-payment-chase";
+import {
+  ADDITIONAL_ASK_RETIRED_BOOKING_STATUSES,
+  isAdditionalAmountUncollected,
+} from "@/lib/additional-payment-chase";
 import { CAPTURED_PAYMENT_STATUS_LIST } from "@/lib/booking-payment-state";
 import { formatCents } from "@/lib/utils";
 import type { ClubFormat } from "@/lib/club-format";
@@ -159,13 +162,27 @@ class AdditionalAskValue {
    */
   readonly #carriedCents: number;
 
-  constructor(params: { ownCents: number; carriedCents: number }) {
+  /**
+   * #3954: this ask RE-ISSUES, smaller, an unpaid ask a price reduction retired
+   * (`reissueUnpaidAdditionalAsk`). The member's card was already asked for it,
+   * so the minter may mint it on a credit-paid ($0) booking whose reduction
+   * captured nothing - the one place the minter reads this.
+   */
+  readonly #reissuesUnpaidAsk: boolean;
+
+  constructor(params: { ownCents: number; carriedCents: number; reissuesUnpaidAsk?: boolean }) {
     this.amountCents = params.ownCents + params.carriedCents;
     this.#carriedCents = params.carriedCents;
+    this.#reissuesUnpaidAsk = params.reissuesUnpaidAsk ?? false;
   }
 
   get carriedCents(): number {
     return this.#carriedCents;
+  }
+
+  /** Private for the reason `#carriedCents` is: a spread cannot carry it. */
+  get reissuesUnpaidAsk(): boolean {
+    return this.#reissuesUnpaidAsk;
   }
 }
 
@@ -179,6 +196,7 @@ export type AdditionalAsk = AdditionalAskValue;
 function buildAdditionalAsk(params: {
   ownCents: number;
   carriedCents: number;
+  reissuesUnpaidAsk?: boolean;
 }): AdditionalAsk {
   return new AdditionalAskValue(params);
 }
@@ -211,14 +229,24 @@ export function sizeAdditionalAsk({
   priceDiffCents,
   changeFeeCents,
   payment,
+  waitingReissuedAskCents = 0,
 }: {
   priceDiffCents: number;
   changeFeeCents: number;
   payment: AdditionalAskPayment | null | undefined;
+  /**
+   * #3954 review round 4: a reduction's smaller re-issued ask still waiting on
+   * its mint, which this increase folds in and closes
+   * (`foldWaitingReissuedAsks`) - carried like the `Payment`'s live ask, since
+   * this mint is what asks for it now. The edit doors pass what they folded;
+   * an increase's recovery replay passes what its edit's history recorded it
+   * folded (`sizeRecoveryReplayAsk`, round 6), since its fold closed them.
+   */
+  waitingReissuedAskCents?: number;
 }): AdditionalAsk {
   return buildAdditionalAsk({
     ownCents: priceDiffCents + changeFeeCents,
-    carriedCents: outstandingAdditionalAskCents(payment),
+    carriedCents: outstandingAdditionalAskCents(payment) + Math.max(0, waitingReissuedAskCents),
   });
 }
 
@@ -306,6 +334,128 @@ export function restateAdditionalAsk(request: {
   return buildAdditionalAsk({
     ownCents: request.amountCents - request.carriedAskCents,
     carriedCents: request.carriedAskCents,
+  });
+}
+
+/**
+ * A PRICE REDUCTION IS FIRST SET AGAINST THE UNPAID ASK (#3954, owner decision
+ * 8 Oct 2026; `INV-PAY-047`, `INV-MOD-011`).
+ *
+ * A booking that grew and has not yet paid for the growth carries an unpaid
+ * ask. When a later edit brings the price down, the member is first released
+ * from that ask - cancelled, or re-issued smaller - and only what is left of
+ * the reduction is refunded, credited or given back, by the club's policy
+ * tiers as before. The ask is money nobody has paid, so no tier applies to the
+ * part of the reduction that cancels it.
+ *
+ * `netChargeCents` is the edit's own net (price delta plus change fee), the
+ * same figure every settlement branch reads; `unpaidAskCents` is the ask a
+ * reduction may be set against (`readUnpaidPriceAsk`), never the review-raised
+ * kind. Returns the edit's net with the offset taken out - still a reduction,
+ * or zero - and what is left of the ask. An increase passes through unchanged.
+ */
+export function setReductionAgainstUnpaidAsk({
+  netChargeCents,
+  unpaidAskCents,
+}: {
+  netChargeCents: number;
+  unpaidAskCents: number;
+}): { offsetCents: number; netChargeLeftCents: number; askLeftCents: number } {
+  const offsetCents =
+    netChargeCents < 0 ? Math.min(-netChargeCents, Math.max(0, unpaidAskCents)) : 0;
+  return {
+    offsetCents,
+    netChargeLeftCents: netChargeCents + offsetCents,
+    askLeftCents: Math.max(0, unpaidAskCents) - offsetCents,
+  };
+}
+
+/**
+ * #3954: WHAT XERO IS OWED FOR A REDUCTION'S OFFSET - the one home for that
+ * arithmetic (`INV-PAY-120`; round 6, `INV-SSOT-001`), for the edit that
+ * records it (`settleReductionAgainstUnpaidAsk`); the repair pass reads the
+ * figures it recorded.
+ *
+ * The retired asks' money was billed to Xero by supplementary invoices
+ * (`supplementaryInvoicedCents` - parked or still to be queued, never yet in
+ * Xero) or by the booking's primary invoice. The offset is taken from the
+ * supplementary money first:
+ *
+ * - `reissuedAskInvoiceCents` - decision A (owner 9 Oct 2026): the smaller
+ *   re-issued ask's own invoice bills what is left of that money, never more
+ *   than the ask;
+ * - `billedOffsetCents` - decision 10 Oct 2026: the rest of the offset the
+ *   primary invoice had billed takes an invoice-correction note - only where a
+ *   primary invoice exists and what it billed was established
+ *   (`billedByPrimaryEstablished`); otherwise it is `billedOffsetUnsureCents`,
+ *   reported for a person and never credit-noted on a guess;
+ * - `reissuedAskInvoiceUnsureCents` - round 7: where it was not established,
+ *   money the evidence could not place may be supplementary money too, so the
+ *   re-issue's invoice may owe more than the part that is certain. The certain
+ *   part is still invoiced; the rest of the ask, up to the whole of it, is
+ *   reported for a person rather than read as 0.
+ */
+export function splitUnpaidAskOffsetForXero({
+  offsetCents,
+  askLeftCents,
+  supplementaryInvoicedCents,
+  primaryInvoiceIssued,
+  billedByPrimaryEstablished,
+}: {
+  offsetCents: number;
+  askLeftCents: number;
+  supplementaryInvoicedCents: number;
+  primaryInvoiceIssued: boolean;
+  billedByPrimaryEstablished: boolean;
+}): {
+  reissuedAskInvoiceCents: number;
+  reissuedAskInvoiceUnsureCents: number;
+  billedOffsetCents: number;
+  billedOffsetUnsureCents: number;
+} {
+  const billedCents = primaryInvoiceIssued ? Math.max(0, offsetCents - supplementaryInvoicedCents) : 0;
+  const reissuedAskInvoiceCents = Math.min(askLeftCents, Math.max(0, supplementaryInvoicedCents - offsetCents));
+  const established = billedByPrimaryEstablished || !primaryInvoiceIssued;
+  return {
+    reissuedAskInvoiceCents,
+    reissuedAskInvoiceUnsureCents: established ? 0 : Math.max(0, askLeftCents - reissuedAskInvoiceCents),
+    billedOffsetCents: billedByPrimaryEstablished ? billedCents : 0,
+    billedOffsetUnsureCents: billedByPrimaryEstablished ? 0 : billedCents,
+  };
+}
+
+/**
+ * What of a reduction is left to settle - refund, credit or note - once the
+ * unpaid ask took its offset (#3954): never the offset itself, which returned
+ * no money. 0 for an increase.
+ */
+export function reductionLeftAfterUnpaidAskCents({
+  netAmountCents,
+  unpaidAskOffsetCents,
+}: {
+  netAmountCents: number;
+  unpaidAskOffsetCents: number;
+}): number {
+  return netAmountCents < 0 ? Math.max(0, -netAmountCents - unpaidAskOffsetCents) : 0;
+}
+
+/**
+ * The ask a reduction leaves behind when it only SHRINKS an unpaid one (#3954).
+ * All of it is carried from the ask the reduction retired - nothing in it is
+ * this edit's own - so it records that as its carried part (`INV-PAY-098`),
+ * and it is marked a re-issue so the minter mints it on a credit-paid booking
+ * too (`reissuesUnpaidAsk`).
+ */
+export function reissueUnpaidAdditionalAsk({
+  askLeftCents,
+}: {
+  askLeftCents: number;
+}): AdditionalAsk {
+  if (askLeftCents <= 0) return NO_ADDITIONAL_ASK;
+  return buildAdditionalAsk({
+    ownCents: 0,
+    carriedCents: askLeftCents,
+    reissuesUnpaidAsk: true,
   });
 }
 
@@ -504,10 +654,8 @@ export function bookingLedgerResidualSql(): string {
  * identity has no third term to check there. Both filters are written once and
  * read by the TypeScript census and the SQL alike.
  */
-export const BOOKING_LEDGER_CENSUS_EXCLUDED_BOOKING_STATUSES = [
-  "CANCELLED",
-  "BUMPED",
-] as const;
+export const BOOKING_LEDGER_CENSUS_EXCLUDED_BOOKING_STATUSES =
+  ADDITIONAL_ASK_RETIRED_BOOKING_STATUSES; // #4316: one home, re-exported
 
 // #3340 fix round (`INV-SSOT-001`): re-exported, never restated. A third copy of
 // this list was added HERE by the change that exists to stop facts having two

@@ -497,35 +497,23 @@ describe("outstanding additional payment panel visibility (#2350)", () => {
     expect(source).toMatch(/canResend=\{canSeeAdminTools\}/);
   });
 
-  /*
-    The member's own card stays owner-only (#1303). #2350 round 2 added ONE
-    clause to that condition and nothing else: the booking's lifecycle, because
-    cancelling leaves the delta columns untouched and the card was still
-    offering a cancelled booking's owner a payment form (see
-    src/components/__tests__/additional-payment-card-gate.test.ts). The owner
-    gate itself is unchanged, which is what this pin is for.
-
-    #3340 replaced the trailing "is there an uncollected ask" pair with a CALL to
-    `isAdditionalAmountUncollected`, the one predicate that answers it - a
-    behaviour-identical refactor (`payment.additionalAmountCents > 0 &&
-    payment.additionalPaymentStatus !== "SUCCEEDED"`, which is what that function
-    is). This pin follows it rather than holding the restated form in place: what
-    it is for is the OWNER half of the condition, and pinning a copy of a rule
-    that has just been given one home would be asking for the copy back.
-  */
-  it("leaves the member's own owner-only card exactly where it was (#1303)", () => {
-    const source = bookingPageSource();
+  // #4047 moved the owner card into the streamed outstanding-payment section.
+  // Pin the render gate AND its canonical server projection, retaining the
+  // owner/lifecycle/uncollected boundary rather than the former file location.
+  it("keeps the streamed member card owner-only behind the canonical pay door (#1303)", () => {
+    const code = (relative: string) => stripComments(fs.readFileSync(path.join(process.cwd(), relative), "utf8"));
+    const source = code("src/app/(authenticated)/bookings/[id]/_components/booking-outstanding-payments.tsx");
+    const projection = code("src/app/(authenticated)/bookings/[id]/_lib/booking-detail-outstanding.ts");
+    const cardAmount = code("src/lib/booking-outstanding-payment.ts");
 
     expect(source).toMatch(
-      // #3641: the lifecycle and deleted checks are the pay door's booking
-      // half, called rather than restated.
-      /booking\.payment &&\s*isBookingOwner &&\s*isAdditionalPaymentDoorOpenForBooking\(\{[\s\S]{0,200}?\}\) &&[\s\S]{0,200}?isAdditionalAmountUncollected\(booking\.payment\) && \(\s*<AdditionalPaymentCard/,
+      /view\.audience === "owner" && view\.cardDueCents > 0 &&\s*isAdditionalPaymentDoorOpenForBooking\(\{[^}]+\}\) && \(\s*<div[^>]*>\s*<AdditionalPaymentCard/,
     );
-    // The ask half is a CALL, never a restatement: a second copy of the rule on
-    // this page is what #3340 removed (`INV-SSOT-001`).
-    expect(source).not.toMatch(
-      /isBookingOwner[\s\S]{0,400}additionalPaymentStatus !== "SUCCEEDED"/,
-    );
+    expect(source.match(/<AdditionalPaymentCard/g)).toHaveLength(1);
+    expect(projection).toMatch(/audience: state\.viewer\.isBookingOwner \? "owner" : "officer"/);
+    expect(projection).toContain("cardDueCents: bookingOutstandingCardCents(state.booking)");
+    expect(cardAmount).toMatch(/isAdditionalPaymentDoorOpenForBooking\([\s\S]{0,200}?&& isAdditionalAmountUncollected\(booking\.payment\)/);
+    expect(cardAmount).not.toMatch(/additionalPaymentStatus !== "SUCCEEDED"/);
   });
 });
 

@@ -1,4 +1,5 @@
 import { isCreditOnlyCardPayment } from "@/lib/credit-only-card-payment";
+import { xeroRefusedOperation } from "@/lib/xero-error-shape";
 import {
   XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE,
   XERO_OUTBOX_BOOKING_INVOICE_TYPE,
@@ -12,20 +13,13 @@ import { getBlockingOperation, isStuckOperation } from "./xero-booking-repair-ob
 import { addAction, addFinding, addResolvedInXeroFinding, buildRetryAction } from "./xero-booking-repair-findings";
 
 /**
- * #3836 (M2): Xero REFUSED this operation (a 4xx other than 408 or 429: the
- * invoice voided, or settled by hand). Re-running it changes nothing until someone fixes the cause in
- * Xero, so its retry is offered but never auto-applied.
+ * A retry action, auto-applied only where Xero did not refuse the operation
+ * (#3836 M2, `xeroRefusedOperation`: the invoice voided, or settled by hand):
+ * its retry is offered but never auto-applied.
  */
-function refusedByXero(operation: { status: string; lastErrorCode: string | null }): boolean {
-  const code = operation.lastErrorCode ?? "";
-  // 408 (timeout) and 429 (rate limit) are transient, not refusals: still auto-retried.
-  return ["FAILED", "PARTIAL"].includes(operation.status) && /^4\d\d$/.test(code) && code !== "408" && code !== "429";
-}
-
-/** A retry action, auto-applied only where Xero did not refuse the operation. */
 function retryUnlessRefused(bookingId: string, match: Parameters<typeof buildRetryAction>[1]) {
   const action = buildRetryAction(bookingId, match);
-  return refusedByXero(match.operation) ? { ...action, safeToAutoApply: false } : action;
+  return xeroRefusedOperation(match.operation) ? { ...action, safeToAutoApply: false } : action;
 }
 
 /**

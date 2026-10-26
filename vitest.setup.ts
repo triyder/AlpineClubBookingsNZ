@@ -107,3 +107,12 @@ if (typeof document !== "undefined") {
   const { configure } = await import("@testing-library/dom");
   configure({ asyncUtilTimeout: 4_000 });
 }
+
+// #4367: real-PostgreSQL files share one race database, so they take turns
+// rather than running in parallel. Imported only when the race env is on.
+if (process.env.RUN_CONCURRENCY_RACE_TESTS === "1") {
+  const { serialiseRealdbFile } = await import(
+    "./src/lib/__tests__/support/realdb-file-serialisation"
+  );
+  serialiseRealdbFile();
+}

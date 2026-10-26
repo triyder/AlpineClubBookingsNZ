@@ -418,11 +418,11 @@ export function RosterEditor({
 
   return (
     <div className="space-y-6">
-      <Card>
+      <Card {...section.sectionRegionProps}>
         <CardHeader>
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <CardTitle headingLevel={2}>Roster assignments</CardTitle>
+              <CardTitle {...section.titleProps} headingLevel={2}>Roster assignments</CardTitle>
               <CardDescription>
                 {roster.guestCount} guest{roster.guestCount === 1 ? "" : "s"} staying ·{" "}
                 {draftAssignments.length} assignment{draftAssignments.length === 1 ? "" : "s"}
@@ -444,6 +444,7 @@ export function RosterEditor({
                   canEdit={canEdit}
                   describeReason={!ancestorRendersViewOnlyBanner}
                   onClick={startEditing}
+                  {...section.editTriggerProps}
                 >
                   Edit roster
                 </ViewOnlyActionButton>

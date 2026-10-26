@@ -13,10 +13,13 @@
  * only rises and is moved by writers with no refund row (review of #3604), so
  * C4 classifies that difference rather than asserting it away.
  *
- * A leaf with no imports of its own beyond the enum, so both can depend on it
- * without `payment-transactions.ts` and the ledger sync importing each other.
+ * A leaf with no imports of its own beyond the enum and the ledger's order
+ * (`payment-ledger-order.ts`, itself a leaf), so both can depend on it without
+ * `payment-transactions.ts` and the ledger sync importing each other.
  */
 import { PaymentStatus, type PaymentTransactionKind } from "@prisma/client";
+
+import { compareLedgerRowsOldestFirst, type LedgerOrderedRow } from "@/lib/payment-ledger-order";
 
 /**
  * Money was taken. A refunded transaction stays captured — its capture
@@ -36,6 +39,21 @@ const CAPTURED_TRANSACTION_STATUSES = new Set<PaymentStatus>(
   CAPTURED_TRANSACTION_STATUS_LIST
 );
 
+/**
+ * The `PaymentTransaction.status` values of an intent that is still OPEN - not
+ * captured, not failed: it can still be confirmed, so it is what a supersede or
+ * a retirement cancels (#4316 review round 3, one list).
+ */
+export const OPEN_INTENT_TRANSACTION_STATUS_LIST = [
+  PaymentStatus.PENDING,
+  PaymentStatus.PROCESSING,
+] as const satisfies readonly PaymentStatus[];
+
+/** Is this transaction's intent still open (`OPEN_INTENT_TRANSACTION_STATUS_LIST`)? */
+export function isOpenIntentTransactionStatus(status: string): boolean {
+  return (OPEN_INTENT_TRANSACTION_STATUS_LIST as readonly string[]).includes(status);
+}
+
 /** Captured rows that still hold cash after refunds. */
 export const CAPTURED_NOT_FULLY_REFUNDED_TRANSACTION_STATUS_LIST = [
   PaymentStatus.SUCCEEDED,
@@ -52,17 +70,61 @@ export function isCapturedTransactionStatus(status: PaymentStatus): boolean {
 }
 
 /**
- * The newest transaction of one kind on a payment, by `createdAt` (the first
- * of a tie wins) — the row the `Payment` mirror's summary columns are derived
- * from (`reconcilePaymentAggregates`). One home, so the booking-ledger census
- * (#3583) reads "the latest PRIMARY" and "the live ask" exactly as the mirror
- * it checks was written (`INV-SSOT`).
+ * #3979 (`INV-SSOT`): what a payment has captured, gross of refunds - the sum of
+ * its captured rows. The `Payment.amountCents` projection
+ * (`reconcilePaymentAggregates`) and the Internet Banking settle that writes
+ * the same figure (`settle-from-cash.ts`) both read it here.
+ */
+export function grossCapturedCents(
+  rows: ReadonlyArray<{ status: PaymentStatus; amountCents: number }>,
+): number {
+  return rows.reduce((sum, row) => sum + (isCapturedTransactionStatus(row.status) ? row.amountCents : 0), 0);
+}
+
+/**
+ * The `Payment.status` its rows project: refunded, part refunded or settled
+ * once anything is captured, else the latest PRIMARY row's status (or the
+ * fallback). One home for `reconcilePaymentAggregates` and the Internet
+ * Banking settle (#3979), which writes the same columns itself.
+ */
+export function deriveAggregatePaymentStatus(
+  fallbackStatus: PaymentStatus,
+  grossCapturedAmountCents: number,
+  refundedAmountCents: number,
+  latestPrimaryStatus: PaymentStatus | null
+): PaymentStatus {
+  if (grossCapturedAmountCents > 0) {
+    if (refundedAmountCents >= grossCapturedAmountCents) {
+      return PaymentStatus.REFUNDED;
+    }
+
+    if (refundedAmountCents > 0) {
+      return PaymentStatus.PARTIALLY_REFUNDED;
+    }
+
+    return PaymentStatus.SUCCEEDED;
+  }
+
+  return latestPrimaryStatus ?? fallbackStatus;
+}
+
+/**
+ * The newest transaction of one kind on a payment: the latest `createdAt`, and
+ * on a tie the row inserted LAST, the highest `insertionSeq` (#4132,
+ * `INV-PAY-133`, owner decision 15 Oct 2026). The row the `Payment` mirror's
+ * summary columns are derived from (`reconcilePaymentAggregates`). One home,
+ * so the booking-ledger census (#3583) reads "the latest PRIMARY" and "the
+ * live ask" exactly as the mirror it checks was written (`INV-SSOT`), and the
+ * answer never depends on the order the rows were read in.
+ *
+ * Before #4132 a tie went to the first row of the input, which over the
+ * oldest-first ledger read was the EARLIEST of the tie, while the ask chain
+ * (`readUnpaidPriceAsk`) took its last row as the live ask.
  */
 export function latestTransactionOfKind<
   T extends {
     kind: PaymentTransactionKind;
-    createdAt: Date;
-  },
+  } & LedgerOrderedRow,
 >(transactions: readonly T[], kind: PaymentTransactionKind): T | null {
   let latest: T | null = null;
 
@@ -71,7 +133,7 @@ export function latestTransactionOfKind<
       continue;
     }
 
-    if (!latest || transaction.createdAt.getTime() > latest.createdAt.getTime()) {
+    if (!latest || compareLedgerRowsOldestFirst(transaction, latest) > 0) {
       latest = transaction;
     }
   }
@@ -115,10 +177,49 @@ export function isRecordedRefundStatus(status: string): boolean {
 }
 
 /**
- * #3639: HOW MUCH OF ONE CAPTURE HAS GONE BACK, and how much Stripe still holds
- * - one home for every late-capture reader that must not refund, approve or
- * record a hand-back twice (the webhook's verdict, the treasurer's approval,
- * the #2700 hand-back and its raise).
+ * #4083: Stripe answered the refund but refused it (`failed`, `canceled`), so
+ * no money went back and it is still owed. A refund with no status counts as
+ * made (#4070), as the ledger counts it.
+ */
+export function isRefusedRefundStatus(status: string | null | undefined): boolean {
+  return !isRecordedRefundStatus(status ?? "unknown");
+}
+
+/** #4103: what Stripe's answers refused, in cents - the one sum the late-capture hold and the repair pass read. */
+export function refusedRefundAnswerCents(refunds: ReadonlyArray<{ status?: string | null; amountCents: number }>): number {
+  return refunds.filter((refund) => isRefusedRefundStatus(refund.status)).reduce((sum, refund) => sum + refund.amountCents, 0);
+}
+
+/**
+ * #4070, #4084: a refund to the member's own card, sent after commit by
+ * `refundPaymentTransactions`, is made when that call returned (every slice
+ * refunded at Stripe and recorded) with at least one refund, and Stripe
+ * answered each with a status counted as money back (`isRecordedRefundStatus`:
+ * `pending` and `succeeded` count, `failed` and `canceled` do not; no status
+ * counts, as the organiser executor reads it). Judged by the refunds that
+ * exist, never assumed. A call that threw made nothing here. ONE rule for the
+ * "Booking Modified" (`executeBookingModificationRefund`) and "Booking
+ * Cancelled" (`booking-cancel.ts`) emails and the cancel's confirmation.
+ */
+export function ownCardRefundMade(refunds: ReadonlyArray<{ status: string | null }>): boolean {
+  return refunds.length > 0 && !refunds.some((refund) => isRefusedRefundStatus(refund.status));
+}
+
+/**
+ * #3639: HOW MUCH OF ONE CAPTURE HAS GONE BACK TO THE MEMBER, in any form, and
+ * how much the club may still hand back from it - one home for every
+ * late-capture reader that must not refund, approve or record a hand-back twice
+ * (the webhook's verdict, the treasurer's approval, the #2700 hand-back and its
+ * raise).
+ *
+ * It measures LEDGER headroom, not what Stripe still holds: `refundedAmountCents`
+ * also counts a refund made as account credit or by hand
+ * (`applyLocalRefundAllocation`), which leaves the money on the card. Every
+ * reader uses it as a cap or a refusal on handing more back, where money
+ * already returned another way must count, or the member is paid twice; so a
+ * credit-filled row makes them hand back less, never more. A reader that must
+ * say what the CARD still holds subtracts the card refunds recorded against it
+ * instead (`sumRecordedRefundsForCapture`, #4285 review).
  *
  * `refundedAmountCents` is load-bearing, not `status`:
  * `markPaymentIntentTransactionSucceeded` rewrites a refunded row's status to
@@ -157,4 +258,20 @@ export function expectedRefundedFloorCents(input: {
   accountCreditCents: number;
 }): number {
   return Math.min(input.amountCents, input.cardRefundCents + input.accountCreditCents);
+}
+
+/**
+ * #3640, #4154: whether a card refund made at `createdSeconds` predates the
+ * install's refund ledger. A null start (no migration history) predates
+ * nothing. An undated refund is the caller's to read: the refund sync takes it
+ * as made since (`since-ledger`, the safe direction for adding it), #4154's
+ * correction as made before (`pre-ledger`, the safe direction for lowering).
+ */
+export function predatesRefundLedger(
+  createdSeconds: number | null | undefined,
+  ledgerStartSeconds: number | null,
+  undated: "pre-ledger" | "since-ledger",
+): boolean {
+  if (typeof createdSeconds !== "number") return undated === "pre-ledger";
+  return ledgerStartSeconds !== null && createdSeconds < ledgerStartSeconds;
 }

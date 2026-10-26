@@ -6,6 +6,9 @@ const mocks = vi.hoisted(() => ({
   requireActiveSessionUser: vi.fn(),
   refundRequestFindMany: vi.fn(),
   refundRequestCount: vi.fn(),
+  // #4117: the approved appeals' payments, read for what their card refund still owes.
+  paymentFindMany: vi.fn(async () => []),
+  manualRefundTaskFindMany: vi.fn(async () => []),
   bookingFindMany: vi.fn(),
   bookingCount: vi.fn(),
   memberApplicationFindMany: vi.fn(),
@@ -37,6 +40,8 @@ vi.mock("@/lib/prisma", () => ({
       findMany: mocks.refundRequestFindMany,
       count: mocks.refundRequestCount,
     },
+    payment: { findMany: mocks.paymentFindMany },
+    manualRefundTask: { findMany: mocks.manualRefundTaskFindMany },
     booking: {
       findMany: mocks.bookingFindMany,
       count: mocks.bookingCount,
@@ -114,6 +119,8 @@ function refundRequest(id: string, status = "PENDING") {
         amountCents: 12000,
         refundedAmountCents: 0,
         stripePaymentIntentId: "pi_123",
+        recoveryOperations: [],
+        refunds: [],
       },
     },
     member: {
@@ -263,6 +270,8 @@ describe("admin query validation and pagination", () => {
     it("returns expected data for valid params", async () => {
       mocks.refundRequestFindMany.mockResolvedValue([refundRequest("refund-1", "APPROVED")]);
       mocks.refundRequestCount.mockResolvedValue(1);
+      // #4117: the approved appeal's approval audit, read for a card refund not queued.
+      mocks.auditLogFindMany.mockResolvedValue([]);
 
       const response = await getRefundRequests(
         request("/api/admin/refund-requests?status=APPROVED&page=2&pageSize=10")

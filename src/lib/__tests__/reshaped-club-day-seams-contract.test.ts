@@ -263,7 +263,10 @@ describe("#3123 reshaped seams keep their required club day", () => {
     // unreadable arm (`cron-group-settlement-reaper.ts`, C5). #3827 added a
     // twelfth `getBookingEditPolicy`: a guest's acceptance re-prices only a
     // booking a member could edit for a stay yet to start, on the club's day
-    // the consent service resolved before its transaction.
+    // the consent service resolved before its transaction. #4202 added a
+    // thirteenth: the edit's promo preview refuses a re-rate on a stay under way
+    // exactly as the quote does (`promo-preview-edit.ts`), on the club's day it
+    // resolves itself, with no transaction open.
     const sources = productionSources();
     let policyCalls = 0;
     let startedCalls = 0;
@@ -273,7 +276,7 @@ describe("#3123 reshaped seams keep their required club day", () => {
       policyCalls += callArguments(code, "getBookingEditPolicy").length;
       startedCalls += callArguments(code, "bookingStayHasStarted").length;
     }
-    expect(policyCalls).toBe(12);
+    expect(policyCalls).toBe(13);
     expect(startedCalls).toBe(7);
   });
 });

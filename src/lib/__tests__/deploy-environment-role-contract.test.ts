@@ -1,9 +1,12 @@
-import { readdirSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 
 import { ENVIRONMENT_ROLE_ENV_VAR } from "@/lib/environment-role-declaration";
+import { bashFixturePath, bashGateArgs } from "@/lib/__tests__/helpers/bash-fixture-path";
 import { ciEnvHeredocs } from "@/lib/__tests__/helpers/ci-env-heredocs";
 import {
   appServiceNames,
@@ -14,6 +17,7 @@ import {
   NON_APP_COMPOSE_SERVICES,
   readRepoFile,
 } from "@/lib/__tests__/helpers/compose";
+import { DEPLOY_SCRIPT, shellFunctionSource } from "@/lib/__tests__/helpers/deploy-script";
 
 /**
  * The production-upgrade path for the environment declaration (ENV-SAFETY 1,
@@ -69,7 +73,7 @@ const ROOT = process.cwd();
  */
 const E2E_STAGING_ENV_WRITER = "scripts/ci/write-e2e-staging-env.sh";
 
-const script = readRepoFile("scripts/run-production-blue-green-deploy.sh");
+const script = readRepoFile(DEPLOY_SCRIPT);
 const compose = readRepoFile(BASE_COMPOSE);
 const stagingCompose = readRepoFile("docker-compose.staging.yml");
 const envExample = readRepoFile(".env.example");
@@ -319,19 +323,29 @@ describe("the deploy refuses an undeclared production release", () => {
       INDENTED line, an `export `-prefixed line and spaces around the `=` all
       slipped past, measured against real `docker compose`. Each of those as a
       SECOND line in a .env whose first line is correct passed the duplicate check
-      and handed every container `non-production`.
+      and handed every container `non-production`. #4026 then found Compose's
+      parser also takes a COLON (`KEY: value`), which still slipped past.
 
-      Behaviour is proved in the lane report by running the extracted helpers over
-      nineteen .env fixtures against both the previous and the current script;
-      what this case pins is the pattern, so the grammar cannot quietly narrow
-      again.
+      The grammar is ONE top-level function every .env reader shares (#4026);
+      the role check's pattern is that function for its one key. Behaviour is
+      RUN, shape by shape, in the describe block below; what this case pins is
+      the wiring, so a second spelling cannot quietly reappear.
     */
-    const pattern = functionBody("environment_role_env_pattern");
+    const pattern = functionBody("env_assignment_pattern");
     expect(pattern).toContain("^[[:space:]]*");
     expect(pattern).toContain("(export[[:space:]]+)?");
-    expect(pattern).toContain("[[:space:]]*=");
-    // Built from the key it is given, so there is one spelling of the name.
-    expect(pattern).toContain("%s");
+    expect(pattern).toContain("[[:space:]]*[=:]");
+    // Built from the keys it is given, so there is one spelling of each name.
+    expect(pattern).toContain("(%s)");
+    // Defined at column 0, where `shellFunctionSource` (and a fork copying it the
+    // same way) can lift it; it is not nested in another reader.
+    expect(script).toMatch(/^env_assignment_pattern\(\) \{$/m);
+    // The role check's pattern delegates rather than restating the grammar.
+    const rolePattern = functionBody("environment_role_env_pattern");
+    expect(rolePattern).toContain('env_assignment_pattern "$1"');
+    expect(rolePattern).not.toContain("[[:space:]]");
+    // And it is the ONLY place the grammar is spelled in the script.
+    expect(script.split("(export[[:space:]]+)?").length - 1).toBe(1);
     expect(functionBody("count_environment_role_env_assignments")).toContain(
       "grep -cE",
     );
@@ -345,7 +359,13 @@ describe("the deploy refuses an undeclared production release", () => {
       three to `production`. "Missing" for a visible key is what gets an operator
       editing the wrong line under deploy pressure.
     */
-    const reader = functionBody("environment_role_env_value");
+    // The role check's reader is the shared Compose-semantics reader (#4027),
+    // which the PENDING_SCHOOL_ADULTS_ENABLED agreement check also uses.
+    expect(functionBody("environment_role_env_value")).toContain(
+      'compose_env_file_value "$1"',
+    );
+    const reader = functionBody("compose_env_file_value");
+    expect(reader).toContain('env_assignment_pattern "$key"');
     // Last-wins, matching Compose rather than the first-match reader every other
     // key uses.
     expect(reader).toContain("tail -n 1");
@@ -420,6 +440,154 @@ describe("the deploy refuses an undeclared production release", () => {
   });
 });
 
+/**
+ * The shared `.env` assignment grammar, RUN rather than grepped (#4026).
+ *
+ * The helpers are lifted out of the deploy script into a harness and run over a
+ * throwaway `.env` per case, so each shape below is proved against the script's
+ * own functions. Every accepted shape is one Compose's dotenv parser resolves:
+ * the `=` forms were measured on `docker compose v5.3.1` (#3034), the `:` forms
+ * on Compose v5.6.0 (#4026). A shape the duplicate check cannot count is a
+ * second assignment Compose applies and this gate never sees.
+ */
+describe("every .env assignment shape Compose accepts is counted and read", () => {
+  const LIFTED = [
+    "trim_whitespace",
+    "printable_deploy_value",
+    "env_assignment_pattern",
+    "environment_role_env_pattern",
+    "count_environment_role_env_assignments",
+    "compose_env_file_value",
+    "environment_role_env_value",
+  ];
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "env-assignment-pattern-"));
+  afterAll(() => rmSync(fixtureRoot, { recursive: true, force: true }));
+
+  const harnessPath = path.join(fixtureRoot, "harness.sh");
+  writeFileSync(
+    harnessPath,
+    [
+      "set -Eeuo pipefail",
+      ...LIFTED.map((name) => shellFunctionSource(script, name)),
+      'cd "$ENV_DIR"',
+      'if [ "$ENTRY" = "pattern" ]; then',
+      '  env_assignment_pattern $KEYS',
+      "  exit $?",
+      "fi",
+      'if [ "$ENTRY" = "value" ]; then',
+      '  value="$(environment_role_env_value "$KEY")"',
+      "  printf 'VALUE=%s\\n' \"$value\"",
+      "  exit 0",
+      "fi",
+      // Each printed as soon as it is read, so a run that aborts in the second
+      // reader still shows what the first one returned.
+      'count="$(count_environment_role_env_assignments "$KEY")"',
+      "printf 'COUNT=%s\\n' \"$count\"",
+      'value="$(environment_role_env_value "$KEY")"',
+      "printf 'VALUE=%s\\n' \"$value\"",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+
+  function run(env: Record<string, string>, envFile = "") {
+    const dir = mkdtempSync(path.join(fixtureRoot, "case-"));
+    writeFileSync(path.join(dir, ".env"), envFile, "utf8");
+    const result = spawnSync(
+      "bash",
+      bashGateArgs(bashFixturePath(harnessPath), [], {
+        ENV_DIR: bashFixturePath(dir),
+        ENTRY: "read",
+        KEY: ENVIRONMENT_ROLE_ENV_VAR,
+        KEYS: "",
+        ...env,
+      }),
+      { cwd: ROOT, encoding: "utf8" },
+    );
+    return { code: result.status, stdout: result.stdout, stderr: result.stderr };
+  }
+
+  function read(envFile: string) {
+    const result = run({}, envFile);
+    expect(result.code, result.stderr).toBe(0);
+    const count = /^COUNT=(.*)$/m.exec(result.stdout)?.[1];
+    const value = /^VALUE=(.*)$/m.exec(result.stdout)?.[1];
+    return { count: Number(count), value };
+  }
+
+  const KEY = ENVIRONMENT_ROLE_ENV_VAR;
+  const ACCEPTED: Array<[string, string]> = [
+    ["plain", `${KEY}=production`],
+    ["indented", `   ${KEY}=production`],
+    ["export-prefixed", `export ${KEY}=production`],
+    ["spaced =", `${KEY} = production`],
+    ["tab-indented, tab-separated export", `\texport\t${KEY}\t=\tproduction`],
+    ["colon then space", `${KEY}: production`],
+    ["bare colon", `${KEY}:production`],
+    ["spaced colon", `${KEY} : production`],
+    ["export with colon", `export ${KEY}: production`],
+    ["quoted, colon, inline comment", `  export ${KEY}:"production" # live site`],
+  ];
+
+  it.each(ACCEPTED)("reads the %s form as one assignment of production", (_label, line) => {
+    expect(read(`OTHER=1\n${line}\nLATER=2\n`)).toEqual({ count: 1, value: "production" });
+  });
+
+  it.each(ACCEPTED)(
+    "counts a SECOND %s line, so the duplicate check refuses it",
+    (_label, line) => {
+      // The case #4026 exists for: a correct first line, then a later line in
+      // another shape that Compose applies last-wins.
+      const second = line.replace("production", "non-production");
+      expect(read(`${KEY}=production\n${second}\n`)).toEqual({
+        count: 2,
+        value: "non-production",
+      });
+    },
+  );
+
+  it.each([
+    ["a comment", `# ${KEY}: production`],
+    ["a longer name sharing the prefix", `${KEY}_EXTRA: production`],
+    ["a name ending in the key", `X${KEY}=production`],
+    ["export glued to the key", `export${KEY}=production`],
+  ])("does not count %s as an assignment", (_label, line) => {
+    expect(read(`${line}\n`)).toEqual({ count: 0, value: "" });
+  });
+
+  it("builds one alternation for several keys, with the key as group 2", () => {
+    const result = run({ ENTRY: "pattern", KEYS: "FIRST_KEY SECOND_KEY" });
+    expect(result.code, result.stderr).toBe(0);
+    expect(result.stdout).toBe(
+      "^[[:space:]]*(export[[:space:]]+)?(FIRST_KEY|SECOND_KEY)[[:space:]]*[=:]",
+    );
+  });
+
+  it.each([
+    ["no key at all", ""],
+    ["a key holding a regex character", "A.B"],
+    ["a key holding the sed delimiter", "A/B"],
+  ])("refuses %s rather than matching every line", (_label, keys) => {
+    const result = run({ ENTRY: "pattern", KEYS: keys });
+    expect(result.code).not.toBe(0);
+    expect(result.stdout).toBe("");
+  });
+
+  it("aborts the count and the read for a refused key instead of matching every line", () => {
+    // `grep -E ""` matches every line, so a reader that swallowed the refusal
+    // would count every assignment in the file as this key.
+    const counted = run({ KEY: "A.B" }, `${KEY}=production\nOTHER=1\n`);
+    expect(counted.code).not.toBe(0);
+    expect(counted.stdout).not.toContain("COUNT=");
+    expect(counted.stderr).toContain("not a plain variable name");
+
+    const readOnly = run({ ENTRY: "value", KEY: "A.B" }, `${KEY}=production\n`);
+    expect(readOnly.code).not.toBe(0);
+    expect(readOnly.stdout).not.toContain("VALUE=");
+    expect(readOnly.stderr).toContain("not a plain variable name");
+  });
+});
+
 describe("the deploy re-reads the declaration from the container itself", () => {
   /*
     WHY A SECOND CHECK AT ALL, when step 3 already validates `.env` (#3034
@@ -463,10 +631,17 @@ describe("the deploy re-reads the declaration from the container itself", () => 
       whose `environmentRole` comes from `readEnvironmentRoleDeclaration` itself.
       There is nothing left to drift, which is why this case asserts an ABSENCE.
     */
-    const payload = functionBody("get_service_runtime_payload");
-
-    // It asks the application, on the container`s own loopback address.
-    expect(payload).toContain("$DEPLOY_RUNTIME_STATUS_PATH");
+    // It asks the application for the runtime status, with the cron secret
+    // (the trailing `1`), through the bounded retry (#3965) ...
+    expect(functionBody("get_service_runtime_payload")).toContain(
+      'poll_service_endpoint "$service" "$DEPLOY_RUNTIME_STATUS_PATH" 1',
+    );
+    expect(functionBody("poll_service_endpoint")).toContain(
+      "read_service_endpoint_once",
+    );
+    // ... whose single-attempt reader makes the request on the container`s own
+    // loopback address.
+    const payload = functionBody("read_service_endpoint_once");
     expect(payload).toContain("http://127.0.0.1:3000");
     expect(payload).toContain("x-cron-secret");
 
@@ -495,9 +670,13 @@ describe("the deploy re-reads the declaration from the container itself", () => 
     }
     // And no case-folding of the declaration in shell either, which is the other
     // half of a parser.
-    expect(functionBody("get_service_runtime_payload")).not.toContain(
-      `tr "[:upper:]" "[:lower:]"`,
-    );
+    for (const reader of [
+      "get_service_runtime_payload",
+      "poll_service_endpoint",
+      "read_service_endpoint_once",
+    ]) {
+      expect(functionBody(reader)).not.toContain(`tr "[:upper:]" "[:lower:]"`);
+    }
   });
 
   it("fails the deploy when a container reports anything else", () => {
@@ -805,13 +984,18 @@ describe("non-production targets declare themselves", () => {
       Named rather than counted, the way the neighbouring censuses name their
       inputs: a job that stops calling the writer should say WHICH job, and a new
       one should be added here deliberately. Three callers today — `e2e.yml`'s
-      two jobs and the dispatch-only rollover proof.
+      seeded-database job, the `e2e-run` action every browser job uses (#4397),
+      and the dispatch-only rollover proof.
     */
-    const callers = readdirSync(path.join(ROOT, ".github/workflows"))
+    const workflowFiles = readdirSync(path.join(ROOT, ".github/workflows"))
       .filter((name) => /\.ya?ml$/.test(name))
+      .map((name) => `.github/workflows/${name}`);
+    const actionFiles = readdirSync(path.join(ROOT, ".github/actions"))
+      .map((name) => `.github/actions/${name}/action.yml`)
+      .filter((file) => existsSync(path.join(ROOT, file)));
+    const callers = [...actionFiles, ...workflowFiles]
       .sort()
-      .flatMap((name) => {
-        const file = `.github/workflows/${name}`;
+      .flatMap((file) => {
         const calls =
           readRepoFile(file).split(`bash ${E2E_STAGING_ENV_WRITER}`).length - 1;
         return Array.from(
@@ -824,9 +1008,9 @@ describe("non-production targets declare themselves", () => {
       "the set of CI jobs writing the E2E stack's env file changed; if that is " +
         "deliberate, update this list",
     ).toEqual([
+      ".github/actions/e2e-run/action.yml #1",
       ".github/workflows/e2e-rollover-proof.yml #1",
       ".github/workflows/e2e.yml #1",
-      ".github/workflows/e2e.yml #2",
     ]);
   });
 

@@ -1,0 +1,42 @@
+-- #4110: a family whose per-family charge was VOIDED in Xero (#2147) or closed
+-- as already paid (#4098, status NOT_REQUIRED) can be billed again.
+--
+-- Both paths keep the old charge row, with its familyGroupId, for audit, and
+-- release its coverage claims so the next billing run can bill the family
+-- again. The full UNIQUE (seasonYear, membershipTypeId, familyGroupId) still
+-- counted that retained row, so the re-bill's new charge collided with it and
+-- the whole confirm transaction failed (measured on real PostgreSQL by
+-- src/lib/__tests__/membership-family-rebill.realdb.test.ts).
+--
+-- The replacement constrains only charges that can still be invoiced: every
+-- status outside MEMBERSHIP_CHARGE_NO_INVOICE_STATUSES
+-- (src/lib/subscription-charge-already-paid.ts), whose two members are the
+-- NOT_REQUIRED and VOIDED, both terminal for the new code: every charge-status
+-- write its invoice pipeline makes is guarded to live charges, so a row leaving
+-- the predicate never comes back into it, and at most one live family charge
+-- per family, type and season still holds.
+--
+-- Blue/green EXPAND, the same keying swap 20260720130000 made for coverage:
+-- * Old code never names this index and never relies on its refusal: a
+--   draining colour's preview still counts a closed family charge as billed
+--   (it filters only VOIDED), so it never tries a second charge for one, and
+--   a re-bill after a void that used to fail now succeeds, which is the fix.
+-- * A draining colour's worker still has unguarded charge-status writes. A late
+--   one onto a closed or voided row either re-enters the index with no live
+--   sibling (the pre-existing stray case) or, if the family already has a live
+--   re-bill, fails P2002 into its retry path, leaving the live charge intact.
+-- * Every existing row already satisfies the full UNIQUE, so the partial index
+--   builds with no collision.
+--
+-- LOCK IMPACT: Prisma runs this file in one short transaction, so the ACCESS
+-- EXCLUSIVE lock DROP INDEX takes on "MembershipSubscriptionCharge" is held for
+-- the whole transaction, including the CREATE UNIQUE INDEX build: a scan of a
+-- cold billing table with one row per family or member per season. Run in the
+-- normal deploy window and let the deploy guard stop on lock timeout.
+--
+-- Prisma cannot express a predicated index, so the @@unique leaves
+-- prisma/schema.prisma; the index is registered in
+-- prisma/partial-unique-indexes.tsv, which scripts/check-partial-indexes.sh
+-- holds to set equality in CI.
+DROP INDEX "MembershipCharge_family_type_year_key";
+CREATE UNIQUE INDEX "MembershipCharge_family_type_year_live_key" ON "MembershipSubscriptionCharge"("seasonYear", "membershipTypeId", "familyGroupId") WHERE "status" NOT IN ('NOT_REQUIRED', 'VOIDED');

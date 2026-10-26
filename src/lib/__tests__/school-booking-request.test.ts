@@ -17,6 +17,7 @@ vi.mock("@/lib/prisma", () => ({
       update: vi.fn(),
     },
     bookingRequestSettings: { findUnique: vi.fn() },
+    lodgeSettings: { findUnique: vi.fn() },
     member: { create: vi.fn(), findUnique: vi.fn(), findMany: vi.fn().mockResolvedValue([]) },
     // #2364: the hosting review is reconciled inside the approving/holding
     // transaction, so every prisma/tx double a booking-writing path runs
@@ -269,7 +270,7 @@ import { generateSchoolGuests } from "@/lib/school-booking-constants";
 // #2739: the night rows this pipeline writes are the #1036 locked prices the
 // #2337 member link then prices against, so the join is asserted here with the
 // real reader and the real engine rather than described in a comment.
-import { lockedNightPricesForGuest } from "@/lib/booking-modify-plan";
+import { valuedNightLocksForGuest } from "@/lib/edit-night-valuation";
 import { calculateBookingPrice } from "@/lib/policies/pricing";
 import { generateHutLeaderPin, hashHutLeaderPin } from "@/lib/lodge-pin-session";
 
@@ -724,11 +725,13 @@ describe("approveSchoolBookingRequest", () => {
     mockedModuleEnabled.mockResolvedValue(true);
     mockedSeasonFindMany.mockResolvedValue(seasonWithRates() as never);
     mockedGroupDiscount.mockResolvedValue(null as never);
-    // Existing conversion tests specify the legacy enabled policy. Each OFF
-    // case below overrides this explicitly, so the setting is part of the
-    // behaviour under test rather than ambient mock state.
-    vi.mocked(prisma.bookingRequestSettings.findUnique).mockResolvedValue({
-      assignSchoolTeachersAsHutLeaders: true,
+    // Existing conversion tests run at a lodge that ticks teachers (#3819: the
+    // per-lodge setting replaced #3416's club-wide switch). Each OFF case below
+    // overrides this explicitly, so the setting is part of the behaviour under
+    // test rather than ambient mock state. Every lodge reads this own row.
+    vi.mocked(prisma.lodgeSettings.findUnique).mockResolvedValue({
+      capacity: null,
+      schoolHutLeaderTeacherOnBooking: true,
     } as never);
     vi.mocked(prisma.lodge.findFirst).mockResolvedValue({ id: "lodge-1" } as never);
 
@@ -1100,8 +1103,20 @@ describe("approveSchoolBookingRequest", () => {
     // Teachers carry the same non-member SCHOOL role as the school contact.
     expect(teacherMemberArgs.role).toBe("SCHOOL");
     expect(vi.mocked(prisma.hutLeaderAssignment.create)).toHaveBeenCalledTimes(1);
+    // #3819: the teacher leads the school's nights, first to LAST: the night
+    // before checkout, never the checkout day (INV-DATE-002). The PIN email
+    // states the same span.
+    expect(vi.mocked(prisma.hutLeaderAssignment.create).mock.calls[0]![0].data).toMatchObject({
+      startDate: CHECK_IN,
+      endDate: new Date("2026-08-02T00:00:00.000Z"),
+    });
     expect(mockedSendPin).toHaveBeenCalledWith(
-      expect.objectContaining({ email: "tana@school.test", pin: "246810" })
+      expect.objectContaining({
+        email: "tana@school.test",
+        pin: "246810",
+        startDate: CHECK_IN,
+        endDate: new Date("2026-08-02T00:00:00.000Z"),
+      })
     );
 
     expect(mockedEnqueueInvoice).toHaveBeenCalledWith(
@@ -1113,10 +1128,69 @@ describe("approveSchoolBookingRequest", () => {
     expect(mockedSendOwnerSubstitution).not.toHaveBeenCalled();
   });
 
-  it("keeps teacher guests and school contact people without hut-leader PINs when the policy is off (#3416)", async () => {
+  it("refuses, writing nothing, when the default lodge moves between the hut-leader setting read and the lock (#3819)", async () => {
+    // A null-lodge request: the setting is read for the default lodge before
+    // the transaction, and the transaction re-resolves the default.
     mockedFindUnique.mockResolvedValue(schoolRequest() as never);
-    vi.mocked(prisma.bookingRequestSettings.findUnique).mockResolvedValue({
-      assignSchoolTeachersAsHutLeaders: false,
+    let defaultReads = 0;
+    vi.mocked(prisma.lodge.findFirst).mockImplementation((async () => ({
+      id: defaultReads++ === 0 ? "lodge-1" : "lodge-9",
+    })) as never);
+
+    await expect(
+      approveSchoolBookingRequest({ requestId: "req-school", adminMemberId: "admin-1" }),
+    ).rejects.toMatchObject({ status: 409 });
+    expect(prisma.lodgeSettings.findUnique).toHaveBeenCalledWith({ where: { id: "lodge-1" } });
+    expect(prisma.booking.create).not.toHaveBeenCalled();
+    expect(prisma.hutLeaderAssignment.create).not.toHaveBeenCalled();
+  });
+
+  it("still replays an already-converted request when the default lodge has moved (#3819 review)", async () => {
+    mockedFindUnique.mockResolvedValue(
+      schoolRequest({
+        status: BookingRequestStatus.PRICED,
+        priceCents: 20000,
+        convertedBookingId: "booking-1",
+        convertedMemberId: "school-member",
+      }) as never,
+    );
+    let defaultReads = 0;
+    vi.mocked(prisma.lodge.findFirst).mockImplementation((async () => ({
+      id: defaultReads++ === 0 ? "lodge-1" : "lodge-9",
+    })) as never);
+
+    await expect(
+      approveSchoolBookingRequest({ requestId: "req-school", adminMemberId: "admin-1" }),
+    ).resolves.toMatchObject({ type: "approved", bookingId: "booking-1" });
+    expect(prisma.booking.create).not.toHaveBeenCalled();
+  });
+
+  it("assigns no teacher and sends no PIN while the Hut Leaders module is off, whatever the lodge ticks (#3821)", async () => {
+    mockedFindUnique.mockResolvedValue(schoolRequest() as never);
+    vi.mocked(prisma.lodgeSettings.findUnique).mockResolvedValue({
+      capacity: null,
+      schoolHutLeaderTeacherOnBooking: true,
+    } as never);
+    // Every other module stays on, so only the hut-leader gate can refuse.
+    mockedModuleEnabled.mockImplementation((async (key: string) => key !== "hutLeaders") as never);
+
+    const result = await approveSchoolBookingRequest({
+      requestId: "req-school",
+      adminMemberId: "admin-1",
+    });
+
+    expect(result).toMatchObject({ type: "approved", teacherHutLeaderAssignmentsCreated: false });
+    expect(mockedModuleEnabled).toHaveBeenCalledWith("hutLeaders");
+    expect(prisma.hutLeaderAssignment.create).not.toHaveBeenCalled();
+    expect(mockedGenerateHutLeaderPin).not.toHaveBeenCalled();
+    expect(mockedSendPin).not.toHaveBeenCalled();
+  });
+
+  it("keeps teacher guests and school contact people without hut-leader PINs when the lodge does not tick teachers (#3416, #3819)", async () => {
+    mockedFindUnique.mockResolvedValue(schoolRequest() as never);
+    vi.mocked(prisma.lodgeSettings.findUnique).mockResolvedValue({
+      capacity: null,
+      schoolHutLeaderTeacherOnBooking: false,
     } as never);
 
     const result = await approveSchoolBookingRequest({
@@ -1735,6 +1809,8 @@ describe("approveSchoolBookingRequest", () => {
     const hutLeaderArgs = vi.mocked(prisma.hutLeaderAssignment.create).mock
       .calls[0][0].data as Record<string, unknown>;
     expect(hutLeaderArgs.lodgeId).toBe("lodge-2");
+    // #3819: and it was THAT lodge's setting that allowed it.
+    expect(prisma.lodgeSettings.findUnique).toHaveBeenCalledWith({ where: { id: "lodge-2" } });
     // #2926: the row carries its own provenance, and this is the ONLY writer
     // that stamps SCHOOL_BOOKING. It is what takes teacher rows out of the
     // hut-leader overlap predicate, so losing it here silently restores the
@@ -2616,7 +2692,7 @@ describe("approveMemberWholeLodgeRequest (#2263)", () => {
 
       The #2337 placeholder→member link is the ONE edit path exempt from the
       quote-priced block, and it reprices the whole booking. `prepareGuestPlan`
-      passes `link ? [] : lockedNightPricesForGuest(guest)`, so an UNLINKED
+      passes `link ? [] : valuedNightLocksForGuest(guest, booking)`, so an UNLINKED
       placeholder is protected only by its stored night rows. While this pipeline
       wrote none, those rows were empty, every unlinked placeholder repriced at
       whatever the season rate is on the day of the link, and the negotiated
@@ -2654,12 +2730,35 @@ describe("approveMemberWholeLodgeRequest (#2263)", () => {
     ).create;
 
     // AFTER: the rows this pipeline now writes, read by the real lock reader.
-    const locks = lockedNightPricesForGuest({ nights: storedNights });
-    expect(locks).toHaveLength(2);
-    // BEFORE: what the same reader returned while the pipeline wrote no rows at
-    // all. Not a stand-in — a night-less guest is exactly what it was handed.
-    const noLocks = lockedNightPricesForGuest({ nights: [] });
-    expect(noLocks).toEqual([]);
+    // R1 (#4317, INV-MOD-028): the two $50 rows add up to the guest's $100, so
+    // the rows are the values.
+    const storedGuestTotalCents = data.guests.create[0].priceCents as number;
+    expect(storedGuestTotalCents).toBe(10000);
+    const bookingRange = { checkIn: CHECK_IN, checkOut: CHECK_OUT };
+    const locks = valuedNightLocksForGuest(
+      {
+        priceCents: storedGuestTotalCents,
+        stayStart: CHECK_IN,
+        stayEnd: CHECK_OUT,
+        nights: storedNights,
+      },
+      bookingRange,
+    ).lockedNightPrices;
+    expect(locks.map((lock) => lock.priceCents)).toEqual([5000, 5000]);
+    // BEFORE: the lock set the engine was handed while the pipeline wrote no
+    // rows at all, so every night priced at the season rate on the day of the
+    // link. Written out as the empty set it was, not read from the valued
+    // reader: since #4317 that reader values a night-less guest from its stored
+    // total (R3: $100 over two nights, $50 each), so it can no longer produce
+    // this historical case. That is pinned here too, so the old behaviour
+    // cannot come back through a guest that merely lost its rows.
+    const noLocks: typeof locks = [];
+    expect(
+      valuedNightLocksForGuest(
+        { priceCents: storedGuestTotalCents, stayStart: CHECK_IN, stayEnd: CHECK_OUT, nights: [] },
+        bookingRange,
+      ).lockedNightPrices.map((lock) => lock.priceCents),
+    ).toEqual([5000, 5000]);
 
     /** What the #2337 link charges this untouched placeholder, at `rateCents`. */
     const priceUnlinkedPlaceholderAt = (

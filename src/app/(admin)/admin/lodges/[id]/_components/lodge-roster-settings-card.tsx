@@ -186,10 +186,10 @@ export function LodgeRosterSettingsCard({ lodgeId }: { lodgeId: string }) {
     <div>
       {viewOnlyBanner}
       {feedback}
-      <Card>
+      <Card {...section.sectionRegionProps}>
         <CardHeader className="flex flex-row items-start justify-between gap-3">
           <div>
-            <CardTitle className="flex items-center gap-2 text-base">
+            <CardTitle {...section.titleProps} className="flex items-center gap-2 text-base">
               <Users className="h-4 w-4" />
               Member roster
             </CardTitle>
@@ -206,6 +206,7 @@ export function LodgeRosterSettingsCard({ lodgeId }: { lodgeId: string }) {
               variant="outline"
               size="sm"
               onClick={section.startEditing}
+              {...section.editTriggerProps}
             >
               Edit
             </ViewOnlyActionButton>

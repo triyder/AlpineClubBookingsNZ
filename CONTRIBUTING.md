@@ -94,11 +94,27 @@ is a reviewed edit there), `nodeLinker`, `verifyDepsBeforeRun` and
 `enableGlobalVirtualStore`. `.npmrc` exists for npm only.
 
 **Bumping a package that runs an install script.** The `allowBuilds` packages
-(`@prisma/engines`, `@sentry/cli`, `esbuild`, `prisma`, `unrs-resolver`) are
+(`@prisma/engines`, `esbuild`, `prisma`, `unrs-resolver`) are
 approved at one exact version each. Dependabot groups them, and the packages
 that pull them in, into their own `install-scripts` PR, so the ordinary
-minor-and-patch group is not held up. When a bump fails the install with
-`ERR_PNPM_IGNORED_BUILDS <name>@<version>`:
+minor-and-patch group is not held up. That works only because every other npm
+group lists each `install-scripts` pattern under `exclude-patterns`: Dependabot
+scores group matches rather than taking the first, so group order alone let
+them slip into the catch-all (#4364). `verify` runs
+`node scripts/ci/check-allow-builds.mjs` before the install; it fails when the
+two lists differ in either direction, when an approved package matches no
+`install-scripts` pattern, and when an approval no longer matches the version
+`pnpm-lock.yaml` resolves, naming the package and both versions. Adding a
+package to `allowBuilds` therefore also means adding a pattern that matches it
+to both groups in `.github/dependabot.yml`: the `install-scripts` group's
+`patterns` and the other group's `exclude-patterns`. Dependabot groups by the **direct**
+dependency it bumps, not by the approved package. So the direct dependencies
+that pull an approved package in (`pnpm why <package>`; today `tsx`, `vite`,
+`vitest`, `@vitest/coverage-v8`, `@sentry/nextjs`, `prisma`, `@prisma/client`,
+`eslint-config-next`) need a matching pattern too. The check doesn't verify
+those; keep them by hand when adding a direct dependency. When that
+check, or the install itself with `ERR_PNPM_IGNORED_BUILDS <name>@<version>`,
+fails on a bump:
 
 1. Read what that version's install script does (its `package.json`
    `scripts.preinstall`/`install`/`postinstall`, and the file it runs).
@@ -297,7 +313,7 @@ at once).
 ### Dead-code gate (knip)
 
 `pnpm run knip` is a blocking CI check (the `verify` job runs `pnpm exec knip` after
-the typecheck step). It fails the build if a pull request adds an unused file,
+generating the Prisma client). It fails the build if a pull request adds an unused file,
 export, type, or dependency, so remove dead code in the same PR that orphans it.
 Like the test suite, knip needs `DATABASE_URL` set to any value (an unreachable
 dummy is fine) so `prisma.config.ts` resolves; without it knip errors on the
@@ -365,15 +381,36 @@ the owner's checklist for rebuilding it.
 
 | Required check | Status | Job | What it gates |
 | --- | --- | --- | --- |
-| `verify` | applied | `ci.yml` → `verify` | lint, typecheck, knip, build, PR-body gates, and a fail-closed same-attempt poll of four independent full-suite test shards (#3431). It no longer runs the dependency audit (#2946) |
-| `Migration drift check` | applied | `ci.yml` → `migration-drift` | migrations reproduce `schema.prisma`; real-Postgres lock harnesses |
-| `Data migration verification` | applied | `ci.yml` → `data-migration-verification` | data-rewriting migrations against realistic pre-state |
+| `verify` | applied | `ci.yml` → `verify` | knip, PR-body gates and the other cheap checks itself, then one fail-closed same-attempt poll of four independent full-suite test shards (#3431) and the `Typecheck`, `Lint` and `Production build` jobs (#4425; those three are not required contexts themselves). It no longer runs the dependency audit (#2946) |
+| `Migration drift check` | applied | `ci.yml` → `migration-drift` | migrations reproduce `schema.prisma`; real-Postgres lock harnesses. On a pull request that changes nothing in `CHANGE_SCOPES.migrations` (`scripts/ci/change-scope.mjs`), its migration-only steps skip (drift, partial indexes, two migration tests; a step-level skip, #4425). Every real-Postgres proof that imports app code still runs |
+| `Data migration verification` | applied | `ci.yml` → `data-migration-verification` | data-rewriting migrations against realistic pre-state; its two migration-only proofs skip like `Migration drift check`, and the school naming races always run (#4425) |
 | `Static analysis gate` | applied | `ci.yml` → `static-analysis` | Semgrep: four registry packs **plus** `.semgrep/rules/**` and their fixtures |
-| `Playwright E2E` | applied | `e2e.yml` → `playwright` | the browser suite |
-| `E2E multi-lodge` | applied | `e2e.yml` → `multi-lodge` | the multi-lodge browser suite |
+| `Playwright E2E` | applied | `e2e.yml` → `playwright` | the browser suite: runs shard 1 and fails closed unless `E2E shard (2/3)`/`(3/3)` pass (#4397) |
+| `E2E multi-lodge` | applied | `e2e.yml` → `multi-lodge` | the multi-lodge browser suite (#4397: waits for the run's image and database in a step, never `needs:`) |
 | `Secret scan (gitleaks)` | applied | `ci.yml` → `secret-scan` | the PR's own commits, `main`'s history including merge commits, and the checked-out tree (#2686) |
-| `Image security gate (Trivy CRITICAL)` | applied | `ci.yml` → `docker-image-security` | CRITICAL image vulnerabilities. HIGH stays advisory (#2686) |
+| `Image security gate (Trivy CRITICAL)` | applied | `ci.yml` → `docker-image-security` | CRITICAL image vulnerabilities. HIGH stays advisory (#2686). On a pull request it builds and scans only when dependencies, `patches/`, the Dockerfile, a compose file, `.dockerignore`, `.trivyignore` or the workflow changed; every push scans (#4425, owner decision) |
 | `Dependency audit` | applied | `ci.yml` → `dependency-audit` | `pnpm audit --audit-level=high`. Split out of `verify` (#2946), where a failing audit skipped lint, the ratchet, `prisma generate`, typecheck, knip, `pnpm test` and the build on every branch (#2945) |
+
+**A required job never skips by a job-level `if:` or `needs:`** (#4397, #4425):
+GitHub counts a skipped required check as passing. A job that may skip work
+decides in a step (`scripts/ci/change-scope.mjs`, `e2e-scope.mjs`) and skips its
+heavy steps only on an explicit `needed=false`, so a push or any failure to
+classify the change runs everything. A job that reaches a required check
+through another's gate step (`require-test-shards.mjs`) takes no condition
+either: the gate fails on a skipped job. Renaming such a job means renaming it
+in the gate's `--job` too.
+
+**The PR-body gates read the description from a file, never an environment
+variable** (#4053). `verify` writes `.pull_request.body` from
+`$GITHUB_EVENT_PATH` to `$RUNNER_TEMP/pr-body.md` and the two gates open it
+through `PR_BODY_FILE` (`readEventPrBody` in `scripts/ci/pr-body.mjs`), as their
+fallback behind the live body fetched from the pulls API. Linux caps one
+environment string at 128 KiB, so a description past that size (PR #3924 reached
+173 KB) used to stop the runner starting the step's shell ("Argument list too
+long") and turn `verify` red with no finding. Do not reference
+`github.event.pull_request.body` on any non-comment line of a workflow or action;
+`scripts/ci/pr-body-file.test.mjs` fails if it comes back. Keep a long
+description short anyway: link the review history rather than pasting it.
 
 **Adding a required context is a three-step sequence, and doing it out of
 order breaks every open pull request** — whenever a job producing a required
@@ -383,7 +420,8 @@ new names, and a required check that has never reported sits on
 
 1. merge the change that adds or renames the job;
 2. then add that job's context to branch protection;
-3. then rebase every open pull request onto the new `main`, oldest first.
+3. then merge the new `main` into every open pull request branch, oldest first,
+   following [`AGENTS.md` → "Safety"](AGENTS.md#safety) for branch-history handling.
 
 **Between step 1 and step 2 the new context is a red check, not a merge
 block.** Splitting out `Dependency audit` (#2946) opened exactly such a gap:

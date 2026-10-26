@@ -356,6 +356,7 @@ describe("EML-01: bookingModifiedTemplate", () => {
     );
 
     const html = bookingModifiedTemplate({
+      addedGuests: [],
       firstName: "Alice",
       modificationType: "DATE_CHANGE",
       oldCheckIn: new Date("2026-06-01"),
@@ -372,9 +373,10 @@ describe("EML-01: bookingModifiedTemplate", () => {
       // #3032: required, and this suite is not about the review note.
       // False is the control state for every assertion here.
       financialReviewPending: false,
-      refundByBankTransfer: false,
+      refundByBankTransfer: null,
       appliedCreditGivenBackCents: 0,
-      refundReturnedToOrganiser: false,
+      unpaidAskCancelled: false,
+      refundDestination: "own",
     }, CLUB_FORMAT_TEST);
 
     expect(html).toContain("Booking Modified");
@@ -390,6 +392,7 @@ describe("EML-01: bookingModifiedTemplate", () => {
     );
 
     const html = bookingModifiedTemplate({
+      addedGuests: [],
       firstName: "Bob",
       modificationType: "GUEST_ADD",
       oldCheckIn: new Date("2026-06-01"),
@@ -406,9 +409,10 @@ describe("EML-01: bookingModifiedTemplate", () => {
       // #3032: required, and this suite is not about the review note.
       // False is the control state for every assertion here.
       financialReviewPending: false,
-      refundByBankTransfer: false,
+      refundByBankTransfer: null,
       appliedCreditGivenBackCents: 0,
-      refundReturnedToOrganiser: false,
+      unpaidAskCancelled: false,
+      refundDestination: "own",
     }, CLUB_FORMAT_TEST);
 
     expect(html).toContain("Guests Added");
@@ -423,6 +427,7 @@ describe("EML-01: bookingModifiedTemplate", () => {
     );
 
     const html = bookingModifiedTemplate({
+      addedGuests: [],
       firstName: "Charlie",
       modificationType: "GUEST_REMOVE",
       oldCheckIn: new Date("2026-06-01"),
@@ -439,9 +444,10 @@ describe("EML-01: bookingModifiedTemplate", () => {
       // #3032: required, and this suite is not about the review note.
       // False is the control state for every assertion here.
       financialReviewPending: false,
-      refundByBankTransfer: false,
+      refundByBankTransfer: null,
       appliedCreditGivenBackCents: 0,
-      refundReturnedToOrganiser: false,
+      unpaidAskCancelled: false,
+      refundDestination: "own",
     }, CLUB_FORMAT_TEST);
 
     expect(html).toContain("Guest Removed");
@@ -454,6 +460,7 @@ describe("EML-01: bookingModifiedTemplate", () => {
     );
 
     const html = bookingModifiedTemplate({
+      addedGuests: [],
       firstName: '<script>alert("xss")</script>',
       modificationType: "DATE_CHANGE",
       oldCheckIn: new Date("2026-06-01"),
@@ -470,9 +477,10 @@ describe("EML-01: bookingModifiedTemplate", () => {
       // #3032: required, and this suite is not about the review note.
       // False is the control state for every assertion here.
       financialReviewPending: false,
-      refundByBankTransfer: false,
+      refundByBankTransfer: null,
       appliedCreditGivenBackCents: 0,
-      refundReturnedToOrganiser: false,
+      unpaidAskCancelled: false,
+      refundDestination: "own",
     }, CLUB_FORMAT_TEST);
 
     expect(html).not.toContain("<script>");
@@ -485,6 +493,7 @@ describe("EML-01: bookingModifiedTemplate", () => {
     );
 
     const html = bookingModifiedTemplate({
+      addedGuests: [],
       firstName: "Dan",
       modificationType: "DATE_CHANGE",
       oldCheckIn: new Date("2026-06-01"),
@@ -501,9 +510,10 @@ describe("EML-01: bookingModifiedTemplate", () => {
       // #3032: required, and this suite is not about the review note.
       // False is the control state for every assertion here.
       financialReviewPending: false,
-      refundByBankTransfer: false,
+      refundByBankTransfer: null,
       appliedCreditGivenBackCents: 0,
-      refundReturnedToOrganiser: false,
+      unpaidAskCancelled: false,
+      refundDestination: "own",
     }, CLUB_FORMAT_TEST);
 
     // Should show "Total" not "Previous Total" / "New Total"

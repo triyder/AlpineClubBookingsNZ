@@ -373,6 +373,59 @@ describe("Xero webhook route", () => {
     expect(mockRecordXeroInboundEvent).not.toHaveBeenCalled();
   });
 
+  it("accepts a signed CREDITNOTE event and records the category Xero sent", async () => {
+    const { POST } = await import("@/app/api/webhooks/xero/route");
+
+    const response = await POST(
+      signedRequest({
+        events: [
+          {
+            eventType: "UPDATE",
+            eventCategory: "CREDITNOTE",
+            resourceId: "cn-void-1",
+            eventDateUtc: "2026-05-29T00:00:00.000Z",
+            data: { Type: "ACCRECCREDIT", Status: "VOIDED" },
+          },
+        ],
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockRecordXeroInboundEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventCategory: "CREDITNOTE",
+        eventType: "UPDATE",
+        resourceId: "cn-void-1",
+        status: "RECEIVED",
+      }),
+    );
+  });
+
+  it("still rejects a CREDITNOTE payload when the signature does not match", async () => {
+    const { POST } = await import("@/app/api/webhooks/xero/route");
+
+    const response = await POST(
+      signedRequest(
+        {
+          events: [
+            {
+              eventType: "UPDATE",
+              eventCategory: "CREDITNOTE",
+              resourceId: "cn-void-1",
+              eventDateUtc: "2026-05-29T00:00:00.000Z",
+              data: { Type: "ACCRECCREDIT", Status: "VOIDED" },
+            },
+          ],
+        },
+        "bad-signature",
+      ),
+    );
+
+    expect(response.status).toBe(401);
+    expect(mockRecordXeroInboundEvent).not.toHaveBeenCalled();
+    expect(mockRecordXeroWebhookValidation).not.toHaveBeenCalled();
+  });
+
   it("records valid signed Xero events with required resource identity", async () => {
     const { POST } = await import("@/app/api/webhooks/xero/route");
 

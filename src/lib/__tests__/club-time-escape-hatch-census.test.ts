@@ -636,6 +636,17 @@ const CENSUS_CEILING = {
    * `@db.Date` day `checkLodgeAuth` already judged, the same window
    * `getKioskAccessTier` uses. Re-measured by RUNNING this suite on this tree.
    *
+   * 227 -> 226 (#3817): `member-dietary.ts` stops importing it. Every
+   * hut-leader access reader now asks the one window in
+   * `hut-leader-access-window.ts`, which steps its stored days with the
+   * club-time kernel (`addCalendarDays`), as does the new stay check in
+   * `hut-leader-stayed-nights.ts`; neither imports this adapter. Re-measured by
+   * RUNNING this suite on this tree.
+   *
+   * 226 -> 227 (#3413, composed with #3817): `booking-request-pending-adult-reservations.ts`
+   * uses only zone-free lodge-night helpers. Re-measured by RUNNING this suite
+   * on the composed tree.
+   *
    * 228 -> 229 (#50, composed with main): one importer, `src/lib/other-lodges.ts`, and the
    * zone-free direction again. The other-lodges registry gains two `@db.Date`
    * season-start columns that travel as `yyyy-MM-dd` strings, so the shared
@@ -644,23 +655,13 @@ const CENSUS_CEILING = {
    * takes a `timeZone`, and the file consults no zone anywhere else; the one
    * comparison it makes between two stored days goes through `storedDateOnly`.
    * Re-measured by RUNNING this suite on this tree.
+   *
+   * 227/229 -> 228 (sync of `main` f1ecdb5ff into epic #3789): #3817's removal
+   * (`member-dietary.ts`) and #50's addition (`other-lodges.ts`) are disjoint.
+   * Re-measured by RUNNING this suite on the composed tree, never added.
    */
-  // #3413: booking-request-pending-adult-reservations uses only zone-free
-  // lodge-night helpers. Re-measured by this suite on the composed branch.
-  // 229 -> 231 (#62): two importers, both the zone-free direction.
-  // `central-availability.ts` lists a stay's date-only lodge nights
-  // (`eachDateOnlyInRange`) and keys the member calendar's map by them
-  // (`formatDateOnly`); the availability route validates and parses the posted
-  // `yyyy-MM-dd` strings (`isDateOnlyString`, `parseDateOnly`) and bounds the
-  // stay (`addDaysDateOnly`). Neither takes a `timeZone`; the club's today comes
-  // from `club-time` (`clubTodayDateOnlyInstant`), not this adapter.
-  // Re-measured by RUNNING this suite on this tree.
-  // 231 -> 232 (#77): `other-lodge-fees-sync.ts`, the zone-free direction:
-  // it formats stored `@db.Date` season days as `yyyy-MM-dd` (`formatDateOnly`)
-  // for the season check and the audit text; the club's today comes from
-  // `club-time` (`clubTodayDateOnlyInstant`), not this adapter.
-  // Re-measured by RUNNING this suite on this tree.
-  dateOnlyImporters: 232,
+  // 228 -> 231 (fork #62/#77 importers on top of main). MEASURED by running this suite on the fork's sync of thatskiff33 main (#89, 26 Oct 2026).
+  dateOnlyImporters: 231,
   /**
    * `new Date(y, m, d)` — local midnight in the HOST's zone.
    *

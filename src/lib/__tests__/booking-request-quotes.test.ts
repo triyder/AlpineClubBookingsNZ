@@ -2282,6 +2282,34 @@ describe("holdBookingRequestSlots owner role", () => {
     }
   });
 
+  it("checks capacity with each named guest's linked member and a null for every pending adult (#3789/#3821)", async () => {
+    // A ticked custodian on the booking counts once, so the capacity ranges
+    // carry the linked member; the unnamed pending adults are nobody in
+    // particular. The exact list, in guest order, pins both halves.
+    vi.stubEnv("PENDING_SCHOOL_ADULTS_ENABLED", "1");
+    vi.stubEnv("BLUE_GREEN_OLD_APP_AND_WORKERS_STOPPED", "1");
+    try {
+      const breakdown = [
+        { guestIndex: 0, kind: "NAMED", firstName: "Tara", lastName: "Tester", ageTier: AgeTier.ADULT, isMember: true, memberId: "member-42", nightCount: 2, rateCents: null, totalCents: 100 },
+        { guestIndex: 1, kind: "NAMED", firstName: "Sam", lastName: "Student", ageTier: AgeTier.CHILD, isMember: false, memberId: null, nightCount: 2, rateCents: null, totalCents: 100 },
+        { guestIndex: 2, kind: "PENDING_ADULT", ageTier: AgeTier.ADULT, isMember: false, memberId: null, nightCount: 2, rateCents: null, totalCents: 100 },
+        { guestIndex: 3, kind: "PENDING_ADULT", ageTier: AgeTier.ADULT, isMember: false, memberId: null, nightCount: 2, rateCents: null, totalCents: 100 },
+      ];
+      vi.mocked(prisma.bookingRequest.findUnique).mockResolvedValue(baseRequest({
+        type: BookingRequestType.SCHOOL,
+        pendingAdultCount: 2,
+        lodgeId: "lodge-1",
+        linkedGuestMembers: [{ guestIndex: 0, memberId: "member-42" }],
+        quotes: [{ options: [{ id: "NON_CATERED", label: "Non-catered", cateringOption: SchoolCateringOption.NON_CATERED, totalCents: 400, pricingMode: BookingRequestPricingMode.OVERALL_TOTAL, guestBreakdown: breakdown }] }],
+      }) as never);
+      await holdBookingRequestSlots({ requestId: "req-1", adminMemberId: "admin-1" });
+      const ranges = mockedCheckCapacity.mock.calls.at(-1)?.[3] as Array<{ memberId: string | null }>;
+      expect(ranges.map((range) => range.memberId)).toEqual(["member-42", null, null, null]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("locks transaction-current linked members after lodge and before the versioned claim", async () => {
     const request = baseRequest({
       type: BookingRequestType.GENERAL,

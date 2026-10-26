@@ -44,6 +44,14 @@ describe("postHandBackLedgerLine", () => {
     expect(createMany).not.toHaveBeenCalled();
   });
 
+  it("#4097 (`INV-PAY-129`): posts a cancellation's card refund shortfall on a CARD payment - no refund row will ever post that money", async () => {
+    const { input, createMany } = args({ paymentSource: "STRIPE", cardShortfall: true });
+    await postHandBackLedgerLine(input);
+    expect(createMany.mock.calls[0]?.[0]).toMatchObject({
+      data: [expect.objectContaining({ kind: "BANK_REFUND", amountCents: -3_500, settlementMethod: "INTERNET_BANKING", postingKey: "handback:t1" })],
+    });
+  });
+
   it("refuses, in pure code, a hand-back routed as a card refund or account credit", async () => {
     log.error.mockClear();
     const { input, createMany } = args({ refundMethod: "card" });

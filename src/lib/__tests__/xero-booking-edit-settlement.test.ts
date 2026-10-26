@@ -12,9 +12,24 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/xero-operation-outbox", () => mocks);
 
+// #3979: the queue reads whether a bank receipt was captured, only when the
+// aggregate status alone would refuse an invoice correction. Default: one was
+// (the answer the aggregate gave before #3979).
+const receiptFindFirst = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/prisma", () => ({ prisma: { paymentTransaction: { findFirst: receiptFindFirst } } }));
+beforeEach(() => {
+  receiptFindFirst.mockReset();
+  receiptFindFirst.mockResolvedValue({ id: "ptx-captured" });
+});
+
 vi.mock("@/lib/logger", () => ({
   default: { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
+
+// #3403 review (M5): an invoice parked on an ask a later request already
+// superseded follows it at once; proven in its own suite and on PostgreSQL.
+const followForIntent = vi.hoisted(() => vi.fn(async () => undefined));
+vi.mock("@/lib/superseded-ask-invoice-carry", () => ({ followSupersededAskInvoicesForIntentSafely: followForIntent }));
 
 import { wouldQueueCheckInDatedInvoiceUpdate } from "@/lib/xero-booking-edit-conditions";
 import {
@@ -404,6 +419,7 @@ describe("queueXeroBookingEditSettlement (side effects)", () => {
       }),
     );
     expect(mocks.kickQueuedXeroOutboxOperationsIfConnected).toHaveBeenCalled();
+    expect(followForIntent).toHaveBeenCalledWith("pi_additional");
   });
 
   it("queues a mixed-sign supplementary invoice with the signed price reduction (#1356)", async () => {
@@ -623,5 +639,55 @@ describe("queueXeroBookingEditSettlement (side effects)", () => {
     expect(calls).toEqual([
       expect.objectContaining({ refundAmountCents: 4000, refundMethod: "account-credit", reviewTaskId: "applied-credit-give-back" }),
     ]);
+  });
+});
+
+describe("an invoice correction is decided from the bank receipt, not the aggregate (#3979 review E)", () => {
+  const reduction = {
+    hasIssuedXeroInvoice: true,
+    priceDiffCents: -10_000,
+    refundedThroughStripe: false,
+    // #1765: a card capture refunded before the switch reads REFUNDED.
+    originalPaymentStatus: "REFUNDED",
+  };
+
+  it("classifies a reduction of a never-paid invoice as a correction when no receipt was captured", () => {
+    const decision = classifyXeroBookingEditSettlement({ ...reduction, internetBankingReceiptCaptured: false });
+    expect(decision.financialAction).toMatchObject({ type: "modification-credit-note", noteWording: "invoice-correction" });
+    expect(decision.financialAction).not.toHaveProperty("refundMethod");
+  });
+
+  it("keeps the refund wording once a receipt was captured", () => {
+    const decision = classifyXeroBookingEditSettlement({ ...reduction, internetBankingReceiptCaptured: true });
+    expect(decision.financialAction).not.toMatchObject({ noteWording: "invoice-correction" });
+    expect(decision.financialAction).toMatchObject({ refundMethod: "internet-banking" });
+  });
+
+  it("the queue reads the receipt in exactly that case, and words the note a correction", async () => {
+    receiptFindFirst.mockResolvedValue(null);
+    mocks.enqueueXeroModificationCreditNoteOperation.mockResolvedValue({ queueOperationId: null });
+
+    await queueXeroBookingEditSettlement({ ...reduction, bookingId: "booking-1", bookingModificationId: "mod-1" });
+
+    expect(receiptFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ payment: { bookingId: "booking-1" }, source: "INTERNET_BANKING" }) }),
+    );
+    expect(mocks.enqueueXeroModificationCreditNoteOperation).toHaveBeenCalledWith(
+      expect.objectContaining({ noteWording: "invoice-correction" }),
+      expect.anything(),
+    );
+  });
+
+  it("the queue asks nothing for an unpaid aggregate", async () => {
+    mocks.enqueueXeroModificationCreditNoteOperation.mockResolvedValue({ queueOperationId: null });
+
+    await queueXeroBookingEditSettlement({
+      ...reduction,
+      originalPaymentStatus: "PENDING",
+      bookingId: "booking-1",
+      bookingModificationId: "mod-1",
+    });
+
+    expect(receiptFindFirst).not.toHaveBeenCalled();
   });
 });

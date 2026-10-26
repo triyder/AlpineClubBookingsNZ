@@ -37,14 +37,6 @@ export function eachNightKey(checkIn: string, checkOut: string): string[] {
   return keys;
 }
 
-export function previousDateOnly(dateString: string | null) {
-  if (!dateString) return null;
-  const date = new Date(`${dateString}T00:00:00.000Z`);
-  if (Number.isNaN(date.getTime())) return null;
-  date.setUTCDate(date.getUTCDate() - 1);
-  return formatDateOnly(date);
-}
-
 export function shiftDateOnly(dateString: string, days: number) {
   const date = new Date(`${dateString}T00:00:00.000Z`);
   if (Number.isNaN(date.getTime())) return dateString;

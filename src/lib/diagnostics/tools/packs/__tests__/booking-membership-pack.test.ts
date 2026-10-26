@@ -2985,23 +2985,30 @@ describe("AID-6B booking/membership pack: the relation census (#2376)", () => {
     }
   });
 
-  it("uses XeroToken only as a provider-free connected-tenant presence probe", () => {
+  it("asks only the non-secret connection row whether a Xero tenant is connected (#3806)", () => {
     const source = packSource("booking-evidence.ts");
     expect(source).not.toContain("prisma.xeroToken");
+    expect(source).not.toContain("prisma.xeroConnection");
     const resolver = readFileSync(
       join(REPO_ROOT, "src", "lib", "financial-year-server.ts"),
       "utf8",
     );
-    // `db.` and not `prisma.`: the resolution takes a client so a caller inside a
+    // `db` and not `prisma`: the resolution takes a client so a caller inside a
     // bounded read-only transaction can hand it one, and reading these two rows on
     // the global client instead would put them outside that transaction's snapshot
     // and its statement timeout. The default is still the global client, for the
     // product callers that have no transaction.
-    expect(resolver).toContain("db.xeroToken.findFirst");
+    expect(resolver).toContain("readXeroConnection(db)");
     expect(resolver).toContain("db: StoredFinancialYearDb = prisma");
-    expect(resolver).toContain("select: { id: true }");
-    for (const credential of ["accessToken", "refreshToken", "expiresAt"]) {
-      expect(resolver).not.toContain(`select: { ${credential}`);
+    // Since #3806 R2 the token-bearing table is not read here at all.
+    expect(resolver).not.toContain("xeroToken");
+    const connection = readFileSync(
+      join(REPO_ROOT, "src", "lib", "xero-connection.ts"),
+      "utf8",
+    );
+    expect(connection).toContain("select: { tenantId: true, expiresAt: true }");
+    for (const credential of ["accessToken", "refreshToken"]) {
+      expect(connection).not.toContain(credential);
     }
   });
 

@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
+import { Button, type ButtonProps } from "@/components/ui/button";
 import { DatasetResetButton } from "@/components/admin/dataset-reset-button";
 import { bookingOwner } from "@/lib/booking-owner";
 import { ChangeRequestPaymentLine } from "@/components/admin/booking-requests/change-request-payment-line";
@@ -24,6 +24,30 @@ import { useClubTime } from "@/components/club-time-provider";
 import { formatStayDate } from "@/lib/club-time";
 import { formatCents } from "@/lib/utils";
 import { useClubFormat } from "@/components/club-format-provider";
+import { useAgeTierOptions } from "@/lib/use-age-tier-options";
+import {
+  decisionToastMessage,
+  FinishedStayApprovalNotice,
+  FinishedStaySettlementField,
+  FinishedStayQuoteSummary,
+  expectedFiguresOf,
+  OfficerGuestEntry,
+  officerGuestsKey,
+  officerGuestsPayload,
+  OverCapacityConfirmation,
+  quoteIsCurrent,
+  requestStay,
+  RequestedGuestAdds,
+  useFinishedStayQuotes,
+} from "@/components/admin/booking-requests/booking-change-request-finished-stay";
+import { DecidedChangeRequestSummary } from "@/components/admin/booking-requests/booking-change-request-decided";
+import { RequestedGuestNights } from "@/components/admin/booking-requests/requested-guest-nights";
+import {
+  EMPTY_DECISION_DRAFT,
+  statusBadgeClass,
+  type BookingChangeRequestData,
+  type DecisionDraft,
+} from "@/components/admin/booking-requests/booking-change-request-panel-model";
 
 type RequestFilter = "REQUESTED" | "APPROVED" | "REJECTED" | "ALL";
 
@@ -38,81 +62,6 @@ function isRequestFilter(value: string | null): value is RequestFilter {
   return requestFilters.has(value as RequestFilter);
 }
 
-interface BookingChangeRequestData {
-  id: string;
-  bookingId: string;
-  requestedByMemberId: string;
-  status: "REQUESTED" | "APPROVED" | "REJECTED";
-  requestedChanges: {
-    requested?: {
-      summary?: string | null;
-    };
-    payment?: {
-      id?: string;
-      amountCents?: number;
-      refundedAmountCents?: number;
-      status?: string;
-      xeroInvoiceId?: string | null;
-      xeroInvoiceNumber?: string | null;
-    } | null;
-  };
-  reason: string | null;
-  /**
-   * MEMBER-VISIBLE (#2562). Rendered to the member verbatim on their booking page
-   * under "Change Requests", so the field below is labelled for that audience
-   * before a decision is submitted.
-   */
-  adminNotes: string | null;
-  /** The officer's PRIVATE note (#2562) — admin surfaces only, never the member. */
-  internalNotes: string | null;
-  reviewedAt: string | null;
-  createdAt: string;
-  requestedBy: {
-    id: string;
-    firstName: string;
-    lastName: string;
-    email: string;
-  };
-  reviewedBy: {
-    id: string;
-    firstName: string;
-    lastName: string;
-  } | null;
-  linkedModification: {
-    id: string;
-    createdAt: string;
-    modificationType: string;
-    priceDiffCents: number;
-    changeFeeCents: number;
-  } | null;
-  booking: {
-    id: string;
-    checkIn: string;
-    checkOut: string;
-    status: string;
-    finalPriceCents: number;
-    // #3369: NULLABLE — a school booking has no member, and an officer can
-    // raise a locked-period change request on one. Declared non-null here, a
-    // hand-written copy of an API shape that was right, it satisfied the
-    // compiler while the render threw inside the `.map()`.
-    member: {
-      id: string;
-      firstName: string;
-      lastName: string;
-      email: string;
-    } | null;
-    organisation: { name: string; email: string | null } | null;
-    payment: {
-      id: string;
-      amountCents: number;
-      refundedAmountCents: number;
-      status: string;
-      xeroInvoiceId: string | null;
-      xeroInvoiceNumber: string | null;
-    } | null;
-  };
-}
-
 /**
  * A real INSTANT, in the club's PERSISTED timezone (CT-4, #2870;
  * INV-CONFIG-002) rather than the container's `TZ`. A hook because that setting
@@ -124,11 +73,6 @@ function useInstantFormatter() {
     value ? clubTime.instantDateTime(new Date(value)) : null;
 }
 
-function statusBadgeClass(status: BookingChangeRequestData["status"]) {
-  if (status === "REQUESTED") return "border-warning-6 bg-warning-3 text-warning-11";
-  if (status === "APPROVED") return "border-success-6 bg-success-3 text-success-11";
-  return "border-border bg-muted text-muted-foreground";
-}
 
 interface BookingChangeRequestsPanelProps {
   basePath?: string;
@@ -137,34 +81,7 @@ interface BookingChangeRequestsPanelProps {
   canEdit?: boolean;
 }
 
-/**
- * One request's un-submitted decision, as the officer has typed it so far.
- *
- * A DRAFT PER REQUEST, keyed by request id, and that is the whole design (#2562
- * review). The three fields used to share one state slot with a `reviewingId`
- * marker naming their owner, and every field's onChange moved the marker — so a
- * keystroke in the internal note or the modification id on one row claimed
- * ownership of the OTHER row's half-written member-facing explanation: the second
- * card displayed it, its decision buttons unlocked on it, and submitting posted
- * one member a sentence written about somebody else's request. On this table
- * `adminNotes` is read verbatim by the member on their own booking page, so that
- * was a privacy failure, not a cosmetic one. Keyed state makes the row-isolation
- * invariant structural: there is no shared slot left for a draft to leak through,
- * whichever field is typed in and in whatever order.
- */
-interface DecisionDraft {
-  /** The MEMBER-FACING decision explanation (`adminNotes`). */
-  adminNotes: string;
-  /** The officer's PRIVATE note. Never shown to the member. */
-  internalNotes: string;
-  linkedModificationId: string;
-}
 
-const EMPTY_DECISION_DRAFT: DecisionDraft = {
-  adminNotes: "",
-  internalNotes: "",
-  linkedModificationId: "",
-};
 
 const EMPTY_SEARCH_PARAMS: Record<string, string> = {};
 
@@ -246,6 +163,22 @@ export function BookingChangeRequestsPanel({
     });
   }
   const [error, setError] = useState("");
+  // #3750 (P2 on #3955): each finished-stay card's dry-run figures, and any
+  // over-capacity night its officer has to confirm, keyed by request id.
+  const quotes = useFinishedStayQuotes(setError);
+  // #4030 Part B: the officer's guest entry — its age tiers, and the member
+  // finder's reach as the list route answered it.
+  const ageTierOptions = useAgeTierOptions();
+  const [memberGuestFind, setMemberGuestFind] = useState<{ openSearchEnabled: boolean } | null>(null);
+  // #4030 review S6: the officer entry's buttons are this section's view-only button.
+  const OfficerEntryButton = useCallback((props: ButtonProps) => (
+    <ViewOnlyActionButton canEdit={canEdit} describeReason={false} {...props} />
+  ), [canEdit]);
+  /** This row's officer-entered guests as sent, or null (#4030). */
+  const officerGuestsFor = (request: BookingChangeRequestData) =>
+    request.acceptsOfficerGuests
+      ? officerGuestsPayload(decisionDraftFor(request.id).officerGuests, requestStay(request.booking))
+      : null;
   const currentPath = buildBookingChangeRequestsPath(
     basePath,
     searchParams.toString(),
@@ -268,6 +201,7 @@ export function BookingChangeRequestsPanel({
         throw new Error(data.error || "Failed to load booking change requests");
       }
       setRequests(Array.isArray(data?.data) ? data.data : []);
+      setMemberGuestFind(data?.memberGuestFind ?? null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load booking change requests");
     } finally {
@@ -275,7 +209,7 @@ export function BookingChangeRequestsPanel({
     }
     // setState functions are referentially stable; they are listed so the
     // manual dependencies match what the React Compiler infers.
-  }, [filter, setError, setLoading, setRequests]);
+  }, [filter, setError, setLoading, setRequests, setMemberGuestFind]);
 
   useEffect(() => {
     fetchRequests();
@@ -283,7 +217,7 @@ export function BookingChangeRequestsPanel({
 
   async function reviewRequest(
     request: BookingChangeRequestData,
-    status: "APPROVED" | "REJECTED"
+    status: "APPROVED" | "REJECTED",
   ) {
     if (decisionInFlightRef.current.has(request.id)) return;
     decisionInFlightRef.current.add(request.id);
@@ -298,7 +232,10 @@ export function BookingChangeRequestsPanel({
     try {
       const trimmedAdminNotes = draft.adminNotes.trim();
       const trimmedInternalNotes = draft.internalNotes.trim();
-      const trimmedModificationId = draft.linkedModificationId.trim();
+      // #3750: an executed approval links its own modification, so a pasted
+      // id is never sent for one.
+      const executes = status === "APPROVED" && request.executesOnApproval === true;
+      const trimmedModificationId = executes ? "" : draft.linkedModificationId.trim();
       const response = await fetch(`/api/admin/booking-change-requests/${request.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -310,12 +247,39 @@ export function BookingChangeRequestsPanel({
             status === "APPROVED" && trimmedModificationId
               ? trimmedModificationId
               : undefined,
+          expectedVersion: request.version,
+          // The screen's own answer to "does this apply the change?" (#3955):
+          // the server refuses an approval whose answer has gone stale.
+          ...(status === "APPROVED" ? { execute: executes } : {}),
+          ...(executes
+            ? {
+                ...(draft.settlementMethod ? { settlementMethod: draft.settlementMethod } : {}),
+                ...(quotes.quoteFor(request.id)?.confirmOverCapacity
+                  ? { confirmOverCapacity: true }
+                  : {}),
+                ...(officerGuestsFor(request) ? { officerGuests: officerGuestsFor(request) } : {}),
+                // #4030 review C4: the figures this approval was shown.
+                expectedFigures: expectedFiguresOf(quotes.quoteFor(request.id)),
+              }
+            : {}),
         }),
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
+        // #3750 decision 3: over-capacity past nights warn, and the officer
+        // confirms on this card before the change is applied.
+        // #4030 review C4: the figures moved under the officer; drop the stale
+        // ones so Approve stays off until they are checked again.
+        if (data.code === "FIGURES_CHANGED") quotes.clear(request.id);
+        if (data.needsCapacityConfirmation === true) {
+          quotes.needsCapacity(
+            request.id,
+            Array.isArray(data.nightDetails) ? data.nightDetails : [],
+          );
+        }
         throw new Error(data.error || "Failed to review request");
       }
+      quotes.clear(request.id);
 
       // Cleared only on SUCCESS, and only THIS row's draft. A failed decision
       // keeps it (#2562 review) so the officer's typed note stays on screen and
@@ -324,11 +288,11 @@ export function BookingChangeRequestsPanel({
       // decision's business.
       clearDecisionDraft(request.id);
       toast.success(
-        status === "APPROVED"
-          ? trimmedModificationId
-            ? "Request approved and linked to the booking modification."
-            : "Request acknowledged as approved. Apply the actual change on the booking page if it is still required."
-          : "Request rejected"
+        decisionToastMessage({
+          status,
+          execution: data.execution,
+          linkedModificationId: trimmedModificationId,
+        }),
       );
       await fetchRequests();
     } catch (err) {
@@ -422,10 +386,20 @@ export function BookingChangeRequestsPanel({
             // #3369: a school presents through the owner projection; `id` is a
             // MEMBER id and is absent for one, which is what the link asks.
             const owner = bookingOwner(request.booking).member;
+            // #3750: the nights this card's approval is waiting to have confirmed.
+            const quote = quotes.quoteFor(request.id);
+            const overCapacityNights = quote?.overCapacityNights ?? null;
+            const officerGuests = officerGuestsFor(request);
+            const quoteCurrent = quoteIsCurrent(
+              quote,
+              decisionDraftFor(request.id).settlementMethod,
+              officerGuestsKey(officerGuests),
+            );
 
             return (
               <Card
                 key={request.id}
+                data-testid={`change-request-${request.id}`}
                 className={request.id === requestId ? "border-warning-6" : undefined}
               >
                 <CardHeader>
@@ -461,6 +435,11 @@ export function BookingChangeRequestsPanel({
 
                   <div className="rounded-md border bg-muted p-3 text-sm">
                     <p className="font-medium text-foreground">{summary}</p>
+                    <RequestedGuestAdds
+                      guests={request.requestedChanges?.requested?.addGuests}
+                      returnTo={(href) => buildHrefWithReturnTo(href, currentPath)}
+                    />
+                    <RequestedGuestNights guests={request.requestedGuestNights} format={format} />
                     {request.reason ? (
                       <p className="mt-2 text-muted-foreground">{request.reason}</p>
                     ) : null}
@@ -493,6 +472,9 @@ export function BookingChangeRequestsPanel({
 
                   {request.status === "REQUESTED" ? (
                     <div className="space-y-3 rounded-md border border-border p-3">
+                      {request.executesOnApproval ? (
+                        <FinishedStayApprovalNotice />
+                      ) : (
                       <p className="text-xs text-muted-foreground">
                         Marking a request approved only acknowledges the review.
                         The booking is not edited automatically; open the
@@ -506,6 +488,7 @@ export function BookingChangeRequestsPanel({
                         asked for guest changes), paste the booking modification
                         id below to link the audit trail.
                       </p>
+                      )}
                       {/* #2562 — the note SPLIT, and the labelling that makes it
                           safe, on the locked-period half of this table too. The
                           box used to be headed only "Admin notes" while writing
@@ -564,6 +547,50 @@ export function BookingChangeRequestsPanel({
                           placeholder="Context for the next officer. The member never reads this."
                         />
                       </div>
+                      {request.acceptsOfficerGuests ? (
+                        <OfficerGuestEntry
+                          requestId={request.id}
+                          bookingId={request.booking.id}
+                          stay={requestStay(request.booking)}
+                          guests={decisionDraftFor(request.id).officerGuests}
+                          onChange={(officerGuests) => {
+                            updateDecisionDraft(request.id, { officerGuests });
+                            quotes.clear(request.id); // #4030 review M1: figures belong to their list
+                          }}
+                          ageTierOptions={ageTierOptions}
+                          memberGuestFind={memberGuestFind}
+                          existingMemberIds={(request.booking.guests ?? []).flatMap((guest) =>
+                            guest.memberId ? [guest.memberId] : [],
+                          )}
+                          canEdit={canEdit}
+                          ActionButton={OfficerEntryButton}
+                        />
+                      ) : null}
+                      {request.executesOnApproval ? (
+                        <FinishedStaySettlementField
+                          requestId={request.id}
+                          value={decisionDraftFor(request.id).settlementMethod}
+                          canEdit={canEdit}
+                          onChange={(settlementMethod) =>
+                            updateDecisionDraft(request.id, { settlementMethod })
+                          }
+                        />
+                      ) : null}
+                      {request.executesOnApproval ? (
+                        <FinishedStayQuoteSummary
+                          quote={quote}
+                          current={quoteCurrent}
+                          format={format}
+                          canEdit={canEdit}
+                          onCheck={() =>
+                            quotes.requestQuote(request.id, {
+                              settlementMethod: decisionDraftFor(request.id).settlementMethod,
+                              confirmOverCapacity: quote?.confirmOverCapacity === true, // a list change clears it (M1)
+                              officerGuests,
+                            })
+                          }
+                        />
+                      ) : (
                       <div className="space-y-1">
                         <Label htmlFor={`linked-modification-${request.id}`}>
                           Linked booking modification id (optional)
@@ -581,6 +608,30 @@ export function BookingChangeRequestsPanel({
                           placeholder="Paste the BookingModification id from the booking audit"
                         />
                       </div>
+                      )}
+                      {overCapacityNights ? (
+                        <OverCapacityConfirmation
+                          nights={overCapacityNights}
+                          format={format}
+                          confirmButton={
+                            <ViewOnlyActionButton
+                              canEdit={canEdit}
+                              describeReason={false}
+                              size="sm"
+                              onClick={() =>
+                                quotes.requestQuote(request.id, {
+                                  settlementMethod: decisionDraftFor(request.id).settlementMethod,
+                                  confirmOverCapacity: true,
+                                  officerGuests,
+                                })
+                              }
+                              disabled={quote?.loading === true}
+                            >
+                              Confirm overbooking
+                            </ViewOnlyActionButton>
+                          }
+                        />
+                      ) : null}
                       {/* Gated on THIS row's own draft (#2562 review). The original
                           rule was `reviewingId === request.id && !adminNotes.trim()`,
                           which enabled both buttons on every row the officer had
@@ -603,10 +654,15 @@ export function BookingChangeRequestsPanel({
                           onClick={() => reviewRequest(request, "APPROVED")}
                           disabled={
                             decisionInFlight.has(request.id) ||
-                            !decisionDraftFor(request.id).adminNotes.trim()
+                            !decisionDraftFor(request.id).adminNotes.trim() ||
+                            // P2: a finished stay is applied only once its
+                            // figures, for this refund choice, are on screen.
+                            (request.executesOnApproval === true && !quoteCurrent)
                           }
                         >
-                          Acknowledge as approved
+                          {request.executesOnApproval
+                            ? "Approve and apply"
+                            : "Acknowledge as approved"}
                         </ViewOnlyActionButton>
                         <ViewOnlyActionButton
                           canEdit={canEdit}
@@ -624,56 +680,11 @@ export function BookingChangeRequestsPanel({
                       </div>
                     </div>
                   ) : (
-                    <div className="rounded-md bg-muted p-3 text-sm text-muted-foreground">
-                      {request.status === "APPROVED" ? "Approved" : "Rejected"}
-                      {reviewedAt ? ` on ${reviewedAt}` : ""}
-                      {request.reviewedBy
-                        ? ` by ${request.reviewedBy.firstName} ${request.reviewedBy.lastName}`
-                        : ""}
-                      {/* #2562: after the decision the two notes stay visually
-                          separated and labelled, so an officer reading a
-                          colleague's decision knows which half the member has
-                          already read. */}
-                      {request.adminNotes ? (
-                        <div className="mt-2 rounded-md border border-border bg-background p-2">
-                          <p className="text-xs font-semibold text-foreground">
-                            Explanation the member can see
-                          </p>
-                          <p className="mt-1 whitespace-pre-wrap">
-                            {request.adminNotes}
-                          </p>
-                        </div>
-                      ) : null}
-                      {request.internalNotes ? (
-                        <div className="mt-2 rounded-md border border-dashed border-border bg-background p-2">
-                          <p className="text-xs font-semibold text-foreground">
-                            Internal note — admins only, never shown to the member
-                          </p>
-                          <p className="mt-1 whitespace-pre-wrap">
-                            {request.internalNotes}
-                          </p>
-                        </div>
-                      ) : null}
-                      {request.linkedModification ? (
-                        <p className="mt-2 text-muted-foreground">
-                          Linked booking modification:{" "}
-                          <span className="font-mono">
-                            {request.linkedModification.id}
-                          </span>{" "}
-                          ({request.linkedModification.modificationType},{" "}
-                          {formatCents(request.linkedModification.priceDiffCents, format)}{" "}
-                          delta)
-                        </p>
-                      ) : request.status === "APPROVED" ? (
-                        <p className="mt-2 text-warning-11">
-                          No booking modification linked. The booking edit may
-                          still be outstanding — apply it from the booking page
-                          (using the admin override control for locked or
-                          fully-past dates); a date-only request links back here
-                          automatically when the applied dates match.
-                        </p>
-                      ) : null}
-                    </div>
+                    <DecidedChangeRequestSummary
+                      request={request}
+                      reviewedAt={reviewedAt}
+                      format={format}
+                    />
                   )}
                 </CardContent>
               </Card>

@@ -12,6 +12,11 @@ const state = vi.hoisted(() => ({
   keptLinks: [] as Array<{ localId: string; xeroObjectId: string }>,
   resolvedKept: [] as string[],
   supplementary: [] as Array<{ paymentIntentId: string; status: string; xeroObjectId: string | null }>,
+  /** #4170: captures the primary late-capture handler marked as its own write. */
+  markedIntents: [] as string[],
+  /** #4170: intents a cancel claim (`CANCEL_PAYMENT_INTENT` recovery) names. */
+  cancelClaims: [] as string[],
+  bookingStatus: "CANCELLED",
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -31,8 +36,25 @@ vi.mock("@/lib/prisma", () => ({
         state.refunds.filter((r) => r.paymentId === where.paymentId && r.stripePaymentIntentId),
     },
     memberCredit: { aggregate: async () => ({ _sum: { amountCents: 0 } }) },
+    payment: { findUnique: async () => ({ booking: { status: state.bookingStatus } }) },
+    paymentTransaction: {
+      findMany: async ({ where }: { where: { stripePaymentIntentId: { in: string[] } } }) =>
+        where.stripePaymentIntentId.in.map((intent) => ({
+          stripePaymentIntentId: intent,
+          reason: state.markedIntents.includes(intent) ? "cancelled_booking_late_capture" : null,
+        })),
+    },
+    paymentRecoveryOperation: {
+      findMany: async ({ where }: { where: { paymentIntentId: string | { in: string[] } } }) => {
+        const asked = typeof where.paymentIntentId === "string" ? [where.paymentIntentId] : where.paymentIntentId.in;
+        return state.cancelClaims.filter((intent) => asked.includes(intent)).map((paymentIntentId) => ({ paymentIntentId }));
+      },
+    },
     manualRefundTask: {
-      findMany: async ({ where }: { where: { OR: [{ lateCaptureApprovalIntentId: { in: string[] } }, { reason: { in: string[] } }] } }) =>
+      // #3924 round 4: the cash evidence's paid-another-way read (on the payment, by key prefix; #4097,
+      // with a paid-back card refund shortfall beside it) finds none here.
+      findMany: async ({ where }: { where: { paymentId?: string; OR: [{ lateCaptureApprovalIntentId: { in: string[] } }, { reason: { in: string[] } }] } }) =>
+        where.paymentId !== undefined ? [] :
         state.tasks.filter(
           (t) =>
             (t.lateCaptureApprovalIntentId && where.OR[0].lateCaptureApprovalIntentId.in.includes(t.lateCaptureApprovalIntentId)) ||
@@ -42,16 +64,18 @@ vi.mock("@/lib/prisma", () => ({
         state.tasks.find((t) => t.lateCaptureApprovalIntentId === where.lateCaptureApprovalIntentId) ?? null,
     },
     xeroObjectLink: {
-      findFirst: async ({ where }: { where: { localId: string } }) =>
-        state.keptLinks.find((l) => l.localId === where.localId) ?? null,
+      // #3924 round 10: a change's own invoice link is asked too; none here.
+      findFirst: async ({ where }: { where: { localId: string; role?: string } }) =>
+        where.role === "SUPPLEMENTARY_INVOICE" ? null : (state.keptLinks.find((l) => l.localId === where.localId) ?? null),
     },
     xeroSyncOperation: {
-      count: async ({ where }: { where: { localId: string } }) =>
-        state.resolvedKept.filter((id) => id === where.localId).length,
-      findMany: async ({ where }: { where: { requestPayload: { equals: string } } }) =>
-        state.supplementary
-          .filter((row) => row.paymentIntentId === where.requestPayload.equals)
-          .map((row) => ({ ...row, manuallyResolvedAt: null })),
+      // Round 10: the kept receipt's resolved rows are read with their invoice id.
+      findMany: async ({ where }: { where: { queueType?: string; localId?: string; requestPayload?: { equals: string } } }) =>
+        where.queueType === "KEPT_LATE_CAPTURE_INVOICE"
+          ? state.resolvedKept.filter((id) => id === where.localId).map(() => ({ xeroObjectId: null }))
+          : state.supplementary
+              .filter((row) => row.paymentIntentId === where.requestPayload?.equals)
+              .map((row) => ({ ...row, manuallyResolvedAt: null })),
     },
   },
 }));
@@ -70,6 +94,9 @@ beforeEach(() => {
   state.keptLinks = [];
   state.resolvedKept = [];
   state.supplementary = [];
+  state.markedIntents = [];
+  state.cancelClaims = [];
+  state.bookingStatus = "CANCELLED";
 });
 
 describe("resolveRefundNoteEligibleCash", () => {
@@ -86,6 +113,29 @@ describe("resolveRefundNoteEligibleCash", () => {
       eligibleCashCents: 10000,
       lateCaptureExcludedCents: 24000,
     });
+  });
+
+  it("leaves out a capture the primary late-capture handler marked as its own, before any record row exists (#4170)", async () => {
+    state.markedIntents = ["pi_late"];
+    await expect(resolveRefundNoteEligibleCash(PAYMENT)).resolves.toMatchObject({
+      eligibleCashCents: 10000,
+      lateCaptureExcludedCents: 24000,
+    });
+  });
+
+  it("leaves out a capture a cancel claim names, so a refund made before the late notice is not noted either (#4170)", async () => {
+    state.cancelClaims = ["pi_late"];
+    await expect(resolveRefundNoteEligibleCash(PAYMENT)).resolves.toMatchObject({
+      eligibleCashCents: 10000,
+      lateCaptureExcludedCents: 24000,
+    });
+  });
+
+  it("counts that evidence only on a cancelled booking: a superseded intent's claim on a live booking is no late capture", async () => {
+    state.cancelClaims = ["pi_late"];
+    state.markedIntents = ["pi_late"];
+    state.bookingStatus = "CONFIRMED";
+    await expect(resolveRefundNoteEligibleCash(PAYMENT)).resolves.toMatchObject({ eligibleCashCents: 34000 });
   });
 
   it("leaves out one the webhook refunded automatically, found by its frozen record reason", async () => {

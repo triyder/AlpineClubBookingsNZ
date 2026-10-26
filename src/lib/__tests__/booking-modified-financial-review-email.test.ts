@@ -41,6 +41,8 @@ const sendEmail = vi.hoisted(() => vi.fn(async () => ({ delivered: true })));
 vi.mock("@/lib/email/core", () => ({ sendEmail }));
 
 import { bookingModifiedTemplate } from "@/lib/email-templates/booking";
+import { alertBox } from "@/lib/email-templates/layout";
+import { bookingModifiedRefundSentence, organiserCardRefundPendingSentence } from "@/lib/booking-modified-email-copy";
 import { sendBookingModifiedEmail } from "@/lib/email/booking";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
@@ -62,15 +64,17 @@ function params(overrides: Record<string, unknown> = {}) {
     oldFinalPriceCents: 24000,
     newFinalPriceCents: 12000,
     changeFeeCents: 0,
+    addedGuests: [],
     refundAmountCents: 0,
     additionalAmountCents: 0,
     // #3032 made this required, so the base fixture states the CONTROL value
     // explicitly: this is the "no review is open" email every case below is
     // measured against, not an absence the compiler filled in.
     financialReviewPending: false,
-    refundByBankTransfer: false,
+    refundByBankTransfer: null,
     appliedCreditGivenBackCents: 0,
-    refundReturnedToOrganiser: false,
+    unpaidAskCancelled: false,
+    refundDestination: "own" as const,
     ...overrides,
   };
 }
@@ -294,7 +298,7 @@ describe("an unresolved adjustment no longer sends a silent money section (#3033
 
 describe("an internet-banking refund is promised, not reported (#3827, D-3813-6)", () => {
   it("both the HTML and the editable body say the club WILL refund by bank transfer", async () => {
-    const overrides = { refundAmountCents: 6000, refundByBankTransfer: true };
+    const overrides = { refundAmountCents: 6000, refundByBankTransfer: "member" as const };
     const note = await paymentNoteFromSender(overrides);
     expect(note).toBe("The club will refund $60.00 to you by bank transfer.");
     const html = bookingModifiedTemplate(params(overrides), CLUB_FORMAT_TEST);
@@ -335,7 +339,7 @@ describe("#3809: applied credit given back is named in the Booking Modified emai
   });
 
   it("composes with an internet-banking refund promised by bank transfer (#3829: #3827 with #3809)", async () => {
-    const overrides = { refundAmountCents: 6000, refundByBankTransfer: true, appliedCreditGivenBackCents: 5000 };
+    const overrides = { refundAmountCents: 6000, refundByBankTransfer: "member" as const, appliedCreditGivenBackCents: 5000 };
     const note = await paymentNoteFromSender(overrides);
     expect(note).toContain("The club will refund $60.00 to you by bank transfer.");
     expect(note).toContain(SENTENCE);
@@ -352,40 +356,84 @@ describe("#3809: applied credit given back is named in the Booking Modified emai
 });
 
 /*
-  #3916: a joiner's booking the group organiser paid for by card refunds its
-  reduction to the ORGANISER's card (#3653). The email names where the money
+  #3916, #4057: a joiner's booking the group organiser paid for by card refunds
+  its reduction to the ORGANISER's card (#3653). The email names where the money
   went on every route, in the HTML email and the flat {{paymentNote}} alike,
-  because both read the one home (`bookingModifiedRefundSentence`).
+  because both read the one home (`bookingModifiedRefundSentence`), and says it
+  was made only when the refund's own debt says so (#4057): otherwise it is on
+  its way, in an info box. A refund to the member's own card likewise, when
+  Stripe did not make it (#4070).
 
-  MUTATION PROOF. Make `bookingModifiedRefundSentence` ignore its organiser flag in either direction and
-  either "organiser's card" or "own card" fails in both paths; drop the flag at
-  either call site (HTML or sender) and that path's assertion fails.
+  MUTATION PROOF. Make `bookingModifiedRefundSentence` answer one organiser case
+  with the other, or with the own-card sentence, and that case fails in both
+  paths; make `bookingModifiedRefundPending` answer false and the pending case's
+  info box fails; drop the destination at either call site (HTML or sender) and
+  that path's assertion fails.
 */
-describe("#3916: the Booking Modified refund sentence names where the refund went", () => {
+describe("#3916, #4057, #4070: the Booking Modified refund sentence names where the refund went", () => {
   const OWN_CARD = "A refund of $45.00 has been processed to your original payment method.";
   const ORGANISER_CARD =
     "A refund of $45.00 has been processed to the group organiser's card, because the group organiser paid for this booking.";
+  const ORGANISER_CARD_PENDING =
+    "A refund of $45.00 is on its way to the group organiser's card, because the group organiser paid for this booking.";
 
-  it("organiser's card: names the group organiser's card, never the joiner's payment method", async () => {
-    const overrides = { refundAmountCents: 4500, refundReturnedToOrganiser: true };
+  it("organiser's card, made: names the group organiser's card, never the joiner's payment method", async () => {
+    const overrides = { refundAmountCents: 4500, refundDestination: "organiser_card" };
     const html = bookingModifiedTemplate(params(overrides), CLUB_FORMAT_TEST);
     const note = await paymentNoteFromSender(overrides);
 
     expect(html).toContain(ORGANISER_CARD);
+    expect(html).toContain(alertBox(ORGANISER_CARD, "success"));
     expect(html).not.toContain("your original payment method");
     expect(note).toBe(ORGANISER_CARD);
   });
 
+  it("organiser's card, not made yet: on its way, in an info box, and never 'has been processed'", async () => {
+    const overrides = { refundAmountCents: 4500, refundDestination: "organiser_card_pending" };
+    const html = bookingModifiedTemplate(params(overrides), CLUB_FORMAT_TEST);
+    const note = await paymentNoteFromSender(overrides);
+
+    expect(html).toContain(alertBox(ORGANISER_CARD_PENDING, "info"));
+    expect(html).not.toContain(alertBox(ORGANISER_CARD_PENDING, "success"));
+    expect(html).not.toMatch(/has been processed|original payment method/);
+    expect(note).toBe(ORGANISER_CARD_PENDING);
+  });
+
+  it("the pending sentence is #3973's, from its one home", () => {
+    expect(bookingModifiedRefundSentence("$45.00", null, "organiser_card_pending")).toBe(
+      organiserCardRefundPendingSentence("$45.00"),
+    );
+    // An organiser-card refund is a Stripe one: never by hand, made or not.
+    expect(bookingModifiedRefundSentence("$45.00", "member", "organiser_card_pending")).toBe(ORGANISER_CARD_PENDING);
+    expect(bookingModifiedRefundSentence("$45.00", "member", "organiser_card")).toBe(ORGANISER_CARD);
+  });
+
+  // #4070: the member's own-card refund Stripe did not make, queued for retry.
+  it("own card, not made yet: on its way, in an info box, never 'has been processed' (#4070)", async () => {
+    const OWN_CARD_PENDING = "A refund of $45.00 is on its way to your original payment method.";
+    const overrides = { refundAmountCents: 4500, refundDestination: "own_card_pending" };
+    const html = bookingModifiedTemplate(params(overrides), CLUB_FORMAT_TEST);
+    const note = await paymentNoteFromSender(overrides);
+
+    expect(html).toContain(alertBox(OWN_CARD_PENDING, "info"));
+    expect(html).not.toContain(alertBox(OWN_CARD_PENDING, "success"));
+    expect(html).not.toMatch(/has been processed|bank transfer/);
+    expect(note).toBe(OWN_CARD_PENDING);
+    // A card refund the club did not send by hand: the card's pending wording, whatever the flag says.
+    expect(bookingModifiedRefundSentence("$45.00", "member", "own_card_pending")).toBe(OWN_CARD_PENDING);
+  });
+
   it("own card: the member's original payment method, byte-identical to before", async () => {
     const overrides = { refundAmountCents: 4500 };
-    expect(bookingModifiedTemplate(params(overrides), CLUB_FORMAT_TEST)).toContain(OWN_CARD);
+    const html = bookingModifiedTemplate(params(overrides), CLUB_FORMAT_TEST);
+    expect(html).toContain(alertBox(OWN_CARD, "success"));
     expect(await paymentNoteFromSender(overrides)).toBe(OWN_CARD);
   });
 
   it("bank transfer: an Internet Banking reduction keeps the D-3813-6 bank-transfer promise", async () => {
     // An organiser who settled by Internet Banking is not `paidByOrganiserCard`,
-    // so its door answers false and the bank-transfer sentence stands.
-    const overrides = { refundAmountCents: 4500, refundByBankTransfer: true };
+    // so its door answers "own" and the bank-transfer sentence stands.
+    const overrides = { refundAmountCents: 4500, refundByBankTransfer: "member" as const };
     const bank = "The club will refund $45.00 to you by bank transfer.";
     const html = bookingModifiedTemplate(params(overrides), CLUB_FORMAT_TEST);
     expect(html).toContain(bank);
@@ -402,7 +450,7 @@ describe("#3916: the Booking Modified refund sentence names where the refund wen
     expect(await paymentNoteFromSender(overrides)).toBe(credit);
   });
 
-  it("every door that can refund an edit routes the flag from its settlement result, not a recomputation", () => {
+  it("every door that can refund an edit passes the refund's own answer after it ran, not a recomputation (#4057)", () => {
     const repoRoot = resolve(__dirname, "../../..");
     for (const door of [
       "src/lib/booking-date-modification-service.ts",
@@ -411,7 +459,36 @@ describe("#3916: the Booking Modified refund sentence names where the refund wen
       "src/lib/booking-guest-acceptance-reprice.ts",
     ]) {
       const source = readFileSync(resolve(repoRoot, door), "utf8");
-      expect(source, door).toMatch(/refundReturnedToOrganiser: (?:result|reprice)\.organiserChildRefund !== null,/);
+      expect(source, door).toMatch(/const refund = await executeBookingModificationRefund\(/);
+      expect(source, door).toMatch(/refundDestination: refund\.refundDestination,/);
+      // The yes/no flag this replaced, and any answer read off the settlement plan.
+      expect(source, door).not.toMatch(/refundReturnedToOrganiser|refundDestination: (?:result|reprice)\./);
     }
+  });
+});
+
+/*
+  #3954 (review round 4): an edit whose price drop cancelled the member's
+  unpaid additional payment outright says so - in the HTML email and the flat body
+  alike, beside any refund for the rest of the drop. A shrunk ask keeps the
+  ordinary "an additional payment of $X is required" note at its new figure.
+*/
+describe("#3954: a cancelled unpaid additional payment is named in the Booking Modified email", () => {
+  const SENTENCE = "The additional payment we asked for has been cancelled, so you no longer need to pay it.";
+
+  it("MUTATION: the HTML email and the flat body both say the additional payment is cancelled", async () => {
+    expect(bookingModifiedTemplate(params({ unpaidAskCancelled: true }), CLUB_FORMAT_TEST)).toContain(SENTENCE);
+    expect(await paymentNoteFromSender({ unpaidAskCancelled: true })).toBe(SENTENCE);
+  });
+
+  it("composes with a refund for the rest of the drop", async () => {
+    const note = await paymentNoteFromSender({ refundAmountCents: 1500, unpaidAskCancelled: true });
+    expect(note).toMatch(/A refund of \$15\.00 has been processed/);
+    expect(note).toContain(SENTENCE);
+  });
+
+  it("says nothing of it when no ask was cancelled", async () => {
+    expect(bookingModifiedTemplate(params(), CLUB_FORMAT_TEST)).not.toContain(SENTENCE);
+    expect(await paymentNoteFromSender({ additionalAmountCents: 3000 })).not.toContain(SENTENCE);
   });
 });

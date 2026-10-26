@@ -1,5 +1,5 @@
 import { loadModificationLinesAuditFields } from "@/lib/booking-modification-lines";
-import { editRefundGoesBackByHand } from "@/lib/edit-refund-hand-back";
+import { editRefundBankTransferPayee } from "@/lib/edit-refund-hand-back";
 import { NextRequest, NextResponse } from "next/server";
 import { bookingOwner } from "@/lib/booking-owner";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
@@ -41,6 +41,7 @@ import {
   PaidUpAdultMemberRequiredError,
 } from "@/lib/subscription-lockout-enforcement";
 import {
+  additionalAmountToName,
   createModificationAdditionalPaymentIntent,
   drainSupersededPrimaryIntents,
   executeBookingModificationRefund,
@@ -232,11 +233,10 @@ export async function DELETE(
     // non-Stripe captured payments never issue a Stripe refund. The shared
     // helper scopes the idempotency key to this modification and enqueues
     // durable recovery on failure (issue #818).
-    const stripeRefundId = await executeBookingModificationRefund({
+    const refund = await executeBookingModificationRefund({
       format,
       bookingId,
       result,
-      metadataReason: "guest_removed_price_decrease",
       idempotencyKeyPrefix: `guest_remove_refund_${bookingId}`,
       failureMessage:
         "Stripe refund failed after guest removal - enqueueing recovery",
@@ -252,16 +252,15 @@ export async function DELETE(
     // No-op when nothing is owed or the payment is not a captured Stripe
     // payment (Internet Banking increases bill via the Xero supplementary
     // invoice below, unchanged).
-    const { additionalPaymentClientSecret, additionalPaymentIntentId } =
-      await createModificationAdditionalPaymentIntent({
-        format,
-        bookingId,
-        result,
-        reason: "guest_removal_price_increase",
-        idempotencyKey: `mod_guest_remove_${bookingId}_${result.bookingModificationId}`,
-        failureMessage:
-          "Failed to create additional PaymentIntent for guest removal",
-      });
+    const additionalMint = await createModificationAdditionalPaymentIntent({
+      format,
+      bookingId,
+      result,
+      door: "guestRemoval",
+      failureMessage:
+        "Failed to create additional PaymentIntent for guest removal",
+    });
+    const { additionalPaymentClientSecret, additionalPaymentIntentId } = additionalMint;
 
     // Audit log. #3530: what the figure is made of, line by line and in dollars.
     const linesAudit = await loadModificationLinesAuditFields(prisma, result.priceLines, logger, format);
@@ -329,12 +328,17 @@ export async function DELETE(
       firstName: result.memberFirstName,
     };
     if (notifyMember) {
+      const namedAdditionalCents = additionalAmountToName(
+        result.hasIssuedXeroInvoice || additionalPaymentIntentId ? result.additionalAmountCents : 0,
+        additionalMint,
+      );
       sendBookingModifiedEmail({
         bookingId: result.booking.id,
         recipientMemberId: result.memberId,
         email: member.email,
         firstName: member.firstName,
         modificationType: "GUEST_REMOVE",
+        addedGuests: [], // #4030: adds nobody
         oldCheckIn: result.booking.checkIn,
         oldCheckOut: result.booking.checkOut,
         newCheckIn: result.booking.checkIn,
@@ -347,6 +351,7 @@ export async function DELETE(
         refundAmountCents: result.refundAmountCents,
         accountCreditAmountCents: result.accountCreditAmountCents,
         appliedCreditGivenBackCents: result.appliedCreditGivenBackCents,
+        unpaidAskCancelled: result.unpaidAskCancelled,
         // #2390: same words as the edit preview and the booking history when a
         // usage cap stopped the promotion reaching somebody on this booking.
         promoCoverageNote: result.promoCoverage?.message ?? null,
@@ -359,9 +364,9 @@ export async function DELETE(
           docblock), and why this is a single hand-off rather than a query.
         */
         financialReviewPending: result.financialReviewPending,
-        refundReturnedToOrganiser: result.organiserChildRefund !== null,
+        refundDestination: refund.refundDestination,
         // D-3813-6: an internet-banking refund is the club's to send.
-        refundByBankTransfer: editRefundGoesBackByHand(result),
+        refundByBankTransfer: editRefundBankTransferPayee(result, result.booking), // #3949: the member or the group organiser
         lodgeId: result.booking.lodgeId,
         // Removing a guest can raise the price when it invalidates a group
         // promo the remaining guests relied on. Surface the increase when a
@@ -370,15 +375,13 @@ export async function DELETE(
         // PaymentIntent now created for captured Stripe payments (#1042). If
         // Stripe intent creation failed, stay silent — an "additional payment
         // required" note with no way to pay is worse than saying nothing; the
-        // price change still shows via old/new total.
-        additionalAmountCents:
-          result.hasIssuedXeroInvoice || additionalPaymentIntentId
-            ? result.additionalAmountCents
-            : 0,
+        // price change still shows via old/new total. #3954 round 9: nor is an
+        // ask a reduction retired before it was offered named as due.
+        additionalAmountCents: namedAdditionalCents,
         additionalPaymentMethod:
-          result.additionalAmountCents > 0 && additionalPaymentIntentId
+          namedAdditionalCents > 0 && additionalPaymentIntentId
             ? "STRIPE"
-            : result.hasIssuedXeroInvoice && result.additionalAmountCents > 0
+            : namedAdditionalCents > 0
               ? "INTERNET_BANKING"
               : undefined,
       }, format).catch((err) =>
@@ -412,7 +415,7 @@ export async function DELETE(
       accountCreditAmountCents: result.accountCreditAmountCents,
       settlementMethod: result.settlementMethod,
       policyRetainedAmountCents: result.policyRetainedAmountCents,
-      stripeRefundId: stripeRefundId ?? null,
+      stripeRefundId: refund.stripeRefundId ?? null,
       additionalAmountCents: result.additionalAmountCents,
       // The payer is the booking owner. Hand the client secret only to them
       // (or an admin acting on their behalf); a linked guest self-removing

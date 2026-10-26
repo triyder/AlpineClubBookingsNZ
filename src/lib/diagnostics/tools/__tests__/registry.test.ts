@@ -2567,6 +2567,7 @@ describe("the evidence modules are SERVER-ONLY (#2375)", () => {
     "packs/membership-records.ts",
     "packs/finance-evidence.ts",
     "packs/finance-records.ts",
+    "packs/finance-recovery-scenarios.ts",
     "packs/finance-search.ts",
     "packs/finance-shared.ts",
     "packs/finance-state.ts",

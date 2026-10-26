@@ -88,6 +88,13 @@ export function resolveBookingDetailViewer({
   // admin) must not be addressed with owner second-person copy ("your place /
   // your stay") — issue #1289. Linked guests keep the member framing.
   const nonOwnerAdminViewer = !isBookingOwner && canViewAsAdmin;
+  // #3991: WHO MAY SEE THE BOOKING OWNER'S MONEY BEYOND ITS PRICE — their
+  // account credit (elected, applied, held or restored) and a refund still being
+  // handed back to them: the owner, anyone who can manage the booking, and
+  // admin-type viewers including read-only ones. In practice everyone the page
+  // admits except a linked guest — and it is decided HERE, once, so a read-only
+  // admin who is also a guest on the booking gets one answer on every surface.
+  const canSeeOwnerCredit = canManageBooking || nonOwnerAdminViewer;
   return {
     isAdmin,
     viewerAuthorizationRole,
@@ -101,6 +108,7 @@ export function resolveBookingDetailViewer({
     canEditFinance,
     actingOnBehalf,
     nonOwnerAdminViewer,
+    canSeeOwnerCredit,
   };
 }
 

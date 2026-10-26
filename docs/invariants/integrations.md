@@ -486,7 +486,8 @@ re-run, never offered for retry, never re-minted beside (owner decision,
 - **Retries refuse it.** `getXeroOperationRetryMeta` refuses first; retry and
   requeue answer 409; the drain closes that queued row `CANCELLED`.
 - **Enqueues and the outbox respect it.** A resolved refund note covers its
-  recorded amount, so later refunds still get notes; one sum
+  recorded amount, so later refunds still get notes, unless voided or deleted
+  (#4250) or a refund request's (#4265); one sum
   (`sumRefundCreditNoteCoverageCents`) caps the enqueue, the send and the gap. No booking invoice is
   queued while the latest create is resolved; only single-booking force-sync
   overrides, and audits it. The outbox cancels, before any Xero call, a copy
@@ -505,9 +506,73 @@ re-run, never offered for retry, never re-minted beside (owner decision,
   booking page says the same.
 
 Pinned by `xero-operation-retry.test.ts`, `xero-operation-queue.test.ts`,
-`xero-operation-routes.test.ts`, `xero-operation-outbox.test.ts`,
+`xero-operation-routes.test.ts`, `xero-operations-panel-failed-default.test.tsx`,
+`xero-operation-outbox.test.ts`,
 `xero-booking-repair.test.ts`, `refunds-missing-credit-notes.test.ts`,
 `booking-provider-mismatches.test.ts`.
+
+### INV-INT-028
+
+A payment refund credit-note create resolved by hand names the Xero note the
+officer made, and that note records no other refund: one note, one refund
+(#4421, owner decision 26 Oct 2026).
+
+- **Asked of one population.** `refundNoteResolveShape`
+  (`xero-resolve-refund-note.ts`) asks for the number on a FAILED row naming no
+  note, among the rows `readResolvedRefundCreditNoteCoverage` reads (one set of
+  row constants) that are their own refund's (`countsTowardRefundNoteCoverage`).
+  A refund request's note (#4391), a row naming its note and every other row
+  resolve as `INV-INT-025` says; a number sent for one is refused. Refused
+  too: a PARTIAL row naming no note, an unreadable amount (Mark
+  non-replayable; the treasurer decides), and a row a retry or same-key run
+  already raised.
+- **Checked as the hand-made answer is.** `verifyHandMadeRefundNote`
+  (`INV-ADDPAY-042`), before any transaction: approved or paid, a sales credit
+  note for the booking's contact, the row's exact amount.
+- **Recorded once, and tracked.** Under `lock(1)`, then the Payment row: a
+  retry since the read, a superseding run, a live copy, another create row or
+  any link recording the note refuses with a 409 and nothing written; then the
+  status-guarded claim writes the mark and the note, and the answer's own
+  writer (`writeHandMadeRefundNoteLink`) its live link, so the inbound sync
+  catches a void and coverage counts the note once. Either order of resolve and
+  answer ends with one record. A withdrawn mark retires its link (audited; a
+  failed withdrawal alerts); only that row takes it back. Every refusal is
+  audited.
+- **Legacy.** A row resolved before #4421 names no note and stays so.
+
+Pinned by `xero-resolve-refund-note.test.ts`,
+`resolve-records-refund-note.realdb.test.ts`, `advisory-lock-guard.test.ts`.
+
+## One outcome per Xero operation row (#4356)
+
+### INV-INT-029
+
+A recorded Xero outcome is never replaced by a worse one. Two callers can hold
+one operation row: a start that loses the insert race on the one-ACTIVE-row
+index (#1354) is handed the winner's row, and both make the same keyed Xero
+call and record their own outcome there.
+
+- **One guard, in the two writers.** `completeXeroSyncOperation` and
+  `failXeroSyncOperation` (`xero-sync.ts`) take `outcomeWriteGuard`
+  (`xero-operation-outcome-guard.ts`) and write every outcome but SUCCEEDED as
+  a status-guarded write. Only SUCCEEDED lands on SUCCEEDED, and only SUCCEEDED
+  or PARTIAL on PARTIAL; `keepCancelled` also keeps CANCELLED.
+- **A repair's claim is kept too.** The PARTIAL repair and the FAILED
+  refund-note repair stamp a marker code on their RUNNING claim, and no outcome
+  but SUCCEEDED lands there unless written onto that claim (`onlyIfRunningSince`).
+- **A success always lands.** It is Xero's answer to the same keyed call.
+- **A refused write changes nothing.** It answers null, writes no link and
+  raises no alert. A missing row throws, or is logged for a guarded caller.
+- **Claims, resets and marks write directly,** guarded as before.
+- **Limit (#4373).** Only claim-guarded completions lose to a late outcome, and
+  the two repairs that use them are marked. A late outcome still lands on any
+  other RUNNING row: a plain FAILED retry's claim then reads FAILED mid-retry
+  and a second retry may claim it; a new start can be handed a claim row; and
+  the row leaves RUNNING, which the booking invoice retry's settle-time fence
+  relies on. The fix is a per-claim `startedAt` token on every outcome.
+
+Pinned by `xero-sync.test.ts` and, against real PostgreSQL,
+`xero-shared-operation-outcome.realdb.test.ts`.
 
 ## Stored outbox payloads (#3971)
 

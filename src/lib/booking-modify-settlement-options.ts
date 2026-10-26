@@ -4,6 +4,10 @@
 // the one basis both read. Code moved verbatim; import via
 // "@/lib/booking-modify" or "@/lib/booking-modify-settlement".
 
+import {
+  assertReductionReadForNet,
+  type ReductionAgainstUnpaidAsk,
+} from "@/lib/additional-ask-reduction";
 import type { CalendarDate } from "@/lib/club-time";
 import {
   calculateDualRefundAmounts,
@@ -12,12 +16,17 @@ import {
   type CancellationPolicyDb,
 } from "@/lib/cancellation";
 import { hasCapturedPayment, isSettledBookingStatus } from "@/lib/booking-payment-state";
-import { type LoadedBookingForModify } from "@/lib/booking-modify-validation";
+import {
+  type BookingModificationSettlementMethod,
+  type LoadedBookingForModify,
+} from "@/lib/booking-modify-validation";
+import { ApiError } from "@/lib/api-error";
+import { BookingModificationSettlementMethodRequiredError } from "@/lib/booking-modify-settlement-required";
 import {
   refundableCashNetOfOpenHandBacks,
   type OpenNonCancellationHandBackDb,
 } from "@/lib/edit-refund-hand-back";
-import { paidByOrganiserCard } from "@/lib/group-organiser-paid";
+import { paidByOrganiser, paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 
 export type BookingModificationSettlementOptions = {
   basisAmountCents: number;
@@ -28,11 +37,19 @@ export type BookingModificationSettlementOptions = {
   daysUntilCheckIn: number;
   requiresSettlementMethod: boolean;
   /**
-   * #3653: the booking was paid for by its group organiser, so the reduction
-   * goes back to the organiser's card and there is no choice to make - the
-   * joiner paid nothing and is never handed account credit for it.
+   * #3653, #3949 (review round 5): the booking was paid for by its group
+   * organiser (`paidByOrganiser`), so the reduction goes back to the organiser,
+   * on the card tier, and there is no choice to make - the joiner paid nothing
+   * and is never handed account credit for it.
    */
   returnsToOrganiser: boolean;
+  /**
+   * #3949: and the organiser paid by Internet Banking, so it goes back to them by
+   * bank transfer - the edit's hand-back (`raiseEditRefundHandBackIfOwed`) -
+   * never to a card. Always false where `returnsToOrganiser` is false; where it
+   * is true, false means the organiser's card.
+   */
+  organiserRefundByBankTransfer: boolean;
 };
 
 /**
@@ -51,14 +68,22 @@ export type BookingModificationSettlementOptions = {
 export async function calculateModificationSettlementOptions({
   booking,
   netChargeCents,
+  reduction,
   db,
   todayAtClub,
 }: {
   booking: Pick<
     LoadedBookingForModify,
-    "checkIn" | "status" | "payment" | "lodgeId" | "organiserSettled" | "parentBookingId"
+    "id" | "checkIn" | "status" | "payment" | "lodgeId" | "organiserSettled" | "parentBookingId"
   >;
   netChargeCents: number;
+  /**
+   * #3954: this edit's net set against the booking's unpaid ask, READ ONCE by
+   * the caller (`readReductionAgainstUnpaidAsk`) and handed to
+   * `applyPaymentAdjustments` too, so the options are sized on exactly what the
+   * save retires - a capture between two reads can no longer split them.
+   */
+  reduction: ReductionAgainstUnpaidAsk;
   /**
    * Also reads the payment's OPEN edit refund hand-backs (#3827,
    * `INV-PAY-117`), so a reduction is sized off cash not already promised back.
@@ -72,9 +97,10 @@ export async function calculateModificationSettlementOptions({
    */
   todayAtClub: CalendarDate;
 }): Promise<BookingModificationSettlementOptions | null> {
+  assertReductionReadForNet(reduction, netChargeCents, booking.id);
   const basisAmountCents = settlementBasisCents(
     booking,
-    netChargeCents,
+    reduction.netChargeLeftCents,
     await refundableCashNetOfOpenHandBacks(db, booking.payment),
   );
   if (basisAmountCents === null) return null;
@@ -88,10 +114,12 @@ export async function calculateModificationSettlementOptions({
     creditRefundPercentage,
   } = calculateDualRefundAmounts(basisAmountCents, daysUntilCheckIn, policy);
 
-  if (paidByOrganiserCard(booking)) {
-    // #3653: one disposition, the organiser's card, so nothing to choose. A
-    // child the organiser settled by Internet Banking keeps the ordinary
-    // options: no card money moved, and that group's settlement is #3642's.
+  if (paidByOrganiser(booking)) {
+    // #3653: one disposition, the organiser's, so nothing to choose. #3949
+    // (review round 5; owner decisions of 15-22 Oct 2026): so is a child the
+    // organiser settled by Internet Banking - its reduction goes back to the
+    // organiser by a bank-transfer hand-back on the card tier, as the joiner's
+    // own cancel does, never as the joiner's account credit.
     return {
       basisAmountCents,
       cardRefundAmountCents,
@@ -101,6 +129,7 @@ export async function calculateModificationSettlementOptions({
       daysUntilCheckIn,
       requiresSettlementMethod: false,
       returnsToOrganiser: true,
+      organiserRefundByBankTransfer: paidByOrganiserInternetBanking(booking),
     };
   }
   return {
@@ -113,6 +142,7 @@ export async function calculateModificationSettlementOptions({
     requiresSettlementMethod:
       cardRefundAmountCents > 0 || creditRefundAmountCents > 0,
     returnsToOrganiser: false,
+    organiserRefundByBankTransfer: false,
   };
 }
 
@@ -164,10 +194,11 @@ export function calculateFullReductionSettlementOptions({
   const basisAmountCents = settlementBasisCents(booking, netChargeCents, refundableCashCents);
   if (basisAmountCents === null) return null;
   const daysUntilCheckIn = daysUntilDate(booking.checkIn, todayAtClub);
-  if (paidByOrganiserCard(booking)) {
-    // #3653, composed by #3829: the booking was paid on the group organiser's
-    // card, so "the same way it was paid" (D-3813-5) is that card - one
-    // disposition, nothing to choose, exactly as the tiered options above.
+  if (paidByOrganiser(booking)) {
+    // #3653, composed by #3829: the booking was paid by the group organiser, so
+    // "the same way it was paid" (D-3813-5) is back to the organiser - their
+    // card, or (#3949) a bank transfer - one disposition, nothing to choose,
+    // exactly as the tiered options above.
     return {
       basisAmountCents,
       cardRefundAmountCents: basisAmountCents,
@@ -177,6 +208,7 @@ export function calculateFullReductionSettlementOptions({
       daysUntilCheckIn,
       requiresSettlementMethod: false,
       returnsToOrganiser: true,
+      organiserRefundByBankTransfer: paidByOrganiserInternetBanking(booking),
     };
   }
   return {
@@ -188,5 +220,69 @@ export function calculateFullReductionSettlementOptions({
     daysUntilCheckIn,
     requiresSettlementMethod: true,
     returnsToOrganiser: false,
+    organiserRefundByBankTransfer: false,
+  };
+}
+
+/**
+ * The refund or credit an edit's chosen settlement takes of its options. Moved
+ * verbatim from `booking-modify-settlement.ts` (#3980, its size budget); its one
+ * caller is `applyPaymentAdjustments`.
+ */
+export function resolveSelectedSettlementAmount({
+  settlementOptions,
+  settlementMethod,
+}: {
+  settlementOptions: BookingModificationSettlementOptions | null | undefined;
+  settlementMethod: BookingModificationSettlementMethod | undefined;
+}) {
+  if (!settlementOptions) {
+    return {
+      settlementMethod: null,
+      amountCents: 0,
+      policyRetainedAmountCents: 0,
+    };
+  }
+
+  if (settlementOptions.returnsToOrganiser) {
+    if (settlementMethod === "credit") {
+      throw new ApiError(
+        "This booking was paid for by the group organiser, so a reduction goes back to the organiser and cannot be held as account credit.",
+        400,
+      );
+    }
+    const amountCents = settlementOptions.cardRefundAmountCents;
+    return {
+      settlementMethod: amountCents > 0 ? ("card" as const) : null,
+      amountCents,
+      policyRetainedAmountCents: Math.max(0, settlementOptions.basisAmountCents - amountCents),
+    };
+  }
+
+  if (settlementOptions.requiresSettlementMethod && !settlementMethod) {
+    throw new BookingModificationSettlementMethodRequiredError();
+  }
+
+  if (!settlementOptions.requiresSettlementMethod) {
+    return {
+      settlementMethod: null,
+      amountCents: 0,
+      policyRetainedAmountCents: settlementOptions.basisAmountCents,
+    };
+  }
+
+  const resolvedMethod = settlementMethod ?? "card";
+  const amountCents =
+    resolvedMethod === "credit"
+      ? settlementOptions.accountCreditAmountCents
+      : settlementOptions.cardRefundAmountCents;
+
+  return {
+    settlementMethod: resolvedMethod,
+    amountCents,
+    policyRetainedAmountCents: Math.max(
+      0,
+      settlementOptions.basisAmountCents - amountCents,
+    ),
   };
 }

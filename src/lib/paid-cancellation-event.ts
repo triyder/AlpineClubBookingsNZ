@@ -105,6 +105,8 @@ export async function writePaidCancellationEvent(
      * re-tiers exactly what was tiered, rather than guessing from the branch.
      */
     tier: { refundMethod: "card" | "credit"; refundableBaseCents: number };
+    /** #4097 (`INV-PAY-129`): the card's part and the two parts its plan could not carry, for the narrative. */
+    cardShortfall?: { cardCents: number; bankCents: number; checkCents: number };
   }
 ): Promise<void> {
   const { days, refundPercentage } = params;
@@ -159,6 +161,7 @@ export async function writePaidCancellationEvent(
         tierRefundMethod: params.tier.refundMethod,
         refundableBaseCents: params.tier.refundableBaseCents,
         completedReviewTaskIds: completedReviews.map((task) => task.id),
+        ...(params.cardShortfall ? { cardShortfall: params.cardShortfall } : {}),
       },
     },
   });

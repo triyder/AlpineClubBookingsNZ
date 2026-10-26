@@ -6,6 +6,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { formatSignedCents } from "@/lib/utils";
 import { useClubFormat } from "@/components/club-format-provider";
+import {
+  promoPreviewEditRerateBody,
+  promoPreviewGuestBody,
+  type PromoPreviewEditRerates,
+  type PromoPreviewGuest,
+} from "@/components/promo-preview-guest";
 
 export interface PromoResult {
   // Null when the discount comes from a work party event's internal promo
@@ -51,17 +57,7 @@ interface PromoCodeInputProps {
   // `Date` re-serialised here.
   checkIn: string;
   checkOut: string;
-  guests: {
-    firstName?: string;
-    lastName?: string;
-    ageTier: string;
-    isMember: boolean;
-    memberId?: string;
-    stayStart?: string;
-    stayEnd?: string;
-    /** On an edit: the row this guest already is (sent only with `bookingId`). */
-    bookingGuestId?: string;
-  }[];
+  guests: Array<PromoPreviewGuest & { firstName?: string; lastName?: string }>;
   onPromoApplied: (result: PromoResult | null) => void;
   appliedPromo: PromoResult | null;
   forMemberId?: string;
@@ -86,6 +82,8 @@ interface PromoCodeInputProps {
    * (D-3492-4). Each guest's `bookingGuestId` travels only with it.
    */
   bookingId?: string;
+  /** #4202: the edit's officer re-rates, as the quote is sent them (needs `bookingId`). */
+  editRerates?: PromoPreviewEditRerates;
 }
 
 export function PromoCodeInput({
@@ -101,6 +99,7 @@ export function PromoCodeInput({
   disabledReason,
   forBookingEdit = false,
   bookingId,
+  editRerates,
 }: PromoCodeInputProps) {
   const format = useClubFormat();
   const [code, setCode] = useState(appliedPromo?.code || "");
@@ -137,14 +136,7 @@ export function PromoCodeInput({
           code: code.trim(),
           checkIn,
           checkOut,
-          guests: guests.map((g) => ({
-            ageTier: g.ageTier,
-            isMember: g.isMember,
-            ...(g.memberId ? { memberId: g.memberId } : {}),
-            ...(g.stayStart ? { stayStart: g.stayStart } : {}),
-            ...(g.stayEnd ? { stayEnd: g.stayEnd } : {}),
-            ...(bookingId && g.bookingGuestId ? { bookingGuestId: g.bookingGuestId } : {}),
-          })),
+          guests: guests.map((g) => promoPreviewGuestBody(g, { bookingId })),
           ...(selectionRequired ? { promoGuestIndexes: selectedGuestIndexes } : {}),
           ...(forMemberId ? { forMemberId } : {}),
           ...(lodgeId ? { lodgeId } : {}),
@@ -152,6 +144,7 @@ export function PromoCodeInput({
           // bodies are byte-identical to what they send today.
           ...(forBookingEdit ? { forBookingEdit: true } : {}),
           ...(bookingId ? { bookingId } : {}),
+          ...promoPreviewEditRerateBody({ bookingId, editRerates }),
         }),
       });
 

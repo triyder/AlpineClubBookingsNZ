@@ -84,6 +84,16 @@ const RAW_READ_INVENTORY: Record<string, number> = {
   // returned by `pg_try_advisory_xact_lock`; the row is schema-decoded before
   // the worker decides whether it may proceed.
   "src/lib/adult-member-hosting-policy-set.ts": 1,
+  // #4162: the voided bank-transfer refund note scan's candidate ids - a status
+  // read the way the link reader reads it (trimmed, any case) joined to the
+  // payment's source, which no Prisma JSON filter expresses. Its rows are
+  // schema-decoded through `decodeRawRows`.
+  "src/lib/bank-refund-void-scan.ts": 1,
+  // #4042: a group organiser hand-back's alert lease reads the database's own
+  // `now()` - no Prisma model exposes the server clock, and stamping the lease
+  // with each replica's clock would let a skewed one take over a live lease.
+  // Its one timestamp is schema-decoded through `decodeRawRows`.
+  "src/lib/group-organiser-hand-back.ts": 1,
   // The hosting coverage participant protocol's fail-fast lock reads the boolean
   // returned by `pg_try_advisory_xact_lock` and schema-decodes it before deciding
   // whether the outer transaction must retry.
@@ -99,14 +109,14 @@ const RAW_READ_INVENTORY: Record<string, number> = {
   // parameterised on those two (`INV-SSOT-001`). A second copy would be a second
   // place for the `AS "locked"` alias or the decoder to drift.
   "src/lib/adult-member-hosting-coverage-lock.ts": 1,
-  // #3640: when this install's refund-ledger writers arrived - the
-  // `finished_at` of the migration that shipped them. No Prisma model covers
+  // #3640, #4104 (`INV-SSOT`): when a named migration finished on this install -
+  // the refund ledger's start (`INV-PAY-103`) and the failed-later card refund
+  // cutoff (`INV-PAY-128`) both read it here. No Prisma model covers
   // `_prisma_migrations`, so it is read raw, and its one timestamp is
-  // schema-decoded before the card-refund writer decides whether a refund
-  // predates the ledger (`INV-PAY-103`). TWO reads since the delta review
-  // (D4): a `to_regclass` boolean first, also decoded, because naming the
-  // table on a `db push` database that lacks it would abort the transaction.
-  "src/lib/payment-transactions.ts": 2,
+  // schema-decoded. TWO reads since #3640's delta review (D4): a `to_regclass`
+  // boolean first, also decoded, because naming the table on a `db push`
+  // database that lacks it would abort the transaction.
+  "src/lib/migration-finished-at.ts": 2,
 };
 
 /**

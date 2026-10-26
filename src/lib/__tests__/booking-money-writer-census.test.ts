@@ -25,7 +25,8 @@ const REVIEWED_WRITERS = [
   "e2e/setup/seed-second-lodge.ts|booking|create,deleteMany,update|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents|3",
   "e2e/setup/seed-second-lodge.ts|bookingGuest|create|priceCents|1",
   "e2e/setup/seed-second-lodge.ts|bookingGuestNight|create|priceCents,priceSource|1",
-  "prisma/demo-seed.ts|booking|create,deleteMany|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents|11",
+  // #4162: +1, the three cancelled bank-transfer bookings whose refunds are back on the refund list (one create, in a loop).
+  "prisma/demo-seed.ts|booking|create,deleteMany|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents|12",
   "prisma/demo-seed.ts|bookingGuest|create,deleteMany|priceCents|2",
   "prisma/demo-seed.ts|bookingGuestNight|create,deleteMany|priceCents,priceSource|2",
   "prisma/demo-seed.ts|promoRedemption|deleteMany||1",
@@ -73,6 +74,7 @@ const REVIEWED_WRITERS = [
   "src/lib/group-cancel.ts|booking|opaquePayload||1",
   "src/lib/internet-banking-payment-cron.ts|booking|opaquePayload||1",
   "src/lib/member-guest-consent-service.ts|bookingGuest|opaquePayload||1",
+  // #4317 review rounds 4 and 6: the restore's createMany also writes a capped in-progress promotion's rows scaled to the cap, or none for a code that cannot be scaled (scaleCappedCarriedRows via scaleSurvivors: INV-MONEY-029's one rule-derived amount, owner decision 24 Oct 2026 on #4302). No new site.
   "src/lib/night-adjustment-write.ts|bookingGuestNightAdjustment|createMany,deleteMany,opaquePayload|amountCents|4",
   "src/lib/payment-reconciliation.ts|booking|opaquePayload||1",
   "src/lib/promo.ts|promoRedemption|create,delete,update|discountCents,priceAdjustmentCents|3",

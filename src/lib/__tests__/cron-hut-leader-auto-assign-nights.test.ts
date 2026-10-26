@@ -1,0 +1,331 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+/**
+ * The auto-assign cron writes the NIGHTS a leader stays (#3817): from the first
+ * to the last night of the run of consecutive nights containing the date it is
+ * deciding, so the row ends on `checkOut - 1`, never on the check-out day, and a
+ * split stay gets one row per run.
+ *
+ * The booking double applies the job's envelope filter (`stayStart <= day <
+ * stayEnd`) per day, so a split stay's gap night reaches the job exactly the way
+ * the database would hand it over — and the job must refuse it on the night
+ * model. Today is frozen at 2026-07-01 (`vitest.clock-setup.ts`).
+ */
+
+const { mockPrisma, mockFlags, mockLookahead, mockKinds, school } = vi.hoisted(() => ({
+  mockPrisma: {
+    lodge: { findMany: vi.fn() },
+    booking: { findMany: vi.fn() },
+    hutLeaderAssignment: {
+      findMany: vi.fn(),
+      create: vi.fn(),
+    },
+    bookingGuest: { findMany: vi.fn() },
+    $executeRaw: vi.fn(async () => 0),
+    $transaction: vi.fn(),
+  },
+  mockFlags: vi.fn(),
+  mockLookahead: vi.fn(),
+  mockKinds: vi.fn(),
+  /** School bookings the cover's school read returns (#3819). */
+  school: { bookings: [] as Array<{ id: string; lodgeId: string; checkIn: Date; checkOut: Date }> },
+}));
+
+vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
+vi.mock("./prisma", () => ({ prisma: mockPrisma }));
+// Partial: `admin-modules` (reached through the capacity counter since the
+// #3817 one-space rule) reads `normalizeClubModuleSettings` at import time.
+vi.mock("@/lib/module-settings", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/module-settings")),
+  loadEffectiveModuleFlags: mockFlags,
+}));
+vi.mock("./module-settings", () => ({ loadEffectiveModuleFlags: mockFlags }));
+vi.mock("@/lib/lodge-settings", () => ({
+  loadHutLeaderLookaheadDays: mockLookahead,
+  loadSchoolHutLeaderKinds: mockKinds,
+}));
+vi.mock("./lodge-settings", () => ({
+  loadHutLeaderLookaheadDays: mockLookahead,
+  loadSchoolHutLeaderKinds: mockKinds,
+}));
+vi.mock("@/lib/logger", () => ({
+  default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+vi.mock("./logger", () => ({
+  default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+
+import { autoAssignHutLeaders } from "@/lib/cron-hut-leader-auto-assign";
+import { hutLeaderStayBookingWhere } from "@/lib/hut-leader-stayed-nights";
+
+const day = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
+const iso = (value: Date) => value.toISOString().slice(0, 10);
+
+type Guest = {
+  memberId: string;
+  stayStart: Date;
+  stayEnd: Date;
+  nights: Array<{ stayDate: Date }>;
+  member: { id: string; active: true };
+};
+
+/** One adult member guest, optionally with an explicit (split) night set. */
+function guest(memberId: string, checkIn: string, checkOut: string, nights: string[] = []): Guest {
+  return {
+    memberId,
+    stayStart: day(checkIn),
+    stayEnd: day(checkOut),
+    nights: nights.map((n) => ({ stayDate: day(n) })),
+    member: { id: memberId, active: true },
+  };
+}
+
+/** Serve bookings the way the job's per-day envelope query would. */
+function withGuests(guests: Guest[]) {
+  // The presence-aware cover (#3818) reads the leaders' stays: every guest
+  // here is at lodge-a, so it sees the same stays the job does.
+  mockPrisma.bookingGuest.findMany.mockResolvedValue(
+    guests.map((g) => ({
+      memberId: g.memberId,
+      stayStart: g.stayStart,
+      stayEnd: g.stayEnd,
+      nights: g.nights,
+      booking: { lodgeId: "lodge-a", checkIn: g.stayStart, checkOut: g.stayEnd },
+    })),
+  );
+  mockPrisma.booking.findMany.mockImplementation(
+    async ({ where, select }: { where: { checkIn: { lte: Date } }; select: { guests?: unknown } }) => {
+      // The cover's school-booking read selects no guests (#3819); the job's
+      // candidate read does. Both carry a status half under AND (#3821).
+      if (!select.guests) return school.bookings;
+      const asked = where.checkIn.lte;
+      const present = guests.filter((g) => g.stayStart <= asked && asked < g.stayEnd);
+      return present.map((g) => ({
+        id: `booking-${g.memberId}`,
+        checkIn: g.stayStart,
+        checkOut: g.stayEnd,
+        guests: [g],
+      }));
+    },
+  );
+}
+
+/** The job's per-night candidate searches: every booking read but the cover's school read (#3819). */
+function candidateSearches() {
+  return mockPrisma.booking.findMany.mock.calls.filter(
+    ([args]) => Boolean((args as { select: { guests?: unknown } }).select.guests),
+  );
+}
+
+/** Rows the job wrote, as `[memberId, startDate, endDate]`. */
+function written() {
+  return mockPrisma.hutLeaderAssignment.create.mock.calls.map(([call]) => {
+    const data = (call as { data: { memberId: string; startDate: Date; endDate: Date } }).data;
+    return [data.memberId, iso(data.startDate), iso(data.endDate)];
+  });
+}
+
+describe("autoAssignHutLeaders writes stayed nights (#3817)", () => {
+  /** Assignments written so far, so the job's own coverage probe sees them. */
+  let rows: Array<{ memberId: string; startDate: Date; endDate: Date }> = [];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    rows = [];
+    mockFlags.mockResolvedValue({ hutLeaders: true });
+    mockLookahead.mockResolvedValue(14);
+    school.bookings = [];
+    mockKinds.mockResolvedValue({
+      teacherOnBooking: false,
+      custodian: true,
+      memberOnBooking: true,
+      memberStayingSeparately: true,
+    });
+    mockPrisma.lodge.findMany.mockResolvedValue([{ id: "lodge-a" }]);
+    mockPrisma.bookingGuest.findMany.mockResolvedValue([]);
+    // The coverage cover's read (it selects `source`) sees the rows written so
+    // far; the overlap guard's read refuses nothing, as before.
+    mockPrisma.hutLeaderAssignment.findMany.mockImplementation(
+      async (args: { select?: { source?: true }; where: { startDate: { lte: Date }; endDate: { gte: Date } } }) =>
+        args.select?.source
+          ? rows
+              .filter((r) => r.startDate <= args.where.startDate.lte && r.endDate >= args.where.endDate.gte)
+              .map((r, index) => ({
+                id: `row-${index + 1}`,
+                memberId: r.memberId,
+                lodgeId: "lodge-a",
+                startDate: r.startDate,
+                endDate: r.endDate,
+                source: "CRON",
+                bedId: null,
+                isCustodian: false,
+              }))
+          : [],
+    );
+    mockPrisma.hutLeaderAssignment.create.mockImplementation(
+      async ({ data }: { data: { memberId: string; startDate: Date; endDate: Date } }) => {
+        rows.push({ memberId: data.memberId, startDate: data.startDate, endDate: data.endDate });
+        return { id: `row-${rows.length}` };
+      },
+    );
+    mockPrisma.$transaction.mockImplementation(async (arg: unknown) =>
+      typeof arg === "function" ? (arg as (tx: typeof mockPrisma) => unknown)(mockPrisma) : arg,
+    );
+  });
+
+  it("ends the row on the last night stayed, checkOut - 1", async () => {
+    withGuests([guest("m-1", "2026-07-03", "2026-07-06")]);
+
+    await autoAssignHutLeaders();
+
+    expect(written()).toEqual([["m-1", "2026-07-03", "2026-07-05"]]);
+  });
+
+  it("writes one row per run of a split stay, and never the gap night", async () => {
+    // Nights 3, 4 and 7, 8: the envelope 3-9 fills the 5th and 6th.
+    withGuests([
+      guest("m-1", "2026-07-03", "2026-07-09", [
+        "2026-07-03",
+        "2026-07-04",
+        "2026-07-07",
+        "2026-07-08",
+      ]),
+    ]);
+
+    await autoAssignHutLeaders();
+
+    expect(written()).toEqual([
+      ["m-1", "2026-07-03", "2026-07-04"],
+      ["m-1", "2026-07-07", "2026-07-08"],
+    ]);
+  });
+
+  it("does not count a guest on their gap night towards 'exactly one adult'", async () => {
+    // m-gap is away on the 5th (nights 3 and 6 only); m-solo is the only adult
+    // actually there that night, so the 5th gets m-solo.
+    withGuests([
+      guest("m-gap", "2026-07-05", "2026-07-07", ["2026-07-06"]),
+      guest("m-solo", "2026-07-05", "2026-07-06"),
+    ]);
+
+    await autoAssignHutLeaders();
+
+    expect(written()).toContainEqual(["m-solo", "2026-07-05", "2026-07-05"]);
+  });
+
+  it("Wednesday-leave / Thursday-arrive leaves Wednesday night unassigned", async () => {
+    // A: Mon 6 - Wed 8 Jul (nights Mon, Tue). B: Thu 9 - Sat 11 (nights Thu, Fri).
+    withGuests([
+      guest("m-a", "2026-07-06", "2026-07-08"),
+      guest("m-b", "2026-07-09", "2026-07-11"),
+    ]);
+
+    await autoAssignHutLeaders();
+
+    expect(written()).toEqual([
+      ["m-a", "2026-07-06", "2026-07-07"],
+      ["m-b", "2026-07-09", "2026-07-10"],
+    ]);
+    const wednesday = day("2026-07-08");
+    expect(rows.some((r) => r.startDate <= wednesday && r.endDate >= wednesday)).toBe(false);
+  });
+
+  it("reads bookings through THE hut-leader stay definition: no soft-deleted booking (#3817)", async () => {
+    withGuests([guest("m-1", "2026-07-01", "2026-07-03")]);
+    mockLookahead.mockResolvedValue(0);
+    await autoAssignHutLeaders();
+    const [{ where }] = candidateSearches()[0] as [
+      { where: Record<string, unknown> },
+    ];
+    expect(where).toMatchObject(
+      hutLeaderStayBookingWhere({
+        lodgeId: "lodge-a",
+        rangeStart: day("2026-07-01"),
+        rangeEnd: day("2026-07-01"),
+      }) as Record<string, unknown>,
+    );
+    expect(where).toMatchObject({ deletedAt: null });
+  });
+
+  it("starts at the club's today, not the day before (date-only days)", async () => {
+    // The defect this pins (date-fns `eachDayOfInterval` returning LOCAL
+    // midnights) shows only when the process zone is ahead of UTC, and CI runs
+    // in UTC, so the zone is pinned here or the test cannot fail (#3817
+    // review). Node re-reads `process.env.TZ` on assignment; restored after.
+    const previousTz = process.env.TZ;
+    process.env.TZ = "Pacific/Auckland";
+    try {
+      // A stay whose only night is yesterday must not be assigned.
+      withGuests([guest("m-past", "2026-06-30", "2026-07-01")]);
+      mockLookahead.mockResolvedValue(0);
+
+      await autoAssignHutLeaders();
+
+      expect(written()).toEqual([]);
+      // The nights the job asked bookings for (one per uncovered night).
+      const asked = candidateSearches().map(
+        ([args]) => (args as { where: { checkIn: { lte: Date } } }).where.checkIn.lte,
+      );
+      expect(asked.map(iso)).toEqual(["2026-07-01"]);
+      // Every asked day is a stored calendar day: a UTC-midnight instant.
+      for (const instant of asked) expect(instant.getTime() % 86_400_000).toBe(0);
+    } finally {
+      if (previousTz === undefined) delete process.env.TZ;
+      else process.env.TZ = previousTz;
+    }
+  });
+
+  describe("on a school group's nights it writes only a kind the lodge ticks (#3819)", () => {
+    // A school group at lodge-a 3-6 Jul; m-1 is the only adult member staying,
+    // on a booking of their own, so they would be "a member staying separately".
+    beforeEach(() => {
+      school.bookings = [
+        { id: "school-booking", lodgeId: "lodge-a", checkIn: day("2026-07-03"), checkOut: day("2026-07-06") },
+      ];
+    });
+
+    it("writes nothing on school nights when members staying separately are unticked", async () => {
+      mockKinds.mockResolvedValue({
+        teacherOnBooking: true,
+        custodian: true,
+        memberOnBooking: true,
+        memberStayingSeparately: false,
+      });
+      withGuests([guest("m-1", "2026-07-03", "2026-07-06")]);
+
+      await autoAssignHutLeaders();
+
+      expect(written()).toEqual([]);
+    });
+
+    it("cuts a stay longer than the school group's to the nights the member may lead (#3821)", async () => {
+      // m-1 stays nights 1-7 Jul on their own booking; the school group holds
+      // nights 3-5. With "a member staying separately" unticked the job may
+      // write nights 1-2 and 6-7, and never the school nights in between: the
+      // whole run would claim nights the cover never counts, and block, by
+      // overlap, the leader an officer adds for the school group.
+      mockKinds.mockResolvedValue({
+        teacherOnBooking: false,
+        custodian: true,
+        memberOnBooking: true,
+        memberStayingSeparately: false,
+      });
+      withGuests([guest("m-1", "2026-07-01", "2026-07-08")]);
+
+      await autoAssignHutLeaders();
+
+      expect(written()).toEqual([
+        ["m-1", "2026-07-01", "2026-07-02"],
+        ["m-1", "2026-07-06", "2026-07-07"],
+      ]);
+    });
+
+    it("writes the member when that kind is ticked", async () => {
+      withGuests([guest("m-1", "2026-07-03", "2026-07-06")]);
+
+      await autoAssignHutLeaders();
+
+      expect(written()).toEqual([["m-1", "2026-07-03", "2026-07-05"]]);
+    });
+  });
+});

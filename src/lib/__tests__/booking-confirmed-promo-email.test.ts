@@ -736,6 +736,7 @@ describe("booking-modified default body (#2267)", () => {
   }): Promise<{ templateData: EmailTemplateData; html: string }> {
     const { sendBookingModifiedEmail } = await import("../email/booking");
     await sendBookingModifiedEmail({
+      addedGuests: [],
       bookingId: "bk_test",
       recipientMemberId: "member_1",
       email: "member@example.org",
@@ -754,9 +755,10 @@ describe("booking-modified default body (#2267)", () => {
       // #3032: required. This helper is about promo coverage, so the control
       // value keeps the review note out of every assertion here.
       financialReviewPending: false,
-      refundByBankTransfer: false,
+      refundByBankTransfer: null,
       appliedCreditGivenBackCents: 0,
-      refundReturnedToOrganiser: false,
+      unpaidAskCancelled: false,
+      refundDestination: "own",
       ...overrides,
     }, CLUB_FORMAT_TEST);
     const call = sendEmailMock.mock.calls[0][0];

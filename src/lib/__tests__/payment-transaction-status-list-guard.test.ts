@@ -222,13 +222,14 @@ function unexplainedCapturedStatusCopies(files: readonly SourceFile[]): string[]
  * claim that its reader is an aggregate `Payment` row (#3503, #3632).
  */
 const AGGREGATE_CAPTURED_STATUS_AUTHORITY_READERS = new Map([
-  ["src/app/api/bookings/[id]/guests/route.ts", "booking.payment.status (guest-add collection)"],
   ["src/lib/additional-payment-ask.ts", "census SQL over payment.status"],
   ["src/lib/booking-delete.ts", "payment.status in hasCapturedOrCreditedPayment"],
   ["src/lib/booking-ledger-group-child-plan.ts", "a group child's payment.status: which children a settlement paid (#3854)"],
   ["src/lib/booking-ledger-projection-census-classes.ts", "payment.status in nothingCapturedFaceCents (#3583)"],
   ["src/lib/booking-ledger-projection-census-group.ts", "settlement.status: a share's settlement captured, REFUNDED included (#3854 K2)"],
   ["src/lib/booking-ledger-projection-census.ts", "payment.status in hasMoneyColumns (#3583)"],
+  ["src/lib/credit-release-ask.ts", "payment.status: a booking whose payment has taken nothing owes its price as the PRIMARY payment, not a released-credit ask (#4253)"],
+  ["src/lib/finance-booking-metrics.ts", "payment.status: a change fee is income only once captured (#3750, #3955 F9)"],
   ["src/lib/payment-net-collected.ts", "payment.status in netCollectedPaymentTookMoney (#3372)"],
   ["src/lib/refunded-total-shortfall-audit.ts", "Prisma payment.findMany status filter"],
   ["src/lib/xero-booking-edit-conditions.ts", "primary-invoice payment.status"],

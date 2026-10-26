@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   transaction: vi.fn(),
   clubTimeSettings: { findUnique: vi.fn() },
   refreshFinancialYearConfig: vi.fn(),
+  closeAlreadyPaid: vi.fn(),
 }));
 
 vi.mock("next/cache", () => ({ revalidatePath: mocks.revalidatePath }));
@@ -33,6 +34,12 @@ vi.mock("@/lib/logger", () => ({
 }));
 vi.mock("@/lib/xero-subscription-invoices", () => ({ enqueueMembershipSubscriptionChargeOperation: mocks.enqueue }));
 vi.mock("@/lib/audit", () => ({ createAuditLog: mocks.audit }));
+// #4098: the close's own guards are pinned in its service test; the route owns
+// the edit guard, the payload schema and the error mapping.
+vi.mock("@/lib/membership-subscription-charge-close", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/membership-subscription-charge-close")),
+  closeAlreadyPaidSubscriptionCharge: mocks.closeAlreadyPaid,
+}));
 // REFRESH_PREVIEW resolves the club's financial year-end before reconciling, so
 // the reconcile transaction is never the thing that reads settings or calls Xero
 // under the season's advisory lock (#3116). Mocked here because the real module
@@ -326,6 +333,63 @@ describe("admin subscription billing route", () => {
     const response = await POST(request({ action: "UNMARK_FAMILY_INVOICED", seasonYear: 2026, familyGroupId: "family-1" }));
     expect(response.status).toBe(200);
     expect(mocks.audit).not.toHaveBeenCalledWith(expect.objectContaining({ action: "membership-subscription-billing.unmark-family" }));
+  });
+
+  it("CLOSE_ALREADY_PAID passes the charge, the trimmed reason and the officer, and refreshes the pages", async () => {
+    mocks.closeAlreadyPaid.mockResolvedValue({ closed: true, message: "Charge closed as already paid. No Xero invoice will be raised for it." });
+    const response = await POST(request({ action: "CLOSE_ALREADY_PAID", chargeId: "charge-1", reason: "  Paid in cash  " }));
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      success: true,
+      closed: true,
+      message: "Charge closed as already paid. No Xero invoice will be raised for it.",
+    });
+    expect(mocks.closeAlreadyPaid).toHaveBeenCalledWith({ chargeId: "charge-1", reason: "Paid in cash", actorMemberId: "admin-1" });
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/admin/subscriptions");
+  });
+
+  it("CLOSE_ALREADY_PAID returns an idempotent repeat as a success", async () => {
+    mocks.closeAlreadyPaid.mockResolvedValue({ closed: false, message: "This charge is already closed as paid." });
+    const response = await POST(request({ action: "CLOSE_ALREADY_PAID", chargeId: "charge-1", reason: "Paid in cash" }));
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ success: true, closed: false });
+  });
+
+  it.each([
+    ["no reason", { action: "CLOSE_ALREADY_PAID", chargeId: "charge-1" }],
+    ["a blank reason", { action: "CLOSE_ALREADY_PAID", chargeId: "charge-1", reason: "   " }],
+    ["an overlong reason", { action: "CLOSE_ALREADY_PAID", chargeId: "charge-1", reason: "x".repeat(501) }],
+    ["no charge", { action: "CLOSE_ALREADY_PAID", reason: "Paid in cash" }],
+    ["an unknown field", { action: "CLOSE_ALREADY_PAID", chargeId: "charge-1", reason: "Paid in cash", force: true }],
+  ])("CLOSE_ALREADY_PAID rejects %s before closing anything", async (_label, body) => {
+    const response = await POST(request(body));
+    expect(response.status).toBe(400);
+    expect(mocks.closeAlreadyPaid).not.toHaveBeenCalled();
+  });
+
+  it.each([404, 409] as const)("CLOSE_ALREADY_PAID maps a %s refusal to its status and message", async (status) => {
+    const { CloseAlreadyPaidChargeError } = await import("@/lib/membership-subscription-charge-close");
+    mocks.closeAlreadyPaid.mockRejectedValue(new CloseAlreadyPaidChargeError("A covered subscription is no longer paid.", status));
+    const response = await POST(request({ action: "CLOSE_ALREADY_PAID", chargeId: "charge-1", reason: "Paid in cash" }));
+    expect(response.status).toBe(status);
+    await expect(response.json()).resolves.toEqual({ error: "A covered subscription is no longer paid." });
+    expect(mocks.revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("GET returns each charge's active coverage with its subscription status, so the panel offers Close only where it can succeed (#4098)", async () => {
+    const response = await GET(new NextRequest("http://localhost/api/admin/subscription-billing?seasonYear=2026&decisionDate=2026-07-13"));
+    expect(response.status).toBe(200);
+    expect(mocks.charges.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      include: { coverage: { select: expect.objectContaining({ memberName: true, releasedAt: true, subscription: { select: { status: true } } }) } },
+    }));
+  });
+
+  it("CLOSE_ALREADY_PAID requires finance edit — a denied guard closes nothing", async () => {
+    mocks.requireAdmin.mockResolvedValue({ ok: false, response: NextResponse.json({ error: "Forbidden" }, { status: 403 }) });
+    const response = await POST(request({ action: "CLOSE_ALREADY_PAID", chargeId: "charge-1", reason: "Paid in cash" }));
+    expect(response.status).toBe(403);
+    expect(mocks.requireAdmin).toHaveBeenCalledWith({ permission: { area: "finance", level: "edit" } });
+    expect(mocks.closeAlreadyPaid).not.toHaveBeenCalled();
   });
 
   it("mark/unmark require the edit guard — a denied guard blocks the write", async () => {

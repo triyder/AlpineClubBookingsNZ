@@ -48,17 +48,18 @@ admin surface showed one. These rules now hold:
   page's `AdditionalPaymentCard` and
   `GET /api/bookings/[id]/additional-payment-secret`. The member dashboard's
   owed total is scoped instead by its own query (`ACTIVE_BOOKING_STATUSES` +
-  `COMPLETED`), wider again. **What every one of them excludes is CANCELLED and
+  `COMPLETED`), wider again. **Every one of them excludes CANCELLED and
   BUMPED**, and that is the invariant: a member is never shown, and can never
   complete, a card payment for a booking the club has stopped counting.
   Enforcement is not cosmetic — cancellation marks the additional intent
   `FAILED` without zeroing the amount, and the cancel path asks Stripe to cancel
   only an intent that was still *outstanding*, so an intent that had already
   failed (a declined card) stays confirmable at Stripe. Before this gate the
-  owner of a cancelled booking could open the booking, be offered "pay this
+  owner of a cancelled booking could open it, be offered "pay this
   extra", fetch a live client secret and complete the charge; the late-capture
   backstop (#1350) auto-refunded and alerted, but the member had still been
-  charged for a booking that no longer existed.
+  charged for a booking that no longer existed. A credit-paid card ask
+  ([INV-PAY-047]) is raised only on these statuses.
 
   **The rule is about a RETIRED OBLIGATION, of which a cancelled booking is one
   case and a SUPERSEDED ask is the other (#3340).** A booking edit that raises a
@@ -70,15 +71,15 @@ admin surface showed one. These rules now hold:
   inside it. The same shape as a cancelled booking, and the same harm: a member
   charged against an obligation the club had already withdrawn.
 
-  Three things close it, and all three are needed because each alone leaves the
-  charge possible. The cancellation is attempted SYNCHRONOUSLY at mint, before
-  the new client secret is returned, with the enqueued operation kept as the
-  durable backstop for a provider failure. The secret route returns the
-  INTENT'S own amount and id, so the figure a member reads and the intent the
-  button confirms cannot come from different places. And `<Elements>` is keyed on
-  the client secret, because Stripe treats `options.clientSecret` as immutable
-  after mount — without the key a changed secret rebinds nothing and the mounted
-  form goes on confirming the intent it was born with.
+  Three things close it; each alone leaves the charge possible. The cancellation
+  is attempted SYNCHRONOUSLY at mint, before the new client secret is returned,
+  with the enqueued operation kept as the durable backstop for a provider
+  failure. The secret route returns the INTENT'S own amount and id, so the
+  figure a member reads and the intent the button confirms cannot come from
+  different places. And `<Elements>` is keyed on the client secret, because
+  Stripe treats `options.clientSecret` as immutable after mount — without the
+  key a changed secret rebinds nothing and the mounted form goes on confirming
+  the intent it was born with.
 
   **"Cancelled at mint" is BEST-EFFORT, and the queued operation is the durable
   guarantee.** The immediate attempt cannot run when the recovery row is not
@@ -87,9 +88,9 @@ admin surface showed one. These rules now hold:
   retired intent then stays confirmable until the cron reaches it, and a capture
   landing in that window is caught by the compensating refund below rather than
   prevented. Every declined immediate attempt is logged with the intent it left
-  live, so such a charge can be explained rather than investigated from scratch.
+  live, so such a charge can be explained, not investigated from scratch.
 
-  When a capture does land on a retired intent anyway, the refund that follows is
+  When a capture lands on a retired intent anyway, the refund that follows is
   no longer silent: it writes a `booking.payment.superseded_payment_refunded`
   audit row and a REFUNDED `BookingEvent` (discriminated so the cancellation
   narrative can never read it as a settlement clause), emails the member naming
@@ -425,7 +426,7 @@ global lock (#3415): a late accept or modify/query `409`s (no new booking,
 Payment, or PaymentLink; no resurrection to
 `MODIFICATION_REQUESTED`/`QUERY_PENDING`). Approve's `convertedBookingId`
 idempotency returns the one existing booking (#1232). Per-teacher hut-leader
-records, when the school policy creates them (#3416), are always created fresh.
+records, when the booking's lodge ticks teachers (#3819), are always created fresh.
 The held owner is
 re-validated at officer approval's conversion:
 if a previously mapped contact is no longer a valid non-login contact by then
@@ -642,27 +643,45 @@ home for that judgement), its still-active local mirror is stale drift that
 cleanup deactivates, and active non-cancelled coverage above the cash
 refund-note target is reported as its own drift class
 (`overCoveredStripeRefundPayments`) because it silently suppresses every
-later refund note. A non-Stripe payment keeps ONE refund note; a refund
-request's own note (`INV-PAY-118`, role `REFUND_REQUEST_CREDIT_NOTE`) is
-outside it.
-The operator repair for already-damaged links is
-`scripts/xero-refund-note-link-repair.ts`
+later refund note. A non-Stripe payment keeps ONE refund note; a request's
+own (`INV-PAY-118`) and per-refund notes (`INV-ADDPAY-043`, `INV-ADDPAY-047`) are outside it. A void deactivates
+either mirror (`INV-ADDPAY-041`).
+Operator repair: `scripts/xero-refund-note-link-repair.ts`
 ([runbook](../xero/ARCHITECTURE.md)).
 
 ### INV-ADDPAY-021
 
-For `source: STRIPE` payments the local refund ledger is Stripe-truth and
-inbound Xero reconciliation may only raise it, never lower it (#1353). The
-inbound credit-note repair keeps the local `refundedAmountCents` when the
-Xero-derived total is below it (logging and raising the deduped Xero sync
-alert instead of rewriting), and never flips a REFUNDED/PARTIALLY_REFUNDED
-Stripe payment back to SUCCEEDED from Xero-derived data — an operator voiding
-a refund credit note in Xero cannot "un-refund" money Stripe has already paid
-out, and a missing refund-delta credit note can no longer silently lower the
-ledger the missing-credit-note detector compares against (which previously
-self-masked the divergence). Internet Banking payments are the deliberate
-exception: Xero is their payment rail, so the repair remains authoritative in
-both directions for them.
+For `source: STRIPE` payments the local refund ledger is Stripe-truth:
+inbound Xero reconciliation may raise it, never lower it (#1353). Below it the
+credit-note repair keeps `refundedAmountCents`, logs and raises the deduped
+Xero sync alert, never flipping a REFUNDED/PARTIALLY_REFUNDED Stripe payment
+back to SUCCEEDED from Xero-derived data: a void in Xero cannot un-refund
+Stripe's money, nor a missing note silently lower the ledger the missing-note
+detector reads. Internet Banking payments (#4162): the repair follows Xero both
+ways, but never takes the total below the payment's own transaction detail (the
+recorded hand-backs). Below that it keeps the detail, logs and raises the same
+alert; only the nightly follow-up moves the detail, line and total together
+(`INV-ADDPAY-042`).
+
+- **A refund request's paid-back cash is not Xero's to drop** (#4215,
+  `INV-PAY-118`). Its own note is outside the notes the repair sums, so the
+  recount adds what each request's completed hand-back recorded
+  (`COMPLETED_REFUND_REQUEST_HAND_BACK_TASK_WHERE`), never its note (queued,
+  voided or never raised) nor the canonical note, so the floor never alerts
+  on it and a total dropped before #4215 is raised back. It reads them after
+  the payment row, so a completion in between loses the claim and the repair
+  re-runs. The booking repair tool nets the same figure from the cash a cancellation's
+  note answers (`readPaidBackRefundRequests`, #4231), and offers, for an officer to
+  confirm, a request's own note its completion could not queue (no invoice
+  yet): only with no note row of its own (a voided one stays the officer's,
+  `INV-ADDPAY-041`) and no cancellation note at all, else a person checks
+  Xero.
+  Pinned by `xero-credit-note-repairs`, `xero-booking-repair` and
+  `xero-bt-repair-request-cash`.
+- **Below the detail, Xero is short a note** (#4230), usually refunds
+  folded into one note before `INV-ADDPAY-043` and `INV-ADDPAY-047`. The alert says so; adding folded
+  cash to the recount would silence it. Pinned by
+  `xero-bt-recount-handbacks`.
 
 ### INV-ADDPAY-022
 
@@ -1053,9 +1072,9 @@ same `cancelled_booking_late_capture` reason, wrote the same
 `booking.payment.refunded_after_cancellation` audit entry, and left no
 `ManualRefundTask` and no unmuteable mail — so an operator holding a
 `refunded_after_cancellation` entry with no card row had to know which handler wrote
-it before they could tell whether the card was broken. **Both now route through the
-same shared epilogue** (`src/lib/cancelled-booking-late-capture.ts`), which is one
-implementation rather than a copy per handler: one record writer, one `deletedAt`
+it before they could tell whether the card was broken. **Both now route through one
+shared epilogue** (`finishAutomaticLateCaptureRefund`,
+`src/lib/late-capture-record-recovery.ts`): one record writer, one `deletedAt`
 re-read, one alert decision.
 
 **WHAT "EVERY ORDERING" MEANS ON THE PRIMARY PATH, checked rather than assumed.**
@@ -1127,17 +1146,18 @@ is worse than the partial claim it replaced:
   **`COMPLETED`** variant of the same ordering is a different matter entirely and is
   now `INV-ADDPAY-039`: it means the club has already paid the member back, and it
   is fenced.
-- **The record write itself failing.** The caller must answer 200 — the money is
-  already back with the member and a 500 replays the whole refund path for a
-  bookkeeping row — so Stripe never redelivers and nothing else in the tree ever
-  writes that row. A container log is not a record when the card claims
-  completeness, so the caller writes
+- **The record write itself failing.** Since #4149 the delivery still writes the
+  `refunded_after_cancellation` entry (`recordLost`) and the alert, then answers
+  500; a replay never refunds again, so the redelivery or the nightly self-heal
+  writes the missing row once, with a `booking.payment.auto_refund_record_recovered`
+  entry and the alert again (`late-capture-record-recovery.ts`). Meanwhile the
+  writer adds
   `booking.payment.auto_refund_record_failed` (`severity: "critical"`,
   `outcome: "failure"`, `category: "payment"`, carrying the booking and the
-  payment intent) beside the `refunded_after_cancellation` entry. **That audit row
-  is the recovery surface**: it is the one place a finance operator can find an
-  automatic refund the card does not hold. Removing it, or downgrading it to a log
-  line, breaks this rule.
+  payment intent). **That audit row is the recovery surface** while the row is
+  missing: it is the one place a finance operator can find an automatic refund
+  the card does not hold. Removing it, or downgrading it to a log line, breaks
+  this rule.
 
 **The writer's obligations, none of them optional:**
 
@@ -1179,8 +1199,8 @@ is worse than the partial claim it replaced:
   `lock(1)` in the tree — `assignBedRange`, up to 366 nights — runs on
   `{ maxWait: 10_000, timeout: 30_000 }`, so on the 2s/5s default an admin
   assigning a bed range concurrently with a Stripe delivery blows this
-  transaction with a `P2028` and the row is lost for good (see the second
-  exception above). Copying the 30s admin precedent into a webhook is the
+  transaction with a `P2028` and the row waits for Stripe's redelivery (see the
+  second exception above). Copying the 30s admin precedent into a webhook is the
   opposite error: Stripe's delivery timeout is the ceiling on a handler, so it
   would trade a lost row for a lost delivery. This is the `lock(1)` cohort's only
   webhook-triggered participant, and `docs/CONCURRENCY_AND_LOCKING.md` records it
@@ -1197,16 +1217,16 @@ second.** `handleCancelledBookingAdditionalPaymentSucceeded` has always mailed t
 club at the moment it happens, naming the member, the stay, the amount, the payment
 intent, and the fact that the capture was auto-refunded and the supplementary Xero
 invoice was not released; since #2773 the primary handler sends the same mail in
-place of the generic muteable one it used to send. **"One" is per EVENT, and there
-are three mutually exclusive kinds of it, never two at once:** the ordinary
-auto-refund alert, the withheld-refund alert when `INV-ADDPAY-039`'s fence fires,
-and the possible-double-payment alert when a hand-completion is found after the
-refund. The shared epilogue picks exactly one and the fenced path returns before the
-ordinary one can be reached. What was missing was somewhere to look afterwards, which
-is what this rule adds. Anyone tempted to "add an alert" here should read
-`INV-ADDPAY-038` first: that mail was rewritten by #2761 rather than joined by
-another, because a second notification for one event is noise, and noise is how the
-first one stops being read. No pending count anywhere reaches these rows either —
+place of the generic muteable one it used to send. **"One" is per EVENT, of three
+kinds:** the ordinary auto-refund alert, the withheld-refund alert when
+`INV-ADDPAY-039`'s fence fires, and the possible-double-payment alert when a
+hand-completion is found after the refund. The epilogue picks one, and the fenced
+path returns before the ordinary one. Two deliberate exceptions (#4149): a lost
+record re-sends the ordinary alert (#2761: a duplicate, never a silence), and a
+hand-completion found only later raises the double-payment alert after it, once.
+What was missing was somewhere to look afterwards, which is what this rule adds.
+Read `INV-ADDPAY-038` before adding an alert: #2761 rewrote that mail rather than
+joining it, because a second notification is noise. No pending count anywhere reaches these rows either —
 every one of them counts `status: "OPEN"`, and #2761's owner decision explicitly
 left badges and the digest alone.
 
@@ -1535,28 +1555,32 @@ decision and would need its own owner decision.
 
 ### INV-ADDPAY-040
 
+_Legacy: settles tasks raised before #4317._
+
 - **An unpaid additional-payment request a completed financial review raised
   can always be withdrawn, and withdrawal retires every instrument it minted**
-  (#3528, stage 0 of #3527). One service, `additional-payment-withdraw.ts`, one
-  route (`finance:edit`), one button on the admin booking page. In order: the
+  (#3528). One service (`additional-payment-withdraw.ts`), one
+  `finance:edit` route, one admin button. In order: the
   Stripe PaymentIntent is cancelled at the provider FIRST, outside any lock
-  (`INV-LOCK-001`; idempotent — an already-cancelled intent makes no call); then,
+  (`INV-LOCK-001`; idempotent); then,
   under the global money key, the `Payment` summary columns are zeroed behind a
-  fence re-asserting the exact values retired (count 0 → 409, nothing changes),
+  fence re-asserting the exact values retired (count 0 → 409),
   the `ADDITIONAL` row is FAILED and stamped `withdrawnAt`, and any
   `SUPPLEMENTARY_INVOICE` operation parked `WAITING_PAYMENT` on that intent is
   CANCELLED (`ADDITIONAL_ASK_WITHDRAWN`). A live intent-mint recovery
   (PENDING, PROCESSING, or a retry scheduled) REFUSES the withdrawal rather
-  than being retired here — one route to terminal failure (`INV-PAY-056`).
+  than being retired — one route to terminal failure (`INV-PAY-056`).
   The source task stays COMPLETED (`INV-PAY-099`); the
-  `booking.additionalPayment.withdrawn` audit row is the record.
-- **`withdrawnAt` is the durable fact; the columns are a projection.**
+  `booking.additionalPayment.withdrawn` audit row records it.
+- **`withdrawnAt` is the durable fact; the columns are a projection.** A
+  reduction ([INV-PAY-120]) stamps it too, and so does a mark-paid reversal
+  restoring a card ask, on its reversed INTERNET_BANKING cash row (#4320).
   `reconcilePaymentAggregates` derives the additional columns from the latest
   ADDITIONAL row WITHOUT a stamp, so the `payment_intent.canceled` webhook the
   cancel triggers cannot put the ask back. A FAILED row still projects as owed
-  by design (a declined card is retried), which is why FAILED alone cannot mean
-  withdrawn. `findEditReviewChargeRequest` and the repair pass's
-  `planEditReviewChargeInvoicePayment` (`withdrawn` outcome, no finding) read
+  (a declined card is retried), so FAILED alone cannot mean
+  withdrawn. `findEditReviewChargeRequest`, this door and the repair pass's
+  `planEditReviewChargeInvoicePayment` (`withdrawn` outcome) read
   past it too, so no fresh invoice is parked on a cancelled intent.
 - **Only a review-raised request, and only its own money** (D-3528-2): an
   ordinary price-increase ask is the price itself (`INV-PAY-047`), and so is
@@ -1565,3 +1589,222 @@ decision and would need its own owner decision.
   price is editing the booking. A paid request is a refund, refused. Pinned by
   `additional-payment-withdraw.test.ts`, `payment-transactions-refunds.test.ts`,
   `xero-booking-repair.test.ts`.
+
+### INV-ADDPAY-041
+
+- **A refund credit note Xero voided is never re-adopted as a payment's
+  refund note; a reissue's key names every note whose key it could collide
+  with; and on a bank transfer a void undoes the refund** (#4091, owner
+  decisions). Its mirror goes inactive on any payment (`INV-ADDPAY-020`),
+  status-less racing writes too, including missing mirrors (#4223),
+  and no live read revives it (#4288);
+  `findCanonicalPaymentRefundCreditNote`, `mayRecordAsCanonicalRefundNote` and the booking repair's field backfill
+  and conflict check leave out a note a link records VOIDED or DELETED
+  (`refundNoteIdSets`), so nothing writes one into
+  `Payment.xeroRefundCreditNoteId`. The nightly cleanup heals a pre-#4091
+  active mirror (#4161). A later event for it still recounts the payment
+  (#4291).
+- **A refund request's own note** (`INV-PAY-118`, #4195) too: its voided
+  mirror goes inactive and never covers the request. Only an officer
+  re-raises one (#4214), never a retry; the Xero key and any unqueued row
+  name the voided notes. Its void moves no refunded
+  total; the booking repair still counts the request.
+- **The reissue's key** (`refundNoteKeyAfterVoidParts`, row and Xero alike).
+  Once a note is voided it appends `after-void:<sorted ids>`: every
+  refund note, live or voided, recorded at the key's watermark (v2) or amount
+  (v1), or every note a "Paid another way" close's own rows raised once one is
+  voided (v3). A figure the link lacks comes from its create row, or counts
+  as matching. With no void the key is byte-identical. The create path
+  refuses, recording nothing, a VOIDED/DELETED note or one another row raised.
+- **Bank transfers.** The inbound sync never undoes the refund
+  (`INV-ADDPAY-021`'s floor). One writer, the nightly follow-up
+  (`INV-ADDPAY-042`), moves the detail, `BANK_REFUND` line and total
+  together and raises the follow-up; nothing is re-raised automatically.
+  Pinned by `xero-refund-note-{void-pointer,crash-window,after-void-key}`,
+  `xero-voided-note-recount`, `bank-refund-void-follow-up`,
+  `xero-refund-request-note-void`, `xero-canonical-refund-note-void-race`,
+  `xero-refund-note-stale-live-status`, `xero-voided-request-note-retry-routes`,
+  `xero-sync`, `xero-booking-repair`, `xero-operation-retry`,
+  `xero-operation-outbox` and `xero-hardening`.
+
+### INV-ADDPAY-042
+
+- **A voided bank-transfer refund note is undone, then asked once** (#4162,
+  owner decision 17 Oct 2026). The hand-back is the record that the refund was
+  paid; its note mirrors it. Each night, after #4161's heal, the follow-up
+  (`bank-refund-void-follow-up.ts`) handles every voided `REFUND_CREDIT_NOTE`
+  on an `INTERNET_BANKING` payment EXACTLY ONCE (`bank-refund-void-scan.ts`):
+- **A spare moves nothing.** When live notes, plus notes resolved by hand
+  (`INV-INT-025`, #4265), still cover every bank hand-back, a marker on the
+  link records it.
+- **Otherwise one transaction**, under `lock(1)` then the Payment row:
+  re-classify, defer while a create could mint, claim with the follow-up's
+  unique key `bank-refund-void:<payment>:<note>`, then unwind the allocation,
+  reverse the hand-back's line and recompute the total from the detail. The
+  follow-up is a new open `CANCELLED_BOOKING_HAND_BACK`; the completed task is
+  never reopened. A note matches by the task it names, else by a unique amount.
+  For an unmatched one a person picks the live bank refunds it recorded on
+  Stuck States, and the same undo runs (owner, 18 Oct 2026): one pick per
+  refund, keyed `<payment>:<note>:<line>`, until the picks add up to the
+  note's amount (one pick if unreadable). A line its own live notes record
+  even in part is never matched or picked; a card refund's record is never undone
+  here.
+- **Nothing is raised in Xero without a person.** No email, booking event or
+  provider call. Completing the follow-up needs an answer: a fresh note keyed
+  and sized on it, or a hand-made note checked in Xero first and then tracked,
+  never one another record tracks or an unfinished or hand-resolved create
+  row names (#4321, `INV-INT-028`).
+- **Report-only** until `XERO_ENABLE_BANK_REFUND_VOID_WRITES=true`: nothing,
+  the person's pick included, writes before then.
+  Pinned by `bank-refund-void-follow-up` (unit and realdb),
+  `bank-refund-void-answer` and `advisory-lock-guard`.
+
+### INV-ADDPAY-043
+
+- **A later cancellation hand-back on a bank transfer gets its own Xero note,
+  keyed and sized on its task** (#4287, owner decision 22 Oct 2026). An
+  `INTERNET_BANKING` payment's first refund takes its one canonical note
+  (`INV-ADDPAY-020`). A completed cancellation hand-back is noted on its own
+  task (`paidAnotherWayTaskId`, as a close is, `INV-PAY-122`) when the
+  payment has that note linked or on its way (a create row PENDING, RUNNING,
+  FAILED or unreadable: two equal hand-backs would else dedupe into one
+  canonical row), or has any
+  STRIPE transaction row, in any status, or card refund row (a wrong "own" is
+  harmless; `cancellationHandBackNotedOnItsOwnRecord`). Sized from its task less its
+  own notes (`readPaidAnotherWayCloseShare`), never payment-wide cash less all
+  coverage, which floors at nothing once card refunds exist.
+- **Its cash counts beside its note while its refund stands.** Once a note row
+  names it (any status), it - or a re-confirmed `bank-refund-void:` follow-up
+  (#4315 item 2), also once a hand-made note is linked to it - is noted bank
+  cash (`readPaidAnotherWayCash`), so a card note is
+  never squeezed by that note, less what a follow-up naming it took back
+  (`INV-ADDPAY-042`): undone or dismissed, nothing.
+- **No new term in the recount or the coverage sum; three in the cash
+  reader** (the record, its netting, a hand-made note's cover in its share).
+  They count its `perDelta` link; its payload names the hand-back
+  (`handBackTaskId`), so a void is matched to it.
+- **Decided under the completion's Payment row lock** (#4217), after the
+  allocation. No new advisory key.
+- **Never for a historical refund.** Only the completion asks; an older
+  absorbed refund stays on the #4230 deploy note's list.
+- **A card refund is noted on its own record** (`INV-ADDPAY-047`).
+  Pinned by `xero-bt-per-refund-notes` (realdb), `bank-hand-back-refund-note`,
+  `card-refund-paid-another-way-cash`, `manual-refund-task`,
+  `payment-lock-before-rebuild` and `xero-bt-recount-handbacks`.
+
+### INV-ADDPAY-044
+
+- **An after-commit mint never leaves a live ask on a booking that has ended**
+  (#4316, the cancelled-booking case of `INV-ADDPAY-023`). Three minters run
+  after the decision to ask commits: the edit doors'
+  `createModificationAdditionalPaymentIntent`, the recovery runner's replay of
+  a failed mint (`processCreateAdditionalPaymentIntentOperation`) and a
+  currency re-issue (`reissueAdditionalIntentInClubCurrency`). Each re-reads
+  the booking twice against `ADDITIONAL_ASK_RETIRED_BOOKING_STATUSES`
+  (CANCELLED, BUMPED):
+  - **Before the provider call:** an ended booking is asked nothing and owes
+    nothing.
+  - **After the new row is written:** a cancel that committed in between could
+    not see the intent. Its `CANCEL_PAYMENT_INTENT` row is queued first, on its
+    own, then the ask retired with the cancel claim's own routine,
+    `failOutstandingAdditionalAskInClaim`, under the `Payment` row lock, and
+    cancelled now.
+- **The two writers cannot both miss.** The row write and BOTH cancel claims -
+  the paid path's and the never-captured branch's, which a fully REFUNDED
+  payment takes - hold the `Payment` row: a cancel that held it first is seen
+  by the re-read; one that took it after reads the new intent and retires it.
+- **Nothing is offered.** No secret, no figure named as due, no supplementary
+  invoice; a currency re-issue answers the pay door with nothing payable. A
+  review charge on a CANCELLED or BUMPED booking takes its cancelled path
+  (`INV-PAY-112`).
+- **A failed retirement still ends.** The door's queued cancellation, if
+  written, finishes it; the runner throws and retries, and its retry retires
+  the ask before its settled check, then closes.
+- **No new advisory key.** Home: `ended-booking-ask-guard.ts`. Pinned by
+  `ended-booking-ask-mint-guard`, `payment-recovery`,
+  `additional-intent-currency` and `ended-booking-ask-mint-race` (realdb).
+
+### INV-ADDPAY-045
+
+- **Credit released after a Xero offset is asked for once, by card.** When
+  `convergeCreditNoteSpentOutsideApp` (#4251) releases credit applied to a
+  booking, the booking owes that amount and nothing asked for it (#4253). Each
+  release row gets one `credit_release_ask_` recovery row; the runner branch in
+  `credit-release-ask.ts` is reached before the ordinary replay, which has no
+  edit to size from.
+- **The size is re-derived, never trusted.** The smaller of the release, what
+  the ledger still shows owed and unasked (`INV-PAY-047`), and what Xero shows
+  due on the booking's invoice; an unpaid ask it supersedes is carried
+  (`INV-PAY-098`). Nothing owed closes the row with an audit.
+- **No second invoice.** The amount already stands on the booking's invoice, so
+  the row is written `hadIssuedXeroInvoice: false`.
+- **It waits behind an unpaid edit request** (its supplementary invoice could not
+  be paid by this one; release 2 merges them) and retries.
+- **It closes, never guesses.** Cancelled, bumped, uncaptured and
+  organiser-settled bookings close without an ask; an invoice not yet open in
+  Xero throws and retries. A booking that ended is asked nothing
+  (`INV-ADDPAY-044`).
+- **Its own words.** The first email goes out at the next reminder pass instead
+  of after the usual wait (`INV-ADDPAY-024`), worded as credit used elsewhere,
+  never as a change to the stay. A reduction never nets against this request.
+  A chain mixing an edit and a release is worded by its newest request (release 2).
+- **Blue/green.** Enqueueing is off until an operator sets the
+  `CREDIT_RELEASE_ASK`/`WRITER` `XeroSyncCursor` row's `enabled` to `true`, after
+  the previous colour has drained; the runner, recorder and closer are always on.
+  Only releases created after that moment are asked (the backlog is a later
+  run), and once enabled the previous colour must not be rolled back to.
+  Home: `credit-release-ask-sweep.ts`.
+
+### INV-ADDPAY-046
+
+- **The card payment is recorded against the booking's own invoice.** A captured
+  credit-release request's own money (its amount less the ask it carried) is
+  recorded in Xero as a Stripe-account payment on the booking's invoice, dated
+  the day Stripe took it, never a second invoice. An edit's own money stays on
+  its supplementary invoice.
+- **It is a sweep.** `planCreditReleasePayments` re-derives from the ledger chain
+  which captures collected credit-release money; the payment's `XeroObjectLink`
+  (role `CREDIT_RELEASE_PAYMENT`) is the only marker of done, and the Xero key
+  makes a repeat harmless.
+- **It fails closed.** An invoice not open, owing less than the card took, or a
+  chain that cannot be traced records nothing and alerts the officers once a day.
+  Retries are at least an hour apart and capped at five.
+- **Xero paying first closes the request.** An unpaid request that carries
+  nothing is closed when Xero shows its invoice paid: the card payment is
+  cancelled first (a succeeded or processing one is left), then one transaction
+  under the global key fences the row and writes the money as bank cash.
+- **No new advisory key.** Home: `credit-release-xero-payment.ts`,
+  `credit-release-ask-close.ts`.
+
+### INV-ADDPAY-047
+
+- **A card refund on a bank transfer gets its own Xero note, keyed and sized
+  on its `PaymentRefund` row** (#4312, owner decision 24 Oct 2026). On an
+  `INTERNET_BANKING` payment its note names the refund (`cardRefundId`) and
+  answers its amount less its own notes (`readCardRefundNoteShare`), never the
+  canonical note (`INV-ADDPAY-020`). One key for row and Xero
+  (`cardRefundNoteKey`), so two writers collide on one row; a `perDelta` link.
+  The invoice it credits is read from the refund (`queueCardRefundOwnNotes`).
+- **Each writer asks where it first knows the refund.** A refund request's
+  approval and replay, for each refund made, on any outcome
+  (`replayNotingEachRefund`, `INV-PAY-118`); any other replay, only for
+  re-sends whose failures were own-noted and for late-capture refunds;
+  `charge.refunded`, for a refund it first records, by its metadata
+  (`cardRefundDoorOf`); a late capture's note, per refund.
+- **A re-send is paired with its failures only by the replay's record**
+  (#4104). The replay marks the slice it sent with the refund it made
+  (`madeRefundId`), compare-and-set on its plan; that refund is sized less the
+  failures' own notes, a chain followed through marks
+  (`cardRefundFailuresAnsweredBy`). A dashboard refund is noted in full. A
+  re-send never enters the canonical delta: one recorded first is left to its
+  row's replay, or marked on a dead row (`pairResendRecordedFirst`).
+- **Never for a historical refund.** Only a refund Stripe made since the
+  marker migration finished qualifies (`madeSinceCardRefundNoteCutover`);
+  none if the marker never finished, when the approval takes the one note. An
+  older one keeps its fold and the #4230 deploy note's list.
+- **No new term in a reader.** Coverage, gap and recount count its link, and
+  the hand-back cash reader (`INV-ADDPAY-043`) never does. A voided one is
+  never undone as a bank refund (`card-refund`, `INV-ADDPAY-042`).
+- **No lock.** Enqueued outside transactions; no new advisory key.
+  Pinned by `xero-bt-card-refund-notes` (realdb), `card-refund-resend-answer`,
+  `card-refund-own-note-share` and `xero-bt-recount-handbacks`.

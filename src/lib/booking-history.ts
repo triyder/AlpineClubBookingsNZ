@@ -92,8 +92,15 @@ interface BookingHistoryDuplicateCaptureRefund {
  *
  * `"staff"` means the viewer holds `bookings:edit` (the page's `canSeeAdminTools`),
  * which is the readership the owner chose for that reason on 4 September 2026.
+ * `"linked_guest"` (#3991) is a viewer who cannot see the booking owner's
+ * account credit (`canSeeOwnerCredit` false on the booking page — a guest on
+ * someone else's booking): everything a member reads, except that the
+ * "Saved account credit was not applied" entry and any "Credit Choice Updated"
+ * modification row are dropped and the
+ * "Booking cancelled" entry reads only "This booking was cancelled.", because
+ * its stored text can name the credit the cancellation issued.
  */
-export type BookingHistoryAudience = "member" | "staff";
+export type BookingHistoryAudience = "member" | "linked_guest" | "staff";
 
 interface BuildBookingHistoryOptions {
   createdAt: Date;
@@ -333,8 +340,11 @@ export function buildBookingHistoryItems({
       // it, and you still have it": a silent cleared column would leave them
       // believing credit had been spent that is in fact still theirs. Rendered
       // for members and admins alike, because both need the same answer to
-      // "what happened to my credit?".
+      // "what happened to my credit?". Not a linked guest's (#3991, below).
       case "booking.credit_election.unapplied": {
+        // #3991: the owner's credit and balance — withheld from a linked guest,
+        // as the page's credit-election notice and amount narrative are.
+        if (audience === "linked_guest") break;
         const electionCents =
           typeof parsedDetails?.creditElectionCents === "number"
             ? parsedDetails.creditElectionCents
@@ -412,7 +422,12 @@ export function buildBookingHistoryItems({
           occurredAt: auditLog.createdAt,
           category: "Booking",
           title: "Booking cancelled",
-          detail: auditLog.details ?? "This booking was cancelled.",
+          // #3991: the stored text can name the owner's account credit ("Credit
+          // 50% = $X as account credit"), so a linked guest reads only the fact.
+          detail:
+            audience === "linked_guest"
+              ? "This booking was cancelled."
+              : auditLog.details ?? "This booking was cancelled.",
           amountDisplay: null,
           tone: "warning",
         });
@@ -423,6 +438,10 @@ export function buildBookingHistoryItems({
   }
 
   for (const modification of modifications) {
+    // #3991: a credit-choice edit is about the owner's credit ("$X of account
+    // credit will be applied"); dropped for a linked guest, like the timeline's
+    // "Saved account credit was not applied" entry.
+    if (audience === "linked_guest" && modification.modificationType === "CREDIT_ELECTION") continue;
     const detailParts = [describeModification(modification, format)];
     // #3530: the itemised lines behind the figure, when the edit stored them.
     const linesNote = describeModificationLines(modification, rateLabels, format);

@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  ADDITIONAL_PAYMENT_REMINDER_DAYS,
+  additionalPaymentFirstReminderDelayDays,
   ADDITIONAL_OWED_BOOKING_STATUSES,
   ADDITIONAL_PAYABLE_BOOKING_STATUSES,
   isAdditionalPayableBookingStatus,
@@ -11,6 +13,7 @@ import {
   resolveAdditionalPaymentChase,
   resolveAdditionalPaymentDoor,
 } from "@/lib/additional-payment-chase";
+import { CREDIT_RELEASE_ASK_REASON } from "@/lib/credit-release-ask-keys";
 import { buildAdditionalOwedWhere } from "@/lib/unpaid-finished-stays";
 
 /**
@@ -300,6 +303,17 @@ describe("resolveAdditionalPaymentChase", () => {
     expect(
       chase({ now: new Date(AFTER_CUTOFF.getTime() + 86_400_000) }),
     ).toBeNull();
+  });
+
+  it("sends a credit-release request's first email at once, and only once (#4253)", () => {
+    const raisedJustNow = { now: AFTER_CUTOFF, today: AFTER_CUTOFF };
+    expect(chase({ ...raisedJustNow })).toBeNull();
+    expect(chase({ ...raisedJustNow, askReason: CREDIT_RELEASE_ASK_REASON })).toBe("initial");
+    expect(
+      chase({ ...raisedJustNow, askReason: CREDIT_RELEASE_ASK_REASON, reminderSentAt: AFTER_CUTOFF }),
+    ).toBeNull();
+    expect(additionalPaymentFirstReminderDelayDays(CREDIT_RELEASE_ASK_REASON)).toBe(0);
+    expect(additionalPaymentFirstReminderDelayDays(null)).toBe(ADDITIONAL_PAYMENT_REMINDER_DAYS);
   });
 
   it("prefers the last-chance nudge inside the pre-arrival window", () => {

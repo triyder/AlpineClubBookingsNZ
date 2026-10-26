@@ -333,9 +333,9 @@ export function VideoMeetingsSetup({
 
   return (
     <div className="space-y-6">
-      <Card>
+      <Card {...section.sectionRegionProps}>
         <CardHeader>
-          <CardTitle>Meeting server</CardTitle>
+          <CardTitle {...section.titleProps}>Meeting server</CardTitle>
           <CardDescription>
             Where your club&apos;s MiroTalk meetings are hosted, and how the join
             links behave. Leave a box empty to keep using whatever the server
@@ -491,6 +491,7 @@ export function VideoMeetingsSetup({
                 describeReason={false}
                 readOnlyReason={ADMIN_FULL_ADMIN_ONLY_ACTION_REASON}
                 onClick={section.startEditing}
+                {...section.editTriggerProps}
               >
                 Edit
               </ViewOnlyActionButton>

@@ -10,8 +10,9 @@ interface FinanceReportAvailabilityInput {
 }
 
 // Structural subset of getXeroConnectionStatus: `connected` is readability-based
-// (tokens decrypt), and `needsReentry` is true when a token row exists but can no
-// longer be decrypted — the operator must reconnect, not run a first sync (#2079).
+// (tokens decrypt), and `needsReentry` is true for a connection with an
+// unreadable or missing stored token set — the operator must reconnect, not run
+// a first sync (#2079, #3806).
 interface XeroConnectionSignal {
   connected: boolean;
   needsReentry: boolean;

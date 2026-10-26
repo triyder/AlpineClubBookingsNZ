@@ -28,6 +28,7 @@ import {
   ROSTER_GUEST_LODGE_A,
   ROSTER_GUEST_LODGE_B,
   ROSTER_ISOLATION_WINDOW,
+  seededBookingDates,
   SECOND_LODGE,
   SECOND_LODGE_BED_COUNT,
   shiftDateOnly,
@@ -83,11 +84,10 @@ async function createBookingWithGuests(opts: {
       memberId: opts.memberId,
       lodgeId: opts.lodgeId,
       status: opts.status,
-      checkIn: d(opts.checkIn),
-      checkOut: d(opts.checkOut),
       totalPriceCents: total,
       finalPriceCents: total,
       ...(opts.extra ?? {}),
+      ...seededBookingDates(opts.checkIn, opts.checkOut),
     },
   });
   for (const guest of opts.guests) {

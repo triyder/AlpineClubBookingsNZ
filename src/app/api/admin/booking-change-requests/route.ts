@@ -3,6 +3,14 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 import { z } from "zod";
+import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
+import { isFinishedStay } from "@/lib/booking-edit-policy";
+import {
+  describeRequestedGuestNights,
+  storedRequestNamesNoChange,
+} from "@/lib/booking-change-request-stored";
+import { hasAdminAreaAccess } from "@/lib/admin-permissions";
+import { loadMemberGuestFindGate } from "@/lib/member-guest-find-service";
 
 const querySchema = z.object({
   status: z.enum(["REQUESTED", "APPROVED", "REJECTED", "ALL"]).optional().default("REQUESTED"),
@@ -64,6 +72,9 @@ export async function GET(req: NextRequest) {
             },
             // #3369: the owner may be an Organisation; bookingOwner() reads both.
             organisation: { select: { name: true, email: true } },
+            // #4030: the member ids already on the booking, and nothing else
+            // about its guests, so the officer's member finder disables them.
+            guests: { where: { memberId: { not: null } }, select: { memberId: true } },
             payment: {
               select: {
                 id: true,
@@ -84,5 +95,79 @@ export async function GET(req: NextRequest) {
     prisma.bookingChangeRequest.count({ where }),
   ]);
 
-  return NextResponse.json({ data: requests, page, pageSize, total });
+  // #4157 (`INV-REQ-012`): a pending request's card reads a repeated range
+  // against the nights approval keeps — the booking's live guest rows. Loaded
+  // only for the pending rows' bookings: a decided request never reads them,
+  // so the approved and declined views load no night rows at all. Kept on the
+  // server; nothing about these guests reaches the screen.
+  const pendingBookingIds = [
+    ...new Set(requests.filter((request) => request.status === "REQUESTED").map((request) => request.booking.id)),
+  ];
+  const liveGuestsByBooking = new Map<
+    string,
+    Array<{ id: string; stayStart: Date; stayEnd: Date; nights: Array<{ stayDate: Date }> }>
+  >();
+  if (pendingBookingIds.length > 0) {
+    const liveGuests = await prisma.bookingGuest.findMany({
+      where: { bookingId: { in: pendingBookingIds } },
+      select: {
+        id: true,
+        bookingId: true,
+        stayStart: true,
+        stayEnd: true,
+        nights: { select: { stayDate: true } },
+      },
+    });
+    for (const { bookingId, ...guest } of liveGuests) {
+      const list = liveGuestsByBooking.get(bookingId) ?? [];
+      list.push(guest);
+      liveGuestsByBooking.set(bookingId, list);
+    }
+  }
+
+  // #3750: whether approving a request EXECUTES it — its booking's stay has
+  // finished — answered here from the same `isFinishedStay` the decision route
+  // asks, so the panel's wording and the route's behaviour cannot disagree.
+  const today = await clubTodayDateOnlyInstant();
+  const data = requests.map(({ booking: { guests, ...booking }, ...request }) => {
+    const executesOnApproval = isFinishedStay(booking, today);
+    // #4030 Part B: a pending request on a finished stay that names no change
+    // (a member's free-text note) — the officer may enter the guests it
+    // describes. Asked through the executor's own mapping, so the card never
+    // offers an entry the approval would refuse.
+    const acceptsOfficerGuests =
+      executesOnApproval &&
+      request.status === "REQUESTED" &&
+      storedRequestNamesNoChange(request.requestedChanges, booking);
+    return {
+      ...request,
+      // #4030 review S7: the guests' member ids reach the screen only where
+      // the officer's finder uses them.
+      booking: acceptsOfficerGuests ? { ...booking, guests } : booking,
+      executesOnApproval,
+      acceptsOfficerGuests,
+      // #4088: each guest's requested nights, as runs, for the card; #4157:
+      // a pending request read against the live rows approval reads.
+      requestedGuestNights: describeRequestedGuestNights(request.requestedChanges, {
+        status: request.status,
+        guests: liveGuestsByBooking.get(booking.id),
+      }),
+    };
+  });
+
+  // #4030 Part B: the officer's member-guest finder, when the club's module is
+  // on — email lookup for any officer, name search only with the membership
+  // directory, exactly the gates the admin finder route itself applies.
+  const memberGuestFind = data.some((request) => request.acceptsOfficerGuests)
+    ? (await loadMemberGuestFindGate({ requiresOpenSearch: false })).ok
+      ? {
+          openSearchEnabled: hasAdminAreaAccess(guard.session.user, {
+            area: "membership",
+            level: "view",
+          }),
+        }
+      : null
+    : null;
+
+  return NextResponse.json({ data, page, pageSize, total, memberGuestFind });
 }

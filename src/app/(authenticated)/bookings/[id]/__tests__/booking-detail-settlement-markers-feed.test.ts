@@ -20,6 +20,8 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     auditLog: { findMany: mocks.auditLogFindMany },
     bookingEvent: { findMany: mocks.bookingEventFindMany },
+    // #3991: the narrative's amount owed reads the applied-credit ledger.
+    memberCredit: { aggregate: vi.fn().mockResolvedValue({ _sum: { amountCents: null } }) },
   },
 }));
 vi.mock("@/lib/booking-history", () => ({
@@ -62,11 +64,11 @@ const booking = {
   moneyReconciliation: null,
 } as never;
 
-async function feedFor(canSeeAdminTools: boolean) {
+async function feedFor(canSeeAdminTools: boolean, canSeeOwnerCredit = true) {
   await loadBookingDetailHistory({
     booking,
     club: {} as never,
-    viewer: { canSeeAdminTools } as never,
+    viewer: { canSeeAdminTools, canSeeOwnerCredit } as never,
     format: CLUB_FORMAT_TEST,
   });
   expect(mocks.buildBookingHistoryItems).toHaveBeenCalledTimes(1);
@@ -111,5 +113,18 @@ describe("booking detail feed: settlement markers are staff-only at the data fee
         title: "May have been paid twice (card and Xero)",
       }),
     ]);
+  });
+});
+
+// #3991: a viewer who cannot see the owner's credit (`canSeeOwnerCredit` false —
+// a linked guest) is its own timeline audience, so the builder can keep the
+// owner's account credit from them.
+describe("booking detail feed: the timeline audience of a linked guest (#3991)", () => {
+  it("hands a linked guest's timeline the linked_guest audience", async () => {
+    expect((await feedFor(false, false)).audience).toBe("linked_guest");
+  });
+
+  it("CONTROL: the owner's timeline is the member audience", async () => {
+    expect((await feedFor(false, true)).audience).toBe("member");
   });
 });

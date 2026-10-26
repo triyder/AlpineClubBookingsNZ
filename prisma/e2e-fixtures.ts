@@ -333,6 +333,16 @@ export const IB_WINDOW = relMondayWindow(56);
 export const PAID_CANCEL_BOOKING_ID = "e2e-paid-cancel";
 export const PAID_CANCEL_WINDOW = relWindow(300, 2);
 
+// --- Help-widget booking fixture (#4397) ----------------------------------
+// The same shape as the paid-cancel booking, but no spec ever cancels it:
+// e2e/help-widget.spec.ts asserts the refund-schedule block, which renders
+// only while a paid booking is still cancellable. It used to read
+// PAID_CANCEL_BOOKING_ID, which booking-cancel-refund.spec.ts cancels, so the
+// assertion depended on which file ran first. Between the paid-cancel and
+// additional-owed windows, disjoint from both.
+export const HELP_WIDGET_BOOKING_ID = "e2e-help-widget-paid";
+export const HELP_WIDGET_WINDOW = relWindow(310, 2);
+
 // --- Outstanding additional payment fixture (#2350) ----------------------
 // A future-dated PAID booking owned by Nadia whose price was pushed up after it
 // was paid, leaving an uncollected additional payment — the exact state
@@ -361,6 +371,35 @@ export const PAID_PROMO_BOOKING_ID = "e2e-paid-promo";
 export const UNRECONCILED_BOOKING_ID = "e2e-unreconciled-booking";
 export const UNRECONCILED_BOOKING_WINDOW = relWindow(340, 1);
 export const ADDITIONAL_OWED_AMOUNT_CENTS = 21_000;
+
+// --- A bank refund back on the refund list after its note's void (#4162) ----
+// Three cancelled bookings paid by internet banking, each with a bank refund
+// the nightly follow-up put back on Money to settle because Xero voided its
+// credit note (the follow-up task, as the follow-up writes it, and the voided
+// note's link). e2e/bank-refund-void-follow-up.spec.ts answers ONE per attempt
+// (the first still open): an answer is final and the suite seeds once per
+// run, so a retry must never meet the row its earlier attempt answered
+// (docs/E2E_PLAYWRIGHT.md, flake invariant 1). The ids' first eight characters
+// differ, so each booking reference does. Every window is in
+// SEEDED_BOOKING_WINDOWS below, which `seededBookingDates` requires (#4004).
+export const BANK_REFUND_VOID_BOOKING_IDS = ["e2ebrv0-booking", "e2ebrv1-booking", "e2ebrv2-booking"] as const;
+export const BANK_REFUND_VOID_WINDOWS = [relWindow(360, 1), relWindow(362, 1), relWindow(364, 1)] as const;
+
+// --- Finished-stay free-text change request (#4030) -----------------------
+// A COMPLETED two-night stay of Heidi's, paid in full by internet banking
+// against an issued invoice, carrying one REQUESTED locked-period change
+// request in the old FREE-TEXT shape: a note and an effective date, no guests.
+// e2e/change-request-officer-entry.spec.ts enters the guests the note describes
+// and approves it, which applies them to the finished stay.
+//
+// Sixty days back: below every other past fixture (heidiCompleted, the deepest,
+// starts at -45) and far below the -7..-15 band the retroactive spec sweeps,
+// and inside the winter season band (-90 onward) so the added guests price.
+export const CHANGE_REQUEST_FINISHED_BOOKING_ID = "e2e-change-request-finished";
+export const CHANGE_REQUEST_FREE_TEXT_ID = "e2e-change-request-free-text";
+export const CHANGE_REQUEST_FINISHED_WINDOW = relWindow(-60, 2);
+// The stay's owner (the demo seed's Heidi Hill), who is emailed the change.
+export const CHANGE_REQUEST_OWNER_EMAIL = demoEmail("heidi");
 
 // --- Membership application fixture (e2e/membership-application.spec.ts) --
 // A PENDING_NOMINATORS application whose two nomination tokens have KNOWN raw
@@ -474,21 +513,52 @@ export const CROSS_LODGE_OFFER_MEMBER_GUEST_WINDOW = relWindow(111, 2);
 // Alice on it) sat on stayWindow(15)'s Monday or Tuesday, and
 // e2e/guest-promo-code-chips.spec.ts stalled on the member-night conflict.
 //
-// A new seeded booking window belongs here. src/lib/__tests__/
-// e2e-stay-window-fixture-nights.test.ts fails if an exported `*_WINDOW` or a
-// DEMO_BOOKING_WINDOWS entry is missing.
+// A new seeded booking window belongs here. Seed Booking writes finish with
+// seededBookingDates(), checked structurally by the fixture-night census.
+// Reserve these even when the optional demo lodge is disabled, so the same
+// date allocator works with either seed configuration.
+export const DEMO_SECOND_LODGE_BOOKING_WINDOWS = {
+  draft: relWindow(55, 2),
+  confirmed: relWindow(60, 3),
+  pending: relWindow(65, 2),
+};
+
 export const SEEDED_BOOKING_WINDOWS: ReadonlyArray<{
+  readonly checkIn: string;
+  readonly checkOut: string;
   readonly nights: readonly string[];
 }> = [
   ...Object.values(DEMO_BOOKING_WINDOWS),
+  ...Object.values(DEMO_SECOND_LODGE_BOOKING_WINDOWS),
   WAITLIST_FULL_WINDOW,
   WAITLIST_OFFER_WINDOW,
   IB_WINDOW,
   PAID_CANCEL_WINDOW,
+  HELP_WIDGET_WINDOW,
   ADDITIONAL_OWED_WINDOW,
   UNRECONCILED_BOOKING_WINDOW,
+  ...BANK_REFUND_VOID_WINDOWS,
+  CHANGE_REQUEST_FINISHED_WINDOW,
   ROSTER_ISOLATION_WINDOW,
   CAPACITY_ISOLATION_WINDOW,
   CROSS_LODGE_OFFER_WINDOW,
   CROSS_LODGE_OFFER_MEMBER_GUEST_WINDOW,
 ];
+
+// Keep this as the FINAL spread in seed Booking data: caller overrides cannot
+// replace these dates. Matching the actual pair, rather than an export name,
+// makes inline dates, aliases and divergent imported windows fail closed.
+export function seededBookingDates(checkIn: string, checkOut: string) {
+  const window = SEEDED_BOOKING_WINDOWS.find(
+    (candidate) => candidate.checkIn === checkIn && candidate.checkOut === checkOut,
+  );
+  if (!window) {
+    throw new Error(
+      `INV-SSOT-001: seeded booking ${checkIn}..${checkOut} is missing from SEEDED_BOOKING_WINDOWS`,
+    );
+  }
+  return {
+    checkIn: new Date(`${window.checkIn}T00:00:00.000Z`),
+    checkOut: new Date(`${window.checkOut}T00:00:00.000Z`),
+  };
+}

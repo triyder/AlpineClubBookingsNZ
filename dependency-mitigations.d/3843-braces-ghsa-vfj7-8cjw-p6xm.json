@@ -22,7 +22,8 @@
     "https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3932#issuecomment-6012984341",
     "https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3962#issuecomment-6031635473",
     "https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/3995#issuecomment-6056848503",
-    "https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/4000#issuecomment-6066865039"
+    "https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/4000#issuecomment-6066865039",
+    "https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/3892#issuecomment-6066867807"
   ],
   "expires": "2026-11-05T00:00:00Z",
   "patch": {
@@ -30,8 +31,8 @@
     "sha256": "37f95f7d660c05bfd44d4b429ca49ceeede99dcff68389f81ee9b995a8ea24d2"
   },
   "reviewedInputs": {
-    "pnpm-workspace.yaml": "460e0a1b8449537f9e4ebb261a61a30f84d1e024fa0cd5e00f67b7c71596aef1",
-    "pnpm-lock.yaml": "392f43f32ec0ba5c83cfd9565fa9b1dfea6255bd075b28a0cecf159b9f1068c8"
+    "pnpm-workspace.yaml": "b0cb42a7a7c76803c14d1c655238ff0134956c88513debb56536a21d3b1fdd98",
+    "pnpm-lock.yaml": "9c739853d93a49dc28747621db3b31af8d058ae35bc8487419303a59cf594f49"
   },
   "scope": "This mitigation covers ONLY the braces@3.0.3 package that pnpm installs and audits, on the path above. Nine further copies of braces are compiled into other packages' own files, where no pnpm patch reaches and pnpm audit cannot see them; they are known, unpatched and out of reach of this record, and are listed below. The reachability trace at https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3843#issuecomment-5966944832 found that none of them can receive input from outside the club's own developers and build, which is the condition the owner's second decision set for this record.",
   "knownUncoveredCopies": [
@@ -73,7 +74,7 @@
       "reachedThrough": "prisma > @prisma/dev"
     },
     {
-      "copy": "vite@8.3.5",
+      "copy": "vite@8.3.4",
       "files": [
         "dist/node/chunks/node.js"
       ],

@@ -62,10 +62,6 @@ export {
 } from "./xero-oauth";
 
 export {
-  // test seam
-  decryptToken,
-  // test seam
-  encryptToken,
   getXeroConnectionStatus,
   getXeroTokenReadability,
   isXeroConnected,

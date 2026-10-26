@@ -40,6 +40,16 @@ before sharding and remain absent; adding them is a separate project.
 does **not** apply sharding in this version, so comparing four `list` outputs
 would falsely suggest every file runs four times.
 
+The required `Migration drift check` also runs the opt-in PostgreSQL race
+proofs. Its dedicated service binds only to loopback, and Docker selects an
+available host port from 55442–65535 rather than requiring port 55442 to be
+free. The workflow validates the resolved URL with the existing race-database
+guard before migration, then shares it through `CONCURRENCY_RACE_DATABASE_URL`;
+the seeded ledger-history database derives its URL from that same endpoint.
+Missing or unsafe endpoint metadata fails the job. Port-range exhaustion or
+service startup failure also stays a failure; neither skips nor passes the
+real database checks.
+
 ## Shared setup
 
 `vitest.config.mts` points every test file at three setup files, in order —
@@ -1032,7 +1042,7 @@ why the reveal key is a required argument, what reduced motion does, and what
 the census does and does not hold. This section is about TESTING a call site,
 and deliberately does not restate it.
 
-Testing a call site is the same three assertions each time, and each is
+Testing a call site is the same four assertions each time, and each is
 discriminated by a named test in the tree already:
 
 - **Failure**: `expectRecoveryAlertToHoldFocus(alert)` above — the element the
@@ -1047,7 +1057,11 @@ discriminated by a named test in the tree already:
   only "group" is the defect, and `getByRole("region", { name })` is what fails
   when the name goes missing. Do not hand-roll the spy — jsdom implements no
   layout, so `Element.prototype.scrollIntoView` does not exist, and three files
-  had written the same fixture out verbatim before it moved to the helper.
+  had written the same fixture out verbatim before it moved to the helper. A
+  staged section's Edit reveals on its own (#4115), so there press Edit as a
+  keyboard user does and `expectToHoldFocus` its first field — the one the edit
+  enabled, not a control that was already live
+  (`group-discount-section.test.tsx`, `list-editor-focus-return.test.tsx`).
 - **Success**: `document.activeElement` is the page or card whose top was
   positioned at, and it contains the confirmation
   (`lodge-capacity-card.test.tsx`). A card below the top of its scroll container
@@ -1056,6 +1070,19 @@ discriminated by a named test in the tree already:
   page wrapper (`use-scroll-to-feedback.test.ts`). A surface whose success closes
   a Radix dialog cannot assert focus at all — the dialog's focus release wins, by
   design, and the scroll still happens — so assert the scroll there.
+- **Return** (applies to staged sections — `useSectionEditState`, or
+  `useEditorFocusReturn` for a list whose row editor is its own component — and
+  to a list row's direct write, `useRowActionFocusReturn`): operate Save, Cancel
+  or the action as a keyboard user does — `focus()` the control, then click it —
+  and `expectToHoldFocus(target)` from the same helper file, finding the
+  re-rendered target by role and name
+  (`use-section-edit-state.test.tsx`, `allocation-preferences-section.test.tsx`,
+  `list-editor-focus-return.test.tsx`; a row's direct write in
+  `row-action-focus-return.test.tsx`). jsdom never drops focus from a control
+  that becomes disabled, so a failed-save return is tested by blurring to the
+  page inside the save, as a browser would (#4087); jsdom will not blur a
+  DISABLED control either, so park focus on a throwaway control and remove it
+  (#4116).
 
 `admin-attention-primitive-contract.test.ts` is the census that keeps the admin
 tree routed through the module: a direct `scrollIntoView` / `scrollTo`, or a
@@ -1078,7 +1105,9 @@ is
 rather than writing its own (#3434 retired nine hand-rolled copies, each
 supporting a different slice of the grammar). It models the scalar operators,
 `AND`/`OR`/`NOT`, the to-one and to-many relation filters and a compound-unique
-key, and it **throws**, naming the operator and the column, on anything it does
+key — `startsWith` and `contains` as the unescaped `LIKE` Prisma sends, so `_`
+and `%` are wildcards and a backslash escapes, as `exactPrefix` relies on (#4165;
+`audit-query-exact-prefix.realdb.test.ts` checks it against PostgreSQL) — and it **throws**, naming the operator and the column, on anything it does
 not — including a column the fake row never carried, which is how a
 `storeMember` fixture one self-relation column short of the merge's sweep was
 found. Teach it a new operator in that file, with a case in
@@ -1333,8 +1362,8 @@ first entry below was added (#3395) rather than left to be rediscovered.
 cannot show both is a claim rather than evidence:
 
 1. The failure text is vitest's own `Test timed out in Nms` — the per-test
-   budget, 5,000ms unless the `it()` carries an inline one. Nothing else
-   qualifies. A suite that fails on an **assertion** is never in this class,
+   budget, 5,000ms unless the `it()` or its `describe` carries an inline one.
+   Nothing else qualifies. A suite that fails on an **assertion** is never in this class,
    whatever the machine: `page-content-starter-backfill.test.ts` (seed-copy
    drift, the known-environmental failure this section is the home of) is a different
    class, and #2886 removed two suites that had been excused as
@@ -1389,19 +1418,116 @@ re-verify an entry.
   that mapper the only production season mapping", ran **2,589ms** alone, over
   half the budget with the machine otherwise idle. Under the smaller batch it
   **timed out**. This is the entry closest to being a real per-test budget
-  problem rather than a load artefact, and it is the first candidate if the
-  class is ever fixed at the suite rather than in this list.
+  problem rather than a load artefact, and it is a candidate for an inline
+  budget like the next entry's.
+- [`src/lib/__tests__/hut-leader-change-last-night.test.tsx`](../src/lib/__tests__/hut-leader-change-last-night.test.tsx)
+  — measured 13 October 2026 (vitest 5.0.3, Node 24, WSL2): run alone its
+  first test, which absorbs the Hut Leaders page's first jsdom render, took
+  427ms on an idle machine and 1,914ms beside two other lanes' builds. In CI's
+  `Test shard (2/4)` the file took 6,873ms and its first test hit "Test timed
+  out in 5000ms", twice on PR #4077's head `31e771fde` and once on PR #4063;
+  it passed alone each time. **The timeout hid an ordering bug**, the case the
+  section above warns about: with the budget raised, CI showed RTL's own
+  "Unable to find … Sam Stayer". The page clears the picked dates when its
+  lodge scope settles, and the test typed them before the lodge list loaded,
+  so on a slow runner they were wiped and no member was ever fetched. A 400ms
+  delay on the mocked lodge list reproduces it locally every time. The suite
+  now waits for the settled scope before typing (#4085), and keeps the
+  30,000ms `describe` budget for the full-page render itself.
 
-The two 2026-09-19 batches produced no timeout, so their figures show how close
-each suite runs to the budget under a batch of that size, not a red. The reds
-came later, on 20 September 2026 at `6ca8f179d`, from a smaller and therefore
-harsher-per-file batch: the 141 files vitest selects for the filters `census`,
-`contract` and `guard`, 2,068 tests in 220s, run beside nothing else. All three
-of `client-server-boundary-census`, `identity-ordering-census` and
+Of the entries above, the two 2026-09-19 batches covered the first five; they
+produced no timeout, so their figures show how close each suite runs to the
+budget under a batch of that size, not a red. The reds came later, on 20
+September 2026 at `6ca8f179d`, from a smaller and therefore harsher-per-file
+batch: the 141 files vitest selects for the filters `census`, `contract` and
+`guard`, 2,068 tests in 220s, run beside nothing else. All three of
+`client-server-boundary-census`, `identity-ordering-census` and
 `in-progress-edit-sold-price-census` timed out in that one run and all three
 passed alone immediately afterwards. That is the evidence of the limit being
 crossed; a lane running any such batch beside another lane's tests, a build, or
 a typecheck is where it will be crossed again.
+
+## The shared race harness: declare the environment role per suite, and put it back
+
+The real-PostgreSQL race harness (`concurrency-lock-races.realdb.test.ts`)
+imports some forty suites into one vitest file, so whatever one suite leaves in
+`process.env` is there for every suite after it. A suite that drives a Xero or
+email path should still say what installation it is (`INV-CONFIG-003`): left
+unset, the role resolves UNKNOWN and the containment gates refuse, which is the
+safe default and the wrong premise for a disposable test database.
+
+Use `declareEnvironmentRoleForSuite("non-production")` from
+`src/lib/__tests__/helpers/environment-role.ts` in the suite's `beforeAll`,
+call the handle's `restore()` in a `finally` in its `afterAll`, and add a
+describe after the suite that asserts the variable equals the handle's
+`before` again. #4013 does all three in
+`credit-only-card-allocation.realdb.test.ts`. Do not use
+`declareEnvironmentRole` (`vi.stubEnv`) here: nothing unstubs it until the
+whole file ends, and `vi.unstubAllEnvs()` would undo every other suite's stubs
+too. The helper accepts only `non-production`: a shared harness never
+declares itself the live site, and never weakens the production containment
+gate to make a suite pass.
+
+The harness checks this for every suite at once (#4107). It imports
+`src/lib/__tests__/support/race-harness-env-guard.ts` first, which snapshots
+`process.env` before any suite's hooks run, and its `afterAll` runs last. A
+variable left changed, added or removed by any suite fails the run, naming the
+variable. The one exemption is `DATABASE_URL` pointed at the race database,
+which every suite sets on purpose. It checks the end state, so a later
+suite's blanket restore could hide an earlier leak: put back only the variable
+your suite changed.
+
+The shared database has the same ownership rule for Xero work (#4234).
+`support/race-harness-outbox-guard.ts` checks after all suite teardown that no
+`PENDING` operations remain, using its own guarded disposable connection.
+Clean operations by the suite's exact owned booking, payment, modification or
+task ids before deleting those fixtures; an operation's scalar `localId` is not
+a foreign key and survives deleting its payment.
+
+An end-state check alone could miss a leak that a later processor consumed.
+Every suite calling the global outbox processor must therefore call
+`assertNoForeignPendingXeroOperations(prisma, ownedLocalIds)` before processing
+or temporarily parking work. Pending rows owned by that suite are legitimate
+inside its tests; foreign rows fail with their ids and queue types. Park only
+the suite's own other rows when a test selects one operation, and restore those
+exact ids in `finally`. Never delete foreign rows, park the whole queue or age
+a row to make it win the processor's oldest-first scan. The guard reports
+leakage; it does not clean it up.
+
+Wait for owned asynchronous enqueues before that cleanup. #3750's real batch
+writer starts its Xero leg without awaiting it; deleting operations first let
+the leg finish after its modification was gone. Its fixture forwards to the
+real enqueue unchanged, captures the returned promises and drains them before
+collecting modification ids for teardown, then restores the forwarding spy.
+
+A declared role is not a fix for a path a suite should never reach. #4013's H1
+case reached the remainder-note mint because its credit lots tied on the
+frozen clock; the cure was an explicit fixture chronology and a regression that
+names the path (`INV-PAY-127`), not a declaration that let the mint go further.
+
+### Realdb files take turns on the race database
+
+Running several `*.realdb.test.ts` files in one `vitest run` used to fail
+intermittently, while every file passed alone (#4367). They share one
+database. Trigger DDL takes table-level locks, the global Xero outbox
+processor and the ownership guard see other files' rows, and some cases scan
+whole tables. The first local run of the 27 Xero and refund files in parallel
+failed 6 tests in 2 files.
+
+When `RUN_CONCURRENCY_RACE_TESTS=1` and `CONCURRENCY_RACE_DATABASE_URL` is
+set, `vitest.setup.ts` makes each realdb file hold one session advisory lock,
+`(4367, 1)`, from its first hook through its teardown. The files then run one
+at a time whatever the worker count; importing and collecting them still overlap.
+The same 27 files then passed twice in a row. The lock lives in
+`src/lib/__tests__/support/realdb-file-serialisation.ts`. One `aroundAll`
+holds it, so a root `afterAll` that throws still releases it, and the wait has
+no hook timeout. A waiting file polls `pg_try_advisory_lock` instead of
+blocking, because several suites' barriers count ungranted advisory rows in
+`pg_locks`. Realdb files on another database, such as
+`data-migration-verification`, take the race lock too when the race env is
+on. Expect a batch of realdb files to
+take as long as running them one after another. Inside one file the old rules
+still apply: a suite owns its own fixtures and queued work.
 
 ## Mocking a money seam: never in a test that asserts its money
 

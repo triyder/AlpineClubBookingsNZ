@@ -28,14 +28,24 @@ import {
 } from "@/hooks/use-admin-area-edit-access"
 import { BookingNoEmailsNotice } from "@/components/booking-no-emails-notice"
 import { getCancellationSettlementBreakdown, type CancellationCreditEntry } from "@/lib/payment-status-display"
-import { refundAppealCeiling } from "@/lib/manual-refund-task-settlement-rules"
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path"
 import { useClubTime } from "@/components/club-time-provider"
 import { parseInstant, type BoundClubTime, formatStayDateOrNull } from "@/lib/club-time"
 import { MoneyInput } from "@/components/ui/money-input"
 import { parseDecimalDollarsToCents } from "@/lib/money-input"
 import { formatCents, formatCentsPlain } from "@/lib/utils"
+import {
+  appealCardRefundOwedOfficerNote,
+  refundAppealApprovedNotice,
+  refundAppealOutstandingLines,
+  approvedAppealRefundedCents,
+  type AppealCardRefundState,
+} from "@/lib/refund-request-card-refund-copy"
 import { useClubFormat } from "@/components/club-format-provider"
+import {
+  ORGANISER_CARD_APPEAL_CEILING_NOTE,
+  ORGANISER_CARD_APPEAL_PENDING_ADMIN_NOTE,
+} from "@/lib/group-organiser-paid"
 
 type ReviewFilter = "PENDING" | "APPROVED" | "REJECTED" | "ALL"
 const reviewFilters = new Set<ReviewFilter>(["PENDING", "APPROVED", "REJECTED", "ALL"])
@@ -55,6 +65,14 @@ interface RefundRequestData {
   approvedAmountCents: number | null
   reviewedAt: string | null
   createdAt: string
+  // #4117: what an approved appeal has still to give back (`readApprovedAppealOutcomes`).
+  cardRefundState?: AppealCardRefundState
+  cardRefundOwedCents?: number
+  cardRefundRefusedCents?: number
+  cardRefundUnansweredCents?: number
+  handBackOwedCents?: number
+  handBackDismissedCents?: number
+  cardRefundClosedUnpaidCents?: number
   booking: {
     id: string
     checkIn: string
@@ -72,9 +90,16 @@ interface RefundRequestData {
       amountCents: number
       refundedAmountCents: number
       stripePaymentIntentId: string | null
-      // #3827: every hand-back still promised back by bank transfer.
-      manualRefundTasks?: Array<{ amountCents: number | null }>
     } | null
+    appealCeilingCents: number // #4124: the list route's `refundAppealCeilingParts`, card debts netted
+    appealCardRefundOwedCents: number // ...and the card refund still owed it netted (0: none, or not why)
+    // #3956 (`INV-PAY-123`): on a pending appeal for a booking the group
+    // organiser paid for by card, the server's `organiserCardAppealCap` - the
+    // most the organiser's combined payment can still return. Null otherwise.
+    organiserCardMaxRefundableCents?: number | null
+    // ...and whether that zero is only a wait: the group cancellation's own
+    // refund to the organiser's card is not made yet.
+    organiserCardCombinedRefundPending?: boolean
   }
   member: {
     id: string
@@ -82,6 +107,15 @@ interface RefundRequestData {
     lastName: string
     email: string
   }
+}
+
+/**
+ * The figure the approve route caps an appeal at: the organiser-card cap the
+ * server read for a booking the group organiser paid for by card (#3956), and
+ * otherwise `refundAppealCeilingParts` (#3827).
+ */
+function appealCeiling(req: RefundRequestData): number {
+  return req.booking.organiserCardMaxRefundableCents ?? req.booking.appealCeilingCents
 }
 
 interface AdminActor {
@@ -295,8 +329,8 @@ export default function RefundRequestsPage() {
         body: JSON.stringify(body),
       })
 
+      const data = await res.json().catch(() => ({}))
       if (!res.ok) {
-        const data = await res.json()
         throw new Error(data.error || "Failed to process")
       }
 
@@ -305,7 +339,15 @@ export default function RefundRequestsPage() {
       setApprovedAmount("")
       toast.success(
         (status === "APPROVED"
-          ? "Refund approved and processed"
+          ? refundAppealApprovedNotice(
+              {
+                cardRefundOwedCents: data.cardRefundOwedCents ?? 0,
+                cardRefundQueued: data.cardRefundQueued !== false,
+                refusedCents: data.cardRefundRefusedCents ?? 0,
+                unansweredCents: data.cardRefundUnansweredCents ?? 0,
+              },
+              (cents: number) => formatCents(cents, format),
+            )
           : "Appeal rejected") +
           (noEmails
             ? " Emails are off for this booking, so nothing was sent — the withheld message is listed on the booking."
@@ -371,7 +413,7 @@ export default function RefundRequestsPage() {
     // (`INV-PAY-118`) - and there is
     // an ELSE: a request whose booking has no captured payment used to leave
     // the amount prefilled for the request viewed before it (#2932 review).
-    const max = refundAppealCeiling(req.booking.payment, req.booking.creditsFromCancellation)
+    const max = appealCeiling(req)
     const requested = req.requestedAmountCents
     setApprovedAmount(max > 0 ? formatCentsPlain(Math.min(requested || max, max)) : "")
   }
@@ -457,7 +499,7 @@ export default function RefundRequestsPage() {
                         req.booking.creditsFromCancellation
                       )
                     : null
-                  const maxRefundable = refundAppealCeiling(payment, req.booking.creditsFromCancellation)
+                  const maxRefundable = appealCeiling(req)
                   const isReviewing = reviewingRefundId === req.id
 
                   return (
@@ -494,14 +536,16 @@ export default function RefundRequestsPage() {
                             <>
                               {/* #3372: GROSS - captured before any refund - so
                                   the label says so. "Remaining refundable" is
-                                  `refundAppealCeiling` (#3827). */}
+                                  `refundAppealCeilingParts` (#3827). */}
                               <div>
                                 <span className="text-muted-foreground">Gross paid:</span>{" "}
                                 {formatCents(payment.amountCents, format)}
                               </div>
                               <div>
                                 <span className="text-muted-foreground">Remaining refundable:</span>{" "}
-                                {formatCents(maxRefundable, format)}
+                                {req.booking.organiserCardCombinedRefundPending
+                                  ? "Waiting for the group refund"
+                                  : formatCents(maxRefundable, format)}
                               </div>
                               <div>
                                 <span className="text-muted-foreground">To card:</span>{" "}
@@ -541,10 +585,22 @@ export default function RefundRequestsPage() {
                         {req.status !== "PENDING" && (
                           <div className="border-t pt-3 mt-3">
                             {req.approvedAmountCents != null && req.approvedAmountCents > 0 && (
-                              <p className="text-sm">
-                                <span className="text-muted-foreground">Refunded:</span>{" "}
-                                <strong>{formatCents(req.approvedAmountCents, format)}</strong>
-                              </p>
+                              <>
+                                <p className="text-sm">
+                                  <span className="text-muted-foreground">Refunded:</span>{" "}
+                                  <strong>
+                                    {formatCents(
+                                      approvedAppealRefundedCents(req.approvedAmountCents, req),
+                                      format,
+                                    )}
+                                  </strong>
+                                </p>
+                                {refundAppealOutstandingLines(req, (cents) => formatCents(cents, format)).map((line) => (
+                                  <p key={line} className="text-sm text-muted-foreground">
+                                    {line}
+                                  </p>
+                                ))}
+                              </>
                             )}
                             {req.adminNotes && (
                               <p className="text-sm mt-1">
@@ -588,10 +644,25 @@ export default function RefundRequestsPage() {
                                     : undefined
                                 }
                                 className="w-40"
+                                aria-describedby="approvedAmountLimits"
                               />
-                              <p className="text-xs text-muted-foreground">
-                                Max refundable: {formatCents(maxRefundable, format)}
-                              </p>
+                              {req.booking.organiserCardCombinedRefundPending ? (
+                                <p className="text-xs text-muted-foreground">
+                                  {ORGANISER_CARD_APPEAL_PENDING_ADMIN_NOTE}
+                                </p>
+                              ) : (
+                                <div id="approvedAmountLimits" className="space-y-2">
+                                  <p className="text-xs text-muted-foreground">
+                                    Max refundable: {formatCents(maxRefundable, format)}
+                                  </p>
+                                  {req.booking.organiserCardMaxRefundableCents != null && (
+                                    <p className="text-xs text-muted-foreground">
+                                      {ORGANISER_CARD_APPEAL_CEILING_NOTE}
+                                    </p>
+                                  )}
+                                  {req.booking.organiserCardMaxRefundableCents == null && req.booking.appealCardRefundOwedCents > 0 && <p className="text-xs text-muted-foreground">{appealCardRefundOwedOfficerNote(formatCents(req.booking.appealCardRefundOwedCents, format))}</p>}
+                                </div>
+                              )}
                             </div>
                             <div className="space-y-2">
                               <Label htmlFor="adminNotes">Admin Notes (optional)</Label>

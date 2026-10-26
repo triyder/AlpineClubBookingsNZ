@@ -1,3 +1,4 @@
+import { exactContains } from "@/lib/prisma-exact-prefix";
 import { z } from "zod";
 import { Prisma, type AgeTier } from "@prisma/client";
 import { randomBytes } from "crypto";
@@ -208,8 +209,8 @@ async function findPotentialMemberMatches(
   const members = await prisma.member.findMany({
     where: {
       AND: [
-        { firstName: { contains: firstName.trim(), mode: "insensitive" as const } },
-        { lastName: { contains: lastName.trim(), mode: "insensitive" as const } },
+        { firstName: exactContains(firstName.trim(), "insensitive") },
+        { lastName: exactContains(lastName.trim(), "insensitive") },
         ...(dateOfBirth ? [{ dateOfBirth: getSameDayRange(dateOfBirth) }] : []),
         ...(request.type === "ADULT_REQUEST"
           ? [

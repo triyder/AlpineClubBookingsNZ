@@ -768,7 +768,10 @@ menu.
   `{{joining-fees}}`, and `{{annual-fees}}` (with `{{entrance-fees}}` and
   `{{membership-types}}` retained as deprecated aliases of `{{joining-fees}}`
   and `{{annual-fees}}` respectively); the policy embeds are
-  `{{booking-policy-summary}}` and `{{cancellation-policy}}`. Each defaults
+  `{{booking-policy-summary}}` and `{{cancellation-policy}}`. `{{first-year-costs}}`
+  shows the joining fee plus the first year's subscription as one total per
+  publicly listed membership type and age tier; it appears only while both the
+  **Joining fees** and **Annual membership fees** toggles are on. Each defaults
   hidden until its family is enabled in Admin > Page Content — hut fees use the
   **Hut fees** toggle, joining fees the **Joining fees** toggle, and annual fees
   their own dedicated **Annual membership fees** double-opt-in (which also
@@ -2275,8 +2278,8 @@ once.
 > rotating it **invalidates every member's enrolled authenticator and recovery
 > codes at once** — on their next sign-in each member is forced back through
 > two-factor enrollment. Since #2079 the blast radius also includes **all stored
-> provider credentials** (Xero client id/secret/webhook key) **and the wrapped
-> Xero token-encryption key**: after rotation those fail decryption and must be
+> provider credentials** (Xero client id/secret/webhook key) **and the stored
+> Xero tokens**: after rotation those fail decryption and must be
 > re-entered in-app, and Xero must be reconnected (re-OAuth). Schedule rotation
 > as a maintenance action with advance member communication and a support plan
 > for anyone who cannot immediately re-enroll (e.g. members who no longer have
@@ -2473,7 +2476,7 @@ its list of processors. Suggested wording:
 ## Operational Xero
 
 **Xero credentials are DB-only (#2079).** The Xero OAuth client id/secret, the
-webhook signing key, and the token-encryption key live **only** in the encrypted
+webhook signing key, and the connection's tokens live **only** in the encrypted
 `IntegrationCredential` store and are captured in-app through the **guided setup
 wizard at Admin > Xero > Setup** (#2080; Full Admin only) — it walks you through
 creating the Xero app with copy-paste-exact values, entering the credentials, and
@@ -2485,8 +2488,9 @@ shown for copy-paste in the wizard. There are **no**
 any are still present they are **ignored** and setup readiness raises a warning
 naming them for removal (never silently honoured). Credentials are encrypted at
 rest with AES-256-GCM under a key derived from `AUTH_SECRET`/`NEXTAUTH_SECRET`
-via HKDF-SHA256; the wrapped Xero token-encryption key is auto-generated on
-first use (a strong auth secret is required — see the auth-secret note above).
+via HKDF-SHA256 (a strong auth secret is required — see the auth-secret note
+above). The separate wrapped Xero token-encryption key earlier releases
+generated is retired (#3806).
 
 The wizard then finishes the connection (#2081): an optional **Webhooks** step
 shows the delivery URL (`{origin}/api/webhooks/xero`), captures Xero's webhook
@@ -2496,7 +2500,12 @@ account/item **mapping** and the one-time contact **import** follow, ending on a
 summary. Webhooks are skippable — until verified, a persistent amber
 **"Webhooks not configured — payment updates rely on scheduled sync"** badge
 shows on the Xero pages, and a localhost/non-public-HTTPS deployment can't verify
-there (the scheduled sync still keeps payments current).
+there (the scheduled sync still keeps payments current). Event subscriptions
+are chosen in the Xero developer portal, not by this app: under **My Apps →
+your app → Webhooks**, tick **Invoices**, **Contacts**, and **Credit Notes**.
+Xero sends a credit note as `eventCategory` `CREDITNOTE` (no underscore),
+including a void. Without the Credit Notes tick, a void made in Xero never
+arrives.
 
 Only these operational-tuning env vars remain (they are not credentials):
 
@@ -2505,6 +2514,7 @@ Only these operational-tuning env vars remain (they are not credentials):
 | `XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH`     | Enables daily membership refresh behavior when operational Xero is on. |
 | `XERO_ENABLE_LIVE_MEMBER_GROUP_LOOKUPS`    | Enables live Xero member group lookups.                                |
 | `XERO_ENABLE_AUTOLOAD_XERO_CONTACT_GROUPS` | Enables automatic Xero contact-group loading.                          |
+| `XERO_ENABLE_BANK_REFUND_VOID_WRITES`      | `true` lets the nightly follow-up of voided bank-transfer refund notes write (#4162); anything else is report-only. Run `pnpm run xero:bank-refund-void-count` first ([UPGRADING.md](docs/UPGRADING.md)). |
 | `XERO_INBOUND_FAILED_RETRY_BACKOFF_MS`     | Optional retry backoff for failed inbound Xero reconciliation.         |
 | `XERO_HTTP_TIMEOUT_MS`                     | Optional OAuth-layer HTTP timeout (identity discovery and token requests) in ms; default 10000, overriding xero-node's 3500ms. |
 
@@ -2707,6 +2717,7 @@ rate-limited, or temporarily unavailable.
 | `PRUNE_STALE_DEPLOY_WORKSPACES`        | Whether the wrapper removes stale deployment workspaces.              |
 | `PROJECT_DIR`                          | Low-level blue/green deploy project directory.                        |
 | `HEALTH_TIMEOUT_SECONDS`               | Readiness wait timeout for blue/green deploy.                         |
+| `DEPLOY_INTERNAL_READ_TIMEOUT_SECONDS` | How long the blue/green deploy keeps retrying each of its two reads inside a newly started container, readiness and then `/api/deploy/runtime-status`, until it answers HTTP 200, in seconds (#3965). This applies at steps 14 and 15, before the cutover. At step 17, after the cutover, each read is tried once whatever this says, so a failure hands over to the rollback at once. Default `60`, accepted `0`-`600` and checked at step 3 of 20; `0` means a single attempt and no retry. The bound is measured on a clock from the first attempt; attempts are 2 seconds apart and each waits at most 5 seconds for a reply, so, provided Docker itself answers, a read gives up at most about 10 seconds after the bound; a `docker compose exec` that hangs is not cut short. Read only from the deploy shell, never from `.env`. HTTP 401, 403 or 404 stops at once, and an empty `CRON_SECRET` in the container stops at once with its own message. On giving up the deploy prints the last HTTP status and body, or the `docker compose exec` exit code and the container's state, and whether traffic had already moved. |
 | `DEPLOY_WARMUP_ENABLED`                | Whether the pre-cutover warm-up gate runs at step 16 of 20 (#2566). Default `1`; `1`, `true`, `yes`, and `on` enable it and any other value disables it. Disabling is refused unless `DEPLOY_WARMUP_OVERRIDE_REASON` is also set. |
 | `DEPLOY_WARMUP_OVERRIDE_REASON`        | The written justification required when `DEPLOY_WARMUP_ENABLED` is off. Default empty. Printed in the deploy log and repeated after the completion banner. |
 | `DEPLOY_WARMUP_SERVICES`               | Which app services the gate warms, space-separated. Default empty, meaning the target colour plus the `app` cron leader. Only `app`, `app_blue`, and `app_green` are accepted, and a value that resolves to no services is refused rather than treated as "nothing to check". |
@@ -2721,8 +2732,8 @@ rate-limited, or temporarily unavailable.
 | `BLUE_GREEN_DRAIN_SECONDS`             | Drain window for previous blue/green slot.                            |
 | `ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS` | Explicit migration safety override.                                   |
 | `BLUE_GREEN_MIGRATION_OVERRIDE_REASON` | Required explanation when allowing a breaking migration.              |
-| `BLUE_GREEN_OLD_APP_AND_WORKERS_STOPPED` | Windowed-migration acknowledgement. Set exactly to `1` only after every old web and worker process has stopped and no old database connection remains. The #3413 pending-school-adult write gate requires it as a second, independent acknowledgement. |
-| `PENDING_SCHOOL_ADULTS_ENABLED` | Server-only #3413 write gate. Defaults disabled; set exactly to `1` only after the maintenance-window drain and new-runtime capacity checks. It does nothing without `BLUE_GREEN_OLD_APP_AND_WORKERS_STOPPED=1`, and `true`, whitespace, or any other value stays disabled. |
+| `BLUE_GREEN_OLD_APP_AND_WORKERS_STOPPED` | Windowed-migration acknowledgement. Set exactly to `1` only after every old web and worker process has stopped and no old database connection remains. It has two separate meanings. Set in the deploy shell, it satisfies the migration validator, which reads only that shell and never `.env`, so every windowed migration needs it there. Immediately before the app-database migrate step, the deploy also requires every `app`, `app_blue` and `app_green` replica stopped or absent and zero other client backends on the app database, including idle/admin/external clients. Unknown or failed checks refuse the deploy. These are snapshots: keep the offline window until the new runtime is ready. Set in `.env`, it is the app's lasting acknowledgement that no pre-#3413 runtime remains: the #3413 pending-school-adult write gate and its cleanup require it, and `docker-compose.yml` passes it into the app containers, empty by default (#3964). Change the `.env` copy only by editing the source repository's `.env` and re-running the deploy script for the deployed commit. The deploy shell's copy never reaches the containers: the production deploy keeps it for the validator and stops exporting it before it runs Compose (#4027). |
+| `PENDING_SCHOOL_ADULTS_ENABLED` | Server-only #3413 write gate. Defaults disabled; set exactly to `1` only after the maintenance-window drain and new-runtime capacity checks. It does nothing without `BLUE_GREEN_OLD_APP_AND_WORKERS_STOPPED=1`, and `true`, whitespace, or any other value stays disabled. Apply or remove it only by editing the source repository's `.env` and re-running the deploy script for the deployed commit; `docker-compose.yml` passes it into the app containers, empty by default (#3964). The production deploy refuses, at step 3 of 20, a value exported in its shell that differs from `.env`, because Compose would hand the containers the shell's (#4027). |
 | `MIGRATION_SAFETY_LEDGER`              | Path to the migration safety ledger.                                  |
 | `MIGRATION_LOCK_TIMEOUT_MS`            | How long a migration may wait for a lock before the deploy stops, in milliseconds. Default `5000`; accepted from `100` up to one millisecond under the web slots' `pool_timeout`, which the deploy script derives rather than restates (10 s today, so `9999`). Set on the `migrate` service's connection in `docker-compose.yml`, and refused outside that range at step 3 — the script reads the value out of `docker compose config`, so an overlay that removes or changes the bound is caught too. **`0` is refused, not accepted as "off":** PostgreSQL reads `0` as *wait forever*, which is the exposure the bound exists to remove. The ceiling is the web slots' `pool_timeout` (10 s) — past it a blocked table is already refusing member requests with Prisma `P2024`, so the guard could not fire in time to prevent anything. A migration cancelled here applies nothing and the deploy stops cleanly; recovery is `prisma migrate resolve --rolled-back` then a retry in a quieter window, written out in `docs/PRODUCTION_UPGRADE_RUNBOOK.md` 2.1a. The measurement behind the default is in `docs/CONCURRENCY_AND_LOCKING.md` -> "The migration lock timeout". |
 | `RELEASE_ID`                           | Docker **build** arg, not a runtime setting. Identifies the release, and the public website's fixed CSP script nonce is derived from it (#2352). CI and `scripts/run-production-blue-green-deploy.sh` set it to the deployed commit SHA automatically; `docker-compose.yml` falls back to `GIT_COMMIT_SHA`. If neither is set — a hand-rolled `docker build` — the nonce falls back to a random per-BUILD seed baked into the bundles, which is still one value per release; you only lose the ability to read the deployed revision out of the image. Leave it alone unless you build images by hand — see "Public website page caching" below. |

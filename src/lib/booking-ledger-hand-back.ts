@@ -22,6 +22,13 @@
  * refund posts `CARD_REFUND` from its `PaymentRefund` row when Stripe reports
  * it (#3581); a `BANK_REFUND` here as well would record one refund twice, the
  * second by the wrong method. So a Stripe payment's completion posts nothing.
+ * One exception is not a completion that reaches here: a dead card refund
+ * the treasurer closed as paid another way has no refund row, so its close
+ * posts its own `BANK_REFUND` on its own completed task
+ * (`closeCardRefundPaidAnotherWay`, `INV-PAY-122`, `INV-MONEY-035`). The other
+ * is: a cancellation's card refund shortfall (`cardShortfall`, #4097,
+ * `INV-PAY-129`) is money no card refund carried, so no refund row will ever
+ * post it, and it posts here on a card payment too.
  *
  * Build in pure code, caught and logged; write unwrapped (#3590's review). The
  * key is the task id, and a task completes at most once, so a replay of the
@@ -41,6 +48,7 @@ export async function postHandBackLedgerLine({
   amountCents,
   refundMethod,
   paymentSource,
+  cardShortfall = false,
   officerMemberId,
   store,
 }: {
@@ -52,10 +60,12 @@ export async function postHandBackLedgerLine({
   refundMethod: RefundMethod;
   /** The source of the payment the money comes back out of; null when the task has none. */
   paymentSource: PaymentSource | null;
+  /** #4097: the task is a cancellation's card refund shortfall (`isCancelCardShortfallTask`). */
+  cardShortfall?: boolean;
   officerMemberId: string;
   store: Pick<Prisma.TransactionClient, "bookingLedgerLine">;
 }): Promise<void> {
-  if (paymentSource === "STRIPE") return;
+  if (paymentSource === "STRIPE" && !cardShortfall) return;
   let rows: ReturnType<typeof buildBookingLedgerRows> = [];
   try {
     // Money handed back by hand is a bank transfer and nothing else: a card

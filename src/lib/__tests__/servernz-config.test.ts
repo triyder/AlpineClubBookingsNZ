@@ -9,7 +9,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   credFindFirst: vi.fn(),
-  getIntegrationCredentialValue: vi.fn(),
+  resolveIntegrationCredential: vi.fn(),
+  readIntegrationCredentialRow: vi.fn(),
   setIntegrationCredential: vi.fn(),
   deleteIntegrationCredential: vi.fn(),
   forgetServerConnectionAnswers: vi.fn(),
@@ -24,7 +25,8 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 vi.mock("@/lib/integration-credentials", () => ({
-  getIntegrationCredentialValue: mocks.getIntegrationCredentialValue,
+  resolveIntegrationCredential: mocks.resolveIntegrationCredential,
+  readIntegrationCredentialRow: mocks.readIntegrationCredentialRow,
   setIntegrationCredential: mocks.setIntegrationCredential,
   deleteIntegrationCredential: mocks.deleteIntegrationCredential,
 }));
@@ -33,7 +35,8 @@ import {
   SERVERNZ_PROVIDER,
   SERVERNZ_CREDENTIAL_KEYS,
   SERVERNZ_WRITABLE_CREDENTIAL_KEYS,
-  getOperationalServerNzApiKey,
+  getOperationalServerNzCredential,
+  readServerNzCredentialVersion,
   setServerNzApiKey,
   clearServerNzApiKey,
   getServerNzSetupState,
@@ -55,18 +58,43 @@ describe("ServerNZ credential wiring", () => {
     ]);
   });
 
-  it("resolves the operational key from the encrypted store", async () => {
-    mocks.getIntegrationCredentialValue.mockResolvedValue("acs_live_key");
-    await expect(getOperationalServerNzApiKey()).resolves.toBe("acs_live_key");
-    expect(mocks.getIntegrationCredentialValue).toHaveBeenCalledWith(
+  it("resolves the operational key with the version of the row it came from (#4366)", async () => {
+    mocks.resolveIntegrationCredential.mockResolvedValue({
+      status: "configured",
+      value: "acs_live_key",
+      version: "row-version-1",
+    });
+    await expect(getOperationalServerNzCredential()).resolves.toEqual({
+      apiKey: "acs_live_key",
+      version: "row-version-1",
+    });
+    expect(mocks.resolveIntegrationCredential).toHaveBeenCalledWith(
       "servernz",
       "api_key",
     );
   });
 
-  it("reports an absent key as undefined rather than null", async () => {
-    mocks.getIntegrationCredentialValue.mockResolvedValue(null);
-    await expect(getOperationalServerNzApiKey()).resolves.toBeUndefined();
+  it.each([
+    { status: "not_configured" },
+    { status: "needs_reentry", reason: "secret changed", version: "row-version-1" },
+  ])("reports no usable key ($status) as undefined", async (resolution) => {
+    mocks.resolveIntegrationCredential.mockResolvedValue(resolution);
+    await expect(getOperationalServerNzCredential()).resolves.toBeUndefined();
+  });
+
+  it("re-reads the key's version through the caller's client, under the provider namespace (#4366)", async () => {
+    const tx = { integrationCredential: {} };
+    mocks.readIntegrationCredentialRow.mockResolvedValue({ status: "configured", version: "row-version-2" });
+    await expect(readServerNzCredentialVersion(tx as never)).resolves.toBe("row-version-2");
+    expect(mocks.readIntegrationCredentialRow).toHaveBeenCalledWith(tx, "servernz", "api_key");
+  });
+
+  it("keeps an unreadable row's version and returns null only for an absent row", async () => {
+    const tx = { integrationCredential: {} };
+    mocks.readIntegrationCredentialRow.mockResolvedValueOnce({ status: "needs_reentry", version: "row-version-2" });
+    await expect(readServerNzCredentialVersion(tx as never)).resolves.toBe("row-version-2");
+    mocks.readIntegrationCredentialRow.mockResolvedValueOnce({ status: "not_configured" });
+    await expect(readServerNzCredentialVersion(tx as never)).resolves.toBeNull();
   });
 
   it("stores and clears the key through the encrypted-credential helpers", async () => {

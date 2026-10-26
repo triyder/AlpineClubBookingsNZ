@@ -3,6 +3,7 @@ import { storageStatePath } from "./helpers/auth";
 import { E2E_ADMIN } from "./helpers/fixtures";
 import { overrideModules, setModuleSettings, type ModuleSettings } from "./helpers/modules";
 import { resetXeroSetupWizard } from "./helpers/reset";
+import { wizardCursorSave } from "./helpers/wizard-cursor";
 
 // Kept in lockstep with MOCK_XERO_ORG_NAME in src/lib/xero-mock-endpoint.ts.
 const MOCK_XERO_ORG_NAME = "Alpine Test Club Ltd";
@@ -83,12 +84,16 @@ test("operator completes the whole Xero wizard including verified webhooks", asy
     page.getByRole("status").getByText(/Credentials saved/i),
   ).toBeVisible();
   await expect(page.getByText(/Both credentials stored/i)).toBeVisible();
+  const connectCursorSaved = wizardCursorSave(page, "xero", "connect");
   await page.getByRole("button", { name: "Continue" }).click();
 
   // Step 3 — connect (mock OAuth round-trip).
   await expect(
     page.getByRole("heading", { name: /connect to xero/i }),
   ).toBeVisible();
+  // The post-OAuth page resumes on the step the server has stored, so leave
+  // only once the wizard has saved that it is on Connect (#4014).
+  expect((await connectCursorSaved).ok()).toBeTruthy();
   await page.getByRole("button", { name: /^Connect Xero$/ }).click();
   // ?connected=true is consumed and stripped by the wizard context (#2394
   // review, F1), so match the page, not the marker.

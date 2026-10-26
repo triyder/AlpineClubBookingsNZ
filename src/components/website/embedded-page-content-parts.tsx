@@ -135,6 +135,7 @@ export function EmbeddedPageContentParts({
         if (part.type === "hut-fees") return <FeeTableToken key={`${keyPrefix}-hut-fees-${index}`} idPrefix={`hut-fees-${idSlug}-${index}`} tables={part.tables} />;
         if (part.type === "joining-fees") return <FeeGroupsToken key={`${keyPrefix}-joining-fees-${index}`} groups={part.groups} />;
         if (part.type === "annual-fees") return <FeeGroupsToken key={`${keyPrefix}-annual-fees-${index}`} groups={part.groups} />;
+        if (part.type === "first-year-costs") return <FeeGroupsToken key={`${keyPrefix}-first-year-costs-${index}`} groups={part.groups} />;
         if (part.type === "booking-policy-summary") return <BookingPolicyToken key={`${keyPrefix}-booking-policy-${index}`} policy={part.policy} />;
         if (part.type === "cancellation-policy") return <CancellationPolicyToken key={`${keyPrefix}-cancellation-policy-${index}`} policy={part.policy} />;
 

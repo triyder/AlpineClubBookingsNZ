@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { IntegrationWizard } from "../integration-wizard";
+import { useStepSaving } from "../use-step-saving";
 import type { WizardStepConfig } from "../types";
 import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
 import { ADMIN_VIEW_ONLY_ACTION_REASON } from "@/hooks/use-admin-area-edit-access";
@@ -777,5 +778,124 @@ describe("IntegrationWizard with zero configured steps (#2801)", () => {
     });
     expect(screen.queryByText(/Step \d+ of/)).toBeNull();
     expect(screen.queryByRole("button", { name: "Continue" })).toBeNull();
+  });
+});
+
+describe("a step's save in flight holds the wizard where it is (#4410)", () => {
+  // Step B counts as verified throughout, like a credential Replace whose
+  // stored pair already verifies, and saves through the shell's hook.
+  function SavingStep({ helpers }: { helpers: Parameters<WizardStepConfig<Ctx>["render"]>[1] }) {
+    const [saving, setSaving] = useStepSaving(helpers);
+    return (
+      <div>
+        <div>Saving step body</div>
+        <button type="button" onClick={() => setSaving(true)}>start save</button>
+        <button type="button" onClick={() => setSaving(false)}>finish save</button>
+        <button type="button" onClick={() => helpers.goNext()}>step goes next</button>
+        <button type="button" onClick={() => helpers.skip()}>step skips</button>
+        <span>{saving ? "saving" : "idle"}</span>
+      </div>
+    );
+  }
+
+  function savingSteps(): WizardStepConfig<Ctx>[] {
+    return [
+      { id: "a", title: "Step A", isVerified: () => true, render: () => <div>Step A body</div> },
+      { id: "b", title: "Step B", isVerified: () => true, render: (_ctx, helpers) => <SavingStep helpers={helpers} /> },
+      { id: "c", title: "Step C", isVerified: () => true, render: () => <div>Step C body</div> },
+    ];
+  }
+
+  function renderSaving(stepList: WizardStepConfig<Ctx>[]) {
+    return render(
+      <IntegrationWizard<Ctx>
+        wizardId="test"
+        title="Test wizard"
+        steps={stepList}
+        context={{ bReady: true, cReady: true }}
+        contextLoading={false}
+        onRefresh={() => {}}
+        canEdit={true}
+        viewOnlyBanner={<>view only</>}
+      />,
+    );
+  }
+
+  it("holds an optional step's Skip mid-save too", async () => {
+    mockedProgress = { currentStepId: "b" };
+    const list = savingSteps();
+    list[1] = { ...list[1]!, isVerified: () => false, optional: true };
+    renderSaving(list);
+    await openedAt("Saving step body");
+    fireEvent.click(screen.getByRole("button", { name: "start save" }));
+    const skip = screen.getByRole("button", { name: /Skip for now/ });
+    expect((skip as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(skip);
+    expect(screen.getByText("Saving step body")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "step skips" }));
+    expect(screen.getByText("Saving step body")).toBeTruthy();
+  });
+
+  it("a step that unmounts mid-save releases the lock it took", async () => {
+    mockedProgress = { currentStepId: "b" };
+    const view = renderSaving(savingSteps());
+    await openedAt("Saving step body");
+    fireEvent.click(screen.getByRole("button", { name: "start save" }));
+    expect((screen.getByRole("button", { name: "Continue" }) as HTMLButtonElement).disabled).toBe(true);
+    // The provider swaps the step's body out (as a reload of context would).
+    const list = savingSteps();
+    list[1] = { ...list[1]!, render: () => <div>Replaced body</div> };
+    view.rerender(
+      <IntegrationWizard<Ctx>
+        wizardId="test"
+        title="Test wizard"
+        steps={list}
+        context={{ bReady: true, cReady: true }}
+        contextLoading={false}
+        onRefresh={() => {}}
+        canEdit={true}
+        viewOnlyBanner={<>view only</>}
+      />,
+    );
+    await screen.findByText("Replaced body");
+    expect((screen.getByRole("button", { name: "Continue" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("disables Continue, Back and the other steps until the save settles", async () => {
+    mockedProgress = { currentStepId: "b" };
+    render(
+      <IntegrationWizard<Ctx>
+        wizardId="test"
+        title="Test wizard"
+        steps={savingSteps()}
+        context={{ bReady: true, cReady: true }}
+        contextLoading={false}
+        onRefresh={() => {}}
+        canEdit={true}
+        viewOnlyBanner={<>view only</>}
+      />,
+    );
+    await openedAt("Saving step body");
+    const continueButton = () => screen.getByRole("button", { name: "Continue" });
+    const backButton = () => screen.getByRole("button", { name: "Back" });
+    const stepC = () => screen.getByRole("button", { name: /Step C/ });
+    expect((continueButton() as HTMLButtonElement).disabled).toBe(false);
+
+    fireEvent.click(screen.getByRole("button", { name: "start save" }));
+    expect(screen.getByText("saving")).toBeTruthy();
+    expect((continueButton() as HTMLButtonElement).disabled).toBe(true);
+    expect((backButton() as HTMLButtonElement).disabled).toBe(true);
+    expect((stepC() as HTMLButtonElement).disabled).toBe(true);
+    // A click that slips through moves nothing.
+    fireEvent.click(stepC());
+    expect(screen.getByText("Saving step body")).toBeTruthy();
+    // Nor does the step itself advancing mid-save (helpers.goNext).
+    fireEvent.click(screen.getByRole("button", { name: "step goes next" }));
+    expect(screen.getByText("Saving step body")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "finish save" }));
+    expect((continueButton() as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(continueButton());
+    expect(await screen.findByText("Step C body")).toBeTruthy();
   });
 });

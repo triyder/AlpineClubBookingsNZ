@@ -36,6 +36,16 @@ const mocks = vi.hoisted(() => ({
   recordBookingEvent: vi.fn(),
   lodgeFindFirst: vi.fn(),
   enqueuePaymentIntentCancellationRecovery: vi.fn(),
+  lockPaymentForRefundedTotal: vi.fn(),
+}));
+
+// #4300 (`INV-PAY-138`): the settle's superseded-capture refusal reads the
+// superseded machinery's rows, which this suite's transaction double does not
+// model; nothing here is superseded. Pinned by issue-1992-duplicate-capture-refund
+// and superseded-capture-ownership, and on PostgreSQL by superseded-intent-card-doors.
+vi.mock("@/lib/superseded-capture-ownership", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/superseded-capture-ownership")),
+  supersededMachineryOwnsCapture: async () => false,
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -45,6 +55,8 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 vi.mock("@/lib/payment-transactions", () => ({
+  // #4217: the settle locks the Payment row before its ledger lookup.
+  lockPaymentForRefundedTotal: (...args: unknown[]) => mocks.lockPaymentForRefundedTotal(...args),
   upsertPaymentIntentTransaction: (...args: unknown[]) =>
     mocks.upsertPaymentIntentTransaction(...args),
   findPaymentTransactionByIntentId: (...args: unknown[]) =>
@@ -310,6 +322,25 @@ describe("#1765 markBookingPaymentSucceeded refund-history guard", () => {
 
     expect(result.outcome).toBe("paid");
     expect(mocks.upsertPaymentIntentTransaction).toHaveBeenCalled();
+  });
+
+  // #4217 (`INV-LOCK-002`): the lookup may backfill a pre-ledger payment's rows,
+  // so the Payment row is locked first - after the upsert that makes sure the
+  // row exists, inside the settle's transaction.
+  it("MUTATION (#4217): locks the Payment row after the upsert and before the ledger lookup and the row write", async () => {
+    await markBookingPaymentSucceeded({
+      format: CLUB_FORMAT_TEST,
+      bookingId: "booking-1",
+      paymentIntentId: "pi_fresh",
+      amountCents: 9000,
+      paymentMethodId: "pm_1",
+    });
+
+    expect(mocks.lockPaymentForRefundedTotal).toHaveBeenCalledWith(tx, "payment-1");
+    const lockedAt = mocks.lockPaymentForRefundedTotal.mock.invocationCallOrder[0]!;
+    expect(mocks.paymentUpsert.mock.invocationCallOrder[0]!).toBeLessThan(lockedAt);
+    expect(lockedAt).toBeLessThan(mocks.findPaymentTransactionByIntentId.mock.invocationCallOrder[0]!);
+    expect(lockedAt).toBeLessThan(mocks.upsertPaymentIntentTransaction.mock.invocationCallOrder[0]!);
   });
 });
 

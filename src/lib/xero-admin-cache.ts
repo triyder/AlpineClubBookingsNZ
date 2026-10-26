@@ -1,7 +1,7 @@
 import { Prisma } from "@prisma/client";
-import { XERO_TOKEN_ROW_ORDER } from "@/lib/xero-token-row-order";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
+import { readXeroConnection } from "@/lib/xero-connection";
 
 export interface XeroAccount {
   code: string;
@@ -70,17 +70,6 @@ interface XeroAdminCacheStore {
   }) => Promise<unknown>;
 }
 
-interface XeroTokenStore {
-  findFirst?: (args: {
-    select: {
-      tenantId: true;
-    };
-    orderBy: typeof XERO_TOKEN_ROW_ORDER;
-  }) => Promise<{
-    tenantId: string | null;
-  } | null>;
-}
-
 const CACHE_TTL_MS = 60 * 60 * 1000;
 const CHART_OF_ACCOUNTS_CACHE_KEY = "chart-of-accounts";
 const ITEMS_CACHE_KEY = "items";
@@ -93,26 +82,9 @@ function getAdminCacheStore(): XeroAdminCacheStore | null {
   return cacheStore ?? null;
 }
 
-function getXeroTokenStore(): XeroTokenStore | null {
-  const tokenStore = (prisma as unknown as { xeroToken?: XeroTokenStore }).xeroToken;
-  return tokenStore ?? null;
-}
-
 async function getActiveTenantId(): Promise<string | null> {
-  const tokenStore = getXeroTokenStore();
-  if (!tokenStore?.findFirst) {
-    return null;
-  }
-
   try {
-    const record = await tokenStore.findFirst({
-      select: {
-        tenantId: true,
-      },
-      orderBy: XERO_TOKEN_ROW_ORDER,
-    });
-
-    return record?.tenantId ?? null;
+    return (await readXeroConnection())?.tenantId ?? null;
   } catch (error) {
     logger.warn({ err: error }, "Failed to read active Xero tenant for admin cache");
     return null;

@@ -4,6 +4,11 @@
 
 import type { Prisma } from "@prisma/client";
 
+import {
+  assertReductionReadForNet,
+  reductionLeftAfterAskCents,
+  type ReductionAgainstUnpaidAsk,
+} from "@/lib/additional-ask-reduction";
 import type { LoadedBookingForModify } from "@/lib/booking-modify";
 import {
   calculateFullReductionSettlementOptions,
@@ -52,9 +57,17 @@ export async function fullReductionReturnRoute(
   },
   loaded: LoadedBookingForModify,
   priceDiffCents: number,
+  /**
+   * #3954: the reduction set against the booking's unpaid ask, read ONCE by the
+   * re-price (`readReductionAgainstUnpaidAsk`) and handed to
+   * `applyPaymentAdjustments` too, which retires that ask; only what is left
+   * goes back here.
+   */
+  reduction: ReductionAgainstUnpaidAsk,
   todayAtClub: CalendarDate,
 ): Promise<FullReductionReturnRoute | null> {
-  const reductionCents = Math.max(0, -priceDiffCents);
+  assertReductionReadForNet(reduction, priceDiffCents, booking.id);
+  const reductionCents = reductionLeftAfterAskCents(reduction);
   if (reductionCents === 0) return { kind: "none" };
   const capturedCash = isSettledBookingStatus(booking.status) && hasCapturedPayment(booking.payment);
   if (!capturedCash && !isPaidLikeBookingStatus(booking.status)) return { kind: "none" };
@@ -66,7 +79,7 @@ export async function fullReductionReturnRoute(
   const settlementOptions = capturedCash
     ? calculateFullReductionSettlementOptions({
         booking: loaded,
-        netChargeCents: priceDiffCents,
+        netChargeCents: reduction.netChargeLeftCents,
         refundableCashCents: await refundableCashNetOfOpenHandBacks(tx, booking.payment),
         todayAtClub,
       })
@@ -74,7 +87,9 @@ export async function fullReductionReturnRoute(
   // #3653 (composed by #3829): an organiser-paid child's cash goes back to the
   // organiser's card. Asked here, before anything is written, whether that card
   // can return it in full - else the refund plan or its reservation would refuse
-  // after the codes moved and fail the guest's whole acceptance.
+  // after the codes moved and fail the guest's whole acceptance. #3949: one the
+  // organiser paid by Internet Banking goes back by a hand-back instead, which
+  // has no card to ask (`organiserCardCanReturnInFull` answers true for it).
   if (
     settlementOptions?.returnsToOrganiser &&
     booking.payment &&
@@ -90,7 +105,8 @@ export async function fullReductionReturnRoute(
   if (creditHolder === null) return null;
   await lockMemberCreditLedger(creditHolder, tx);
   const appliedCreditCents = await deriveBookingAppliedCreditCents(booking.id, tx);
-  if (appliedCreditCents + cashCents !== booking.finalPriceCents) return null;
+  // The unpaid ask is the part of the price nobody paid (#3954).
+  if (appliedCreditCents + cashCents + reduction.ask.askCents !== booking.finalPriceCents) return null;
   const creditReturn = { amountCents: reductionCents - cashCents, memberId: creditHolder };
   return settlementOptions
     ? { kind: "money-back", settlementOptions, creditRemainder: creditReturn }

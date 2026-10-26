@@ -161,29 +161,10 @@ export function PriceSummaryCard({
           </div>
         ) : null}
 
-        {/* #3170 (epic #2797) — this edit's money cannot be read from the
-            booking's own stored history, so saving will commit the change and
-            hold the amount for a person to confirm. Shown in the same slot and
-            with the same lifecycle as the two notices around it, and rendered
-            VERBATIM: the server owns this sentence, because the words are bound
-            by the epic (no estimate, no `$0`, and nothing that reads as the
-            member's fault). Every figure above it is the booking's stored one
-            and every delta is zero, so there is no number here to explain away
-            — which is exactly why the sentence has to be present. */}
-        {quote?.financialReviewRequired && quote.financialReviewNotice ? (
-          <div
-            className="rounded-md bg-info-3 p-3 text-sm text-info-11"
-            role="status"
-            data-testid="financial-review-required-notice"
-          >
-            {quote.financialReviewNotice}
-          </div>
-        ) : null}
-
         {/* #3179 (epic #2797) — this edit will save WITHOUT the promo-code
-            change the member just made. Placed directly under the review
-            notice, in warning colours rather than the info colours beside it,
-            and with a heading: the owner accepted the cost of a partial save on
+            change the member just made. In warning colours rather than the
+            info colours beside it, and with a heading: the owner accepted the
+            cost of a partial save on
             the condition that the wording is impossible to skim past, and a
             member who reads nothing here walks away believing they applied a
             discount they did not. Rendered VERBATIM from the server, and read
@@ -377,18 +358,35 @@ export function PriceSummaryCard({
               </div>
             )}
 
-            {quote.chargeRefusal && (
-              // #3653: the organiser paid by card; the save refuses this charge.
+            {(quote.chargeRefusal || quote.priceChangeRefusal) && (
+              // #3653: the organiser paid by card; the save refuses this charge. #3949: or the organiser paid by
+              // Internet Banking and is part-way through cancelling the group; the save refuses any price change.
               <p
                 role="alert"
-                data-testid="organiser-charge-refusal"
+                data-testid={quote.priceChangeRefusal ? "organiser-price-change-refusal" : "organiser-charge-refusal"}
                 className="rounded-md border border-danger-6 bg-danger-3 p-3 text-sm text-danger-11"
               >
-                {quote.chargeRefusal}
+                {quote.priceChangeRefusal ?? quote.chargeRefusal}
               </p>
             )}
 
-            {quote.netChargeCents < 0 && quote.settlementOptions && (
+            {/* #3954: a reduction first comes off the additional payment the
+                member has not paid yet; only the rest is refunded or credited. */}
+            {quote.netChargeCents < 0 && (quote.unpaidAskOffsetCents ?? 0) > 0 && (
+              <p className="rounded-md border p-3 text-sm" data-testid="unpaid-ask-offset">
+                Comes off your unpaid additional payment:{" "}
+                <span className="font-medium">{formatCents(quote.unpaidAskOffsetCents ?? 0, format)}</span>
+                {/* Round 6: said only when the quote states what is left - an
+                    absent figure is not "nothing left to pay". */}
+                {quote.askLeftCents === undefined
+                  ? null
+                  : quote.askLeftCents > 0
+                    ? ` (you will then owe ${formatCents(quote.askLeftCents, format)})`
+                    : " (nothing left to pay)"}
+              </p>
+            )}
+
+            {quote.netChargeCents < 0 && quote.settlementOptions && !quote.priceChangeRefusal && (
               <div className="space-y-2 rounded-md border p-3 text-sm">
                 <div className="flex items-center justify-between">
                   <p className="font-medium">Return method</p>
@@ -403,7 +401,7 @@ export function PriceSummaryCard({
                   // #3653: the organiser paid, so the organiser is refunded.
                   <p data-testid="organiser-refund-notice">
                     {quote.settlementOptions.cardRefundAmountCents > 0
-                      ? `Refunded to the group organiser's card: ${formatCents(quote.settlementOptions.cardRefundAmountCents, format)} (${quote.settlementOptions.cardRefundPercentage}%). The organiser paid for this booking, so the refund goes back to them.`
+                      ? `${quote.settlementOptions.organiserRefundByBankTransfer ? "To be refunded to the group organiser by bank transfer" : "Refunded to the group organiser's card"}: ${formatCents(quote.settlementOptions.cardRefundAmountCents, format)} (${quote.settlementOptions.cardRefundPercentage}%). The organiser paid for this booking, so the refund goes back to them.`
                       : "No refund is available for this reduction under the current policy."}
                   </p>
                 ) : quote.settlementOptions.requiresSettlementMethod ? (

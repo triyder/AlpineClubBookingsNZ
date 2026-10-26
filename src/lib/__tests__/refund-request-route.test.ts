@@ -11,6 +11,8 @@ const mocks = vi.hoisted(() => ({
   memberCreditAggregate: vi.fn(),
   logAudit: vi.fn(),
   sendAdminRefundRequestAlert: vi.fn(),
+  // #4124: the payment as the card-debt read loads it (null: no card refund rows).
+  cardDebtPaymentFindUnique: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({
@@ -36,6 +38,8 @@ vi.mock("@/lib/prisma", () => ({
     memberCredit: {
       aggregate: (...args: unknown[]) => mocks.memberCreditAggregate(...args),
     },
+    // #4124: the card-debt read; no open card-refund debt unless a test says.
+    payment: { findUnique: (...args: unknown[]) => mocks.cardDebtPaymentFindUnique(...args) },
   },
 }));
 
@@ -53,6 +57,7 @@ import { POST } from "@/app/api/bookings/[id]/refund-request/route";
 describe("POST /api/bookings/[id]/refund-request", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.cardDebtPaymentFindUnique.mockResolvedValue(null);
     mocks.auth.mockResolvedValue({
       user: { id: "member-1", role: "MEMBER", accessRoles: [{ role: "USER" }] },
     });
@@ -224,9 +229,66 @@ describe("POST /api/bookings/[id]/refund-request", () => {
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toEqual({
       error:
-        "Everything still refundable on this booking is already being returned to you, by bank transfer or as account credit, so there is nothing further to appeal for.",
+        "Everything still refundable on this booking is already being returned to you, to your card, by bank transfer or as account credit, so there is nothing further to appeal for.",
     });
     expect(mocks.refundRequestCreate).not.toHaveBeenCalled();
+  });
+
+  // #4124: a card refund not yet made (here refused and being retried) is
+  // money already promised back, so the member may not appeal for it again.
+  describe("with a card refund not yet made on the payment (#4124)", () => {
+    function withCardDebt(amountCents: number) {
+      cancelledAfterEdit();
+      mocks.manualRefundTaskAggregate.mockResolvedValue({ _sum: { amountCents: null } });
+      mocks.cardDebtPaymentFindUnique.mockResolvedValue({
+        status: "PARTIALLY_REFUNDED",
+        amountCents: 20000,
+        refundedAmountCents: 7500,
+        recoveryOperations: [
+          {
+            id: "op-refused",
+            type: "REFUND_BOOKING_MODIFICATION",
+            status: "FAILED",
+            idempotencyKey: "refund_request_req-0",
+            amountCents,
+            allocationPlan: [{ paymentTransactionId: "txn-1", amountCents, stripeKeySuffix: "refused1" }],
+            paymentTransactionId: null,
+            createdAt: new Date("2026-06-20T00:00:00.000Z"),
+            succeededAt: null,
+          },
+        ],
+        refunds: [],
+      });
+    }
+
+    it("caps the appeal net of it", async () => {
+      withCardDebt(2500);
+
+      const over = await appealFor(10001);
+      expect(over.status).toBe(400);
+      await expect(over.json()).resolves.toEqual({
+        error: "Requested amount exceeds maximum refundable amount of $100.00",
+      });
+      expect(mocks.cardDebtPaymentFindUnique).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: "payment-1" } }),
+      );
+
+      const within = await appealFor(10000);
+      expect(within.status).toBe(201);
+    });
+
+    it("names the card when it is everything still refundable", async () => {
+      withCardDebt(12500);
+
+      const response = await appealFor(100);
+
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toEqual({
+        error:
+          "Everything still refundable on this booking is already being returned to you, to your card, by bank transfer or as account credit, so there is nothing further to appeal for.",
+      });
+      expect(mocks.refundRequestCreate).not.toHaveBeenCalled();
+    });
   });
 
   // M1(a), `INV-PAY-118`: a bank transfer that arrived after the cancel was
@@ -255,7 +317,7 @@ describe("POST /api/bookings/[id]/refund-request", () => {
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toEqual({
       error:
-        "Everything still refundable on this booking is already being returned to you, by bank transfer or as account credit, so there is nothing further to appeal for.",
+        "Everything still refundable on this booking is already being returned to you, to your card, by bank transfer or as account credit, so there is nothing further to appeal for.",
     });
     expect(mocks.memberCreditAggregate).toHaveBeenCalledWith({
       where: {

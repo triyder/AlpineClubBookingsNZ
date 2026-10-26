@@ -1080,10 +1080,12 @@ model MemberSubscription {
   manualPaymentNote            String?   @db.VarChar(500)
   // #2147: monotonic re-bill discriminator. Incremented each time the
   // membership sync observes this season's Xero invoice VOIDED/DELETED and
-  // releases the coverage claim. The confirm step folds it into the charge
-  // idempotencyKey so a post-void re-bill mints a NEW charge instead of
-  // no-op-ing onto the released one. Stays 0 for a never-voided subscription,
-  // which keeps the idempotencyKey byte-identical to the pre-#2147 shape.
+  // releases the coverage claim, and (#4098) each time an officer closes a
+  // charge as already paid, which releases its claims the same way. The
+  // confirm step folds it into the charge idempotencyKey so a re-bill mints a
+  // NEW charge instead of no-op-ing onto the released one. Stays 0 for a
+  // subscription never released, which keeps the idempotencyKey byte-identical
+  // to the pre-#2147 shape.
   voidGeneration       Int       @default(0)
   createdAt            DateTime           @default(now())
   updatedAt            DateTime           @updatedAt
@@ -1162,7 +1164,13 @@ model MembershipSubscriptionCharge {
   @@index([seasonYear, status, createdAt])
   @@index([recipientMemberId, seasonYear])
   @@index([familyGroupId, seasonYear])
-  @@unique([seasonYear, membershipTypeId, familyGroupId], map: "MembershipCharge_family_type_year_key")
+  // #4110: at most one LIVE family charge per (seasonYear, membershipTypeId,
+  // familyGroupId) is enforced by the raw-SQL partial unique index
+  // MembershipCharge_family_type_year_live_key (prisma/partial-unique-indexes.tsv),
+  // which excludes the terminal no-invoice statuses NOT_REQUIRED and VOIDED so a
+  // family whose charge was voided (#2147) or closed as already paid (#4098) can
+  // be billed again beside the retained row. Prisma cannot express it, which is
+  // why the plain @@unique was dropped.
 }
 
 // Frozen per-line snapshot of an annual-fee component at the moment the charge
@@ -1199,14 +1207,22 @@ model MembershipSubscriptionChargeCoverage {
   memberName     String
   // #2147: null while the claim is ACTIVE. Set (never cleared, row never
   // deleted) when the membership sync observes the charge's Xero invoice
-  // VOIDED/DELETED, releasing the claim so a fresh preview can re-bill the
-  // member. The dedup skip-set and the confirm coveredAlready check count only
+  // VOIDED/DELETED, or (#4098) when an officer closes the charge as already
+  // paid, releasing the claim so a fresh preview can re-bill the member. The dedup skip-set and the confirm coveredAlready check count only
   // active (releasedAt IS NULL) claims. "One active claim per subscription" is
   // enforced by the raw-SQL partial unique index
   // MembershipSubscriptionChargeCoverage_active_subscription_unique
   // (prisma/partial-unique-indexes.tsv) — Prisma cannot express it, which is
   // why the plain subscriptionId @unique was dropped.
   releasedAt     DateTime?
+  // #4110 review: the covered subscription's status when an officer's close as
+  // already paid (#4098) released this claim — PAID, or NOT_REQUIRED for an
+  // exempt member. Only a later move away from PAID is a reversed payment that
+  // makes a closed family re-billable (owner, 15 Oct 2026); an exempt member
+  // later moved to NOT_INVOICED had no payment to reverse. Null on an active
+  // claim, on a claim the void sync released, and on a close made before the
+  // column existed, when the close accepted only PAID (read as PAID).
+  subscriptionStatusAtClose SubscriptionStatus?
   createdAt      DateTime @default(now())
 
   charge       MembershipSubscriptionCharge @relation(fields: [chargeId], references: [id], onDelete: Restrict)
@@ -2662,8 +2678,11 @@ model BookingRequestSettings {
   showPricingToNonMembers          Boolean  @default(false)
   quoteResponseTtlDays             Int      @default(14)
   quoteReminderLeadDays            Int      @default(3)
-  // Club policy for school-request approval. Existing installations retain
-  // their teacher contacts but do not create hut-leader PIN assignments.
+  // RETIRED by #3819: no runtime code reads or writes it. #3416's club-wide
+  // switch, replaced by the per-lodge LodgeSettings.schoolHutLeader* kinds; the
+  // expand migration 20261114020000 copied its value into every lodge. Kept
+  // only so the draining colour can still read it; a later contract release
+  // drops it.
   assignSchoolTeachersAsHutLeaders Boolean  @default(false)
   // Soft link for the phase-7 singleton-to-per-lodge conversion
   // (docs/multi-lodge/implementation-plan.md); unused by runtime reads today.
@@ -2948,6 +2967,16 @@ model Payment {
   // the reversal so it can restore what it replaced. Lives on Payment so all
   // manual provenance is written and cleared as one unit.
   manuallyMarkedPaidPreviousStatus BookingStatus?
+  // #4211 (owner decision 17 Oct 2026, "Record the settler"): the
+  // PaymentTransaction on this payment whose settlement moved the booking to
+  // PAID - the card capture, or the cash / bank receipt's PRIMARY row. Written
+  // by the settle's PAID claim under lock(1), cleared by the manual reversal.
+  // The duplicate-capture guard never refunds it and refunds any other card
+  // capture that arrives. NULL = not recorded: paid before this column, by a
+  // draining old colour, or by a path no transaction settles (zero cash, an
+  // organiser's group settlement). No foreign key: the two tables already
+  // reference each other the other way, and the guard re-reads the row.
+  settledByTransactionId        String?
   createdAt                     DateTime      @default(now())
   updatedAt                     DateTime      @updatedAt
 
@@ -3146,6 +3175,13 @@ model ManualRefundTask {
   /// nights given back, the stored guest total and whatever stored night prices
   /// existed, and the booking/edit dates. The payment and rate history is NOT
   /// copied here: the admin surface links to the booking's own, which is live.
+  ///
+  /// Two other kinds keep a payload of their own here, each under its own key
+  /// and each read only by its own kind's reader: `groupOrganiserHandBack` (a
+  /// group organiser's hand-back's joiner shares and alert record, #4042,
+  /// `readGroupOrganiserHandBackShares`) and `paidTwiceResolved` (#3924,
+  /// `readPaidTwiceResolution`, beside the close's own
+  /// `paidAnotherWayCardNoteCover`, #4104). Neither is edit-review evidence.
   reviewContext       Json?
   /// #3170 (epic #2797): which way this completion's money went. See
   /// `ManualRefundTaskDirection`.
@@ -3233,9 +3269,40 @@ model PaymentTransaction {
   /// while it was unpaid. A withdrawn row is no longer the live ask:
   /// `reconcilePaymentAggregates` projects the Payment's additional columns
   /// from the latest row WITHOUT one, and the repair pass raises nothing for
-  /// it. Never deleted, never cleared - the audit row says who and why.
+  /// it. Never deleted, never cleared - the audit row says who and why. A
+  /// reduction stamps it too (INV-PAY-120), and so does a mark-paid reversal
+  /// restoring a card ask, on its reversed INTERNET_BANKING cash row (#4320).
   withdrawnAt           DateTime?
+  /// #3954 round 7 (INV-PAY-120): on an ADDITIONAL request an edit asked for, that
+  /// edit's own answer to `hasIssuedPrimaryXeroInvoice` when it asked - the twin of
+  /// `PaymentRecoveryOperation.hadIssuedXeroInvoice` (#3181). True: the request's
+  /// own money is billed by its supplementary invoice; false: by the primary
+  /// invoice raised afterwards. A later price reduction that cancels or shrinks the
+  /// unpaid request reads it (`unpaidAskBillingEvidence`). Stamped by every mint of a
+  /// member's price ask - the edit's door, its recovery's replay (from the recovery's
+  /// frozen answer) and a currency re-issue (copied). NULL means not recorded: rows
+  /// written before it, a replay whose recovery recorded no answer, or rows that are
+  /// not a price ask.
+  hadIssuedXeroInvoice  Boolean?
+  /// #3954 round 8 (INV-PAY-120): on an ADDITIONAL request for a member's price ask,
+  /// the `BookingModification` whose ask it is - the increase that asked, or the
+  /// reduction whose smaller re-issue it is - stamped by the same mints as
+  /// `hadIssuedXeroInvoice`. A later reduction that retires the row names that edit
+  /// in its history, so the repair pass never bills a retired ask again. No foreign
+  /// key: a provenance stamp, read only beside the booking's own edits. NULL means
+  /// not recorded (older rows, review charges, and every other kind of row).
+  bookingModificationId String?
   createdAt             DateTime               @default(now())
+  /// #4132 (INV-PAY-133): the order rows were inserted in, from an owned
+  /// INTEGER sequence. Rows written in one transaction share a `createdAt`, so
+  /// every money read orders by `createdAt`, then this column
+  /// (`LEDGER_ROWS_OLDEST_FIRST` / `LEDGER_ROWS_NEWEST_FIRST` in
+  /// `payment-ledger-order.ts`), and "the latest" row of a kind on a tie is the
+  /// one inserted last. Never written by code: the database assigns it. The
+  /// migration numbered stored rows by `createdAt`, retired rows before live
+  /// ones within a tie, then `ctid`, and created the sequence by hand; never
+  /// accept a generated `SERIAL` for it.
+  insertionSeq          Int                    @default(autoincrement())
   updatedAt             DateTime               @updatedAt
 
   payment            Payment                    @relation(fields: [paymentId], references: [id], onDelete: Cascade)
@@ -4140,15 +4207,46 @@ model HostingCoverageReevaluation {
 }
 
 // ---------------------------------------------------------------------------
-// Xero OAuth Token (single row)
+// Xero OAuth Token (single row) — RETIRING (#3806)
 // ---------------------------------------------------------------------------
+//
+// Kept only for the previous release (#3454), which reads, refreshes, connects
+// and disconnects through this row alone. Since #3806 R2 the tokens live only in
+// the credential store and the connection facts and refresh lease live in
+// `XeroConnection`. This release keeps the row present while connected, with
+// `tenantId`, `expiresAt` and the old lease current, and never names the two
+// ciphertext columns: they are `@ignore`d so the generated client cannot put
+// them in a SELECT, an INSERT or a RETURNING (INV-OPS-005), and the database
+// fills them with '' on create (the schema's `@default("")` mirrors the column default for the drift check only). The table is dropped in R3 (#3806).
 
 model XeroToken {
   id                     String    @id @default(cuid())
-  accessToken            String
-  refreshToken           String
+  accessToken            String    @default("") @ignore
+  refreshToken           String    @default("") @ignore
   expiresAt              DateTime
   tenantId               String?
+  refreshInProgressUntil DateTime?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Xero connection (single row, no secret) — #3806 R2
+// ---------------------------------------------------------------------------
+//
+// The one answer to "is Xero connected, to which tenant, until when", and the
+// refresh lease. Holds no token, ciphertext or key; the tokens are one row of
+// the encrypted credential store (`xero-oauth` / `token-set`). One row, id
+// "default" (a CHECK constraint in the migration). While `XeroToken` exists, a
+// statement trigger on it copies the latest row's `tenantId` and `expiresAt`
+// here and deletes this row when none is left, so the previous release's writes
+// are reflected too; the lease column is written only by the token store.
+// Read it through `readXeroConnection` (src/lib/xero-connection.ts).
+
+model XeroConnection {
+  id                     String    @id @default("default")
+  tenantId               String?
+  expiresAt              DateTime
   refreshInProgressUntil DateTime?
   createdAt              DateTime  @default(now())
   updatedAt              DateTime  @updatedAt
@@ -5460,6 +5558,19 @@ model LodgeSettings {
   // single-lodge club (ADR-002). Warning-only — the hard limit stays the
   // lodge's capacity.
   schoolGroupSoftCap     Int?
+  // Who can be hut leader for a school booking's nights at this lodge (#3819,
+  // wave #3820): any combination of four kinds. On a night a school booking
+  // stays here, the night counts as covered only when its leader is a ticked
+  // kind (`hut-leader-night-cover.ts`), and approving a school request makes
+  // its teachers hut leaders only when this lodge ticks teachers. Per-lodge
+  // like the soft cap above, resolved the same way. Replaces #3416's club-wide
+  // BookingRequestSettings.assignSchoolTeachersAsHutLeaders, whose value the
+  // expand migration carried into every lodge; that column is dropped by a
+  // later contract release.
+  schoolHutLeaderTeacherOnBooking        Boolean @default(false)
+  schoolHutLeaderCustodian               Boolean @default(true)
+  schoolHutLeaderMemberOnBooking         Boolean @default(true)
+  schoolHutLeaderMemberStayingSeparately Boolean @default(true)
   // Soft link to the lodge this settings row belongs to. Becomes the row key
   // when singleton settings convert to per-lodge rows (phase 7); until then
   // the "default" row keeps serving the sole lodge.
@@ -6764,6 +6875,12 @@ model HutLeaderAssignment {
   // move it. See docs/CONCURRENCY_AND_LOCKING.md -> "Composition: lodge
   // admission, deactivation and hut-leader assignments".
   source       HutLeaderAssignmentSource @default(MANUAL)
+  // The officer's "Custodian (lives on site)" tick (#3817, owner decision on
+  // #3820, 3 Oct 2026). A custodian lives at the lodge, so the assignment counts
+  // as present on every night it covers with no booking and no bed, whether bed
+  // allocation is on or off. Set only by the manual create and edit; the cron
+  // and the school writer never set it. Expand-only, default false.
+  isCustodian  Boolean  @default(false)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -7285,6 +7402,12 @@ model MemberCredit {
   sourceBookingModificationId String?    @unique // Booking modification that generated the credit
   appliedToBookingId          String? // Booking where credit was spent
   xeroCreditNoteId            String? // Linked Xero credit note ID
+  // #4219: set only on the two rows that bring the ledger into line with Xero when
+  // a credit note was spent there outside the app (the release of a booking's
+  // applied credit and the write-down of the lot). It says the row is NOT a
+  // spendable lot: the release is a positive row, and without this marker the
+  // planner would count it as the member's own money and mint a Xero note for it.
+  outsideSpendConvergedAt     DateTime?
   createdAt                   DateTime   @default(now())
 
   member                    Member                        @relation(fields: [memberId], references: [id], onDelete: Restrict)

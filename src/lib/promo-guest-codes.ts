@@ -53,21 +53,35 @@ export const GUEST_PROMO_CODE_LOOKUP_AUDIT_ACTION = "promo_code.guest_lookup";
  * for an officer holding the booking-management role. `null` both for a booking
  * that does not exist and for one the caller does not own, so every door that
  * asks answers the two with the same 404 and never confirms that an id exists.
- * Shared by the guest-code lookup and the edit panel's promo preview.
+ * Shared by the guest-code lookup and the edit panel's promo preview. The
+ * stored dates are what the preview hands the modification planner (#4199), so
+ * it resolves the edit's stays against the booking the save will edit.
  */
 export async function bookingForPromoLookup(params: {
   bookingId: string;
   actorMemberId: string;
   isBookingOfficer: boolean;
-}): Promise<{ id: string; lodgeId: string; ownerMemberId: string | null } | null> {
+}): Promise<{
+  id: string;
+  lodgeId: string;
+  ownerMemberId: string | null;
+  checkIn: Date;
+  checkOut: Date;
+} | null> {
   const booking = await prisma.booking.findUnique({
     where: { id: params.bookingId },
-    select: { id: true, memberId: true, lodgeId: true },
+    select: { id: true, memberId: true, lodgeId: true, checkIn: true, checkOut: true },
   });
   if (!booking) return null;
   const ownerMemberId = bookingOwner(booking).memberId ?? null;
   if (!params.isBookingOfficer && ownerMemberId !== params.actorMemberId) return null;
-  return { id: booking.id, lodgeId: booking.lodgeId, ownerMemberId };
+  return {
+    id: booking.id,
+    lodgeId: booking.lodgeId,
+    ownerMemberId,
+    checkIn: booking.checkIn,
+    checkOut: booking.checkOut,
+  };
 }
 
 /**

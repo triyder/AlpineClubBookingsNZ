@@ -21,6 +21,7 @@ import {
   addDaysDateOnly,
   eachDateOnlyInRange,
   formatDateOnly,
+  parseDateOnly,
 } from "./date-only";
 import { clubTodayDateOnlyInstant } from "./club-time/server";
 import { getCachedClubIdentity } from "./public-layout-config";
@@ -31,6 +32,7 @@ import {
 } from "./club-theme-schema";
 import { getSanitizedLodgeInstructions } from "./lodge-instructions";
 import { DISPLAY_RELEVANT_MODULE_KEYS } from "./lodge-display/conditions";
+import { CUSTODIAN_OCCUPANCY_WHERE, isCustodianOnNight } from "./custodian-occupancy";
 import { lodgeNullTolerantScope } from "./lodges";
 import { OPERATIONALLY_PRESENT_GUEST_WHERE } from "./member-guest-consent";
 import { loadEffectiveModuleFlags } from "./module-settings";
@@ -202,12 +204,12 @@ export interface DisplayState {
   /**
    * The custodian(s) in residence today (#2286), or null when there is none.
    *
-   * ONLY a bed-holding hut-leader assignment produces this slot: a role-only
-   * assignment is not an occupancy and does not appear. The custodian is not a
+   * ONLY a custodian occupancy — a held bed or the tick, #3818 — produces this
+   * slot; a role-only assignment is not an occupancy. The custodian is not a
    * BookingGuest, so their exclusion from the occupancy counts, the booking
    * rows and the chore roster is structural — there is nothing to filter.
    *
-   * `count` is how many bed-holding custodians are in residence tonight. It is
+   * `count` is custodians in residence tonight, one per assignment. It is
    * a COUNT, not a flag, because a handover night legitimately has two people
    * on two different beds — the previous shape (one `findFirst`) silently named
    * one of them and hid the other, which is the one thing a "who is here" slot
@@ -367,6 +369,7 @@ export async function buildDisplayState(
             ageTier: true,
             stayStart: true,
             stayEnd: true,
+            memberId: true, // #3821: matches a custodian; never in the payload
             // #125 / #37: the member's opt-in + phone, released per-guest only
             // under `canServeMemberPhoneOnLodgeSurface` in the row builder.
             member: {
@@ -608,6 +611,41 @@ export async function buildDisplayState(
     }
   }
 
+  // Custodian in residence (#2286). Scoped to this lodge and to the window's
+  // CURRENT day — the wall answers "who is here now", not "who will be here on
+  // Thursday". `CUSTODIAN_OCCUPANCY_WHERE` (bed or tick, #3818) is the gate.
+  //
+  // Gated on the hutLeaders module like every other module-owned read in this
+  // builder (`flags.bedAllocation` for rooms, `flags.chores` for the roster): a
+  // club with the module off has no hut-leader surface at all, so the wall must
+  // not grow one. The query is skipped entirely rather than filtered later.
+  //
+  // findMany, NOT findFirst (#2286 review B11): a handover night has TWO
+  // custodians on two different beds, and a findFirst named one and silently
+  // dropped the other. `take` is a sanity bound — the assignment overlap rule
+  // permits a one-day handover, so more than a handful on one night means bad
+  // data, not a case to render.
+  const custodianAssignments = flags.hutLeaders
+    ? await prisma.hutLeaderAssignment.findMany({
+        where: {
+          ...CUSTODIAN_OCCUPANCY_WHERE,
+          startDate: { lte: startDate },
+          endDate: { gte: startDate },
+          ...lodgeNullTolerantScope(lodgeId),
+        },
+        select: {
+          memberId: true, startDate: true, endDate: true, // #3821
+          member: { select: { firstName: true, lastName: true, ageTier: true } },
+        },
+        orderBy: [{ startDate: "asc" }, { id: "asc" }],
+        take: 8,
+      })
+    : [];
+  // #3821: today's custodians, listed once (`isCustodianOnNight`).
+  const custodianNights = custodianAssignments.filter((a) => a.memberId).map((a) => ({
+    memberId: a.memberId, startDate: formatDateOnly(a.startDate), endDate: formatDateOnly(a.endDate),
+  }));
+
   // --- booking rows: split per (booking, room); privacy-reduce labels ------
   const rows: DisplayStateBooking[] = [];
   for (const booking of bookings) {
@@ -644,12 +682,35 @@ export async function buildDisplayState(
     // envelope when they do not. Derived once per guest and reused for the
     // in-window test, the row's own night set and the per-guest payload, so
     // those three can never disagree about which nights a guest is here.
-    const nightKeysByGuest = new Map<string, string[]>(
-      booking.guests.map((guest) => [
+    const nightKeysByGuest = new Map<string, string[]>();
+    // #3821: each guest's displayed span, from the SAME nights. A custodian
+    // who also booked is listed once, as custodian, so their custodian nights
+    // leave their booking's row — and its dates must not still claim them, or
+    // the row would say they arrive or leave on a day they are shown only as
+    // custodian. When the filter took nights away, the span is rebuilt from
+    // the nights kept (first night to the morning after the last); otherwise
+    // it is the guest's own envelope, exactly as before.
+    const spanByGuest = new Map<string, { start: Date; end: Date }>();
+    for (const guest of booking.guests) {
+      const allNights = getGuestBedNightKeys(guest, booking);
+      const kept = allNights.filter(
+        (key) => !isCustodianOnNight(custodianNights, guest.memberId, key),
+      );
+      nightKeysByGuest.set(guest.id, kept);
+      const firstKept = kept[0];
+      const lastKept = kept[kept.length - 1];
+      spanByGuest.set(
         guest.id,
-        getGuestBedNightKeys(guest, booking),
-      ])
-    );
+        kept.length < allNights.length && firstKept && lastKept
+          ? {
+              start: parseDateOnly(firstKept),
+              end: addDaysDateOnly(parseDateOnly(lastKept), 1),
+            }
+          : { start: getGuestStayStart(guest, booking), end: getGuestStayEnd(guest, booking) },
+      );
+    }
+    const spanOf = (guestId: string) =>
+      spanByGuest.get(guestId) ?? { start: booking.checkIn, end: booking.checkOut };
 
     const byRoom = new Map<string | null, typeof booking.guests>();
     for (const guest of booking.guests) {
@@ -677,8 +738,8 @@ export async function buildDisplayState(
 
     let rowIndex = 0;
     for (const [roomId, guests] of byRoom) {
-      const stayStarts = guests.map((g) => getGuestStayStart(g, booking).getTime());
-      const stayEnds = guests.map((g) => getGuestStayEnd(g, booking).getTime());
+      const stayStarts = guests.map((g) => spanOf(g.id).start.getTime());
+      const stayEnds = guests.map((g) => spanOf(g.id).end.getTime());
       const rowStayStart = Math.min(...stayStarts);
       // The row's own night set: the union of its guests' nights, sorted. For
       // every contiguous stay this is exactly `[stayStart, stayEnd)` expanded,
@@ -758,8 +819,8 @@ export async function buildDisplayState(
               return {
                 label:
                   reduceName(guest.firstName, guest.lastName, granularity) ?? "",
-                stayStart: formatDateOnly(getGuestStayStart(guest, booking)),
-                stayEnd: formatDateOnly(getGuestStayEnd(guest, booking)),
+                stayStart: formatDateOnly(spanOf(guest.id).start),
+                stayEnd: formatDateOnly(spanOf(guest.id).end),
                 nights: nightKeysByGuest.get(guest.id) ?? [],
                 ...(phone ? { phone } : {}),
               };
@@ -849,36 +910,6 @@ export async function buildDisplayState(
   // back to config.
   const clubIdentity = await getCachedClubIdentity();
 
-  // Custodian in residence (#2286). Scoped to this lodge and to the window's
-  // CURRENT day — the wall answers "who is here now", not "who will be here on
-  // Thursday". `bedId: not null` is the whole gate: a role-only assignment is
-  // not an occupancy and never renders a slot.
-  //
-  // Gated on the hutLeaders module like every other module-owned read in this
-  // builder (`flags.bedAllocation` for rooms, `flags.chores` for the roster): a
-  // club with the module off has no hut-leader surface at all, so the wall must
-  // not grow one. The query is skipped entirely rather than filtered later.
-  //
-  // findMany, NOT findFirst (#2286 review B11): a handover night has TWO
-  // custodians on two different beds, and a findFirst named one and silently
-  // dropped the other. `take` is a sanity bound — the assignment overlap rule
-  // permits a one-day handover, so more than a handful on one night means bad
-  // data, not a case to render.
-  const custodianAssignments = flags.hutLeaders
-    ? await prisma.hutLeaderAssignment.findMany({
-        where: {
-          bedId: { not: null },
-          startDate: { lte: startDate },
-          endDate: { gte: startDate },
-          ...lodgeNullTolerantScope(lodgeId),
-        },
-        select: {
-          member: { select: { firstName: true, lastName: true, ageTier: true } },
-        },
-        orderBy: [{ startDate: "asc" }, { id: "asc" }],
-        take: 8,
-      })
-    : [];
   // A minor is never individually named at ANY granularity (the contract at the
   // top of this file). Nothing structurally stops a minor-age member being made
   // custodian, so the guard lives here rather than relying on the admin

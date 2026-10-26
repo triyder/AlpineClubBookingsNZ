@@ -4,13 +4,14 @@
  *
  * Why this exists: inbound reconciliation structurally cannot stamp
  * `metadata.status` onto an INACTIVE link — `reconcileXeroCreditNote` reaches
- * a payment's refund links only through ACTIVE links or the scalar pointer,
+ * a payment's refund links only through ACTIVE links or the scalar pointer
+ * (for writing a status; #4291 reads voided inactive mirrors for the recount only),
  * and there is no credit-note cursor — so the population the #2901 repair
  * wants to reactivate (links the pre-fix cleanup deactivated) never gains a
  * recorded status by itself, and the repair rightly refuses to reactivate an
  * unknown-status note. This recorder closes that gap with read-only provider
- * GETs: it fetches each linked note once and merges
- * `{status, total, appliedAmount, remainingCredit}` onto ALL of that note's
+ * GETs: it fetches each linked note once and merges its snapshot
+ * (`xeroCreditNoteSnapshotMetadata`, #4288) onto ALL of that note's
  * refund-note links, active or not, through the normal `upsertXeroObjectLink`
  * funnel.
  *
@@ -28,6 +29,7 @@ import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 import { callXeroApi, getAuthenticatedXeroClient } from "@/lib/xero-api-client";
 import { upsertXeroObjectLink } from "@/lib/xero-sync";
+import { xeroCreditNoteSnapshotMetadata } from "@/lib/xero-refund-note-status";
 
 export interface StripeRefundNoteStatusRecordResult {
   scannedPayments: number;
@@ -134,12 +136,9 @@ export async function recordStripeRefundNoteLinkStatuses(options?: {
             creditNote.creditNoteNumber ?? link.xeroObjectNumber ?? null,
           role: "REFUND_CREDIT_NOTE",
           active: link.active,
-          metadata: {
-            status: creditNote.status ?? null,
-            total: creditNote.total ?? null,
-            appliedAmount: creditNote.appliedAmount ?? null,
-            remainingCredit: creditNote.remainingCredit ?? null,
-          },
+          // #4288: stamped with its UpdatedDateUTC. `active` was read before
+          // the fetch; a void committed since is kept under the row lock.
+          metadata: xeroCreditNoteSnapshotMetadata(creditNote),
           mergeMetadata: true,
         });
         result.updatedLinks += 1;

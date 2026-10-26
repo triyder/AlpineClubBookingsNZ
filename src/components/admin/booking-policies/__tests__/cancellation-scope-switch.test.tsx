@@ -9,6 +9,7 @@ import {
   waitFor,
 } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { expectToHoldFocus } from "@/lib/__tests__/helpers/focus";
 
 // #2142 review: the rest of this suite mocks `useLodgeOptions` to ZERO lodges,
 // so `PolicyScopeSelect` renders nothing and no scope-switch path is exercised
@@ -382,6 +383,46 @@ describe("in-flight scope changes cannot re-target a click (#2142 review)", () =
     // Still exactly where the admin actually is.
     expect(screen.getByText("Lodge Two uses the club-wide rules")).toBeTruthy();
     expect(writeCalls(fetchMock)).toHaveLength(0);
+  });
+
+  // #4115: the editor opens only after the seed fetch, so the reveal into it
+  // runs after an await. It may move focus only if the admin is still on
+  // "Create override" (now unmounted) — not if they moved on meanwhile.
+  it("lands in the new override's first field when focus stayed on Create override", async () => {
+    stubDeferrable();
+    await goToLodgeOne();
+
+    const create = screen.getByRole("button", {
+      name: "Create override for this lodge",
+    });
+    create.focus();
+    fireEvent.click(create);
+
+    const region = await screen.findByRole("region", {
+      name: "Lodge One Override",
+    });
+    const firstField = region.querySelector<HTMLElement>(
+      "input:not([disabled])",
+    );
+    await expectToHoldFocus(firstField!);
+  });
+
+  it("leaves focus where the admin moved it while the seed fetch was in flight", async () => {
+    const { state } = stubDeferrable();
+    await goToLodgeOne();
+
+    state.holdClubGet = true;
+    const create = screen.getByRole("button", {
+      name: "Create override for this lodge",
+    });
+    create.focus();
+    fireEvent.click(create);
+    // The admin moves back to the scope select before the editor opens.
+    scopeSelect().focus();
+    state.releaseClubGet();
+
+    await screen.findByRole("region", { name: "Lodge One Override" });
+    await expectToHoldFocus(scopeSelect());
   });
 
   // `successMessage` is evaluated when the save RESOLVES, so reading the lodge

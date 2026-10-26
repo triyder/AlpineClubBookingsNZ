@@ -80,7 +80,13 @@ export async function sendBookingRequestApprovedEmail(params: {
   checkIn: Date;
   checkOut: Date;
   guestCount: number;
+  /** The booking's price: the `{{price}}` token, never what is owed. */
   priceCents: number;
+  /**
+   * What the pay link asks for (#4058, `INV-PAY-119`): the `{{amountDue}}`
+   * token and the "Amount due" row. Read through `readBookingAmountOwed`.
+   */
+  amountDueCents: number;
   bookingReference: string;
   expiresAt: Date;
   // Lodge the request is for (multi-lodge): overlays that lodge's
@@ -104,7 +110,7 @@ export async function sendBookingRequestApprovedEmail(params: {
       checkIn: params.checkIn,
       checkOut: params.checkOut,
       guestCount: params.guestCount,
-      priceCents: params.priceCents,
+      amountDueCents: params.amountDueCents,
       expiresAt: params.expiresAt,
     }, format)),
     bookingContext: classifyBookingOwnerContext(params.bookingContext),
@@ -118,6 +124,8 @@ export async function sendBookingRequestApprovedEmail(params: {
       guestCount: params.guestCount,
       priceCents: params.priceCents,
       price: formatMoneyCents(params.priceCents, format),
+      amountDueCents: params.amountDueCents,
+      amountDue: formatMoneyCents(params.amountDueCents, format),
       bookingReference: params.bookingReference,
       // PERSISTED zone, matching the HTML body two blocks up (#2870, CT-4).
       // A saved body override re-renders the WHOLE email from this object
@@ -180,7 +188,13 @@ export async function sendSplitGuestPaymentLinkEmail(params: {
   checkIn: Date;
   checkOut: Date;
   guestCount: number;
+  /** The booking's price: the `{{price}}` token, never what is owed. */
   priceCents: number;
+  /**
+   * What the pay link asks for (#4058, `INV-PAY-119`): the `{{amountDue}}`
+   * token and the "Amount due" row. Read through `readBookingAmountOwed`.
+   */
+  amountDueCents: number;
   bookingReference: string;
   expiresAt: Date;
   lodgeId?: string | null;
@@ -200,7 +214,7 @@ export async function sendSplitGuestPaymentLinkEmail(params: {
       checkIn: params.checkIn,
       checkOut: params.checkOut,
       guestCount: params.guestCount,
-      priceCents: params.priceCents,
+      amountDueCents: params.amountDueCents,
       expiresAt: params.expiresAt,
     }, format)),
     bookingContext: classifyBookingOwnerContext(params.bookingContext),
@@ -214,6 +228,8 @@ export async function sendSplitGuestPaymentLinkEmail(params: {
       guestCount: params.guestCount,
       priceCents: params.priceCents,
       price: formatMoneyCents(params.priceCents, format),
+      amountDueCents: params.amountDueCents,
+      amountDue: formatMoneyCents(params.amountDueCents, format),
       bookingReference: params.bookingReference,
       // PERSISTED zone — see the identical note on `booking-request-approved`
       // above. Same value, same override branch, same defect.

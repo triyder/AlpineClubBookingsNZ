@@ -89,7 +89,9 @@ const fakePrisma = vi.hoisted(() => {
     where: Record<string, unknown>
   ): boolean => {
     if (where.localModel !== undefined && row.localModel !== where.localModel) return false;
-    if (where.localId !== undefined && row.localId !== where.localId) return false;
+    const localIdFilter = where.localId as string | { in?: string[] } | undefined;
+    if (typeof localIdFilter === "string" && row.localId !== localIdFilter) return false;
+    if (localIdFilter && typeof localIdFilter === "object" && localIdFilter.in && !localIdFilter.in.includes(row.localId)) return false;
     if (where.xeroObjectType !== undefined && row.xeroObjectType !== where.xeroObjectType) return false;
     if (where.role !== undefined && !matchesRole(row.role, where.role)) return false;
     if (typeof where.active === "boolean" && row.active !== where.active) return false;
@@ -97,8 +99,9 @@ const fakePrisma = vi.hoisted(() => {
     if (idFilter?.in && !idFilter.in.includes(row.id)) return false;
     const objectIdFilter = where.xeroObjectId as
       | string
-      | { not?: string }
+      | { not?: string; in?: string[] }
       | undefined;
+    if (objectIdFilter && typeof objectIdFilter === "object" && objectIdFilter.in && !objectIdFilter.in.includes(row.xeroObjectId)) return false;
     if (typeof objectIdFilter === "string" && row.xeroObjectId !== objectIdFilter) return false;
     if (
       objectIdFilter &&
@@ -115,6 +118,8 @@ const fakePrisma = vi.hoisted(() => {
 
   const client = {
     member: { findMany: async () => [] },
+    // #3924 round 4: the cash evidence's paid-another-way read finds none here.
+    manualRefundTask: { findMany: async () => [] },
     memberSubscription: { findMany: async () => [] },
     memberCredit: {
       groupBy: async () => [],
@@ -204,12 +209,51 @@ const fakePrisma = vi.hoisted(() => {
         Object.assign(row, args.data);
         return { ...row };
       },
+      updateMany: async (args: {
+        where: { id: string; xeroRefundCreditNoteId?: string };
+        data: { xeroRefundCreditNoteId?: string | null };
+      }) => {
+        const row = state.payments.find(
+          (payment) =>
+            payment.id === args.where.id &&
+            (args.where.xeroRefundCreditNoteId === undefined ||
+              payment.xeroRefundCreditNoteId === args.where.xeroRefundCreditNoteId),
+        );
+        if (!row) return { count: 0 };
+        Object.assign(row, args.data);
+        return { count: 1 };
+      },
     },
     xeroObjectLink: {
+      // The unique-key reservation inserts only a missing identity. An existing
+      // live or voided mirror must keep all its fields, just as ON CONFLICT
+      // DO NOTHING does; concurrency itself is covered by the realdb suite.
+      createMany: async (args: {
+        data: Array<Pick<FakeLinkRow, "localModel" | "localId" | "xeroObjectType" | "xeroObjectId" | "role" | "active">>;
+        skipDuplicates: boolean;
+      }) => {
+        let count = 0;
+        for (const input of args.data) {
+          const { active, ...key } = input;
+          if (state.links.some((row) => matchesLinkWhere(row, key))) {
+            if (args.skipDuplicates) continue;
+            throw new Error("Duplicate XeroObjectLink natural key");
+          }
+          state.linkIdCounter += 1;
+          state.links.push({
+            id: `link_${state.linkIdCounter}`, ...key, active,
+            xeroObjectNumber: null, xeroObjectUrl: null, metadata: null,
+            createdAt: new Date(), updatedAt: new Date(),
+          });
+          count += 1;
+        }
+        return { count };
+      },
       findMany: async (args: { where: Record<string, unknown> }) =>
         state.links.filter((row) => matchesLinkWhere(row, args.where)).map((row) => ({ ...row })),
       findUnique: async (args: {
         where: {
+          id?: string;
           localModel_localId_xeroObjectType_xeroObjectId_role?: {
             localModel: string;
             localId: string;
@@ -219,6 +263,11 @@ const fakePrisma = vi.hoisted(() => {
           };
         };
       }) => {
+        // #4161: the heal re-reads its link by id under the row lock.
+        if (args.where.id) {
+          const byId = state.links.find((link) => link.id === args.where.id);
+          return byId ? { ...byId } : null;
+        }
         const key = args.where.localModel_localId_xeroObjectType_xeroObjectId_role;
         if (!key) return null;
         const row = state.links.find(
@@ -285,8 +334,11 @@ const fakePrisma = vi.hoisted(() => {
     },
     xeroSyncOperation: {
       findFirst: async (args: {
-        where: { localId?: string; xeroObjectId?: string | { not: null } };
+        where: { localId?: string; xeroObjectId?: string | { not: null }; OR?: unknown[] };
       }) => {
+        // #4161: the heal's still-minting refusal (status branches). Every
+        // fixture operation here is a finished create, so none can still mint.
+        if (args.where.OR) return null;
         const rows = state.operations
           .filter(
             (row) =>
@@ -303,6 +355,8 @@ const fakePrisma = vi.hoisted(() => {
       findMany: async () => [],
     },
     $transaction: async <T>(fn: (tx: unknown) => Promise<T>) => fn(client),
+    // #4161: the heal's link row lock; the fake runs one writer at a time.
+    $executeRaw: async () => 1,
   };
   return client;
 });
@@ -523,6 +577,9 @@ describe("Stripe per-delta refund notes vs canonical cleanup and reconciliation 
     });
 
     expect(activeRefundNoteIds()).toEqual(["cn_90"]);
+    // The scalar named the voided note. It must not stay there, or the nightly
+    // report calls the inactive mirror a missing refund credit note.
+    expect(state.payments[0].xeroRefundCreditNoteId).toBe("cn_90");
     expect(await sumCoveredRefundCreditNoteCents("pay_1")).toBe(90);
 
     // The detector now sees the honest 10c shortfall and the daily
@@ -556,8 +613,20 @@ describe("Stripe per-delta refund notes vs canonical cleanup and reconciliation 
 
     expect(cleanup.deactivatedLinkIds).toHaveLength(1);
     expect(cleanup.byCategory.paymentRefundCreditNotes).toBe(1);
+    expect(cleanup.cancelledRefundCreditNoteMirrors).toBe(1);
     expect(activeRefundNoteIds()).toEqual(["cn_90"]);
     expect(await sumCoveredRefundCreditNoteCents("pay_1")).toBe(90);
+    // #4161: healed through the link write, so the pointer that named the
+    // voided note moves to the newest other live note (#4046) and its other
+    // metadata survives the merge.
+    expect(state.payments[0].xeroRefundCreditNoteId).toBe("cn_90");
+    expect(cn10!.metadata).toEqual({ amountCents: 10, watermarkCents: 100, status: "VOIDED" });
+
+    // A second run finds nothing left to heal and moves nothing.
+    const again = await cleanupStaleCanonicalXeroObjectLinks();
+    expect(again.cancelledRefundCreditNoteMirrors).toBe(0);
+    expect(again.deactivatedLinkIds).toEqual([]);
+    expect(state.payments[0].xeroRefundCreditNoteId).toBe("cn_90");
   });
 
   it("an account-credit-only cancellation queues NO refund note across repeated reconciliation cycles (#2902 acceptance)", async () => {

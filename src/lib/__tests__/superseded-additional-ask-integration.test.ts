@@ -40,6 +40,8 @@ const ledger = vi.hoisted(() => ({
   transactions: [] as Row[],
   operations: [] as Row[],
   clock: 0,
+  /** The database's insertion sequence (#4132): every new ledger row takes the next value. */
+  seq: 0,
 }));
 
 const stripe = vi.hoisted(() => ({
@@ -57,7 +59,7 @@ vi.mock("@/lib/prisma", () => {
     the supersede query would otherwise over-select, and this witness would keep
     passing over a ledger that no longer behaves like Postgres.
   */
-  const OPERATORS = new Set(["in", "not", "gt", "lt", "lte"]);
+  const OPERATORS = new Set(["in", "notIn", "not", "gt", "lt", "lte"]);
   const refuse = (what: string): never => {
     throw new Error(`in-memory ledger: unsupported ${what}; teach the fake before relying on it`);
   };
@@ -65,9 +67,11 @@ vi.mock("@/lib/prisma", () => {
     for (const key of Object.keys(args)) if (!allowed.includes(key)) refuse(`argument "${key}"`);
   };
 
-  const matches = (row: Row, where: Row = {}): boolean =>
+  const matches: (row: Row, where?: Row) => boolean = (row, where = {}) =>
     Object.entries(where).every(([field, condition]) => {
-      if (field === "AND" || field === "OR" || field === "NOT") refuse(`combinator "${field}"`);
+      // #4036 review: the ask write's guard (`writePaymentIntentTransaction`) reads OR.
+      if (field === "OR") return (condition as Row[]).some((branch) => matches(row, branch));
+      if (field === "AND" || field === "NOT") refuse(`combinator "${field}"`);
       const value = row[field];
       if (condition !== null && typeof condition === "object" && !(condition instanceof Date)) {
         const c = condition as Record<string, unknown>;
@@ -75,6 +79,8 @@ vi.mock("@/lib/prisma", () => {
           if (!OPERATORS.has(operator)) refuse(`operator "${operator}" on "${field}"`);
         }
         if ("in" in c && !(c.in as unknown[]).includes(value)) return false;
+        // #4081: the same write splits on whether the row is captured.
+        if ("notIn" in c && (c.notIn as unknown[]).includes(value)) return false;
         if ("not" in c && (value === null || value === c.not)) return false;
         if ("gt" in c && !((value as number) > (c.gt as number))) return false;
         if ("lt" in c && !((value as number) < (c.lt as number))) return false;
@@ -102,7 +108,12 @@ vi.mock("@/lib/prisma", () => {
     ...payment,
     transactions: ledger.transactions
       .filter((transaction) => transaction.paymentId === payment.id)
-      .sort((a, b) => (a.createdAt as Date).getTime() - (b.createdAt as Date).getTime())
+      // LEDGER_ROWS_OLDEST_FIRST (#4132): createdAt, then insertion order.
+      .sort(
+        (a, b) =>
+          (a.createdAt as Date).getTime() - (b.createdAt as Date).getTime() ||
+          (a.insertionSeq as number) - (b.insertionSeq as number),
+      )
       .map((transaction) => ({ ...transaction })),
   });
 
@@ -116,10 +127,15 @@ vi.mock("@/lib/prisma", () => {
     withdrawnAt: null,
     carriedAskCents: 0,
     reason: null,
+    bookingModificationId: null,
+    insertionSeq: ++ledger.seq,
   });
 
   return {
     prisma: {
+      // #4217: the ledger writers lock the Payment row first; a single-writer
+      // fake has nothing to wait on.
+      $executeRaw: async () => 0,
       payment: {
         findUnique: async (args: { where: Row; include?: Row }) => {
           onlyArgs(args, ["where", "include"]);
@@ -128,7 +144,10 @@ vi.mock("@/lib/prisma", () => {
             onlyArgs(include, ["transactions"]);
             // `withTransactions` sorts oldest first, which is the only order
             // reconcile asks for; anything else would be answered wrongly.
-            if (JSON.stringify(include.transactions) !== JSON.stringify({ orderBy: { createdAt: "asc" } })) {
+            if (
+              JSON.stringify(include.transactions) !==
+              JSON.stringify({ orderBy: [{ createdAt: "asc" }, { insertionSeq: "asc" }] })
+            ) {
               refuse(`include ${JSON.stringify(include)}`);
             }
           }
@@ -166,6 +185,25 @@ vi.mock("@/lib/prisma", () => {
           const hit = ledger.transactions.filter((row) => matches(row, where));
           hit.forEach((row) => apply(row, data));
           return { count: hit.length };
+        },
+        // #4036 review: `ON CONFLICT DO NOTHING` on the intent's unique id.
+        createMany: async (args: { data: Row[]; skipDuplicates?: boolean }) => {
+          onlyArgs(args, ["data", "skipDuplicates"]);
+          if (args.skipDuplicates !== true) refuse("createMany without skipDuplicates");
+          let count = 0;
+          for (const data of args.data) {
+            if (ledger.transactions.some((row) => row.stripePaymentIntentId === data.stripePaymentIntentId)) continue;
+            ledger.transactions.push({ id: `txn_${ledger.transactions.length + 1}`, ...transactionDefaults(), createdAt: tick(), ...data });
+            count += 1;
+          }
+          return { count };
+        },
+        // #3954 round 7: the door re-reads its new intent's row before it
+        // queues anything on it (`isMintedAskStillLive`).
+        findUnique: async (args: { where: Row; select?: Row }) => {
+          onlyArgs(args, ["where", "select"]);
+          const row = ledger.transactions.find((candidate) => matches(candidate, args.where));
+          return row ? project(row, args.select) : null;
         },
       },
       paymentRecoveryOperation: {
@@ -251,6 +289,7 @@ function seedPaidBooking() {
     carriedAskCents: 0,
     reason: null,
     createdAt: new Date(Date.UTC(2026, 7, 1)),
+    insertionSeq: ++ledger.seq,
   });
 }
 
@@ -283,6 +322,7 @@ async function editUp(modificationId: string, priceDiffCents: number, changeFeeC
     organiserChildRefund: null,
     paymentId: PAYMENT_ID,
     additionalAsk,
+    retiredAdditionalAsks: [], // #3954: an increase retires nothing by reduction.
     hasSucceededPayment: true,
     hasIssuedXeroInvoice: false,
     paymentCustomerId: "cus_3341",
@@ -297,8 +337,7 @@ async function editUp(modificationId: string, priceDiffCents: number, changeFeeC
     format: CLUB_FORMAT_TEST,
     bookingId: BOOKING_ID,
     result: context,
-    reason: "modification_price_increase",
-    idempotencyKey: `mod_${BOOKING_ID}_${modificationId}`,
+    door: "dateChange",
     failureMessage: "mint failed",
   });
 }
@@ -315,6 +354,7 @@ beforeEach(() => {
   ledger.transactions.length = 0;
   ledger.operations.length = 0;
   ledger.clock = 0;
+  ledger.seq = 0;
   let minted = 0;
   stripe.createPaymentIntent.mockReset().mockImplementation(async () => {
     minted += 1;
@@ -394,5 +434,45 @@ describe("mint -> supersede -> resulting ask, every seam real (#3341, INV-OPS-01
     // Row written before the supersede (#3340 fix round), so the reconcile the
     // mint ran reads the new ask as the latest ADDITIONAL, not the retired one.
     expect(payment()).toMatchObject({ additionalAmountCents: 14000, additionalPaymentIntentId: "pi_add_2" });
+  });
+});
+
+/*
+  #4036 review: an edit's ask write never lands on a row naming another edit.
+  Whatever handed the minter an intent already recorded for edit 1 - a runner's
+  adoption, or Stripe answering a replayed key - edit 2's write refuses, and its
+  door keeps the debt on a recovery row instead.
+*/
+describe("an ask's ledger write keeps each edit's row its own (#4036 review)", () => {
+  it("MUTATION: refuses an intent already recorded for another edit - the row is untouched and the debt is kept", async () => {
+    await editUp("mod_1", 7000);
+    const before = { ...additionalRows()[0] };
+    expect(before).toMatchObject({ stripePaymentIntentId: "pi_add_1", bookingModificationId: "mod_1", amountCents: 7000 });
+    stripe.createPaymentIntent.mockResolvedValueOnce({ id: "pi_add_1", client_secret: "pi_add_1_secret" });
+
+    const second = await editUp("mod_2", 7000);
+
+    expect(second.additionalPaymentIntentId).toBeUndefined();
+    expect(additionalRows()).toEqual([before]);
+    expect(ledger.operations).toEqual([
+      expect.objectContaining({ idempotencyKey: "payment_recovery_additional_intent_mod_2", amountCents: 14000, status: PaymentRecoveryOperationStatus.PENDING }),
+    ]);
+  });
+
+  it("still claims a row for the intent that names no edit (a webhook wrote it first)", async () => {
+    ledger.transactions.push({
+      id: "txn_webhook", paymentId: PAYMENT_ID, kind: PaymentTransactionKind.ADDITIONAL, source: PaymentSource.STRIPE,
+      stripePaymentIntentId: "pi_add_1", amountCents: 7000, refundedAmountCents: 0, status: PaymentStatus.PENDING,
+      paymentMethodId: null, reference: null, xeroInvoiceId: null, xeroInvoiceNumber: null, withdrawnAt: null,
+      carriedAskCents: 0, reason: null, bookingModificationId: null, createdAt: new Date(Date.UTC(2026, 7, 2)),
+      insertionSeq: ++ledger.seq,
+    });
+
+    const first = await editUp("mod_1", 7000);
+
+    expect(first.additionalPaymentIntentId).toBe("pi_add_1");
+    expect(additionalRows()).toEqual([
+      expect.objectContaining({ id: "txn_webhook", bookingModificationId: "mod_1", reason: "date_change_price_increase" }),
+    ]);
   });
 });

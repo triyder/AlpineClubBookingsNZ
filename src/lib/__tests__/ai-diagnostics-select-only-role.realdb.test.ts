@@ -1130,7 +1130,8 @@ describe("diagnostics privilege proof DB safety guard (#2374)", () => {
       // The two credential surfaces, named individually because they are the ones
       // ADR-007 §1 puts permanently out of scope. `IntegrationCredential` holds
       // encrypted provider secrets and, since #3454, the Xero OAuth token set;
-      // `XeroToken` holds the same tokens, encrypted, for the blue-green window.
+      // `XeroToken` may still hold the last token ciphertext the previous release
+      // wrote, until #3806 R3 drops it.
       // No tool pack may ever grant either.
       ["IntegrationCredential", `SELECT * FROM public."IntegrationCredential" LIMIT 1`],
       ["XeroToken", `SELECT * FROM public."XeroToken" LIMIT 1`],

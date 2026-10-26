@@ -1,3 +1,4 @@
+import { exactContains } from "@/lib/prisma-exact-prefix";
 import "server-only";
 import { Prisma } from "@prisma/client";
 
@@ -76,8 +77,8 @@ export async function listClubPostsForAdmin(options: {
   const search: Prisma.ClubPostWhereInput = options.q
     ? {
         OR: [
-          { content: { contains: options.q, mode: "insensitive" } },
-          { authorName: { contains: options.q, mode: "insensitive" } },
+          { content: exactContains(options.q, "insensitive") },
+          { authorName: exactContains(options.q, "insensitive") },
         ],
       }
     : {};

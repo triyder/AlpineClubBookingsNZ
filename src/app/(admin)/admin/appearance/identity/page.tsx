@@ -1,6 +1,9 @@
 import { BackLink } from "@/components/admin/back-link";
 import { ClubContactPanel } from "@/components/admin/club-contact-panel";
-import { ClubIdentityPanel } from "@/components/admin/club-identity-panel";
+import {
+  CLUB_IDENTITY_TITLE,
+  ClubIdentityPanel,
+} from "@/components/admin/club-identity-panel";
 import { LodgeDetailsPanel } from "@/components/admin/lodge-details-panel";
 import {
   Card,
@@ -26,7 +29,7 @@ export default function ClubIdentityAdminPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Club identity</CardTitle>
+          <CardTitle>{CLUB_IDENTITY_TITLE}</CardTitle>
           <CardDescription>
             Overrides the file configuration. Blank fields fall back to the
             configured defaults.

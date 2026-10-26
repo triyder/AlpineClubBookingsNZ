@@ -842,6 +842,12 @@ describe("review finding source/schema contracts", () => {
         "src/lib/booking-batch-modification-service.ts",
         "export async function modifyBookingBatch",
       ],
+      // #3750: the finished-stay change-request executor claims the request
+      // and runs the batch modification on one transaction, global first.
+      [
+        "src/lib/booking-change-request-execution.ts",
+        "export async function approveAndExecuteLockedPeriodChangeRequest",
+      ],
       // #1881 — previously-unpinned two-tier writers (money/status + capacity).
       // The date-modification services both claim beds under a per-lodge lock
       // after the global lock(1).
@@ -1059,10 +1065,10 @@ describe("review finding source/schema contracts", () => {
     const workflow = readRepoFile(".github/workflows/ci.yml");
     expect(workflow).toContain("concurrency-race-postgres:");
     expect(workflow).toContain("POSTGRES_DB: concurrency_race_1881");
-    expect(workflow).toContain("55442:5432");
+    expect(workflow).toContain("127.0.0.1:55442-65535:5432");
     expect(workflow).toContain('RUN_CONCURRENCY_RACE_TESTS: "1"');
     expect(workflow).toContain(
-      "CONCURRENCY_RACE_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:55442/concurrency_race_1881"
+      "CONCURRENCY_RACE_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:${{ job.services.concurrency-race-postgres.ports[5432] }}/concurrency_race_1881"
     );
     const migrateStep = workflow.indexOf(
       "name: Migrate dedicated advisory-lock race database"
@@ -1074,7 +1080,7 @@ describe("review finding source/schema contracts", () => {
     expect(raceStep).toBeGreaterThan(migrateStep);
     const migrationBlock = workflow.slice(migrateStep, raceStep);
     expect(migrationBlock).toContain(
-      "DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:55442/concurrency_race_1881"
+      "DATABASE_URL: ${{ env.CONCURRENCY_RACE_DATABASE_URL }}"
     );
     expect(migrationBlock).toContain("run: pnpm exec prisma migrate deploy");
     expect(migrationBlock).not.toContain("drift_main");
@@ -1118,9 +1124,7 @@ describe("review finding source/schema contracts", () => {
       workflow.indexOf("      - name:", mergeRaceStep + 1)
     );
     expect(stepBlock).toContain('RUN_CONCURRENCY_RACE_TESTS: "1"');
-    expect(stepBlock).toContain(
-      "CONCURRENCY_RACE_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:55442/concurrency_race_1881"
-    );
+    expect(stepBlock).not.toContain("CONCURRENCY_RACE_DATABASE_URL:");
     expect(stepBlock).toContain(
       "pnpm exec vitest run src/lib/__tests__/member-merge-shared-double-races.realdb.test.ts"
     );
@@ -1159,9 +1163,7 @@ describe("review finding source/schema contracts", () => {
       workflow.indexOf("      - name:", raceStep + 1)
     );
     expect(stepBlock).toContain('RUN_CONCURRENCY_RACE_TESTS: "1"');
-    expect(stepBlock).toContain(
-      "CONCURRENCY_RACE_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:55442/concurrency_race_1881"
-    );
+    expect(stepBlock).not.toContain("CONCURRENCY_RACE_DATABASE_URL:");
     expect(stepBlock).toContain(
       "pnpm exec vitest run src/lib/__tests__/page-content-delete-race.realdb.test.ts"
     );
@@ -1335,12 +1337,19 @@ describe("review finding source/schema contracts", () => {
     // so deleting this step would still fail on an app error. What would vanish
     // silently is `tsconfig.test.json` and `tsconfig.e2e.json`, the two
     // projects the build never reads — which is precisely the gap #2875 was
-    // filed about.
+    // filed about. Since #4425 Typecheck is its own job, so the guard follows
+    // it there and pins the bridge that keeps it inside the required check.
+    const typecheck = jobBlock(workflow, "typecheck");
+    expect(
+      stepBlock(typecheck, "Typecheck"),
+      "the Typecheck job must still run Typecheck (#2875): it is the only gate that " +
+        "reads the test and e2e projects, which `next build` never compiles"
+    ).toContain("run: pnpm run typecheck");
+    expect(typecheck).toContain("    name: Typecheck\n");
     expect(
       job,
-      "the verify job must still run Typecheck (#2875): it is the only gate that " +
-        "reads the test and e2e projects, which `next build` never compiles"
-    ).toContain("- name: Typecheck");
+      "verify must require the Typecheck job (#4425), or a type error stops gating merges"
+    ).toMatch(/run: node scripts\/ci\/require-test-shards\.mjs .*--job Typecheck /);
   });
 
   it("wraps age-up membership upgrades and token issuance in a transaction", () => {

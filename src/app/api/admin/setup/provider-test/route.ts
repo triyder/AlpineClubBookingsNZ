@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { XERO_TOKEN_ROW_ORDER } from "@/lib/xero-token-row-order";
 import * as Sentry from "@sentry/nextjs";
 import { z } from "zod";
 import { logAudit } from "@/lib/audit";
-import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
+import { readXeroConnection } from "@/lib/xero-connection";
 import { getStripe } from "@/lib/stripe";
 import { getOperationalStripeSecretKey } from "@/lib/stripe-config";
 
@@ -78,10 +77,7 @@ async function testSentry() {
 }
 
 async function testOperationalXero() {
-  const token = await prisma.xeroToken.findFirst({
-    orderBy: XERO_TOKEN_ROW_ORDER,
-    select: { expiresAt: true, tenantId: true },
-  });
+  const token = await readXeroConnection();
   if (!token) {
     throw new Error("Operational Xero is not connected");
   }

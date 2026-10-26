@@ -19,6 +19,7 @@ import {
   type MemberGuestSettingsValues,
 } from "@/lib/member-guest-settings";
 import { prisma } from "@/lib/prisma";
+import { exactPrefix } from "@/lib/prisma-exact-prefix";
 import {
   isDeletedAccountRecord,
   notDeletedAccountWhere,
@@ -197,15 +198,15 @@ export async function searchMemberGuestCandidatesByName(params: {
     parsed.terms.kind === "SINGLE"
       ? {
           OR: [
-            { firstName: { startsWith: parsed.terms.prefix, ...insensitive } },
-            { lastName: { startsWith: parsed.terms.prefix, ...insensitive } },
+            { firstName: { ...exactPrefix(parsed.terms.prefix), ...insensitive } },
+            { lastName: { ...exactPrefix(parsed.terms.prefix), ...insensitive } },
           ],
         }
       : {
           AND: [
-            { firstName: { startsWith: parsed.terms.firstPrefix, ...insensitive,
+            { firstName: { ...exactPrefix(parsed.terms.firstPrefix), ...insensitive,
               }, },
-            { lastName: { startsWith: parsed.terms.lastPrefix, ...insensitive }, },
+            { lastName: { ...exactPrefix(parsed.terms.lastPrefix), ...insensitive }, },
           ],
         };
 

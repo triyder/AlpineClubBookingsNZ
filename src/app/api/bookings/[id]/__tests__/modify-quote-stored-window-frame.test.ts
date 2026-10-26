@@ -126,7 +126,6 @@ vi.mock("@/lib/booking-modify", () => ({
   isMemberWholeLodgeBooking: vi.fn().mockResolvedValue(false),
   resolveGuestMemberLinks: vi.fn().mockReturnValue([]),
   resolveGuestNameUpdates: vi.fn().mockReturnValue([]),
-  lockedNightPricesForGuest: vi.fn().mockReturnValue(null),
   // #3531: the route reaches the reader through this wrapper; the null it
   // answers is exactly what the reader stub above answers.
   editedGuestPricingLocks: vi.fn().mockReturnValue({ lockedNightPrices: null }),
@@ -408,13 +407,14 @@ describe("modify-quote prices the stored window, not a projected one (CT-4, #287
 
     expect(body.newTotalPriceCents).toBe(SHOULDER_NIGHT_CENTS * 2);
     expect(body.priceDiffCents).toBe(SHOULDER_NIGHT_CENTS * 2 - STORED_TOTAL_CENTS);
-    // Same night COUNT, cheaper nights, and the guest's range really did move —
-    // so the repricing line is the "Guest stay range change" wording rather than
-    // "Date change: N nights → M nights". Either is the branch firing; what
-    // matters is that it fired and carries the real difference.
+    // Same night COUNT, cheaper nights, and the whole booking moved — so the
+    // repricing line is "Date change (rate difference)" (#4197: a booking move
+    // reads as a date change before a guest-range change) rather than "Date
+    // change: N nights → M nights". Either is the branch firing; what matters
+    // is that it fired and carries the real difference.
     expect(body.itemizedChanges).toEqual([
       {
-        label: "Guest stay range change",
+        label: "Date change (rate difference)",
         amountCents: SHOULDER_NIGHT_CENTS * 2 - STORED_TOTAL_CENTS,
       },
     ]);

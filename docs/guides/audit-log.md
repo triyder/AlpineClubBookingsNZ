@@ -15,6 +15,19 @@ detail, and drill through to the member or record it references, but you cannot
 edit or delete an entry. Retention and optional archival are governed by the
 [`AUDIT_RETENTION_ARCHIVE_RUNBOOK.md`](../AUDIT_RETENTION_ARCHIVE_RUNBOOK.md).
 
+An entry kept as evidence of an incident skips its normal retention period
+and is deleted **10 years after it was recorded**, from the audit log and from
+its archive alike (#3939). An entry whose normal retention is longer than that
+keeps it: preservation never shortens how long an entry is kept. The app marks
+these entries itself: today, the entry for an admin capacity hold or
+force-confirm that overbooked the lodge. Such an entry also keeps its IP address
+and browser details. A preserved entry of a kind that is normally archived still
+moves to the archive after 12 months, with those details; that relocates it, and
+the 10-year limit applies there too. The Audit Log screen does not mark which
+entries are preserved; the
+[runbook](../AUDIT_RETENTION_ARCHIVE_RUNBOOK.md#incident-preserved-rows-are-kept-for-ten-years-3939)
+explains the rule and has a read-only query to count them.
+
 ## When you'd use it
 
 - A member asks "who changed my booking / membership / family group, and when?"
@@ -35,6 +48,9 @@ edit or delete an entry. Retention and optional archival are governed by the
    **Member** (and set **Member Scope** to *Involves*, *Actor*, or *Subject*),
    set a **date range**, or filter by **Outcome**, **Severity**, or **Entity**.
    The free-text **Search** matches the action, summary, request ID, or entity.
+   Like the other admin text searches, it ignores letter case and treats `\`,
+   `_` and `%` as ordinary characters. Searching for `john_smith` finds that
+   text, rather than also finding `johnXsmith`.
 3. Click a row to expand it for the **Details**, **Metadata**, request ID, IP,
    user agent, retention class, and every drill-down target. Use **Reset** to
    restore search, filters, and page while keeping unrelated URL context.
@@ -492,7 +508,7 @@ and the data download rather than every page that happens to quote an entry.
 
 `Category` is optional in the database, and **82 of the platform's places that
 record an audit entry used not to set one**. As of this release **none do**: all
-501 now record a category, measured on every build rather than estimated.
+520 now record a category, measured on every build rather than estimated.
 
 **And a new one can no longer forget.** Recording an entry without a category is
 now refused three separate ways. Giving the 82 places a category and stopping the
@@ -514,7 +530,7 @@ that order and both landing in this release; this is the second:
    maintenance script outside the normal path.
 
 The practical effect for you: an entry recorded the ordinary way — through the
-platform’s own recording step, which is how every one of the 501 places does it —
+platform’s own recording step, which is how every one of the 520 places does it —
 cannot be born without a category any more. **It is not a mathematical
 guarantee**, and it is worth saying so rather than overclaiming: someone writing
 directly to the database table in a migration, or building a query by hand, is
@@ -636,6 +652,26 @@ reviewer on it, so the activity entry is the only attribution. Seven years is a
 long time and nothing goes before 2033, but if the club wants that particular
 record kept permanently, it is a one-line change at the writer and it should be
 made deliberately rather than discovered in 2033.
+
+**Older entries with no severity are no longer kept by accident (#3524).** An
+old entry that has no retention class and was never given a severity used to
+be kept indefinitely, even after its expiry date had passed. That was a side
+effect of how the database reads an empty value, not a choice anyone made. Such
+an entry is now treated as not critical and is deleted when its expiry date
+passes, like its peers. The first nightly run after the upgrade deletes the
+ones already past their date, once. Entries recorded with **no** expiry date
+are unaffected and are still kept. The
+[retention runbook](../AUDIT_RETENTION_ARCHIVE_RUNBOOK.md#unclassified-rows-with-no-severity-3524)
+has the read-only query that counts them on a copy before you upgrade.
+
+**An entry with an unrecognised retention class is no longer kept forever
+(#3940).** The retention class is stored as plain text, so a value the app does
+not recognise (a typo, a hand-written database change, a restored backup) used
+to match no rule and was never deleted. Such an entry is now treated exactly
+like one with no class: deleted at its expiry date unless its severity is
+critical, which keeps it seven years; incident evidence keeps its ten-year
+floor, and an entry with no expiry date is still kept. A census keeps the app's
+own writers on the four known classes.
 
 ### Booking-policy entries
 
@@ -812,6 +848,55 @@ Only the codes of family guests, or of guests the booking treats as confirmed
 predates guest consent), are ever read, and the booker sees only each code and
 its benefit. The
 booker's own activity history shows the entry's title and nothing else.
+
+### Late card payments refunded automatically (#4131)
+
+When a card payment goes through after its booking was cancelled, the app
+refunds it automatically and writes one `booking.payment.refunded_after_cancellation`
+entry, category `payment`. The refund always comes off that payment's own card
+charge. On the booking's own payment the details add up: `amountCents`, the
+whole late payment, is `refundedNowCents` plus `alreadyRefundedOnCaptureCents`
+when that is present.
+
+| Field | What it means |
+| --- | --- |
+| `refundId` | The Stripe refund this event made, or `null` when it sent nothing (then `noRefundSentReason` says why) |
+| `refundedNowCents` | What went back to the card now |
+| `alreadyRefundedOnCaptureCents` | Present only when part of the payment had already been refunded, for example in the Stripe dashboard. Not asked for again, and never taken from another card charge instead |
+| `recordLost` | Present (`true`) when the app could not save the "Refunded automatically" row at the time. The email still went out; the row is saved later, as below |
+| `recoveredLostRecord` | Present (`true`) only on an entry written late, because the server stopped before it could write this entry or send the email at the time of the refund. Then `refundedCents` is what Stripe shows went back, and the email is sent with it |
+
+**When the row is saved later (#4149).** If the "Refunded automatically" row
+could not be saved at the moment of the refund, the app saves it when Stripe
+sends the payment notice again, or overnight at the latest, and writes one
+`booking.payment.auto_refund_record_recovered` entry, category `payment`. It
+sends the email again unless the refund's own entry shows the row was saved
+then: the first email may have failed with the row, and a second copy is better
+than none.
+
+| Field | What it means |
+| --- | --- |
+| `paymentIntentId`, `refundId` | The late payment, and the first refund Stripe shows the app sent for it |
+| `amountCents` | The whole late payment |
+| `refundedCents` | What Stripe shows went back, across the refunds the app sent for it |
+| `kind` | `primary` for the booking's own payment, `modification_additional` for a payment for a change |
+| `refundTimeReport` | What the refund left at the time: `none` (the server stopped first, so the recovery wrote the refund's entry too), `record_lost` (its entry says the row could not be saved), or `reported` (an older entry from a refund whose row did save) |
+| `alertSent` | Whether this recovery sent the email |
+| `repairRefund` | Present (`true`) when the refund was the booking repair tool's own: its record is written as the repair tool writes it, with no "refunded automatically" entry or email |
+
+**A late payment refunded some other way (#4170).** If a card payment that
+arrived after its booking was cancelled is refunded outside the app - in the
+Stripe dashboard, say, even before Stripe's own "payment succeeded" notice
+reached the app - the app writes one
+`booking.payment.late_capture_refunded_outside_app` entry, category `payment`,
+severity `important`, with `paymentIntentId`, `refundIds`, `refundedCents` and
+`creditNoteQueued: false`, and emails everyone who can edit Finance, once for
+that payment (the email shows what was refunded outside the app, never the
+app's own refunds of it), through its own alert that cannot be switched off (*Late payment
+refunded outside the app - check Xero*); if that email could not be sent, the
+nightly check sends it. No Xero credit note is raised for it, because
+Xero never received that payment; record it by hand only if it was recorded
+there. A refund the app's own repair tool made is not one of these.
 
 ### Issue-report screenshot entries (#2703)
 

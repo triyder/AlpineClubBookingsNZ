@@ -35,6 +35,8 @@ const mocks = vi.hoisted(() => ({
   recordAutomaticCancelledBookingRefundTask: vi.fn(),
   sendAdminLateCaptureAutoRefundAlert: vi.fn(),
   sendAdminLateCaptureHandBackConflictAlert: vi.fn(),
+  onceEverKeys: [] as string[],
+  onceEverWins: { value: true },
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -57,6 +59,16 @@ vi.mock("@/lib/email", () => ({
     mocks.sendAdminLateCaptureAutoRefundAlert(...args),
   sendAdminLateCaptureHandBackConflictAlert: (...args: unknown[]) =>
     mocks.sendAdminLateCaptureHandBackConflictAlert(...args),
+}));
+
+// #4149: the double-payment arm is claimed once ever; here the claim is won and its send runs.
+vi.mock("@/lib/admin-alert-once", () => ({
+  sendAdminAlertOnceEver: async ({ key, send }: { key: string; send: () => Promise<unknown> }) => {
+    mocks.onceEverKeys.push(key);
+    if (!mocks.onceEverWins.value) return false;
+    await send();
+    return true;
+  },
 }));
 
 vi.mock("@/lib/logger", () => ({
@@ -503,6 +515,38 @@ describe("recordAutomaticLateCaptureRefund (#2773 — the record)", () => {
 
     const outcome = await recordAutomaticLateCaptureRefund(capture());
     expect(outcome.handCompletedAfterRefund).toBe(false);
+    // An operator's row, not this writer's: the lost-record recovery writes no entry for it (#4149).
+    expect(outcome.alreadyRecorded).toBe("hand-resolved");
+  });
+
+  it("passes the writer's answer through, so the lost-record recovery writes its entry only for a row it wrote (#4149)", async () => {
+    mocks.recordAutomaticCancelledBookingRefundTask.mockResolvedValueOnce({
+      closed: 0,
+      created: false,
+      alreadyRecorded: "self",
+      existingStatus: "DISMISSED",
+    });
+    expect((await recordAutomaticLateCaptureRefund(capture())).alreadyRecorded).toBe("self");
+
+    mocks.recordAutomaticCancelledBookingRefundTask.mockResolvedValueOnce({
+      closed: 0,
+      created: true,
+      alreadyRecorded: false,
+      existingStatus: null,
+    });
+    expect((await recordAutomaticLateCaptureRefund(capture())).alreadyRecorded).toBe(false);
+  });
+
+  it("dates a record written late by the Stripe refund's day, and leaves the date to the writer otherwise (#4149)", async () => {
+    const refundedOn = new Date("2026-06-25T03:00:00.000Z");
+    await recordAutomaticLateCaptureRefund(capture(), { completedAt: refundedOn });
+    expect(mocks.recordAutomaticCancelledBookingRefundTask).toHaveBeenLastCalledWith(
+      expect.objectContaining({ completedAt: refundedOn }),
+    );
+    await recordAutomaticLateCaptureRefund(capture());
+    expect(mocks.recordAutomaticCancelledBookingRefundTask).toHaveBeenLastCalledWith(
+      expect.objectContaining({ completedAt: undefined }),
+    );
   });
 });
 
@@ -511,6 +555,7 @@ describe("announceAutomaticLateCaptureRefund (#2773 / #2774 — one notification
     await announceAutomaticLateCaptureRefund(capture({ captureKind: "primary" }), {
       bookingDeleted: false,
       recorded: true,
+      alreadyRecorded: false,
       handCompletedAfterRefund: false,
     }, CLUB_FORMAT_TEST);
 
@@ -533,6 +578,7 @@ describe("announceAutomaticLateCaptureRefund (#2773 / #2774 — one notification
     await announceAutomaticLateCaptureRefund(capture(), {
       bookingDeleted: true,
       recorded: true,
+      alreadyRecorded: false,
       handCompletedAfterRefund: false,
     }, CLUB_FORMAT_TEST);
     expect(mocks.sendAdminLateCaptureAutoRefundAlert).toHaveBeenCalledWith(
@@ -540,13 +586,36 @@ describe("announceAutomaticLateCaptureRefund (#2773 / #2774 — one notification
     );
   });
 
+  it("writes the CRITICAL row for every detection, but sends the conflict email only to the claim's winner (#4149)", async () => {
+    mocks.onceEverWins.value = false;
+    try {
+      await announceAutomaticLateCaptureRefund(capture(), {
+        bookingDeleted: false,
+        recorded: true,
+        alreadyRecorded: false,
+        handCompletedAfterRefund: true,
+      }, CLUB_FORMAT_TEST);
+    } finally {
+      mocks.onceEverWins.value = true;
+    }
+
+    expect(mocks.logAudit).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "booking.payment.late_capture_double_refund_suspected", severity: "critical" }),
+    );
+    expect(mocks.sendAdminLateCaptureHandBackConflictAlert).not.toHaveBeenCalled();
+    expect(mocks.sendAdminLateCaptureAutoRefundAlert).not.toHaveBeenCalled();
+  });
+
   it("swaps to the conflict alert, with a CRITICAL audit row, on a suspected double payment", async () => {
     await announceAutomaticLateCaptureRefund(capture(), {
       bookingDeleted: false,
       recorded: true,
+      alreadyRecorded: false,
       handCompletedAfterRefund: true,
     }, CLUB_FORMAT_TEST);
 
+    // Claimed once ever per capture, whichever path finds it (#4149).
+    expect(mocks.onceEverKeys).toContain("late-capture-double-refund:pi_late");
     expect(mocks.logAudit).toHaveBeenCalledWith(
       expect.objectContaining({
         action: "booking.payment.late_capture_double_refund_suspected",

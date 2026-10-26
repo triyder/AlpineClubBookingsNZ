@@ -4,7 +4,7 @@
  *
  * Lifted out of `edit-financial-review-charge.ts` in the #3181 fix round. The
  * seam is worth having on its own merits and not only for the file-size ratchet:
- * these five are member- and officer-facing SENTENCES, each carrying the reason
+ * these are member- and officer-facing SENTENCES, each carrying the reason
  * it exists, and the module they came from is about deciding a route and raising
  * an ask. `edit-financial-review-settlement.ts` already imported one of them
  * across that boundary, which is the usual sign that the strings are their own
@@ -28,6 +28,29 @@ export const REVIEW_CHARGE_WRONG_KIND_MESSAGE =
   "This task is money the club owes the member, so it cannot be used to collect money from them. If the member owes the club for a booking change, make that change on the booking itself.";
 
 /**
+ * #4272 (owner decision, 21 Oct 2026): a charge on a CANCELLED booking.
+ *
+ * Neither instrument is right. A card ask on a cancelled booking is one the
+ * member can never pay - every place a member pays excludes it
+ * (`INV-ADDPAY-023`) - and a cancelled booking has no issued invoice to add to.
+ * The recovery replay already skips a cancelled booking, so refusing here keeps
+ * the inline path and the replay agreeing. Refused before the claim, so the
+ * task stays OPEN for a person to settle another way. #4316: a BUMPED booking
+ * is refused the same way (`INV-ADDPAY-044`, an ended booking is asked
+ * nothing), so the sentence names both.
+ */
+export const REVIEW_CHARGE_BOOKING_CANCELLED_MESSAGE =
+  "This booking has ended (cancelled or bumped), so the club cannot ask the member for this amount automatically - a payment request on an ended booking is one the member has no way to pay. Collect it another way, then dismiss this task with a note recording what was collected and how - the note is the record that the money was settled outside the system.";
+
+/**
+ * #4272: the same refusal on a cancelled joiner's booking the group organiser
+ * settled, by card or by internet banking. The joiner did not pay for it, so the
+ * officer is pointed at the organiser, as the live-booking refusal above does.
+ */
+export const REVIEW_CHARGE_BOOKING_CANCELLED_ORGANISER_MESSAGE =
+  "This booking has ended (cancelled or bumped), and the group organiser paid for it, so the club cannot ask for this amount automatically. Agree it with the organiser and collect it another way, then dismiss this task with a note recording what was collected and how - the note is the record that the money was settled outside the system.";
+
+/**
  * #3653 (`INV-PAY-114`): a charge on a joiner's booking the group organiser paid
  * for by card. The card behind the booking's payment mirror is the ORGANISER's
  * combined payment, and an invoice would bill the joiner for a booking somebody
@@ -38,11 +61,22 @@ export const REVIEW_CHARGE_ORGANISER_PAID_MESSAGE =
   "The group organiser paid for this booking by card, so the extra amount cannot be charged to the joiner from here. Agree it with the organiser and collect it another way, then dismiss this task with a note recording what was collected and how.";
 
 /**
+ * #3949 (`INV-PAY-137`): the same refusal on a joiner's booking the group organiser paid for by Internet Banking. The
+ * booking's payment is a slice of the organiser's one settlement and the joiner has no invoice of their own, so there
+ * is nobody to ask from here. Refused before the claim, beside the card twin's, so the officer reads whose money it
+ * is rather than the general no-instrument sentence. Building a way to collect it is an owner decision, not this.
+ */
+export const REVIEW_CHARGE_ORGANISER_PAID_BY_BANK_MESSAGE =
+  "The group organiser paid for this booking by internet banking, so the club cannot ask for the extra amount from here. Agree it with the organiser and collect it another way, then dismiss this task with a note recording what was collected and how.";
+
+/**
  * #3170: the officer said the club is owed, and there is no way to ask for it.
  *
  * The club collects a price increase in exactly two ways: an additional card
- * payment against a captured Stripe payment, or a supplementary invoice on a
- * booking that already has one. A booking with neither has no instrument at all -
+ * payment, when the booking has a card to ask (`canAskCardForReviewCharge`,
+ * which since #3947 includes a settled booking paid wholly with credit), or a
+ * supplementary invoice on a booking whose Xero invoice has been issued. A
+ * booking with neither has no instrument at all -
  * inventing one here would be the fourth settlement mechanism the epic forbids,
  * and pretending the money was collected would be the "claims money moved"
  * failure `INV-PAY-051` exists to stop.

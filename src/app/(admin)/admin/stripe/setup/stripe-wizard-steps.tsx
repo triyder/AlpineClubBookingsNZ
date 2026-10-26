@@ -6,7 +6,8 @@ import { Button } from "@/components/ui/button";
 import { FieldHint, useFieldHint } from "@/components/ui/field-hint";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { CopyField } from "@/components/admin/integration-wizard";
+import { CopyField, useStepSaving } from "@/components/admin/integration-wizard";
+import { STRIPE_WEBHOOK_EVENT_TYPES } from "@/lib/stripe-webhook-events";
 import type { WizardStepHelpers } from "@/components/admin/integration-wizard";
 import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
 import { ADMIN_FULL_ADMIN_ONLY_ACTION_REASON } from "@/hooks/use-admin-area-edit-access";
@@ -137,7 +138,7 @@ export function CredentialsStep({
 }) {
   const [secretKey, setSecretKey] = useState("");
   const [publishableKey, setPublishableKey] = useState("");
-  const [saving, setSaving] = useState(false);
+  const [saving, setSaving] = useStepSaving(helpers);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   /*
@@ -395,7 +396,7 @@ export function WebhookStep({
   helpers: WizardStepHelpers;
 }) {
   const [webhookSecret, setWebhookSecret] = useState("");
-  const [saving, setSaving] = useState(false);
+  const [saving, setSaving] = useStepSaving(helpers);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   // #2264 — same split as the key fields: the example shape becomes a hint, the
@@ -456,6 +457,19 @@ export function WebhookStep({
         emptyHint="Set NEXTAUTH_URL so the endpoint URL can be derived."
         description="Paste this into the Stripe webhook endpoint URL field."
       />
+
+      <div className="space-y-1 text-sm">
+        <p className="text-muted-foreground">
+          Under <strong>Events to send</strong>, select exactly these events:
+        </p>
+        <ul aria-label="Stripe events to send" className="flex flex-wrap gap-1.5">
+          {STRIPE_WEBHOOK_EVENT_TYPES.map((eventType) => (
+            <li key={eventType}>
+              <code className="rounded bg-muted px-1.5 py-0.5 text-xs text-foreground">{eventType}</code>
+            </li>
+          ))}
+        </ul>
+      </div>
 
       {canWrite === false ? (
         <div className="flex items-start gap-2 rounded-md border border-border bg-muted p-3 text-sm text-muted-foreground">

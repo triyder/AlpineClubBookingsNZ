@@ -25,6 +25,7 @@ import { cancelPaymentIntentIfCancellableWithResult } from "@/lib/stripe";
 import { formatCents } from "@/lib/utils";
 import type { ClubFormat } from "@/lib/club-format";
 import { clubFormatValues } from "@/lib/club-format-server";
+import { LEDGER_ROWS_NEWEST_FIRST } from "@/lib/payment-ledger-order";
 
 /**
  * WITHDRAW AN UNPAID ADDITIONAL-PAYMENT REQUEST (#3528, `INV-ADDPAY-040`,
@@ -155,8 +156,12 @@ export async function withdrawAdditionalPaymentAsk(params: {
           additionalPaymentStatus: true,
           additionalPaymentIntentId: true,
           transactions: {
-            where: { kind: PaymentTransactionKind.ADDITIONAL },
-            orderBy: { createdAt: "desc" },
+            // Past a withdrawn row, as the mirror rebuild reads (`INV-ADDPAY-040`):
+            // a reversal stamps its reversed cash row withdrawn and points the
+            // mirror back at the card ask under it (#4320). A truly withdrawn
+            // ask has zeroed the columns, so the owed gate below refuses it.
+            where: { kind: PaymentTransactionKind.ADDITIONAL, withdrawnAt: null },
+            orderBy: [...LEDGER_ROWS_NEWEST_FIRST],
             take: 1,
             select: {
               id: true,

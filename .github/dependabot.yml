@@ -20,8 +20,20 @@ updates:
       # that bring them in. A bump of one of these fails the frozen install with
       # ERR_PNPM_IGNORED_BUILDS until its new version is reviewed and written
       # into `allowBuilds`, so it gets a PR of its own instead of turning the
-      # whole minor-and-patch group red. Dependabot puts a dependency in the
-      # FIRST group that matches, which is why this one comes first.
+      # whole minor-and-patch group red.
+      #
+      # #4364: the order of the groups is NOT what keeps these packages out of
+      # the group below; its `exclude-patterns` is. Dependabot's documentation
+      # says a dependency goes to the first group that matches, but the updater
+      # actually scores each match (dependabot-core
+      # `PatternSpecificityCalculator`): a group with no `patterns` scores 500,
+      # a wildcard such as `@sentry/*` about 90, an exact name 1000. So
+      # `@prisma/*`, `@sentry/*` and `@vitest/*` packages always went to the
+      # catch-all group, and the exact names went there too whenever Dependabot
+      # refreshed (rebased) the catch-all's open PR, which then superseded this
+      # group's PR (#3890 by #3925, #4244 by #4271; #4332 failed CI on
+      # `ERR_PNPM_IGNORED_BUILDS`). Keep the two lists identical:
+      # `scripts/ci/check-allow-builds.mjs` fails CI when they differ.
       install-scripts:
         # Minor and patch only, as in the group below: a major version still
         # arrives as a PR of its own.
@@ -44,6 +56,19 @@ updates:
         update-types:
           - minor
           - patch
+        # Exactly the `install-scripts` patterns above (#4364).
+        exclude-patterns:
+          - "prisma"
+          - "@prisma/*"
+          - "@sentry/*"
+          - "esbuild"
+          - "tsx"
+          - "vite"
+          - "vitest"
+          - "@vitest/*"
+          - "unrs-resolver"
+          - "eslint-config-next"
+          - "eslint-import-resolver-typescript"
 
   - package-ecosystem: github-actions
     directory: /

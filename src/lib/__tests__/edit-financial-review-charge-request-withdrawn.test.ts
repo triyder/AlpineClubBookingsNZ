@@ -43,7 +43,7 @@ describe("findEditReviewChargeRequest and withdrawn rows (#3528)", () => {
         reason: buildEditFinancialReviewChargeReason("mod-1"),
         withdrawnAt: null,
       },
-      orderBy: { createdAt: "desc" },
+      orderBy: [{ createdAt: "desc" }, { insertionSeq: "desc" }],
       select: {
         id: true,
         stripePaymentIntentId: true,

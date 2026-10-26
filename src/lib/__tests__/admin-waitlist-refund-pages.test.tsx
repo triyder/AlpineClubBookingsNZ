@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import AdminWaitlistPage from "@/app/(admin)/admin/waitlist/page";
 import RefundRequestsPage from "@/app/(admin)/admin/refund-requests/page";
 import { expectRecoveryAlertToHoldFocus } from "@/lib/__tests__/helpers/focus";
+import { refundAppealCeilingParts } from "@/lib/manual-refund-task-settlement-rules";
 
 const mocks = vi.hoisted(() => ({
   currentSearch: "",
@@ -20,6 +21,9 @@ const mocks = vi.hoisted(() => ({
 
 const fetchMock = vi.fn();
 const scrollIntoView = vi.fn();
+const toastSuccess = vi.hoisted(() => vi.fn());
+
+vi.mock("sonner", () => ({ toast: { success: toastSuccess, error: vi.fn() } }));
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({
@@ -597,6 +601,7 @@ describe("Admin refund and credit review page", () => {
                   finalPriceCents: 10000,
                   status: "CANCELLED",
                   creditsFromCancellation: [],
+                  appealCeilingCents: 10000, // #4124: the list route's `refundAppealCeilingParts`
                   payment: {
                     status: "SUCCEEDED",
                     amountCents: 10000,
@@ -708,6 +713,7 @@ describe("Admin refund and credit review page", () => {
                   finalPriceCents: 13000,
                   status: "CANCELLED",
                   creditsFromCancellation: [],
+                  appealCeilingCents: 6500, // #4124: the list route's `refundAppealCeilingParts`
                   // The #3340 booking: $130.00 captured, $65.00 refunded.
                   payment: {
                     status: "PARTIALLY_REFUNDED",
@@ -798,6 +804,8 @@ describe("Admin refund and credit review page", () => {
         status: "CANCELLED",
         noEmails: false,
         creditsFromCancellation: [],
+        // #4124: the list route's `refundAppealCeilingParts` of this payment.
+        appealCeilingCents: refundAppealCeilingParts(payment && ({ ...payment, recoveryOperations: [], refunds: [] } as never), []).ceilingCents,
         payment,
       },
       member: {
@@ -887,13 +895,8 @@ describe("Admin refund and credit review page", () => {
     expect(screen.getByText("Max refundable: $0.00")).toBeTruthy();
   });
 
-  // #3827 (`INV-PAY-117`): the ceiling the screen offers is the one the approve
-  // route enforces - the remaining refundable cash LESS the edit refunds still
-  // promised back by bank transfer. Paid 200, refunded 75 at cancel, a 50 edit
-  // refund still open: 75, not the gross 125.
-  it("offers the ceiling net of open edit refunds, the figure the approve route caps at", async () => {
-    mocks.currentSearch = "";
-    mocks.sessionUser = { id: "admin-2", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] };
+  /** Paid 200, refunded 75 at cancel, a 50 edit refund still open: one pending appeal, ceiling 75. */
+  function mockEditedPendingAppeal(appealCardRefundOwedCents = 0) {
     fetchMock.mockImplementation((input: RequestInfo | URL) => {
       const url = String(input);
       if (url === "/api/admin/refund-requests?status=PENDING") {
@@ -920,12 +923,13 @@ describe("Admin refund and credit review page", () => {
                   status: "CANCELLED",
                   noEmails: false,
                   creditsFromCancellation: [],
+                  appealCeilingCents: 7500, // #4124: the list route's `refundAppealCeilingParts`
+                  appealCardRefundOwedCents,
                   payment: {
                     status: "PARTIALLY_REFUNDED",
                     amountCents: 20000,
                     refundedAmountCents: 7500,
                     stripePaymentIntentId: null,
-                    manualRefundTasks: [{ amountCents: 5000 }],
                   },
                 },
                 member: { id: "member-edited", firstName: "Jane", lastName: "edited", email: "e@example.com" },
@@ -942,6 +946,16 @@ describe("Admin refund and credit review page", () => {
       }
       return Promise.reject(new Error(`Unexpected fetch: ${url}`));
     });
+  }
+
+  // #3827 (`INV-PAY-117`): the ceiling the screen offers is the one the approve
+  // route enforces - the remaining refundable cash LESS the edit refunds still
+  // promised back by bank transfer. Paid 200, refunded 75 at cancel, a 50 edit
+  // refund still open: 75, not the gross 125.
+  it("offers the ceiling net of open edit refunds, the figure the approve route caps at", async () => {
+    mocks.currentSearch = "";
+    mocks.sessionUser = { id: "admin-2", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] };
+    mockEditedPendingAppeal();
 
     render(<RefundRequestsPage />);
     fireEvent.click(await screen.findByRole("button", { name: "Review" }));
@@ -953,4 +967,229 @@ describe("Admin refund and credit review page", () => {
     expect(screen.getByText("Remaining refundable:").parentElement).toHaveTextContent("Remaining refundable: $75.00");
     expect(screen.getByText("Gross paid:").parentElement).toHaveTextContent("Gross paid: $200.00");
   });
+
+  // #4124: a card refund not yet made is netted from the ceiling, and the
+  // officer is told why it is lower, and where that refund is tracked.
+  it("says under the ceiling how much of it is a card refund not yet made", async () => {
+    mocks.currentSearch = "";
+    mocks.sessionUser = { id: "admin-2", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] };
+    mockEditedPendingAppeal(2500);
+
+    render(<RefundRequestsPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Review" }));
+
+    expect(screen.getByText("Max refundable: $75.00")).toBeTruthy();
+    const note = screen.getByText("Less $25.00 of card refund not yet made for this payment (retrying, or stopped and listed on Stuck states).");
+    // The note and the maximum describe the amount box.
+    const limits = document.getElementById("approvedAmountLimits");
+    expect(limits?.contains(note)).toBe(true);
+    expect(screen.getByRole("textbox", { name: /Refund Amount/i }).getAttribute("aria-describedby")).toContain("approvedAmountLimits");
+  });
+
+  it("CONTROL: shows no card refund line when none was netted", async () => {
+    mocks.currentSearch = "";
+    mocks.sessionUser = { id: "admin-2", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] };
+    mockEditedPendingAppeal(0);
+
+    render(<RefundRequestsPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Review" }));
+
+    expect(screen.getByText("Max refundable: $75.00")).toBeTruthy();
+    expect(screen.queryByText(/card refund not yet made/)).toBeNull();
+  });
+
+  /*
+    #3956 round 3: while the group cancellation's own refund to the organiser's
+    card is still being made, the ceiling is zero only for now. The screen says
+    so, rather than "Max refundable $0.00", which an officer would decline on.
+  */
+  it("says a group joiner's appeal waits on the group refund, not that nothing is left", async () => {
+    mocks.currentSearch = "";
+    mocks.sessionUser = { id: "admin-2", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] };
+    const waitingRequest = (pending: boolean) => ({
+      id: "joiner",
+      bookingId: "booking-joiner",
+      memberId: "member-joiner",
+      reason: "Weather closure",
+      requestedAmountCents: null,
+      status: "PENDING",
+      adminNotes: null,
+      approvedAmountCents: null,
+      reviewedAt: null,
+      createdAt: "2026-07-01T00:00:00.000Z",
+      booking: {
+        id: "booking-joiner",
+        checkIn: "2026-08-01T00:00:00.000Z",
+        checkOut: "2026-08-03T00:00:00.000Z",
+        finalPriceCents: 15000,
+        status: "CANCELLED",
+        noEmails: false,
+        creditsFromCancellation: [],
+        appealCeilingCents: 15000, // #4124: the list route's `refundAppealCeilingParts`
+        // #4124 delta review: a card refund owed on the child's own payment is
+        // already in the organiser cap's room, so no "Less ..." line here.
+        appealCardRefundOwedCents: 2_500,
+        payment: { status: "SUCCEEDED", amountCents: 15000, refundedAmountCents: 0, stripePaymentIntentId: null },
+        organiserCardMaxRefundableCents: pending ? 0 : 4_000,
+        organiserCardCombinedRefundPending: pending,
+      },
+      member: { id: "member-joiner", firstName: "Jo", lastName: "Joiner", email: "j@example.com" },
+    });
+    for (const pending of [true, false]) {
+      fetchMock.mockImplementation((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === "/api/admin/refund-requests?status=PENDING") {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({ data: [waitingRequest(pending)], page: 1, pageSize: 25, total: 1 }),
+          });
+        }
+        if (url === "/api/admin/credit-approvals?status=PENDING") {
+          return Promise.resolve({ ok: true, json: async () => [] });
+        }
+        return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+      });
+
+      const view = render(<RefundRequestsPage />);
+      fireEvent.click(await screen.findByRole("button", { name: "Review" }));
+
+      if (pending) {
+        expect(
+          screen.getByText(
+            "The group cancellation's refund to the organiser's card is still being made or reconciled. Approve this once it is made.",
+          ),
+        ).toBeTruthy();
+        expect(screen.queryByText(/Max refundable/)).toBeNull();
+        expect(screen.getByText("Remaining refundable:").parentElement).toHaveTextContent(
+          "Remaining refundable: Waiting for the group refund",
+        );
+      } else {
+        expect(screen.getByText("Max refundable: $40.00")).toBeTruthy();
+        expect(screen.queryByText(/still being made or reconciled/)).toBeNull();
+        expect(screen.getByText("Refunded to the group organiser's card; the most that payment can still return for this booking.")).toBeTruthy();
+        expect(screen.queryByText(/card refund not yet made/)).toBeNull();
+      }
+      view.unmount();
+    }
+  });
 });
+
+/*
+  #4117 (`INV-PAY-128`): an approved appeal's card refund may not be made in
+  full - Stripe refused a part, or a part could not be sent - and that part is
+  queued for retry. The screen says so, rather than "approved and processed",
+  and its Refunded figure is what was actually refunded.
+*/
+describe("an approved appeal whose card refund is still partly owed (#4117)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    global.fetch = fetchMock as typeof fetch;
+    mocks.sessionUser = { id: "admin-2", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] };
+  });
+
+  function appeal(overrides: Record<string, unknown>) {
+    return {
+      id: "refund-1",
+      bookingId: "booking-1",
+      memberId: "member-1",
+      reason: "Weather closure",
+      requestedAmountCents: 2500,
+      status: "PENDING",
+      adminNotes: null,
+      approvedAmountCents: null,
+      reviewedAt: null,
+      createdAt: "2026-07-01T00:00:00.000Z",
+      booking: {
+        id: "booking-1",
+        checkIn: "2026-08-01T00:00:00.000Z",
+        checkOut: "2026-08-03T00:00:00.000Z",
+        finalPriceCents: 10000,
+        status: "CANCELLED",
+        noEmails: false,
+        creditsFromCancellation: [],
+        appealCeilingCents: 10000, // #4124: the list route's `refundAppealCeilingParts`
+        payment: { status: "SUCCEEDED", amountCents: 10000, refundedAmountCents: 0, stripePaymentIntentId: "pi_1" },
+      },
+      member: { id: "member-1", firstName: "Jane", lastName: "Doe", email: "jane@example.com" },
+      ...overrides,
+    };
+  }
+
+  function serve(status: string, rows: unknown[], put?: unknown) {
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === `/api/admin/refund-requests?status=${status}`) {
+        return Promise.resolve({ ok: true, json: async () => ({ data: rows, page: 1, pageSize: 25, total: rows.length }) });
+      }
+      if (url === `/api/admin/credit-approvals?status=${status}`) {
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }
+      if (url === "/api/admin/refund-requests/refund-1" && init?.method === "PUT") {
+        return Promise.resolve({ ok: true, json: async () => put });
+      }
+      return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+    });
+  }
+
+  it("shows Refunded as what was made, and the part still queued for retry", async () => {
+    mocks.currentSearch = "status=APPROVED";
+    serve("APPROVED", [
+      appeal({ status: "APPROVED", approvedAmountCents: 2500, reviewedAt: "2026-07-02T00:00:00.000Z", cardRefundState: "retrying", cardRefundOwedCents: 1000 }),
+    ]);
+
+    render(<RefundRequestsPage />);
+
+    expect((await screen.findByText("Refunded:")).parentElement).toHaveTextContent("Refunded: $15.00");
+    expect(screen.getByText("$10.00 of the card refund is queued for retry.")).toBeTruthy();
+  });
+
+  it.each([
+    [{ cardRefundState: "dead", cardRefundOwedCents: 1000 }, "$15.00", "$10.00 of the card refund is still owed: its retries ran out."],
+    [
+      { cardRefundState: "not_queued", cardRefundOwedCents: 2500, cardRefundRefusedCents: 1500, cardRefundUnansweredCents: 1000 },
+      "$0.00",
+      "This card refund could not be queued for retry. $15.00 was refused by Stripe, so it certainly did not go back: refund it another way. $10.00 got no answer from Stripe and may have been made: check the payment in Stripe before refunding it another way. A refund made another way does not show here: check and record it.",
+    ],
+    [{ cardRefundState: "made", cardRefundOwedCents: 0, handBackOwedCents: 500 }, "$20.00", "$5.00 is still to be refunded by bank transfer."],
+    [{ cardRefundState: "made", cardRefundOwedCents: 0, handBackDismissedCents: 700 }, "$18.00", "$7.00 was not refunded: its bank-transfer task was dismissed."],
+  ])("an appeal %o: Refunded %s, and says what is still owed", async (outcome, refunded, line) => {
+    mocks.currentSearch = "status=APPROVED";
+    serve("APPROVED", [appeal({ status: "APPROVED", approvedAmountCents: 2500, reviewedAt: "2026-07-02T00:00:00.000Z", ...outcome })]);
+
+    render(<RefundRequestsPage />);
+
+    expect((await screen.findByText("Refunded:")).parentElement).toHaveTextContent(`Refunded: ${refunded}`);
+    expect(screen.getByText(line)).toBeTruthy();
+    expect(screen.queryByText(/queued for retry\.$/)).toBeNull();
+  });
+
+  it("an appeal refunded in full shows the whole amount and no retry line", async () => {
+    mocks.currentSearch = "status=APPROVED";
+    serve("APPROVED", [appeal({ status: "APPROVED", approvedAmountCents: 2500, reviewedAt: "2026-07-02T00:00:00.000Z", cardRefundOwedCents: 0 })]);
+
+    render(<RefundRequestsPage />);
+
+    expect((await screen.findByText("Refunded:")).parentElement).toHaveTextContent("Refunded: $25.00");
+    expect(screen.queryByText(/queued for retry/)).toBeNull();
+  });
+
+  it.each([
+    [{ cardRefundOwedCents: 1000, cardRefundQueued: true }, "Refund approved; $10.00 is queued for retry"],
+    [{ cardRefundOwedCents: 0, cardRefundQueued: true }, "Refund approved and processed"],
+    [
+      { cardRefundOwedCents: 2500, cardRefundQueued: false, cardRefundRefusedCents: 1500, cardRefundUnansweredCents: 1000 },
+      "Refund approved, but its card refund could not be queued for retry. $15.00 was refused by Stripe, so it certainly did not go back: refund it another way. $10.00 got no answer from Stripe and may have been made: check the payment in Stripe before refunding it another way.",
+    ],
+  ])("after approving, the toast reads the route's answer %o", async (answer, toast) => {
+    mocks.currentSearch = "";
+    serve("PENDING", [appeal({})], { ...appeal({ status: "APPROVED", approvedAmountCents: 2500 }), ...answer });
+
+    render(<RefundRequestsPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Review" }));
+    fireEvent.click(screen.getByRole("button", { name: "Approve & Refund" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Approve and email member" }));
+
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith(toast));
+  });
+});
+

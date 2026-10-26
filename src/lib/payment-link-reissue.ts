@@ -5,6 +5,7 @@
  * per-lodge advisory lock so at most one live token exists per booking. Token
  * resolution and the refusal vocabulary stay in `payment-link.ts`.
  */
+import { readBookingAmountOwed } from "@/lib/booking-amount-owed";
 import { bookingOwner } from "@/lib/booking-owner";
 import { issueActionToken } from "@/lib/action-tokens";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
@@ -118,6 +119,7 @@ export async function reissuePaymentLinkForToken(
     checkOut: booking.checkOut,
     guestCount: booking.guests.length,
     priceCents: booking.finalPriceCents,
+    amountDueCents: (await readBookingAmountOwed(booking)).dueCents,
     bookingReference: booking.id,
     expiresAt,
     // The pay link is about this booking (#2258).

@@ -198,14 +198,18 @@ const fakePrisma = vi.hoisted(() => {
     },
     manualRefundTask: {
       // `findLateCapturePaymentIntents`' read, and the receipt reader's.
+      // #3924 round 4: the cash evidence's paid-another-way read (by key
+      // prefix) finds none in these fixtures.
       findMany: async (args: {
         where: {
+          occurrenceKey?: unknown;
           OR: Array<{
             lateCaptureApprovalIntentId?: { in: string[] };
             reason?: { in: string[] };
           }>;
         };
       }) =>
+        args.where.occurrenceKey !== undefined ? [] :
         state.manualRefundTasks.filter((row) =>
           args.where.OR.some(
             (branch) =>
@@ -251,6 +255,8 @@ const fakePrisma = vi.hoisted(() => {
         }));
       },
     },
+    // #4170: no capture here carries the late-capture handler's own marker.
+    paymentTransaction: { findMany: async () => [] },
     memberCredit: {
       aggregate: async (args: {
         where: {

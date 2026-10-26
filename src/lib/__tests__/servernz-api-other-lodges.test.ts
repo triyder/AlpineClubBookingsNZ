@@ -3,7 +3,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // ── Mocks ──────────────────────────────────────────────────────────────────
 
 vi.mock("@/lib/servernz-config", () => ({
-  getOperationalServerNzApiKey: vi.fn(async () => "test-api-key"),
+  getOperationalServerNzCredential: vi.fn(async () => ({
+    apiKey: "test-api-key",
+    version: "test-credential-version",
+  })),
+}));
+
+vi.mock("@/lib/servernz-version-record", () => ({
+  recordServerVersionIfCurrent: vi.fn(async () => true),
 }));
 
 vi.mock("@/lib/servernz-settings", () => ({

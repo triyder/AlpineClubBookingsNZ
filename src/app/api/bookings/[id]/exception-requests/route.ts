@@ -6,13 +6,15 @@ import { auth } from "@/lib/auth";
 import { logAudit } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
 import { getDefaultLodgeId } from "@/lib/lodges";
-import { isDateOnlyString } from "@/lib/date-only";
 import { storedDateOnly } from "@/lib/stored-calendar-day";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { checkRateLimit, getClientIp, rateLimiters } from "@/lib/rate-limit";
 import { sendAdminBookingChangeRequestAlert } from "@/lib/email";
 import { bookableAgeTierEnum } from "@/lib/age-tier-schema";
 import { nameField } from "@/lib/zod-helpers";
+import {
+  GUEST_CHANGE_LIST_BOUND, BOOKING_PARTY_GUESTS_MAX, guestRequestSchemaError, guestStayFieldsSchema,
+} from "@/lib/booking-guest-stay-range-input";
 import {
   dependantIdentityDeclarationSchema,
 } from "@/lib/booking-dependant-identity";
@@ -36,8 +38,8 @@ import {
 } from "@/lib/member-guest-probe-guard";
 import { BookingGuestValidationError } from "@/lib/booking-guests";
 
-/**
- * A guest's explicit night set (#713), mirroring `/modify`'s own field.
+/*
+ * A guest's explicit night set (#713) rides in `guestStayFieldsSchema`, as on `/modify`.
  *
  * REQUIRED here, not a nicety (#2562 review). The edit panel's grid mode sends
  * `guestStayRanges: [{ guestId, nights }]` and `addGuests: [{ ..., nights }]`, and
@@ -47,9 +49,6 @@ import { BookingGuestValidationError } from "@/lib/booking-guests";
  * moved) or byte-identical to the live booking (when they did not). Both are
  * proposals the member never made.
  */
-const nightList = z
-  .array(z.string().refine(isDateOnlyString, { message: "Night must be YYYY-MM-DD" }))
-  .max(370);
 
 const createSchema = z.object({
   checkIn: z.string().optional(),
@@ -62,24 +61,20 @@ const createSchema = z.object({
         ageTier: bookableAgeTierEnum,
         isMember: z.boolean(),
         memberId: z.string().trim().min(1).optional(),
-        stayStart: z.string().optional(),
-        stayEnd: z.string().optional(),
-        nights: nightList.optional(),
+        ...guestStayFieldsSchema.shape,
       }),
     )
-    .max(200)
+    .max(...GUEST_CHANGE_LIST_BOUND)
     .optional(),
-  removeGuestIds: z.array(z.string().trim().min(1)).max(200).optional(),
+  removeGuestIds: z.array(z.string().trim().min(1)).max(...GUEST_CHANGE_LIST_BOUND).optional(),
   guestStayRanges: z
     .array(
       z.object({
         guestId: z.string().trim().min(1),
-        stayStart: z.string().optional(),
-        stayEnd: z.string().optional(),
-        nights: nightList.optional(),
+        ...guestStayFieldsSchema.shape,
       }),
     )
-    .max(200)
+    .max(BOOKING_PARTY_GUESTS_MAX)
     .optional(),
   // #3451 (`INV-GUEST-019`): the edit panel's answers about an added guest who
   // shares a name with one of the owner's dependants, re-verified by the service.
@@ -170,7 +165,7 @@ export async function POST(
   const parsed = createSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
-      { error: "Validation failed", details: parsed.error.flatten() },
+      { error: guestRequestSchemaError(parsed.error, "Validation failed"), details: parsed.error.flatten() },
       { status: 400 },
     );
   }

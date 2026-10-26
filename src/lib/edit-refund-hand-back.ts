@@ -15,10 +15,15 @@ import {
   OPEN_NON_CANCELLATION_HAND_BACKS_SELECT,
   refundRequestHandBackOccurrenceKey,
 } from "@/lib/manual-refund-task-settlement-rules";
-import { REVIEW_REFUND_EXCEEDS_UNPROMISED_CASH_MESSAGE } from "@/lib/edit-financial-review-refund-refusals";
+import { GROUP_MIRROR_HAND_BACK_EXCEEDS_CASH_MESSAGE, REVIEW_REFUND_EXCEEDS_UNPROMISED_CASH_MESSAGE } from "@/lib/edit-financial-review-refund-refusals";
+import { netCollectedCardRefundSelect } from "@/lib/additional-ledger-gap";
+import { openCardRefundOwedCents } from "@/lib/open-card-refund-owed";
 import { sumInternetBankingMintedCentsForBookings } from "@/lib/internet-banking-late-cash-credit";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
 import { MANUAL_REFUND_TASK_REASON_MAX } from "@/lib/manual-subscription-payment";
+import { bankTransferRefundPayee, type BankTransferRefundPayee } from "@/lib/group-organiser-paid";
+import { GroupCancelInProgressError, groupCancelInProgress } from "@/lib/group-cancel-in-progress";
+import { editRefundHandBackReason, refundRequestHandBackReason } from "@/lib/manual-refund-task-copy";
 
 /**
  * #3827 (owner decision D-3813-6, `INV-PAY-117`): AN EDIT'S REFUND THAT THE
@@ -52,7 +57,34 @@ export function editRefundGoesBackByHand(adjusted: {
 }
 
 /**
+ * #3949 (`INV-PAY-137`): WHO that bank transfer goes to, or null when the
+ * edit's refund is not sent by hand: the member, or the group organiser who
+ * paid for the booking by internet banking (`bankTransferRefundPayee`). The
+ * one answer the hand-back's reason and the "Booking Modified" email share.
+ */
+export function editRefundBankTransferPayee(
+  adjusted: Parameters<typeof editRefundGoesBackByHand>[0],
+  booking: Parameters<typeof bankTransferRefundPayee>[0],
+): BankTransferRefundPayee | null {
+  return editRefundGoesBackByHand(adjusted) ? bankTransferRefundPayee(booking) : null;
+}
+
+/**
+ * #3949 review round 4 (`INV-PAY-137`): a refund to the group organiser is never RAISED on a child while the
+ * organiser's group cancel is between its plan and this child's claim (`groupCancelInProgress`): the plan froze the
+ * child's share net of the hand-backs then open and pays it whole at the claim, so a new one would pay the organiser
+ * twice. The child's status is read here under the caller's `lock(1)`. Throws, so the edit or the approval rolls back
+ * whole and its door answers 409.
+ */
+async function refuseOrganiserHandBackWhileGroupCancelInProgress(tx: Prisma.TransactionClient, bookingId: string): Promise<void> {
+  const child = await tx.booking.findUnique({ where: { id: bookingId }, select: { status: true, parentBookingId: true } });
+  if (child && (await groupCancelInProgress(tx, child))) throw new GroupCancelInProgressError();
+}
+
+/**
  * Raise the edit's refund hand-back, when it owes one, and say whether it did.
+ * Every edit door and a guest's acceptance raise it here, so this is where a refund to the organiser is refused
+ * while the group cancel is part-way through (`refuseOrganiserHandBackWhileGroupCancelInProgress`).
  *
  * IDEMPOTENT PER MODIFICATION: the occurrence key is unique, and the insert is
  * `ON CONFLICT DO NOTHING` (`skipDuplicates`) rather than a create that could
@@ -72,10 +104,14 @@ export async function raiseEditRefundHandBackIfOwed(
     adjusted: { refundAmountCents: number; hasSucceededPayment: boolean };
     /** What changed, for the task's reason line (e.g. "date change"). */
     editLabel: string;
+    /** #3949: whether the group organiser paid for it, whom the reason names as the payee. */
+    booking: Parameters<typeof bankTransferRefundPayee>[0];
   },
 ): Promise<boolean> {
-  const { bookingId, paymentId, bookingModificationId, adjusted, editLabel } = params;
-  if (!editRefundGoesBackByHand(adjusted) || paymentId === null) return false;
+  const { bookingId, paymentId, bookingModificationId, adjusted, editLabel, booking } = params;
+  const payee = editRefundBankTransferPayee(adjusted, booking);
+  if (payee === null || paymentId === null) return false;
+  if (payee === "organiser") await refuseOrganiserHandBackWhileGroupCancelInProgress(tx, bookingId);
   await tx.manualRefundTask.createMany({
     data: [
       {
@@ -85,10 +121,7 @@ export async function raiseEditRefundHandBackIfOwed(
         raisedAmountCents: adjusted.refundAmountCents,
         kind: ManualRefundTaskKind.CANCELLED_BOOKING_HAND_BACK,
         occurrenceKey: editRefundHandBackOccurrenceKey(bookingModificationId),
-        reason: `Booking ${bookingId} lowered by a ${editLabel}; paid by internet banking or by hand, so the club refunds the difference by bank transfer (#3827).`.slice(
-          0,
-          MANUAL_REFUND_TASK_REASON_MAX,
-        ),
+        reason: editRefundHandBackReason({ bookingId, editLabel, payee }).slice(0, MANUAL_REFUND_TASK_REASON_MAX),
       },
     ],
     skipDuplicates: true,
@@ -123,10 +156,14 @@ export async function raiseRefundRequestHandBack(
     refundRequestId: string;
     /** The approved amount no card refund carries; nothing is raised at 0. */
     amountCents: number;
+    /** #3949: whether the group organiser paid for it, whom the reason names as the payee. */
+    booking: Parameters<typeof bankTransferRefundPayee>[0];
   },
 ): Promise<number> {
-  const { bookingId, paymentId, refundRequestId, amountCents } = params;
+  const { bookingId, paymentId, refundRequestId, amountCents, booking } = params;
   if (amountCents <= 0) return 0;
+  const payee = bankTransferRefundPayee(booking);
+  if (payee === "organiser") await refuseOrganiserHandBackWhileGroupCancelInProgress(tx, bookingId);
   const raised = await tx.manualRefundTask.createMany({
     data: [
       {
@@ -136,10 +173,7 @@ export async function raiseRefundRequestHandBack(
         raisedAmountCents: amountCents,
         kind: ManualRefundTaskKind.CANCELLED_BOOKING_HAND_BACK,
         occurrenceKey: refundRequestHandBackOccurrenceKey(refundRequestId),
-        reason: `Refund appeal approved on booking ${bookingId}; not paid by card, so the club refunds this by bank transfer (#3827).`.slice(
-          0,
-          MANUAL_REFUND_TASK_REASON_MAX,
-        ),
+        reason: refundRequestHandBackReason({ bookingId, payee }).slice(0, MANUAL_REFUND_TASK_REASON_MAX),
       },
     ],
     skipDuplicates: true,
@@ -173,10 +207,12 @@ export type OpenNonCancellationHandBackDb = Pick<PrismaClient, "manualRefundTask
 export async function openNonCancellationHandBackCents(
   db: OpenNonCancellationHandBackDb,
   paymentId: string | null | undefined,
+  /** #3949: a hand-back sizing its OWN completion leaves itself out. */
+  excludeTaskId?: string,
 ): Promise<number> {
   if (!paymentId) return 0;
   const open = await db.manualRefundTask.aggregate({
-    where: { paymentId, ...OPEN_NON_CANCELLATION_HAND_BACKS_SELECT.where },
+    where: { paymentId, ...OPEN_NON_CANCELLATION_HAND_BACKS_SELECT.where, ...(excludeTaskId ? { NOT: { id: excludeTaskId } } : {}) },
     _sum: { amountCents: true },
   });
   return open._sum.amountCents ?? 0;
@@ -224,8 +260,32 @@ export async function assertByHandReviewRefundWithinUnpromisedCash(
   }
 }
 
-/** What a refund appeal's cap reads: hand-back tasks and member credit. */
-export type RefundAppealCapDb = Pick<PrismaClient, "manualRefundTask" | "memberCredit">;
+/**
+ * #3949 (`INV-PAY-137`): an edit's or an approved appeal's hand-back on a
+ * joiner's booking the organiser paid for by internet banking completes onto
+ * the child's mirror (`group-settlement-mirror-hand-back.ts`), which no
+ * `PaymentTransaction` backs, so the ledger cap inside
+ * `applyLocalRefundAllocation` cannot guard it. This is its cap, before the
+ * claim and under the completion's `lock(1)` and the Payment row: what the
+ * child's payment still holds, less every OTHER open edit or appeal hand-back
+ * on it (this task's own amount is the one being settled).
+ */
+export async function assertGroupMirrorHandBackWithinUnpromisedCash(
+  db: OpenNonCancellationHandBackDb & Pick<PrismaClient, "payment">,
+  { paymentId, taskId, amountCents }: { paymentId: string; taskId: string; amountCents: number },
+): Promise<void> {
+  const payment = await db.payment.findUnique({
+    where: { id: paymentId },
+    select: { status: true, amountCents: true, refundedAmountCents: true },
+  });
+  const promisedCents = await openNonCancellationHandBackCents(db, paymentId, taskId);
+  if (amountCents > getRemainingRefundableCentsNetOf(payment, promisedCents)) {
+    throw new ManualBookingPaymentError(GROUP_MIRROR_HAND_BACK_EXCEEDS_CASH_MESSAGE, 400);
+  }
+}
+
+/** What a refund appeal's cap reads: hand-back tasks, member credit and (#4124) the payment's card refunds. */
+export type RefundAppealCapDb = Pick<PrismaClient, "manualRefundTask" | "memberCredit" | "payment">;
 
 /**
  * #3827 (`INV-PAY-118`): the sum of EVERY open hand-back on one payment - any
@@ -246,36 +306,80 @@ export async function openHandBackCentsForRefundAppeal(
 
 /**
  * #3827 (`INV-PAY-118`): what a refund appeal must treat as ALREADY handed
- * back, beyond `refundedAmountCents`: every hand-back still open on the
- * payment and the member credit already minted from its late cash
- * (`refundAppealCeiling` says why each one is missing from the mirror).
+ * back, beyond `refundedAmountCents`, in its three parts: every hand-back
+ * still open on the payment, the member credit already minted from its late
+ * cash (`OPEN_HAND_BACKS_FOR_REFUND_APPEAL_SELECT` says why each is missing from the mirror), and
+ * (#4124) the card refunds the payment still owes.
  *
- * READ THIS BEFORE THE PAYMENT. A cancellation's own hand-back completes
- * without `lock(1)` (legacy kinds take none; it holds only the Payment row),
- * moving the mirror and closing the task in one commit. Read in this order, a
- * completion landing between the two reads is counted twice - the task still
- * open here, its refund already in the payment read after - so the ceiling
- * errs LOW, never high. The other order would count it nowhere. The late-cash
- * mint and every non-cancellation hand-back hold `lock(1)`, as the approval
- * does, so they cannot land in between at all.
+ * The parts are kept apart because the organiser-card cap (`INV-PAY-123`)
+ * already nets this child's card refund debts in its own headroom
+ * (`organiserCardAppealCap`), so it takes only the first two; every other cap
+ * takes all three (`refundAppealHandedBackCents`).
+ *
+ * LOCKED READERS - the approval and the reopen of a dismissed appeal task -
+ * take `lock(1)` and then the Payment row (`lockPaymentForRefundedTotal`)
+ * BEFORE this, then read the payment after it. No writer holding either lock
+ * can then land between these reads and the payment's: every refunded-total
+ * writer and a cancellation hand-back's completion hold the Payment row, a
+ * card refund Stripe failed later is kept owed under it (#4104), and every
+ * other hand-back writer and the late-cash mint hold `lock(1)`. The member's
+ * request and the screens read it unlocked, as advice.
  */
+export type RefundAppealHandedBack = {
+  /** Every hand-back still open on the payment, the cancellation's own included. */
+  handBackCents: number;
+  /** Member credit already minted from the booking's late cash. */
+  lateCashCreditCents: number;
+  /** #4124: the card refunds the payment still owes (`openCardRefundOwedCents`). */
+  cardRefundOwedCents: number;
+};
+
+/** The three parts of what a refund appeal treats as already handed back (`RefundAppealHandedBack`). */
+export async function refundAppealHandedBackParts(
+  db: RefundAppealCapDb,
+  payment: { id: string; bookingId: string },
+): Promise<RefundAppealHandedBack> {
+  return {
+    handBackCents: await openHandBackCentsForRefundAppeal(db, payment.id),
+    lateCashCreditCents: await sumInternetBankingMintedCentsForBookings(db, [payment.bookingId]),
+    cardRefundOwedCents: await openCardRefundDebtCents(db, payment.id),
+  };
+}
+
+/** Every part a refund appeal's cap nets: hand-backs, late-cash credit and owed card refunds. */
+export function totalRefundAppealHandedBackCents(parts: RefundAppealHandedBack): number {
+  return parts.handBackCents + parts.lateCashCreditCents + parts.cardRefundOwedCents;
+}
+
+/** `totalRefundAppealHandedBackCents` of a fresh read (`refundAppealHandedBackParts`). */
 export async function refundAppealHandedBackCents(
   db: RefundAppealCapDb,
   payment: { id: string; bookingId: string },
 ): Promise<number> {
-  return (
-    (await openHandBackCentsForRefundAppeal(db, payment.id)) +
-    (await sumInternetBankingMintedCentsForBookings(db, [payment.bookingId]))
-  );
+  return totalRefundAppealHandedBackCents(await refundAppealHandedBackParts(db, payment));
 }
 
 /**
- * #3827 (`INV-PAY-118`): THE MOST A REFUND APPEAL MAY PROMISE BACK, for a
- * caller holding no lock (the member's advisory request): the refundable cash
- * less `refundAppealHandedBackCents`, read before the payment. The admin
- * approval and the reopen of a dismissed appeal task, which re-read the
- * payment under `lock(1)`, call that function first and read the payment
- * after it themselves.
+ * #4124 (`INV-PAY-118`): the card refunds the payment still OWES - a recovery
+ * row's slices Stripe refused or never answered, or a refund it failed later -
+ * the same figure "Refunds owed" counts (`openCardRefundOwedCents`). That money
+ * is out of `refundedAmountCents` (it never went back) yet a row is set to send
+ * it, so an appeal approved against it would return it twice.
+ */
+async function openCardRefundDebtCents(db: Pick<PrismaClient, "payment">, paymentId: string): Promise<number> {
+  const payment = await db.payment.findUnique({
+    where: { id: paymentId },
+    select: { status: true, amountCents: true, refundedAmountCents: true, ...netCollectedCardRefundSelect },
+  });
+  return payment ? openCardRefundOwedCents(payment) : 0;
+}
+
+/**
+ * #3827 (`INV-PAY-118`): THE MOST A REFUND APPEAL MAY PROMISE BACK: the
+ * refundable cash less `refundAppealHandedBackCents`, read before the payment.
+ * The reopen of a dismissed appeal task calls it holding `lock(1)` and the
+ * Payment row (`RefundAppealHandedBack` says why both); the admin approval
+ * reads the parts itself under the same two locks.
  */
 export async function refundableCashForRefundAppeal(
   db: RefundAppealCapDb & Pick<PrismaClient, "payment">,

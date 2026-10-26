@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { BookingStatus } from "@prisma/client";
+import { BookingStatus, Prisma } from "@prisma/client";
 import { normalizeDateOnlyForTimeZone, parseDateOnly } from "@/lib/date-only";
 
 /**
@@ -78,6 +78,15 @@ const cancellationLedger = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/booking-ledger-cancellation-sync", () => cancellationLedger);
 
+// #4300 (`INV-PAY-138`): the settle's superseded-capture refusal reads the
+// superseded machinery's rows, which this suite's transaction double does not
+// model; nothing here is superseded. Pinned by issue-1992-duplicate-capture-refund
+// and superseded-capture-ownership, and on PostgreSQL by superseded-intent-card-doors.
+vi.mock("@/lib/superseded-capture-ownership", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/superseded-capture-ownership")),
+  supersededMachineryOwnsCapture: async () => false,
+}));
+
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     $transaction: (...args: unknown[]) => mocks.transaction(...args),
@@ -85,10 +94,29 @@ vi.mock("@/lib/prisma", () => ({
     payment: {
       updateMany: (...args: unknown[]) => mocks.paymentUpdateMany(...args),
     },
+    // #4103 — a refusal's re-plan of the pre-persisted row, outside the claim.
+    paymentRecoveryOperation: {
+      updateMany: (...args: unknown[]) => refusalReplan.updateMany(...args),
+      findUnique: async () => null,
+    },
+    // #4125: the member-facing booking events, read back by the capacity-race tests.
+    bookingEvent: { create: (...args: unknown[]) => bookingEvents.create(...args) },
   },
 }));
+const bookingEvents = vi.hoisted(() => ({ create: vi.fn<(...args: unknown[]) => Promise<object>>(async () => ({})) }));
+const refusalReplan = vi.hoisted(() => ({ updateMany: vi.fn<(...args: unknown[]) => Promise<{ count: number }>>(async () => ({ count: 1 })) }));
+
+// #4125: the officers' once-ever alert for a capacity-race charge no refund covers; its rule is proved in its own suite.
+// #4154: and the hand-back task to check it raises in the void's claim; its rule is proved there too.
+const shortfallAlert = vi.hoisted(() => ({
+  alertCapacityRaceRefundShortfall: vi.fn<(...args: unknown[]) => Promise<boolean>>(async () => true),
+  raiseCapacityRaceRefundShortfallTask: vi.fn<(...args: unknown[]) => Promise<boolean>>(async () => true),
+}));
+vi.mock("@/lib/capacity-race-refund-shortfall", () => shortfallAlert);
 
 vi.mock("@/lib/payment-transactions", () => ({
+  // #4217: the settle locks the Payment row before its ledger lookup.
+  lockPaymentForRefundedTotal: async () => undefined,
   upsertPaymentIntentTransaction: (...args: unknown[]) =>
     mocks.upsertPaymentIntentTransaction(...args),
   findPaymentTransactionByIntentId: (...args: unknown[]) =>
@@ -181,9 +209,14 @@ import {
   markBookingSetupIntentSucceeded,
 } from "@/lib/payment-reconciliation";
 import logger from "@/lib/logger";
+import { resolveBookingNarrative, type NarrativeEvent } from "@/lib/booking-narrative";
+import { bindClubTime, requireClubTimeZone } from "@/lib/club-time";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { buildCapacityClaimFailedRefundRecoveryIdempotencyKey } from "@/lib/payment-recovery-keys";
 
 const tx = {
+  // #4125: the capacity race's REFUNDED event commits with the recovery row's close.
+  bookingEvent: { create: (...args: unknown[]) => bookingEvents.create(...args) },
   $executeRaw: (...args: unknown[]) => mocks.executeRaw(...args),
   $queryRaw: (...args: unknown[]) => mocks.executeRaw(...args),
   lodge: {
@@ -1022,6 +1055,7 @@ describe("markBookingPaymentSucceeded", () => {
       });
 
       expect(result.outcome).toBe("cancelled_refund_failed");
+      expect(result.capacityRefund).toEqual({ chargedAmountCents: 10000, plannedRefundCents: 10000 });
       expect(result.refundError).toContain("503");
 
       // The durable debt was persisted with the transaction client (atomic
@@ -1066,10 +1100,28 @@ describe("markBookingPaymentSucceeded", () => {
         })
       );
       expect(mocks.sendAdminPaymentFailureAlert).toHaveBeenCalled();
+      // #4125: the member's history says the refund is under way, never that it was made.
+      const written = bookingEvents.create.mock.calls.map(([args]) => (args as { data: { type: string; reason: string | null; snapshot: object } }).data);
+      const cancelled = written.find((event) => event.type === "CANCELLED");
+      expect(cancelled?.reason).toBe("These dates filled up before payment could be secured, so the booking was cancelled and the full amount is being refunded.");
+      expect(cancelled?.snapshot).toMatchObject({ policySummary: "These dates were no longer available when payment completed, so the full amount is being refunded.", cancelledBecause: "capacity_race" });
+      expect(written.some((event) => event.type === "REFUNDED")).toBe(false);
       // #3611: the cancel posts its ledger reversals in its own claim, keeping nothing.
       expect(cancellationLedger.postCancellationLedgerLines).toHaveBeenCalledWith(
         expect.objectContaining({ bookingId: "booking-1", keptCents: 0, site: "settle:capacity-void" }),
       );
+    });
+
+    it("reports an empty refund plan without claiming any automatic refund (#4178)", async () => {
+      primeCapacityRaceLoss();
+      mocks.planStripeRefundAllocation.mockResolvedValue({ slices: [], plannedAmountCents: 0, totalRefundableCents: 0 });
+      const result = await markBookingPaymentSucceeded({
+        format: CLUB_FORMAT_TEST, bookingId: "booking-1", paymentIntentId: "pi_race", amountCents: 10000, paymentMethodId: "pm_123",
+      });
+      expect(result.outcome).toBe("cancelled_refund_failed");
+      expect(result.capacityRefund).toEqual({ chargedAmountCents: 10000, plannedRefundCents: 0 });
+      expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
+      expect(mocks.enqueueCapacityClaimFailedRefundRecovery).not.toHaveBeenCalled();
     });
 
     it("executes the inline refund from the frozen plan under the shared capacity_claim_failed Stripe key prefix and closes the pre-persisted operation on success", async () => {
@@ -1084,6 +1136,9 @@ describe("markBookingPaymentSucceeded", () => {
       });
 
       expect(result.outcome).toBe("cancelled_refunded");
+      expect(result.capacityRefund).toEqual({ chargedAmountCents: 10000, plannedRefundCents: 10000 });
+      // #4125: made inline, so the REFUNDED event follows the CANCELLED one.
+      expect(bookingEvents.create.mock.calls.map(([args]) => (args as { data: { type: string } }).data.type)).toEqual(["CANCELLED", "REFUNDED"]);
       // The durable backstop is enqueued unconditionally, before the refund.
       expect(
         mocks.enqueueCapacityClaimFailedRefundRecovery
@@ -1107,14 +1162,192 @@ describe("markBookingPaymentSucceeded", () => {
         mocks.markCapacityClaimFailedRefundRecoverySucceeded
       ).toHaveBeenCalledWith(
         expect.objectContaining({
-          bookingId: "booking-1",
-          paymentIntentId: "pi_race",
+          idempotencyKey: "capacity_claim_failed_refund_recovery_booking-1_pi_race",
         })
       );
       expect(
         mocks.recordCapacityClaimFailedRefundRecoveryInlineError
       ).not.toHaveBeenCalled();
       expect(mocks.sendAdminPaymentFailureAlert).not.toHaveBeenCalled();
+    });
+
+    // #4125: the REFUNDED event says what was refunded - the frozen plan's
+    // total, which is less than the charge when the payment ledger shows less
+    // refundable - never the full charge.
+    it("records the inline REFUNDED event for the planned refund, not the full charge (#4125)", async () => {
+      primeCapacityRaceLoss();
+      mocks.planStripeRefundAllocation.mockResolvedValue({
+        slices: [{ paymentTransactionId: "txn-1", amountCents: 9000 }],
+        plannedAmountCents: 9000,
+        totalRefundableCents: 9000,
+      });
+
+      const result = await markBookingPaymentSucceeded({
+        format: CLUB_FORMAT_TEST, bookingId: "booking-1", paymentIntentId: "pi_race", amountCents: 10000, paymentMethodId: "pm_123",
+      });
+
+      expect(result.outcome).toBe("cancelled_refunded");
+      expect(result.capacityRefund).toEqual({ chargedAmountCents: 10000, plannedRefundCents: 9000 });
+      // #4154: the $10.00 no refund covers is a task to check, raised in the void's own claim transaction.
+      expect(shortfallAlert.raiseCapacityRaceRefundShortfallTask).toHaveBeenCalledWith(tx, {
+        bookingId: "booking-1", paymentId: expect.any(String), paymentIntentId: "pi_race", chargedCents: 10000, plannedRefundCents: 9000, format: CLUB_FORMAT_TEST,
+      });
+      // #4125: the officers are told about the $10.00 no refund covers - and (#4154) that its task was raised.
+      expect(shortfallAlert.alertCapacityRaceRefundShortfall).toHaveBeenCalledWith(
+        { bookingId: "booking-1", paymentIntentId: "pi_race", chargedCents: 10000, plannedRefundCents: 9000, taskRaised: true },
+        CLUB_FORMAT_TEST,
+      );
+      // The close runs in the event's transaction, so the two commit together.
+      expect(mocks.markCapacityClaimFailedRefundRecoverySucceeded).toHaveBeenCalledWith({ idempotencyKey: "capacity_claim_failed_refund_recovery_booking-1_pi_race", sentPlan: [{ paymentTransactionId: "txn-1", amountCents: 9000 }], store: tx });
+      const refunded = bookingEvents.create.mock.calls
+        .map(([args]) => (args as { data: { type: string; amountCents: number | null; reason: string | null } }).data)
+        .filter((event) => event.type === "REFUNDED");
+      expect(refunded).toEqual([
+        expect.objectContaining({ amountCents: 9000, reason: "Automatic refund after lodge capacity was no longer available." }),
+      ]);
+
+      // The member's page, from exactly what this settle wrote: paid, refunded, and the rest followed up.
+      const written = bookingEvents.create.mock.calls.map(([args]) => (args as { data: Omit<NarrativeEvent, "occurredAt"> }).data);
+      expect(written.find((event) => event.type === "CANCELLED")?.snapshot).toMatchObject({ paidAmountCents: 10000, settledAmountCents: 9000, retainedAmountCents: 0 });
+      const narrative = resolveBookingNarrative({
+        club: bindClubTime(requireClubTimeZone("Pacific/Auckland"), CLUB_FORMAT_TEST),
+        booking: { status: "CANCELLED", finalPriceCents: 10000, amountOwed: { owedCents: 0, dueCents: 0, appliedCreditCents: 0 }, checkIn: new Date("2026-04-10T00:00:00.000Z"), checkOut: new Date("2026-04-12T00:00:00.000Z"), firstName: "Alice", adminReviewStatus: null, adminReviewNotes: null, adminReviewReason: null },
+        events: written.map((event) => ({ ...event, occurredAt: new Date("2026-05-05T00:00:00.000Z") })),
+      }, CLUB_FORMAT_TEST);
+      expect(narrative.message).toBe(
+        "This booking was cancelled on 5 May 2026, after you paid $100.00 on 5 May 2026, because the dates filled up while your payment was going through. $90.00 was refunded to your card on 5 May 2026; the club will be in touch about the remaining $10.00. No further payment is required.",
+      );
+    });
+
+    // #4125: the event is the close's - written only by the close that moved
+    // the row to SUCCEEDED. A close the runner already made (count 0), or one
+    // that failed, leaves the event to the runner's own close.
+    it.each([
+      ["the runner already closed the row", () => mocks.markCapacityClaimFailedRefundRecoverySucceeded.mockResolvedValue({ count: 0 })],
+      ["the close failed", () => mocks.markCapacityClaimFailedRefundRecoverySucceeded.mockRejectedValue(new Error("db down"))],
+    ])("writes no inline REFUNDED event when %s (#4125)", async (_label, arrange) => {
+      primeCapacityRaceLoss();
+      arrange();
+
+      const result = await markBookingPaymentSucceeded({
+        format: CLUB_FORMAT_TEST, bookingId: "booking-1", paymentIntentId: "pi_race", amountCents: 10000, paymentMethodId: "pm_123",
+      });
+
+      expect(result.outcome).toBe("cancelled_refunded");
+      expect(bookingEvents.create.mock.calls.map(([args]) => (args as { data: { type: string } }).data.type)).toEqual(["CANCELLED"]);
+    });
+
+    // #4125: the close and its REFUNDED insert are one transaction (the
+    // rollback itself is proved against PostgreSQL in
+    // `capacity-race-refund-event.realdb.test.ts`). Here: a refused insert is
+    // logged, the settle still reports the refund made, and nothing throws.
+    it("a refused REFUNDED insert is logged and the refund still reads made (#4125)", async () => {
+      primeCapacityRaceLoss();
+      // The CANCELLED event first, then the REFUNDED insert, refused once.
+      bookingEvents.create.mockResolvedValueOnce({}).mockRejectedValueOnce(new Error("insert refused"));
+
+      const result = await markBookingPaymentSucceeded({
+        format: CLUB_FORMAT_TEST, bookingId: "booking-1", paymentIntentId: "pi_race", amountCents: 10000, paymentMethodId: "pm_123",
+      });
+
+      expect(result.outcome).toBe("cancelled_refunded");
+      expect(logger.error).toHaveBeenCalledWith(
+        expect.objectContaining({ bookingId: "booking-1", paymentIntentId: "pi_race", err: expect.objectContaining({ message: "insert refused" }) }),
+        "Failed to close the capacity race's refund recovery operation after its inline refund was made; the recovery runner will replay the frozen plan idempotently",
+      );
+      expect(bookingEvents.create.mock.calls.map(([args]) => (args as { data: { type: string } }).data.type)).toEqual(["CANCELLED", "REFUNDED"]);
+    });
+
+    // #4103 (`INV-PAY-130`): Stripe answers a slice `failed` or `canceled`
+    // without throwing. The pre-persisted row stays open, re-planned on the
+    // refused slice's next key; the door reports a failure (no close, so no
+    // REFUNDED event after it), and its own failure alert is the one alert.
+    describe("a capacity-race refund Stripe refuses (#4103)", () => {
+      const a = { paymentTransactionId: "txn-1", amountCents: 6000 };
+      const b = { paymentTransactionId: "txn-2", amountCents: 4000 };
+      const answer = (slice: typeof a, status: string) => ({
+        status,
+        slice,
+        refundId: `re_${slice.paymentTransactionId}`,
+        paymentIntentId: "pi_race",
+        amountCents: slice.amountCents,
+      });
+      const settle = () =>
+        markBookingPaymentSucceeded({
+          format: CLUB_FORMAT_TEST,
+          bookingId: "booking-1",
+          paymentIntentId: "pi_race",
+          amountCents: 10000,
+          paymentMethodId: "pm_123",
+        });
+      const replanned = () => (refusalReplan.updateMany.mock.calls[0]?.[0] as { where: unknown; data: { allocationPlan: unknown } } | undefined);
+
+      beforeEach(() => {
+        primeCapacityRaceLoss();
+        refusalReplan.updateMany.mockReset().mockResolvedValue({ count: 1 });
+        mocks.planStripeRefundAllocation.mockResolvedValue({ slices: [a, b], plannedAmountCents: 10000, totalRefundableCents: 10000 });
+      });
+
+      it("a clean refusal: not closed, re-planned on the next key, reported failed and alerted once", async () => {
+        mocks.refundPaymentTransactions.mockResolvedValue({ refunds: [answer(a, "failed"), answer(b, "canceled")] });
+
+        const result = await settle();
+
+        expect(result.outcome).toBe("cancelled_refund_failed");
+        expect(result.refundError).toMatch(/Stripe refused \$100\.00 .*still owed/);
+        expect(mocks.markCapacityClaimFailedRefundRecoverySucceeded).not.toHaveBeenCalled();
+        expect(replanned()).toEqual({
+          where: {
+            idempotencyKey: buildCapacityClaimFailedRefundRecoveryIdempotencyKey("booking-1", "pi_race"),
+            status: "PENDING",
+            attempts: 0,
+            allocationPlan: { equals: Prisma.DbNull },
+          },
+          data: { allocationPlan: [{ ...a, stripeKeySuffix: "refused1" }, { ...b, stripeKeySuffix: "refused1" }], lastError: result.refundError },
+        });
+        expect(mocks.recordCapacityClaimFailedRefundRecoveryInlineError).toHaveBeenCalledWith(
+          expect.objectContaining({ message: expect.stringMatching(/Stripe refused/) }),
+        );
+        expect(mocks.sendAdminPaymentFailureAlert).toHaveBeenCalledTimes(1);
+      });
+
+      it("one made beside one refused: the made slice is marked, never sent again; the alert names only the refusal", async () => {
+        mocks.refundPaymentTransactions.mockResolvedValue({ refunds: [answer(a, "succeeded"), answer(b, "failed")] });
+
+        const result = await settle();
+
+        expect(result.outcome).toBe("cancelled_refund_failed");
+        expect(replanned()?.data.allocationPlan).toEqual([{ ...a, madeRefundId: "re_txn-1" }, { ...b, stripeKeySuffix: "refused1" }]);
+        expect(mocks.sendAdminPaymentFailureAlert).toHaveBeenCalledWith(
+          expect.objectContaining({ errorMessage: expect.stringMatching(/Stripe refused \$40\.00/) }),
+          CLUB_FORMAT_TEST,
+        );
+        expect(mocks.sendAdminPaymentFailureAlert).toHaveBeenCalledTimes(1);
+      });
+
+      it("refused then thrown: the refusal moves, the slice that threw keeps its key, and the alert names both", async () => {
+        mocks.refundPaymentTransactions.mockRejectedValue(
+          Object.assign(new Error("Refund failed after $0.00 was refunded and recorded: network"), { refunds: [answer(a, "failed")] }),
+        );
+
+        const result = await settle();
+
+        expect(result.outcome).toBe("cancelled_refund_failed");
+        expect(replanned()?.data.allocationPlan).toEqual([{ ...a, stripeKeySuffix: "refused1" }, b]);
+        expect(result.refundError).toMatch(/Stripe refused \$60\.00.*network/);
+        expect(mocks.sendAdminPaymentFailureAlert).toHaveBeenCalledTimes(1);
+      });
+
+      it("a replay whose row a worker already holds moves nothing and stays quiet: the worker alerts as it moves the slice", async () => {
+        mocks.refundPaymentTransactions.mockResolvedValue({ refunds: [answer(a, "failed"), answer(b, "failed")] });
+        refusalReplan.updateMany.mockResolvedValue({ count: 0 });
+
+        const result = await settle();
+
+        expect(result.outcome).toBe("cancelled_refund_failed");
+        expect(mocks.markCapacityClaimFailedRefundRecoverySucceeded).not.toHaveBeenCalled();
+        expect(mocks.sendAdminPaymentFailureAlert).not.toHaveBeenCalled();
+      });
     });
   });
 

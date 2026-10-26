@@ -67,6 +67,8 @@ vi.mock("@/lib/prisma", () => ({
     // #3032: the pending-review fence reads this under the booking-edit locks.
     // Empty by default - no financial review is open - so every pre-#3032 test
     // asserts exactly what it asserted before.
+    // #3954: no increase is waiting on its mint's recovery for a reduction to net off.
+    paymentRecoveryOperation: { findMany: vi.fn(async () => []) },
     manualRefundTask: {
       // #3827 (`INV-PAY-117`): no open edit refund hand-back on file.
       aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })),
@@ -85,7 +87,25 @@ vi.mock("@/lib/prisma", () => ({
     promoCode: { update: mockUpdate },
     choreAssignment: { findMany: mockFindMany, delete: mockDelete, deleteMany: mockDeleteMany },
     season: { findMany: mockFindMany },
-    payment: { update: mockUpdate },
+    payment: {
+      update: mockUpdate,
+      // #3980: an edit that read no invoice link claims the payment row.
+      updateMany: vi.fn(async () => ({ count: 1 })),
+      // #4036: with no stored customer, the door reads the owner after commit
+      // and resolves the customer as the recovery runner does.
+      findUnique: vi.fn(async () => ({
+        additionalAmountCents: 0,
+        additionalPaymentStatus: null,
+        stripeCustomerId: null,
+        booking: {
+          organisationId: null,
+          member: { id: "m1", email: "alice@test.com", firstName: "Alice", lastName: "Smith" },
+          organisation: null,
+        },
+      })),
+    },
+    // #3954 round 7: the door re-reads its new intent (`isMintedAskStillLive`).
+    paymentTransaction: { findUnique: vi.fn().mockResolvedValue({ status: "PENDING", withdrawnAt: null }) },
     member: { count: mockMemberCount, findUnique: mockFindUnique, findMany: mockFindMany },
     familyGroupMember: { findMany: mockFindMany },
     auditLog: { create: vi.fn().mockResolvedValue({}) },
@@ -499,6 +519,8 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
     // #3032: the pending-review fence reads this under the booking-edit locks.
     // Empty by default - no financial review is open - so every pre-#3032 test
     // asserts exactly what it asserted before.
+    // #3954: no increase is waiting on its mint's recovery for a reduction to net off.
+    paymentRecoveryOperation: { findMany: vi.fn(async () => []) },
     manualRefundTask: {
       // #3827 (`INV-PAY-117`): no open edit refund hand-back on file.
       aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })),
@@ -519,6 +541,8 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
     },
     payment: {
       update: vi.fn().mockResolvedValue({}),
+      // #3980: an edit that read no invoice link claims the payment row.
+      updateMany: vi.fn(async () => ({ count: 1 })),
       upsert: vi.fn().mockResolvedValue({ id: "p1" }),
     },
     paymentTransaction: {
@@ -1537,6 +1561,69 @@ describe("POST /api/bookings/[id]/guests", () => {
     expect(fullPartyCall?.[2]?.lockedNightPrices ?? []).toEqual([]);
   });
 
+  /** #3980: an add on a booking whose primary invoice is not linked yet. */
+  async function addGuestToUnlinkedBooking(claimCount: number) {
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
+    const booking = makeBooking({ payment: { ...makeBooking().payment, xeroInvoiceId: null } });
+    const tx = makeTx(booking);
+    tx.payment.updateMany.mockResolvedValue({ count: claimCount });
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockedCheckCapacity.mockResolvedValue({ available: true, minAvailable: 5, nightDetails: [] } as any);
+    mockedCheckCapacityForGuestRanges.mockResolvedValue({ available: true, minAvailable: 5, nightDetails: [] } as any);
+    mockedCalcPrice.mockImplementation(((_ci: unknown, _co: unknown, guests: unknown[]) => ({
+      totalPriceCents: guests.length * 5000,
+      guests: guests.map(() => ({ priceCents: 5000, perNightCents: [2500, 2500], nightDates: [] })),
+    })) as any);
+    const req = new NextRequest("http://localhost/api/bookings/bk1/guests", {
+      method: "POST",
+      body: JSON.stringify({ guests: [{ firstName: "New", lastName: "Guest", ageTier: "ADULT", isMember: false }] }),
+    });
+    const res = await POST(req, { params: Promise.resolve({ id: "bk1" }) });
+    return { res, tx };
+  }
+
+  it("#3980: an add that read no invoice link claims the payment row and marks its history row", async () => {
+    const { res, tx } = await addGuestToUnlinkedBooking(1);
+    expect(res.status).toBe(200);
+    // A guest add records no fee: the claim only takes the row.
+    expect(tx.payment.updateMany).toHaveBeenCalledWith({
+      where: { id: "p1", xeroInvoiceId: null },
+      data: { changeFeeCents: { increment: 0 } },
+    });
+    const created = tx.bookingModification.create.mock.calls.at(-1)?.[0]?.data;
+    expect(created.modificationType).toBe("GUEST_ADD");
+    expect(created.newData).toMatchObject({ primaryInvoiceSettlement: { settledAgainstPrimaryInvoice: true } });
+  });
+
+  it("#3980: MUTATION - an add whose invoice link was saved under it is refused whole with the try-again 409", async () => {
+    const { PRIMARY_INVOICE_RAISED_DURING_EDIT_MESSAGE } = await import("@/lib/booking-primary-invoice-claim");
+    const { res, tx } = await addGuestToUnlinkedBooking(0);
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ error: PRIMARY_INVOICE_RAISED_DURING_EDIT_MESSAGE });
+    expect(tx.bookingModification.create).not.toHaveBeenCalled();
+  });
+
+  it("#3980: an add that read the invoice link claims nothing", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
+    const booking = makeBooking();
+    const tx = makeTx(booking);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockedCheckCapacity.mockResolvedValue({ available: true, minAvailable: 5, nightDetails: [] } as any);
+    mockedCheckCapacityForGuestRanges.mockResolvedValue({ available: true, minAvailable: 5, nightDetails: [] } as any);
+    mockedCalcPrice.mockImplementation(((_ci: unknown, _co: unknown, guests: unknown[]) => ({
+      totalPriceCents: guests.length * 5000,
+      guests: guests.map(() => ({ priceCents: 5000, perNightCents: [2500, 2500], nightDates: [] })),
+    })) as any);
+    const req = new NextRequest("http://localhost/api/bookings/bk1/guests", {
+      method: "POST",
+      body: JSON.stringify({ guests: [{ firstName: "New", lastName: "Guest", ageTier: "ADULT", isMember: false }] }),
+    });
+    const res = await POST(req, { params: Promise.resolve({ id: "bk1" }) });
+    expect(res.status).toBe(200);
+    expect(tx.payment.updateMany).not.toHaveBeenCalled();
+    expect(tx.bookingModification.create.mock.calls.at(-1)?.[0]?.data.newData).not.toHaveProperty("primaryInvoiceSettlement");
+  });
+
   it("moves a pending booking to PAYMENT_PENDING and clears the hold when the policy is disabled on add (#1287)", async () => {
     mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
     mockedGetHoldPolicy.mockResolvedValueOnce({ enabled: false, holdDays: 7, source: "default" });
@@ -1982,7 +2069,8 @@ describe("POST /api/bookings/[id]/guests", () => {
       booking.checkOut,
       [
         ...booking.guests,
-        { stayStart: booking.checkIn, stayEnd: booking.checkOut },
+        // A typed guest is no member, said so (#3817: the party's members).
+        { stayStart: booking.checkIn, stayEnd: booking.checkOut, memberId: null },
       ],
       "bk1",
       tx
@@ -2502,7 +2590,7 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
       skipDuplicates: true,
     });
     expect(sendBookingModifiedEmail).toHaveBeenCalledWith(
-      expect.objectContaining({ refundAmountCents: 2500, refundByBankTransfer: true }),
+      expect.objectContaining({ refundAmountCents: 2500, refundByBankTransfer: "member" }),
       expect.anything(),
     );
   });
@@ -3104,6 +3192,34 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
     );
   });
 
+  // #3954 round 9: the same liveness that withholds the secret. A reduction that
+  // retired the just-minted ask settled it, and its own email said so.
+  it("MUTATION (round 9): an ask a reduction retired before it was offered is never named as due in the member's email", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
+    const booking = makePromoIncreaseBooking();
+    const tx = makeTx(booking);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockPromoInvalidatedRepricing();
+    const { prisma } = await import("@/lib/prisma");
+    vi.mocked(prisma.paymentTransaction.findUnique).mockResolvedValueOnce(
+      { status: "FAILED", withdrawnAt: new Date("2026-07-01T00:00:00.000Z") } as never,
+    );
+
+    const res = await DELETE(
+      new NextRequest("http://localhost/api/bookings/bk1/guests/g2", { method: "DELETE" }),
+      { params: Promise.resolve({ id: "bk1", guestId: "g2" }) },
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+
+    expect(mockCreatePaymentIntent).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 2000 }));
+    expect(body.additionalPaymentClientSecret).toBeNull();
+    expect(sendBookingModifiedEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ additionalAmountCents: 0, additionalPaymentMethod: undefined }),
+      CLUB_FORMAT_TEST,
+    );
+  });
+
   it("does not hand the owner's client secret to a self-removing linked guest (#1042)", async () => {
     mockedAuth.mockResolvedValue({ user: { id: "guest-member-1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
     const booking = makePromoIncreaseBooking({
@@ -3217,6 +3333,7 @@ describe("bookingModifiedTemplate", () => {
   it("renders date change template", async () => {
     const { bookingModifiedTemplate } = await import("@/lib/email-templates/booking");
     const html = bookingModifiedTemplate({
+      addedGuests: [],
       firstName: "Alice",
       modificationType: "DATE_CHANGE",
       oldCheckIn: new Date("2026-06-01"),
@@ -3233,9 +3350,10 @@ describe("bookingModifiedTemplate", () => {
       // #3032: required, and this suite is not about the review note.
       // False is the control state for every assertion here.
       financialReviewPending: false,
-      refundByBankTransfer: false,
+      refundByBankTransfer: null,
       appliedCreditGivenBackCents: 0,
-      refundReturnedToOrganiser: false,
+      unpaidAskCancelled: false,
+      refundDestination: "own",
     }, CLUB_FORMAT_TEST);
     expect(html).toContain("Booking Modified");
     expect(html).toContain("Alice");
@@ -3247,6 +3365,7 @@ describe("bookingModifiedTemplate", () => {
   it("renders guest add template", async () => {
     const { bookingModifiedTemplate } = await import("@/lib/email-templates/booking");
     const html = bookingModifiedTemplate({
+      addedGuests: [],
       firstName: "Bob",
       modificationType: "GUEST_ADD",
       oldCheckIn: new Date("2026-06-01"),
@@ -3263,9 +3382,10 @@ describe("bookingModifiedTemplate", () => {
       // #3032: required, and this suite is not about the review note.
       // False is the control state for every assertion here.
       financialReviewPending: false,
-      refundByBankTransfer: false,
+      refundByBankTransfer: null,
       appliedCreditGivenBackCents: 0,
-      refundReturnedToOrganiser: false,
+      unpaidAskCancelled: false,
+      refundDestination: "own",
     }, CLUB_FORMAT_TEST);
     expect(html).toContain("Guests Added");
     expect(html).toContain("Previous Guests");
@@ -3276,6 +3396,7 @@ describe("bookingModifiedTemplate", () => {
   it("renders guest remove with refund", async () => {
     const { bookingModifiedTemplate } = await import("@/lib/email-templates/booking");
     const html = bookingModifiedTemplate({
+      addedGuests: [],
       firstName: "Carol",
       modificationType: "GUEST_REMOVE",
       oldCheckIn: new Date("2026-06-01"),
@@ -3292,9 +3413,10 @@ describe("bookingModifiedTemplate", () => {
       // #3032: required, and this suite is not about the review note.
       // False is the control state for every assertion here.
       financialReviewPending: false,
-      refundByBankTransfer: false,
+      refundByBankTransfer: null,
       appliedCreditGivenBackCents: 0,
-      refundReturnedToOrganiser: false,
+      unpaidAskCancelled: false,
+      refundDestination: "own",
     }, CLUB_FORMAT_TEST);
     expect(html).toContain("Guest Removed");
     expect(html).toContain("refund");
@@ -3304,6 +3426,7 @@ describe("bookingModifiedTemplate", () => {
   it("shows change fee when present", async () => {
     const { bookingModifiedTemplate } = await import("@/lib/email-templates/booking");
     const html = bookingModifiedTemplate({
+      addedGuests: [],
       firstName: "Dave",
       modificationType: "DATE_CHANGE",
       oldCheckIn: new Date("2026-06-01"),
@@ -3320,9 +3443,10 @@ describe("bookingModifiedTemplate", () => {
       // #3032: required, and this suite is not about the review note.
       // False is the control state for every assertion here.
       financialReviewPending: false,
-      refundByBankTransfer: false,
+      refundByBankTransfer: null,
       appliedCreditGivenBackCents: 0,
-      refundReturnedToOrganiser: false,
+      unpaidAskCancelled: false,
+      refundDestination: "own",
     }, CLUB_FORMAT_TEST);
     expect(html).toContain("Change Fee");
     expect(html).toContain("$50.00");
@@ -3332,6 +3456,7 @@ describe("bookingModifiedTemplate", () => {
   it("renders Internet Banking additional payment context", async () => {
     const { bookingModifiedTemplate } = await import("@/lib/email-templates/booking");
     const html = bookingModifiedTemplate({
+      addedGuests: [],
       firstName: "Eve",
       modificationType: "DATE_CHANGE",
       oldCheckIn: new Date("2026-06-01"),
@@ -3351,9 +3476,10 @@ describe("bookingModifiedTemplate", () => {
       // #3032: required, and this suite is not about the review note.
       // False is the control state for every assertion here.
       financialReviewPending: false,
-      refundByBankTransfer: false,
+      refundByBankTransfer: null,
       appliedCreditGivenBackCents: 0,
-      refundReturnedToOrganiser: false,
+      unpaidAskCancelled: false,
+      refundDestination: "own",
     }, CLUB_FORMAT_TEST);
 
     expect(html).toContain("additional Internet Banking payment");
@@ -3365,6 +3491,7 @@ describe("bookingModifiedTemplate", () => {
   it("escapes HTML in firstName", async () => {
     const { bookingModifiedTemplate } = await import("@/lib/email-templates/booking");
     const html = bookingModifiedTemplate({
+      addedGuests: [],
       firstName: "<script>alert('xss')</script>",
       modificationType: "DATE_CHANGE",
       oldCheckIn: new Date("2026-06-01"),
@@ -3381,9 +3508,10 @@ describe("bookingModifiedTemplate", () => {
       // #3032: required, and this suite is not about the review note.
       // False is the control state for every assertion here.
       financialReviewPending: false,
-      refundByBankTransfer: false,
+      refundByBankTransfer: null,
       appliedCreditGivenBackCents: 0,
-      refundReturnedToOrganiser: false,
+      unpaidAskCancelled: false,
+      refundDestination: "own",
     }, CLUB_FORMAT_TEST);
     expect(html).not.toContain("<script>");
     expect(html).toContain("&lt;script&gt;");

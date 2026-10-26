@@ -3,6 +3,7 @@ import "server-only";
 import { SchoolHasNoCreditAccountError } from "@/lib/member-credit";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
 import { RefundAllocationRacedError } from "@/lib/payment-transactions";
+import { CARD_SHORTFALL_NOTHING_TO_ALLOCATE_MESSAGE } from "@/lib/cancel-card-refund-shortfall-settle";
 import {
   needsOperatorXeroRetry,
   XeroAppliedCreditOperationBusyError,
@@ -14,7 +15,7 @@ import {
  * account-credit write after it, so the two cannot answer the same refusal
  * differently.
  */
-export function settlementWriteRefusal(error: unknown): unknown {
+export function settlementWriteRefusal(error: unknown, route?: { kind: string; cardShortfall?: { nothingToAllocateMessage?: string } } | null): unknown {
   // #3030: the settlement cap is now OPERATOR-REACHABLE. Before this the amount
   // always came from cancellation or capture policy and could not exceed what
   // was captured; now an admin types it. The cap itself is not weakened by a
@@ -24,7 +25,12 @@ export function settlementWriteRefusal(error: unknown): unknown {
   // check, so the operator was told "Could not close the refund task" and
   // monitoring recorded a 500 for working code. This says what is wrong and
   // what to do about it.
+  // The message `RefundAllocationExceedsCapturedError` carries (#3924 round 4),
+  // matched by its words so a caller's mocked module needs no new export.
   if (error instanceof Error && error.message === "Refund amount exceeds captured payments") {
+    // #4097 (`INV-PAY-129`): a card refund shortfall the ledger holds nothing for is dismissed, not repriced.
+    // #4154 (`INV-PAY-135`): a capacity race's names its own way out.
+    if (route?.cardShortfall) return new ManualBookingPaymentError(route.cardShortfall.nothingToAllocateMessage ?? CARD_SHORTFALL_NOTHING_TO_ALLOCATE_MESSAGE, 400);
     return new ManualBookingPaymentError("That is more than was ever captured on this payment — check the amount against the booking's payment history.", 400);
   }
   // #3032: a lock-free writer on the same payment (the charge.refunded sync; a

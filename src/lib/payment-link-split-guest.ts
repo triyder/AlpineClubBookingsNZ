@@ -23,9 +23,11 @@ import { sendSplitGuestPaymentLinkEmail } from "@/lib/email";
 import { recordWithheldBookingEmail } from "@/lib/booking-email-suppression";
 import type { EmailAuditTemplateName } from "@/lib/email-message-audit-defaults";
 import logger from "@/lib/logger";
+import { readBookingAmountOwed } from "@/lib/booking-amount-owed";
 import { revokePaymentLinkById } from "@/lib/payment-link";
 import { prisma } from "@/lib/prisma";
 import { savedPaymentMethodForBooking } from "@/lib/saved-payment-method";
+import { savedCardChargeCents } from "@/lib/booking-payment-state";
 import type { ClubFormat } from "@/lib/club-format";
 
 /** A freshly minted split-guest link: the raw token (emailable exactly once)
@@ -190,7 +192,9 @@ export async function issueSplitGuestPaymentLink(
     // via the split-guest flow.
     booking.groupBookingJoin ||
     !booking.hasNonMembers ||
-    booking.finalPriceCents <= 0
+    // #4357 (`INV-PAY-119`): worth, not the bare price - a change fee recorded
+    // on a $0 child's payment is still owed, and the cron sends it this link.
+    savedCardChargeCents(booking) <= 0
   ) {
     return { outcome: "not_payable" };
   }
@@ -322,6 +326,7 @@ export async function issueSplitGuestPaymentLink(
       checkOut: booking.checkOut,
       guestCount: booking.guests.length,
       priceCents: booking.finalPriceCents,
+      amountDueCents: (await readBookingAmountOwed(booking)).dueCents,
       bookingReference: booking.id,
       expiresAt: minted.expiresAt, // the row's own instant, not a re-derivation
       lodgeId: booking.lodgeId ?? null,

@@ -1,3 +1,4 @@
+import { exactContains } from "@/lib/prisma-exact-prefix";
 import { NextRequest, NextResponse } from "next/server";
 import type { Prisma } from "@prisma/client";
 import {
@@ -44,9 +45,9 @@ export async function GET(request: NextRequest) {
   if (search) {
     where.member = {
       OR: [
-        { firstName: { contains: search, mode: "insensitive" } },
-        { lastName: { contains: search, mode: "insensitive" } },
-        { email: { contains: search, mode: "insensitive" } },
+        { firstName: exactContains(search, "insensitive") },
+        { lastName: exactContains(search, "insensitive") },
+        { email: exactContains(search, "insensitive") },
       ],
     };
   }

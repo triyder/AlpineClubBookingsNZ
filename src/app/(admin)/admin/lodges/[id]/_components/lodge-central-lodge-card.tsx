@@ -181,10 +181,10 @@ export function LodgeCentralLodgeCard({ lodgeId }: { lodgeId: string }) {
     <div>
       {viewOnlyBanner}
       {feedback}
-      <Card>
+      <Card {...section.sectionRegionProps}>
         <CardHeader className="flex flex-row items-start justify-between gap-3">
           <div>
-            <CardTitle className="flex items-center gap-2 text-base">
+            <CardTitle {...section.titleProps} className="flex items-center gap-2 text-base">
               <Link2 className="h-4 w-4" />
               Central lodge
             </CardTitle>
@@ -200,6 +200,7 @@ export function LodgeCentralLodgeCard({ lodgeId }: { lodgeId: string }) {
               describeReason={false}
               variant="outline"
               size="sm"
+              {...section.editTriggerProps}
               onClick={section.startEditing}
               disabled={owned === null}
             >

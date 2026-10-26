@@ -8,6 +8,9 @@ database-backed 404. The supported data tokens are:
   rate columns (all lodges, or one named lodge).
 - `{{joining-fees}}` — one-off joining fees, grouped by membership type or age.
 - `{{annual-fees}}` — annual membership fee totals (own visibility opt-in).
+- `{{first-year-costs}}` — what it costs to join: the joining fee plus the first
+  year's annual subscription as one total per membership type and age tier
+  (needs both the Joining fees and Annual membership fees opt-ins).
 - `{{booking-policy-summary}}` or `{{booking-policy-summary:lodge-slug}}`
 - `{{cancellation-policy}}` or `{{cancellation-policy:lodge-slug}}`
 
@@ -19,7 +22,7 @@ replacement through the same grouped-table renderer — prefer the new name):
 
 ## Fee embed parameters (#1933, E7)
 
-The three fee embeds — `{{hut-fees}}`, `{{joining-fees}}`, `{{annual-fees}}`
+The fee embeds — `{{hut-fees}}`, `{{joining-fees}}`, `{{annual-fees}}`
 (and their aliases) — accept an optional parameter after a colon. The parameter
 is a comma-separated list of segments; each segment is either `key=value` or a
 bare positional value:
@@ -45,6 +48,33 @@ the safe **no-information state** — never another group's data. The single-bra
 capture is unchanged; the parameter grammar is parsed from the captured text by
 `parseTokenParameters` in `src/lib/token-parameters.ts`, shared by the renderer
 and the admin token-help validation.
+
+## How `{{first-year-costs}}` works (#4295)
+
+One row per publicly-listed active membership type and age tier: the current
+joining fee plus the current annual fee, resolved from the same dated schedules
+the invoicing reads (`getEffectiveJoiningFee`, `getEffectiveMembershipAnnualFee`,
+and the subscription run's exemptions), so a schedule that takes effect on a
+future date changes the totals on that day with no edit. The figure is for **one
+person**. It accepts only `type=` (`{{first-year-costs:type=family}}`).
+
+- A tier with no row of its own uses the type's flat (NULL-tier) row. A type
+  without age groups reads only its flat rows.
+- A flat `PER_FAMILY` annual fee is added once, so a Family type reads joining
+  fee + family annual fee with no rule in the page code. A `PER_MEMBER` fee is
+  **not** multiplied by family size: price a family with a `PER_FAMILY` fee, or
+  the block will show one member's cost.
+- No subscription is added for a `NOT_REQUIRED` type, for a `NO_INVOICE` fee, or
+  for a `BASED_ON_AGE_TIER` tier that is not subscription-liable when its fee is
+  per member (a per-family fee still applies to it), exactly as the invoicing
+  exempts them.
+- A tier whose subscription is required but has **no** annual fee set is left
+  out, so a joining fee alone is never presented as the first-year cost. A tier
+  with no joining fee set simply has no joining fee.
+- An annual fee with a proration rule shows the total as "up to $X": a
+  mid-season joiner's first invoice is smaller.
+- Both the Joining fees and Annual membership fees opt-ins must be on; either
+  off renders nothing, never a partial total.
 
 ## How `{{hut-fees}}` builds its table (#2129)
 

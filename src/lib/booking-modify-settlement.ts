@@ -15,26 +15,37 @@ import {
   sizeAdditionalAsk,
   type AdditionalAsk,
 } from "@/lib/additional-payment-ask";
+import {
+  assertReductionReadForNet,
+  type ReductionAgainstUnpaidAsk,
+} from "@/lib/additional-ask-reduction";
+import {
+  assertOptionsSizedAfterUnpaidAsk,
+  foldWaitingReissuedAsks,
+  settleReductionAgainstUnpaidAsk,
+  type UnpaidAskSettlement,
+} from "@/lib/additional-ask-reissue";
 import { bookingOwner } from "@/lib/booking-owner";
-import { BookingModificationSettlementMethodRequiredError } from "@/lib/booking-modify-settlement-required";
 import type { CalendarDate } from "@/lib/club-time";
 import type { ClubFormat } from "@/lib/club-format";
 import { giveBackPaidReductionCredit } from "@/lib/booking-modify-credit-give-back";
 import type { PaidReductionCreditGiveBack } from "@/lib/booking-credit-give-back-marker";
+import { NO_FOLDED_REISSUED_ASKS, type FoldedReissuedAsks } from "@/lib/unpaid-ask-offset-marker";
 import { getNonMemberHoldPolicy } from "@/lib/cancellation";
 import {
   queueSupersededPrimaryIntentCancellations,
   type SupersededPrimaryPaymentIntent,
 } from "@/lib/booking-payment-cleanup";
 import {
+  bookingAmountOwedCents,
+  bookingWorthCents,
+  canAskCardForIncrease,
   hasCapturedPayment,
   hasIssuedPrimaryXeroInvoice,
   isSettledBookingStatus,
+  recordedChangeFeeCents,
 } from "@/lib/booking-payment-state";
-import {
-  type BookingModificationSettlementMethod,
-  type LoadedBookingForModify,
-} from "@/lib/booking-modify-validation";
+import { type BookingModificationSettlementMethod, type LoadedBookingForModify } from "@/lib/booking-modify-validation";
 import { type GuestPlan } from "@/lib/booking-modify-plan";
 import { calculateBookingHoldDecision } from "@/lib/policies/booking-route-decisions";
 import {
@@ -43,13 +54,14 @@ import {
 } from "@/lib/member-credit";
 import { clearStaleCreditElection } from "@/lib/booking-credit-election";
 import { refundableCashNetOfOpenHandBacks } from "@/lib/edit-refund-hand-back";
-import { ApiError } from "@/lib/api-error";
+import { writeEditOnPayment } from "@/lib/booking-primary-invoice-claim";
 import {
   OrganiserChildRefundRefusedError,
   planOrganiserChildModificationRefund,
   type CombinedCardSettlement,
 } from "@/lib/organiser-child-refund";
 import { ORGANISER_CHILD_CHARGE_REFUSAL, paidByOrganiserCard } from "@/lib/group-organiser-paid";
+import { refuseOrganiserBankChildPriceChangeInGroupCancel } from "@/lib/group-cancel-in-progress";
 
 export type PaymentAdjustmentResult = {
   refundAmountCents: number;
@@ -89,7 +101,11 @@ export type PaymentAdjustmentResult = {
    * `BookingModification` row exists; null for every other booking.
    */
   organiserChildRefund: { settlement: CombinedCardSettlement; amountCents: number } | null;
-};
+  /** #3954 round 6: the waiting re-issues this increase folded into its ask, for its history (`unpaidAskOffsetHistory`). */
+  foldedReissuedAsks: FoldedReissuedAsks;
+  /** #3980: read no invoice link and claimed it (`writeEditOnPayment`); the door marks its history row. */
+  settledAgainstPrimaryInvoice: boolean;
+} & UnpaidAskSettlement; // #3954: what the reduction did to the unpaid ask
 
 /**
  * #3653 (`INV-PAY-114`): the refusal an edit that raises the price of a booking
@@ -104,11 +120,9 @@ export function organiserChildChargeRefusal({
   booking: Pick<LoadedBookingForModify, "status" | "payment" | "organiserSettled" | "parentBookingId">;
   netChargeCents: number;
 }): string | null {
-  const hasSucceededPayment =
-    isSettledBookingStatus(booking.status) &&
-    hasCapturedPayment(booking.payment) &&
-    booking.payment?.source === PaymentSource.STRIPE;
-  return netChargeCents > 0 && hasSucceededPayment && paidByOrganiserCard(booking)
+  // #3502: the increase question, so a credit-paid ($0) child is refused here
+  // exactly as `applyPaymentAdjustments` now asks its card.
+  return netChargeCents > 0 && canAskCardForIncrease(booking) && paidByOrganiserCard(booking)
     ? ORGANISER_CHILD_CHARGE_REFUSAL
     : null;
 }
@@ -125,71 +139,18 @@ export {
   calculateModificationSettlementOptions,
   type BookingModificationSettlementOptions,
 } from "@/lib/booking-modify-settlement-options";
-import type { BookingModificationSettlementOptions } from "@/lib/booking-modify-settlement-options";
+import {
+  resolveSelectedSettlementAmount,
+  type BookingModificationSettlementOptions,
+} from "@/lib/booking-modify-settlement-options";
 
 // #3232: the settlement-required refusal moved to `booking-modify-settlement-
 // required.ts`, whose only import is `ApiError`, so a caller that needs to
 // RECOGNISE it does not have to pull this file's pricing/cancellation/payment
-// graph in with it. It is imported above and thrown below exactly as before; the
-// `booking-modify` barrel re-exports it from its new home, so no importer moved.
-
-function resolveSelectedSettlementAmount({
-  settlementOptions,
-  settlementMethod,
-}: {
-  settlementOptions: BookingModificationSettlementOptions | null | undefined;
-  settlementMethod: BookingModificationSettlementMethod | undefined;
-}) {
-  if (!settlementOptions) {
-    return {
-      settlementMethod: null,
-      amountCents: 0,
-      policyRetainedAmountCents: 0,
-    };
-  }
-
-  if (settlementOptions.returnsToOrganiser) {
-    if (settlementMethod === "credit") {
-      throw new ApiError(
-        "This booking was paid for by the group organiser, so a reduction goes back to the organiser's card and cannot be held as account credit.",
-        400,
-      );
-    }
-    const amountCents = settlementOptions.cardRefundAmountCents;
-    return {
-      settlementMethod: amountCents > 0 ? ("card" as const) : null,
-      amountCents,
-      policyRetainedAmountCents: Math.max(0, settlementOptions.basisAmountCents - amountCents),
-    };
-  }
-
-  if (settlementOptions.requiresSettlementMethod && !settlementMethod) {
-    throw new BookingModificationSettlementMethodRequiredError();
-  }
-
-  if (!settlementOptions.requiresSettlementMethod) {
-    return {
-      settlementMethod: null,
-      amountCents: 0,
-      policyRetainedAmountCents: settlementOptions.basisAmountCents,
-    };
-  }
-
-  const resolvedMethod = settlementMethod ?? "card";
-  const amountCents =
-    resolvedMethod === "credit"
-      ? settlementOptions.accountCreditAmountCents
-      : settlementOptions.cardRefundAmountCents;
-
-  return {
-    settlementMethod: resolvedMethod,
-    amountCents,
-    policyRetainedAmountCents: Math.max(
-      0,
-      settlementOptions.basisAmountCents - amountCents,
-    ),
-  };
-}
+// graph in with it. The `booking-modify` barrel re-exports it from its new home,
+// so no importer moved. #3980: it is thrown by `resolveSelectedSettlementAmount`,
+// moved verbatim to `booking-modify-settlement-options.ts` beside the options it
+// reads, to keep this module inside its size budget.
 
 export async function applyPaymentAdjustments(
   tx: Prisma.TransactionClient,
@@ -197,15 +158,21 @@ export async function applyPaymentAdjustments(
     booking,
     priceDiffCents,
     changeFeeCents,
+    reduction,
     settlementOptions,
     settlementMethod,
     todayAtClub,
     format,
     appliedCreditReturnedByCaller = false,
+    reductionUntiered = false,
+    changeFeeRecordedByCaller = false,
+    primaryInvoiceRaisedMessage,
   }: {
     booking: LoadedBookingForModify;
     priceDiffCents: number;
     changeFeeCents: number;
+    /** #3954: the caller's ONE read of the unpaid ask, which its options were sized on. */
+    reduction: ReductionAgainstUnpaidAsk;
     settlementOptions?: BookingModificationSettlementOptions | null;
     settlementMethod?: BookingModificationSettlementMethod;
     /** #3809: the club's day, the tier boundary of a credit-paid booking's give-back. */
@@ -220,18 +187,39 @@ export async function applyPaymentAdjustments(
      * Every ordinary edit door omits it and keeps #3809's give-back.
      */
     appliedCreditReturnedByCaller?: boolean;
+    /**
+     * #3750 (F2 on #3955): the caller already charged the cancellation tier in
+     * its change fee (a finished-stay correction), so the applied-credit
+     * give-back returns the remaining reduction in full rather than tiering it
+     * a second time.
+     */
+    reductionUntiered?: boolean;
+    /** #3954 x #3750: the caller records the fee on the amount owed (`recordFinishedStayFeeOwed`). */
+    changeFeeRecordedByCaller?: boolean;
+    primaryInvoiceRaisedMessage?: string; // #3980: the claim's refusal, in the caller's words
   },
 ): Promise<PaymentAdjustmentResult> {
+  // #3949 review round 5: the one place a price change is refused mid group cancel (every door settles through here).
+  await refuseOrganiserBankChildPriceChangeInGroupCancel(tx, booking, { priceDiffCents, changeFeeCents });
   const inSettledStatus = isSettledBookingStatus(booking.status);
   const hasSettledPayment =
     inSettledStatus && hasCapturedPayment(booking.payment);
+  // #3954 (`INV-PAY-120`): every branch settles what the unpaid ask leaves.
+  assertReductionReadForNet(reduction, priceDiffCents + changeFeeCents, booking.id);
+  assertOptionsSizedAfterUnpaidAsk(settlementOptions, reduction, booking.id, format);
+  const netAmountCents = reduction.netChargeLeftCents;
+  // #3502 (owner, 6 Oct 2026): a credit- or promo-paid ($0) booking's INCREASE is
+  // asked by card, as a card-paid one's; every REDUCTION reads `hasSettledPayment`.
+  const zeroDollarCardIncrease =
+    netAmountCents > 0 && !hasSettledPayment && canAskCardForIncrease(booking);
   const hasSucceededPayment =
-    hasSettledPayment && booking.payment?.source === PaymentSource.STRIPE;
+    (hasSettledPayment && booking.payment?.source === PaymentSource.STRIPE) ||
+    zeroDollarCardIncrease;
   const hasIssuedXeroInvoice = hasIssuedPrimaryXeroInvoice(booking);
+  let feeRecordedHereCents = 0; // written with the payment's claim below (#3980)
   // #3827 (`INV-PAY-117`): net of edit refunds already promised back by hand.
   const remainingRefundableCents = await refundableCashNetOfOpenHandBacks(tx, booking.payment);
 
-  const netAmountCents = priceDiffCents + changeFeeCents;
   const selectedSettlement = resolveSelectedSettlementAmount({
     settlementOptions,
     settlementMethod,
@@ -256,6 +244,7 @@ export async function applyPaymentAdjustments(
           cardBasisCents: hasSettledPayment ? Math.min(-netAmountCents, remainingRefundableCents) : 0,
           todayAtClub,
           format,
+          untiered: reductionUntiered,
         })
       : null;
   const xeroRefundAmountCents =
@@ -275,9 +264,25 @@ export async function applyPaymentAdjustments(
   // #3371: zero until a card arm builds one. `NO_ADDITIONAL_ASK` never mints, so
   // every non-card ending is safe by construction rather than by remembering.
   let additionalAsk: AdditionalAsk = NO_ADDITIONAL_ASK;
+  let foldedReissuedAsks: FoldedReissuedAsks = NO_FOLDED_REISSUED_ASKS;
   let pendingRefundAmountCents = 0;
+  // #3954: retire the unpaid ask; what is left of it is re-issued after commit.
+  const { reissuedAsk, ...unpaidAskSettlement } = await settleReductionAgainstUnpaidAsk(tx, {
+    booking,
+    reduction,
+    changeFeeCents,
+    hasSettledPayment,
+    hasIssuedXeroInvoice,
+    changeFeeRecordedByCaller,
+  });
+  if (reissuedAsk.amountCents > 0) {
+    additionalAsk = reissuedAsk;
+    additionalAmountCents = reissuedAsk.amountCents;
+  }
 
-  if (hasSettledPayment && booking.payment) {
+  // #3502: the zero-dollar increase joins the settled arm, reaching only its
+  // `netAmountCents > 0` branch (refusal, sizing, the fee recorded, `INV-PAY-047`).
+  if ((hasSettledPayment || zeroDollarCardIncrease) && booking.payment) {
     if (settlementOptions && netAmountCents < 0) {
       if (selectedSettlement.settlementMethod === "credit") {
         accountCreditAmountCents = selectedSettlement.amountCents;
@@ -333,10 +338,14 @@ export async function applyPaymentAdjustments(
         // refunds. Refused before the edit commits.
         throw new OrganiserChildRefundRefusedError(organiserChargeRefusal);
       } else if (hasSucceededPayment) {
+        // #3954: a waiting re-issue joins this ask, its recovery closed and the
+        // fold recorded on this edit's history so its replay asks again.
+        foldedReissuedAsks = await foldWaitingReissuedAsks(tx, booking);
         additionalAsk = sizeAdditionalAsk({
           priceDiffCents,
           changeFeeCents,
           payment: booking.payment,
+          waitingReissuedAskCents: foldedReissuedAsks.cents,
         });
         additionalAmountCents = additionalAsk.amountCents;
       } else {
@@ -344,15 +353,18 @@ export async function applyPaymentAdjustments(
       }
     }
 
-    if (changeFeeCents > 0) {
-      await tx.payment.update({
-        where: { id: booking.payment.id },
-        data: { changeFeeCents: { increment: changeFeeCents } },
-      });
-    }
+    // #3954 x #3750: once - a caller that records it on the amount owed did.
+    if (changeFeeCents > 0 && !changeFeeRecordedByCaller) feeRecordedHereCents = changeFeeCents;
   } else if (xeroAdditionalAmountCents > 0) {
     additionalAmountCents = xeroAdditionalAmountCents;
   }
+
+  // #3980 (`INV-PAY-136`): the fee, and the claim on an unlinked invoice (409 if it moved).
+  const settledAgainstPrimaryInvoice = await writeEditOnPayment(tx, {
+    payment: booking.payment,
+    changeFeeCents: feeRecordedHereCents,
+    refusalMessage: primaryInvoiceRaisedMessage,
+  });
 
   // #3653: refused here, before the edit commits, when the organiser's combined
   // payment cannot return it.
@@ -379,6 +391,9 @@ export async function applyPaymentAdjustments(
     appliedCreditGivenBackCents: creditGiveBack?.givenBackCents ?? 0,
     appliedCreditGiveBack: creditGiveBack,
     organiserChildRefund,
+    foldedReissuedAsks,
+    settledAgainstPrimaryInvoice,
+    ...unpaidAskSettlement,
   };
 }
 
@@ -407,6 +422,7 @@ export async function applyLifecycleTransitions(
     bookingId,
     newCheckIn,
     newFinalPriceCents,
+    feeRecordedByThisEditCents,
     format,
     guestsForPricing,
     skipBookingLifecycleRules,
@@ -416,6 +432,15 @@ export async function applyLifecycleTransitions(
     bookingId: string;
     newCheckIn: Date;
     newFinalPriceCents: number;
+    /**
+     * #3750 (#3955 review F1): a change fee THIS edit recorded on the payment
+     * of a booking with nothing captured ("Add fee to amount owed"), already
+     * written by the caller. With the fee already on the payment it is what
+     * the booking is worth (`bookingWorthCents`), so the credit clamp, the $0
+     * decision and the stale-intent comparison below all read worth, never the
+     * bare price. Every other edit door records none and passes 0.
+     */
+    feeRecordedByThisEditCents: number;
     format: ClubFormat;
     guestsForPricing: Array<{ isMember: boolean }>;
     skipBookingLifecycleRules: boolean;
@@ -516,6 +541,16 @@ export async function applyLifecycleTransitions(
   const isRepriceablePrePayment =
     newStatus === BookingStatus.PENDING ||
     newStatus === BookingStatus.PAYMENT_PENDING;
+  // #3750 (#3955 review F1, `INV-PAY-119`): the fee recorded on the payment —
+  // before this edit, plus what this edit recorded — is owed with the price, so
+  // the clamp keeps credit up to the booking's WORTH and the $0 decision and
+  // stale-intent comparison read what it owes. Read from the one home.
+  const feeOwedCents =
+    recordedChangeFeeCents(booking.payment) + feeRecordedByThisEditCents;
+  const newWorthCents = bookingWorthCents({
+    finalPriceCents: newFinalPriceCents,
+    changeFeeCents: feeOwedCents,
+  });
   if (!skipBookingLifecycleRules && isRepriceablePrePayment) {
     const appliedBeforeClamp = await deriveBookingAppliedCreditCents(
       bookingId,
@@ -523,14 +558,18 @@ export async function applyLifecycleTransitions(
     );
     if (appliedBeforeClamp > 0) {
       const clamp = await clampAppliedCreditToBookingPrice(
-        { memberId: bookingOwner(booking).memberId, bookingId, newFinalPriceCents, format },
+        { memberId: bookingOwner(booking).memberId, bookingId, newWorthCents, format },
         tx,
       );
       appliedCreditCents = clamp.appliedCreditCents;
       refundedExcessCreditCents = clamp.refundedExcessCents;
     }
   }
-  const effectivePriceCents = newFinalPriceCents - appliedCreditCents;
+  const effectivePriceCents = bookingAmountOwedCents({
+    finalPriceCents: newFinalPriceCents,
+    changeFeeCents: feeOwedCents,
+    appliedCreditCents,
+  });
 
   if (
     !skipBookingLifecycleRules &&

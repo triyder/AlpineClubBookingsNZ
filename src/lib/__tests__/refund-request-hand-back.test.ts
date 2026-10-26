@@ -10,6 +10,9 @@ import {
   openNonCancellationHandBackCents,
   raiseRefundRequestHandBack,
   refundableCashForRefundAppeal,
+  refundAppealHandedBackCents,
+  refundAppealHandedBackParts,
+  totalRefundAppealHandedBackCents,
 } from "@/lib/edit-refund-hand-back";
 import {
   isInternetBankingLateCashCredit,
@@ -22,7 +25,7 @@ import {
   isRefundRequestHandBackTask,
   NON_CANCELLATION_HAND_BACK_WHERE,
   nonCancellationHandBackCompletedSnapshot,
-  refundAppealCeiling,
+  refundAppealCeilingParts,
   refundRequestHandBackOccurrenceKey,
 } from "@/lib/manual-refund-task-settlement-rules";
 import { isRefundOutsideBookingSettlement } from "@/lib/refund-event-outside-settlement";
@@ -42,6 +45,7 @@ describe("raising an approved appeal's hand-back (D-3813-7)", () => {
       paymentId: "pay-1",
       refundRequestId: "req-1",
       amountCents: 10000,
+      booking: { organiserSettled: false, parentBookingId: null, payment: null },
     });
     expect(raised).toBe(1);
     expect(store.manualRefundTask.createMany).toHaveBeenCalledWith({
@@ -67,6 +71,7 @@ describe("raising an approved appeal's hand-back (D-3813-7)", () => {
         paymentId: "pay-1",
         refundRequestId: "req-1",
         amountCents: 10000,
+        booking: { organiserSettled: false, parentBookingId: null, payment: null },
       }),
     ).toBe(0);
   });
@@ -80,6 +85,7 @@ describe("raising an approved appeal's hand-back (D-3813-7)", () => {
           paymentId: "pay-1",
           refundRequestId: "req-1",
           amountCents,
+          booking: { organiserSettled: false, parentBookingId: null, payment: null },
         }),
       ).toBe(0);
       expect(store.manualRefundTask.createMany).not.toHaveBeenCalled();
@@ -114,6 +120,8 @@ describe("telling an appeal's hand-back apart (INV-PAY-118)", () => {
       OR: [
         { occurrenceKey: { startsWith: "edit-refund-hand-back:" } },
         { occurrenceKey: { startsWith: "refund-request-hand-back:" } },
+        { occurrenceKey: { startsWith: "card-refund-paid-another-way:" } },
+        { occurrenceKey: { startsWith: "bank-refund-void:" } },
       ],
     });
   });
@@ -196,6 +204,8 @@ describe("the queue payload marks an appeal's hand-back for the card", () => {
         organisation: null,
         memberId: "ann",
         deletedAt: null,
+        organiserSettled: false,
+        parentBookingId: null,
         status: "CANCELLED",
         payment: null,
       },
@@ -224,7 +234,8 @@ describe("the refund appeal ceiling (INV-PAY-118)", () => {
     return {
       manualRefundTask: { aggregate: vi.fn(async () => ({ _sum: { amountCents: openCents } })) },
       memberCredit: { aggregate: vi.fn(async () => ({ _sum: { amountCents: creditCents } })) },
-      payment: { findUnique: vi.fn(async () => fresh) },
+      // #4124: the card-debt read and the payment read; no open card-refund debt.
+      payment: { findUnique: vi.fn(async () => fresh && { recoveryOperations: [], refunds: [], ...fresh }) },
     };
   }
 
@@ -260,15 +271,74 @@ describe("the refund appeal ceiling (INV-PAY-118)", () => {
     expect(store.manualRefundTask.aggregate).not.toHaveBeenCalled();
   });
 
+  /** The screen's ceiling alone (`refundAppealCeilingParts`). */
+  const refundAppealCeiling = (...args: Parameters<typeof refundAppealCeilingParts>) => refundAppealCeilingParts(...args).ceilingCents;
+
   it("screen: the same figure from the loaded rows, counting only the late-cash credit", () => {
     expect(
       refundAppealCeiling(
-        { ...payment, manualRefundTasks: [{ amountCents: 4000 }, { amountCents: null }] },
+        { ...payment, recoveryOperations: [], refunds: [], manualRefundTasks: [{ amountCents: 4000 }, { amountCents: null }] },
         [lateCash, cancellationCredit],
       ),
     ).toBe(3000);
-    expect(refundAppealCeiling({ ...payment, manualRefundTasks: [] }, null)).toBe(10000);
+    expect(refundAppealCeiling({ ...payment, recoveryOperations: [], refunds: [], manualRefundTasks: [] }, null)).toBe(10000);
     expect(refundAppealCeiling(null, [lateCash])).toBe(0);
+  });
+
+  // #4124: a card refund Stripe refused (or that failed later) is out of
+  // `refundedAmountCents` while a recovery row is set to send it; an appeal
+  // approved against it would return it twice. Server and screen both net it.
+  const owingOperation = {
+    id: "op-refused",
+    type: "REFUND_BOOKING_MODIFICATION" as const,
+    status: "FAILED" as const,
+    idempotencyKey: "refund_request_refund_rr0",
+    amountCents: 2500,
+    allocationPlan: [{ paymentTransactionId: "txn-1", amountCents: 2500, stripeKeySuffix: "refused1" }],
+    paymentTransactionId: null,
+    createdAt: new Date("2026-06-20T00:00:00.000Z"),
+    succeededAt: null,
+  };
+
+  it("#4124 server: an open card-refund debt comes off the appeal ceiling, read before the payment", async () => {
+    const store = {
+      manualRefundTask: { aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })) },
+      memberCredit: { aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })) },
+      payment: { findUnique: vi.fn(async () => ({ ...payment, recoveryOperations: [owingOperation], refunds: [] })) },
+    };
+    await expect(refundableCashForRefundAppeal(store as never, payment)).resolves.toBe(7500);
+    // Two payment reads: the card-refund debt (its recovery rows), then the
+    // payment the ceiling is taken from - the debt first, with the other sums.
+    const [debtRead, paymentRead] = store.payment.findUnique.mock.calls as unknown as Array<[{ select: Record<string, unknown> }]>;
+    expect(debtRead?.[0].select).toHaveProperty("recoveryOperations");
+    expect(paymentRead?.[0].select).not.toHaveProperty("recoveryOperations");
+    const [debtAt, paymentAt] = store.payment.findUnique.mock.invocationCallOrder;
+    expect(store.manualRefundTask.aggregate.mock.invocationCallOrder[0]).toBeLessThan(paymentAt!);
+    expect(store.memberCredit.aggregate.mock.invocationCallOrder[0]).toBeLessThan(paymentAt!);
+    expect(debtAt).toBeLessThan(paymentAt!);
+  });
+
+  it("#4124 review F1: the parts keep the card debt apart, and the total sums all three", async () => {
+    const store = {
+      manualRefundTask: { aggregate: vi.fn(async () => ({ _sum: { amountCents: 1000 } })) },
+      memberCredit: { aggregate: vi.fn(async () => ({ _sum: { amountCents: 500 } })) },
+      payment: { findUnique: vi.fn(async () => ({ ...payment, recoveryOperations: [owingOperation], refunds: [] })) },
+    };
+    const parts = await refundAppealHandedBackParts(store as never, payment);
+    expect(parts).toEqual({ handBackCents: 1000, lateCashCreditCents: 500, cardRefundOwedCents: 2500 });
+    expect(totalRefundAppealHandedBackCents(parts)).toBe(4000);
+    await expect(refundAppealHandedBackCents(store as never, payment)).resolves.toBe(4000);
+  });
+
+  it("#4124 screen: the same figure from the loaded rows", () => {
+    expect(refundAppealCeilingParts({ ...payment, recoveryOperations: [owingOperation], refunds: [], manualRefundTasks: [] }, null)).toEqual({
+      ceilingCents: 7500,
+      cardRefundOwedCents: 2500,
+    });
+    // Made since: the debt is gone and the cap is whole again.
+    expect(
+      refundAppealCeiling({ ...payment, recoveryOperations: [{ ...owingOperation, status: "SUCCEEDED" as const }], refunds: [], manualRefundTasks: [] }, null),
+    ).toBe(10000);
   });
 
   it("the late-cash predicate keys on the pipeline's prefix and type, never on amount", () => {
@@ -288,6 +358,8 @@ describe("the refund appeal ceiling (INV-PAY-118)", () => {
         OR: [
           { occurrenceKey: { startsWith: "edit-refund-hand-back:" } },
           { occurrenceKey: { startsWith: "refund-request-hand-back:" } },
+          { occurrenceKey: { startsWith: "card-refund-paid-another-way:" } },
+          { occurrenceKey: { startsWith: "bank-refund-void:" } },
         ],
       }),
       _sum: { amountCents: true },

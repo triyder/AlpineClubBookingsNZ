@@ -12,6 +12,7 @@
  * unavailable.
  */
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 
 /**
  * Body-source selection, factored pure so it can be unit tested without network
@@ -24,6 +25,35 @@ export function selectPrBody({ fetchedBody, eventBody }) {
     return fetchedBody;
   }
   return typeof eventBody === "string" ? eventBody : "";
+}
+
+/**
+ * The pull request body as the workflow's event payload carried it, for
+ * `selectPrBody`'s `eventBody` fallback (#4053).
+ *
+ * `PR_BODY_FILE` names a file holding the body; `ci.yml` writes it from
+ * `$GITHUB_EVENT_PATH` and points the gates at it. The body used to arrive as
+ * `PR_BODY: ${{ github.event.pull_request.body }}`, an environment variable, and
+ * Linux caps any one environment string at 128 KiB (`MAX_ARG_STRLEN`): a longer
+ * description meant the runner could not start the step's shell at all
+ * ("Argument list too long"), and `verify` went red with no finding to read.
+ * `PR_BODY` stays as the fallback for a caller with a small body and no file
+ * (the unit tests, a local run).
+ *
+ * A named file that cannot be read THROWS rather than falling back to an empty
+ * body: the gates fail closed on an empty body anyway, but the message here
+ * names the real fault.
+ */
+export function readEventPrBody(env = process.env) {
+  const file = env.PR_BODY_FILE;
+  if (file) {
+    try {
+      return readFileSync(file, "utf8");
+    } catch (error) {
+      throw new Error(`PR_BODY_FILE ${file} could not be read: ${error.message}`);
+    }
+  }
+  return env.PR_BODY;
 }
 
 /**

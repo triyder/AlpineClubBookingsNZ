@@ -31,6 +31,7 @@
  * projection. Callers must import them from here rather than restating either
  * arm (INV-SSOT-001).
  */
+import { exactContains } from "@/lib/prisma-exact-prefix";
 import type { Prisma } from "@prisma/client";
 import { DELETED_CONTACT_EMAIL_DOMAIN } from "./deleted-account-email";
 
@@ -143,10 +144,7 @@ export function notDeletedAccountWhere(): Prisma.MemberWhereInput[] {
       },
     },
     ...DELETED_ACCOUNT_TRAILING_WHITESPACE.map((character) => ({
-      email: {
-        contains: `${DELETED_ACCOUNT_EMAIL_SUFFIX}${character}`,
-        mode: "insensitive" as const,
-      },
+      email: exactContains(`${DELETED_ACCOUNT_EMAIL_SUFFIX}${character}`, "insensitive"),
     })),
   ];
 

@@ -242,11 +242,11 @@ export function LocalBackupCard({
   const editingDisabled = !section.editing || section.saving;
 
   return (
-    <Card>
+    <Card {...section.sectionRegionProps}>
       <CardHeader>
         <div className="flex items-center justify-between">
           <div>
-            <CardTitle>Local backup</CardTitle>
+            <CardTitle {...section.titleProps}>Local backup</CardTitle>
             <CardDescription>
               Keep a copy of each backup in a directory on the server. Uses the
               same retention as above; older files are deleted automatically.
@@ -259,6 +259,7 @@ export function LocalBackupCard({
               variant="outline"
               size="sm"
               onClick={section.startEditing}
+              {...section.editTriggerProps}
             >
               Edit
             </ViewOnlyActionButton>

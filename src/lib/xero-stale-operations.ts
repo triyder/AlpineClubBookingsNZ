@@ -1,5 +1,9 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { XERO_ORPHANED_STALE_RUNNING_ERROR_CODE } from "@/lib/xero-operation-error-codes";
+
+// #4278: re-exported so existing importers keep one name; the definition is in the client-safe module.
+export { XERO_ORPHANED_STALE_RUNNING_ERROR_CODE };
 
 // Issue #819: an outbox operation is claimed by flipping it to RUNNING and
 // stamping startedAt. If the worker dies (or an unexpected dispatch-level error
@@ -10,16 +14,36 @@ import { prisma } from "@/lib/prisma";
 export const STALE_RUNNING_XERO_OPERATION_MINUTES = 15;
 
 /**
- * THE ERROR CODE a stale-RUNNING reset stamps on the row it fails (#3001).
- *
- * One home, because three places depend on the exact string: the operator reset
- * route writes it, the contact-create recovery reads it back, and the booking
- * page's invoice warning uses it to tell an operation that FAILED from an
- * operation that was never seen through — a worker killed mid-invoice leaves no
- * evidence either way, so the honest reading of such a row is that the invoice
- * state is UNKNOWN rather than that no invoice was raised.
+ * #4256: the code a retry's claim stamps on a PARTIAL row it is REPAIRING
+ * (`runWithClaimedOriginal` in `xero-operation-retry.ts`). The repair's own
+ * completion or give-back replaces it. A repair that died instead leaves it on
+ * the stuck RUNNING row, and the stale reset below returns that row to PARTIAL,
+ * payload kept, so Retry repairs it again. FAILED would send it down the
+ * invoice replay, which finds the invoice and records no payment.
  */
-export const XERO_ORPHANED_STALE_RUNNING_ERROR_CODE = "ORPHANED_STALE_RUNNING";
+export const XERO_PARTIAL_REPAIR_RUNNING_CODE = "PARTIAL_REPAIR_RUNNING";
+
+/**
+ * #4356: the code the FAILED refund-note repair's claim stamps
+ * (`runWithClaimedOriginal`). Its completion or give-back replaces it; a stale
+ * reset of a dead run sends the row to FAILED, where it came from.
+ */
+export const XERO_REFUND_NOTE_REPAIR_RUNNING_CODE = "REFUND_NOTE_REPAIR_RUNNING";
+
+/**
+ * #4356 (`INV-INT-029`): the repair claims whose RUNNING row no other caller's
+ * PARTIAL, FAILED or CANCELLED outcome may land on (`outcomeWriteGuard`). Each
+ * repair completes onto its own claim (`onlyIfRunningSince`), so a late
+ * outcome from a caller sharing the row would replace the payload the repair
+ * reads and make its give-back lose.
+ */
+export const XERO_REPAIR_CLAIM_RUNNING_CODES = [
+  XERO_PARTIAL_REPAIR_RUNNING_CODE,
+  XERO_REFUND_NOTE_REPAIR_RUNNING_CODE,
+] as const;
+
+const STALE_PARTIAL_REPAIR_RESET_MESSAGE =
+  "A repair of this partly completed operation was stuck RUNNING past the staleness threshold and was returned to PARTIAL by an operator. Retry it to repair it again.";
 
 /** The instant before which a RUNNING claim is stale. One threshold for both forms below. */
 function staleRunningThreshold(now: Date): Date {
@@ -116,24 +140,46 @@ type StaleResetWriter = Pick<Prisma.TransactionClient, "xeroSyncOperation">;
  * `where` differs between them; neither touches the response payload or the
  * Xero object identity, which may be the only proof of what a dead run created.
  * The client is required: both callers write inside the transaction that also
- * writes their audit row.
+ * writes their audit row. #4256: a stuck PARTIAL repair
+ * (`XERO_PARTIAL_REPAIR_RUNNING_CODE`) goes back to PARTIAL, not FAILED. The
+ * bulk reset writes both; Mark failed, which read the row's code under the same
+ * `startedAt` guard, passes `only` for the one write that row needs.
  */
 export async function writeStaleRunningXeroOperationReset(
   where: Prisma.XeroSyncOperationWhereInput,
   now: Date,
   lastErrorMessage: string,
   db: StaleResetWriter,
-): Promise<number> {
-  const result = await db.xeroSyncOperation.updateMany({
-    where,
-    data: {
-      status: "FAILED",
-      lastErrorCode: XERO_ORPHANED_STALE_RUNNING_ERROR_CODE,
-      lastErrorMessage,
-      completedAt: now,
-    },
-  });
-  return result.count;
+  only?: "FAILED" | "PARTIAL",
+): Promise<{ failed: number; partial: number }> {
+  const count = { failed: 0, partial: 0 };
+  if (only !== "PARTIAL") {
+    const failed = await db.xeroSyncOperation.updateMany({
+      where: only
+        ? where
+        : { ...where, OR: [{ lastErrorCode: null }, { lastErrorCode: { not: XERO_PARTIAL_REPAIR_RUNNING_CODE } }] },
+      data: {
+        status: "FAILED",
+        lastErrorCode: XERO_ORPHANED_STALE_RUNNING_ERROR_CODE,
+        lastErrorMessage,
+        completedAt: now,
+      },
+    });
+    count.failed = failed.count;
+  }
+  if (only !== "FAILED") {
+    const repairs = await db.xeroSyncOperation.updateMany({
+      where: { ...where, lastErrorCode: XERO_PARTIAL_REPAIR_RUNNING_CODE },
+      data: {
+        status: "PARTIAL",
+        lastErrorCode: XERO_ORPHANED_STALE_RUNNING_ERROR_CODE,
+        lastErrorMessage: STALE_PARTIAL_REPAIR_RESET_MESSAGE,
+        completedAt: now,
+      },
+    });
+    count.partial = repairs.count;
+  }
+  return count;
 }
 
 export interface MarkedStaleRunningXeroOperation {
@@ -150,7 +196,7 @@ export interface MarkedStaleRunningXeroOperation {
 export type MarkStaleRunningXeroOperationFailedResult =
   | { outcome: "not-found" }
   | { outcome: "not-stale"; status: string }
-  | { outcome: "marked"; operation: MarkedStaleRunningXeroOperation };
+  | { outcome: "marked"; operation: MarkedStaleRunningXeroOperation; returnedTo: "FAILED" | "PARTIAL" };
 
 /**
  * #3462: the per-row **Mark failed** - the runbook's hand `UPDATE` as one
@@ -214,8 +260,9 @@ export async function markStaleRunningXeroOperationFailed(
     previousErrorCode: row.lastErrorCode,
     previousErrorMessage: row.lastErrorMessage,
   };
+  const returnedTo = row.lastErrorCode === XERO_PARTIAL_REPAIR_RUNNING_CODE ? "PARTIAL" : "FAILED";
   const marked = await prisma.$transaction(async (tx) => {
-    const count = await writeStaleRunningXeroOperationReset(
+    const reset = await writeStaleRunningXeroOperationReset(
       {
         id: row.id,
         status: stale.status,
@@ -224,8 +271,9 @@ export async function markStaleRunningXeroOperationFailed(
       now,
       message,
       tx,
+      returnedTo,
     );
-    if (count !== 1) return false;
+    if (reset.failed + reset.partial !== 1) return false;
     await recordAudit(tx, operation);
     return true;
   });
@@ -239,7 +287,7 @@ export async function markStaleRunningXeroOperationFailed(
       : { outcome: "not-found" };
   }
 
-  return { outcome: "marked", operation };
+  return { outcome: "marked", operation, returnedTo };
 }
 
 /**

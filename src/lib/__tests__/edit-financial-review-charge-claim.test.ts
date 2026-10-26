@@ -239,6 +239,8 @@ describe("the review-charge raise claim (#3402)", () => {
       amountCents: 20_000,
       refundedAmountCents: 0,
       source: "STRIPE",
+      // #3947: the sync re-reads the booking's status with the payment.
+      booking: { status: "PAID" },
       stripeCustomerId: null,
       additionalAmountCents: 0,
       additionalPaymentStatus: null,

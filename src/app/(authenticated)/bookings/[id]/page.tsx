@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { bookingOwner } from "@/lib/booking-owner";
 import { auth } from "@/lib/auth";
 import { notFound, redirect } from "next/navigation";
@@ -15,7 +16,7 @@ import { BookingStayPreferences } from "./_components/booking-stay-preferences";
 import { BookingReviewNotices } from "./_components/booking-review-notices";
 import { BookingLinkedPartySections } from "./_components/booking-linked-party-sections";
 import { BookingConsentCards } from "./_components/booking-consent-cards";
-import { BookingStatusBanners } from "./_components/booking-status-banners";
+import { BookingStatusSection } from "./_components/booking-status-section";
 import { BookingAdminToolsSection } from "./_components/booking-admin-tools-section";
 import { BookingGuestDietaryCard } from "./_components/booking-guest-dietary-card";
 import { loadBookingDetail } from "./_lib/load-booking-detail";
@@ -24,6 +25,7 @@ import { resolveBookingDetailConsent } from "./_lib/booking-detail-consent";
 import { loadBookingDetailHistory } from "./_lib/booking-detail-history";
 import { resolveBookingDetailEditAccess } from "./_lib/booking-detail-edit-access";
 import { resolveBookingDetailPayment } from "./_lib/booking-detail-payment";
+import { loadOrganiserCardAppealCeiling } from "./_lib/booking-detail-organiser-card-appeal";
 import { resolveBookingDetailLinkedParty } from "./_lib/booking-detail-linked-party";
 import { buildBookingDetailEditorData } from "./_lib/booking-detail-editor-data";
 import { renderBookingDetailMessages } from "./_lib/booking-detail-messages";
@@ -190,6 +192,8 @@ export default async function BookingDetailPage({
     viewer,
     consent,
     access,
+    // #3991: the ledger credit the history loader already read for this page.
+    appliedCreditCents: history.amountOwed.appliedCreditCents,
   });
   const backHref = resolveInternalReturnPath(
     query.returnTo,
@@ -231,13 +235,23 @@ export default async function BookingDetailPage({
     viewer,
     access,
   });
-  const payment = resolveBookingDetailPayment({
+  const resolvedPayment = resolveBookingDetailPayment({
     booking,
     modules,
     viewer,
     access,
     party,
+    // #3991: the same read the narrative quoted, so the two cannot disagree.
+    amountOwed: history.amountOwed,
   });
+  // #3956 (`INV-PAY-123`): an appeal on a booking the organiser paid for by card
+  // is capped at what the organiser's combined payment can still return.
+  const organiserCardAppeal = await loadOrganiserCardAppealCeiling(booking);
+  const payment =
+    organiserCardAppeal === null
+      ? resolvedPayment
+      : // #4124: its cap nets this child's card refunds in its own headroom, so no "still being refunded" line.
+        { ...resolvedPayment, maxRefundableCents: organiserCardAppeal.ceilingCents, appealCardRefundOwedCents: 0 };
   const { originalPaymentCaptured } = payment;
   const messages = renderBookingDetailMessages({
     booking,
@@ -322,17 +336,23 @@ export default async function BookingDetailPage({
         payment={payment}
       />
 
-      <BookingStatusBanners
-        booking={booking}
-        club={club}
-        money={money}
-        viewer={viewer}
-        access={access}
-        party={party}
-        payment={payment}
-        history={history}
-        messages={messages}
-      />
+      <Suspense fallback={<p className="text-sm text-muted-foreground" role="status">Checking additional-payment information…</p>}>
+        <BookingStatusSection
+          actorId={session.user.id}
+          modules={modules}
+          bookingMessages={bookingMessages}
+          bookingLodgeEmailSettings={bookingLodgeEmailSettings}
+          booking={booking}
+          club={club}
+          money={money}
+          viewer={viewer}
+          access={access}
+          party={party}
+          payment={payment}
+          history={history}
+          messages={messages}
+        />
+      </Suspense>
 
       <section id="details" className="scroll-mt-20">
         <BookingEditor
@@ -398,6 +418,9 @@ export default async function BookingDetailPage({
         canDeleteDraft={canDeleteDraft}
         canSoftDeleteCancelled={canSoftDeleteCancelled}
         backHref={backHref}
+        money={money}
+        organiserCardAppeal={organiserCardAppeal !== null}
+        organiserCardAppealPending={organiserCardAppeal?.combinedRefundPending === true}
       />
 
       <BookingCancellationOutcome

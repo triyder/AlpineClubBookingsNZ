@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { type XeroObjectLinkInput } from "@/lib/xero-sync";
+import { isRefundCreditNoteLinkCancelledInXero } from "@/lib/xero-refund-note-status";
 import { type ResolvedXeroObjectLink } from "./types";
 import { BOOKING_SCOPED_OUTBOUND_MODELS } from "./constants";
 
@@ -44,6 +45,14 @@ export function dedupeResolvedXeroObjectLinks(
 
 /** #3643: the payment roles on a booking's own invoices, named once. */
 export const INVOICE_PAYMENT_ROLE = "INVOICE_PAYMENT";
+
+/**
+ * #3979: the primary-invoice link's metadata key recording that the invoice
+ * was paid, wholly or partly, by applied overpayments or prepayments - which
+ * Xero records as allocations, leaving no payment to link. The inbound invoice
+ * sync writes it; the settled-cash audit reads it.
+ */
+export const PRIMARY_INVOICE_CASH_ALLOCATIONS_KEY = "overpaymentOrPrepaymentAllocations";
 export const SUPPLEMENTARY_INVOICE_PAYMENT_ROLE = "SUPPLEMENTARY_INVOICE_PAYMENT";
 
 export function getDerivedInboundPaymentRole(link: Pick<ResolvedXeroObjectLink, "xeroObjectType" | "role">) {
@@ -133,6 +142,35 @@ export async function findActiveXeroObjectLinks(
       role: true,
     },
   });
+}
+
+/**
+ * #4291 (`INV-ADDPAY-041`): the payments whose refund-note mirror of
+ * `creditNoteId` a void turned off - inactive, its recorded status VOIDED or
+ * DELETED (#2901, #4091, #4161's heal). That write also released the payment's
+ * pointer, so neither an active link nor the pointer names the payment any
+ * more. The inbound reconcile of a cancelled note still recounts these
+ * payments, so a redelivery, the retry of an event that failed after its link
+ * write, or an operator's replay finishes the recount. Read-only: the mirror
+ * stays off and the note is never re-adopted. A mirror retired while its note
+ * was live (no recorded void) is not one of these.
+ */
+export async function findPaymentIdsWithCancelledRefundNoteMirror(creditNoteId: string): Promise<string[]> {
+  const links = await prisma.xeroObjectLink.findMany({
+    where: {
+      localModel: "Payment",
+      xeroObjectType: "CREDIT_NOTE",
+      xeroObjectId: creditNoteId,
+      role: "REFUND_CREDIT_NOTE",
+      active: false,
+    },
+    select: { localId: true, metadata: true },
+  });
+  return [
+    ...new Set(
+      links.filter((link) => isRefundCreditNoteLinkCancelledInXero(link.metadata)).map((link) => link.localId),
+    ),
+  ];
 }
 
 export async function recoverBookingScopedLinksFromOutboundOperations(

@@ -106,11 +106,17 @@ line is `AGENTS.md` → "Change discipline": a defect the PR introduces, or one
 that blocks its agreed behaviour, is fixed in the PR; a pre-existing defect
 found nearby is filed as a new issue.
 
+Open the PR from `.github/pull_request_template.md`, copying headings and labels
+verbatim with values on the label's line. The diff decides when the changelog
+and `## Concurrency And Lock Impact` sections are required, but fill the whole
+template regardless. `Closes #NNN` works only in the PR description.
+
 ## Risk And Attendance
 
 High and critical issues are not suitable for unattended coding runs. They can
 be planned, mapped, or reviewed; their PRs merge on the `AGENTS.md` merge gate
-(#3959) with the lenses their risk requires, and any open owner decision in
+(#3959) with the review lenses the lane chose for their risk
+([`COORDINATION.md`](COORDINATION.md#reviews-choosing-lenses)), and any open owner decision in
 them waits for the owner.
 
 Low and medium issues may be suitable for an autonomous local run only when the
@@ -119,7 +125,7 @@ movement, booking capacity, membership lifecycle, live providers, schema,
 production config, or deployment behavior. Such eligible runs may also push,
 monitor CI to green, and merge their own PR with a merge commit per the
 `AGENTS.md` "Completion and Merge" merge gate (#3959). A High or critical PR
-merges on the same gate, with the lenses its risk requires; an open owner
+merges on the same gate, with the lenses chosen for its risk; an open owner
 decision on it still waits for the owner.
 
 ## Conflict Handling
@@ -317,13 +323,25 @@ doubt.
 
 ## Claiming, and talking between lanes
 
-`AGENTS.md` tells you to post a CLAIM comment using the repository convention.
+`AGENTS.md` → "Orchestration Model" tells the lane to post a CLAIM comment
+when it starts, using the repository convention; check it held as
+[`COORDINATION.md`](COORDINATION.md#checking-a-claim-held) describes.
 This section is that convention for every agent interface.
 
-Every agent in this repository authenticates to GitHub as the **same account**,
-so GitHub's author field cannot tell two concurrent lanes apart. The comment
-body is the only lane identity there is — which is why each of these comments
-opens with an explicit prefix and says who is writing and what they are doing.
+Every agent lane here except Sekreton's authenticates to GitHub as the **same
+account**, `thatskiff33-agents`, so GitHub's author field cannot tell two
+concurrent lanes apart. The comment body is the only lane identity there is —
+which is why each of these comments opens with an explicit prefix and says who
+is writing and what they are doing.
+
+Sekreton lanes write as `sekreton[bot]`, through the Sekreton GitHub App, and
+use the same prefixes and the same rules (#4392). Sekreton's task sandboxes have
+no GitHub write, so its orchestrator writes for the lane as `thatskiff33-agents`.
+Every comment it posts is signed `Sekreton lane (orchestrator)` (#4429,
+[`SEKRETON_ORCHESTRATOR.md`](SEKRETON_ORCHESTRATOR.md)). `sekreton[bot]` is an agent
+identity like `thatskiff33-agents`: its text is never owner authorisation, and
+only a `thatskiff33` comment or a recorded owner decision is
+(`AGENTS.md` → "Pre-authorisation and attributability").
 
 ### `CLAIM:`
 
@@ -337,7 +355,9 @@ Scope: the routing-table row plus the two new sections in this file.
 ```
 
 Before you post it, re-read the **whole issue thread** (`pnpm run issue <n>`,
-see "Reading an issue" above), not just the body:
+see "Reading an issue" above), not just the body. A claim or reservation is
+never taken over because it looks stale
+([`COORDINATION.md`](COORDINATION.md#reservations-stale-sessions-and-conflicts)):
 
 - An in-chat decision is not a claim. A conversation with the owner leaves no
   trace another lane can see.
@@ -372,7 +392,8 @@ Post one, on the issue and the PR, once the PR is reviewed, every confirmed
 finding is fixed and CI is green. It is the only post-PR evidence comment:
 
 - the branch, the PR, and what was built;
-- which review lenses ran, what they found, and how each finding was fixed;
+- which review lenses ran, why each was chosen (or why none was needed), the
+  head SHA each read, what they found, and how each finding was fixed;
 - validation run, validation not run and why, manual checks, and stated limits;
 - confirmation that no production credentials, production data, live providers
   or live webhooks were used;

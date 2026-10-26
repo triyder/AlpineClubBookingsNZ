@@ -146,13 +146,13 @@ export function PasswordPolicyCard() {
   );
 
   return (
-    <Card>
+    <Card {...section.sectionRegionProps}>
       <CardHeader>
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-start gap-3">
             <KeyRound className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
             <div className="min-w-0 flex-1">
-              <CardTitle className="text-base">Password policy</CardTitle>
+              <CardTitle {...section.titleProps} className="text-base">Password policy</CardTitle>
               <CardDescription className="mt-1">
                 Set the minimum length and required character types for member
                 passwords. Rules apply the next time a member sets or changes their
@@ -170,6 +170,7 @@ export function PasswordPolicyCard() {
               size="sm"
               type="button"
               onClick={section.startEditing}
+              {...section.editTriggerProps}
             >
               Edit
             </ViewOnlyActionButton>

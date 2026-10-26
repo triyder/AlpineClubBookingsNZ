@@ -178,10 +178,7 @@ describe("Xero admin bulk routes", () => {
         createdLinks: 1,
       },
     });
-    mocks.cleanupStaleCanonicalXeroObjectLinks.mockResolvedValue({
-      deactivatedLinks: 2,
-      preservedStripeRefundCreditNoteLinks: 3,
-    });
+    mocks.cleanupStaleCanonicalXeroObjectLinks.mockResolvedValue(cleanupResult());
   });
 
   it("returns the Xero admin health snapshot for admins", async () => {
@@ -341,17 +338,65 @@ describe("Xero admin bulk routes", () => {
     });
   });
 
+  function cleanupResult(overrides: Record<string, unknown> = {}) {
+    return {
+      deactivatedLinks: 2,
+      preservedStripeRefundCreditNoteLinks: 3,
+      healedCancelledRefundCreditNoteMirrors: 1,
+      releasedInactiveRefundNotePointers: 1,
+      deferredRefundNoteHealLinkIds: [],
+      failedRefundNoteHealLinkIds: [],
+      ...overrides,
+    };
+  }
+
+  it("audits and reports a link maintenance run whose refund-note heals partly failed, as a warning (#4161)", async () => {
+    mocks.cleanupStaleCanonicalXeroObjectLinks.mockResolvedValue(
+      cleanupResult({ failedRefundNoteHealLinkIds: ["link_a"], deferredRefundNoteHealLinkIds: ["link_b"] })
+    );
+
+    const response = await runLinkMaintenance();
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.ok).toBe(false);
+    expect(body.message).toContain(", deferred 1 heal behind a refund note still being created");
+    expect(body.warning).toBe("1 refund-note heal failed (link_a); the next nightly link cleanup retries it.");
+    expect(mocks.logAudit).toHaveBeenCalledTimes(1);
+    expect(mocks.logAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "XERO_LINK_LEDGER_MAINTENANCE",
+        details: expect.stringContaining("; 1 refund-note heal failed (link_a)"),
+      })
+    );
+  });
+
+  it("audits a link maintenance run that stopped on an error", async () => {
+    mocks.cleanupStaleCanonicalXeroObjectLinks.mockRejectedValue(new Error("db down"));
+
+    const response = await runLinkMaintenance();
+
+    expect(response.status).toBe(500);
+    expect(mocks.logAudit).toHaveBeenCalledTimes(1);
+    expect(mocks.logAudit).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "XERO_LINK_LEDGER_MAINTENANCE", details: expect.stringContaining("failed before it finished") })
+    );
+  });
+
   it("runs Xero link ledger maintenance for admins", async () => {
     const response = await runLinkMaintenance();
 
     expect(response.status).toBe(200);
     expect(mocks.backfillHistoricalXeroObjectLinks).toHaveBeenCalled();
     expect(mocks.cleanupStaleCanonicalXeroObjectLinks).toHaveBeenCalled();
+    expect(mocks.logAudit).toHaveBeenCalledTimes(1);
+    // The healed mirrors are part of the deactivated count, never added to it.
     expect(mocks.logAudit).toHaveBeenCalledWith({
       action: "XERO_LINK_LEDGER_MAINTENANCE",
       category: "xero",
       memberId: "admin-1",
-      details: "Backfilled 1 canonical Xero links and deactivated 2 stale canonical links",
+      details:
+        "Backfilled 1 canonical Xero links, deactivated 2 stale canonical links (including 1 mirror of VOIDED/DELETED Xero refund notes), released 1 refund-note pointer left on an inactive voided note",
     });
     await expect(response.json()).resolves.toEqual({
       ok: true,
@@ -360,12 +405,9 @@ describe("Xero admin bulk routes", () => {
           createdLinks: 1,
         },
       },
-      cleanup: {
-        deactivatedLinks: 2,
-        preservedStripeRefundCreditNoteLinks: 3,
-      },
+      cleanup: cleanupResult(),
       message:
-        "Backfilled 1 missing canonical Xero link, deactivated 2 stale canonical links, and preserved 3 live per-refund note links (#2901, #3880).",
+        "Backfilled 1 missing canonical Xero link, deactivated 2 stale canonical links (including 1 mirror of VOIDED/DELETED Xero refund notes), released 1 refund-note pointer left on an inactive voided note, and preserved 3 live per-refund note links (#2901, #3880, #4161).",
     });
   });
 
@@ -403,6 +445,21 @@ describe("Xero admin bulk routes", () => {
         details: expect.stringContaining("op-resolved"),
         metadata: expect.objectContaining({ overrodeResolvedInXeroOperationId: "op-resolved" }),
       })
+    );
+  });
+
+  it("matches a typed id prefix literally, so its `_` or `%` cannot resolve another record (#4146)", async () => {
+    mocks.prisma.member.findMany.mockResolvedValue([]);
+    mocks.prisma.booking.findMany.mockResolvedValue([]);
+
+    await forceSync(makeJsonRequest("http://localhost/api/admin/xero/force-sync", { syncType: "CONTACT", query: "mem_1%" }));
+    await forceSync(makeJsonRequest("http://localhost/api/admin/xero/force-sync", { syncType: "INVOICE", query: "bk_1" }));
+
+    expect(mocks.prisma.member.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { startsWith: "mem\\_1\\%" } } }),
+    );
+    expect(mocks.prisma.booking.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { startsWith: "bk\\_1" } } }),
     );
   });
 

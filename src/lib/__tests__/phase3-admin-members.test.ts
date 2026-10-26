@@ -229,6 +229,18 @@ describe("Phase 3: Admin Member Management", () => {
       expect(body.totalPages).toBe(5);
     });
 
+    it("matches a typed member id prefix literally, so `_` or `%` is not a wildcard (#4146)", async () => {
+      mockedAuth.mockResolvedValue(adminSession);
+      vi.mocked(prisma.member.findMany).mockResolvedValue([]);
+      mockSessionAndMemberListCounts(0);
+
+      const res = await getMembers(new NextRequest("http://localhost/api/admin/members?q=ab_1%25"));
+      expect(res.status).toBe(200);
+      const wheres = JSON.stringify(vi.mocked(prisma.member.findMany).mock.calls.map((call) => call[0]?.where));
+      expect(wheres).toContain(JSON.stringify({ id: { startsWith: "ab\\_1\\%" } }));
+      expect(wheres).not.toContain(JSON.stringify({ id: { startsWith: "ab_1%" } }));
+    });
+
     it("defaults to page 1 and pageSize 25", async () => {
       mockedAuth.mockResolvedValue(adminSession);
       vi.mocked(prisma.member.findMany).mockResolvedValue([]);

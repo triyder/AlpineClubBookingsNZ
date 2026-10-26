@@ -9,6 +9,7 @@ import {
   sanitizeAuditMetadata,
 } from "@/lib/audit";
 import { isAuditCategory } from "@/lib/audit-categories";
+import { isAuditRetentionClass, UNCLASSIFIED_RETENTION } from "@/lib/audit-retention-classes";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 
@@ -16,6 +17,12 @@ const RAW_REQUEST_DATA_RETENTION_DAYS = 90;
 const ARCHIVE_AFTER_MONTHS = 12;
 const ARCHIVE_PRUNE_AFTER_YEARS = 7;
 const CRITICAL_MAIN_RETENTION_YEARS = 7;
+// #3939 (owner decision, 11 Oct 2026): the outer limit for a row with
+// `incidentPreserved` set. Such a row skips its normal expiry but is still
+// deleted this many years after `createdAt`, from the main table and from the
+// archive alike. The one source of the figure for both prunes, read through
+// `getAuditLogRetentionCutoffs(now).incidentPreserved`.
+const INCIDENT_PRESERVED_RETENTION_YEARS = 10;
 const DEFAULT_ARCHIVE_BATCH_SIZE = 500;
 const ARCHIVABLE_RETENTION_CLASSES: AuditRetentionClass[] = [
   "sensitive_access",
@@ -300,9 +307,14 @@ function addUtcMonths(date: Date, months: number): Date {
   return next;
 }
 
+// Clamped (#3939): 29 Feb in a year without one is 28 Feb, not 1 Mar. Every
+// caller subtracts years to get a deletion cutoff, so rolling over to 1 Mar
+// would delete up to a day early; the clamp errs towards keeping.
 function addUtcYears(date: Date, years: number): Date {
   const next = new Date(date);
+  const month = next.getUTCMonth();
   next.setUTCFullYear(next.getUTCFullYear() + years);
+  if (next.getUTCMonth() !== month) next.setUTCDate(0);
   return next;
 }
 
@@ -341,17 +353,20 @@ export function getAuditLogRetentionCutoffs(now = new Date()) {
     archive: addUtcMonths(now, -ARCHIVE_AFTER_MONTHS),
     archivePrune: addUtcYears(now, -ARCHIVE_PRUNE_AFTER_YEARS),
     criticalMain: addUtcYears(now, -CRITICAL_MAIN_RETENTION_YEARS),
+    incidentPreserved: addUtcYears(now, -INCIDENT_PRESERVED_RETENTION_YEARS),
   };
 }
 
-// test seam
+// test seam: the writer's classification, not what the prune keeps (#3524).
 export function isAuditLogRetentionCritical(input: {
   action: string;
   category?: string | null;
   severity?: string | null;
   retentionClass?: string | null;
 }): boolean {
-  if (input.retentionClass) {
+  // An unknown stored class reads as no class (#3940). This answers the
+  // writer's question, not the prune's: see the runbook's #3524 asymmetry.
+  if (isAuditRetentionClass(input.retentionClass)) {
     return input.retentionClass === "critical";
   }
   if (input.severity === "critical") {
@@ -619,13 +634,24 @@ export async function archiveEligibleAuditLogs(
 // outrun and nowhere for the data to go, so archivable rows are pruned on
 // `expiresAt` exactly as before — retaining them forever would break data
 // minimisation. `diagnostic_high_volume` and the unclassified/`critical` classes
-// are never archived, so they are always pruned purely on their own expiry.
+// are never archived, so an unpreserved row of theirs prunes purely on its own
+// expiry; a NULL severity is NOT critical (#3524).
+//
+// INCIDENT-PRESERVED ROWS (#3939, owner decision 11 Oct 2026). The app sets
+// `incidentPreserved` itself, on the audit entry for an admin capacity hold or
+// force-confirm that overbooked the lodge. Such a row must satisfy every rule
+// above AND be `INCIDENT_PRESERVED_RETENTION_YEARS` old, counted from
+// `createdAt`: it goes at the later of the two, never sooner than an
+// unpreserved twin. So a preserved row with no `expiresAt` is kept like its
+// twin, and a preserved archivable row stays behind the archive gate and
+// leaves through the archive, whose prune applies the same cap.
 export async function pruneExpiredAuditLogs(
   db: AuditRetentionDbClient = prisma,
   now = new Date(),
   options: { archiveActive?: boolean } = {}
 ): Promise<{ cutoff: Date; deleted: number }> {
-  const { criticalMain: cutoff } = getAuditLogRetentionCutoffs(now);
+  const { criticalMain: cutoff, incidentPreserved: preservedCutoff } =
+    getAuditLogRetentionCutoffs(now);
 
   // Archivable-class rows: gated on the archive marker only when an archive is
   // active. `ARCHIVABLE_RETENTION_CLASSES` is the single source of which classes
@@ -643,6 +669,17 @@ export async function pruneExpiredAuditLogs(
 
   const { count } = await db.auditLog.deleteMany({
     where: {
+      // #3939: a preserved row also has to be ten years old, so it goes at the
+      // LATER of its normal rule and the cap. The column is NOT NULL DEFAULT
+      // false, so `incidentPreserved: false` has no NULL case.
+      AND: [
+        {
+          OR: [
+            { incidentPreserved: false },
+            { createdAt: { lt: preservedCutoff } },
+          ],
+        },
+      ],
       OR: [
         archivableExpiredClause,
         {
@@ -650,22 +687,13 @@ export async function pruneExpiredAuditLogs(
           retentionClass: "diagnostic_high_volume",
           expiresAt: { lt: now },
         },
-        {
-          retentionClass: null,
-          expiresAt: { lt: now },
-          NOT: { severity: "critical" },
-        },
+        { AND: [UNCLASSIFIED_RETENTION, { expiresAt: { lt: now } }, { OR: [{ severity: null }, { severity: { not: "critical" } }] }] },
         {
           retentionClass: "critical",
           createdAt: { lt: cutoff },
           expiresAt: { lt: now },
         },
-        {
-          retentionClass: null,
-          severity: "critical",
-          createdAt: { lt: cutoff },
-          expiresAt: { lt: now },
-        },
+        { AND: [UNCLASSIFIED_RETENTION, { severity: "critical", createdAt: { lt: cutoff }, expiresAt: { lt: now } }] },
       ],
     },
   });
@@ -678,7 +706,8 @@ export async function pruneAuditArchive(
   archiveDb: AuditArchiveDbClient | undefined,
   now = new Date()
 ): Promise<AuditLogRetentionJobResult["archivePrune"]> {
-  const { archivePrune: cutoff } = getAuditLogRetentionCutoffs(now);
+  const { archivePrune: cutoff, incidentPreserved: preservedCutoff } =
+    getAuditLogRetentionCutoffs(now);
   if (!archiveDb) {
     return {
       configured: false,
@@ -690,9 +719,15 @@ export async function pruneAuditArchive(
   }
 
   await ensureAuditArchiveSchema(archiveDb);
+  // #3939: as in the main table, an incident-preserved copy goes at the later
+  // of its normal rule (seven years) and the ten-year cap from creation, which
+  // is always the cap. The archive table has carried `incidentPreserved BOOLEAN
+  // NOT NULL DEFAULT false` since it was first provisioned, so no archive
+  // database lacks the column.
   const pruned = await archiveDb.$executeRaw(Prisma.sql`
     DELETE FROM "AuditLogArchive"
     WHERE "createdAt" < ${cutoff}
+      AND ("incidentPreserved" = false OR "createdAt" < ${preservedCutoff})
   `);
 
   return {

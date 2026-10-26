@@ -164,7 +164,9 @@ vi.mock("@/lib/booking-guests", () => ({
     error: e.message,
   }),
 }));
-vi.mock("@/lib/booking-guest-stay-range-input", () => ({
+// The request schema's shared shapes stay real (#4199); only these are stubbed.
+vi.mock("@/lib/booking-guest-stay-range-input", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/booking-guest-stay-range-input")),
   normalizeGuestStayRanges: (guests: unknown[]) => guests,
   BookingGuestStayRangeValidationError: class extends Error {},
 }));

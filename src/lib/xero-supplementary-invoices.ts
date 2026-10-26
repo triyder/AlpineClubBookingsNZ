@@ -40,13 +40,14 @@ import {
   invoicedPartyContactRepair,
 } from "@/lib/organisation-xero-contacts";
 import { readStripeCaptureDocumentDate } from "@/lib/stripe-capture-date";
+import { queueWaitingPaidAnotherWayNote } from "@/lib/paid-another-way-receipt-note";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import {
   xeroDocumentDateForClubToday,
   xeroDocumentDateFromInstant,
 } from "@/lib/xero-provider-dates";
 import {
-  CHANGE_FEE_LINE_DESCRIPTION,
+  changeFeeLineItem,
   MODIFICATION_DOCUMENT_LINES_SELECT,
   resolveModificationDocumentLineItems,
 } from "@/lib/xero-modification-line-items";
@@ -172,7 +173,6 @@ export async function createXeroSupplementaryInvoice(params: {
     repairExistingLink,
   });
   const incomeMapping = await getResolvedAccountMapping("hutFeesIncome");
-  const incomeCode = incomeMapping.code ?? "200";
   // A negative price adjustment is a give-back, so it posts to the
   // hutFeeRefunds mapping like the standalone-reduction credit-note path
   // (owner decision on #1356): clubs that prefer a single account map
@@ -238,17 +238,7 @@ export async function createXeroSupplementaryInvoice(params: {
   }
 
   if (!itemised.lineItems && changeFeeCents > 0) {
-    const li: LineItem = {
-      description: CHANGE_FEE_LINE_DESCRIPTION,
-      quantity: 1,
-      unitAmount: changeFeeCents / 100,
-      taxType: "OUTPUT2",
-    };
-    if (incomeMapping.itemCode) li.itemCode = incomeMapping.itemCode;
-    if (!incomeMapping.itemCode || incomeCode !== "200" || incomeMapping.codeExplicitlyConfigured) {
-      li.accountCode = incomeCode;
-    }
-    lineItems.push(li);
+    lineItems.push(changeFeeLineItem(changeFeeCents, incomeMapping));
   }
 
   // Both halves of this are real instants — `BookingModification.createdAt` is a
@@ -385,6 +375,7 @@ export async function createXeroSupplementaryInvoice(params: {
     operationId = operation.id;
   }
 
+  let createdInvoiceId: string;
   try {
     const response = await retryXeroWriteWithContactRepair({
       memberId: bookingOwner(booking).memberId,
@@ -422,6 +413,7 @@ export async function createXeroSupplementaryInvoice(params: {
     if (!created?.invoiceID) {
       throw new Error("Failed to create supplementary Xero invoice");
     }
+    createdInvoiceId = created.invoiceID;
 
     let paymentResponseBody: XeroPayment | null = null;
     let paymentError: unknown = null;
@@ -533,12 +525,31 @@ export async function createXeroSupplementaryInvoice(params: {
           : []),
       ],
     });
-
-    return created.invoiceID;
   } catch (error) {
     await failXeroSyncOperation(operationId!, error);
     throw error;
   }
+
+  // #3924 round 8 (owner, 8 Oct 2026: "Raise a refund note for all";
+  // `INV-PAY-122`): this invoice may be the receipt of a late card charge
+  // whose approved refund was closed as paid another way while it was still
+  // on its way to Xero. That close's bank-transfer note waits for it, and is
+  // queued now that it is here. After the row completes, never failing it: the
+  // invoice is in Xero. A failure is logged; the nightly credit check runs the
+  // step again (`queueWaitingPaidAnotherWayNotesForPayment`, round 9),
+  // and the repair tool raises the note (`PAID_ANOTHER_WAY_REFUND_NOTE_NOT_QUEUED`).
+  // Read off this row's queued payload, so only the outbox path runs it - an
+  // officer's retry of a FAILED one goes back through the outbox (round 9).
+  const releasedForIntent = queuedRequestPayload?.paymentIntentId;
+  if (typeof releasedForIntent === "string" && releasedForIntent) {
+    await queueWaitingPaidAnotherWayNote(releasedForIntent).catch((error: unknown) =>
+      logger.error(
+        { err: error, bookingId, paymentIntentId: releasedForIntent, invoiceId: createdInvoiceId },
+        "Sent a late card charge's change invoice but could not queue the refund note a paid-another-way close waits for",
+      ),
+    );
+  }
+  return createdInvoiceId;
 }
 
 /**

@@ -21,6 +21,7 @@ import {
 import type { LodgeOptionScopeOnLodge } from "@/lib/lodge-option-scope";
 import {
   expectRevealed,
+  expectToHoldFocus,
   installScrollIntoViewSpy,
   removeScrollIntoViewSpy,
 } from "@/lib/__tests__/helpers/focus";
@@ -170,6 +171,30 @@ describe("AllocationPreferencesSection", () => {
     } finally {
       removeScrollIntoViewSpy();
     }
+  });
+
+  it("returns focus to Edit after Cancel and after a successful Save (#4087)", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => response()));
+    await renderLoaded();
+
+    // A keyboard user: each pressed control holds focus first, and each press
+    // unmounts it.
+    const press = (name: string) => {
+      const control = screen.getByRole("button", { name });
+      control.focus();
+      fireEvent.click(control);
+    };
+
+    press("Edit");
+    press("Cancel");
+    await expectToHoldFocus(screen.getByRole("button", { name: "Edit" }));
+
+    press("Edit");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Disable Keep each booking together" }),
+    );
+    press("Save");
+    await expectToHoldFocus(await screen.findByRole("button", { name: "Edit" }));
   });
 
   it("renders every disabled priority in canonical order, including empty read-only state", async () => {

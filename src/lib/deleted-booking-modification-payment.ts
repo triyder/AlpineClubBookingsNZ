@@ -638,10 +638,9 @@ export const AUTOMATIC_REFUND_NOTICE_WINDOW_DAYS = 30;
  * `maxWait: 2s / timeout: 5s` while the longest-lived holder of `lock(1)` in the
  * tree — `assignBedRange` — runs on `{ maxWait: 10_000, timeout: 30_000 }`. An
  * admin assigning a bed range concurrently with a Stripe delivery would therefore
- * blow this transaction's budget with a P2028, and because the caller must not
- * fail the webhook the row would simply be lost: Stripe never redelivers a 200.
- * It takes a wider budget than the default and a TIGHTER one than the admin
- * precedent — Stripe's own delivery timeout is the ceiling on a webhook handler,
+ * blow this transaction's budget with a P2028, and the record would wait for
+ * Stripe's redelivery (#4149). It takes a wider budget than the default and a
+ * TIGHTER one than the admin precedent — Stripe's own delivery timeout is the ceiling on a webhook handler,
  * so copying 30s here would trade a lost row for a lost delivery. The caller
  * writes a `critical` audit row if it still fails.
  *
@@ -678,6 +677,8 @@ export async function recordAutomaticCancelledBookingRefundTask(params: {
    * text on the finance card.
    */
   captureKind: CancelledBookingLateCaptureKind;
+  /** #4149: a record written late is dated the Stripe refund's day; omitted, now. */
+  completedAt?: Date;
 }): Promise<{
   closed: number;
   created: boolean;
@@ -714,17 +715,12 @@ export async function recordAutomaticCancelledBookingRefundTask(params: {
     bookingDeleted,
     captureKind,
   } = params;
+  const completedAt = params.completedAt ?? new Date();
   const reasons = automaticCancelledBookingRefundTaskReasons(paymentIntentId);
   // Same frozen prefix on both arms - it is the card's filter key - and a tail
   // that tells the truth about which arm wrote the row. See the note builder.
-  const closedNote = automaticCancelledBookingRefundNote(
-    paymentIntentId,
-    "closed",
-  );
-  const createdNote = automaticCancelledBookingRefundNote(
-    paymentIntentId,
-    "created",
-  );
+  const closedNote = automaticCancelledBookingRefundNote(paymentIntentId, "closed");
+  const createdNote = automaticCancelledBookingRefundNote(paymentIntentId, "created");
 
   const outcome = await prisma.$transaction(
     async (tx) => {
@@ -739,7 +735,7 @@ export async function recordAutomaticCancelledBookingRefundTask(params: {
         },
         data: {
           status: ManualRefundTaskStatus.DISMISSED,
-          completedAt: new Date(),
+          completedAt,
           note: closedNote,
         },
       });
@@ -813,7 +809,7 @@ export async function recordAutomaticCancelledBookingRefundTask(params: {
           status: ManualRefundTaskStatus.DISMISSED,
           // The card's window and ordering both read `completedAt`, so a row
           // without it would be invisible to the surface it exists for.
-          completedAt: new Date(),
+          completedAt,
           note: createdNote,
         },
         select: { id: true },

@@ -17,4 +17,5 @@
  */
 export { IntegrationWizard } from "./integration-wizard";
 export { CopyField } from "./copy-field";
+export { useStepSaving } from "./use-step-saving";
 export type { WizardStepConfig, WizardStepHelpers } from "./types";

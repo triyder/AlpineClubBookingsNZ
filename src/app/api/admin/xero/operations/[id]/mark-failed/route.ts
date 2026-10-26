@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { XERO_OPERATION_REASON_MAX, XERO_OPERATION_REASON_MIN } from "@/lib/xero-operation-resolution";
 import { createAuditLog } from "@/lib/audit";
 import { requireAdmin } from "@/lib/session-guards";
 import {
@@ -9,7 +10,7 @@ import {
 import logger from "@/lib/logger";
 
 const markFailedSchema = z.object({
-  reason: z.string().trim().min(3).max(500),
+  reason: z.string().trim().min(XERO_OPERATION_REASON_MIN).max(XERO_OPERATION_REASON_MAX),
 });
 
 /**
@@ -88,8 +89,11 @@ export async function POST(
 
     return NextResponse.json({
       ok: true,
+      // #4256: an interrupted PARTIAL repair goes back to PARTIAL, not FAILED.
       message:
-        "Xero operation marked failed with an audit record. Fix the cause, then retry or requeue it.",
+        result.returnedTo === "PARTIAL"
+          ? "The interrupted repair was returned to PARTIAL with an audit record. Retry it to repair it again."
+          : "Xero operation marked failed with an audit record. Fix the cause, then retry or requeue it.",
     });
   } catch (error) {
     logger.error({ err: error, operationId: id }, "Failed to mark stale Xero operation failed");

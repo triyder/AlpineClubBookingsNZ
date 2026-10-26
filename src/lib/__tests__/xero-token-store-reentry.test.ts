@@ -1,46 +1,88 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// FIX-1 (#2079): a stored Xero token that no longer decrypts (env→DB upgrade or
-// an auth-secret change) must become a TYPED reconnect signal, and the status
-// surface must report "needs re-entry / not connected" rather than "connected"
-// over dead tokens.
+// FIX-1 (#2079), restated for #3806 R2: stored Xero tokens that can no longer be
+// used (an auth-secret change, a malformed value, or a connection with no stored
+// token set at all) must read as "needs re-entry / not connected", never as
+// "connected" over dead tokens. Since R2 the only copy is the credential-store
+// one, and the connection is the `XeroConnection` row.
 
 const h = vi.hoisted(() => ({
   prisma: {
-    xeroToken: {
-      findFirst: vi.fn(),
+    xeroConnection: {
+      findUnique: vi.fn(),
     },
-    // #3454: no credential-store copy in these cases, so the readability probe
-    // falls through to the XeroToken row exactly as before.
+    // The previous release's lease (#3806 R2); none held here.
+    xeroToken: {
+      findFirst: vi.fn(async () => null),
+    },
     integrationCredential: {
-      findUnique: vi.fn(async () => null),
+      findUnique: vi.fn(),
     },
   },
-  getOperationalXeroEncryptionKey: vi.fn(),
-  peekOperationalXeroEncryptionKey: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({ prisma: h.prisma }));
-vi.mock("@/lib/xero-config", () => ({
-  getOperationalXeroEncryptionKey: h.getOperationalXeroEncryptionKey,
-  peekOperationalXeroEncryptionKey: h.peekOperationalXeroEncryptionKey,
-}));
 
+import { encryptCredential, INTEGRATION_CREDENTIAL_LABEL } from "@/lib/integration-crypto";
 import {
+  XERO_OAUTH_TOKEN_KEY,
+  XERO_OAUTH_TOKEN_PROVIDER,
   XeroTokenDecryptError,
-  decryptToken,
-  encryptToken,
   getXeroConnectionStatus,
   getXeroTokenReadability,
+  loadXeroTokens,
 } from "@/lib/xero-token-store";
 
-const KEY_A = "a".repeat(64); // 32 bytes
-const KEY_B = "b".repeat(64); // a different 32-byte key
-
+const STRONG_SECRET = "s".repeat(48);
+const OTHER_SECRET = "t".repeat(48);
 const originalAuthSecret = process.env.AUTH_SECRET;
+const EXPIRES_AT = new Date("2026-08-01T00:00:00.000Z");
+
+/** A credential-store row holding `plaintext`, encrypted under the CURRENT secret. */
+function storeRow(plaintext: string) {
+  const encrypted = encryptCredential({
+    provider: XERO_OAUTH_TOKEN_PROVIDER,
+    key: XERO_OAUTH_TOKEN_KEY,
+    plaintext,
+    label: INTEGRATION_CREDENTIAL_LABEL,
+  });
+  return {
+    id: "ic-1",
+    provider: XERO_OAUTH_TOKEN_PROVIDER,
+    key: XERO_OAUTH_TOKEN_KEY,
+    ciphertext: encrypted.ciphertext,
+    iv: encrypted.iv,
+    authTag: encrypted.authTag,
+    secretSource: encrypted.secretSource,
+    labelVersion: encrypted.labelVersion,
+    updatedByUserId: null,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  };
+}
+
+const TOKEN_SET = JSON.stringify({
+  v: 1,
+  accessToken: "access",
+  refreshToken: "refresh",
+  expiresAt: EXPIRES_AT.toISOString(),
+  tenantId: "tenant-1",
+  mirror: "0".repeat(64),
+});
+
+function connected() {
+  h.prisma.xeroConnection.findUnique.mockResolvedValue({
+    tenantId: "tenant-1",
+    expiresAt: EXPIRES_AT,
+    refreshInProgressUntil: null,
+  });
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
+  process.env.AUTH_SECRET = STRONG_SECRET;
+  h.prisma.xeroConnection.findUnique.mockResolvedValue(null);
+  h.prisma.integrationCredential.findUnique.mockResolvedValue(null);
 });
 
 afterEach(() => {
@@ -48,71 +90,61 @@ afterEach(() => {
   else process.env.AUTH_SECRET = originalAuthSecret;
 });
 
-/** Encrypt a value under KEY_A using the real crypto, for use as a fixture. */
-async function cipherUnderKeyA(plaintext: string): Promise<string> {
-  h.getOperationalXeroEncryptionKey.mockResolvedValue(KEY_A);
-  return encryptToken(plaintext);
-}
-
-describe("decryptToken typed reconnect signal (FIX-1)", () => {
-  it("round-trips under the same key", async () => {
-    const token = await cipherUnderKeyA("access-token-value");
-    h.getOperationalXeroEncryptionKey.mockResolvedValue(KEY_A);
-    expect(await decryptToken(token)).toBe("access-token-value");
-  });
-
-  it("throws XeroTokenDecryptError (not a generic Error) when the key no longer matches", async () => {
-    const token = await cipherUnderKeyA("access-token-value");
-    // Key rotated: decrypt now resolves a different key → GCM tag fails.
-    h.getOperationalXeroEncryptionKey.mockResolvedValue(KEY_B);
-    await expect(decryptToken(token)).rejects.toBeInstanceOf(
-      XeroTokenDecryptError,
-    );
-  });
-
-  it("throws XeroTokenDecryptError on a malformed stored row", async () => {
-    h.getOperationalXeroEncryptionKey.mockResolvedValue(KEY_A);
-    await expect(decryptToken("not-a-valid-format")).rejects.toBeInstanceOf(
-      XeroTokenDecryptError,
-    );
-  });
-});
-
-describe("getXeroTokenReadability (side-effect-free) (FIX-1)", () => {
-  it("reports no_tokens when nothing is stored", async () => {
-    h.prisma.xeroToken.findFirst.mockResolvedValue(null);
+describe("getXeroTokenReadability (side-effect-free) (FIX-1, #3806)", () => {
+  it("reports no_tokens when there is no connection, whatever the store holds", async () => {
+    h.prisma.integrationCredential.findUnique.mockResolvedValue(storeRow(TOKEN_SET));
     expect(await getXeroTokenReadability()).toBe("no_tokens");
   });
 
-  it("reports readable via the PEEK resolver (never the mutating generate path)", async () => {
-    const accessToken = await cipherUnderKeyA("access");
-    h.getOperationalXeroEncryptionKey.mockClear(); // ignore fixture-build calls
-    h.peekOperationalXeroEncryptionKey.mockResolvedValue(KEY_A);
-    h.prisma.xeroToken.findFirst.mockResolvedValue({ id: "tok", accessToken });
+  it("reports readable when the store copy decrypts and parses", async () => {
+    connected();
+    h.prisma.integrationCredential.findUnique.mockResolvedValue(storeRow(TOKEN_SET));
     expect(await getXeroTokenReadability()).toBe("readable");
-    // Side-effect-free: the generate-on-miss resolver is never touched.
-    expect(h.getOperationalXeroEncryptionKey).not.toHaveBeenCalled();
-    expect(h.peekOperationalXeroEncryptionKey).toHaveBeenCalled();
   });
 
-  it("reports unreadable when the key is gone (auth secret changed)", async () => {
-    const accessToken = await cipherUnderKeyA("access");
-    h.peekOperationalXeroEncryptionKey.mockResolvedValue(undefined);
-    h.prisma.xeroToken.findFirst.mockResolvedValue({ id: "tok", accessToken });
+  it("reports unreadable when the store copy was written under another auth secret", async () => {
+    connected();
+    process.env.AUTH_SECRET = OTHER_SECRET;
+    const row = storeRow(TOKEN_SET);
+    process.env.AUTH_SECRET = STRONG_SECRET;
+    h.prisma.integrationCredential.findUnique.mockResolvedValue(row);
     expect(await getXeroTokenReadability()).toBe("unreadable");
   });
 
-  it("reports unreadable when the row fails GCM under the peeked key", async () => {
-    const accessToken = await cipherUnderKeyA("access");
-    h.peekOperationalXeroEncryptionKey.mockResolvedValue(KEY_B);
-    h.prisma.xeroToken.findFirst.mockResolvedValue({ id: "tok", accessToken });
+  it("reports unreadable when the store value is not a token set", async () => {
+    connected();
+    h.prisma.integrationCredential.findUnique.mockResolvedValue(storeRow("{}"));
+    expect(await getXeroTokenReadability()).toBe("unreadable");
+  });
+
+  it("reports unreadable when a connection has no stored token set at all (#3806: no legacy fallback)", async () => {
+    connected();
     expect(await getXeroTokenReadability()).toBe("unreadable");
   });
 });
 
-describe("getXeroConnectionStatus truthfulness (FIX-1)", () => {
-  it("is not connected and not needing re-entry when no tokens exist", async () => {
-    h.prisma.xeroToken.findFirst.mockResolvedValue(null);
+describe("loadXeroTokens raises the typed reconnect signal (FIX-1, #3806)", () => {
+  it("is null when not connected", async () => {
+    expect(await loadXeroTokens()).toBeNull();
+  });
+
+  it("throws XeroTokenDecryptError for a connection with no stored token set", async () => {
+    connected();
+    await expect(loadXeroTokens()).rejects.toBeInstanceOf(XeroTokenDecryptError);
+  });
+
+  it("throws XeroTokenDecryptError for a store copy that no longer decrypts", async () => {
+    connected();
+    process.env.AUTH_SECRET = OTHER_SECRET;
+    const row = storeRow(TOKEN_SET);
+    process.env.AUTH_SECRET = STRONG_SECRET;
+    h.prisma.integrationCredential.findUnique.mockResolvedValue(row);
+    await expect(loadXeroTokens()).rejects.toBeInstanceOf(XeroTokenDecryptError);
+  });
+});
+
+describe("getXeroConnectionStatus truthfulness (FIX-1, #3806)", () => {
+  it("is not connected and not needing re-entry when there is no connection", async () => {
     expect(await getXeroConnectionStatus()).toEqual({
       connected: false,
       needsReentry: false,
@@ -121,60 +153,36 @@ describe("getXeroConnectionStatus truthfulness (FIX-1)", () => {
     });
   });
 
-  it("reports connected when the stored token still decrypts", async () => {
-    process.env.AUTH_SECRET = "s".repeat(48);
-    const accessToken = await cipherUnderKeyA("access");
-    const expiresAt = new Date("2026-08-01T00:00:00.000Z");
-    h.prisma.xeroToken.findFirst.mockResolvedValue({
-      accessToken,
-      tenantId: "tenant-1",
-      expiresAt,
-    });
-    h.peekOperationalXeroEncryptionKey.mockResolvedValue(KEY_A);
-
+  it("reports connected, with the connection's tenant and expiry, when the store copy is usable", async () => {
+    connected();
+    h.prisma.integrationCredential.findUnique.mockResolvedValue(storeRow(TOKEN_SET));
     expect(await getXeroConnectionStatus()).toEqual({
       connected: true,
       needsReentry: false,
       tenantId: "tenant-1",
-      tokenExpiresAt: expiresAt,
+      tokenExpiresAt: EXPIRES_AT,
     });
   });
 
   it("reports NOT connected over readable tokens when no refresh could store its result (#3454 review)", async () => {
+    connected();
+    h.prisma.integrationCredential.findUnique.mockResolvedValue(storeRow(TOKEN_SET));
     // A grandfathered secret the capture gate now refuses: the tokens still
     // decrypt, but every refresh refuses, so "Connected" would be a lie.
     process.env.AUTH_SECRET = "too-short";
-    const accessToken = await cipherUnderKeyA("access");
-    const expiresAt = new Date("2026-08-01T00:00:00.000Z");
-    h.prisma.xeroToken.findFirst.mockResolvedValue({
-      accessToken,
-      tenantId: "tenant-1",
-      expiresAt,
-    });
-    h.peekOperationalXeroEncryptionKey.mockResolvedValue(KEY_A);
-
     expect(await getXeroConnectionStatus()).toMatchObject({
       connected: false,
       needsReentry: true,
     });
   });
 
-  it("reports needsReentry / NOT connected when the stored token no longer decrypts", async () => {
-    const accessToken = await cipherUnderKeyA("access");
-    const expiresAt = new Date("2026-08-01T00:00:00.000Z");
-    h.prisma.xeroToken.findFirst.mockResolvedValue({
-      accessToken,
-      tenantId: "tenant-1",
-      expiresAt,
-    });
-    // Key rotated: the row can no longer be read.
-    h.peekOperationalXeroEncryptionKey.mockResolvedValue(KEY_B);
-
+  it("reports needsReentry / NOT connected when a connection has no usable token set", async () => {
+    connected();
     expect(await getXeroConnectionStatus()).toEqual({
       connected: false,
       needsReentry: true,
       tenantId: "tenant-1",
-      tokenExpiresAt: expiresAt,
+      tokenExpiresAt: EXPIRES_AT,
     });
   });
 });

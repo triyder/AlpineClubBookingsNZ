@@ -1,6 +1,7 @@
 import { Prisma, type PrismaClient } from "@prisma/client";
 
 import { bookingOwner } from "@/lib/booking-owner";
+import { isPostgresLockNotAvailable } from "@/lib/prisma-errors";
 import { ApiError } from "@/lib/api-error";
 import type { HostingCoverageReevaluationInput } from "@/lib/adult-member-hosting-coverage-queue";
 
@@ -242,20 +243,9 @@ function issueProof(
   return proof;
 }
 
-/** Exact SQLSTATE inspection for direct pg and nested Prisma adapter errors. */
-export function isPostgresLockNotAvailable(
-  error: unknown,
-  depth = 0,
-): boolean {
-  if (depth > 5 || !error || typeof error !== "object") return false;
-  const candidate = error as Record<string, unknown>;
-  if (candidate.code === "55P03" || candidate.originalCode === "55P03") {
-    return true;
-  }
-  return ["meta", "driverAdapterError", "cause"].some((key) =>
-    isPostgresLockNotAvailable(candidate[key], depth + 1),
-  );
-}
+// Lives in `prisma-errors.ts` since #4161 (the Xero link heal reads it too);
+// re-exported here for this module's existing callers and tests.
+export { isPostgresLockNotAvailable };
 
 /**
  * Acquire one exact, sorted Member participant set without waiting. Source

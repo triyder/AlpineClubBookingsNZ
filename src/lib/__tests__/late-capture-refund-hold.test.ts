@@ -60,6 +60,7 @@ vi.mock("@/lib/logger", () => ({
 
 import {
   heldLateCaptureReason,
+  holdLateCaptureRefusedByStripe,
   holdSupersededLateCaptureIfRequired,
   reannounceHeldLateCaptures,
 } from "@/lib/late-capture-refund-hold";
@@ -253,6 +254,62 @@ describe("holdSupersededLateCaptureIfRequired", () => {
  * redeliver a notice it was answered for, so without this a claim held for a
  * day would never be tried again.
  */
+/**
+ * #4103 (`INV-PAY-130`): a late-capture webhook's automatic refund that Stripe
+ * answered `failed` or `canceled` sent nothing back. The capture is held for a
+ * treasurer whatever the setting says - the task is the record and its
+ * once-ever alert the one alert - and the webhook writes nothing that says
+ * "refunded". The webhook's own wiring is pinned in `stripe-webhook-alerts.test.ts`.
+ */
+describe("holdLateCaptureRefusedByStripe", () => {
+  const CAPTURE = { bookingId: "booking-9", paymentId: "payment-9", paymentIntentId: "pi_late", amountCents: 2500, captureKind: "modification" as const };
+
+  it.each([["failed"], ["canceled"]])("a refusal (%s) is held on a club that refunds automatically, as one marked task, alerted once", async (status) => {
+    mocks.bookingDefaultsFindUnique.mockResolvedValue({ lateCaptureRefundNeedsApproval: false });
+
+    await expect(holdLateCaptureRefusedByStripe(CAPTURE, [{ status, amountCents: 2500 }])).resolves.toBe(true);
+
+    expect(mocks.taskCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({ amountCents: 2500, lateCaptureApprovalIntentId: "pi_late", status: "OPEN" }),
+      select: { id: true },
+    });
+    expect(mocks.logAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "booking.payment.late_capture_refund_held",
+        details: expect.stringContaining('"stripeRefusedAutomaticRefund":true'),
+      }),
+    );
+    expect(mocks.sendHeldAlert).toHaveBeenCalledTimes(1);
+  });
+
+  it("one slice made beside one refused: only the refused amount is held", async () => {
+    await holdLateCaptureRefusedByStripe(CAPTURE, [
+      { status: "succeeded", amountCents: 1500 },
+      { status: "failed", amountCents: 1000 },
+    ]);
+
+    expect(mocks.taskCreate).toHaveBeenCalledWith({ data: expect.objectContaining({ amountCents: 1000 }), select: { id: true } });
+  });
+
+  it("a replay finds the task it raised and holds nothing new", async () => {
+    mocks.taskFindUnique.mockResolvedValue({ id: "task-held", status: "OPEN" });
+
+    await expect(holdLateCaptureRefusedByStripe(CAPTURE, [{ status: "failed", amountCents: 2500 }])).resolves.toBe(true);
+
+    expect(mocks.taskCreate).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["every refund made", [{ status: "succeeded", amountCents: 2500 }]],
+    ["a refund with no status, which counts as made", [{ status: null, amountCents: 2500 }]],
+    ["pending, which counts as made", [{ status: "pending", amountCents: 2500 }]],
+  ])("nothing refused (%s): answers false and holds nothing", async (_label, refunds) => {
+    await expect(holdLateCaptureRefusedByStripe(CAPTURE, refunds)).resolves.toBe(false);
+    expect(mocks.taskCreate).not.toHaveBeenCalled();
+    expect(mocks.bookingDefaultsFindUnique).not.toHaveBeenCalled();
+  });
+});
+
 describe("reannounceHeldLateCaptures (the payments cron's sweep)", () => {
   beforeEach(() => {
     mocks.taskFindMany.mockResolvedValue([

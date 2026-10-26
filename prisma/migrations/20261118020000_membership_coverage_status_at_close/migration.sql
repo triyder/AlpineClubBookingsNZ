@@ -1,0 +1,19 @@
+-- #4110 review: record, on each coverage claim an officer's close as already
+-- paid (#4098) releases, the covered subscription's status at that moment
+-- (PAID, or NOT_REQUIRED for an exempt member).
+--
+-- A closed family charge stays billed until a covered member's PAYMENT is
+-- reversed (owner decision on #4110, 15 Oct 2026). An exempt member's
+-- NOT_REQUIRED row can later move to NOT_INVOICED with no payment involved (an
+-- assignment re-save, or the membership sync for a REQUIRED type), and that
+-- must not re-bill the family. Only this column tells the two apart.
+--
+-- Blue/green EXPAND: one nullable column, no default, no index, no DML. Old
+-- code never selects it, and its INSERTs and the old close's release omit it
+-- (NULL). The new preview reads NULL as PAID, which is exactly what the old
+-- close accepted, so a close made by the draining colour is read correctly.
+--
+-- LOCK IMPACT: ADD COLUMN with no default is catalog-only on PostgreSQL 11+
+-- (no table rewrite); the ACCESS EXCLUSIVE lock on the cold coverage table is
+-- held for one short DDL-only transaction.
+ALTER TABLE "MembershipSubscriptionChargeCoverage" ADD COLUMN "subscriptionStatusAtClose" "SubscriptionStatus";

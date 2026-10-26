@@ -15,6 +15,8 @@ import {
   type NarrativeEvent,
   type ResolveBookingNarrativeInput,
 } from "@/lib/booking-narrative";
+import { readBookingAmountOwed } from "@/lib/booking-amount-owed";
+import { readCancelledCardRefund, readCardShortfallTaskStatuses } from "@/lib/cancel-card-refund-shortfall-status";
 import { bindClubTime } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import logger from "@/lib/logger";
@@ -145,11 +147,27 @@ export async function getPaymentLinkContext(
 
   const financialReviewPending = await readOpenFinancialReview(booking.id);
 
+  // #3955 round 3 (`INV-PAY-119`): the amount this page quotes is what the
+  // link's card intent charges — the booking's price plus a change fee
+  // recorded on its payment, less applied credit — read from the one home.
+  // At or below zero the narrative says there is nothing to pay, and the page
+  // offers neither a payment nor a fresh link.
+  // #3991: the narrative takes the whole reading (it decides on `owedCents`
+  // and quotes `dueCents`); the payable figure below is the unfloored `owedCents`.
+  const amountOwed = await readBookingAmountOwed(booking);
+  const { owedCents } = amountOwed;
+
   const narrativeInput = {
     club,
+    // #4097: a card cancel's shortfall parts, so the page says which are done.
+    cardShortfallStatuses: booking.status === BookingStatus.CANCELLED ? await readCardShortfallTaskStatuses(booking.id) : {},
+    // #4125: a card cancel's refund with no REFUNDED event - still being sent, made, or stalled;
+    // #4145: closed "Paid another way", what the officer paid back.
+    ...(booking.status === BookingStatus.CANCELLED ? await readCancelledCardRefund(booking.id) : {}),
     booking: {
       status: booking.status,
       finalPriceCents: booking.finalPriceCents,
+      amountOwed,
       checkIn: booking.checkIn,
       checkOut: booking.checkOut,
       firstName: bookingOwner(booking).member.firstName,
@@ -246,7 +264,7 @@ export async function getPaymentLinkContext(
           checkOut: booking.checkOut.toISOString(),
           guestCount: booking.guests.length,
           status: booking.status,
-          amountCents: booking.finalPriceCents,
+          amountCents: owedCents,
           cardPaymentAvailable: !payingByInternetBanking,
           ...(internetBankingEnabled || payingByInternetBanking
             ? {

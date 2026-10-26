@@ -70,6 +70,7 @@ function makeHelpers(
     optional: false,
     acknowledged: false,
     skip: vi.fn(),
+    reportSaving: vi.fn(),
     ancestorRendersViewOnlyBanner: true,
     ...overrides,
   };

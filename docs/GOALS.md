@@ -38,6 +38,9 @@ Before sweeping, rank the business areas by bugs that came back — fixed, then
 re-broken or re-fixed (ALP-4). The review proposes the list of areas, the
 maintainer confirms it, and each area shows its evidence (the issues and fixes
 that make it "hot"). Every sweep below then starts with the hottest areas.
+The list, confirmed by the owner
+([recorded on #4024](https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/4024#issuecomment-6113045008)),
+is [audits/FRAGILITY_AREAS_PROPOSAL.md](audits/FRAGILITY_AREAS_PROPOSAL.md).
 
 ### The seven sweeps
 

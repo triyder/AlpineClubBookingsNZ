@@ -1,16 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PaymentSource, PaymentStatus } from "@prisma/client";
+import { isAdditionalAmountUncollected } from "@/lib/additional-payment-chase";
 
 const mocks = vi.hoisted(() => ({
   processRefund: vi.fn(),
   loggerWarn: vi.fn(),
+  loggerError: vi.fn(),
 }));
 
 vi.mock("@/lib/logger", () => ({
   default: {
     warn: mocks.loggerWarn,
     info: vi.fn(),
-    error: vi.fn(),
+    error: mocks.loggerError,
     debug: vi.fn(),
   },
 }));
@@ -23,6 +25,23 @@ vi.mock("@/lib/stripe", () => ({
   processRefund: mocks.processRefund,
 }));
 
+// #4104: the failed-later debt and its alert, observed here; their own rules are
+// `card-refund-failed-later.test.ts`'s.
+const failedLater = vi.hoisted(() => ({
+  keep: vi.fn<(...args: unknown[]) => Promise<{ debts: unknown[]; readAsRefused: string[] }>>(async () => ({ debts: [], readAsRefused: [] })),
+  alert: vi.fn<(...args: unknown[]) => Promise<void>>(async () => undefined),
+}));
+// #4159 review round 2 (F2): the officers' alert for refund money a charge's total cannot hold, observed here.
+const capOverflow = vi.hoisted(() => ({ alert: vi.fn<(...args: unknown[]) => Promise<boolean>>(async () => true) }));
+vi.mock("@/lib/card-refund-cap-overflow", async (importOriginal) => ({
+  ...((await importOriginal()) as object),
+  alertCardRefundCapOverflow: capOverflow.alert,
+}));
+vi.mock("@/lib/card-refund-failed-later", () => ({
+  keepFailedLaterCardRefundsOwed: failedLater.keep,
+  alertFailedLaterCardRefunds: failedLater.alert,
+}));
+
 import {
   applyLocalRefundAllocation,
   foldIntoTransactionRefundedAmount,
@@ -33,8 +52,10 @@ import {
   recordInternetBankingPaymentTransaction,
   RefundAllocationRacedError,
   refundPaymentTransactions,
+  recordStripeRefundsAgainstTransaction,
   syncRefundsFromStripeCharge,
 } from "@/lib/payment-transactions";
+import { predatesRefundLedger } from "@/lib/payment-transaction-status";
 import {
   cancelRefundableBaseCents,
   getRemainingRefundableCents,
@@ -272,6 +293,12 @@ function createRefundStore() {
         refunds.set(where.stripeRefundId, nextRefund);
         return nextRefund;
       }),
+      // #4159 round 3 (4): the counted refunds on a charge, which key a cap overflow's alert.
+      findMany: vi.fn(async ({ where }: any) =>
+        [...refunds.values()].filter(
+          (refund) => refund.paymentTransactionId === where.paymentTransactionId && !(where.status?.notIn ?? []).includes(refund.status),
+        ),
+      ),
       aggregate: vi.fn(async ({ where }: any) => {
         const excludedStatuses = new Set(where.status?.notIn ?? []);
         let amountCents = 0;
@@ -332,6 +359,10 @@ describe("payment refund ledger", () => {
         paymentIntentId: "pi_1",
         refundId: "re_direct_1",
         amountCents: 2500,
+        // #4070: Stripe's own status, so a caller can tell a refund made from one it refused.
+        status: "succeeded",
+        // #4083: the slice as sent, so a refused one can be asked for again.
+        slice: { paymentTransactionId: "txn_1", amountCents: 2500 },
       },
     ]);
     expect(store.paymentRefund.createMany).toHaveBeenCalledWith(
@@ -780,6 +811,112 @@ describe("multi-transaction refund allocation (#1097)", () => {
     expect(totalRecordedCents).toBe(6000);
   });
 
+  it("#3924 round 4 (C2): a slice Stripe refunded but that could not be recorded is a partial failure carrying only the slices before it", async () => {
+    const { store, refunds } = twoTransactionStore();
+    mocks.processRefund
+      .mockResolvedValueOnce(stripeRefund("re_slice_a", 3000, "pi_2", "ch_2"))
+      .mockResolvedValueOnce(stripeRefund("re_slice_b", 3000, "pi_1", "ch_1"));
+    const recordingFault = new Error("database connection lost");
+    const createMany = store.paymentRefund.createMany as ReturnType<typeof vi.fn>;
+    const recordOnce = createMany.getMockImplementation()!;
+    createMany.mockImplementationOnce(recordOnce).mockRejectedValueOnce(recordingFault);
+
+    let thrown: unknown;
+    try {
+      await refundPaymentTransactions({
+        format: CLUB_FORMAT_TEST,
+        paymentId: "payment_1",
+        amountCents: 6000,
+        allocation: [
+          { paymentTransactionId: "txn_2", amountCents: 3000 },
+          { paymentTransactionId: "txn_1", amountCents: 3000 },
+        ],
+        idempotencyKeyPrefix: "refund_request_rq2",
+        store: store as any,
+      });
+    } catch (error) {
+      thrown = error;
+    }
+
+    // Not the raw fault: a caller would then re-queue the whole plan.
+    expect(thrown).toBeInstanceOf(PartialRefundError);
+    const partial = thrown as PartialRefundError;
+    expect(partial.cause).toBe(recordingFault);
+    // Only the first slice was refunded AND recorded; the second goes to the
+    // recovery, which replays its same key and records Stripe's original refund.
+    expect(partial.refunds).toEqual([expect.objectContaining({ refundId: "re_slice_a", amountCents: 3000 })]);
+    expect(partial.completedRefundCents).toBe(3000);
+    expect([...refunds.keys()]).toEqual(["re_slice_a"]);
+  });
+
+  // #4083 (`INV-PAY-128`): Stripe can answer a refund `failed` or `canceled`
+  // without throwing. Such a slice sent nothing back: it is returned with the
+  // slice as sent (so it can be queued and asked for again) and is never
+  // counted as completed (so a remainder sized from the partial failure keeps it).
+  it("#4083: a refused slice is returned with its slice and never counted as completed", async () => {
+    const { store } = twoTransactionStore();
+    mocks.processRefund
+      .mockResolvedValueOnce({ ...stripeRefund("re_refused", 3000, "pi_2", "ch_2"), status: "failed" })
+      .mockResolvedValueOnce(stripeRefund("re_made", 3000, "pi_1", "ch_1"));
+
+    const result = await refundPaymentTransactions({
+      format: CLUB_FORMAT_TEST,
+      paymentId: "payment_1",
+      amountCents: 6000,
+      idempotencyKeyPrefix: "mod_dates_refund_b1_m1",
+      store: store as any,
+    });
+
+    expect(result.refunds).toEqual([
+      expect.objectContaining({ refundId: "re_refused", status: "failed", slice: { paymentTransactionId: "txn_2", amountCents: 3000 } }),
+      expect.objectContaining({ refundId: "re_made", status: "succeeded", slice: { paymentTransactionId: "txn_1", amountCents: 3000 } }),
+    ]);
+  });
+
+  it("#4083: a slice refused before a later one throws is owed: completedRefundCents excludes it and refusedSlices names it", async () => {
+    const { store } = twoTransactionStore();
+    mocks.processRefund
+      .mockResolvedValueOnce({ ...stripeRefund("re_refused", 3000, "pi_2", "ch_2"), status: "canceled" })
+      .mockRejectedValueOnce(new Error("stripe unavailable"));
+
+    const thrown = await refundPaymentTransactions({
+      format: CLUB_FORMAT_TEST,
+      paymentId: "payment_1",
+      amountCents: 6000,
+      idempotencyKeyPrefix: "mod_dates_refund_b1_m1",
+      store: store as any,
+    }).catch((error: unknown) => error);
+
+    expect(thrown).toBeInstanceOf(PartialRefundError);
+    expect((thrown as PartialRefundError).completedRefundCents).toBe(0);
+    expect((thrown as PartialRefundError).refusedSlices).toEqual([{ paymentTransactionId: "txn_2", amountCents: 3000 }]);
+  });
+
+  it("#4083: a slice moved to a fresh key generation is sent under that key; the others keep theirs", async () => {
+    const { store } = twoTransactionStore();
+    mocks.processRefund
+      .mockResolvedValueOnce(stripeRefund("re_retry", 3000, "pi_2", "ch_2"))
+      .mockResolvedValueOnce(stripeRefund("re_replayed", 3000, "pi_1", "ch_1"));
+
+    const result = await refundPaymentTransactions({
+      format: CLUB_FORMAT_TEST,
+      paymentId: "payment_1",
+      amountCents: 6000,
+      allocation: [
+        { paymentTransactionId: "txn_2", amountCents: 3000, stripeKeySuffix: "refused1" },
+        { paymentTransactionId: "txn_1", amountCents: 3000 },
+      ],
+      idempotencyKeyPrefix: "mod_dates_refund_b1_m1",
+      store: store as any,
+    });
+
+    expect(mocks.processRefund.mock.calls.map(([call]) => call.idempotencyKey)).toEqual([
+      "mod_dates_refund_b1_m1_txn_2_3000_refused1",
+      "mod_dates_refund_b1_m1_txn_1_3000",
+    ]);
+    expect(result.refunds[0]?.slice).toEqual({ paymentTransactionId: "txn_2", amountCents: 3000, stripeKeySuffix: "refused1" });
+  });
+
   it("rejects an allocation slice that references an unknown transaction", async () => {
     const { store } = twoTransactionStore();
 
@@ -1022,6 +1159,34 @@ describe("#3032 - applyLocalRefundAllocation cannot lose an update", () => {
     ).rejects.toBeInstanceOf(RefundAllocationRacedError);
     // Never past what was captured.
     expect(ctx.transaction.refundedAmountCents).toBeLessThanOrEqual(5000);
+  });
+});
+
+/**
+ * #4154 (`INV-PAY-135`, PR #4159 F2/F4): a capacity race's hand-back may land
+ * only on the race's own card charge. `onlyTransactionIds` narrows the charges
+ * the allocation may use; short there, it refuses as any shortfall does, and
+ * never spills onto a charge outside the list, however much that one holds.
+ */
+describe("#4154 - applyLocalRefundAllocation onlyTransactionIds", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("MUTATION: a charge outside the list is never used, though it holds the whole amount", async () => {
+    const { store, transaction } = createRefundStore();
+
+    await expect(
+      applyLocalRefundAllocation({ paymentId: "payment_1", amountCents: 2000, onlyTransactionIds: ["txn_race"], store: store as never }),
+    ).rejects.toThrow("Refund amount exceeds captured payments");
+    expect(transaction.refundedAmountCents).toBe(0);
+  });
+
+  it("a charge on the list takes it", async () => {
+    const { store, transaction } = createRefundStore();
+
+    await applyLocalRefundAllocation({ paymentId: "payment_1", amountCents: 2000, onlyTransactionIds: ["txn_1"], store: store as never });
+    expect(transaction.refundedAmountCents).toBe(2000);
   });
 });
 
@@ -1304,6 +1469,56 @@ describe("#3528 - reconcilePaymentAggregates reads past a WITHDRAWN ask (INV-ADD
       additionalPaymentIntentId: "pi_ask_2",
     });
   });
+
+  /*
+    #4320 / #4355: a reversed covering mark-paid. The cash ADDITIONAL row is
+    FAILED and NEWER than the card ask the extra goes back to, and the member
+    then pays that ask. The reversal stamps its cash row withdrawn (only when a
+    live card ask stands), so the rebuild after the capture reads the ask.
+  */
+  function reversedCashRow(transaction: ReturnType<typeof createRefundStore>["transaction"], withdrawnAt: Date | null) {
+    return {
+      ...transaction,
+      id: "txn_cash",
+      kind: "ADDITIONAL",
+      source: PaymentSource.INTERNET_BANKING,
+      stripePaymentIntentId: null,
+      paymentMethodId: null,
+      amountCents: 2275,
+      status: "FAILED",
+      reason: "manual_mark_paid_additional_reversed",
+      withdrawnAt,
+      createdAt: new Date("2026-01-06T00:00:00.000Z"),
+      updatedAt: new Date("2026-01-07T00:00:00.000Z"),
+    };
+  }
+
+  for (const [label, withdrawnAt, expected] of [
+    [
+      "CONTROL: unstamped, the reversed cash row hides the paid ask: the extra reads FAILED with no pointer and is chased",
+      null,
+      { additionalAmountCents: 2275, additionalPaymentStatus: "FAILED", additionalPaymentIntentId: null },
+    ],
+    [
+      "stamped by the reversal, the rebuild reads past it to the paid ask: SUCCEEDED, the pointer on the ask, nothing chased",
+      new Date("2026-01-07T00:00:00.000Z"),
+      { additionalAmountCents: 2275, additionalPaymentStatus: "SUCCEEDED", additionalPaymentIntentId: "pi_ask" },
+    ],
+  ] as const) {
+    it(label, async () => {
+      const { store, payment, transaction, transactions } = createRefundStore();
+      transactions.push({ ...additionalRow(transaction), status: "SUCCEEDED" });
+      transactions.push(reversedCashRow(transaction, withdrawnAt));
+
+      await reconcilePaymentAggregates({ paymentId: payment.id, store: store as any });
+
+      const projected = stampedAdditional(store);
+      expect(projected).toEqual(expected);
+      expect(isAdditionalAmountUncollected(projected as { additionalAmountCents: number; additionalPaymentStatus: string | null })).toBe(
+        withdrawnAt === null,
+      );
+    });
+  }
 });
 
 /*
@@ -1570,8 +1785,11 @@ describe("#3640 / INV-PAY-103 - a card refund adds to the refunded total", () =>
 
   it("records the refund rows and the mirror in one transaction when given the root client", async () => {
     const ctx = paidStore();
+    // The transaction client: the same models, without the root client's
+    // `$connect` - so the reconcile inside joins this transaction (#4217).
+    const txClient = { ...ctx.store };
     const transactionSpy = vi.fn(
-      async (fn: (tx: unknown) => Promise<unknown>) => fn(ctx.store),
+      async (fn: (tx: unknown) => Promise<unknown>) => fn(txClient),
     );
     const rootClient = Object.assign(ctx.store, {
       $connect: vi.fn(),
@@ -1601,6 +1819,68 @@ describe("#3640 / INV-PAY-103 - a card refund adds to the refunded total", () =>
   // the old max-based total already counted it (from Stripe's amount_refunded).
   // The first sync that lists it inserts its row for the first time: that must
   // not add it again.
+  // #4154 review (M1): the charge caps the total, so cents above it are refund money the total cannot hold - logged, never silent.
+  describe("a refund the charge's total cannot hold is logged as an error", () => {
+    it("MUTATION: credit for the whole charge, then a card refund on top: capped at the charge, the discarded cents named", async () => {
+      const ctx = paidStore();
+      await settleCredit(ctx, PAID_CENTS);
+      await webhookSync(ctx);
+      expect(ctx.transaction.refundedAmountCents).toBe(PAID_CENTS);
+      expect(mocks.loggerError).toHaveBeenCalledWith(
+        expect.objectContaining({ paymentTransactionId: ctx.transaction.id, discardedCents: CARD_REFUND_CENTS }),
+        expect.stringContaining("#4154"),
+      );
+    });
+
+    it("CONTROL: a refund within the charge logs no error", async () => {
+      const ctx = paidStore();
+      await settleCredit(ctx);
+      await webhookSync(ctx);
+      expect(mocks.loggerError).not.toHaveBeenCalled();
+      expect(capOverflow.alert).not.toHaveBeenCalled();
+    });
+
+    // #4159 review round 2 (F2): logged is not enough - the officers are told, after the commit, never inside it.
+    const record = (store: unknown) =>
+      recordStripeRefundsAgainstTransaction({ paymentId: "payment_1", paymentTransactionId: "txn_1", refunds: [cardRefund("re_over", CARD_REFUND_CENTS)], store: store as never });
+
+    it("MUTATION: on its own commit, the discarded cents reach the officers' alert - after the transaction - and are returned", async () => {
+      const ctx = paidStore();
+      await settleCredit(ctx, PAID_CENTS);
+      let committed = false;
+      const root = { ...ctx.store, $connect: () => undefined, $transaction: async (fn: (tx: unknown) => Promise<unknown>) => { const out = await fn(ctx.store); committed = true; return out; } };
+      capOverflow.alert.mockImplementationOnce(async () => { expect(committed).toBe(true); return true; });
+      const result = await record(root);
+      const overflow = { paymentId: "payment_1", paymentTransactionId: "txn_1", discardedCents: CARD_REFUND_CENTS, recordedRefundCents: CARD_REFUND_CENTS, countedRefundIds: ["re_over"] };
+      expect(result.capOverflow).toEqual(overflow);
+      expect(capOverflow.alert).toHaveBeenCalledWith(overflow);
+    });
+
+    it("MUTATION (round 3, 6): the charge.refunded sync passes the discarded cents on to its caller", async () => {
+      const ctx = paidStore();
+      await settleCredit(ctx, PAID_CENTS);
+      const synced = await syncRefundsFromStripeCharge({
+        paymentIntentId: "pi_1", stripeChargeId: "ch_1", refundedAmountCents: CARD_REFUND_CENTS, refunds: [cardRefund("re_over", CARD_REFUND_CENTS)], store: ctx.store as never,
+      });
+      expect(synced?.capOverflow).toMatchObject({ paymentTransactionId: "txn_1", discardedCents: CARD_REFUND_CENTS, countedRefundIds: ["re_over"] });
+    });
+
+    it("CONTROL (round 3, 6): an inline card refund within the charge passes on no overflow", async () => {
+      const ctx = paidStore();
+      mocks.processRefund.mockResolvedValueOnce(cardRefund("re_1", CARD_REFUND_CENTS));
+      const result = await refundPaymentTransactions({ format: CLUB_FORMAT_TEST, paymentId: "payment_1", amountCents: CARD_REFUND_CENTS, idempotencyKeyPrefix: "refund_request_rq1", store: ctx.store as never });
+      expect(result.capOverflows).toEqual([]);
+    });
+
+    it("joined to a caller's transaction, it alerts nothing itself and returns the discarded cents for the caller", async () => {
+      const ctx = paidStore();
+      await settleCredit(ctx, PAID_CENTS);
+      const result = await record(ctx.store);
+      expect(result.capOverflow).toMatchObject({ discardedCents: CARD_REFUND_CENTS });
+      expect(capOverflow.alert).not.toHaveBeenCalled();
+    });
+  });
+
   describe("a refund older than the refund ledger", () => {
     const PRE_LEDGER_CENTS = 3000;
     const preLedgerRefund = {
@@ -2043,5 +2323,161 @@ describe("#3640 / INV-PAY-103 - a card refund adds to the refunded total", () =>
 
     expect(ctx.transaction.refundedAmountCents).toBe(CARD_REFUND_CENTS);
     expect(delta).toBe(CARD_REFUND_CENTS);
+  });
+});
+
+/*
+  #4104 (`INV-PAY-128`) - A REFUND SEEN FAILING AFTER IT COUNTED IS OWED AGAIN.
+
+  The one writer of a transaction's refund rows says when it sees a refund
+  fail after it counted, and keeps it owed in the same transaction: its own
+  guarded counted -> refused write, or a caller told the refund counts (a
+  replayed key reads Stripe's original 'pending') while the row says refused -
+  the refund-failed webhook having got there first.
+*/
+describe("#4104 - a card refund seen failing after it counted is kept owed, once", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const APP_METADATA = { bookingId: "booking_1", reason: "cancellation" };
+  const refund = (status: string) => ({
+    id: "re_1",
+    amount: 2000,
+    currency: "nzd",
+    status,
+    created: 1770000000,
+    charge: "ch_1",
+    payment_intent: "pi_1",
+    metadata: APP_METADATA,
+  });
+  /** The refunds each write handed over as failed later, write by write. */
+  const seen = () =>
+    failedLater.keep.mock.calls.map((call) =>
+      (call[1] as { seen: Array<{ refund: { id: string }; kind: string }> }).seen.map(({ refund, kind }) => `${refund.id}:${kind}`),
+    );
+  const record = (store: unknown, status: string) =>
+    syncRefundsFromStripeCharge({ paymentIntentId: "pi_1", stripeChargeId: "ch_1", refundedAmountCents: 0, refunds: [refund(status)], store: store as never });
+
+  it("the counted -> failed write keeps it owed, with the refund and its charge, and a replay does not again", async () => {
+    const { store, transaction } = createRefundStore();
+    await record(store, "pending");
+    expect(transaction.refundedAmountCents).toBe(2000);
+    expect(seen()).toEqual([[]]);
+
+    await record(store, "failed");
+    expect(transaction.refundedAmountCents).toBe(0);
+    expect(failedLater.keep.mock.calls[1]?.[1]).toEqual({
+      paymentId: "payment_1",
+      paymentTransactionId: "txn_1",
+      seen: [{ refund: expect.objectContaining({ id: "re_1", amount: 2000, metadata: APP_METADATA }), kind: "transition" }],
+      fallbackPaymentIntentId: "pi_1",
+    });
+
+    // The same event again: the row is already refused, nothing is seen twice.
+    await record(store, "failed");
+    expect(seen()).toEqual([[], ["re_1:transition"], []]);
+  });
+
+  it("a refund told to count while its row already says refused is kept owed (the event arrived first)", async () => {
+    const { store, transaction } = createRefundStore();
+    await record(store, "failed");
+    expect(transaction.refundedAmountCents).toBe(0);
+
+    // The door's own write, carrying Stripe's original answer.
+    await record(store, "pending");
+    expect(seen()).toEqual([[], ["re_1:replayed"]]);
+    expect(transaction.refundedAmountCents).toBe(0);
+  });
+
+  it("a refund Stripe refused at once is the door's to keep owed (#4083), not this", async () => {
+    const { store } = createRefundStore();
+    await record(store, "failed");
+    await record(store, "canceled");
+    expect(seen()).toEqual([[], []]);
+  });
+
+  it("alerts after the commit it owns, with the debts it kept; joined to a caller's transaction it leaves that to the caller", async () => {
+    const debt = { outcome: "raised", operationId: "op_1" };
+    const joined = createRefundStore();
+    await record(joined.store, "pending");
+    failedLater.keep.mockResolvedValueOnce({ debts: [debt], readAsRefused: [] });
+    const joinedSync = await record(joined.store, "failed");
+    // Returned for the caller to alert after its own commit (concurrency E).
+    expect(joinedSync?.failedLaterDebts).toEqual([debt]);
+    expect(failedLater.alert).not.toHaveBeenCalled();
+
+    const owned = createRefundStore();
+    const root = { ...owned.store, $connect: vi.fn(), $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(owned.store)) };
+    await record(root, "pending");
+    expect(failedLater.alert).toHaveBeenLastCalledWith([]);
+    failedLater.keep.mockResolvedValueOnce({ debts: [debt], readAsRefused: [] });
+    await record(root, "failed");
+    expect(root.$transaction).toHaveBeenCalledTimes(2);
+    expect(failedLater.alert).toHaveBeenLastCalledWith([debt]);
+  });
+});
+
+describe("#4104 review - what the refund sender and the snapshot floor do with a failure", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const stripeRefund = (id: string, status: string, amount = 2000) => ({
+    id,
+    amount,
+    currency: "nzd",
+    status,
+    created: 1770000000,
+    charge: "ch_1",
+    payment_intent: "pi_1",
+    metadata: { bookingId: "booking_1", reason: "cancellation" },
+  });
+
+  it("MUTATION (money 4): a charge.refunded snapshot taken before a refund failed does not lift the total back up", async () => {
+    const { store, transaction } = createRefundStore();
+    await syncRefundsFromStripeCharge({ paymentIntentId: "pi_1", stripeChargeId: "ch_1", refundedAmountCents: 2000, refunds: [stripeRefund("re_1", "pending")], store: store as never });
+    await syncRefundsFromStripeCharge({ paymentIntentId: "pi_1", stripeChargeId: "ch_1", refundedAmountCents: 2000, refunds: [stripeRefund("re_1", "failed")], store: store as never });
+    expect(transaction.refundedAmountCents).toBe(0);
+    // A late snapshot still carrying the failed refund in Stripe's cumulative figure.
+    await syncRefundsFromStripeCharge({ paymentIntentId: "pi_1", stripeChargeId: "ch_1", refundedAmountCents: 2000, refunds: [stripeRefund("re_1", "failed")], store: store as never });
+    expect(transaction.refundedAmountCents).toBe(0);
+    // Backed by counted rows, the figure still floors the total.
+    await syncRefundsFromStripeCharge({ paymentIntentId: "pi_1", stripeChargeId: "ch_1", refundedAmountCents: 500, refunds: [stripeRefund("re_1", "failed"), stripeRefund("re_2", "succeeded", 500)], store: store as never });
+    expect(transaction.refundedAmountCents).toBe(500);
+  });
+
+  it("a refund a row it is moving owns is handed back as refused: never counted as completed, and owed by that row", async () => {
+    const { store } = createRefundStore();
+    failedLater.keep.mockResolvedValueOnce({ debts: [], readAsRefused: ["re_held"] });
+    mocks.processRefund.mockResolvedValueOnce(stripeRefund("re_held", "pending"));
+    const result = await refundPaymentTransactions({ format: CLUB_FORMAT_TEST, paymentId: "payment_1", amountCents: 2000, idempotencyKeyPrefix: "booking_cancel_refund_b1", store: store as never });
+    expect(result.refunds).toEqual([expect.objectContaining({ refundId: "re_held", status: "failed" })]);
+  });
+
+  it("returns what it decided, for a caller whose transaction it joined to alert after its commit (concurrency E)", async () => {
+    const { store } = createRefundStore();
+    const debt = { outcome: "raised", operationId: "op_1" };
+    failedLater.keep.mockResolvedValueOnce({ debts: [debt], readAsRefused: [] });
+    mocks.processRefund.mockResolvedValueOnce(stripeRefund("re_x", "succeeded"));
+    const result = await refundPaymentTransactions({ format: CLUB_FORMAT_TEST, paymentId: "payment_1", amountCents: 2000, store: store as never });
+    expect(result.failedLaterDebts).toEqual([debt]);
+    expect(mocks.loggerWarn).toHaveBeenCalledWith(expect.objectContaining({ failedLaterDebts: [debt] }), expect.stringContaining("#4104"));
+  });
+});
+
+// #4154 review (M9): ONE rule for "made before the refund ledger", whose undated reading is each caller's to name.
+describe("predatesRefundLedger", () => {
+  it("a dated refund predates the ledger only when made before its start; no start predates nothing", () => {
+    expect(predatesRefundLedger(999, 1_000, "since-ledger")).toBe(true);
+    expect(predatesRefundLedger(1_000, 1_000, "pre-ledger")).toBe(false);
+    expect(predatesRefundLedger(999, null, "pre-ledger")).toBe(false);
+  });
+
+  it("MUTATION: an undated refund is read as its caller names, whatever the start", () => {
+    for (const start of [1_000, null]) {
+      expect(predatesRefundLedger(null, start, "pre-ledger")).toBe(true);
+      expect(predatesRefundLedger(undefined, start, "since-ledger")).toBe(false);
+    }
   });
 });

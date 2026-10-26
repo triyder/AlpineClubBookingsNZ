@@ -14,7 +14,8 @@ Refunds & Credits is a **finance** permission area: finance view to read the
 queue, finance **edit** to approve, reject, or process. Amounts are integer cents;
 a refund is capped at the remaining refundable amount on the payment, less any
 refund the club has already promised back by bank transfer for an earlier booking
-change and not yet sent ([Payments](payments.md)).
+change and not yet sent ([Payments](payments.md)), and any card refund on the
+payment not yet made (being retried, or stopped and listed on [Stuck States](stuck-states.md#close-a-card-refund-stripe-gave-up-on)).
 
 ## When you'd use it
 
@@ -80,9 +81,36 @@ change and not yet sent ([Payments](payments.md)).
    **Money already returned another way is not offered again.** The most you
    can approve also leaves out any refund task still open on the booking's
    payment (including one a cancellation raised, for example for an
-   organisation's late bank transfer), and any account credit the member
+   organisation's late bank transfer), any account credit the member
    already received because their bank transfer arrived after the booking was
-   cancelled. The member's own appeal form uses the same limit.
+   cancelled, and any card refund on the payment not yet made: one refused
+   or failed after the card provider accepted it, and being retried, or one
+   stopped and listed on [Stuck States](stuck-states.md#close-a-card-refund-stripe-gave-up-on) for you to close as paid another way. When a
+   card refund is what lowered it, the review shows "Less $X of card refund not
+   yet made for this payment (retrying, or stopped and listed on Stuck states)."
+   under **Max refundable**, never more than it actually took off. The member's
+   own appeal form uses the same limit, and tells the member how much is still
+   owed back to them.
+
+   **A group joiner's booking the organiser paid for by card is refunded to the
+   organiser's card (#3956).** When a group organiser paid for everyone in one
+   card payment, the joiner's booking has no card payment of its own, so
+   approving its appeal refunds the amount out of the organiser's payment, back
+   to the card the organiser paid with. The refund is made straight away, or
+   retried automatically if the card provider does not answer. Its Xero refund
+   credit note is queued once the refund has gone through, not at approval. The
+   joiner is emailed that the refund went (or is on its way) to the organiser's
+   card, and the organiser is emailed that it is being refunded to their card
+   for that joiner's share. Your notify choice covers both emails. The most you
+   can approve is what the organiser's payment can still return for this booking
+   after the group's cancellation refunds; the review screen says so under
+   **Max refundable**, and the joiner's appeal form says the same. Approving
+   more is refused with a message naming how much can still be refunded;
+   approve that amount or less, or decline the appeal. When that payment has
+   nothing left for the booking, the appeal can only be declined. While the
+   group cancellation's own refund to the organiser's card has not been made
+   yet (an older group cancellation still being retried), approval is refused
+   until it has.
 
    A booking paid by **card** whose card ledger shows less refundable than the
    amount you approve refunds what the card can carry and logs the difference
@@ -119,7 +147,10 @@ governed by the [cancellation policy](../CANCELLATIONS.md#refund-policy).
 | --- | --- | --- |
 | Everything is read-only ("… can view refund appeals and credit approvals but cannot approve, reject, or process them") | Your finance role is view-only | Ask a finance-edit admin |
 | A credit approval is disabled for me | You raised it — the two-person rule needs a different reviewer | Ask another admin to review it |
-| The refund amount won't go above a certain figure | It is capped at the remaining refundable amount (paid minus already refunded, minus any refund task still waiting to be sent by bank transfer, minus account credit already given for a bank transfer that arrived after the cancellation) | Refund up to that cap; the rest may already be refunded, credited or promised back |
+| The refund amount won't go above a certain figure | It is capped at the remaining refundable amount (paid minus already refunded, minus any refund task still waiting to be sent by bank transfer, minus account credit already given for a bank transfer that arrived after the cancellation, minus any card refund not yet made: retrying, or stopped and listed on Stuck States) | Refund up to that cap; the rest may already be refunded, credited or promised back |
+| Approving a group joiner's appeal says the organiser's card payment "can refund at most" a smaller amount | The organiser paid for the group by card, and that one payment has already returned money for the group's cancellation or other changes (#3956) | Approve the amount it names or less, or decline the appeal |
+| Approving a group joiner's appeal says the organiser's card payment "has nothing left to refund for it" | That payment has already returned everything it can for this booking (#3956) | Decline the appeal |
+| Approving a group joiner's appeal says the group cancellation's own refund "is still being made or reconciled" (the review screen says the same where it would show the maximum, and the member is told to appeal once it is made) | An older group cancellation's single refund to the organiser's card is still being retried (#3956) | Wait for the automatic retry to make that refund, then approve; or decline the appeal. If no retry has started yet it shows under **Unexecuted group settlement refunds**, and if the retry has used all its attempts under **Exhausted recovery operations**, both on [Stuck States](stuck-states.md), which does not close this kind of refund: ask a developer to reconcile it |
 | The queue is empty | The status filter excludes the request | Switch to **All** to see approved/rejected items |
 
 ## Related links

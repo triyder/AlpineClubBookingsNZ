@@ -87,6 +87,65 @@ describe("matchesWhere — scalar conditions", () => {
     expect(matchesWhere(booking({ notes: null }), { notes: { contains: "" } })).toBe(false);
   });
 
+  it("reads startsWith and contains as the unescaped LIKE Prisma sends (#4165)", () => {
+    const action = (value: string) => booking({ notes: value });
+    // A bare `_` is any one character and `%` any run, as PostgreSQL reads them.
+    expect(matchesWhere(action("xero.contact.synced"), { notes: { startsWith: "xero_" } })).toBe(true);
+    expect(matchesWhere(action("memberXlifecycle.delete_x"), { notes: { startsWith: "member_lifecycle.delete" } })).toBe(true);
+    expect(matchesWhere(action("a-long-b"), { notes: { startsWith: "a%b" } })).toBe(true);
+    expect(matchesWhere(action("xDATAXEXPORTx"), { notes: { contains: "DATA_EXPORT" } })).toBe(true);
+    // A `.` and the regex metacharacters are literal.
+    expect(matchesWhere(action("memberXprofile"), { notes: { startsWith: "member." } })).toBe(false);
+    expect(matchesWhere(action("a(b)+c"), { notes: { startsWith: "a(b)+" } })).toBe(true);
+    // A backslash escapes the next character, which is how `exactPrefix` asks for a literal.
+    expect(matchesWhere(action("xero.contact.synced"), { notes: { startsWith: "xero\\_" } })).toBe(false);
+    expect(matchesWhere(action("xero_account_mappings_updated"), { notes: { startsWith: "xero\\_" } })).toBe(true);
+    expect(matchesWhere(action("MEMBERSHIP_APPLICATION_APPROVED"), { notes: { startsWith: "MEMBERSHIP\\_APPLICATION" } })).toBe(true);
+    expect(matchesWhere(action("50%_off\\x"), { notes: { startsWith: "50\\%\\_off\\\\" } })).toBe(true);
+    expect(matchesWhere(action("50%Xoff\\x"), { notes: { startsWith: "50\\%\\_off\\\\" } })).toBe(false);
+    // Case-sensitive, as LIKE is.
+    expect(matchesWhere(action("XERO_PUSH"), { notes: { startsWith: "xero\\_" } })).toBe(false);
+    // Prisma appends `%`, so a trailing backslash escapes it: `startsWith: "a\\"`
+    // is `LIKE 'a\%'` (exactly `a%`) and `contains: "a\\"` is `LIKE '%a\%'`
+    // (ends with `a%`), as PostgreSQL reads them.
+    expect(matchesWhere(action("a%"), { notes: { startsWith: "a\\" } })).toBe(true);
+    expect(matchesWhere(action("a%x"), { notes: { startsWith: "a\\" } })).toBe(false);
+    expect(matchesWhere(action("a\\"), { notes: { startsWith: "a\\" } })).toBe(false);
+    expect(matchesWhere(action("xa%"), { notes: { contains: "a\\" } })).toBe(true);
+    expect(matchesWhere(action("xa%y"), { notes: { contains: "a\\" } })).toBe(false);
+    // `_` is one CHARACTER, as in a UTF-8 PostgreSQL database, not one UTF-16 unit.
+    expect(matchesWhere(action("\u{1F600}x"), { notes: { startsWith: "_x" } })).toBe(true);
+    expect(matchesWhere(action("\u{1F600}x"), { notes: { startsWith: "__x" } })).toBe(false);
+    expect(matchesWhere(action("a\u{1F600}b"), { notes: { contains: "a_b" } })).toBe(true);
+    expect(matchesWhere(action("a-b/c"), { notes: { startsWith: "a-b/" } })).toBe(true);
+  });
+
+  it("reads a Json column's path + equals as PostgreSQL does: a missing key or NULL matches nothing (#3403)", () => {
+    const op = (requestPayload: unknown): WhereRow => ({ id: "op-1", requestPayload });
+    const where = { requestPayload: { path: ["paymentIntentId"], equals: "pi_a" } };
+    expect(matchesWhere(op({ paymentIntentId: "pi_a" }), where)).toBe(true);
+    expect(matchesWhere(op({ paymentIntentId: "pi_b" }), where)).toBe(false);
+    expect(matchesWhere(op({}), where)).toBe(false);
+    expect(matchesWhere(op(null), where)).toBe(false);
+    expect(matchesWhere(op({ paymentIntentId: { id: "pi_a" } }), where)).toBe(false);
+    expect(matchesWhere(op({ a: { b: 3 } }), { requestPayload: { path: ["a", "b"], equals: 3 } })).toBe(true);
+    // Inside OR, with other clauses, as the production queries use it.
+    expect(
+      matchesWhere(op({ paymentIntentId: "pi_b" }), {
+        OR: [where, { requestPayload: { path: ["paymentIntentId"], equals: "pi_b" } }],
+      }),
+    ).toBe(true);
+    // Under a negation a missing key is unknown: refused, never guessed.
+    expect(() => matchesWhere(op({}), { NOT: where })).toThrow(/met a NULL column/);
+    // Only path + equals with a scalar is modelled.
+    expect(() =>
+      matchesWhere(op({}), { requestPayload: { path: ["x"], string_contains: "y" } }),
+    ).toThrow(/only path \+ equals/);
+    expect(() =>
+      matchesWhere(op({}), { requestPayload: { path: ["x"], equals: { y: 1 } } }),
+    ).toThrow(/only a scalar/);
+  });
+
   it("drops a condition of undefined, as Prisma does", () => {
     expect(matchesWhere(booking(), { status: undefined, memberId: "m-1" })).toBe(true);
     expect(matchesWhere(booking(), { status: { in: undefined } })).toBe(true);
@@ -275,6 +334,31 @@ describe("matchesWhere — refuses what it does not model", () => {
     // rows are evaluated un-negated, so a null guest column is an ordinary miss.
     expect(matchesWhere(row, { NOT: { guests: { some: { memberId: "m-9" } } } })).toBe(true);
     expect(matchesWhere(row, { guests: { none: { memberId: "m-9" } } })).toBe(true);
+  });
+
+  it("evaluates OR as three-valued logic: any true clause wins over an unknown, in either order", () => {
+    const row = booking({ deletedAt: null });
+    const isNull = { deletedAt: null };
+    const notJuly = { deletedAt: { not: JULY } };
+    expect(matchesWhere(row, { OR: [isNull, notJuly] })).toBe(true);
+    expect(matchesWhere(row, { OR: [notJuly, isNull] })).toBe(true);
+    // A true clause elsewhere in the list also settles it.
+    expect(matchesWhere(row, { OR: [notJuly, { status: "CONFIRMED" }] })).toBe(true);
+    // No true clause and one unknown: the OR is unknown, and still refuses.
+    expect(() => matchesWhere(row, { OR: [notJuly, { status: "PAID" }] })).toThrow(
+      /`not` on deletedAt met a NULL column/,
+    );
+    expect(() => matchesWhere(row, { OR: [{ status: "PAID" }, notJuly] })).toThrow(
+      /`not` on deletedAt met a NULL column/,
+    );
+    // A bare negation over NULL outside such an OR still throws.
+    expect(() => matchesWhere(row, { NOT: { deletedAt: JULY } })).toThrow(
+      /`NOT` on deletedAt met a NULL column/,
+    );
+    // A real failure in a clause is never swallowed as "unknown".
+    expect(() => matchesWhere(row, { OR: [{ status: "PAID" }, { notes: { mode: "insensitive" } }] })).toThrow(
+      /unsupported filter operator "mode"/,
+    );
   });
 
   it("names the caller when a label is given", () => {

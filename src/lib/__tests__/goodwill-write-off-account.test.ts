@@ -66,6 +66,8 @@ const h = vi.hoisted(() => {
       groupBy: async () => [],
       upsert: async () => ({ id: "jr1" }),
       findUnique: async () => null,
+      // #4013: the committed slices a retry must keep; none here.
+      findMany: async () => [],
     },
     xeroObjectLink: {
       findFirst: async () => null,

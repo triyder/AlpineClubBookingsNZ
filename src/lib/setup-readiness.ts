@@ -101,9 +101,9 @@ export interface SetupDatabaseSnapshot {
   membershipCancellationXeroGroupCount: number;
   membershipCancellationArchiveContacts: boolean;
   operationalXeroConnected: boolean;
-  // A Xero token row exists but no longer decrypts (env→DB upgrade or an
-  // auth-secret change, #2079): the connection needs re-entry/reconnect, not
-  // "connected". Distinguishes "needs reconnect" from "never connected" so the
+  // A Xero connection exists but its stored token set is unreadable or missing
+  // (an auth-secret change, #2079; a connection made before #3454, #3806): the
+  // connection needs re-entry/reconnect, not "connected". Distinguishes "needs reconnect" from "never connected" so the
   // Operational Xero step shows the right guidance. Optional/undefined for older
   // callers or when no DB snapshot was taken.
   operationalXeroNeedsReentry?: boolean;

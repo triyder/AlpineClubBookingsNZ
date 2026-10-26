@@ -36,7 +36,6 @@ import { parseJsonRequestBody } from "@/lib/api-json";
 import { ApiError } from "@/lib/api-error";
 import {
   assertOtherLodgeExists,
-  OtherLodgeRateAmountUnderReviewError,
   OtherLodgeRateInProgressError,
   requestCarriesOtherLodgeElection,
   requestIsOtherLodgeRateElectionOnly,
@@ -53,10 +52,12 @@ import {
   findOpenEditFinancialReviewTask,
 } from "@/lib/edit-financial-review";
 import {
-  preCheckInEditEvidence,
-  preCheckInEditStrands,
-} from "@/lib/stored-sold-price-evidence";
-import { editFinancialReviewStrandRecords } from "@/lib/edit-financial-review-context";
+  editedBookingTotalCents,
+  NegativeEditedHeadlineError,
+  NegativeStoredGuestTotalError,
+  refuseNegativeStoredGuestTotals,
+  withUnattachedStrandMoney,
+} from "@/lib/edit-night-valuation";
 import type { MinimumStayViolation } from "@/lib/booking-policies";
 import {
   assertCheckInClearsXeroLockDate,
@@ -127,7 +128,7 @@ import {
   buildPaidUpAdultRefusalBody,
   evaluateNonMemberPricingRequirements,
 } from "@/lib/subscription-lockout-enforcement";
-import { BookingGuestStayRangeValidationError } from "@/lib/booking-guest-stay-range-input";
+import { BookingGuestStayRangeValidationError, guestRequestSchemaError } from "@/lib/booking-guest-stay-range-input";
 import {
   resolveModificationStayRanges,
   type LiveGuestStayRow,
@@ -140,14 +141,16 @@ import {
   usesActiveBookingEditLifecycle,
 } from "@/lib/booking-edit-policy";
 import { clubTime } from "@/lib/club-time/server";
+import { readReductionAgainstUnpaidAsk, reductionLeftAfterAskCents } from "@/lib/additional-ask-reduction";
+import { organiserBankChildPriceChangeRefusal } from "@/lib/group-cancel-in-progress";
 import { dateOnlyInstantOf } from "@/lib/club-time";
 import {
   calculateModificationSettlementOptions, organiserChildChargeRefusal,
   GUEST_MEMBER_LINK_IN_PROGRESS_MESSAGE,
+  GUEST_MEMBER_LINK_MEMBER_WHOLE_LODGE_ONLY_MESSAGE,
   editedGuestPricingLocks,
   resolveGuestMemberLinks,
   resolveGuestNameUpdates,
-  EDIT_FINANCIAL_REVIEW_QUOTE_NOTICE,
   isMemberWholeLodgeBooking,
   isQuotePricedBooking,
   QUOTE_PRICED_EDIT_BLOCK_MESSAGE,
@@ -159,8 +162,10 @@ import {
   type InProgressGuestRangePlanResult,
   type BookingEditGuestRangePlan,
 } from "@/lib/booking-edit-guest-ranges";
-import { formatDateOnly, parseDateOnly } from "@/lib/date-only";
+import { addDaysDateOnly, countNightsDateOnly, formatDateOnly, parseDateOnly } from "@/lib/date-only";
 import { getCapacityFullNights } from "@/lib/capacity-full-nights";
+import { getGuestBedNightKeys, sameNightKeys } from "@/lib/booking-guest-stay-ranges";
+import { promoBreakdownLines } from "@/lib/booking-edit-promo-lines";
 import { overCapacityNights } from "@/lib/over-capacity-confirmation";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import { storedDateOnly } from "@/lib/stored-calendar-day";
@@ -376,7 +381,7 @@ export async function POST(
   const parsed = modifyQuoteSchema.safeParse(json.body);
   if (!parsed.success) {
     return NextResponse.json(
-      { error: "Invalid input", details: parsed.error.flatten() },
+      { error: guestRequestSchemaError(parsed.error, "Invalid input"), details: parsed.error.flatten() },
       { status: 400 }
     );
   }
@@ -591,10 +596,7 @@ export async function POST(
     : false;
   if (hasLinks && !memberWholeLodgeForLink) {
     return NextResponse.json(
-      {
-        error:
-          "Linking a placeholder to a member is only available on member whole-lodge bookings.",
-      },
+      { error: GUEST_MEMBER_LINK_MEMBER_WHOLE_LODGE_ONLY_MESSAGE },
       { status: 400 },
     );
   }
@@ -765,6 +767,7 @@ export async function POST(
       input: otherLodgeInput,
       role: actorRole,
       eligibleGuestIds: otherLodgeEligibleGuestIds,
+      linkedGuestIds: new Set(linkByGuestId.keys()),
     });
     if (otherLodgeElection.otherLodgeIdChanged) await assertOtherLodgeExists(prisma, otherLodgeElection.otherLodgeId); // #58: a booking keeps a hidden lodge
   } catch (error) {
@@ -1172,6 +1175,13 @@ export async function POST(
       })
     : undefined;
 
+  // The guests this edit re-rates whole: a #2337 link or an other-lodge tick.
+  // Their locks are cleared so they price afresh, and each gets its own line in
+  // the breakdown, which the stay line therefore leaves out (#4197).
+  const rerateGuestIds = new Set<string>([
+    ...guestMemberLinks.map((link) => link.guestId),
+    ...otherLodgeElection.repriceGuestIds,
+  ]);
   const proposedGuestRows = [
     ...proposedRemainingGuests.map((entry) => {
       const link = linkByGuestId.get(entry.guest.id);
@@ -1180,9 +1190,6 @@ export async function POST(
       // otherwise, so an ordinary date change still prices an already-recognised
       // other-club guest at the member rate.
       const otherLodgeMember = otherLodgeElection.flaggedGuestIds.has(
-        entry.guest.id,
-      );
-      const otherLodgeRateChanged = otherLodgeElection.repriceGuestIds.has(
         entry.guest.id,
       );
       return {
@@ -1199,7 +1206,7 @@ export async function POST(
         // The same locks the save prices with, cleared for the same reasons,
         // from the one home (#3531): the preview's re-rate delta equals the
         // save's by construction rather than by two agreeing comments.
-        ...editedGuestPricingLocks(entry.guest, Boolean(link) || otherLodgeRateChanged),
+        ...editedGuestPricingLocks(entry.guest, booking, rerateGuestIds.has(entry.guest.id)),
       };
     }),
     ...(normalizedAddGuestsWithRanges ?? []).map((g) => ({
@@ -1549,8 +1556,8 @@ export async function POST(
   const policyAdjustedGuestsForPricing = await resolveGuestRateMembershipTypes(prisma, {
     seasonYear,
     guests: guestsForPricing,
-    // #2543: this route performs SEVEN or more pricing passes in one request and
-    // differences two of them into the member's settlement delta, so every pass
+    // #2543: this route performed SEVEN or more pricing passes in one request and
+    // differenced two of them into the member's settlement delta, so every pass
     // is handed the one mode resolved above. Left to peek independently, an admin
     // save landing between two passes made the delta wrong by the entire
     // member/non-member spread on every remaining guest.
@@ -1600,6 +1607,11 @@ export async function POST(
         })
         : null;
   } catch (error) {
+    // Review round 2: the save refuses an edit that would carry a frozen
+    // headline below zero in these words; the preview says the same.
+    if (error instanceof NegativeEditedHeadlineError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     logger.error({ err: error, bookingId }, "Failed to price booking modification quote");
     return NextResponse.json(
       { error: "Unable to price the requested future-night changes" },
@@ -1607,36 +1619,24 @@ export async function POST(
     );
   }
 
-  // #3031 (epic #2797): QUOTE AND APPLY CONSUME THE SAME DISCRIMINATED RESULT,
-  // which is the issue's own parity requirement. The preview refuses here with
-  // the same code and the same member-facing sentence the save refuses with
-  // (`BookingEditFinancialReviewRequiredError`), so the member cannot be shown a
-  // price the save would decline to honour — and is never shown an estimate or a
-  // `$0` for an amount nobody has worked out yet.
-  //
-  // #3170 CHANGED WHAT THAT PARITY MEANS, and the parity itself is why this had
-  // to change here too. The save no longer refuses: it COMMITS the structural
-  // change and parks the amount as an OPEN review task. A preview that went on
-  // refusing would have blocked the member from a save that would have
-  // succeeded, which is the same disagreement in the opposite direction.
-  //
-  // So the quote parks as well: it prices NOTHING, reports a zero movement
-  // because the booking's money genuinely does not move, and says so with
-  // `financialReviewRequired`. It is not a `$0` quote — the panel renders the
-  // sentence rather than the number, and no settlement option is offered
-  // because none is being taken.
-  //
-  // THE CAPACITY CHECK STILL RUNS FIRST, on the parked plan, for the same
-  // reason it does on the save: beds are not money, and the member must be told
-  // "no beds" before they are told "an officer will confirm the amount".
-  const parkedPlan = planResult?.kind === "financial_review_required"
-    ? planResult.parkedPlan
-    : null;
+  // #3031: QUOTE AND APPLY CONSUME THE SAME RESULT, which is their parity
+  // requirement. Since #4317 it is always priced: every held night is valued
+  // from stored data (`INV-MOD-028`), so the preview quotes exactly what the
+  // save will charge and never parks.
   const inProgressPlan: BookingEditGuestRangePlan | null =
-    planResult?.kind === "priced" ? planResult.plan : null;
-  // Which plan the capacity check reads. Exactly one is ever set, and both
-  // propose the same beds by construction (`composeCapacityCoverage`).
-  const capacityPlan = inProgressPlan ?? parkedPlan;
+    planResult?.plan ?? null;
+  const capacityPlan = inProgressPlan;
+  // #4317 (D11, review M2): the save refuses an edit to a booking holding a
+  // negative stored guest total, which the database forbids; the preview
+  // refuses it in the same words, so it never quotes what the save will not do.
+  try {
+    refuseNegativeStoredGuestTotals(logger, { bookingId, site: "modify-quote" }, booking.guests);
+  } catch (error) {
+    if (error instanceof NegativeStoredGuestTotalError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
+    throw error;
+  }
 
   // Capacity check (exclude current booking)
   // #1746: with admin-flagged partner-sharers the preview runs the same
@@ -1705,31 +1705,6 @@ export async function POST(
   }
 
   /**
-   * The parked preview, composed once and returned from BOTH review exits
-   * (`INV-SSOT`, #3166).
-   *
-   * EVERY MONEY FIELD IS THE BOOKING'S OWN STORED FIGURE, and the three deltas
-   * are zero because the booking's money does not move on this save, not
-   * because zero was chosen as the adjustment. `settlementOptions` is null, so
-   * the panel offers no card-or-credit election for a movement that is not
-   * happening, and `promoValidation` is null because no promotion is re-run.
-   *
-   * Two exits reach it. The in-progress planner's park is decided before a
-   * single cent is computed; the pre-check-in one (#3166) is decided after the
-   * ordinary pricing pass, because that pass is what says which nights each
-   * strand ends up holding. Both are the same answer to the member and must
-   * therefore be the same payload — a second literal here is how the two
-   * previews would come to differ from each other, and from the save.
-   *
-   * #3179: AND IT SAYS WHAT IT IS NOT DOING WITH THE PROMO CODE. No promotion is
-   * re-run on this branch, so a request that also carries a promo-code change
-   * has that part dropped - and the member is reading a quote whose total looks
-   * settled. The sentence is built by the same function the save uses, from the
-   * same request fields, so the preview and the save cannot describe one
-   * member's request two ways (`INV-SSOT`). Null whenever the request carried no
-   * promo change at all.
-   */
-  /**
    * What a capacity refusal puts on the wire, for each of the two audiences that
    * can receive one (#2930).
    *
@@ -1764,114 +1739,6 @@ export async function POST(
           : {}),
       };
 
-  const parkedQuoteResponse = (causes: readonly string[]) => {
-    /**
-     * #3214: THE ONE ANSWER THAT IS NOT A PARKED QUOTE — an edit that parks its
-     * money may not also carry an other-lodge rate election, and the save
-     * refuses it (`OtherLodgeRateAmountUnderReviewError`, `INV-MOD-028`). Inside
-     * this helper rather than at its two call sites, for the reason the payload
-     * is: both exits are the same answer, and a second copy of the test is how
-     * the two previews would come to differ. Fenced on
-     * `otherLodgeElection.requested`, the field the SAVE fences on, so neither
-     * surface can offer what the other declines. The in-progress exit cannot
-     * reach it — a mid-stay election is refused several hundred lines above —
-     * and is covered anyway so relaxing that refusal cannot silently re-open
-     * this one.
-     *
-     * AHEAD OF THE CAPACITY PAYLOAD, and that does NOT breach the "beds before
-     * money" ordering the caller below states. That rule orders two FIELDS of
-     * one quote: a parked preview is a 200 that reports `capacityAvailable`
-     * alongside `financialReviewRequired`, so the member reads "no beds" first.
-     * This is not a field of a quote — it is the refusal of a request two of
-     * whose parts cannot be combined, and there is no quote to hang a bed
-     * answer on. Ordering it after the capacity composition would have to mean
-     * gating it on `capacity.available`, which would make an unconditional
-     * refusal conditional on an unrelated field and hide the election problem
-     * entirely from the officer who is also overbooked. The save answers a
-     * capacity failure first because there capacity THROWS, from inside
-     * `calculateModifiedPricing`; the preview has no such throw to order
-     * against.
-     */
-    if (otherLodgeElection.requested) {
-      const refusal = new OtherLodgeRateAmountUnderReviewError();
-      return NextResponse.json(
-        { error: refusal.message },
-        { status: refusal.status },
-      );
-    }
-    logger.info(
-      {
-        bookingId,
-        // The CAUSES only. Which nights and what was stored against them is
-        // evidence for an admin on the review task (#3030), not log fodder.
-        causes,
-      },
-      "Booking modification quote parks its money for financial review",
-    );
-    return NextResponse.json({
-      newTotalPriceCents: booking.totalPriceCents,
-      newDiscountCents: booking.discountCents,
-      newPromoAdjustmentCents: booking.promoAdjustmentCents,
-      newFinalPriceCents: booking.finalPriceCents,
-      priceDiffCents: 0,
-      changeFeeCents: 0,
-      netChargeCents: 0,
-      settlementOptions: null,
-      availableCreditCents,
-      capacityAvailable: capacity.available,
-      financialReviewRequired: true,
-      financialReviewNotice: EDIT_FINANCIAL_REVIEW_QUOTE_NOTICE,
-      minimumStayValid: minimumStayViolations.length === 0,
-      minimumStayViolations,
-      exceptionReview,
-      promoStillValid: true,
-      promoCoverage: null,
-      // #3179: the promo-code change this parked edit will not carry. The
-      // reason is chosen the same way the save chooses it - a stay already
-      // under way refuses a promo change outright a few hundred lines above,
-      // so the reachable case here is the parked one.
-      promoChangeNotApplied: describePromoChangeNotApplied({
-        ...promoChange,
-        currentPromoCode: bookingPromoCodeLabel(booking) ?? undefined,
-        // The resolved removals, matching the save exactly - a preview that
-        // promised "who it covers has not changed" would be contradicted by the
-        // save it is previewing.
-        guestRemovalsRequested: removedGuests.length > 0,
-        reason: isInProgressEdit ? "STAY_IN_PROGRESS" : "AMOUNT_UNDER_REVIEW",
-        phase: "preview",
-      }),
-      promoValidation: null,
-      itemizedChanges: [],
-      ...(partnerSharedReason !== null ? { partnerSharedReason } : {}),
-      ...(adminOverride && !capacity.available && partnerSharedGuests.length === 0
-        ? { overCapacityConfirmRequired: true }
-        : {}),
-      ...capacityRefusalFields,
-    });
-  };
-
-  // #3170: the parked preview for a stay already under way. Taken the moment
-  // the beds are settled and before a single cent is computed — everything
-  // below prices the edit, and this booking's history cannot support a price.
-  //
-  // THE CAPACITY CHECK STILL RUNS FIRST, on the parked plan, for the same
-  // reason it does on the save: beds are not money, and the member must be told
-  // "no beds" before they are told "an officer will confirm the amount".
-  if (parkedPlan) {
-    return parkedQuoteResponse(
-      // #3498: the causes of EVERY strand this park records, across every work
-      // item it composes into - the preview said the same thing before, when it
-      // was one occurrence per strand.
-      planResult?.kind === "financial_review_required"
-        ? planResult.occurrences.flatMap((occurrence) =>
-            editFinancialReviewStrandRecords(occurrence).map(
-              (strand) => strand.cause,
-            ),
-          )
-        : [],
-    );
-  }
-
   // Calculate new total price
   let newTotalPriceCents: number;
   let priceBreakdown: {
@@ -1882,19 +1749,29 @@ export async function POST(
     if (inProgressPlan) {
       newTotalPriceCents = inProgressPlan.newTotalPriceCents;
     } else {
-      priceBreakdown = await priceBookingGuestsWithMembershipTypePolicy(prisma, {
-        ownerMemberId: bookingOwner(booking).memberId,
-        checkIn: newCheckIn,
-        checkOut: newCheckOut,
-        guests: policyAdjustedGuestsForPricing,
-        seasons: seasonRateData,
-        groupDiscount,
-        seasonYear,
-        subscriptionLockoutMode,
-      });
-      newTotalPriceCents = priceBreakdown.totalPriceCents;
+      // #4317: the same unattached-money step the save takes
+      // (`calculateModifiedPricing`), through the same helper, so the preview's
+      // total is the save's.
+      priceBreakdown = withUnattachedStrandMoney(
+        await priceBookingGuestsWithMembershipTypePolicy(prisma, {
+          ownerMemberId: bookingOwner(booking).memberId,
+          checkIn: newCheckIn,
+          checkOut: newCheckOut,
+          guests: policyAdjustedGuestsForPricing,
+          seasons: seasonRateData,
+          groupDiscount,
+          seasonYear,
+          subscriptionLockoutMode,
+        }),
+        guestsForPricing,
+      );
+      // #4317 review H1: the save's carry-forward, through the same helper.
+      newTotalPriceCents = editedBookingTotalCents(booking, priceBreakdown.totalPriceCents);
     }
   } catch (error) {
+    if (error instanceof NegativeEditedHeadlineError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     if (error instanceof MembershipTypeBookingPolicyError) {
       // Finding 2 (privacy re-review of MG3 #2308). The membership-type refusal
       // is D-8's FOURTH collapsing refusal, so when it collapsed it owes the
@@ -1923,47 +1800,6 @@ export async function POST(
     );
   }
 
-  /**
-   * #3166: THE PREVIEW HALF OF THE PRE-CHECK-IN GATE, and the parity requirement
-   * is why it cannot be left to the save.
-   *
-   * `calculateModifiedPricing` now judges every existing strand of a
-   * not-yet-started booking and PARKS the edit when one of them cannot be priced
-   * from its own history. A preview that went on quoting a price for that edit
-   * would show the member a refund or a charge the save will not make — the same
-   * disagreement #3170 removed in the opposite direction, and the one thing
-   * INV-MOD-028 says quote and apply may never have.
-   *
-   * It is judged HERE, after the pricing pass and against
-   * `priceBreakdown.guests[i].nightDates`, for exactly the reason the save
-   * judges it there: that array is the night set the edit really proposes, and a
-   * second derivation of it would be a second answer to a question already
-   * answered (`INV-SSOT`). The two surfaces read the same input in the same
-   * order, so they cannot disagree about which strands are unreadable.
-   */
-  if (!inProgressPlan && priceBreakdown) {
-    const previewEvidence = preCheckInEditEvidence({
-      bookingId: booking.id,
-      booking: { checkIn: booking.checkIn, checkOut: booking.checkOut },
-      // THE SAME ASSEMBLY THE SAVE USES, not a second one that agrees today.
-      strands: preCheckInEditStrands({
-        bookingGuests: booking.guests,
-        guestsForPricing,
-        pricedGuests: priceBreakdown.guests,
-        removeGuestIds: removeSet,
-      }),
-    });
-    if (previewEvidence.occurrences !== null) {
-      return parkedQuoteResponse(
-        previewEvidence.occurrences.flatMap((occurrence) =>
-          editFinancialReviewStrandRecords(occurrence).map(
-            (strand) => strand.cause,
-          ),
-        ),
-      );
-    }
-  }
-
   // --- Build itemized changes ---
   const itemizedChanges: Array<{ label: string; amountCents: number }> = [];
   if (guestNameUpdates.length > 0) {
@@ -1975,6 +1811,45 @@ export async function POST(
       amountCents: 0,
     });
   }
+
+  /**
+   * #4197: every party line below is read off `priceBreakdown`, the ONE pricing
+   * pass that produced `newTotalPriceCents`, over the nights and locked sold
+   * prices the shared resolver gave each guest (`INV-EXCEPT-022`, `INV-SSOT`).
+   * The old side is each guest's stored price, as the removed-guest line reads.
+   * So the lines sum to `priceDiffCents` (and, with the change-fee line, to
+   * `netChargeCents`) while the stored final price is the stored total plus the
+   * stored promo adjustment, which is how every writer stores them. A total a
+   * parked edit froze away from its guests no longer breaks that: the new total
+   * carries the gap forward (`editedBookingTotalCents`, #4317 review H1).
+   */
+  const pricedGuestAt = (index: number) => {
+    const priced = priceBreakdown?.guests[index];
+    if (!priced) {
+      throw new Error(`The modify quote has no priced guest at position ${index}.`);
+    }
+    return priced;
+  };
+  /** The remaining guest at `index`'s nights before and after the edit, as keys. */
+  const guestNightKeysAt = (index: number) => {
+    const entry = proposedRemainingGuests[index];
+    if (!entry) throw new Error(`The modify quote has no remaining guest at position ${index}.`);
+    return {
+      before: getGuestBedNightKeys(entry.guest, booking),
+      after: getGuestBedNightKeys(
+        { stayStart: entry.stayStart, stayEnd: entry.stayEnd, nights: pricedGuestAt(index).nightDates },
+        booking,
+      ),
+    };
+  };
+  const guestNightsMovedAt = (index: number) => {
+    const { before, after } = guestNightKeysAt(index);
+    return !sameNightKeys(before, after);
+  };
+  // A re-rate line carries the guest's whole change. Splitting out a date part
+  // would need a second pricing pass at their old rate, so the label says so.
+  const withDateChange = (label: string, index: number) =>
+    guestNightsMovedAt(index) ? `${label}, including their date change` : label;
 
   // #2337: a per-link re-rate line so the officer sees the money each link moves
   // BEFORE committing (quote-first). The linked guest is a remaining guest, so its
@@ -1990,10 +1865,12 @@ export async function POST(
       const index = indexByGuestId.get(link.guestId);
       const guest = remainingGuests.find((g) => g.id === link.guestId);
       if (index === undefined || !guest) continue;
-      const newPriceCents = priceBreakdown.guests[index]?.priceCents ?? 0;
       itemizedChanges.push({
-        label: `Linked ${link.previousFirstName} ${link.previousLastName} to member (re-rated)`,
-        amountCents: newPriceCents - guest.priceCents,
+        label: withDateChange(
+          `Linked ${link.previousFirstName} ${link.previousLastName} to member (re-rated)`,
+          index,
+        ),
+        amountCents: pricedGuestAt(index).priceCents - guest.priceCents,
       });
     }
   }
@@ -2015,7 +1892,7 @@ export async function POST(
     priceBreakdown
       ? proposedRemainingGuests.map((entry, index) => ({
           guestId: entry.guest.id,
-          priceCents: priceBreakdown.guests[index]?.priceCents ?? entry.guest.priceCents,
+          priceCents: pricedGuestAt(index).priceCents,
         }))
       : null;
   if (priceBreakdown && otherLodgeElection.repriceGuestIds.size > 0) {
@@ -2026,13 +1903,15 @@ export async function POST(
       const index = indexByGuestId.get(guestId);
       const guest = remainingGuests.find((g) => g.id === guestId);
       if (index === undefined || !guest) continue;
-      const newPriceCents = priceBreakdown.guests[index]?.priceCents ?? 0;
       const nowFlagged = otherLodgeElection.flaggedGuestIds.has(guestId);
       itemizedChanges.push({
-        label: `${guest.firstName} ${guest.lastName} re-rated at the ${
-          nowFlagged ? "other-lodge member" : "non-member"
-        } rate`,
-        amountCents: newPriceCents - guest.priceCents,
+        label: withDateChange(
+          `${guest.firstName} ${guest.lastName} re-rated at the ${
+            nowFlagged ? "other-lodge member" : "non-member"
+          } rate`,
+          index,
+        ),
+        amountCents: pricedGuestAt(index).priceCents - guest.priceCents,
       });
     }
   }
@@ -2040,81 +1919,52 @@ export async function POST(
   const oldNights = getStayNights(booking.checkIn, booking.checkOut).length;
   const newNights = getStayNights(newCheckIn, newCheckOut).length;
   const datesChanged = targetDatesChanged;
-  const guestRangesChanged = proposedRemainingGuests.some((entry) => {
-    const currentStayStart = storedDateOnly(
-      entry.guest.stayStart ?? booking.checkIn
-    );
-    const currentStayEnd = storedDateOnly(
-      entry.guest.stayEnd ?? booking.checkOut
-    );
-    return (
-      currentStayStart.getTime() !== entry.stayStart.getTime() ||
-      currentStayEnd.getTime() !== entry.stayEnd.getTime()
-    );
-  });
 
-  // 1. Date change cost: price remaining guests at new dates vs old dates
+  // 1. Date change cost: the remaining guests' new prices against their stored ones
   if (inProgressPlan) {
-    if (inProgressPlan.futureExistingDeltaCents !== 0) {
+    // #4197: the guests who stay. A removed guest's future credit is in the
+    // planner's `futureExistingDeltaCents` too, and has its own line below, so
+    // reading the whole figure counted it twice, under a date-change label.
+    const futureRangeChangeCents = inProgressPlan.proposedExistingGuests
+      .filter((entry) => !entry.removedFromFuture)
+      .reduce((sum, entry) => sum + entry.futureDeltaCents, 0);
+    if (futureRangeChangeCents !== 0) {
       itemizedChanges.push({
         label:
           newCheckOut.getTime() !== new Date(booking.checkOut).getTime()
             ? "Future-night date change"
             : "Future-night guest range change",
-        amountCents: inProgressPlan.futureExistingDeltaCents,
+        amountCents: futureRangeChangeCents,
       });
     }
-  } else if ((datesChanged || guestRangesChanged) && remainingGuests.length > 0) {
-    const oldRemainingForPricing = remainingGuests.map((g) => ({
-      ageTier: g.ageTier as AgeTier,
-      isMember: g.isMember,
-      memberId: g.memberId ?? null,
-      stayStart: storedDateOnly(g.stayStart ?? booking.checkIn),
-      stayEnd: storedDateOnly(g.stayEnd ?? booking.checkOut),
-    }));
-    const newRemainingForPricing = proposedRemainingGuests.map((entry) => ({
-      ageTier: entry.guest.ageTier as AgeTier,
-      isMember: entry.guest.isMember,
-      memberId: entry.guest.memberId ?? null,
-      stayStart: entry.stayStart,
-      stayEnd: entry.stayEnd,
-    }));
-
-    try {
-      const oldPriceForRemaining = await priceBookingGuestsWithMembershipTypePolicy(prisma, {
-        ownerMemberId: bookingOwner(booking).memberId,
-        checkIn: booking.checkIn,
-        checkOut: booking.checkOut,
-        guests: oldRemainingForPricing,
-        seasons: seasonRateData,
-        groupDiscount,
-        subscriptionLockoutMode,
-      });
-      const newPriceForRemaining = await priceBookingGuestsWithMembershipTypePolicy(prisma, {
-        ownerMemberId: bookingOwner(booking).memberId,
-        checkIn: newCheckIn,
-        checkOut: newCheckOut,
-        guests: newRemainingForPricing,
-        seasons: seasonRateData,
-        groupDiscount,
-        seasonYear,
-        subscriptionLockoutMode,
-      });
-      const dateChangeCost =
-        newPriceForRemaining.totalPriceCents -
-        oldPriceForRemaining.totalPriceCents;
-
-      if (dateChangeCost !== 0) {
-        const nightLabel =
+  } else if (priceBreakdown) {
+    let stayChangeCents = 0;
+    let guestNightsChanged = false;
+    // Whether every guest moved with the booking, night for night, so the line
+    // can call it a date change rather than a guest-range change.
+    const shiftDays = countNightsDateOnly(storedDateOnly(booking.checkIn), newCheckIn);
+    const shifted = (key: string) =>
+      formatDateOnly(addDaysDateOnly(parseDateOnly(key), shiftDays));
+    let everyGuestMovedWithBooking = true;
+    proposedRemainingGuests.forEach((entry, index) => {
+      if (rerateGuestIds.has(entry.guest.id)) return;
+      stayChangeCents += pricedGuestAt(index).priceCents - entry.guest.priceCents;
+      const { before, after } = guestNightKeysAt(index);
+      guestNightsChanged ||= !sameNightKeys(before, after);
+      everyGuestMovedWithBooking &&= sameNightKeys(after, before.map(shifted));
+    });
+    if (stayChangeCents !== 0) {
+      itemizedChanges.push({
+        label:
           oldNights !== newNights
             ? `Date change: ${oldNights} night${oldNights !== 1 ? "s" : ""} → ${newNights} night${newNights !== 1 ? "s" : ""}`
-            : guestRangesChanged
-              ? "Guest stay range change"
-            : "Date change (rate difference)";
-        itemizedChanges.push({ label: nightLabel, amountCents: dateChangeCost });
-      }
-    } catch {
-      // If pricing fails for old dates (unlikely), skip itemization
+            : datesChanged && everyGuestMovedWithBooking
+              ? "Date change (rate difference)"
+              : guestNightsChanged
+                ? "Guest stay range change"
+                : "Price recalculated (rate difference)",
+        amountCents: stayChangeCents,
+      });
     }
   }
 
@@ -2162,40 +2012,20 @@ export async function POST(
         amountCents: entry.priceCents,
       });
     }
-  } else if (normalizedAddGuestsWithRanges && normalizedAddGuestsWithRanges.length > 0) {
-    for (const guest of normalizedAddGuestsWithRanges) {
-      try {
-        const guestPrice = await priceBookingGuestsWithMembershipTypePolicy(prisma, {
-          ownerMemberId: bookingOwner(booking).memberId,
-          checkIn: newCheckIn,
-          checkOut: newCheckOut,
-          guests: [
-            {
-              ageTier: guest.ageTier,
-              isMember: guest.isMember,
-              memberId: guest.memberId ?? null,
-              stayStart: guest.stayStart,
-              stayEnd: guest.stayEnd,
-            },
-          ],
-          seasons: seasonRateData,
-          groupDiscount,
-          seasonYear,
-          subscriptionLockoutMode,
-        });
-        const tierLabel = guest.ageTier.charAt(0) + guest.ageTier.slice(1).toLowerCase();
-        const memberLabel = guest.isMember ? "Member" : "Non-member";
-        itemizedChanges.push({
-          label: `Added: ${guest.firstName} ${guest.lastName} (${tierLabel}, ${memberLabel})`,
-          amountCents: guestPrice.totalPriceCents,
-        });
-      } catch {
-        // skip itemization if pricing fails
-      }
-    }
+  } else if (normalizedAddGuestsWithRanges && priceBreakdown) {
+    // #4197: each added guest's price in the party pass, on their own nights.
+    normalizedAddGuestsWithRanges.forEach((guest, index) => {
+      const tierLabel = guest.ageTier.charAt(0) + guest.ageTier.slice(1).toLowerCase();
+      const memberLabel = guest.isMember ? "Member" : "Non-member";
+      itemizedChanges.push({
+        label: `Added: ${guest.firstName} ${guest.lastName} (${tierLabel}, ${memberLabel})`,
+        amountCents: pricedGuestAt(proposedRemainingGuests.length + index).priceCents,
+      });
+    });
   }
 
-  // 4. Per-removed-guest credits (use their stored priceCents)
+  // 4. Per-removed-guest credits: their stored priceCents, or $0 for a negative
+  // stored total (D11), exactly what the save credits.
   if (inProgressPlan) {
     for (const entry of inProgressPlan.proposedExistingGuests.filter(
       (guest) => guest.removedFromFuture
@@ -2236,9 +2066,7 @@ export async function POST(
   } | null = null;
   // #3179: the promo-code change this preview will not carry. Null on every
   // ordinary quote; set only on the in-progress branch below, which prices the
-  // stay from prices already agreed and re-runs no promotion. (The PARKED
-  // preview never reaches here — it returns from `parkedQuoteResponse` long
-  // before this, and builds the same notice there.)
+  // stay from prices already agreed and re-runs no promotion.
   let promoChangeNotApplied: PromoChangeNotAppliedNotice | null = null;
   // #3827: the codes the preview applied, in order, for the line item.
   let appliedPromoCodeLabel: string | null = null;
@@ -2261,7 +2089,7 @@ export async function POST(
   if (inProgressPlan) {
     // #3179: an in-progress edit prices from the nights already agreed and
     // re-runs no promotion, so a promo-code change carried alongside it is
-    // dropped exactly as it is on a parked edit.
+    // dropped.
     //
     // TODAY THIS RESOLVES TO NULL, and it is wired anyway on purpose. A promo
     // change on a stay already under way is refused outright above, with "Promo
@@ -2271,10 +2099,6 @@ export async function POST(
     // is what would make relaxing either refusal re-open the silence: the
     // wording alone does not warn anybody unless something calls for it. The
     // save is wired the same way, off `promo.promoEngineRan`.
-    //
-    // The reason is fixed rather than chosen: `inProgressPlan` is produced only
-    // under `isInProgressEdit`, so `AMOUNT_UNDER_REVIEW` here would be a dead
-    // arm claiming something untrue if it ever came alive.
     promoChangeNotApplied = describePromoChangeNotApplied({
       ...promoChange,
       currentPromoCode: bookingPromoCodeLabel(booking) ?? undefined,
@@ -2284,6 +2108,8 @@ export async function POST(
     });
     newDiscountCents = inProgressPlan.newDiscountCents;
     newPromoAdjustmentCents = inProgressPlan.newPromoAdjustmentCents;
+    // The stored codes stay applied, never re-validated (#4317 review round 4).
+    appliedPromoCodeLabel = bookingPromoCodeLabel(booking);
   } else {
     // #3827: the save's reading of the request (`requestedPromoCodeList`) and
     // the save's pricing (`applyBookingPromotions`), unlocked and read-only, so
@@ -2418,10 +2244,14 @@ export async function POST(
     }
 
     if (requested && refusal) {
-      // Invalid new code — the save refuses the whole edit, so the discount
-      // stays 0 here; don't fall back to the old codes. Checked before the
-      // removal below: a one-code removal on a several-code booking is
-      // refused too (#3828), not previewed as removing every code.
+      // Invalid new code — the save refuses the whole edit, which leaves the
+      // stored promotion where it is, so the preview keeps it too (#4197): the
+      // totals then show what the save would leave, with no promo line to
+      // explain. Checked before the removal below: a one-code removal on a
+      // several-code booking is refused too (#3828), not previewed as removing
+      // every code.
+      newDiscountCents = booking.discountCents;
+      newPromoAdjustmentCents = booking.promoAdjustmentCents;
       promoValidation = { valid: false, error: refusal };
     } else if (requested && requested.length === 0) {
       // User wants to remove every code (for reuse later).
@@ -2448,21 +2278,20 @@ export async function POST(
     }
   }
 
-  // Add promo line item
-  if (newPromoAdjustmentCents !== 0) {
-    itemizedChanges.push({
-      label: appliedPromoCodeLabel ? `Promo '${appliedPromoCodeLabel}'` : "Promo discount",
-      amountCents: newPromoAdjustmentCents,
-    });
-  }
-
-  // Show removed promo as the inverse of its previous signed adjustment.
-  if (promoChange.removePromoCodeRequested && booking.promoAdjustmentCents !== 0) {
-    itemizedChanges.push({
-      label: `Removed promo '${bookingPromoCodeLabel(booking) || "adjustment"}'`,
-      amountCents: -booking.promoAdjustmentCents,
-    });
-  }
+  itemizedChanges.push(
+    ...promoBreakdownLines({
+      // An in-progress edit carries the stored adjustment over unchanged,
+      // unless it capped it at the new total (#4317 review round 4): then the
+      // stored codes are re-priced to the cap, a line of their own.
+      carriedOver: Boolean(inProgressPlan) && !inProgressPlan?.promotionCappedAtNewTotal,
+      // A refused code refuses the save; the promo card shows why instead.
+      refused: promoValidation?.valid === false,
+      storedCodes: bookingPromoCodeLabel(booking),
+      storedAdjustmentCents: booking.promoAdjustmentCents,
+      appliedCodes: appliedPromoCodeLabel,
+      newAdjustmentCents: newPromoAdjustmentCents,
+    }),
+  );
 
   const newFinalPriceCents = inProgressPlan
     ? inProgressPlan.newFinalPriceCents
@@ -2474,9 +2303,14 @@ export async function POST(
     ? inProgressPlan.priceDiffCents
     : newFinalPriceCents - booking.finalPriceCents;
   const netChargeCents = priceDiffCents + changeFeeCents;
+  // #3954: what of a reduction releases the member from an unpaid ask before
+  // anything is refunded, credited or given back - read ONCE, so the options
+  // below and the figures returned agree; the save re-reads it under its locks.
+  const reduction = await readReductionAgainstUnpaidAsk(prisma, booking, netChargeCents);
   const settlementOptions = await calculateModificationSettlementOptions({
     booking,
     netChargeCents,
+    reduction,
     db: prisma, // advisory, unlocked; payment and open edit refunds read apart (#3827 stated limit: commit re-reads both under lock(1))
     todayAtClub,
   });
@@ -2485,7 +2319,7 @@ export async function POST(
   const appliedCreditGiveBackCents = await previewPaidReductionCreditGiveBackCents({
     booking,
     ownerMemberId: bookingOwner(booking).memberId,
-    reductionCents: Math.max(0, -netChargeCents),
+    reductionCents: reductionLeftAfterAskCents(reduction),
     cardBasisCents: settlementOptions?.basisAmountCents ?? 0,
     todayAtClub,
     db: prisma,
@@ -2499,7 +2333,11 @@ export async function POST(
     priceDiffCents,
     changeFeeCents,
     netChargeCents,
-    settlementOptions, chargeRefusal: organiserChildChargeRefusal({ booking, netChargeCents }), // #3653: an increase the save refuses
+    settlementOptions, chargeRefusal: organiserChildChargeRefusal({ booking, netChargeCents }), priceChangeRefusal: await organiserBankChildPriceChangeRefusal(prisma, booking, { priceDiffCents, changeFeeCents }), // #3653, #3949: what the save refuses
+    // #3954: the part of a reduction that cancels or shrinks the unpaid card
+    // ask, and what is left of that ask afterwards (0: nothing left to pay).
+    unpaidAskOffsetCents: reduction.offsetCents,
+    askLeftCents: reduction.askLeftCents,
     appliedCreditGiveBackCents,
     // #2266: create-flow parity (api/bookings/quote/route.ts) — the member's
     // live balance so the edit panel can offer credit against the new price.

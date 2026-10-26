@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { bookingAmountOwedCents, bookingWorthCents } from "@/lib/booking-payment-state";
 import {
   BookingStatus,
   CreditType,
@@ -183,7 +184,12 @@ export async function POST(request: NextRequest) {
       { status: 400 }
     );
   }
-  if (booking.finalPriceCents <= 0) {
+  if (
+    bookingWorthCents({
+      finalPriceCents: booking.finalPriceCents,
+      changeFeeCents: booking.payment?.changeFeeCents ?? null,
+    }) <= 0
+  ) {
     return NextResponse.json(
       { error: "This booking has nothing to pay." },
       { status: 400 }
@@ -266,7 +272,11 @@ export async function POST(request: NextRequest) {
     // during the lock wait is only visible here.
     const locked = await tx.booking.findUnique({
       where: { id: booking.id },
-      include: { guests: { include: { nights: true } } },
+      include: {
+        guests: { include: { nights: true } },
+        // #3750: a change fee recorded on the payment is invoiced and owed too.
+        payment: { select: { changeFeeCents: true } },
+      },
     });
     // The same status the pre-lock snapshot was admitted on, re-checked under
     // the locks: a PAYMENT_PENDING booking a concurrent writer confirmed, or a
@@ -356,7 +366,14 @@ export async function POST(request: NextRequest) {
       0,
       -(appliedCreditAgg._sum.amountCents ?? 0),
     );
-    const amountCents = Math.max(0, locked.finalPriceCents - creditAppliedCents);
+    const amountCents = Math.max(
+      0,
+      bookingAmountOwedCents({
+        finalPriceCents: locked.finalPriceCents,
+        changeFeeCents: locked.payment?.changeFeeCents ?? null,
+        appliedCreditCents: creditAppliedCents,
+      }),
+    );
 
     // Nothing left to invoice. Raising a $0 Internet Banking invoice and asking
     // the member to bank-transfer nothing is not a payment path, and settling

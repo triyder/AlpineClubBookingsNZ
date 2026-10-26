@@ -36,8 +36,10 @@ the list but the selector is disabled.
 2. Use the selector on the right to pick a mode. The change **saves
    automatically** — there is no separate Save button.
 3. A template shown as **Locked** cannot be changed here — its delivery is
-   essential (for example a security or bearer-token email) and is fixed by the
-   system.
+   essential (for example a security or bearer-token email, or a money alert
+   such as *Bank transfer amount needs checking*, #3979) and is fixed by the
+   system. The always-on admin alerts are listed under
+   [Recipients](notification-recipients.md#always-on-alerts).
 
 ## Settings reference
 

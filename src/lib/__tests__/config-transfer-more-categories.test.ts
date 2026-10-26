@@ -39,7 +39,9 @@ function sourceDb(): ReadDb {
       ]),
     },
     // Connected Xero org, stamped into xero-config/source.json by the exporter.
-    xeroToken: { findFirst: vi.fn().mockResolvedValue({ tenantId: "tenant-src" }) },
+    xeroConnection: {
+      findUnique: vi.fn().mockResolvedValue({ tenantId: "tenant-src", expiresAt: new Date() }),
+    },
   } as unknown as ReadDb;
 }
 
@@ -54,7 +56,7 @@ function emptyTargetDb(): ReadDb {
         { id: "mt-nonmember", key: "NON_MEMBER" },
       ]),
     },
-    xeroToken: { findFirst: vi.fn().mockResolvedValue(null) },
+    xeroConnection: { findUnique: vi.fn().mockResolvedValue(null) },
   } as unknown as ReadDb;
 }
 

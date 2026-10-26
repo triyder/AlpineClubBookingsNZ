@@ -32,6 +32,7 @@ import {
 } from "./xero-hardening-shared";
 import {
   findStripeSourcePaymentIds,
+  isCancelledRefundCreditNoteMirror,
   isPerRefundCreditNoteLink,
 } from "./xero-hardening-canonical-links";
 import { resolveRefundNoteEligibleCash } from "@/lib/refund-note-eligible-cash";
@@ -40,7 +41,6 @@ import {
   readResolvedRefundCreditNoteCoverage,
   sumRefundCreditNoteCoverageCents,
 } from "@/lib/xero-resolved-in-xero-fences";
-import { isRefundCreditNoteLinkCancelledInXero } from "@/lib/xero-refund-note-status";
 import { XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE } from "@/lib/xero-operation-outbox-payload";
 import { formatCents } from "@/lib/utils";
 import type { ClubFormat } from "@/lib/club-format";
@@ -674,13 +674,13 @@ export async function buildXeroReconciliationReport(
   });
   const mismatchedCanonicalLinks = mismatchedCanonicalExpectations.length;
 
+  // A VOIDED/DELETED note's active mirror is drift the cleanup heals on any
+  // source (#2901, #4161), even a bank note its pointer names. Judged once.
+  const cancelledMirrors = new Set(links.filter(isCancelledRefundCreditNoteMirror));
   const staleCanonicalLinkRecords = links.filter((link) => {
-    if (isPerRefundCreditNoteLink(link, stripePaymentIds)) {
-      // Exempt only LIVE per-delta coverage: the still-active mirror of a
-      // note VOIDED/DELETED in Xero is exactly the drift the nightly cleanup
-      // deactivates (#2901 fix round), so the digest must show it too.
-      return isRefundCreditNoteLinkCancelledInXero(link.metadata);
-    }
+    if (cancelledMirrors.has(link)) return true;
+    // Exempt only LIVE per-delta coverage.
+    if (isPerRefundCreditNoteLink(link, stripePaymentIds)) return false;
     const expectation = canonicalExpectationByScope.get(buildCanonicalScopeKey(link));
     if (!expectation) {
       return true;
@@ -889,13 +889,10 @@ export async function buildXeroReconciliationReport(
     );
   });
   const staleCanonicalItems = staleCanonicalLinkRecords.map((link) => {
-    if (
-      isPerRefundCreditNoteLink(link, stripePaymentIds) &&
-      isRefundCreditNoteLinkCancelledInXero(link.metadata)
-    ) {
+    if (cancelledMirrors.has(link)) {
       return buildCanonicalLinkIssueItem(
         link,
-        `The Xero credit note ${link.xeroObjectId} is VOIDED/DELETED in Xero but its local link is still active. The nightly link-cleanup deactivates it so the refund self-heal can reissue the uncovered delta.`
+        `The Xero credit note ${link.xeroObjectId} is VOIDED/DELETED in Xero but its local link is still active. The nightly link-cleanup deactivates it and releases the payment's refund-note pointer if it names this note; on a card payment the refund self-heal can then reissue the uncovered delta.`
       );
     }
     const expectation = canonicalExpectationByScope.get(buildCanonicalScopeKey(link));

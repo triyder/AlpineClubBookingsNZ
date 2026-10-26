@@ -13,6 +13,8 @@ export type EditReviewSettlementTask = {
   bookingId: string;
   paymentId: string | null;
   kind: ManualRefundTaskKind | null;
+  /** #4097: marks a cancellation's card refund shortfall (`isCancelCardShortfallTask`). */
+  occurrenceKey: string | null;
   /** #3639: set on a late capture held for a treasurer; names its intent. */
   lateCaptureApprovalIntentId: string | null;
   /** #3639: a #2700 task's frozen sentence, which names its capture. */
@@ -26,6 +28,8 @@ export type EditReviewSettlementTask = {
      * selected by the caller for `hasIssuedPrimaryXeroInvoice`.
      */
     status: string;
+    /** #4154 review (M5): a capacity race's correction is audited against the booking's owner (`bookingOwner`). */
+    memberId: string | null;
     organiserSettled: boolean; parentBookingId: string | null; // #3653: `paidByOrganiserCard`
     /** #3835: what a cancelled booking's netting re-tiers by (`capturedShareOwedAfterCancellationCents`). */
     checkIn: Date;

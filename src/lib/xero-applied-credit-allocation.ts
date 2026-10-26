@@ -21,9 +21,13 @@
  */
 import { CreditNote, LineAmountTypes } from "xero-node";
 import { CreditType, Prisma } from "@prisma/client";
-import { appliedCreditSettledByCancel, unallocatedAppliedCreditCentsByBooking } from "./xero-applied-credit-ledger-state";
+import { appliedCreditSettledByCancel, unallocatedAppliedCents } from "./xero-applied-credit-ledger-state";
 import { prisma } from "./prisma";
+import { APPLIED_CREDIT_ALLOCATION_ROLE } from "./xero-applied-credit-link-roles";
+import { sliceHeldInXero } from "./xero-applied-credit-slice-lookup";
+import { NOT_A_CONVERGENCE_ROW, writtenDownCentsByCreditNote } from "./xero-credit-note-write-down";
 import { lockMemberCreditLedger } from "./member-credit";
+import { convergedForNamedFailure } from "./xero-applied-credit-spent-outside-app";
 import { allocateCreditNoteToInvoice } from "./xero-credit-notes";
 import {
   buildXeroIdempotencyKey,
@@ -54,7 +58,6 @@ import {
 } from "./xero-applied-credit-operation-serialization";
 
 // XeroObjectLink roles for this engine's artefacts.
-const APPLIED_CREDIT_ALLOCATION_ROLE = "APPLIED_CREDIT_ALLOCATION";
 const APPLIED_CREDIT_REMAINDER_NOTE_ROLE = "APPLIED_CREDIT_REMAINDER_NOTE";
 const APPLIED_CREDIT_REMAINDER_ALLOCATION_ROLE =
   "APPLIED_CREDIT_REMAINDER_ALLOCATION";
@@ -66,10 +69,11 @@ export {
   type PlannedMintSlice,
   type PlannedNoteAllocation,
 } from "./xero-applied-credit-plan";
-import { planAppliedCreditAllocation, type AppliedCreditLot } from "./xero-applied-credit-plan";
+import { assertPlanKeepsCommittedSlices, CREDIT_LOT_USE_ORDER, planAppliedCreditAllocation, type AppliedCreditLot } from "./xero-applied-credit-plan";
 
 /**
- * Gather the member's positive credit lots (oldest-first) with each lot's
+ * Gather the member's positive credit lots in `CREDIT_LOT_USE_ORDER` (oldest
+ * first, ties by `id` — `INV-PAY-127`) with each lot's
  * remaining unallocated balance. Read within the caller's ledger-locked tx.
  *
  * CRITICAL — the remaining balance EXCLUDES `forBookingId`'s own prior allocation
@@ -89,7 +93,7 @@ async function gatherAppliedCreditLots(
   tx: Prisma.TransactionClient,
 ): Promise<AppliedCreditLot[]> {
   const positiveLots = await tx.memberCredit.findMany({
-    where: { memberId, amountCents: { gt: 0 } },
+    where: { memberId, amountCents: { gt: 0 }, ...NOT_A_CONVERGENCE_ROW },
     // `type` is read for the mint's account mapping (#2717) — see
     // `mintSliceMappingKey`. Blue/green runtime-prep: name only what is read.
     select: {
@@ -98,7 +102,7 @@ async function gatherAppliedCreditLots(
       type: true,
       xeroCreditNoteId: true,
     },
-    orderBy: { createdAt: "asc" },
+    orderBy: [...CREDIT_LOT_USE_ORDER],
   });
 
   const allocated = await tx.memberCreditNoteAllocation.groupBy({
@@ -113,9 +117,19 @@ async function gatherAppliedCreditLots(
     allocated.map((a) => [a.memberCreditId, a._sum.amountCents ?? 0]),
   );
 
+  // #4219: credit written down because its note was used outside the app is gone.
+  const writtenDown = await writtenDownCentsByCreditNote(
+    tx,
+    memberId,
+    positiveLots.flatMap((l) => (l.xeroCreditNoteId ? [l.xeroCreditNoteId] : [])),
+  );
   const lots: AppliedCreditLot[] = [];
   for (const lot of positiveLots) {
-    const remainingCents = lot.amountCents - (allocatedById.get(lot.id) ?? 0);
+    const free = lot.amountCents - (allocatedById.get(lot.id) ?? 0);
+    // A note's write-down is taken once, oldest lot first, never from each lot stamped with the note.
+    const downCents = lot.xeroCreditNoteId ? Math.min(Math.max(free, 0), writtenDown.get(lot.xeroCreditNoteId) ?? 0) : 0;
+    if (lot.xeroCreditNoteId && downCents > 0) writtenDown.set(lot.xeroCreditNoteId, (writtenDown.get(lot.xeroCreditNoteId) ?? 0) - downCents);
+    const remainingCents = free - downCents;
     if (remainingCents <= 0) {
       continue;
     }
@@ -127,13 +141,6 @@ async function gatherAppliedCreditLots(
     });
   }
   return lots;
-}
-
-async function unallocatedAppliedCents(
-  bookingId: string,
-  db: Prisma.TransactionClient | typeof prisma,
-): Promise<number> {
-  return (await unallocatedAppliedCreditCentsByBooking([bookingId], db)).get(bookingId) ?? 0;
 }
 
 /** The remainder note this payment already minted, if any. */
@@ -338,7 +345,7 @@ async function completeSkip(syncOperationId: string | undefined, reason: string)
  */
 export async function allocateAppliedCreditForBooking(
   bookingId: string,
-  options?: { createdByMemberId?: string; syncOperationId?: string },
+  options?: { createdByMemberId?: string; syncOperationId?: string; convergeAttempts?: number },
 ): Promise<void> {
   const format = await getClubFormat();
   const syncOperationId = options?.syncOperationId;
@@ -439,6 +446,9 @@ export async function allocateAppliedCreditForBooking(
     }
     const lots = await gatherAppliedCreditLots(creditOwnerMemberId, bookingId, tx);
     const planned = planAppliedCreditAllocation(lots, lockedApplied, format);
+    // #4013: a retry must keep what an earlier attempt committed; refuse before any write.
+    const committed = await tx.memberCreditNoteAllocation.findMany({ where: { appliedToBookingId: bookingId }, select: { memberCreditId: true, xeroCreditNoteId: true, amountCents: true } });
+    assertPlanKeepsCommittedSlices(bookingId, committed, planned, format);
     for (const na of planned.noteAllocations) {
       await tx.memberCreditNoteAllocation.upsert({
         where: {
@@ -478,35 +488,39 @@ export async function allocateAppliedCreditForBooking(
           appliedToBookingId: bookingId,
         },
       },
-      select: { id: true },
+      select: { id: true, amountCents: true },
     });
     if (!joinRow) {
       continue;
     }
-    const alreadyAllocated = await prisma.xeroObjectLink.findFirst({
-      where: {
-        localModel: "MemberCreditNoteAllocation",
-        localId: joinRow.id,
-        xeroObjectType: "ALLOCATION",
-        role: APPLIED_CREDIT_ALLOCATION_ROLE,
-        active: true,
-      },
-      select: { id: true },
-    });
-    if (alreadyAllocated) {
+    if (await sliceHeldInXero(prisma, joinRow.id)) {
       continue;
     }
-    await allocateCreditNoteToInvoice(na.xeroCreditNoteId, invoiceId, na.amountCents, {
-      localModel: "MemberCreditNoteAllocation",
-      localId: joinRow.id,
-      role: APPLIED_CREDIT_ALLOCATION_ROLE,
-      createdByMemberId,
-      appliedCreditContext: {
-        parentOperationId: syncOperationId ?? null,
-        bookingId,
-        paymentId: payment.id,
-      },
-    });
+    try {
+      // The slice's current amount, not the plan's: a concurrent converge may have shrunk it (#4219).
+      await allocateCreditNoteToInvoice(na.xeroCreditNoteId, invoiceId, joinRow.amountCents, {
+        localModel: "MemberCreditNoteAllocation",
+        localId: joinRow.id,
+        role: APPLIED_CREDIT_ALLOCATION_ROLE,
+        createdByMemberId,
+        appliedCreditContext: {
+          parentOperationId: syncOperationId ?? null,
+          bookingId,
+          paymentId: payment.id,
+        },
+      });
+    } catch (error) {
+      // #4219: the note was confirmed spent in Xero outside the app. Bring the
+      // ledger into line, then plan again so the booking's other slices still
+      // allocate; a refusal to converge leaves the original failure standing.
+      if (await convergedForNamedFailure(error, bookingId, options?.convergeAttempts)) {
+        return allocateAppliedCreditForBooking(bookingId, {
+          ...options,
+          convergeAttempts: (options?.convergeAttempts ?? 0) + 1,
+        });
+      }
+      throw error;
+    }
   }
 
   // 3) Mint + allocate the noteless (admin / restored) remainder, if any.

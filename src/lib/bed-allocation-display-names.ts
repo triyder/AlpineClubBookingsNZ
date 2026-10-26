@@ -17,6 +17,10 @@ export function memberName(member: {
   return name || member.email || "Unknown member";
 }
 
-export function guestName(guest: { firstName: string; lastName: string }) {
+/**
+ * A guest's name, or `""` when neither part is known — a stored request's
+ * snapshot may lack them (#4088), so both parts are optional here.
+ */
+export function guestName(guest: { firstName?: string | null; lastName?: string | null }) {
   return [guest.firstName, guest.lastName].filter(Boolean).join(" ");
 }

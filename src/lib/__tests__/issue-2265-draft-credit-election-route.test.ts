@@ -174,6 +174,7 @@ import { POST as createPaymentIntentRoute } from "@/app/api/payments/create-paym
 const mockPrisma = prisma as unknown as {
   booking: { findUnique: ReturnType<typeof vi.fn> };
   payment: { upsert: ReturnType<typeof vi.fn> };
+  memberCredit: { aggregate: ReturnType<typeof vi.fn> };
   $transaction: ReturnType<typeof vi.fn>;
 };
 const mockAuth = auth as ReturnType<typeof vi.fn>;
@@ -432,6 +433,27 @@ describe("#2265 the pay step honours the election made when the draft was saved"
     expect(mocks.recordBookingEvent).toHaveBeenCalledWith(
       expect.objectContaining({ type: "MEMBER_PAID", amountCents: 0 }),
     );
+  });
+
+  // #3991: the $0 decision reads what is owed through `readBookingAmountOwed`
+  // ON THE TRANSACTION HANDLE, after the election was applied inside it. Here a
+  // read outside the transaction sees no credit at all, so a decision taken
+  // there would mint a card intent for the whole price instead of settling.
+  it("decides the $0 settle from the ledger read on the transaction handle", async () => {
+    const live = arrangeDraft(makeDraft(PRICE_CENTS), 20_000);
+    mockPrisma.memberCredit.aggregate.mockImplementation(() => ({ _sum: { amountCents: 0 } }));
+    try {
+      const res = await createPaymentIntentRoute(payRequest());
+      expect(res.status).toBe(200);
+      expect((await res.json()).alreadyPaid).toBe(true);
+      expect(live.status).toBe("PAID");
+      expect(mockStripeCreatePaymentIntent).not.toHaveBeenCalled();
+      expect(tx.memberCredit.aggregate).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ appliedToBookingId: BOOKING_ID }) }),
+      );
+    } finally {
+      mockPrisma.memberCredit.aggregate.mockImplementation(aggregateLedger);
+    }
   });
 
   it("leaves a draft with no election exactly as it behaved before", async () => {

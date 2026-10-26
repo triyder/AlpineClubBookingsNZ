@@ -211,3 +211,63 @@ describe("SetupPanels — Import Members mode (#2108)", () => {
     expect(payload.repairMissingContactCache).toBe(false);
   });
 });
+
+describe("SetupPanels — Repair Canonical Links (#4161)", () => {
+  it("shows a run whose refund-note heals partly failed as a warning, not a success", async () => {
+    const onMessage = vi.fn();
+    mockPostJson.mockResolvedValue({
+      ok: false,
+      message: "Backfilled 0 missing canonical Xero links.",
+      warning: "1 refund-note heal failed (link_a); the next nightly link cleanup retries it.",
+    });
+    render(
+      <SetupPanels
+        connected
+        open
+        onToggle={vi.fn()}
+        clubName="Test Club"
+        bookingsName="Bookings"
+        syncing={null}
+        setSyncing={vi.fn()}
+        setSyncResult={vi.fn()}
+        onMessage={onMessage}
+        onRefreshOperations={vi.fn()}
+        onRefreshDiagnostics={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Repair Canonical Links" }));
+
+    const status = await screen.findByRole("status");
+    expect(status.textContent).toBe(
+      "Backfilled 0 missing canonical Xero links. 1 refund-note heal failed (link_a); the next nightly link cleanup retries it.",
+    );
+    expect(status.className).toContain("text-warning");
+    expect(onMessage).not.toHaveBeenCalledWith(expect.stringContaining("Backfilled"));
+  });
+
+  it("hands a clean run to the page's success message", async () => {
+    const onMessage = vi.fn();
+    mockPostJson.mockResolvedValue({ ok: true, message: "Backfilled 0 missing canonical Xero links." });
+    render(
+      <SetupPanels
+        connected
+        open
+        onToggle={vi.fn()}
+        clubName="Test Club"
+        bookingsName="Bookings"
+        syncing={null}
+        setSyncing={vi.fn()}
+        setSyncResult={vi.fn()}
+        onMessage={onMessage}
+        onRefreshOperations={vi.fn()}
+        onRefreshDiagnostics={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Repair Canonical Links" }));
+
+    await waitFor(() => expect(onMessage).toHaveBeenCalledWith("Backfilled 0 missing canonical Xero links."));
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+});

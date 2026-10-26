@@ -82,13 +82,13 @@ export type PublicCancellationPolicy = {
 
 type PublicCancellationRuleInput = Parameters<typeof normalizeCancellationRule>[0];
 
-function money(amountCents: number, format: ClubFormat): PublicMoney {
+export function money(amountCents: number, format: ClubFormat): PublicMoney {
   return { amountCents, label: formatCents(amountCents, format) };
 }
 
 type PublicContentGate = "membershipTypes" | "entranceFees" | "hutFees" | "annualFees" | "bookingPolicySummary" | "cancellationPolicy";
 
-async function isPublicContentEnabled(gate: PublicContentGate): Promise<boolean> {
+export async function isPublicContentEnabled(gate: PublicContentGate): Promise<boolean> {
   const settings = await prisma.publicContentSettings.findUnique({
     where: { id: "default" },
     select: { [gate]: true },
@@ -195,14 +195,14 @@ async function publicLodges(slug?: string): Promise<Array<PublicTokenLodge & { i
 }
 
 // Active effective-dated window helper (from <= today <= to-or-open).
-function activeWindow(today: Date) {
+export function activeWindow(today: Date) {
   return {
     effectiveFrom: { lte: today },
     OR: [{ effectiveTo: null }, { effectiveTo: { gte: today } }],
   };
 }
 
-async function loadAgeTierLabels(): Promise<Map<string, { label: string; sortOrder: number }>> {
+export async function loadAgeTierLabels(): Promise<Map<string, { label: string; sortOrder: number }>> {
   const ageTiers = await prisma.ageTierSetting.findMany({
     orderBy: [{ sortOrder: "asc" }, { minAge: "asc" }],
     select: { tier: true, label: true, sortOrder: true },
@@ -210,11 +210,11 @@ async function loadAgeTierLabels(): Promise<Map<string, { label: string; sortOrd
   return new Map(ageTiers.map((tier) => [tier.tier, { label: tier.label.trim() || sentenceCase(tier.tier), sortOrder: tier.sortOrder }]));
 }
 
-const ageLabel = (
+export const ageLabel = (
   tiers: Map<string, { label: string; sortOrder: number }>,
   tier: string | null,
 ): string => (tier === null ? "All ages" : tiers.get(tier)?.label || sentenceCase(tier));
-const ageSort = (
+export const ageSort = (
   tiers: Map<string, { label: string; sortOrder: number }>,
   tier: string | null,
 ): number => (tier === null ? Number.MAX_SAFE_INTEGER : tiers.get(tier)?.sortOrder ?? Number.MAX_SAFE_INTEGER);

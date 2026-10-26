@@ -293,6 +293,13 @@ export type ResolvedTargetDates = {
   skipBookingLifecycleRules: boolean;
   checkInChanged: boolean;
   datesChanged: boolean;
+  /**
+   * #3750: the edit policy really did admit this as a finished-stay correction.
+   * The flag a caller passes only ASKS for the mode; a booking whose stay has
+   * not finished falls through to its ordinary window, and the batch service
+   * refuses on this answer rather than quietly running an ordinary admin edit.
+   */
+  isFinishedStayCorrection: boolean;
 };
 
 /**
@@ -320,15 +327,54 @@ export type ResolvedTargetDates = {
 export const GUEST_MEMBER_LINK_IN_PROGRESS_MESSAGE =
   "Linking a placeholder guest to a member is not available once a booking has started. Remove the placeholder guest and add the member as a new guest to re-rate this stay.";
 
+/**
+ * #3750: what a finished-stay correction may carry. Exactly the structural parts
+ * a LOCKED_PERIOD change request can record (`requestedChanges.requested`), plus
+ * the three settlement answers the approving officer gives — and nothing a
+ * request never asked for. A promo-code change, a member link, a rename, a credit
+ * election or an other-lodge tick on a finished stay would be an officer edit
+ * nobody requested, wearing the request's approval.
+ */
+const FINISHED_STAY_CORRECTION_INPUT_KEYS: ReadonlySet<string> = new Set<
+  keyof BatchModifyInput
+>([
+  "checkIn",
+  "checkOut",
+  "addGuests",
+  "removeGuestIds",
+  "guestStayRanges",
+  "settlementMethod",
+  "confirmOverCapacity",
+  "notifyMember",
+  // Owner D1 (7 Oct 2026): the member rules apply to what the member asked
+  // for, and the member's own reason travels with a supervision review.
+  "reviewedMemberProposal",
+  "memberReviewJustification",
+]);
+
+export const FINISHED_STAY_CORRECTION_FIELD_MESSAGE =
+  "A finished-stay correction applies only the dates and guests its change request asked for.";
+
+export const FINISHED_STAY_CORRECTION_FUTURE_NIGHT_MESSAGE =
+  "A finished-stay correction can only change nights before today. Ask the member to make a new booking for later nights.";
+
 export function resolveTargetDates({
   booking,
   role,
   input,
   today,
+  finishedStayCorrection = false,
 }: {
   booking: LoadedBookingForModify;
   role: Role;
   input: BatchModifyInput;
+  /**
+   * #3750: this is the executor of an officer-approved LOCKED_PERIOD change
+   * request, applying it to a finished stay. Threaded into
+   * `getBookingEditPolicy`, which admits the fully-past booking only in that
+   * mode; never set by a route.
+   */
+  finishedStayCorrection?: boolean;
   /**
    * The club's today, threaded straight into `getBookingEditPolicy` — see it for
    * why this is a required value rather than a read (#3123). This function is
@@ -346,6 +392,7 @@ export function resolveTargetDates({
     checkIn: booking.checkIn,
     checkOut: booking.checkOut,
     adminOverride: effectiveAdminOverride,
+    finishedStayCorrection,
     today,
   });
   if (!editPolicy.canModify) {
@@ -353,6 +400,16 @@ export function resolveTargetDates({
       editPolicy.reason ?? "This booking cannot be modified",
       400,
     );
+  }
+  const isFinishedStayCorrection = editPolicy.mode === "finished-stay-correction";
+  if (isFinishedStayCorrection) {
+    const extraneous = Object.entries(input).filter(
+      ([key, value]) =>
+        value !== undefined && !FINISHED_STAY_CORRECTION_INPUT_KEYS.has(key),
+    );
+    if (extraneous.length > 0) {
+      throw new ApiError(FINISHED_STAY_CORRECTION_FIELD_MESSAGE, 400);
+    }
   }
 
   const requestedCheckIn = input.checkIn
@@ -469,6 +526,17 @@ export function resolveTargetDates({
   if (newCheckOut <= newCheckIn) {
     throw new ApiError("Check-out must be after check-in", 400);
   }
+  // #3750: a correction stays a correction of the PAST. A night on or after
+  // today is bookable capacity that ordinary booking rules govern (minimum stay,
+  // the member's own edit window, a live hold), and an approval of a request
+  // filed about the past is not the door to it. `newCheckOut` is the departure
+  // day, so every night is before today exactly when it is on or before today.
+  if (
+    isFinishedStayCorrection &&
+    storedDateOnly(newCheckOut) > editPolicy.today
+  ) {
+    throw new ApiError(FINISHED_STAY_CORRECTION_FUTURE_NIGHT_MESSAGE, 400);
+  }
 
   const skipBookingLifecycleRules =
     role === "ADMIN" && !usesActiveBookingEditLifecycle(booking.status);
@@ -487,6 +555,7 @@ export function resolveTargetDates({
     skipBookingLifecycleRules,
     checkInChanged,
     datesChanged,
+    isFinishedStayCorrection,
   };
 }
 
@@ -510,36 +579,6 @@ export class BookingModifyReviewJustificationRequiredError extends ApiError {
     this.name = "BookingModifyReviewJustificationRequiredError";
   }
 }
-
-/**
- * What the EDIT PANEL says when the quote it just asked for PARKS (#3170, epic
- * #2797).
- *
- * ## What it replaced, and why the old sentence had to go rather than stay
- *
- * There used to be a `BookingEditFinancialReviewRequiredError` here — a 409 with
- * the code `FINANCIAL_REVIEW_REQUIRED` and the sentence *"Nothing has been
- * changed yet — please contact the office."* #3031 raised it on the in-progress
- * edit path, #3032 removed it from the guest-removal path, and #3170 removed the
- * last one: an unpriceable edit now COMMITS its structural half and holds the
- * amount for a person, on every path this rule covers.
- *
- * So the class is deleted rather than kept for a caller that might come back.
- * Its sentence is now FALSE for what the system does — something HAS been
- * changed — and a member-facing refusal left lying around for a state that can
- * no longer occur is the next implementor's most likely mistake.
- *
- * ## The wording is bound by the epic
- *
- * No estimate and no `$0` (both prohibited), no "corrupt" or "invalid data"
- * terminology, and nothing that reads as the member's fault — the stored history
- * is the club's record, not theirs. It must also say that the change WILL be
- * saved, because it will. Rendered VERBATIM by the panel; never re-worded there.
- */
-export const EDIT_FINANCIAL_REVIEW_QUOTE_NOTICE =
-  "The club needs to check the amount for this change. Your change will be saved, " +
-  "and nothing will be charged or refunded until someone from the office has " +
-  "confirmed it with you.";
 
 export function assertBookingModifiable(
   booking: LoadedBookingForModify | null,
@@ -583,6 +622,9 @@ export async function isQuotePricedBooking(
 export const QUOTE_PRICED_EDIT_BLOCK_MESSAGE =
   "This booking keeps a negotiated booking-request price, so standard edits are disabled — they would reprice every guest at season rates. Re-price or issue a revised quote from its booking request instead.";
 
+/** #4202: the member-origin link fence's one wording, for the save, the quote and the promo box. */
+export const GUEST_MEMBER_LINK_MEMBER_WHOLE_LODGE_ONLY_MESSAGE =
+  "Linking a placeholder to a member is only available on member whole-lodge bookings.";
 /**
  * True when this booking was created from an authenticated member whole-lodge
  * request (#2263) — `requestedByMemberId` set and `exclusivityRequested` — as

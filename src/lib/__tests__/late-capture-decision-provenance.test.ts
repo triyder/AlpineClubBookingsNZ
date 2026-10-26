@@ -113,6 +113,13 @@ const PROVENANCE_SCANNED_FILES = [
   "src/components/admin/manual-refund-task-queue.tsx",
   // #3635: the receipt rule cites the #2760/#2773 task row that names the intent.
   "src/lib/late-capture-xero-receipt.ts",
+  // #4149: the shared epilogue cites #2761/#2773 for the alert it sends.
+  "src/lib/late-capture-record-recovery.ts",
+  // #4149 round 2: its tests cite #2774's escalation, which the recovery raises late.
+  "src/lib/__tests__/late-capture-record-recovery.test.ts",
+  // #4149 round 4: the unrecorded-refund module and its tests cite #2774's escalation too.
+  "src/lib/late-capture-unrecorded-refunds.ts",
+  "src/lib/__tests__/late-capture-unrecorded-refunds.test.ts",
   // The test files matter as much as the sources. A test docblock is what the next
   // implementor reads before touching this money path, and four of them carried the
   // fabricated "the owner chose to keep it" sentence.

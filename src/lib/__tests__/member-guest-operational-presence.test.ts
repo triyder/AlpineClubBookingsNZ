@@ -84,7 +84,10 @@ vi.mock("@/lib/lodge-auth", () => ({
 
 // The hut-leader cron is a no-op unless its module flag is on, and it reads the
 // club's lookahead. Neither is what these tests are about.
-vi.mock("@/lib/module-settings", () => ({
+// Partial: `admin-modules` (reached through the capacity counter since the
+// #3817 one-space rule) reads `normalizeClubModuleSettings` at import time.
+vi.mock("@/lib/module-settings", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/module-settings")),
   loadEffectiveModuleFlags: () => mockFlags(),
 }));
 vi.mock("@/lib/lodge-settings", () => ({
@@ -540,7 +543,12 @@ describe("hut leader auto-assign (D-12)", () => {
     // This job assigns ONLY when exactly one adult member is staying. Anna is
     // consented, Penny is pending: with Penny counted the job sees two adults
     // and assigns nobody, so leaving her in would change the outcome for Anna.
+    // Their stay holds the job's window (the frozen today, 1 July, plus a
+    // one-day lookahead): since #3817 a guest counts only on a night they hold.
     mockPrisma.booking.findMany.mockImplementation(async (args: never) => {
+      // The coverage cover's school-group read (#3819) finds no school here;
+      // it selects no guests, the job's candidate read does (#3821).
+      if (!(args as unknown as { select: { guests?: unknown } }).select.guests) return [];
       const typed = args as unknown as {
         select: { guests: { where?: { OR?: Array<{ consentStatus: string | null }> } } };
       };
@@ -550,15 +558,15 @@ describe("hut leader auto-assign (D-12)", () => {
           guests: applyGuestWhere(typed.select.guests.where, [
             {
               memberId: "m-anna",
-              stayStart: dateOnly("2026-07-10"),
-              stayEnd: dateOnly("2026-07-12"),
+              stayStart: dateOnly("2026-07-01"),
+              stayEnd: dateOnly("2026-07-03"),
               member: { id: "m-anna", firstName: "Anna", lastName: "Adult", active: true },
               ...ORDINARY,
             },
             {
               memberId: "m-penny",
-              stayStart: dateOnly("2026-07-10"),
-              stayEnd: dateOnly("2026-07-12"),
+              stayStart: dateOnly("2026-07-01"),
+              stayEnd: dateOnly("2026-07-03"),
               member: { id: "m-penny", firstName: "Penny", lastName: "Awaiting", active: true },
               ...AWAITING,
             },
@@ -581,7 +589,11 @@ describe("hut leader auto-assign (D-12)", () => {
       expect((call as { data: { memberId: string } }).data.memberId).toBe("m-anna");
     }
 
-    const args = mockPrisma.booking.findMany.mock.calls[0][0] as {
+    // The first candidate search, past the cover's school-group read (#3819).
+    const [[firstSearch]] = mockPrisma.booking.findMany.mock.calls.filter(
+      ([call]: unknown[]) => Boolean((call as { select: { guests?: unknown } }).select.guests),
+    );
+    const args = firstSearch as {
       where: { guests: { some: { OR?: unknown } } };
       select: { guests: { where?: { OR?: unknown } } };
     };

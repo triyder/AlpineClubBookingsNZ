@@ -11,7 +11,10 @@ import {
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import { ADMIN_VIEW_ONLY_ACTION_REASON } from "@/hooks/use-admin-area-edit-access";
-import { expectRecoveryAlertToHoldFocus } from "@/lib/__tests__/helpers/focus";
+import {
+  expectRecoveryAlertToHoldFocus,
+  expectToHoldFocus,
+} from "@/lib/__tests__/helpers/focus";
 
 // useAdminAreaEditAccess reads the merged matrix off the session user; drive it
 // per-test so the panels see a content:edit vs content:view admin.
@@ -1539,6 +1542,20 @@ describe("AdminMemberFieldsPage view-only gating (#1940, membership)", () => {
     expect(screen.getAllByRole("checkbox")[0]).toBeDisabled();
   });
 
+  it("moves focus to the first field toggle on Edit (#2934, #4115)", async () => {
+    sessionMatrix = matrix("view", { membership: "edit" });
+    render(<AdminMemberFieldsPage />);
+    const edit = await screen.findByRole("button", { name: /Edit member fields/i });
+
+    // A keyboard user: Edit holds focus, and pressing it unmounts it. The
+    // shared reveal lands on the first toggle Edit enabled — a named control —
+    // and scrolls only as far as it must, so Save stays clear of the header.
+    edit.focus();
+    fireEvent.click(edit);
+
+    await expectToHoldFocus(screen.getAllByRole("checkbox")[0]);
+  });
+
   it("focuses the failure when a save is rejected with 403 (#2934)", async () => {
     sessionMatrix = matrix("view", { membership: "edit" });
     render(<AdminMemberFieldsPage />);
@@ -1553,6 +1570,52 @@ describe("AdminMemberFieldsPage view-only gating (#1940, membership)", () => {
       vi.fn(async () => new Response("{}", { status: 403 })),
     );
     fireEvent.click(screen.getByRole("button", { name: /^Save$/i }));
+
+    const failure = await screen.findByText(ADMIN_FORBIDDEN_SAVE_REASON);
+    await expectRecoveryAlertToHoldFocus(failure);
+  });
+
+  // #4087: Save returns focus to Edit — but this page also positions its
+  // success at the top of the page, which runs after the return in the same
+  // commit, so the success target is where a keyboard user ends up.
+  it("ends a successful keyboard Save on the success target, not on Edit (#4087)", async () => {
+    sessionMatrix = matrix("view", { membership: "edit" });
+    render(<AdminMemberFieldsPage />);
+    const edit = await screen.findByRole("button", { name: /Edit member fields/i });
+    edit.focus();
+    fireEvent.click(edit);
+    fireEvent.click(screen.getAllByRole("checkbox")[0]);
+    const save = screen.getByRole("button", { name: /^Save$/i });
+    save.focus();
+    fireEvent.click(save);
+
+    await screen.findByText("Member field settings saved.");
+    const page = screen
+      .getByRole("heading", { name: "Member fields", level: 1 })
+      .closest<HTMLElement>("[data-return-focus-region]");
+    expect(page).not.toBeNull();
+    await expectToHoldFocus(page!);
+  });
+
+  it("keeps a failed keyboard Save on the failure even when the save dropped focus (#4087)", async () => {
+    sessionMatrix = matrix("view", { membership: "edit" });
+    render(<AdminMemberFieldsPage />);
+    const edit = await screen.findByRole("button", { name: /Edit member fields/i });
+    edit.focus();
+    fireEvent.click(edit);
+    fireEvent.click(screen.getAllByRole("checkbox")[0]);
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        // What a browser does to the Save that `saving` disabled.
+        (document.activeElement as HTMLElement | null)?.blur();
+        return new Response("{}", { status: 403 });
+      }),
+    );
+    const save = screen.getByRole("button", { name: /^Save$/i });
+    save.focus();
+    fireEvent.click(save);
 
     const failure = await screen.findByText(ADMIN_FORBIDDEN_SAVE_REASON);
     await expectRecoveryAlertToHoldFocus(failure);
@@ -2247,6 +2310,34 @@ describe("LodgeConfigurationHubPage view-only gating (#1940, lodge)", () => {
     ).toBeInTheDocument();
   });
 
+  it("names the school hut-leader setting in the banner, and gates its Edit, while Hut Leaders is on (#3819)", async () => {
+    stubFetchRoutes({
+      "/api/admin/lodge-settings/school-hut-leaders": {
+        kinds: { teacherOnBooking: false, custodian: true, memberOnBooking: true, memberStayingSeparately: true },
+      },
+      "/api/admin/lodge-settings": { capacity: null },
+      "/api/admin/lodges": { lodges: [LODGE] },
+      "/api/admin/modules": { settings: { hutLeaders: true } },
+      "/api/admin/bed-allocation/rooms": {
+        rooms: [],
+        capacity: { capacity: 0, source: "unconfigured_lodge", activeBedCount: 0 },
+      },
+      "/api/admin/lockers": { lockers: [] },
+      "/api/admin/seasons": [],
+      "/api/admin/chores": [],
+    });
+    sessionMatrix = matrix("view", { lodge: "view" });
+    render(<LodgeConfigurationHubPage />);
+
+    expect(
+      await screen.findByText(/can view this lodge.s capacity and who can be hut leader for its school bookings, but cannot change them/i),
+    ).toBeInTheDocument();
+    await screen.findByLabelText("The lodge custodian");
+    expect(
+      screen.getByRole("button", { name: "Edit who can be hut leader for school bookings" }),
+    ).toBeDisabled();
+  });
+
   it("enables the capacity editor for a lodge:edit admin", async () => {
     sessionMatrix = matrix("view", { lodge: "edit" });
     render(<LodgeConfigurationHubPage />);
@@ -2421,7 +2512,7 @@ describe("ConfirmPendingGuestsButton view-only gating (#1997, bookings)", () => 
       <ConfirmPendingGuestsButton
         bookingId="b1"
         hasSavedPaymentMethod={false}
-        finalPriceCents={0}
+        savedCardChargeCents={0}
       />,
     );
 
@@ -2436,7 +2527,7 @@ describe("ConfirmPendingGuestsButton view-only gating (#1997, bookings)", () => 
       <ConfirmPendingGuestsButton
         bookingId="b1"
         hasSavedPaymentMethod={false}
-        finalPriceCents={0}
+        savedCardChargeCents={0}
       />,
     );
 

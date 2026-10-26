@@ -9,8 +9,10 @@ const mocks = vi.hoisted(() => ({
   runXeroInboundReconciliationCycle: vi.fn(),
   backfillHistoricalXeroObjectLinks: vi.fn(),
   cleanupStaleCanonicalXeroObjectLinks: vi.fn(),
+  runBankRefundVoidFollowUp: vi.fn(),
   sendXeroReconciliationReport: vi.fn(),
   reconcileXeroCreditSync: vi.fn(),
+  runCreditNoteMirrorSweep: vi.fn(),
   isEffectiveModuleEnabled: vi.fn(),
   recordCronJobRunSafe: vi.fn(),
 }));
@@ -43,9 +45,21 @@ vi.mock("@/lib/xero-hardening", () => ({
   sendXeroReconciliationReport: mocks.sendXeroReconciliationReport,
 }));
 
+// #4162: the voided bank-transfer refund notes' follow-up, run after the cleanup.
+vi.mock("@/lib/bank-refund-void-follow-up", () => ({
+  runBankRefundVoidFollowUp: mocks.runBankRefundVoidFollowUp,
+  bankRefundVoidFollowUpFailureMessage: (result: { counts?: { failed?: number } }) =>
+    (result.counts?.failed ?? 0) > 0 ? "follow-up failed" : null,
+}));
+
 vi.mock("@/lib/xero-credit-sync-checker", () => ({
   reconcileXeroCreditSync: mocks.reconcileXeroCreditSync,
   XERO_CREDIT_SYNC_JOB_NAME: "xero-credit-sync-check",
+}));
+
+// #4270: the credit-note mirror's backstop sweep.
+vi.mock("@/lib/xero-credit-note-mirror-sweep", () => ({
+  runCreditNoteMirrorSweep: mocks.runCreditNoteMirrorSweep,
 }));
 
 vi.mock("@/lib/logger", () => ({
@@ -103,12 +117,14 @@ describe("POST /api/cron/xero", () => {
       inboundReconciliation: null,
       linkBackfill: null,
       linkCleanup: null,
+      bankRefundVoidFollowUp: null,
       reconciliationReport: null,
       creditSyncCheck: null,
+      creditNoteMirror: null,
     });
     expect(mocks.isXeroConnected).not.toHaveBeenCalled();
     expect(mocks.refreshAllMembershipStatuses).not.toHaveBeenCalled();
-    expect(mocks.recordCronJobRunSafe).toHaveBeenCalledTimes(8);
+    expect(mocks.recordCronJobRunSafe).toHaveBeenCalledTimes(10); // #4162: + the voided bank-transfer refund notes' follow-up; #4270: + the credit-note mirror
     expect(mocks.recordCronJobRunSafe).toHaveBeenCalledWith(
       expect.objectContaining({
         jobName: "xero-outbox",
@@ -223,6 +239,7 @@ describe("POST /api/cron/xero", () => {
       scannedActiveLinks: 5,
       deactivatedLinks: 1,
     });
+    mocks.runBankRefundVoidFollowUp.mockResolvedValue({ mode: "report-only", scanned: 0, counts: { failed: 0 }, items: [] });
     mocks.sendXeroReconciliationReport.mockResolvedValue({
       sent: true,
       report: {
@@ -241,6 +258,15 @@ describe("POST /api/cron/xero", () => {
       totalDriftCents: 1200,
       completePass: true,
       emailSent: true,
+    });
+    mocks.runCreditNoteMirrorSweep.mockResolvedValue({
+      skipped: false,
+      read: 2,
+      writtenDown: 1,
+      restored: 0,
+      refused: { unsettled: 1 },
+      readFailures: 0,
+      completePass: true,
     });
 
     const response = await POST(makeRequest("all"));
@@ -336,6 +362,13 @@ describe("POST /api/cron/xero", () => {
     expect(mocks.recordCronJobRunSafe).toHaveBeenCalledWith(
       expect.objectContaining({
         jobName: "xero-credit-sync-check",
+        status: "SUCCESS",
+      })
+    );
+    expect(body.creditNoteMirror).toMatchObject({ read: 2, writtenDown: 1, completePass: true });
+    expect(mocks.recordCronJobRunSafe).toHaveBeenCalledWith(
+      expect.objectContaining({
+        jobName: "xero-credit-note-outside-spend-mirror",
         status: "SUCCESS",
       })
     );

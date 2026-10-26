@@ -4,6 +4,7 @@ import {
   MANUAL_SETTLEMENT_CONFLICT_EVENT_REASON,
   MANUAL_SETTLEMENT_REVERSAL_EVENT_REASON,
   SECOND_INSTRUMENT_SETTLEMENT_CONFLICT_EVENT_REASON,
+  IB_SETTLEMENT_FIGURE_CHECK_EVENT_REASON,
   GROUP_JOINER_PAYS_OWN_EVENT_REASON,
 } from "@/lib/manual-settlement-reversal-event";
 import {
@@ -180,6 +181,8 @@ function buildDeps(overrides?: Partial<StuckStateDashboardDependencies>) {
     // unit and wording are keyed on the CLUB's active-lodge count (#2917
     // review), not on how many lodges its rows happen to span.
     countActiveLodges: vi.fn().mockResolvedValue(1),
+    // #4162: the voided bank refund notes a person answers.
+    countBankRefundVoidsToAnswer: vi.fn().mockResolvedValue(0),
   };
 
   return {
@@ -417,7 +420,7 @@ describe("getStuckStateDashboard", () => {
       title: "Unassigned hut leader lodge dates",
       count: 3,
       summary:
-        "3 upcoming lodge dates in the next 21 days with bookings have no hut leader assigned.",
+        "3 upcoming lodge dates in the next 21 days with guests have no hut leader who counts.",
     });
   });
 
@@ -449,7 +452,7 @@ describe("getStuckStateDashboard", () => {
       title: "Unassigned hut leader lodge-nights",
       count: 4,
       summary:
-        "4 upcoming lodge-nights in the next 21 days with bookings have no hut leader assigned.",
+        "4 upcoming lodge-nights in the next 21 days with guests have no hut leader who counts.",
     });
   });
 
@@ -480,8 +483,19 @@ describe("getStuckStateDashboard", () => {
       title: "Unassigned hut leader lodge-nights",
       count: 2,
       summary:
-        "2 upcoming lodge-nights in the next 21 days with bookings have no hut leader assigned.",
+        "2 upcoming lodge-nights in the next 21 days with guests have no hut leader who counts.",
     });
+  });
+
+  // #4104 (ops 7, concurrency C): a card refund raised dead is PENDING with its
+  // attempts spent. It is exhausted - a person's - never an overdue queue.
+  it("MUTATION: counts a dead PENDING row as exhausted, never as overdue (#4104)", async () => {
+    const deps = buildDeps({});
+    vi.mocked(deps.db.paymentRecoveryOperation.count).mockResolvedValue(0);
+    await getStuckStateDashboard({ deps, now: new Date("2026-06-22T00:00:00.000Z") });
+    const wheres = vi.mocked(deps.db.paymentRecoveryOperation.count).mock.calls.map((call) => (call[0] as { where: Record<string, unknown> }).where);
+    expect(wheres).toContainEqual({ status: { in: ["PENDING", "FAILED"] }, attempts: { gte: 5 } });
+    expect(wheres).toContainEqual(expect.objectContaining({ status: "PENDING", attempts: { lt: 5 } }));
   });
 
   // #2550: the admin-dashboard half of the placeholder-naming feature. Both
@@ -713,6 +727,8 @@ describe("getStuckStateDashboard", () => {
                     MANUAL_SETTLEMENT_CONFLICT_EVENT_REASON,
                     // #3638: the second-instrument conflict marker.
                     SECOND_INSTRUMENT_SETTLEMENT_CONFLICT_EVENT_REASON,
+                    // #3979: the bank-transfer settlement-figure marker.
+                    IB_SETTLEMENT_FIGURE_CHECK_EVENT_REASON,
                     // #3672: the group payer-switch marker.
                     GROUP_JOINER_PAYS_OWN_EVENT_REASON,
                   ],
@@ -980,5 +996,21 @@ describe("getStuckStateDashboard", () => {
         (candidate) => candidate.id === "booking-hosting-coverage-incidents",
       )?.details,
     ).toBeUndefined();
+  });
+});
+
+describe("voided bank refund notes to answer (#4162)", () => {
+  it("counts them under Xero, linking a finance viewer to the panel and anyone else to the Xero screen", async () => {
+    const deps = buildDeps({ countBankRefundVoidsToAnswer: vi.fn().mockResolvedValue(2) });
+    const finance = await getStuckStateDashboard({ deps, now: new Date("2026-06-22T00:00:00.000Z"), viewerCanViewFinance: true });
+    expect(finance.items.find((item) => item.id === "xero-bank-refund-voids-to-answer")).toMatchObject({
+      domain: "xero",
+      owner: "Finance",
+      count: 2,
+      href: "/admin/stuck-states#bank-refund-voids",
+      summary: expect.stringContaining("2 bank refunds had their Xero credit note voided"),
+    });
+    const support = await getStuckStateDashboard({ deps, now: new Date("2026-06-22T00:00:00.000Z") });
+    expect(support.items.find((item) => item.id === "xero-bank-refund-voids-to-answer")?.href).toBe("/admin/xero");
   });
 });

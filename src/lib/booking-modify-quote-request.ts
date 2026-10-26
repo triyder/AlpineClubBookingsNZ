@@ -4,6 +4,7 @@ import { bookableAgeTierEnum } from "@/lib/age-tier-schema";
 import { dependantIdentityDeclarationSchema } from "@/lib/booking-dependant-identity";
 import type { MemberGuestConsentGuestFields } from "@/lib/member-guest-add-policy";
 import { nameField } from "@/lib/zod-helpers";
+import { GUEST_CHANGE_LIST_BOUND, BOOKING_PARTY_GUESTS_MAX, guestStayFieldsSchema } from "@/lib/booking-guest-stay-range-input";
 
 // The request contract for `POST /api/bookings/[id]/modify-quote`, split
 // verbatim out of that route (#3128) because none of it depends on a request:
@@ -29,8 +30,8 @@ export const editPromoCodesSchema = z
   .array(
     z.object({
       code: z.string().min(1).max(50),
-      promoGuestIds: z.array(z.string().min(1)).max(200).optional(),
-      promoAddedGuestIndexes: z.array(z.number().int().min(0)).max(200).optional(),
+      promoGuestIds: z.array(z.string().min(1)).max(BOOKING_PARTY_GUESTS_MAX).optional(),
+      promoAddedGuestIndexes: z.array(z.number().int().min(0)).max(...GUEST_CHANGE_LIST_BOUND).optional(),
     }),
   )
   .max(20)
@@ -47,12 +48,10 @@ export const modifyQuoteSchema = z.object({
         ageTier: bookableAgeTierEnum,
         isMember: z.boolean(),
         memberId: z.string().min(1).optional(),
-        stayStart: z.string().optional(),
-        stayEnd: z.string().optional(),
-        nights: z.array(z.string()).max(370).optional(),
+        ...guestStayFieldsSchema.shape,
       })
     )
-    .optional(),
+    .max(...GUEST_CHANGE_LIST_BOUND).optional(),
   // #3451 (`INV-GUEST-019`): the member's answer "this is a different person with
   // the same name" about one of the booking owner's recorded dependants, for an
   // ADDED guest whose name matches. The same shape the create route takes; the
@@ -62,17 +61,15 @@ export const modifyQuoteSchema = z.object({
     .array(dependantIdentityDeclarationSchema)
     .max(50)
     .optional(),
-  removeGuestIds: z.array(z.string()).optional(),
+  removeGuestIds: z.array(z.string()).max(...GUEST_CHANGE_LIST_BOUND).optional(),
   guestStayRanges: z
     .array(
       z.object({
         guestId: z.string().min(1),
-        stayStart: z.string().optional(),
-        stayEnd: z.string().optional(),
-        nights: z.array(z.string()).max(370).optional(),
+        ...guestStayFieldsSchema.shape,
       })
     )
-    .optional(),
+    .max(BOOKING_PARTY_GUESTS_MAX).optional(),
   guestUpdates: z
     .array(
       z.object({
@@ -81,7 +78,7 @@ export const modifyQuoteSchema = z.object({
         lastName: nameField(),
       })
     )
-    .optional(),
+    .max(...GUEST_CHANGE_LIST_BOUND).optional(),
   // #2337: mirror of the apply route's placeholder→member link so the preview
   // shows the same re-rate delta the save will settle. Gated identically.
   linkGuestToMember: z
@@ -91,20 +88,19 @@ export const modifyQuoteSchema = z.object({
         memberId: z.string().min(1),
       })
     )
-    .max(60)
-    .optional(),
+    .max(60).optional(),
   // Other Lodges epic: mirror of the apply route's reciprocal other-club rate
   // election, so the preview prices the tick exactly as the save will charge it.
   // Both fields are an END STATE, never a delta — see booking-other-lodge-rate.ts.
   otherLodgeId: z.string().min(1).nullable().optional(),
-  otherLodgeMemberGuestIds: z.array(z.string().min(1)).max(200).optional(),
+  otherLodgeMemberGuestIds: z.array(z.string().min(1)).max(BOOKING_PARTY_GUESTS_MAX).optional(),
   promoCode: z.string().optional(),
   // #2266 (MED-4): beneficiaries for guest-targeted promo codes, mirroring the
   // apply route — EXISTING guests bind by bookingGuestId (a stale id refuses
   // loudly instead of re-pointing the discount), and positional indexes exist
   // only for TO-BE-ADDED guests within this request, relative to addGuests.
-  promoGuestIds: z.array(z.string().min(1)).max(200).optional(),
-  promoAddedGuestIndexes: z.array(z.number().int().min(0)).max(200).optional(),
+  promoGuestIds: z.array(z.string().min(1)).max(BOOKING_PARTY_GUESTS_MAX).optional(),
+  promoAddedGuestIndexes: z.array(z.number().int().min(0)).max(...GUEST_CHANGE_LIST_BOUND).optional(),
   removePromoCode: z.boolean().optional(),
   // #3827: the complete list of codes after the edit, in the booker's order —
   // the same field, and the same schema, the apply route takes.

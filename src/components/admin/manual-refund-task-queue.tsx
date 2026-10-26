@@ -36,7 +36,7 @@ import {
   type ClubDateFormat,
 } from "@/lib/club-time";
 import { unverifiedWriteMessage } from "@/lib/unverified-write-copy";
-import { zeroCompletionRefusal } from "@/lib/manual-refund-task-copy";
+import { reviewGuestRemovedSinceRaisedWarning, zeroCompletionRefusal } from "@/lib/manual-refund-task-copy";
 // #3213: whether a row may be closed as money that moved is decided ONCE, in a
 // client-safe home, and the completion door throws on the same answer
 // (`manual-refund-task-resolution.ts`, `INV-SSOT`). Deciding it again here is
@@ -72,6 +72,9 @@ import type { ClubFormat } from "@/lib/club-format";
 import { useClubFormat } from "@/components/club-format-provider";
 import { PartPaymentReviewXeroPaidLine } from "@/components/admin/part-payment-review-xero-paid-line";
 import { HandBackMethodChoice } from "@/components/admin/hand-back-method-choice";
+import { BankRefundVoidAnswerChoice } from "@/components/admin/bank-refund-void-answer-choice";
+import { bankRefundVoidQuestion, type BankRefundVoidAnswer } from "@/lib/bank-refund-void-follow-up-copy";
+import { formatBookingReference } from "@/lib/booking-reference";
 import { ManualRefundTaskStillOwedNotice } from "@/components/admin/manual-refund-task-still-owed-notice";
 
 const NOTE_MAX_LENGTH = MANUAL_PAYMENT_NOTE_MAX;
@@ -105,6 +108,14 @@ interface ManualRefundTask {
   editRefundHandBack?: boolean;
   /** #3827 (D-3813-7): an approved appeal's refund, by bank transfer. Optional, as above. */
   refundRequestHandBack?: boolean;
+  paidToGroupOrganiser?: boolean; // #3949: either of those two, paid back to the group organiser
+  /** #4042: an organiser's Internet Banking group cancel, repaid to the organiser. Optional, as above. */
+  groupOrganiserHandBack?: boolean;
+  /** #4097: what a card cancellation's card refund could not carry - by bank transfer, or checked first. Optional, as above. */
+  cardShortfallHandBack?: boolean;
+  cardShortfallCheck?: boolean;
+  /** #4162: a bank refund back on the list because Xero voided its credit note. Optional, as above. */
+  bankRefundVoidFollowUp?: { voidedCreditNoteNumber: string | null; voidedAt: string } | null;
   /**
    * #3643 (`INV-PAY-108`): Xero reported the review's invoice paid after the
    * cancel, and the invoice's cash then. Optional, as above.
@@ -127,6 +138,8 @@ interface ManualRefundTask {
    */
   reviewEvidence?: EditFinancialReviewEvidence | null;
   reviewEvidenceUnreadable?: boolean;
+  /** #4317 (owner, #4302): moved guests removed since, already credited. Absent: no warning. */
+  reviewGuestsRemovedSinceRaised?: Array<{ strandIndex: number; strandCount: number; guestTotalCents: number | null; gaveNightsBack: boolean; addedNights: boolean }>;
   /**
    * #3191: this booking's nights that carry no stored price, and the two totals
    * the officer's figures must reconcile against.
@@ -609,9 +622,17 @@ function completionTitle({ task, resolution }: ResolutionTarget, format: ClubFor
     if (isPartPaymentReview(task)) {
       return `Close this payment from ${task.memberName} as settled in Xero?`;
     }
+    // #4162: "No, the club keeps it" is this row's dismissal.
+    if (task.bankRefundVoidFollowUp && task.amountCents !== null) {
+      return `The club keeps the ${formatCents(task.amountCents, format)}, and ${task.memberName} is not paid?`;
+    }
     return isFinancialReview(task)
       ? `Close this review for ${task.memberName} with no adjustment?`
       : `Dismiss the refund for ${task.memberName}?`;
+  }
+
+  if (task.bankRefundVoidFollowUp && task.amountCents !== null) {
+    return `Has the ${formatCents(task.amountCents, format)} gone to ${task.memberName}?`;
   }
 
   if (isLateCaptureApproval(task) && task.amountCents !== null) {
@@ -628,6 +649,13 @@ function completionTitle({ task, resolution }: ResolutionTarget, format: ClubFor
     return `Settle this review for ${task.memberName}?`;
   }
 
+  if (task.groupOrganiserHandBack === true && task.amountCents !== null) {
+    return `Record ${formatCents(task.amountCents, format)} as repaid to the group organiser, ${task.memberName}?`;
+  }
+  // #3949 review: a joiner's refund that goes to the group organiser who paid for their place.
+  if (task.paidToGroupOrganiser === true && task.amountCents !== null) {
+    return `Record ${formatCents(task.amountCents, format)} as paid back to the group organiser for ${task.memberName}?`;
+  }
   return task.amountCents === null
     ? `Record this refund as paid back to ${task.memberName}?`
     : `Record ${formatCents(task.amountCents, format)} as paid back to ${task.memberName}?`;
@@ -647,12 +675,20 @@ function resolutionDescription({
     if (isPartPaymentReview(task)) {
       return "This closes the item as dealt with. It moves no money here, and the Xero repair tool stops listing the booking for review. Say how the payment was settled in Xero - refunded, or applied - and how the rest of the invoice was cleared, because that note is the record of it.";
     }
+    if (task.bankRefundVoidFollowUp) {
+      return "The refund stays out of the payment's records and no credit note is raised. Give the reason the club is keeping it, so the record makes sense later.";
+    }
+    if (task.paidToGroupOrganiser === true) { // #3949 review
+      return "Dismissing closes the task without refunding anything — for a group organiser who declined the refund, or money settled another way. Say which, so the record makes sense later.";
+    }
     return isFinancialReview(task)
       ? "This closes the review as looked at, with nothing to pay back or credit. It moves no money and records none as having moved. Say what the evidence showed, so the finding makes sense to whoever reads it next."
       : "Dismissing closes the task without refunding anything — for a member who declined the refund, or money settled another way. Say which, so the record makes sense later.";
   }
 
   if (isFinancialReview(task)) {
+    // #3949 review round 3: the group organiser paid for this booking by internet banking, so money owed back is theirs.
+    if (task.paidToGroupOrganiser === true) return "Price this from the evidence on the row and the booking's payment history: the amount, and which way it goes. The group organiser paid for this booking, so money the club owes goes back to the organiser by bank transfer, never to the member. If the member owes the club, it cannot be asked for from here: agree it with the organiser and collect it another way, then dismiss the review with a note. If nothing is owed either way, close the review with no adjustment instead.";
     return "Price this from the evidence on the row and the booking's payment history: the amount, and which way it goes. If the club owes the member it is paid back or held as account credit; if the member owes the club they are asked to pay it on this booking. If nothing is owed either way, close the review with no adjustment instead.";
   }
 
@@ -660,6 +696,14 @@ function resolutionDescription({
     return "This refunds the payment to the card it came from, through Stripe, now. If you already refunded it in the Stripe dashboard, close it without refunding instead, saying so.";
   }
 
+  if (task.bankRefundVoidFollowUp) {
+    return "Answer once the money has gone to the member, whenever that was. It records the refund on the payment again; the member is not told anything. If it has not gone yet, cancel and leave it on the list.";
+  }
+  if (task.groupOrganiserHandBack === true) {
+    return "Only do this once the money has actually gone back to the organiser. It records that the club repaid them and who did it; the joiners' refunds are already in the ledger, so nothing more is written there or on the bookings' history.";
+  }
+  if (task.paidToGroupOrganiser === true) return "Only do this once the money has actually gone back to the group organiser, who paid for this booking. It writes the refund into the payment ledger and records a refund on the booking's history; admins are then emailed to raise its Xero credit note by hand."; // #3949
+  if (task.cardShortfallCheck === true) return "Only do this once you have checked the member really is owed it. The app first checks it can record this; pay straight after it accepts. It writes the refund into the payment ledger and records a refund on the booking's history. If it refuses, follow what it says."; // #4154 review (M3): mark first, then pay
   return "Only do this once the money has actually gone back to the member. It writes the refund into the payment ledger and records a refund on the booking's history.";
 }
 
@@ -679,14 +723,16 @@ function confirmButtonLabel(
   if (resolution === "dismissed") {
     if (isLateCaptureApproval(task)) return "Close without refunding";
     if (isPartPaymentReview(task)) return "Close as settled in Xero";
+    if (task.bankRefundVoidFollowUp) return "The club keeps it";
     return isFinancialReview(task) ? "Close with no adjustment" : "Dismiss refund";
   }
+  if (task.bankRefundVoidFollowUp) return "Record the answer";
 
   if (isLateCaptureApproval(task)) return "Refund to card";
 
   if (isFinancialReview(task)) {
     if (direction === "CHARGE_TO_MEMBER") return "Ask the member to pay";
-    if (direction === "REFUND_TO_MEMBER") return "Pay the member back";
+    if (direction === "REFUND_TO_MEMBER") return task.paidToGroupOrganiser === true ? "Pay the group organiser back" : "Pay the member back"; // #3949
     return "Settle the review";
   }
 
@@ -1004,6 +1050,7 @@ function AutomaticRefundNoticesCard({
  */
 export function ManualRefundTaskQueue() {
   const format = useClubFormat();
+  const clubTime = useClubTime();
   const canEdit = useAdminAreaEditAccess("finance");
   const [tasks, setTasks] = useState<ManualRefundTask[] | null>(null);
   const [autoRefunded, setAutoRefunded] = useState<AutoRefundedNotice[]>([]);
@@ -1051,6 +1098,9 @@ export function ManualRefundTaskQueue() {
   const [direction, setDirection] = useState<SettlementDirection | null>(null);
   /** #3536: the officer's cash-or-bank answer; null is "not said" (bank wording). */
   const [handedBackInCash, setHandedBackInCash] = useState<boolean | null>(null);
+  // #4162: a re-confirmed bank refund's answer, with no default, and the hand-made note's number.
+  const [voidAnswer, setVoidAnswer] = useState<BankRefundVoidAnswer | null>(null);
+  const [handMadeNoteNumber, setHandMadeNoteNumber] = useState("");
   const [amountInput, setAmountInput] = useState("");
   /**
    * #3191: what the officer says each unpriced night sold for, as typed text
@@ -1166,7 +1216,7 @@ export function ManualRefundTaskQueue() {
     isFinancialReview(target.task);
   // #3536: only a refund the club pays back by hand asks how it went back.
   const askHandBackMethod =
-    pricingReview && direction === "REFUND_TO_MEMBER" && target.task.paidBackByHand === true;
+    pricingReview && direction === "REFUND_TO_MEMBER" && target.task.paidBackByHand === true && target.task.paidToGroupOrganiser !== true; // #3949: an organiser's goes by bank, its note by hand
   const pricedAmountCents = pricingReview
     ? parseDecimalDollarsToCents(amountInput)
     : null;
@@ -1390,7 +1440,10 @@ export function ManualRefundTaskQueue() {
                     ? { handedBackInCash }
                     : {}),
                 }
-              : {}),
+              : target.resolution === "completed" && target.task.groupOrganiserHandBack === true
+                ? // #4042: the total this card showed; the server refuses it once another share has grown the task.
+                  { confirmedAmountCents: target.task.amountCents }
+                : {}),
             /*
               #3191: sent only when the officer filled every box and the figures
               reconcile. A partial answer is never posted - the button is
@@ -1399,6 +1452,15 @@ export function ManualRefundTaskQueue() {
               this issue.
             */
             ...(recordedNightPrices ? { recordedNightPrices } : {}),
+            // #4162: a re-confirmed bank refund's answer, only on its own completion.
+            ...(target.resolution === "completed" && target.task.bankRefundVoidFollowUp && voidAnswer
+              ? {
+                  bankRefundVoidAnswer:
+                    voidAnswer === "recorded-in-xero"
+                      ? { answer: voidAnswer, creditNoteNumber: handMadeNoteNumber.trim() }
+                      : { answer: voidAnswer },
+                }
+              : {}),
           }),
         },
       );
@@ -1414,6 +1476,8 @@ export function ManualRefundTaskQueue() {
       setNote("");
       setDirection(null);
       setHandedBackInCash(null);
+      setVoidAnswer(null);
+      setHandMadeNoteNumber("");
       setAmountInput("");
       setNightPriceInputs({});
       await load();
@@ -1483,8 +1547,14 @@ export function ManualRefundTaskQueue() {
   */
   const hasLateCaptureRows = openTasks.some(isLateCaptureApproval);
   const hasPartPaymentReviewRows = openTasks.some(isPartPaymentReview);
-  const hasEditRefundRows = openTasks.some(isEditRefundHandBack);
-  const hasRefundRequestRows = openTasks.some(isRefundRequestHandBack);
+  // #3949 review: a row paid back to a group organiser has its own sentence, not the member's.
+  const toMember = (task: ManualRefundTask) => task.paidToGroupOrganiser !== true;
+  const hasEditRefundRows = openTasks.some((task) => isEditRefundHandBack(task) && toMember(task));
+  const hasRefundRequestRows = openTasks.some((task) => isRefundRequestHandBack(task) && toMember(task));
+  const hasOrganiserPayeeRows = openTasks.some((task) => !toMember(task));
+  const hasGroupOrganiserRows = openTasks.some((task) => task.groupOrganiserHandBack === true);
+  const hasCardShortfallRows = openTasks.some((task) => task.cardShortfallHandBack === true);
+  const hasCardShortfallCheckRows = openTasks.some((task) => task.cardShortfallCheck === true);
   const hasHandBackRows = openTasks.some(
     (task) =>
       !isFinancialReview(task) &&
@@ -1492,8 +1562,13 @@ export function ManualRefundTaskQueue() {
       !isLateCaptureApproval(task) &&
       !isPartPaymentReview(task) &&
       !isEditRefundHandBack(task) &&
-      !isRefundRequestHandBack(task),
+      !isRefundRequestHandBack(task) &&
+      task.groupOrganiserHandBack !== true &&
+      task.cardShortfallHandBack !== true &&
+      task.cardShortfallCheck !== true &&
+      !task.bankRefundVoidFollowUp && toMember(task),
   );
+  const hasBankRefundVoidRows = openTasks.some((task) => Boolean(task.bankRefundVoidFollowUp));
   if (
     !showQueue &&
     autoRefunded.length === 0 &&
@@ -1548,6 +1623,19 @@ export function ManualRefundTaskQueue() {
                 actually gone — that is when the ledger records it.
               </p>
             ) : null}
+            {hasBankRefundVoidRows ? (
+              <p
+                className="text-sm text-muted-foreground"
+                data-testid="manual-refund-task-bank-refund-void-intro"
+              >
+                Some of these are bank refunds the club had recorded as paid,
+                whose Xero credit note has since been voided. The app has taken
+                each back out of the payment&apos;s records until you say what
+                happened. If the money has gone to the member, say so and choose
+                how Xero records it. If it has not gone yet, leave it here. If
+                the club is keeping it, say why.
+              </p>
+            ) : null}
             {hasEditRefundRows ? (
               <p
                 className="text-sm text-muted-foreground"
@@ -1571,6 +1659,67 @@ export function ManualRefundTaskQueue() {
                 club sends the approved amount by bank transfer; the member has
                 been told it is coming. Mark a refund as paid back once the
                 money has actually gone.
+              </p>
+            ) : null}
+            {hasOrganiserPayeeRows ? (
+              <p
+                className="text-sm text-muted-foreground"
+                data-testid="manual-refund-task-organiser-payee-intro"
+              >
+                Some of these are refunds on joiners&apos; bookings that a group
+                organiser paid for by internet banking, after a change lowered
+                the price, an appeal was approved or the joiner cancelled. That money came from the
+                organiser, so it goes back to the organiser by bank transfer,
+                not to the joiner; the joiner has been told so. The app raises
+                no Xero credit note for these: once you mark one paid back,
+                admins are emailed to credit the group&apos;s Xero invoice by
+                hand. Mark a refund as paid back once the money has actually
+                gone.
+              </p>
+            ) : null}
+            {hasCardShortfallRows ? (
+              <p
+                className="text-sm text-muted-foreground"
+                data-testid="manual-refund-task-card-shortfall-intro"
+              >
+                Some of these are from card cancellations whose card refund could
+                not carry all of the refund due; each is the part the
+                payment&apos;s other (non-card) charges hold. The member is told
+                (on their booking page, and by email unless emails were turned
+                off) that the club will refund it by bank transfer: mark it paid back first, which
+                records it and, where the booking has a Xero invoice, raises its refund credit note,
+                then pay it by bank transfer straight after the app accepts. None can be marked
+                until the card refund itself has gone through.
+              </p>
+            ) : null}
+            {hasCardShortfallCheckRows ? (
+              <p
+                className="text-sm text-muted-foreground"
+                data-testid="manual-refund-task-card-shortfall-check-intro"
+              >
+                Some of these are the rest of a card refund that the payment&apos;s records show already
+                refunded, or that nothing holds: from a card cancellation, or from a booking cancelled because
+                its dates filled up during the card payment. The member is told only that the club will be in
+                touch: on their booking page, and for a cancellation by email unless emails were turned off.
+                Check Stripe and the bank before paying anything, then contact the member with what you found.
+                If they were refunded, dismiss it with a note saying how. If it really is owed, mark it paid
+                back first, once any bank-transfer part and the card refund are done, and pay it by bank
+                transfer straight after the app accepts; if it refuses, follow what it says.
+              </p>
+            ) : null}
+            {hasGroupOrganiserRows ? (
+              <p
+                className="text-sm text-muted-foreground"
+                data-testid="manual-refund-task-group-organiser-intro"
+              >
+                Some of these are group bookings paid by internet banking that
+                the organiser cancelled. Each joiner&apos;s refund is already
+                recorded in the app&apos;s ledger, but the money has not gone:
+                the club repays the organiser by bank transfer. The row lists
+                each joiner&apos;s share. Mark it paid back once the money has
+                actually gone; it cannot be dismissed. If the club decides not
+                to repay them, take it to the treasurer. Marking it paid back
+                sends nothing to Xero.
               </p>
             ) : null}
             {hasReviewRows ? (
@@ -1697,6 +1846,17 @@ export function ManualRefundTaskQueue() {
                         )}
                       </p>
                       <p className="text-xs text-muted-foreground">{task.reason}</p>
+                      {task.bankRefundVoidFollowUp && task.amountCents !== null ? (
+                        <p className="text-sm text-foreground" data-testid="manual-refund-task-bank-refund-void-question">
+                          {bankRefundVoidQuestion({
+                            bookingReference: formatBookingReference(task.bookingId),
+                            amount: formatCents(task.amountCents, format),
+                            memberName: task.memberName,
+                            creditNoteNumber: task.bankRefundVoidFollowUp.voidedCreditNoteNumber,
+                            voidedOn: clubTime.instantDate(new Date(task.bankRefundVoidFollowUp.voidedAt)),
+                          })}
+                        </p>
+                      ) : null}
                       {isPartPaymentReview(task) && task.partPaymentReviewXeroPaid ? (
                         <PartPaymentReviewXeroPaidLine
                           xeroPaid={task.partPaymentReviewXeroPaid}
@@ -1728,6 +1888,9 @@ export function ManualRefundTaskQueue() {
                             : `Open this booking's invoices in Xero and check whether they already include ${formatCents(task.amountCents, format)}. If they do, nothing is owed. If they fall short, raise a supplementary invoice for that amount only — never for the change's full total, which the member has already been asked for. Then close the item with a note saying what Xero showed and what you billed.`}
                         </p>
                       ) : null}
+                      {(task.reviewGuestsRemovedSinceRaised ?? []).map((guest) => (
+                        <p key={guest.strandIndex} role="alert" className="text-sm font-medium text-warning-11" data-testid="manual-refund-task-review-guest-removed">{reviewGuestRemovedSinceRaisedWarning({ ...guest, ordinal: strandOrdinal(guest.strandIndex, guest.strandCount) }, format)}</p>
+                      ))}
                       {task.reviewEvidence ? (
                         <EditFinancialReviewEvidenceBlock
                           evidence={task.reviewEvidence}
@@ -1817,9 +1980,13 @@ export function ManualRefundTaskQueue() {
                           ? "Record the adjustment"
                           : isLateCaptureApproval(task)
                             ? "Refund to card"
-                            : "Mark paid back"}
+                            : task.bankRefundVoidFollowUp
+                              ? "Yes, it has gone"
+                              : "Mark paid back"}
                       </ViewOnlyActionButton>
                       ) : null}
+                      {/* #4042: a group organiser's hand-back is paid, never dismissed. */}
+                      {task.groupOrganiserHandBack === true ? null : (
                       <ViewOnlyActionButton
                         canEdit={canEdit}
                         type="button"
@@ -1839,8 +2006,11 @@ export function ManualRefundTaskQueue() {
                             ? "Close this item"
                             : isLateCaptureApproval(task)
                               ? "Close without refunding"
-                              : "Dismiss"}
+                              : task.bankRefundVoidFollowUp
+                                ? "No, the club keeps it"
+                                : "Dismiss"}
                       </ViewOnlyActionButton>
+                      )}
                     </div>
                   </li>
                 ))}
@@ -1861,6 +2031,8 @@ export function ManualRefundTaskQueue() {
                 // pre-filled figure nobody priced.
                 setDirection(null);
                 setHandedBackInCash(null);
+                setVoidAnswer(null);
+                setHandMadeNoteNumber("");
                 setAmountInput("");
                 // #3191: figures typed for one booking's nights must never be
                 // carried onto another's, for the same reason the amount is not.
@@ -2052,6 +2224,15 @@ export function ManualRefundTaskQueue() {
                     />
                     );
                   })}
+                  {target.resolution === "completed" && target.task.bankRefundVoidFollowUp ? (
+                    <BankRefundVoidAnswerChoice
+                      answer={voidAnswer}
+                      creditNoteNumber={handMadeNoteNumber}
+                      disabled={submitting || unverified !== null}
+                      onAnswer={setVoidAnswer}
+                      onCreditNoteNumber={setHandMadeNoteNumber}
+                    />
+                  ) : null}
                   <div className="space-y-2">
                     <Label htmlFor="manual-refund-task-note">
                       Note{target.resolution === "dismissed" ? " (required)" : " (optional)"}
@@ -2135,7 +2316,11 @@ export function ManualRefundTaskQueue() {
                         (target.resolution === "completed" &&
                           !isFinancialReview(target.task) &&
                           target.task.amountCents === null) ||
-                        (target.resolution === "dismissed" && note.trim().length === 0)
+                        (target.resolution === "dismissed" && note.trim().length === 0) ||
+                        // #4162: a re-confirmed bank refund needs its answer (and the note number for "already in Xero").
+                        (target.resolution === "completed" &&
+                          Boolean(target.task.bankRefundVoidFollowUp) &&
+                          (voidAnswer === null || (voidAnswer === "recorded-in-xero" && handMadeNoteNumber.trim().length === 0)))
                       }
                     >
                       {confirmButtonLabel(target, direction)}

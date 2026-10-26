@@ -50,6 +50,7 @@ import {
 } from "@/lib/payment-transactions";
 import { PART_PAYMENT_RECOGNISED_REASON } from "@/lib/part-payment-recognition-reason";
 import { MANUAL_REFUND_TASK_REASON_MAX } from "@/lib/manual-subscription-payment";
+import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 
 export { PART_PAYMENT_RECOGNISED_REASON };
 
@@ -188,7 +189,7 @@ export async function recordPartPaymentInClaim(
   await lockPaymentForRefundedTotal(tx, paymentId);
   const payment = await tx.payment.findUnique({
     where: { id: paymentId },
-    include: { transactions: true },
+    include: { transactions: { orderBy: [...LEDGER_ROWS_OLDEST_FIRST] } },
   });
   if (
     !payment ||

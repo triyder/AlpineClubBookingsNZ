@@ -60,14 +60,16 @@ const OCCUPANCY_TERMS = [
     evidence: [
       "capacityHoldingBookingFilter()",
       "guests: { include: { nights: true } }",
-      "getOccupiedBedsForNightFromIndex(night, occupancyIndex)",
+      "getCountedGuestsForNightFromIndex(night, occupancyIndex)",
     ],
   },
   {
     id: "custodian-bed-holds",
     issue: "#2286",
     what: "a bed held for a season by a hut-leader assignment, which has no booking and no guest row",
-    evidence: ["buildLodgeCustodianNightCounter(", "custodianCount(night)"],
+    // Read with the night's guest members, so a ticked custodian who is also
+    // a counted guest (or in the party being admitted) is one space (#3817).
+    evidence: ["buildLodgeCustodianNightCounter(", "custodianCount(night, guestMemberIds)"],
   },
   {
     id: "policy-exception-reservations",
@@ -98,8 +100,8 @@ const OCCUPANCY_TERMS = [
 /**
  * The symbols that implement an occupancy term. A file naming one of these is
  * either the module that defines it, or `capacity.ts`, or a seventh copy.
- * Matched on word boundaries so `getOccupiedBedsForNightFromIndex` does not
- * count as a mention of `getOccupiedBedsForNight`.
+ * Matched on word boundaries so `getCountedGuestsForNightFromIndex` and
+ * `getOccupiedBedsForNight` are never read as mentions of one another.
  */
 const TERM_SYMBOLS = [
   "buildLodgeCustodianNightCounter",
@@ -107,7 +109,7 @@ const TERM_SYMBOLS = [
   "buildLodgePendingAdultReservationCounter",
   "buildWholeLodgeHoldIndex",
   "isNightWholeLodgeHeld",
-  "getOccupiedBedsForNightFromIndex",
+  "getCountedGuestsForNightFromIndex",
   "getOccupiedBedsForNight",
 ] as const;
 
@@ -190,6 +192,10 @@ const NON_OCCUPANCY_READERS: Array<{
   {
     file: "src/lib/seasonal-membership-assignments.ts",
     why: "lists a member's own capacity-holding bookings for the season roll-over; no bed count",
+  },
+  {
+    file: "src/lib/hut-leader-stayed-nights.ts",
+    why: "decides which nights are school nights, for which kinds of leader may lead them (#3819); which nights NEED a leader reads the narrower accepted-and-CONFIRMED rule (#3821), not this; no bed count",
   },
 ];
 
@@ -305,7 +311,7 @@ describe("#2681 night-occupancy census: one calculation, every term", () => {
       "the pending school-adult term (#3413) must be summed in exactly one place - computeNightOccupancy",
     ).toBe(1);
     expect(
-      countOf("getOccupiedBedsForNightFromIndex(night, occupancyIndex)"),
+      countOf("getCountedGuestsForNightFromIndex(night, occupancyIndex)"),
       "the booked-guest-nights term (#713) must be summed in exactly one place — computeNightOccupancy",
     ).toBe(1);
 

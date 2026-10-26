@@ -470,6 +470,15 @@ export function getGuestBedNightKeys(
 }
 
 /**
+ * Whether two night lists are the same nights (#4088): the one definition of
+ * "same nights", for lists already in the sorted, distinct shape
+ * {@link getGuestBedNightKeys} returns.
+ */
+export function sameNightKeys(a: ReadonlyArray<string>, b: ReadonlyArray<string>): boolean {
+  return a.length === b.length && a.every((key, i) => key === b[i]);
+}
+
+/**
  * The mornings this guest leaves the lodge, sorted — one per SEGMENT, not one
  * per stay.
  *

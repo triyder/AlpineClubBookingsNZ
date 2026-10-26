@@ -102,3 +102,17 @@ function optionalString(source: object, key: string): string | null {
   const value = (source as Record<string, unknown>)[key];
   return typeof value === "string" && value.length > 0 ? value : null;
 }
+
+/**
+ * #4149: `resource_missing` that says the object is absent from THIS Stripe
+ * account and mode - not one Stripe reports exists in the other mode (a test
+ * key reading a live intent, or the reverse) or on another account, which says
+ * the configuration is wrong rather than that the object is gone, and so stays
+ * "unknown". Read from Stripe's own message, its only signal for this.
+ */
+export function isStripeResourceAbsentHere(error: unknown): boolean {
+  if (!isStripeResourceMissingError(error)) return false;
+  return !/similar object exists in (test|live) mode|(another|a different) account/i.test(
+    readStripeErrorFields(error).message,
+  );
+}

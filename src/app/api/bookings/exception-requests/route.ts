@@ -16,7 +16,9 @@ import { checkRateLimit, getClientIp, rateLimiters } from "@/lib/rate-limit";
 import { sendAdminBookingChangeRequestAlert } from "@/lib/email";
 import { bookableAgeTierEnum } from "@/lib/age-tier-schema";
 import { nameField } from "@/lib/zod-helpers";
-import { isDateOnlyString } from "@/lib/date-only";
+import {
+  GUEST_CHANGE_LIST_BOUND, guestRequestSchemaError, guestStayFieldsSchema,
+} from "@/lib/booking-guest-stay-range-input";
 import logger from "@/lib/logger";
 import {
   createNewBookingExceptionRequest,
@@ -25,8 +27,8 @@ import {
 import { mapExceptionRequestError } from "@/lib/booking-exception-request-http";
 import { dependantIdentityDeclarationSchema } from "@/lib/booking-dependant-identity";
 
-/**
- * A guest's explicit night set (#713), mirroring the create route's own field.
+/*
+ * A guest's explicit night set (#713) rides in `guestStayFieldsSchema`, as on create.
  *
  * REQUIRED here, not a nicety (#2562 review): the wizard sends per-guest night
  * sets whenever "Multiple date ranges" is on, and zod STRIPS unknown keys — so
@@ -34,9 +36,6 @@ import { dependantIdentityDeclarationSchema } from "@/lib/booking-dependant-iden
  * night, and the officer then reviewed (and an approval reserved, priced and
  * booked) nights nobody asked for.
  */
-const nightList = z
-  .array(z.string().refine(isDateOnlyString, { message: "Night must be YYYY-MM-DD" }))
-  .max(370);
 
 const createSchema = z.object({
   lodgeId: z.string().trim().min(1).optional(),
@@ -50,13 +49,11 @@ const createSchema = z.object({
         ageTier: bookableAgeTierEnum,
         isMember: z.boolean(),
         memberId: z.string().trim().min(1).optional(),
-        stayStart: z.string().optional(),
-        stayEnd: z.string().optional(),
-        nights: nightList.optional(),
+        ...guestStayFieldsSchema.shape,
       }),
     )
     .min(1)
-    .max(200),
+    .max(...GUEST_CHANGE_LIST_BOUND),
   memberMessage: z.string().max(5000),
   /**
    * #2721: the requester's answers to "this guest has the same name as your own
@@ -107,7 +104,7 @@ export async function POST(req: NextRequest) {
   const parsed = createSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
-      { error: "Validation failed", details: parsed.error.flatten() },
+      { error: guestRequestSchemaError(parsed.error, "Validation failed"), details: parsed.error.flatten() },
       { status: 400 },
     );
   }

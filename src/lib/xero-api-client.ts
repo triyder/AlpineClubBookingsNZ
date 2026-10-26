@@ -251,7 +251,7 @@ export async function getAuthenticatedXeroClient(): Promise<{
 
     // Token expired or about to expire - refresh it (wrapped in mutex)
     const refreshWork = (async () => {
-      const { tokens: claimedTokens, leaseUntil } = leaseClaim;
+      const { tokens: claimedTokens, lease } = leaseClaim;
       // Everything after the lease claim must run under this try: if client
       // construction (initialize() -> identity.xero.com discovery) throws
       // before the finally is armed, the rejected promise stays cached in
@@ -281,7 +281,7 @@ export async function getAuthenticatedXeroClient(): Promise<{
             tenantId: claimedTokens.tenantId,
           }, {
             actor: { kind: "system", actor: "xero-token-refresh" }, // #3454
-            lease: { claimed: claimedTokens, leaseUntil },
+            lease,
           });
 
           xero.setTokenSet({
@@ -311,7 +311,7 @@ export async function getAuthenticatedXeroClient(): Promise<{
           throw new Error(message);
         }
       } finally {
-        await releaseXeroTokenRefreshLease(claimedTokens.id, leaseUntil).catch((err) => {
+        await releaseXeroTokenRefreshLease(lease).catch((err) => {
           logger.warn({ err }, "Failed to release Xero token refresh lease");
         });
         _tokenRefreshPromise = null;

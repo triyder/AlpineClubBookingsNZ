@@ -183,6 +183,8 @@ describe("cancel preview for a part-paid internet banking booking (#3643)", () =
                   OR: [
                     { occurrenceKey: { startsWith: "edit-refund-hand-back:" } },
                     { occurrenceKey: { startsWith: "refund-request-hand-back:" } },
+                    { occurrenceKey: { startsWith: "card-refund-paid-another-way:" } },
+                    { occurrenceKey: { startsWith: "bank-refund-void:" } },
                   ],
                 },
                 select: { amountCents: true },

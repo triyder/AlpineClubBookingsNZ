@@ -27,7 +27,9 @@ import {
   lateCaptureAutoRefundOutcomeParagraph,
   lateCaptureHandBackConflictOutcomeParagraph,
   lateCapturePaymentLabel,
+  manualRefundTaskAlertAmountLabel, manualRefundTaskAlertLeadAndBody, manualRefundTaskAlertRecipientLabel,
   secondInstrumentConflictOutcomeParagraph,
+  type ManualRefundTaskAlertSituation,
 } from "@/lib/email-message-notes";
 import { emailPalette } from "@/lib/email-theme";
 import {
@@ -530,9 +532,9 @@ export function adminSecondInstrumentSettlementConflictTemplate(data: {
 
 // ---- B5 (#2262): Admin Alert — manual refund task raised ----
 //
-// A cash-settled booking was cancelled. There is no card to refund and no Xero
-// credit note to raise, so the money has to be handed back by a person. The
-// task is durable; this alert is the nudge, not the record.
+// A cash-settled booking was cancelled (or #4042 a group paid by Internet
+// Banking, or #4097 a card booking whose card refund fell short): a person
+// pays it back or checks it. The task is durable; this alert is the nudge.
 export function adminManualRefundTaskTemplate(data: {
   memberName: string;
   checkIn: Date;
@@ -541,12 +543,14 @@ export function adminManualRefundTaskTemplate(data: {
   bookingId: string;
   reason: string;
   reviewUrl: string;
+  situation?: ManualRefundTaskAlertSituation;
 },
   format: ClubFormat,
 ): string {
+  const [situation, leadAndBody] = [data.situation ?? "cash-cancellation", manualRefundTaskAlertLeadAndBody(data.situation ?? "cash-cancellation")]; // #4042, #4097, #3949
   return layout(`
-    ${heading("Manual Refund Needed — Cash Booking Cancelled")}
-    ${alertBox(
+    ${heading(situation === "group-organiser-internet-banking" ? "Manual Refund Needed — Internet Banking Group Cancelled" : situation === "card-refund-shortfall" ? "Manual Refund Needed — Card Refund Short on a Cancelled Booking" : situation === "joiner-cancel-organiser" ? "Manual Refund Needed — Group Joiner Cancelled, Refund to the Organiser" : "Manual Refund Needed — Cash Booking Cancelled")}
+    ${leadAndBody ? `${alertBox(leadAndBody[0], "warning")}${paragraph(leadAndBody[1])}` : `${alertBox(
       "A booking settled in cash (or by an off-Xero bank transfer) has been cancelled. The refund has to be paid back by hand — nothing was refunded automatically.",
       "warning"
     )}
@@ -555,13 +559,13 @@ export function adminManualRefundTaskTemplate(data: {
     )}
     ${paragraph(
       "Pay the member back, then mark the task complete on the payments board so the ledger records the refund. If the member declines it, or it was settled another way, dismiss the task with a note."
-    )}
+    )}`}
     ${infoTable([
-      { label: "Member", value: escapeHtml(data.memberName) },
+      { label: manualRefundTaskAlertRecipientLabel(situation), value: escapeHtml(data.memberName) },
       { label: "Check-in", value: emailCalendarDay(data.checkIn) },
       { label: "Check-out", value: emailCalendarDay(data.checkOut) },
       { label: "Booking", value: escapeHtml(data.bookingId) },
-      { label: "Amount to refund", value: formatCents(data.refundAmountCents, format) },
+      { label: manualRefundTaskAlertAmountLabel(situation), value: formatCents(data.refundAmountCents, format) },
       { label: "Reason", value: escapeHtml(data.reason) },
     ])}
     ${button("View Payments", data.reviewUrl, { sameOrigin: true })}
@@ -574,7 +578,7 @@ export function adminLateCaptureHeldTemplate(data: {
 }, format: ClubFormat): string {
   return layout(`
     ${heading("Late Payment Held for Approval")}
-    ${alertBox("A card payment went through after its booking was cancelled. Your club has a treasurer approve these refunds, so it has NOT been refunded - the money is still with the club.", "warning")}
+    ${alertBox("A card payment went through after its booking was cancelled and has NOT been refunded - your club has a treasurer approve these refunds, or the card provider refused the automatic refund - so the money is still with the club.", "warning")}
     ${paragraph("Open the refund tasks on the payments board and either refund it to the card (through Stripe) or close it without refunding, with a note - for example, when the cancellation was a mistake.")}
     ${infoTable([
       { label: "Member", value: escapeHtml(data.memberName) },

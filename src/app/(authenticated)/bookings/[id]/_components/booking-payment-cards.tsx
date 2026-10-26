@@ -3,13 +3,8 @@ import type { BoundClubFormat } from "@/lib/club-format-bound";
 import { BookingPaymentSection } from "@/components/booking-payment-section";
 import { SwitchToInternetBankingButton } from "@/components/switch-to-internet-banking-button";
 import { SendGuestPaymentLinkButton } from "@/components/send-guest-payment-link-button";
-import { AdditionalPaymentCard } from "@/components/additional-payment-card";
 import { BookingAdditionalPaymentPanel } from "@/components/admin/booking-additional-payment-panel";
-import {
-  additionalPaymentEpisodeStartedAt,
-  isAdditionalAmountUncollected,
-  isAdditionalPaymentDoorOpenForBooking,
-} from "@/lib/additional-payment-chase";
+import { additionalPaymentEpisodeStartedAt } from "@/lib/additional-payment-chase";
 import { ConfirmDraftButton } from "@/components/confirm-draft-button";
 import { WaitlistOfferCard } from "@/components/waitlist-offer-card";
 import { getBookingPaymentMode } from "@/lib/booking-payment-flow";
@@ -20,6 +15,7 @@ import type { BoundClubTime } from "@/lib/club-time";
 import type { BookingDetailViewer } from "../_lib/booking-detail-viewer";
 import type { BookingDetailEditAccess } from "../_lib/booking-detail-edit-access";
 import type { BookingDetailLinkedParty } from "../_lib/booking-detail-linked-party";
+import { savedCardChargeCents } from "@/lib/booking-payment-state";
 import type { BookingDetailPayment } from "../_lib/booking-detail-payment";
 import type { BookingDetailMessages } from "../_lib/booking-detail-messages";
 
@@ -71,7 +67,9 @@ export function BookingPaymentCards({
     showCompletePaymentCard,
     creditAppliedCents,
     showCreditApplied,
-    amountDueAfterCreditCents,
+    changeFeeOwedCents,
+    showAmountBreakdown,
+    cardAmountDueCents,
   } = payment;
   const {
     paymentRequiredDescription,
@@ -291,29 +289,35 @@ export function BookingPaymentCards({
             <p className="text-sm text-muted-foreground mb-4">
               {paymentRequiredDescription}
             </p>
-            {showCreditApplied && (
+            {showAmountBreakdown && (
               <div className="mb-4 space-y-1 rounded-md border border-success-6 bg-success-3 px-3 py-2 text-sm text-success-11">
                 <div className="flex items-center justify-between">
                   <span>Booking total</span>
                   <span>{money.cents(booking.finalPriceCents)}</span>
                 </div>
-                <div className="flex items-center justify-between">
-                  <span>Credit applied</span>
-                  <span>-{money.cents(creditAppliedCents)}</span>
-                </div>
+                {/* #3750 (#3955 review F8): a change fee owed with the price,
+                    so the rows add up to the amount due. */}
+                {changeFeeOwedCents > 0 && (
+                  <div className="flex items-center justify-between">
+                    <span>Change fee</span>
+                    <span>+{money.cents(changeFeeOwedCents)}</span>
+                  </div>
+                )}
+                {showCreditApplied && (
+                  <div className="flex items-center justify-between">
+                    <span>Credit applied</span>
+                    <span>-{money.cents(creditAppliedCents)}</span>
+                  </div>
+                )}
                 <div className="flex items-center justify-between font-medium">
                   <span>Amount due</span>
-                  <span>{money.cents(amountDueAfterCreditCents)}</span>
+                  <span>{money.cents(cardAmountDueCents)}</span>
                 </div>
               </div>
             )}
             <BookingPaymentSection
               bookingId={booking.id}
-              amountCents={
-                showCreditApplied
-                  ? amountDueAfterCreditCents
-                  : booking.finalPriceCents
-              }
+              amountCents={cardAmountDueCents}
               paymentMode={getBookingPaymentMode(booking.status)}
               returnUrl={`${process.env.NEXTAUTH_URL || "http://localhost:3000"}/bookings/${booking.id}`}
             />
@@ -374,7 +378,8 @@ export function BookingPaymentCards({
             </p>
             <BookingPaymentSection
               bookingId={booking.id}
-              amountCents={booking.finalPriceCents}
+              // #4357 (`INV-PAY-119`): what the saved card will be charged.
+              amountCents={savedCardChargeCents(booking)}
               paymentMode={getBookingPaymentMode(booking.status)}
               returnUrl={`${process.env.NEXTAUTH_URL || "http://localhost:3000"}/bookings/${booking.id}`}
             />
@@ -400,38 +405,6 @@ export function BookingPaymentCards({
           canWithdraw={canEditFinance}
         />
       ) : null}
-
-      {/* Additional payment required after a modification that increased the
-          price. Member-personal payment (Stripe card entry) — owner-only so a
-          non-owner admin/officer never sees the member's pay controls (#1303).
-
-          The lifecycle check is load-bearing, not tidiness (#2350): cancelling a
-          booking marks the additional intent FAILED and leaves the amount alone,
-          so an amount-and-status-only condition kept showing the owner of a
-          CANCELLED booking a "pay this extra" card — and the secret route behind
-          it would still hand out a confirmable client secret.
-
-          #3641: the booking half of the member's pay door, the same predicate
-          the secret route's door (`resolveAdditionalPaymentDoor`) is built on,
-          so the card, the route and the Xero reaper share one lifecycle rule.
-          Not the whole door: that needs an intent, and this card is shown for an
-          uncollected amount with none (a failed mint), to say it is owing. */}
-      {booking.payment &&
-        isBookingOwner &&
-        isAdditionalPaymentDoorOpenForBooking({
-          bookingStatus: booking.status,
-          bookingDeletedAt: booking.deletedAt,
-        }) &&
-        // #3340: the ONE uncollected predicate, called not restated
-        // (`INV-SSOT-001`). Arrived from `main`, where it replaced these two
-        // clauses in the pre-split page; re-homed here because #2958 moved this
-        // gate into the section that renders it.
-        isAdditionalAmountUncollected(booking.payment) && (
-          <AdditionalPaymentCard
-            bookingId={booking.id}
-            additionalAmountCents={booking.payment.additionalAmountCents}
-          />
-        )}
     </>
   );
 }

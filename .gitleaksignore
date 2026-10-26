@@ -47,3 +47,19 @@
 # To add one: run the scan the `Secret scan (gitleaks)` job runs, take the
 # `Fingerprint` field from the JSON report, and paste it here. `SECURITY.md` →
 # "Which CI security checks block a merge" has the full command.
+
+# #3924 (#3372): a realdb fixture's Xero outbox idempotency and correlation keys,
+# a plain test label for a paid-another-way race case. Not a credential.
+33ab0ed913f8b30f0f10a4eae47bfe3b5c010fd9:src/lib/__tests__/card-refund-paid-another-way.realdb.test.ts:generic-api-key:472
+33ab0ed913f8b30f0f10a4eae47bfe3b5c010fd9:src/lib/__tests__/card-refund-paid-another-way.realdb.test.ts:generic-api-key:473
+
+# #4132: a realdb fixture's recovery idempotency key, a plain test label for the
+# plan-less modification-refund replay case. Not a credential; the file now
+# builds it rather than quoting it.
+c7df5c92c2a2d419538428be36c1618cc7c13d6c:src/lib/__tests__/ledger-insertion-seq.realdb.test.ts:generic-api-key:327
+
+# #4256: a realdb fixture's invoice idempotency/correlation key, a plain test
+# label for the PARTIAL repair claim proof. Not a credential; the file now
+# builds it rather than quoting it.
+d7d8618d9b3a40143f34b06c10b4f1494fffcc3a:src/lib/__tests__/xero-partial-repair-claim.realdb.test.ts:generic-api-key:117
+d7d8618d9b3a40143f34b06c10b4f1494fffcc3a:src/lib/__tests__/xero-partial-repair-claim.realdb.test.ts:generic-api-key:118

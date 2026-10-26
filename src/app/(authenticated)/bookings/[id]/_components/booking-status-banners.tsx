@@ -11,6 +11,7 @@ import type { BookingDetailPayment } from "../_lib/booking-detail-payment";
 import type { BookingDetailHistory } from "../_lib/booking-detail-history";
 import type { BookingDetailMessages } from "../_lib/booking-detail-messages";
 import { BookingMoneyReconciliationNotice } from "./booking-money-reconciliation-notice";
+import { isPaidLikeBookingStatus } from "@/lib/booking-status";
 
 // States with a self-contained outcome worth surfacing as a banner. Active
 // states (payable / under_review) already have their own dedicated UI below.
@@ -77,6 +78,8 @@ export function BookingStatusBanners({
   } = party;
   const { showCompletePaymentCard } = payment;
   const { bookingNarrative } = history;
+  const neutralFinancialNarrative = !viewer.canSeeOwnerCredit && ["paid", "financial_review_pending"].includes(bookingNarrative.state);
+  const stayConfirmed = isPaidLikeBookingStatus(booking.status) || booking.status === "CONFIRMED";
   const { paymentRequiredDescription, financialReviewPendingDescription } =
     messages;
   return (
@@ -123,18 +126,18 @@ export function BookingStatusBanners({
             "border-border bg-muted text-foreground"
           }`}
         >
-          <p className="font-medium">{bookingNarrative.headline}</p>
-          <p>{bookingNarrative.message}</p>
+          <p className="font-medium">{neutralFinancialNarrative ? stayConfirmed ? "Booking confirmed" : "Booking awaiting confirmation" : bookingNarrative.headline}</p>
+          <p>{neutralFinancialNarrative ? stayConfirmed ? "This stay is confirmed." : "This booking is awaiting confirmation." : bookingNarrative.message}</p>
           {/* #3033: the club's configurable explanation, inside the banner and
               between the facts and the next step, which is where a member reads
               it as part of one message rather than as a second notice. */}
-          {bookingNarrative.state === "financial_review_pending" &&
+          {viewer.canSeeOwnerCredit && bookingNarrative.state === "financial_review_pending" &&
           financialReviewPendingDescription ? (
             <p data-testid="booking-financial-review-description">
               {financialReviewPendingDescription}
             </p>
           ) : null}
-          <p className="opacity-80">{bookingNarrative.nextStep}</p>
+          {!neutralFinancialNarrative ? <p className="opacity-80">{bookingNarrative.nextStep}</p> : null}
         </div>
       ) : null}
 
@@ -212,14 +215,14 @@ export function BookingStatusBanners({
           the edit path may write one onto), and never on a deleted booking.
 
           Audience (MED-2): the OWNER hears the second-person promise, an
-          admin-type viewer the third-person one; a linked-guest viewer sees
-          nothing at all — the election is the owner's money, and every other
-          money surface on this page is likewise withheld from linked guests
-          (see resolveCreditElectionNoticeAudience). */}
+          admin-type viewer the third-person one; a viewer who cannot see the
+          owner's credit (`canSeeOwnerCredit` false — a linked guest) sees
+          nothing at all, as with the page's other credit surfaces (#3991; see
+          resolveCreditElectionNoticeAudience). */}
       {(() => {
         const creditNoticeAudience = resolveCreditElectionNoticeAudience({
           isBookingOwner,
-          isNonOwnerAdminViewer: nonOwnerAdminViewer,
+          canSeeOwnerCredit: viewer.canSeeOwnerCredit,
         });
         return !isDeleted &&
           creditNoticeAudience !== null &&

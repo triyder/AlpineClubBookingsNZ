@@ -18,6 +18,12 @@ export interface PaymentDisplayStatusInput {
   paymentStatus: string;
   refundedAmountCents: number;
   credits?: CancellationCreditEntry[];
+  /**
+   * #3991: the viewer cannot see the booking owner's account credit (the
+   * booking page's `canSeeOwnerCredit` is false — a linked guest). A settlement
+   * that issued credit then reads neutrally rather than "Credit Issued".
+   */
+  ownerCreditHidden?: boolean;
 }
 
 export interface PaymentDisplayStatus {
@@ -68,11 +74,20 @@ export function getPaymentDisplayStatus({
   paymentStatus,
   refundedAmountCents,
   credits = [],
+  ownerCreditHidden = false,
 }: PaymentDisplayStatusInput): PaymentDisplayStatus {
   const { accountCreditCents, refundToOriginalMethodCents } =
     getCancellationSettlementBreakdown(refundedAmountCents, credits);
 
   if (paymentStatus === "REFUNDED" || paymentStatus === "PARTIALLY_REFUNDED") {
+    if (accountCreditCents > 0 && ownerCreditHidden) {
+      return {
+        label: paymentStatus === "REFUNDED" ? "Settled on Cancellation" : "Partly Settled on Cancellation",
+        toneStatus: paymentStatus,
+        detail: "Settled under the cancellation policy in effect at the time.",
+      };
+    }
+
     if (accountCreditCents > 0 && refundToOriginalMethodCents > 0) {
       return {
         label:

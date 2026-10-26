@@ -64,8 +64,9 @@ const h = vi.hoisted(() => {
     },
     memberCredit: {
       // #3836: the engine's one batch predicate, over the same rows.
-      groupBy: async ({ where }: { where: { appliedToBookingId: { in: string[] }; type: string; xeroCreditNoteId: null } }) =>
-        where.appliedToBookingId.in.flatMap((appliedToBookingId) => {
+      groupBy: async ({ where }: { where: { appliedToBookingId?: { in: string[] }; type: string; xeroCreditNoteId: null } }) =>
+        // #4219: the lot calculation's write-down read shares this stub; no row here is one.
+        !where.appliedToBookingId ? [] : where.appliedToBookingId.in.flatMap((appliedToBookingId) => {
           const rows = state.appliedRows.filter((r) => matchesApplied(r, { appliedToBookingId, type: where.type, xeroCreditNoteId: null }));
           return rows.length ? [{ appliedToBookingId, _sum: { amountCents: rows.reduce((s, r) => s + r.amountCents, 0) } }] : [];
         }),
@@ -106,6 +107,9 @@ const h = vi.hoisted(() => {
       },
     },
     memberCreditNoteAllocation: {
+      // #4013: the committed slices a retry must keep.
+      findMany: async ({ where }: { where: { appliedToBookingId: string } }) =>
+        state.joinRows.filter((j) => j.appliedToBookingId === where.appliedToBookingId),
       groupBy: async ({
         where,
       }: {
@@ -176,7 +180,7 @@ const h = vi.hoisted(() => {
             j.memberCreditId === key.memberCreditId &&
             j.appliedToBookingId === key.appliedToBookingId,
         );
-        return row ? { id: row.id } : null;
+        return row ? { id: row.id, amountCents: row.amountCents } : null;
       },
     },
     xeroObjectLink: {
@@ -202,6 +206,8 @@ const h = vi.hoisted(() => {
 vi.mock("@/lib/prisma", () => ({ prisma: h.prismaStub }));
 vi.mock("@/lib/member-credit", () => ({ lockMemberCreditLedger: vi.fn() }));
 vi.mock("@/lib/xero-credit-notes", () => ({ allocateCreditNoteToInvoice: vi.fn() }));
+// #4219: the converge routine is proved against real PostgreSQL; here only whether the worker calls it.
+vi.mock("@/lib/xero-applied-credit-spent-outside-app", () => ({ convergedForNamedFailure: vi.fn(async () => false) }));
 vi.mock("@/lib/xero-sync", () => ({
   completeXeroSyncOperation: vi.fn(),
   failXeroSyncOperation: vi.fn(),
@@ -219,7 +225,13 @@ import {
   mintSliceMappingKey,
   planMintGroups,
 } from "@/lib/xero-applied-credit-mint-accounts";
+import {
+  AppliedCreditReplanDivergedError,
+  assertPlanKeepsCommittedSlices,
+} from "@/lib/xero-applied-credit-plan";
 import { allocateCreditNoteToInvoice } from "@/lib/xero-credit-notes";
+import { convergedForNamedFailure } from "@/lib/xero-applied-credit-spent-outside-app";
+import { CreditNoteSpentOutsideAppError } from "@/lib/xero-credit-note-spent-outside-app";
 import { completeXeroSyncOperation } from "@/lib/xero-sync";
 
 const TEST_FORMAT = { currencyCode: "NZD", locale: "en-NZ" };
@@ -360,6 +372,28 @@ describe("planAppliedCreditAllocation (#1620 allocate-existing)", () => {
  * as a discretionary club expense for ever. An ordinary refund read before its
  * note arrives from the outbox worker would land wherever worker latency put it.
  */
+describe("assertPlanKeepsCommittedSlices (#4013, INV-PAY-127): a retry keeps what it committed", () => {
+  const plan = planAppliedCreditAllocation([noteLot("lot-a", "note-a", 5_000), restoredLot("lot-r", 5_000)], 8_000);
+  const keep = (committed: Parameters<typeof assertPlanKeepsCommittedSlices>[1]) =>
+    assertPlanKeepsCommittedSlices("booking-1", committed, plan, TEST_FORMAT);
+
+  it("passes a first run, and a retry whose committed slices the plan reproduces", () => {
+    expect(() => keep([])).not.toThrow();
+    expect(() => keep([{ memberCreditId: "lot-a", xeroCreditNoteId: "note-a", amountCents: 5_000 }])).not.toThrow();
+    // A minted slice is matched by lot and amount: the plan never knows the minted note.
+    expect(() => keep([{ memberCreditId: "lot-r", xeroCreditNoteId: "minted-note", amountCents: 3_000 }])).not.toThrow();
+  });
+
+  it.each([
+    { shape: "a lot the plan no longer uses", slice: { memberCreditId: "lot-b", xeroCreditNoteId: "note-b", amountCents: 5_000 } },
+    { shape: "another figure on a planned lot", slice: { memberCreditId: "lot-a", xeroCreditNoteId: "note-a", amountCents: 4_000 } },
+    { shape: "another note on a planned lot", slice: { memberCreditId: "lot-a", xeroCreditNoteId: "note-z", amountCents: 5_000 } },
+  ])("refuses a committed slice on $shape, naming the booking and the slice", ({ slice }) => {
+    expect(() => keep([slice])).toThrow(AppliedCreditReplanDivergedError);
+    expect(() => keep([slice])).toThrow(new RegExp(`booking-1.*on credit ${slice.memberCreditId}.*INV-PAY-127`));
+  });
+});
+
 describe("mintSliceMappingKey (#2717): goodwill is the admin adjustment", () => {
   it("sends an admin adjustment to the goodwill expense mapping", () => {
     expect(mintSliceMappingKey(CreditType.ADMIN_ADJUSTMENT)).toBe(
@@ -563,5 +597,111 @@ describe("allocateAppliedCreditForBooking (#1620 handler retry idempotency)", ()
     expect(h.state.joinRows).toHaveLength(1);
     // Both runs resolved the op (first: complete, second: skip-complete).
     expect(completeXeroSyncOperation).toHaveBeenCalledTimes(2);
+  });
+  it("plans only from lots that are not convergence rows, less credit written down because its note was used outside the app (#4219)", async () => {
+    const findMany = vi.spyOn(h.prismaStub.memberCredit, "findMany");
+    const groupBy = vi.spyOn(h.prismaStub.memberCredit, "groupBy");
+    vi.mocked(allocateCreditNoteToInvoice).mockResolvedValue(undefined);
+
+    await allocateAppliedCreditForBooking("b1", { syncOperationId: "op1" });
+    const findManyCalls = findMany.mock.calls.map((call) => call[0]);
+    const groupByCalls = groupBy.mock.calls.map((call) => call[0]);
+    findMany.mockRestore();
+    groupBy.mockRestore();
+
+    expect(findManyCalls).toContainEqual(
+      expect.objectContaining({ where: expect.objectContaining({ amountCents: { gt: 0 }, outsideSpendConvergedAt: null }) }),
+    );
+    expect(groupByCalls).toContainEqual(
+      expect.objectContaining({
+        where: expect.objectContaining({ memberId: "m1", type: "ADMIN_ADJUSTMENT", outsideSpendConvergedAt: { not: null }, xeroCreditNoteId: { in: ["cn1"] } }),
+      }),
+    );
+  });
+
+  it("takes a note's write-down once, from its oldest lot, not from every lot stamped with the note (#4219)", async () => {
+    // Two positive rows carry cn1: the funding lot (3000) and a later reconciliation row (500), 1000 written down.
+    h.state.lots = [
+      { id: "c1", memberId: "m1", amountCents: 3000, xeroCreditNoteId: "cn1" },
+      { id: "c2", memberId: "m1", amountCents: 500, xeroCreditNoteId: "cn1" },
+    ];
+    h.state.appliedRows = [{ appliedToBookingId: "b1", type: "BOOKING_APPLIED", amountCents: -2500, xeroCreditNoteId: null }];
+    vi.mocked(allocateCreditNoteToInvoice).mockResolvedValue(undefined);
+    const realGroupBy = h.prismaStub.memberCredit.groupBy;
+    const groupBy = vi.spyOn(h.prismaStub.memberCredit, "groupBy").mockImplementation(((args: { where: { outsideSpendConvergedAt?: unknown } }) =>
+      args.where.outsideSpendConvergedAt ? [{ xeroCreditNoteId: "cn1", _sum: { amountCents: -1000 } }] : realGroupBy(args as never)) as never);
+    try {
+      await allocateAppliedCreditForBooking("b1", { syncOperationId: "op1" });
+    } finally {
+      groupBy.mockRestore();
+    }
+
+    // 2000 left on c1 and 500 on c2 cover 2500; taking 1000 from EACH lot would leave 2000 + 0 and fail.
+    expect(h.state.joinRows.map((row) => [row.memberCreditId, row.amountCents])).toEqual([["c1", 2000], ["c2", 500]]);
+  });
+
+  it("spills a write-down larger than the oldest lot's free amount onto the next lot stamped with the note (#4219)", async () => {
+    // c1 is nearly spent (500 free), c2 holds 3000; 1000 was written down, so c1 gives up 500 and c2 gives up the other 500.
+    h.state.lots = [
+      { id: "c1", memberId: "m1", amountCents: 500, xeroCreditNoteId: "cn1" },
+      { id: "c2", memberId: "m1", amountCents: 3000, xeroCreditNoteId: "cn1" },
+    ];
+    vi.mocked(allocateCreditNoteToInvoice).mockResolvedValue(undefined);
+    const realGroupBy = h.prismaStub.memberCredit.groupBy;
+    const groupBy = vi.spyOn(h.prismaStub.memberCredit, "groupBy").mockImplementation(((args: { where: { outsideSpendConvergedAt?: unknown } }) =>
+      args.where.outsideSpendConvergedAt ? [{ xeroCreditNoteId: "cn1", _sum: { amountCents: -1000 } }] : realGroupBy(args as never)) as never);
+    try {
+      // 3000 is applied but only 2500 of the note is left after the write-down: it cannot be covered.
+      h.state.appliedRows = [{ appliedToBookingId: "b1", type: "BOOKING_APPLIED", amountCents: -3000, xeroCreditNoteId: null }];
+      await expect(allocateAppliedCreditForBooking("b1", { syncOperationId: "op1" })).rejects.toThrow(/ledger inconsistency/);
+
+      // 2500 is exactly what is left, and all of it is on c2.
+      h.state.appliedRows = [{ appliedToBookingId: "b1", type: "BOOKING_APPLIED", amountCents: -2500, xeroCreditNoteId: null }];
+      await allocateAppliedCreditForBooking("b1", { syncOperationId: "op1" });
+      expect(h.state.joinRows.map((row) => [row.memberCreditId, row.amountCents])).toEqual([["c2", 2500]]);
+    } finally {
+      groupBy.mockRestore();
+    }
+  });
+
+  it("does not plan credit that was written down: the lot's remaining balance falls by it (#4219)", async () => {
+    const realGroupBy = h.prismaStub.memberCredit.groupBy;
+    const groupBy = vi.spyOn(h.prismaStub.memberCredit, "groupBy").mockImplementation(((args: { where: { outsideSpendConvergedAt?: unknown } }) =>
+      args.where.outsideSpendConvergedAt ? [{ xeroCreditNoteId: "cn1", _sum: { amountCents: -1000 } }] : realGroupBy(args as never)) as never);
+    try {
+      // The lot holds 3000 and 1000 of it was written down, so 3000 of applied credit cannot be covered.
+      await expect(allocateAppliedCreditForBooking("b1", { syncOperationId: "op1" })).rejects.toThrow(/ledger inconsistency/);
+      expect(allocateCreditNoteToInvoice).not.toHaveBeenCalled();
+    } finally {
+      groupBy.mockRestore();
+    }
+  });
+
+  describe("a credit note spent outside the app (#4219)", () => {
+    const named = () => new CreditNoteSpentOutsideAppError("spent", "cn1", 0, 3000);
+
+    it("rethrows the named failure when the converge declines, so the operation fails as before", async () => {
+      vi.mocked(allocateCreditNoteToInvoice).mockRejectedValue(named());
+      vi.mocked(convergedForNamedFailure).mockResolvedValue(false);
+
+      await expect(allocateAppliedCreditForBooking("b1", { syncOperationId: "op1" })).rejects.toBeInstanceOf(
+        CreditNoteSpentOutsideAppError,
+      );
+      expect(allocateCreditNoteToInvoice).toHaveBeenCalledTimes(1);
+      expect(convergedForNamedFailure).toHaveBeenCalledWith(expect.any(CreditNoteSpentOutsideAppError), "b1", undefined);
+    });
+
+    it("plans again after a converge, and stops after three converges in one run", async () => {
+      vi.mocked(allocateCreditNoteToInvoice).mockRejectedValue(named());
+      vi.mocked(convergedForNamedFailure).mockImplementation(async (_error, _bookingId, attempts = 0) => attempts < 3);
+
+      await expect(allocateAppliedCreditForBooking("b1", { syncOperationId: "op1" })).rejects.toBeInstanceOf(
+        CreditNoteSpentOutsideAppError,
+      );
+
+      // The first attempt and three re-plans; the counter reaches the routine as 0, 1, 2, 3.
+      expect(allocateCreditNoteToInvoice).toHaveBeenCalledTimes(4);
+      expect(vi.mocked(convergedForNamedFailure).mock.calls.map((call) => call[2])).toEqual([undefined, 1, 2, 3]);
+    });
   });
 });

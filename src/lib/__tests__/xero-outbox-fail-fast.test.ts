@@ -49,6 +49,18 @@ const mocks = vi.hoisted(() => {
     return false;
   };
 
+  // One branch of an `OR`: `null`, `{ not }` or `{ notIn }` per column. A NULL
+  // column matches only `null`, as in SQL, where `NULL <> x` is not true.
+  const matchesBranch = (row: StoredOperation, branch: Record<string, unknown>): boolean =>
+    Object.entries(branch).every(([column, test]) => {
+      const value = (row as unknown as Record<string, unknown>)[column];
+      if (test === null) return value === null;
+      if (value === null || value === undefined) return false;
+      const { not, notIn } = test as { not?: unknown; notIn?: unknown[] };
+      if (notIn) return !notIn.includes(value);
+      return value !== not;
+    });
+
   // Stateful `updateMany` honouring the `where.id` + `where.status` predicate,
   // exactly as Postgres would: a guard that does not match the row's current
   // status touches nothing and returns `{ count: 0 }`. This is what makes the
@@ -59,13 +71,15 @@ const mocks = vi.hoisted(() => {
       where,
       data,
     }: {
-      where: { id: string; status?: unknown; manuallyResolvedAt?: null };
+      where: { id: string; status?: unknown; manuallyResolvedAt?: null; OR?: Record<string, unknown>[] };
       data: Partial<StoredOperation>;
     }) => {
       let count = 0;
       for (const row of rows.values()) {
         if (row.id !== where.id) continue;
         if (!matchesStatus(row.status, where)) continue;
+        // #4356: honour the not-a-repair-claim `OR` as Postgres would, NULL included.
+        if (where.OR && !where.OR.some((branch) => matchesBranch(row, branch))) continue;
         // #3635: honour the resolved-in-Xero guard the way Postgres would.
         if (
           where.manuallyResolvedAt === null &&
@@ -81,18 +95,20 @@ const mocks = vi.hoisted(() => {
   );
 
   // The handlers' own `catch` self-fails the outbox row via this shared helper
-  // (xero-sync.ts): it writes FAILED + completedAt with no status guard. The
-  // mock reproduces that write against the store so the outbox's un-claim runs
-  // against a genuinely-FAILED row.
-  const failXeroSyncOperation = vi.fn(
-    async (operationId: string, _error?: unknown) => {
-      const row = rows.get(operationId);
-      if (row) {
-        row.status = "FAILED";
-        row.completedAt = new Date();
-      }
-    }
-  );
+  // (xero-sync.ts): it writes FAILED + completedAt over any row but one holding
+  // a recorded success, SUCCEEDED or PARTIAL, which it leaves as it is and
+  // answers null (#4356, `INV-INT-029`). The mock reproduces that write against
+  // the store so the outbox's un-claim runs against a genuinely-FAILED row.
+  const selfFail = async (operationId: string, _error?: unknown) => {
+    const row = rows.get(operationId);
+    if (!row || row.status === "SUCCEEDED" || row.status === "PARTIAL") return null;
+    // Nor over a repair's marked RUNNING claim.
+    if (row.status === "RUNNING" && row.lastErrorCode === "REFUND_NOTE_REPAIR_RUNNING") return null;
+    row.status = "FAILED";
+    row.completedAt = new Date();
+    return { ...row };
+  };
+  const failXeroSyncOperation = vi.fn(selfFail);
 
   /**
    * #3170 fix round (F1): the worker re-reads an operation's payload AFTER it
@@ -103,12 +119,13 @@ const mocks = vi.hoisted(() => {
   const operationFindUnique = vi.fn(
     async ({ where }: { where: { id: string } }) => {
       const row = rows.get(where.id);
-      return row ? { requestPayload: row.requestPayload } : null;
+      return row ? { requestPayload: row.requestPayload, status: row.status } : null;
     }
   );
 
   return {
     rows,
+    selfFail,
     operationFindMany: vi.fn(),
     operationFindUnique,
     operationUpdateMany,
@@ -130,6 +147,8 @@ vi.mock("@/lib/prisma", () => ({
     membershipSubscriptionCharge: {
       findUnique: mocks.chargeFindUnique,
       update: mocks.chargeUpdate,
+      // #4098: the failure handler's charge write is a status-guarded updateMany.
+      updateMany: mocks.chargeUpdate,
     },
   },
 }));
@@ -163,6 +182,7 @@ import {
 } from "@/lib/xero-api-client";
 import { XeroContactEnvironmentUnknownError } from "@/lib/xero-environment-write-gate";
 import { processQueuedXeroOutboxOperations } from "@/lib/xero-operation-outbox";
+import { NOT_A_XERO_REPAIR_CLAIM } from "@/lib/xero-operation-outcome-guard";
 
 /** Seed one PENDING row into both the store and the initial scan result. */
 function seedOperation(row: Partial<StoredOperation> & { id: string }) {
@@ -220,15 +240,7 @@ describe("outbox processor fail-fast for all queue types (#1354)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.rows.clear();
-    mocks.failXeroSyncOperation.mockImplementation(
-      async (operationId: string, _error?: unknown) => {
-        const row = mocks.rows.get(operationId);
-        if (row) {
-          row.status = "FAILED";
-          row.completedAt = new Date();
-        }
-      }
-    );
+    mocks.failXeroSyncOperation.mockImplementation(mocks.selfFail);
     mocks.chargeFindUnique.mockResolvedValue(null);
   });
 
@@ -287,6 +299,7 @@ describe("outbox processor fail-fast for all queue types (#1354)", () => {
         succeeded: 0,
         failed: 0,
         skipped: 1,
+        cooldownDeferred: 1,
       });
       // The handler self-failed once; the outbox must NOT fail it again.
       expect(mocks.failXeroSyncOperation).toHaveBeenCalledTimes(1);
@@ -304,6 +317,7 @@ describe("outbox processor fail-fast for all queue types (#1354)", () => {
           id: "op_refund_1",
           status: { in: ["RUNNING", "FAILED"] },
           manuallyResolvedAt: null,
+          ...NOT_A_XERO_REPAIR_CLAIM,
         },
         data: {
           status: "PENDING",
@@ -312,6 +326,32 @@ describe("outbox processor fail-fast for all queue types (#1354)", () => {
           lastErrorCode: null,
           lastErrorMessage: null,
         },
+      });
+    });
+
+    // #4356 (`INV-INT-029`): a FAILED refund-note repair claimed the row the
+    // handler condemned before the hand-back ran; the claim is the repair's.
+    it("MUTATION: never returns a repair's marked claim to PENDING", async () => {
+      queueOneRefundOperation();
+      const repairClaimedAt = new Date("2026-07-01T00:00:00.000Z");
+      mocks.createXeroCreditNote.mockImplementation(async () => {
+        const refusal = new XeroTransientOutageError(120, true);
+        await mocks.failXeroSyncOperation("op_refund_1", refusal);
+        Object.assign(mocks.rows.get("op_refund_1")!, {
+          status: "RUNNING",
+          startedAt: repairClaimedAt,
+          completedAt: null,
+          lastErrorCode: "REFUND_NOTE_REPAIR_RUNNING",
+        });
+        throw refusal;
+      });
+
+      await processQueuedXeroOutboxOperations({ limit: 1 });
+
+      expect(mocks.rows.get("op_refund_1")).toMatchObject({
+        status: "RUNNING",
+        startedAt: repairClaimedAt,
+        lastErrorCode: "REFUND_NOTE_REPAIR_RUNNING",
       });
     });
 
@@ -332,6 +372,28 @@ describe("outbox processor fail-fast for all queue types (#1354)", () => {
       expect(mocks.rows.get("op_refund_1")?.status).toBe("FAILED");
     });
 
+    // #4356 review F5: a caller sharing this row recorded its success while
+    // this run's handler was refused, so the handler's self-fail was kept off
+    // it. The un-claim then matches nothing, and that is not a failure.
+    it("MUTATION: a row another caller completed is left as it is, counted skipped, not failed", async () => {
+      const logger = (await import("@/lib/logger")).default;
+      queueOneRefundOperation();
+      mocks.createXeroCreditNote.mockImplementation(async () => {
+        const refusal = new XeroTransientOutageError(120, true);
+        Object.assign(mocks.rows.get("op_refund_1")!, { status: "SUCCEEDED", completedAt: new Date() });
+        await mocks.failXeroSyncOperation("op_refund_1", refusal);
+        throw refusal;
+      });
+
+      const result = await processQueuedXeroOutboxOperations({ limit: 1 });
+
+      expect(result).toMatchObject({ found: 1, processed: 1, succeeded: 0, failed: 0, skipped: 1 });
+      expect(mocks.rows.get("op_refund_1")?.status).toBe("SUCCEEDED");
+      expect(mocks.failXeroSyncOperation).toHaveBeenCalledTimes(1);
+      expect(logger.warn).not.toHaveBeenCalledWith(expect.anything(), expect.stringContaining("failing it"));
+      expect(logger.error).not.toHaveBeenCalled();
+    });
+
     it("MEMBERSHIP_SUBSCRIPTION_INVOICE (non-self-failing handler): returns the RUNNING row", async () => {
       queueOneSubscriptionOperation();
       mocks.createXeroMembershipSubscriptionInvoice.mockRejectedValue(
@@ -346,6 +408,7 @@ describe("outbox processor fail-fast for all queue types (#1354)", () => {
         succeeded: 0,
         failed: 0,
         skipped: 1,
+        cooldownDeferred: 1,
       });
       expect(mocks.failXeroSyncOperation).not.toHaveBeenCalled();
       // The subscription-charge exposure below the cooldown branch must NOT run
@@ -389,6 +452,7 @@ describe("outbox processor fail-fast for all queue types (#1354)", () => {
       succeeded: 0,
       failed: 0,
       skipped: 1,
+      cooldownDeferred: 1,
     });
     const row = mocks.rows.get("op_refund_1");
     expect(row?.status).toBe("PENDING");
@@ -452,5 +516,41 @@ describe("outbox processor fail-fast for all queue types (#1354)", () => {
 
     expect(result).toMatchObject({ found: 1, failed: 1, skipped: 0 });
     expect(mocks.rows.get("op_refund_1")?.status).toBe("FAILED");
+  });
+});
+
+// #2147 / #4098: when a subscription invoice attempt fails, the handler exposes
+// the error on the charge by sending it back to QUEUED / EMAIL_FAILED. A charge
+// that needs no invoice — VOIDED, or NOT_REQUIRED because an officer closed it
+// as already paid — must never come back as retryable work.
+describe("a failed subscription invoice never reopens a charge that needs no invoice (#4098)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.rows.clear();
+    mocks.failXeroSyncOperation.mockImplementation(mocks.selfFail);
+    mocks.chargeUpdate.mockResolvedValue({ count: 1 });
+    mocks.createXeroMembershipSubscriptionInvoice.mockRejectedValue(new Error("Xero is down"));
+  });
+
+  it.each(["NOT_REQUIRED", "VOIDED"])("leaves a %s charge as it is", async (status) => {
+    queueOneSubscriptionOperation();
+    mocks.chargeFindUnique.mockResolvedValue({ status, billingBasis: "PER_MEMBER", xeroInvoiceId: null });
+
+    await processQueuedXeroOutboxOperations({ limit: 1 });
+
+    expect(mocks.chargeUpdate).not.toHaveBeenCalled();
+    expect(mocks.rows.get("op_sub_1")?.status).toBe("FAILED");
+  });
+
+  it("control: exposes the error on a live charge, guarded so a close landing after the read still stands", async () => {
+    queueOneSubscriptionOperation();
+    mocks.chargeFindUnique.mockResolvedValue({ status: "PROCESSING", billingBasis: "PER_MEMBER", xeroInvoiceId: null });
+
+    await processQueuedXeroOutboxOperations({ limit: 1 });
+
+    expect(mocks.chargeUpdate).toHaveBeenCalledWith({
+      where: { id: "charge_1", status: { notIn: ["NOT_REQUIRED", "VOIDED"] } },
+      data: expect.objectContaining({ status: "QUEUED", lastErrorCode: "XERO_FAILED", lastErrorMessage: "Xero is down" }),
+    });
   });
 });

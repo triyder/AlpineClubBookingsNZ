@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import { NO_ADDITIONAL_ASK } from "@/lib/additional-payment-ask";
 import { NextRequest } from "next/server";
 
 /*
@@ -216,6 +218,9 @@ beforeEach(() => {
     hasSucceededPayment: false,
     xeroAdditionalAmountCents: 0,
     zeroDollarAutoPaid: false,
+    // #3954: no unpaid ask on this booking, so the removal retired none.
+    retiredAdditionalAsks: [],
+    additionalAsk: NO_ADDITIONAL_ASK,
   });
   h.canRespondForTarget.mockResolvedValue(false);
   h.resolveNotificationRecipients.mockResolvedValue([]);
@@ -563,5 +568,29 @@ describe("DECLINE", () => {
       severity: "important",
       outcome: "failure",
     });
+  });
+  it("#3954: answers an unpaid ask that moved under the removal with a 409 to try again, recording no outcome", async () => {
+    const { AdditionalAskChangedDuringReductionError, CONSENT_ANSWER_RACED_MESSAGE } = await import("@/lib/additional-ask-reduction-error");
+    h.removeBookingGuestInTransaction.mockRejectedValue(new AdditionalAskChangedDuringReductionError());
+    const res = await callRoute(makeRequest({ action: "DECLINE" }));
+    expect(res.status).toBe(409);
+    // Round 6: neutral wording - the member was answering, not saving a change.
+    // Round 7: and plain about the outcome - the answer was not recorded.
+    expect(await res.json()).toEqual({
+      error: "We couldn't record your answer because something changed on this booking. Please try again in a moment.",
+    });
+    expect(CONSENT_ANSWER_RACED_MESSAGE).toMatch(/couldn't record your answer/);
+    // Not a blocked row: nothing is audited as needing a human.
+    expect(h.logAudit).not.toHaveBeenCalled();
+  });
+
+  it("#3949 review round 5: answers a group cancel part-way through with its own 409 and words, recording no outcome", async () => {
+    const { GroupCancelInProgressError, GROUP_CANCEL_IN_PROGRESS_PRICE_MESSAGE } = await import("@/lib/group-cancel-in-progress");
+    h.removeBookingGuestInTransaction.mockRejectedValue(new GroupCancelInProgressError(GROUP_CANCEL_IN_PROGRESS_PRICE_MESSAGE));
+    const res = await callRoute(makeRequest({ action: "DECLINE" }));
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: GROUP_CANCEL_IN_PROGRESS_PRICE_MESSAGE });
+    // Not a blocked row (the cancel's claim takes the guest's place with the booking): nothing is audited.
+    expect(h.logAudit).not.toHaveBeenCalled();
   });
 });

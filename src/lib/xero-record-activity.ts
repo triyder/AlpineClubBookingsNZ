@@ -17,6 +17,7 @@ import { getXeroOrgShortCode } from "@/lib/xero-link-short-code";
 import { getXeroOperationRetryMeta } from "@/lib/xero-operation-retry";
 import { buildLocalAdminUrl, type XeroLocalModel } from "@/lib/xero-record-links";
 import { canReplayXeroInboundEvent } from "@/lib/xero-stale-operations";
+import { inboundEventCategoriesForXeroObjectType } from "@/lib/xero-webhook-categories";
 import type {
   XeroRecordActivityData,
   XeroRecordActivityOperation,
@@ -96,20 +97,6 @@ function getScopeWhere(records: XeroRecordReference[]) {
       localId: record.localId,
     })),
   };
-}
-
-function getInboundEventCategoryForObjectType(xeroObjectType: string): string | null {
-  switch (xeroObjectType) {
-    case "SUBSCRIPTION":
-      return "INVOICE";
-    case "CONTACT":
-    case "INVOICE":
-    case "PAYMENT":
-    case "CREDIT_NOTE":
-      return xeroObjectType;
-    default:
-      return null;
-  }
 }
 
 async function getMemberScope(localId: string, yearEndMonth: number): Promise<XeroRecordScope | null> {
@@ -678,22 +665,18 @@ export async function getXeroRecordActivity(
   const inboundEventTargets = Array.from(
     new Map(
       links
-        .flatMap((link) => {
-          const eventCategory = getInboundEventCategoryForObjectType(link.xeroObjectType);
-          if (!eventCategory) {
-            return [];
-          }
-
-          return [
-            [
-              `${eventCategory}:${link.xeroObjectId}`,
-              {
-                eventCategory,
-                resourceId: link.xeroObjectId,
-              },
-            ] as const,
-          ];
-        })
+        .flatMap((link) =>
+          inboundEventCategoriesForXeroObjectType(link.xeroObjectType).map(
+            (eventCategory) =>
+              [
+                `${eventCategory}:${link.xeroObjectId}`,
+                {
+                  eventCategory,
+                  resourceId: link.xeroObjectId,
+                },
+              ] as const,
+          ),
+        )
     ).values()
   );
   const inboundEvents = inboundEventTargets.length

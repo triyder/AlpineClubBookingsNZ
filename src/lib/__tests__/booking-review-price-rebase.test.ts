@@ -28,12 +28,14 @@ import {
   rebaseDivergesFromIssuedInvoice,
   rebaseMovedStoredMoney,
   recordBookingPriceRebaseHistory,
+  REBASE_INVOICE_RAISED_MESSAGE,
   type BookingPriceRebase,
 } from "@/lib/booking-review-price-rebase";
 import { requireCalendarDate } from "@/lib/club-time";
 import { selectBookingMoneyBuildUp } from "@/lib/booking-money-build-up";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
+const paymentClaim = vi.fn();
 const store = {
   booking: {
     findUnique: (...a: unknown[]) => mocks.bookingFindUnique(...a),
@@ -42,6 +44,8 @@ const store = {
   bookingModification: {
     create: (...a: unknown[]) => mocks.bookingModificationCreate(...a),
   },
+  // #3980 review C4: the re-price's claim on an unlinked primary invoice.
+  payment: { updateMany: (...a: unknown[]) => paymentClaim(...a), update: vi.fn() },
   // #3276: the re-base records the promotion build-up over the strands' nights.
   bookingGuestNightAdjustment: {
     deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
@@ -297,7 +301,7 @@ describe("re-pricing a booking from its strands (#3219)", () => {
   });
 });
 
-describe("what the re-price will not price from (#3219, INV-MOD-028)", () => {
+describe("a closure re-bases every strand it used to decline on (#4317 review H1, D1, D5)", () => {
   it.each([
     [
       "a strand with a night that carries no price at all",
@@ -309,6 +313,8 @@ describe("what the re-price will not price from (#3219, INV-MOD-028)", () => {
           { stayDate: AUG_2, priceCents: null },
         ],
       },
+      // R2: the blank takes what $80 leaves after the $40 row.
+      [4_000, 4_000],
     ],
     [
       "a strand whose nights do not sum to its stored total",
@@ -316,23 +322,23 @@ describe("what the re-price will not price from (#3219, INV-MOD-028)", () => {
         id: "guest-2",
         priceCents: 8_000,
         nights: [
-          { stayDate: AUG_1, priceCents: 4_000 },
-          { stayDate: AUG_2, priceCents: 3_000 },
+          { stayDate: AUG_1, priceCents: 5_000 },
+          { stayDate: AUG_2, priceCents: 4_000 },
         ],
       },
+      // R3: $90 of rows over an $80 total - the total is split.
+      [4_000, 4_000],
     ],
     [
       "a strand with a stay envelope and no night rows behind it",
       { id: "guest-2", priceCents: 8_000, nights: [] },
+      // R2 over the booking's two nights.
+      [4_000, 4_000],
     ],
     [
-      // The same absence at a total the sum check CANNOT catch: no rows sum to
-      // zero, and zero is what the strand says it is worth. Only "a strand with
-      // no night rows has a stay envelope and no evidence" refuses this one, so
-      // without it the case is a false green - which a mutation probe of the
-      // row-count check found it to be.
       "a strand with no night rows and nothing stored against it either",
       { id: "guest-2", priceCents: 0, nights: [] },
+      [0, 0],
     ],
     [
       "a strand carrying a night price that is not usable money",
@@ -344,33 +350,24 @@ describe("what the re-price will not price from (#3219, INV-MOD-028)", () => {
           { stayDate: AUG_2, priceCents: -4_000 },
         ],
       },
+      // The negative row is no value; it takes what $80 leaves (R2).
+      [4_000, 4_000],
     ],
-  ])("declines and writes nothing: %s", async (_name, badStrand) => {
+  ])("re-bases to the sum of the guests, the promotion over valued nights: %s", async (_name, strand, values) => {
     /*
-      The re-price is DECLINED rather than approximated, and the booking's own
-      figures are left exactly where the park set them. Re-basing anyway would
-      assert a booking total built from strands the system has already said it
-      cannot value - which is a worse lie than the stale one, and harder to
-      notice.
-
-      #3257 MADE THIS THE LOAD-BEARING HALF OF THE FEATURE. The trigger is now
-      any parked review closing, so a closure that offers no price boxes reaches
-      this writer instead of skipping it - and "a strand with a stay envelope and
-      no night rows behind it" IS one of the two shapes that used to escape. Get
-      this decline wrong and re-pricing on every close stops closing a gap and
-      starts creating a worse one, so each case is asserted on BOTH triggers.
+      Until #4317 each of these DECLINED, leaving the headline the park froze -
+      a gap the next priced edit would then have settled as its own (review H1).
+      Every night now has a value (`valueStrandNights`, D1), so the closure
+      re-bases the headline to the sum of the guests' stored totals (D5) and
+      re-decides the promotion over those values. Asserted on both triggers.
     */
-    mocks.bookingFindUnique.mockResolvedValue(
-      bookingWithStrands([SURVIVING_STRAND, badStrand]),
-    );
-
     for (const repairedStrands of [
       [{ bookingGuestId: "guest-1", totalCents: 10_000 }],
       [],
     ]) {
       vi.clearAllMocks();
       mocks.bookingFindUnique.mockResolvedValue(
-        bookingWithStrands([SURVIVING_STRAND, badStrand]),
+        bookingWithStrands([SURVIVING_STRAND, strand]),
       );
 
       const outcome = await rebaseBookingPriceFromStrands({
@@ -382,13 +379,35 @@ describe("what the re-price will not price from (#3219, INV-MOD-028)", () => {
       });
 
       expect(outcome).toMatchObject({
-        rebased: false,
-        reason: "strand-evidence-unreadable",
-        moneyBuildUpSelection: { source: "BASE_EVIDENCE_UNKNOWN" },
+        rebased: true,
+        rebase: { newTotalPriceCents: 10_000 + strand.priceCents },
       });
-      expect(mocks.recalculateBookingPromo).not.toHaveBeenCalled();
-      expect(mocks.bookingUpdateMany).not.toHaveBeenCalled();
+      const promo = mocks.recalculateBookingPromo.mock.calls[0]?.[0] as {
+        newTotalPriceCents: number;
+        guestNightRates: Array<{ bookingGuestId: string; perNightRates: number[] }>;
+      };
+      expect(promo.newTotalPriceCents).toBe(10_000 + strand.priceCents);
+      expect(promo.guestNightRates.find((rates) => rates.bookingGuestId === "guest-2")?.perNightRates).toEqual(values);
+      expect(mocks.bookingUpdateMany).toHaveBeenCalled();
     }
+  });
+
+  it("still declines, and writes nothing, for a negative stored guest total (D11; the database forbids one)", async () => {
+    mocks.bookingFindUnique.mockResolvedValue(
+      bookingWithStrands([SURVIVING_STRAND, { id: "guest-2", priceCents: -500, nights: [] }]),
+    );
+
+    const outcome = await rebaseBookingPriceFromStrands({
+      format: CLUB_FORMAT_TEST,
+      bookingId: "booking-1",
+      repairedStrands: [],
+      todayAtClub: TODAY,
+      store,
+    });
+
+    expect(outcome).toMatchObject({ rebased: false, reason: "strand-evidence-unreadable" });
+    expect(mocks.recalculateBookingPromo).not.toHaveBeenCalled();
+    expect(mocks.bookingUpdateMany).not.toHaveBeenCalled();
   });
 });
 
@@ -739,4 +758,64 @@ describe("D1's two consequences, surfaced rather than shipped blind (#3219)", ()
       ).toBe(expectedMovementCents);
     },
   );
+});
+
+describe("#3980 review C4: a re-price claims an unlinked primary invoice, as an edit does", () => {
+  const rebase = () =>
+    rebaseBookingPriceFromStrands({
+      format: CLUB_FORMAT_TEST,
+      bookingId: "booking-1",
+      repairedStrands: [{ bookingGuestId: "guest-1", totalCents: 10_000 }],
+      todayAtClub: TODAY,
+      store,
+    });
+
+  it("MUTATION: claims the payment row when it changes the price and read no link", async () => {
+    mocks.bookingFindUnique.mockResolvedValue(
+      bookingWithStrands([SURVIVING_STRAND], { payment: { id: "payment-1", xeroInvoiceId: null } }),
+    );
+    paymentClaim.mockResolvedValue({ count: 1 });
+    await rebase();
+    expect(paymentClaim).toHaveBeenCalledWith({
+      where: { id: "payment-1", xeroInvoiceId: null },
+      data: { changeFeeCents: { increment: 0 } },
+    });
+  });
+
+  it("is refused, nothing saved, when the link was saved under it - and claims nothing once linked", async () => {
+    mocks.bookingFindUnique.mockResolvedValue(
+      bookingWithStrands([SURVIVING_STRAND], { payment: { id: "payment-1", xeroInvoiceId: null } }),
+    );
+    paymentClaim.mockResolvedValue({ count: 0 });
+    await expect(rebase()).rejects.toMatchObject({ status: 409, message: REBASE_INVOICE_RAISED_MESSAGE });
+
+    paymentClaim.mockClear();
+    mocks.bookingFindUnique.mockResolvedValue(
+      bookingWithStrands([SURVIVING_STRAND], { payment: { id: "payment-1", xeroInvoiceId: "inv-1" } }),
+    );
+    await rebase();
+    expect(paymentClaim).not.toHaveBeenCalled();
+  });
+
+  it("MUTATION round 2 F4: claims against the CLOSURE's read, so a link saved between the two reads refuses the closure", async () => {
+    // The closure read no link; the re-base's own read already sees one.
+    mocks.bookingFindUnique.mockResolvedValue(
+      bookingWithStrands([SURVIVING_STRAND], { payment: { id: "payment-1", xeroInvoiceId: "inv-new" } }),
+    );
+    paymentClaim.mockResolvedValue({ count: 0 });
+    await expect(
+      rebaseBookingPriceFromStrands({
+        format: CLUB_FORMAT_TEST,
+        bookingId: "booking-1",
+        repairedStrands: [{ bookingGuestId: "guest-1", totalCents: 10_000 }],
+        todayAtClub: TODAY,
+        store,
+        paymentLinkRead: { id: "payment-1", xeroInvoiceId: null },
+      }),
+    ).rejects.toMatchObject({ status: 409, message: REBASE_INVOICE_RAISED_MESSAGE });
+    expect(paymentClaim).toHaveBeenCalledWith({
+      where: { id: "payment-1", xeroInvoiceId: null },
+      data: { changeFeeCents: { increment: 0 } },
+    });
+  });
 });

@@ -42,12 +42,15 @@ import {
   isStoredServerVersionMismatch,
   storableServerVersion,
 } from "@/lib/servernz-api-version";
-import { getOperationalServerNzApiKey } from "@/lib/servernz-config";
+import { getOperationalServerNzCredential } from "@/lib/servernz-config";
 import {
   loadServerNzSettings,
-  recordServerVersionCheck,
   validateCentralServerBaseUrl,
 } from "@/lib/servernz-settings";
+import {
+  recordServerVersionIfCurrent,
+  type ServerNzConnectionIdentity,
+} from "@/lib/servernz-version-record";
 
 /**
  * Outbound client for the Alpine Central Server (ServerNZ) REST API. Mirrors the
@@ -59,6 +62,7 @@ import {
  */
 
 const REQUEST_TIMEOUT_MS = 10_000;
+const CONNECTION_CHANGED = Symbol("connection changed");
 
 export class ServerNzNotConfiguredError extends Error {
   constructor(message: string) {
@@ -96,6 +100,17 @@ export class ServerNzVersionMismatchError extends Error {
 }
 
 /**
+ * A resolved connection: where to send, the bearer key, and the identity of
+ * both as stored when they were read (#4366). `identity` travels with every
+ * request so a version answer is recorded only for the connection it came from.
+ */
+interface ServerNzConnection {
+  baseUrl: string;
+  apiKey: string;
+  identity: ServerNzConnectionIdentity;
+}
+
+/**
  * The connection every request is built from, and THE ONE PLACE the version
  * gate lives (#49, `INV-INT-027`). Every server-bound function in this module
  * calls it, so a caller cannot reach the server past the gate; the only opt-out
@@ -108,21 +123,27 @@ export class ServerNzVersionMismatchError extends Error {
  * inline check first so a deployment that upgraded before its nightly sync, or a
  * key saved a moment ago, learns the answer on its first request rather than
  * syncing blind until 03:00. A check that FAILS leaves the row `null` and lets
- * the request through: a failed check never pauses syncing.
+ * the request through: a failed check never pauses syncing. An answer dropped
+ * after a connection change instead resolves and gates the current connection
+ * once more only at the same base URL; a changed URL or second drop fails
+ * with a retryable 503.
  */
 async function resolveConnection(
-  options: { skipVersionGate?: boolean } = {},
-): Promise<{ baseUrl: string; apiKey: string }> {
-  const [apiKey, settings] = await Promise.all([
-    getOperationalServerNzApiKey(),
+  options: { skipVersionGate?: boolean; retriedConnection?: ServerNzConnectionIdentity } = {},
+): Promise<ServerNzConnection> {
+  const [credential, settings] = await Promise.all([
+    getOperationalServerNzCredential(),
     loadServerNzSettings(),
   ]);
+  if (options.retriedConnection && settings.baseUrl !== options.retriedConnection.baseUrl) {
+    throw new ServerNzApiError(503, "The Alpine Central Server connection changed during its version check; retry the request.");
+  }
   if (!settings.baseUrl) {
     throw new ServerNzNotConfiguredError(
       "The Alpine Central Server base URL is not set.",
     );
   }
-  if (!apiKey) {
+  if (!credential) {
     throw new ServerNzNotConfiguredError(
       "No Alpine Central Server API key is stored.",
     );
@@ -137,16 +158,27 @@ async function resolveConnection(
       `The stored Alpine Central Server base URL is not usable: ${check.reason}`,
     );
   }
-  const connection = { baseUrl: check.value as string, apiKey };
+  const connection = {
+    baseUrl: check.value as string,
+    apiKey: credential.apiKey,
+    identity: { baseUrl: settings.baseUrl, credentialVersion: credential.version },
+  };
   if (options.skipVersionGate) return connection;
 
   let stored = settings.serverVersion;
   if (stored === null) {
-    // Self-heal: ask once, inline. `refreshStoredServerVersion` returns null
+    // Self-heal: ask once, inline. `refreshServerVersionAnswer` returns null
     // for a call that FAILED, which allows the request (default 1); a record
     // that fails after a received answer throws, like any other database
     // failure on a server-bound path.
-    stored = await refreshStoredServerVersion(connection);
+    const answer = await refreshServerVersionAnswer(connection);
+    if (answer === CONNECTION_CHANGED) {
+      if (options.retriedConnection) {
+        throw new ServerNzApiError(503, "The Alpine Central Server connection changed during its version check; retry the request.");
+      }
+      return resolveConnection({ retriedConnection: connection.identity });
+    }
+    stored = answer;
   }
   assertStoredServerVersionMatches(stored);
   return connection;
@@ -196,11 +228,10 @@ function authHeaders(apiKey: string): HeadersInit {
  * stored answer; it never pauses syncing). The version gate is skipped here and
  * nowhere else: this is the call that tells a paused site it may resume.
  */
-export async function fetchServerVersion(connection?: {
-  baseUrl: string;
-  apiKey: string;
-}): Promise<string> {
-  const { baseUrl, apiKey } =
+export async function fetchServerVersion(
+  connection?: ServerNzConnection,
+): Promise<string> {
+  const { baseUrl, apiKey, identity } =
     connection ?? (await resolveConnection({ skipVersionGate: true }));
   const res = await fetch(`${baseUrl}/api/v1/version`, {
     method: "GET",
@@ -209,36 +240,39 @@ export async function fetchServerVersion(connection?: {
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
   if (res.status === 404) return SERVER_VERSION_UNKNOWN;
-  if (!res.ok) await refuse(res, apiKey);
+  if (!res.ok) await refuse(res, identity);
   // Malformed or over-long on the wire reads as the unknown marker: still an
   // ANSWER (and a mismatch), never a failed check.
   return storableServerVersion(versionResultSchema.parse(await res.json()).version);
 }
 
 /**
- * THE ONE PATH THAT WRITES THE VERSION COLUMN (#49 review items 3 and 4): the
- * answer is normalised (`storableServerVersion`) and recorded only if the API
- * key it was obtained with is STILL the stored key. A key saved while the call
- * was in flight has already forgotten the old connection's answers, and the
- * old server's late answer must not be written over that - it would pause, or
- * clear a pause on, a connection it never described. Returns what was
- * recorded, or null when the answer was dropped for that reason. A record that
- * fails throws: a RECEIVED mismatch must never read as "could not check".
+ * THE ONE PATH THAT WRITES THE VERSION COLUMN (#49 review items 3 and 4,
+ * #4366): the answer is normalised (`storableServerVersion`) and recorded only
+ * if the connection it was obtained on - the stored address and the API key's
+ * credential version, captured before the request - is STILL the stored one,
+ * compared and recorded under the settings-row lock
+ * (`recordServerVersionIfCurrent`). A connection changed while the call was in
+ * flight has already forgotten the old connection's answers, and the old
+ * server's late answer must not be written over that - it would pause, or
+ * clear a pause on, a connection it never described. The credential version,
+ * not the key, is compared, so a key saved again with the same value
+ * (A -> B -> A) is still a different connection. Returns what was recorded, or
+ * CONNECTION_CHANGED when the answer was dropped for that reason. A record that fails
+ * throws: a RECEIVED mismatch must never read as "could not check".
  */
 async function recordServerAnswer(
   raw: string,
-  apiKeyUsed: string,
-): Promise<string | null> {
+  identity: ServerNzConnectionIdentity,
+): Promise<string | typeof CONNECTION_CHANGED> {
   const version = storableServerVersion(raw);
-  const currentKey = await getOperationalServerNzApiKey();
-  if (currentKey !== apiKeyUsed) {
+  if (!(await recordServerVersionIfCurrent(identity, version))) {
     logger.info(
       { expected: SERVERNZ_EXPECTED_SERVER_VERSION, serverVersion: version },
-      "Dropped a late Alpine Central Server version answer: the API key changed while it was in flight",
+      "Dropped a late Alpine Central Server version answer: the connection changed while it was in flight",
     );
-    return null;
+    return CONNECTION_CHANGED;
   }
-  await recordServerVersionCheck(version);
   if (version !== SERVERNZ_EXPECTED_SERVER_VERSION) {
     logger.info(
       { expected: SERVERNZ_EXPECTED_SERVER_VERSION, serverVersion: version },
@@ -259,10 +293,16 @@ async function recordServerAnswer(
  * failed check to warn about on every pass. Logs only the two numbers
  * (`INV-INT-005`).
  */
-export async function refreshStoredServerVersion(connection?: {
-  baseUrl: string;
-  apiKey: string;
-}): Promise<string | null> {
+export async function refreshStoredServerVersion(
+  connection?: ServerNzConnection,
+): Promise<string | null> {
+  const answer = await refreshServerVersionAnswer(connection);
+  return answer === CONNECTION_CHANGED ? null : answer;
+}
+
+async function refreshServerVersionAnswer(
+  connection?: ServerNzConnection,
+): Promise<string | null | typeof CONNECTION_CHANGED> {
   const resolved =
     connection ?? (await resolveConnection({ skipVersionGate: true }));
   let version: string;
@@ -279,7 +319,7 @@ export async function refreshStoredServerVersion(connection?: {
     );
     return null;
   }
-  return recordServerAnswer(version, resolved.apiKey);
+  return recordServerAnswer(version, resolved.identity);
 }
 
 /**
@@ -319,13 +359,16 @@ function remoteErrorMessage(status: number, body: { error?: unknown }): string {
  * is parsed once. A 409 carrying the server's `API_VERSION_MISMATCH` code is
  * the server refusing the transfer for version - the same fact the local gate
  * refuses for - so it RECORDS the server's number (through the one write path,
- * with the same key-change guard) and throws `ServerNzVersionMismatchError`,
+ * with the same connection fence, #4366) and throws `ServerNzVersionMismatchError`,
  * which every caller already maps to its paused path. It used to surface as a
  * plain 4xx `ServerNzApiError`, which `shareOnePost` reads as a refusal that
  * will never change and retires the share for good. Every other failure is
  * the `ServerNzApiError` it always was.
  */
-async function refuse(res: Response, apiKeyUsed: string): Promise<never> {
+async function refuse(
+  res: Response,
+  sentOn: ServerNzConnectionIdentity,
+): Promise<never> {
   let body: { error?: unknown; code?: unknown; serverVersion?: unknown } = {};
   try {
     body = (await res.json()) ?? {};
@@ -338,10 +381,10 @@ async function refuse(res: Response, apiKeyUsed: string): Promise<never> {
     typeof body.serverVersion === "string" &&
     body.serverVersion.length <= MAX_SERVER_VERSION_CHARS
   ) {
-    const stored = await recordServerAnswer(body.serverVersion, apiKeyUsed);
+    const stored = await recordServerAnswer(body.serverVersion, sentOn);
     throw new ServerNzVersionMismatchError(
       SERVERNZ_EXPECTED_SERVER_VERSION,
-      stored ?? storableServerVersion(body.serverVersion),
+      stored === CONNECTION_CHANGED ? storableServerVersion(body.serverVersion) : stored,
     );
   }
   throw new ServerNzApiError(res.status, remoteErrorMessage(res.status, body));
@@ -382,7 +425,7 @@ export async function shareClubPost(input: {
   bodyHtml: string | null;
   images: SharedPostImage[];
 }): Promise<SharedPostResult> {
-  const { baseUrl, apiKey } = await resolveConnection();
+  const { baseUrl, apiKey, identity } = await resolveConnection();
 
   const form = new FormData();
   form.append("author_user_id", input.authorUserId);
@@ -410,7 +453,7 @@ export async function shareClubPost(input: {
     body: form,
     signal: AbortSignal.timeout(SHARE_TIMEOUT_MS),
   });
-  if (!res.ok) await refuse(res, apiKey);
+  if (!res.ok) await refuse(res, identity);
   return sharedPostResultSchema.parse(await res.json());
 }
 
@@ -423,7 +466,7 @@ export async function shareClubPost(input: {
  * row stuck claiming to be shared forever.
  */
 export async function withdrawClubPost(serverPostId: string): Promise<void> {
-  const { baseUrl, apiKey } = await resolveConnection();
+  const { baseUrl, apiKey, identity } = await resolveConnection();
   const res = await fetch(
     `${baseUrl}/api/v1/posts/${encodeURIComponent(serverPostId)}`,
     {
@@ -434,7 +477,7 @@ export async function withdrawClubPost(serverPostId: string): Promise<void> {
     },
   );
   if (res.status === 404) return;
-  if (!res.ok) await refuse(res, apiKey);
+  if (!res.ok) await refuse(res, identity);
 }
 
 /**
@@ -448,7 +491,7 @@ export async function pullSharedPostSync(cursor: {
   since?: string | null;
   sinceId?: string | null;
 }): Promise<SyncEnvelope> {
-  const { baseUrl, apiKey } = await resolveConnection();
+  const { baseUrl, apiKey, identity } = await resolveConnection();
   const url = new URL(`${baseUrl}/api/v1/feed/sync`);
   if (cursor.since) {
     url.searchParams.set("since", cursor.since);
@@ -460,7 +503,7 @@ export async function pullSharedPostSync(cursor: {
     headers: authHeaders(apiKey),
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
-  if (!res.ok) await refuse(res, apiKey);
+  if (!res.ok) await refuse(res, identity);
   return syncEnvelopeSchema.parse(await res.json());
 }
 
@@ -475,7 +518,7 @@ export async function pullSharedPostSync(cursor: {
 export async function fetchSharedPostImage(
   imageUrl: string,
 ): Promise<Uint8Array | null> {
-  const { baseUrl, apiKey } = await resolveConnection();
+  const { baseUrl, apiKey, identity } = await resolveConnection();
   const base = new URL(baseUrl);
   let target: URL;
   try {
@@ -501,7 +544,7 @@ export async function fetchSharedPostImage(
     // A missing or refused picture is null (the words still arrive) - except
     // the server's version refusal, which is the pass's answer, not the
     // picture's, and must not be mirrored away as "no image".
-    if (res.status === 409) await refuse(res, apiKey);
+    if (res.status === 409) await refuse(res, identity);
     return null;
   }
   return new Uint8Array(await res.arrayBuffer());
@@ -517,7 +560,7 @@ export async function fetchSharedPostImage(
 export async function registerPushTarget(
   callbackUrl: string,
 ): Promise<PushTargetResult> {
-  const { baseUrl, apiKey } = await resolveConnection();
+  const { baseUrl, apiKey, identity } = await resolveConnection();
   const res = await fetch(`${baseUrl}/api/v1/push-target`, {
     method: "PUT",
     cache: "no-store",
@@ -525,7 +568,7 @@ export async function registerPushTarget(
     body: JSON.stringify({ url: callbackUrl }),
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
-  if (!res.ok) await refuse(res, apiKey);
+  if (!res.ok) await refuse(res, identity);
   return pushTargetResultSchema.parse(await res.json());
 }
 
@@ -533,7 +576,7 @@ export async function registerPushTarget(
 export async function uploadOtherLodges(
   lodges: OtherLodgeUploadItem[],
 ): Promise<OtherLodgesUploadResult> {
-  const { baseUrl, apiKey } = await resolveConnection();
+  const { baseUrl, apiKey, identity } = await resolveConnection();
   const res = await fetch(`${baseUrl}/api/v1/other-lodges`, {
     method: "POST",
     cache: "no-store",
@@ -541,7 +584,7 @@ export async function uploadOtherLodges(
     body: JSON.stringify({ lodges }),
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
-  if (!res.ok) await refuse(res, apiKey);
+  if (!res.ok) await refuse(res, identity);
   return uploadResultSchema.parse(await res.json());
 }
 
@@ -549,7 +592,7 @@ export async function uploadOtherLodges(
 export async function pullOtherLodges(
   since?: string | null,
 ): Promise<OtherLodgesPullResult> {
-  const { baseUrl, apiKey } = await resolveConnection();
+  const { baseUrl, apiKey, identity } = await resolveConnection();
   const url = new URL(`${baseUrl}/api/v1/other-lodges`);
   if (since) url.searchParams.set("since", since);
   const res = await fetch(url, {
@@ -558,7 +601,7 @@ export async function pullOtherLodges(
     headers: authHeaders(apiKey),
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
-  if (!res.ok) await refuse(res, apiKey);
+  if (!res.ok) await refuse(res, identity);
   const envelope = pullEnvelopeSchema.parse(await res.json());
 
   // Per-row validation: a row the server sends that breaks the bounds above is

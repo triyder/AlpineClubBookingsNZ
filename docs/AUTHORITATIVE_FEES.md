@@ -137,7 +137,10 @@ current schedule; annual-fee blocks omit types with no current invoiceable fee
 and require each type's public-listing flag. `{{annual-fees}}` has its **own**
 dedicated `annualFees` visibility opt-in (default off), separate from the joining
 `entranceFees` gate (D-R4); `{{membership-types}}` and `{{entrance-fees}}` are
-deprecated aliases of `{{annual-fees}}` and `{{joining-fees}}`. Hut-rate blocks
+deprecated aliases of `{{annual-fees}}` and `{{joining-fees}}`. `{{first-year-costs}}`
+(#4295) adds the two schedules into one first-year total per type and tier, read
+through the same precedence and exemptions as the invoicing, and needs **both**
+the `entranceFees` and `annualFees` opt-ins. Hut-rate blocks
 use active seasons/rates plus configured age-tier labels. Fees are edited on the
 consolidated **Admin > Fees** page (`/admin/fees`); **Admin > Seasons** now holds
 only season windows (name/type/dates/active). Visibility writes are audited and
@@ -182,7 +185,26 @@ billing workflow below.
    change affects future previews only and never rewrites existing charges.
    A member added to an already-billed family is left uncovered with a visible
    `FAMILY_ALREADY_BILLED` exception; the old family snapshot is not expanded
-   and a second family invoice is not created.
+   and a second family invoice is not created. A family charge closed as
+   already paid (#4098) still counts as billing its family, so a new joiner
+   gets the same exception; it stops counting only when a covered member's
+   payment is reversed — a member `PAID` at the close is no longer settled
+   (`PAID` or `NOT_REQUIRED`) — and the family is then billed again on a new
+   charge. A member exempt (`NOT_REQUIRED`) at the close had no payment to
+   reverse, so a later move to `NOT_INVOICED` (an assignment save, the
+   membership sync) does not re-bill the family; the close records each
+   member's status on the released claim for this. Such a member, and one
+   whose payment under an older closed charge was reversed, is an exception
+   asking Finance to decide (`CLOSED_FAMILY_MEMBER_NEEDS_DECISION`): mark them
+   Paid if the family fee covers everyone, otherwise invoice the difference in
+   Xero by hand. It stays open until they are paid or invoiced. With two closed
+   charges, the newest one decides — the owner's rule (#4110 decisions 4 and
+   5, 16 Oct 2026). When only some of the
+   payments were reversed, the preview warns (`CLOSED_FAMILY_PARTLY_REVERSED`)
+   that confirming invoices the full family fee (#4110). A membership approval
+   confirms with no officer to see that warning, so it withholds the family
+   instead and leaves the warning open for Finance. A family charge Xero voided
+   never counts: nobody paid it.
 5. Watch the durable charge queue. `EMAIL_FAILED` can be retried safely because
    the Xero invoice identifier is persisted before email. `CONFLICT` means an
    invoice with the immutable reference exists but its contact, account, amount,

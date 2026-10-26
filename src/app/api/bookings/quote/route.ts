@@ -41,9 +41,8 @@ import {
   type MemberGuestConsentGuestFields,
 } from "@/lib/member-guest-add-policy";
 import {
-  BookingGuestStayRangeValidationError,
-  type NormalizedBookingGuestStayRange,
-  normalizeGuestStayRanges,
+  BOOKING_PARTY_GUESTS_MAX, BookingGuestStayRangeValidationError, guestRequestSchemaError,
+  guestStayFieldsSchema, type NormalizedBookingGuestStayRange, normalizeGuestStayRanges,
 } from "@/lib/booking-guest-stay-range-input";
 import { isDateOnlyString, parseDateOnly } from "@/lib/date-only";
 import { bookingManagementAuthorizationRole } from "@/lib/admin-permissions";
@@ -73,12 +72,10 @@ const quoteSchema = z.object({
       ageTier: bookableAgeTierEnum,
       isMember: z.boolean(),
       memberId: z.string().min(1).optional(),
-      stayStart: z.string().optional(),
-      stayEnd: z.string().optional(),
-      // Explicit included nights for a multi date range stay (issue #713).
-      nights: z.array(z.string()).max(370).optional(),
+      // Date In and Date Out, or the night set of a multi date range stay (#713, #4199).
+      ...guestStayFieldsSchema.shape,
     })
-  ).min(1),
+  ).min(1).max(BOOKING_PARTY_GUESTS_MAX),
   forMemberId: z.string().optional(),
 });
 
@@ -110,7 +107,7 @@ export async function POST(request: NextRequest) {
 
   if (!parsed.success) {
     return NextResponse.json(
-      { error: "Invalid input", details: parsed.error.flatten() },
+      { error: guestRequestSchemaError(parsed.error, "Invalid input"), details: parsed.error.flatten() },
       { status: 400 }
     );
   }

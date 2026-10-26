@@ -8,6 +8,10 @@ import { buildXeroObjectUrl } from "@/lib/xero-links";
 import { getXeroOrgShortCode } from "@/lib/xero-link-short-code";
 import { canReplayXeroInboundEvent } from "@/lib/xero-stale-operations";
 import {
+  inboundEventCategoriesForXeroObjectType,
+  inboundEventCategoryFilter,
+} from "@/lib/xero-webhook-categories";
+import {
   endOfClubDayInclusive,
   requireCalendarDate,
   startOfClubDay,
@@ -48,20 +52,6 @@ function startOfInputDate(date: string, zone: ClubTimeZone) {
 /** The last instant of that club day, INCLUSIVE — the filter uses `lte`. */
 function endOfInputDate(date: string, zone: ClubTimeZone) {
   return endOfClubDayInclusive(requireCalendarDate(date), zone);
-}
-
-function eventCategoryForXeroObjectType(xeroObjectType: string) {
-  switch (xeroObjectType) {
-    case "SUBSCRIPTION":
-      return "INVOICE";
-    case "CONTACT":
-    case "INVOICE":
-    case "PAYMENT":
-    case "CREDIT_NOTE":
-      return xeroObjectType;
-    default:
-      return null;
-  }
 }
 
 export async function GET(request: NextRequest) {
@@ -112,7 +102,7 @@ export async function GET(request: NextRequest) {
 
     const andFilters: Prisma.XeroInboundEventWhereInput[] = [{
       ...(status !== "all" ? { status } : {}),
-      ...(eventCategory !== "all" ? { eventCategory } : {}),
+      ...(eventCategory !== "all" ? inboundEventCategoryFilter(eventCategory) : {}),
       ...(source !== "all" ? { source } : {}),
       ...(resourceId ? { resourceId } : {}),
       ...(eventType !== "all" ? { eventType } : {}),
@@ -133,12 +123,12 @@ export async function GET(request: NextRequest) {
       });
       const linkTargets: Prisma.XeroInboundEventWhereInput[] = [];
       for (const link of links) {
-        const linkedEventCategory = eventCategoryForXeroObjectType(link.xeroObjectType);
-        if (!linkedEventCategory) continue;
-        linkTargets.push({
-          eventCategory: linkedEventCategory,
-          resourceId: link.xeroObjectId,
-        });
+        for (const linkedEventCategory of inboundEventCategoriesForXeroObjectType(link.xeroObjectType)) {
+          linkTargets.push({
+            eventCategory: linkedEventCategory,
+            resourceId: link.xeroObjectId,
+          });
+        }
       }
 
       if (linkTargets.length === 0) {

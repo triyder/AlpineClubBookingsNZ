@@ -50,3 +50,18 @@ export function adminAlertSendOutcome(result: AdminAlertSendResult): AdminAlertS
   if (result.queuedForRetry > 0) return "queued-for-retry";
   return "undelivered";
 }
+
+/**
+ * What a once-only caller reads after an UNMUTEABLE alert's send returned
+ * (#4149): `sendUnmuteableAdminAlert` returns nothing, sends to a fallback
+ * audience when the owning area has nobody, and records its own escalation when
+ * no copy went out, so a send that returns has done all it can and the claim is
+ * kept. One that throws is given back by `sendAdminAlertOnceEver`.
+ */
+export const UNMUTEABLE_ALERT_SENT: AdminAlertSendResult = {
+  deliveryAllowed: true,
+  recipients: 1,
+  sent: 1,
+  queuedForRetry: 0,
+  notDelivered: 0,
+};

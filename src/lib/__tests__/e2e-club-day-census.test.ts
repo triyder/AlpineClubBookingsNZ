@@ -200,6 +200,10 @@ describe("no second way to ask what day it is (#3221)", () => {
     );
     expect(prepare).toContain('export E2E_FIXTURE_TODAY_NZ');
     expect(prepare).toContain('printf \'%s\\n\' "$E2E_FIXTURE_TODAY_NZ" > "$FIXTURE_DATE_FILE"');
+    // #4397: a restored CI snapshot brings the day it was seeded for, never today's.
+    expect(prepare).toContain('cp "$dump.fixture-date" "$FIXTURE_DATE_FILE"');
+    expect(prepare.split("restore_snapshot() {")[1]).toMatch(/IFS= read -r E2E_FIXTURE_TODAY_NZ < "\$FIXTURE_DATE_FILE"\s+export E2E_FIXTURE_TODAY_NZ/);
+    expect(prepare).toContain('cp "$FIXTURE_DATE_FILE" "$out.fixture-date"');
     expect(run).toContain('IFS= read -r E2E_FIXTURE_TODAY_NZ < "$FIXTURE_DATE_FILE"');
     expect(run).toContain('export E2E_FIXTURE_TODAY_NZ');
   });

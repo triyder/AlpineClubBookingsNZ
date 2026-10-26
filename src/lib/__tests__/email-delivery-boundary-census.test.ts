@@ -1,11 +1,15 @@
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { ciEnvHeredocs } from "./helpers/ci-env-heredocs";
+import { trackedRootDotenvFiles } from "./helpers/tracked-root-dotenv";
 
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
 
 import {
+  appEnvironmentAnchor,
   composeFiles,
   composeServices,
   readRepoFile,
@@ -187,8 +191,7 @@ function captureCandidateBlocks(): ConfigBlock[] {
   const root = process.cwd();
   const blocks: ConfigBlock[] = [];
 
-  for (const name of readdirSync(root).sort()) {
-    if (!/^\.env($|\.)/.test(name)) continue;
+  for (const name of trackedRootDotenvFiles(root)) {
     blocks.push({ id: name, text: withoutDotenvComments(readRepoFile(name)) });
   }
 
@@ -204,14 +207,11 @@ function captureCandidateBlocks(): ConfigBlock[] {
   }
 
   for (const file of composeFiles) {
-    const text = readRepoFile(file);
-    const anchor = text.indexOf("x-app-environment:");
-    if (anchor > -1) {
-      const rest = text.slice(anchor);
-      const end = rest.search(/\n[^\s#]/);
+    const anchor = appEnvironmentAnchor(readRepoFile(file));
+    if (anchor !== undefined) {
       blocks.push({
         id: `${file} -> x-app-environment`,
-        text: withoutDotenvComments(end === -1 ? rest : rest.slice(0, end)),
+        text: withoutDotenvComments(anchor),
       });
     }
     for (const [service, body] of composeServices(file)) {
@@ -286,6 +286,30 @@ describe("email delivery boundary census (INV-CONFIG-004)", () => {
         "a fourth call site here would be an ungated provider send " +
         "(INV-CONFIG-004).",
     ).toEqual([XERO_EMAIL_MODULE]);
+  });
+
+  it("#4411: reads only the root dotenv files Git tracks, so an untracked copy is ignored", () => {
+    // The repository's own tracked examples are found (a floor, not an exact
+    // list, so tracking a new example does not read as a regression here).
+    expect(trackedRootDotenvFiles(process.cwd())).toEqual(expect.arrayContaining([".env.example", ".env.staging.example"]));
+
+    // A throwaway repository: one tracked example, the documented untracked copy
+    // beside it (relaying to a capture host without the flag), a tracked file
+    // that only ends in `.env`, and a tracked file under a `.env.d/` directory.
+    const repo = mkdtempSync(path.join(os.tmpdir(), "census-4411-"));
+    try {
+      const git = (...args: string[]) => execFileSync("git", args, { cwd: repo, stdio: "ignore" });
+      git("init", "-q");
+      writeFileSync(path.join(repo, ".env.example"), "EMAIL_SERVER_HOST=smtp.example.invalid\n");
+      writeFileSync(path.join(repo, ".env.staging"), "EMAIL_SERVER_HOST=mailpit\n");
+      writeFileSync(path.join(repo, "not.env"), "\n");
+      mkdirSync(path.join(repo, ".env.d"));
+      writeFileSync(path.join(repo, ".env.d", "README"), "\n");
+      git("add", ".env.example", "not.env", ".env.d/README");
+      expect(trackedRootDotenvFiles(repo)).toEqual([".env.example"]);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
   });
 
   /**

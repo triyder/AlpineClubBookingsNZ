@@ -28,7 +28,7 @@
  * have introduced two brand-new wrong-day defects here and fixed nothing.
  */
 import { emailCalendarDay } from "@/lib/email-templates-club-time";
-import { type BookingPaymentDueCredit } from "@/lib/email-message-notes";
+import { type BookingPaymentDueCredit } from "@/lib/email-payment-due-note";
 import { PROMO_CHANGE_NOT_APPLIED_LABEL } from "@/lib/promo-change-not-applied";
 import { formatCents as formatMoneyCents } from "@/lib/utils";
 import type { ClubFormat } from "@/lib/club-format";
@@ -465,6 +465,26 @@ export function unpaidMoneySummaryRows(
 }
 
 /**
+ * #4030: one guest a booking change added, as the booking-modified email names
+ * them. `stayStart` / `stayEnd` are the guest's own `@db.Date` stay bounds.
+ */
+export interface BookingModificationAddedGuest {
+  firstName: string;
+  lastName: string;
+  stayStart: Date;
+  stayEnd: Date;
+  /**
+   * #4030 review S8: the guest row's member-guest consent status. A cross-family
+   * member guest still `PENDING` is on the booking only once they accept, so the
+   * line says so rather than reading as settled.
+   */
+  consentStatus?: string | null;
+}
+
+/** #4030 review S8: what the Guests Added line says about a guest yet to accept. */
+export const ADDED_GUEST_AWAITING_CONSENT_NOTE = "(waiting for them to accept)";
+
+/**
  * #2267: the single source of truth for WHICH change rows a booking-modified
  * email shows — shared by the hand-built HTML email (bookingModifiedTemplate)
  * and the flat {{changeSummary}} token the admin-editable body renders, so the
@@ -500,6 +520,18 @@ export function bookingModificationSummaryRows(params: {
   // reason above: the hand-built HTML email and the admin-editable flat body
   // both compose from these rows, so neither can be the one that stays silent.
   promoChangeNotAppliedNote?: string | null;
+  /**
+   * #4030: the people this change ADDED to the booking, named, so the member is
+   * told who was added rather than only that the count went up (the owner's
+   * decision: "the usual change email listing the guests and amount").
+   * REQUIRED, with no default, for the reason `financialReviewPending` is: a
+   * default would let the one path that adds guests forget to say so. Every
+   * path that adds nobody passes `[]`.
+   *
+   * Names only, and only of guests on this booking — which its owner, the one
+   * recipient of this email, already reads on their own booking page.
+   */
+  addedGuests: ReadonlyArray<BookingModificationAddedGuest>;
 },
   format: ClubFormat,
 ): Array<{ label: string; value: string }> {
@@ -539,6 +571,27 @@ export function bookingModificationSummaryRows(params: {
     rows.push({ label: "New Guests", value: String(params.newGuestCount) });
   } else {
     rows.push({ label: "Guests", value: String(params.newGuestCount) });
+  }
+
+  // #4030: who was added, beside the count. A guest staying only part of the
+  // stay carries their own nights; one staying the whole stay needs none.
+  if (params.addedGuests.length > 0) {
+    rows.push({
+      label: "Guests Added",
+      value: params.addedGuests
+        .map((guest) => {
+          const name = `${guest.firstName} ${guest.lastName}`.trim();
+          const wholeStay =
+            guest.stayStart.getTime() === params.newCheckIn.getTime() &&
+            guest.stayEnd.getTime() === params.newCheckOut.getTime();
+          const awaiting =
+            guest.consentStatus === "PENDING" ? ` ${ADDED_GUEST_AWAITING_CONSENT_NOTE}` : "";
+          return wholeStay
+            ? `${name}${awaiting}`
+            : `${name} (${dateRange(guest.stayStart, guest.stayEnd)})${awaiting}`;
+        })
+        .join("; "),
+    });
   }
 
   if (params.oldFinalPriceCents !== params.newFinalPriceCents) {

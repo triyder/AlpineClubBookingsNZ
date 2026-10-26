@@ -2,6 +2,8 @@ import { readdirSync, readFileSync } from "fs";
 import path from "path";
 import { describe, expect, it } from "vitest";
 
+import { readAllowBuilds } from "../../../scripts/ci/check-allow-builds.mjs";
+
 /**
  * Every tracked file under `dir` whose extension is in `exts`, repository-
  * relative, recursively.
@@ -721,20 +723,30 @@ describe("deployment image contracts", () => {
       expect(verify.length).toBeGreaterThan(0);
       expect(verify).not.toContain("npm audit");
       expect(verify).not.toContain("pnpm audit");
-      // The gates that were skipped must all still be in `verify`, and none of
-      // them may have acquired a condition of its own on the way out. #3431
-      // moves the suite itself to independent shard jobs but keeps its
-      // fail-closed bridge as a step in this required job.
+      // The gates that were skipped must all still be reached by `verify`, and
+      // none of them may have acquired a condition of its own on the way out.
+      // #3431 moves the suite itself to independent shard jobs, and #4425 does
+      // the same for lint, typecheck and build; each keeps its fail-closed
+      // bridge as a step in this required job, which names every one of them.
       for (const step of [
-        "run: pnpm run lint",
         "run: pnpm run quality:budget",
         "run: pnpm run db:generate",
-        "run: pnpm run typecheck",
         "run: pnpm exec knip",
-        "run: node scripts/ci/require-test-shards.mjs",
-        "run: pnpm run build",
+        'run: node scripts/ci/require-test-shards.mjs --job Typecheck --job Lint --job "Production build"',
       ]) {
         expect(verify, `verify no longer runs \`${step}\``).toContain(step);
+      }
+      for (const [jobId, step] of [
+        ["typecheck", "run: pnpm run typecheck"],
+        ["lint", "run: pnpm run lint"],
+        ["build", "run: pnpm run build"],
+      ]) {
+        const start = workflow.indexOf(`\n  ${jobId}:\n`);
+        expect(start, `the ${jobId} job is missing`).toBeGreaterThan(-1);
+        const rest = workflow.slice(start + 1).search(/\n {2}[a-z][a-z0-9-]*:\n/);
+        const job = directivesOnly(workflow.slice(start, start + 1 + rest));
+        expect(job, `the ${jobId} job no longer runs \`${step}\``).toContain(step);
+        expect(verify, `verify runs \`${step}\` as well as its own job`).not.toContain(step);
       }
     });
 
@@ -920,34 +932,26 @@ describe("package manager contract (#3673)", () => {
   it("pins which install scripts run, and forbids the settings that would widen that or blind the audit", () => {
     const workspace = readRepoFile("pnpm-workspace.yaml");
     const lines = workspace.split(/\r?\n/);
-    const start = lines.indexOf("allowBuilds:");
-    expect(start).toBeGreaterThan(-1);
-    const entries: string[] = [];
-    for (const line of lines.slice(start + 1)) {
-      if (!/^\s/.test(line)) break;
-      entries.push(line.trim());
-    }
+    expect(lines).toContain("allowBuilds:");
     // Which packages, and allowed or denied, is the contract. The exact version
     // lives only in pnpm-workspace.yaml, so a reviewed bump is a one-line edit
     // there (CONTRIBUTING.md, "Package manager: pnpm"). Every allowed entry must
     // carry an exact version: a bare name would approve every future version.
-    const parsed = entries.map((entry) => {
-      const m = /^"?(@?[^@"]+)(?:@([^"]+))?"?:\s*(true|false)$/.exec(entry);
-      expect(m, `unreadable allowBuilds entry: ${entry}`).not.toBeNull();
-      return { name: m![1], version: m![2], allowed: m![3] === "true" };
-    });
+    // The entries are read by the pre-install gate's own reader (#4364), which
+    // also checks each version against pnpm-lock.yaml.
+    const parsed = readAllowBuilds(workspace);
     expect(parsed.map(({ name, allowed }) => `${name}=${allowed}`)).toEqual([
       "@prisma/engines=true",
-      "@sentry/cli=true",
       "core-js=false",
       "esbuild=true",
       "prisma=true",
       "unrs-resolver=true",
     ]);
     for (const entry of parsed.filter((e) => e.allowed)) {
-      expect(entry.version, `${entry.name} must be pinned to an exact version`).toMatch(
-        /^\d+\.\d+\.\d+(?: \|\| \d+\.\d+\.\d+)*$/,
-      );
+      expect(entry.versions, `${entry.name} must be pinned to an exact version`).not.toEqual([]);
+      for (const version of entry.versions) {
+        expect(version, `${entry.name} must be pinned to an exact version`).toMatch(/^\d+\.\d+\.\d+$/);
+      }
     }
 
     const topLevelKeys = lines
@@ -1053,6 +1057,12 @@ describe("package manager contract (#3673)", () => {
     const firstPnpm = builder.search(/^RUN pnpm\b/m);
     expect(firstPnpm).toBeGreaterThan(-1);
     expect(builder.indexOf("COPY --from=deps /app/patches")).toBeLessThan(firstPnpm);
+    // #4028: node_modules and patches/ are separate cached layers, so a partial
+    // cache hit can pair a fresh patch with an older install; the builder pins
+    // the patch dates to the epoch, after restoring them and before any `pnpm run`.
+    const pinDates = builder.search(/^RUN find patches -type f -exec touch -d @0 \{\} \+$/m);
+    expect(pinDates).toBeGreaterThan(builder.indexOf("COPY --from=deps /app/patches"));
+    expect(pinDates).toBeLessThan(firstPnpm);
     expect(dockerfile).not.toMatch(/\bnpm ci\b|package-lock\.json/);
     // npm is used once, to install pnpm, and then removed in the SAME layer, so
     // the builder and migrate images carry pnpm and no npm/npx.

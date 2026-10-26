@@ -2,6 +2,7 @@ import { AdminBookingToolsCard } from "@/components/admin/admin-booking-tools-ca
 import { BookingWithheldEmailsBanner } from "@/components/admin/booking-withheld-emails-banner";
 import { bookingOwner } from "@/lib/booking-owner";
 import { bookingHoldsCapacity } from "@/lib/booking-status";
+import { savedCardChargeCents } from "@/lib/booking-payment-state";
 import type { BookingDetailRecord } from "../_lib/load-booking-detail";
 import type { BookingEditorData } from "@/components/booking-editor";
 import type { FeatureFlags } from "@/config/schema";
@@ -78,7 +79,7 @@ export function BookingAdminToolsSection({
           // promises a charge the route will not make, and never promises one
           // while the page asks for a card.
           hasSavedPaymentMethod={savedCard !== null}
-          finalPriceCents={booking.finalPriceCents}
+          savedCardChargeCents={savedCardChargeCents(booking)}
           providerMismatches={providerMismatches}
           financialReviewWarnings={financialReviewWarnings}
           features={modules}

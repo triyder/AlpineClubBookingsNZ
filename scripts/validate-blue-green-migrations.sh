@@ -525,6 +525,14 @@ validate_ledger_entry() {
 
 found_breaking=0
 found_failure=0
+# Opt-in protocol for the deploy engine. Diagnostics stay on stderr; emit the
+# canonical classification only after every validation gate succeeds.
+report_windowed=0
+if [ "${1:-}" = "--report-windowed" ]; then
+  report_windowed=1
+  shift
+fi
+
 found_windowed=0
 pending_count=0
 
@@ -707,4 +715,8 @@ if [ "$found_breaking" = "1" ]; then
   echo "WARNING: Override reason: ${BLUE_GREEN_MIGRATION_OVERRIDE_REASON}" >&2
 elif [ "$pending_count" -gt 0 ]; then
   echo "Blue/green migration safety check passed for ${pending_count} pending migration(s)." >&2
+fi
+
+if [ "$report_windowed" = "1" ]; then
+  printf '%s\n' "$found_windowed"
 fi

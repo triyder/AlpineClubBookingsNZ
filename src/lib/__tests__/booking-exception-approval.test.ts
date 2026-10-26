@@ -103,6 +103,11 @@ vi.mock("@/lib/email", () => ({
     sendBookingPolicyExceptionApprovedEmail(...(args as [])),
 }));
 
+const deriveBookingAppliedCreditCents = vi.fn<(id: string) => Promise<number>>(async () => 0);
+vi.mock("@/lib/member-credit", () => ({
+  deriveBookingAppliedCreditCents: (id: string) => deriveBookingAppliedCreditCents(id),
+}));
+
 const bookingFindUnique = vi.fn();
 vi.mock("@/lib/prisma", () => ({
   prisma: { booking: { findUnique: (...a: unknown[]) => bookingFindUnique(...a) } },
@@ -1348,5 +1353,77 @@ describe("buildOverrideReason", () => {
     expect(
       buildOverrideReason({ requestId: "req-9", override: MIN_STAY_OVERRIDE }),
     ).toContain("request req-9");
+  });
+});
+
+// #4058 (`INV-PAY-119`): the approved-exception email quotes what the pay step
+// will ask for - price plus recorded change fee, less applied credit - never the
+// bare price.
+describe("notifyApproved quotes the amount owed (#4058)", () => {
+  const approvedBooking = (over: Record<string, unknown> = {}) => ({
+    id: "bk-new",
+    checkIn: new Date("2026-08-01T00:00:00.000Z"),
+    checkOut: new Date("2026-08-03T00:00:00.000Z"),
+    finalPriceCents: 30_000,
+    lodgeId: LODGE,
+    status: "PAYMENT_PENDING",
+    member: { id: "m-1", email: "member@example.test", firstName: "Mia" },
+    organisation: null,
+    guests: [{ id: "g-1" }],
+    payment: null,
+    ...over,
+  });
+
+  async function notify(booking: ReturnType<typeof approvedBooking>, appliedCreditCents: number) {
+    bookingFindUnique.mockResolvedValue(booking);
+    deriveBookingAppliedCreditCents.mockResolvedValue(appliedCreditCents);
+    const { hooks, outcome } = buildPolicyExceptionApprovalHooks({
+      format: CLUB_FORMAT_TEST,
+      todayAtClub: FIXTURE_CLUB_DAY,
+      batchPreTransaction: FIXTURE_PRE_TRANSACTION,
+      requestId: "req-1",
+      actorMemberId: OFFICER,
+      ipAddress: "1.2.3.4",
+    });
+    outcome.createdBookingId = "bk-new";
+    await hooks.notifyApproved?.({} as never);
+    return sendBookingPolicyExceptionApprovedEmail.mock.calls[0] as unknown as [
+      unknown,
+      string,
+      { amountDueCents: number },
+    ];
+  }
+
+  beforeEach(() => {
+    sendBookingPolicyExceptionApprovedEmail.mockClear();
+    deriveBookingAppliedCreditCents.mockClear();
+  });
+
+  it("takes partial applied credit off the price", async () => {
+    const [, , args] = await notify(approvedBooking(), 12_000);
+    expect(args.amountDueCents).toBe(18_000);
+  });
+
+  it("adds a recorded change fee, as the pay step does", async () => {
+    const [, , args] = await notify(
+      approvedBooking({ payment: { status: "PENDING", changeFeeCents: 2_500 } }),
+      12_000,
+    );
+    expect(args.amountDueCents).toBe(20_500);
+  });
+
+  it("owes nothing when credit covers the whole booking", async () => {
+    const [, , args] = await notify(approvedBooking(), 30_000);
+    expect(args.amountDueCents).toBe(0);
+  });
+
+  it("owes nothing when the booking was already settled at create", async () => {
+    const [, , args] = await notify(approvedBooking({ status: "PAID" }), 0);
+    expect(args.amountDueCents).toBe(0);
+  });
+
+  it("never goes negative if credit exceeds the worth", async () => {
+    const [, , args] = await notify(approvedBooking(), 35_000);
+    expect(args.amountDueCents).toBe(0);
   });
 });

@@ -144,6 +144,37 @@ describe("validatePromoCodeList", () => {
     ]);
   });
 
+  it("sends an edit's officer re-rates with the booking, as the quote is sent them (#4202)", async () => {
+    const editRerates = {
+      otherLodgeId: "ol-1",
+      otherLodgeMemberGuestIds: ["bg-1"],
+      linkGuestToMember: [{ guestId: "bg-2", memberId: "m9" }],
+    };
+    const fetchMock = stubPreview({ valid: true, codes: [{ code: "A", valid: true }] });
+    await validatePromoCodeList({
+      entries: [{ code: "A" }],
+      checkIn: "2026-08-01",
+      checkOut: "2026-08-03",
+      guests: [{ ageTier: "ADULT", isMember: false, bookingGuestId: "bg-1" }],
+      bookingId: "booking-1",
+      editRerates,
+    });
+    const sent = JSON.parse((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body as string);
+    expect(sent).toMatchObject(editRerates);
+    // Without a booking there is nothing to re-rate, so nothing travels.
+    const createFetch = stubPreview({ valid: true, codes: [{ code: "A", valid: true }] });
+    await validatePromoCodeList({
+      entries: [{ code: "A" }],
+      checkIn: "2026-08-01",
+      checkOut: "2026-08-03",
+      guests: [{ ageTier: "ADULT", isMember: false }],
+      editRerates,
+    });
+    const created = JSON.parse((createFetch.mock.calls[0] as unknown as [string, RequestInit])[1].body as string);
+    expect(created).not.toHaveProperty("otherLodgeMemberGuestIds");
+    expect(created).not.toHaveProperty("linkGuestToMember");
+  });
+
   it("never sends a guest row id without a booking (the create wizard)", async () => {
     const fetchMock = stubPreview({ valid: true, codes: [{ code: "A", valid: true }] });
     await validatePromoCodeList({

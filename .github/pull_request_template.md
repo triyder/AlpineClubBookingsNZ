@@ -120,6 +120,6 @@
       webhooks for exploratory validation.
 - [ ] Merge handling follows the `AGENTS.md` "Completion and Merge" merge gate
       (#3959): any risk level merges once complete, green on its exact head,
-      reviewed with the lenses its risk requires, and carrying the full
+      reviewed with the lenses chosen for its risk, and carrying the full
       Ready-to-Merge comment; no owner Approve is needed. An open owner
       decision still waits for the owner. Merge commits only.

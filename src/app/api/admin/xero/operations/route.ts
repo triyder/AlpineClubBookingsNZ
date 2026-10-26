@@ -10,6 +10,8 @@ import { getXeroOrgShortCode } from "@/lib/xero-link-short-code";
 import { getXeroOperationRetryMeta } from "@/lib/xero-operation-retry";
 import { buildLocalAdminUrl } from "@/lib/xero-record-links";
 import { isStaleRunningXeroOperation } from "@/lib/xero-stale-operations";
+import { refundNoteResolveShape, resolveCreditNotePrompt } from "@/lib/xero-resolve-refund-note";
+import { findSupersededRefundNoteRowIds } from "@/lib/xero-operation-resolve-guards";
 import {
   endOfClubDayInclusive,
   requireCalendarDate,
@@ -115,6 +117,10 @@ export async function GET(request: NextRequest) {
 
     let operations;
     let total: number;
+    // #4220: FAILED rows (matching the other filters) that the failure-state
+    // filter leaves out, so the panel can say "N hidden, show them". Always 0
+    // when no failure-state filter is applied: nothing is hidden then.
+    let hiddenFailedCount = 0;
 
     if (failureState !== "all") {
       const failureCandidates = await prisma.xeroSyncOperation.findMany({
@@ -133,6 +139,12 @@ export async function GET(request: NextRequest) {
       );
       total = filteredFailures.length;
       operations = filteredFailures.slice((page - 1) * pageSize, page * pageSize);
+      // The candidate query above already drops manually-resolved rows, so
+      // they are counted separately: both kinds are the rows the filter hides.
+      const resolvedHidden = await prisma.xeroSyncOperation.count({
+        where: { ...where, status: "FAILED", manuallyResolvedAt: { not: null } },
+      });
+      hiddenFailedCount = failureCandidates.length - filteredFailures.length + resolvedHidden;
     } else {
       [operations, total] = await Promise.all([
         prisma.xeroSyncOperation.findMany({
@@ -155,6 +167,11 @@ export async function GET(request: NextRequest) {
     // one.
     const shortCode = await getXeroOrgShortCode();
     const now = new Date();
+    // #4421 review (round 2): a FAILED refund note a later run already
+    // raised is refused on Resolve; the panel says so up front.
+    const superseded = await findSupersededRefundNoteRowIds(
+      operations.filter((operation) => refundNoteResolveShape(operation).kind === "asks-number"),
+    );
 
     return NextResponse.json({
       data: operations.map((operation) => ({
@@ -177,8 +194,13 @@ export async function GET(request: NextRequest) {
         // #3462: the server's clock decides "stale", so the panel's Mark failed
         // button agrees with the route that will accept it.
         staleRunning: isStaleRunningXeroOperation(operation, now),
+        // #4421: the server decides whether "Resolve by hand" asks for the
+        // note's number (and for what amount) or will be refused, so the
+        // panel and the resolve route agree.
+        ...resolveCreditNotePrompt(operation, superseded.has(operation.id)),
       })),
       total,
+      hiddenFailedCount,
       page,
       pageSize,
     });

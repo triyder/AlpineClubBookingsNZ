@@ -172,8 +172,17 @@ export function IntegrationWizard<Ctx>({
     stepContainerRef.current?.focus();
   }, [step, ready]);
 
+  // #4410: the index of a step whose save is still in flight (the step said so
+  // through `helpers.reportSaving`), or null. While it is set the operator
+  // cannot move to another step: a credential Replace counts as verified before
+  // its writes land, and continuing to Connect let a late write reset the
+  // tokens the OAuth callback had just stored.
+  const [savingStepIndex, setSavingStepIndex] = useState<number | null>(null);
+  const stepSaving = savingStepIndex === index;
+
   function goTo(next: number) {
     const clamped = Math.min(Math.max(next, 0), maxReachable);
+    if (stepSaving && clamped !== index) return;
     // The operator owns the cursor from here on, so a resume initialisation
     // that has not run yet stands down rather than undoing this (#2781).
     //
@@ -196,6 +205,7 @@ export function IntegrationWizard<Ctx>({
   // Skip an optional, unverified step: acknowledge it (persist its id so gating
   // passes it) and advance. A no-op for a required or already-verified step.
   function skipCurrent() {
+    if (stepSaving) return; // #4410: held like every other move mid-save
     const current = stepStates[index];
     if (!current) return; // see the unreachable note in `goTo` above
     const { step, verified } = current;
@@ -250,6 +260,10 @@ export function IntegrationWizard<Ctx>({
     optional: isWizardStepOptional(activeStep),
     acknowledged: acknowledgedOnly,
     skip: skipCurrent,
+    // A release clears only this step's own lock, so a late release from a
+    // copy of the step that already unmounted cannot unlock a newer save.
+    reportSaving: (saving) =>
+      setSavingStepIndex((previous) => (saving ? index : previous === index ? null : previous)),
     // The shell's vouch (#2324): `viewOnlyBanner` above is rendered in EVERY
     // branch of this component — the loading early-return included — so a step's
     // gated controls may drop their own per-button reason and lean on it. The
@@ -298,7 +312,7 @@ export function IntegrationWizard<Ctx>({
                   <button
                     type="button"
                     onClick={() => reachable && goTo(i)}
-                    disabled={!reachable}
+                    disabled={!reachable || (stepSaving && i !== index)}
                     aria-current={active ? "step" : undefined}
                     className={cn(
                       "flex min-h-11 w-full items-center gap-2 rounded-md border px-3 py-2 text-left text-sm transition-colors",
@@ -363,14 +377,14 @@ export function IntegrationWizard<Ctx>({
               type="button"
               variant="outline"
               onClick={() => goTo(index - 1)}
-              disabled={index === 0}
+              disabled={index === 0 || stepSaving}
             >
               Back
             </Button>
             <div className="flex flex-wrap items-center justify-end gap-3">
               {canSkip ? (
                 <div className="flex flex-col items-end gap-0.5">
-                  <Button type="button" variant="ghost" onClick={skipCurrent}>
+                  <Button type="button" variant="ghost" onClick={skipCurrent} disabled={stepSaving}>
                     {skipCopy.skipLabel}
                   </Button>
                   {skipCopy.skipDescription ? (
@@ -402,7 +416,7 @@ export function IntegrationWizard<Ctx>({
                 <Button
                   type="button"
                   onClick={() => goTo(index + 1)}
-                  disabled={!currentPassed}
+                  disabled={!currentPassed || stepSaving}
                 >
                   Continue
                 </Button>

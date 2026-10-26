@@ -10,8 +10,8 @@ import { resolveAdditionalPaymentDoor } from "@/lib/additional-payment-chase";
 import {
   intentCurrencyDiffers,
   reissueAdditionalIntentInClubCurrency,
-  staleIntentAction,
 } from "@/lib/additional-intent-currency";
+import { staleIntentAction } from "@/lib/stale-intent-action";
 import { restateAdditionalAsk } from "@/lib/additional-payment-ask";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { findPaymentTransactionByIntentId } from "@/lib/payment-transactions";
@@ -134,7 +134,7 @@ export async function GET(
         currency and the amount.
       */
       const row = await findPaymentTransactionByIntentId({ paymentIntentId: pi.id });
-      pi = await reissueAdditionalIntentInClubCurrency({
+      const reissued = await reissueAdditionalIntentInClubCurrency({
         format,
         bookingId,
         paymentId: payment.id,
@@ -146,6 +146,11 @@ export async function GET(
         reason: row?.reason ?? null,
         customerId: payment.stripeCustomerId,
       });
+      // #4316: the booking ended while this re-issued; nothing is payable.
+      if (!reissued) {
+        return NextResponse.json({ error: "No pending additional payment" }, { status: 404 });
+      }
+      pi = reissued;
     }
     if (!pi.client_secret) {
       return NextResponse.json(

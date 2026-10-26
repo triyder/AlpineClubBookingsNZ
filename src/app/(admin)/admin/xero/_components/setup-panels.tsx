@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
 import { loadAdminXeroContactGroups } from "@/lib/admin-xero-contact-groups"
-import { fetchJson, postJson } from "./api"
+import { fetchJson, postJson, type ActionResponse } from "./api"
 import { SectionCard, type ToggleSection } from "./shared"
 import { xeroSectionId } from "./types"
 import type {
@@ -68,6 +68,8 @@ export function SetupPanels({
   const [scanningDuplicates, setScanningDuplicates] = useState(false)
   const [creatingFamilyGroup, setCreatingFamilyGroup] = useState<string | null>(null)
   const [error, setError] = useState("")
+  // #4161: a link repair that ran but could not heal every refund note.
+  const [warning, setWarning] = useState("")
 
   const loadContactGroups = useCallback(
     async (options?: {
@@ -226,10 +228,13 @@ export function SetupPanels({
   const repairXeroLinks = async () => {
     setRepairingXeroLinks(true)
     setError("")
+    setWarning("")
     onMessage("")
     try {
-      const data = await postJson<{ message?: string }>("/api/admin/xero/link-maintenance", undefined, "Failed to repair Xero link ledger")
-      onMessage(data.message || "Xero link ledger maintenance completed.")
+      const data = await postJson<ActionResponse>("/api/admin/xero/link-maintenance", undefined, "Failed to repair Xero link ledger")
+      const message = data.message || "Xero link ledger maintenance completed."
+      if (data.warning) setWarning(`${message} ${data.warning}`)
+      else onMessage(message)
       onRefreshDiagnostics()
       onRefreshOperations()
     } catch (err) {
@@ -294,6 +299,7 @@ export function SetupPanels({
       <div className="space-y-6">
         {confirmDialog}
         {error ? <p className="text-sm text-danger">{error}</p> : null}
+        {warning ? <p className="text-sm text-warning" role="status">{warning}</p> : null}
         <div className="space-y-4">
           <div className="space-y-1">
             <h3 className="text-sm font-semibold">Import Members from Xero</h3>

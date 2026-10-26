@@ -58,9 +58,18 @@ import {
   XeroReconnectRequiredError,
 } from "@/lib/xero-api-client";
 
+/** What a won claim hands back for the save and the release (#3806 R2). */
+function makeLease(leaseUntil: Date) {
+  return {
+    leaseUntil,
+    tokenRowId: "xero-token-1",
+    storeVersion: "store-v1",
+    mirror: "mirror-fingerprint",
+  };
+}
+
 function makeTokens(overrides: Record<string, unknown> = {}) {
   return {
-    id: "xero-token-1",
     accessToken: "old-access",
     refreshToken: "old-refresh",
     expiresAt: new Date("2026-06-21T12:05:00.000Z"),
@@ -109,6 +118,7 @@ describe("getAuthenticatedXeroClient token refresh lease", () => {
       claimed: true,
       tokens,
       leaseUntil,
+      lease: makeLease(leaseUntil),
     });
 
     const result = await getAuthenticatedXeroClient();
@@ -130,12 +140,11 @@ describe("getAuthenticatedXeroClient token refresh lease", () => {
       {
         // #3454: a refresh is the named background job, never an absence.
         actor: { kind: "system", actor: "xero-token-refresh" },
-        lease: { claimed: tokens, leaseUntil },
+        lease: makeLease(leaseUntil),
       }
     );
     expect(mocks.releaseXeroTokenRefreshLease).toHaveBeenCalledWith(
-      "xero-token-1",
-      leaseUntil
+      makeLease(leaseUntil),
     );
   });
 
@@ -145,9 +154,14 @@ describe("getAuthenticatedXeroClient token refresh lease", () => {
     const xero = makeXeroClient();
     mocks.createXeroClient.mockReturnValue(xero);
     mocks.loadXeroTokens.mockResolvedValue(tokens);
-    mocks.claimXeroTokenRefreshLease.mockResolvedValue({ claimed: true, tokens, leaseUntil });
+    mocks.claimXeroTokenRefreshLease.mockResolvedValue({
+      claimed: true,
+      tokens,
+      leaseUntil,
+      lease: makeLease(leaseUntil),
+    });
     const refusal = Object.assign(
-      new Error("the token key is not available; the refresh token was not spent"),
+      new Error("the auth secret fails the capture gate; the refresh token was not spent"),
       { name: "XeroTokenSaveUnavailableError" },
     );
     mocks.assertXeroTokensCanBeStored.mockRejectedValue(refusal);
@@ -157,7 +171,7 @@ describe("getAuthenticatedXeroClient token refresh lease", () => {
     await expect(getAuthenticatedXeroClient()).rejects.toBe(refusal);
     expect(xero.refreshWithRefreshToken).not.toHaveBeenCalled();
     expect(mocks.saveXeroTokens).not.toHaveBeenCalled();
-    expect(mocks.releaseXeroTokenRefreshLease).toHaveBeenCalledWith("xero-token-1", leaseUntil);
+    expect(mocks.releaseXeroTokenRefreshLease).toHaveBeenCalledWith(makeLease(leaseUntil));
     // And it is not silent: it alerts like any refresh failure (#3454 review).
     await vi.waitFor(() =>
       expect(mocks.notifyXeroSyncError).toHaveBeenCalledWith(
@@ -185,7 +199,12 @@ describe("getAuthenticatedXeroClient token refresh lease", () => {
     });
     mocks.createXeroClient.mockReturnValue(xero);
     mocks.loadXeroTokens.mockResolvedValue(tokens);
-    mocks.claimXeroTokenRefreshLease.mockResolvedValue({ claimed: true, tokens, leaseUntil });
+    mocks.claimXeroTokenRefreshLease.mockResolvedValue({
+      claimed: true,
+      tokens,
+      leaseUntil,
+      lease: makeLease(leaseUntil),
+    });
     const stale = new StaleCredentialWriteError({
       provider: "xero-oauth",
       key: "token-set",
@@ -233,14 +252,14 @@ describe("getAuthenticatedXeroClient token refresh lease", () => {
       claimed: true,
       tokens,
       leaseUntil,
+      lease: makeLease(leaseUntil),
     });
 
     await expect(getAuthenticatedXeroClient()).rejects.toThrow(
       "outgoing request timed out after 3500ms"
     );
     expect(mocks.releaseXeroTokenRefreshLease).toHaveBeenCalledWith(
-      "xero-token-1",
-      leaseUntil
+      makeLease(leaseUntil),
     );
 
     const result = await getAuthenticatedXeroClient();
@@ -338,10 +357,12 @@ describe("getAuthenticatedXeroClient error taxonomy (#2105)", () => {
     xero.refreshWithRefreshToken = vi.fn().mockRejectedValue(refreshError);
     mocks.createXeroClient.mockReturnValue(xero);
     mocks.loadXeroTokens.mockResolvedValue(tokens);
+    const leaseUntil = new Date("2026-06-21T12:02:00.000Z");
     mocks.claimXeroTokenRefreshLease.mockResolvedValue({
       claimed: true,
       tokens,
-      leaseUntil: new Date("2026-06-21T12:02:00.000Z"),
+      leaseUntil,
+      lease: makeLease(leaseUntil),
     });
   }
 

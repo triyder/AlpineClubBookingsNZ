@@ -5,8 +5,10 @@ vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 import {
   coverageLodgeLabel,
   coverageNeedsLodgeContext,
+  getHutLeaderDashboardCoverage,
   getUnassignedHutLeaderDates,
 } from "@/lib/hut-leader-coverage";
+import { matchesWhere } from "@/lib/__tests__/support/prisma-where";
 
 function dateOnly(value: string) {
   return new Date(`${value}T00:00:00.000Z`);
@@ -25,6 +27,12 @@ function buildDb(options: {
     lodgeId?: string | null;
     /** The booking's lodge `active` flag; defaults to an active lodge. */
     lodgeActive?: boolean;
+    /** Defaults to PAID, an operational stay. */
+    status?: string;
+    /** A school group's booking (#3819/#3821). */
+    school?: boolean;
+    /** Held for a school quote not yet accepted (an AWAITING_REVIEW hold). */
+    heldForSchool?: boolean;
     checkIn: Date;
     checkOut: Date;
     guests?: Array<{
@@ -33,8 +41,43 @@ function buildDb(options: {
       nights?: Array<{ stayDate: Date }>;
     }>;
   }>;
-  assignments?: Array<{ lodgeId?: string | null; startDate: Date; endDate: Date }>;
+  assignments?: Array<{
+    lodgeId?: string | null;
+    memberId?: string;
+    startDate: Date;
+    endDate: Date;
+  }>;
+  /**
+   * The assigned leaders' own stays (#3818). Omitted, every leader is staying
+   * every night their assignment claims, so the cases below keep testing what
+   * they were written to test; pass an explicit list to test presence.
+   */
+  leaderStays?: Array<{
+    memberId: string;
+    lodgeId?: string;
+    /** The booking the stay is on, e.g. `booking-0` for the first booking. */
+    bookingId?: string;
+    checkIn: Date;
+    checkOut: Date;
+  }>;
 }) {
+  const assignments = (options.assignments ?? []).map((assignment, index) => ({
+    id: `assignment-${index}`,
+    memberId: assignment.memberId ?? `leader-${index}`,
+    source: "MANUAL" as const,
+    bedId: null,
+    ...assignment,
+    lodgeId: assignment.lodgeId ?? "lodge-a",
+  }));
+  const leaderStays: NonNullable<typeof options.leaderStays> =
+    options.leaderStays ??
+    assignments.map((assignment) => ({
+      memberId: assignment.memberId,
+      lodgeId: assignment.lodgeId,
+      checkIn: assignment.startDate,
+      // The night of `endDate` is claimed, so the stay runs to the morning after.
+      checkOut: new Date(assignment.endDate.getTime() + 86_400_000),
+    }));
   return {
     lodgeSettings: {
       findUnique: vi.fn().mockResolvedValue({
@@ -43,23 +86,58 @@ function buildDb(options: {
       }),
     },
     booking: {
-      findMany: vi.fn().mockResolvedValue(
-        (options.bookings ?? []).map((booking) => {
-          const lodgeId = booking.lodgeId ?? "lodge-a";
-          return {
-            lodge: {
-              name: LODGE_NAMES[lodgeId] ?? lodgeId,
-              active: booking.lodgeActive ?? true,
-            },
-            ...booking,
-            lodgeId,
-          };
-        }),
+      // Two reads share this delegate: the coverage reader's (it selects the
+      // guests) and the cover's school-booking read (#3819). Each one's status
+      // half, under `AND`, is applied as Postgres would (#3821), so a school
+      // booking awaiting its invoice is found by both and anything else only
+      // by its own rule.
+      findMany: vi.fn().mockImplementation(
+        async (args?: { where?: { AND?: unknown[] }; select?: { guests?: unknown } }) =>
+          (options.bookings ?? [])
+            .filter((booking) =>
+              matchesWhere(
+                {
+                  status: booking.status ?? "PAID",
+                  originBookingRequest: booking.school ? { type: "SCHOOL" } : null,
+                  heldForBookingRequest: booking.heldForSchool ? { type: "SCHOOL" } : null,
+                  adminCapacityHoldAt: null,
+                },
+                { AND: args?.where?.AND ?? [] },
+              ),
+            )
+            .map((booking, index) => {
+              const lodgeId = booking.lodgeId ?? "lodge-a";
+              if (!args?.select?.guests) {
+                return { id: `booking-${index}`, lodgeId, checkIn: booking.checkIn, checkOut: booking.checkOut };
+              }
+              return {
+                lodge: {
+                  name: LODGE_NAMES[lodgeId] ?? lodgeId,
+                  active: booking.lodgeActive ?? true,
+                },
+                ...booking,
+                lodgeId,
+              };
+            }),
       ),
     },
     hutLeaderAssignment: {
+      findMany: vi.fn().mockResolvedValue(assignments),
+    },
+    bookingGuest: {
       findMany: vi.fn().mockResolvedValue(
-        (options.assignments ?? []).map((assignment) => ({ lodgeId: "lodge-a", ...assignment })),
+        leaderStays.map((stay) => ({
+          memberId: stay.memberId,
+          stayStart: stay.checkIn,
+          stayEnd: stay.checkOut,
+          nights: [],
+          booking: {
+            id: stay.bookingId ?? `stay-${stay.memberId}`,
+            lodgeId: stay.lodgeId ?? "lodge-a",
+            checkIn: stay.checkIn,
+            checkOut: stay.checkOut,
+          },
+        })),
       ),
     },
   };
@@ -539,5 +617,188 @@ describe("coverageLodgeLabel", () => {
         guestCount: 1,
       }),
     ).toBeNull();
+  });
+});
+
+describe("getUnassignedHutLeaderDates — a leader must be staying (#3818)", () => {
+  it("an existing row ending on checkout day no longer covers the checkout night, with no backfill", async () => {
+    // The leader stays Mon 3 Aug and Tue 4 Aug, leaving Wed 5 Aug morning; the
+    // old cron stamped the row through the checkout day. Other guests stay on
+    // Wednesday night, so it needs a leader the row's dates still "claim".
+    const db = buildDb({
+      bookings: [
+        { checkIn: dateOnly("2026-08-03"), checkOut: dateOnly("2026-08-07"), guests: [{}, {}] },
+      ],
+      assignments: [
+        { memberId: "leader", startDate: dateOnly("2026-08-03"), endDate: dateOnly("2026-08-05") },
+      ],
+      leaderStays: [
+        { memberId: "leader", checkIn: dateOnly("2026-08-03"), checkOut: dateOnly("2026-08-05") },
+      ],
+    });
+
+    const result = await getUnassignedHutLeaderDates({
+      scope: { kind: "lodge", lodgeId: "lodge-a" },
+      db,
+      from: dateOnly("2026-08-03"),
+      to: dateOnly("2026-08-06"),
+    });
+
+    // Healed by the reader alone: this PR ships no migration or backfill.
+    expect(result.map((row) => row.date)).toEqual(["2026-08-05", "2026-08-06"]);
+  });
+
+  it("a leader whose stay is not loaded (cancelled, bumped or archived) covers nothing", async () => {
+    const result = await getUnassignedHutLeaderDates({
+      scope: { kind: "lodge", lodgeId: "lodge-a" },
+      db: buildDb({
+        bookings: [
+          { checkIn: dateOnly("2026-08-03"), checkOut: dateOnly("2026-08-04"), guests: [{}] },
+        ],
+        assignments: [{ startDate: dateOnly("2026-08-03"), endDate: dateOnly("2026-08-03") }],
+        leaderStays: [],
+      }),
+      from: dateOnly("2026-08-03"),
+      to: dateOnly("2026-08-03"),
+    });
+
+    expect(result.map((row) => row.date)).toEqual(["2026-08-03"]);
+  });
+});
+
+describe("getUnassignedHutLeaderDates — a school booking awaiting its invoice (#3821)", () => {
+  // Owner decision on #3820, 13 Oct 2026, "Yes, count it": a school booking
+  // that holds beds (CONFIRMED until its invoice is paid) needs a leader, a
+  // member on it can lead, and the dashboard warns while nobody does.
+  const school = {
+    status: "CONFIRMED",
+    school: true,
+    checkIn: dateOnly("2026-08-03"),
+    checkOut: dateOnly("2026-08-05"),
+    guests: [{}, {}, {}],
+  };
+
+  it("reports its nights while no leader covers them", async () => {
+    const result = await getUnassignedHutLeaderDates({
+      scope: { kind: "lodge", lodgeId: "lodge-a" },
+      db: buildDb({ bookings: [school] }),
+      from: dateOnly("2026-08-03"),
+      to: dateOnly("2026-08-04"),
+    });
+    expect(result).toEqual([uncovered("2026-08-03", 1, 3), uncovered("2026-08-04", 1, 3)]);
+  });
+
+  it("is covered by a member staying on it", async () => {
+    const result = await getUnassignedHutLeaderDates({
+      scope: { kind: "lodge", lodgeId: "lodge-a" },
+      db: buildDb({
+        bookings: [school],
+        assignments: [
+          { memberId: "parent", startDate: dateOnly("2026-08-03"), endDate: dateOnly("2026-08-04") },
+        ],
+        leaderStays: [
+          {
+            memberId: "parent",
+            bookingId: "booking-0",
+            checkIn: dateOnly("2026-08-03"),
+            checkOut: dateOnly("2026-08-05"),
+          },
+        ],
+      }),
+      from: dateOnly("2026-08-03"),
+      to: dateOnly("2026-08-04"),
+    });
+    expect(result).toEqual([]);
+  });
+
+  it("does not need a leader for an unaccepted school quote's AWAITING_REVIEW hold", async () => {
+    // The owner's words: "a school booking that holds beds (CONFIRMED,
+    // awaiting its invoice)". A hold for a quote the school has not accepted
+    // holds beds but is not yet a stay, so nobody is chased to lead it.
+    const result = await getUnassignedHutLeaderDates({
+      scope: { kind: "lodge", lodgeId: "lodge-a" },
+      db: buildDb({
+        bookings: [{ ...school, status: "AWAITING_REVIEW", school: false, heldForSchool: true }],
+      }),
+      from: dateOnly("2026-08-03"),
+      to: dateOnly("2026-08-04"),
+    });
+    expect(result).toEqual([]);
+  });
+
+  it("still ignores a CONFIRMED booking that is not a school group's", async () => {
+    const result = await getUnassignedHutLeaderDates({
+      scope: { kind: "lodge", lodgeId: "lodge-a" },
+      db: buildDb({ bookings: [{ ...school, school: false }] }),
+      from: dateOnly("2026-08-03"),
+      to: dateOnly("2026-08-04"),
+    });
+    expect(result).toEqual([]);
+  });
+});
+
+describe("getHutLeaderDashboardCoverage (#3818)", () => {
+  // Today 1 Aug, a three-night lookahead (1..4 Aug), the week 1..7 Aug.
+  const today = dateOnly("2026-08-01");
+  const week = { from: today, to: dateOnly("2026-08-07") };
+
+  it("reads ONE cover reaching from the night before the week to whichever window ends later, with names", async () => {
+    const db = buildDb({
+      hutLeaderLookaheadDays: 3,
+      bookings: [
+        { checkIn: dateOnly("2026-08-02"), checkOut: dateOnly("2026-08-03"), guests: [{}] },
+      ],
+      assignments: [
+        { memberId: "ann", startDate: dateOnly("2026-07-31"), endDate: dateOnly("2026-08-02") },
+        { memberId: "ben", startDate: dateOnly("2026-08-03"), endDate: dateOnly("2026-08-06") },
+      ],
+    });
+
+    const result = await getHutLeaderDashboardCoverage({
+      db,
+      scope: { kind: "all" },
+      today,
+      handovers: week,
+    });
+
+    expect(db.hutLeaderAssignment.findMany).toHaveBeenCalledTimes(1);
+    expect(db.hutLeaderAssignment.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { startDate: { lte: week.to }, endDate: { gte: dateOnly("2026-07-31") } },
+        select: expect.objectContaining({ member: expect.anything() }),
+      }),
+    );
+    // The uncovered nights still answer over the lookahead window alone.
+    expect(db.booking.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          checkIn: { lte: dateOnly("2026-08-04") },
+          checkOut: { gt: today },
+        }),
+      }),
+    );
+    expect(result.unassignedDates).toEqual([]);
+    expect(result.handovers.map((handover) => handover.date)).toEqual(["2026-08-03"]);
+  });
+
+  it("reads neither names nor handovers when the viewer cannot see the card", async () => {
+    const db = buildDb({ hutLeaderLookaheadDays: 3 });
+
+    const result = await getHutLeaderDashboardCoverage({
+      db,
+      scope: { kind: "all" },
+      today,
+      handovers: null,
+    });
+
+    const [[args]] = db.hutLeaderAssignment.findMany.mock.calls as [
+      [{ where: unknown; select: Record<string, unknown> }],
+    ];
+    expect(args.where).toEqual({
+      startDate: { lte: dateOnly("2026-08-04") },
+      endDate: { gte: today },
+    });
+    expect(args.select).not.toHaveProperty("member");
+    expect(result.handovers).toEqual([]);
   });
 });

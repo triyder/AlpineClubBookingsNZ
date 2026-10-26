@@ -122,6 +122,7 @@ export async function recordReviewClosurePricing({
   note,
   todayAtClub,
   hasIssuedXeroInvoice,
+  paymentLinkRead,
   settlementRoute,
   settlementAmountCents,
   settlementDirection,
@@ -148,6 +149,8 @@ export async function recordReviewClosurePricing({
   todayAtClub: CalendarDate;
   /** #3219: whether the club has already invoiced this booking through Xero. */
   hasIssuedXeroInvoice: boolean;
+  /** #3980 review round 2 F4: the closure's own read of the payment's invoice link, which the re-price claims against. */
+  paymentLinkRead: { id: string; xeroInvoiceId: string | null } | null;
   /**
    * #3219: what THIS closure would send Xero, so this module can ask the Xero
    * leg's own predicate whether a document is actually issued.
@@ -215,6 +218,7 @@ export async function recordReviewClosurePricing({
     })),
     todayAtClub,
     store,
+    paymentLinkRead,
   });
   const rebase = outcome.rebased ? outcome.rebase : null;
   const settled = settleAgainstRebase ? await settleAgainstRebase(rebase) : null;

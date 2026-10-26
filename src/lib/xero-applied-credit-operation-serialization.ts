@@ -1,3 +1,4 @@
+import { XERO_ACTIVE_OPERATION_STATUSES } from "./xero-active-operation-statuses";
 import { Prisma } from "@prisma/client";
 import {
   XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE,
@@ -50,11 +51,18 @@ export class XeroAppliedCreditOperationBusyError extends Error {
    * do next has to be able to tell the two apart.
    */
   readonly fenceStatus: string | null;
+  /**
+   * #3954 round 8: the `lastErrorCode` the outbox records as it returns the
+   * row to PENDING, where the wait is one its scan should space out
+   * (`BILLED_OFFSET_AWAITING_OWN_NOTE_CODE`); null for every other wait.
+   */
+  readonly waitCode: string | null;
 
-  constructor(message: string, fenceStatus: string | null = null) {
+  constructor(message: string, fenceStatus: string | null = null, waitCode: string | null = null) {
     super(message);
     this.name = "XeroAppliedCreditOperationBusyError";
     this.fenceStatus = fenceStatus;
+    this.waitCode = waitCode;
   }
 }
 
@@ -118,7 +126,7 @@ export async function findUnconvergedAppliedCreditDeallocation(
       localId: paymentId,
       queueType: XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE,
       status: {
-        in: ["PENDING", "RUNNING", "FAILED", "PARTIAL", "WAITING_PAYMENT"],
+        in: [...XERO_ACTIVE_OPERATION_STATUSES, "FAILED", "PARTIAL"],
       },
     },
     select: { id: true, status: true },
@@ -154,7 +162,7 @@ export async function findAppliedCreditDeallocationFence(
       localId: paymentId,
       queueType: XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE,
       status: {
-        in: ["PENDING", "RUNNING", "FAILED", "PARTIAL", "WAITING_PAYMENT"],
+        in: [...XERO_ACTIVE_OPERATION_STATUSES, "FAILED", "PARTIAL"],
       },
     },
     select: { id: true, status: true, requestPayload: true },

@@ -170,6 +170,24 @@ describe("suggestNonMemberContacts (#1935)", () => {
     expect(out[1]).toMatchObject({ id: "s2", email: "", isPlaceholderEmail: true });
   });
 
+  it("escapes typed email/name fragments while retaining insensitive matching (#4190)", async () => {
+    (mockedPrisma.member.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    await suggestNonMemberContacts({ email: " John_%\\Smith@example.invalid ", name: " John_%\\Smith " });
+    expect(mockedPrisma.member.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        AND: [
+          { canLogin: false, role: { in: ["NON_MEMBER", "SCHOOL"] }, archivedAt: null, active: true },
+          { OR: [
+            { email: { equals: "John_%\\Smith@example.invalid", mode: "insensitive" } },
+            { email: { contains: "John\\_\\%\\\\Smith@example.invalid", mode: "insensitive" } },
+            { firstName: { contains: "John\\_\\%\\\\Smith", mode: "insensitive" } },
+            { lastName: { contains: "John\\_\\%\\\\Smith", mode: "insensitive" } },
+          ] },
+        ],
+      },
+    }));
+  });
+
   it("returns nothing for too-short input", async () => {
     const out = await suggestNonMemberContacts({ email: "a", name: "" });
     expect(out).toEqual([]);

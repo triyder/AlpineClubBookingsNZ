@@ -8,6 +8,7 @@ import {
   OTHER_LODGE_RATE_LODGE_NOT_FOUND_MESSAGE,
   OTHER_LODGE_RATE_LODGE_REQUIRED_MESSAGE,
   OTHER_LODGE_RATE_INELIGIBLE_GUEST_MESSAGE,
+  OTHER_LODGE_RATE_LINKED_GUEST_MESSAGE,
   resolveOtherLodgeRateElection,
   type OtherLodgeRateBooking,
 } from "@/lib/booking-other-lodge-rate";
@@ -51,9 +52,11 @@ function elect(args: {
   input: Parameters<typeof resolveOtherLodgeRateElection>[0]["input"];
   role: Role;
   eligibleGuestIds?: ReadonlySet<string>;
+  linkedGuestIds?: ReadonlySet<string>;
 }) {
   return resolveOtherLodgeRateElection({
     ...args,
+    linkedGuestIds: args.linkedGuestIds ?? new Set(),
     eligibleGuestIds:
       args.eligibleGuestIds ??
       new Set(
@@ -336,6 +339,40 @@ describe("resolveOtherLodgeRateElection", () => {
     expect(election.requested).toBe(true);
     expect(election.otherLodgeIdChanged).toBe(false);
     expect(election.repriceGuestIds.size).toBe(0);
+  });
+
+  describe("a guest this edit also links to a member (#4197)", () => {
+    const booking = makeBooking({
+      otherLodgeId: "lodge-1",
+      guests: [
+        { id: "guest-a", isMember: false, otherLodgeMember: true },
+        { id: "guest-b", isMember: false, otherLodgeMember: false },
+      ],
+    });
+
+    it.each([
+      ["ticking them", ["guest-a", "guest-b"], "guest-b"],
+      ["unticking them", [], "guest-a"],
+    ])("refuses %s", (_label, ticked, linked) => {
+      expect(() =>
+        elect({
+          booking,
+          input: { otherLodgeId: "lodge-1", otherLodgeMemberGuestIds: ticked },
+          role: ADMIN,
+          linkedGuestIds: new Set([linked]),
+        }),
+      ).toThrow(OTHER_LODGE_RATE_LINKED_GUEST_MESSAGE);
+    });
+
+    it("allows the link when that guest's rate is left alone", () => {
+      const election = elect({
+        booking,
+        input: { otherLodgeId: "lodge-1", otherLodgeMemberGuestIds: ["guest-a"] },
+        role: ADMIN,
+        linkedGuestIds: new Set(["guest-b"]),
+      });
+      expect([...election.repriceGuestIds]).toEqual([]);
+    });
   });
 });
 

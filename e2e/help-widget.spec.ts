@@ -6,7 +6,7 @@ import { stayWindow } from "./helpers/stay-dates";
 import {
   E2E_ADMIN,
   NOMINATOR_TWO,
-  PAID_CANCEL_BOOKING_ID,
+  HELP_WIDGET_BOOKING_ID,
 } from "./helpers/fixtures";
 
 // Epic #2094 C2: the chat-style help widget replaces the old ContextualHelpButton
@@ -110,10 +110,11 @@ test.describe("member booking-detail help widget", () => {
     const context = await browser.newContext();
     const page = await context.newPage();
     try {
-      // Nadia owns the seeded PAID, far-future (cancellable) booking, so its
-      // detail page computes a real cancellation refund schedule.
+      // Nadia owns a seeded PAID, far-future booking that no spec cancels
+      // (#4397), so its detail page always computes a real cancellation refund
+      // schedule, whichever specs ran before this one.
       await loginPersona(page, NOMINATOR_TWO.email);
-      await page.goto(`/bookings/${PAID_CANCEL_BOOKING_ID}`);
+      await page.goto(`/bookings/${HELP_WIDGET_BOOKING_ID}`);
       await expect(
         page.getByRole("heading", { name: "Booking Details" }),
       ).toBeVisible();
@@ -124,11 +125,16 @@ test.describe("member booking-detail help widget", () => {
 
       // The BookingHelpExtras leaf re-surfaces the dialog's four blocks; the
       // refund-schedule block is present for a captured-payment booking.
+      // Matched by its heading, exactly: the member guide's "Cancelling and
+      // refunds" text also names the schedule, so a substring match finds two
+      // elements on a cancellable booking - and on a cancelled one it found
+      // only that paragraph, which is how this assertion passed for months
+      // without the block it names (#4397).
       await expect(
-        panel(page).getByText("Cancellation refund schedule"),
+        panel(page).getByRole("heading", { name: "Cancellation refund schedule", exact: true }),
       ).toBeVisible();
       // The status glossary block survives too.
-      await expect(panel(page).getByText("Booking statuses")).toBeVisible();
+      await expect(panel(page).getByRole("heading", { name: "Booking statuses", exact: true })).toBeVisible();
     } finally {
       await context.close();
     }

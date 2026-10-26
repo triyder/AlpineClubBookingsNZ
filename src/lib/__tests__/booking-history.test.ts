@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildBookingHistoryItems } from "@/lib/booking-history";
+import { buildBookingHistoryItems, type BookingHistoryAudience } from "@/lib/booking-history";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 describe("buildBookingHistoryItems", () => {
@@ -501,9 +501,9 @@ describe("buildBookingHistoryItems", () => {
  * never moves money — and this note is where they read that.
  */
 describe("buildBookingHistoryItems — unapplied credit election (#2265)", () => {
-  function build(details: string | null) {
+  function build(details: string | null, audience: BookingHistoryAudience = "member") {
     return buildBookingHistoryItems({
-      audience: "member",
+      audience,
       createdAt: new Date("2026-04-01T09:00:00Z"),
       payment: null,
       modifications: [],
@@ -563,6 +563,23 @@ describe("buildBookingHistoryItems — unapplied credit election (#2265)", () =>
 
     expect(item?.detail).toContain("$0.00 of account credit available");
     expect(item?.detail).toContain("balance was not reduced");
+  });
+
+  // #3991: the owner's elected credit and balance are not a linked guest's to
+  // read — the page's credit-election notice and narrative withhold them too.
+  it("is withheld from a linked guest, and shown to the member and staff", () => {
+    const details = JSON.stringify({
+      source: "manual-mark-paid",
+      creditElectionCents: 45000,
+      paidAmountCents: 12000,
+      availableCreditCents: 5000,
+    });
+    const find = (audience: BookingHistoryAudience) =>
+      build(details, audience).find((entry) => entry.id === "audit-audit-election");
+
+    expect(find("linked_guest")).toBeUndefined();
+    expect(find("member")?.detail).toContain("$50.00 of account credit available");
+    expect(find("staff")?.detail).toContain("$50.00 of account credit available");
   });
 
   it("says credit spent and then returned was RETURNED, not 'not reduced' (#3864)", () => {
@@ -899,6 +916,88 @@ describe("a modification whose adjustment is still with the club (#3033)", () =>
     // And no row anywhere carries the text, whatever it might have been titled.
     for (const item of items) {
       expect(item.detail ?? "").not.toMatch(/chose to move only that one/);
+    }
+  });
+});
+
+// #3991: the cancel row replays its stored audit text, which can name the
+// account credit the cancellation issued — the owner's money, not a linked
+// guest's. They read only the fact.
+describe("buildBookingHistoryItems — the cancel row for a linked guest (#3991)", () => {
+  const cancelRow = (audience: BookingHistoryAudience) =>
+    buildBookingHistoryItems({
+      audience,
+      createdAt: new Date("2026-04-01T09:00:00Z"),
+      payment: null,
+      modifications: [],
+      refundRequests: [],
+      auditLogs: [
+        {
+          id: "audit-cancel",
+          action: "booking.cancel",
+          details: "Cancelled by member. Credit 50% = $60.00 as account credit.",
+          createdAt: new Date("2026-04-02T10:00:00Z"),
+        },
+      ],
+    }, CLUB_FORMAT_TEST).find((entry) => entry.id === "audit-audit-cancel");
+
+  it("reads only that the booking was cancelled", () => {
+    const row = cancelRow("linked_guest");
+    expect(row?.title).toBe("Booking cancelled");
+    expect(row?.detail).toBe("This booking was cancelled.");
+  });
+
+  it("CONTROL: the member and staff read the stored text", () => {
+    expect(cancelRow("member")?.detail).toContain("$60.00 as account credit");
+    expect(cancelRow("staff")?.detail).toContain("$60.00 as account credit");
+  });
+});
+
+// #3991: a credit-choice edit names the owner's credit ("$X of account credit
+// will be applied at payment"); a linked guest's history drops the row, as it
+// drops the "Saved account credit was not applied" entry.
+describe("buildBookingHistoryItems — a credit-choice edit for a linked guest (#3991)", () => {
+  const rows = (audience: BookingHistoryAudience) =>
+    buildBookingHistoryItems({
+      audience,
+      createdAt: new Date("2026-04-01T09:00:00Z"),
+      payment: null,
+      modifications: [
+        {
+          id: "mod-credit",
+          modificationType: "CREDIT_ELECTION",
+          previousData: { creditElectionCents: 0 },
+          newData: { creditElectionCents: 4500 },
+          priceDiffCents: 0,
+          changeFeeCents: 0,
+          createdAt: new Date("2026-04-03T10:00:00Z"),
+        },
+        {
+          id: "mod-guests",
+          modificationType: "GUEST_ADD",
+          previousData: { guestCount: 2 },
+          newData: { guestCount: 3 },
+          priceDiffCents: 6000,
+          changeFeeCents: 0,
+          createdAt: new Date("2026-04-04T10:00:00Z"),
+        },
+      ],
+      refundRequests: [],
+      auditLogs: [],
+    }, CLUB_FORMAT_TEST);
+
+  it("drops the credit-choice row and keeps the other edits", () => {
+    const items = rows("linked_guest");
+    expect(items.find((item) => item.id === "modification-mod-credit")).toBeUndefined();
+    expect(items.find((item) => item.id === "modification-mod-guests")).toBeDefined();
+    expect(JSON.stringify(items)).not.toMatch(/credit/i);
+  });
+
+  it("CONTROL: the member and staff read it with its amount", () => {
+    for (const audience of ["member", "staff"] as const) {
+      const row = rows(audience).find((item) => item.id === "modification-mod-credit");
+      expect(row?.title).toBe("Credit Choice Updated");
+      expect(row?.detail).toContain("$45.00 of account credit will be applied at payment");
     }
   });
 });

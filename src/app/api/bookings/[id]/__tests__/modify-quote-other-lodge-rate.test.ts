@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { NEGATIVE_EDITED_HEADLINE_MESSAGE } from "@/lib/edit-night-valuation";
 import { NextRequest } from "next/server";
 
 /**
@@ -36,6 +37,7 @@ const h = vi.hoisted(() => ({
   isXeroConnected: vi.fn(),
   getXeroLockDates: vi.fn(),
   isQuotePricedBooking: vi.fn(),
+  isMemberWholeLodgeBooking: vi.fn(),
   // #2978 review: hoisted so the tests can assert what the ROUTE passes it. It
   // was previously an inline stub, which meant nothing checked that the route
   // handed it the booking's guests or the booking's season — the two inputs that
@@ -116,14 +118,14 @@ vi.mock("@/lib/membership-type-policy", () => ({
   MembershipTypeBookingPolicyError: class extends Error {},
   getMembershipTypeBookingPolicyErrorBody: (e: Error) => ({ error: e.message }),
 }));
-// `lockedNightPricesForGuest` is left REAL — it is half of what this suite
+// The valued night locks (`editedGuestPricingLocks`) are left REAL — half of what this suite
 // asserts. Only the three collaborators that would need a database are stubbed.
 vi.mock("@/lib/booking-modify", async (importOriginal) => {
   const actual = (await importOriginal()) as typeof import("@/lib/booking-modify");
   return {
     ...actual,
     isQuotePricedBooking: h.isQuotePricedBooking,
-    isMemberWholeLodgeBooking: vi.fn().mockResolvedValue(false),
+    isMemberWholeLodgeBooking: h.isMemberWholeLodgeBooking,
     calculateModificationSettlementOptions: vi.fn().mockResolvedValue(null),
   };
 });
@@ -180,8 +182,8 @@ vi.mock("@/lib/booking-policies", () => ({
 
 import { POST } from "@/app/api/bookings/[id]/modify-quote/route";
 import {
-  OTHER_LODGE_RATE_AMOUNT_UNDER_REVIEW_MESSAGE,
   OTHER_LODGE_RATE_IN_PROGRESS_MESSAGE,
+  OTHER_LODGE_RATE_LINKED_GUEST_MESSAGE,
 } from "@/lib/booking-other-lodge-rate";
 
 const D = (s: string) => new Date(`${s}T00:00:00.000Z`);
@@ -214,10 +216,11 @@ function booking(overrides: Record<string, unknown> = {}) {
     otherLodgeId: null,
     checkIn: D("2026-08-01"),
     checkOut: D("2026-08-03"),
-    totalPriceCents: 10600,
+    // The stored guest prices summed: 2000 + 4800 + 4800 (#4197).
+    totalPriceCents: 11600,
     discountCents: 0,
     promoAdjustmentCents: 0,
-    finalPriceCents: 10600,
+    finalPriceCents: 11600,
     payment: null,
     promoRedemption: null,
     guests: [
@@ -262,10 +265,9 @@ function booking(overrides: Record<string, unknown> = {}) {
 /**
  * The guest rows the route handed to the pricing engine, keyed by guest id.
  *
- * The FIRST call, which is the one that produces the new price. A date change
- * makes several further passes to itemise what each part of the edit cost, and
- * those price the OLD dates from differently-shaped rows — reading the last call
- * would quietly assert against a comparison pass instead of the real quote.
+ * The FIRST call, which is the one that produces the new price. The breakdown
+ * reads that same pass since #4197; before then a date change made further
+ * comparison passes, which is why this names the first call rather than the last.
  */
 function pricedGuestsById() {
   const call = h.priceGuests.mock.calls[0]?.[1] as {
@@ -289,6 +291,7 @@ beforeEach(() => {
   h.groupDiscountFindUnique.mockResolvedValue(null);
   h.bookingRequestFindFirst.mockResolvedValue(null);
   h.isQuotePricedBooking.mockResolvedValue(false);
+  h.isMemberWholeLodgeBooking.mockResolvedValue(false);
   h.resolveOtherLodgeRateEligible.mockImplementation(
     (_db: unknown, { guests }: { guests: Array<{ id: string }> }) =>
       Promise.resolve(new Set(guests.map((guest) => guest.id))),
@@ -359,6 +362,106 @@ describe("modify-quote — other-lodge member rate", () => {
       // 2000 quoted against 4800 booked.
       amountCents: -2800,
     });
+  });
+
+  it("itemises the re-rate once, so the breakdown adds up to the total (#4197)", async () => {
+    const res = await POST(
+      req({
+        otherLodgeId: "lodge-partner",
+        otherLodgeMemberGuestIds: ["g-visitor"],
+      }),
+      { params },
+    );
+    const body = await res.json();
+
+    // The re-rated guest's whole change is on the re-rate line; the stay line
+    // must not count it a second time.
+    expect(body.priceDiffCents).toBe(-2800);
+    expect(body.itemizedChanges).toEqual([
+      { label: expect.stringContaining("other-lodge member rate"), amountCents: -2800 },
+    ]);
+  });
+
+  it("a re-rate beside a date change says its line includes the guest's date change (#4197)", async () => {
+    // One more night: the owner and the stranger keep their locked nights and buy
+    // the 3rd at their rates; the visitor's whole stay re-prices at the member rate.
+    const nightDates = [D("2026-08-01"), D("2026-08-02"), D("2026-08-03")];
+    h.priceGuests.mockResolvedValue({
+      totalPriceCents: 13200,
+      guests: [
+        { priceCents: 3000, perNightCents: [1000, 1000, 1000], nightDates },
+        { priceCents: 3000, perNightCents: [1000, 1000, 1000], nightDates },
+        { priceCents: 7200, perNightCents: [2400, 2400, 2400], nightDates },
+      ],
+    });
+    const res = await POST(
+      req({
+        checkOut: "2026-08-04",
+        otherLodgeId: "lodge-partner",
+        otherLodgeMemberGuestIds: ["g-visitor"],
+      }),
+      { params },
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.priceDiffCents).toBe(13200 - 11600);
+    expect(body.itemizedChanges).toEqual([
+      {
+        label: expect.stringMatching(/other-lodge member rate, including their date change$/),
+        amountCents: 3000 - 4800,
+      },
+      { label: "Date change: 2 nights → 3 nights", amountCents: 1000 + 2400 },
+    ]);
+  });
+
+  it("refuses linking a guest and changing their other-lodge rate in one change (#4197)", async () => {
+    // Both would re-rate the same guest, and each has its own breakdown line, so
+    // the quote would count the change twice. The same resolver refuses it on
+    // the save. (On a real booking the negotiated-price block, which a link plus
+    // an election does not escape, refuses first; this pins the rule itself.)
+    h.isMemberWholeLodgeBooking.mockResolvedValue(true);
+    h.bookingFindUnique.mockResolvedValue(booking({ wholeLodgeHold: true }));
+    const res = await POST(
+      req({
+        linkGuestToMember: [{ guestId: "g-visitor", memberId: "member-9" }],
+        otherLodgeId: "lodge-partner",
+        otherLodgeMemberGuestIds: ["g-visitor"],
+      }),
+      { params },
+    );
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: OTHER_LODGE_RATE_LINKED_GUEST_MESSAGE });
+    expect(h.priceGuests).not.toHaveBeenCalled();
+  });
+
+  it("an untouched guest priced differently with no date change reads as a recalculation (#4197)", async () => {
+    // The owner's nights do not move but come back dearer. In real data the
+    // pre-check-in gate parks an unlocked strand before this line is built
+    // (#3166); the pricer is stubbed here to reach the label regardless.
+    h.priceGuests.mockResolvedValue({
+      totalPriceCents: 9300,
+      guests: [
+        { priceCents: 2500, perNightCents: [1250, 1250], nightDates: [] },
+        { priceCents: 2000, perNightCents: [1000, 1000], nightDates: [] },
+        { priceCents: 4800, perNightCents: [2400, 2400], nightDates: [] },
+      ],
+    });
+    const res = await POST(
+      req({
+        otherLodgeId: "lodge-partner",
+        otherLodgeMemberGuestIds: ["g-visitor"],
+      }),
+      { params },
+    );
+    const body = await res.json();
+
+    expect(body.priceDiffCents).toBe(9300 - 11600);
+    expect(body.itemizedChanges).toEqual([
+      { label: expect.stringMatching(/other-lodge member rate$/), amountCents: -2800 },
+      { label: "Price recalculated (rate difference)", amountCents: 500 },
+    ]);
   });
 
   it("unticking clears the locks the other way, so the guest goes back to the non-member rate", async () => {
@@ -570,24 +673,47 @@ describe("modify-quote — other-lodge member rate", () => {
 });
 
 /**
- * #3214 (epic #2797): THE PREVIEW HALF OF THE PARKED-EDIT REFUSAL.
+ * #4317 (epic #4302): AN ELECTION ON A BOOKING WHOSE ROWS DO NOT RECONCILE IS
+ * PRICED, NEVER REFUSED.
  *
- * The save refuses an other-lodge election on the edit that parks a booking's
- * money (`OTHER_LODGE_RATE_AMOUNT_UNDER_REVIEW_MESSAGE`). A preview that went on
- * returning the parked quote would show the officer "an officer will confirm the
- * amount", and then Save would 400 — the quote/charge disagreement this whole
- * module exists to prevent, and the same preview/save parity the mid-stay
- * refusal already keeps.
- *
- * The fixture parks by making ONE strand unreadable: `g-stranger` carries a
- * stored total that does not reconcile with its own night rows, which
- * `storedSoldPriceEvidenceForGuest` classes as an absence of usable evidence
- * (INV-MOD-028). Nothing about that guest is ticked, which is the point — a
- * parked edit is judged over every existing strand, not over the ticked subset.
+ * #3214 refused an other-lodge election on an edit that parked its money. No
+ * edit parks since #4317 (`INV-MOD-028`), so the refusal is gone: `g-stranger`
+ * carries a stored total that does not reconcile with its own night rows, and
+ * the valuation keeps that total on the strand (R3), so the re-rate quotes
+ * exactly what it quotes on the same booking with reconciling rows.
  */
-describe("modify-quote — an election on an edit whose money parks", () => {
+describe("modify-quote — an election on a booking whose rows do not reconcile", () => {
+  beforeEach(() => {
+    // The engine's own lock rule: a guest whose nights are locked is priced at
+    // its locks, which since #4317 are its VALUED nights - so the drifted
+    // stranger keeps its stored $50 rather than the fixed $48 the default mock
+    // returns. Without it the mock would reprice that strand as no real edit
+    // does. A guest with its locks cleared (the re-rated visitor) takes the
+    // figure the default mock gives it.
+    const unlocked = [2000, 2000, 4800];
+    h.priceGuests.mockImplementation(
+      async (
+        _db: unknown,
+        input: { guests: Array<{ lockedNightPrices?: ReadonlyArray<{ priceCents: number }> | null }> },
+      ) => {
+        const guests = input.guests.map((guest, index) => {
+          const locks = guest.lockedNightPrices ?? [];
+          const priceCents =
+            locks.length > 0
+              ? locks.reduce((sum, lock) => sum + lock.priceCents, 0)
+              : (unlocked[index] ?? 0);
+          return { priceCents, perNightCents: [priceCents / 2, priceCents / 2], nightDates: [] };
+        });
+        return {
+          totalPriceCents: guests.reduce((sum, guest) => sum + guest.priceCents, 0),
+          guests,
+        };
+      },
+    );
+  });
+
   /** The same booking, with one strand whose stored total has drifted. */
-  function unpriceable() {
+  function unreconciled() {
     const stored = booking();
     return {
       ...stored,
@@ -597,53 +723,54 @@ describe("modify-quote — an election on an edit whose money parks", () => {
     };
   }
 
-  beforeEach(() => {
-    h.bookingFindUnique.mockResolvedValue(unpriceable());
-  });
-
-  it("parks with no election, which is what makes the refusal below narrow", async () => {
-    // The control. Parking is not itself a refusal: an edit that never mentions
-    // the rate still gets its parked quote, unchanged by #3214.
-    const res = await POST(req({ checkOut: "2026-08-04" }), { params });
-
+  async function quoteDiff(stored: object, body: unknown) {
+    h.bookingFindUnique.mockResolvedValue(stored);
+    const res = await POST(req(body), { params });
     expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ financialReviewRequired: true });
+    const json = await res.json();
+    expect(json.financialReviewRequired).toBeUndefined();
+    return json.priceDiffCents as number;
+  }
+
+  it("quotes an edit with no election, and no review notice", async () => {
+    await quoteDiff(unreconciled(), { checkOut: "2026-08-04" });
   });
 
-  it("REFUSES a tick instead of quoting a park", async () => {
-    const res = await POST(
-      req({
-        otherLodgeId: "lodge-partner",
-        otherLodgeMemberGuestIds: ["g-visitor"],
-      }),
-      { params },
-    );
-
-    expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({
-      error: OTHER_LODGE_RATE_AMOUNT_UNDER_REVIEW_MESSAGE,
-    });
+  it("prices a tick exactly as on the reconciled booking", async () => {
+    const tick = { otherLodgeId: "lodge-partner", otherLodgeMemberGuestIds: ["g-visitor"] };
+    expect(await quoteDiff(unreconciled(), tick)).toBe(await quoteDiff(booking(), tick));
   });
 
-  it("REFUSES an untick as well, which is the direction that left the records disagreeing", async () => {
-    const stored = unpriceable();
-    h.bookingFindUnique.mockResolvedValue({
+  it("prices an untick exactly as on the reconciled booking", async () => {
+    const withTick = (stored: ReturnType<typeof booking>) => ({
       ...stored,
       otherLodgeId: "lodge-partner",
       guests: stored.guests.map((guest) =>
         guest.id === "g-visitor" ? { ...guest, otherLodgeMember: true } : guest,
       ),
     });
+    const untick = { otherLodgeId: "lodge-partner", otherLodgeMemberGuestIds: [] };
+    expect(await quoteDiff(withTick(unreconciled()), untick)).toBe(
+      await quoteDiff(withTick(booking()), untick),
+    );
+  });
+});
 
+/**
+ * #4317 review round 2: the preview refuses, in the save's words, an edit that
+ * would carry a headline frozen below its guests under zero. The headline here
+ * is $10 over $116 of guests; the tick takes the guests to $88, which carried
+ * forward would be a -$18 total.
+ */
+describe("modify-quote — an edit that would carry a frozen headline below zero", () => {
+  it("answers 409 with the save's refusal, quoting nothing", async () => {
+    h.bookingFindUnique.mockResolvedValue(booking({ totalPriceCents: 1000, finalPriceCents: 1000 }));
     const res = await POST(
-      req({ otherLodgeId: "lodge-partner", otherLodgeMemberGuestIds: [] }),
+      req({ otherLodgeId: "lodge-partner", otherLodgeMemberGuestIds: ["g-visitor"] }),
       { params },
     );
-
-    expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({
-      error: OTHER_LODGE_RATE_AMOUNT_UNDER_REVIEW_MESSAGE,
-    });
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toBe(NEGATIVE_EDITED_HEADLINE_MESSAGE);
   });
 });
 
@@ -652,10 +779,8 @@ describe("modify-quote — an election on an edit whose money parks", () => {
  *
  * `OTHER_LODGE_RATE_IN_PROGRESS_MESSAGE` refuses an election once the stay is
  * under way, on both surfaces, because the in-progress plan prices the STORED
- * guest rows and would settle $0. That refusal is now load-bearing for a SECOND
- * rule: the parked guard above says the in-progress exit "cannot reach it — a
- * mid-stay election is refused several hundred lines above". A reader trusts
- * that sentence, so the refusal it names is pinned here rather than assumed.
+ * guest rows and would settle $0, so the refusal is pinned here rather than
+ * assumed.
  */
 describe("modify-quote — an election once the stay is under way", () => {
   /** The same booking, moved so the frozen clock (2026-07-01) sits inside it. */

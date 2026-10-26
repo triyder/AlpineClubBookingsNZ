@@ -1,0 +1,1 @@
+- **Xero sync checks share one definition of work in flight (#4354).** Internal queue, repair and resolution checks now use the same status list, with a regression check against the database index. Existing accounting behavior is unchanged.

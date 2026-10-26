@@ -584,9 +584,9 @@ land.
 manifest moving with it. The numbers this page was written against:
 
 ```
-row-producing sites:  501
+row-producing sites:  520
 uncategorised:        0
-category values: admin 109, booking 107, xero 39, family 35, payment 52,
+category values: admin 110, booking 108, xero 44, family 35, payment 64,
                  lodge 68, account 19, security 25, privacy 21,
                  communication 21, system 4
 ```
@@ -772,7 +772,16 @@ both (RE-MEASURED on the tree #3829 composed): #3827's
 `booking.modify.promo_reprice`, a guest's acceptance re-pricing the booking's
 promo codes (`booking` 106 -> 107, 497 -> 498), and #3492's
 `promo_code.guest_lookup`, a booker looking up their guests' promo codes for
-the chips (`privacy` 20 -> 21, 498 -> 499).
+the chips (`privacy` 20 -> 21, 498 -> 499). #3372 then added
+`booking-payment.card-refund.paid-another-way`, the treasurer closing a card
+refund Stripe gave up on (`payment` 52 -> 53, 499 -> 500), and
+`booking-payment.card-refund.paid-twice-resolved`, the treasurer marking a
+refund paid back twice as sorted out with the member (`payment` 53 -> 54; 499 ->
+500 on the tree composed with #52's removals below and #3750's change-request
+approval, MEASURED). #3819 added one, disjoint from all of these: the
+per-lodge "Who can be hut leader for school bookings" save,
+`LODGE_SETTINGS_UPDATED` beside its lodge-settings sibling (`admin` 109 -> 110,
+RE-MEASURED).
 
 #52 then REMOVED two (`admin` 109 -> 107, 497 -> 495 on the tree composed
 with all of the above; MEASURED with
@@ -783,6 +792,8 @@ the central server says it owns and never adds to or removes from the shared
 list. `OTHER_LODGE_UPDATED` stays, still `admin` under INV-PRIV-013's rule, so
 the lodge-gated keep shrinks from nineteen pinned sites to seventeen without
 anyone's readership changing.
+
+The fork (triyder) then added four of its own, measured on its pre-sync tree — its own count, not additive to the `main` chain that follows:
 
 #62 then added one (`admin` 107 -> 108, 497 -> 498, MEASURED with
 `pnpm run audit:census`): `LODGE_CENTRAL_LINK_UPDATED`, the record that an
@@ -808,6 +819,18 @@ Fees page (`OTHER_LODGE_RATES_FROM_FEES`, `lodge` 67 -> 68, 500 -> 501,
 MEASURED): the lodge, the trigger and the fields that changed, no member. A
 library writer, so it joins no keep.
 
+`main` then added #3750's executed approval of a change request on a finished
+stay (`booking` 107 -> 108, `booking-change-request.approve` with
+`executed: true`). The sync of `main` into epic #3789 composed #3819's addition
+with #52's two removals and #3750's addition, all disjoint: `admin` 108,
+`booking` 108, 499 row-producing sites, and the lodge-gated keep eighteen
+(RE-MEASURED with `pnpm run audit:census` on the composed tree, never added
+together). The later sync of `main` 0ff7e6d46 into the epic (#3821) composed
+#3372's two `payment` additions with that tree, also disjoint: `admin` 108,
+`payment` 54, 501 row-producing sites (RE-MEASURED the same way). The hand sync of `main`
+f3b6c008b (epic #3789) brought the same two `payment` additions in again from
+the other side and measured the same figures on the merged tree.
+
 #3498 then added one more (`payment` 45 -> 46, 483 -> 484, MEASURED with
 `npm run audit:census` on that branch rather than added to the literal):
 `booking-payment.manual-refund-task.reopen`, the record that an officer put a
@@ -815,6 +838,58 @@ DISMISSED money task back on the finance queue. `payment` for the same audience
 reason as the closure it reverses, and it carries what that closure looked like —
 who dismissed it, when, and the note they wrote — because the status claim beside
 it clears all three off the row, so this entry is the only place they survive.
+
+#4098 then added one more (`payment` 54 -> 55, 501 -> 502, MEASURED with
+`pnpm run audit:census`): `membership-subscription-billing.close-already-paid`,
+an officer closing a subscription charge whose members had already paid, filed
+`payment` beside the other subscription-billing actions the same people read.
+
+#4104 then added one more (`payment` 55 -> 56, 502 -> 503, MEASURED with
+`pnpm run audit:census`): `booking-payment.card-refund.failed-later-not-resent`,
+a card refund Stripe failed later that the app did not make for the booking,
+filed `payment` beside the paid-another-way close the same people read.
+
+#4149 left the totals where they were (`payment` 56, 503, MEASURED with
+`pnpm run audit:census`) by moving two writers and adding one: the two
+late-capture handlers' `booking.payment.refunded_after_cancellation` writers
+became one shared writer (`reportAutomaticLateCaptureRefund`), and the
+lost-record recovery adds `booking.payment.auto_refund_record_recovered`, also
+`payment`, read by the same people who reconcile the refund.
+
+#4170, folded into the same change, then added one (`payment` 56 -> 57, 503 ->
+504, MEASURED with `pnpm run audit:census`):
+`booking.payment.late_capture_refunded_outside_app`, a late capture the
+late-capture handler marked as its own but refunded some other way, named for
+the same people instead of being noted in Xero.
+
+#4219 then added one more (`xero` 39 -> 40, 507 -> 508, MEASURED with
+`pnpm run audit:census`): `xero.credit_note.spent_outside_app_converged`, the credit-ledger
+convergence's own row, filed `xero` beside the other Xero rows.
+
+#4338 then added one more (`xero` 40 -> 41, 508 -> 509, MEASURED with
+`pnpm run audit:census`): `xero.credit_note.spent_outside_app_attempt_closed`,
+the same convergence closing a concurrent attempt's failed allocation, filed
+`xero` beside it.
+#4253 then added five (`payment` 60 -> 64, `xero` 41 -> 42, 509 -> 514, MEASURED with
+`pnpm run audit:census`): a released-credit card request raised, one closed without
+asking and two closed because Xero shows its invoice paid (one at ask time, one by the
+sweep), filed `payment`, and the recording of its card payment in Xero, filed `xero`.
+
+#4270 then added two (`xero` 42 -> 44, 514 -> 516, MEASURED with
+`pnpm run audit:census`): `xero.credit_note.outside_spend_mirrored` and
+`xero.credit_note.outside_spend_restored`, the inbound credit-note mirror's rows, filed
+`xero` beside the converge's.
+
+#4154 then added one more (`payment` 57 -> 58, 504 -> 505, MEASURED with
+`pnpm run audit:census`): `booking-payment.capacity-race.refunded-total-corrected`,
+a capacity race's card charge corrected to its refund rows before its hand-back
+(the owner's guarded recalculation), filed `payment` beside the close it enables.
+
+#4162 then added two (`payment` 58 -> 60, 505 -> 507, MEASURED with
+`pnpm run audit:census`): `booking-payment.bank-refund.void-undone`, the nightly
+undo of a voided bank-transfer refund note, and `.void-answered`, a person's
+answer to one the undo could not match - both the payment's figures, filed
+`payment` for the people who reconcile it.
 
 #2942 then added one more (`admin` 106 -> 107, 482 -> 483 on the MERGED tree —
 the MAD epic's own children carried the total from 472 to 482 without a

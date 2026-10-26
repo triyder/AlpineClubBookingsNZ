@@ -14,9 +14,12 @@
  * HTML templates and the flat `{{...Note}}` tokens the senders supply are built
  * from the same function, so the two paths cannot drift apart.
  *
- * This module deliberately imports nothing - the email template layer, the
- * senders and the template registry all depend on it.
+ * This module deliberately imports only pure copy modules (no imports of their
+ * own) - the email template layer, the senders and the template registry all
+ * depend on it.
  */
+import { CARD_REFUND_SHORTFALL_ALERT_BODY, CARD_REFUND_SHORTFALL_ALERT_LEAD } from "@/lib/cancel-card-refund-shortfall-copy";
+import { JOINER_CANCEL_ORGANISER_ALERT_BODY, JOINER_CANCEL_ORGANISER_ALERT_LEAD } from "@/lib/joiner-cancel-organiser-alert-copy";
 
 /**
  * #2268 — compose an OPTIONAL line of an admin-editable plain-text email body.
@@ -269,6 +272,57 @@ export function internetBankingHoldKeptParagraph(
 }
 
 /**
+ * #4042 (`INV-PAY-124`) — which hand-back the "Manual refund needed" alert is
+ * about: the cash cancel's (#2262), whose ledger records the refund when it is
+ * paid back, or an organiser's Internet Banking group cancel, whose joiners'
+ * refunds the ledger already holds. These feed the sender's subject, the text
+ * body's `{{handBack…}}` tokens, the group arm of the HTML and both arms' amount
+ * label. The cash HTML keeps its own pinned literal blocks; the cash note is
+ * those same blocks, so its text default still says what its HTML says.
+ * #4097 (`INV-PAY-129`): a card cancel whose card refund plan carried less
+ * than the refund due, whose remainder the club pays by bank transfer.
+ */
+export type ManualRefundTaskAlertSituation = "cash-cancellation" | "group-organiser-internet-banking" | "card-refund-shortfall" | "joiner-cancel-organiser"; // #3949: a joiner's own cancel
+
+/** Each situation's subject phrase, text heading, amount row label and recipient row label: the cash ones exactly as they always read. */
+const ALERT_WORDS: Record<ManualRefundTaskAlertSituation, { label: string; heading: string; amountLabel: string; recipientLabel: string }> = {
+  "cash-cancellation": { label: "cash booking cancelled", heading: "Manual Refund Needed - Cash Booking Cancelled", amountLabel: "Amount to refund", recipientLabel: "Member" },
+  "group-organiser-internet-banking": { label: "Internet Banking group cancelled", heading: "Manual Refund Needed - Internet Banking Group Cancelled", amountLabel: "Owed when this alert was sent", recipientLabel: "Organiser" },
+  "card-refund-shortfall": { label: "card refund short on a cancelled booking", heading: "Manual Refund Needed - Card Refund Short on a Cancelled Booking", amountLabel: "Amount the card refund could not carry", recipientLabel: "Member" },
+  "joiner-cancel-organiser": { label: "group joiner cancelled, refund to the organiser", heading: "Manual Refund Needed - Group Joiner Cancelled, Refund to the Organiser", amountLabel: "Amount to refund to the organiser", recipientLabel: "Organiser" },
+};
+
+/** The subject phrase (`{{handBackLabel}}`). */
+export const manualRefundTaskAlertLabel = (situation: ManualRefundTaskAlertSituation): string => ALERT_WORDS[situation].label;
+/** The text body's heading (`{{handBackHeading}}`). */
+export const manualRefundTaskAlertHeading = (situation: ManualRefundTaskAlertSituation): string => ALERT_WORDS[situation].heading;
+/** The amount row's label, in the HTML and the text body (`{{handBackAmountLabel}}`). */
+export const manualRefundTaskAlertAmountLabel = (situation: ManualRefundTaskAlertSituation): string => ALERT_WORDS[situation].amountLabel;
+/** Whom the money goes back to, as the text body's row label (`{{handBackRecipientLabel}}`). */
+export const manualRefundTaskAlertRecipientLabel = (situation: ManualRefundTaskAlertSituation): string => ALERT_WORDS[situation].recipientLabel;
+
+/** The group alert's first sentence: the HTML's warning box, and the note's lead. */
+export const GROUP_HAND_BACK_ALERT_LEAD =
+  "A group booking its organiser paid for by Internet Banking has been cancelled by the organiser, and the club has to repay the organiser by bank transfer - nothing has been refunded automatically.";
+
+/** The group alert's paragraph after its lead, shared by the HTML and the note. */
+export const GROUP_HAND_BACK_ALERT_BODY =
+  "Each joiner's refund has been recorded in the app's ledger as made, but no money has moved. The hand-back task on the payments board holds the total owed: it grows as each joiner's place is cancelled, and its reason lists each joiner's share. Pay the organiser the total the task shows, then mark it paid back - that records only that the money went, because the refunds are already in the ledger. It cannot be dismissed: if the club decides not to repay the organiser, take it to the treasurer.";
+
+/** A non-cash situation's lead and paragraph: the HTML's warning box and paragraph, and the note's (#4042, #4097, #3949). */
+export const manualRefundTaskAlertLeadAndBody = (situation: ManualRefundTaskAlertSituation): readonly [string, string] | null =>
+  situation === "group-organiser-internet-banking" ? [GROUP_HAND_BACK_ALERT_LEAD, GROUP_HAND_BACK_ALERT_BODY] : situation === "card-refund-shortfall" ? [CARD_REFUND_SHORTFALL_ALERT_LEAD, CARD_REFUND_SHORTFALL_ALERT_BODY] : situation === "joiner-cancel-organiser" ? [JOINER_CANCEL_ORGANISER_ALERT_LEAD, JOINER_CANCEL_ORGANISER_ALERT_BODY] : null;
+
+/** The text body's explaining paragraphs (`{{handBackNote}}`). */
+export function manualRefundTaskAlertNote(situation: ManualRefundTaskAlertSituation): string {
+  return manualRefundTaskAlertLeadAndBody(situation)?.join("\n\n") ?? [
+    "A booking settled in cash (or by an off-Xero bank transfer) has been cancelled. The refund has to be paid back by hand - nothing was refunded automatically.",
+    "The member's cancellation refund has been worked out under the club's normal policy, but there is no card charge to reverse and no Xero invoice to credit, so the system has raised a hand-back task instead of pretending money moved. The member has been told the club will arrange the refund.",
+    "Pay the member back, then mark the task complete on the payments board so the ledger records the refund. If the member declines it, or it was settled another way, dismiss the task with a note.",
+  ].join("\n\n");
+}
+
+/**
  * #3638 — the paragraph that says what happened when Xero reported an Internet
  * Banking invoice paid on a booking that also carries a captured card payment.
  *
@@ -324,208 +378,6 @@ export function adminSplitSettlementCancelledLeadParagraph(
   return parentUnpaid
     ? "A split booking's non-member guest portion was still unpaid at the end of its check-in day, with no saved card to charge, and the member's own linked booking is not settled either (it may be unpaid or already cancelled). The provisional guest booking has now been automatically cancelled. No payment was taken and no beds were held. The member has been notified. Review the whole booking to confirm the state of the member's own place."
     : "A split booking's non-member guest portion was still unpaid at the end of its check-in day, with no saved card to charge (the member had paid their own place by internet banking). The provisional guest booking has now been automatically cancelled. No payment was taken and no beds were held. The member has been notified; the member's own linked booking is settled and is unaffected.";
-}
-
-/**
- * #2263 × #2444 × #2483 — the whole confirmed-but-UNPAID paragraph of a booking
- * confirmation, shared by the hand-built HTML confirmation
- * (`bookingConfirmedTemplate`) and the flat `{{paymentDueNote}}` token the
- * admin-editable body renders inside `{{paymentOutcome}}`.
- *
- * It was written out TWICE — once in the template monolith (now
- * `email-templates/booking.ts`) and once in
- * `email/booking.ts` — with only a comment claiming the two copies were
- * byte-identical. #2444 has to add a sentence to it, and adding a sentence to
- * two hand-kept copies is exactly the drift `composeOptionalEmailLine` and
- * `appliedCreditSummaryRows` exist to prevent, so the paragraph moved here.
- *
- * TWO SHAPES, chosen by whether `accountCredit` is supplied.
- *
- * 1. NO APPLICABLE CREDIT (`accountCredit` absent) — the #2444 paragraph,
- *    unchanged to the byte. This is what every member on today's one live
- *    unpaid path receives. The "Total Due" line above is the BOOKING's own
- *    price; the invoice the member actually pays against is a separate document
- *    a club admin can adjust by hand in Xero, so the closing sentence points at
- *    the invoice as the figure to transfer and names the commonest reason the
- *    two would differ. It is CONDITIONAL and states no second figure, because
- *    most invoices match the total exactly, and it does NOT say credit "will be
- *    applied", because on this path nothing applies it: the member whole-lodge
- *    approval in `school-booking-request.ts` mints a brand-new booking and
- *    writes no `MemberCredit` row, so the
- *    `enqueueXeroAppliedCreditAllocationOperation` call it makes always
- *    short-circuits with "No unallocated applied credit; nothing to allocate."
- *    (re-verified in review, 1 Aug 2026 — an earlier draft asserted the
- *    opposite and was corrected before merge; do not reinstate it without
- *    making the allocation real).
- *
- * 2. CREDIT APPLIED TO THIS BOOKING (`accountCredit` supplied, #2483). The
- *    caller supplies it only from `resolveUnpaidCreditNetting`, and its
- *    `outcome` picks one of three further shapes — because the one thing this
- *    paragraph must never do is name a figure the club's own ledger
- *    contradicts:
- *
- *    - `"netted"` (credit smaller than the price) — names the NET figure, shows
- *      the arithmetic in words, and asks for it.
- *    - `"covered"` (credit equals the price exactly) — asks for NOTHING. This
- *      is not a corrupt state: it is the documented steady state of the #1887
- *      reprice clamp, and it is exactly what the club's own amount-owing law
- *      calls "nothing owing" (`prepareManualSettlement` refuses to take a
- *      payment for it). Asking for the price here would be a 100% overpayment
- *      — the single worst outcome this whole change exists to prevent — so the
- *      paragraph states that nothing further is to be transferred.
- *    - `"unreconciled"` (more credit applied than the booking costs) — names NO
- *      figure and issues NO payment instruction at all. Something upstream is
- *      inconsistent, and a refusal that still printed the gross price and told
- *      the member to pay it would be the same overpayment wearing a disclaimer.
- *      The member is asked to wait; the sender logs it for an admin.
- *
- *    Why the closing instruction inverts under `"netted"`. Under (1) the email
- *    defers to the invoice. It cannot do that here: the allocation that reduces
- *    the invoice is processed asynchronously on the Xero outbox, so a member
- *    reading the invoice first may still see the full price — and "transfer
- *    what the invoice shows" would then produce exactly the overpayment this
- *    whole change exists to prevent. So the netted figure stands where the
- *    invoice asks for MORE.
- *
- *    It is deliberately NOT symmetric (#2483 review, 2 Aug 2026). An invoice
- *    asking for LESS than the netted figure is the drift direction a hand edit
- *    in Xero produces, and telling the member to transfer the email's larger
- *    figure anyway would recreate the very overpayment #2444 was raised to
- *    stop. So the rule is "pay the smaller of the two, and tell the club":
- *    underpaying is recoverable by an admin, overpaying is not, and either way
- *    the disagreement is routed to the club rather than acted on silently.
- *    Admins are not left to notice it by hand: a separate reconciliation
- *    checker (#2501) compares the club's credits against Xero's and warns them
- *    on drift. The sentence promises only that the club will check — never that
- *    Xero has already been updated, which this module cannot know.
- *
- * `amount`, `reference` and the `accountCredit` figures arrive ALREADY
- * FORMATTED and already escaped for the caller's medium — this module imports
- * nothing (see the file docblock), so money formatting stays with the caller,
- * and the HTML path escapes the club-entered reference at its own edge exactly
- * as it did before. `amount` and `reference` are UNUSED under `"covered"` and
- * `"unreconciled"`: neither shape may ask for money, so neither may quote a
- * figure or a payment reference.
- */
-export type BookingPaymentDueCredit =
-  | {
-      /** Credit smaller than the price: the member owes the difference. */
-      outcome: "netted";
-      /** The booking's full price, formatted — "$300.00". */
-      bookingTotal: string;
-      /** Credit applied to it, formatted and UNSIGNED — "$120.00". */
-      creditApplied: string;
-    }
-  | {
-      /** Credit equals the price exactly: nothing further is owed. */
-      outcome: "covered";
-      bookingTotal: string;
-      creditApplied: string;
-    }
-  | {
-      /**
-       * More credit applied than the booking costs. No figure may be stated
-       * and no payment may be asked for.
-       */
-      outcome: "unreconciled";
-    };
-
-/**
- * HOW an unpaid confirmation asks to be paid (fork, booking-fixes).
- *
- * `payOnline`: no receivable exists yet — the member chooses on their booking
- * page between a card payment and a switch to internet banking (the member
- * whole-lodge approval with the Internet Banking and Xero modules on). The
- * note names no reference and no invoice, because neither exists until the
- * member chooses.
- *
- * Otherwise the legacy pay-on-account shape: an internet-banking reference the
- * member must quote, and whether the invoice really was emailed.
- */
-export type BookingPaymentDueInstruction =
-  | { payOnline: true }
-  | {
-      payOnline?: false;
-      /** Internet-banking reference the member must quote, already escaped. */
-      reference: string;
-      /** TRUE only when an invoice really was raised (the Xero module is on). */
-      invoiceEmailed: boolean;
-    };
-
-export function bookingPaymentDueNote(
-  input: {
-    /**
-     * What the member must TRANSFER, already formatted as money — "$300.00".
-     * Already net of `accountCredit.creditApplied` when that is supplied.
-     */
-    amount: string;
-    /**
-     * #2483 — present ONLY when the club's own credit ledger says credit is
-     * applied to this booking. Absent renders the #2444 paragraph unchanged.
-     */
-    accountCredit?: BookingPaymentDueCredit;
-  } & BookingPaymentDueInstruction,
-): string {
-  const { amount, accountCredit } = input;
-
-  if (input.payOnline === true) {
-    const howToPay =
-      " Please pay it from your booking page, where you can pay by card or choose to pay by internet banking.";
-    if (!accountCredit) {
-      return (
-        `This booking is confirmed, but payment of ${amount} is still owing.` +
-        howToPay
-      );
-    }
-    if (accountCredit.outcome === "unreconciled") {
-      return "This booking is confirmed. The club is checking its record of the account credit held against this booking and will confirm what, if anything, is left to pay. Please wait to hear from the club before paying anything.";
-    }
-    if (accountCredit.outcome === "covered") {
-      return `This booking is confirmed and there is nothing further to pay — the booking's price of ${accountCredit.bookingTotal} is fully covered by the ${accountCredit.creditApplied} of account credit the club has put towards it.`;
-    }
-    return (
-      `This booking is confirmed, but payment of ${amount} is still owing — the booking's price of ${accountCredit.bookingTotal} less the ${accountCredit.creditApplied} of account credit the club has put towards it.` +
-      howToPay
-    );
-  }
-
-  const { reference, invoiceEmailed } = input;
-  const invoiceSentence = invoiceEmailed
-    ? " An invoice has been emailed to you separately."
-    : " The club will send you an invoice for it.";
-
-  if (!accountCredit) {
-    return (
-      `This booking is confirmed, but payment of ${amount} is still owing. Please pay by internet banking quoting reference ${reference}.` +
-      invoiceSentence +
-      " If the invoice asks for a different amount — for example because the club has put account credit you hold towards it — please transfer the amount the invoice shows."
-    );
-  }
-
-  if (accountCredit.outcome === "unreconciled") {
-    return (
-      "This booking is confirmed. The club is checking its record of the account credit held against this booking and will confirm what, if anything, is left to pay." +
-      (invoiceEmailed
-        ? " An invoice has been emailed to you separately — please wait to hear from the club before transferring anything against it."
-        : " Please wait to hear from the club before transferring anything.")
-    );
-  }
-
-  if (accountCredit.outcome === "covered") {
-    return (
-      `This booking is confirmed and there is nothing further to transfer — the booking's price of ${accountCredit.bookingTotal} is fully covered by the ${accountCredit.creditApplied} of account credit the club has put towards it.` +
-      (invoiceEmailed
-        ? " An invoice has been emailed to you separately."
-        : " The club will send you an invoice for the booking.") +
-      " If the invoice asks for a payment, please let the club know rather than paying it, and the club will check its own record of your credit against the invoice."
-    );
-  }
-
-  return (
-    `This booking is confirmed, but payment of ${amount} is still owing — the booking's price of ${accountCredit.bookingTotal} less the ${accountCredit.creditApplied} of account credit the club has put towards it. Please pay ${amount} by internet banking quoting reference ${reference}.` +
-    invoiceSentence +
-    ` If the invoice asks for more than that, please still transfer ${amount}; if it asks for less, please pay what the invoice asks. Either way, let the club know, and the club will check its own record of your credit against the invoice.`
-  );
 }
 
 /**

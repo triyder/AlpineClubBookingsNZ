@@ -16,6 +16,7 @@ import { planConfirmationChargeLines } from "@/lib/booking-ledger-confirmation-p
 import {
   groupChildHandBacksFromRows,
   needsPerChildCommittedRefund,
+  organiserCardAppealRefundsFromRows,
   organiserChildRefundEvidenceFromRows,
   planGroupChildLines,
 } from "@/lib/booking-ledger-group-child-plan";
@@ -150,6 +151,11 @@ export function plannedGroupChildLines(row: BookingLedgerCensusRow): CensusLedge
           )
         : null,
     handBacks: groupChildHandBacksFromRows(payment.id, row.tasks),
+    appealRefunds: organiserCardAppealRefundsFromRows({
+      paymentId: payment.id,
+      paymentIntentId: settlement.stripePaymentIntentId,
+      operations: row.recoveryOperations,
+    }),
   });
   if (group === null || group.kind === "refuse") return null;
   // Posted after every edit the booking holds, as the back-post posts now.

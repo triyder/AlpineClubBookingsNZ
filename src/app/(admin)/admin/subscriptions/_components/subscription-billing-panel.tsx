@@ -17,6 +17,15 @@ import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { formatCents } from "@/lib/utils";
 import { useClubTime } from "@/components/club-time-provider";
 import { useClubFormat } from "@/components/club-format-provider";
+import {
+  CLOSE_ALREADY_PAID_REASON_MAX,
+  everyActiveCoveredSubscriptionSettled,
+  isChargeClosableAsAlreadyPaid,
+  isChargeClosedAsAlreadyPaid,
+  isOfficerDecisionException,
+  isInvoicingPreviewWarning,
+  STRAY_INVOICE_AFTER_CLOSE_CODE,
+} from "@/lib/subscription-charge-already-paid";
 
 type BillingData = {
   preview: {
@@ -40,7 +49,9 @@ type BillingData = {
       recipient: { name: string };
       coveredMembers: Array<{ id: string; name: string }>;
     }>;
-    exceptions: Array<{ fingerprint: string; message: string }>;
+    // `code` lets an invoicing warning (#4110) render apart from the exceptions
+    // that withhold an invoice; optional for an older cached payload.
+    exceptions: Array<{ fingerprint: string; message: string; code?: string }>;
     // #2148 (D1): members exempt from a subscription by their age tier (no fee
     // required by design). Shown in a collapsed informational "Exempt" section,
     // never raised as MISSING_FEE_SCHEDULE. Optional so an older cached response
@@ -84,14 +95,19 @@ type BillingData = {
   charges: Array<{
     id: string;
     status: string;
+    billingBasis: string;
     membershipTypeName: string;
     chargedAmountCents: number;
     recipientName: string;
+    xeroInvoiceId: string | null;
     xeroInvoiceNumber: string | null;
+    lastErrorCode: string | null;
     lastErrorMessage: string | null;
-    coverage: Array<{ memberName: string }>;
+    // #4098: an older cached payload may omit releasedAt/subscription; the
+    // close is then not offered, and the server would refuse it anyway.
+    coverage: Array<{ memberName: string; releasedAt?: string | null; subscription?: { status: string } }>;
   }>;
-  exceptions: Array<{ id: string; fingerprint: string; message: string }>;
+  exceptions: Array<{ id: string; fingerprint: string; message: string; code?: string }>;
   settings: { invoiceDueDays: number; familyBillingMode: FamilyBillingMode };
 };
 
@@ -117,13 +133,25 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
   // open, and the draft note. null = no editor open.
   const [markingFamilyGroupId, setMarkingFamilyGroupId] = useState<string | null>(null);
   const [markNote, setMarkNote] = useState("");
+  // #4098: the conflicted charge whose "close as already paid" reason editor is
+  // open, and the draft reason. null = no editor open.
+  const [closingChargeId, setClosingChargeId] = useState<string | null>(null);
+  const [closeReason, setCloseReason] = useState("");
   const [loadFeedback, setLoadFeedback] = useState<{ kind: "error"; text: string } | null>(null);
   const [mutationFeedback, setMutationFeedback] = useState<{ kind: "success" | "error"; text: string } | null>(null);
   const loadGeneration = useRef(0);
   const selectionRef = useRef({ seasonYear, decisionDate });
-  const visibleExceptions = data
+  const visibleItems = data
     ? [...new Map([...data.preview.exceptions, ...data.exceptions].map((item) => [item.fingerprint, item])).values()]
     : [];
+  // #4110: a warning about a charge confirming still invoices is shown apart
+  // from the exceptions that withhold an invoice, and is not counted with them.
+  const visibleExceptions = visibleItems.filter((item) => !isInvoicingPreviewWarning(item.code ?? ""));
+  // #4110 decision 4: a member Finance must decide how to bill is counted and
+  // listed apart, so the officer is asked rather than left to find it.
+  const needsDecision = visibleExceptions.filter((item) => isOfficerDecisionException(item.code ?? ""));
+  const otherExceptions = visibleExceptions.filter((item) => !isOfficerDecisionException(item.code ?? ""));
+  const previewWarnings = visibleItems.filter((item) => isInvoicingPreviewWarning(item.code ?? ""));
 
   const load = useCallback(async () => {
     const selection = selectionRef.current;
@@ -156,7 +184,8 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
     void load();
   }, [load, decisionDate, seasonYear]);
 
-  async function post(body: Record<string, unknown>) {
+  /** Resolves true when the action succeeded. */
+  async function post(body: Record<string, unknown>): Promise<boolean> {
     setWorking(true);
     setMutationFeedback(null);
     try {
@@ -169,9 +198,11 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
       if (!response.ok) throw new Error(result.error || "Billing action failed.");
       setMutationFeedback({ kind: "success", text: result.message || "Billing action completed." });
       await load();
+      return true;
     } catch (error) {
       setData(null);
       setMutationFeedback({ kind: "error", text: error instanceof Error ? error.message : "Billing action failed." });
+      return false;
     } finally {
       setWorking(false);
     }
@@ -199,6 +230,29 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
     await post({ action: "MARK_FAMILY_INVOICED", seasonYear, familyGroupId, ...(note ? { note } : {}) });
   }
 
+  // #4098: Close is offered only where the close can succeed — an already-paid
+  // conflict whose every active covered subscription is settled (PAID, or
+  // NOT_REQUIRED for an exempt member). A partly paid
+  // charge shows its conflict message, which names the paths that work.
+  const canOfferClose = (charge: BillingData["charges"][number]) =>
+    isChargeClosableAsAlreadyPaid(charge) &&
+    charge.coverage.every((row) => row.subscription !== undefined) &&
+    everyActiveCoveredSubscriptionSettled(
+      charge.coverage.map((row) => ({ releasedAt: row.releasedAt ?? null, subscription: row.subscription! })),
+    );
+
+  // #4098: the inline reason editor IS the confirm step, as for the family
+  // marker; the reason is required and the server refuses a blank one. A
+  // refused close keeps the editor and the typed reason for the next attempt.
+  async function closeAlreadyPaid(chargeId: string) {
+    const reason = closeReason.trim();
+    if (!reason) return;
+    if (await post({ action: "CLOSE_ALREADY_PAID", chargeId, reason })) {
+      setClosingChargeId(null);
+      setCloseReason("");
+    }
+  }
+
   async function unmarkFamily(familyGroupId: string) {
     const accepted = await confirm({
       title: "Unmark this family?",
@@ -211,9 +265,12 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
 
   async function confirmBatch() {
     if (!data || data.preview.seasonYear !== seasonYear || data.preview.decisionDate !== decisionDate) return;
+    const warningCount = data.preview.exceptions.filter((item) => isInvoicingPreviewWarning(item.code ?? "")).length;
+    const withheldCount = data.preview.exceptions.length - warningCount;
+    const decisionCount = data.preview.exceptions.filter((item) => isOfficerDecisionException(item.code ?? "")).length;
     const accepted = await confirm({
       title: `Create ${data.preview.entries.length} annual membership charge${data.preview.entries.length === 1 ? "" : "s"}?`,
-      description: `${formatCents(data.preview.totalCents, format)} will be snapshotted. This creates durable Xero invoice work and cannot be undone by later fee or family changes. ${data.preview.exceptions.length} exception${data.preview.exceptions.length === 1 ? "" : "s"} will be recorded without invoicing.`,
+      description: `${formatCents(data.preview.totalCents, format)} will be snapshotted. This creates durable Xero invoice work and cannot be undone by later fee or family changes. ${withheldCount} exception${withheldCount === 1 ? "" : "s"} will be recorded without invoicing${decisionCount > 0 ? `, ${decisionCount} of them needing your decision` : ""}.${warningCount > 0 ? ` ${warningCount} warning${warningCount === 1 ? "" : "s"} below: confirming invoices ${warningCount === 1 ? "that charge" : "those charges"}.` : ""}`,
       confirmLabel: "Confirm annual batch",
     });
     if (!accepted) return;
@@ -237,7 +294,7 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
   */
   const viewOnlyBanner = (
     <AdminViewOnlySectionBanner canEdit={canEditFinance} className="mb-4">
-      Finance view access can inspect previews and charge history. Finance edit access is required to change settings, confirm billing, or retry Xero delivery.
+      Finance view access can inspect previews and charge history. Finance edit access is required to change settings, confirm billing, retry Xero delivery, or close a charge as already paid.
     </AdminViewOnlySectionBanner>
   );
 
@@ -287,10 +344,11 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
         {loadFeedback ? <Alert variant="error">{loadFeedback.text}</Alert> : null}
         {loading ? <Spinner label="Building subscription billing preview…" /> : data ? (
           <>
-            <div className="grid gap-3 sm:grid-cols-4">
+            <div className="grid gap-3 sm:grid-cols-5">
               <div><p className="text-xs text-muted-foreground">Charges</p><p className="text-xl font-semibold tabular-nums">{data.preview.entries.length}</p></div>
               <div><p className="text-xs text-muted-foreground">Preview total</p><p className="text-xl font-semibold tabular-nums">{formatCents(data.preview.totalCents, format)}</p></div>
               <div><p className="text-xs text-muted-foreground">Open exceptions</p><p className="text-xl font-semibold tabular-nums">{visibleExceptions.length}</p></div>
+              <div><p className="text-xs text-muted-foreground">Needs your decision</p><p className="text-xl font-semibold tabular-nums">{needsDecision.length}</p></div>
               <div><p className="text-xs text-muted-foreground">Due</p><p className="text-xl font-semibold tabular-nums">{data.preview.dueDays} days</p></div>
             </div>
             {data.preview.entries.length > 0 ? (
@@ -401,19 +459,37 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
                 ) : null}
               </details>
             ) : null}
-            {visibleExceptions.length > 0 ? (
-              <Alert variant="warning"><div className="space-y-1"><p className="font-medium">Billing exceptions — no invoice created</p>{visibleExceptions.map((item) => <p key={item.fingerprint}>{item.message}</p>)}</div></Alert>
+            {needsDecision.length > 0 ? (
+              <Alert variant="warning"><div className="space-y-1"><p className="font-medium">Needs your decision — no invoice created</p>{needsDecision.map((item) => <p key={item.fingerprint}>{item.message}</p>)}</div></Alert>
+            ) : null}
+            {otherExceptions.length > 0 ? (
+              <Alert variant="warning"><div className="space-y-1"><p className="font-medium">Billing exceptions — no invoice created</p>{otherExceptions.map((item) => <p key={item.fingerprint}>{item.message}</p>)}</div></Alert>
+            ) : null}
+            {previewWarnings.length > 0 ? (
+              <Alert variant="warning"><div className="space-y-1"><p className="font-medium">Check before confirming — these charges will be invoiced</p>{previewWarnings.map((item) => <p key={item.fingerprint}>{item.message}</p>)}</div></Alert>
             ) : null}
             {data.charges.length > 0 ? (
               <div className="space-y-2">
                 <h3 className="font-medium">Durable charge queue</h3>
                 {data.charges.map((charge) => (
                   <div key={charge.id} className="flex flex-wrap items-center justify-between gap-3 rounded-md border p-3 text-sm">
-                    <div><p className="font-medium">{charge.membershipTypeName} · {charge.recipientName} · {formatCents(charge.chargedAmountCents, format)}</p><p className="text-muted-foreground">{charge.coverage.map((row) => row.memberName).join(", ")} · {charge.xeroInvoiceNumber ?? "No Xero number yet"}</p>{charge.lastErrorMessage ? <p className="text-danger">{charge.lastErrorMessage}</p> : null}</div>
+                    <div><p className="font-medium">{charge.membershipTypeName} · {charge.recipientName} · {formatCents(charge.chargedAmountCents, format)}</p><p className="text-muted-foreground">{charge.coverage.map((row) => row.memberName).join(", ")} · {charge.xeroInvoiceNumber ?? "No Xero number yet"}</p>{charge.lastErrorMessage ? <p className="text-danger">{charge.lastErrorMessage}</p> : null}{isChargeClosedAsAlreadyPaid(charge) ? <p className="text-muted-foreground">{charge.lastErrorCode === STRAY_INVOICE_AFTER_CLOSE_CODE ? "Closed as already paid." : "Closed as already paid. No Xero invoice is raised for this charge."}</p> : null}</div>
                     <div className="flex items-center gap-2">
                       <Badge variant="secondary">{charge.status.replaceAll("_", " ")}</Badge>
                       {charge.status === "EMAIL_FAILED" || charge.status === "CONFLICT" || charge.status === "QUEUED" || charge.status === "INVOICE_CREATED" ? <ViewOnlyActionButton canEdit={canEditFinance} describeReason={false} size="sm" variant="outline" disabled={working} onClick={() => void post({ action: "RETRY_CHARGE", chargeId: charge.id })}>{charge.status === "EMAIL_FAILED" ? <MailWarning className="mr-1 h-4 w-4" /> : charge.status === "CONFLICT" ? <AlertTriangle className="mr-1 h-4 w-4" /> : <CheckCircle2 className="mr-1 h-4 w-4" />} Retry</ViewOnlyActionButton> : null}
+                      {canOfferClose(charge) && closingChargeId !== charge.id ? <ViewOnlyActionButton canEdit={canEditFinance} describeReason={false} type="button" size="sm" variant="outline" disabled={working} onClick={() => { setClosingChargeId(charge.id); setCloseReason(""); }}>Close: already paid</ViewOnlyActionButton> : null}
                     </div>
+                    {canOfferClose(charge) && closingChargeId === charge.id ? (
+                      <div className="basis-full space-y-2 rounded-md border border-dashed p-2">
+                        <p id={`close-reason-help-${charge.id}`} className="text-muted-foreground">Closing records that every member on this charge has already paid. No Xero invoice will be raised for it, and Retry is no longer offered. If a payment was recorded by mistake, reverse it and Retry instead.</p>
+                        <Label htmlFor={`close-reason-${charge.id}`}>Reason (required) — e.g. how and when they paid</Label>
+                        <Input id={`close-reason-${charge.id}`} autoFocus required aria-required="true" aria-describedby={`close-reason-help-${charge.id}`} value={closeReason} onChange={(event) => setCloseReason(event.target.value)} maxLength={CLOSE_ALREADY_PAID_REASON_MAX} />
+                        <div className="flex flex-wrap gap-2">
+                          <Button type="button" size="sm" disabled={working || !closeReason.trim()} onClick={() => void closeAlreadyPaid(charge.id)}>Confirm — close as already paid</Button>
+                          <Button type="button" size="sm" variant="outline" disabled={working} onClick={() => { setClosingChargeId(null); setCloseReason(""); }}>Cancel</Button>
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
                 ))}
               </div>

@@ -29,6 +29,8 @@ function readInstrumentationRecordedJobNames(): string[] {
     // (XERO_CREDIT_SYNC_JOB_NAME), which the Xero cron runner maps to and
     // records under; scan it so the contract discovers that job name.
     "src/lib/xero-credit-sync-checker.ts",
+    // #4270: the credit-note mirror's sweep owns its recorded job-name constant likewise.
+    "src/lib/xero-credit-note-mirror.ts",
     "src/lib/finance-sync-cron-config.ts",
   ].map((filePath) =>
     fs.readFileSync(path.join(process.cwd(), filePath), "utf8")
@@ -39,7 +41,7 @@ function readInstrumentationRecordedJobNames(): string[] {
     /recordCronRun\(\s*"([a-z0-9-]+)"/g,
     /jobName:\s*"([a-z0-9-]+)"/g,
     /[A-Z_]+_JOB_NAME\s*=\s*"([a-z0-9-]+)"/g,
-    /^\s*(?:memberships|outbox|retries|inbound|backfill|"link-cleanup"|report):\s*"([a-z0-9-]+)"/gm,
+    /^\s*(?:memberships|outbox|retries|inbound|backfill|"link-cleanup"|"bank-refund-voids"|report):\s*"([a-z0-9-]+)"/gm,
   ];
 
   for (const source of sources) {

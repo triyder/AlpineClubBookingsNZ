@@ -8,6 +8,7 @@ import {
 } from "@prisma/client";
 import type { BookingPaymentRecord } from "./xero-booking-repair-types";
 import { isEditReviewChargeRequestRow } from "@/lib/edit-financial-review-charge-shape";
+import { compareLedgerRowsNewestFirst } from "@/lib/payment-ledger-order";
 import { isCapturedTransactionStatus } from "@/lib/payment-transactions";
 import { hasCapturedPayment } from "@/lib/booking-payment-state";
 
@@ -21,6 +22,8 @@ interface RepairPaymentTransaction {
   refundedAmountCents: number;
   status: PaymentStatus;
   createdAt: Date;
+  /** #4132: the ledger's tiebreak; a legacy slice is numbered in the order it is reconstructed. */
+  insertionSeq: number;
 }
 
 const CANCELLABLE_REPAIR_PAYMENT_STATUSES = new Set<PaymentStatus>([
@@ -96,6 +99,7 @@ function buildRepairPaymentTransactions(
       refundedAmountCents: transaction.refundedAmountCents,
       status: transaction.status,
       createdAt: transaction.createdAt,
+      insertionSeq: transaction.insertionSeq,
     })
   );
 
@@ -144,6 +148,7 @@ function buildRepairPaymentTransactions(
         primaryRefundedAmountCents
       ),
       createdAt: payment.createdAt,
+      insertionSeq: 0,
     });
   }
 
@@ -164,6 +169,7 @@ function buildRepairPaymentTransactions(
         payment.updatedAt.getTime() >= payment.createdAt.getTime()
           ? payment.updatedAt
           : payment.createdAt,
+      insertionSeq: 1,
     });
   }
 
@@ -405,14 +411,15 @@ export function planEditReviewChargeInvoicePayment({
   /** An open edit-scoped `CREATE_ADDITIONAL_PAYMENT_INTENT` recovery row. */
   hasOpenIntentMintRecovery: boolean;
 }): EditReviewChargeInvoicePaymentPlan {
-  // Newest first, matching `findEditReviewChargeRequest`'s own
-  // `orderBy: { createdAt: "desc" }` rather than trusting the select's order.
+  // Newest first, and on a tie the row inserted last, matching
+  // `findEditReviewChargeRequest`'s own `LEDGER_ROWS_NEWEST_FIRST` rather than
+  // trusting the select's order (#4132).
   const request =
     (payment?.transactions ?? [])
       .filter((transaction) =>
         isEditReviewChargeRequestRow(transaction, bookingModificationId)
       )
-      .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())[0] ??
+      .sort(compareLedgerRowsNewestFirst)[0] ??
     null;
 
   if (!request) {

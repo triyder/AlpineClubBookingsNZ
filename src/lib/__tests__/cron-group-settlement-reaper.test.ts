@@ -80,7 +80,10 @@ vi.mock("@/lib/xero-group-settlement-invoice-voids", () => ({
   readGroupSettlementInvoiceState: mocks.readInvoiceState,
   describeGroupSettlementInvoiceMoney: () => "$500.00 paid",
 }));
-vi.mock("@/lib/module-settings", () => ({
+// Partial: `admin-modules` (reached through the capacity counter since the
+// #3817 one-space rule) reads `normalizeClubModuleSettings` at import time.
+vi.mock("@/lib/module-settings", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/module-settings")),
   loadEffectiveModuleFlags: mocks.loadModuleFlags,
 }));
 // The 24-hour invoice alert is mocked; #3635's once-ever started-stay alert is
@@ -99,6 +102,9 @@ vi.mock("@/lib/alert-cooldown", async (importOriginal) => ({
 vi.mock("@/lib/club-time-zone-runtime", () => ({
   readClubTimeZoneOutsideRequest: async () => "Pacific/Auckland",
 }));
+// #4042: the hand-back alert sweep is proved in group-organiser-hand-back.test.ts; here only that the reaper runs it.
+const handBackAlerts = vi.hoisted(() => ({ resendUnsentGroupOrganiserHandBackAlerts: vi.fn<(cutoff: Date, format: unknown) => Promise<number>>(async () => 0) }));
+vi.mock("@/lib/group-organiser-hand-back", () => handBackAlerts);
 vi.mock("@/lib/group-cancel", () => ({
   settleGroupBookingOnOrganiserCancel:
     mocks.settleGroupBookingOnOrganiserCancel,
@@ -272,6 +278,7 @@ describe("reapStaleGroupSettlements", () => {
       cancelledChildBookings: 0,
       scannedInterruptedCancels: 0,
       resumedInterruptedCancels: 0,
+      resentHandBackAlerts: 0,
       heldForInvoicePayment: 0,
       heldForUnreadableInvoice: 0,
       heldForStartedStay: 0,
@@ -727,6 +734,7 @@ describe("reapStaleGroupSettlements", () => {
       cancelledChildBookings: 0,
       scannedInterruptedCancels: 0,
       resumedInterruptedCancels: 0,
+      resentHandBackAlerts: 0,
       heldForInvoicePayment: 0,
       heldForUnreadableInvoice: 0,
       heldForStartedStay: 0,
@@ -780,6 +788,7 @@ describe("reapStaleGroupSettlements", () => {
       cancelledChildBookings: 0,
       scannedInterruptedCancels: 0,
       resumedInterruptedCancels: 0,
+      resentHandBackAlerts: 0,
       heldForInvoicePayment: 0,
       heldForUnreadableInvoice: 0,
       heldForStartedStay: 0,
@@ -815,6 +824,7 @@ describe("reapStaleGroupSettlements", () => {
       cancelledChildBookings: 0,
       scannedInterruptedCancels: 0,
       resumedInterruptedCancels: 0,
+      resentHandBackAlerts: 0,
       heldForInvoicePayment: 0,
       heldForUnreadableInvoice: 0,
       heldForStartedStay: 0,
@@ -1087,5 +1097,38 @@ describe("resume of interrupted organiser-cancel cleanups (#1236)", () => {
     expect(mocks.settleGroupBookingOnOrganiserCancel).not.toHaveBeenCalled();
     expect(result.scannedInterruptedCancels).toBe(0);
     expect(result.resumedInterruptedCancels).toBe(0);
+  });
+});
+
+describe("#4042: the reaper retries group organiser hand-back alerts, keyed on the task", () => {
+  it("sweeps unsent alerts older than the resume grace on every run, and counts what it sent", async () => {
+    handBackAlerts.resendUnsentGroupOrganiserHandBackAlerts.mockResolvedValueOnce(2);
+
+    const result = await reapStaleGroupSettlements(NOW);
+
+    expect(handBackAlerts.resendUnsentGroupOrganiserHandBackAlerts).toHaveBeenCalledWith(new Date(NOW.getTime() - 15 * 60 * 1000), CLUB_FORMAT_TEST);
+    expect(result.resentHandBackAlerts).toBe(2);
+  });
+
+  it("runs the sweep even when an earlier step throws, then lets that error through", async () => {
+    mocks.settlementFindMany.mockRejectedValueOnce(new Error("settlement read failed"));
+
+    await expect(reapStaleGroupSettlements(NOW)).rejects.toThrow("settlement read failed");
+
+    expect(handBackAlerts.resendUnsentGroupOrganiserHandBackAlerts).toHaveBeenCalledTimes(1);
+  });
+
+  it("runs the sweep even when the resume phase's read throws", async () => {
+    mocks.groupBookingFindMany.mockRejectedValueOnce(new Error("resume read failed"));
+
+    await expect(reapStaleGroupSettlements(NOW)).rejects.toThrow("resume read failed");
+
+    expect(handBackAlerts.resendUnsentGroupOrganiserHandBackAlerts).toHaveBeenCalledTimes(1);
+  });
+
+  it("a failed sweep never fails the reap", async () => {
+    handBackAlerts.resendUnsentGroupOrganiserHandBackAlerts.mockRejectedValueOnce(new Error("db down"));
+
+    await expect(reapStaleGroupSettlements(NOW)).resolves.toMatchObject({ resentHandBackAlerts: 0 });
   });
 });

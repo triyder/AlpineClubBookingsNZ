@@ -12,11 +12,16 @@ import { bookingOwner } from "@/lib/booking-owner";
 import { handsBackByHand } from "@/lib/manual-refund-hand-back-route";
 import { recordBookingEvent } from "@/lib/booking-events";
 import { editReviewRefundGoesBackOnCard, editReviewRefundSettlementPayment, hasCapturedPayment } from "@/lib/booking-payment-state";
+import { readBookingHasEnded } from "@/lib/booking-ended";
 import {
   chooseEditReviewChargeRoute,
   executeEditReviewCharge,
+  finishEditReviewChargeInvoice,
+  type QueuedEditReviewChargeInvoice,
   type EditReviewChargeRoute,
 } from "@/lib/edit-financial-review-charge";
+// #3947: re-exported so the completion reaches the charge's in-transaction invoice through its one settlement import.
+export { queueEditReviewChargeInvoiceInTransaction } from "@/lib/edit-financial-review-charge";
 import { REVIEW_CHARGE_WRONG_KIND_MESSAGE } from "@/lib/edit-financial-review-charge-refusals";
 import {
   REVIEW_CREDIT_ANCHOR_TAKEN_MESSAGE,
@@ -25,16 +30,10 @@ import {
 } from "@/lib/edit-financial-review-refund-refusals";
 import { assertByHandReviewRefundWithinUnpromisedCash } from "@/lib/edit-refund-hand-back";
 import { parseEditFinancialReviewContext } from "@/lib/edit-financial-review-context";
-import logger from "@/lib/logger";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
-import {
-  buildBookingModificationRefundMetadata,
-  markEditFinancialReviewRefundRecoverySucceeded,
-} from "@/lib/payment-recovery";
-import { buildEditFinancialReviewRefundStripeKeyPrefix } from "@/lib/payment-recovery-keys";
+import { executeEditReviewCardRefund } from "@/lib/edit-financial-review-card-refund";
 import {
   planStripeRefundAllocation,
-  refundPaymentTransactions,
   type RefundAllocationSlice,
 } from "@/lib/payment-transactions";
 import { dispatchEditReviewXeroSettlement, type EditReviewHandBackXeroFacts } from "@/lib/edit-financial-review-xero-leg";
@@ -55,6 +54,10 @@ import {
   capturedShareOwedAfterCancellation,
 } from "@/lib/edit-financial-review-cancel-netting";
 import type { EditReviewSettlementTask } from "@/lib/edit-financial-review-settlement-task";
+import { cardShortfallSettlement } from "@/lib/cancel-card-refund-shortfall-settle";
+import type { CapacityRaceStripeRefunded } from "@/lib/capacity-race-refunded-total-correction";
+import { alertGroupMirrorRefundXeroByHand, chooseGroupSettlementMirrorRoute, chooseReviewGroupSettlementMirrorRoute, type GroupSettlementMirrorRoute } from "@/lib/group-settlement-mirror-hand-back";
+import { reviewRefundGoesToGroupOrganiser } from "@/lib/group-settlement-mirror-kinds";
 
 /**
  * #3032 (epic #2797): WHERE a confirmed review amount goes when the task is
@@ -183,12 +186,8 @@ export type EditReviewSettlementRoute =
   | {
       kind: "local-allocation";
       paymentId: string;
-      /**
-       * The `BookingModification` anchor, for the Xero credit note the caller
-       * queues after the commit. NULL on every pre-#3032 task kind, keeping their
-       * behaviour byte-identical: they were raised for bookings with no edit
-       * behind them and no invoice line to correct.
-       */
+      /** The `BookingModification` anchor, for the Xero credit note the caller queues after the commit. NULL on
+       * every pre-#3032 task kind, which were raised with no edit behind them and no invoice line to correct. */
       bookingModificationId: string | null;
       /** What is handed back: the share, or on a cancelled booking the capture's part of what is still owed (#3835). */
       refundCents: number;
@@ -197,6 +196,9 @@ export type EditReviewSettlementRoute =
       /** #3536 (`INV-PAY-116`): the officer said this went back in cash, never inferred from
        * "marked paid by hand". Words on the Xero note only; settlement and ledger unchanged. */
       handedBackInCash?: true;
+      /** #4097 (`INV-PAY-129`): a card refund shortfall settles on its non-card charges first; its refusal names dismissing.
+       * #4154 (`INV-PAY-135`): a capacity race's, on the race's own charge only, with its own refusal. */
+      cardShortfall?: { preferTransactionIds: string[]; onlyTransactionIds?: string[]; nothingToAllocateMessage?: string };
     }
   | {
       kind: "account-credit";
@@ -238,7 +240,9 @@ export type EditReviewSettlementRoute =
    * what that refund is: the automatic refund of the same capture, under the
    * same Stripe keys.
    */
-  | LateCaptureRefundRoute;
+  | LateCaptureRefundRoute
+  /** #3949 (`INV-PAY-137`): recorded on a group child's payment mirror (`group-settlement-mirror-hand-back.ts`). */
+  | GroupSettlementMirrorRoute;
 
 /**
  * Choose the settlement route for a completion, or throw the refusal that stops
@@ -263,6 +267,8 @@ export async function chooseEditReviewSettlementRoute({
   handedBackInCash = false,
   club,
   store,
+  actingMemberId,
+  capacityRace,
 }: {
   task: EditReviewSettlementTask;
   /**
@@ -299,14 +305,17 @@ export async function chooseEditReviewSettlementRoute({
   /** #3835: the club's zone (`INV-LOCK-004`) and format, resolved before the transaction. */
   club: { zone: ClubTimeZone; format: ClubFormat };
   store: Prisma.TransactionClient;
+  /** #4154: the officer completing it, for a capacity race's audited correction; absent on a read-only preview. */
+  actingMemberId?: string;
+  /** #4154 review (M1, M4): a capacity race's Stripe read, made before the transaction, and whether its note has an invoice. */
+  capacityRace?: { stripe: CapacityRaceStripeRefunded | null; invoiced: boolean };
 }): Promise<EditReviewSettlementRoute | null> {
   if (task.kind !== ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW) {
     if (direction === ManualRefundTaskDirection.CHARGE_TO_MEMBER) {
       throw new ManualBookingPaymentError(REVIEW_CHARGE_WRONG_KIND_MESSAGE, 400);
     }
-    // #3639: an approved late-capture refund goes back to the card through
-    // Stripe - never a hand-back ledger mirror, which would count one refund
-    // twice once `charge.refunded` synced a dashboard refund of the same money.
+    // #3639: an approved late-capture refund goes back to the card through Stripe - never a hand-back
+    // ledger mirror, which would count one refund twice once `charge.refunded` synced a dashboard refund.
     if (task.lateCaptureApprovalIntentId) {
       return planLateCaptureApprovalRefund({ task, amountCents, store });
     }
@@ -314,13 +323,17 @@ export async function chooseEditReviewSettlementRoute({
     if (task.kind === ManualRefundTaskKind.DELETED_BOOKING_LATE_CAPTURE) {
       await assertLateCaptureHandBackStillOwed({ task, amountCents, store });
     }
+    // #3949 (`INV-PAY-137`): an edit's or appeal's hand-back on a joiner the organiser paid for by bank transfer.
+    const groupMirror = await chooseGroupSettlementMirrorRoute({ task, amountCents, store });
+    if (groupMirror) return groupMirror;
+    const cardShortfall = await cardShortfallSettlement(task, store, { amountCents, actingMemberId: actingMemberId ?? null, format: club.format, capacityRace }); // #4097: null unless a card refund shortfall
     return handsBackByHand(task) && task.paymentId !== null
       ? {
           kind: "local-allocation",
           paymentId: task.paymentId,
           bookingModificationId: null,
           refundCents: amountCents,
-          creditBackCents: 0,
+          creditBackCents: 0, ...(cardShortfall ? { cardShortfall } : {}),
         }
       : null;
   }
@@ -402,6 +415,12 @@ export async function chooseEditReviewSettlementRoute({
         })
       : Promise.resolve({ captureCents: amountCents, creditCents: 0 });
 
+  // #3949 review: on a joiner the organiser paid for by Internet Banking the share goes to the organiser, onto the
+  // child's mirror (`INV-PAY-137`); a cancelled one is refused by the netting first, as the card twin is.
+  if (settlementPayment !== null && reviewRefundGoesToGroupOrganiser(task)) {
+    const reviewMirror = await chooseReviewGroupSettlementMirrorRoute({ task, paymentId: settlementPayment.id, amountCents: (await owed()).captureCents, store });
+    if (reviewMirror) return reviewMirror;
+  }
   if (settlementPayment !== null && editReviewRefundGoesBackOnCard(settlementPayment)) {
     if (!bookingModificationId) {
       throw new ManualBookingPaymentError(
@@ -518,6 +537,7 @@ export async function executeEditReviewSettlement({
   bookingPaymentStatus,
   bookingXeroInvoiceId = null,
   format,
+  chargeInvoice = null,
   ...handBackXero
 }: {
   bookingId: string;
@@ -533,9 +553,13 @@ export async function executeEditReviewSettlement({
   bookingPaymentStatus: string | null;
   /** The club's format (#3565), resolved once by the caller, before its transaction. */
   format: ClubFormat;
+  /** #3947: the `invoice` route's invoice, queued inside the completion's transaction. */
+  chargeInvoice?: QueuedEditReviewChargeInvoice | null;
 } & EditReviewHandBackXeroFacts): Promise<{
   stripeRefundId: string | null;
   additionalPaymentIntentId: string | null;
+  /** #4272: cancelled before the ask; `recorded` = this run wrote the record. */
+  chargeBookingCancelled?: { recorded: boolean };
 }> {
   let stripeRefundId: string | null = null;
 
@@ -550,66 +574,12 @@ export async function executeEditReviewSettlement({
     });
   }
 
+  // #3949 review M1: no Xero note can be placed for a group child's refund to the organiser; the officers are told.
+  if (route?.kind === "group-settlement-mirror") await alertGroupMirrorRefundXeroByHand({ bookingId, taskId, refundCents: route.refundCents, format });
+
   if (route?.kind === "stripe-refund" && route.refundCents > 0) {
-    const refundAmountCents = route.refundCents;
-    try {
-      const refundResult = await refundPaymentTransactions({
-        format,
-        paymentId: route.paymentId,
-        amountCents: refundAmountCents,
-        // #1507: the body is rebuilt byte-identically by a recovery replay from
-        // the stored key prefix, so the reason is a fixed discriminator, never
-        // prose. `bookingModificationRefundReasonForKeyPrefix` maps this task's
-        // prefix back to exactly this string.
-        metadata: buildBookingModificationRefundMetadata(
-          bookingId,
-          "edit_financial_review",
-        ),
-        // TASK-scoped, not modification-scoped. Owner decision D-3032-1 settles a
-        // review against the ORIGINAL edit's `BookingModification`, and one edit
-        // can raise TWO review tasks - two unpriceable strands, one modification
-        // row. A modification-scoped prefix would give both the same per-slice
-        // key, Stripe would answer the second with the FIRST refund, and the
-        // caller would take the replayed id as success and tell the member their
-        // money came back when half of it never left.
-        idempotencyKeyPrefix:
-          buildEditFinancialReviewRefundStripeKeyPrefix(taskId),
-        // The slices frozen inside the transaction, so an inline attempt and a
-        // cron replay send byte-identical requests.
-        allocation: route.allocation,
-      });
-      stripeRefundId = refundResult.refunds[0]?.refundId ?? null;
-      // Best-effort close, exactly as #1349's is: a lost close leaves the
-      // operation PENDING and the cron replays the identical frozen slices, which
-      // Stripe answers with the original refunds.
-      await markEditFinancialReviewRefundRecoverySucceeded({ taskId }).catch(
-        (err) =>
-          logger.error(
-            { err, bookingId, taskId },
-            "Failed to close the edit-financial-review refund recovery operation after an inline refund succeeded",
-          ),
-      );
-    } catch (err) {
-      // The debt is already durable, so there is nothing to enqueue here and
-      // nothing is lost: the operation stays PENDING and the cron replays it.
-      logger.error(
-        { err, bookingId, taskId, amountCents: refundAmountCents },
-        "Stripe refund failed after an edit financial review was completed - the persisted recovery operation will replay it",
-      );
-    }
-    if (stripeRefundId) {
-      // Only on a refund that actually issued. A failure records NO event: a
-      // REFUNDED row is member-facing through `booking-narrative.ts`, so writing
-      // one for money still sitting in the club's account would tell the member
-      // their refund had happened.
-      await recordBookingEvent({
-        bookingId,
-        type: BookingEventType.REFUNDED,
-        actorMemberId: actingMemberId,
-        amountCents: refundAmountCents,
-        reason: "edit_financial_review_completed",
-      });
-    }
+    // The card refund, its recovery row's close and its REFUNDED event (#3032, #4103).
+    stripeRefundId = await executeEditReviewCardRefund({ bookingId, taskId, actingMemberId, route, format });
   }
 
   // #3835: the applied-credit part of a cancelled booking's share, given back
@@ -653,6 +623,13 @@ export async function executeEditReviewSettlement({
     });
     additionalPaymentIntentId = charged.paymentIntentId;
     chargeTotalCents = charged.totalCents;
+    // #4272: a booking cancelled after the commit gets no Xero leg, whatever the
+    // sync answered: its invoice would wait on a request never raised. The
+    // share is recorded by the sync or the recovery row's cancelled path.
+    if (charged.outcome === "booking-cancelled") {
+      return { stripeRefundId, additionalPaymentIntentId, chargeBookingCancelled: { recorded: charged.recordedUncollected === true } };
+    }
+    if (route.collectVia === "stripe" && (await readBookingHasEnded(bookingId)) /* #4272, #4316: ended now, after the commit */) return { stripeRefundId, additionalPaymentIntentId };
   }
 
   // #3791: an account-credit share's event and Xero leg - given back, minted,
@@ -667,6 +644,23 @@ export async function executeEditReviewSettlement({
       hasIssuedXeroInvoice,
       bookingXeroInvoiceId,
       bookingPaymentStatus,
+    });
+    return { stripeRefundId, additionalPaymentIntentId };
+  }
+
+  // #3947: the `invoice` route's invoice was queued inside the completion's
+  // transaction, so the dispatch below must not restate or enqueue it again;
+  // what is left is the kick and the short-ask record.
+  if (route?.kind === "additional-charge" && route.collectVia === "invoice" && chargeInvoice) {
+    await finishEditReviewChargeInvoice({
+      queued: chargeInvoice,
+      bookingId,
+      taskId,
+      bookingModificationId: route.bookingModificationId,
+      shareCents: amountCents,
+      memberId: route.member?.id ?? null,
+      actingMemberId,
+      format,
     });
     return { stripeRefundId, additionalPaymentIntentId };
   }

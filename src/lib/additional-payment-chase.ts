@@ -24,10 +24,24 @@
  * we would chase a member for money they do not owe.
  */
 
+import {
+  CREDIT_RELEASE_ASK_REASON,
+} from "@/lib/credit-release-ask-keys";
 import { isStripeResourceMissingError } from "@/lib/stripe-errors";
 
 /** Days after the extra was raised before the first reminder goes out. */
 export const ADDITIONAL_PAYMENT_REMINDER_DAYS = 3;
+
+/**
+ * Days after the request was raised before the first reminder, by what the request
+ * is for. A request for credit used elsewhere in the club's accounts (#4253,
+ * `INV-ADDPAY-045`) is not noticed by the member the way a change they made
+ * themselves is: nothing they did caused it, so the first email goes out at once
+ * and is the only way they hear of it. Every other request keeps the usual wait.
+ */
+export function additionalPaymentFirstReminderDelayDays(askReason: string | null | undefined): number {
+  return askReason === CREDIT_RELEASE_ASK_REASON ? 0 : ADDITIONAL_PAYMENT_REMINDER_DAYS;
+}
 
 /**
  * Days before check-in for the last-chance reminder. Deliberately inside the
@@ -123,6 +137,33 @@ export function isAdditionalPayableBookingStatus(
   return (
     status != null &&
     (ADDITIONAL_PAYABLE_BOOKING_STATUSES as readonly string[]).includes(status)
+  );
+}
+
+/**
+ * The booking statuses that RETIRE every ask on the booking (`INV-ADDPAY-044`,
+ * the cancelled-booking case of `INV-ADDPAY-023`):
+ * both lists above exclude them, and no surface may offer or take a card
+ * payment for one. A CANCELLED or BUMPED booking keeps its ask columns as they
+ * were, so its residual says nothing to the ledger census either
+ * (`BOOKING_LEDGER_CENSUS_EXCLUDED_BOOKING_STATUSES` re-exports this list).
+ *
+ * #4316: the after-commit minter reads it twice - before the provider call (an
+ * ended booking is asked nothing) and after its row is written (a cancel that
+ * committed in between had no intent to see, so the minter retires its own).
+ */
+export const ADDITIONAL_ASK_RETIRED_BOOKING_STATUSES = [
+  "CANCELLED",
+  "BUMPED",
+] as const;
+
+/** Has this booking's lifecycle retired every ask on it (`INV-ADDPAY-044`)? */
+export function isAdditionalAskRetiredBookingStatus(
+  status: string | null | undefined,
+): boolean {
+  return (
+    status != null &&
+    (ADDITIONAL_ASK_RETIRED_BOOKING_STATUSES as readonly string[]).includes(status)
   );
 }
 
@@ -393,6 +434,8 @@ export interface AdditionalPaymentChaseInput {
   episodeStartedAt: Date;
   reminderSentAt: Date | null;
   finalReminderSentAt: Date | null;
+  /** The newest request's cause (its ledger `reason`); sets how long the first reminder waits. */
+  askReason?: string | null;
   /**
    * First-deploy guard: the instant automatic chasing began on THIS deployment.
    *
@@ -467,7 +510,7 @@ export function resolveAdditionalPaymentChase(
 
   const initialDueAt =
     input.episodeStartedAt.getTime() +
-    ADDITIONAL_PAYMENT_REMINDER_DAYS * MS_PER_DAY;
+    additionalPaymentFirstReminderDelayDays(input.askReason) * MS_PER_DAY;
   if (
     input.now.getTime() >= initialDueAt &&
     !isCurrentEpisodeStamp(input.reminderSentAt, input.episodeStartedAt)

@@ -60,7 +60,10 @@ import {
 } from "@/lib/xero-operation-queue";
 import { XERO_REQUEUE_OPERATION_TYPE } from "@/lib/xero-hardening-shared";
 import { XeroRefundCreditNoteInFlightError } from "@/lib/xero-applied-credit-operation-serialization";
-import { XeroOperationResolvedInXeroError } from "@/lib/xero-operation-retry";
+import {
+  XeroOperationNotReplayableError,
+  XeroOperationResolvedInXeroError,
+} from "@/lib/xero-operation-retry";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 function makeOperation(overrides: Record<string, unknown> = {}) {
@@ -412,6 +415,28 @@ describe("processQueuedXeroOperationRetries", () => {
       })
     );
   });
+
+  it.each([409, 400])(
+    "MUTATION: skips a queued retry of an operation marked not replayable (%s), never telling anyone to requeue it (#4256)",
+    async (status) => {
+      mocks.findManyQueued.mockResolvedValue([makeQueuedOperation()]);
+      mocks.retryXeroSyncOperation.mockRejectedValue(new XeroOperationNotReplayableError(status));
+
+      await expect(processQueuedXeroOperationRetries({ limit: 5 }, CLUB_FORMAT_TEST)).resolves.toMatchObject({
+        failed: 0,
+        skipped: 1,
+      });
+
+      expect(mocks.failXeroSyncOperation).not.toHaveBeenCalled();
+      expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
+        "queue_1",
+        expect.objectContaining({
+          status: "CANCELLED",
+          responsePayload: expect.objectContaining({ originalOperationId: "op_123", skipped: "not-replayable" }),
+        }),
+      );
+    },
+  );
 
   it("skips a queued retry it loses the claim race for (updateMany matched zero PENDING rows)", async () => {
     // A concurrent worker already claimed the requeue row, so the conditional

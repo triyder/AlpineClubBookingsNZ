@@ -33,6 +33,16 @@ const mocks = vi.hoisted(() => ({
   createUnappliedXeroCreditNoteForModification: vi.fn(),
   createXeroCreditNoteForModification: vi.fn(),
   findManyXeroObjectLink: vi.fn().mockResolvedValue([]),
+  // #3924 round 10: a late charge's change invoice is told by its approval
+  // task, and one already linked in Xero is refused.
+  findUniqueManualRefundTask: vi.fn().mockResolvedValue(null),
+  // #3924 round 12: what the linked change invoice's 409 names - the close's
+  // share, and the card refunds no note answers.
+  findLateCaptureRefundPaidAnotherWay: vi.fn().mockResolvedValue(null),
+  readUnnotedLateCaptureCardRefunds: vi
+    .fn()
+    .mockResolvedValue({ byHandCents: 0, mayBeInXeroCents: 0, notesCanStillLand: false, notedLaterCents: 0 }),
+  findFirstXeroObjectLink: vi.fn().mockResolvedValue(null),
   // #3548: the one read-back-then-settle the repair leg hands a note to.
   finishRefundCreditNoteSettlement: vi.fn().mockResolvedValue({ refundPaymentErr: null }),
   allocateCreditNoteToInvoice: vi.fn(),
@@ -40,6 +50,14 @@ const mocks = vi.hoisted(() => ({
   createXeroMembershipCancellationCreditNote: vi.fn(),
   allocateAppliedCreditForBooking: vi.fn(),
   deallocateExcessAppliedCreditForBooking: vi.fn(),
+  // #3953 round 9: the replay's recordPayment, asked again under the change's anchor lock.
+  supplementaryReplayMayRecordPayment: vi.fn(),
+}));
+
+vi.mock("@/lib/additional-capture-receipt-gate", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/additional-capture-receipt-gate")),
+  supplementaryReplayMayRecordPayment: async (...args: unknown[]) =>
+    (await mocks.supplementaryReplayMayRecordPayment(...args)) ?? { recordPayment: true, raisedUnpaid: false },
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -72,6 +90,10 @@ vi.mock("@/lib/prisma", () => ({
     // #3535: a PARTIAL clearing note's repair skips targets already allocated.
     xeroObjectLink: {
       findMany: mocks.findManyXeroObjectLink,
+      findFirst: mocks.findFirstXeroObjectLink,
+    },
+    manualRefundTask: {
+      findUnique: mocks.findUniqueManualRefundTask,
     },
   },
 }));
@@ -119,6 +141,15 @@ vi.mock("@/lib/xero-applied-credit-deallocation", () => ({
   deallocateExcessAppliedCreditForBooking: mocks.deallocateExcessAppliedCreditForBooking,
 }));
 
+vi.mock("@/lib/late-capture-paid-another-way", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/late-capture-paid-another-way")),
+  findLateCaptureRefundPaidAnotherWay: mocks.findLateCaptureRefundPaidAnotherWay,
+}));
+vi.mock("@/lib/late-capture-refund-credit-note", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/late-capture-refund-credit-note")),
+  readUnnotedLateCaptureCardRefunds: mocks.readUnnotedLateCaptureCardRefunds,
+}));
+
 vi.mock("@/lib/xero-sync", async (importOriginal) => {
   const actual = (await importOriginal()) as typeof import("@/lib/xero-sync");
 
@@ -131,8 +162,10 @@ vi.mock("@/lib/xero-sync", async (importOriginal) => {
 
 import {
   getXeroOperationRetryMeta,
+  PARTIAL_REPAIR_CLAIM_LOST_MESSAGE,
   retryAbandonedItsClaim,
   retryXeroSyncOperation,
+  XeroOperationNotReplayableError,
   XeroOperationResolvedInXeroError,
   XeroOperationRetryError,
 } from "@/lib/xero-operation-retry";
@@ -144,7 +177,11 @@ import {
   XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_TYPE,
 } from "@/lib/xero-operation-outbox-payload";
 import { CLUB_NAME } from "@/config/club-identity";
+import { PRIMARY_INVOICE_NOTHING_LEFT_DUE_REASON } from "@/lib/xero-primary-invoice-fee-at-link";
+import { PARTIAL_REPAIR_EMAIL_STILL_FAILED_MESSAGE } from "@/lib/xero-partial-invoice-repair-amount";
+import { XERO_PARTIAL_REPAIR_RUNNING_CODE, XERO_REFUND_NOTE_REPAIR_RUNNING_CODE } from "@/lib/xero-stale-operations";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { cardRefundNoteKeyTag } from "@/lib/card-refund-paid-another-way-cash";
 
 function makeOperation(overrides: Record<string, unknown> = {}) {
   return {
@@ -279,6 +316,23 @@ describe("getXeroOperationRetryMeta", () => {
     ).toEqual({
       supported: true,
       reason: null,
+    });
+  });
+
+  it("gives a stray subscription invoice (raised after its charge was closed as paid) its own reason, not a payload repair (#4098 review)", () => {
+    expect(
+      getXeroOperationRetryMeta(
+        makeOperation({
+          status: "PARTIAL",
+          localModel: "MembershipSubscriptionCharge",
+          localId: "charge-1",
+          xeroObjectId: "inv_stray",
+          responsePayload: { conflict: "STRAY_INVOICE_AFTER_CLOSE", invoice: { invoiceID: "inv_stray" }, adopted: false, email: null },
+        })
+      )
+    ).toEqual({
+      supported: false,
+      reason: expect.stringMatching(/^The membership charge was closed as already paid while this invoice was being raised.*Void it in Xero promptly.*then mark this operation resolved\. There is nothing to retry\.$/),
     });
   });
 
@@ -585,6 +639,8 @@ describe("retryXeroSyncOperation", () => {
     });
     mocks.findUniqueMember.mockResolvedValue(null);
     mocks.updateManyOperation.mockResolvedValue({ count: 1 });
+    // #4256: a completion onto the claim lands unless a test says it lost.
+    mocks.completeXeroSyncOperation.mockResolvedValue({ id: "op_123" });
     // No SUCCEEDED ADDITIONAL capture exists unless a test says so (#1882).
     mocks.findFirstPaymentTransaction.mockResolvedValue(null);
     mocks.shouldRepairXeroContactNameOrder.mockResolvedValue(false);
@@ -757,6 +813,48 @@ describe("retryXeroSyncOperation", () => {
     });
   });
 
+  it("MUTATION (#4312): a failed card refund note whose payload an older worker rewrote still retries as that refund's own note, from its key", async () => {
+    // `createXeroCreditNote` rewrites the payload before the Xero call; an older
+    // release's worker writes no `cardRefundId`, but the row's key still names it.
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        entityType: "CREDIT_NOTE",
+        localId: "pay_9",
+        queueType: "REFUND_CREDIT_NOTE",
+        correlationKey: `payment:pay_9:refund-credit-note${cardRefundNoteKeyTag("re_late")}0:v3`,
+        requestPayload: {
+          creditNotes: [{ lineItems: [{ unitAmount: 30 }] }],
+          allocation: { invoiceId: "inv_1", amount: 30 },
+        },
+      })
+    );
+
+    await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" });
+
+    expect(mocks.createXeroCreditNote).toHaveBeenCalledWith("pay_9", 3000, {
+      createdByMemberId: "admin_1",
+      repairExistingLink: true,
+      watermarkCents: 0,
+      cardRefundId: "re_late",
+    });
+  });
+
+  it("#4312: a card refund note's payload names its refund first", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        entityType: "CREDIT_NOTE",
+        localId: "pay_9",
+        queueType: "REFUND_CREDIT_NOTE",
+        correlationKey: `payment:pay_9:refund-credit-note${cardRefundNoteKeyTag("re_key")}0:v3`,
+        requestPayload: { queueType: "REFUND_CREDIT_NOTE", refundAmountCents: 3000, cardRefundId: "re_payload" },
+      })
+    );
+
+    await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" });
+
+    expect(mocks.createXeroCreditNote.mock.calls[0]![2]).toMatchObject({ cardRefundId: "re_payload" });
+  });
+
   it("MUTATION (#3880 F2): an inline row (no queue type) re-enters delta mode from the watermark its payload recorded", async () => {
     mocks.findUniqueOperation.mockResolvedValue(
       makeOperation({
@@ -850,6 +948,8 @@ describe("retryXeroSyncOperation", () => {
         id: "op_123",
         status: { in: ["FAILED", "PARTIAL"] },
         manuallyResolvedAt: null,
+        // #4256: a mark non-replayable landing after the read loses it too.
+        replayable: true,
       },
       data: { status: "RUNNING", startedAt: expect.any(Date) },
     });
@@ -1456,6 +1556,97 @@ describe("retryXeroSyncOperation", () => {
     );
   });
 
+  it("MUTATION #3953 round 9: a replay asked to record the payment asks again under the change's lock, and replays unpaid where a capture's receipt records it", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        entityType: "INVOICE",
+        operationType: "CREATE",
+        localModel: "BookingModification",
+        localId: "mod_receipt",
+        requestPayload: {
+          queueType: "SUPPLEMENTARY_INVOICE",
+          bookingId: "book_123",
+          priceDiffCents: 2500,
+          changeFeeCents: 500,
+          paymentIntentId: "pi_change",
+        },
+      })
+    );
+    mocks.findUniqueBookingModification.mockResolvedValue({
+      bookingId: "book_123",
+      priceDiffCents: 2500,
+      changeFeeCents: 500,
+      createdAt: new Date("2026-07-01T00:00:00Z"),
+    });
+    mocks.supplementaryReplayMayRecordPayment.mockResolvedValueOnce({ recordPayment: false, raisedUnpaid: true });
+
+    // Round 11: the officer is told it was raised unpaid, and why.
+    await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" })).resolves.toEqual({
+      message: "Retried Xero supplementary invoice creation, raised unpaid: the card payment it would record is recorded by its own receipt.",
+    });
+
+    expect(mocks.supplementaryReplayMayRecordPayment).toHaveBeenCalledWith({
+      operationId: "op_123",
+      bookingId: "book_123",
+      bookingModificationId: "mod_receipt",
+    });
+    expect(mocks.createXeroSupplementaryInvoice).toHaveBeenCalledWith(
+      expect.objectContaining({ recordPayment: false })
+    );
+  });
+
+  // #3953 round 10: a #3980 gap invoice's coverage record (`primaryInvoiceGap`,
+  // `coveredPaymentIntentIds`, `coveredCaptureCents`) is never an input to the
+  // create - the outbox dispatch passes none either; it lives on the QUEUED
+  // row, which the replay never rewrites and which stays FAILED (not
+  // CANCELLED), so the readers that filter on `queueType` keep finding it. The
+  // replay's own row is a direct call's, with no `queueType`, invisible to them.
+  it("replays a #3980 gap invoice with its queued amounts and payment, leaving its coverage record on the queued row (#3953)", async () => {
+    const gapPayload = {
+      queueType: "SUPPLEMENTARY_INVOICE",
+      bookingId: "book_123",
+      bookingModificationId: "mod_gap",
+      priceDiffCents: 0,
+      changeFeeCents: 2500,
+      recordPayment: true,
+      primaryInvoiceGap: true,
+      coveredPaymentIntentIds: ["pi_change"],
+      coveredCaptureCents: { pi_change: 2500 },
+    };
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        entityType: "INVOICE",
+        operationType: "CREATE",
+        localModel: "BookingModification",
+        localId: "mod_gap",
+        requestPayload: gapPayload,
+      })
+    );
+    mocks.findUniqueBookingModification.mockResolvedValue({
+      bookingId: "book_123",
+      priceDiffCents: 9999,
+      changeFeeCents: 9999,
+      createdAt: new Date("2026-07-01T00:00:00Z"),
+    });
+
+    await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" });
+
+    expect(mocks.createXeroSupplementaryInvoice).toHaveBeenCalledWith(
+      expect.objectContaining({
+        bookingId: "book_123",
+        bookingModificationId: "mod_gap",
+        priceDiffCents: 0,
+        changeFeeCents: 2500,
+        recordPayment: true,
+      })
+    );
+    expect(mocks.createXeroSupplementaryInvoice.mock.calls[0]![0]).not.toHaveProperty("syncOperationId");
+    // The queued row - the coverage record - is never rewritten by the replay.
+    expect(
+      mocks.updateManyOperation.mock.calls.filter(([args]) => "requestPayload" in ((args as { data?: object }).data ?? {}))
+    ).toEqual([]);
+  });
+
   it("defaults a stored payload without the flag to recordPayment=true like the outbox dispatch (#1882)", async () => {
     mocks.findUniqueOperation.mockResolvedValue(
       makeOperation({
@@ -1948,6 +2139,122 @@ describe("retryXeroSyncOperation", () => {
     });
   });
 
+  // #4010: the repair records the cash the create would have recorded — the
+  // figure stored with the invoice link, capped for applied account credit —
+  // not the invoice total. The total is only an older operation's fallback.
+  describe("primary invoice PARTIAL repair sizes at the stored cash figure (#4010)", () => {
+    // `attempted` undefined models a record written before #4010 stored it.
+    const storedAtLink = (
+      primaryInvoiceCashCents: number,
+      xeroInvoiceId = "inv_123",
+      primaryInvoiceAttemptedCashCents: number | undefined = primaryInvoiceCashCents,
+    ) => ({
+      invoices: [{ lineItems: [{ quantity: 1, unitAmount: 100 }] }],
+      primaryInvoiceBilledFee: {
+        xeroInvoiceId,
+        billedChangeFeeCents: 0,
+        billedTotalCents: 10_000,
+        recordedChangeFeeCentsAtLink: 0,
+        primaryInvoiceCashCents,
+        ...(primaryInvoiceAttemptedCashCents === undefined ? {} : { primaryInvoiceAttemptedCashCents }),
+      },
+    });
+    const partialPrimary = (requestPayload: unknown) =>
+      makeOperation({
+        status: "PARTIAL",
+        xeroObjectId: "inv_123",
+        requestPayload,
+        responsePayload: {
+          invoice: { invoices: [{ total: 100 }] },
+          paymentError: { message: "Xero rejected the payment" },
+        },
+      });
+    const repairedPaymentCents = () => {
+      expect(mocks.createXeroPaymentForInvoice).toHaveBeenCalledTimes(1);
+      const call = mocks.createXeroPaymentForInvoice.mock.calls[0][0];
+      expect(call.metadata.amountCents).toBe(call.amountCents);
+      expect(call.idempotencyKey).toBe("payment:pay_123:invoice-payment:v1");
+      return call.amountCents;
+    };
+
+    it("card plus applied credit: records the card cash (total less credit), not the total", async () => {
+      // $100 invoice, $20 of it paid by applied credit: the card paid $80.
+      mocks.findUniqueOperation.mockResolvedValue(partialPrimary(storedAtLink(8_000)));
+      await expect(
+        retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" })
+      ).resolves.toEqual({ message: "Repaired Xero booking invoice payment recording." });
+      expect(repairedPaymentCents()).toBe(8_000);
+    });
+
+    // #4010 review: the stored cash is floored at an earlier unmatched payment
+    // on the invoice; the repair records what the create tried to pay.
+    it.each([
+      { floored: 6_000, attempted: 4_000 },
+      { floored: 3_000, attempted: 2_000 },
+    ])("records the attempted $attempted, never the floored $floored", async ({ floored, attempted }) => {
+      mocks.findUniqueOperation.mockResolvedValue(partialPrimary(storedAtLink(floored, "inv_123", attempted)));
+      await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" });
+      expect(repairedPaymentCents()).toBe(attempted);
+    });
+
+    it("a record from before the attempted figure falls back to the stored cash", async () => {
+      mocks.findUniqueOperation.mockResolvedValue(partialPrimary(storedAtLink(8_000, "inv_123", undefined)));
+      await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" });
+      expect(repairedPaymentCents()).toBe(8_000);
+    });
+
+    it("card only: the stored figure is the total, so the repair is unchanged", async () => {
+      mocks.findUniqueOperation.mockResolvedValue(partialPrimary(storedAtLink(10_000)));
+      await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" });
+      expect(repairedPaymentCents()).toBe(10_000);
+    });
+
+    it("an operation from before the stored figure falls back to the invoice total", async () => {
+      // Pre-#3955: no record at all.
+      mocks.findUniqueOperation.mockResolvedValue(
+        partialPrimary({ invoices: [{ lineItems: [{ quantity: 1, unitAmount: 100 }] }] }),
+      );
+      await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" });
+      expect(repairedPaymentCents()).toBe(10_000);
+    });
+
+    it("a record without the cash figure (pre-round-5) or for another invoice also falls back", async () => {
+      const withoutCash: Record<string, unknown> = { ...storedAtLink(8_000, "inv_123", undefined).primaryInvoiceBilledFee };
+      delete withoutCash.primaryInvoiceCashCents;
+      for (const requestPayload of [
+        { ...storedAtLink(8_000), primaryInvoiceBilledFee: withoutCash },
+        storedAtLink(8_000, "inv_other"),
+      ]) {
+        vi.clearAllMocks();
+        mocks.findUniqueOperation.mockResolvedValue(partialPrimary(requestPayload));
+        await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" });
+        expect(repairedPaymentCents()).toBe(10_000);
+      }
+    });
+
+    it("a stored figure of zero records no payment and says the credit took it, not that the invoice was zero", async () => {
+      mocks.findUniqueOperation.mockResolvedValue(partialPrimary(storedAtLink(0)));
+      await expect(
+        retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" })
+      ).resolves.toEqual({
+        message:
+          "Marked Xero booking invoice as repaired without payment recording: its applied account credit leaves no card cash to record.",
+      });
+      expect(mocks.createXeroPaymentForInvoice).not.toHaveBeenCalled();
+      expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
+        "op_123",
+        expect.objectContaining({
+          status: "SUCCEEDED",
+          responsePayload: expect.objectContaining({
+            paymentSkipped: true,
+            paymentSkipReason: PRIMARY_INVOICE_NOTHING_LEFT_DUE_REASON,
+          }),
+        }),
+        { onlyIfRunningSince: expect.any(Date), alert: false },
+      );
+    });
+  });
+
   // #2258 round-2, money-adjacent: an invoice can be PARTIAL because only its
   // EMAIL failed, and every such case is an INTERNET_BANKING booking whose Xero
   // payment is deliberately skipped because the member has not paid. Repairing
@@ -2108,7 +2415,8 @@ describe("retryXeroSyncOperation", () => {
           paymentSkipped: true,
           paymentSkipReason: "Zero-total invoice does not require Xero payment recording.",
         }),
-      })
+      }),
+      { onlyIfRunningSince: expect.any(Date), alert: false },
     );
   });
 
@@ -2228,8 +2536,31 @@ describe("retryXeroSyncOperation", () => {
       expect.objectContaining({
         status: "SUCCEEDED",
         responsePayload: expect.objectContaining({ refundPaymentSkipped: true, refundPaymentSkipReason: "unset" }),
+      }),
+      { onlyIfRunningSince: expect.any(Date) },
+    );
+  });
+
+  it("MUTATION (INV-ADDPAY-041): a PARTIAL row's repair never writes a note Xero voided into the payment's pointer", async () => {
+    mocks.findUniquePayment.mockResolvedValue({ id: "pay_123", source: "STRIPE" });
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        status: "PARTIAL", entityType: "CREDIT_NOTE", operationType: "CREATE", xeroObjectId: "cn_123",
+        requestPayload: { allocation: { invoiceId: "inv_123", amount: 12.34 } },
+        responsePayload: { allocation: { allocations: [{ amount: 12.34 }] } },
       })
     );
+    mocks.findManyXeroObjectLink.mockImplementation((async ({ where }: any) =>
+      where?.role === "REFUND_CREDIT_NOTE" ? [{ xeroObjectId: "cn_123", metadata: { amountCents: 1234, status: "VOIDED" } }] : []) as never);
+    mocks.updatePayment.mockResolvedValue({ id: "pay_123" });
+
+    try {
+      await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" });
+
+      expect(mocks.updatePayment).not.toHaveBeenCalledWith(expect.objectContaining({ data: { xeroRefundCreditNoteId: "cn_123" } }));
+    } finally {
+      mocks.findManyXeroObjectLink.mockImplementation((async () => []) as never);
+    }
   });
 
   it("repairs partial refund credit note follow-up actions", async () => {
@@ -2520,6 +2851,327 @@ describe("retryXeroSyncOperation", () => {
         }),
       ).supported,
     ).toBe(false);
+  });
+
+  // #3924 round 9 (`INV-PAY-122`): a late card charge's change invoice that
+  // FAILED goes back to the outbox on its own row, so its worker - not an
+  // inline replay minting a row that does not name the charge - records the
+  // invoice where the charge's receipt reads it, and queues the note a
+  // "Paid another way" close waits for.
+  it("MUTATION: returns a FAILED late-capture change invoice to the outbox on its own row, never replaying it inline", async () => {
+    const queued = {
+      queueType: "SUPPLEMENTARY_INVOICE",
+      bookingId: "book_123",
+      priceDiffCents: 3000,
+      changeFeeCents: 0,
+      bookingModificationId: "mod_123",
+      recordPayment: true,
+      paymentIntentId: "pi_late",
+      keptLateCaptureDay: "2026-06-10",
+      invoices: [{ type: "ACCREC" }],
+    };
+    const operation = makeOperation({
+      status: "FAILED",
+      entityType: "INVOICE",
+      operationType: "CREATE",
+      localModel: "BookingModification",
+      localId: "mod_123",
+      queueType: "SUPPLEMENTARY_INVOICE",
+      requestPayload: queued,
+    });
+    mocks.findUniqueOperation.mockResolvedValue(operation);
+    mocks.updateManyOperation.mockResolvedValue({ count: 1 });
+    mocks.findUniqueManualRefundTask.mockResolvedValueOnce({ id: "task_late" });
+
+    await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).resolves.toEqual({
+      message: "Queued the late card charge's change invoice for retry.",
+    });
+    expect(mocks.findUniqueManualRefundTask).toHaveBeenCalledWith({
+      where: { lateCaptureApprovalIntentId: "pi_late" },
+      select: { id: true },
+    });
+    expect(mocks.updateManyOperation).toHaveBeenCalledWith({
+      where: { id: "op_123", status: "FAILED", manuallyResolvedAt: null },
+      // #3953 round 11: the stored payload - the intent the note step reads,
+      // and the charge day - is kept as it stands, never written back.
+      data: expect.objectContaining({ status: "PENDING" }),
+    });
+    expect(mocks.updateManyOperation.mock.calls[0]![0].data).not.toHaveProperty("requestPayload");
+    expect(mocks.createXeroSupplementaryInvoice).not.toHaveBeenCalled();
+  });
+
+  it("MUTATION #3953 round 11: decides the late charge's change invoice again under the change's lock before requeueing it, and never writes back the payload it read", async () => {
+    const queued = {
+      queueType: "SUPPLEMENTARY_INVOICE",
+      bookingId: "book_123",
+      priceDiffCents: 3000,
+      changeFeeCents: 0,
+      bookingModificationId: "mod_123",
+      recordPayment: true,
+      paymentIntentId: "pi_late",
+    };
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        status: "FAILED",
+        entityType: "INVOICE",
+        operationType: "CREATE",
+        localModel: "BookingModification",
+        localId: "mod_123",
+        queueType: "SUPPLEMENTARY_INVOICE",
+        requestPayload: queued,
+      }),
+    );
+    mocks.updateManyOperation.mockResolvedValue({ count: 1 });
+    mocks.findUniqueManualRefundTask.mockResolvedValueOnce({ id: "task_late" });
+    // A receipt's switch (or this check) set the row unpaid since it was read.
+    mocks.supplementaryReplayMayRecordPayment.mockResolvedValueOnce({ recordPayment: false, raisedUnpaid: true });
+
+    await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST);
+
+    expect(mocks.supplementaryReplayMayRecordPayment).toHaveBeenCalledWith({
+      operationId: "op_123",
+      bookingId: "book_123",
+      bookingModificationId: "mod_123",
+    });
+    expect(mocks.supplementaryReplayMayRecordPayment.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.updateManyOperation.mock.invocationCallOrder[0]!,
+    );
+    for (const [args] of mocks.updateManyOperation.mock.calls) {
+      expect((args as { data: object }).data).not.toHaveProperty("requestPayload");
+    }
+  });
+
+  // #3924 round 10 (finding 2): one whose change is already linked to its
+  // invoice in Xero is never sent again.
+  it("MUTATION: round 10: refuses with a 409 a late charge's change invoice already linked in Xero, and says to mark it resolved", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        status: "FAILED",
+        entityType: "INVOICE",
+        operationType: "CREATE",
+        localModel: "BookingModification",
+        localId: "mod_123",
+        queueType: "SUPPLEMENTARY_INVOICE",
+        requestPayload: {
+          queueType: "SUPPLEMENTARY_INVOICE",
+          bookingId: "book_123",
+          priceDiffCents: 3000,
+          changeFeeCents: 0,
+          bookingModificationId: "mod_123",
+          recordPayment: true,
+          paymentIntentId: "pi_late",
+        },
+      }),
+    );
+    mocks.findUniqueManualRefundTask.mockResolvedValueOnce({ id: "task_late" });
+    mocks.findFirstXeroObjectLink.mockResolvedValueOnce({ xeroObjectId: "inv_linked" });
+
+    const refused = retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST);
+    await expect(refused).rejects.toBeInstanceOf(XeroOperationRetryError);
+    await expect(refused).rejects.toMatchObject({
+      status: 409,
+      message: expect.stringContaining("Mark this operation resolved as fixed in Xero instead"),
+    });
+    // Round 12: no close and no card refund yet - nothing is said not to be
+    // recorded by hand, and a later card refund is.
+    await expect(refused).rejects.toMatchObject({
+      message: expect.stringMatching(
+        /instead, and do that first, before recording anything by hand in Xero\. If this charge is refunded to the card, record that refund by hand in Xero: once this operation is resolved the app raises no refund note for it\.$/,
+      ),
+    });
+    await expect(refused).rejects.not.toMatchObject({ message: expect.stringMatching(/Do not record/) });
+    // Round 11 (`INV-SSOT`): the receipt reader's own link query.
+    expect(mocks.findFirstXeroObjectLink).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          OR: [{ localModel: "BookingModification", localId: "mod_123" }],
+          xeroObjectType: "INVOICE",
+          role: "SUPPLEMENTARY_INVOICE",
+          active: true,
+        },
+        select: { xeroObjectId: true },
+      }),
+    );
+    expect(mocks.updateManyOperation).not.toHaveBeenCalled();
+    expect(mocks.createXeroSupplementaryInvoice).not.toHaveBeenCalled();
+  });
+
+  // #3924 round 12 (F1): once the row is resolved, a refund closed as paid
+  // another way reads the linked invoice as its receipt and its note follows,
+  // but every card-refund path reads the row resolved by hand - so the 409
+  // says which share to record by hand and which never to.
+  describe("round 12: what the linked change invoice's 409 says to record by hand", () => {
+    const linkedLateChange = () =>
+      makeOperation({
+        status: "FAILED",
+        entityType: "INVOICE",
+        operationType: "CREATE",
+        localModel: "BookingModification",
+        localId: "mod_123",
+        queueType: "SUPPLEMENTARY_INVOICE",
+        requestPayload: {
+          queueType: "SUPPLEMENTARY_INVOICE",
+          bookingId: "book_123",
+          priceDiffCents: 40000,
+          changeFeeCents: 0,
+          bookingModificationId: "mod_123",
+          recordPayment: true,
+          paymentIntentId: "pi_late",
+        },
+      });
+    const refusal = async ({
+      closeCents,
+      cardCents,
+      mayBeInXeroCents = 0,
+      notesCanStillLand = false,
+      notedLaterCents = 0,
+    }: {
+      closeCents: number | null;
+      cardCents: number;
+      mayBeInXeroCents?: number;
+      notesCanStillLand?: boolean;
+      notedLaterCents?: number;
+    }) => {
+      mocks.findUniqueOperation.mockResolvedValue(linkedLateChange());
+      mocks.findUniqueManualRefundTask.mockResolvedValueOnce({ id: "task_late" });
+      mocks.findUniqueManualRefundTask.mockResolvedValueOnce({ paymentId: "payment_1" });
+      mocks.findFirstXeroObjectLink.mockResolvedValueOnce({ xeroObjectId: "inv_linked" });
+      mocks.findLateCaptureRefundPaidAnotherWay.mockResolvedValueOnce(
+        closeCents === null ? null : { id: "close_1", paymentId: "payment_1", amountCents: closeCents },
+      );
+      mocks.readUnnotedLateCaptureCardRefunds.mockResolvedValueOnce({
+        byHandCents: cardCents,
+        mayBeInXeroCents,
+        notesCanStillLand,
+        notedLaterCents,
+      });
+      const error = await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST).catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(XeroOperationRetryError);
+      expect(error).toMatchObject({ status: 409 });
+      expect(mocks.updateManyOperation).not.toHaveBeenCalled();
+      return (error as Error).message;
+    };
+
+    it("MUTATION: card only - the whole card refund is recorded by hand, and nothing is said not to be", async () => {
+      const message = await refusal({ closeCents: null, cardCents: 40000 });
+      expect(message).toMatch(/Record the \$400\.00 refunded to the card by hand in Xero: once this operation is resolved the app raises no refund note for a card refund of this charge\.$/);
+      expect(message).not.toMatch(/Do not record/);
+      expect(mocks.readUnnotedLateCaptureCardRefunds).toHaveBeenCalledWith("payment_1", "pi_late");
+    });
+
+    it("MUTATION: split - the close's share is not recorded by hand, the card share is", async () => {
+      const message = await refusal({ closeCents: 25000, cardCents: 15000 });
+      expect(message).toMatch(/Do not record the \$250\.00 paid back another way by hand: the app raises that refund note against the invoice already there, through the nightly credit check or the Xero repair tool\./);
+      expect(message).toMatch(/Record the \$150\.00 refunded to the card by hand in Xero/);
+    });
+
+    it("MUTATION: close only - nothing to record by hand", async () => {
+      const message = await refusal({ closeCents: 40000, cardCents: 0 });
+      expect(message).toMatch(/Do not record the \$400\.00 paid back another way by hand/);
+      expect(message).not.toMatch(/Record the|record that refund by hand/);
+    });
+
+    // Round 13: a $0 close leaves nothing paid back another way, so the
+    // officer is still told a later card refund is theirs to record.
+    it("MUTATION: round 13: a $0 close with no card refund still says to record any later card refund by hand", async () => {
+      const message = await refusal({ closeCents: 0, cardCents: 0 });
+      expect(message).not.toMatch(/Do not record/);
+      expect(message).toMatch(/If this charge is refunded to the card, record that refund by hand in Xero: once this operation is resolved the app raises no refund note for it\.$/);
+    });
+
+    // Round 14: the row is resolved before anything is recorded by hand -
+    // until then a card note waiting for the receipt may still be sent.
+    it("MUTATION: round 14: says to mark the row resolved first, before recording anything by hand", async () => {
+      const message = await refusal({ closeCents: null, cardCents: 40000 });
+      expect(message).toMatch(
+        /^This late card charge's change invoice is already in Xero, so retrying it could raise a second invoice\. Mark this operation resolved as fixed in Xero instead, and do that first, before recording anything by hand in Xero\. /,
+      );
+    });
+
+    // Round 14: a card note sent without a reply may be in Xero - named apart,
+    // never in the amount to record by hand, and checked in Xero first.
+    it("MUTATION: round 14: a card note sent without a reply is named apart, to check in Xero before recording", async () => {
+      const message = await refusal({ closeCents: null, cardCents: 25000, mayBeInXeroCents: 15000 });
+      expect(message).toMatch(/Record the \$250\.00 refunded to the card by hand in Xero/);
+      expect(message).toMatch(
+        /A refund credit note for \$150\.00 refunded to the card may be in Xero: the app tried to send it and cannot tell whether Xero took it\. Check Xero for that credit note first, and record that \$150\.00 by hand only if Xero does not hold it\.$/,
+      );
+      expect(message).not.toMatch(/If this charge is refunded to the card/);
+      const onlySent = await refusal({ closeCents: null, cardCents: 0, mayBeInXeroCents: 15000 });
+      expect(onlySent).not.toMatch(/Record the|If this charge is refunded to the card/);
+      expect(onlySent).toMatch(/Check Xero for that credit note first/);
+    });
+
+    // Round 14: while the card verdict still names an invoice in Xero, the
+    // app's card notes land against it, and nothing says the app raises no
+    // note. Round 15: what no note asks for yet is noted the next time the app
+    // notes this charge, so the officer is told NOT to record it by hand.
+    it("MUTATION: round 15: while card notes can still land, says the app notes the gap later and never to record it by hand", async () => {
+      const message = await refusal({ closeCents: null, cardCents: 0, notesCanStillLand: true, notedLaterCents: 5000 });
+      expect(message).toMatch(
+        /Do not record the \$50\.00 refunded to the card that no refund note answers yet by hand: the app notes it against this charge's receipt in Xero the next time it notes this charge, as it notes this charge's other card refunds\.$/,
+      );
+      expect(message).not.toMatch(/Record the|raises no refund note/);
+      const nothing = await refusal({ closeCents: null, cardCents: 0, notesCanStillLand: true });
+      expect(nothing).not.toMatch(/Record the|Do not record|If this charge is refunded to the card|raises no refund note/);
+    });
+  });
+
+  // #3924 round 10 (finding 3): an ordinary card edit's invoice names its
+  // `paymentIntentId` too, but no approval task owns it: the inline replay.
+  it("MUTATION: round 10: an ordinary card edit's FAILED invoice - an intent no approval task owns - keeps the inline replay", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        status: "FAILED",
+        entityType: "INVOICE",
+        operationType: "CREATE",
+        localModel: "BookingModification",
+        localId: "mod_123",
+        queueType: "SUPPLEMENTARY_INVOICE",
+        requestPayload: {
+          queueType: "SUPPLEMENTARY_INVOICE",
+          bookingId: "book_123",
+          priceDiffCents: 3000,
+          changeFeeCents: 0,
+          bookingModificationId: "mod_123",
+          recordPayment: true,
+          paymentIntentId: "pi_card_edit",
+        },
+      }),
+    );
+    mocks.findUniqueBookingModification.mockResolvedValue({ bookingId: "book_123", priceDiffCents: 3000, changeFeeCents: 0 });
+    await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST);
+    expect(mocks.findUniqueManualRefundTask).toHaveBeenCalledWith({
+      where: { lateCaptureApprovalIntentId: "pi_card_edit" },
+      select: { id: true },
+    });
+    expect(mocks.createXeroSupplementaryInvoice).toHaveBeenCalledTimes(1);
+    expect(mocks.updateManyOperation).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: "PENDING" }) }),
+    );
+  });
+
+  it("replays a change invoice that names no late charge inline, as before", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        status: "FAILED",
+        entityType: "INVOICE",
+        operationType: "CREATE",
+        localModel: "BookingModification",
+        localId: "mod_123",
+        requestPayload: {
+          queueType: "SUPPLEMENTARY_INVOICE",
+          bookingId: "book_123",
+          priceDiffCents: 3000,
+          changeFeeCents: 0,
+          bookingModificationId: "mod_123",
+          recordPayment: true,
+        },
+      })
+    );
+    mocks.findUniqueBookingModification.mockResolvedValue({ bookingId: "book_123", priceDiffCents: 3000, changeFeeCents: 0 });
+    await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST);
+    expect(mocks.createXeroSupplementaryInvoice).toHaveBeenCalledTimes(1);
   });
 
   // #3635 composition (`INV-INT-025`): a kept late-capture invoice an officer
@@ -3021,5 +3673,404 @@ describe("retryXeroSyncOperation", () => {
       name: "XeroOperationRetryError",
       status: 400,
     } satisfies Partial<XeroOperationRetryError>);
+  });
+});
+
+// #4256: the PARTIAL repairs claim their row first, PARTIAL -> RUNNING, like
+// every other retry that writes the original. A resolve, a mark or a second
+// retry landing after the read makes the claim lose: nothing written, no Xero.
+describe("PARTIAL repairs claim the original before they write or call Xero (#4256)", () => {
+  const partialInvoice = (totalDollars: number, extra: Record<string, unknown> = {}) =>
+    makeOperation({
+      status: "PARTIAL",
+      xeroObjectId: "inv_123",
+      xeroObjectNumber: "INV-0042",
+      responsePayload: {
+        invoice: { invoices: [{ total: totalDollars }] },
+        paymentError: { message: "Xero 503" },
+        ...extra,
+      },
+    });
+  const partialRefundNote = () =>
+    makeOperation({
+      status: "PARTIAL",
+      entityType: "CREDIT_NOTE",
+      operationType: "CREATE",
+      xeroObjectId: "cn_123",
+      requestPayload: { allocation: { invoiceId: "inv_123", amount: 12.34 } },
+      responsePayload: {},
+    });
+  const branches = [
+    ["the invoice payment repair", () => partialInvoice(45.67)],
+    ["the zero-cash invoice repair", () => partialInvoice(0)],
+    ["the refund-note repair", partialRefundNote],
+  ] as const;
+  const noSideEffect = () => {
+    expect(mocks.createXeroPaymentForInvoice).not.toHaveBeenCalled();
+    expect(mocks.finishRefundCreditNoteSettlement).not.toHaveBeenCalled();
+    expect(mocks.completeXeroSyncOperation).not.toHaveBeenCalled();
+    expect(mocks.updatePayment).not.toHaveBeenCalled();
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.findFirstOperation.mockResolvedValue(null);
+    mocks.updateManyOperation.mockResolvedValue({ count: 1 });
+    mocks.findUniquePayment.mockResolvedValue({ id: "pay_123", source: "STRIPE" });
+    mocks.createXeroPaymentForInvoice.mockResolvedValue("xpay_1");
+    mocks.finishRefundCreditNoteSettlement.mockResolvedValue({ refundPaymentErr: null });
+    mocks.completeXeroSyncOperation.mockResolvedValue({ id: "op_123" });
+    mocks.findFirstXeroObjectLink.mockResolvedValue(null);
+    mocks.findManyXeroObjectLink.mockResolvedValue([]);
+  });
+
+  it.each(branches)("MUTATION: %s claims PARTIAL only, unresolved and replayable, before anything else", async (_label, row) => {
+    mocks.findUniqueOperation.mockResolvedValue(row());
+    await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" });
+
+    expect(mocks.updateManyOperation.mock.calls[0][0]).toEqual({
+      where: { id: "op_123", status: "PARTIAL", manuallyResolvedAt: null, replayable: true },
+      // #4256 review F1: the marker a stale reset reads to return a dead repair to PARTIAL.
+      data: { status: "RUNNING", startedAt: expect.any(Date), lastErrorCode: XERO_PARTIAL_REPAIR_RUNNING_CODE },
+    });
+    const claimOrder = mocks.updateManyOperation.mock.invocationCallOrder[0];
+    for (const sideEffect of [
+      mocks.createXeroPaymentForInvoice,
+      mocks.finishRefundCreditNoteSettlement,
+      mocks.completeXeroSyncOperation,
+      mocks.updatePayment,
+    ]) {
+      for (const order of sideEffect.mock.invocationCallOrder) expect(claimOrder).toBeLessThan(order);
+    }
+  });
+
+  it.each(branches)("MUTATION: a resolve landing before %s claims makes it write nothing and call Xero for nothing", async (_label, row) => {
+    // The read saw the row unresolved; the re-read after the lost claim sees the mark.
+    mocks.findUniqueOperation
+      .mockResolvedValueOnce(row())
+      .mockResolvedValueOnce({ manuallyResolvedAt: RESOLVED_AT, requestPayload: null });
+    mocks.updateManyOperation.mockImplementation(async (args: { where: Record<string, unknown> }) => ({
+      count: args.where.manuallyResolvedAt === null ? 0 : 1,
+    }));
+
+    await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).rejects.toBeInstanceOf(
+      XeroOperationResolvedInXeroError,
+    );
+    noSideEffect();
+  });
+
+  it.each(branches)("MUTATION: a mark non-replayable landing before %s claims makes it write nothing", async (_label, row) => {
+    mocks.findUniqueOperation
+      .mockResolvedValueOnce(row())
+      .mockResolvedValueOnce({ manuallyResolvedAt: null, requestPayload: null, replayable: false });
+    mocks.updateManyOperation.mockImplementation(async (args: { where: Record<string, unknown> }) => ({
+      count: args.where.replayable === true ? 0 : 1,
+    }));
+
+    const refusal = retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST);
+    // Its own class, so the queued-retry drain skips its row (review, permissions F1).
+    await expect(refusal).rejects.toBeInstanceOf(XeroOperationNotReplayableError);
+    await expect(refusal).rejects.toMatchObject({
+      status: 409,
+      message: "This operation is not marked replayable.",
+    });
+    noSideEffect();
+  });
+
+  it.each(branches)("MUTATION: %s loses to a write that took the row out of PARTIAL (Mark failed, a requeue)", async (_label, row) => {
+    mocks.findUniqueOperation
+      .mockResolvedValueOnce(row())
+      .mockResolvedValueOnce({ manuallyResolvedAt: null, requestPayload: null });
+    // The row is no longer PARTIAL: only a PARTIAL-only claim misses it.
+    mocks.updateManyOperation.mockImplementation(async (args: { where: { status?: unknown } }) => ({
+      count: args.where.status === "PARTIAL" ? 0 : 1,
+    }));
+
+    await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).rejects.toMatchObject({
+      status: 409,
+      message: expect.stringContaining("already claimed"),
+    });
+    noSideEffect();
+  });
+
+  it.each(branches)("MUTATION: two retries racing on %s run its side effect once", async (_label, row) => {
+    mocks.findUniqueOperation.mockImplementation(async () => ({ ...row(), manuallyResolvedAt: null }));
+    let status = "PARTIAL";
+    mocks.updateManyOperation.mockImplementation(async (args: { where: { status?: unknown }; data: { status?: string } }) => {
+      const matches =
+        args.where.status === status ||
+        (typeof args.where.status === "object" &&
+          (args.where.status as { in?: string[] } | null)?.in?.includes(status));
+      if (!matches) return { count: 0 };
+      if (args.data.status) status = args.data.status;
+      return { count: 1 };
+    });
+
+    const results = await Promise.allSettled([
+      retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST),
+      retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST),
+    ]);
+    expect(results.map((r) => r.status).sort()).toEqual(["fulfilled", "rejected"]);
+    // One run's worth: at most one payment write, one settle, one completion.
+    for (const sideEffect of [
+      mocks.createXeroPaymentForInvoice,
+      mocks.finishRefundCreditNoteSettlement,
+      mocks.completeXeroSyncOperation,
+    ]) {
+      expect(sideEffect.mock.calls.length).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it("closes the repaired invoice row SUCCEEDED with the payment, keeping its invoice number", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(partialInvoice(45.67));
+    await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST);
+    expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith("op_123", {
+      status: "SUCCEEDED",
+      responsePayload: expect.objectContaining({
+        invoice: { invoices: [{ total: 45.67 }] },
+        payment: { paymentID: "xpay_1", amount: 45.67 },
+        paymentError: null,
+      }),
+      xeroObjectType: "INVOICE",
+      xeroObjectId: "inv_123",
+      xeroObjectNumber: "INV-0042",
+    }, { onlyIfRunningSince: expect.any(Date), alert: false });
+  });
+
+  it("leaves it PARTIAL while its invoice email fault remains, which the repair does not send", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(partialInvoice(45.67, { invoiceEmailError: "SES refused" }));
+    await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST);
+    expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
+      "op_123",
+      expect.objectContaining({
+        status: "PARTIAL",
+        responsePayload: expect.objectContaining({ paymentError: null, invoiceEmailError: "SES refused" }),
+        // #4256 review: the stale payment fault's message is replaced.
+        lastErrorMessage: PARTIAL_REPAIR_EMAIL_STILL_FAILED_MESSAGE,
+      }),
+      { onlyIfRunningSince: expect.any(Date), alert: false },
+    );
+  });
+
+  it("MUTATION: a failed payment write gives the row back PARTIAL with its payload, guarded on this claim", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(partialInvoice(45.67));
+    const refusal = new Error("Xero 503 again");
+    mocks.createXeroPaymentForInvoice.mockRejectedValue(refusal);
+
+    await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).rejects.toBe(refusal);
+
+    const claim = mocks.updateManyOperation.mock.calls[0][0];
+    expect(mocks.updateManyOperation.mock.calls[1][0]).toEqual({
+      where: { id: "op_123", status: "RUNNING", startedAt: claim.data.startedAt },
+      data: {
+        status: "PARTIAL",
+        lastErrorCode: null,
+        lastErrorMessage: "Xero 503 again",
+        completedAt: expect.any(Date),
+      },
+    });
+    // Not FAILED, which would replace the payload the repair reads.
+    expect(mocks.failXeroSyncOperation).not.toHaveBeenCalled();
+    expect(mocks.completeXeroSyncOperation).not.toHaveBeenCalled();
+    expect(retryAbandonedItsClaim(refusal)).toBe(false);
+  });
+
+  it("a refund-note leg that completed the row itself before throwing is not overwritten", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(partialRefundNote());
+    mocks.finishRefundCreditNoteSettlement.mockResolvedValueOnce({ refundPaymentErr: new Error("Xero 503") });
+    // The shared leg already wrote PARTIAL, so the claim's give-back matches nothing.
+    mocks.updateManyOperation.mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ count: 0 });
+
+    await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).rejects.toThrow("Xero 503");
+    expect(mocks.updateManyOperation.mock.calls[1][0].where).toMatchObject({ status: "RUNNING" });
+    expect(mocks.failXeroSyncOperation).not.toHaveBeenCalled();
+  });
+
+  it("refuses a row read as not replayable with its own error, before any claim", async () => {
+    mocks.findUniqueOperation.mockResolvedValue({ ...partialInvoice(45.67), replayable: false });
+    const refusal = retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST);
+    await expect(refusal).rejects.toBeInstanceOf(XeroOperationNotReplayableError);
+    await expect(refusal).rejects.toMatchObject({ status: 400 });
+    expect(mocks.updateManyOperation).not.toHaveBeenCalled();
+    noSideEffect();
+  });
+
+  it("sends Xero the stored cash, and completes onto its own claim with no repeated-failure alert", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(partialInvoice(45.67));
+    await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST);
+    expect(mocks.createXeroPaymentForInvoice).toHaveBeenCalledWith(
+      expect.objectContaining({ amountCents: 4567, invoiceId: "inv_123", idempotencyKey: "payment:pay_123:invoice-payment:v1" }),
+    );
+    const claimedAt = mocks.updateManyOperation.mock.calls[0][0].data.startedAt;
+    expect(mocks.completeXeroSyncOperation.mock.calls[0][2]).toEqual({ onlyIfRunningSince: claimedAt, alert: false });
+  });
+
+  it("a zero-cash repair with an email fault stays PARTIAL, records no payment and says the email is what is left", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(partialInvoice(0, { invoiceEmailError: "SES refused" }));
+    await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST);
+    expect(mocks.createXeroPaymentForInvoice).not.toHaveBeenCalled();
+    expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
+      "op_123",
+      expect.objectContaining({
+        status: "PARTIAL",
+        responsePayload: expect.objectContaining({ payment: null, paymentError: null, paymentSkipped: true }),
+        lastErrorMessage: PARTIAL_REPAIR_EMAIL_STILL_FAILED_MESSAGE,
+      }),
+      { onlyIfRunningSince: expect.any(Date), alert: false },
+    );
+  });
+
+  it("a give-back records the Xero status code of the error that stopped the repair", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(partialInvoice(45.67));
+    const refusal = Object.assign(new Error("Service Unavailable"), { response: { statusCode: 503 } });
+    mocks.createXeroPaymentForInvoice.mockRejectedValue(refusal);
+
+    await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).rejects.toBe(refusal);
+    expect(mocks.updateManyOperation.mock.calls[1][0].data).toMatchObject({
+      status: "PARTIAL",
+      lastErrorCode: "503",
+      lastErrorMessage: "Service Unavailable",
+    });
+  });
+
+  it.each([
+    ["the payment repair", 45.67, PARTIAL_REPAIR_CLAIM_LOST_MESSAGE],
+    ["the zero-cash repair", 0, "This operation was reset while the repair ran, so it was not closed. Retry it once to close it."],
+  ])("MUTATION: %s whose completion lost its claim never reports it repaired", async (_label, total, message) => {
+    mocks.findUniqueOperation.mockResolvedValue(partialInvoice(total));
+    // An operator's Mark failed / Reset stale running took the claim back mid-run.
+    mocks.completeXeroSyncOperation.mockResolvedValue(null);
+    await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).resolves.toEqual({ message });
+  });
+
+  const paymentLink = (metadata: Record<string, unknown>, xeroObjectId = "xpay_earlier") => ({
+    xeroObjectId,
+    xeroObjectType: "PAYMENT",
+    role: "INVOICE_PAYMENT",
+    metadata,
+  });
+
+  it.each([
+    ["the repair's own link (amountCents)", { invoiceId: "inv_123", amountCents: 4567 }],
+    ["the create's or the inbound sync's link (dollar amount)", { invoiceId: "inv_123", amount: 45.67, status: "AUTHORISED" }],
+  ])("MUTATION: a payment already recorded for this invoice at this amount - %s - is never sent again; the row closes on it", async (_label, metadata) => {
+    mocks.findUniqueOperation.mockResolvedValue(partialInvoice(45.67));
+    mocks.findManyXeroObjectLink.mockResolvedValue([paymentLink(metadata)]);
+
+    await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).resolves.toEqual({
+      message: "The payment was already recorded in Xero; closed the operation without paying again.",
+    });
+    expect(mocks.findManyXeroObjectLink).toHaveBeenCalledWith({
+      where: {
+        localModel: "Payment",
+        localId: "pay_123",
+        xeroObjectType: "PAYMENT",
+        role: "INVOICE_PAYMENT",
+        active: true,
+        metadata: { path: ["invoiceId"], equals: "inv_123" },
+      },
+      select: { xeroObjectId: true, xeroObjectType: true, role: true, metadata: true },
+    });
+    expect(mocks.createXeroPaymentForInvoice).not.toHaveBeenCalled();
+    expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
+      "op_123",
+      expect.objectContaining({
+        status: "SUCCEEDED",
+        responsePayload: expect.objectContaining({ paymentError: null, payment: { paymentID: "xpay_earlier", amount: 45.67 } }),
+      }),
+      { onlyIfRunningSince: expect.any(Date), alert: false },
+    );
+  });
+
+  // Review C: the inbound sync links every payment Xero reports on the invoice.
+  it.each([
+    ["a DELETED payment", { invoiceId: "inv_123", amount: 45.67, status: "DELETED" }],
+    ["a VOIDED payment", { invoiceId: "inv_123", amountCents: 4567, status: "VOIDED" }],
+    ["a part payment of a different amount", { invoiceId: "inv_123", amount: 20, status: "AUTHORISED" }],
+    ["a payment against another invoice", { invoiceId: "inv_other", amount: 45.67, status: "AUTHORISED" }],
+    ["a link with no readable amount", { invoiceId: "inv_123", status: "AUTHORISED" }],
+  ])("MUTATION: %s is not this repair's payment, so the repair still pays", async (_label, metadata) => {
+    mocks.findUniqueOperation.mockResolvedValue(partialInvoice(45.67));
+    mocks.findManyXeroObjectLink.mockResolvedValue([paymentLink(metadata)]);
+
+    await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).resolves.toEqual({
+      message: "Repaired Xero booking invoice payment recording.",
+    });
+    expect(mocks.createXeroPaymentForInvoice).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 4567 }));
+    expect(mocks.completeXeroSyncOperation.mock.calls[0][1].responsePayload.payment).toEqual({ paymentID: "xpay_1", amount: 45.67 });
+  });
+
+  it("a closing-on-the-recorded-payment whose completion lost its claim says the payment is already recorded (review D)", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(partialInvoice(45.67));
+    mocks.findManyXeroObjectLink.mockResolvedValue([paymentLink({ invoiceId: "inv_123", amountCents: 4567 })]);
+    mocks.completeXeroSyncOperation.mockResolvedValue(null);
+
+    await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).resolves.toEqual({
+      message: "The payment is already recorded in Xero; retry once to close this operation.",
+    });
+  });
+
+  describe("the FAILED refund-note repair claims its row too (review F3)", () => {
+    const failedRefundNote = () => ({ ...partialRefundNote(), status: "FAILED" });
+
+    // #4356: its own marker, not the PARTIAL one, so a stale reset still gives
+    // it back FAILED, and no other caller's late outcome lands on the claim.
+    it("MUTATION: claims FAILED only before it settles, with its own repair marker, and completes onto the claim", async () => {
+      mocks.findUniqueOperation.mockResolvedValue(failedRefundNote());
+      await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST);
+
+      const claim = mocks.updateManyOperation.mock.calls[0][0];
+      expect(claim).toEqual({
+        where: { id: "op_123", status: "FAILED", manuallyResolvedAt: null, replayable: true },
+        data: { status: "RUNNING", startedAt: expect.any(Date), lastErrorCode: XERO_REFUND_NOTE_REPAIR_RUNNING_CODE },
+      });
+      expect(mocks.updateManyOperation.mock.invocationCallOrder[0]).toBeLessThan(
+        mocks.finishRefundCreditNoteSettlement.mock.invocationCallOrder[0],
+      );
+      expect(mocks.finishRefundCreditNoteSettlement).toHaveBeenCalledWith(
+        expect.objectContaining({ operationId: "op_123", onlyIfRunningSince: claim.data.startedAt }),
+      );
+    });
+
+    // #4356: a row another caller completed PARTIAL after the read is not this repair's to take.
+    it("MUTATION: a row that went PARTIAL after its read is already claimed, and it settles nothing", async () => {
+      mocks.findUniqueOperation
+        .mockResolvedValueOnce(failedRefundNote())
+        .mockResolvedValueOnce({ manuallyResolvedAt: null, requestPayload: null });
+      // The row now reads PARTIAL: only a claim that still matches PARTIAL takes it.
+      mocks.updateManyOperation.mockImplementation(async (args: { where: { status?: unknown } }) => ({
+        count: args.where.status === "FAILED" ? 0 : 1,
+      }));
+
+      await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).rejects.toMatchObject({
+        status: 409,
+        message: expect.stringContaining("already claimed"),
+      });
+      noSideEffect();
+    });
+
+    it("MUTATION: a resolve landing before its claim makes it settle nothing", async () => {
+      mocks.findUniqueOperation
+        .mockResolvedValueOnce(failedRefundNote())
+        .mockResolvedValueOnce({ manuallyResolvedAt: RESOLVED_AT, requestPayload: null });
+      mocks.updateManyOperation.mockResolvedValue({ count: 0 });
+
+      await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).rejects.toBeInstanceOf(
+        XeroOperationResolvedInXeroError,
+      );
+      noSideEffect();
+    });
+
+    it("a throw before the leg completes abandons the claim to FAILED, guarded on it", async () => {
+      mocks.findUniqueOperation.mockResolvedValue(failedRefundNote());
+      const refusal = new Error("Credit note cn_123 is VOIDED in Xero");
+      mocks.finishRefundCreditNoteSettlement.mockRejectedValueOnce(refusal);
+
+      await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).rejects.toBe(refusal);
+      const claimedAt = mocks.updateManyOperation.mock.calls[0][0].data.startedAt;
+      expect(mocks.failXeroSyncOperation).toHaveBeenCalledWith("op_123", refusal, undefined, {
+        onlyIfRunningSince: claimedAt,
+      });
+    });
   });
 });

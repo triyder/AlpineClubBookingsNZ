@@ -79,11 +79,16 @@ actually happens:
    checkout time is free text; the natural value is **midday**, since a lodge
    stay runs midday to midday and the checkout date is a departure morning. The
    footer also prints **who is in residence tonight** on its own, whenever a hut
-   leader has been given a bed on the [Hut Leaders](hut-leaders.md) page — you do
-   not configure that anywhere. It always reads **Custodian** (or *Custodians*
-   with a count, on a handover night when two people hold two beds), whatever
+   leader is ticked **Custodian (lives on site)** or given a bed on the
+   [Hut Leaders](hut-leaders.md) page — you do not configure that anywhere. It
+   always reads **Custodian** (or *Custodians* with a count, on a handover night
+   with two custodians), whatever
    your club calls the role elsewhere in the admin area, and it never names a
    child: if the person may not be named, the wall shows the role alone. A
+   custodian who has also booked a stay is shown once, as the custodian: their
+   booking's line drops them for their custodian nights and lists the rest of
+   their party, and the dates shown for them (and for a line that is only
+   them) start and end around those nights. A
    value the board asks for but the lodge has not saved renders as a visible
    `⟨config:key?⟩` placeholder on the wall. Anything beyond these is edited on
    the lodge's full display settings, linked from the step.

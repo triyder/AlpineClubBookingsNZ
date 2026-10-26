@@ -13,6 +13,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { bookingOwner } from "@/lib/booking-owner";
+import { mergeChangeRequestGuests } from "@/lib/booking-change-request-input";
 import { useAgeTierOptions } from "@/lib/use-age-tier-options";
 // The create wizard's own prediction + column translation, imported rather than
 // re-implemented (MG4 #2309). The first cut of this panel wrote its own copy of
@@ -45,6 +46,7 @@ import {
 import { AccountCreditCard } from "@/components/edit-booking/account-credit-card";
 import { AdminOverrideCard } from "@/components/edit-booking/admin-override-card";
 import { ChangeRequestCard } from "@/components/edit-booking/change-request-card";
+import type { ChangeRequestAddGuest } from "@/lib/booking-change-request-guests";
 import { EditDatesCard } from "@/components/edit-booking/edit-dates-card";
 import { EditGuestsCard } from "@/components/edit-booking/edit-guests-card";
 import { EditDependantIdentityQuestion } from "@/components/edit-booking/edit-dependant-identity-question";
@@ -63,11 +65,8 @@ import {
   exceptionProposalSignature,
   exceptionRequestPayloadFromModification,
 } from "@/components/edit-booking/exception-request-payload";
-import {
-  eachNightKey,
-  previousDateOnly,
-  shiftDateKey,
-} from "@/components/edit-booking/stay-nights";
+import { eachNightKey, shiftDateKey } from "@/components/edit-booking/stay-nights";
+import { buildEditGuestStays } from "@/components/edit-booking/guest-stay-payload";
 import type {
   BookingData,
   FamilyMember,
@@ -76,6 +75,7 @@ import type {
   PartnerSharingCandidate,
 } from "@/components/edit-booking/types";
 import { useAvailablePromoCodes } from "@/components/edit-booking/hooks/use-available-promo-codes";
+import { useEditRerates } from "@/components/edit-booking/hooks/use-edit-rerates";
 import { useBookingFamilyOptions } from "@/components/edit-booking/hooks/use-booking-family-options";
 import { useGuestDateModes } from "@/components/edit-booking/hooks/use-guest-date-modes";
 import {
@@ -635,6 +635,45 @@ export function EditBookingPanel({
     otherLodgeRate.changed ||
     creditChanged;
 
+  // #4202: the officer re-rates, read ONCE for the payload and the promo box.
+  const editRerates = useEditRerates({
+    linkedGuestMembers,
+    otherLodgePayloadFields: otherLodgeRate.payloadFields,
+    removedGuestIds,
+    guestNameUpdates,
+  });
+
+  // #4199: the stays this edit sends, read ONCE for the payload and the promo
+  // card, so the promo preview prices the nights the quote and the save price.
+  const guestStays = useMemo(
+    () =>
+      buildEditGuestStays({
+        multiDateRangesEnabled,
+        perGuestDatesEnabled,
+        isInProgressEdit,
+        booking: { checkIn: booking.checkIn, checkOut: booking.checkOut },
+        checkIn,
+        checkOut,
+        remainingGuests,
+        addedGuests,
+        existingGuestNights,
+        getExistingGuestRange,
+      }),
+    [
+      multiDateRangesEnabled,
+      perGuestDatesEnabled,
+      isInProgressEdit,
+      booking.checkIn,
+      booking.checkOut,
+      checkIn,
+      checkOut,
+      remainingGuests,
+      addedGuests,
+      existingGuestNights,
+      getExistingGuestRange,
+    ],
+  );
+
   const buildModificationPayload = useCallback(() => {
     // Issue #1668: an admin override is strictly date-only. Send only the dates,
     // the override flags, and the capacity confirm — never guest/promo inputs,
@@ -651,103 +690,18 @@ export function EditBookingPanel({
     }
 
     const body: Record<string, unknown> = {};
-    const gridMode = multiDateRangesEnabled && !isInProgressEdit;
-    const rangeMode = perGuestDatesEnabled && !isInProgressEdit && !gridMode;
-    let effectiveCheckIn = checkIn;
-    let effectiveCheckOut = checkOut;
-    let rangeAwareAddedGuests: Array<{
-      firstName: string;
-      lastName: string;
-      ageTier: AgeTier;
-      isMember: boolean;
-      memberId?: string;
-      stayStart?: string;
-      stayEnd?: string;
-      nights?: string[];
-    }> = addedGuests.map((g) => ({
+    // #4199: every guest's stay through the one reading the promo card shares.
+    const rangeAwareAddedGuests = addedGuests.map((g, index) => ({
       firstName: g.firstName,
       lastName: g.lastName,
       ageTier: g.ageTier,
       isMember: g.isMember,
       memberId: g.memberId,
+      ...guestStays.added[index],
     }));
-
-    if (gridMode) {
-      // Multi date range mode (issue #713): send each guest's explicit night
-      // set; the server reprices, re-allocates and recomputes the envelope.
-      const existingRanges = remainingGuests.map((guest) => ({
-        guestId: guest.id,
-        nights:
-          existingGuestNights[guest.id] ??
-          eachNightKey(
-            guest.stayStart ?? booking.checkIn,
-            guest.stayEnd ?? booking.checkOut
-          ),
-      }));
-      rangeAwareAddedGuests = addedGuests.map((g) => ({
-        firstName: g.firstName,
-        lastName: g.lastName,
-        ageTier: g.ageTier,
-        isMember: g.isMember,
-        memberId: g.memberId,
-        nights: g.nights ?? eachNightKey(checkIn, checkOut),
-      }));
-      const allNights = [
-        ...existingRanges.flatMap((range) => range.nights),
-        ...rangeAwareAddedGuests.flatMap((guest) => guest.nights ?? []),
-      ].filter(Boolean);
-      if (allNights.length > 0) {
-        // `.reduce()` with no seed starts from the array's own first element,
-        // which is exactly the seed the previous `allNights[0]` supplied —
-        // and it does so without indexing, so the non-empty check above is
-        // the only place that fact needs to be true.
-        effectiveCheckIn = allNights.reduce((a, b) => (b < a ? b : a));
-        const lastNight = allNights.reduce((a, b) => (b > a ? b : a));
-        effectiveCheckOut = shiftDateKey(lastNight, 1);
-      }
-      body.guestStayRanges = existingRanges;
-    } else if (rangeMode) {
-      const existingRanges = remainingGuests.map((guest) => ({
-        guestId: guest.id,
-        ...getExistingGuestRange(guest),
-      }));
-      rangeAwareAddedGuests = addedGuests.map((g) => ({
-        firstName: g.firstName,
-        lastName: g.lastName,
-        ageTier: g.ageTier,
-        isMember: g.isMember,
-        memberId: g.memberId,
-        stayStart: g.stayStart ?? checkIn,
-        stayEnd: g.stayEnd ?? checkOut,
-      }));
-      const rangeValues = [
-        ...existingRanges.map((range) => ({
-          stayStart: range.stayStart,
-          stayEnd: range.stayEnd,
-        })),
-        ...rangeAwareAddedGuests.map((guest) => ({
-          stayStart: guest.stayStart ?? checkIn,
-          stayEnd: guest.stayEnd ?? checkOut,
-        })),
-      ].filter((range) => range.stayStart && range.stayEnd);
-
-      if (rangeValues.length > 0) {
-        // Reduce over each bound's own values (no initial seed needed, since
-        // the array is non-empty) rather than threading `rangeValues[0]`
-        // in as a seed for a differently-typed accumulator.
-        effectiveCheckIn = rangeValues
-          .map((range) => range.stayStart)
-          .reduce((earliest, stayStart) => (stayStart < earliest ? stayStart : earliest));
-        effectiveCheckOut = rangeValues
-          .map((range) => range.stayEnd)
-          .reduce((latest, stayEnd) => (stayEnd > latest ? stayEnd : latest));
-      }
-
-      body.guestStayRanges = existingRanges;
-    }
-
-    if (effectiveCheckIn !== booking.checkIn) body.checkIn = effectiveCheckIn;
-    if (effectiveCheckOut !== booking.checkOut) body.checkOut = effectiveCheckOut;
+    if (guestStays.existing) body.guestStayRanges = guestStays.existing;
+    if (guestStays.checkIn !== booking.checkIn) body.checkIn = guestStays.checkIn;
+    if (guestStays.checkOut !== booking.checkOut) body.checkOut = guestStays.checkOut;
     if (addedGuests.length > 0) {
       body.addGuests = rangeAwareAddedGuests;
       // #1746: partner-sharer flags for admin-added partner guests still in
@@ -762,27 +716,11 @@ export function EditBookingPanel({
         body.partnerSharedGuests = partnerSharedGuests;
       }
     }
-    if (removedGuestIds.size > 0) {
-      body.removeGuestIds = Array.from(removedGuestIds);
-    }
-    if (guestNameUpdates.length > 0) {
-      body.guestUpdates = guestNameUpdates;
-    }
     // #3451: only the answers that still describe a live collision travel.
     if (dependantIdentity.declarationsPayload) {
       body.dependantIdentityDeclarations = dependantIdentity.declarationsPayload;
     }
-    // Other Lodges epic: the other-club rate election, sent only when this edit
-    // actually proposes a change to it — an unchanged election must not travel,
-    // or every ordinary edit would re-assert it and re-reprice those guests.
-    Object.assign(body, otherLodgeRate.payloadFields());
-    // #2337: the placeholder→member links, keyed to existing guest rows.
-    const links = Object.entries(linkedGuestMembers).map(
-      ([guestId, candidate]) => ({ guestId, memberId: candidate.memberId }),
-    );
-    if (links.length > 0) {
-      body.linkGuestToMember = links;
-    }
+    Object.assign(body, editRerates); // re-rates, removals, renames (#4202)
     // #2266 / #3492: the promo choice, bound to guests the way the server binds them.
     Object.assign(body, promoActionPayload(promoAction, remainingGuests));
 
@@ -800,17 +738,10 @@ export function EditBookingPanel({
     booking.checkOut,
     checkIn,
     checkOut,
-    getExistingGuestRange,
-    guestNameUpdates,
-    linkedGuestMembers,
-    otherLodgeRate,
-    isInProgressEdit,
-    perGuestDatesEnabled,
-    multiDateRangesEnabled,
-    existingGuestNights,
+    guestStays,
+    editRerates,
     promoAction,
     remainingGuests,
-    removedGuestIds,
     overrideEnabled,
     overridePricingMode,
     confirmOverCapacity,
@@ -1570,17 +1501,13 @@ export function EditBookingPanel({
     }
   }
 
-  async function handleSubmitChangeRequest() {
+  async function handleSubmitChangeRequest(cardAddGuests: ChangeRequestAddGuest[]) {
     setRequestError("");
     setRequestSuccess("");
     setRequestSubmitting(true);
 
     try {
-      const body = buildModificationPayload();
-      if (!hasChanges) {
-        body.requestedEffectiveDate =
-          previousDateOnly(booking.editPolicy.editableFrom) ?? today;
-      }
+      const body = mergeChangeRequestGuests(buildModificationPayload(), cardAddGuests);
 
       const res = await fetch(`/api/bookings/${booking.id}/change-requests`, {
         method: "POST",
@@ -1593,13 +1520,15 @@ export function EditBookingPanel({
       const data = await res.json();
       if (!res.ok) {
         setRequestError(data.error || "Failed to submit request");
-        return;
+        return false;
       }
 
       setRequestReason("");
       setRequestSuccess("Request sent to admins");
+      return true;
     } catch {
       setRequestError("Failed to submit request");
+      return false;
     } finally {
       setRequestSubmitting(false);
     }
@@ -1814,18 +1743,15 @@ export function EditBookingPanel({
           availablePromoCodes={availablePromoCodes}
           appliedNewPromo={appliedNewPromo}
           prefillPromoCode={prefillPromoCode}
-          checkIn={checkIn}
-          checkOut={checkOut}
+          guestStays={guestStays}
           remainingGuests={remainingGuests}
           addedGuests={addedGuests}
-          perGuestDatesEnabled={perGuestDatesEnabled}
-          isInProgressEdit={isInProgressEdit}
-          getExistingGuestRange={getExistingGuestRange}
           quote={quote}
           forMemberId={
             booking.viewerRole === "ADMIN" ? bookingOwner(booking).memberId : undefined
           }
           lodgeId={booking.lodgeId}
+          editRerates={editRerates}
           onRemovePromo={() => setPromoAction({ type: "remove" })}
           onKeepPromo={() => setPromoAction({ type: "keep" })}
           onPrefillCode={setPrefillPromoCode}
@@ -1879,7 +1805,9 @@ export function EditBookingPanel({
           submitting={requestSubmitting}
           error={requestError}
           success={requestSuccess}
-          submitDisabled={requestSubmitting || (!hasChanges && !requestReason.trim())}
+          hasEditorChanges={hasChanges}
+          editorChanges={buildModificationPayload()}
+          guestContext={{ booking, ageTierOptions, familyMembers }}
           onReasonChange={setRequestReason}
           onSubmit={handleSubmitChangeRequest}
         />
@@ -1946,8 +1874,7 @@ export function EditBookingPanel({
             >
               <p className="font-medium">Return method</p>
               <p className="text-xs text-muted-foreground">
-                Moving both bookings brings money back on the other booking.
-                Choose where it goes; the same choice covers both.
+                Moving both bookings brings money back on the other booking.{(activeLinkedMoveState?.prompt.combinedOrganiserRefundCents ?? 0) > 0 ? " Choose where yours goes; the same choice covers every booking you paid for. A group organiser's refund goes back to them." : " Choose where it goes; the same choice covers both."}
               </p>
               <label className="flex cursor-pointer items-start gap-2">
                 <input
@@ -2008,7 +1935,7 @@ export function EditBookingPanel({
                 saving ||
                 quoteLoading ||
                 !quote ||
-                !capacityOk || Boolean(quote.chargeRefusal) /* #3653 */ ||
+                !capacityOk || Boolean(quote.chargeRefusal) /* #3653 */ || Boolean(quote.priceChangeRefusal) /* #3949 */ ||
                 (settlementRequired && !settlementMethod) ||
                 (linkedMoveSettlementRequired &&
                   linkedMoveChoice === "MOVE_BOTH" &&

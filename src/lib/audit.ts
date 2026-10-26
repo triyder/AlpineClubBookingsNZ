@@ -12,6 +12,7 @@ import { prisma } from "./prisma";
 import type { Prisma, PrismaClient } from "@prisma/client";
 import logger from "@/lib/logger";
 import { isAuditCategory, type AuditCategory } from "./audit-categories";
+import type { AuditRetentionClass } from "@/lib/audit-retention-classes";
 import { isDietaryKeyName } from "@/lib/member-dietary-field";
 import {
   resolveDeclaredMemberText,
@@ -66,11 +67,7 @@ type AuditOutcome =
   | "blocked"
   | "cookie-present-no-session"
   | "session-invalidated";
-export type AuditRetentionClass =
-  | "critical"
-  | "sensitive_access"
-  | "diagnostic_high_volume"
-  | "standard";
+export type { AuditRetentionClass };
 
 export type AuditLogParams = {
   action: string;

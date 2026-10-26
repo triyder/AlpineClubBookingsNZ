@@ -50,6 +50,14 @@ COPY . .
 # modified". The deps layer's copy is byte-identical (it is part of its cache
 # key) and older than its own install, so this keeps the check meaningful.
 COPY --from=deps /app/patches ./patches/
+# ...but only when node_modules and patches/ come from the SAME deps run. They
+# are two COPY layers, cached separately: when the build cache loses a deps blob
+# (BuildKit "blob ... not found"), the deps stage re-runs and this COPY takes its
+# fresh patches (dated this checkout) while the node_modules COPY above is still
+# served from the cache with an older install timestamp, and pnpm refuses (#4028).
+# The content is fixed by the lockfile's patch hash, which the frozen install
+# verified; only the date is wrong, so pin it before the install it is compared to.
+RUN find patches -type f -exec touch -d @0 {} +
 
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV NODE_ENV=production

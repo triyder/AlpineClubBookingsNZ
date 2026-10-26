@@ -22,13 +22,18 @@ export async function validateSeveralPromoCodes(params: {
       })
     | null;
   workPartyEvent: { id: string; name: string; discountPercent: number } | null;
-  memberId: string;
+  memberId: string | null;
   checkIn: Date;
   totalPriceCents: number;
   guests: PromotionGuest[];
   lodgeId: string;
   /** The club's day, resolved by the route (`INV-CONFIG-002`). */
   todayAtClub: CalendarDate;
+  /**
+   * #4202: on an edit, the booking being edited, whose own promotion slots the
+   * usage caps leave out — as the quote does, since the save replaces them.
+   */
+  excludeBookingId?: string;
 }) {
   const typed = params.codes.map((entry) => normalizePromoCodeInput(entry.code));
   const sources = (params.workPartyPromo ? 1 : 0) + typed.length;
@@ -86,6 +91,7 @@ export async function validateSeveralPromoCodes(params: {
     db: prisma,
     lodgeId: params.lodgeId,
     todayAtClub: params.todayAtClub,
+    excludeBookingId: params.excludeBookingId,
   });
   const perCode = [
     ...priced.outcomes

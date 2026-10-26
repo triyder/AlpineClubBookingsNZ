@@ -82,9 +82,11 @@ export async function handleXeroCallback(
  * Disconnect Xero by revoking stored tokens (best-effort) and removing them locally.
  */
 export async function disconnectXero(context: XeroTokenWriteContext): Promise<void> {
-  const tokens = await loadXeroTokens();
-  if (tokens) {
-    try {
+  try {
+    // Inside the best-effort block (#3806): a connection whose stored tokens can
+    // no longer be read has nothing to revoke, and must still be disconnectable.
+    const tokens = await loadXeroTokens();
+    if (tokens) {
       const xero = await createXeroClient();
       await xero.initialize();
       xero.setTokenSet({
@@ -93,9 +95,9 @@ export async function disconnectXero(context: XeroTokenWriteContext): Promise<vo
         token_type: "Bearer",
       });
       await xero.revokeToken();
-    } catch {
-      // Best-effort revocation; continue with local cleanup
     }
+  } catch {
+    // Best-effort revocation; continue with local cleanup
   }
   await deleteXeroTokens({ ...context, cause: { kind: "oauth-disconnect" } });
 }

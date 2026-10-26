@@ -1,3 +1,4 @@
+import { exactContains } from "@/lib/prisma-exact-prefix";
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
@@ -37,8 +38,8 @@ export async function DELETE(
   const referencingPages = await prisma.pageContent.findMany({
     where: {
       OR: [
-        { contentHtml: { contains: servingUrl } },
-        { headerText: { contains: servingUrl } },
+        { contentHtml: exactContains(servingUrl) },
+        { headerText: exactContains(servingUrl) },
       ],
     },
     select: { slug: true },

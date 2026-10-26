@@ -29,6 +29,7 @@ import type {
   XeroRecordActivityOperation,
 } from "@/lib/xero-record-types";
 import { useClubTime } from "@/components/club-time-provider";
+import { XeroFailureExplanation } from "@/components/admin/xero-failure-explanation";
 
 interface XeroRecordActivityPanelProps {
   localModel: string
@@ -146,11 +147,8 @@ function OperationItem({
         )}
       </div>
 
-      {operation.lastErrorMessage && (
-        <p className="text-sm text-danger-11">
-          {operation.lastErrorCode ? `${operation.lastErrorCode}: ` : ""}
-          {redactSensitiveText(operation.lastErrorMessage)}
-        </p>
+      {operation.lastErrorMessage && operation.status !== "SUCCEEDED" && (
+        <XeroFailureExplanation code={operation.lastErrorCode} message={redactSensitiveText(operation.lastErrorMessage)} entityType={operation.entityType} headlineClassName="text-danger-11" />
       )}
 
       {!compact && (

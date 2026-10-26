@@ -281,6 +281,55 @@ async function clearFixtures(): Promise<void> {
       ).resolves.toMatchObject({ error: expect.stringContaining("School Contact") });
     });
 
+    it("reads the cover on a real database when a custodian is in the clash (#3821)", async () => {
+      // A custodian clash loads `hut-leader-night-cover.ts` on the client it
+      // was given: the school-booking read (capacity-holding AND school), the
+      // stay read (`hutLeaderStayBookingWhere`, its OR of an operational stay
+      // and an accepted, CONFIRMED school booking) and the lodge's school kinds. A mocked client
+      // accepts any where; PostgreSQL through Prisma proves these shapes are
+      // valid. With no school group there, the clash is refused as before.
+      await prisma.hutLeaderAssignment.create({
+        data: {
+          id: LEADER_ASSIGNMENT_ID,
+          memberId: LEADER_ID,
+          lodgeId: LODGE_ID,
+          startDate: STAY_START,
+          endDate: STAY_END,
+          source: "MANUAL",
+          isCustodian: true,
+        },
+      });
+
+      await expect(
+        findHutLeaderOverlapRefusal(prisma, {
+          ...CLASHING_WINDOW,
+          allowOverlappingSchoolRows: true,
+          candidate: { memberId: LOOKALIKE_ID, bedId: null, isCustodian: true, source: "MANUAL" },
+        }),
+      ).resolves.toMatchObject({ error: expect.stringContaining("Ordinary Leader") });
+
+      // The same stay set read by the manual stay check and the coverage
+      // reader's "needs a leader" query, on the real schema.
+      const { loadHutLeaderStayedNightKeys } = await import("@/lib/hut-leader-stayed-nights");
+      await expect(
+        loadHutLeaderStayedNightKeys(prisma, {
+          memberId: LEADER_ID,
+          lodgeId: LODGE_ID,
+          rangeStart: STAY_START,
+          rangeEnd: STAY_END,
+        }),
+      ).resolves.toEqual([]);
+      const { getUnassignedHutLeaderDates } = await import("@/lib/hut-leader-coverage");
+      await expect(
+        getUnassignedHutLeaderDates({
+          db: prisma as never,
+          scope: { kind: "lodge", lodgeId: LODGE_ID },
+          from: STAY_START,
+          to: STAY_END,
+        }),
+      ).resolves.toEqual([]);
+    });
+
     it("keeps every other guarantee: lodge scope, the one-day handover, and exclude-self", async () => {
       await prisma.hutLeaderAssignment.create({
         data: {

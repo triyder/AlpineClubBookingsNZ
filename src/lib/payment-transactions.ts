@@ -5,26 +5,39 @@ import {
   Prisma,
 } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { refundSliceStripeIdempotencyKey } from "@/lib/payment-recovery-keys";
 import { processRefund } from "@/lib/stripe";
 import { stripeReferenceId, type StripeReference } from "@/lib/stripe-references";
 import Stripe from "stripe";
 import { formatCents } from "@/lib/utils";
 import { compareOrdinal } from "@/lib/ordinal-order";
-import { withStoreTransaction } from "@/lib/db-transaction";
-import { decodeRawRows } from "@/lib/raw-sql-rows";
+import { isRootPrismaClient, withStoreTransaction } from "@/lib/db-transaction";
+import {
+  alertFailedLaterCardRefunds,
+  keepFailedLaterCardRefundsOwed,
+  type FailedLaterCardRefundDebt,
+  type FailedLaterKind,
+} from "@/lib/card-refund-failed-later";
+import { readMigrationFinishedAt } from "@/lib/migration-finished-at";
+import { alertCardRefundCapOverflow, readCardRefundCapOverflow, type CardRefundCapOverflow } from "@/lib/card-refund-cap-overflow";
 import logger from "@/lib/logger";
+import { IntentLedgerRowOnAnotherPaymentError, writePaymentIntentTransaction } from "@/lib/payment-intent-ledger-row-write";
 import { accountCreditDispositionCents } from "@/lib/stripe-cash-refund-evidence";
-import { z } from "zod";
 import type { ClubFormat } from "@/lib/club-format";
 import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sync";
+import { compareLedgerRowsNewestFirst, LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 // Moved to a leaf so the booking ledger's settlement sync can share them
 // without an import cycle (#3581); re-exported so existing importers stand.
 import {
   CAPTURED_TRANSACTION_STATUS_LIST,
+  deriveAggregatePaymentStatus,
   EXCLUDED_LEDGER_REFUND_STATUSES,
+  predatesRefundLedger,
   expectedRefundedFloorCents,
+  grossCapturedCents,
   isCapturedTransactionStatus,
   isRecordedRefundStatus,
+  isRefusedRefundStatus,
   LEGACY_ADDITIONAL_BACKFILL_REASON,
   LEGACY_PRIMARY_BACKFILL_REASON,
   latestTransactionOfKind,
@@ -43,6 +56,7 @@ type StripeRefundLedgerInput = {
   created?: number | null;
   charge?: StripeReference;
   payment_intent?: StripeReference;
+  metadata?: Record<string, string> | null; // #4104: whose refund it is, and a retry's generation
 };
 
 function stripeCreatedAtToDate(created: number | null | undefined) {
@@ -108,18 +122,19 @@ function applyRefundStatus(
   return baseStatus;
 }
 
-async function loadPaymentWithTransactions(store: PaymentStore, paymentId: string) {
+/** The payment and its capture ledger, oldest first (`LEDGER_ROWS_OLDEST_FIRST`, #4132). Read-only. */
+export async function loadPaymentWithTransactions(store: PaymentStore, paymentId: string) {
   return store.payment.findUnique({
     where: { id: paymentId },
     include: {
       transactions: {
-        orderBy: { createdAt: "asc" },
+        orderBy: [...LEDGER_ROWS_OLDEST_FIRST],
       },
     },
   });
 }
 
-function isStripeTransaction<
+export function isStripeTransaction<
   T extends {
     source: PaymentSource;
     stripePaymentIntentId: string | null;
@@ -136,21 +151,20 @@ function isStripeTransaction<
   );
 }
 
-async function ensurePaymentTransactionsBackfilled(
-  store: PaymentStore,
-  paymentId: string
-) {
-  const payment = await loadPaymentWithTransactions(store, paymentId);
-  if (!payment) {
-    return null;
-  }
-
+/**
+ * The rows a pre-ledger payment's backfill writes, derived from the payment
+ * alone. Pure, so the write (`ensurePaymentTransactionsBackfilled`) and the
+ * cancel preview's read-only plan (#4119) see the same legacy charges.
+ */
+export function legacyBackfillRows(
+  payment: NonNullable<Awaited<ReturnType<typeof loadPaymentWithTransactions>>>
+): Array<Prisma.PaymentTransactionUncheckedCreateInput & Omit<RefundableStripeTransaction, "id" | "createdAt" | "insertionSeq">> {
   const knownIntentIds = new Set(
     payment.transactions.flatMap((transaction) =>
       transaction.stripePaymentIntentId ? [transaction.stripePaymentIntentId] : []
     )
   );
-  const createOperations: Array<Promise<unknown>> = [];
+  const rows: ReturnType<typeof legacyBackfillRows> = [];
 
   if (payment.stripePaymentIntentId && !knownIntentIds.has(payment.stripePaymentIntentId)) {
     const additionalCapturedAmountCents =
@@ -167,25 +181,21 @@ async function ensurePaymentTransactionsBackfilled(
       primaryAmountCents
     );
 
-    createOperations.push(
-      store.paymentTransaction.create({
-        data: {
-          paymentId: payment.id,
-          kind: PaymentTransactionKind.PRIMARY,
-          source: PaymentSource.STRIPE,
-          stripePaymentIntentId: payment.stripePaymentIntentId,
-          amountCents: primaryAmountCents,
-          refundedAmountCents: primaryRefundedAmountCents,
-          status: applyRefundStatus(
-            payment.status,
-            primaryAmountCents,
-            primaryRefundedAmountCents
-          ),
-          paymentMethodId: payment.stripePaymentMethodId ?? undefined,
-          reason: LEGACY_PRIMARY_BACKFILL_REASON,
-        },
-      })
-    );
+    rows.push({
+      paymentId: payment.id,
+      kind: PaymentTransactionKind.PRIMARY,
+      source: PaymentSource.STRIPE,
+      stripePaymentIntentId: payment.stripePaymentIntentId,
+      amountCents: primaryAmountCents,
+      refundedAmountCents: primaryRefundedAmountCents,
+      status: applyRefundStatus(
+        payment.status,
+        primaryAmountCents,
+        primaryRefundedAmountCents
+      ),
+      paymentMethodId: payment.stripePaymentMethodId ?? undefined,
+      reason: LEGACY_PRIMARY_BACKFILL_REASON,
+    });
   }
 
   if (
@@ -210,55 +220,43 @@ async function ensurePaymentTransactionsBackfilled(
           )
         : 0;
 
-    createOperations.push(
-      store.paymentTransaction.create({
-        data: {
-          paymentId: payment.id,
-          kind: PaymentTransactionKind.ADDITIONAL,
-          source: PaymentSource.STRIPE,
-          stripePaymentIntentId: payment.additionalPaymentIntentId,
-          amountCents: payment.additionalAmountCents,
-          refundedAmountCents: additionalRefundedAmountCents,
-          status: applyRefundStatus(
-            baseStatus,
-            payment.additionalAmountCents,
-            additionalRefundedAmountCents
-          ),
-          reason: LEGACY_ADDITIONAL_BACKFILL_REASON,
-        },
-      })
-    );
+    rows.push({
+      paymentId: payment.id,
+      kind: PaymentTransactionKind.ADDITIONAL,
+      source: PaymentSource.STRIPE,
+      stripePaymentIntentId: payment.additionalPaymentIntentId,
+      amountCents: payment.additionalAmountCents,
+      refundedAmountCents: additionalRefundedAmountCents,
+      status: applyRefundStatus(
+        baseStatus,
+        payment.additionalAmountCents,
+        additionalRefundedAmountCents
+      ),
+      reason: LEGACY_ADDITIONAL_BACKFILL_REASON,
+    });
   }
 
-  if (createOperations.length === 0) {
-    return payment;
-  }
+  return rows;
+}
 
-  await Promise.all(createOperations);
+export async function ensurePaymentTransactionsBackfilled(
+  store: PaymentStore,
+  paymentId: string
+) {
+  const payment = await loadPaymentWithTransactions(store, paymentId);
+  if (!payment) return null;
+  const rows = legacyBackfillRows(payment);
+  if (rows.length === 0) return payment;
+  await Promise.all(rows.map((data) => store.paymentTransaction.create({ data })));
   return loadPaymentWithTransactions(store, paymentId);
 }
 
-function deriveAggregatePaymentStatus(
-  fallbackStatus: PaymentStatus,
-  grossCapturedAmountCents: number,
-  refundedAmountCents: number,
-  latestPrimaryStatus: PaymentStatus | null
-) {
-  if (grossCapturedAmountCents > 0) {
-    if (refundedAmountCents >= grossCapturedAmountCents) {
-      return PaymentStatus.REFUNDED;
-    }
-
-    if (refundedAmountCents > 0) {
-      return PaymentStatus.PARTIALLY_REFUNDED;
-    }
-
-    return PaymentStatus.SUCCEEDED;
-  }
-
-  return latestPrimaryStatus ?? fallbackStatus;
-}
-
+/**
+ * Re-derive the Payment's summary columns from its ledger rows. #4217
+ * (`INV-LOCK-002`): under the Payment row lock, taken BEFORE the rows are read
+ * (a re-lock inside a writer that holds it), so no refund writer's commit can
+ * land between the read and the write.
+ */
 export async function reconcilePaymentAggregates({
   paymentId,
   store = prisma,
@@ -266,6 +264,13 @@ export async function reconcilePaymentAggregates({
   paymentId: string;
   store?: PaymentStore;
 }) {
+  return withStoreTransaction(store, async (db) => {
+    await lockPaymentForRefundedTotal(db, paymentId);
+    return reconcilePaymentAggregatesUnderLock(db, paymentId);
+  });
+}
+
+async function reconcilePaymentAggregatesUnderLock(store: Prisma.TransactionClient, paymentId: string) {
   const payment = await ensurePaymentTransactionsBackfilled(store, paymentId);
   if (!payment) {
     return null;
@@ -286,9 +291,7 @@ export async function reconcilePaymentAggregates({
     PaymentTransactionKind.ADDITIONAL
   );
 
-  const grossCapturedAmountCents = payment.transactions.reduce((sum, transaction) => {
-    return sum + (isCapturedTransactionStatus(transaction.status) ? transaction.amountCents : 0);
-  }, 0);
+  const grossCapturedAmountCents = grossCapturedCents(payment.transactions);
   const refundedAmountCents = payment.transactions.reduce((sum, transaction) => {
     return sum + transaction.refundedAmountCents;
   }, 0);
@@ -422,6 +425,21 @@ async function findPaymentByIntentPointer(
   });
 }
 
+/**
+ * #4217: the intent's row, or else the payment whose pointer names the intent -
+ * read WITHOUT writing. The one lookup both `findPaymentTransactionByIntentId`
+ * (which then backfills a pre-ledger payment) and the `mark…` writers' pure
+ * read (which then lock that payment) start from.
+ */
+async function locateIntent(store: PaymentStore, paymentIntentId: string) {
+  const transaction = await store.paymentTransaction.findUnique({
+    where: { stripePaymentIntentId: paymentIntentId },
+  });
+  if (transaction) return { transaction, paymentId: transaction.paymentId };
+  const payment = await findPaymentByIntentPointer(store, paymentIntentId);
+  return payment ? { transaction: null, paymentId: payment.id } : null;
+}
+
 export async function findPaymentTransactionByIntentId({
   paymentIntentId,
   store = prisma,
@@ -429,25 +447,15 @@ export async function findPaymentTransactionByIntentId({
   paymentIntentId: string;
   store?: PaymentStore;
 }) {
-  let transaction = await store.paymentTransaction.findUnique({
+  const located = await locateIntent(store, paymentIntentId);
+  if (!located) return null;
+  if (located.transaction) return located.transaction;
+
+  // A pre-ledger payment: its rows are backfilled, then the intent's is read.
+  await ensurePaymentTransactionsBackfilled(store, located.paymentId);
+  return store.paymentTransaction.findUnique({
     where: { stripePaymentIntentId: paymentIntentId },
   });
-
-  if (transaction) {
-    return transaction;
-  }
-
-  const payment = await findPaymentByIntentPointer(store, paymentIntentId);
-  if (!payment) {
-    return null;
-  }
-
-  await ensurePaymentTransactionsBackfilled(store, payment.id);
-  transaction = await store.paymentTransaction.findUnique({
-    where: { stripePaymentIntentId: paymentIntentId },
-  });
-
-  return transaction;
 }
 
 // #3653: exported for the organiser child's refund out of the COMBINED charge,
@@ -494,6 +502,7 @@ export async function recordStripeRefundLedgerEntry({
     skipDuplicates: true,
   });
   let reversedCents = 0;
+  let failedLater: FailedLaterKind | null = null;
   if (inserted.count === 0) {
     // The refresh is guarded on the row still being COUNTED, for two reasons:
     //
@@ -515,10 +524,13 @@ export async function recordStripeRefundLedgerEntry({
     if (refreshed.count === 1 && !isRecordedRefundStatus(data.status)) {
       reversedCents = refund.amount;
     }
+    // #4104: seen failed after it counted - that write, or a caller told it counts (a replayed key) that the row holds refused.
+    failedLater = reversedCents > 0 ? "transition" : refreshed.count === 0 && isRecordedRefundStatus(data.status) ? "replayed" : null;
   }
 
   return {
     created: inserted.count > 0,
+    failedLater,
     reversedCents,
     amountCents: refund.amount,
     status: data.status,
@@ -542,7 +554,7 @@ const REFUND_MIRROR_CAS_ATTEMPTS = 5;
  * #1491 fold leaves status alone, as it always has. Exhausting the attempts
  * throws: loud, and inside a transaction, so nothing half-written commits.
  */
-async function compareAndSetRefundedAmount(
+export async function compareAndSetRefundedAmount(
   db: PaymentStore,
   paymentTransactionId: string,
   nextFrom: (row: { amountCents: number; refundedAmountCents: number }) => number,
@@ -597,15 +609,15 @@ async function addWithinHeadroom(
   const { previousCents, nextCents } = await compareAndSetRefundedAmount(
     db,
     paymentTransactionId,
-    (row) =>
-      row.refundedAmountCents +
-      Math.min(
-        Math.max(row.amountCents - row.refundedAmountCents, 0),
-        Math.max(amountCents, 0)
-      ),
+    (row) => row.refundedAmountCents + refundHeadroomIncrementCents(row, amountCents),
     options
   );
   return nextCents - previousCents;
+}
+
+/** What of `amountCents` a captured row's refunded total can still take: capped at its headroom. Pure (#4119: the cancel preview's in-memory fold). */
+export function refundHeadroomIncrementCents(row: { amountCents: number; refundedAmountCents: number }, amountCents: number): number {
+  return Math.min(Math.max(row.amountCents - row.refundedAmountCents, 0), Math.max(amountCents, 0));
 }
 
 /**
@@ -614,8 +626,6 @@ async function addWithinHeadroom(
  */
 const REFUND_LEDGER_WRITERS_MIGRATION = "20260509090000_enrich_payment_refund_ledger";
 
-const REFUND_LEDGER_START_ROW = z.object({ finished_at: z.date() });
-const REFUND_LEDGER_HISTORY_PRESENT_ROW = z.object({ present: z.boolean() });
 
 /**
  * #3640: THE lock order for a payment's refunded total - the `Payment` row
@@ -632,7 +642,7 @@ const REFUND_LEDGER_HISTORY_PRESENT_ROW = z.object({ present: z.boolean() });
  * is read back here.
  */
 export async function lockPaymentForRefundedTotal(
-  db: PaymentStore,
+  db: Pick<Prisma.TransactionClient, "$executeRaw">,
   paymentId: string
 ): Promise<void> {
   await db.$executeRaw`SELECT 1 FROM "Payment" WHERE "id" = ${paymentId} FOR NO KEY UPDATE`;
@@ -701,36 +711,20 @@ async function reversalFloorForTransaction(
  * a refund made there is counted twice (safe direction: the member is
  * under-refunded, never over-refunded; the Xero note is capped by cash evidence).
  *
- * A one-row lookup, read raw because no Prisma model covers `_prisma_migrations`
- * (`INV-OPS-001`: the row is decoded, never cast).
+ * Read through the one reader of migration history (`readMigrationFinishedAt`).
  */
-async function refundLedgerStartSeconds(db: PaymentStore): Promise<number | null> {
+export async function refundLedgerStartSeconds(db: PaymentStore): Promise<number | null> {
   // A database built with `prisma db push` (a dev convenience) has no
-  // `_prisma_migrations` table, and naming a missing table aborts the whole
-  // transaction - every card-refund write with it. Such a database never ran
-  // pre-ledger code either, so a missing table reads like a missing row
-  // (#3640 delta review, D4). Production, CI and e2e all `migrate deploy`.
-  const presence = decodeRawRows(
-    await db.$queryRaw`SELECT to_regclass('"_prisma_migrations"') IS NOT NULL AS "present"`,
-    REFUND_LEDGER_HISTORY_PRESENT_ROW,
-    "refund ledger history present"
-  );
-  if (!presence[0]?.present) {
+  // migration history; it never ran pre-ledger code either, so it reads like
+  // a missing row (#3640 delta review, D4). Production, CI and e2e all `migrate deploy`.
+  const started = await readMigrationFinishedAt(db, REFUND_LEDGER_WRITERS_MIGRATION);
+  if (!started.history) {
     logger.warn(
       "No _prisma_migrations table: treating every card refund as made since the refund ledger started (#3640)"
     );
     return null;
   }
-  const rows = await db.$queryRaw`
-    SELECT "finished_at" FROM "_prisma_migrations"
-    WHERE "migration_name" = ${REFUND_LEDGER_WRITERS_MIGRATION}
-      AND "finished_at" IS NOT NULL
-      AND "rolled_back_at" IS NULL
-    ORDER BY "finished_at" ASC
-    LIMIT 1
-  `;
-  const [row] = decodeRawRows(rows, REFUND_LEDGER_START_ROW, "refund ledger start");
-  return row ? Math.floor(row.finished_at.getTime() / 1000) : null;
+  return started.finishedAtSeconds;
 }
 
 /**
@@ -759,8 +753,9 @@ async function refundLedgerStartSeconds(db: PaymentStore): Promise<number | null
  *   counted (`reversalFloorForTransaction`) - so a refund the OLD arithmetic
  *   never added cannot be taken out of money that was never its.
  *
- * The card refunds on record - and, from the webhook, Stripe's own
- * `amount_refunded` - remain a FLOOR, never the value: the mirror never reads
+ * The card refunds on record remain a FLOOR, never the value (#4104: Stripe's
+ * own `amount_refunded` no longer is - the sync reads every refund live, and a
+ * snapshot from before a refund failed would undo it): the mirror never reads
  * below the cash the card has demonstrably returned. For a transaction with no
  * credit on it, that also lifts a row a pre-#3640 crash left between its ledger
  * row and its mirror write; with a credit the floor cannot, and the refunded-
@@ -776,7 +771,8 @@ async function refundLedgerStartSeconds(db: PaymentStore): Promise<number | null
  *   aggregate would otherwise leave a retry that records nothing new, reports
  *   no delta and queues no Xero note. Lock order: the Payment row FIRST
  *   (`lockPaymentForRefundedTotal`), then refund rows, then the transaction
- *   row - the one order every writer of the mirror takes.
+ *   row - the one order every writer of the mirror takes - then, for a refund
+ *   seen failing after it counted, its `PaymentRecoveryOperation` (#4104).
  * - Refunds are inserted in id order, so two writers inserting overlapping sets
  *   take the unique-index locks in one order.
  *
@@ -801,12 +797,14 @@ export async function recordStripeRefundsAgainstTransaction({
   stripeRefundedAmountCents?: number;
   store?: PaymentStore;
 }) {
-  return withStoreTransaction(store, async (db) => {
+  const recorded = await withStoreTransaction(store, async (db) => {
     await lockPaymentForRefundedTotal(db, paymentId);
     const ledgerStartSeconds = await refundLedgerStartSeconds(db);
+    const failedLater: Array<{ refund: StripeRefundLedgerInput; kind: FailedLaterKind }> = [];
     let createdRefundsCount = 0;
     let createdRefundAmountCents = 0;
     let newlyCountedCents = 0;
+    const newlyCountedRefundIds: string[] = []; // #4312: which refunds those are, for a bank transfer's own notes
     let reversedCents = 0;
     const ordered = [...refunds].sort((a, b) => compareOrdinal(a.id, b.id));
     for (const refund of ordered) {
@@ -819,17 +817,16 @@ export async function recordStripeRefundsAgainstTransaction({
         store: db,
       });
       reversedCents += recorded.reversedCents;
+      if (recorded.failedLater) failedLater.push({ refund, kind: recorded.failedLater });
       if (!recorded.created) {
         continue;
       }
       createdRefundsCount += 1;
       createdRefundAmountCents += recorded.amountCents;
-      const predatesLedger =
-        ledgerStartSeconds !== null &&
-        typeof refund.created === "number" &&
-        refund.created < ledgerStartSeconds;
-      if (isRecordedRefundStatus(recorded.status) && !predatesLedger) {
+      // An undated refund counts as new here: only a dated pre-ledger one was already folded in.
+      if (isRecordedRefundStatus(recorded.status) && !predatesRefundLedger(refund.created, ledgerStartSeconds, "since-ledger")) {
         newlyCountedCents += recorded.amountCents;
+        newlyCountedRefundIds.push(refund.id);
       }
     }
 
@@ -843,27 +840,42 @@ export async function recordStripeRefundsAgainstTransaction({
         ? await reversalFloorForTransaction(db, paymentId, paymentTransactionId)
         : 0;
 
+    // #4104 review (ML4): Stripe's cumulative `amount_refunded` is no longer a
+    // floor. The sync records every refund Stripe lists for the charge, read
+    // live, so the ledger floor above already holds each one that counts; the
+    // event's figure is a snapshot, and one taken before a refund failed would
+    // lift the total back up. Above the ledger it is only logged.
+    if (stripeRefundedAmountCents > ledgerRefundedAmountCents) {
+      logger.info(
+        { paymentId, paymentTransactionId, stripeRefundedAmountCents, ledgerRefundedAmountCents },
+        "Stripe's refunded figure is above the card refunds on record; the refunds on record stand (#4104)",
+      );
+    }
+    let discardedCents = 0;
     const { previousCents, nextCents } = await compareAndSetRefundedAmount(
       db,
       paymentTransactionId,
-      (row) =>
-        Math.min(
-          row.amountCents,
-          Math.max(
-            row.refundedAmountCents + newlyCountedCents - reversedCents,
-            ledgerRefundedAmountCents,
-            stripeRefundedAmountCents,
-            // A subtraction never goes below the payment's floor - and the
-            // floor never RAISES a mirror (that would be the repair the audit
-            // leaves to a person).
-            Math.min(row.refundedAmountCents, reversalFloorCents),
-            0
-          )
-        ),
+      (row) => {
+        const uncapped = Math.max(
+          row.refundedAmountCents + newlyCountedCents - reversedCents,
+          ledgerRefundedAmountCents,
+          // A subtraction never goes below the payment's floor - and the
+          // floor never RAISES a mirror (that would be the repair the audit
+          // leaves to a person).
+          Math.min(row.refundedAmountCents, reversalFloorCents),
+          0
+        );
+        discardedCents = Math.max(0, uncapped - row.amountCents);
+        return Math.min(row.amountCents, uncapped);
+      },
       { writeStatus: true }
     );
+    const capOverflow = await readCardRefundCapOverflow(db, { paymentId, paymentTransactionId, discardedCents, recordedRefundCents: ledgerRefundedAmountCents, previousCents, nextCents }); // #4154 M1, F2: logged; the officers alerted after the commit
 
     const payment = await reconcilePaymentAggregates({ paymentId, store: db });
+
+    // #4104 (`INV-PAY-128`): a refund seen failing after it counted is owed again, in this transaction.
+    const { debts: failedLaterDebts, readAsRefused } = await keepFailedLaterCardRefundsOwed(db, { paymentId, paymentTransactionId, seen: failedLater, fallbackPaymentIntentId });
 
     return {
       payment,
@@ -872,8 +884,18 @@ export async function recordStripeRefundsAgainstTransaction({
       ledgerRefundedAmountCents,
       refundedAmountCents: nextCents,
       appliedCents: nextCents - previousCents,
+      newlyCountedRefundIds,
+      failedLaterDebts,
+      /** #4104: refunds its caller was told counted that a row it is moving owns; the caller reads them as refused. */
+      readAsRefused,
+      /** #4159 review round 2 (F2): refund money the charge's total could not hold, or null. */
+      capOverflow,
     };
   });
+  // Alerted once its commit is ours; joined to a caller's transaction, returned for the caller to alert after its commit.
+  if (isRootPrismaClient(store)) await alertFailedLaterCardRefunds(recorded.failedLaterDebts);
+  if (isRootPrismaClient(store) && recorded.capOverflow) await alertCardRefundCapOverflow(recorded.capOverflow);
+  return recorded;
 }
 
 /**
@@ -899,21 +921,16 @@ export async function foldIntoTransactionRefundedAmount({
   });
 }
 
-async function sumRecordedRefundsForTransaction(
-  store: PaymentStore,
-  paymentTransactionId: string
-) {
-  const recordedRefunds = await store.paymentRefund.aggregate({
-    where: {
-      paymentTransactionId,
-      status: {
-        notIn: EXCLUDED_LEDGER_REFUND_STATUSES,
-      },
-    },
-    _sum: { amountCents: true },
-  });
-
-  return recordedRefunds._sum.amountCents ?? 0;
+/** The recorded, non-refused card refunds on one charge (`EXCLUDED_LEDGER_REFUND_STATUSES`): the floor its refunded total keeps, and what #4154's correction lowers to. */
+export const sumRecordedRefundsForTransaction = (store: RefundRowStore, paymentTransactionId: string) => sumRecordedRefundRows(store, { paymentTransactionId });
+/** #4154 review (M2): the same, over every charge on one payment. */
+export const sumRecordedRefundsForPayment = (store: RefundRowStore, paymentId: string) => sumRecordedRefundRows(store, { paymentId });
+/** #4285 review: the same, on one capture by row OR intent. What its CARD still holds is its amount less this: `refundedAmountCents` also counts account credit and by-hand refunds. */
+export const sumRecordedRefundsForCapture = (store: RefundRowStore, capture: { id: string; paymentIntentId: string }) => sumRecordedRefundRows(store, { OR: [{ paymentTransactionId: capture.id }, { stripePaymentIntentId: capture.paymentIntentId }] });
+type RefundRowStore = Pick<PaymentStore, "paymentRefund">;
+async function sumRecordedRefundRows(store: RefundRowStore, where: Prisma.PaymentRefundWhereInput): Promise<number> {
+  const recorded = await store.paymentRefund.aggregate({ where: { ...where, status: { notIn: EXCLUDED_LEDGER_REFUND_STATUSES } }, _sum: { amountCents: true } });
+  return recorded._sum.amountCents ?? 0;
 }
 
 export async function upsertPaymentIntentTransaction({
@@ -926,6 +943,8 @@ export async function upsertPaymentIntentTransaction({
   paymentMethodId,
   reason,
   stripeCustomerId,
+  hadIssuedXeroInvoice,
+  bookingModificationId,
   store = prisma,
 }: {
   paymentId: string;
@@ -945,43 +964,42 @@ export async function upsertPaymentIntentTransaction({
   paymentMethodId?: string | null;
   reason?: string;
   stripeCustomerId?: string | null;
+  /** #3954 round 7: a mint stamps its edit's invoice answer (`unpaidAskBillingEvidence`); omitted, left alone. */
+  hadIssuedXeroInvoice?: boolean;
+  /** #3954 round 8: the edit whose price ask the row is, named by a reduction that retires it; omitted, left alone. #4036: given, `writePaymentIntentTransaction` keeps it to that edit's row. */
+  bookingModificationId?: string;
   store?: PaymentStore;
 }) {
-  await store.paymentTransaction.upsert({
-    where: { stripePaymentIntentId: paymentIntentId },
-    create: {
-      paymentId,
-      kind,
-      source: PaymentSource.STRIPE,
-      stripePaymentIntentId: paymentIntentId,
-      amountCents,
-      status,
-      paymentMethodId: paymentMethodId ?? undefined,
-      reason,
-      ...(carriedAskCents !== undefined ? { carriedAskCents } : {}),
-    },
-    update: {
-      paymentId,
-      kind,
-      source: PaymentSource.STRIPE,
-      amountCents,
-      status,
-      ...(paymentMethodId !== undefined
-        ? { paymentMethodId: paymentMethodId ?? null }
-        : {}),
-      ...(reason !== undefined ? { reason } : {}),
-      ...(carriedAskCents !== undefined ? { carriedAskCents } : {}),
-    },
+  const provenance = { ...(hadIssuedXeroInvoice !== undefined ? { hadIssuedXeroInvoice } : {}), ...(bookingModificationId !== undefined ? { bookingModificationId } : {}) };
+  const update = {
+    kind, source: PaymentSource.STRIPE, amountCents, status,
+    ...(paymentMethodId !== undefined ? { paymentMethodId: paymentMethodId ?? null } : {}),
+    ...(reason !== undefined ? { reason } : {}),
+    ...(carriedAskCents !== undefined ? { carriedAskCents } : {}),
+    ...provenance,
+  };
+  const create = {
+    paymentId, kind, source: PaymentSource.STRIPE, stripePaymentIntentId: paymentIntentId, amountCents, status,
+    paymentMethodId: paymentMethodId ?? undefined, reason,
+    ...(carriedAskCents !== undefined ? { carriedAskCents } : {}),
+    ...provenance,
+  };
+  // #4217 (`INV-LOCK-002`): the Payment row before the intent's row, joined to
+  // the caller's transaction or in a short one of its own.
+  return withStoreTransaction(store, async (db) => {
+    await lockPaymentForRefundedTotal(db, paymentId);
+    // #4036 review: an ask write naming its edit never lands on another edit's row; #4081: no write lowers a captured status.
+    await writePaymentIntentTransaction(db, { paymentId, paymentIntentId, bookingModificationId, create, update });
+
+    if (stripeCustomerId) {
+      await db.payment.update({
+        where: { id: paymentId },
+        data: { stripeCustomerId },
+      });
+    }
+
+    return reconcilePaymentAggregates({ paymentId, store: db });
   });
-
-  if (stripeCustomerId) {
-    await store.payment.update({
-      where: { id: paymentId },
-      data: { stripeCustomerId },
-    });
-  }
-
-  return reconcilePaymentAggregates({ paymentId, store });
 }
 
 /**
@@ -1017,21 +1035,25 @@ export async function writeRaisedAdditionalRequestAmount({
   carriedAskCents: number;
   store?: PaymentStore;
 }): Promise<boolean> {
-  const written = await store.paymentTransaction.updateMany({
-    where: {
-      paymentId,
-      stripePaymentIntentId: paymentIntentId,
-      kind: PaymentTransactionKind.ADDITIONAL,
-      // #3528: a withdrawn request is retired for good; raising it would put a
-      // figure on an ask the projection no longer reads.
-      withdrawnAt: null,
-      status: { notIn: [...CAPTURED_TRANSACTION_STATUS_LIST] },
-    },
-    data: { amountCents, carriedAskCents },
+  // #4217 (`INV-LOCK-002`): the Payment row before the request's row.
+  return withStoreTransaction(store, async (db) => {
+    await lockPaymentForRefundedTotal(db, paymentId);
+    const written = await db.paymentTransaction.updateMany({
+      where: {
+        paymentId,
+        stripePaymentIntentId: paymentIntentId,
+        kind: PaymentTransactionKind.ADDITIONAL,
+        // #3528: a withdrawn request is retired for good; raising it would put a
+        // figure on an ask the projection no longer reads.
+        withdrawnAt: null,
+        status: { notIn: [...CAPTURED_TRANSACTION_STATUS_LIST] },
+      },
+      data: { amountCents, carriedAskCents },
+    });
+    if (written.count === 0) return false;
+    await reconcilePaymentAggregates({ paymentId, store: db });
+    return true;
   });
-  if (written.count === 0) return false;
-  await reconcilePaymentAggregates({ paymentId, store });
-  return true;
 }
 
 export async function recordInternetBankingPaymentTransaction({
@@ -1055,22 +1077,26 @@ export async function recordInternetBankingPaymentTransaction({
   reason?: string;
   store?: PaymentStore;
 }) {
-  await store.paymentTransaction.create({
-    data: {
-      paymentId,
-      kind,
-      source: PaymentSource.INTERNET_BANKING,
-      stripePaymentIntentId: null,
-      xeroInvoiceId: xeroInvoiceId ?? undefined,
-      xeroInvoiceNumber: xeroInvoiceNumber ?? undefined,
-      reference: reference ?? undefined,
-      amountCents,
-      status,
-      reason,
-    },
-  });
+  // #4217 (`INV-LOCK-002`): the Payment row before the receipt's row.
+  return withStoreTransaction(store, async (db) => {
+    await lockPaymentForRefundedTotal(db, paymentId);
+    await db.paymentTransaction.create({
+      data: {
+        paymentId,
+        kind,
+        source: PaymentSource.INTERNET_BANKING,
+        stripePaymentIntentId: null,
+        xeroInvoiceId: xeroInvoiceId ?? undefined,
+        xeroInvoiceNumber: xeroInvoiceNumber ?? undefined,
+        reference: reference ?? undefined,
+        amountCents,
+        status,
+        reason,
+      },
+    });
 
-  return reconcilePaymentAggregates({ paymentId, store });
+    return reconcilePaymentAggregates({ paymentId, store: db });
+  });
 }
 
 export async function markPaymentIntentTransactionSucceeded({
@@ -1084,26 +1110,33 @@ export async function markPaymentIntentTransactionSucceeded({
   paymentMethodId?: string | null;
   store?: PaymentStore;
 }) {
-  const transaction = await findPaymentTransactionByIntentId({
-    paymentIntentId,
-    store,
-  });
-  if (!transaction) {
+  // #4217: which payment, read without writing; then that Payment row; then the
+  // re-read (which may backfill a pre-ledger payment) and the write under it.
+  const paymentId = await findPaymentIdForIntent(store, paymentIntentId);
+  if (!paymentId) {
     return null;
   }
 
-  await store.paymentTransaction.update({
-    where: { id: transaction.id },
-    data: {
-      amountCents,
-      status: PaymentStatus.SUCCEEDED,
-      ...(paymentMethodId !== undefined
-        ? { paymentMethodId: paymentMethodId ?? null }
-        : {}),
-    },
-  });
+  return withStoreTransaction(store, async (db) => {
+    await lockPaymentForRefundedTotal(db, paymentId);
+    const transaction = await findPaymentTransactionForLockedPayment(db, paymentIntentId, paymentId);
+    if (!transaction) {
+      return null;
+    }
 
-  return reconcilePaymentAggregates({ paymentId: transaction.paymentId, store });
+    await db.paymentTransaction.update({
+      where: { id: transaction.id },
+      data: {
+        amountCents,
+        status: PaymentStatus.SUCCEEDED,
+        ...(paymentMethodId !== undefined
+          ? { paymentMethodId: paymentMethodId ?? null }
+          : {}),
+      },
+    });
+
+    return reconcilePaymentAggregates({ paymentId, store: db });
+  });
 }
 
 export async function markPaymentIntentTransactionFailed({
@@ -1113,24 +1146,59 @@ export async function markPaymentIntentTransactionFailed({
   paymentIntentId: string;
   store?: PaymentStore;
 }) {
-  const transaction = await findPaymentTransactionByIntentId({
-    paymentIntentId,
-    store,
-  });
-  if (!transaction) {
+  // #4217: as `markPaymentIntentTransactionSucceeded` - find the payment
+  // without writing, lock it, re-read and write under the lock.
+  const paymentId = await findPaymentIdForIntent(store, paymentIntentId);
+  if (!paymentId) {
     return null;
   }
 
-  if (isCapturedTransactionStatus(transaction.status)) {
-    return transaction;
-  }
+  return withStoreTransaction(store, async (db) => {
+    await lockPaymentForRefundedTotal(db, paymentId);
+    const transaction = await findPaymentTransactionForLockedPayment(db, paymentIntentId, paymentId);
+    if (!transaction) {
+      return null;
+    }
 
-  await store.paymentTransaction.update({
-    where: { id: transaction.id },
-    data: { status: PaymentStatus.FAILED },
+    if (isCapturedTransactionStatus(transaction.status)) {
+      return transaction;
+    }
+
+    // Status-guarded: a capture committed since the re-read keeps its status; the row is returned as above.
+    const failed = await db.paymentTransaction.updateMany({
+      where: { id: transaction.id, status: { notIn: [...CAPTURED_TRANSACTION_STATUS_LIST] } },
+      data: { status: PaymentStatus.FAILED },
+    });
+    if (failed.count === 0) {
+      return db.paymentTransaction.findUnique({ where: { id: transaction.id } });
+    }
+
+    return reconcilePaymentAggregates({ paymentId, store: db });
   });
+}
 
-  return reconcilePaymentAggregates({ paymentId: transaction.paymentId, store });
+/** #4217: the intent's payment, read WITHOUT writing (`locateIntent`), so the lock comes before any backfill. */
+async function findPaymentIdForIntent(store: PaymentStore, paymentIntentId: string): Promise<string | null> {
+  return (await locateIntent(store, paymentIntentId))?.paymentId ?? null;
+}
+
+/**
+ * #4217: the intent's row re-read under its Payment row lock. No ledger writer
+ * moves a row between payments (`writePaymentIntentTransaction` is pinned to
+ * the locked payment), so a row on another payment than the one the pure read
+ * named - the Payment pointer naming the intent while the row sits elsewhere -
+ * is an inconsistency, refused before anything is written.
+ */
+async function findPaymentTransactionForLockedPayment(
+  db: Prisma.TransactionClient,
+  paymentIntentId: string,
+  lockedPaymentId: string,
+) {
+  const transaction = await findPaymentTransactionByIntentId({ paymentIntentId, store: db });
+  if (transaction && transaction.paymentId !== lockedPaymentId) {
+    throw new IntentLedgerRowOnAnotherPaymentError(paymentIntentId, lockedPaymentId, transaction.paymentId);
+  }
+  return transaction;
 }
 
 export async function syncRefundsFromStripeCharge({
@@ -1176,7 +1244,12 @@ export async function syncRefundsFromStripeCharge({
     transactionId: transaction.id,
     createdRefundsCount: recorded.createdRefundsCount,
     createdRefundAmountCents: recorded.createdRefundAmountCents,
+    /** #4312: the refunds this sync was the first to record and count. */
+    newlyCountedRefundIds: recorded.newlyCountedRefundIds,
     ledgerRefundedAmountCents: recorded.ledgerRefundedAmountCents,
+    /** #4104: alerted already unless `store` was the caller's transaction. */
+    failedLaterDebts: recorded.failedLaterDebts,
+    capOverflow: recorded.capOverflow, // #4159 round 3 (6): alerted already unless `store` was the caller's transaction
   };
 }
 
@@ -1188,6 +1261,7 @@ type RefundableStripeTransaction = {
   amountCents: number;
   refundedAmountCents: number;
   createdAt: Date;
+  insertionSeq: number; // #4132: breaks a createdAt tie (`compareLedgerRowsNewestFirst`)
 };
 
 /**
@@ -1214,7 +1288,7 @@ function buildRefundAllocationSlices<T extends RefundableStripeTransaction>(
       (transaction) =>
         transaction.amountCents - transaction.refundedAmountCents > 0
     )
-    .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+    .sort(compareLedgerRowsNewestFirst); // #4132 (INV-PAY-133): a tie's last-inserted row first
 
   const totalRefundableCents = refundableTransactions.reduce(
     (sum, transaction) =>
@@ -1266,16 +1340,28 @@ export async function planStripeRefundAllocation({
     throw new Error("Payment not found");
   }
 
+  return planCardRefundFromLedger(payment.transactions, amountCents);
+}
+
+/**
+ * THE card refund plan a capture ledger carries for `amountCents`: its
+ * newest-first slices and their total. Pure - the plan the cancel's claim
+ * freezes (`planStripeRefundAllocation`) and the one the cancel preview quotes
+ * from its in-memory ledger (#4119, `INV-PAY-131`), so the two cannot differ
+ * on the same rows.
+ */
+export function planCardRefundFromLedger(
+  transactions: readonly RefundableStripeTransaction[],
+  amountCents: number
+) {
   const { slices, totalRefundableCents } = buildRefundAllocationSlices(
-    payment.transactions,
+    transactions,
     amountCents
   );
-
-  const plan = slices.map((slice) => ({
+  const plan: RefundAllocationSlice[] = slices.map((slice) => ({
     paymentTransactionId: slice.transaction.id,
     amountCents: slice.amountCents,
   }));
-
   return {
     slices: plan,
     plannedAmountCents: plan.reduce((sum, slice) => sum + slice.amountCents, 0),
@@ -1286,6 +1372,14 @@ export async function planStripeRefundAllocation({
 export interface RefundAllocationSlice {
   paymentTransactionId: string;
   amountCents: number;
+  /** #4083: the slice's key generation after Stripe refused it (`refundSliceStripeIdempotencyKey`). */
+  stripeKeySuffix?: string;
+  /** #4083: Stripe made it (this refund) on an attempt that met a refusal: never sent again, still this plan's. */
+  madeRefundId?: string;
+  /** #4104: the refunds that made this slice and that Stripe failed later, each moving it to its next key; it is still owed. */
+  failedRefundIds?: string[];
+  /** #4166: a failed-later row's maker of the failed refund, by its metadata (`card-refund-failed-later.ts`); null for none, absent before #4166. */
+  madeByOperationId?: string | null;
 }
 
 /**
@@ -1300,17 +1394,24 @@ export class PartialRefundError extends Error {
     paymentIntentId: string;
     refundId: string;
     amountCents: number;
+    /** #4070, #4083: Stripe's answer and the slice as sent; `refundPaymentTransactions` always sets both. */
+    status?: string | null;
+    slice?: RefundAllocationSlice;
   }>;
+  /** #4083: slices Stripe answered but refused before the failure; still owed. */
+  refusedSlices: RefundAllocationSlice[];
   override cause: unknown;
 
   constructor({
     completedRefundCents,
     refunds,
+    refusedSlices = [],
     cause,
     format,
   }: {
     completedRefundCents: number;
     refunds: PartialRefundError["refunds"];
+    refusedSlices?: RefundAllocationSlice[];
     cause: unknown;
     /** The club's format (#3565): the message names the amount already refunded. */
     format: ClubFormat;
@@ -1323,6 +1424,7 @@ export class PartialRefundError extends Error {
     this.name = "PartialRefundError";
     this.completedRefundCents = completedRefundCents;
     this.refunds = refunds;
+    this.refusedSlices = refusedSlices;
     this.cause = cause;
   }
 }
@@ -1368,6 +1470,7 @@ export async function refundPaymentTransactions({
   let slices: Array<{
     transaction: (typeof stripeTransactions)[number];
     amountCents: number;
+    stripeKeySuffix?: string;
   }>;
 
   if (allocation) {
@@ -1381,7 +1484,7 @@ export async function refundPaymentTransactions({
           `Refund allocation references transaction ${slice.paymentTransactionId} which is not a captured Stripe transaction of payment ${paymentId}`
         );
       }
-      return { transaction, amountCents: slice.amountCents };
+      return { transaction, amountCents: slice.amountCents, stripeKeySuffix: slice.stripeKeySuffix };
     });
   } else {
     // Shared with planStripeRefundAllocation (#1349) so a plan frozen at
@@ -1396,14 +1499,16 @@ export async function refundPaymentTransactions({
     slices = derived.slices;
   }
 
-  const refunds: Array<{
-    paymentIntentId: string;
-    refundId: string;
-    amountCents: number;
-  }> = [];
+  // #4070: Stripe's own status rides along, so a caller can tell a refund made from one it refused;
+  // #4083: with the slice as sent, so a refused one can be asked for again (`refusedRefundSlices`).
+  const refunds: Array<PartialRefundError["refunds"][number] & { status: string | null; slice: RefundAllocationSlice }> = [];
+  const refusedSlices: RefundAllocationSlice[] = [];
   let completedRefundCents = 0;
+  const failedLaterDebts: FailedLaterCardRefundDebt[] = [];
+  const capOverflows: CardRefundCapOverflow[] = [];
 
-  for (const { transaction, amountCents: refundAmountForTransaction } of slices) {
+  for (const { transaction, amountCents: refundAmountForTransaction, stripeKeySuffix } of slices) {
+    const slice: RefundAllocationSlice = { paymentTransactionId: transaction.id, amountCents: refundAmountForTransaction, ...(stripeKeySuffix ? { stripeKeySuffix } : {}) };
     let refund;
     try {
       refund = await processRefund({
@@ -1413,37 +1518,70 @@ export async function refundPaymentTransactions({
           typeof reason === "string" ? reason : "requested_by_customer",
         metadata,
         idempotencyKey: idempotencyKeyPrefix
-          ? `${idempotencyKeyPrefix}_${transaction.id}_${refundAmountForTransaction}`
+          ? refundSliceStripeIdempotencyKey(idempotencyKeyPrefix, slice)
           : undefined,
       });
     } catch (err) {
       throw new PartialRefundError({
         completedRefundCents,
         refunds,
+        refusedSlices,
         cause: err,
         format,
       });
     }
 
-    await recordStripeRefundsAgainstTransaction({
-      paymentId,
-      paymentTransactionId: transaction.id,
-      refunds: [refund],
-      fallbackPaymentIntentId: transaction.stripePaymentIntentId,
-      store,
-    });
+    let readAsRefused = false;
+    try {
+      const recorded = await recordStripeRefundsAgainstTransaction({
+        paymentId,
+        paymentTransactionId: transaction.id,
+        refunds: [refund],
+        fallbackPaymentIntentId: transaction.stripePaymentIntentId,
+        store,
+      });
+      failedLaterDebts.push(...recorded.failedLaterDebts);
+      if (recorded.capOverflow) capOverflows.push(recorded.capOverflow);
+      readAsRefused = recorded.readAsRefused.includes(refund.id);
+    } catch (err) {
+      // #3924 round 4 (C2): Stripe refunded this slice but it could not be
+      // recorded. It is reported as a partial failure like a Stripe one, carrying
+      // only the slices BEFORE it - the ones refunded AND recorded - so every
+      // caller's recovery replays this slice under its same key (Stripe answers
+      // with the original refund and the ledger records it then) and never
+      // re-asks for a slice already recorded. A raw error here made the refund
+      // request's route enqueue the whole plan and the edit's the whole amount.
+      throw new PartialRefundError({
+        completedRefundCents,
+        refunds,
+        refusedSlices,
+        cause: err,
+        format,
+      });
+    }
 
     refunds.push({
       paymentIntentId: transaction.stripePaymentIntentId,
       refundId: refund.id,
       amountCents: refund.amount,
+      // #4104: a replayed key reads Stripe's original answer; the row knows it failed since.
+      status: readAsRefused ? "failed" : refund.status,
+      slice,
     });
-    completedRefundCents += refundAmountForTransaction;
+    // #4083: a refused slice sent nothing back, so it is owed, never completed.
+    if (readAsRefused || isRefusedRefundStatus(refund.status)) refusedSlices.push(slice);
+    else completedRefundCents += refundAmountForTransaction;
   }
 
+  if (failedLaterDebts.length > 0 && !isRootPrismaClient(store)) {
+    logger.warn({ paymentId, failedLaterDebts }, "Card refunds that failed later were kept owed in the caller's transaction; the caller alerts after its commit (#4104)");
+  }
   return {
     refunds,
     totalRefundedAmountCents: amountCents,
+    /** #4104: decided as this call recorded its refunds; alerted already unless `store` was the caller's transaction. */
+    failedLaterDebts,
+    capOverflows, // #4159 round 3 (6): the same, for refund money a charge's total could not hold
   };
 }
 
@@ -1462,6 +1600,19 @@ export class RefundAllocationRacedError extends Error {
   constructor() {
     super("Refund allocation raced another writer on the same payment");
     this.name = "RefundAllocationRacedError";
+  }
+}
+
+/**
+ * Raised when an allocation asks for more than the payment's captured
+ * transactions still hold, before anything is written. The message is the one
+ * callers already read (`settlementWriteRefusal`); the class lets a caller tell
+ * this refusal from a fault without matching it (#3924 round 4, C3).
+ */
+export class RefundAllocationExceedsCapturedError extends Error {
+  constructor() {
+    super("Refund amount exceeds captured payments");
+    this.name = "RefundAllocationExceedsCapturedError";
   }
 }
 
@@ -1494,22 +1645,30 @@ export class RefundAllocationRacedError extends Error {
 export async function applyLocalRefundAllocation({
   paymentId,
   amountCents,
+  preferTransactionIds = [], onlyTransactionIds,
   store = prisma,
 }: {
   paymentId: string;
   amountCents: number;
+  /** #3372 ("Paid another way"): placed FIRST, in order - the charges an unsent card refund was for. */
+  preferTransactionIds?: readonly string[];
+  /** #4154: placed on these charges and no other; short of headroom there, it throws as any shortfall does. */ onlyTransactionIds?: readonly string[];
   store?: PaymentStore;
 }) {
   await withStoreTransaction(store, async (db) => {
     await lockPaymentForRefundedTotal(db, paymentId);
     const payment = await ensurePaymentTransactionsBackfilled(db, paymentId);
-    if (!payment) {
-      throw new Error("Payment not found");
-    }
+    if (!payment) throw new Error("Payment not found");
 
+    const preferredRank = (id: string) =>
+      preferTransactionIds.includes(id) ? preferTransactionIds.indexOf(id) : preferTransactionIds.length;
     const capturedTransactions = [...payment.transactions]
-      .filter((transaction) => isCapturedTransactionStatus(transaction.status))
-      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+      .filter((transaction) => isCapturedTransactionStatus(transaction.status) && (!onlyTransactionIds || onlyTransactionIds.includes(transaction.id)))
+      .sort(
+        (a, b) =>
+          preferredRank(a.id) - preferredRank(b.id) ||
+          compareLedgerRowsNewestFirst(a, b)
+      );
 
     const totalRefundableCents = capturedTransactions.reduce(
       (sum, transaction) =>
@@ -1517,7 +1676,7 @@ export async function applyLocalRefundAllocation({
       0
     );
     if (amountCents > totalRefundableCents) {
-      throw new Error("Refund amount exceeds captured payments");
+      throw new RefundAllocationExceedsCapturedError();
     }
 
     let remainingAmountCents = amountCents;

@@ -62,11 +62,23 @@ export async function expectRecoveryAlertToHoldFocus(
     );
   }
 
+  await expectToHoldFocus(alert, "the recovery alert");
+}
+
+/**
+ * The same two halves for any focus target — liveness (focus arrives) and
+ * safety (it is still there after every pending render and effect settles).
+ * A return-focus assertion after Save or Cancel (#4087) needs exactly this.
+ */
+export async function expectToHoldFocus(
+  target: Element,
+  label = "the focus target",
+): Promise<void> {
   // Liveness: focus must actually arrive. Waiting for it — rather than asserting
   // it at the instant the message appears — is what stops this depending on
   // whether React's effect flush or the test runner's drain wins the race.
   await waitFor(() => {
-    expect(document.activeElement).toBe(alert);
+    expect(document.activeElement).toBe(target);
   });
 
   // Safety: and it must still be there afterwards. This is the half a bare
@@ -75,10 +87,10 @@ export async function expectRecoveryAlertToHoldFocus(
     await settlePendingReactWork();
     expect(
       document.activeElement,
-      `the recovery alert received focus but lost it ${turn} settled event-loop ` +
+      `${label} received focus but lost it ${turn} settled event-loop ` +
         "turn(s) later — something re-rendered or released a focus scope and " +
         "moved focus away",
-    ).toBe(alert);
+    ).toBe(target);
   }
 }
 

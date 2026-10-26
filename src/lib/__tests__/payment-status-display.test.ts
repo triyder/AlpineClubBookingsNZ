@@ -136,3 +136,41 @@ describe("getPaymentDisplayStatus", () => {
     expect(result.label).toBe("Cancelled - No Refund");
   });
 });
+
+// #3991: a viewer who cannot see the booking owner's account credit (a linked
+// guest) is not told credit was issued — not in the badge, not in its sentence.
+describe("getPaymentDisplayStatus with the owner's credit hidden (#3991)", () => {
+  const credit = (amountCents: number) => ({
+    amountCents,
+    description: "Cancellation refund for booking abc123",
+    type: "CANCELLATION_REFUND",
+    restoredFromBookingId: null,
+  });
+  const display = (paymentStatus: string, refundedAmountCents: number, ownerCreditHidden?: boolean) =>
+    getPaymentDisplayStatus({
+      bookingStatus: "CANCELLED",
+      paymentStatus,
+      refundedAmountCents,
+      credits: [credit(5000)],
+      ownerCreditHidden,
+    });
+
+  it("reads neutrally, with no credit, for a credit-only and a split settlement", () => {
+    for (const result of [display("REFUNDED", 5000, true), display("PARTIALLY_REFUNDED", 7000, true)]) {
+      expect(result.label).not.toMatch(/credit/i);
+      expect(result.detail).not.toMatch(/credit/i);
+      expect(result.label).toMatch(/Settled on Cancellation/);
+    }
+  });
+
+  it("CONTROL: the owner is told credit was issued", () => {
+    expect(display("REFUNDED", 5000).label).toBe("Credit Issued");
+    expect(display("PARTIALLY_REFUNDED", 7000).label).toBe("Partial Credit + Card Refund");
+  });
+
+  it("leaves a card-only refund's label alone", () => {
+    const cardOnly = (hidden?: boolean) =>
+      getPaymentDisplayStatus({ bookingStatus: "CANCELLED", paymentStatus: "REFUNDED", refundedAmountCents: 5000, ownerCreditHidden: hidden });
+    expect(cardOnly(true)).toEqual(cardOnly(false));
+  });
+});

@@ -995,10 +995,17 @@ describe("consent columns have exactly one writer", () => {
       "the review re-base selects each strand's stored consent for the promo re-price",
     "src/lib/booking-strand-night-prices.ts":
       "the strand reader carries each strand's stored consent to the promo re-price",
+    "src/lib/edit-night-valuation.ts":
+      "the valued strand reader (#4317) carries each guest's stored consent to the acceptance promo re-price",
     "src/lib/waitlist.ts":
       "the waitlist offer hands each guest's stored consent to the promo re-price",
     "src/app/api/promo-codes/validate/route.ts":
       "the promo preview marks a guest the booker says awaits acceptance as pending, and an edit preview reads an owned booking's stored consent (#3492)",
+    // #4199, #4202: a READER. The edit preview's row read (moved out of the
+    // route by #4199, into its own module by #4202) selects the named rows'
+    // stored consent for the route to judge them by, and writes nothing.
+    "src/lib/promo-preview-edit.ts":
+      "reads the stored consent of the rows an owned booking's edit preview names, for the promo preview (#3492, #4199, #4202); writes nothing",
     // The override door. A READER, and the narrowest kind: one `where`/`select`
     // pair asking which of a live booking's member rows are operationally
     // present, so a party refused by a booking path reproduces the SAME violation
@@ -1013,6 +1020,11 @@ describe("consent columns have exactly one writer", () => {
     // guest is present enough to hold a bed at all (`GUEST_NOT_PRESENT`) —
     // the same rule the placement paths already apply. It composes no consent
     // shape; every write it makes is to `BedAllocation`.
+    // #4030 review S8: a READER. The booking-modified email's Guests Added line
+    // marks a guest whose stored consentStatus is still PENDING as waiting to
+    // accept. It composes no consent shape and writes nothing.
+    "src/lib/booking-money-lines.ts":
+      "the change email's Guests Added line reads each added guest's stored consent state to say who has not yet accepted",
     "src/lib/bed-allocation-move.ts":
       "the reviewed move digest reads each guest's stored consent state, and the conflict pass refuses a guest who is not operationally present",
     // #2376's AI-diagnostics booking pack. Three files, all READERS, none of

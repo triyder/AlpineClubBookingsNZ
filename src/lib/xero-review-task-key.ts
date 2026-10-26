@@ -26,6 +26,20 @@ export function isGiveBackNoteScope(scope: string | null | undefined): boolean {
   return scope === APPLIED_CREDIT_GIVE_BACK_NOTE_SCOPE || Boolean(scope?.endsWith(`:${APPLIED_CREDIT_GIVE_BACK_NOTE_SCOPE}`));
 }
 
+/**
+ * #3954 (owner decision 10 Oct 2026, "Auto credit note", `INV-PAY-120`): the
+ * scope of a reduction's invoice-correction note for the part of its
+ * unpaid-ask offset the primary invoice had already billed. Rides the same
+ * slot as the give-back's, for the same reasons; only an edit's own
+ * settlement raises it, so it is never nested under a review task.
+ */
+export const UNPAID_ASK_BILLED_OFFSET_NOTE_SCOPE = "unpaid-ask-billed-offset";
+
+/** Whether a scope is a billed-offset note's (`UNPAID_ASK_BILLED_OFFSET_NOTE_SCOPE`). */
+export function isUnpaidAskBilledOffsetNoteScope(scope: string | null | undefined): boolean {
+  return scope === UNPAID_ASK_BILLED_OFFSET_NOTE_SCOPE;
+}
+
 export function reviewTaskKeyParts(reviewTaskId: string | null | undefined): string[] {
   return reviewTaskId ? ["review-task", reviewTaskId] : [];
 }
@@ -37,4 +51,13 @@ export function reviewTaskKeyParts(reviewTaskId: string | null | undefined): str
  */
 export function queuedReviewTaskId(operation: { requestPayload: unknown }): string | undefined {
   return readString(asRecord(operation.requestPayload)?.reviewTaskId) ?? undefined;
+}
+
+/**
+ * The scope a modification credit note's LINK records (`metadata.reviewTaskId`,
+ * written by `createXeroCreditNoteForModification` for a scoped note), or
+ * undefined for an edit's own note.
+ */
+export function linkReviewTaskId(link: { metadata: unknown }): string | undefined {
+  return readString(asRecord(link.metadata)?.reviewTaskId) ?? undefined;
 }

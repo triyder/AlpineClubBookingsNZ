@@ -161,7 +161,7 @@ correctness rather than speed:
 - **Consistency.** An independent read per pricing call let an admin's mid-request
   save have the route gate branch on one regime and the price be computed under the
   other - the "priced as a member here, refused there" drift #2543 exists to remove.
-  `modify-quote` performs seven or more pricing passes in one request and differences
+  `modify-quote` performed seven or more pricing passes in one request and differenced
   two of them into the member's settlement delta, so a save landing between those two
   made the delta wrong by the whole member/non-member spread on every remaining guest.
 - **Connections.** The pricing gate runs inside booking transactions that hold the

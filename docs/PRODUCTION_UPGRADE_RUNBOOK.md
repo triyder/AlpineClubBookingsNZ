@@ -176,8 +176,9 @@ APP_ENVIRONMENT_ROLE=production
 ```
 
 **Exactly one such line.** The usual `.env` shapes are all accepted — an
-`export ` prefix, spaces around the `=`, quotes round the value, a leading indent
-— but a SECOND line assigning the same key is refused, in any of those shapes,
+`export ` prefix, spaces around the `=`, quotes round the value, a leading indent,
+and the colon form Compose also reads (`APP_ENVIRONMENT_ROLE: production`) — but
+a SECOND line assigning the same key is refused, in any of those shapes,
 because Docker Compose would use the last one and you would not know which you
 had deployed. Search the file rather than trusting the top of it.
 
@@ -224,6 +225,22 @@ matter for this upgrade:
   [§2.1a](#21a-step-1320-stopped-on-a-lock-timeout) for what to do when it fires.
 - **Step 14/20 / Step 15/20 — starts the new (target) web color and refreshes
   the cron leader on the new release, both before cutover.**
+  Each container is asked, from inside it, whether it is ready
+  (`/api/health/ready`) and which role and environment role it is running
+  (`/api/deploy/runtime-status`). A read that does not get HTTP 200 is
+  retried every 2 seconds for up to `DEPLOY_INTERNAL_READ_TIMEOUT_SECONDS` (60 by
+  default, set in the deploy shell), and every failed attempt prints one of
+  three lines: the HTTP status; `no HTTP response (TimeoutError)` or
+  `no HTTP response (TypeError (ECONNREFUSED))` when the request got no answer
+  inside the container; or the `docker compose exec` exit code and the
+  container's state (`restarts=`, `oom=`) when Docker could not reach it.
+  HTTP 401, 403 or 404 stops at once. On giving up the step prints the last
+  result and response body, and the deploy stops before the cutover. Caddy
+  still points at the old colour, but that serves only if it is still running: in a windowed deploy,
+  where the old app and workers were stopped first, the site stays down until
+  the deploy is re-run. On a first blue/green deploy Caddy points at `app`
+  itself, which step 15 has just recreated on the new release, so a step-15
+  failure leaves that new release behind Caddy (#3965).
 - **Step 16/20 — "Warming the new release and verifying its page cache before
   cutover".** The #2566 gate: it renders every eligible public page on the new
   colour, proves the page cache was populated for the addresses this release stores,
@@ -237,6 +254,14 @@ matter for this upgrade:
   the **cutover**: Caddy is repointed to the new color, external/internal health
   is verified, then the previous color's connections are drained. Everything
   before this step is reversible by aborting; see [§4](#4-rollback-plan).
+  The internal check here is the same pair of reads as steps 14 and 15, but it
+  runs **after** the switch, so each read is tried **once**, whatever
+  `DEPLOY_INTERNAL_READ_TIMEOUT_SECONDS` says: members are already being sent
+  to the new colour, and a failure must hand over to the rollback at once. The
+  deploy then fails and tries to point Caddy back at the old colour, which
+  serves only if it is still running. On a first blue/green deploy the "old
+  colour" is `app`, which step 15 recreated on the new release, so the rollback
+  lands on the release that just failed (#3965).
 
 ### 2.1 The validator gate is expected green
 
@@ -520,6 +545,24 @@ lists every one; these are in that class:
 - `20261101020000_add_pending_school_adult_capacity` (#3413) — additive DDL,
   but old capacity readers cannot see its new per-night reservation relation.
   Its server-side write gate stays disabled until the drained window completes.
+- `20261112010000_other_lodge_beds_and_facilities`
+  (triyder/AlpineClubBookingsNZ#50, Alpine Central Server API 2.1) — one
+  `CREATE TYPE` and one `ALTER TABLE "OtherLodge"` that adds six columns
+  (catalogue-only, no row rewritten) and **drops `bookingPath`**. That column
+  was added by `20261006020000_add_other_lodge_details_and_amenities`, which
+  ships in the same release, so the colour draining at cutover never names it.
+  It is windowed because a build carrying `20261006020000` without this
+  migration names the column on every other-lodge read and would fail. The
+  drop is a breaking statement, so the window also needs
+  `ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS=1` and an override reason naming it.
+  `OtherLodge` is a small admin registry, so its `ACCESS EXCLUSIVE` lock is
+  brief. **Rollback:** its `rollback.sql` restores `bookingPath` as a nullable
+  `VARCHAR(300)` with no default, `NULL` on every row (PostgreSQL cannot
+  un-drop a column, so the old text cannot come back; a 2.0 central server
+  refills it on the next download) and removes the six new columns and
+  the `OtherLodgeRoomType` type, losing what a 2.1 server sent. It is not
+  idempotent, and rolling forward afterwards means re-applying `migration.sql`
+  by hand, because `_prisma_migrations` still records it as applied.
 
 **If several are pending, they share ONE window.** `prisma migrate deploy` applies
 them in the same command — you do not stop and start the application repeatedly. Work
@@ -527,18 +570,75 @@ the checks in [§2.4.1](#241-2520-drop-familygroupmemberrole) as well as the one
 here, plus [§2.4.3](#243-3271-parentpartner-exclusivity-backstop) when #3271 is
 pending, and name every pending windowed migration in the override reason.
 
+Before the deploy reaches step 13, it verifies the window itself: every replica
+of Compose `app`, `app_blue` and `app_green` must be stopped or absent (a paused
+container is still running), and the app database must have zero other client
+backends. This includes idle or idle-in-transaction sessions, every user, and
+external/admin/monitoring clients; it excludes only the checking session,
+background processes and other databases. Disconnect those clients as well as
+stopping the old runtime. A running replica, nonzero count, failed command or
+invalid result refuses before the app-database migration marker, migrate command
+and new app startup. A failed pending-migration discovery also refuses instead
+of reporting nothing pending (#4071).
+
+The deploy prints the service or client count and corrective action without
+connection addresses or session query text. Resolve the reported condition and
+retry within the offline window. It does not stop containers or terminate
+sessions for you. These are snapshots, **not reconnect fencing**: keep external
+workers disconnected and prevent service restarts until the new runtime is ready.
+The earlier shadow-database replay is separate and precedes these checks. The
+standalone validator checks the ledger and acknowledgements; these runtime
+checks belong to the production deploy wrapper, so a hand-run migration still
+requires the operator's own drain verification.
+
 #### #3413: pending school-adult capacity activation
 
 `20261101020000_add_pending_school_adult_capacity` is additive, but old runtime
 colours cannot count its reservation rows. Keep `PENDING_SCHOOL_ADULTS_ENABLED`
 absent or any value other than exactly `1` until the window has stopped admission,
 stopped every old web and worker, and proved no old database connection remains.
-Only then set `BLUE_GREEN_OLD_APP_AND_WORKERS_STOPPED=1` for the migration
-validator, deploy the new runtime, check canonical capacity readers, and set
-`PENDING_SCHOOL_ADULTS_ENABLED=1`. The application requires both values exactly;
-the migration override is not a write permission.
+Then, in order:
 
-To roll back after activation, first disable `PENDING_SCHOOL_ADULTS_ENABLED`,
+1. Export `BLUE_GREEN_OLD_APP_AND_WORKERS_STOPPED=1` in the shell that runs the
+   deploy, for the migration validator, and deploy the new runtime as the
+   window describes. That shell value tells the validator, for this deploy
+   only, that the old app is stopped. It never reaches the application (#4027),
+   so it does not open the gate; while `.env` lacks the value, step 3 of 20
+   prints a note saying so.
+2. Check the canonical capacity readers on the new runtime.
+3. Switch the gate on: add **both** `PENDING_SCHOOL_ADULTS_ENABLED=1` and
+   `BLUE_GREEN_OLD_APP_AND_WORKERS_STOPPED=1` to the source repository's `.env`,
+   then re-run `scripts/run-production-blue-green-deploy.sh` for the commit
+   already deployed. Both lines are needed. The application reads them only
+   from `.env`, and requires both to be exactly `1`.
+
+The migration override is not a write permission, and neither is the shell value
+from step 1.
+
+The application reads both from its container environment. `docker-compose.yml`
+passes both through its `x-app-environment` block, empty by default (#3964). To
+apply or remove either value **for the application**, edit the source
+repository's `.env`, then re-run `scripts/run-production-blue-green-deploy.sh` for
+the commit already deployed. The deploy makes `.env` the only source the
+containers read, although Compose would otherwise prefer a value exported in the
+shell (#4027): it refuses a `PENDING_SCHOOL_ADULTS_ENABLED` exported in its shell
+that differs from `.env`, and it never passes its shell's
+`BLUE_GREEN_OLD_APP_AND_WORKERS_STOPPED` to any container. Do not recreate
+containers by hand: the deploy copies `.env` into its workspace, pins `APP_IMAGE`
+and chooses the colour, and a hand-run `docker compose up` does none of that —
+and it would let a shell export override `.env` again.
+
+`BLUE_GREEN_OLD_APP_AND_WORKERS_STOPPED` therefore has two separate meanings,
+and each copy serves only one. Its `.env` copy is the application's lasting
+acknowledgement that no pre-#3413 runtime remains; pending-adult cleanup needs it
+as well as admissions. That copy never satisfies the migration validator, which
+reads only the deploy shell's own environment, so every windowed migration still
+needs the value set in the shell that runs the deploy, exactly as above. The
+shell copy, in turn, never reaches the containers (#4027), so exporting it for a
+window cannot open the gate.
+
+To roll back after activation, first disable `PENDING_SCHOOL_ADULTS_ENABLED`
+(one deploy, as above),
 resolve or explicitly cancel every request with a pending adult, and prove both
 queries return zero before running this migration's `rollback.sql`:
 
@@ -550,10 +650,23 @@ SELECT count(*) FROM "BookingRequestPendingAdultReservationNight";
 Do not restart old code before that proof. It would accept new capacity using an
 occupancy calculation that cannot see held unnamed adults.
 
-**Reverse every pending windowed migration in application order.** Stop all new
-app/worker processes first. If #3271 is present, run its `rollback.sql` before any
+**Reverse every pending windowed migration in application order, newest
+first.** Stop all new app/worker processes first. The full order is:
+
+1. `20261112010000_other_lodge_beds_and_facilities` (other lodges, API 2.1),
+   when present. It is the newest, and it touches only `OtherLodge`.
+2. `20261101020000_add_pending_school_adult_capacity` (#3413), when present,
+   and only after its two zero-count queries above both return zero.
+3. `20260929010000_add_member_parent_partner_exclusion` (#3271), when present.
+4. #3369's pair, then #2739, #2596, `20260803030000` and `20260803010000`, as
+   below.
+
+If #3271 is present, run its `rollback.sql` before any
 older reverse and verify the pair table, functions, and triggers are gone while
-both source relationship tables are unchanged. A window containing #2739 next
+both source relationship tables are unchanged. A window containing #3369 next
+reverses its two migrations in the opposite order, as
+[§2.4.2](#242-3369-a-school-booking-has-an-organisation-not-an-invented-person)
+says. A window containing #2739 next
 uses `20260810010000`'s `rollback.sql`, which changes no data: keep its night
 rows, and once a release with #3214 is back, repair the nights its query lists
 and only then refresh those invoices, as the #2739 entry above says. A window

@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {
@@ -100,6 +101,10 @@ const mocks = vi.hoisted(() => {
   // #3827 (`INV-PAY-117`): the open edit refund hand-backs on the payment.
   txManualRefundTaskAggregate: vi.fn(),
   txManualRefundTaskCreate: vi.fn(),
+  // #4097 (`INV-PAY-129`): the card refund shortfall's hand-back, and the officers' alert.
+  txManualRefundTaskCreateMany: vi.fn(),
+  txManualRefundTaskFindUnique: vi.fn(),
+  sendAdminManualRefundTaskAlert: vi.fn(),
   // #3653: a joiner's own cancel of a booking the organiser paid for by card.
   txSettlementFindFirst: vi.fn(),
   txPaymentRefundAggregate: vi.fn(),
@@ -107,6 +112,11 @@ const mocks = vi.hoisted(() => {
   txRecoveryOperationFindMany: vi.fn(),
   txRecoveryOperationCreate: vi.fn(),
   runPaymentRecoveryOperationNow: vi.fn(),
+  // #3973: the debt's own status, re-read after the inline run.
+  recoveryOperationFindUnique: vi.fn(),
+  // #4096: the refused cancellation refund's re-plan and the officers' alert.
+  recoveryOperationUpdateMany: vi.fn(),
+  alertPaymentRecoveryOfficers: vi.fn(),
   };
 });
 
@@ -145,6 +155,10 @@ vi.mock("@/lib/prisma", () => ({
     clubTimeSettings: {
       findUnique: mocks.clubTimeSettingsFindUnique,
     },
+    paymentRecoveryOperation: {
+      findUnique: mocks.recoveryOperationFindUnique,
+      updateMany: mocks.recoveryOperationUpdateMany,
+    },
     $transaction: mocks.prismaTransaction,
   },
 }));
@@ -156,8 +170,13 @@ vi.mock("@/lib/cancellation", () => ({
   loadCancellationPolicy: mocks.loadCancellationPolicy,
 }));
 
+vi.mock("@/lib/payment-recovery-alert", () => ({
+  alertPaymentRecoveryOfficers: mocks.alertPaymentRecoveryOfficers,
+}));
+
 vi.mock("@/lib/email", () => ({
   sendBookingCancelledEmail: mocks.sendBookingCancelledEmail,
+  sendAdminManualRefundTaskAlert: mocks.sendAdminManualRefundTaskAlert,
 }));
 
 vi.mock("@/lib/audit", () => ({
@@ -178,8 +197,21 @@ vi.mock("@/lib/member-credit", () => ({
   },
 }));
 
+const CLOSE_TX = vi.hoisted(() => ({ closeTx: true }));
 vi.mock("@/lib/booking-events", () => ({
   recordBookingEvent: mocks.recordBookingEvent,
+  // #4145: the cancel's REFUNDED event commits with the close that moved its
+  // row (proved against PostgreSQL in cancel-card-refund-event.realdb.test.ts);
+  // here the close runs on a stand-in transaction and a moved row records the
+  // event through the same spy.
+  closeRefundRowRecordingEvent: async (
+    input: { bookingId: string; amountCents: number; actorMemberId: string | null; reason: string },
+    close: (tx: unknown) => Promise<boolean>,
+  ) => {
+    if (!(await close(CLOSE_TX))) return false;
+    mocks.recordBookingEvent({ ...input, type: "REFUNDED" });
+    return true;
+  },
 }));
 
 vi.mock("@/lib/waitlist", () => ({
@@ -213,7 +245,9 @@ vi.mock("@/lib/logger", () => ({
   },
 }));
 
-vi.mock("@/lib/payment-transactions", () => ({
+vi.mock("@/lib/payment-transactions", async (importOriginal) => ({
+  // #4097: the card plan's own predicate, real: a shortfall's non-card charges are its complement.
+  isStripeTransaction: ((await importOriginal()) as typeof import("@/lib/payment-transactions")).isStripeTransaction,
   PartialRefundError: mocks.PartialRefundError,
   applyLocalRefundAllocation: mocks.applyLocalRefundAllocation,
   foldIntoTransactionRefundedAmount: mocks.foldIntoTransactionRefundedAmount,
@@ -278,10 +312,11 @@ import {
   fenceMemberFindMany,
   recordingBookingDouble,
 } from "@/lib/__tests__/support/hosting-participant-fence-double";
-import { cancelBooking } from "@/lib/booking-cancel";
+import { CANCEL_PAYMENT_JUST_RECORDED_MESSAGE, cancelBooking } from "@/lib/booking-cancel";
 import { addDaysDateOnly, getTodayDateOnly } from "@/lib/date-only";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { lockedPaymentReReadDouble } from "./support/locked-payment-reread-double";
+import { OWN_CARD_REFUND_STATES, primeOwnCardRefund } from "./support/own-card-refund-outcome";
 
 /** The club's zone, named rather than taken from a helper default (#3123). */
 const CLUB_ZONE = "Pacific/Auckland";
@@ -337,6 +372,8 @@ describe("cancelBooking credit refunds", () => {
     mocks.txPaymentFindUnique.mockImplementation(
       lockedPaymentReReadDouble(mocks.txBookingFindUnique),
     );
+    // #4316: the immediate run of a queued intent cancellation answers like the real one.
+    mocks.runPaymentRecoveryOperationNow.mockResolvedValue("succeeded");
     // The cancel service uses two $transaction shapes: the callback form for
     // the paid single-flight critical section (#1160) and the array form for
     // the pre-payment branches. Support both.
@@ -365,6 +402,8 @@ describe("cancelBooking credit refunds", () => {
             booking: {
               findUnique: fenceBooking.findUnique,
               findMany: fenceBooking.findMany,
+              // #3949 review round 4: the organiser's booking, read to name the organiser a joiner's cancel repays.
+              findUniqueOrThrow: vi.fn(async () => ({ member: { firstName: "Olive", lastName: "Organiser" }, organisation: null })),
               update: mocks.bookingUpdate,
               updateMany: mocks.bookingUpdateMany,
             },
@@ -391,6 +430,8 @@ describe("cancelBooking credit refunds", () => {
               findMany: vi.fn().mockResolvedValue([]),
               findFirst: mocks.txManualRefundTaskFindFirst,
               create: mocks.txManualRefundTaskCreate,
+              createMany: mocks.txManualRefundTaskCreateMany,
+              findUnique: mocks.txManualRefundTaskFindUnique,
             },
             groupBookingSettlement: { findFirst: mocks.txSettlementFindFirst },
             paymentRefund: { aggregate: mocks.txPaymentRefundAggregate },
@@ -444,6 +485,13 @@ describe("cancelBooking credit refunds", () => {
     mocks.recordBookingEvent.mockResolvedValue(undefined);
     mocks.createCancellationCredit.mockResolvedValue(undefined);
     mocks.sendBookingCancelledEmail.mockResolvedValue(undefined);
+    // #4097: the shortfall task is the row the insert wrote, read back by its key.
+    mocks.sendAdminManualRefundTaskAlert.mockResolvedValue({ sent: true });
+    mocks.txManualRefundTaskCreateMany.mockResolvedValue({ count: 1 });
+    mocks.txManualRefundTaskFindUnique.mockImplementation(async () => {
+      const [{ data }] = mocks.txManualRefundTaskCreateMany.mock.calls.at(-1) ?? [{ data: [] }];
+      return data[0] ? { id: "task_shortfall", amountCents: data[0].amountCents } : null;
+    });
     mocks.processWaitlistForDates.mockResolvedValue(undefined);
     mocks.isXeroConnected.mockResolvedValue(true);
     mocks.enqueueXeroAccountCreditNoteOperation.mockResolvedValue({
@@ -1514,15 +1562,101 @@ describe("cancelBooking credit refunds", () => {
     );
 
     expect(result.status).toBe(200);
+    // #4316: the ask is read and retired under the Payment row lock, as the
+    // paid claim retires one: mirror FAILED and a durable cancellation queued.
+    expect(mocks.txPaymentFindUnique).toHaveBeenCalledWith({
+      where: { id: "payment_addl" },
+      select: { id: true, additionalPaymentIntentId: true, additionalPaymentStatus: true },
+    });
     expect(mocks.paymentUpdate).toHaveBeenCalledWith({
       where: { id: "payment_addl" },
       data: { additionalPaymentStatus: "FAILED" },
     });
+    expect(mocks.enqueuePaymentIntentCancellationRecovery).toHaveBeenCalledWith(
+      expect.objectContaining({ paymentIntentId: "pi_addl_extra", paymentId: "payment_addl" }),
+    );
     // Only the outstanding additional intent is cancelled at Stripe; the
     // captured primary is left alone.
     expect(mocks.cancelPaymentIntentIfCancellableWithResult).toHaveBeenCalledTimes(1);
     expect(mocks.cancelPaymentIntentIfCancellableWithResult).toHaveBeenCalledWith("pi_addl_extra");
     expect(mocks.enqueueXeroModificationCreditNoteOperation).not.toHaveBeenCalled();
+  });
+
+  // #4316 review round 3 (C1): the never-captured claim re-asks the paid-path
+  // question under the Payment row lock. An ask's capture webhook takes only
+  // that row, so a REFUNDED payment read before it can be SUCCEEDED by now.
+  function refundedBookingWithAsk() {
+    return {
+      id: "booking_c1",
+      memberId: "member_1",
+      lodgeId: "lodge_1",
+      status: "CONFIRMED",
+      finalPriceCents: 12000,
+      checkIn: new Date("2026-07-10"),
+      checkOut: new Date("2026-07-12"),
+      member: { id: "member_1", email: "member@example.com", firstName: "Alice" },
+      payment: {
+        id: "payment_c1",
+        bookingId: "booking_c1",
+        amountCents: 10000,
+        refundedAmountCents: 10000,
+        status: "REFUNDED",
+        source: "STRIPE",
+        changeFeeCents: 0,
+        creditAppliedCents: 0,
+        stripePaymentIntentId: "pi_c1_primary",
+        additionalPaymentIntentId: "pi_c1_extra",
+        additionalPaymentStatus: "PENDING",
+        xeroInvoiceId: null,
+      },
+    };
+  }
+
+  it("refuses with the 409 when a capture landed on the payment before the never-captured claim's row lock (#4316 C1)", async () => {
+    const booking = refundedBookingWithAsk();
+    mocks.bookingFindUnique.mockResolvedValueOnce(booking);
+    mocks.txBookingFindUnique.mockResolvedValueOnce(booking);
+    // Under the row lock the ask's capture has committed: the payment holds cash again.
+    mocks.txPaymentFindUnique.mockImplementation(async (args: { select?: Record<string, unknown> }) =>
+      args.select?.status ? { id: "payment_c1", status: "PARTIALLY_REFUNDED", source: "STRIPE", refundedAmountCents: 10000 } : null,
+    );
+    mocks.paymentTransactionFindFirst.mockResolvedValue({ id: "ptx_c1_extra" });
+
+    const result = await cancelBooking("booking_c1", "member_1", "MEMBER", "127.0.0.1", CLUB_FORMAT_TEST, "card");
+
+    expect(result).toMatchObject({ status: 409, error: CANCEL_PAYMENT_JUST_RECORDED_MESSAGE });
+    // Review round 4 (F2): the re-asked read is taken UNDER the row lock - the
+    // lock on this payment precedes the read of its status.
+    const lockOrder = mocks.lockPaymentForRefundedTotal.mock.calls.findIndex(([, id]) => id === "payment_c1");
+    const readOrder = mocks.txPaymentFindUnique.mock.calls.findIndex(
+      ([args]) => (args as { select?: Record<string, unknown> }).select?.status === true,
+    );
+    expect(lockOrder).toBeGreaterThanOrEqual(0);
+    expect(readOrder).toBeGreaterThanOrEqual(0);
+    expect(mocks.lockPaymentForRefundedTotal.mock.invocationCallOrder[lockOrder]).toBeLessThan(
+      mocks.txPaymentFindUnique.mock.invocationCallOrder[readOrder]!,
+    );
+    // Nothing moved: no claim, no FAILED flip, no retirement - the retry takes the paid path.
+    expect(mocks.bookingUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.paymentUpdate).not.toHaveBeenCalled();
+    expect(mocks.enqueuePaymentIntentCancellationRecovery).not.toHaveBeenCalled();
+  });
+
+  it("runs no side effect when the never-captured claim is lost (#4316 C2)", async () => {
+    const booking = refundedBookingWithAsk();
+    mocks.bookingFindUnique.mockResolvedValueOnce(booking);
+    mocks.txBookingFindUnique.mockResolvedValueOnce(booking);
+    mocks.bookingUpdateMany.mockResolvedValueOnce({ count: 0 });
+    mocks.paymentTransactionFindFirst.mockResolvedValue({ id: "ptx_c1_extra" });
+
+    const result = await cancelBooking("booking_c1", "member_1", "MEMBER", "127.0.0.1", CLUB_FORMAT_TEST, "card");
+
+    expect(result.status).toBe(409);
+    // The pre-claim best-effort Stripe cancel may still mark its own row; the
+    // claim transaction itself writes nothing once the claim is lost.
+    expect(mocks.paymentUpdate).not.toHaveBeenCalledWith(expect.objectContaining({ data: { additionalPaymentStatus: "FAILED" } }));
+    expect(mocks.paymentUpdate).not.toHaveBeenCalledWith(expect.objectContaining({ data: { status: "FAILED" } }));
+    expect(mocks.enqueuePaymentIntentCancellationRecovery).not.toHaveBeenCalled();
   });
 
   it("waits for Stripe cancellation before finalising an unpaid booking cancellation", async () => {
@@ -1871,6 +2005,159 @@ describe("cancelBooking credit refunds", () => {
     });
   });
 
+  // #4083 (`INV-PAY-128`): Stripe answered the refund `failed` or `canceled`
+  // without throwing. The pre-persisted debt must stay open for the runner,
+  // never be closed as paid; the runner asks again under a fresh key.
+  // #4083/#4096 (`INV-PAY-128`): Stripe answered the refund `failed` or
+  // `canceled` without throwing. The pre-persisted debt must stay open, never be
+  // closed as paid: re-planned to the refused slices on their next key, fenced
+  // on a row no worker has touched, and the officers alerted once.
+  const cancelRefund = (slice: { paymentTransactionId: string; amountCents: number }, status: string) => ({
+    paymentIntentId: "pi_1",
+    refundId: `re_${slice.paymentTransactionId}_${status}`,
+    amountCents: slice.amountCents,
+    status,
+    slice,
+  });
+
+  it.each(["failed", "canceled"])("leaves the pre-persisted recovery op open, re-planned on a fresh key, when Stripe answers the card refund %s (#4083, #4096)", async (status) => {
+    mocks.calculateRefundAmount.mockReturnValueOnce({ refundAmountCents: 50, refundPercentage: 100 });
+    mocks.refundPaymentTransactions.mockResolvedValueOnce({
+      refunds: [cancelRefund({ paymentTransactionId: "ptx_1", amountCents: 50 }, status)],
+      totalRefundedAmountCents: 50,
+    });
+    mocks.recoveryOperationUpdateMany.mockResolvedValueOnce({ count: 1 });
+    mocks.recoveryOperationFindUnique.mockResolvedValueOnce({ id: "op_cancel", paymentIntentId: "pi_1" });
+
+    const result = await cancelBooking("booking_1", "member_1", "MEMBER", "127.0.0.1", CLUB_FORMAT_TEST, "card");
+
+    expect(result).toEqual({ status: 200, data: expect.objectContaining({ success: true, refundMethod: "card" }) });
+    // The debt was written once, in the claim, with the frozen plan; nothing re-queues it.
+    expect(mocks.enqueueBookingCancellationRefundRecovery).toHaveBeenCalledTimes(1);
+    expect(mocks.markBookingCancellationRefundRecoverySucceeded).not.toHaveBeenCalled();
+    expect(mocks.recoveryOperationUpdateMany).toHaveBeenCalledWith({
+      // #4103 review C2: compare-and-set on the plan the row held (none, here).
+      where: { idempotencyKey: "booking_cancel_refund_recovery_booking_1", status: "PENDING", attempts: 0, allocationPlan: { equals: Prisma.DbNull } },
+      // The amount is not written: it stays the plan's total.
+      data: {
+        allocationPlan: [{ paymentTransactionId: "ptx_1", amountCents: 50, stripeKeySuffix: "refused1" }],
+        lastError: "Stripe refused $0.50 of this card refund (failed or cancelled), so that $0.50 did not go back and is still owed.",
+      },
+    });
+    expect(mocks.recordBookingCancellationRefundRecoveryInlineError).toHaveBeenCalledWith({
+      bookingId: "booking_1",
+      message: "Stripe refused $0.50 of this card refund (failed or cancelled), so that $0.50 did not go back and is still owed.",
+    });
+    expect(mocks.alertPaymentRecoveryOfficers).toHaveBeenCalledTimes(1);
+    expect(mocks.alertPaymentRecoveryOfficers).toHaveBeenCalledWith(
+      expect.objectContaining({ bookingId: "booking_1", operationId: "op_cancel", amountCents: 50, paymentIntentId: "pi_1" }),
+      CLUB_FORMAT_TEST,
+    );
+  });
+
+  it("one slice made, one refused: the made slice is marked and never sent again, and the amount stays the plan's (#4083)", async () => {
+    mocks.calculateRefundAmount.mockReturnValueOnce({ refundAmountCents: 50, refundPercentage: 100 });
+    mocks.refundPaymentTransactions.mockResolvedValueOnce({
+      refunds: [
+        cancelRefund({ paymentTransactionId: "ptx_2", amountCents: 30 }, "succeeded"),
+        cancelRefund({ paymentTransactionId: "ptx_1", amountCents: 20 }, "failed"),
+      ],
+      totalRefundedAmountCents: 50,
+    });
+    mocks.recoveryOperationUpdateMany.mockResolvedValueOnce({ count: 1 });
+    mocks.recoveryOperationFindUnique.mockResolvedValueOnce({ id: "op_cancel", paymentIntentId: "pi_1" });
+
+    await cancelBooking("booking_1", "member_1", "MEMBER", "127.0.0.1", CLUB_FORMAT_TEST, "card");
+
+    const written = mocks.recoveryOperationUpdateMany.mock.calls[0]?.[0] as { data: Record<string, unknown> };
+    expect(written.data.allocationPlan).toEqual([
+      { paymentTransactionId: "ptx_2", amountCents: 30, madeRefundId: "re_ptx_2_succeeded" },
+      { paymentTransactionId: "ptx_1", amountCents: 20, stripeKeySuffix: "refused1" },
+    ]);
+    expect(written.data).not.toHaveProperty("amountCents");
+    expect(mocks.markBookingCancellationRefundRecoverySucceeded).not.toHaveBeenCalled();
+  });
+
+  // #4103 review C2: the re-plan is compare-and-set on the row's plan, so a row
+  // that cannot be read is not moved here: it stays open on its first key, and
+  // the runner reads the refusal back, moves it and alerts.
+  it("the row cannot be read: nothing is re-planned or alerted here, and it is still not closed (#4096, #4103)", async () => {
+    mocks.calculateRefundAmount.mockReturnValueOnce({ refundAmountCents: 50, refundPercentage: 100 });
+    mocks.refundPaymentTransactions.mockResolvedValueOnce({
+      refunds: [cancelRefund({ paymentTransactionId: "ptx_1", amountCents: 50 }, "failed")],
+      totalRefundedAmountCents: 50,
+    });
+    mocks.recoveryOperationFindUnique.mockRejectedValueOnce(new Error("database blip"));
+
+    await cancelBooking("booking_1", "member_1", "MEMBER", "127.0.0.1", CLUB_FORMAT_TEST, "card");
+
+    expect(mocks.recoveryOperationUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.alertPaymentRecoveryOfficers).not.toHaveBeenCalled();
+    expect(mocks.markBookingCancellationRefundRecoverySucceeded).not.toHaveBeenCalled();
+  });
+
+  // #4103 (review g): a slice Stripe refused before a later one threw is
+  // re-planned by the catch, as at every other pre-persisted door.
+  it("refused then thrown: the refused slice moves to its next key, the one that threw keeps its own (#4103)", async () => {
+    mocks.calculateRefundAmount.mockReturnValueOnce({ refundAmountCents: 50, refundPercentage: 100 });
+    mocks.planStripeRefundAllocation.mockResolvedValueOnce({
+      slices: [
+        { paymentTransactionId: "ptx_2", amountCents: 30 },
+        { paymentTransactionId: "ptx_1", amountCents: 20 },
+      ],
+      plannedAmountCents: 50,
+      totalRefundableCents: 50,
+    });
+    const thrown = Object.assign(new mocks.PartialRefundError(0), {
+      refunds: [cancelRefund({ paymentTransactionId: "ptx_2", amountCents: 30 }, "failed")],
+    });
+    mocks.refundPaymentTransactions.mockRejectedValueOnce(thrown);
+    mocks.recoveryOperationUpdateMany.mockResolvedValueOnce({ count: 1 });
+    mocks.recoveryOperationFindUnique.mockResolvedValueOnce({ id: "op_cancel", paymentIntentId: "pi_1" });
+
+    await cancelBooking("booking_1", "member_1", "MEMBER", "127.0.0.1", CLUB_FORMAT_TEST, "card");
+
+    const written = mocks.recoveryOperationUpdateMany.mock.calls[0]?.[0] as { data: Record<string, unknown> };
+    expect(written.data.allocationPlan).toEqual([
+      { paymentTransactionId: "ptx_2", amountCents: 30, stripeKeySuffix: "refused1" },
+      { paymentTransactionId: "ptx_1", amountCents: 20 },
+    ]);
+    expect(mocks.alertPaymentRecoveryOfficers).toHaveBeenCalledTimes(1);
+    expect(mocks.markBookingCancellationRefundRecoverySucceeded).not.toHaveBeenCalled();
+  });
+
+  it("a row a worker already holds is left to the worker: no re-plan, no alert, still not closed (#4096)", async () => {
+    mocks.calculateRefundAmount.mockReturnValueOnce({ refundAmountCents: 50, refundPercentage: 100 });
+    mocks.refundPaymentTransactions.mockResolvedValueOnce({
+      refunds: [cancelRefund({ paymentTransactionId: "ptx_1", amountCents: 50 }, "failed")],
+      totalRefundedAmountCents: 50,
+    });
+    mocks.recoveryOperationUpdateMany.mockResolvedValueOnce({ count: 0 });
+    // The row is there to read: only the lost fence may stop the alert.
+    mocks.recoveryOperationFindUnique.mockResolvedValueOnce({ id: "op_cancel", paymentIntentId: "pi_1" });
+
+    await cancelBooking("booking_1", "member_1", "MEMBER", "127.0.0.1", CLUB_FORMAT_TEST, "card");
+
+    expect(mocks.alertPaymentRecoveryOfficers).not.toHaveBeenCalled();
+    expect(mocks.markBookingCancellationRefundRecoverySucceeded).not.toHaveBeenCalled();
+
+  });
+
+  it("CONTROL: closes the pre-persisted recovery op when Stripe answers the card refund pending (#4083)", async () => {
+    mocks.calculateRefundAmount.mockReturnValueOnce({ refundAmountCents: 50, refundPercentage: 100 });
+    mocks.refundPaymentTransactions.mockResolvedValueOnce({
+      refunds: [
+        { paymentIntentId: "pi_1", refundId: "re_pending", amountCents: 50, status: "pending", slice: { paymentTransactionId: "ptx_1", amountCents: 50 } },
+      ],
+      totalRefundedAmountCents: 50,
+    });
+
+    await cancelBooking("booking_1", "member_1", "MEMBER", "127.0.0.1", CLUB_FORMAT_TEST, "card");
+
+    expect(mocks.markBookingCancellationRefundRecoverySucceeded).toHaveBeenCalledWith({ idempotencyKey: "booking_cancel_refund_recovery_booking_1", sentPlan: [{ paymentTransactionId: "ptx_1", amountCents: 50 }], store: CLOSE_TX });
+    expect(mocks.recordBookingCancellationRefundRecoveryInlineError).not.toHaveBeenCalled();
+  });
+
   // ---------------------------------------------------------------------------
   // F1 (#1350): an outstanding ADDITIONAL payment intent gets a durable
   // CANCEL_PAYMENT_INTENT recovery operation INSIDE the claim transaction, so
@@ -1920,7 +2207,7 @@ describe("cancelBooking credit refunds", () => {
           paymentId: "payment_1",
           stripePaymentIntentId: "pi_additional_1",
         },
-        orderBy: { createdAt: "desc" },
+        // #4132: no order - the intent id is unique, so at most one row matches.
         select: { id: true, amountCents: true },
       });
       expect(mocks.enqueuePaymentIntentCancellationRecovery).toHaveBeenCalledWith({
@@ -2053,6 +2340,7 @@ describe("cancelBooking credit refunds", () => {
         amountCents: data.amountCents,
       }));
       mocks.runPaymentRecoveryOperationNow.mockResolvedValue("succeeded");
+      mocks.recoveryOperationFindUnique.mockResolvedValue({ status: "SUCCEEDED" });
       mocks.calculateRefundAmount.mockReturnValue({ refundAmountCents: 2500, refundPercentage: 50 });
     });
 
@@ -2088,7 +2376,80 @@ describe("cancelBooking credit refunds", () => {
       expect(mocks.enqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
       expect(mocks.enqueueXeroAccountCreditNoteOperation).not.toHaveBeenCalled();
       expect(result).toMatchObject({
-        data: { refundAmountCents: 2500, refundMethod: "card", message: expect.stringContaining("organiser's card") },
+        data: {
+          refundAmountCents: 2500,
+          refundMethod: "card",
+          organiserRefund: { method: "organiser_card", amountCents: 2500 },
+          message: expect.stringContaining("organiser's card"),
+        },
+      });
+      // #3973: made, by the debt's own status re-read after the run.
+      expect(mocks.recoveryOperationFindUnique).toHaveBeenCalledWith({ where: { id: "op_child_cancel" }, select: { status: true } });
+      // #3973: the joiner's email names the organiser's card, from this branch's
+      // own settlement answer; the audit row still records "card", as before.
+      expect(mocks.sendBookingCancelledEmail).toHaveBeenCalledTimes(1);
+      expect(mocks.sendBookingCancelledEmail.mock.calls[0][5]).toBe(2500);
+      expect(mocks.sendBookingCancelledEmail.mock.calls[0][7]).toBe("organiser_card");
+      expect(mocks.logAudit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          metadata: expect.objectContaining({ refundMethod: "card", refundTo: "organiser" }),
+        }),
+      );
+    });
+
+    it.each([
+      ["run failed", "failed", () => Promise.resolve({ status: "FAILED" })],
+      ["run not claimed", "not-claimed", () => Promise.resolve({ status: "PENDING" })],
+      // The debt's own status decides, never the run's answer.
+      ["run succeeded but the debt still PENDING", "succeeded", () => Promise.resolve({ status: "PENDING" })],
+      ["run succeeded but the debt not found", "succeeded", () => Promise.resolve(null)],
+      // A re-read that fails after the refund neither claims it nor fails the cancel.
+      ["run succeeded but the re-read threw", "succeeded", () => Promise.reject(new Error("database blip"))],
+    ] as const)("#3973: %s: the refund is on its way, never \"processed\"", async (_label, outcome, reread) => {
+      mocks.runPaymentRecoveryOperationNow.mockResolvedValue(outcome);
+      mocks.recoveryOperationFindUnique.mockImplementation(reread);
+
+      const result = await cancelBooking("booking_1", "member_1", "MEMBER", "127.0.0.1", CLUB_FORMAT_TEST);
+
+      expect(result.status).toBe(200);
+      expect(mocks.sendBookingCancelledEmail).toHaveBeenCalledTimes(1);
+      expect(mocks.sendBookingCancelledEmail.mock.calls[0][5]).toBe(2500);
+      expect(mocks.sendBookingCancelledEmail.mock.calls[0][7]).toBe("organiser_card_pending");
+      expect(result).toMatchObject({
+        data: { refundAmountCents: 2500, refundMethod: "card", organiserRefund: { method: "organiser_card_pending", amountCents: 2500 } },
+      });
+    });
+
+    it.each([
+      [
+        "PENDING",
+        "group_cancel_refunding",
+        "Booking cancelled. The group organiser's cancellation is already refunding $30.00 for this booking to the organiser's card.",
+      ],
+      [
+        "SUCCEEDED",
+        "group_cancel_refunded",
+        "Booking cancelled. The group organiser's cancellation refunded $30.00 for this booking to the organiser's card.",
+      ],
+    ] as const)("#3973: behind the group's cancellation (its debt %s), refunds nothing of its own and names the group's refund", async (status, method, message) => {
+      // The organiser's cancellation of the group already wrote this child's debt.
+      mocks.txRecoveryOperationFindUnique.mockResolvedValue({ id: "op_group_cancel", amountCents: 3000, status });
+
+      const result = await cancelBooking("booking_1", "member_1", "MEMBER", "127.0.0.1", CLUB_FORMAT_TEST);
+
+      expect(result.status).toBe(200);
+      expect(mocks.txRecoveryOperationCreate).not.toHaveBeenCalled();
+      expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
+      // The email names the group's refund, never "No refund was applicable";
+      // `{{refundAmount}}` stays this booking's own 0, the sentence names 3000.
+      expect(mocks.sendBookingCancelledEmail).toHaveBeenCalledTimes(1);
+      const call = mocks.sendBookingCancelledEmail.mock.calls[0];
+      expect(call[5]).toBe(0);
+      expect(call[7]).toBe(method);
+      expect(call[11]).toBe(3000);
+      // The confirmation screen reads the same answer.
+      expect(result).toMatchObject({
+        data: { refundAmountCents: 0, refundMethod: "card", organiserRefund: { method, amountCents: 3000 }, message },
       });
     });
 
@@ -2185,7 +2546,7 @@ describe("cancelBooking credit refunds", () => {
       // Happy path closes the operation.
       expect(
         mocks.markBookingCancellationRefundRecoverySucceeded
-      ).toHaveBeenCalledWith({ bookingId: "booking_1" });
+      ).toHaveBeenCalledWith({ idempotencyKey: "booking_cancel_refund_recovery_booking_1", sentPlan: [{ paymentTransactionId: "ptx_1", amountCents: 5000 }], store: CLOSE_TX });
       expect(
         mocks.markBookingCancellationRefundRecoverySucceeded.mock
           .invocationCallOrder[0]
@@ -2436,7 +2797,11 @@ describe("cancelBooking credit refunds", () => {
       1500,
       // The booking's lodge. This read `undefined` while the fixture carried no
       // lodgeId — which Booking.lodgeId being NOT NULL means never happens.
-      "lodge_1"
+      "lodge_1",
+      "cancellation-policy",
+      5000,
+      // #4097: nothing beside the card refund.
+      { bankCents: 0, checkCents: 0 },
     );
   });
 
@@ -2479,6 +2844,290 @@ describe("cancelBooking credit refunds", () => {
     });
     expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
     expect(mocks.applyLocalRefundAllocation).not.toHaveBeenCalled();
+  });
+
+  describe("#4084: an own-card refund is reported made only once Stripe has made it", () => {
+    // The states the Booking Modified doors are driven through (#4070); the
+    // cancel's email and confirmation take the same answer (`ownCardRefundMade`).
+    // A thrown call, or (#4083, `INV-PAY-128`) a refund Stripe refused, records
+    // an inline error and leaves the pre-persisted recovery operation open; the
+    // cancel queues nothing new, the debt committed with the claim.
+    it.each(OWN_CARD_REFUND_STATES)("$label", async ({ answer, queued, destination }) => {
+      primeOwnCardRefund(mocks.refundPaymentTransactions, answer);
+      const method = destination === "own" ? "card" : "card_pending";
+
+      const result = await cancelBooking("booking_1", "member_1", "MEMBER", "127.0.0.1", CLUB_FORMAT_TEST, "card");
+
+      expect(result.status).toBe(200);
+      expect(mocks.sendBookingCancelledEmail).toHaveBeenCalledTimes(1);
+      expect(mocks.sendBookingCancelledEmail.mock.calls[0][5]).toBe(5000);
+      expect(mocks.sendBookingCancelledEmail.mock.calls[0][7]).toBe(method);
+      // The result and the audit row still say "card"; only the wording follows Stripe's answer.
+      expect(result).toMatchObject({
+        data: { refundAmountCents: 5000, refundMethod: "card", ownCardRefund: { method, amountCents: 5000 } },
+      });
+      expect(result).toMatchObject({ data: { message: expect.stringContaining(method === "card" ? "processed" : "on its way") } });
+      expect(mocks.logAudit).toHaveBeenCalledWith(
+        expect.objectContaining({ metadata: expect.objectContaining({ refundMethod: "card" }) }),
+      );
+      expect(mocks.recordBookingCancellationRefundRecoveryInlineError).toHaveBeenCalledTimes(queued ? 1 : 0);
+      expect(mocks.markBookingCancellationRefundRecoverySucceeded).toHaveBeenCalledTimes(queued ? 0 : 1);
+      // #4145: REFUNDED only with the close that recorded the refund made; one
+      // still owed is the runner's to record when its close moves the row.
+      const refunded = mocks.recordBookingEvent.mock.calls.filter(([event]) => event.type === "REFUNDED");
+      expect(refunded).toEqual(queued ? [] : [[{ bookingId: "booking_1", type: "REFUNDED", actorMemberId: "member_1", amountCents: 5000, reason: "50% refunded to the original payment method." }]]);
+    });
+
+    it("#4145: writes no REFUNDED event when its close loses the row - the runner's close recorded it", async () => {
+      mocks.markBookingCancellationRefundRecoverySucceeded.mockResolvedValueOnce({ count: 0 });
+      mocks.recoveryOperationFindUnique.mockResolvedValueOnce({ id: "op_1", status: "SUCCEEDED", attempts: 1 });
+
+      const result = await cancelBooking("booking_1", "member_1", "MEMBER", "127.0.0.1", CLUB_FORMAT_TEST, "card");
+
+      expect(result.status).toBe(200);
+      expect(mocks.markBookingCancellationRefundRecoverySucceeded).toHaveBeenCalledTimes(1);
+      expect(mocks.recordBookingEvent).not.toHaveBeenCalledWith(expect.objectContaining({ type: "REFUNDED" }));
+    });
+
+    it("a zero plan calls neither Stripe nor recovery, and (#4097) records the whole refund, to check when nothing holds it", async () => {
+      mocks.planStripeRefundAllocation.mockResolvedValueOnce({ slices: [], plannedAmountCents: 0, totalRefundableCents: 0 });
+
+      const result = await cancelBooking("booking_1", "member_1", "MEMBER", "127.0.0.1", CLUB_FORMAT_TEST, "card");
+
+      expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
+      expect(mocks.enqueueBookingCancellationRefundRecovery).not.toHaveBeenCalled();
+      expect(mocks.sendBookingCancelledEmail.mock.calls[0][7]).toBe("card");
+      expect(mocks.sendBookingCancelledEmail.mock.calls[0][12]).toEqual({ bankCents: 0, checkCents: 5000 });
+      expect(mocks.txManualRefundTaskCreateMany).toHaveBeenCalledTimes(1);
+      expect(mocks.txManualRefundTaskCreateMany).toHaveBeenCalledWith({
+        data: [expect.objectContaining({ amountCents: 5000, raisedAmountCents: 5000, occurrenceKey: "cancel-card-shortfall:booking_1:check" })],
+        skipDuplicates: true,
+      });
+      // Nothing went to the card, so nothing is recorded as refunded to it.
+      expect(mocks.recordBookingEvent).not.toHaveBeenCalledWith(expect.objectContaining({ type: "REFUNDED" }));
+      // Nothing holds it, so no bank transfer is promised.
+      expect(result).toMatchObject({
+        data: {
+          refundAmountCents: 5000,
+          ownCardRefund: { method: "card", amountCents: 0, toCheckCents: 5000 },
+          message: expect.stringContaining("The club will be in touch about the $50.00 refund."),
+        },
+      });
+      expect(result).not.toMatchObject({ data: { message: expect.stringContaining("bank transfer") } });
+    });
+
+    describe("#4097 (`INV-PAY-129`): what the card refund plan cannot carry is recorded, split by what holds it", () => {
+      const prime = (plannedAmountCents: number) =>
+        mocks.planStripeRefundAllocation.mockResolvedValueOnce({
+          slices: [{ paymentTransactionId: "txn_1", amountCents: plannedAmountCents }],
+          plannedAmountCents,
+          totalRefundableCents: plannedAmountCents,
+        });
+      /** The payment's captured non-card charges, as the raise reads them; every other read sees none. */
+      const nonCardCharges = (headroomCents: number) =>
+        mocks.txPaymentTransactionFindMany.mockImplementation(async (args: { select?: { stripePaymentIntentId?: unknown } }) =>
+          args?.select?.stripePaymentIntentId
+            ? [{ id: "txn_bank", source: "INTERNET_BANKING", stripePaymentIntentId: null, amountCents: headroomCents, refundedAmountCents: 0 }]
+            : [],
+        );
+
+      it("a partial plan whose rest the non-card charges hold raises ONE bank task, inside the claim, and promises a bank transfer", async () => {
+        prime(3000);
+        nonCardCharges(2000);
+
+        const result = await cancelBooking("booking_1", "member_1", "MEMBER", "127.0.0.1", CLUB_FORMAT_TEST, "card");
+
+        expect(result.status).toBe(200);
+        expect(mocks.txManualRefundTaskCreateMany).toHaveBeenCalledTimes(1);
+        expect(mocks.txManualRefundTaskCreateMany).toHaveBeenCalledWith({
+          data: [
+            expect.objectContaining({
+              bookingId: "booking_1",
+              paymentId: "payment_1",
+              amountCents: 2000,
+              raisedAmountCents: 2000,
+              kind: "CANCELLED_BOOKING_HAND_BACK",
+              occurrenceKey: "cancel-card-shortfall:booking_1",
+            }),
+          ],
+          skipDuplicates: true,
+        });
+        // On the claim's own transaction client, so it commits with the CANCELLED flip.
+        expect(mocks.txManualRefundTaskCreateMany.mock.invocationCallOrder[0]).toBeLessThan(
+          mocks.refundPaymentTransactions.mock.invocationCallOrder[0],
+        );
+        // The card's own refund is what the plan carries, and its event says it is a part.
+        expect(mocks.refundPaymentTransactions).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 3000 }));
+        expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith("payment_1", 3000, expect.anything());
+        expect(mocks.recordBookingEvent).toHaveBeenCalledWith(
+          expect.objectContaining({ type: "REFUNDED", amountCents: 3000, reason: "$30.00 of the 50% refund ($50.00) refunded to the original payment method." }),
+        );
+        // Frozen on the CANCELLED event for the booking page.
+        expect(mocks.txBookingEventCreate).toHaveBeenCalledWith(
+          expect.objectContaining({ data: expect.objectContaining({ snapshot: expect.objectContaining({ cardShortfall: { cardCents: 3000, bankCents: 2000, checkCents: 0 } }) }) }),
+        );
+        const emailCall = mocks.sendBookingCancelledEmail.mock.calls[0];
+        expect(emailCall[5]).toBe(5000);
+        expect(emailCall[7]).toBe("card");
+        expect(emailCall[11]).toBe(5000);
+        expect(emailCall[12]).toEqual({ bankCents: 2000, checkCents: 0 });
+        expect(result).toMatchObject({
+          data: {
+            refundAmountCents: 5000,
+            ownCardRefund: { method: "card", amountCents: 3000, byHandCents: 2000 },
+            message:
+              "Booking cancelled. 50% refund of $50.00: A refund of $30.00 has been processed to your original payment method, and the club will refund the remaining $20.00 to you by bank transfer.",
+          },
+        });
+        expect(mocks.logAudit).toHaveBeenCalledWith(
+          expect.objectContaining({
+            metadata: expect.objectContaining({ cardRefundCents: 3000, bankCents: 2000, checkCents: 0, shortfallTaskIds: ["task_shortfall"] }),
+          }),
+        );
+      });
+
+      it("splits the rest: what the non-card charges hold by bank transfer, the remainder to check", async () => {
+        prime(3000);
+        nonCardCharges(500);
+
+        const result = await cancelBooking("booking_1", "member_1", "MEMBER", "127.0.0.1", CLUB_FORMAT_TEST, "card");
+
+        const calls = mocks.txManualRefundTaskCreateMany.mock.calls as unknown as Array<[{ data: Array<{ occurrenceKey: string; amountCents: number }> }]>;
+        const raised = calls.map(([{ data }]) => [data[0]!.occurrenceKey, data[0]!.amountCents]);
+        expect(raised).toEqual([
+          ["cancel-card-shortfall:booking_1", 500],
+          ["cancel-card-shortfall:booking_1:check", 1500],
+        ]);
+        expect(result).toMatchObject({
+          data: {
+            ownCardRefund: { amountCents: 3000, byHandCents: 500, toCheckCents: 1500 },
+            message: expect.stringContaining(
+              "A refund of $30.00 has been processed to your original payment method; the club will refund $5.00 to you by bank transfer and will be in touch about the remaining $15.00.",
+            ),
+          },
+        });
+      });
+
+      it("alerts the officers once, straight after the claim commits, and says when the member was not emailed", async () => {
+        prime(3000);
+
+        await cancelBooking("booking_1", "member_1", "MEMBER", "127.0.0.1", CLUB_FORMAT_TEST, "card");
+
+        expect(mocks.sendAdminManualRefundTaskAlert).toHaveBeenCalledTimes(1);
+        expect(mocks.sendAdminManualRefundTaskAlert).toHaveBeenCalledWith(
+          expect.objectContaining({ bookingId: "booking_1", refundAmountCents: 2000, situation: "card-refund-shortfall" }),
+          CLUB_FORMAT_TEST,
+        );
+        expect(mocks.sendAdminManualRefundTaskAlert.mock.calls[0][0].reason).toContain("$20.00 to check before paying");
+        expect(mocks.sendAdminManualRefundTaskAlert.mock.calls[0][0].reason).toContain("The member is being sent a cancellation email");
+        expect(mocks.sendAdminManualRefundTaskAlert.mock.calls[0][0].reason).toContain("may still be going through");
+        // Before the promo cleanup, the first thing after the commit.
+        expect(mocks.sendAdminManualRefundTaskAlert.mock.invocationCallOrder[0]).toBeLessThan(
+          mocks.refundPaymentTransactions.mock.invocationCallOrder[0],
+        );
+      });
+
+      it("an officer cancelling on the member's behalf reads the member's card in the result", async () => {
+        prime(3000);
+        nonCardCharges(2000);
+
+        const result = await cancelBooking("booking_1", "officer_1", "ADMIN", "127.0.0.1", CLUB_FORMAT_TEST, "card");
+
+        expect(result).toMatchObject({
+          data: { message: expect.stringContaining("processed to the member's original payment method, and the club will refund the remaining $20.00 to the member by bank transfer.") },
+        });
+      });
+
+      it("a re-driven cancel loses the claim and raises and alerts nothing more", async () => {
+        prime(3000);
+        await cancelBooking("booking_1", "member_1", "MEMBER", "127.0.0.1", CLUB_FORMAT_TEST, "card");
+        mocks.txBookingFindUnique.mockResolvedValue({ ...(await mocks.txBookingFindUnique.mock.results[0].value), status: "CANCELLED" });
+
+        const replay = await cancelBooking("booking_1", "member_1", "MEMBER", "127.0.0.1", CLUB_FORMAT_TEST, "card");
+
+        expect(replay.status).not.toBe(200);
+        expect(mocks.txManualRefundTaskCreateMany).toHaveBeenCalledTimes(1);
+        expect(mocks.sendAdminManualRefundTaskAlert).toHaveBeenCalledTimes(1);
+      });
+
+      it("MUTATION: raises nothing off the card branch - a hand-settled payment's cancel raises only its own hand-back", async () => {
+        const base = (await mocks.txBookingFindUnique()) as { payment: Record<string, unknown> };
+        const manual = { ...base, payment: { ...base.payment, manuallyMarkedPaidAt: new Date("2026-06-01T00:00:00.000Z") } };
+        mocks.bookingFindUnique.mockResolvedValue(manual);
+        mocks.txBookingFindUnique.mockResolvedValue(manual);
+        mocks.txManualRefundTaskCreate.mockResolvedValue({ id: "task_cash" });
+        prime(0);
+
+        const result = await cancelBooking("booking_1", "member_1", "MEMBER", "127.0.0.1", CLUB_FORMAT_TEST, "card");
+
+        expect(result).toMatchObject({ status: 200, data: { refundMethod: "manual" } });
+        expect(mocks.txManualRefundTaskCreate).toHaveBeenCalledTimes(1);
+        expect(mocks.txManualRefundTaskCreateMany).not.toHaveBeenCalled();
+        expect(mocks.sendAdminManualRefundTaskAlert).toHaveBeenCalledTimes(1);
+        expect(mocks.sendAdminManualRefundTaskAlert.mock.calls[0][0].situation).toBeUndefined();
+      });
+
+      it("#3949 (owner decision, 22 Oct 2026): a joiner's own cancel of a place the organiser paid for by internet banking raises the organiser's hand-back, emails the organiser wording and alerts with it", async () => {
+        const base = (await mocks.txBookingFindUnique()) as { payment: Record<string, unknown> };
+        const child = { ...base, organiserSettled: true, parentBookingId: "organiser_booking", payment: { ...base.payment, source: "INTERNET_BANKING", manuallyMarkedPaidAt: null } };
+        mocks.bookingFindUnique.mockResolvedValue(child);
+        mocks.txBookingFindUnique.mockResolvedValue(child);
+        mocks.txManualRefundTaskCreate.mockResolvedValue({ id: "task_organiser" });
+        prime(0);
+
+        const result = await cancelBooking("booking_1", "member_1", "MEMBER", "127.0.0.1", CLUB_FORMAT_TEST, "credit");
+
+        expect(result).toMatchObject({ status: 200, data: { refundMethod: "manual", organiserRefund: { method: "organiser_by_hand" } } });
+        const reason = mocks.txManualRefundTaskCreate.mock.calls[0][0].data.reason as string;
+        expect(reason).toContain("the group organiser (Olive Organiser) paid for it by internet banking");
+        expect(reason).toContain("to the group organiser by bank transfer");
+        expect(mocks.sendBookingCancelledEmail.mock.calls[0][7]).toBe("organiser_by_hand");
+        expect(mocks.sendAdminManualRefundTaskAlert).toHaveBeenCalledTimes(1);
+        const alert = mocks.sendAdminManualRefundTaskAlert.mock.calls[0][0] as { situation: string; memberName: string; reason: string };
+        expect(alert.situation).toBe("joiner-cancel-organiser");
+        // Review round 4: the Organiser row names the organiser, as #4042's alert does; the reason names the joiner;
+        // officer-facing words cite no issue numbers.
+        expect(alert.memberName).toBe("Olive Organiser");
+        expect(alert.reason).toMatch(/cancelled their own place in the group/);
+        for (const words of [reason, alert.reason]) expect(words).not.toMatch(/#\d/);
+      });
+
+      it("a refund the plan carries in full raises no task and no alert", async () => {
+        const result = await cancelBooking("booking_1", "member_1", "MEMBER", "127.0.0.1", CLUB_FORMAT_TEST, "card");
+
+        expect(result).toMatchObject({ data: { ownCardRefund: { method: "card", amountCents: 5000 } } });
+        expect(result).not.toMatchObject({ data: { ownCardRefund: { byHandCents: expect.anything() } } });
+        expect(mocks.txManualRefundTaskCreateMany).not.toHaveBeenCalled();
+        expect(mocks.sendAdminManualRefundTaskAlert).not.toHaveBeenCalled();
+        expect(mocks.sendBookingCancelledEmail.mock.calls[0][12]).toEqual({ bankCents: 0, checkCents: 0 });
+        expect(mocks.recordBookingEvent).toHaveBeenCalledWith(expect.objectContaining({ type: "REFUNDED", reason: "50% refunded to the original payment method." }));
+      });
+
+      it("a partial plan whose card refund threw is on its way, beside the remainder", async () => {
+        prime(3000);
+        nonCardCharges(2000);
+        mocks.refundPaymentTransactions.mockRejectedValueOnce(new Error("Stripe unavailable"));
+
+        const result = await cancelBooking("booking_1", "member_1", "MEMBER", "127.0.0.1", CLUB_FORMAT_TEST, "card");
+
+        expect(mocks.sendBookingCancelledEmail.mock.calls[0][7]).toBe("card_pending");
+        expect(result).toMatchObject({
+          data: {
+            ownCardRefund: { method: "card_pending", amountCents: 3000, byHandCents: 2000 },
+            message: expect.stringContaining("A refund of $30.00 is on its way to your original payment method, and the club will refund the remaining $20.00"),
+          },
+        });
+      });
+    });
+
+    it("a partial refund that threw is on its way, not processed", async () => {
+      mocks.refundPaymentTransactions.mockRejectedValueOnce(new mocks.PartialRefundError(4000));
+
+      const result = await cancelBooking("booking_1", "member_1", "MEMBER", "127.0.0.1", CLUB_FORMAT_TEST, "card");
+
+      expect(mocks.sendBookingCancelledEmail.mock.calls[0][7]).toBe("card_pending");
+      expect(result).toMatchObject({ data: { ownCardRefund: { method: "card_pending", amountCents: 5000 } } });
+    });
   });
 
   describe("the cancellation's ledger lines post inside the claim (#3611)", () => {
@@ -3151,9 +3800,38 @@ describe("cancelBooking credit refunds", () => {
       );
 
       expect(result.status).toBe(409);
+      // #4316 review round 4: told a payment was just recorded, not that the
+      // booking is being cancelled by someone else.
+      expect(result).toMatchObject({ error: CANCEL_PAYMENT_JUST_RECORDED_MESSAGE });
       expect(mocks.restoreCreditFromBooking).not.toHaveBeenCalled();
       expect(mocks.paymentUpdate).not.toHaveBeenCalled();
       expect(mocks.bookingUpdate).not.toHaveBeenCalled();
+    });
+
+    // #4316 review round 4 (F1): a lost claim on a NEVER-captured payment - the
+    // shape whose won claim flips the payment FAILED - writes no FAILED flip.
+    function lostNeverCapturedClaim(claimCount: number) {
+      const booking = neverCapturedBooking({}, { status: "PENDING" });
+      mocks.bookingFindUnique.mockResolvedValueOnce(booking);
+      mocks.txBookingFindUnique.mockResolvedValueOnce(booking);
+      mocks.txPaymentTransactionFindFirst.mockResolvedValue(null);
+      mocks.paymentTransactionFindFirst.mockResolvedValue(null);
+      mocks.bookingUpdateMany.mockResolvedValueOnce({ count: claimCount });
+      return cancelBooking("bk_nc", "member_1", "MEMBER", "127.0.0.1", CLUB_FORMAT_TEST, "card");
+    }
+
+    it("CONTROL: a won claim on a never-captured payment flips it FAILED (#4316 F1)", async () => {
+      const result = await lostNeverCapturedClaim(1);
+
+      expect(result.status).toBe(200);
+      expect(mocks.paymentUpdate).toHaveBeenCalledWith({ where: { id: "payment_nc" }, data: { status: "FAILED" } });
+    });
+
+    it("a lost claim on a never-captured payment writes no FAILED flip (#4316 F1)", async () => {
+      const result = await lostNeverCapturedClaim(0);
+
+      expect(result).toMatchObject({ status: 409, error: "This booking is already being cancelled or has been cancelled" });
+      expect(mocks.paymentUpdate).not.toHaveBeenCalledWith(expect.objectContaining({ data: { status: "FAILED" } }));
     });
 
     const pendingBooking = () => ({

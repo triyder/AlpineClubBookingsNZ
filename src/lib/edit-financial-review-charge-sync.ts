@@ -1,10 +1,9 @@
 import "server-only";
 
-import { PaymentSource } from "@prisma/client";
-
 import { raiseReviewChargeAsk, sizeReviewChargeAsk } from "@/lib/additional-payment-ask";
 import { reissueRaisedAskIfCurrencyChanged } from "@/lib/additional-intent-currency";
-import { hasCapturedPayment } from "@/lib/booking-payment-state";
+import { canAskCardForReviewCharge, refusesReviewChargeForCancellation } from "@/lib/booking-payment-state";
+import { settleCancelledEditReviewCharge } from "@/lib/edit-financial-review-charge-cancelled";
 import { createModificationAdditionalPaymentIntent } from "@/lib/booking-modification-settlement";
 import type { ClubFormat } from "@/lib/club-format";
 import { recordCarriedEditReviewChargeBalance } from "@/lib/edit-financial-review-carried-balance";
@@ -78,6 +77,10 @@ export type EditReviewChargeMember = {
  *   * `not-raised`     - the ask does NOT exist and the money IS owed. The debt
  *                        is durable (a recovery row), and a replay that sees this
  *                        must leave its operation open.
+ *   * `booking-cancelled` - #4272: the booking was cancelled after the
+ *                        completion committed, so nothing was asked; what the
+ *                        shares leave uncollected is recorded for an officer.
+ *                        Terminal, like `already-paid`.
  *   * `deferred`       - #3402: another run holds this edit's raise claim (or
  *                        this run lost its lease), so this run's share is not yet
  *                        known to be asked for. It is covered by that holder's
@@ -92,6 +95,7 @@ export type EditReviewChargeSyncOutcome =
   | "raised"
   | "already-paid"
   | "not-raised"
+  | "booking-cancelled"
   | "deferred";
 
 /** What the sync did, and what the request now asks for. */
@@ -104,6 +108,8 @@ export type EditReviewChargeSyncResult = {
   totalCents: number;
   /** #3371: the carried part; the member is asked `totalCents + carriedCents`. */
   carriedCents: number;
+  /** #4272, `booking-cancelled` only: whether this run wrote the uncollected-share record. */
+  recordedUncollected?: boolean;
 };
 
 /**
@@ -315,6 +321,24 @@ async function syncEditReviewChargeRequestUnderClaim(
     };
   }
 
+  // #4272: a booking cancelled since the completion committed is asked nothing,
+  // before any provider call - neither a raise of this edit's request, whose
+  // intent the cancellation retired, nor a currency re-issue or a first mint.
+  // Under this claim, what the shares leave uncollected is recorded for an
+  // officer (`settleCancelledEditReviewCharge`): `booking-cancelled`, or
+  // `already-paid` when a paid request covers them. A failure there throws, and
+  // the caller makes the debt durable on the recovery row.
+  const cancelledSince = await prisma.payment.findUnique({
+    where: { id: paymentId },
+    select: { booking: { select: { status: true } } },
+  });
+  if (cancelledSince && refusesReviewChargeForCancellation(cancelledSince.booking)) {
+    const settled = await settleCancelledEditReviewCharge({
+      bookingId, paymentId, bookingModificationId, memberId: member?.id ?? null, format,
+    });
+    return { result: settled, coveredOwedCents: settled.totalCents, providerCall: null };
+  }
+
   const existing = await findEditReviewChargeRequest({
     paymentId,
     bookingModificationId,
@@ -493,16 +517,20 @@ async function syncEditReviewChargeRequestUnderClaim(
   }
 
   // No request yet: mint through the same function every ordinary booking-edit
-  // price increase uses. Its guard on a captured card payment is answered with
-  // the payment as it stands NOW, re-read after the commit, rather than with a
-  // literal `true` - a constant there would make the minter's own guard
-  // permanently dead for this caller, which is the opposite of letting it remain
-  // the one definition.
+  // price increase uses. Its guard on a card to ask is answered with the
+  // payment AND its booking's status as they stand NOW, re-read after the
+  // commit, rather than with a literal `true` - a constant there would make the
+  // minter's own guard permanently dead for this caller, which is the opposite
+  // of letting it remain the one definition.
   const payment = await prisma.payment.findUnique({
     where: { id: paymentId },
     select: {
       id: true,
       status: true,
+      // #3947: half of `canAskCardForReviewCharge`, the question the route
+      // chooser asked before the claim. Read here rather than carried, for the
+      // same reason as the payment: the guard answers for the booking now.
+      booking: { select: { status: true } },
       amountCents: true,
       refundedAmountCents: true,
       source: true,
@@ -537,9 +565,22 @@ async function syncEditReviewChargeRequestUnderClaim(
       // (`pendingRefundAmountCents` 0) and a settlement it does not choose.
       pendingRefundAmountCents: 0, organiserChildRefund: null,
       paymentId, memberFirstName: "", // #3369: mints an ask, sends nothing.
-      additionalAsk: ask,
-      hasSucceededPayment:
-        hasCapturedPayment(payment) && payment?.source === PaymentSource.STRIPE,
+      additionalAsk: ask, retiredAdditionalAsks: [], // #3954: a review charge retires nothing by reduction.
+      // #3947: the chooser's own question (`chooseEditReviewChargeRoute`), so a
+      // credit-paid ($0) booking routed to the card is minted for, not left to a
+      // replay that reports `not-raised` until its recovery row dies FAILED.
+      // #4272: it also answers no on a CANCELLED booking, so a cancellation
+      // landing between the check above and this re-read still mints nothing.
+      // The sync then reports `not-raised`, and the replay of the recovery row
+      // below takes the cancelled path (`closeCancelledEditReviewChargeReplay`),
+      // which records the share as uncollected. #4316: one landing after this
+      // re-read is caught by the minter, which re-reads the booking before the
+      // provider call and after its row write, retires what it minted and
+      // returns no intent id - so this sync takes that same `not-raised` path.
+      hasSucceededPayment: canAskCardForReviewCharge({
+        status: payment?.booking.status ?? "",
+        payment,
+      }),
       paymentCustomerId: payment?.stripeCustomerId ?? null,
       memberEmail: member?.email ?? "",
       memberName: member?.name ?? "",
@@ -548,24 +589,26 @@ async function syncEditReviewChargeRequestUnderClaim(
       // #3181: carried, not re-read. See this function's parameter docblock.
       hasIssuedXeroInvoice,
     },
-    // #3170: the request's identity in the ledger. A later share finds this row
-    // by exact match on it, which is why it is built rather than spelled.
-    reason,
-    // EDIT-scoped on both keys, which INVERTS the first #3170 round - see
-    // `payment-recovery-keys.ts` for the full reasoning and for which of the two
-    // (request vs share) each key belongs to. In short: the request is the thing
-    // being identified, there is one per edit, and a replay converging on the
-    // first intent is now the point rather than the hazard. #3371 adds THE
-    // AMOUNT, because this figure is RE-DERIVED on every attempt and a fixed key
-    // would then answer `idempotency_error` for ever - see that helper.
-    idempotencyKey: stripeIdempotencyKeyForAskAmount(
-      buildEditFinancialReviewAdditionalIntentStripeKey(bookingModificationId),
-      ask.amountCents,
-    ),
-    recoveryIdempotencyKey:
-      buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey(
-        bookingModificationId,
+    reviewCharge: {
+      // #3170: the request's identity in the ledger. A later share finds this row
+      // by exact match on it, which is why it is built rather than spelled.
+      reason,
+      // EDIT-scoped on both keys, which INVERTS the first #3170 round - see
+      // `payment-recovery-keys.ts` for the full reasoning and for which of the two
+      // (request vs share) each key belongs to. In short: the request is the thing
+      // being identified, there is one per edit, and a replay converging on the
+      // first intent is now the point rather than the hazard. #3371 adds THE
+      // AMOUNT, because this figure is RE-DERIVED on every attempt and a fixed key
+      // would then answer `idempotency_error` for ever - see that helper.
+      idempotencyKey: stripeIdempotencyKeyForAskAmount(
+        buildEditFinancialReviewAdditionalIntentStripeKey(bookingModificationId),
+        ask.amountCents,
       ),
+      recoveryIdempotencyKey:
+        buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey(
+          bookingModificationId,
+        ),
+    },
     failureMessage:
       "Failed to create the additional PaymentIntent for a completed edit financial review - the persisted recovery operation will replay it",
   });

@@ -14,7 +14,8 @@ import {
   kickQueuedXeroOutboxOperationsIfConnected,
 } from "@/lib/xero-operation-outbox";
 import { enqueueXeroRefundRequestCreditNoteOperation } from "@/lib/xero-refund-request-credit-note-outbox";
-import { isNonCancellationHandBackTask, refundRequestIdOfHandBack } from "@/lib/manual-refund-task-settlement-rules";
+import { isCancelCardShortfallTask, isNonCancellationHandBackTask, refundRequestIdOfHandBack } from "@/lib/manual-refund-task-settlement-rules";
+import { cancellationHandBackNotedOnItsOwnRecord } from "@/lib/bank-hand-back-refund-note";
 import type { RefundMethod } from "@/lib/xero-refund-method";
 import type { ClubFormat } from "@/lib/club-format";
 
@@ -37,6 +38,7 @@ export function refundMethodForEditReviewRoute(
     case "account-credit":
       return "account-credit";
     case "local-allocation":
+    case "group-settlement-mirror": // #3949: a bank transfer to the group organiser
       return "internet-banking";
     default:
       return "card";
@@ -135,8 +137,9 @@ function enqueueCancelledReviewRefundNote(
  * #3880: a bank-transfer hand-back's note on a cancelled booking, queued on the
  * completion's own transaction after its allocation: a review's hand-back
  * (noted per refund, keyed on the task) and a `CANCELLED_BOOKING_HAND_BACK`
- * (`INV-PAY-101`, #3529: the payment's one refund note). An outbox row insert
- * and no provider call; a throw rolls the completion back.
+ * (`INV-PAY-101`, #3529: the payment's canonical note, or a later one's OWN,
+ * #4287; #4097, a card refund shortfall's OWN, keyed like a close's).
+ * An outbox row insert and no provider call; a throw rolls the completion back.
  */
 export async function queueCancelledBookingHandBackNoteInTransaction({
   task,
@@ -150,6 +153,10 @@ export async function queueCancelledBookingHandBackNoteInTransaction({
   store: Prisma.TransactionClient;
 }): Promise<void> {
   const invoiceId = cancelledBookingRefundInvoiceId(task);
+  if (isCancelCardShortfallTask(task)) {
+    if (invoiceId !== null && route?.kind === "local-allocation" && route.refundCents > 0) await enqueueXeroRefundCreditNoteOperation(route.paymentId, route.refundCents, { createdByMemberId: actingMemberId, refundMethod: "internet-banking", paidAnotherWayTaskId: task.id, store });
+    return;
+  }
   const noted = cancelledReviewRefundNoteRoute(route, invoiceId);
   if (noted) {
     if (noted.kind !== "local-allocation" || noted.refundCents <= 0) return;
@@ -167,11 +174,9 @@ export async function queueCancelledBookingHandBackNoteInTransaction({
     route?.kind === "local-allocation" &&
     route.refundCents > 0
   ) {
-    await enqueueXeroRefundCreditNoteOperation(route.paymentId, route.refundCents, {
-      createdByMemberId: actingMemberId,
-      refundMethod: "internet-banking",
-      store,
-    });
+    // The payload names the hand-back it records (#4162, `INV-ADDPAY-042`); a later one is keyed and sized on its own task (#4287, `INV-ADDPAY-043`).
+    const ownRecord = (await cancellationHandBackNotedOnItsOwnRecord(store, route.paymentId, task.id)) ? { paidAnotherWayTaskId: task.id } : {};
+    await enqueueXeroRefundCreditNoteOperation(route.paymentId, route.refundCents, { createdByMemberId: actingMemberId, refundMethod: "internet-banking", handBackTaskId: task.id, ...ownRecord, store });
   }
 }
 
@@ -294,7 +299,7 @@ export function refundRequestCreditNoteAsk({
 }): { paymentId: string; refundRequestId: string; amountCents: number } | null {
   if (
     !refundRequestId ||
-    route?.kind !== "local-allocation" ||
+    route?.kind !== "local-allocation" || // #3949 review M1: a group child's mirror route raises no note (`alertGroupMirrorRefundXeroByHand`)
     cancellationHandBackInvoiceId === null ||
     amountCents === null ||
     amountCents <= 0
@@ -570,10 +575,10 @@ export async function dispatchEditReviewXeroSettlement({
     // so a charge passes null and lets the positive delta speak for itself
     // rather than handing the credit-note arm an amount it must not use.
     settlementAmountCents: isCharge ? null : ask.amountCents,
-    // #3170: the supplementary invoice waits for the additional payment when
-    // there is one to wait for, which is the ordinary price-increase
-    // arrangement. On the `invoice` route no intent exists and the
-    // supplementary invoice IS the ask, so it is raised unpaid.
+    // #3170: the supplementary invoice waits for the card request, the ordinary
+    // price-increase arrangement. #3947: the `invoice` route's invoice (the ask,
+    // raised unpaid) is queued inside the completion instead and skips this leg
+    // (`queueEditReviewChargeInvoiceInTransaction`); false here only without one.
     requiresAdditionalStripePayment: isCharge && route.collectVia === "stripe",
     additionalPaymentIntentId,
   })

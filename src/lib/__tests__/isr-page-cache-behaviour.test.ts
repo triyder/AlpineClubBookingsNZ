@@ -86,6 +86,9 @@ function refusingFs() {
   });
 
   return {
+    readFileSync: vi.fn(() => {
+      throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+    }),
     readFile: vi.fn(async () => {
       throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
     }),

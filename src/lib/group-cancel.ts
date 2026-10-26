@@ -50,7 +50,7 @@
  * their refund mirrors deferred, and executeGroupSettlementRefundPlan replays
  * the refund under the same `group_cancel_refund_<settlementId>` key, flips
  * the settlement, applies the per-child mirrors idempotently (only for
- * already-CANCELLED plan children whose mirror is still zero — ACTIVE
+ * already-CANCELLED plan children whose plan share is unwritten — ACTIVE
  * children stay owned by the reaper resume path), and enqueues their Xero
  * credit notes. Admins are alerted only when the recovery retries exhaust.
  *
@@ -72,7 +72,7 @@ import {
   Prisma,
 } from "@prisma/client";
 import { prisma } from "./prisma";
-import { processRefund, cancelPaymentIntentIfCancellable } from "./stripe";
+import { processRefund, cancelPaymentIntentIfCancellable, listRefundsForPaymentIntent } from "./stripe";
 import {
   calculateRefundAmount,
   daysUntilDate,
@@ -107,13 +107,17 @@ import {
   enqueueGroupSettlementRefundRecovery,
   markGroupSettlementRefundRecoverySucceeded,
 } from "@/lib/payment-recovery";
-import { deserializeRefundPlan, isMirrorRefundPlan, mirrorPlanRefundedCents } from "@/lib/group-settlement-refund-plan";
+import { deserializeRefundPlan, isMirrorRefundPlan, mirrorPlanRefundedCents, organiserCancelJoinerEmailRefund } from "@/lib/group-settlement-refund-plan";
 import { refundOrganiserCancelChildren } from "@/lib/organiser-child-refund-executor";
+import { readGroupChildMirrorForPlanReplay } from "@/lib/group-settlement-mirror-hand-back";
+import { alertUnsentGroupOrganiserHandBacks, recordGroupOrganiserHandBackShare, type GroupOrganiserHandBack } from "@/lib/group-organiser-hand-back";
 import { enqueueXeroGroupSettlementInvoiceVoidOperation } from "@/lib/xero-group-settlement-void-outbox";
 import logger from "@/lib/logger";
 import { clubToday } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import type { ClubFormat } from "@/lib/club-format";
+import { isRefusedRefundStatus } from "@/lib/payment-transaction-status";
+import { keyAfterStripeRefusals, refusedRefundMessage } from "@/lib/refused-card-refund-retry";
 
 // F3 (#1351): the recovery operation is enqueued BEFORE the inline Stripe
 // refund, so the cron must not claim it while this run is still executing.
@@ -428,7 +432,7 @@ export async function settleGroupBookingOnOrganiserCancel(
     }
 
     try {
-      await processRefund({
+      const refund = await processRefund({
         paymentIntentId: settlement.stripePaymentIntentId,
         amountCents: totalRefundCents,
         metadata: {
@@ -447,6 +451,8 @@ export async function settleGroupBookingOnOrganiserCancel(
         // failure (Stripe refunded, response lost) is replayed, not repeated.
         idempotencyKey: `group_cancel_refund_${settlement.id}`,
       });
+      // #4103 (`INV-PAY-130`): a refusal fails like a throw - no flip, no mirrors, re-armed below.
+      if (isRefusedRefundStatus(refund.status)) throw new Error(refusedRefundMessage(totalRefundCents, format));
       await prisma.groupBookingSettlement.update({
         where: { id: settlement.id },
         data: {
@@ -510,6 +516,8 @@ export async function settleGroupBookingOnOrganiserCancel(
     }
   }
 
+  // #4042 (`INV-PAY-124`): the organiser's hand-back is alerted once the loop ends (finally), at least once.
+  try {
   for (const child of children) {
     const refundForChild = refundByChildId.get(child.id) ?? 0;
     const owedForChild = owedByChildId.get(child.id) ?? 0;
@@ -517,6 +525,7 @@ export async function settleGroupBookingOnOrganiserCancel(
     // kick can run POST-commit (the enqueue itself is now durable — below).
     let queuedCreditNoteOperationId: string | null = null;
     let childClaimed = false;
+    const raised: { handBack: GroupOrganiserHandBack | null } = { handBack: null };
     try {
       queuedCreditNoteOperationId = await prisma.$transaction(async (tx) => {
         let queuedOperationId: string | null = null;
@@ -591,6 +600,8 @@ export async function settleGroupBookingOnOrganiserCancel(
             { createdByMemberId: sessionUserId, store: tx }
           );
           queuedOperationId = queued.queueOperationId;
+          // #4042: an Internet Banking settlement's refund is the club's to repay by hand.
+          if (settlement && !settlement.stripePaymentIntentId) raised.handBack = await recordGroupOrganiserHandBackShare(tx, { settlementId: settlement.id, organiserBookingId, plan: plannedMirrorRefunds, claimedChildId: child.id, format });
         }
 
         // #3209 (`INV-HOST-041`). The beds are reconciled above; ADULT SUPERVISION
@@ -667,6 +678,7 @@ export async function settleGroupBookingOnOrganiserCancel(
         refundForChild,
         owedRefundForChild: owedForChild,
         paymentId: child.payment?.id ?? null,
+        organiserHandBackTaskId: raised.handBack?.id ?? null,
       },
       ipAddress,
     });
@@ -691,17 +703,20 @@ export async function settleGroupBookingOnOrganiserCancel(
       )
     );
 
+    const joinerRefund = organiserCancelJoinerEmailRefund({ refundForChild, owedForChild, plannedRefundCents: plannedMirrorRefunds.get(child.id) ?? 0, cardSettlement: Boolean(settlement?.stripePaymentIntentId) });
     sendBookingCancelledEmail(
       { bookingId: child.id, recipientMemberId: bookingOwner(child).memberId },
       bookingOwner(child).member.email,
       bookingOwner(child).member.firstName,
       child.checkIn,
       child.checkOut,
-      refundForChild,
+      joinerRefund.refundCents,
       format,
-      "card",
+      joinerRefund.refundMethod,
       0,
-      child.lodgeId
+      child.lodgeId,
+      "cancellation-policy",
+      joinerRefund.sentenceCents,
     ).catch((err) =>
       logger.error(
         { err, bookingId: child.id },
@@ -726,6 +741,10 @@ export async function settleGroupBookingOnOrganiserCancel(
     // organiser's own drain in `booking-cancel.ts` cannot reach them. It never
     // throws, and the cron sweep remains the authority on completion.
     await settleHostingCoverageAfterCommit({ bookingId: child.id });
+  }
+  } finally {
+    // Outside every transaction; a task only a committed claim wrote; any unsent alert, so a crashed run's is retried.
+    if (settlement && !settlement.stripePaymentIntentId) await alertUnsentGroupOrganiserHandBacks({ settlementId: settlement.id, organiserBookingId, format });
   }
 
   // The group was fenced CANCELLED before provider calls and child cleanup.
@@ -766,13 +785,15 @@ export type GroupSettlementRefundReplayResult = {
  * Idempotency:
  * - The Stripe refund reuses the inline `group_cancel_refund_<settlementId>`
  *   key, so an ambiguous inline failure (Stripe refunded, response lost) is
- *   answered with the original refund, never repeated.
+ *   answered with the original refund, never repeated - moved on past each
+ *   refusal Stripe holds on the intent (#4103, `keyAfterStripeRefusals`).
  * - The settlement flip is guarded on SUCCEEDED; a crash-after-flip replay
  *   lands in the already_refunded branch and only completes the mirrors.
  * - Per-child refundedAmountCents mirrors are applied only to plan children
  *   whose booking is already CANCELLED (the inline loop is done with them)
- *   and whose mirror is still zero, via a conditional updateMany — so this
- *   can never double-apply against the inline loop or the #1236 reaper
+ *   and whose plan share is not yet written (#3949: net of paid-back edit and
+ *   appeal hand-backs, under the Payment row, `readGroupChildMirrorForPlanReplay`),
+ *   so this can never double-apply against the inline loop or the #1236 reaper
  *   resume path, which own ACTIVE children.
  * - Xero credit-note enqueues are deduplicated by the outbox (watermark /
  *   canonical-note logic), keyed off the mirror written just before.
@@ -812,15 +833,22 @@ export async function executeGroupSettlementRefundPlan(
       // reconciliation is operator-driven and never enqueues this operation.
       return { outcome: "not_refundable", mirroredChildren: 0 };
     }
-    await processRefund({
+    const metadata = {
+      groupBookingId: settlement.groupBookingId,
+      reason: "organiser_cancellation",
+    };
+    const refund = await processRefund({
       paymentIntentId: settlement.stripePaymentIntentId,
       amountCents: totalRefundCents,
-      metadata: {
-        groupBookingId: settlement.groupBookingId,
-        reason: "organiser_cancellation",
-      },
-      idempotencyKey: `group_cancel_refund_${settlement.id}`,
+      metadata,
+      // #4103 (`INV-PAY-130`): moved on past each refusal Stripe holds, so a retry asks afresh.
+      idempotencyKey: keyAfterStripeRefusals(`group_cancel_refund_${settlement.id}`, await listRefundsForPaymentIntent(settlement.stripePaymentIntentId), {
+        amountCents: totalRefundCents,
+        metadata,
+      }),
     });
+    // #4103: a refusal fails the attempt, never closing the row; the backoff asks again.
+    if (isRefusedRefundStatus(refund.status)) throw new Error(refusedRefundMessage(totalRefundCents, format));
     await prisma.groupBookingSettlement.update({
       where: { id: settlement.id },
       data: {
@@ -855,41 +883,35 @@ export async function executeGroupSettlementRefundPlan(
     // ACTIVE children still belong to the inline loop / reaper resume path,
     // which cancel + mirror atomically; touching them here could double-apply.
     if (!child || child.status !== BookingStatus.CANCELLED || !child.payment) continue;
-    if (child.payment.refundedAmountCents > 0) {
-      // #3854: mirrored already, its line by the plan regardless (keyed, so a no-op when posted).
-      await prisma.$transaction((tx) => postGroupSettlementRefundLedgerLine({ store: tx, settlement, bookingId: child.id, lodgeId: child.lodgeId, refundCents: refundForChild }));
-      continue;
-    }
-
-    const nextRefunded = mirrorPlanRefundedCents(child.payment, refundForChild);
-    // Conditional write: organiser-settled child payments receive refunds
-    // ONLY from this module, so refundedAmountCents === 0 means unmirrored.
-    // Mirror and durable Xero outbox insertion are one atomic unit.  Previously
-    // the mirror committed first and enqueue failures were swallowed, leaving a
-    // permanently stranded accounting operation that replay would skip because
-    // refundedAmountCents was already non-zero.
+    // #3949 (`INV-PAY-137`): written or not is asked under the Payment row, net of paid-back hand-backs.
+    // Mirror and durable Xero outbox insertion are one atomic unit (an enqueue
+    // failure rolls the mirror back, so the replay never skips a stranded note).
     const mirrorResult = await prisma.$transaction(async (tx) => {
+      const payment = await readGroupChildMirrorForPlanReplay(tx, { bookingId: child.id, paymentId: child.payment!.id });
+      // #3949 review round 3: a child its member cancelled was never the plan's to refund - nothing is written.
+      if (!payment.claimedByGroupCancel) return { applied: false, refundedCents: 0, queuedOperationId: null };
+      // #3854: mirrored already, its line by the plan regardless (keyed, so a no-op when posted).
+      if (payment.planShareWritten) {
+        await postGroupSettlementRefundLedgerLine({ store: tx, settlement, bookingId: child.id, lodgeId: child.lodgeId, refundCents: refundForChild });
+        return { applied: false, refundedCents: 0, queuedOperationId: null };
+      }
+      const nextRefunded = mirrorPlanRefundedCents(payment, refundForChild);
       const applied = await tx.payment.updateMany({
-        where: { id: child.payment!.id, refundedAmountCents: 0 },
+        // The prior figure, under the row lock: a guard against any other writer, not the "mirrored" test.
+        where: { id: child.payment!.id, refundedAmountCents: payment.refundedAmountCents },
         data: {
           refundedAmountCents: nextRefunded,
-          status:
-            nextRefunded >= child.payment!.amountCents
-              ? PaymentStatus.REFUNDED
-              : PaymentStatus.PARTIALLY_REFUNDED,
+          status: nextRefunded >= payment.amountCents ? PaymentStatus.REFUNDED : PaymentStatus.PARTIALLY_REFUNDED,
         },
       });
       if (applied.count !== 1) {
-        return { applied: false, queuedOperationId: null };
+        return { applied: false, refundedCents: 0, queuedOperationId: null };
       }
-      const queued = await enqueueXeroRefundCreditNoteOperation(
-        child.payment!.id,
-        nextRefunded,
-        { store: tx }
-      );
+      const refundedCents = nextRefunded - payment.refundedAmountCents;
+      const queued = await enqueueXeroRefundCreditNoteOperation(child.payment!.id, refundedCents, { store: tx });
       // #3854: as the inline loop posts it, under the same key.
       await postGroupSettlementRefundLedgerLine({ store: tx, settlement, bookingId: child.id, lodgeId: child.lodgeId, refundCents: refundForChild });
-      return { applied: true, queuedOperationId: queued.queueOperationId };
+      return { applied: true, refundedCents, queuedOperationId: queued.queueOperationId };
     });
     if (!mirrorResult.applied) continue;
     mirroredChildren += 1;
@@ -914,11 +936,11 @@ export async function executeGroupSettlementRefundPlan(
       severity: "critical",
       outcome: "success",
       summary: "Group settlement refund recovered",
-      details: `Recovered the organiser's settlement refund for this cancelled group joiner: ${formatCents(nextRefunded, format)} (frozen plan replay).`,
+      details: `Recovered the organiser's settlement refund for this cancelled group joiner: ${formatCents(mirrorResult.refundedCents, format)} (frozen plan replay).`,
       metadata: {
         settlementId,
         groupBookingId: settlement.groupBookingId,
-        refundForChild: nextRefunded,
+        refundForChild: mirrorResult.refundedCents,
         paymentId: child.payment.id,
         replayOutcome: outcome,
       },
@@ -928,7 +950,7 @@ export async function executeGroupSettlementRefundPlan(
       bookingId: child.id,
       type: BookingEventType.REFUNDED,
       actorMemberId: null,
-      amountCents: nextRefunded,
+      amountCents: mirrorResult.refundedCents,
       reason:
         "The organiser's settlement refund for this cancelled group booking was recovered and refunded to the organiser.",
     }).catch((eventErr) =>

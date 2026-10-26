@@ -173,8 +173,8 @@ test.describe("pre-cutover warm-up gate", () => {
   test("names the refused setting in the text form the deploy script reads", async ({
     request,
   }) => {
-    // The text form answers 200 on a refusal, deliberately: the container's only HTTP
-    // client is busybox `wget`, which discards the body of any non-2xx response. A 400
+    // The text form answers 200 on a refusal, deliberately: the deploy script asks it
+    // with busybox `wget`, which discards the body of any non-2xx response. A 400
     // therefore reached the deploy script as an empty report and the operator was told
     // "the warm-up gate could not be read" — pointing them at the container, the
     // network and the cron secret rather than at the setting they had just mistyped.

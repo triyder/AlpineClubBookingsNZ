@@ -2,21 +2,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   getIntegrationCredentialValue: vi.fn(),
-  ensureGeneratedCredential: vi.fn(),
 }));
 
 vi.mock("@/lib/integration-credentials", () => ({
   getIntegrationCredentialValue: mocks.getIntegrationCredentialValue,
-}));
-vi.mock("@/lib/integration-credential-generate", () => ({
-  ensureGeneratedCredential: mocks.ensureGeneratedCredential,
 }));
 
 import {
   XERO_REQUIRED_REPORT_OAUTH_SCOPES,
   detectLegacyProviderEnv,
   getOperationalXeroConfig,
-  getOperationalXeroEncryptionKey,
   getOperationalXeroRedirectUri,
   getOperationalXeroWebhookKey,
 } from "@/lib/xero-config";
@@ -132,12 +127,11 @@ describe("xero-config (DB-only resolution — #2079)", () => {
     expect(await getOperationalXeroWebhookKey()).toBeUndefined();
   });
 
-  it("returns the auto-generated token key when the gate permits, undefined when blocked", async () => {
-    mocks.ensureGeneratedCredential.mockResolvedValue("deadbeef");
-    expect(await getOperationalXeroEncryptionKey()).toBe("deadbeef");
-
-    mocks.ensureGeneratedCredential.mockResolvedValue(null); // gate blocked
-    expect(await getOperationalXeroEncryptionKey()).toBeUndefined();
+  it("no longer knows a wrapped token key (#3806 R2 retired it)", async () => {
+    const config = await import("@/lib/xero-config");
+    expect(Object.values(config.XERO_CREDENTIAL_KEYS)).not.toContain("token_key");
+    expect("getOperationalXeroEncryptionKey" in config).toBe(false);
+    expect("peekOperationalXeroEncryptionKey" in config).toBe(false);
   });
 
   describe("detectLegacyProviderEnv", () => {

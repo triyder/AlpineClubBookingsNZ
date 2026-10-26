@@ -13,7 +13,7 @@
  */
 
 import type { PrismaClient } from "@prisma/client";
-import { XERO_TOKEN_ROW_ORDER } from "@/lib/xero-token-row-order";
+import { isConnectedTenant, readXeroConnection } from "@/lib/xero-connection";
 
 import {
   DEFAULT_FINANCIAL_YEAR_END_MONTH,
@@ -67,7 +67,7 @@ export interface FinancialYearResolution {
  */
 export type StoredFinancialYearDb = Pick<
   PrismaClient,
-  "membershipLockoutSettings" | "xeroToken"
+  "membershipLockoutSettings" | "xeroConnection"
 >;
 
 export type StoredFinancialYearResolution =
@@ -85,8 +85,8 @@ export type StoredFinancialYearResolution =
  * only when persisted state proves there is no connected Xero tenant. The
  * organisation month is not persisted locally, so a connected tenant must be
  * reported as unavailable rather than guessed from the cold process cache or
- * fetched from Xero. Only the token row's existence is selected; credential
- * columns never cross this boundary.
+ * fetched from Xero. Only the connection's non-secret facts are read
+ * (`readXeroConnection`, #3806); no credential crosses this boundary.
  */
 export async function getStoredFinancialYearResolution(
   db: StoredFinancialYearDb = prisma,
@@ -114,11 +114,7 @@ export async function getStoredFinancialYearResolution(
     return { ok: true, effectiveMonth: overrideMonth, source: "override" };
   }
 
-  const connectedTenant = await db.xeroToken.findFirst({
-    where: { tenantId: { not: null } },
-    select: { id: true },
-    orderBy: XERO_TOKEN_ROW_ORDER,
-  });
+  const connectedTenant = isConnectedTenant(await readXeroConnection(db));
   return connectedTenant
     ? { ok: false, reason: "connected_xero_month_not_stored" }
     : {

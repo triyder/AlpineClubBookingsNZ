@@ -49,7 +49,7 @@ const TEST_FILE = /\.(?:test|spec)\.[^./]+$/;
 
 /** Prisma write methods that can carry a payload for these two models. */
 const WRITE_CALL =
-  /\.\s*(xeroObjectLink|xeroSyncOperation)\s*\.\s*(create|createMany|update|updateMany|upsert)\s*\(/g;
+  /\.\s*(xeroObjectLink|xeroSyncOperation)\s*\.\s*(create|createMany|createManyAndReturn|update|updateMany|updateManyAndReturn|upsert)\s*\(/g;
 
 /** The strip helper, spelled once. */
 const STRIP = "stripXeroOrgShortCode(";

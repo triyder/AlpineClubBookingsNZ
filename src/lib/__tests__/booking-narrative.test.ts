@@ -5,6 +5,7 @@ import {
   type NarrativeBooking,
   type NarrativeEvent,
 } from "@/lib/booking-narrative";
+import { CAPACITY_RACE_REFUND_EVENT_REASON } from "@/lib/cancel-card-refund-event-reason";
 import { DUPLICATE_CAPTURE_REFUND_EVENT_KIND } from "@/lib/duplicate-capture-refund-event";
 import { editRefundHandBackCompletedSnapshot } from "@/lib/manual-refund-task-settlement-rules";
 import { bindClubTime, requireClubTimeZone } from "@/lib/club-time";
@@ -26,6 +27,7 @@ function booking(overrides: Partial<NarrativeBooking> = {}): NarrativeBooking {
   return {
     status: "PENDING",
     finalPriceCents: 12000,
+    amountOwed: { owedCents: 12000, dueCents: 12000, appliedCreditCents: 0 },
     checkIn: CHECK_IN,
     checkOut: CHECK_OUT,
     firstName: "Sam",
@@ -212,6 +214,8 @@ describe("resolveBookingNarrative", () => {
         }),
         event(BookingEventType.REFUNDED, "2026-05-06T00:00:00.000Z", {
           amountCents: 9000,
+          // As the cancel's close writes it (`cancelCardRefundEventReason`, #4145).
+          reason: "75% refunded to the original payment method.",
         }),
       ],
     }, CLUB_FORMAT_TEST);
@@ -361,6 +365,208 @@ describe("resolveBookingNarrative", () => {
 
     expect(result.state).toBe("cancelled_post_payment");
     expect(result.message).toContain("no refund was due and the full $120.00 was retained");
+  });
+
+  // #4125: the capacity race's CANCELLED event is written before its card
+  // refund is attempted; while no REFUNDED event follows (it threw, or Stripe
+  // refused it, and the recovery row is retrying), the member is told it is on
+  // its way - never "refunded", never "no refund was due".
+  it("a card refund not yet made reads as on its way, not refunded and not 'no refund was due' (#4125)", () => {
+    const cancelled = event(BookingEventType.CANCELLED, "2026-05-05T00:00:00.000Z", {
+      amountCents: 12000,
+      snapshot: {
+        policySummary: "These dates were no longer available when payment completed, so the full amount is being refunded.",
+        refundMethod: "card",
+        cancelledBecause: "capacity_race",
+        refundPercentage: 100,
+        paidAmountCents: 12000,
+        settledAmountCents: 12000,
+        retainedAmountCents: 0,
+      },
+    });
+    const paid = event(BookingEventType.MEMBER_PAID, "2026-05-02T00:00:00.000Z", { amountCents: 12000 });
+    const pending = resolveBookingNarrative({ club: CLUB, booking: booking({ status: "CANCELLED" }), events: [paid, cancelled] }, CLUB_FORMAT_TEST);
+    expect(pending.message).toContain("$120.00 is on its way to your original payment method.");
+    // The system cancelled it, so the member is never told they did.
+    expect(pending.message).toMatch(/^This booking was cancelled on 5 May 2026, after you paid \$120\.00 on 2 May 2026, because the dates filled up while your payment was going through\./);
+    expect(pending.message).not.toContain("You cancelled");
+    expect(pending.message).not.toContain("was refunded");
+    expect(pending.message).not.toContain("no refund was due");
+
+    const made = resolveBookingNarrative({
+      club: CLUB,
+      booking: booking({ status: "CANCELLED" }),
+      events: [paid, cancelled, event(BookingEventType.REFUNDED, "2026-05-05T00:00:00.000Z", { amountCents: 12000 })],
+    }, CLUB_FORMAT_TEST);
+    expect(made.message).toContain("$120.00 was refunded on 5 May 2026");
+
+    // No cancellation policy decided it: the whole charge goes back, so no policy is named.
+    expect(pending.message).toBe(
+      "This booking was cancelled on 5 May 2026, after you paid $120.00 on 2 May 2026, because the dates filled up while your payment was going through. $120.00 is on its way to your original payment method. No further payment is required.",
+    );
+    expect(made.message).toBe(
+      "This booking was cancelled on 5 May 2026, after you paid $120.00 on 2 May 2026, because the dates filled up while your payment was going through. $120.00 was refunded on 5 May 2026. No further payment is required.",
+    );
+    expect(made.message).not.toContain("cancellation policy");
+  });
+
+  // #4125: the capacity race's settle cancels instead of recording MEMBER_PAID,
+  // and its plan refunds what the payment ledger shows refundable - which can
+  // be less than the charge. The paid fact comes from the CANCELLED snapshot,
+  // and the part no refund covers is the club's to follow up.
+  describe("a capacity-race cancel, as its settle writes it (#4125)", () => {
+    function raceCancel(settledAmountCents: number) {
+      return event(BookingEventType.CANCELLED, "2026-05-05T00:00:00.000Z", {
+        amountCents: 10000,
+        snapshot: { policySummary: "x", refundMethod: "card", cancelledBecause: "capacity_race", refundPercentage: 100, paidAmountCents: 10000, settledAmountCents, retainedAmountCents: 0 },
+      });
+    }
+    const narrate = (events: NarrativeEvent[], cardRefundState?: "on-its-way" | "stalled") =>
+      resolveBookingNarrative({ club: CLUB, booking: booking({ status: "CANCELLED" }), events, cardRefundState }, CLUB_FORMAT_TEST).message;
+    const OPENING = "This booking was cancelled on 5 May 2026, after you paid $100.00 on 5 May 2026, because the dates filled up while your payment was going through.";
+
+    it("with no MEMBER_PAID event, opens with the payment the snapshot froze - never 'no payment had been taken'", () => {
+      expect(narrate([raceCancel(10000)])).toBe(`${OPENING} $100.00 is on its way to your original payment method. No further payment is required.`);
+    });
+
+    it.each([
+      ["refunded", [raceCancel(8000), event(BookingEventType.REFUNDED, "2026-05-05T00:00:00.000Z", { amountCents: 8000 })], undefined, "$80.00 was refunded on 5 May 2026; the club will be in touch about the remaining $20.00."],
+      ["on its way", [raceCancel(8000)], "on-its-way", "$80.00 is on its way to your original payment method; the club will be in touch about the remaining $20.00."],
+      ["stalled", [raceCancel(8000)], "stalled", "$80.00 is being refunded to you; the club will be in touch about the card refund and the remaining $20.00."],
+    ] as const)("MUTATION: a refund short of the charge, %s, names the rest", (_label, events, state, clause) => {
+      expect(narrate([...events], state)).toBe(`${OPENING} ${clause} No further payment is required.`);
+    });
+
+    it("shares the card clause only for the automatic refund's own events (#4178)", () => {
+      const cardRefund = event(BookingEventType.REFUNDED, "2026-05-05T00:00:00.000Z", {
+        amountCents: 8000, reason: CAPACITY_RACE_REFUND_EVENT_REASON,
+      });
+      expect(narrate([raceCancel(8000), cardRefund])).toBe(
+        `${OPENING} $80.00 was refunded to your card on 5 May 2026; the club will be in touch about the remaining $20.00. No further payment is required.`,
+      );
+      const bankRefund = event(BookingEventType.REFUNDED, "2026-05-20T00:00:00.000Z", {
+        amountCents: 2000, reason: "Capacity-race shortfall paid by bank transfer.",
+      });
+      const mixed = narrate([raceCancel(8000), cardRefund, bankRefund]);
+      expect(mixed).toBe(`${OPENING} $100.00 was refunded on 20 May 2026. No further payment is required.`);
+      expect(mixed).not.toContain("to your card");
+      const bankOnly = narrate([raceCancel(0), { ...bankRefund, amountCents: 10000 }]);
+      expect(bankOnly).toBe(`${OPENING} $100.00 was refunded on 20 May 2026. No further payment is required.`);
+      expect(bankOnly).not.toContain("to your card");
+    });
+
+    // An empty plan refunds nothing by card: never "no refund was due", only what the club follows up.
+    it.each([
+      ["on its way", "on-its-way"],
+      ["stalled", "stalled"],
+      ["unread", undefined],
+    ] as const)("MUTATION: an empty plan (%s) says the club will be in touch about the whole charge", (_label, state) => {
+      const message = narrate([raceCancel(0)], state);
+      expect(message).toBe(`${OPENING} The club will be in touch about the $100.00. No further payment is required.`);
+      expect(message).not.toContain("no refund was due");
+    });
+
+    // The club pays the rest later: every settlement event counts, so the follow-up line goes.
+    it("MUTATION: a later refund covering the rest removes the follow-up line", () => {
+      const events = [
+        raceCancel(8000),
+        event(BookingEventType.REFUNDED, "2026-05-05T00:00:00.000Z", { amountCents: 8000 }),
+        event(BookingEventType.REFUNDED, "2026-05-20T00:00:00.000Z", { amountCents: 2000 }),
+      ];
+      expect(narrate(events)).toBe(`${OPENING} $100.00 was refunded on 20 May 2026. No further payment is required.`);
+    });
+
+    // #4154 (`INV-PAY-135`): the rest is a task to check (#4097's `check` part), read live.
+    describe("its task to check (#4154)", () => {
+      const withTask = (events: NarrativeEvent[], check: "OPEN" | "COMPLETED" | "DISMISSED", cardRefundState?: "on-its-way" | "stalled") =>
+        resolveBookingNarrative({ club: CLUB, booking: booking({ status: "CANCELLED" }), events, cardRefundState, cardShortfallStatuses: { check } }, CLUB_FORMAT_TEST).message;
+      const refunded = event(BookingEventType.REFUNDED, "2026-05-05T00:00:00.000Z", { amountCents: 8000 });
+
+      it("still OPEN: the club will be in touch about the rest", () => {
+        expect(withTask([raceCancel(8000), refunded], "OPEN")).toBe(`${OPENING} $80.00 was refunded on 5 May 2026; the club will be in touch about the remaining $20.00. No further payment is required.`);
+      });
+
+      it.each([
+        ["after a refund made", [raceCancel(8000), refunded], undefined, "$80.00 was refunded on 5 May 2026 and the club checked the remaining $20.00 and closed it."],
+        ["with the card refund stalled", [raceCancel(8000)], "stalled", "$80.00 is being refunded to you and the club checked the remaining $20.00 and closed it; the club will be in touch about the card refund."],
+        ["after an empty plan", [raceCancel(0)], undefined, "The club checked the $100.00 and closed it."],
+      ] as const)("MUTATION: dismissed %s, says the club checked it and closed it - never that it will be in touch", (_label, events, state, clause) => {
+        const message = withTask([...events], "DISMISSED", state);
+        expect(message).toBe(`${OPENING} ${clause} No further payment is required.`);
+        expect(message).not.toContain("in touch about the remaining");
+      });
+
+      it("paid back: its REFUNDED event counts, so the whole charge reads refunded", () => {
+        const paidBack = event(BookingEventType.REFUNDED, "2026-05-20T00:00:00.000Z", { amountCents: 2000, reason: "manual_refund_completed" });
+        expect(withTask([raceCancel(8000), refunded, paidBack], "COMPLETED")).toBe(`${OPENING} $100.00 was refunded on 20 May 2026. No further payment is required.`);
+      });
+    });
+
+    it("a refund recorded twice never reads as more than was paid", () => {
+      const events = [
+        raceCancel(10000),
+        event(BookingEventType.REFUNDED, "2026-05-05T00:00:00.000Z", { amountCents: 10000 }),
+        event(BookingEventType.REFUNDED, "2026-05-06T00:00:00.000Z", { amountCents: 10000 }),
+      ];
+      expect(narrate(events)).toBe(`${OPENING} $100.00 was refunded on 6 May 2026. No further payment is required.`);
+    });
+  });
+
+  // #4125: a card cancel's refund with no REFUNDED event says where its
+  // recovery row stands (`readCancelledCardRefundState`), with what was kept.
+  describe("a card refund with no REFUNDED event, by its recovery row (#4125)", () => {
+    function cardCancel(retainedAmountCents: number) {
+      return [
+        event(BookingEventType.MEMBER_PAID, "2026-05-02T00:00:00.000Z", { amountCents: 12000 }),
+        event(BookingEventType.CANCELLED, "2026-05-05T00:00:00.000Z", {
+          snapshot: {
+            policySummary: "partial",
+            refundMethod: "card",
+            refundPercentage: 75,
+            paidAmountCents: 12000,
+            settledAmountCents: 12000 - retainedAmountCents,
+            retainedAmountCents,
+          },
+        }),
+      ];
+    }
+    const narrate = (retained: number, cardRefundState?: "on-its-way" | "stalled" | "settled" | "paid-another-way") =>
+      resolveBookingNarrative({ club: CLUB, booking: booking({ status: "CANCELLED" }), events: cardCancel(retained), cardRefundState }, CLUB_FORMAT_TEST).message;
+
+    it.each([
+      ["on its way (no row read)", undefined, 0, "the time, $120.00 is on its way to your original payment method. No further"],
+      ["on its way, with a part retained", "on-its-way", 3000, "the time, $90.00 is on its way to your original payment method and $30.00 was retained. No further"],
+      ["stalled", "stalled", 0, "the time, $120.00 is being refunded to you; the club will be in touch about the card refund. No further"],
+      ["stalled, with a part retained", "stalled", 3000, "the time, $90.00 is being refunded to you and $30.00 was retained; the club will be in touch about the card refund. No further"],
+      ["made by the runner before it recorded", "settled", 3000, "the time, $90.00 was refunded to your card and $30.00 was retained. No further"],
+      ["closed as paid another way", "paid-another-way", 0, "the time, $120.00 could not go back to your card and was paid back to you another way. No further"],
+    ] as const)("%s", (_label, state, retained, expected) => {
+      const message = narrate(retained, state);
+      expect(message).toContain(expected);
+      expect(message).not.toContain("no refund was due");
+    });
+
+    it("a stalled refund never says it is on its way", () => {
+      expect(narrate(0, "stalled")).not.toContain("on its way");
+    });
+
+    // A joiner's booking the group organiser paid for by card is refunded to the
+    // ORGANISER's card. Its settle writes MEMBER_PAID with no amount
+    // (`group-settlement.ts`), so it never reaches the card branch: it is never
+    // told the refund goes back to "your" payment method.
+    it("never tells an organiser-paid joiner the refund goes to their own payment method", () => {
+      const message = resolveBookingNarrative({
+        club: CLUB,
+        booking: booking({ status: "CANCELLED" }),
+        events: [
+          event(BookingEventType.MEMBER_PAID, "2026-05-02T00:00:00.000Z", { reason: "Settled by the group organiser as part of the combined group bill" }),
+          cardCancel(0)[1]!,
+        ],
+        cardRefundState: "on-its-way",
+      }, CLUB_FORMAT_TEST).message;
+      expect(message).not.toContain("your original payment method");
+      expect(message).not.toContain("your card");
+    });
   });
 
   it("surfaces an admin-declined review with the reason", () => {
@@ -804,5 +1010,58 @@ describe("a stay change that saved while its money is still being worked out (#3
     }, CLUB_FORMAT_TEST);
 
     expect(result.state).toBe("paid");
+  });
+});
+
+/*
+  #3991: `ownerCreditHidden` — the viewer cannot see the booking owner's account
+  credit (a linked guest on the booking page). The narrative then names no
+  credit; the figures the viewer already sees (what was paid, what was retained)
+  stay.
+*/
+describe("resolveBookingNarrative with the owner's credit hidden (#3991)", () => {
+  const cancelledToCredit = (creditedCents: number) => [
+    event(BookingEventType.MEMBER_PAID, "2026-05-02T00:00:00.000Z", { amountCents: 12000 }),
+    event(BookingEventType.CANCELLED, "2026-05-05T00:00:00.000Z"),
+    event(BookingEventType.CREDITED, "2026-05-06T00:00:00.000Z", { amountCents: creditedCents }),
+  ];
+  const resolve = (events: NarrativeEvent[], ownerCreditHidden?: boolean, b = booking({ status: "CANCELLED" })) =>
+    resolveBookingNarrative({ club: CLUB, booking: b, events, ownerCreditHidden }, CLUB_FORMAT_TEST);
+
+  it("CONTROL: a cancellation settled as credit names the credit to the owner", () => {
+    const result = resolve(cancelledToCredit(9000));
+    expect(result.message).toContain("$90.00 was added to your account credit on 6 May 2026 and $30.00 was retained");
+  });
+
+  it("drops the credit clause and keeps what was retained", () => {
+    const result = resolve(cancelledToCredit(9000), true);
+    expect(result.state).toBe("cancelled_post_payment");
+    expect(result.message).not.toMatch(/credit/i);
+    expect(result.message).not.toContain("$90.00");
+    expect(result.message).toContain("after paying $120.00");
+    expect(result.message).toContain("$30.00 was retained");
+  });
+
+  it("says nothing was retained when the whole payment went to credit", () => {
+    const result = resolve(cancelledToCredit(12000), true);
+    expect(result.message).not.toMatch(/credit/i);
+    expect(result.message).toContain("nothing was retained");
+  });
+
+  it("leaves a card refund's wording alone", () => {
+    const refunded = [
+      event(BookingEventType.MEMBER_PAID, "2026-05-02T00:00:00.000Z", { amountCents: 12000 }),
+      event(BookingEventType.CANCELLED, "2026-05-05T00:00:00.000Z"),
+      event(BookingEventType.REFUNDED, "2026-05-06T00:00:00.000Z", { amountCents: 9000 }),
+    ];
+    expect(resolve(refunded, true).message).toBe(resolve(refunded).message);
+  });
+
+  it("says a credit-covered booking has nothing to pay without naming the credit", () => {
+    const covered = booking({ status: "PENDING", amountOwed: { owedCents: -3000, dueCents: 0, appliedCreditCents: 15000 } });
+    expect(resolve([], false, covered).message).toMatch(/credit/);
+    const hidden = resolve([], true, covered);
+    expect(hidden.state).toBe("nothing_to_pay");
+    expect(hidden.message).not.toMatch(/credit/i);
   });
 });

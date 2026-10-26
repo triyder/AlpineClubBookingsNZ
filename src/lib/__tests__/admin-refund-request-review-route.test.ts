@@ -16,9 +16,13 @@ const mocks = vi.hoisted(() => ({
   requireActiveSessionUser: vi.fn(),
   refundRequestFindUnique: vi.fn(),
   refundRequestUpdateMany: vi.fn(),
+  // #3956 review: the approval's re-read of the request's status under lock(1).
+  lockedRefundRequestFindUnique: vi.fn(),
   paymentFindUnique: vi.fn(),
   paymentUpdate: vi.fn(),
   executeRaw: vi.fn(),
+  // #4124 review F2: the Payment row, after lock(1) and before the cap's reads.
+  lockPaymentForRefundedTotal: vi.fn(),
   manualRefundTaskAggregate: vi.fn(),
   manualRefundTaskCreateMany: vi.fn(),
   manualRefundTaskDeleteMany: vi.fn(),
@@ -35,6 +39,7 @@ const mocks = vi.hoisted(() => ({
   refundRequestDeclinedTemplate: vi.fn(),
   createAuditLog: vi.fn(),
   loggerError: vi.fn(),
+  alertPaymentRecoveryOfficers: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({
@@ -102,14 +107,30 @@ vi.mock("@/lib/payment-recovery", () => ({
 }));
 
 vi.mock("@/lib/payment-transactions", () => ({
+  lockPaymentForRefundedTotal: mocks.lockPaymentForRefundedTotal,
   refundPaymentTransactions: mocks.refundPaymentTransactions,
   planStripeRefundAllocation: mocks.planStripeRefundAllocation,
+  // The real class's shape: what the route reads off a partial failure.
   PartialRefundError: class PartialRefundError extends Error {
-    completedRefundCents = 0;
+    completedRefundCents: number;
+    refunds: unknown[];
+    refusedSlices: unknown[];
+    constructor(input: { completedRefundCents: number; refunds: unknown[]; refusedSlices?: unknown[] }) {
+      super("partial refund");
+      this.completedRefundCents = input.completedRefundCents;
+      this.refunds = input.refunds;
+      this.refusedSlices = input.refusedSlices ?? [];
+    }
   },
 }));
 
+// #4102: the officers' alert for a refusal (`alertRefusedCardRefund`'s sender).
+vi.mock("@/lib/payment-recovery-alert", () => ({
+  alertPaymentRecoveryOfficers: mocks.alertPaymentRecoveryOfficers,
+}));
+
 import { PUT } from "@/app/api/admin/refund-requests/[id]/route";
+import { PartialRefundError } from "@/lib/payment-transactions";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 describe("PUT /api/admin/refund-requests/[id]", () => {
@@ -149,6 +170,8 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
     mocks.refundRequestUpdateMany.mockResolvedValue({ count: 1 });
     // #3827: the approval re-reads the payment under lock(1) for its cap.
     mocks.paymentFindUnique.mockResolvedValue({
+      recoveryOperations: [],
+      refunds: [],
       id: "payment_1",
       bookingId: "booking_1",
       source: "STRIPE",
@@ -157,6 +180,7 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
       refundedAmountCents: 0,
     });
     mocks.executeRaw.mockResolvedValue(1);
+    mocks.lockedRefundRequestFindUnique.mockResolvedValue({ status: "PENDING" });
     mocks.manualRefundTaskAggregate.mockResolvedValue({ _sum: { amountCents: null } });
     mocks.memberCreditAggregate.mockResolvedValue({ _sum: { amountCents: null } });
     mocks.manualRefundTaskCreateMany.mockResolvedValue({ count: 1 });
@@ -171,6 +195,7 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
           deleteMany: mocks.manualRefundTaskDeleteMany,
         },
         refundRequest: {
+          findUnique: mocks.lockedRefundRequestFindUnique,
           updateMany: mocks.refundRequestUpdateMany,
         },
         memberCredit: { aggregate: mocks.memberCreditAggregate },
@@ -322,6 +347,8 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
       // The route's pre-lock read (approvedRefundRequest) still says nothing
       // was refunded: the cap must come from the re-read under the lock.
       mocks.paymentFindUnique.mockResolvedValue({
+        recoveryOperations: [],
+        refunds: [],
         id: "payment_1",
         bookingId: "booking_1",
         source: "STRIPE",
@@ -368,6 +395,34 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
       expect(mocks.enqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
     });
 
+    it("#4124: also nets a card refund still owed on the payment, so an appeal cannot promise it twice", async () => {
+      lockedPaymentAfterEditAndCancel();
+      const locked = await mocks.paymentFindUnique();
+      mocks.paymentFindUnique.mockResolvedValue({
+        ...locked,
+        recoveryOperations: [
+          {
+            id: "op_refused",
+            type: "REFUND_BOOKING_MODIFICATION",
+            status: "FAILED",
+            idempotencyKey: "refund_request_refund_rr0",
+            amountCents: 2500,
+            allocationPlan: [{ paymentTransactionId: "txn_1", amountCents: 2500, stripeKeySuffix: "refused1" }],
+            paymentTransactionId: null,
+            createdAt: new Date("2026-06-20T00:00:00.000Z"),
+            succeededAt: null,
+          },
+        ],
+      });
+
+      const response = await PUT(approveFor(7500), { params: Promise.resolve({ id: "refund_1" }) });
+
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toEqual({ error: "Amount exceeds maximum refundable of $50.00" });
+      expect(mocks.refundRequestUpdateMany).not.toHaveBeenCalled();
+      expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
+    });
+
     it("approves up to that net figure, reading it and claiming under lock(1)", async () => {
       lockedPaymentAfterEditAndCancel();
 
@@ -378,15 +433,23 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
       expect(response.status).toBe(200);
       const lockSql = (mocks.executeRaw.mock.calls[0]?.[0] as TemplateStringsArray).join("?");
       expect(lockSql).toContain("pg_advisory_xact_lock(1)");
-      const lockedAt = mocks.executeRaw.mock.invocationCallOrder[0];
-      expect(lockedAt).toBeLessThan(mocks.manualRefundTaskAggregate.mock.invocationCallOrder[0]);
-      // `INV-PAY-118`: the handed-back sums are read BEFORE the payment, so a
-      // cancellation hand-back completing between them errs the cap low.
+      const lockedAt = mocks.executeRaw.mock.invocationCallOrder[0]!;
+      // #4124 review F2 (`INV-LOCK-002`): lock(1), then the Payment row, then
+      // every read the cap makes - the hand-back and credit sums, the card
+      // refund debts and the payment - so no writer holding either lands
+      // between them.
+      expect(mocks.lockPaymentForRefundedTotal).toHaveBeenCalledWith(expect.anything(), "payment_1");
+      const paymentRowAt = mocks.lockPaymentForRefundedTotal.mock.invocationCallOrder[0]!;
+      expect(lockedAt).toBeLessThan(paymentRowAt);
+      const reads = [
+        ...mocks.manualRefundTaskAggregate.mock.invocationCallOrder,
+        ...mocks.memberCreditAggregate.mock.invocationCallOrder,
+        ...mocks.paymentFindUnique.mock.invocationCallOrder,
+      ];
+      expect(reads).toHaveLength(4); // the two sums, the card-debt read and the payment
+      for (const readAt of reads) expect(paymentRowAt).toBeLessThan(readAt);
       expect(mocks.manualRefundTaskAggregate.mock.invocationCallOrder[0]).toBeLessThan(
-        mocks.paymentFindUnique.mock.invocationCallOrder[0],
-      );
-      expect(mocks.memberCreditAggregate.mock.invocationCallOrder[0]).toBeLessThan(
-        mocks.paymentFindUnique.mock.invocationCallOrder[0],
+        mocks.paymentFindUnique.mock.invocationCallOrder[0]!,
       );
       expect(mocks.manualRefundTaskAggregate.mock.invocationCallOrder[0]).toBeLessThan(
         mocks.refundRequestUpdateMany.mock.invocationCallOrder[0],
@@ -423,6 +486,8 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
     }
     function paidBy(source: "INTERNET_BANKING" | "STRIPE") {
       mocks.paymentFindUnique.mockResolvedValue({
+        recoveryOperations: [],
+        refunds: [],
         id: "payment_1",
         bookingId: "booking_1",
         source,
@@ -532,6 +597,8 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
       // $200 by internet banking; the cancel credited back $100; the first
       // appeal's $100 task is still OPEN. Nothing is left to approve.
       mocks.paymentFindUnique.mockResolvedValue({
+        recoveryOperations: [],
+        refunds: [],
         id: "payment_1",
         bookingId: "booking_1",
         source: "INTERNET_BANKING",
@@ -639,7 +706,7 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
             createMany: mocks.manualRefundTaskCreateMany,
             deleteMany: mocks.manualRefundTaskDeleteMany,
           },
-          refundRequest: { updateMany: mocks.refundRequestUpdateMany },
+          refundRequest: { findUnique: mocks.lockedRefundRequestFindUnique, updateMany: mocks.refundRequestUpdateMany },
           memberCredit: { aggregate: mocks.memberCreditAggregate },
           payment: { findUnique: mocks.paymentFindUnique, update: mocks.paymentUpdate },
         }).catch((err: unknown) => {
@@ -698,6 +765,8 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
       // $100 arrived by bank transfer after the cancel and became $100 of
       // account credit; the payment still reads $100 refundable.
       mocks.paymentFindUnique.mockResolvedValue({
+        recoveryOperations: [],
+        refunds: [],
         id: "payment_1",
         bookingId: "booking_1",
         source: "INTERNET_BANKING",
@@ -728,6 +797,8 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
 
     it("late cash on an organisation booking: its open cancellation hand-back is netted", async () => {
       mocks.paymentFindUnique.mockResolvedValue({
+        recoveryOperations: [],
+        refunds: [],
         id: "payment_1",
         bookingId: "booking_1",
         source: "INTERNET_BANKING",
@@ -817,6 +888,53 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
     expect(enqueueArgs.allocationPlan).toBe(inlineArgs.allocation);
   });
 
+  // #3924 money review (round 3, F1): a slice the inline attempt refunded AND
+  // recorded is not enqueued again. The operation carries only the unsent
+  // slices, verbatim, so its retry replays exactly their keys and the "Refunds
+  // owed" figure reads only them as owed.
+  it("marks the slice a partial inline refund made and queues the rest on its own key", async () => {
+    mocks.refundRequestFindUnique.mockResolvedValue(approvedRefundRequest());
+    mocks.refundRequestUpdateMany.mockResolvedValue({ count: 1 });
+    const frozenPlan = [
+      { paymentTransactionId: "txn_new", amountCents: 1500 },
+      { paymentTransactionId: "txn_old", amountCents: 1000 },
+    ];
+    mocks.planStripeRefundAllocation.mockResolvedValue({
+      slices: frozenPlan,
+      plannedAmountCents: 2500,
+      totalRefundableCents: 8000,
+    });
+    mocks.refundPaymentTransactions.mockRejectedValue(
+      new PartialRefundError({
+        completedRefundCents: 1500,
+        refunds: [{ paymentIntentId: "pi_new", refundId: "re_new", amountCents: 1500 }],
+        cause: new Error("txn_old failed"),
+        format: CLUB_FORMAT_TEST,
+      }),
+    );
+    mocks.enqueueRefundRequestRefundRecovery.mockResolvedValue({ id: "op_1" });
+
+    const response = await PUT(approveRequest(), {
+      params: Promise.resolve({ id: "refund_1" }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(mocks.enqueueRefundRequestRefundRecovery).toHaveBeenCalledTimes(1);
+    expect(mocks.enqueueRefundRequestRefundRecovery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        refundRequestId: "refund_1",
+        // #4117: the whole plan, its amount the plan's total. The made slice is
+        // marked with its refund (never re-sent; "Refunds owed" fills it by that
+        // id); the unsent one is exactly as frozen, so its key is unchanged.
+        amountCents: 2500,
+        allocationPlan: [
+          { paymentTransactionId: "txn_new", amountCents: 1500, madeRefundId: "re_new" },
+          { paymentTransactionId: "txn_old", amountCents: 1000 },
+        ],
+      }),
+    );
+  });
+
   it("falls back to releasing the claim when the recovery enqueue also fails", async () => {
     mocks.refundRequestFindUnique.mockResolvedValue(approvedRefundRequest());
     mocks.refundRequestUpdateMany.mockResolvedValue({ count: 1 });
@@ -838,6 +956,281 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
       })
     );
     expect(mocks.enqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
+  });
+
+  // #4102, #4117 (`INV-PAY-128`): the recovery row carries the plan the inline
+  // attempt read - a slice Stripe refused (`failed`/`canceled`) on its next key,
+  // one that threw or was never sent on its own, one made marked with its
+  // refund - and its amount is the plan's total. The officers hear of each
+  // refused slice once, with the intent it was asked of.
+  describe("a slice Stripe refused stays owed (#4102, #4117)", () => {
+    type Slice = { paymentTransactionId: string; amountCents: number };
+    const answer = (slice: Slice, status: string) => ({
+      paymentIntentId: `pi_${slice.paymentTransactionId}`,
+      refundId: `re_${slice.paymentTransactionId}`,
+      amountCents: slice.amountCents,
+      status,
+      slice,
+    });
+    const onNextKey = (slice: Slice) => ({ ...slice, stripeKeySuffix: "refused1" });
+    const made = (slice: Slice) => ({ ...slice, madeRefundId: `re_${slice.paymentTransactionId}` });
+
+    async function approveOver(slices: Slice[]) {
+      mocks.refundRequestFindUnique.mockResolvedValue(approvedRefundRequest());
+      mocks.planStripeRefundAllocation.mockResolvedValue({
+        slices,
+        plannedAmountCents: slices.reduce((sum, slice) => sum + slice.amountCents, 0),
+        totalRefundableCents: 10000,
+      });
+      const response = await PUT(approveRequest(), { params: Promise.resolve({ id: "refund_1" }) });
+      return { status: response.status, body: (await response.json()) as { cardRefundOwedCents?: number; cardRefundQueued?: boolean } };
+    }
+    const queued = () =>
+      mocks.enqueueRefundRequestRefundRecovery.mock.calls.map(([args]) => {
+        const { amountCents, allocationPlan } = args as { amountCents: number; allocationPlan: unknown };
+        return { amountCents, allocationPlan };
+      });
+    const alerts = () =>
+      mocks.alertPaymentRecoveryOfficers.mock.calls.map(([alert]) => {
+        const { amountCents, paymentIntentId } = alert as { amountCents: number; paymentIntentId: string };
+        return { amountCents, paymentIntentId };
+      });
+
+    beforeEach(() => {
+      mocks.enqueueRefundRequestRefundRecovery.mockResolvedValue({ created: true, paymentIntentId: "pi_1" });
+      mocks.alertPaymentRecoveryOfficers.mockResolvedValue(undefined);
+    });
+
+    it("refused, then a later slice threw: the refused one is queued on its next key, the thrown and unsent ones on theirs", async () => {
+      const refused = { paymentTransactionId: "txn_new", amountCents: 1500 };
+      const thrown = { paymentTransactionId: "txn_mid", amountCents: 600 };
+      const unsent = { paymentTransactionId: "txn_old", amountCents: 400 };
+      mocks.refundPaymentTransactions.mockRejectedValue(
+        new PartialRefundError({
+          completedRefundCents: 0,
+          refunds: [answer(refused, "failed")],
+          refusedSlices: [refused],
+          cause: new Error("txn_mid timed out"),
+          format: CLUB_FORMAT_TEST,
+        }),
+      );
+
+      const { status, body } = await approveOver([refused, thrown, unsent]);
+
+      expect(status).toBe(200);
+      expect(queued()).toEqual([{ amountCents: 2500, allocationPlan: [onNextKey(refused), thrown, unsent] }]);
+      expect(alerts()).toEqual([{ amountCents: 1500, paymentIntentId: "pi_txn_new" }]);
+      expect(body).toMatchObject({ cardRefundOwedCents: 2500, cardRefundQueued: true });
+      // The approval stands: only the claim's write.
+      expect(mocks.refundRequestUpdateMany).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(["failed", "canceled"])("Stripe answers %s without a throw: the slice is queued on its next key and the officers are alerted", async (refusal) => {
+      const slice = { paymentTransactionId: "txn_1", amountCents: 2500 };
+      mocks.refundPaymentTransactions.mockResolvedValue({ refunds: [answer(slice, refusal)], totalRefundedAmountCents: 2500 });
+
+      const { status, body } = await approveOver([slice]);
+
+      expect(status).toBe(200);
+      expect(queued()).toEqual([{ amountCents: 2500, allocationPlan: [onNextKey(slice)] }]);
+      expect(mocks.alertPaymentRecoveryOfficers).toHaveBeenCalledTimes(1);
+      expect(mocks.alertPaymentRecoveryOfficers).toHaveBeenCalledWith(
+        expect.objectContaining({
+          bookingId: "booking_1",
+          amountCents: 2500,
+          // The intent Stripe was asked, from the refused answer itself.
+          paymentIntentId: "pi_txn_1",
+          errorMessage:
+            "Stripe refused $25.00 of this card refund (failed or cancelled), so that $25.00 did not go back and is still owed; it will be retried automatically.",
+        }),
+        CLUB_FORMAT_TEST,
+      );
+      expect(body).toMatchObject({ cardRefundOwedCents: 2500, cardRefundQueued: true, cardRefundRefusedCents: 2500, cardRefundUnansweredCents: 0 });
+      expect(mocks.refundRequestUpdateMany).toHaveBeenCalledTimes(1);
+      // #4117: the approval's audit row records what was queued.
+      expect(mocks.createAuditLog).toHaveBeenCalledWith(
+        expect.objectContaining({ metadata: expect.objectContaining({ cardRefundOwedCents: 2500, cardRefundQueued: true }) }),
+      );
+      // The refund will still be made, so its credit note queues as before.
+      expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith("payment_1", 2500, expect.anything());
+    });
+
+    it("one slice made and one refused: the made one is marked, never re-sent; only the refused part is owed and alerted", async () => {
+      const madeSlice = { paymentTransactionId: "txn_new", amountCents: 1500 };
+      const refused = { paymentTransactionId: "txn_old", amountCents: 1000 };
+      mocks.refundPaymentTransactions.mockResolvedValue({
+        refunds: [answer(madeSlice, "succeeded"), answer(refused, "canceled")],
+        totalRefundedAmountCents: 2500,
+      });
+
+      const { status, body } = await approveOver([madeSlice, refused]);
+
+      expect(status).toBe(200);
+      expect(queued()).toEqual([{ amountCents: 2500, allocationPlan: [made(madeSlice), onNextKey(refused)] }]);
+      expect(alerts()).toEqual([{ amountCents: 1000, paymentIntentId: "pi_txn_old" }]);
+      expect(body).toMatchObject({ cardRefundOwedCents: 1000, cardRefundQueued: true });
+    });
+
+    it("every slice made (a pending one included): nothing is queued, nobody is alerted, nothing is owed", async () => {
+      const madeSlice = { paymentTransactionId: "txn_new", amountCents: 1500 };
+      const pending = { paymentTransactionId: "txn_old", amountCents: 1000 };
+      mocks.refundPaymentTransactions.mockResolvedValue({
+        refunds: [answer(madeSlice, "succeeded"), answer(pending, "pending")],
+        totalRefundedAmountCents: 2500,
+      });
+
+      const { status, body } = await approveOver([madeSlice, pending]);
+
+      expect(status).toBe(200);
+      expect(mocks.enqueueRefundRequestRefundRecovery).not.toHaveBeenCalled();
+      expect(mocks.alertPaymentRecoveryOfficers).not.toHaveBeenCalled();
+      expect(body).toMatchObject({ cardRefundOwedCents: 0, cardRefundQueued: true });
+    });
+
+    it("the row already there (a repeat enqueue): the same plan on the same next key, never refused2, and no second alert", async () => {
+      const slice = { paymentTransactionId: "txn_1", amountCents: 2500 };
+      // The first key's refusal is what Stripe answers both times (it caches a key for 24 hours).
+      mocks.refundPaymentTransactions.mockResolvedValue({ refunds: [answer(slice, "failed")], totalRefundedAmountCents: 2500 });
+      mocks.enqueueRefundRequestRefundRecovery
+        .mockResolvedValueOnce({ created: true, paymentIntentId: "pi_1" })
+        .mockResolvedValueOnce({ created: false, paymentIntentId: "pi_1" });
+
+      expect((await approveOver([slice])).status).toBe(200);
+      expect((await approveOver([slice])).status).toBe(200);
+
+      const once = { amountCents: 2500, allocationPlan: [onNextKey(slice)] };
+      expect(queued()).toEqual([once, once]);
+      expect(alerts()).toEqual([{ amountCents: 2500, paymentIntentId: "pi_txn_1" }]);
+    });
+
+    // #4117 (money F2): releasing the claim once Stripe was asked would let a
+    // second approval plan the refund afresh over what was already made, under
+    // new keys, and send it again. The approval stands; what was not made is
+    // told apart - refused (certainly not made) from unanswered (Stripe may have
+    // made it: a bank transfer for it unchecked could pay the member twice) -
+    // on the alert, the request's notes, the audit row and the response, and
+    // the Xero credit note covers only what went back.
+    const refusedPart = (cents: number) =>
+      `$${(cents / 100).toFixed(2)} was refused by Stripe, so it certainly did not go back: refund it another way.`;
+    const unansweredPart = (cents: number) =>
+      `$${(cents / 100).toFixed(2)} got no answer from Stripe and may have been made: check the payment in Stripe before refunding it another way.`;
+    const s1 = { paymentTransactionId: "txn_new", amountCents: 1500 };
+    const s2 = { paymentTransactionId: "txn_old", amountCents: 1000 };
+    it.each([
+      {
+        label: "every slice refused",
+        arrange: () => mocks.refundPaymentTransactions.mockResolvedValue({ refunds: [answer(s1, "failed"), answer(s2, "failed")] }),
+        refused: 2500, unanswered: 0, note: 0,
+      },
+      {
+        // Stripe made slice 1, then the app could not record it (the database
+        // failing), so it comes back unanswered, as does the slice never sent.
+        label: "a database fault after Stripe made the first slice",
+        arrange: () =>
+          mocks.refundPaymentTransactions.mockRejectedValue(
+            new PartialRefundError({ completedRefundCents: 0, refunds: [], cause: new Error("connection terminated"), format: CLUB_FORMAT_TEST }),
+          ),
+        refused: 0, unanswered: 2500, note: 0,
+      },
+      {
+        label: "a refusal, then a throw",
+        arrange: () =>
+          mocks.refundPaymentTransactions.mockRejectedValue(
+            new PartialRefundError({ completedRefundCents: 0, refunds: [answer(s1, "canceled")], refusedSlices: [s1], cause: new Error("timed out"), format: CLUB_FORMAT_TEST }),
+          ),
+        refused: 1500, unanswered: 1000, note: 0,
+      },
+      {
+        label: "one slice made, one refused",
+        arrange: () => mocks.refundPaymentTransactions.mockResolvedValue({ refunds: [answer(s1, "succeeded"), answer(s2, "failed")] }),
+        refused: 1000, unanswered: 0, note: 1500,
+      },
+    ])("no row could be written after $label: the approval stands, and what was not made is told apart everywhere", async ({ arrange, refused, unanswered, note }) => {
+      arrange();
+      mocks.enqueueRefundRequestRefundRecovery.mockRejectedValue(new Error("db unavailable"));
+      const parts = [refused > 0 ? refusedPart(refused) : null, unanswered > 0 ? unansweredPart(unanswered) : null].filter(Boolean).join(" ");
+      const message = `This card refund could not be queued for retry. ${parts}`;
+
+      const { status, body } = await approveOver([s1, s2]);
+
+      expect(status).toBe(200);
+      expect(body).toMatchObject({
+        cardRefundOwedCents: refused + unanswered,
+        cardRefundQueued: false,
+        cardRefundRefusedCents: refused,
+        cardRefundUnansweredCents: unanswered,
+      });
+      // Never released back to PENDING, and never written to the request's
+      // admin notes: the member reads those (#4117). Only the claim writes it.
+      const writes = mocks.refundRequestUpdateMany.mock.calls.map(([args]) => args as { where: unknown; data: Record<string, unknown> });
+      expect(writes.some((write) => write.data.status === "PENDING")).toBe(false);
+      expect(writes).toHaveLength(1);
+      expect(JSON.stringify(writes)).not.toContain("could not be queued");
+      expect(mocks.alertPaymentRecoveryOfficers).toHaveBeenCalledTimes(1);
+      expect(mocks.alertPaymentRecoveryOfficers).toHaveBeenCalledWith(
+        expect.objectContaining({ amountCents: refused + unanswered, errorMessage: message }),
+        CLUB_FORMAT_TEST,
+      );
+      expect(mocks.createAuditLog).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: "refund-request.approve",
+          metadata: expect.objectContaining({
+            cardRefundOwedCents: refused + unanswered,
+            cardRefundQueued: false,
+            cardRefundRefusedCents: refused,
+            cardRefundUnansweredCents: unanswered,
+            // The plan read and when it was attempted: the screen nets refunds recorded later.
+            cardRefundUnqueued: { plan: expect.any(Array), attemptedAt: expect.any(String) },
+          }),
+        }),
+      );
+      // The credit note is for what went back by card, and nothing else.
+      if (note > 0) {
+        expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith("payment_1", note, expect.anything());
+      } else {
+        expect(mocks.enqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
+      }
+    });
+
+    // #4117: a refund not queued is told to the officers and the audit row,
+    // never to the member: the request's admin notes reach the member's booking
+    // page, the refund-appeal button and the booking history.
+    it("the member-facing record carries only the officer's own notes when a refund could not be queued", async () => {
+      mocks.refundRequestFindUnique.mockResolvedValue(approvedRefundRequest());
+      mocks.planStripeRefundAllocation.mockResolvedValue({ slices: [s1], plannedAmountCents: 1500, totalRefundableCents: 10000 });
+      mocks.refundPaymentTransactions.mockResolvedValue({ refunds: [answer(s1, "failed")] });
+      mocks.enqueueRefundRequestRefundRecovery.mockRejectedValue(new Error("db unavailable"));
+
+      const response = await PUT(
+        new NextRequest("http://localhost/api/admin/refund-requests/refund_1", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json", "x-forwarded-for": "127.0.0.1" },
+          body: JSON.stringify({ status: "APPROVED", approvedAmountCents: 1500, adminNotes: "Approved: storm closure" }),
+        }),
+        { params: Promise.resolve({ id: "refund_1" }) },
+      );
+
+      expect(response.status).toBe(200);
+      const notes = mocks.refundRequestUpdateMany.mock.calls.flatMap(([args]) => {
+        const data = (args as { data: Record<string, unknown> }).data;
+        return "adminNotes" in data ? [data.adminNotes] : [];
+      });
+      expect(notes).toEqual(["Approved: storm closure"]);
+      // The member's outcome email does not carry it either.
+      expect(JSON.stringify(mocks.sendEmail.mock.calls)).not.toContain("could not be queued");
+    });
+
+    it("no row could be written and Stripe was never asked: the claim is released and nobody is alerted", async () => {
+      mocks.refundPaymentTransactions.mockRejectedValue(new Error("payment not found"));
+      mocks.enqueueRefundRequestRefundRecovery.mockRejectedValue(new Error("db unavailable"));
+
+      expect((await approveOver([{ paymentTransactionId: "txn_1", amountCents: 2500 }])).status).toBe(500);
+
+      expect(mocks.alertPaymentRecoveryOfficers).not.toHaveBeenCalled();
+      expect(mocks.refundRequestUpdateMany).toHaveBeenLastCalledWith(
+        expect.objectContaining({ where: { id: "refund_1", status: "APPROVED" }, data: expect.objectContaining({ status: "PENDING" }) }),
+      );
+    });
   });
 
   /*

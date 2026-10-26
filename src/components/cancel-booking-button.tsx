@@ -19,11 +19,10 @@ import {
   type HostingCoverageOverridePromptData,
 } from "@/lib/hosting-coverage-override-client";
 import { formatCents } from "@/lib/utils";
+import type { OrganiserRefundMethod, OwnCardRefundMethod } from "@/lib/booking-modified-email-copy";
 import { useClubFormat } from "@/components/club-format-provider";
-import {
-  ForcedRefundNote,
-  NoRefundablePaymentNote,
-} from "@/components/cancel-booking-payment-notes";
+import { CardRefundShortfallRows, CardRefundShortfallSentence, cardShortfallOptionLabel, ForcedRefundNote, NoRefundablePaymentNote, OrganiserRefundConfirmation, OwnCardRefundConfirmation } from "@/components/cancel-booking-payment-notes";
+import type { CancelCardRefundSplit } from "@/lib/cancel-card-refund-shortfall";
 
 interface CancelPreview {
   refundAmountCents: number;
@@ -46,7 +45,7 @@ interface CancelPreview {
    * internet banking payment, decided in `cancel-refund-method.ts` and returned
    * by the preview. When set, the dialog shows only that option.
    */
-  refundMethodForced?: "credit" | "organiser_card" | null;
+  refundMethodForced?: Parameters<typeof ForcedRefundNote>[0]["forced"] | null; // #3949: or organiser_by_hand
   /**
    * #3643 DECISION 2: Xero shows a payment the app cannot hand back as credit,
    * so an officer's cancel treats the booking as unpaid and the treasurer
@@ -55,6 +54,7 @@ interface CancelPreview {
   paymentSettledByHand?: boolean;
   /** #3653: the organiser's cancellation of the group already refunds this booking; the cancel's own sentence. */
   groupCancellationRefundNote?: string;
+  cardShortfall?: CancelCardRefundSplit; // #4119: the card refund plan carries less than refundAmountCents
 }
 
 export function CancelBookingButton({
@@ -96,7 +96,7 @@ export function CancelBookingButton({
   const format = useClubFormat();
   const [step, setStep] = useState<"idle" | "loading" | "preview" | "cancelling" | "success" | "error">("idle");
   const [preview, setPreview] = useState<CancelPreview | null>(null);
-  const [result, setResult] = useState<{ refundAmountCents: number; refundMethod: string; creditAmountCents?: number; creditRestoredCents?: number } | null>(null);
+  const [result, setResult] = useState<{ refundAmountCents: number; refundMethod: string; creditAmountCents?: number; creditRestoredCents?: number; organiserRefund?: { method: OrganiserRefundMethod; amountCents: number }; ownCardRefund?: { method: OwnCardRefundMethod; amountCents: number; byHandCents?: number; toCheckCents?: number } } | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
   const [refundMethod, setRefundMethod] = useState<"card" | "credit">("card");
   // Issue #1705: the admin's explicit email choice dialog, and the choice that
@@ -274,6 +274,8 @@ export function CancelBookingButton({
           refundMethod: data.refundMethod || "card",
           creditAmountCents: data.creditAmountCents,
           creditRestoredCents: data.creditRestoredCents,
+          organiserRefund: data.organiserRefund,
+          ownCardRefund: data.ownCardRefund,
         });
         setStep("success");
         router.refresh();
@@ -337,6 +339,7 @@ export function CancelBookingButton({
     // this disjunct the panel would promise a confirmation email for the one
     // booking guaranteed not to get one.
     const emailSuppressed = notifiedMember === false || noEmailsSuppressesChoice;
+    const emailNote = emailSuppressed ? "" : onBehalfOfMember ? " They will receive a confirmation email shortly." : " You will receive a confirmation email shortly.";
     return renderWithHostingOverrideRegion(
       <div className="rounded-md border border-success-6 bg-success-3 p-4 space-y-1">
         <p className="text-sm font-medium text-success-11">
@@ -353,22 +356,20 @@ export function CancelBookingButton({
             refund to and mints no account credit — the club hands the money
             back directly. The plan-forbidden sentence ("processed to your
             original payment method") must never render for this outcome. */}
-        {refund > 0 && result?.refundMethod === "manual" ? (
+        {refund > 0 && result?.refundMethod === "manual" && !result.organiserRefund ? (
           <p className="text-sm text-success-11">
             {onBehalfOfMember
               ? `The club will arrange the member's refund of ${formatCents(refund, format)} directly — they'll hear from the club about how it will be paid back.`
               : `The club will arrange your refund of ${formatCents(refund, format)} directly — you'll hear from them about how it will be paid back.`}
           </p>
+        ) : result?.organiserRefund ? (
+          <OrganiserRefundConfirmation organiserRefund={result.organiserRefund} format={format} emailNote={emailNote} />
         ) : refund > 0 && isCredit ? (
           <p className="text-sm text-success-11">
             A credit of {formatCents(refund, format)} has been added to {onBehalfOfMember ? "the member's" : "your"} account for future bookings.
           </p>
         ) : refund > 0 ? (
-          <p className="text-sm text-success-11">
-            {onBehalfOfMember
-              ? `The refund of ${formatCents(refund, format)} has been processed to the member's original payment method.${emailSuppressed ? "" : " They will receive a confirmation email shortly."}`
-              : `Your refund of ${formatCents(refund, format)} has been processed to your original payment method.${emailSuppressed ? "" : " You will receive a confirmation email shortly."}`}
-          </p>
+          <OwnCardRefundConfirmation amountCents={result?.ownCardRefund?.amountCents ?? refund} byHandCents={result?.ownCardRefund?.byHandCents} toCheckCents={result?.ownCardRefund?.toCheckCents} pending={result?.ownCardRefund?.method === "card_pending"} format={format} emailNote={emailNote} onBehalfOfMember={onBehalfOfMember} />
         ) : emailSuppressed ? null : (
           <p className="text-sm text-success-11">
             {onBehalfOfMember
@@ -415,6 +416,7 @@ export function CancelBookingButton({
     const hasCardRefund =
       preview.refundAmountCents > 0 || preview.creditRefundAmountCents > 0;
     const hasRefund = hasCardRefund || preview.creditRestoredCents > 0;
+    const cardShortfall = hasCardRefund && !preview.manualRefund && refundMethod === "card" ? preview.cardShortfall : undefined; // #4119
 
     return renderWithHostingOverrideRegion(
       <div className="rounded-md border border-danger-6 bg-danger-3 p-4 space-y-3">
@@ -492,7 +494,7 @@ export function CancelBookingButton({
                   />
                   <span>
                     <span className="font-medium text-foreground">
-                      Refund {formatCents(preview.refundAmountCents, format)} to original payment method
+                      {preview.cardShortfall ? cardShortfallOptionLabel(preview.cardShortfall, format) : `Refund ${formatCents(preview.refundAmountCents, format)} to original payment method`}
                     </span>
                     <span className="text-muted-foreground ml-1">({preview.refundPercentage}% refund)</span>
                   </span>
@@ -553,7 +555,7 @@ export function CancelBookingButton({
                     </span>
                   </div>
                 )}
-              {hasCardRefund && !preview.manualRefund && (
+              {cardShortfall ? <CardRefundShortfallRows split={cardShortfall} format={format} /> : hasCardRefund && !preview.manualRefund && (
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">
                     {refundMethod === "credit" ? "Credit to account:" : "Refund to card:"}
@@ -598,6 +600,7 @@ export function CancelBookingButton({
                 </div>
               )}
             </div>
+            {cardShortfall && <CardRefundShortfallSentence split={cardShortfall} format={format} onBehalfOfMember={onBehalfOfMember} />}
           </div>
         )}
 
