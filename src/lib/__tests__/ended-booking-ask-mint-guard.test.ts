@@ -41,6 +41,7 @@ const mocks = vi.hoisted(() => ({
   paymentUpdate: vi.fn(),
   transactionFindFirst: vi.fn(),
   transaction: vi.fn(),
+  followSuperseded: vi.fn(),
   askRowStatus: { value: "PENDING" },
 }));
 
@@ -74,6 +75,10 @@ vi.mock("@/lib/prisma", () => {
   };
   return { prisma: client };
 });
+// #3403: the superseded asks' invoices follow this mint's intent; its own module is tested on its own.
+vi.mock("@/lib/superseded-ask-invoice-carry", () => ({
+  followSupersededAskInvoicesSafely: mocks.followSuperseded,
+}));
 vi.mock("@/lib/payment-recovery", () => ({
   enqueuePaymentIntentCancellationRecovery: mocks.enqueueCancel,
   runPaymentRecoveryOperationNow: mocks.cancelNow,
@@ -171,6 +176,10 @@ beforeEach(() => {
     return "succeeded";
   });
   mocks.enqueueRecovery.mockResolvedValue(undefined);
+  mocks.followSuperseded.mockImplementation(async () => {
+    order.push("followSuperseded");
+    return null;
+  });
 });
 
 describe("a booking that ended BEFORE the mint is asked nothing (#4316)", () => {
@@ -195,7 +204,10 @@ describe("a booking that ended BEFORE the mint is asked nothing (#4316)", () => 
   it("a live booking is minted for as before, and its ask offered", async () => {
     const result = await mint();
 
-    expect(order).toEqual(["bookingRead", "createPaymentIntent", "upsertPaymentIntentTransaction", "bookingRead"]);
+    // #3403: the superseded asks' waiting invoices are moved onto this intent
+    // after its cancels and before its secret is offered.
+    expect(order).toEqual(["bookingRead", "createPaymentIntent", "upsertPaymentIntentTransaction", "followSuperseded", "bookingRead"]);
+    expect(mocks.followSuperseded).toHaveBeenCalledWith({ paymentId: "payment_1", carrierPaymentIntentId: "pi_new" });
     expect(mocks.transaction).not.toHaveBeenCalled();
     expect(result).toEqual({
       additionalPaymentClientSecret: "pi_new_secret",
@@ -214,6 +226,8 @@ describe("a booking that ended AFTER the provider call is caught after the row w
     expect(order).toEqual([
       "createPaymentIntent",
       "upsertPaymentIntentTransaction",
+      // #3403: the move runs first and refuses an ended booking itself.
+      "followSuperseded",
       // The re-read comes AFTER the row write: that write took the Payment row
       // lock the cancel's claim takes before it reads the mirror. Review round
       // 2: the intent's cancellation is queued on its own FIRST, so a failed

@@ -7,6 +7,7 @@ import { parseWorkflowYaml } from "./check-workflow-suite-checkout-depth.mjs";
 import { parseArtifactWaitArgs } from "./wait-for-run-artifacts.mjs";
 import {
   EXPECTED_SHARD_COUNT,
+  classifyRequiredJobs,
   classifyTestShardJobs,
   getAttemptJobs,
   parseShardGateArgs,
@@ -24,6 +25,10 @@ function shard(index, status = "completed", conclusion = "success") {
 
 const passed = () => Array.from({ length: EXPECTED_SHARD_COUNT }, (_, i) => shard(i + 1));
 
+const GATE = "node scripts/ci/require-test-shards.mjs";
+const splitArgs = (command) => command.match(/"[^"]*"|\S+/g).map((arg) => arg.replace(/^"|"$/g, ""));
+const verifyGateStep = () => workflow.jobs.verify.steps.find((step) => step.run?.startsWith(`${GATE} `) || step.run === GATE);
+
 describe("required verify's independent test-shard gate", () => {
   it("preserves the required job name, avoids needs/job-level if, and gives every shard a full checkout", () => {
     const verify = workflow.jobs.verify;
@@ -33,8 +38,10 @@ describe("required verify's independent test-shard gate", () => {
     expect(verify["continue-on-error"]).toBeUndefined();
     expect(verify.permissions.actions).toBe("read");
     expect(verify.permissions.contents).toBe("read");
-    const gateStep = verify.steps.find((step) => step.run === "node scripts/ci/require-test-shards.mjs");
+    const gateStep = verifyGateStep();
     expect(gateStep).toBeDefined();
+    // The unit-test defaults: `verify` gates the whole matrix, not a slice.
+    expect(parseShardGateArgs(splitArgs(gateStep.run.slice(GATE.length)))).toMatchObject({ label: "Test shard", count: EXPECTED_SHARD_COUNT, from: 1 });
     expect(gateStep?.if).toBeUndefined();
     expect(gateStep?.["continue-on-error"]).toBeUndefined();
     expect(verify.steps.some((step) => /(?:^|\s)p?npm test(?:\s|$)/.test(step.run ?? ""))).toBe(false);
@@ -104,6 +111,81 @@ describe("required verify's independent test-shard gate", () => {
   });
 });
 
+// #4425: typecheck, lint and the build with its proofs left `verify` for jobs
+// of their own, which reach the required check only through `verify`'s gate
+// step. Each must stay unconditional (a skipped job fails the gate, but a
+// condition that is always false would fail every PR), run under `verify`'s
+// environment, and be named exactly as the gate's `--job` names it.
+describe("verify's typecheck, lint and build jobs (#4425)", () => {
+  const SPLIT_JOBS = [
+    { id: "typecheck", command: "pnpm run typecheck" },
+    { id: "lint", command: "pnpm run lint" },
+    { id: "build", command: "pnpm run build" },
+  ];
+
+  it("gates exactly these jobs, by the names GitHub reports them under", () => {
+    const options = parseShardGateArgs(splitArgs(verifyGateStep().run.slice(GATE.length)));
+    expect(options.required.toSorted()).toEqual(SPLIT_JOBS.map(({ id }) => workflow.jobs[id].name).toSorted());
+  });
+
+  it.each(SPLIT_JOBS)("$id has no needs/if/continue-on-error, verify's env, and runs `$command` unconditionally, not in verify", ({ id, command }) => {
+    const job = workflow.jobs[id];
+    expect(job.needs).toBeUndefined();
+    expect(job.if).toBeUndefined();
+    expect(job["continue-on-error"]).toBeUndefined();
+    expect(job.strategy).toBeUndefined();
+    expect(job.env).toEqual(workflow.jobs.verify.env);
+    const step = job.steps.find((item) => item.run === command);
+    expect(step, command).toBeDefined();
+    expect(step.if).toBeUndefined();
+    expect(step["continue-on-error"]).toBeUndefined();
+    expect(workflow.jobs.verify.steps.some((item) => item.run === command)).toBe(false);
+  });
+
+  it("keeps the build's output proofs after the build, in the build job, unconditional", () => {
+    const steps = workflow.jobs.build.steps;
+    const at = (needle) => steps.findIndex((step) => step.run?.includes(needle));
+    const build = at("pnpm run build");
+    for (const proof of ["check-prerendered-script-nonces.mjs", "check-website-prerender-manifest.mjs", "server-only-boundary-selftest.mjs"]) {
+      expect(at(proof), proof).toBeGreaterThan(build);
+      expect(steps[at(proof)].if, proof).toBeUndefined();
+      expect(steps[at(proof)]["continue-on-error"], proof).toBeUndefined();
+    }
+    // The self-test clobbers `.next`, so it stays the last build-output consumer.
+    expect(at("server-only-boundary-selftest.mjs")).toBe(steps.length - 1);
+  });
+
+  it("requires each named job to appear once and succeed, failing at once on any other conclusion", () => {
+    const job = (name, status = "completed", conclusion = "success") => ({ name, status, conclusion });
+    const names = ["Typecheck", "Lint"];
+    expect(classifyRequiredJobs([job("Typecheck"), job("Lint"), job("Other", "completed", "failure")], names)).toEqual([]);
+    expect(classifyRequiredJobs([job("Typecheck", "in_progress", null)], names)).toEqual(['"Typecheck" in_progress', 'missing "Lint"']);
+    for (const conclusion of ["failure", "cancelled", "skipped", "neutral", "timed_out", null]) {
+      expect(() => classifyRequiredJobs([job("Typecheck", "completed", conclusion), job("Lint")], names)).toThrow(/Required job "Typecheck" completed as/);
+    }
+    expect(() => classifyRequiredJobs([job("Lint"), job("Lint")], names)).toThrow(/Duplicate required job: Lint/);
+    expect(() => classifyRequiredJobs([job("Lint", "exploded", null)], ["Lint"])).toThrow(/unknown status exploded/);
+    expect(() => parseShardGateArgs(["--job", "Lint", "--job", "Lint"])).toThrow(/Duplicate --job/);
+    expect(() => parseShardGateArgs(["--job", "x\"; rm"])).toThrow(/Invalid --job/);
+  });
+
+  it("the gate waits for the shards AND the named jobs, and fails before the shards finish when one fails", async () => {
+    const lint = (status, conclusion) => ({ name: "Lint", status, conclusion });
+    let calls = 0;
+    await expect(requireTestShards({
+      required: ["Lint"],
+      loadJobs: async () => (++calls === 1 ? [...passed(), lint("in_progress", null)] : [...passed(), lint("completed", "success")]),
+      sleep: async () => {},
+    })).resolves.toBeUndefined();
+    expect(calls).toBe(2);
+    await expect(requireTestShards({
+      required: ["Lint"],
+      loadJobs: async () => [shard(1, "in_progress", null), lint("completed", "failure")],
+      sleep: async () => { throw new Error("waited instead of failing"); },
+    })).rejects.toThrow(/Required job "Lint" completed as failure/);
+  });
+});
+
 describe("attempt-scoped GitHub jobs read", () => {
   const options = {
     apiUrl: "https://api.github.com",
@@ -149,8 +231,8 @@ describe("the gate for another matrix (--label/--count)", () => {
   const e2e = (index, status = "completed", conclusion = "success") => ({ name: `E2E shard (${index}/3)`, status, conclusion });
 
   it("parses its arguments, defaulting to the unit-test matrix, and refuses anything else", () => {
-    expect(parseShardGateArgs([])).toEqual({ label: "Test shard", count: EXPECTED_SHARD_COUNT, maxWaitMs: 45 * 60_000, upstream: [], from: 1 });
-    expect(parseShardGateArgs(["--label", "E2E shard", "--count", "3", "--max-wait-minutes", "55"])).toEqual({ label: "E2E shard", count: 3, maxWaitMs: 55 * 60_000, upstream: [], from: 1 });
+    expect(parseShardGateArgs([])).toEqual({ label: "Test shard", count: EXPECTED_SHARD_COUNT, maxWaitMs: 45 * 60_000, upstream: [], from: 1, required: [] });
+    expect(parseShardGateArgs(["--label", "E2E shard", "--count", "3", "--max-wait-minutes", "55"])).toEqual({ label: "E2E shard", count: 3, maxWaitMs: 55 * 60_000, upstream: [], from: 1, required: [] });
     expect(() => parseShardGateArgs(["--count", "0"])).toThrow(/Invalid --count/);
     expect(() => parseShardGateArgs(["--label", "x\"; rm"])).toThrow(/Invalid --label/);
     expect(() => parseShardGateArgs(["--label"])).toThrow(/needs a value/);

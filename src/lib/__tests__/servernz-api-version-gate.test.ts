@@ -6,23 +6,75 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  * the only opt-out is the version call itself. This suite drives the REAL
  * module against a stubbed `fetch`, so "nothing was sent" means no fetch at
  * all, not a mocked gate that said so.
+ *
+ * #4366: it also drives the REAL fenced recorder (`servernz-version-record.ts`)
+ * against a stateful double of the stored connection - the settings row's
+ * address and the API key's credential version - and a `$transaction` that
+ * hands the recorder a client reading that state. A test can move the stored
+ * connection while a response is held back, which is the race the fence exists
+ * for, with no real HTTP and no database.
  */
 
-const mocks = vi.hoisted(() => ({
-  getOperationalServerNzApiKey: vi.fn(),
-  loadServerNzSettings: vi.fn(),
-  recordServerVersionCheck: vi.fn(),
-  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
-}));
+const mocks = vi.hoisted(() => {
+  /** The stored connection as the database would hold it right now. */
+  const stored: {
+    baseUrl: string | null;
+    apiKey: string | undefined;
+    credentialVersion: string | null;
+  } = { baseUrl: "https://central.test", apiKey: "acs_key", credentialVersion: "cred-v1" };
+  const order: string[] = [];
+  return {
+    stored,
+    order,
+    loadServerNzSettings: vi.fn(),
+    recordServerVersionCheck: vi.fn(),
+    invalidateProviderCredentialCache: vi.fn(),
+    lockServerNzSettings: vi.fn(async () => {
+      order.push("lock");
+    }),
+    readServerNzCredentialVersion: vi.fn(async () => {
+      order.push("read credential version");
+      return stored.credentialVersion;
+    }),
+    getOperationalServerNzCredential: vi.fn(async () =>
+      stored.apiKey === undefined || stored.credentialVersion === null
+        ? undefined
+        : { apiKey: stored.apiKey, version: stored.credentialVersion },
+    ),
+    tx: {
+      serverNzSettings: {
+        findUnique: vi.fn(async () => {
+          order.push("read address");
+          return { baseUrl: stored.baseUrl };
+        }),
+      },
+    },
+    logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+  };
+});
 
 vi.mock("@/lib/servernz-config", () => ({
-  getOperationalServerNzApiKey: mocks.getOperationalServerNzApiKey,
+  SERVERNZ_PROVIDER: "servernz",
+  getOperationalServerNzCredential: mocks.getOperationalServerNzCredential,
+  readServerNzCredentialVersion: mocks.readServerNzCredentialVersion,
+}));
+
+vi.mock("@/lib/integration-credentials", () => ({
+  invalidateProviderCredentialCache: mocks.invalidateProviderCredentialCache,
 }));
 
 vi.mock("@/lib/servernz-settings", () => ({
+  SERVERNZ_SETTINGS_ID: "default",
   loadServerNzSettings: mocks.loadServerNzSettings,
+  lockServerNzSettings: mocks.lockServerNzSettings,
   recordServerVersionCheck: mocks.recordServerVersionCheck,
   validateCentralServerBaseUrl: (value: string) => ({ ok: true, value }),
+}));
+
+vi.mock("@/lib/prisma", () => ({
+  prisma: {
+    $transaction: vi.fn(async (work: (tx: unknown) => Promise<unknown>) => work(mocks.tx)),
+  },
 }));
 
 vi.mock("@/lib/logger", () => ({ default: mocks.logger }));
@@ -45,15 +97,35 @@ import {
   SERVERNZ_EXPECTED_SERVER_VERSION,
   SERVER_VERSION_UNKNOWN,
 } from "@/lib/servernz-api-version";
+import { prisma } from "@/lib/prisma";
 
 const fetchMock = vi.fn();
 
 function settings(serverVersion: string | null) {
-  mocks.loadServerNzSettings.mockResolvedValue({
-    baseUrl: "https://central.test",
+  mocks.loadServerNzSettings.mockImplementation(async () => ({
+    baseUrl: mocks.stored.baseUrl,
     serverVersion,
     serverVersionCheckedAt: null,
+  }));
+}
+
+/** The version column was written with exactly this, inside the recorder's transaction. */
+function expectRecorded(version: string) {
+  expect(mocks.recordServerVersionCheck).toHaveBeenCalledWith(version, expect.any(Date), mocks.tx);
+}
+
+/** A response the test releases when it chooses, after moving the stored connection. */
+function deferredResponse() {
+  let release!: (value: unknown) => void;
+  const pending = new Promise((resolve) => {
+    release = resolve;
   });
+  fetchMock.mockReturnValueOnce(pending);
+  return release;
+}
+
+async function untilSent(calls = 1) {
+  await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(calls));
 }
 
 function respond(status: number, body: unknown = {}) {
@@ -64,7 +136,10 @@ beforeEach(() => {
   vi.clearAllMocks();
   fetchMock.mockReset();
   vi.stubGlobal("fetch", fetchMock);
-  mocks.getOperationalServerNzApiKey.mockResolvedValue("acs_key");
+  mocks.stored.baseUrl = "https://central.test";
+  mocks.stored.apiKey = "acs_key";
+  mocks.stored.credentialVersion = "cred-v1";
+  mocks.order.length = 0;
   mocks.recordServerVersionCheck.mockResolvedValue(undefined);
   settings(SERVERNZ_EXPECTED_SERVER_VERSION);
 });
@@ -174,7 +249,7 @@ describe("the server's own 409 refusal (review item 1)", () => {
     const error = await call().catch((e: unknown) => e);
     expect(error).toBeInstanceOf(ServerNzVersionMismatchError);
     expect((error as ServerNzVersionMismatchError).serverVersion).toBe("2.7");
-    expect(mocks.recordServerVersionCheck).toHaveBeenCalledWith("2.7");
+    expectRecorded("2.7");
   });
 
   it("leaves a plain 409 (no code) as the ServerNzApiError it always was, recording nothing", async () => {
@@ -207,16 +282,37 @@ describe("the server's own 409 refusal (review item 1)", () => {
     const error = await withdrawClubPost("srv-1").catch((e: unknown) => e);
     expect(error).toBeInstanceOf(ServerNzVersionMismatchError);
     expect((error as ServerNzVersionMismatchError).serverVersion).toBe(SERVER_VERSION_UNKNOWN);
-    expect(mocks.recordServerVersionCheck).toHaveBeenCalledWith(SERVER_VERSION_UNKNOWN);
+    expectRecorded(SERVER_VERSION_UNKNOWN);
   });
 
   it("still throws the version error, without recording, when the key changed while the request was in flight (item 4)", async () => {
-    mocks.getOperationalServerNzApiKey
-      .mockResolvedValueOnce("acs_key") // resolveConnection
-      .mockResolvedValueOnce("acs_replacement"); // the re-read before recording
-    fetchMock.mockResolvedValue(respond(409, MISMATCH_409));
-    await expect(registerPushTarget("https://club.test/hook")).rejects.toBeInstanceOf(ServerNzVersionMismatchError);
+    const release = deferredResponse();
+    const call = registerPushTarget("https://club.test/hook").catch((e: unknown) => e);
+    await untilSent();
+    mocks.stored.apiKey = "acs_replacement";
+    mocks.stored.credentialVersion = "cred-v2";
+    release(respond(409, MISMATCH_409));
+    expect(await call).toBeInstanceOf(ServerNzVersionMismatchError);
     expect(mocks.recordServerVersionCheck).not.toHaveBeenCalled();
+  });
+
+  it("records nothing from a refusal sent on key A when A was replaced and saved again meanwhile (A -> B -> A, #4366)", async () => {
+    const release = deferredResponse();
+    const call = withdrawClubPost("srv-1").catch((e: unknown) => e);
+    await untilSent();
+    // B, then A again: the same plaintext as the request's, on a new row.
+    mocks.stored.apiKey = "acs_other";
+    mocks.stored.credentialVersion = "cred-v2";
+    mocks.stored.apiKey = "acs_key";
+    mocks.stored.credentialVersion = "cred-v3";
+    release(respond(409, MISMATCH_409));
+    const error = await call;
+    expect(error).toBeInstanceOf(ServerNzVersionMismatchError);
+    // The caller still pauses on what the server said; only the record is refused.
+    expect((error as ServerNzVersionMismatchError).serverVersion).toBe("2.7");
+    expect(mocks.recordServerVersionCheck).not.toHaveBeenCalled();
+    // The key it was sent with may be a stale cached copy: the next request re-resolves.
+    expect(mocks.invalidateProviderCredentialCache).toHaveBeenCalledWith("servernz");
   });
 });
 
@@ -224,7 +320,8 @@ describe("refreshStoredServerVersion: one path writes the column", () => {
   it("records what the server said, 'unknown' included", async () => {
     fetchMock.mockResolvedValue(respond(404));
     await expect(refreshStoredServerVersion()).resolves.toBe(SERVER_VERSION_UNKNOWN);
-    expect(mocks.recordServerVersionCheck).toHaveBeenCalledWith(SERVER_VERSION_UNKNOWN);
+    expectRecorded(SERVER_VERSION_UNKNOWN);
+    expect(mocks.invalidateProviderCredentialCache).not.toHaveBeenCalled();
   });
 
   it("records NOTHING and returns null when the call fails, so a blip cannot pause syncing", async () => {
@@ -244,16 +341,74 @@ describe("refreshStoredServerVersion: one path writes the column", () => {
   it("stores a malformed wire version as the unknown marker (item 3)", async () => {
     fetchMock.mockResolvedValue(respond(200, { version: "v2", match: null }));
     await expect(refreshStoredServerVersion()).resolves.toBe(SERVER_VERSION_UNKNOWN);
-    expect(mocks.recordServerVersionCheck).toHaveBeenCalledWith(SERVER_VERSION_UNKNOWN);
+    expectRecorded(SERVER_VERSION_UNKNOWN);
   });
 
-  it("drops a late answer when the key changed while the call was in flight (item 4)", async () => {
-    mocks.getOperationalServerNzApiKey
-      .mockResolvedValueOnce("acs_key")
-      .mockResolvedValueOnce(undefined); // key removed meanwhile
-    fetchMock.mockResolvedValue(respond(200, { version: "2.7", match: false }));
-    await expect(refreshStoredServerVersion()).resolves.toBeNull();
+  it("drops a late answer when the key was removed while the call was in flight (item 4)", async () => {
+    const release = deferredResponse();
+    const check = refreshStoredServerVersion();
+    await untilSent();
+    mocks.stored.apiKey = undefined;
+    mocks.stored.credentialVersion = null;
+    release(respond(200, { version: "2.7", match: false }));
+    await expect(check).resolves.toBeNull();
     expect(mocks.recordServerVersionCheck).not.toHaveBeenCalled();
+  });
+
+  it("drops a late answer after key A -> B -> A, though the plaintext key matches again (#4366)", async () => {
+    const release = deferredResponse();
+    const check = refreshStoredServerVersion();
+    await untilSent();
+    mocks.stored.apiKey = "acs_other";
+    mocks.stored.credentialVersion = "cred-v2";
+    mocks.stored.apiKey = "acs_key";
+    mocks.stored.credentialVersion = "cred-v3";
+    release(respond(200, { version: "3.0", match: false }));
+    await expect(check).resolves.toBeNull();
+    expect(mocks.recordServerVersionCheck).not.toHaveBeenCalled();
+    expect(mocks.logger.info).toHaveBeenCalledWith(
+      { expected: SERVERNZ_EXPECTED_SERVER_VERSION, serverVersion: "3.0" },
+      expect.stringMatching(/connection changed/),
+    );
+  });
+
+  it("drops a late answer after the server address moved, even with the same credential row (#4366)", async () => {
+    const release = deferredResponse();
+    const check = refreshStoredServerVersion();
+    await untilSent();
+    mocks.stored.baseUrl = "https://replacement.test";
+    release(respond(200, { version: "3.0", match: false }));
+    await expect(check).resolves.toBeNull();
+    expect(mocks.recordServerVersionCheck).not.toHaveBeenCalled();
+  });
+
+  it("drops a late answer after the address moved and key A was entered again for it (#4366)", async () => {
+    const release = deferredResponse();
+    const check = refreshStoredServerVersion();
+    await untilSent();
+    // A new address removes the key; the admin then saves A for the new server.
+    mocks.stored.baseUrl = "https://replacement.test";
+    mocks.stored.apiKey = undefined;
+    mocks.stored.credentialVersion = null;
+    mocks.stored.apiKey = "acs_key";
+    mocks.stored.credentialVersion = "cred-v2";
+    release(respond(200, { version: "3.0", match: false }));
+    await expect(check).resolves.toBeNull();
+    expect(mocks.recordServerVersionCheck).not.toHaveBeenCalled();
+  });
+
+  it("records a current answer, comparing only after the settings row is locked (#4366)", async () => {
+    fetchMock.mockResolvedValue(respond(200, { version: "3.0", match: false }));
+    await expect(refreshStoredServerVersion()).resolves.toBe("3.0");
+    expectRecorded("3.0");
+    expect(mocks.order[0]).toBe("lock");
+    expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), { timeout: 150_000, maxWait: 10_000 });
+    expect(mocks.order.slice(1).sort()).toEqual(["read address", "read credential version"]);
+    // ...and the gate then enforces it: nothing else reaches the server.
+    settings("3.0");
+    fetchMock.mockClear();
+    await expect(uploadOtherLodges([])).rejects.toBeInstanceOf(ServerNzVersionMismatchError);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("rethrows not-configured quietly: no 'could not check' warning for a key without an address (item 9)", async () => {
@@ -283,7 +438,7 @@ describe("a never-asked row self-heals with ONE inline check (default 1)", () =>
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(String(fetchMock.mock.calls[0][0])).toBe("https://central.test/api/v1/version");
     expect(String(fetchMock.mock.calls[1][0])).toBe("https://central.test/api/v1/push-target");
-    expect(mocks.recordServerVersionCheck).toHaveBeenCalledWith(SERVERNZ_EXPECTED_SERVER_VERSION);
+    expectRecorded(SERVERNZ_EXPECTED_SERVER_VERSION);
   });
 
   it("refuses the real request when the inline answer differs, having sent only the version call", async () => {
@@ -292,7 +447,7 @@ describe("a never-asked row self-heals with ONE inline check (default 1)", () =>
 
     await expect(uploadOtherLodges([])).rejects.toBeInstanceOf(ServerNzVersionMismatchError);
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(mocks.recordServerVersionCheck).toHaveBeenCalledWith("3.0");
+    expectRecorded("3.0");
   });
 
   it("lets the request through when the inline check FAILS - a failed check never pauses", async () => {
@@ -305,6 +460,69 @@ describe("a never-asked row self-heals with ONE inline check (default 1)", () =>
 
     expect(result.count).toBe(0);
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(mocks.recordServerVersionCheck).not.toHaveBeenCalled();
+  });
+
+  it("re-resolves a stale cached credential and never sends a gated request after mismatching inline answers", async () => {
+    settings(null);
+    mocks.stored.credentialVersion = "cred-v2";
+    mocks.getOperationalServerNzCredential.mockResolvedValueOnce({ apiKey: "stale-key-a", version: "cred-v1" });
+    fetchMock.mockImplementation(async () => respond(200, { version: "3.0", match: false }));
+
+    await expect(uploadOtherLodges([])).rejects.toBeInstanceOf(ServerNzVersionMismatchError);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls.every(([url]) => String(url).endsWith("/api/v1/version"))).toBe(true);
+    expect(mocks.getOperationalServerNzCredential).toHaveBeenCalledTimes(2);
+    expect(mocks.invalidateProviderCredentialCache).toHaveBeenCalledTimes(1);
+    expect(mocks.recordServerVersionCheck).toHaveBeenCalledTimes(1);
+    expectRecorded("3.0");
+  });
+
+  it("returns 503 without another HTTP call when a dropped inline answer follows a base URL change", async () => {
+    settings(null);
+    const release = deferredResponse();
+    const pending = pullOtherLodges(null);
+    const rejected = expect(pending).rejects.toMatchObject({ name: "ServerNzApiError", status: 503 });
+    await untilSent();
+
+    mocks.stored.baseUrl = "https://replacement.test";
+    release(respond(200, { version: SERVERNZ_EXPECTED_SERVER_VERSION, match: true }));
+
+    await rejected;
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0][0])).toBe("https://central.test/api/v1/version");
+    expect(mocks.stored.apiKey).toBe("acs_key");
+    expect(mocks.recordServerVersionCheck).not.toHaveBeenCalled();
+  });
+
+  it("re-runs the gate exactly once with the current key at the same base URL before sending a gated request", async () => {
+    settings(null);
+    mocks.stored.credentialVersion = "cred-v2";
+    mocks.getOperationalServerNzCredential.mockResolvedValueOnce({ apiKey: "stale-key-a", version: "cred-v1" });
+    fetchMock
+      .mockResolvedValueOnce(respond(200, { version: "3.0", match: false }))
+      .mockResolvedValueOnce(respond(200, { version: SERVERNZ_EXPECTED_SERVER_VERSION, match: true }))
+      .mockResolvedValueOnce(respond(200, { lodges: [], cursor: null, count: 0 }));
+
+    await expect(pullOtherLodges(null)).resolves.toMatchObject({ count: 0 });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/api/v1/version"))).toHaveLength(2);
+    expect(fetchMock.mock.calls.every(([url]) => new URL(String(url)).origin === "https://central.test")).toBe(true);
+    expect(mocks.getOperationalServerNzCredential).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0][1].headers.Authorization).toBe("Bearer stale-key-a");
+    expect(fetchMock.mock.calls[1][1].headers.Authorization).toBe("Bearer acs_key");
+    expect(fetchMock.mock.calls[2][1].headers.Authorization).toBe("Bearer acs_key");
+    expectRecorded(SERVERNZ_EXPECTED_SERVER_VERSION);
+  });
+
+  it("throws a retryable error after a second dropped inline answer, without sending a gated request", async () => {
+    settings(null);
+    mocks.readServerNzCredentialVersion.mockResolvedValueOnce("cred-v2").mockResolvedValueOnce("cred-v3");
+    fetchMock.mockImplementation(async () => respond(200, { version: "3.0", match: false }));
+
+    await expect(uploadOtherLodges([])).rejects.toMatchObject({ name: "ServerNzApiError", status: 503 });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls.every(([url]) => String(url).endsWith("/api/v1/version"))).toBe(true);
     expect(mocks.recordServerVersionCheck).not.toHaveBeenCalled();
   });
 });

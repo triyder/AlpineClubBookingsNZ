@@ -1330,6 +1330,16 @@ const SCOPED_ADVISORY_LOCK_INVENTORY: Record<string, number> = {
   // an invoice naming no capture, and an officer's inline Retry of a change's
   // invoice re-asks under the change's key alone, in its own short
   // transaction, before its Xero call. No new raw site, no new key.
+  // #3403 (`INV-PAY-140`): the superseded-invoice move
+  // (`superseded-ask-invoice-carry.ts`) calls the same helper on each change
+  // whose waiting invoice it re-points at the request carrying its balance,
+  // and on that carrier's own key (its change, else the booking - booking
+  // first, else the two changes sorted), one short transaction per change
+  // holding nothing else; its return (`superseded-ask-invoice-return.ts`)
+  // takes it on one change alone, inside a kept capture's release. Their
+  // callers (the supersede's cancel step, the minters after their cancels, an
+  // edit's Xero leg, the reaper, the release) hold nothing there. Still no new
+  // raw site, no new key.
 };
 
 // Every entry here is now a LOCK-ONLY statement (#2289): it selects a constant,
@@ -1415,6 +1425,14 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // advisory lock; disjoint from booking/money writers. See
   // docs/CONCURRENCY_AND_LOCKING.md → "Member photo writer".
   "src/app/api/members/[id]/photo/route.ts": 2,
+  // Alpine Central Server version recorder (#4366): `lockServerNzSettings`
+  // locks the singleton settings row (`SELECT 1 … FOR UPDATE`) so
+  // `recordServerVersionIfCurrent` re-reads the connection (address and API-key
+  // credential version) under it before it records the server's answer; a
+  // connection change writes the same row, so the two serialise. #4277 adds a
+  // second caller of the same one statement (the download record step). No
+  // advisory key; disjoint from booking/money writers. See
+  // docs/CONCURRENCY_AND_LOCKING.md -> "Alpine Central Server version recorder".
   // Alpine Central Server owned-lodge list (#64): `lockServerNzSettings` locks
   // the singleton settings row (`SELECT 1 … FOR UPDATE`) for the download's
   // record step and an admin's Other lodges rename, the two writers that derive

@@ -120,6 +120,32 @@ describe("matchesWhere — scalar conditions", () => {
     expect(matchesWhere(action("a-b/c"), { notes: { startsWith: "a-b/" } })).toBe(true);
   });
 
+  it("reads a Json column's path + equals as PostgreSQL does: a missing key or NULL matches nothing (#3403)", () => {
+    const op = (requestPayload: unknown): WhereRow => ({ id: "op-1", requestPayload });
+    const where = { requestPayload: { path: ["paymentIntentId"], equals: "pi_a" } };
+    expect(matchesWhere(op({ paymentIntentId: "pi_a" }), where)).toBe(true);
+    expect(matchesWhere(op({ paymentIntentId: "pi_b" }), where)).toBe(false);
+    expect(matchesWhere(op({}), where)).toBe(false);
+    expect(matchesWhere(op(null), where)).toBe(false);
+    expect(matchesWhere(op({ paymentIntentId: { id: "pi_a" } }), where)).toBe(false);
+    expect(matchesWhere(op({ a: { b: 3 } }), { requestPayload: { path: ["a", "b"], equals: 3 } })).toBe(true);
+    // Inside OR, with other clauses, as the production queries use it.
+    expect(
+      matchesWhere(op({ paymentIntentId: "pi_b" }), {
+        OR: [where, { requestPayload: { path: ["paymentIntentId"], equals: "pi_b" } }],
+      }),
+    ).toBe(true);
+    // Under a negation a missing key is unknown: refused, never guessed.
+    expect(() => matchesWhere(op({}), { NOT: where })).toThrow(/met a NULL column/);
+    // Only path + equals with a scalar is modelled.
+    expect(() =>
+      matchesWhere(op({}), { requestPayload: { path: ["x"], string_contains: "y" } }),
+    ).toThrow(/only path \+ equals/);
+    expect(() =>
+      matchesWhere(op({}), { requestPayload: { path: ["x"], equals: { y: 1 } } }),
+    ).toThrow(/only a scalar/);
+  });
+
   it("drops a condition of undefined, as Prisma does", () => {
     expect(matchesWhere(booking(), { status: undefined, memberId: "m-1" })).toBe(true);
     expect(matchesWhere(booking(), { status: { in: undefined } })).toBe(true);

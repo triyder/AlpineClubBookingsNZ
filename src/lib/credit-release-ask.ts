@@ -355,6 +355,7 @@ export async function processCreditReleaseAskOperation(
     bookingId: operation.bookingId,
     paymentId: operation.paymentId,
     queued: held.value,
+    newPaymentIntentId: intent.id,
   });
   // #4316: a cancel committed since the check above could not see this intent. It is retired as
   // the cancel retires one (a failure throws, to retry); the debt closes, nothing is owed.

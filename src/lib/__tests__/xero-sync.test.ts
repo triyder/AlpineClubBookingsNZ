@@ -22,6 +22,8 @@ const mocks = vi.hoisted(() => ({
   txExecuteRaw: vi.fn(),
   operationUpdate: vi.fn(),
   operationUpdateMany: vi.fn(),
+  operationUpdateManyAndReturn: vi.fn(),
+  operationFindUnique: vi.fn(),
   operationFindUniqueOrThrow: vi.fn(),
 }));
 
@@ -44,6 +46,8 @@ vi.mock("@/lib/prisma", () => ({
       create: mocks.operationCreate,
       update: mocks.operationUpdate,
       updateMany: mocks.operationUpdateMany,
+      updateManyAndReturn: mocks.operationUpdateManyAndReturn,
+      findUnique: mocks.operationFindUnique,
       findUniqueOrThrow: mocks.operationFindUniqueOrThrow,
     },
     $transaction: mocks.transaction,
@@ -97,6 +101,15 @@ import {
 import { buildXeroContactUrl } from "@/lib/xero-links";
 import { prisma } from "@/lib/prisma";
 import { CREDIT_SPENT_OUTSIDE_APP_REASON_PREFIX } from "@/lib/xero-operation-resolution";
+
+/** #4356: every guarded outcome but a claim's also stays off a repair's RUNNING claim (`INV-INT-029`). */
+const NOT_A_REPAIR_CLAIM = {
+  OR: [
+    { status: { not: "RUNNING" } },
+    { lastErrorCode: null },
+    { lastErrorCode: { notIn: ["PARTIAL_REPAIR_RUNNING", "REFUND_NOTE_REPAIR_RUNNING"] } },
+  ],
+};
 
 describe("sumCoveredRefundCreditNoteCents (#1162)", () => {
   beforeEach(() => {
@@ -1606,13 +1619,14 @@ describe("failXeroSyncOperation keepCancelled", () => {
   });
 
   it("leaves a CANCELLED row as it is and answers null", async () => {
-    mocks.operationUpdateMany.mockResolvedValue({ count: 0 });
+    mocks.operationUpdateManyAndReturn.mockResolvedValue([]);
+    mocks.operationFindUnique.mockResolvedValue({ status: "CANCELLED" });
     await expect(
       failXeroSyncOperation("op_kept", new Error("boom"), undefined, { keepCancelled: true })
     ).resolves.toBeNull();
-    expect(mocks.operationUpdateMany).toHaveBeenCalledWith(
+    expect(mocks.operationUpdateManyAndReturn).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "op_kept", status: { not: "CANCELLED" } },
+        where: { id: "op_kept", status: { notIn: ["SUCCEEDED", "PARTIAL", "CANCELLED"] }, ...NOT_A_REPAIR_CLAIM },
         data: expect.objectContaining({ status: "FAILED" }),
       })
     );
@@ -1620,8 +1634,7 @@ describe("failXeroSyncOperation keepCancelled", () => {
   });
 
   it("fails any other row as before", async () => {
-    mocks.operationUpdateMany.mockResolvedValue({ count: 1 });
-    mocks.operationFindUniqueOrThrow.mockResolvedValue({ id: "op_kept", status: "FAILED" });
+    mocks.operationUpdateManyAndReturn.mockResolvedValue([{ id: "op_kept", status: "FAILED" }]);
     await expect(
       failXeroSyncOperation("op_kept", new Error("boom"), undefined, { keepCancelled: true })
     ).resolves.toMatchObject({ status: "FAILED" });
@@ -1632,7 +1645,7 @@ describe("failXeroSyncOperation named errors (#4218)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.operationCount.mockResolvedValue(0);
-    mocks.operationUpdate.mockResolvedValue({ id: "op_1", status: "FAILED" });
+    mocks.operationUpdateManyAndReturn.mockResolvedValue([{ id: "op_1", status: "FAILED" }]);
   });
 
   it("records the named code for a credit note spent outside the app", async () => {
@@ -1640,9 +1653,9 @@ describe("failXeroSyncOperation named errors (#4218)", () => {
       "op_1",
       new CreditNoteSpentOutsideAppError("only $0.00 left in Xero", "cn_1", 0, 5250)
     );
-    expect(mocks.operationUpdate).toHaveBeenCalledWith(
+    expect(mocks.operationUpdateManyAndReturn).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "op_1" },
+        where: { id: "op_1", status: { notIn: ["SUCCEEDED", "PARTIAL"] }, ...NOT_A_REPAIR_CLAIM },
         data: expect.objectContaining({
           status: "FAILED",
           lastErrorCode: "CREDIT_NOTE_SPENT_OUTSIDE_APP",
@@ -1653,7 +1666,7 @@ describe("failXeroSyncOperation named errors (#4218)", () => {
 
   it("records no named code for any other failure", async () => {
     await failXeroSyncOperation("op_1", new Error("bad request"));
-    const { data } = mocks.operationUpdate.mock.calls[0][0];
+    const { data } = mocks.operationUpdateManyAndReturn.mock.calls[0][0];
     expect(data.lastErrorCode).not.toBe("CREDIT_NOTE_SPENT_OUTSIDE_APP");
   });
 });
@@ -1670,14 +1683,13 @@ describe("failXeroSyncOperation onlyIfRunningSince", () => {
   });
 
   it("fails the row only while it is still this claim, and answers the failed row", async () => {
-    mocks.operationUpdateMany.mockResolvedValue({ count: 1 });
-    mocks.operationFindUniqueOrThrow.mockResolvedValue({ id: "op_1", status: "FAILED" });
+    mocks.operationUpdateManyAndReturn.mockResolvedValue([{ id: "op_1", status: "FAILED" }]);
     await expect(
       failXeroSyncOperation("op_1", new Error("contact refused"), undefined, {
         onlyIfRunningSince: claimedAt,
       })
     ).resolves.toMatchObject({ status: "FAILED" });
-    expect(mocks.operationUpdateMany).toHaveBeenCalledWith(
+    expect(mocks.operationUpdateManyAndReturn).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: "op_1", status: "RUNNING", startedAt: claimedAt },
         data: expect.objectContaining({
@@ -1703,7 +1715,8 @@ describe("failXeroSyncOperation onlyIfRunningSince", () => {
   });
 
   it("leaves a row the handler already completed as it is and answers null", async () => {
-    mocks.operationUpdateMany.mockResolvedValue({ count: 0 });
+    mocks.operationUpdateManyAndReturn.mockResolvedValue([]);
+    mocks.operationFindUnique.mockResolvedValue({ status: "SUCCEEDED" });
     await expect(
       failXeroSyncOperation("op_1", new Error("late throw"), undefined, {
         onlyIfRunningSince: claimedAt,
@@ -1716,12 +1729,12 @@ describe("failXeroSyncOperation onlyIfRunningSince", () => {
   it("records the operator message in place of the error's own, still redacted", async () => {
     // The operator message embeds the provider's raw error text, so the
     // override must pass through the same redaction as the error's own.
-    mocks.operationUpdate.mockResolvedValue({ id: "op_2", status: "FAILED" });
+    mocks.operationUpdateManyAndReturn.mockResolvedValue([{ id: "op_2", status: "FAILED" }]);
     await failXeroSyncOperation("op_2", new Error("raw"), undefined, {
       lastErrorMessage:
         "Retry of Xero operation op_1 failed: Authorization: Bearer live-token.",
     });
-    const recorded = mocks.operationUpdate.mock.calls[0][0].data.lastErrorMessage;
+    const recorded = mocks.operationUpdateManyAndReturn.mock.calls[0][0].data.lastErrorMessage;
     expect(recorded).toContain("Retry of Xero operation op_1 failed");
     expect(recorded).toContain("Bearer [REDACTED]");
     expect(recorded).not.toContain("live-token");
@@ -1729,13 +1742,15 @@ describe("failXeroSyncOperation onlyIfRunningSince", () => {
 });
 
 // #3548 round 3 (R2-6): the loser of two concurrent refund-note legs never
-// writes PARTIAL over the winner's SUCCEEDED.
-describe("completeXeroSyncOperation keepSucceeded", () => {
+// writes PARTIAL over the winner's SUCCEEDED. Once its own `keepSucceeded`
+// option; since #4356 every PARTIAL completion is guarded so (`INV-INT-029`).
+describe("a PARTIAL completion never lands on SUCCEEDED", () => {
   function store(count: number) {
     return {
       xeroSyncOperation: {
         updateMany: vi.fn().mockResolvedValue({ count }),
         update: vi.fn(),
+        findUnique: vi.fn().mockResolvedValue({ status: "SUCCEEDED" }),
         findUniqueOrThrow: vi.fn().mockResolvedValue({ id: "op_note", status: "PARTIAL" }),
       },
     };
@@ -1747,12 +1762,12 @@ describe("completeXeroSyncOperation keepSucceeded", () => {
       completeXeroSyncOperation(
         "op_note",
         { status: "PARTIAL", extraLinks: [{ localModel: "Payment", localId: "p", xeroObjectType: "CREDIT_NOTE", xeroObjectId: "cn", role: "REFUND_CREDIT_NOTE" }] },
-        { store: tx as never, keepSucceeded: true },
+        { store: tx as never },
       ),
     ).resolves.toBeNull();
     expect(tx.xeroSyncOperation.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "op_note", status: { not: "SUCCEEDED" } },
+        where: { id: "op_note", status: { not: "SUCCEEDED" }, ...NOT_A_REPAIR_CLAIM },
         data: expect.objectContaining({ status: "PARTIAL" }),
       }),
     );
@@ -1762,9 +1777,9 @@ describe("completeXeroSyncOperation keepSucceeded", () => {
 
   it("completes any other row as before", async () => {
     const tx = store(1);
-    await expect(
-      completeXeroSyncOperation("op_note", { status: "PARTIAL" }, { store: tx as never, keepSucceeded: true }),
-    ).resolves.toMatchObject({ status: "PARTIAL" });
+    await expect(completeXeroSyncOperation("op_note", { status: "PARTIAL" }, { store: tx as never })).resolves.toMatchObject({
+      status: "PARTIAL",
+    });
     expect(tx.xeroSyncOperation.update).not.toHaveBeenCalled();
   });
 });
@@ -1791,19 +1806,10 @@ describe("completeXeroSyncOperation clears a stale error on success", () => {
     });
   });
 
-  it("MUTATION: the keepSucceeded claim clears them too", async () => {
-    const tx = store();
-    await completeXeroSyncOperation("op_note", { status: "SUCCEEDED" }, { store: tx as never, keepSucceeded: true });
-    expect(tx.xeroSyncOperation.updateMany).toHaveBeenCalledWith({
-      where: { id: "op_note", status: { not: "SUCCEEDED" } },
-      data: expect.objectContaining({ status: "SUCCEEDED", lastErrorCode: null, lastErrorMessage: null }),
-    });
-  });
-
   it("a PARTIAL completion leaves them as they are", async () => {
     const tx = store();
     await completeXeroSyncOperation("op_note", { status: "PARTIAL" }, { store: tx as never });
-    const [{ data }] = tx.xeroSyncOperation.update.mock.calls[0] as [{ data: Record<string, unknown> }];
+    const [{ data }] = tx.xeroSyncOperation.updateMany.mock.calls[0] as [{ data: Record<string, unknown> }];
     expect(data).not.toHaveProperty("lastErrorCode");
     expect(data).not.toHaveProperty("lastErrorMessage");
   });
@@ -1818,6 +1824,7 @@ describe("completeXeroSyncOperation onlyIfRunningSince", () => {
       xeroSyncOperation: {
         updateMany: vi.fn().mockResolvedValue({ count }),
         update: vi.fn(),
+        findUnique: vi.fn().mockResolvedValue({ status: "PARTIAL" }),
         findUniqueOrThrow: vi.fn().mockResolvedValue({ id: "op_repair", status: "PARTIAL" }),
       },
     };
@@ -1856,5 +1863,275 @@ describe("completeXeroSyncOperation onlyIfRunningSince", () => {
     expect(maybeNotifyXeroRepeatedFailure).not.toHaveBeenCalled();
     await completeXeroSyncOperation("op_repair", { status: "PARTIAL" }, { store: store(1) as never, onlyIfRunningSince: claimedAt });
     expect(maybeNotifyXeroRepeatedFailure).toHaveBeenCalledTimes(1);
+  });
+});
+
+// #4356 (`INV-INT-029`): two callers can hold one operation row (a start that
+// loses the insert race is handed the winner's ACTIVE row, #1354) and each
+// records its own outcome there. An outcome never replaces a better one already
+// recorded, nor lands on a repair's claim. A one-row double evaluates each
+// write's guard against the row the way PostgreSQL would, so these pin the
+// DECISION, not the `where` spelling.
+describe("outcome writes never replace a recorded success (#4356, INV-INT-029)", () => {
+  type Row = {
+    id: string;
+    status: string;
+    startedAt: Date | null;
+    lastErrorCode: string | null;
+    xeroObjectId: string | null;
+    [key: string]: unknown;
+  };
+  type StatusFilter = string | { not: string } | { notIn: string[] };
+  type CodeFilter = null | { notIn: string[] };
+  type Where = {
+    id?: string;
+    startedAt?: Date;
+    status?: StatusFilter;
+    OR?: Array<{ status?: StatusFilter; lastErrorCode?: CodeFilter }>;
+  };
+  const STATUSES = ["PENDING", "RUNNING", "WAITING_PAYMENT", "FAILED", "PARTIAL", "SUCCEEDED", "CANCELLED"] as const;
+  const REPAIR_MARKERS = ["PARTIAL_REPAIR_RUNNING", "REFUND_NOTE_REPAIR_RUNNING"] as const;
+
+  const statusMatches = (status: string, filter: StatusFilter) => {
+    if (typeof filter === "string") return status === filter;
+    if ("not" in filter) return status !== filter.not;
+    return !filter.notIn.includes(status);
+  };
+  // SQL: `x NOT IN (...)` is never true for a null x.
+  const codeMatches = (code: string | null, filter: CodeFilter) =>
+    filter === null ? code === null : code !== null && !filter.notIn.includes(code);
+
+  function oneRow(status: string, xeroObjectId: string | null = null, lastErrorCode: string | null = null) {
+    const row: Row = {
+      id: "op_shared",
+      status,
+      startedAt: new Date("2026-06-30T23:00:00.000Z"),
+      lastErrorCode,
+      xeroObjectId,
+    };
+    let present = true;
+    const matches = (where: Where) => {
+      if (!present || where.id !== row.id) return false;
+      if (where.startedAt && where.startedAt.getTime() !== row.startedAt?.getTime()) return false;
+      if (where.status !== undefined && !statusMatches(row.status, where.status)) return false;
+      if (where.OR) {
+        return where.OR.some(
+          (branch) =>
+            (branch.status === undefined || statusMatches(row.status, branch.status)) &&
+            (branch.lastErrorCode === undefined || codeMatches(row.lastErrorCode, branch.lastErrorCode)),
+        );
+      }
+      return true;
+    };
+    const xeroSyncOperation = {
+      updateMany: vi.fn(async ({ where, data }: { where: Where; data: Partial<Row> }) => {
+        if (!matches(where)) return { count: 0 };
+        Object.assign(row, data);
+        return { count: 1 };
+      }),
+      updateManyAndReturn: vi.fn(async ({ where, data }: { where: Where; data: Partial<Row> }) => {
+        if (!matches(where)) return [];
+        Object.assign(row, data);
+        return [{ ...row }];
+      }),
+      update: vi.fn(async ({ where, data }: { where: Where; data: Partial<Row> }) => {
+        if (!present || where.id !== row.id) throw new Error("no such row");
+        Object.assign(row, data);
+        return { ...row };
+      }),
+      findUnique: vi.fn(async () => (present ? { ...row } : null)),
+      findUniqueOrThrow: vi.fn(async () => {
+        if (!present) throw new Error("no such row");
+        return { ...row };
+      }),
+    };
+    // `failXeroSyncOperation` writes on the module client; route it to this row.
+    mocks.operationUpdateMany.mockImplementation(xeroSyncOperation.updateMany);
+    mocks.operationUpdateManyAndReturn.mockImplementation(xeroSyncOperation.updateManyAndReturn);
+    mocks.operationUpdate.mockImplementation(xeroSyncOperation.update);
+    mocks.operationFindUnique.mockImplementation(xeroSyncOperation.findUnique);
+    mocks.operationFindUniqueOrThrow.mockImplementation(xeroSyncOperation.findUniqueOrThrow);
+    return {
+      row,
+      store: { xeroSyncOperation } as never,
+      remove: () => {
+        present = false;
+      },
+    };
+  }
+
+  const recordedSuccess = (status: string) => status === "SUCCEEDED" || status === "PARTIAL";
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.operationCount.mockResolvedValue(0);
+  });
+
+  it.each(STATUSES)("MUTATION: a failure lands on a %s row only when it holds no recorded success", async (existing) => {
+    const { row } = oneRow(existing);
+    const outcome = await failXeroSyncOperation("op_shared", new Error("Xero 429"));
+    expect(row.status).toBe(recordedSuccess(existing) ? existing : "FAILED");
+    expect(outcome === null).toBe(recordedSuccess(existing));
+  });
+
+  it.each(STATUSES)("MUTATION: a PARTIAL completion lands on a %s row unless it is SUCCEEDED", async (existing) => {
+    const { row, store } = oneRow(existing);
+    await completeXeroSyncOperation("op_shared", { status: "PARTIAL", xeroObjectId: "inv_l" }, { store });
+    expect(row.status).toBe(existing === "SUCCEEDED" ? "SUCCEEDED" : "PARTIAL");
+  });
+
+  it.each(STATUSES)("MUTATION: a FAILED or CANCELLED completion lands on a %s row only when it holds no recorded success", async (existing) => {
+    for (const status of ["FAILED", "CANCELLED"]) {
+      const { row, store } = oneRow(existing);
+      await completeXeroSyncOperation("op_shared", { status }, { store });
+      expect(row.status).toBe(recordedSuccess(existing) ? existing : status);
+    }
+  });
+
+  it.each(STATUSES)("a SUCCEEDED completion lands on a %s row: the truer outcome of the same keyed call", async (existing) => {
+    const { row, store } = oneRow(existing);
+    await completeXeroSyncOperation("op_shared", { xeroObjectType: "PAYMENT", xeroObjectId: "pay_l" }, { store });
+    expect(row).toMatchObject({ status: "SUCCEEDED", xeroObjectId: "pay_l", lastErrorCode: null, lastErrorMessage: null });
+  });
+
+  it("W completes SUCCEEDED, then L fails on the same row: the row keeps W's success and the alert never sees L's failure", async () => {
+    const { maybeNotifyXeroRepeatedFailure } = await import("@/lib/xero-hardening");
+    const { row, store } = oneRow("RUNNING");
+    await completeXeroSyncOperation("op_shared", { xeroObjectType: "PAYMENT", xeroObjectId: "pay_w" }, { store });
+    await expect(failXeroSyncOperation("op_shared", new Error("Xero 409: idempotency key in use"))).resolves.toBeNull();
+    expect(row).toMatchObject({ status: "SUCCEEDED", xeroObjectId: "pay_w", lastErrorMessage: null });
+    expect(maybeNotifyXeroRepeatedFailure).not.toHaveBeenCalled();
+  });
+
+  it("a PARTIAL completion that may not land writes no link and raises no alert", async () => {
+    const { maybeNotifyXeroRepeatedFailure } = await import("@/lib/xero-hardening");
+    const { row, store } = oneRow("SUCCEEDED", "cn_w");
+    await expect(
+      completeXeroSyncOperation(
+        "op_shared",
+        { status: "PARTIAL", xeroObjectId: "cn_l", extraLinks: [{ localModel: "Payment", localId: "p", xeroObjectType: "CREDIT_NOTE", xeroObjectId: "cn_l", role: "REFUND_CREDIT_NOTE" }] },
+        { store },
+      ),
+    ).resolves.toBeNull();
+    expect(row).toMatchObject({ status: "SUCCEEDED", xeroObjectId: "cn_w" });
+    expect(mocks.txLinkUpsert).not.toHaveBeenCalled();
+    expect(maybeNotifyXeroRepeatedFailure).not.toHaveBeenCalled();
+  });
+
+  it("a failure that lands is still offered to the repeated-failure alert", async () => {
+    const { maybeNotifyXeroRepeatedFailure } = await import("@/lib/xero-hardening");
+    oneRow("RUNNING");
+    await expect(failXeroSyncOperation("op_shared", new Error("Xero 500"))).resolves.toMatchObject({ status: "FAILED" });
+    expect(maybeNotifyXeroRepeatedFailure).toHaveBeenCalledWith(expect.objectContaining({ id: "op_shared", status: "FAILED" }));
+  });
+
+  // Review F3: the row answered and alerted is the row this write wrote, not a
+  // later read another caller's outcome may already have replaced.
+  it("MUTATION: the failed row returned and offered to the alert is the one this write wrote", async () => {
+    const { maybeNotifyXeroRepeatedFailure } = await import("@/lib/xero-hardening");
+    oneRow("RUNNING");
+    mocks.operationFindUniqueOrThrow.mockResolvedValue({ id: "op_shared", status: "SUCCEEDED" });
+    await expect(failXeroSyncOperation("op_shared", new Error("Xero 500"))).resolves.toMatchObject({ status: "FAILED" });
+    expect(maybeNotifyXeroRepeatedFailure).toHaveBeenCalledWith(expect.objectContaining({ status: "FAILED" }));
+  });
+
+  it("keepCancelled still keeps CANCELLED on top of the guard", async () => {
+    const cancelled = oneRow("CANCELLED");
+    await expect(failXeroSyncOperation("op_shared", new Error("late"), undefined, { keepCancelled: true })).resolves.toBeNull();
+    expect(cancelled.row.status).toBe("CANCELLED");
+  });
+
+  it("a retry's claim guard is unchanged: it writes onto its own RUNNING claim and nothing else", async () => {
+    const { row, store } = oneRow("RUNNING");
+    const claimedAt = row.startedAt!;
+    await completeXeroSyncOperation("op_shared", { status: "PARTIAL" }, { store, onlyIfRunningSince: claimedAt });
+    expect(row.status).toBe("PARTIAL");
+    const failed = oneRow("FAILED");
+    await expect(
+      failXeroSyncOperation("op_shared", new Error("x"), undefined, { onlyIfRunningSince: failed.row.startedAt! }),
+    ).resolves.toBeNull();
+  });
+
+  // Review F1 case (a): a repair's claim holds the payload the repair reads and
+  // gives back; another caller's late outcome landing there would make the give-
+  // back lose and send the next retry down the create path, which records no payment.
+  describe.each(REPAIR_MARKERS)("a repair's RUNNING claim (%s)", (marker) => {
+    it("MUTATION: takes no other caller's failure, or PARTIAL, FAILED or CANCELLED completion", async () => {
+      const { row, store } = oneRow("RUNNING", "inv_1", marker);
+      await expect(failXeroSyncOperation("op_shared", new Error("Xero 409: key in use"))).resolves.toBeNull();
+      await expect(failXeroSyncOperation("op_shared", new Error("late"), undefined, { keepCancelled: true })).resolves.toBeNull();
+      for (const status of ["PARTIAL", "FAILED", "CANCELLED"]) {
+        await expect(completeXeroSyncOperation("op_shared", { status }, { store })).resolves.toBeNull();
+      }
+      expect(row).toMatchObject({ status: "RUNNING", lastErrorCode: marker, xeroObjectId: "inv_1" });
+    });
+
+    it("still takes the repair's own completion onto its claim, and a success", async () => {
+      const own = oneRow("RUNNING", "inv_1", marker);
+      await completeXeroSyncOperation("op_shared", { status: "PARTIAL" }, { store: own.store, onlyIfRunningSince: own.row.startedAt! });
+      expect(own.row).toMatchObject({ status: "PARTIAL", lastErrorCode: null });
+      const succeeded = oneRow("RUNNING", "inv_1", marker);
+      await completeXeroSyncOperation("op_shared", { xeroObjectId: "inv_1" }, { store: succeeded.store });
+      expect(succeeded.row.status).toBe("SUCCEEDED");
+    });
+  });
+
+  // The stated limit of `INV-INT-029` (#4373): a plain retry's claim carries no
+  // marker, so another caller's late failure still lands on it, and a
+  // completion guarded on that claim then loses. Pinned so a fix changes it on purpose.
+  it("LIMIT (#4373): a late failure lands on a plain retry's unmarked claim, and the claim's own completion then loses", async () => {
+    const { row, store } = oneRow("RUNNING", null, "XERO_429");
+    const claimedAt = row.startedAt!;
+    await expect(failXeroSyncOperation("op_shared", new Error("Xero 409: key in use"))).resolves.toMatchObject({ status: "FAILED" });
+    expect(row.status).toBe("FAILED");
+    await expect(
+      completeXeroSyncOperation("op_shared", { status: "PARTIAL" }, { store, onlyIfRunningSince: claimedAt }),
+    ).resolves.toBeNull();
+    expect(row.status).toBe("FAILED");
+  });
+
+  it("refuses an outcome with no operation id rather than write every row", async () => {
+    oneRow("RUNNING");
+    await expect(failXeroSyncOperation(undefined as unknown as string, new Error("x"))).rejects.toThrow("operation's id");
+    expect(mocks.operationUpdateManyAndReturn).not.toHaveBeenCalled();
+  });
+
+  // Review: a refusal says why. A row that is not there is not "kept its outcome".
+  describe("a write that matched nothing", () => {
+    it("MUTATION: logs that the row kept its outcome when the row is there", async () => {
+      const logger = (await import("@/lib/logger")).default;
+      oneRow("SUCCEEDED");
+      await expect(failXeroSyncOperation("op_shared", new Error("late"))).resolves.toBeNull();
+      expect(logger.info).toHaveBeenCalledWith(
+        { operationId: "op_shared", status: "FAILED", heldStatus: "SUCCEEDED" },
+        expect.stringContaining("kept the outcome or claim it holds"),
+      );
+      expect(logger.warn).not.toHaveBeenCalled();
+    });
+
+    it("MUTATION: throws for a missing row the caller did not guard, as the unguarded write did", async () => {
+      const { store, remove } = oneRow("RUNNING");
+      remove();
+      await expect(failXeroSyncOperation("op_shared", new Error("x"))).rejects.toThrow("op_shared was not found");
+      await expect(completeXeroSyncOperation("op_shared", { status: "PARTIAL" }, { store })).rejects.toThrow(
+        "op_shared was not found",
+      );
+    });
+
+    it("MUTATION: logs a missing row a guarded caller wrote to, and answers null", async () => {
+      const logger = (await import("@/lib/logger")).default;
+      const { store, remove } = oneRow("RUNNING");
+      remove();
+      await expect(failXeroSyncOperation("op_shared", new Error("x"), undefined, { keepCancelled: true })).resolves.toBeNull();
+      await expect(
+        completeXeroSyncOperation("op_shared", { status: "PARTIAL" }, { store, onlyIfRunningSince: new Date() }),
+      ).resolves.toBeNull();
+      expect(logger.warn).toHaveBeenCalledTimes(2);
+      expect(logger.warn).toHaveBeenCalledWith(
+        { operationId: "op_shared", status: "FAILED" },
+        expect.stringContaining("row was not found"),
+      );
+      expect(logger.info).not.toHaveBeenCalled();
+    });
   });
 });

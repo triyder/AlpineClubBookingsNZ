@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { decide, e2eNeeded, pullRequestChangedFiles } from "./e2e-scope.mjs";
+import { decide, e2eNeeded } from "./e2e-scope.mjs";
 
 describe("e2e-scope: which pull requests the browser suite can skip (#4397)", () => {
   it.each([
@@ -51,16 +51,6 @@ describe("e2e-scope: which pull requests the browser suite can skip (#4397)", ()
     expect(decide("push", () => ["docs/a.md"]).needed).toBe(true);
     expect(decide("pull_request", () => ["docs/a.md"]).needed).toBe(false);
     expect(decide("pull_request", () => { throw new Error("shallow clone"); }).needed).toBe(true);
-  });
-
-  it("reads a merge commit's change with the shared reader, a rename as both paths, and refuses a non-merge HEAD", () => {
-    const files = pullRequestChangedFiles({
-      run: () => "merge base head\n",
-      diff: () => "M\tdocs/a.md\nR100\tsrc/old.ts\tdocs/new.md\n",
-    });
-    expect(files).toEqual(["docs/a.md", "src/old.ts", "docs/new.md"]);
-    expect(e2eNeeded(files).needed).toBe(true);
-    expect(() => pullRequestChangedFiles({ run: () => "only-one-commit parent\n", diff: () => "" })).toThrow(/two-parent merge/);
   });
 
   it("the CLI writes needed=true to GITHUB_OUTPUT on a push", () => {

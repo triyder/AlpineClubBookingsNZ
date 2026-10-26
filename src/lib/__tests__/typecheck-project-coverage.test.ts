@@ -57,9 +57,15 @@ const JAVASCRIPT_VITEST_TESTS = [
   // same reason every other entry here does. It arrived on `main`, whose copy of
   // this contract has no such list, so nothing there asked for the entry.
   "scripts/ci/audit-dependencies.test.mjs",
+  // #4425: the change-scope classifier the scoped required jobs run under
+  // bare node, before any install; its suite stays JavaScript like e2e-scope's.
+  "scripts/ci/change-scope.test.mjs",
   // #3843: the audit's MITIGATED verdict lives in its own `.mjs` module beside
   // the wrapper, and its suite is JavaScript for the same reason.
   "scripts/ci/dependency-mitigation.test.mjs",
+  // #4364: the `.mjs` allowBuilds/lockfile gate runs with a bare `node` before
+  // the install, so its suite stays JavaScript like the others here.
+  "scripts/ci/check-allow-builds.test.mjs",
   "scripts/ci/check-doc-index-integrity.test.mjs",
   "scripts/ci/check-pr-body.test.mjs",
   // #4053 tests the PR-body gates' file input (`pr-body.mjs`), a `.mjs` tool.
@@ -115,6 +121,11 @@ const DECLARED_JAVASCRIPT_MODULES = [
     module: "load/lib/contention-invariant.js",
     declaration: "load/lib/contention-invariant.d.ts",
     load: () => import("../../../load/lib/contention-invariant.js"),
+  },
+  {
+    module: "scripts/ci/check-allow-builds.mjs",
+    declaration: "scripts/ci/check-allow-builds.d.mts",
+    load: () => import("../../../scripts/ci/check-allow-builds.mjs"),
   },
   {
     module: "scripts/ci/server-only-boundary-selftest.mjs",

@@ -167,6 +167,7 @@ method, scope and finish line for each.
 - [`../agents/COORDINATION.md`](../agents/COORDINATION.md) — on-demand
   coordination: where work state lives, when a coordinator runs, reservations
   that never time out, handoffs, choosing review lenses, asking the owner.
+- [`../agents/SEKRETON_ORCHESTRATOR.md`](../agents/SEKRETON_ORCHESTRATOR.md) — the Sekreton lane's standing orchestrator: gaps it fills, one pass, owner queue, resuming.
 - [`../agents/ISSUE_WORKFLOW.md`](../agents/ISSUE_WORKFLOW.md) — issue
   contracts: the human-first issue-body order, reading the whole thread,
   claiming, recording a decision, the ready comment, and what never goes in a

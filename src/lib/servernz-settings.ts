@@ -106,11 +106,18 @@ export async function loadOwnedOtherLodges(
 }
 
 /**
- * Lock the settings row for the rest of the caller's transaction (#64). Taken by
- * the download's record step, which re-reads the connection and the cursor
- * under it before recording, so a change made meanwhile is never overwritten
- * by an older answer. A row lock on a singleton, not an advisory key: nothing
- * else orders against it. A missing row (never configured) locks nothing.
+ * Lock the settings row for the rest of the caller's transaction. Two callers
+ * share this one statement: the version recorder (#4366), which re-reads the
+ * connection (address and credential version)
+ * under it before recording, so an answer that outlived a change of connection
+ * is never written over the new one; and the Other lodges download's record
+ * step (#64, this fork's central-server lane), which re-reads the connection and
+ * the cursor under it so an older answer never overwrites a newer one. Every
+ * connection change writes this row
+ * (a new address, and the forget that follows a key change), so it queues
+ * behind a recorder holding it, and a recorder behind it re-reads what it
+ * committed. A row lock on a singleton, not an advisory key: nothing else
+ * orders against it. A missing row (never configured) locks nothing.
  */
 export async function lockServerNzSettings(
   db: Pick<Prisma.TransactionClient, "$executeRaw">,
@@ -348,16 +355,20 @@ export async function clearOtherLodgesOwnedNames(): Promise<void> {
 /**
  * Record what the central server said its API version is (#49): a canonical
  * `major.minor`, or `SERVER_VERSION_UNKNOWN` when it answered 404. Written
- * AFTER the HTTP call has completed and outside any transaction. A failed call
+ * AFTER the HTTP call has completed, only through `recordServerVersionIfCurrent`
+ * (`servernz-version-record.ts`), whose short transaction passes `db` - there
+ * is no default client, and `servernz-settings.test.ts` pins that one caller
+ * (#4366). A failed call
  * never reaches here - the previous answer stays, so a network blip cannot
  * pause syncing (`INV-INT-027`). Bounded to the column's VarChar(16) by the
  * caller's schema, which caps the wire value at 16 characters.
  */
 export async function recordServerVersionCheck(
   version: string,
-  at: Date = new Date(),
+  at: Date,
+  db: Pick<Prisma.TransactionClient, "serverNzSettings">,
 ): Promise<void> {
-  await prisma.serverNzSettings.upsert({
+  await db.serverNzSettings.upsert({
     where: { id: SERVERNZ_SETTINGS_ID },
     create: {
       id: SERVERNZ_SETTINGS_ID,

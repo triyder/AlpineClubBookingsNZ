@@ -23,6 +23,25 @@ export const STALE_RUNNING_XERO_OPERATION_MINUTES = 15;
  */
 export const XERO_PARTIAL_REPAIR_RUNNING_CODE = "PARTIAL_REPAIR_RUNNING";
 
+/**
+ * #4356: the code the FAILED refund-note repair's claim stamps
+ * (`runWithClaimedOriginal`). Its completion or give-back replaces it; a stale
+ * reset of a dead run sends the row to FAILED, where it came from.
+ */
+export const XERO_REFUND_NOTE_REPAIR_RUNNING_CODE = "REFUND_NOTE_REPAIR_RUNNING";
+
+/**
+ * #4356 (`INV-INT-029`): the repair claims whose RUNNING row no other caller's
+ * PARTIAL, FAILED or CANCELLED outcome may land on (`outcomeWriteGuard`). Each
+ * repair completes onto its own claim (`onlyIfRunningSince`), so a late
+ * outcome from a caller sharing the row would replace the payload the repair
+ * reads and make its give-back lose.
+ */
+export const XERO_REPAIR_CLAIM_RUNNING_CODES = [
+  XERO_PARTIAL_REPAIR_RUNNING_CODE,
+  XERO_REFUND_NOTE_REPAIR_RUNNING_CODE,
+] as const;
+
 const STALE_PARTIAL_REPAIR_RESET_MESSAGE =
   "A repair of this partly completed operation was stuck RUNNING past the staleness threshold and was returned to PARTIAL by an operator. Retry it to repair it again.";
 

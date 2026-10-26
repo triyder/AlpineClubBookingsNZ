@@ -12,6 +12,7 @@ import {
   runPaymentRecoveryOperationNow,
 } from "@/lib/payment-recovery";
 import type { ClubFormat } from "@/lib/club-format";
+import { followSupersededAskInvoicesSafely } from "@/lib/superseded-ask-invoice-carry";
 
 export type SupersededPrimaryPaymentIntent = {
   paymentTransactionId: string;
@@ -206,12 +207,21 @@ export async function queueSupersededAdditionalIntentCancellationRows(options: {
  * The LATENCY half: cancel each queued intent at Stripe now. The durable rows
  * are the guarantee; this closes the window in which an old client secret is
  * still confirmable (#3340).
+ *
+ * #3403 (`INV-PAY-140`): a minter names the intent it just wrote
+ * (`newPaymentIntentId`), and the superseded asks' waiting Xero supplementary
+ * invoices are then moved onto it, before the minter returns its secret. Here
+ * as well as in the cancel step because an ask whose card was DECLINED is
+ * carried but never cancelled again, so no cancel step runs for it. A writer
+ * that retires an ask without replacing it (a booking cancel) names none.
  */
 export async function cancelSupersededAdditionalIntentsNow(options: {
   bookingId: string;
   paymentId: string;
   queued: readonly QueuedSupersededIntentCancellation[];
   format: ClubFormat;
+  /** The request that now carries the superseded asks' balance; absent, no invoice moves. */
+  newPaymentIntentId?: string | null;
 }): Promise<void> {
   for (const entry of options.queued) {
     // The durable row above is the guarantee; this is latency only (#3340).
@@ -255,6 +265,12 @@ export async function cancelSupersededAdditionalIntentsNow(options: {
         "A superseded additional PaymentIntent was not cancelled immediately; it stays confirmable until the queued recovery operation runs",
       );
     }
+  }
+  if (options.newPaymentIntentId) {
+    await followSupersededAskInvoicesSafely({
+      paymentId: options.paymentId,
+      carrierPaymentIntentId: options.newPaymentIntentId,
+    });
   }
 }
 

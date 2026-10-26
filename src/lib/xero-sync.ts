@@ -23,6 +23,7 @@ import type { XeroInvoiceEmailInstruction } from "@/lib/xero-invoice-email-instr
 import { xeroSyncErrorFields } from "@/lib/xero-sync-error-text";
 import { REFUND_REQUEST_CREDIT_NOTE_ROLE } from "@/lib/refund-request-credit-note";
 import { isClosedByCreditSpentOutsideApp } from "@/lib/xero-operation-resolution";
+import { outcomeWriteGuard, refusedOutcomeWrite } from "@/lib/xero-operation-outcome-guard";
 
 export interface XeroSyncOperationInput {
   direction: string;
@@ -925,9 +926,9 @@ export async function deactivateXeroObjectLinks(params: {
 export async function completeXeroSyncOperation(
   operationId: string,
   completion: XeroSyncOperationCompletion,
-  // #3548: `keepSucceeded` leaves a row a concurrent leg completed SUCCEEDED as it is, links and all, and answers null.
+  // #4356 (`INV-INT-029`): no PARTIAL, FAILED or CANCELLED completion lands on a recorded success or a repair's claim; null then.
   // #4256: `onlyIfRunningSince` writes only onto that retry claim, clearing its marker code; `alert: false` raises no repeated-failure alert.
-  options?: { store?: Prisma.TransactionClient; keepSucceeded?: boolean; onlyIfRunningSince?: Date; alert?: false },
+  options?: { store?: Prisma.TransactionClient; onlyIfRunningSince?: Date; alert?: false },
 ) {
   // #2314: organisation-agnostic in the column, organisation applied on read —
   // see the note on the object-link funnel above.
@@ -953,12 +954,10 @@ export async function completeXeroSyncOperation(
       xeroObjectUrl,
       completedAt: new Date(),
     };
-    const guard = options?.onlyIfRunningSince
-      ? { status: "RUNNING" as const, startedAt: options.onlyIfRunningSince }
-      : options?.keepSucceeded ? { status: { not: "SUCCEEDED" as const } } : null;
+    const guard = outcomeWriteGuard(operationId, status, { onlyIfRunningSince: options?.onlyIfRunningSince });
     if (guard) {
       const claimed = await tx.xeroSyncOperation.updateMany({ where: { id: operationId, ...guard }, data });
-      if (claimed.count === 0) return null;
+      if (claimed.count === 0) return refusedOutcomeWrite(tx, operationId, status, options ?? {});
     }
     const operation = guard
       ? await tx.xeroSyncOperation.findUniqueOrThrow({ where: { id: operationId } })
@@ -994,7 +993,8 @@ export async function completeXeroSyncOperation(
 
 /**
  * The optional write guard of {@link failXeroSyncOperation}: at most one, so a
- * caller can never pass two and have one silently dropped (#3462).
+ * caller can never pass two and have one silently dropped (#3462). Either way a failure
+ * never lands on a recorded success or a repair's claim (#4356, `INV-INT-029`): null.
  */
 type FailXeroSyncOperationGuard =
   | {
@@ -1038,21 +1038,14 @@ export async function failXeroSyncOperation(
     completedAt: new Date(),
   };
 
-  const guard = options?.onlyIfRunningSince
-    ? { status: "RUNNING" as const, startedAt: options.onlyIfRunningSince }
-    : options?.keepCancelled
-      ? { status: { not: "CANCELLED" as const } }
-      : null;
-  if (guard) {
-    const failed = await prisma.xeroSyncOperation.updateMany({
-      where: { id: operationId, ...guard },
-      data,
-    });
-    if (failed.count === 0) return null;
-  }
-  const operation = guard
-    ? await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: operationId } })
-    : await prisma.xeroSyncOperation.update({ where: { id: operationId }, data });
+  // #4356: always guarded - a failure never lands on a recorded success. The
+  // row returned, and offered to the alert, is the one this write wrote.
+  const guard = outcomeWriteGuard(operationId, "FAILED", {
+    onlyIfRunningSince: options?.onlyIfRunningSince,
+    alsoKeep: options?.keepCancelled ? "CANCELLED" : undefined,
+  });
+  const [operation] = await prisma.xeroSyncOperation.updateManyAndReturn({ where: { id: operationId, ...guard }, data });
+  if (!operation) return refusedOutcomeWrite(prisma, operationId, "FAILED", options ?? {});
 
   try {
     const { maybeNotifyXeroRepeatedFailure } = await import("./xero-hardening");

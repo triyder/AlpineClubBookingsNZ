@@ -115,7 +115,8 @@ Add a row for a doc an agent must reach; cite ids, never line numbers
 
 ## Context, usage and failure control
 
-- **Keep a private 25% weekly reserve** for finishing active lanes: check the
+- **Keep a private 25% weekly reserve** for finishing active lanes (bar Sekreton's
+  orchestrator, #4429): check the
   remaining allowance before a sizeable lane, in any agent. If it can't be
   read, finish the active lane but start no new sizeable one without the
   owner. Never publish usage figures.
@@ -165,7 +166,8 @@ every counterpart writer.
 Coordination is on demand: GitHub and deterministic commands hold the work
 state, and no model-powered supervisor runs between tasks. A coordinator session runs
 only for a bounded decision, assignment or integration, records the result on
-the issue and stops ([`COORDINATION.md`](docs/agents/COORDINATION.md)).
+the issue and stops ([`COORDINATION.md`](docs/agents/COORDINATION.md) has
+Sekreton's exception).
 
 - **Lane** (the session that posted an issue's `CLAIM:`; its main session is
   the orchestrator) owns its claim, worktree, branch, GitHub writes, PR, CI
@@ -208,19 +210,18 @@ the issue and stops ([`COORDINATION.md`](docs/agents/COORDINATION.md)).
 
 - The orchestrator chooses model and effort per task, afresh each time: the
   least costly combination expected to meet the quality bar with the required
-  validation. Deterministic commands first, wherever they answer exactly.
+  validation. Deterministic commands first where exact.
 - Before escalating, name what is short — context, instructions, tools,
   reasoning or capability — and fix context or instructions first. For a
   reasoning shortfall raise effort before moving to a larger model; escalate
   on evidence, not a hunch.
-- `xhigh` remains the ceiling — never use `max`, on any lane. Still
-  stuck at `xhigh`: change approach, escalate as `MODELS.md` allows, or ask the owner.
+- `xhigh` remains the ceiling — never use `max`, on any lane. Stuck
+  at `xhigh`: change approach, escalate as `MODELS.md` allows, or ask the owner.
 - State the model explicitly when you dispatch a subagent, and the effort, with
-  one line of why; unstated, the role file's default applies (`MODELS.md`).
+  one line of why; unstated, the role file's default applies. Only
+  [`MODELS.md`](docs/agents/MODELS.md) names models and defaults.
   Report substitutions; never silently fall back to a more expensive model.
   Model choice never changes scope, validation or approvals.
-- Current models and defaults live in [`MODELS.md`](docs/agents/MODELS.md);
-  this file names none.
 - An empty, truncated or refused result (`stop_reason: "refusal"` can arrive on
   an HTTP 200) is incomplete evidence, never a pass: diagnose before re-dispatching.
 

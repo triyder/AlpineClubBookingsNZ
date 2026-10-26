@@ -29,6 +29,7 @@ import {
   startXeroSyncOperation,
   upsertXeroObjectLink,
 } from "@/lib/xero-sync";
+import { holdsRecordedXeroSuccess, NOT_A_XERO_REPAIR_CLAIM } from "@/lib/xero-operation-outcome-guard";
 import {
   createXeroInvoiceForBooking,
   updateXeroBookingInvoiceForBooking,
@@ -122,6 +123,7 @@ import {
   outstandingSupplementaryInvoiceOperationsWhere,
   RESTATABLE_SUPPLEMENTARY_INVOICE_STATUSES,
   restatableSupplementaryInvoiceOperationsWhere,
+  stillWaitingOnIntentWhere,
   waitingSupplementaryInvoiceOperationsWhere,
 } from "@/lib/xero-supplementary-invoice-statuses";
 import { formatDateOnly } from "@/lib/date-only";
@@ -1834,16 +1836,14 @@ export async function releaseXeroSupplementaryInvoiceOperationsForPaymentIntent(
  */
 export async function releaseWaitingSupplementaryInvoiceOperations(
   queueOperationIds: string[],
+  /** #3403 review: the capture they were read waiting on; one moved off it since is not its to release. */
+  paymentIntentId?: string,
 ): Promise<{ released: number; queueOperationIds: string[] }> {
-  if (queueOperationIds.length === 0) {
-    return { released: 0, queueOperationIds: [] };
-  }
+  if (queueOperationIds.length === 0) return { released: 0, queueOperationIds: [] };
   const updateResult = await prisma.xeroSyncOperation.updateMany({
     where: {
-      id: {
-        in: queueOperationIds,
-      },
-      status: "WAITING_PAYMENT",
+      id: { in: queueOperationIds },
+      ...(paymentIntentId ? stillWaitingOnIntentWhere(paymentIntentId) : { status: "WAITING_PAYMENT" }),
     },
     data: {
       status: "PENDING",
@@ -1853,10 +1853,7 @@ export async function releaseWaitingSupplementaryInvoiceOperations(
     },
   });
 
-  return {
-    released: updateResult.count,
-    queueOperationIds,
-  };
+  return { released: updateResult.count, queueOperationIds };
 }
 
 /**
@@ -2027,6 +2024,8 @@ export async function restatePendingSupplementaryInvoiceAmount({
       where: {
         id: operation.id,
         status: { in: [...RESTATABLE_SUPPLEMENTARY_INVOICE_STATUSES] },
+        // #3403 review (C1): still waiting on the request it was read on; an invoice a supersession moved since is not written back.
+        ...(typeof payload.paymentIntentId === "string" ? { requestPayload: { path: ["paymentIntentId"], equals: payload.paymentIntentId } } : {}),
       },
       data: {
         requestPayload: {
@@ -3222,7 +3221,8 @@ export async function processQueuedXeroOutboxOperations(options?: {
         // #3791: the reason stays on the row, so a note waiting on a
         // deallocation says what it is waiting for.
         await prisma.xeroSyncOperation.updateMany({
-          where: { id: queuedOperation.id, status: "RUNNING" },
+          // #4356: never take back a repair's marked claim (`INV-INT-029`).
+          where: { id: queuedOperation.id, status: "RUNNING", ...NOT_A_XERO_REPAIR_CLAIM },
           data: {
             status: "PENDING",
             startedAt: null,
@@ -3250,8 +3250,8 @@ export async function processQueuedXeroOutboxOperations(options?: {
         // state the outbox expects. Every queue type but the three named below
         // owns a `catch { await failXeroSyncOperation(<this outbox row>, error); throw }`
         // (the kept late-capture invoice, #3635, self-fails like the rest),
-        // and `failXeroSyncOperation` writes `status: FAILED` + `completedAt`
-        // with no status guard — so by the time this branch runs the row is
+        // and `failXeroSyncOperation` writes `status: FAILED` + `completedAt` over a
+        // RUNNING row (only a recorded success is kept, `INV-INT-029`) — so by the time this branch runs the row is
         // already FAILED for those types, and a `status: "RUNNING"`-only guard
         // would match zero rows and leave it terminally FAILED (the very bug the
         // #2423 F2 review caught). The three handlers that do NOT self-fail
@@ -3280,8 +3280,9 @@ export async function processQueuedXeroOutboxOperations(options?: {
           where: {
             id: queuedOperation.id,
             status: { in: ["RUNNING", "FAILED"] },
-            // #3635 (`INV-INT-025`): never revive a row an officer resolved.
+            // Never revive a row an officer resolved (#3635, `INV-INT-025`), nor a repair's marked claim (#4356).
             manuallyResolvedAt: null,
+            ...NOT_A_XERO_REPAIR_CLAIM,
           },
           data: {
             status: "PENDING",
@@ -3302,6 +3303,14 @@ export async function processQueuedXeroOutboxOperations(options?: {
           );
           result.skipped += 1;
           result.cooldownDeferred = (result.cooldownDeferred ?? 0) + 1;
+          continue;
+        }
+        // #4356: a caller sharing this row recorded a success on it, so the handler's
+        // own failure was refused (`INV-INT-029`): nothing failed, that outcome stands.
+        const held = await prisma.xeroSyncOperation.findUnique({ where: { id: queuedOperation.id }, select: { status: true } });
+        if (held && holdsRecordedXeroSuccess(held.status)) {
+          logger.info({ queueOperationId: queuedOperation.id, heldStatus: held.status }, "Xero cooldown refused an outbox operation another caller had already completed; its outcome stands");
+          result.skipped += 1;
           continue;
         }
         // The row was in neither RUNNING nor FAILED (e.g. a concurrent worker

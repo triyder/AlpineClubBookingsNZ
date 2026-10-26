@@ -22,6 +22,9 @@
  *   (`booking: { deletedAt: null }`);
  * - a compound-unique key (`memberId_seasonYear: { memberId, seasonYear }`),
  *   evaluated as the nested conditions on the same row;
+ * - a Json column's `path` filter with `equals` (#3403): the value at that key
+ *   path compared to a scalar, as PostgreSQL's `#>` then `=` does, so a
+ *   missing key or a NULL column is NULL and matches nothing;
  * - a condition of `undefined`, which Prisma drops and so does this.
  *
  * NULL is where a two-valued evaluator and PostgreSQL part company, and this
@@ -123,7 +126,6 @@ const UNMODELLED_OPERATORS = new Set([
   "hasSome",
   "isEmpty",
   "isSet",
-  "path",
   "string_contains",
   "string_starts_with",
   "string_ends_with",
@@ -309,6 +311,43 @@ function matchesScalar(
   return true;
 }
 
+/**
+ * #3403: a Json column's `{ path: [...keys], equals: scalar }` - the only `path`
+ * shape the production queries use. The value at the key path is compared with
+ * a scalar; a missing key, a NULL column or a non-object on the way is SQL NULL,
+ * which matches nothing and, under a negation, is unknown and throws. Any other
+ * operator beside `path`, or an object operand, is refused.
+ */
+function matchesJsonPath(
+  actual: unknown,
+  condition: Record<string, unknown>,
+  at: string,
+  label: string,
+  negated: boolean,
+): boolean {
+  const keys = Object.keys(condition).filter((key) => condition[key] !== undefined);
+  if (keys.some((key) => key !== "path" && key !== "equals") || !keys.includes("equals")) {
+    unsupported(label, `Json filter ${keys.join(", ")} on ${at} (only path + equals is modelled)`);
+  }
+  const path = condition.path;
+  const operand = condition.equals;
+  if (!Array.isArray(path) || path.length === 0 || !path.every((part) => typeof part === "string")) {
+    unsupported(label, `Json path ${JSON.stringify(path)} on ${at}`);
+  }
+  if (operand === null || (typeof operand === "object" && operand !== null)) {
+    unsupported(label, `Json path equals ${JSON.stringify(operand)} on ${at} (only a scalar is modelled)`);
+  }
+  let value: unknown = actual;
+  for (const part of path as string[]) {
+    value = isPlainObject(value) ? value[part] : undefined;
+  }
+  if (value === undefined || value === null) {
+    if (negated) nullUnderNegation(label, "NOT", `${at}.${(path as string[]).join(".")}`);
+    return false;
+  }
+  return value === operand;
+}
+
 /** A relation value against `is` / `isNot` / `some` / `none`, or the to-one shorthand. */
 function matchesRelation(
   lookup: RelationLookup,
@@ -458,6 +497,10 @@ function evaluate(
     }
     if (hasColumn(record, key)) {
       const value = record[key];
+      if (isPlainObject(condition) && condition.path !== undefined) {
+        if (!matchesJsonPath(value, condition, key, label, negated)) return false;
+        continue;
+      }
       if (isPlainObject(condition)) {
         const keys = Object.keys(condition).filter((k) => condition[k] !== undefined);
         const unmodelled = keys.find((k) => UNMODELLED_OPERATORS.has(k));

@@ -26,6 +26,11 @@ vi.mock("@/lib/logger", () => ({
   default: { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 
+// #3403 review (M5): an invoice parked on an ask a later request already
+// superseded follows it at once; proven in its own suite and on PostgreSQL.
+const followForIntent = vi.hoisted(() => vi.fn(async () => undefined));
+vi.mock("@/lib/superseded-ask-invoice-carry", () => ({ followSupersededAskInvoicesForIntentSafely: followForIntent }));
+
 import { wouldQueueCheckInDatedInvoiceUpdate } from "@/lib/xero-booking-edit-conditions";
 import {
   classifyXeroBookingEditSettlement,
@@ -414,6 +419,7 @@ describe("queueXeroBookingEditSettlement (side effects)", () => {
       }),
     );
     expect(mocks.kickQueuedXeroOutboxOperationsIfConnected).toHaveBeenCalled();
+    expect(followForIntent).toHaveBeenCalledWith("pi_additional");
   });
 
   it("queues a mixed-sign supplementary invoice with the signed price reduction (#1356)", async () => {

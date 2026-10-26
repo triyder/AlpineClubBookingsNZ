@@ -45,6 +45,7 @@ import {
   type XeroSupplementaryInvoiceEnqueueOutcome,
 } from "@/lib/xero-operation-outbox";
 import { attachRecoveredIntentToWaitingSupplementaryInvoice } from "@/lib/xero-supplementary-invoice-late-capture";
+import { followSupersededAskInvoicesSafely } from "@/lib/superseded-ask-invoice-carry";
 import { queueFoldedReissuedAskInvoices, queueReissuedAskSupplementaryInvoice } from "@/lib/reissued-ask-invoice";
 import {
   mintedIntentCustomerId,
@@ -1685,6 +1686,8 @@ async function markSupersededTransactionFailed(
   if (updated.count > 0) {
     await reconcilePaymentAggregates({ paymentId: operation.paymentId });
   }
+  // #3403 (`INV-PAY-140`): its change's waiting invoice follows the request carrying its balance, before the row completes.
+  await followSupersededAskInvoicesSafely({ paymentId: operation.paymentId });
 }
 
 async function markSupersededTransactionSucceeded({
@@ -1774,6 +1777,8 @@ async function handoffSucceededSupersededIntentToRefund({
     );
     return false;
   }
+  // #3403 review 2 (F1, `INV-PAY-140`): captured late, it is refunded and the request after it carries its balance.
+  await followSupersededAskInvoicesSafely({ paymentId: operation.paymentId });
 
   // #3639: on a CANCELLED booking this capture is a late capture, so it follows
   // the club's setting like every other - held for a treasurer, no refund.
@@ -2942,6 +2947,7 @@ async function processCreateAdditionalPaymentIntentOperation(
     bookingId: operation.bookingId,
     paymentId: operation.paymentId,
     queued: held.value,
+    newPaymentIntentId: pi.id,
   });
 
   // #4316: a cancel committed since that check could not see this intent; retired as the

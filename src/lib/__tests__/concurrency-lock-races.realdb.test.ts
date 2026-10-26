@@ -537,6 +537,13 @@ import "./resolved-voided-refund-note-coverage.realdb.test";
 // failed write gives the row back PARTIAL. Skipped unless
 // RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4256-` fixtures.
 import "./xero-partial-repair-claim.realdb.test";
+// #4356 reuses it to prove two callers sharing one ACTIVE Xero operation row
+// never let a failure overwrite a recorded success: the real
+// createXeroPaymentForInvoice twice onto one row, each Xero call held on a gate,
+// in both orders, a success replacing an earlier failure, and a late failure
+// kept off a PARTIAL repair's claim. Skipped unless
+// RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4356-` fixtures.
+import "./xero-shared-operation-outcome.realdb.test";
 // #4291 reuses it to prove a refund note Xero voided still recounts the payment
 // whose mirror the void turned off: the retry of a void event that died after
 // its link write finishes the recount, the mirror stays off and the pointer
@@ -566,6 +573,14 @@ import "./manual-reversal-retrying-cancel.realdb.test";
 // failed mint, bumped before it runs and cancelled mid-mint. Skipped unless
 // RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4316-` fixtures.
 import "./ended-booking-ask-mint-race.realdb.test";
+// #3403 (`INV-PAY-140`) reuses it to prove a superseded card change's waiting
+// Xero invoice follows the request that carries its balance: released with
+// that request's capture, each invoice for its own amount, retired when it is
+// never paid; and the move forced on the anchor's key against a price
+// reduction's retire and the repair pass's enqueue, in both orders. Skipped
+// unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-3403-`
+// fixtures.
+import "./superseded-ask-invoice-carry.realdb.test";
 // #4357 reuses it to prove every saved-card door charges the booking's worth:
 // a change fee the edit lifecycle's writer recorded on an unsettled payment is
 // charged by the charge-saved-method route and the officer's
@@ -580,6 +595,12 @@ import "./saved-card-charge-worth.realdb.test";
 // note a resolved row records (#4321). Skipped unless
 // RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4265-` fixtures.
 import "./own-live-refund-note-coverage.realdb.test";
+// #4366 reuses it to prove a late central-server version answer records
+// nothing once its connection has changed: the same key saved again or a moved
+// address is refused, and a recorder racing a key change queues on the settings
+// row and then refuses rather than writing over the forget. Skipped unless
+// RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans the singleton settings row.
+import "./servernz-version-record-race.realdb.test";
 // #4421 reuses it to prove "Resolve by hand" on a refund-note create that
 // names no note records the officer's note, and that note then records no
 // other refund: the real resolve route and the real hand-made answer, in

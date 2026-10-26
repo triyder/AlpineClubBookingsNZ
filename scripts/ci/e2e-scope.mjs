@@ -1,8 +1,6 @@
-import { execFileSync } from "node:child_process";
-import { appendFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
-import { gitDiffChangedFiles, parseNameStatus } from "./pr-body.mjs";
+import { decideScope, pullRequestChangedFiles, reportScope } from "./change-scope.mjs";
 
 // #4397: whether a pull request can change what the browser suite exercises.
 // 23 of 100 merged PRs touched only docs, unit tests or agent notes, and each
@@ -10,7 +8,9 @@ import { gitDiffChangedFiles, parseNameStatus } from "./pr-body.mjs";
 // jobs run this as a STEP and skip their heavy steps only when it writes
 // `needed=false` (a missing or garbled answer runs the suite), so every
 // required check still reports a real pass or failure (CONTRIBUTING.md ->
-// "Branch protection": never a job-level `if:`).
+// "Branch protection": never a job-level `if:`). The change list and the
+// fail-toward-running rule are `change-scope.mjs`'s, shared with the CI jobs
+// that skip the same way (#4425).
 //
 // An allowlist, never a denylist: a path joins only when it cannot reach the
 // app image, the seeded database or a spec. Anything unmatched - the rest of
@@ -48,33 +48,10 @@ export function e2eNeeded(files) {
   return { needed: false, reason: `all ${files.length} changed file(s) are docs, unit tests or agent notes` };
 }
 
-/**
- * The pull request's own change: the merge commit GitHub tests, against its
- * first parent (the base tip), read with the repository's one changed-file
- * reader (`pr-body.mjs`; a rename counts as both of its paths).
- */
-export function pullRequestChangedFiles({
-  run = (args) => execFileSync("git", args, { encoding: "utf8" }),
-  diff = () => gitDiffChangedFiles("HEAD^1", "HEAD"),
-} = {}) {
-  const parents = run(["rev-list", "--parents", "-n", "1", "HEAD"]).trim().split(/\s+/);
-  if (parents.length !== 3) throw new Error(`HEAD is not a two-parent merge commit (${parents.length - 1} parent(s))`);
-  return parseNameStatus(diff()).map((record) => record.path);
-}
-
 export function decide(eventName, listFiles = pullRequestChangedFiles) {
-  if (eventName !== "pull_request") {
-    return { needed: true, reason: `a ${eventName || "non-PR"} run always runs the suite` };
-  }
-  try {
-    return e2eNeeded(listFiles());
-  } catch (error) {
-    return { needed: true, reason: `could not list the change (${error.message}), so the suite runs` };
-  }
+  return decideScope(eventName, e2eNeeded, listFiles);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const { needed, reason } = decide(process.env.GITHUB_EVENT_NAME);
-  console.log(`E2E ${needed ? "needed" : "not needed"}: ${reason}`);
-  if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `needed=${needed}\n`);
+  reportScope("E2E", decide(process.env.GITHUB_EVENT_NAME));
 }

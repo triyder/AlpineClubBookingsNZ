@@ -1337,12 +1337,19 @@ describe("review finding source/schema contracts", () => {
     // so deleting this step would still fail on an app error. What would vanish
     // silently is `tsconfig.test.json` and `tsconfig.e2e.json`, the two
     // projects the build never reads — which is precisely the gap #2875 was
-    // filed about.
+    // filed about. Since #4425 Typecheck is its own job, so the guard follows
+    // it there and pins the bridge that keeps it inside the required check.
+    const typecheck = jobBlock(workflow, "typecheck");
+    expect(
+      stepBlock(typecheck, "Typecheck"),
+      "the Typecheck job must still run Typecheck (#2875): it is the only gate that " +
+        "reads the test and e2e projects, which `next build` never compiles"
+    ).toContain("run: pnpm run typecheck");
+    expect(typecheck).toContain("    name: Typecheck\n");
     expect(
       job,
-      "the verify job must still run Typecheck (#2875): it is the only gate that " +
-        "reads the test and e2e projects, which `next build` never compiles"
-    ).toContain("- name: Typecheck");
+      "verify must require the Typecheck job (#4425), or a type error stops gating merges"
+    ).toMatch(/run: node scripts\/ci\/require-test-shards\.mjs .*--job Typecheck /);
   });
 
   it("wraps age-up membership upgrades and token issuance in a transaction", () => {

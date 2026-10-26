@@ -394,12 +394,20 @@ vi.mock("@/lib/club-format-server", async (importOriginal) => ({
   clubFormatValues: (...a: unknown[]) => clubFormatMock(...a),
 }));
 
+// #3403: the superseded ask's waiting Xero invoice moves onto its carrier; the
+// move is its own module's (`superseded-ask-invoice-carry.test.ts`).
+const mockFollowSupersededAskInvoices = vi.hoisted(() => vi.fn(async () => null));
+vi.mock("@/lib/superseded-ask-invoice-carry", () => ({
+  followSupersededAskInvoicesSafely: mockFollowSupersededAskInvoices,
+}));
+
 import logger from "@/lib/logger";
 import {
   buildBookingCancellationRefundMetadata,
   buildBookingModificationRefundMetadata,
   buildRefundRequestRefundMetadata,
   bookingModificationRefundReasonForKeyPrefix,
+  completeCanceledSupersededPaymentIntentRecovery,
   enqueueBookingCancellationRefundRecovery,
   enqueueBookingModificationRefundRecovery,
   enqueueCapacityClaimFailedRefundRecovery,
@@ -576,6 +584,7 @@ describe("payment recovery worker", () => {
   });
 
   it("cancels a cancellable superseded PaymentIntent and marks the transaction failed", async () => {
+    mockFollowSupersededAskInvoices.mockClear();
     const result = await processPaymentRecoveryOperations({ limit: 1 });
 
     expect(result).toMatchObject({
@@ -606,9 +615,47 @@ describe("payment recovery worker", () => {
         nextRetryAt: null,
       }),
     });
+    // #3403: the change's waiting invoice follows the money - after the row is
+    // FAILED and BEFORE the recovery row completes, so a crash replays it.
+    expect(mockFollowSupersededAskInvoices).toHaveBeenCalledWith({ paymentId: "payment-1" });
+    const failedAt = mockPaymentTransactionUpdateMany.mock.invocationCallOrder[0]!;
+    const followedAt = mockFollowSupersededAskInvoices.mock.invocationCallOrder[0]!;
+    const completedAt = mockPaymentRecoveryUpdateMany.mock.invocationCallOrder.at(-1)!;
+    expect(failedAt).toBeLessThan(followedAt);
+    expect(followedAt).toBeLessThan(completedAt);
+  });
+
+  it("#3403: the Stripe webhook's completion of a superseded cancel moves the waiting invoice too, before it completes", async () => {
+    mockFollowSupersededAskInvoices.mockClear();
+    mockPaymentTransactionUpdateMany.mockClear();
+    mockPaymentRecoveryUpdateMany.mockClear();
+    mockPaymentRecoveryFindFirst.mockResolvedValueOnce(makeOperation());
+
+    await expect(
+      completeCanceledSupersededPaymentIntentRecovery({ paymentIntentId: "pi_superseded" }),
+    ).resolves.toBe(true);
+
+    expect(mockFollowSupersededAskInvoices).toHaveBeenCalledWith({ paymentId: "payment-1" });
+    expect(mockPaymentTransactionUpdateMany.mock.invocationCallOrder[0]!).toBeLessThan(
+      mockFollowSupersededAskInvoices.mock.invocationCallOrder[0]!,
+    );
+    expect(mockFollowSupersededAskInvoices.mock.invocationCallOrder[0]!).toBeLessThan(
+      mockPaymentRecoveryUpdateMany.mock.invocationCallOrder.at(-1)!,
+    );
+  });
+
+  it("#3403: a webhook cancel no supersede recovery owns moves nothing", async () => {
+    mockFollowSupersededAskInvoices.mockClear();
+    mockPaymentRecoveryFindFirst.mockResolvedValueOnce(null);
+
+    await expect(
+      completeCanceledSupersededPaymentIntentRecovery({ paymentIntentId: "pi_other" }),
+    ).resolves.toBe(false);
+    expect(mockFollowSupersededAskInvoices).not.toHaveBeenCalled();
   });
 
   it("treats an already-canceled PaymentIntent as a successful cancellation recovery", async () => {
+    mockFollowSupersededAskInvoices.mockClear();
     mockCancelPaymentIntentIfCancellableWithResult.mockResolvedValue({
       canceled: false,
       paymentIntent: { id: "pi_superseded", status: "canceled", amount: 6000 },
@@ -617,6 +664,8 @@ describe("payment recovery worker", () => {
     const result = await processPaymentRecoveryOperations({ limit: 1 });
 
     expect(result.succeeded).toBe(1);
+    // #3403: an intent cancelled elsewhere (Stripe's own expiry) is followed as well.
+    expect(mockFollowSupersededAskInvoices).toHaveBeenCalledWith({ paymentId: "payment-1" });
     expect(mockPaymentTransactionUpdateMany).toHaveBeenCalled();
     expect(mockPaymentRecoveryUpdateMany).toHaveBeenCalledWith({
       where: {
@@ -854,6 +903,7 @@ describe("payment recovery worker", () => {
   });
 
   it("queues refund recovery when the superseded PaymentIntent already succeeded", async () => {
+    mockFollowSupersededAskInvoices.mockClear();
     mockCancelPaymentIntentIfCancellableWithResult.mockResolvedValue({
       canceled: false,
       paymentIntent: {
@@ -889,6 +939,9 @@ describe("payment recovery worker", () => {
         amountCents: 6000,
       }),
     });
+    // #3403 review 2 (F1): captured late, it is refunded and the request after
+    // it carries its balance - with every invoice already moved onto it.
+    expect(mockFollowSupersededAskInvoices).toHaveBeenCalledWith({ paymentId: "payment-1" });
   });
 
   it("does not double-count a previously written refund when the recovery retries", async () => {

@@ -25,6 +25,7 @@ import {
   type ModificationNoteSpecialWording,
   type RefundMethod,
 } from "@/lib/xero-refund-method";
+import { followSupersededAskInvoicesForIntentSafely } from "@/lib/superseded-ask-invoice-carry";
 
 type XeroBookingEditFinancialAction =
   | { type: "none"; reason: string }
@@ -425,6 +426,8 @@ export async function queueXeroBookingEditSettlement(
       );
       supplementaryInvoice = queued.outcome;
       await kickQueuedXeroOperation(queued);
+      // #3403 review (M5): parked on an ask a later request already superseded? It follows that request now.
+      if (decision.financialAction.waitForPaymentIntentId) await followSupersededAskInvoicesForIntentSafely(decision.financialAction.waitForPaymentIntentId);
     }
   } else if (decision.financialAction.type === "modification-credit-note") {
     if (decision.financialAction.refundAmountCents > 0) {

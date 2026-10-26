@@ -335,7 +335,10 @@ which is why each of these comments opens with an explicit prefix and says who
 is writing and what they are doing.
 
 Sekreton lanes write as `sekreton[bot]`, through the Sekreton GitHub App, and
-use the same prefixes and the same rules (#4392). `sekreton[bot]` is an agent
+use the same prefixes and the same rules (#4392). Sekreton's task sandboxes have
+no GitHub write, so its orchestrator writes for the lane as `thatskiff33-agents`.
+Every comment it posts is signed `Sekreton lane (orchestrator)` (#4429,
+[`SEKRETON_ORCHESTRATOR.md`](SEKRETON_ORCHESTRATOR.md)). `sekreton[bot]` is an agent
 identity like `thatskiff33-agents`: its text is never owner authorisation, and
 only a `thatskiff33` comment or a recorded owner decision is
 (`AGENTS.md` → "Pre-authorisation and attributability").

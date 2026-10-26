@@ -763,6 +763,8 @@ edit raises an ask -> mint the replacement intent
        still cancellable -> transaction FAILED, operation SUCCEEDED
        Stripe already captured it -> handed off to REFUND_SUPERSEDED_PAYMENT
        provider failure -> the queued operation stands; the recovery cron finishes
+  -> each superseded ask's WAITING_PAYMENT supplementary invoice, a declined
+       ask's included, re-pointed at the replacing intent (#3403, INV-PAY-140)
   -> the member's card sees only the replacing intent
 REFUND_SUPERSEDED_PAYMENT completes
   -> reconcile aggregates, THEN one audit row + one REFUNDED BookingEvent
@@ -3791,6 +3793,18 @@ local business event -> Xero outbox operation queued
   nothing can be read. Limit: after a FAILED winner the extra call can fail
   too and add one FAILED row toward the repeated-failure alert; an
   applied-credit allocation's is closed by the converge below
+two callers on one row (the hand-off above) each record their own outcome of
+  the same keyed Xero call (#4356, INV-INT-029): an outcome never replaces a
+  better one. A failure, or a FAILED or CANCELLED completion, never lands on
+  SUCCEEDED or PARTIAL; PARTIAL never lands on SUCCEEDED; SUCCEEDED lands on
+  any row. None but SUCCEEDED lands on a repair's marked RUNNING claim unless
+  written onto that claim. A refused write answers null: no link, no
+  repeated-failure alert. Limit (#4373): only claim-guarded completions lose
+  to a late outcome, and both repairs that use them are marked. A late outcome
+  still lands on any other RUNNING row: a plain FAILED retry's claim reads
+  FAILED mid-retry and a second retry may claim it; a new start can be handed
+  a claim row; the row leaves RUNNING, which the booking invoice retry's
+  settle-time fence relies on
 worker claims operation -> provider call -> success or retryable failure
 success -> SUCCEEDED clears lastErrorCode and lastErrorMessage, so an earlier
   wait's or failure's code is not shown on it (#4049); PARTIAL keeps them
@@ -3803,6 +3817,32 @@ worker finds the operation must wait (busy) -> RUNNING -> PENDING: returns
   createdAt -> FAILED for a person (an operator's retry raises it unwaited)
   it waits only when its edit expected an own note; a note the repair pass
   queues reads that from the edit's history row (#4049)
+supplementary invoice WAITING_PAYMENT on a card ask's intent (INV-PAY-104;
+  an officer's or the repair tool's own actions on it are not drawn here)
+  -> that intent captured and the money kept -> the others naming it billed
+     with it fit the capture -> PENDING (released)
+       they would not -> CANCELLED, STALE_WAITING_PAYMENT_CAPTURED, an
+       officer told
+  -> that intent captured and refunded -> left WAITING_PAYMENT for the reaper
+  -> a later request supersedes the ask and carries its balance (#3403,
+     INV-PAY-140) -> stays WAITING_PAYMENT, re-pointed at the request that
+     absorbed it (`parkedFromPaymentIntentId` keeps the first intent), under
+     the change's and the carrier's keys, guarded on status, intent and
+     correlation key: by the supersede's cancel step, by the minter before it
+     returns its secret, by an edit leg parking on a failed ask, and by the
+     reaper before it would retire it
+       -> booking ended, change already linked or another invoice queued, the
+          carrier would bill more than it asks, or the payload unreadable ->
+          left as it was
+       -> the carrier already captured -> released at once (unpaid where its
+          receipt records the capture)
+  -> re-pointed, and the FIRST intent is then captured and kept (a declined
+     ask paid from a stale tab) -> returned to that intent, then released
+  -> a price reduction retires the chain -> CANCELLED,
+     ADDITIONAL_ASK_RETIRED_BY_REDUCTION (INV-PAY-120)
+  -> the pay door closed and nothing carries it -> CANCELLED,
+     STALE_WAITING_PAYMENT (the reaper; only a capture of that same intent
+     revives it)
 inbound webhook/event recorded -> reconciliation worker processes event
 failure -> retry/backoff/admin visibility
 FAILED/PARTIAL -> officer marks it resolved in Xero -> done: status unchanged,
@@ -3882,7 +3922,11 @@ PARTIAL invoice payment repair or refund-note repair claims PARTIAL -> RUNNING
   "Retry it once to close it", never "Repaired"
   Reset stale running reports FAILED and PARTIAL counts separately
   rows repaired before #4256 stay PARTIAL; one retry closes them
-FAILED refund-note repair claims FAILED -> RUNNING too; a throw -> FAILED
+FAILED refund-note repair claims FAILED only -> RUNNING, with code
+  REFUND_NOTE_REPAIR_RUNNING (#4356); a lost claim -> "already claimed". A
+  throw before completion, or a stale reset of a dead run -> FAILED; a
+  refund-payment failure completes PARTIAL first. The outbox's busy and
+  cooldown un-claims never return a marked claim to PENDING
 mark non-replayable on FAILED/PARTIAL only, status-guarded: a retry that
   claimed the row after the officer's read -> 409, nothing written, no audit
 queued retry (REQUEUE) of an operation marked not replayable -> CANCELLED,
@@ -3967,6 +4011,8 @@ The claimed-original abandon and Mark failed are pinned by
 `xero-operation-queue.test.ts` and `xero-operation-routes.test.ts` (#3462).
 The PARTIAL repair's claim is pinned by `xero-operation-retry.test.ts` and,
 against real PostgreSQL, `xero-partial-repair-claim.realdb.test.ts` (#4256).
+The shared-row outcome guard is pinned by `xero-sync.test.ts` and, against real
+PostgreSQL, `xero-shared-operation-outcome.realdb.test.ts` (#4356).
 A change capture's receipt is pinned by `additional-capture-xero-receipt.test.ts`,
 `additional-capture-recorder.test.ts` and, against real PostgreSQL,
 `additional-capture-receipt.realdb.test.ts` and

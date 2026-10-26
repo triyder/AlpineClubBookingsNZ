@@ -47,6 +47,10 @@ vi.mock("@/lib/payment-recovery", () => ({
   enqueueBookingModificationRefundRecovery: vi.fn(),
   processPaymentRecoveryOperations: vi.fn(),
 }));
+// #3403: the superseded asks' invoice move is its own module's, tested there.
+vi.mock("@/lib/superseded-ask-invoice-carry", () => ({
+  followSupersededAskInvoicesSafely: async () => null,
+}));
 // The door folds no waiting re-issue in here; its invoice step answers "live".
 vi.mock("@/lib/reissued-ask-invoice", () => ({
   queueFoldedReissuedAskInvoices: async () => true,

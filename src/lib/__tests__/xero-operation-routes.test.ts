@@ -1088,6 +1088,29 @@ describe("Xero operation admin retry routes", () => {
       });
     });
 
+    // #4356: the FAILED refund-note repair's own marker sends it back where it came from.
+    it("MUTATION: returns a stuck FAILED refund-note repair to FAILED, carrying its last error (#4356)", async () => {
+      mocks.xeroOperationFindUnique.mockResolvedValue({ ...stuckRow, lastErrorCode: "REFUND_NOTE_REPAIR_RUNNING" });
+      mocks.xeroOperationUpdateMany.mockResolvedValue({ count: 1 });
+
+      const response = await markFailedOperation(markRequest(), params);
+
+      expect(response.status).toBe(200);
+      expect(mocks.xeroOperationUpdateMany).toHaveBeenCalledTimes(1);
+      expect(mocks.xeroOperationUpdateMany).toHaveBeenCalledWith({
+        where: {
+          id: "op_stuck",
+          status: "RUNNING",
+          startedAt: { equals: stuckSince, lt: new Date("2026-06-30T23:45:00.000Z") },
+        },
+        data: expect.objectContaining({
+          status: "FAILED",
+          lastErrorCode: "ORPHANED_STALE_RUNNING",
+          lastErrorMessage: expect.stringContaining(`The last error recorded before it stuck: ${stuckRow.lastErrorMessage}`),
+        }),
+      });
+    });
+
     it("leaves the row RUNNING and answers 500 when the audit row cannot be written", async () => {
       const row: Record<string, unknown> = { status: "RUNNING" };
       simulateRollback(row);

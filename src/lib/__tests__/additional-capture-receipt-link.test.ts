@@ -13,7 +13,7 @@ import { buildEditFinancialReviewChargeReason } from "@/lib/payment-recovery-key
 function store(input: {
   captures?: Array<{ id: string }>;
   link?: { id: string } | null;
-  receipts?: Array<{ status: string; requestPayload: unknown }>;
+  receipts?: Array<{ status: string; requestPayload: unknown; manuallyResolvedAt?: Date | null }>;
   supplementaries?: Array<{ requestPayload: unknown }>;
   unattributed?: number;
   modifications?: Array<{ id: string }>;
@@ -167,6 +167,24 @@ describe("anchorCaptureHasReceipt", () => {
       anchorCaptureHasReceipt(store({ captures, receipts: [{ status: "RUNNING", requestPayload: { plan: { invoiceId: "inv_1" } } }] }) as never, input, decidedOnly),
     ).resolves.toBe(true);
     await expect(anchorCaptureHasReceipt(store({ captures, link: { id: "link_1" } }) as never, input, decidedOnly)).resolves.toBe(true);
+  });
+
+  it("#3403 review 2 (F6): with queuedCounts, a receipt that will still run counts - queued, or failed before deciding and not resolved by hand", async () => {
+    const input = { bookingId: "booking_1", bookingModificationId: null, paymentIntentId: "pi_carrier" };
+    const captures = [{ id: "tx_1" }];
+    const queuedCounts = { queuedCounts: true };
+    const has = (receipt: { status: string; manuallyResolvedAt?: Date | null }) =>
+      anchorCaptureHasReceipt(store({ captures, receipts: [{ requestPayload: {}, manuallyResolvedAt: null, ...receipt }] }) as never, input, queuedCounts);
+    await expect(has({ status: "PENDING" })).resolves.toBe(true);
+    await expect(has({ status: "WAITING_PAYMENT" })).resolves.toBe(true);
+    await expect(has({ status: "FAILED" })).resolves.toBe(true);
+    await expect(has({ status: "PARTIAL" })).resolves.toBe(true);
+    await expect(has({ status: "FAILED", manuallyResolvedAt: new Date() })).resolves.toBe(false);
+    await expect(has({ status: "SUCCEEDED" })).resolves.toBe(false);
+    // Without the option the old answer stands: a PENDING row with no plan is not a recorder.
+    await expect(
+      anchorCaptureHasReceipt(store({ captures, receipts: [{ status: "PENDING", requestPayload: {}, manuallyResolvedAt: null }] }) as never, input),
+    ).resolves.toBe(false);
   });
 
   it("counts a RUNNING row or a stored plan, never a PENDING row with no plan", async () => {

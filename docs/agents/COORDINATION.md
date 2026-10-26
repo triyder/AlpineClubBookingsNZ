@@ -39,6 +39,13 @@ supervisor, and it is not started to watch CI: a lane watches its own PR. No
 coordinator is needed for a lane to take, build or finish its own claimed
 issue.
 
+**Exception: the Sekreton lane's orchestrator** (owner decision, 26 Oct 2026,
+#4429). The Sekreton lane is run by a standing orchestrator that makes one
+bounded pass every 30 minutes and watches the lane's CI. It does this because
+Sekreton's task agents can't write to GitHub and Sekreton never merges. The
+orchestrator is part of that lane, not a supervisor over other lanes. Its
+contract is [`SEKRETON_ORCHESTRATOR.md`](SEKRETON_ORCHESTRATOR.md).
+
 ## Lanes and assignments
 
 A lane is the session holding an issue's claim. It does that issue's normal
@@ -46,7 +53,8 @@ authorised work end to end: worktree, branch, commits, push, PR, CI, review,
 ready comment and the merge gate. Implementor and reviewer subagents inside the
 lane stay within their roles (`AGENTS.md` → "Orchestration Model").
 
-A Sekreton lane (branches `sekreton/<org>/alp-<n>`, writing as `sekreton[bot]`)
+A Sekreton lane (branches `sekreton/<org>/alp-<n>`, writing as `sekreton[bot]`,
+or as `thatskiff33-agents` signed `Sekreton lane (orchestrator)`)
 is a lane like any other, and runs the whole pipeline itself (owner decision,
 26 Oct 2026, #4392): its own `CLAIM:` before work starts, a PR body from
 `.github/pull_request_template.md` with `Closes #<n>` that passes
@@ -54,6 +62,12 @@ is a lane like any other, and runs the whole pipeline itself (owner decision,
 merge under `AGENTS.md` → "Completion and Merge". Another lane finishes a
 Sekreton PR only when the owner reassigns it on the issue; a review finding
 goes back to the Sekreton lane as a `LANE-SYNC:`, never as a push to its branch.
+Because the task sandboxes have no GitHub write (ALP-83), the lane's GitHub
+steps (claim, review, ready comment, merge, close-out) and its local validation
+are done by its orchestrator as `thatskiff33-agents`, per
+[`SEKRETON_ORCHESTRATOR.md`](SEKRETON_ORCHESTRATOR.md). The orchestrator also
+asks owner questions there as `needs-decision` issues batched into the owner's
+review windows, rather than as pop-ups.
 
 An assignment names the issue, the branch, the scope and who takes it. The
 taking lane posts its own `CLAIM:`. An assignment written by an agent carries no

@@ -553,7 +553,7 @@ export async function createModificationAdditionalPaymentIntent(
         });
         return reissueNotMinted(moved);
       }
-      await cancelSupersededAdditionalIntentsNow({ format, bookingId, paymentId, queued: superseded });
+      await cancelSupersededAdditionalIntentsNow({ format, bookingId, paymentId, queued: superseded, newPaymentIntentId: pi.id });
       // #4316: a cancel that committed while this minted could not see it.
       if (await retireAskOnEndedBooking({ format, bookingId, paymentId, paymentIntentId: pi.id })) return ASK_RETIRED_UNMINTED;
       // Decision A (#3954): the smaller ask's own invoice, waiting on it - only

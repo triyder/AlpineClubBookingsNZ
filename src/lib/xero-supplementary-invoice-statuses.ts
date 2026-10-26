@@ -18,6 +18,18 @@ import { XERO_REQUEUE_OPERATION_TYPE } from "@/lib/xero-hardening-shared";
 export const OUTSTANDING_SUPPLEMENTARY_INVOICE_STATUSES = XERO_ACTIVE_OPERATION_STATUSES;
 
 /**
+ * A supplementary-invoice create, any anchor and status: the outbox columns
+ * every supplementary-invoice read starts from, matched on the immutable
+ * `queueType` column. #3403 review: named once rather than copied per module.
+ */
+export const SUPPLEMENTARY_INVOICE_CREATE_WHERE = {
+  direction: "OUTBOUND",
+  entityType: "INVOICE",
+  operationType: "CREATE",
+  queueType: XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE,
+} as const satisfies Prisma.XeroSyncOperationWhereInput;
+
+/**
  * The supplementary-invoice outbox operations of ONE anchor, any status: the
  * shape the enqueue's "is an invoice already going out?" read narrows by status
  * (`outstandingSupplementaryInvoiceOperationsWhere`). Matched on the immutable
@@ -31,13 +43,36 @@ export function supplementaryInvoiceAnchorOperationsWhere({
   localModel: XeroSupplementaryInvoiceAnchorModel;
   localId: string;
 }): Prisma.XeroSyncOperationWhereInput {
+  return { ...SUPPLEMENTARY_INVOICE_CREATE_WHERE, localModel, localId };
+}
+
+/**
+ * #3403 review (M2): the supplementary invoices that record, or will record,
+ * a payment against this card request - every one naming it that is not
+ * CANCELLED (released, sending or sent still bills its money). A capture is
+ * checked against what ALL of them bill together, never one at a time: a
+ * superseded change's invoice moved onto the request carrying its balance
+ * names it beside the request's own.
+ */
+export function supplementaryInvoicesNamingIntentWhere(paymentIntentId: string): Prisma.XeroSyncOperationWhereInput {
   return {
-    direction: "OUTBOUND",
-    entityType: "INVOICE",
-    operationType: "CREATE",
-    localModel,
-    localId,
-    queueType: XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE,
+    ...SUPPLEMENTARY_INVOICE_CREATE_WHERE,
+    status: { not: "CANCELLED" },
+    requestPayload: { path: ["paymentIntentId"], equals: paymentIntentId },
+  };
+}
+
+/**
+ * #3403 review 2 (F4): a waiting invoice still parked on the capture it was
+ * read waiting on. Every write a capture makes to the invoices it read - the
+ * release, and the refusal that cancels one it does not cover - is guarded on
+ * this, so an invoice moved off that intent since (taken back by a superseded
+ * ask's own capture, or moved onto a carrier) is never that capture's to touch.
+ */
+export function stillWaitingOnIntentWhere(paymentIntentId: string): Prisma.XeroSyncOperationWhereInput {
+  return {
+    status: "WAITING_PAYMENT",
+    requestPayload: { path: ["paymentIntentId"], equals: paymentIntentId },
   };
 }
 

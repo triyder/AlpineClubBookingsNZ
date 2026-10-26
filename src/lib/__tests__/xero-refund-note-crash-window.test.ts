@@ -188,14 +188,15 @@ vi.mock("@/lib/xero-sync", async (importOriginal) => {
       async (
         id: string,
         completion: { status?: string; responsePayload?: unknown; xeroObjectId?: string | null; xeroObjectNumber?: string | null; extraLinks?: Row[] },
-        options?: { keepSucceeded?: boolean; onlyIfRunningSince?: Date },
+        options?: { onlyIfRunningSince?: Date },
       ) => {
         if (state.crash === "at-completion") {
           state.crash = null;
           throw CRASH;
         }
         const row = state.operations.find((operation) => operation.id === id)!;
-        if (options?.keepSucceeded && row.status === "SUCCEEDED") return null;
+        // #4356 (`INV-INT-029`): a PARTIAL completion never lands on SUCCEEDED.
+        if (completion.status === "PARTIAL" && row.status === "SUCCEEDED") return null;
         // #4256: a retry's completion lands only on its own claim.
         if (options?.onlyIfRunningSince && !(row.status === "RUNNING" && row.startedAt === options.onlyIfRunningSince)) return null;
         Object.assign(row, {

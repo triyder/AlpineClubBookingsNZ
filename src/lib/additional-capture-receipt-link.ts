@@ -14,6 +14,10 @@ import { buildEditFinancialReviewChargeReason } from "@/lib/payment-recovery-key
 import { exactPrefix } from "@/lib/prisma-exact-prefix";
 import { SUPPLEMENTARY_INVOICE_PAYMENT_ROLE } from "@/lib/xero-inbound/object-links";
 
+import { XERO_ACTIVE_OPERATION_STATUSES } from "@/lib/xero-active-operation-statuses";
+/** A receipt that will still run: live, or failed/partial and not resolved by hand. */
+const XERO_RERUNNABLE_RECEIPT_STATUSES = [...XERO_ACTIVE_OPERATION_STATUSES, "FAILED", "PARTIAL"] as const;
+
 /** The link the capture's Xero payment writes, on its `PaymentTransaction`. */
 export const ADDITIONAL_CAPTURE_PAYMENT_ROLE = "ADDITIONAL_CAPTURE_PAYMENT";
 
@@ -181,7 +185,7 @@ export async function bookingHasPaidUnnamedSupplementary(
 export async function anchorCaptureHasReceipt(
   store: Pick<Prisma.TransactionClient, "paymentTransaction" | "xeroObjectLink" | "xeroSyncOperation">,
   input: { bookingId: string; bookingModificationId: string | null; paymentIntentId: string | null },
-  options?: { decidedOnly?: boolean },
+  options?: { decidedOnly?: boolean; queuedCounts?: boolean },
 ): Promise<boolean> {
   // Round 7: the change's captures by its stamp or its review charge's
   // reason, and the one the invoice names. Round 9: an invoice naming its
@@ -218,13 +222,21 @@ export async function anchorCaptureHasReceipt(
         queueType: XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE,
         status: { not: "CANCELLED" },
       },
-      select: { status: true, requestPayload: true },
+      select: { status: true, requestPayload: true, manuallyResolvedAt: true },
     }),
   ]);
   return (
     linked !== null ||
     receipts.some(
-      (receipt) => (!options?.decidedOnly && receipt.status === "RUNNING") || asRecord(receipt.requestPayload)?.plan != null,
+      (receipt) =>
+        (!options?.decidedOnly && receipt.status === "RUNNING") ||
+        asRecord(receipt.requestPayload)?.plan != null ||
+        // #3403 review 2 (F6): a receipt that has not decided yet - queued, or
+        // failed before deciding and still re-runnable - will record the whole
+        // capture when it runs, so a paying invoice must not be put in front of it.
+        (options?.queuedCounts === true &&
+          receipt.manuallyResolvedAt === null &&
+          (XERO_RERUNNABLE_RECEIPT_STATUSES as readonly string[]).includes(receipt.status)),
     )
   );
 }
