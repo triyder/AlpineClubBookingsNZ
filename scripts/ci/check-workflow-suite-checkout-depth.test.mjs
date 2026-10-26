@@ -461,14 +461,20 @@ describe("this repository", () => {
     );
     const verify = parseWorkflowYaml(workflow).jobs.verify;
 
+    // Fork (triyder, #89): `BUDGET_BASE` is written to the job environment by the
+    // preceding "Pick the ratchet base" step — upstream's expression for every
+    // event, thatskiff33 main for a `sync/*` pull request — so the ratchet step
+    // itself carries no `env:` block. The step stays verify's actual final step.
+    const picker = verify.steps.at(-2);
+    expect(picker.name).toBe("Pick the ratchet base (a fork sync judges against upstream main)");
+    expect(picker.env.DEFAULT_BUDGET_BASE).toBe(
+      "${{ (github.event_name == 'push' && github.event.created == false && " +
+        "!startsWith(github.ref, 'refs/heads/epic/')) && github.event.before || " +
+        "'origin/main' }}",
+    );
+    expect(picker.run).toContain("thatskiff33/AlpineClubBookingsNZ.git main");
     expect(verify.steps.at(-1)).toEqual({
       name: "File-size budget ratchet",
-      env: {
-        BUDGET_BASE:
-          "${{ (github.event_name == 'push' && github.event.created == false && " +
-          "!startsWith(github.ref, 'refs/heads/epic/')) && github.event.before || " +
-          "'origin/main' }}",
-      },
       run: 'pnpm run quality:budget --base "$BUDGET_BASE"',
     });
   });
