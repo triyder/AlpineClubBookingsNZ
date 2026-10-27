@@ -73,7 +73,7 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
   },
   "credit-released-payment-request": {
     "defaultSubject": "Payment needed for your lodge booking",
-    "defaultBody": "Payment Needed\n\nHi {{firstName}}, the account credit applied to your booking was used elsewhere in the club's accounts, so {{additionalAmount}} of your booking has not been paid.\n\nAmount still to pay: {{additionalAmount}}\nRequested on: {{requestedOn}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\n\nOpen your booking to pay by card. If you have already paid, or think this is wrong, contact the club.\n\nPay Now: {{BASE_URL}}/bookings"
+    "defaultBody": "Payment Needed\n\nHi {{firstName}}, {{askCauseSentence}}\n\nAmount still to pay: {{additionalAmount}}\nRequested on: {{requestedOn}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\n\nOpen your booking to pay by card. If you have already paid, or think this is wrong, contact the club.\n\n{{bankTransferNote}}Pay Now: {{BASE_URL}}/bookings"
   },
   "chore-roster": {
     "defaultSubject": "Your chore roster for {{formattedDate}} - {{CLUB_LODGE_NAME}}",

@@ -1,3 +1,4 @@
+import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
 /**
  * School group booking request variant (issue #709).
  *
@@ -22,6 +23,7 @@
  * only SHA-256 token hashes are stored, and external calls (email, Xero outbox)
  * run after the transaction commits.
  */
+import { memberWholeLodgeChoosesPaymentMethod } from "@/lib/booking-payment-flow";
 import { randomBytes } from "crypto";
 import { hash } from "bcryptjs";
 import {
@@ -2195,7 +2197,7 @@ type ApproveMemberWholeLodgeRequestOutcome =
  *   - the booking is created **CONFIRMED**, which is capacity-holding in its own
  *     right (CAPACITY_HOLDING_BOOKING_STATUSES) — no dependence on the PENDING
  *     `originBookingRequest` clause;
- *   - the MONEY is where the two paths now part (fork, booking-fixes). With
+ *   - the MONEY is where the two paths now part (#4019). With
  *     the Internet Banking AND Xero modules on, the approval leaves the payment
  *     method to the MEMBER, exactly as an ordinary card booking does: no
  *     Payment row is minted and nothing is invoiced here. The booking page then
@@ -2254,7 +2256,10 @@ export async function approveMemberWholeLodgeRequest(input: {
     isEffectiveModuleEnabled("xeroIntegration"),
     isEffectiveModuleEnabled("internetBankingPayments"),
   ]);
-  const memberChoosesPaymentMethod = xeroModuleOn && internetBankingModuleOn;
+  const memberChoosesPaymentMethod = memberWholeLodgeChoosesPaymentMethod({
+    xeroIntegration: xeroModuleOn,
+    internetBankingPayments: internetBankingModuleOn,
+  });
   const initialRequest = await prisma.bookingRequest.findUnique({
     where: { id: input.requestId },
   });
@@ -2780,8 +2785,9 @@ export async function approveMemberWholeLodgeRequest(input: {
       // exception door, because that officer IS the authority the door leads to.
       // Their remedies are to put a qualifying adult member in the party, move the
       // request to another lodge, or change the lodge's setting.
-      await reconcileAdultMemberHostingReviewWithSiblings(booking.id, tx);
-
+      // #4264 review F4 (INV-LOCK-002): the member-credit tier is taken BEFORE
+      // the hosting reconcile below, which may take Member rows and the
+      // coverage keys; the guide orders member-credit ahead of both.
       let paymentReference: string | null = null;
       let appliedCreditCents = 0;
       let settledByCredit = false;
@@ -2833,6 +2839,7 @@ export async function approveMemberWholeLodgeRequest(input: {
             where: { id: booking.id },
             data: { status: BookingStatus.PAID },
           });
+          await postStoredBookingConfirmationLedgerLines(tx, booking.id);
           settledByCredit = true;
         }
       } else {
@@ -2853,6 +2860,9 @@ export async function approveMemberWholeLodgeRequest(input: {
           },
         });
       }
+
+      await reconcileAdultMemberHostingReviewWithSiblings(booking.id, tx);
+
 
       await tx.bookingRequest.update({
         where: { id: request.id },
@@ -2941,7 +2951,7 @@ export async function approveMemberWholeLodgeRequest(input: {
         checkOut: request.checkOut.toISOString(),
         exclusivityRequested: true,
         wholeLodgeHold: true,
-        // How the money was left (fork, booking-fixes): the member chooses on
+        // How the money was left (#4019): the member chooses on
         // the booking page, or the legacy pay-on-account receivable.
         paymentMethod: memberChoosesPaymentMethod
           ? "member_choice"
@@ -2995,13 +3005,40 @@ export async function approveMemberWholeLodgeRequest(input: {
       },
     });
 
-    if (memberChoosesPaymentMethod) {
+    if (memberChoosesPaymentMethod && conversion.settledByCredit) {
+      // The credit covered the whole price (or the officer priced it at $0), so
+      // the booking is PAID with no card intent and no receivable - but Xero
+      // still needs the revenue invoice to allocate the credit note against,
+      // exactly as booking-create's $0 branch queues one (#4264 review F2).
+      // The invoice op first, then the #1620 applied-credit allocation, which
+      // on this path DOES have ledger rows to allocate.
+      invoiceMode = "paid";
+      try {
+        const queuedInvoice = await enqueueXeroBookingInvoiceOperation(
+          conversion.bookingId,
+          { createdByMemberId: input.adminMemberId, invoiceEmailDelivery: null },
+        );
+        const queuedAllocation =
+          await enqueueXeroAppliedCreditAllocationOperation(
+            conversion.bookingId,
+            { createdByMemberId: input.adminMemberId },
+          );
+        if (queuedInvoice.queueOperationId || queuedAllocation.queueOperationId) {
+          await kickQueuedXeroOutboxOperationsIfConnected({ limit: 2 });
+        }
+      } catch (err) {
+        logger.error(
+          { err, bookingId: conversion.bookingId },
+          "Failed to queue the Xero invoice for a credit-settled member whole-lodge booking",
+        );
+      }
+    } else if (memberChoosesPaymentMethod) {
       // Nothing to invoice: there is no receivable. The member's card intent
       // is minted by the Complete Payment card, and the Internet Banking
-      // switch raises the invoice — plus the #1620 applied-credit allocation
-      // for any credit applied above — through the one switch route every
-      // card booking uses. A fully-credit-covered booking is already PAID.
-      invoiceMode = conversion.settledByCredit ? "paid" : "member";
+      // switch raises the invoice - plus the #1620 applied-credit allocation
+      // for any credit applied above - through the one switch route every
+      // card booking uses.
+      invoiceMode = "member";
     } else if (xeroModuleOn) {
       // LEGACY: invoice the receivable, exactly as the school path and every
       // other INTERNET_BANKING creator does. Without this the PENDING Payment

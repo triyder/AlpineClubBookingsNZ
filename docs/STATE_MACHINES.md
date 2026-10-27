@@ -713,7 +713,9 @@ positive delta -> additional payment or supplementary Xero invoice
   FAILED by the minter - the door's, the recovery runner's or a currency
   re-issue's - #4316, INV-ADDPAY-044)
 uncollected additional payment -> reminder at +3 days, reminder 2 days before
-  check-in, admin re-send on demand; stops at check-out (never auto-cancelled)
+  check-in, admin re-send on demand; stops at check-out (never auto-cancelled);
+  a credit-release request is instead reminded weekly, four times after the request, past check-out,
+  and so is a request an edit merged into once the stay has ended (INV-ADDPAY-048)
 uncollected review-raised request -> WITHDRAWN by a finance officer (#3528)
 negative delta -> first cancels or shrinks an unpaid price ask (#3954), then
   Stripe refund or source-linked member credit for what is left
@@ -1436,6 +1438,15 @@ PRICED   -> APPROVED -> CONVERTED  (same transition, defensive: see the note
 VERIFIED -> DECLINED           (officer declines; the note is audit-log-only)
 VERIFIED -> CANCELLED          (the MEMBER withdraws it)
 ```
+
+Opening card entry leaves the unpaid approval CONFIRMED with an uncaptured
+Stripe PRIMARY attempt. It still reaches the applied-credit clamp, $0
+settlement and finished-stay collection queue (`INV-PAY-140`); received,
+refunded, invoiced or unverified payment evidence does not enter that branch.
+Concurrent Internet Banking switches re-read the payment source under the
+existing global/lodge locks and replay the winner's persisted hold fields
+without another receivable (`INV-LOCK-002`); the replay re-runs the
+idempotent invoice enqueue after the transaction.
 
 **Why `PRICED` appears above when the prose below says these rows never reach it.**
 Both are true and the difference matters. Nothing sanctioned can price a
@@ -2241,18 +2252,29 @@ inbound fence records its conflict the same way, under the
 
 ```text
 (release row written by the outside-spend converge)
-  -> recovery row `credit_release_ask_<releaseId>`        (sweep; off until the writer switch is on)
+  -> recovery row `credit_release_ask_<releaseId>`        (sweep; off until the writer switch is on;
+                                                            earlier releases only behind the backlog switch)
   -> closed, nothing asked    (not a release / ended booking / payment not captured /
                                organiser-settled / invoice paid in Xero / nothing owed /
                                below the card minimum, the last with an officer alert)
+  -> waiting                  (an unpaid edit request is open: back to the longest retry interval,
+                               no attempt spent, never terminal; officers told once, INV-ADDPAY-051)
   -> ADDITIONAL row PENDING (reason credit_released_outside_app, carries any live ask)
        -> SUCCEEDED by card  -> payment recorded on the booking's invoice (sweep, XeroObjectLink)
-       -> FAILED+withdrawn   when Xero shows the invoice PAID: card payment cancelled first,
+       -> FAILED+withdrawn   when Xero shows the invoice PAID (the request alone, or carrying only
+                               earlier released credit): card payment cancelled first,
                                bank-cash row written in the same transaction
-       -> superseded         by a later ask that carries it (INV-PAY-098)
+       -> superseded         by a later ask that carries it (INV-PAY-098): an edit made while
+                               the request is unpaid MERGES into one request (cause "mixed"),
+                               chased and worded as both
+  chase while unpaid (INV-ADDPAY-048): request email now, reminders at 7, 14, 21 and 28
+                               days; after the fourth reminder only the officers' queues chase
+  reminder withheld for an officer (INV-ADDPAY-051): Xero shows the invoice owing less than the
+                               request's released credit, or not open (paid, voided, unapproved),
+                               or the request cannot be matched to it (none, a 404, no amount due)
 ```
 
-`INV-ADDPAY-045`, `INV-ADDPAY-046`.
+`INV-ADDPAY-045`, `INV-ADDPAY-046`, `INV-ADDPAY-048`, `INV-ADDPAY-050`, `INV-ADDPAY-051`.
 
 ### Manual refund task lifecycle (#2262)
 
@@ -3797,13 +3819,15 @@ two callers on one row (the hand-off above) each record their own outcome of
   the same keyed Xero call (#4356, INV-INT-029): an outcome never replaces a
   better one. A failure, or a FAILED or CANCELLED completion, never lands on
   SUCCEEDED or PARTIAL; PARTIAL never lands on SUCCEEDED; SUCCEEDED lands on
-  any row no claim holds. None but SUCCEEDED lands on a repair's marked
-  RUNNING claim unless written onto that claim. Every outcome carries the
-  claim it was made under (its RUNNING row's `startedAt`, #4373), and none, a
-  success included, lands on a RUNNING row another claim holds: a stale-reset
-  or failed attempt's late outcome never lands on the retry's claim, so the
-  row stays RUNNING for the retry and the booking invoice retry's
-  settle-time fence. A refused write answers null: no link, no
+  any row no claim holds, one resolved in Xero included: it leaves the mark,
+  keeps the links and, if it recorded a Xero object, alerts the officers once
+  per operation after commit (#4374). None but SUCCEEDED lands on a repair's
+  marked RUNNING claim unless written onto that claim. Every outcome carries
+  the claim it was made under (its RUNNING row's `startedAt`, #4373), and
+  none, a success included, lands on a RUNNING row another claim holds: a
+  stale-reset or failed attempt's late outcome never lands on the retry's
+  claim, so the row stays RUNNING for the retry and the booking invoice
+  retry's settle-time fence. A refused write answers null: no link, no
   repeated-failure alert
 worker claims operation -> provider call -> success or retryable failure
 success -> SUCCEEDED clears lastErrorCode and lastErrorMessage, so an earlier
@@ -4060,6 +4084,8 @@ alpine-server-other-lodges-sync (03:00) -> module on -> base URL set
      -> mismatch        -> SKIPPED server-version-mismatch   (before the claim)
      -> could not check -> last answer stands; continues
      -> match/unchecked -> item enabled? -> claim -> upload -> download -> SUCCESS
+                                                                  -> download stopped (connection-changed | superseded)
+                                                                     -> SKIPPED stopped; the next pass repeats it
 club-post-mirror-sync / push webhook -> key set -> checkServerVersion
      -> mismatch -> skipped server-version-mismatch          (before commsSyncStartedAt)
 club-post-share-retry -> isServerSyncPaused (stored answer, no call)
@@ -4071,6 +4097,15 @@ server's last answer, so the first run after either side is upgraded records a
 matching answer and resumes with no manual step. A SKIPPED run with reason
 `server-version-mismatch` is therefore the expected state while the two sides
 differ, not a failure to recover from; the setup page shows both numbers.
+
+A download that stops before recording its cursor (#4262 review: the
+connection was replaced while it ran, or another download recorded first) ends
+the pass as `status: "stopped"` with that reason, recorded SKIPPED
+(`alpineServerSyncRunStatus`). That bends the #4375 rule above, where SKIPPED
+means no work: a stopped pass may already have uploaded rows and merged some
+lodges before it stopped. It is SKIPPED rather than SUCCESS because its cursor
+and owned list were not recorded, so the pass is not complete and the next one
+repeats the download; the run's summary keeps the reason.
 
 ### A recovery failure no retry fixes (#4081)
 
@@ -4136,8 +4171,10 @@ PROCESSING -> FAILED  (attempts spent: DEAD, alerted once; still owed)
                        the Payment row lock; INV-PAY-128)
 (none) -> DEAD        (that row's own retry failed later too, or Stripe
                        created the refund before the cutoff migration and no
-                       open row counts it: raised PENDING with its attempts
-                       spent, never claimed, never in flight)
+                       open row counts it, or (#4210, INV-PAY-142) a row that
+                       may have made it was closed "Paid another way":
+                       raised PENDING with its attempts spent, never
+                       claimed, never in flight)
 PENDING|FAILED -> same (an open, claimed row that counted the refund is
                        re-planned instead: the slice on its next key,
                        recording the failure in failedRefundIds; compare-and-set
@@ -4221,7 +4258,11 @@ row is raised dead - for "Paid another way", alerted - when the refund was
 itself such a retry, or Stripe created it before the cutoff migration
 (`20261115010000_card_refund_failed_later_cutoff`) finished (every refund, with
 a migration history that lacks it): it may have failed while nothing could
-notice, and may already have been paid by hand. A refund naming no booking of
+notice, and may already have been paid by hand. So too (#4210, `INV-PAY-142`)
+when a row that may have made it - any whose runner metadata it carries, or
+whose slice it fills - was closed "Paid another way" (a completed close record
+keyed on that row, read under the same lock): the close's bank transfer may
+already have paid it, so an officer checks it. A refund naming no booking of
 the payment (made in the Stripe dashboard, or a legacy group refund) is taken
 out of the refunded total, alerted with its Stripe id and audited, never
 re-sent. Two ways

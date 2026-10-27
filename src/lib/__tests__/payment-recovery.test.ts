@@ -8,6 +8,7 @@ import {
 } from "@prisma/client";
 
 const {
+  mockExecuteRaw,
   mockPaymentRecoveryFindMany,
   mockPaymentRecoveryFindUnique,
   mockPaymentRecoveryFindFirst,
@@ -51,6 +52,9 @@ const {
   mockCreateAuditLog,
   settlementModuleLoadFailure,
 } = vi.hoisted(() => ({
+  // #4442 review C-F1: the raw statements each transaction runs, so a test can
+  // say which took the global key.
+  mockExecuteRaw: vi.fn<(...args: unknown[]) => Promise<number>>(async () => 0),
   mockPaymentRecoveryFindMany: vi.fn(),
   mockPaymentRecoveryFindUnique: vi.fn(),
   mockPaymentRecoveryFindFirst: vi.fn(),
@@ -142,6 +146,7 @@ vi.mock("@/lib/edit-financial-review-charge", () => ({
 
 vi.mock("@/lib/prisma", () => {
   const prisma = {
+    $executeRaw: (...args: unknown[]) => mockExecuteRaw(...args),
     paymentRecoveryOperation: {
       findMany: (...args: unknown[]) => mockPaymentRecoveryFindMany(...args),
       findUnique: (...args: unknown[]) => mockPaymentRecoveryFindUnique(...args),
@@ -366,6 +371,16 @@ vi.mock("@/lib/superseded-additional-refund", () => ({
     mockReportSupersededPaymentRefund(...args),
 }));
 
+// #4253 release 2: the released-credit branch, reduced to the one call these tests need - a release
+// blocked by an unpaid edit request asks the runner to put its row back to wait.
+vi.mock("@/lib/credit-release-ask", () => ({
+  processCreditReleaseAskOperation: vi.fn(
+    async (operation: unknown, _format: unknown, deps: { wait: (op: unknown, message: string) => Promise<unknown> }) => {
+      await deps.wait(operation, "An unpaid edit request is open on this booking");
+      return "waited" as const;
+    },
+  ),
+}));
 vi.mock("@/lib/logger", () => ({
   default: {
     info: vi.fn(),
@@ -408,6 +423,7 @@ import {
   buildRefundRequestRefundMetadata,
   bookingModificationRefundReasonForKeyPrefix,
   completeCanceledSupersededPaymentIntentRecovery,
+  createAdditionalPaymentIntentRecoveryOnce,
   enqueueBookingCancellationRefundRecovery,
   enqueueBookingModificationRefundRecovery,
   enqueueCapacityClaimFailedRefundRecovery,
@@ -763,6 +779,60 @@ describe("payment recovery worker", () => {
       }),
       CLUB_FORMAT_TEST,
     );
+  });
+
+  it("#4253: creates a released-credit request's row only once, and says whether this call created it", async () => {
+    const input = {
+      bookingId: "booking-1",
+      paymentId: "payment-1",
+      idempotencyKey: "credit_release_ask_rel-1",
+      amountCents: 4000,
+      stripeIdempotencyKey: "credit_release_ask_pi_rel-1",
+      hadIssuedXeroInvoice: false,
+    };
+    mockPaymentRecoveryCreateMany.mockResolvedValueOnce({ count: 1 });
+    expect(await createAdditionalPaymentIntentRecoveryOnce(input)).toBe(true);
+    expect(mockPaymentRecoveryCreateMany).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({
+          type: PaymentRecoveryOperationType.CREATE_ADDITIONAL_PAYMENT_INTENT,
+          status: PaymentRecoveryOperationStatus.PENDING,
+          idempotencyKey: "credit_release_ask_rel-1",
+          paymentIntentId: "credit_release_ask_pi_rel-1",
+          hadIssuedXeroInvoice: false,
+          nextRetryAt: expect.any(Date),
+        }),
+      ],
+      skipDuplicates: true,
+    });
+    // Another pass created it first.
+    mockPaymentRecoveryCreateMany.mockResolvedValueOnce({ count: 0 });
+    expect(await createAdditionalPaymentIntentRecoveryOnce(input)).toBe(false);
+  });
+
+  it("#4253: a released-credit request waiting on an unpaid edit goes back to wait, its attempt handed back, never terminal", async () => {
+    // Its last attempt: a failure here would be terminal, alert the officers and never ask again.
+    mockPaymentRecoveryFindUnique.mockResolvedValue(
+      makeOperation({
+        type: PaymentRecoveryOperationType.CREATE_ADDITIONAL_PAYMENT_INTENT,
+        idempotencyKey: "credit_release_ask_rel-1",
+        attempts: 5,
+      }),
+    );
+    const before = Date.now();
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+    // A wait is a retry in the run's summary, never a completion.
+    expect(result).toMatchObject({ processed: 1, succeeded: 0, retried: 1, failed: 0 });
+
+    const waitWrite = mockPaymentRecoveryUpdateMany.mock.calls
+      .map(([args]) => args as { where: Record<string, unknown>; data: Record<string, unknown> })
+      .find((args) => args.data?.status === PaymentRecoveryOperationStatus.FAILED);
+    expect(waitWrite?.where).toMatchObject({ id: "recovery-1", attempts: 5, processingStartedAt: { not: null } });
+    expect(waitWrite?.data).toMatchObject({ attempts: 4, lastError: "An unpaid edit request is open on this booking" });
+    // The longest step of the schedule (12 hours), not a terminal null.
+    expect((waitWrite?.data.nextRetryAt as Date).getTime() - before).toBeGreaterThanOrEqual(720 * 60_000);
+    expect(mockSendAdminPaymentFailureAlert).not.toHaveBeenCalled();
   });
 
   /**
@@ -3271,7 +3341,7 @@ describe("payment recovery worker", () => {
             stripePaymentIntentId: "pi_original",
             amountCents: 10000,
             refundedAmountCents: 0,
-            status: PaymentStatus.SUCCEEDED,
+            status: PaymentStatus.SUCCEEDED as PaymentStatus,
             createdAt: new Date("2026-05-01T00:00:00.000Z"),
           },
         ],
@@ -3402,6 +3472,44 @@ describe("payment recovery worker", () => {
       expect(mockUpsertPaymentIntentTransaction).toHaveBeenCalledWith(
         expect.objectContaining({ amountCents: 5000, carriedAskCents: 2000 }),
       );
+    });
+
+    it.each([
+      ["missing change", null, PaymentStatus.SUCCEEDED],
+      ["zero-net change", { priceDiffCents: 0, changeFeeCents: 0 }, PaymentStatus.SUCCEEDED],
+      ["refunded capture", null, PaymentStatus.REFUNDED],
+      ["partly refunded capture", null, PaymentStatus.PARTIALLY_REFUNDED],
+    ] as const)("refuses an unverifiable frozen replay after a capture (%s), on every retry", async (_name, modification, status) => {
+      const payment = paymentWithAsk(7000, PaymentStatus.SUCCEEDED);
+      payment.transactions.push({
+        ...payment.transactions[0]!,
+        id: "txn-a",
+        kind: "ADDITIONAL",
+        stripePaymentIntentId: "pi_a",
+        amountCents: 7000,
+        status,
+      });
+      mockPaymentFindUnique.mockResolvedValue(payment);
+      for (const attempts of [1, 2, MAX_PAYMENT_RECOVERY_ATTEMPTS]) {
+        mockBookingModificationFindUnique.mockResolvedValueOnce(modification);
+        primeQueue(additionalIntentOperation({ amountCents: 10000, attempts }));
+        const result = await processPaymentRecoveryOperations({ limit: 1 });
+        expect(result).toMatchObject({
+          succeeded: 0,
+          retried: attempts < MAX_PAYMENT_RECOVERY_ATTEMPTS ? 1 : 0,
+          failed: attempts < MAX_PAYMENT_RECOVERY_ATTEMPTS ? 0 : 1,
+        });
+      }
+
+      expect(mockCreatePaymentIntent).not.toHaveBeenCalled();
+      expect(mockUpsertPaymentIntentTransaction).not.toHaveBeenCalled();
+      expect(mockPaymentTransactionFindMany).not.toHaveBeenCalled();
+      expect(mockSendAdminPaymentFailureAlert).toHaveBeenCalledWith(expect.objectContaining({
+        errorMessage: expect.stringContaining("cannot safely replay its frozen amount"),
+      }), expect.anything());
+      expect(mockPaymentRecoveryUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({ lastError: expect.stringContaining("cannot safely replay its frozen amount") }),
+      }));
     });
 
     it("re-derives a smaller ask when the superseded one was paid in the meantime", async () => {
@@ -3831,6 +3939,85 @@ describe("payment recovery worker", () => {
           ...overrides,
         };
       }
+
+      /**
+       * #4442 review C-F1: an earlier attempt wrote this recovery's row and
+       * recorded its intent on the recovery, then failed before the invoice
+       * steps (its re-stamp timed out behind a long holder of the global key).
+       * The retry finds its OWN row: it must not read it as a later edit's
+       * overtake and complete with no invoice. It resumes the steps, minting
+       * nothing, and its write-free re-stamp takes only the Payment row.
+       */
+      it("#4442 C-F1: a retry that finds its own row resumes the invoice steps instead of completing as overtaken", async () => {
+        primeQueue(additionalIntentOperation({ paymentIntentId: "pi_recovered" }));
+        const base = paymentWithIssuedInvoice();
+        mockPaymentFindUnique.mockResolvedValue({
+          ...base,
+          transactions: [
+            ...base.transactions,
+            {
+              id: "txn-own",
+              kind: "ADDITIONAL",
+              stripePaymentIntentId: "pi_recovered",
+              amountCents: 3000,
+              refundedAmountCents: 0,
+              status: PaymentStatus.PENDING,
+              // After the recovery was queued: the overtake rule alone would read it as a later ask.
+              createdAt: new Date("2026-06-02T00:00:00.000Z"),
+            },
+          ],
+        });
+        mockExecuteRaw.mockClear();
+
+        const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+        expect(result.succeeded).toBe(1);
+        expect(mockCreatePaymentIntent).not.toHaveBeenCalled();
+        expect(mockUpsertPaymentIntentTransaction).not.toHaveBeenCalled();
+        expect(mockAttachIntentToWaitingOps).toHaveBeenCalledWith(
+          expect.objectContaining({ paymentIntentId: "pi_recovered" }),
+        );
+        expect(mockCompleteDeferredSupplementaryInvoice).toHaveBeenCalledWith(
+          expect.objectContaining({ bookingModificationId: "mod-9", paymentIntentId: "pi_recovered" }),
+        );
+        expect(mockLockPaymentForRefundedTotal, "the re-stamp takes the Payment row").toHaveBeenCalledWith(expect.anything(), "payment-1");
+        const statements = mockExecuteRaw.mock.calls.map(([sql]) => (sql as readonly string[]).join("?"));
+        expect(statements.filter((sql) => sql.includes("pg_advisory_xact_lock(1)")), "and not the global key").toEqual([]);
+      });
+
+      /**
+       * #4442 re-lens F1: the same own row, but a price reduction retired it
+       * (`withdrawnAt`) while the recovery sat PENDING. Its money is accounted
+       * for by the reduction, so the retry finishes without parking an invoice
+       * on an intent nobody can pay.
+       */
+      it("#4442 C-F1: a retry whose own row a reduction withdrew completes without the invoice steps", async () => {
+        primeQueue(additionalIntentOperation({ paymentIntentId: "pi_recovered" }));
+        const base = paymentWithIssuedInvoice();
+        mockPaymentFindUnique.mockResolvedValue({
+          ...base,
+          transactions: [
+            ...base.transactions,
+            {
+              id: "txn-own",
+              kind: "ADDITIONAL",
+              stripePaymentIntentId: "pi_recovered",
+              amountCents: 3000,
+              refundedAmountCents: 0,
+              status: PaymentStatus.FAILED,
+              withdrawnAt: new Date("2026-06-02T01:00:00.000Z"),
+              createdAt: new Date("2026-06-02T00:00:00.000Z"),
+            },
+          ],
+        });
+
+        const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+        expect(result.succeeded).toBe(1);
+        expect(mockCreatePaymentIntent).not.toHaveBeenCalled();
+        expect(mockAttachIntentToWaitingOps).not.toHaveBeenCalled();
+        expect(mockCompleteDeferredSupplementaryInvoice).not.toHaveBeenCalled();
+      });
 
       it("raises it against the recovered intent once the mint succeeds", async () => {
         primeQueue(additionalIntentOperation());

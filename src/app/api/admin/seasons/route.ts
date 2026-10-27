@@ -158,7 +158,7 @@ export async function POST(req: NextRequest) {
   });
 
   // This club's own Other lodge follows the Fees page (#77).
-  await syncOwnOtherLodgesFromFees("fees season created")
+  await syncOwnOtherLodgesFromFees("fees season created", session.user.id)
   revalidatePublicPageContent()
 
   return NextResponse.json(season, { status: 201 })

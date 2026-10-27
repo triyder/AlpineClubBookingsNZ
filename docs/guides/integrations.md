@@ -140,6 +140,12 @@ so; press **Save** to use it (nothing is contacted before then). Then **Request
 a Connection**: register on the central server, copy the API key it shows you
 once, paste it into the API key field, Save, and Download. The key starts
 working once the central server's administrator approves the connection.
+
+Changing the server address clears the previous server's API key and answers
+in the same save. A sync running at that moment either uses the previous
+connection together or waits for the change; it cannot send the old key to
+the new address. Enter a key issued by the new server before syncing again.
+
 **Read this before you turn it on.** This is the one integration that sends data
 *out* of your club. When you enable a shared item, everything recorded on **your
 own lodge's** entry in the **Other lodges** panel is uploaded to the central
@@ -200,15 +206,20 @@ available unknown". It also answers nothing while **Other
 lodges** sharing is off. The server names the lodge by its **permanent central
 id**, and your site answers for the local lodge linked to it under **Admin →
 Lodges → Configure → Central lodge** (see [Lodges](lodges.md#configure-a-lodge)).
-A club with one active lodge that owns one central lodge needs no setting: the
-two are linked automatically. Since server API 2.2 each download also records
+**Every club saves that link, even a club with one lodge**: a lodge with no saved
+link answers nothing, so the search shows its free beds as unknown. A club with
+one active lodge that owns one central lodge finds it already chosen when it
+clicks **Edit** there, and **Save** links it. Since server API 2.2 each download also records
 the owned lodges' ids beside their names, and they are forgotten with the list.
 
 The same list decides which entries your **Booking Officer** committee role is
 written into: when a member takes or leaves that role, the officer's name,
 role email and (if published) phone are written into the lodge entries the
 central server names as yours — and, until it has named any, into entries whose
-name exactly matches one of your own lodges.
+name exactly matches one of your own lodges. That name rule is the one place a
+lodge is still taken as yours by its name: once a **Download** has said which
+lodges are yours, only their ids count, and another club's lodge of the same
+name is never written into.
 
 Only one sync with the central server runs at a time, across every copy of
 the site: the nightly job, the **Upload** button and the **Download** button
@@ -236,6 +247,11 @@ here; a download never renames it, and an upload sends your new name with the
 id so the server renames its lodge (server API 2.3). The first download after
 this site is upgraded asks for the whole registry once and matches every lodge
 by name, which fills in the ids; after that downloads are incremental again.
+A name that two lodges on the central server share matches **neither** of
+them, even when one is yours: a lodge here with that name could be either, and
+matching the wrong one would move the bookings that name it onto a different
+lodge. Both arrive as new lodges, and the old one is marked **Not found on the
+Alpine Central Server**, for you to check its bookings and **Hide** it.
 
 - **A new name another lodge here already has** is simply taken: two lodges may
   share a name (server API 2.5). A lodge the central server sends without its

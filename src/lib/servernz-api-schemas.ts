@@ -15,6 +15,8 @@ import {
   withRatesFromServer,
   type ServerRates,
 } from "@/lib/servernz-rate";
+import type { ServerNzSettingsValues } from "@/lib/servernz-settings";
+import type { ServerNzConnectionIdentity } from "@/lib/servernz-version-record";
 
 /**
  * The Alpine Central Server's WIRE SHAPES, as `servernz-api.ts` validates them
@@ -125,11 +127,12 @@ export const distributedLodgeSchema = z
 const MAX_LODGES_PER_PULL = 5_000;
 
 /**
- * Upper bound on one pull's deletions (#58). Deletions are never undone, and a
- * whole-registry pull carries all of them, so the list only grows: bounded
- * apart from, and well above, the live lodges.
+ * Upper bound on one pull's deletions (#58): the same bound as the live lodges.
+ * A whole-registry pull carries every deletion ever made, but the download only
+ * acts on the ids it holds locally, and the list is bound to one `IN (...)`
+ * (Postgres allows at most 65,535 bound parameters), so it stays small.
  */
-const MAX_DELETED_LODGES_PER_PULL = 100_000;
+const MAX_DELETED_LODGES_PER_PULL = MAX_LODGES_PER_PULL;
 
 // No exported alias for a single distributed lodge: nothing names one on its
 // own, and callers reach them through `OtherLodgesPullResult["lodges"]`.
@@ -150,6 +153,15 @@ const MAX_DELETED_LODGES_PER_PULL = 100_000;
 // bounds must not fail the WHOLE pull — the lodges still merge and the cursor
 // still advances — it is treated as not sent, and reported so the sync can say
 // so. (API 2.5 dropped the name-only `ownLodgeNames`, #69: names may repeat.)
+/**
+ * Just the NAME of a pulled row, read the way `distributedLodgeSchema` reads
+ * it (#4262 review): a row dropped for breaking some other bound still says a
+ * lodge of that name exists, which the download's by-name keying must count.
+ * Its `id` is read too, unvalidated here (`usableCentralId` decides), so a
+ * dropped row the same answer reports DELETED is not counted.
+ */
+export const pulledRowNameSchema = z.object({ name: otherLodgeNameSchema, id: z.unknown().optional() });
+
 export const pullEnvelopeSchema = z.object({
   lodges: z.array(z.unknown()).max(MAX_LODGES_PER_PULL),
   cursor: z.string().max(64).nullable(),
@@ -175,6 +187,13 @@ export interface OtherLodgesPullResult {
   /** Rows the server sent that failed the bounds above and were discarded. */
   dropped: number;
   /**
+   * The names of the dropped rows whose name alone still reads
+   * (`pulledRowNameSchema`), so a lodge dropped by its bounds still counts as
+   * a lodge of that name (#4262 review); a row whose id this answer reports
+   * deleted is left out, as the download leaves deleted lodges out of the merge.
+   */
+  droppedNames: string[];
+  /**
    * The lodges the server says this club owns, with their central ids (#62),
    * or `undefined` when the server did not send a valid list. Never defaulted
    * to `[]`: absent and "owns nothing" are different answers.
@@ -188,6 +207,19 @@ export interface OtherLodgesPullResult {
    * which hides nothing here. An entry that failed its bounds is left out.
    */
   deletedLodgeIds: string[] | undefined;
+  /**
+   * The connection this answer came from, captured before the request (#4262
+   * review). Every write the download makes from the answer is fenced on it
+   * (`serverNzAnswerWriter`), so an answer from a connection replaced while the
+   * request was in flight changes nothing.
+   */
+  sentOn: ServerNzConnectionIdentity;
+  /**
+   * The settings row read in the same fenced read as `sentOn`: the stored
+   * cursor, keyed marker and owned list this answer is merged against, so
+   * they cannot belong to a connection replaced before the request.
+   */
+  snapshot: ServerNzSettingsValues;
 }
 
 /** The column's VarChar(16): the bound on any version string taken off the wire. */

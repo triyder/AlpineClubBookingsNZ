@@ -119,6 +119,9 @@ function createRefundStore() {
   // #3640 D2: the account credit this booking issued (MemberCredit
   // dispositions), which the failed-refund floor reads.
   const credit = { dispositionCents: 0 };
+  // #4280: the bank cash the payment's "Paid another way" closes recorded,
+  // which the failed-refund floor also reads (one reader, grouped by payment).
+  const bankClose = { paidAnotherWayCents: 0 };
 
   const store = {
     // #3640: the one raw read the card-refund writer makes - the ledger
@@ -134,6 +137,11 @@ function createRefundStore() {
     $executeRaw: vi.fn(async () => 1),
     memberCredit: {
       aggregate: vi.fn(async () => ({ _sum: { amountCents: credit.dispositionCents } })),
+    },
+    manualRefundTask: {
+      groupBy: vi.fn(async () =>
+        bankClose.paidAnotherWayCents > 0 ? [{ paymentId: payment.id, _sum: { amountCents: bankClose.paidAnotherWayCents } }] : [],
+      ),
     },
     // #3581: `reconcilePaymentAggregates` now ends by syncing the booking
     // ledger's settlement lines from the same rows, so it reads and writes here.
@@ -326,7 +334,7 @@ function createRefundStore() {
     },
   };
 
-  return { store, payment, transaction, transactions, refunds, ledger, credit };
+  return { store, payment, transaction, transactions, refunds, ledger, credit, bankClose };
 }
 
 describe("payment refund ledger", () => {
@@ -2175,6 +2183,64 @@ describe("#3640 / INV-PAY-103 - a card refund adds to the refunded total", () =>
       // Unfloored it would read $50 and offer $50 of headroom that is not there.
       expect(ctx.transaction.refundedAmountCents).toBe(CREDIT_CENTS);
       expect(delta).toBe(0);
+    });
+
+    // #4280 (owner, 22 and 26 Oct 2026): a "Paid another way" close's bank cash
+    // is part of the floor; a late card refund the cap kept out, failing, takes
+    // none of it. The real-PostgreSQL proof drives the real writers:
+    // `card-refund-reversal-bank-cash-floor.realdb.test.ts`.
+    async function closePaidAnotherWay(ctx: Ctx, amountCents: number) {
+      await applyLocalRefundAllocation({ paymentId: "payment_1", amountCents, store: ctx.store as never });
+      // The completed close record the real close writes alongside.
+      ctx.bankClose.paidAnotherWayCents += amountCents;
+    }
+
+    it("#4280: a late card refund the cap kept out, failing, leaves the close's bank cash in the total", async () => {
+      const ctx = paidStore();
+      await closePaidAnotherWay(ctx, PAID_CENTS);
+      // The lost refund, recorded late: the cap keeps it out of the total.
+      await webhookSync(ctx, cardRefund("re_late", PAID_CENTS, "pending"));
+      expect(ctx.transaction.refundedAmountCents).toBe(PAID_CENTS);
+
+      const delta = await webhookSync(ctx, cardRefund("re_late", PAID_CENTS, "failed"));
+
+      // Unfloored it read $0, and offered the bank refund's $400 again.
+      expect(ctx.transaction.refundedAmountCents).toBe(PAID_CENTS);
+      expect(ctx.payment.refundedAmountCents).toBe(PAID_CENTS);
+      expect(delta).toBe(0);
+      expect(ctx.store.manualRefundTask.groupBy).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ paymentId: "payment_1", occurrenceKey: { startsWith: "card-refund-paid-another-way:" }, status: "COMPLETED" }) }),
+      );
+    });
+
+    it("#4280: a part close keeps only what it paid, and credit beside it adds", async () => {
+      const ctx = paidStore();
+      await settleCredit(ctx);
+      await closePaidAnotherWay(ctx, 12000);
+      await webhookSync(ctx, cardRefund("re_late", PAID_CENTS, "pending"));
+      expect(ctx.transaction.refundedAmountCents).toBe(PAID_CENTS);
+
+      await webhookSync(ctx, cardRefund("re_late", PAID_CENTS, "failed"));
+
+      expect(ctx.transaction.refundedAmountCents).toBe(CREDIT_CENTS + 12000);
+    });
+
+    it("#4280: the cap binds - credit, a counted card refund and the close's cash above the capture hold the total at the capture", async () => {
+      const ctx = paidStore();
+      await settleCredit(ctx);
+      await closePaidAnotherWay(ctx, PAID_CENTS - CREDIT_CENTS);
+      // A dashboard refund that succeeded on the full charge (the member paid twice), and the lost one recorded late.
+      await webhookSync(ctx, cardRefund("re_extra", CARD_REFUND_CENTS));
+      await webhookSync(ctx, cardRefund("re_late", PAID_CENTS - CREDIT_CENTS, "pending"));
+      expect(ctx.transaction.refundedAmountCents).toBe(PAID_CENTS);
+
+      await webhookSync(ctx, cardRefund("re_late", PAID_CENTS - CREDIT_CENTS, "failed"));
+
+      // $50 + $100 + $300 = $450, capped at the $400 captured. The writer never reads above its own
+      // charge either way (the floor only bounds a subtraction), so the cap shows in the audit's
+      // expected figure (`refunded-total-shortfall-audit.test.ts`), which this floor shares.
+      expect(ctx.transaction.refundedAmountCents).toBe(PAID_CENTS);
+      expect(ctx.payment.refundedAmountCents).toBe(PAID_CENTS);
     });
 
     it("the floor never RAISES a total - it only bounds the subtraction", async () => {

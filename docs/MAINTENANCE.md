@@ -54,9 +54,9 @@ CI also runs independent static and container checks:
   `Dependency audit` job, on pull requests and on pushes to `main`. It runs
   `pnpm audit --audit-level=high --json` and reports which of three things
   happened — see "When the advisory service is down" below — plus a fourth
-  passing verdict, MITIGATED (never CLEAN), for one reviewed unfixed advisory
-  under an expiring owner-approved record (#3843; see "Mitigated advisories"
-  below). It runs from a bare
+  passing verdict, MITIGATED (never CLEAN), for a reviewed unfixed advisory
+  under an expiring owner-approved record (introduced in #3843; none is live
+  since #3851 — see "Mitigated advisories" below). It runs from a bare
   checkout with no install: measured on npm 11.16.0 / Node 24 the audit built
   its tree from `package-lock.json` and returned the same verdict with or without
   `node_modules`, and `pnpm audit` likewise reads `pnpm-lock.yaml` alone (#3673).
@@ -2250,8 +2250,10 @@ that way offers refundable headroom that is not there, so a later cancel or
 refund could pay the same money out twice.
 `scripts/audit-refunded-total-shortfall.ts` lists each captured payment whose
 stored refunded total is below its counted card refunds plus its account-credit
-settlements, with the shortfall. It is READ-ONLY and repairs nothing: whether and
-how to repair is the owner's decision, taken on this report.
+settlements plus (#4280, `INV-PAY-141`) the bank cash its "Paid another way"
+closes recorded, with the shortfall; each line shows that cash as `paid another
+way`. It is READ-ONLY and repairs nothing: whether and how to repair is the
+owner's decision, taken on this report.
 
 ```bash
 DATABASE_URL=<non-prod copy> pnpm run payments:audit-refunded-total
@@ -2264,9 +2266,22 @@ row), and only a shortfall is reported. The report keeps two sections apart:
 the part the old arithmetic can explain (at most the smaller of a payment's card
 refunds and its credit, and only with a card refund), and a shortfall with
 another cause - typically a credit that was never folded into the total, such as
-internet-banking cash that became credit on an already-cancelled booking. Only
-the first is the #3640 repair question. The arithmetic and its caveats are in
+internet-banking cash that became credit on an already-cancelled booking, or
+(#4280) a late card refund that failed after a "Paid another way" close and took
+the close's bank cash out of the total. Attribution to #3640 is measured against
+the floor without the closes' cash, so a payment whose shortfall only that cash
+explains shows 0 attributable to #3640. Only the first section is the #3640
+repair question. The arithmetic and its caveats are in
 `src/lib/refunded-total-shortfall-audit.ts`.
+
+Rolling the application back past #4280 restores the old subtraction: a late
+card refund failing after a close could again take the total below the close's
+cash. This audit still lists any such payment.
+
+Do not run it while a migration runs. It reads every captured payment in ONE
+read-only `RepeatableRead` snapshot, held for up to 120 seconds, and on a very
+large database it may reach that timeout and fail; run it again in a quiet
+window rather than raising the bound.
 
 ### Count voided bank-transfer refund notes before the follow-up writes (#4162)
 
@@ -2427,6 +2442,16 @@ running operations** first. And an applied-credit allocation
 or deallocation cannot be resolved at all, because a hand fix in Xero does not
 bring the club's own credit ledger back in line; retry it instead. One marked
 resolved before this release can still be retried.
+
+A Xero call already under way can still succeed after you resolve (#4374,
+`INV-INT-029`): two attempts can share one operation, and one may answer late.
+The operation then shows as succeeded and, if the app recorded a document in
+Xero, the finance contacts get one **Xero Sync Error** email for it
+(`XERO_SUCCESS_AFTER_RESOLUTION`) naming that document. If you also made the
+document by hand, Xero may now hold it twice. The app may instead have found
+and used yours, by its reference, leaving only one: check Xero before voiding
+a duplicate. If that email cannot reach anyone, it is not sent again; the
+operation's succeeded status on the panel is then the only sign.
 
 There is no undo on the panel. If you marked one by mistake, fix the Xero side
 by hand, or use **Targeted force sync** for that one booking's invoice: it

@@ -4,10 +4,12 @@ import {
   type OwnedCentralLodge,
 } from "@/lib/other-lodges";
 import logger from "@/lib/logger";
+import { usableCentralId } from "@/lib/other-lodge-central-id";
 import {
   MAX_SERVER_VERSION_CHARS,
   deletedLodgeSchema,
   distributedLodgeSchema,
+  pulledRowNameSchema,
   pullEnvelopeSchema,
   pushTargetResultSchema,
   sharedPostResultSchema,
@@ -42,10 +44,11 @@ import {
   isStoredServerVersionMismatch,
   storableServerVersion,
 } from "@/lib/servernz-api-version";
-import { getOperationalServerNzCredential } from "@/lib/servernz-config";
+import { getOperationalServerNzCredential, withServerNzConnectionTransaction } from "@/lib/servernz-config";
 import {
   loadServerNzSettings,
   validateCentralServerBaseUrl,
+  type ServerNzSettingsValues,
 } from "@/lib/servernz-settings";
 import {
   recordServerVersionIfCurrent,
@@ -108,6 +111,13 @@ interface ServerNzConnection {
   baseUrl: string;
   apiKey: string;
   identity: ServerNzConnectionIdentity;
+  /**
+   * The settings row as read in the SAME fenced read as `identity` (#4262
+   * review): a caller that bases its request or its writes on stored answers
+   * (the Other lodges cursor, keyed marker and owned list) takes them from
+   * here, so they belong to the connection the request is sent on.
+   */
+  settings: ServerNzSettingsValues;
 }
 
 /**
@@ -131,10 +141,11 @@ interface ServerNzConnection {
 async function resolveConnection(
   options: { skipVersionGate?: boolean; retriedConnection?: ServerNzConnectionIdentity } = {},
 ): Promise<ServerNzConnection> {
-  const [credential, settings] = await Promise.all([
-    getOperationalServerNzCredential(),
-    loadServerNzSettings(),
-  ]);
+  const [credential, settings] = await withServerNzConnectionTransaction(async (tx) => {
+    const settings = await loadServerNzSettings(tx);
+    const credential = await getOperationalServerNzCredential(tx);
+    return [credential, settings] as const;
+  });
   if (options.retriedConnection && settings.baseUrl !== options.retriedConnection.baseUrl) {
     throw new ServerNzApiError(503, "The Alpine Central Server connection changed during its version check; retry the request.");
   }
@@ -162,6 +173,7 @@ async function resolveConnection(
     baseUrl: check.value as string,
     apiKey: credential.apiKey,
     identity: { baseUrl: settings.baseUrl, credentialVersion: credential.version },
+    settings,
   };
   if (options.skipVersionGate) return connection;
 
@@ -588,13 +600,19 @@ export async function uploadOtherLodges(
   return uploadResultSchema.parse(await res.json());
 }
 
-/** Pull the distributed Other Clubs set from the central server. */
+/**
+ * Pull the distributed Other Clubs set from the central server. `since` may be
+ * a function of the stored settings, so the cursor asked from is the one read
+ * in the same fenced read as the connection (#4262 review); the result returns
+ * that read as `snapshot`.
+ */
 export async function pullOtherLodges(
-  since?: string | null,
+  since?: string | null | ((stored: ServerNzSettingsValues) => string | null),
 ): Promise<OtherLodgesPullResult> {
-  const { baseUrl, apiKey, identity } = await resolveConnection();
+  const { baseUrl, apiKey, identity, settings } = await resolveConnection();
+  const sinceValue = typeof since === "function" ? since(settings) : since;
   const url = new URL(`${baseUrl}/api/v1/other-lodges`);
-  if (since) url.searchParams.set("since", since);
+  if (sinceValue) url.searchParams.set("since", sinceValue);
   const res = await fetch(url, {
     method: "GET",
     cache: "no-store",
@@ -611,10 +629,16 @@ export async function pullOtherLodges(
   // re-fetched and re-fail on every subsequent run.
   const lodges: OtherLodgesPullResult["lodges"] = [];
   let dropped = 0;
+  const droppedRows: Array<{ name: string; id: string | null }> = [];
   for (const raw of envelope.lodges) {
     const row = distributedLodgeSchema.safeParse(raw);
-    if (row.success) lodges.push(row.data);
-    else dropped++;
+    if (row.success) {
+      lodges.push(row.data);
+      continue;
+    }
+    dropped++;
+    const named = pulledRowNameSchema.safeParse(raw);
+    if (named.success) droppedRows.push({ name: named.data.name, id: usableCentralId(named.data.id) });
   }
 
   // The owned list, validated apart from the rows and the cursor: refused
@@ -635,14 +659,20 @@ export async function pullOtherLodges(
     const entry = deletedLodgeSchema.safeParse(raw);
     return entry.success ? [entry.data.id] : [];
   });
+  // A dropped row this answer also reports deleted names no live lodge.
+  const deleted = new Set(deletedLodgeIds ?? []);
+  const droppedNames = droppedRows.filter((row) => row.id === null || !deleted.has(row.id)).map((row) => row.name);
 
   return {
     lodges,
     cursor: envelope.cursor,
     count: envelope.count,
     dropped,
+    droppedNames,
     ownLodges,
     ownLodgesRefused,
     deletedLodgeIds,
+    sentOn: identity,
+    snapshot: settings,
   };
 }

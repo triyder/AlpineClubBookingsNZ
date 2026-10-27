@@ -1,3 +1,4 @@
+import { assertAdditionalAskSizingCurrent, withAdditionalAskQueueTransaction } from "@/lib/additional-ask-queue-transaction";
 import type { ModificationLine } from "@/lib/booking-modification-lines";
 import { PaymentRecoveryOperationStatus, PaymentStatus, PaymentTransactionKind } from "@prisma/client";
 
@@ -28,7 +29,6 @@ import {
 import {
   cancelSupersededAdditionalIntentsNow,
   queueSupersededAdditionalIntentCancellationRows,
-  queueSupersededAdditionalIntentCancellations,
 } from "@/lib/booking-payment-cleanup";
 import { bookingEndedBeforeAskMint, retireAskOnEndedBooking } from "@/lib/ended-booking-ask-guard";
 import logger from "@/lib/logger";
@@ -519,6 +519,7 @@ export async function createModificationAdditionalPaymentIntent(
         recoveryCreatedAt: reissueRecovery.createdAt,
       });
       const superseded = await writeReissuedAskUnderRecovery(reissueRecovery, pi.id, async (store) => {
+        await assertAdditionalAskSizingCurrent(store, paymentId, plan.ask);
         await upsertPaymentIntentTransaction({
           paymentId,
           kind: PaymentTransactionKind.ADDITIONAL,
@@ -631,43 +632,40 @@ export async function createModificationAdditionalPaymentIntent(
     // risen reading the superseded figure with no live instrument behind it.
     //
     // Writing the row first cannot select itself for cancellation: the
-    // `findMany` in `queueSupersededAdditionalIntentCancellations` excludes
+    // `findMany` in `queueSupersededAdditionalIntentCancellationRows` excludes
     // `newPaymentIntentId` explicitly. The cost is one database upsert of
     // latency before the old secret dies, which is far inside the window the
     // synchronous cancel exists to close.
-    await upsertPaymentIntentTransaction({
-      paymentId: result.paymentId,
-      kind: PaymentTransactionKind.ADDITIONAL,
-      paymentIntentId: pi.id,
-      amountCents: result.additionalAsk.amountCents,
-      // #3371: the row records what this ask absorbed from the intents the
-      // cancel below is about to retire. Written in the SAME upsert as the
-      // amount, from the same value, so the two cannot be sized from different
-      // inputs and the provenance cannot be forgotten. Once those rows are
-      // cancelled it is not recoverable from anything.
-      carriedAskCents: result.additionalAsk.carriedCents,
-      status: PaymentStatus.PENDING,
-      reason,
-      stripeCustomerId: customerId,
-      // #3954 round 7: the edit's own invoice answer, on the row it asks with,
-      // so a later reduction knows which invoice billed this money. Round 8:
-      // and the edit itself, so a reduction that retires the row names it.
-      // A member's price ask only: a review charge is never set against.
-      ...(result.hasIssuedXeroInvoice !== null ? { hadIssuedXeroInvoice: result.hasIssuedXeroInvoice } : {}),
-      ...(recoveryIdempotencyKey ? {} : { bookingModificationId: result.bookingModificationId }),
+    const queued = await withAdditionalAskQueueTransaction(paymentId, result.additionalAsk, async (store) => {
+      await upsertPaymentIntentTransaction({
+        paymentId,
+        kind: PaymentTransactionKind.ADDITIONAL,
+        paymentIntentId: pi.id,
+        amountCents: result.additionalAsk.amountCents,
+        // #3371: the row records what this ask absorbed from the intents the
+        // cancel below is about to retire. Written in the SAME upsert as the
+        // amount, from the same value, so the two cannot be sized from different
+        // inputs and the provenance cannot be forgotten. Once those rows are
+        // cancelled it is not recoverable from anything.
+        carriedAskCents: result.additionalAsk.carriedCents,
+        status: PaymentStatus.PENDING,
+        reason,
+        stripeCustomerId: customerId,
+        store,
+        // #3954 round 7: the edit's own invoice answer, on the row it asks with,
+        // so a later reduction knows which invoice billed this money. Round 8:
+        // and the edit itself, so a reduction that retires the row names it.
+        // A member's price ask only: a review charge is never set against.
+        ...(result.hasIssuedXeroInvoice !== null ? { hadIssuedXeroInvoice: result.hasIssuedXeroInvoice } : {}),
+        ...(recoveryIdempotencyKey ? {} : { bookingModificationId: result.bookingModificationId }),
+      });
+      return queueSupersededAdditionalIntentCancellationRows({
+        bookingId, paymentId, newPaymentIntentId: pi.id, store,
+      });
     });
-
-    await queueSupersededAdditionalIntentCancellations({
-      format,
-      bookingId,
-      paymentId: result.paymentId,
-      newPaymentIntentId: pi.id,
-    }).catch((err) =>
-      logger.error(
-        { err, bookingId, paymentIntentId: pi.id },
-        "Failed to queue superseded additional intent cancellations",
-      ),
-    );
+    await cancelSupersededAdditionalIntentsNow({
+      format, bookingId, paymentId, queued, newPaymentIntentId: pi.id,
+    });
 
     // #4316: a cancel that committed while this minted could not see it.
     if (await retireAskOnEndedBooking({ format, bookingId, paymentId, paymentIntentId: pi.id })) return ASK_RETIRED_UNMINTED;

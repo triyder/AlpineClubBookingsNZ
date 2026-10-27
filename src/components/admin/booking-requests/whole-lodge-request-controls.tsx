@@ -251,6 +251,7 @@ export function MemberWholeLodgeApprovalFields({
   onPricingModeChange,
   disabled,
   applyAccountCredit = false,
+  memberChoosesPayment = false,
 }: {
   requestId: string;
   submittedHeadcount: number;
@@ -269,6 +270,7 @@ export function MemberWholeLodgeApprovalFields({
   // Approval applies min(balance, price); the officer only needs to know the
   // total they set is not necessarily what the member will be asked for.
   applyAccountCredit?: boolean;
+  memberChoosesPayment?: boolean;
 }) {
   const format = useClubFormat();
   const flatRateOffered = flatWholeLodgeTotalCents != null;
@@ -277,8 +279,9 @@ export function MemberWholeLodgeApprovalFields({
       {applyAccountCredit ? (
         <p className="rounded-md border border-success/20 bg-success-muted px-3 py-2 text-xs text-success">
           The member asked for their account credit to be put towards this
-          booking. On approval, as much of their credit as the total allows is
-          applied and they pay any remainder from their booking page.
+          booking. {memberChoosesPayment
+            ? "On approval, as much of their credit as the total allows is applied and they pay any remainder from their booking page."
+            : "Account credit will not be applied with the current payment modules; approval uses the invoice payment path."}
         </p>
       ) : null}
       {flatRateOffered ? (

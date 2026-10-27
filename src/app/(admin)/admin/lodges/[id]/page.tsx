@@ -605,7 +605,7 @@ export default function LodgeConfigurationHubPage() {
       <LodgeSettingsLinkCard
         icon={Link2}
         title="Central lodge"
-        description="Link this lodge to its entry on the Alpine Central Server, so the central lodge search can show non-members its free beds."
+        description="Link this lodge to its entry on the Alpine Central Server, so the central lodge search can show non-members its free beds. Until a link is saved the search shows its free beds as unknown, even for a club with one lodge."
         href={`/admin/lodges/${encodeURIComponent(lodgeId)}/central-lodge`}
       />
 

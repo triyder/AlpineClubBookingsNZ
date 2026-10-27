@@ -3,6 +3,7 @@
 // transitions after a modification. Code moved verbatim; import via the
 // "@/lib/booking-modify" barrel.
 
+import { isUnpaidConfirmedWholeLodge } from "@/lib/booking-payment-flow";
 import {
   BookingStatus,
   PaymentSource,
@@ -45,7 +46,7 @@ import {
   isSettledBookingStatus,
   recordedChangeFeeCents,
 } from "@/lib/booking-payment-state";
-import { type BookingModificationSettlementMethod, type LoadedBookingForModify } from "@/lib/booking-modify-validation";
+import { type BookingModificationSettlementMethod, type LoadedBookingForLifecycle, type LoadedBookingForModify } from "@/lib/booking-modify-validation";
 import { type GuestPlan } from "@/lib/booking-modify-plan";
 import { calculateBookingHoldDecision } from "@/lib/policies/booking-route-decisions";
 import {
@@ -300,7 +301,7 @@ export async function applyPaymentAdjustments(
       // #3340 (`INV-PAY-047`, `INV-ADDPAY-023`). A bare `netAmountCents` here is
       // the money leak: minting the new ADDITIONAL intent retires every other
       // outstanding ask on this payment
-      // (`queueSupersededAdditionalIntentCancellations`), so a delta-sized ask
+      // (`queueSupersededAdditionalIntentCancellationRows`), so a delta-sized ask
       // DELETES the unpaid balance of the one it replaces. Two +$70 edits on a
       // $130 paid booking asked $70 and lost $70, permanently and silently.
       //
@@ -428,7 +429,7 @@ export async function applyLifecycleTransitions(
     skipBookingLifecycleRules,
     reviewUpdate,
   }: {
-    booking: LoadedBookingForModify;
+    booking: LoadedBookingForLifecycle;
     bookingId: string;
     newCheckIn: Date;
     newFinalPriceCents: number;
@@ -538,9 +539,9 @@ export async function applyLifecycleTransitions(
   // before an admin approves it — booking-create likewise blocks the zero-dollar
   // path while a booking is under review. The release-from-review transition
   // lands PAYMENT_PENDING, at which point the clamp runs.
-  const isRepriceablePrePayment =
-    newStatus === BookingStatus.PENDING ||
-    newStatus === BookingStatus.PAYMENT_PENDING;
+  const isRepriceablePrePayment = // #4019: an unpaid approved whole-lodge booking reprices like PAYMENT_PENDING
+    newStatus === BookingStatus.PENDING || newStatus === BookingStatus.PAYMENT_PENDING ||
+    (newStatus === BookingStatus.CONFIRMED && isUnpaidConfirmedWholeLodge(booking));
   // #3750 (#3955 review F1, `INV-PAY-119`): the fee recorded on the payment —
   // before this edit, plus what this edit recorded — is owed with the price, so
   // the clamp keeps credit up to the booking's WORTH and the $0 decision and
@@ -572,9 +573,8 @@ export async function applyLifecycleTransitions(
   });
 
   if (
-    !skipBookingLifecycleRules &&
-    effectivePriceCents === 0 &&
-    newStatus === BookingStatus.PAYMENT_PENDING
+    !skipBookingLifecycleRules && effectivePriceCents === 0 &&
+    (newStatus === BookingStatus.PAYMENT_PENDING || (newStatus === BookingStatus.CONFIRMED && isUnpaidConfirmedWholeLodge(booking)))
   ) {
     newStatus = BookingStatus.PAID;
     zeroDollarAutoPaid = true;

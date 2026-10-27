@@ -3,3 +3,5 @@
 # this snippet adds nothing. It exists so the Caddyfile's single
 # `import /etc/caddy/deploy/tls-{$CADDY_TLS_MODE:acme}.caddy` resolves to a
 # file in every mode. The alternative is `tls-local.caddy`.
+# No proxy is trusted in this mode: Caddy IS the edge, so `{client_ip}` is the
+# connecting peer and a visitor cannot forge it through X-Forwarded-For.

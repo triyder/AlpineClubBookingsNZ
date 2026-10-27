@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // ── Mocks ──────────────────────────────────────────────────────────────────
 
 vi.mock("@/lib/servernz-config", () => ({
+  withServerNzConnectionTransaction: async (work: (tx: unknown) => Promise<unknown>) => work({}),
   getOperationalServerNzCredential: vi.fn(async () => ({
     apiKey: "test-api-key",
     version: "test-credential-version",
@@ -578,5 +579,62 @@ describe("pullOtherLodges — deletedLodges, lodges deleted on the server (#58, 
     });
 
     await expect(pullOtherLodges(null)).rejects.toThrow();
+  });
+});
+
+// #4262 review: the cursor a pull asks from, and the stored answers it hands
+// back, come from the settings read in the same fenced read as its connection.
+describe("pullOtherLodges — the fenced settings snapshot", () => {
+  it("asks from the cursor its own fenced read saw, and returns that read with the connection", async () => {
+    respondWith({ lodges: [], cursor: "c-2", count: 0 });
+    const stored: unknown[] = [];
+
+    const pull = await pullOtherLodges((settings) => {
+      stored.push(settings);
+      return "since-from-fenced-read";
+    });
+
+    const [url] = fetchMock.mock.calls.find(([u]) => String(u).includes("/api/v1/other-lodges"))!;
+    expect(new URL(String(url)).searchParams.get("since")).toBe("since-from-fenced-read");
+    expect(stored).toHaveLength(1);
+    expect(pull.snapshot).toBe(stored[0]);
+    expect(pull.sentOn).toEqual({ baseUrl: "https://central.test", credentialVersion: "test-credential-version" });
+  });
+});
+
+// #4262 review (B5): a dropped row's name, when it alone still reads, is kept
+// so the download's by-name keying counts that lodge.
+describe("pullOtherLodges — the names of dropped rows", () => {
+  it("keeps a dropped row's readable name, and none for a row whose name breaks its bounds", async () => {
+    respondWith({
+      lodges: [remoteRow(), remoteRow({ id: "srv_2", bedCapacity: -5 }), { id: "srv_3", name: 42 }],
+      cursor: "c-1",
+      count: 3,
+    });
+
+    const pull = await pullOtherLodges(null);
+
+    expect(pull.dropped).toBe(2);
+    expect(pull.droppedNames).toEqual(["Aorangi Ski Club"]);
+  });
+
+  it("leaves out a dropped row the same answer reports deleted: it names no live lodge", async () => {
+    respondWith({
+      lodges: [
+        remoteRow({ id: "srv_live", name: "Kea Lodge" }),
+        remoteRow({ id: "srv_gone", name: "Kea Lodge", bedCapacity: -5 }),
+        remoteRow({ id: "srv_other", name: "Kea Lodge", bedCapacity: -5 }),
+      ],
+      cursor: "c-1",
+      count: 3,
+      deletedLodges: [{ id: "srv_gone", deletedAt: "2026-10-01T00:00:00.000Z" }],
+    });
+
+    const pull = await pullOtherLodges(null);
+
+    expect(pull.dropped).toBe(2);
+    // srv_gone is deleted; srv_other is not, so its name still counts.
+    expect(pull.droppedNames).toEqual(["Kea Lodge"]);
+    expect(pull.deletedLodgeIds).toEqual(["srv_gone"]);
   });
 });

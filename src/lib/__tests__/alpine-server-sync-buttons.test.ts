@@ -54,6 +54,7 @@ const DOWNLOADED = {
   nameConflicts: [],
   hiddenLodges: [],
   dropped: 0,
+  stopped: null,
 };
 
 const buttons = [
@@ -161,5 +162,31 @@ describe.each(buttons)("the %s button and the sync claim (#66)", (_label, POST, 
     expect(response.status).toBe(409);
     expect(mocks.claimUpdateMany).not.toHaveBeenCalled();
     expect(sync).not.toHaveBeenCalled();
+  });
+});
+
+// #4262 review: a download that stopped before recording is audited as its
+// own outcome, with the reason, never as a plain success.
+describe("a Download that stopped before recording", () => {
+  it.each(["connection-changed", "superseded"] as const)("audits a failure naming %s", async (reason) => {
+    mocks.download.mockResolvedValue({ ...DOWNLOADED, stopped: reason });
+    const res = await downloadPOST();
+    expect(res.status).toBe(200);
+    expect((await res.json()).stopped).toBe(reason);
+    expect(mocks.createAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "alpine_server.other_lodges.download",
+        outcome: "failure",
+        severity: "important",
+        summary: expect.stringContaining(`stopped (${reason})`),
+      }),
+    );
+  });
+
+  it("audits a recorded download as a success", async () => {
+    await downloadPOST();
+    expect(mocks.createAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "alpine_server.other_lodges.download", outcome: "success" }),
+    );
   });
 });

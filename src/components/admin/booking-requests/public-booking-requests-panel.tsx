@@ -463,6 +463,7 @@ export function PublicBookingRequestsPanel({
 
     One rule, one place, and the client stops guessing.
   */
+  const [memberChoosesPayment, setMemberChoosesPayment] = useState(false);
   const [requests, setRequests] = useState<PublicBookingRequestData[]>([]);
   const [filter, setFilter] = useState<PublicRequestFilter>(
     isPublicRequestFilter(initialFilter) ? initialFilter : "QUEUE"
@@ -577,6 +578,7 @@ export function PublicBookingRequestsPanel({
         throw new Error(data.error || "Failed to load booking requests");
       }
       setRequests(Array.isArray(data?.data) ? data.data : []);
+      setMemberChoosesPayment(data.memberWholeLodgeChoosesPaymentMethod === true);
       return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load booking requests");
@@ -586,7 +588,7 @@ export function PublicBookingRequestsPanel({
     }
     // setState functions are referentially stable; they are listed so the
     // manual dependencies match what the React Compiler infers.
-  }, [filter, setError, setLoading, setRequests]);
+  }, [filter, setError, setLoading, setRequests, setMemberChoosesPayment]);
 
   useEffect(() => {
     fetchRequests();
@@ -1334,7 +1336,7 @@ export function PublicBookingRequestsPanel({
           data.invoiceMode === "member"
             ? " The member has been emailed the amount owing and pays from their booking page — by card, with any account credit they asked for already applied, or by switching to internet banking, which raises the Xero invoice then."
             : data.invoiceMode === "paid"
-              ? " The member's account credit covered the whole price, so the booking is paid and nothing is owing."
+              ? " The booking is paid and nothing is owing."
               : data.invoiceMode === "xero"
                 ? " The Xero invoice has been raised and the member has been emailed the amount owing and their payment reference."
                 : data.invoiceMode === "manual"
@@ -2295,6 +2297,7 @@ export function PublicBookingRequestsPanel({
                           requestId={request.id}
                           submittedHeadcount={request.guests.length}
                           applyAccountCredit={request.applyAccountCredit === true}
+                          memberChoosesPayment={memberChoosesPayment}
                           headcount={
                             wholeLodgeHeadcounts[request.id] ??
                             String(request.guests.length)

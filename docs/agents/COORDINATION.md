@@ -131,6 +131,28 @@ its work, post a `LANE-SYNC:` on the issue with the head SHA you read. If the
 holder does not answer and the work is blocked, ask the owner to reassign it.
 Unknown occupancy is not a free slot.
 
+After 72 hours without a `LANE-SYNC:` checkpoint or a push to the reserved
+branch, ask the owner **once**, by decision pop-up, whether to extend, reassign
+or release the reservation (owner decision, #4452). Silence still never frees
+it. Check the thread for an existing question or decision before asking, and
+record the answer there using the
+[decision-recording format](ISSUE_WORKFLOW.md#recording-a-decision-the-body-must-carry-the-answer).
+An unanswered question stays pending; repeated reports are not new prompts.
+
+Run `pnpm run lanes:stale` (optionally followed by `owner/repo`) to list open
+issues and PRs whose latest `CLAIM:` has been inactive for more than 72 hours.
+The [read-only checker](../../scripts/lanes-stale.mjs) prints the lane named in
+the claim, its last activity time and a suggested owner question. A later
+`LANE-SYNC:` or branch push restarts the timer; `RELEASE` or `HANDOVER` ends that
+claim. It reads every comment page and uses GitHub push activity timestamps,
+including force pushes, rather than commit dates. PRs fall back to their head
+branch; issues need a branch named in the claim. Missing branches are flagged
+for a manual push check before asking. GitHub read failures stop the report.
+It uses `gh` when available and public REST reads when `gh` is absent or logged
+out. Authenticated reads avoid the public API's lower rate limit. The checker
+never posts, labels, edits, releases reservations or remembers previous prompts;
+the coordinator checks the thread and asks the question once.
+
 ## Handoffs and checkpoints
 
 A lane stopping before it finishes — end of session, usage limit, waiting on

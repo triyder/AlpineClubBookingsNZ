@@ -7,7 +7,7 @@
  * cancels a declined ask too, and a stale tab's capture racing that cancel is
  * refunded. A capture no live cancel row owns is kept like any other: a declined
  * ask superseded before #4422, one whose row a manual mark-paid reversal
- * deleted, or one paid before the superseding minter committed its row (#4442).
+ * deleted.
  * Its change's invoice must then record THAT capture:
  * left on the carrier, the capture's release would find nothing parked on it,
  * and if the carrier were never paid the invoice would be retired.

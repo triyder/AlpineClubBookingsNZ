@@ -10,6 +10,7 @@ import {
   SERVER_VERSION_MISMATCH_CODE,
   computeServerVersionStatus,
   describeServerVersionPause,
+  type DownloadStopReason,
   type ServerVersionCheck,
 } from "@/lib/servernz-api-version";
 import { Input } from "@/components/ui/input";
@@ -83,6 +84,23 @@ function shownServerVersion(apiKeySet: boolean, stored: string | null): string {
 }
 
 /**
+ * What a stopped download tells the administrator (#4262 review). Exhaustive:
+ * a new `DownloadStopReason` fails typecheck here until it is worded.
+ */
+function downloadStopText(reason: DownloadStopReason): string {
+  switch (reason) {
+    case "connection-changed":
+      return " Stopped: the central server address or API key changed while it ran, so nothing more was saved. Download again.";
+    case "superseded":
+      return " Another download finished first, so this one saved no position. Download again if anything is missing.";
+    default: {
+      const unworded: never = reason;
+      return unworded;
+    }
+  }
+}
+
+/**
  * The Download result in one line. Renames (#64) are counted, and a lodge the
  * download could not place is named (#69): one sent without an id whose name
  * several lodges here share, or a new one whose id a concurrent download held.
@@ -95,6 +113,7 @@ function downloadSummaryText(data: {
   renamed?: number;
   nameConflicts?: Array<{ lodge: string | null; wanted: string }>;
   hiddenLodges?: string[];
+  stopped?: DownloadStopReason | null;
 }): string {
   const entries = `${data.fetched} ${data.fetched === 1 ? "entry" : "entries"}`;
   const renamed = data.renamed ? ` (${data.renamed} renamed)` : "";
@@ -108,7 +127,10 @@ function downloadSummaryText(data: {
   const hiddenText = hidden.length
     ? ` Deleted on the central server, so hidden here: ${hidden.map((n) => `"${n}"`).join(", ")}.`
     : "";
-  return `Downloaded ${entries}: ${data.created} added, ${data.updated} updated${renamed}, ${data.unchanged ?? 0} unchanged.${conflictText}${hiddenText}`;
+  // A download that stopped before recording (#4262 review) says so: the next
+  // one repeats it.
+  const stoppedText = data.stopped ? downloadStopText(data.stopped) : "";
+  return `Downloaded ${entries}: ${data.created} added, ${data.updated} updated${renamed}, ${data.unchanged ?? 0} unchanged.${conflictText}${hiddenText}${stoppedText}`;
 }
 
 export function AlpineServerSetup({ initialState }: { initialState: InitialState }) {
@@ -540,6 +562,11 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
                 <p className="text-sm text-muted-foreground">
                   The registry of other clubs&apos; lodges (name, location, booking
                   officer, beds).
+                </p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Until a lodge&apos;s Central lodge link is saved (Lodges, then
+                  Configure, then Central lodge), the central lodge search shows
+                  its free beds as unknown, even for a club with one lodge.
                 </p>
                 <p className="mt-1 text-xs text-muted-foreground">
                   Last upload {fmt(clubTime, lastUpload)} · last download {fmt(clubTime, lastDownload)}

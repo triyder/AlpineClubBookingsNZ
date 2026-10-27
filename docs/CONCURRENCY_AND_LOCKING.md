@@ -279,7 +279,7 @@ are the literal `1`.
 | **Per-member night footprint** | `hashtext("booking-member-night"), hashtext(<memberId>)` | `lockBookingMemberNights(tx, guests)` (`booking-member-night-conflicts.ts`) | cross-lodge | Serialises the person-night guard ACROSS lodges (see below). |
 | **Per-trip hosting coverage** | `hashtext("hosting-coverage-group"), hashtext(<GroupBooking.id>)` | `lockHostingCoverageGroup` / `lockHostingCoverageGroups`, with `tryLockHostingCoverageGroup(s)` tried first (`adult-member-hosting-coverage-lock.ts`) | cross-account | Serialises `SAME_GROUP_TRIP` coverage (#3039, epic #2943). The owner key cannot do this job: it is `Booking.memberId`, the DEPENDENT's own account, while every Group Trip source belongs to somebody else — so two writers changing two bookings in one trip hold two DIFFERENT owner keys and are not serialised at all. Not the lodge key either: one lodge holds many unrelated trips. Taken immediately BEFORE the sorted owner keys, because the trip's membership is what decides which owners the reconciliation fan-out will name. Several trips are taken in sorted order, and EVERY acquisition is tried with `pg_try_advisory_xact_lock` before the blocking form — one transaction can discover two trip keys (a booking in one trip whose same-owner dependent sits in another), so sorting within a call cannot order keys discovered in two, and a conflict rolls the whole outer transaction back with the stable `HOSTING_COVERAGE_PARTICIPANT_RETRY` 409 rather than waiting inside a booking transaction. Taken only where the lodge has `SAME_GROUP_TRIP` enabled AND the booking is in a trip. |
 | **Per-owner hosting coverage** | `hashtext("hosting-coverage-owner"), hashtext(<Booking.memberId>)` | `lockHostingCoverageOwner` / `lockHostingCoverageOwners` (`adult-member-hosting-coverage-lock.ts`) | cross-booking | Serialises `SAME_BOOKING_OWNER` coverage (#2576 §9): one booking's compliance depends on another booking of the SAME owner, so the key remains authoritative even though #2600 made allocation-participating confirmation and cancellation compose global → lodge. Taken LAST among the application lock families a caller composes, EXCEPT that since #3039 the per-TRIP hosting coverage key above sits immediately before it — so it is the second of the last two rather than the last. Roster-aware modification paths take global → lodge → roster-date → any applicable member keys → sorted queue-participant `Member FOR KEY SHARE NOWAIT` rows → coverage-group → coverage-owner; queued incident reconciliation takes hosting policy-set → sorted claimed member-lifecycle keys → sorted claimed `Member FOR KEY SHARE` rows → coverage-group (only where the reconciled booking is in a Group Trip at a lodge with `SAME_GROUP_TRIP` on; the evaluator takes it fail-fast before it reads a sibling as cover) → coverage-owner. Paths that do not use roster or member keys omit those tiers. Ordinary producers try sorted owner keys before re-entering the blocking helper, while merge takes its sorted owner keys only after its one sorted participant `FOR UPDATE` statement. The key is taken only when the lodge actually has the scope enabled. |
-| **Per-member credit ledger** | `hashtext("member-credit-ledger"), hashtext(<memberId>)` | `lockMemberCreditLedger(memberId, tx)` (`member-credit.ts`) | — | A member's credit-ledger balance operations (spend, negative-adjustment validation, orphan-restore repair, every applied-credit restore (`restoreCreditFromBooking`, taken inside the caller's transaction after its `lock(1)` and lodge locks, #3792), the Xero inbound applied-credit repair, and the F20 pre-payment-reduction applied-credit clamp `clampAppliedCreditToBookingPrice`, taken inside the modification transaction only when the booking carries applied credit, through its give-back `giveBackAppliedCredit`, which a credit-paid booking's review share also goes through (#3791), taken inside an `EDIT_FINANCIAL_REVIEW` completion after its `lock(1)`, its claim and its re-price, only on the account-credit route with no captured payment, and by a paid booking's price reduction (#3809, `giveBackPaidReductionCredit`), taken inside the batch, date-change and guest-removal transactions (the consent decline and expiry included) in `applyPaymentAdjustments`, after `lock(1)`, the lodge key and any roster-date keys and before any `Payment` row write, only on a PAID or COMPLETED booking with credit applied and a reduction the captured money's basis cannot return, and the #2265 stored-election consumption `consumeStoredCreditElection`, taken inside the `create-payment-intent` pay transaction and the Internet Banking switch transaction only when the booking carries an outstanding election). |
+| **Per-member credit ledger** | `hashtext("member-credit-ledger"), hashtext(<memberId>)` | `lockMemberCreditLedger(memberId, tx)` (`member-credit.ts`) | — | A member's credit-ledger balance operations (spend, negative-adjustment validation, orphan-restore repair, every applied-credit restore (`restoreCreditFromBooking`, taken inside the caller's transaction after its `lock(1)` and lodge locks, #3792), the Xero inbound applied-credit repair, and the F20 pre-payment-reduction applied-credit clamp `clampAppliedCreditToBookingPrice`, taken inside the modification transaction only when the booking carries applied credit, through its give-back `giveBackAppliedCredit`, which a credit-paid booking's review share also goes through (#3791), taken inside an `EDIT_FINANCIAL_REVIEW` completion after its `lock(1)`, its claim and its re-price, only on the account-credit route with no captured payment, and by a paid booking's price reduction (#3809, `giveBackPaidReductionCredit`), taken inside the batch, date-change and guest-removal transactions (the consent decline and expiry included) in `applyPaymentAdjustments`, after `lock(1)`, the lodge key and any roster-date keys and before any `Payment` row write, only on a PAID or COMPLETED booking with credit applied and a reduction the captured money's basis cannot return, and the #2265 stored-election consumption `consumeStoredCreditElection`, taken inside the `create-payment-intent` pay transaction and the Internet Banking switch transaction only when the booking carries an outstanding election)., and the member whole-lodge approval's credit application (`approveMemberWholeLodgeRequest`, #4019: `applyCreditToBooking` under this lock inside the approval transaction after its `lock(1)` and lodge key and BEFORE the adult-member-hosting reconcile that may take Member rows and the coverage keys). |
 | **Member lifecycle** | `hashtext("member-lifecycle:<memberId>")` | inline (`member-lifecycle-actions.ts`, `app/api/admin/deletion-requests/[id]/route.ts`, `nomination.ts` approval mapping, `admin-family-group-requests-service.ts`, `member-merge.ts`, `adult-member-hosting-coverage-drain.ts`) | — | Archive/delete of one member; account-deletion approval (the #1756 partner-share prefix — global cohort `lock(1)` + every affected lodge, sorted — and only then member lifecycle → shared standing-subject `Member FOR UPDATE NOWAIT` → exact queue-participant `Member FOR KEY SHARE NOWAIT` rows → coverage-owner before deactivation and guest unlink); overwrite of one member by application-approval mapping (E10, #1936); linking/removing one member into/from a family group on admin request review; **member merge** (dual-lock on master + loser, E11 #1937, see below — merge takes the merge-only partner-share prefix, so every affected lodge key is held BEFORE this tier while the global cohort key is deliberately NOT taken at all, and the two `member-partner-link:` keys immediately AFTER it, #2595); and the queue-drain handshake that prevents a claimed hosting item from using identities while merge re-points them. |
 | **Membership application** | `hashtext(<application key>)` | `membershipApplicationLockKey` (`nomination.ts`) | — | State transitions of one membership application. |
 | **Membership applicant** | `hashtext(<applicant-email key>)` | `membershipApplicationApplicantLockKey` (`nomination.ts`) | — | Per-email applicant dedup at submit time. |
@@ -2079,39 +2079,84 @@ mispricing a booking.
   deliberately **not** taken — the master stays unlocked until step 5, and the
   family-link drift re-check above is what closes that window.
 
-- **Alpine Central Server version recorder** — `src/lib/servernz-version-record.ts`
-  (`recordServerVersionIfCurrent`, #4366): every write of the server's
-  reported API version, from the version check and from a request the server
-  refused for version (409), runs AFTER the HTTP call in one short
-  transaction with a 150s timeout (including row-lock waits) and a 10s pool
-  acquisition maxWait, allowing it to queue behind a lodge merge rather than
-  fail at Prisma's default 5s transaction timeout. It takes `lockServerNzSettings`
-  (`SELECT 1 FROM "ServerNzSettings" WHERE "id" = $1 FOR UPDATE`),
-  then re-reads the stored base URL and the API key's credential version and
-  records only if both still equal what the request was built from. The
-  credential version is the stored row's hash (fresh IV on every write), so a
-  key saved again with the same value (A → B → A) is still a new connection.
-  Counterparts: `updateServerNzSettings` writes the new base URL only; the
-  settings route then calls `clearServerNzApiKey`, whose
-  `forgetServerConnectionAnswers` clears the old answers. Key writes and
-  removals likewise commit before their separate forget. The settings writes
-  queue behind a recorder holding the row lock, and the forget clears any
-  recorded answer; a recorder behind a committed connection change instead
-  re-reads the changed identity and drops the late answer. Singleton-keyed; no advisory lock;
-  no provider call inside the transaction; disjoint from the
-  booking/capacity/credit and money clusters. A missing row locks nothing and
-  fails the address re-read, so nothing is recorded.
-- **Owned-lodge list writer** — `src/lib/servernz-settings.ts` (`lockServerNzSettings`, #64):
-  the Other lodges download's record step (`downloadOtherClubsFromServer`)
-  takes `$executeRaw`SELECT 1 FROM "ServerNzSettings" WHERE "id" = $1 FOR UPDATE``
-  on the singleton settings row, then re-reads the connection (address and API
-  key stamp) and the cursor and keyed marker under it, so a download that ran
-  while the connection changed, or while another download recorded, writes
+- **Alpine Central Server connection and version recorder** —
+  `withServerNzConnectionTransaction` (`src/lib/servernz-config.ts`, #4436)
+  runs request capture, address replacement (`saveServerNzConnectionSettings`,
+  the settings route) and key replacement (`setServerNzApiKey`, the credentials
+  route) under `lockServerNzSettings`. It materialises the singleton
+  with `createMany(skipDuplicates)` before locking, then reads mutable state.
+  Order: settings row first, credential row second, credential audit last;
+  there is no advisory key (`INV-LOCK-001`, `INV-LOCK-002`, `INV-LOCK-003`).
+  Address replacement commits the new address, credential deletion (and its
+  audit) and answer reset together. Key replacement likewise resets answers
+  in its credential transaction. The fence hands its work a branded
+  `ServerNzConnectionTx`, and the address write, key removal and answer reset
+  require that type, so a call outside the fence does not compile. Request
+  builders read the address and uncached decrypted credential through that
+  transaction client, release the lock, then send HTTP using the captured
+  identity. A warmed cross-process credential cache cannot pair an old key
+  with a new address.
+  Every request therefore serialises on the settings row's `FOR UPDATE`; the
+  hold is short, two reads and no HTTP, so requests queue only briefly.
+  `recordServerVersionIfCurrent` (`src/lib/servernz-version-record.ts`, #4366)
+  takes the same settings lock after HTTP, re-reads the address and credential
+  version and records only for the captured identity. A recorder first has its
+  answer cleared by replacement; a replacement first makes the recorder reject
+  the old identity. Both transaction boundaries allow a 150s timeout and 10s
+  pool acquisition maxWait, including a bounded wait behind a lodge merge.
+  The recorder alone can see an absent row and then records nothing. Other
+  settings writers take no credential lock, so cannot invert this order.
+  Since the #4262 review the fence is one helper,
+  `withCurrentServerNzConnection` (and `serverNzAnswerWriter`, which throws
+  `ServerNzConnectionChangedError` on a refusal), in the same module: the
+  version recorder and every write of the Other lodges download (below) run
+  through it, in the same order. No HTTP runs inside these transactions
+  (`INV-INT-027`), and they remain disjoint from booking/capacity/credit and
+  money clusters. The #4436 race suite forces a sync and address move in both
+  orders, including a warmed old-key cache, and a sync holding the old address
+  while the move and a new key's save queue behind it.
+- **Owned-lodge list writer, and every Other lodges download write** —
+  `src/lib/servernz-settings.ts` (`lockServerNzSettings`, #64), through the
+  connection fence above (#4262 review): `downloadOtherClubsFromServer` builds
+  one `serverNzAnswerWriter` for the identity its pull was sent on
+  (`OtherLodgesPullResult.sentOn`: the stored address and API-key credential
+  version captured before the request), and EVERY write it makes from the
+  answer goes through it: the hides of deleted lodges with their unlinks and
+  audit row (one transaction), each merge's create, keying and guarded update
+  (`mergeDistributedLodge`), and the record step. Each is one short
+  transaction that takes `$executeRaw`SELECT 1 FROM "ServerNzSettings" WHERE
+  "id" = $1 FOR UPDATE`` first, re-reads the address and credential version,
+  and writes only while both are unchanged; otherwise it throws having written
+  nothing and the download stops, recording nothing. So an answer from a
+  connection replaced while the request was in flight hides, unlinks, creates
+  or renames nothing, not only its cursor and owned list. Order: settings row,
+  credential read, then `OtherLodge`/`Amenity`/`Lodge` rows and the audit row;
+  the admin other-lodge writers take no settings lock, and the Central lodge
+  writer takes the settings row before its `Lodge` row, so none inverts it.
+  The record step also re-reads the cursor and keyed
+  marker under the lock, so a download that ran while another recorded writes
   nothing back. Since #69 the owned list is stored by central id as the server
   sent it, so an admin's rename of the club's own lodge no longer rewrites it
   and no longer takes this lock. Singleton-keyed; no advisory lock; disjoint
-  from the booking/capacity/credit and money clusters. A missing row (never
-  configured) locks nothing, and its first upsert is the only writer then.
+  from the booking/capacity/credit and money clusters. A missing settings row
+  refuses every fenced write (no stored address matches).
+- **Central lodge link writer** — `PUT /api/admin/lodges/[id]/central-lodge`
+  (#62; #4262 review): in one transaction it first takes the settings row lock
+  (`lockServerNzSettings`) and re-reads the owned-lodge list under it, so a
+  download recording a new list (which unlinks deleted ids under the same
+  lock) cannot land between the ownership check and the write; then it takes
+  `$executeRaw`SELECT 1 FROM "Lodge" WHERE "id" = $1 FOR UPDATE``, re-reads the
+  link it is replacing, writes the new `Lodge.centralLodgeId`, and writes its
+  `LODGE_CENTRAL_LINK_UPDATED` audit row on the same transaction client. Order:
+  settings row, then `Lodge` row — the Other lodges download's own order (its
+  hides and record-step unlink), so neither can wait on the other in reverse.
+  Two saves serialise, the second reads the first's link as its "before", and
+  no audit row describes a transition that never happened. A save refused for
+  ownership (400) writes nothing; one refused by the unique index (409) rolls
+  back; neither leaves an audit row.
+  The transaction uses the settings fence's bounded wait
+  (`SERVERNZ_TRANSACTION_OPTIONS`). No advisory lock; disjoint from the
+  booking/capacity/credit and money clusters.
 
 - **Deletion-request approval release** — `src/lib/deletion-request-decision.ts`
   (`releaseDeletionRequestApprovalClaim`, #2627): takes
@@ -3088,6 +3133,51 @@ their status-guard `notIn` set BY DESIGN: a settlement marked `FAILED` by a
 captured (`payment_intent.succeeded` → settle) must still become `SUCCEEDED`, so
 settle legitimately overwrites `FAILED` → `SUCCEEDED`. `lock(1)` guarantees the
 two run whole-before-whole; it is not a veto on that transition.
+
+**#4442: an additional ask's queue excludes a capture of the balance it carries.**
+A replacement ask carries the unpaid balance of the live ask it supersedes
+(`INV-PAY-098`), sized before its Stripe mint; its row and its supersede's
+cancel rows are written after. Every writer of that row - the inline mint
+(`withAdditionalAskQueueTransaction`: the edit doors, a review charge and the
+currency re-issue), the re-issue's completion (`writeReissuedAskUnderRecovery`)
+and the recovery runner's claim hold (`holdAdditionalIntentRecoveryClaim`) - first
+takes `lockAdditionalAskQueue`: the existing global key, then the `Payment`
+row, before any recovery-row claim (`INV-LOCK-002`; registered once,
+`lockAdditionalAskQueue#1`, `INV-LOCK-003`). Each runs on
+`ADDITIONAL_ASK_QUEUE_TRANSACTION_OPTIONS` (`maxWait` 10s, `timeout` 30s, the
+`additional-payment-withdraw.ts` budget), because its intent already exists at
+Stripe. Under the locks it re-reads the live balance through
+`outstandingAdditionalAskCents`, the rule every ask constructor recorded it with
+(`AdditionalAsk.paymentBalanceCents`, from the `Payment` the caller read), and
+refuses any change with `CarriedAskChangedError`, rolling back the whole queue:
+the minted secret was never offered, and the recovery row re-plans from the
+`Payment` as it then stands. The pay page's currency re-issue answers that
+refusal 409 `ADDITIONAL_PAYMENT_CHANGED` (reload). The capture's settle
+(`markPaymentIntentTransactionSucceeded`) writes under the same `Payment` row,
+so a capture committed first is read and refused. A capture landing later is
+owned by the cancel row the queue committed: the webhook's or the runner's
+superseded-capture hand-off refunds it, and the late-success release reads that
+cancel row (`lateCaptureRefundState`) and leaves the invoice unsent, even where
+the webhook's unlocked cancel-row check ran before the queue committed. Folded
+waiting re-issues are not that live balance and stay owed. A frozen replay (no
+figure it can re-derive) is fenced the same way on the balance its own read
+saw. If an additional capture is already on the ledger, a frozen replay refuses
+before minting on every attempt: its amount cannot distinguish the paid balance
+from this change's own debt. The existing retry exhaustion alerts an officer to
+reconcile the payments and collect only what remains owed. This includes fully
+or partly refunded captures, whose effect on the frozen debt is also unknown.
+
+The runner's re-stamp after the Stripe cancels writes nothing and fences only a
+reduction, which orders on the `Payment` row, so it takes that row alone, not
+the global key. A retry whose attempt wrote its row and then failed (that
+re-stamp timing out, say) finds its OWN row - the intent the recovery recorded -
+and resumes the post-write steps (the waiting invoice's attach, the deferred
+invoice, completion) instead of reading the row as a later edit's overtake.
+Stripe mint and cancel calls stay outside these transactions; no new key
+(`INV-LOCK-001` through `INV-LOCK-003`). Proved against a real server in
+`superseded-ask-invoice-carry.realdb.test.ts` (including a capture committing
+while the queue waits on the global key, and a frozen replay) and
+`additional-ask-reduction.realdb.test.ts` (the re-issue's door and runner).
 
 **#3653 adds the organiser child's refund out of the combined card payment
 (`INV-PAY-114`).** Three writers join this cohort and mint no keyspace. The edit
@@ -4086,7 +4176,12 @@ per call through `withStoreTransaction`: the `Payment` row locked first
 (`lockPaymentForRefundedTotal`, `SELECT 1 ... FOR NO KEY UPDATE`), then
 `PaymentRefund` rows inserted with `ON CONFLICT DO NOTHING` in refund-id order,
 then the transaction row's compare-and-set, then the `Payment` aggregate and its
-booking-ledger lines. No provider call runs inside it.
+booking-ledger lines. No provider call runs inside it. A failed refund's floor
+(#4280, `INV-PAY-141`) reads the payment's "Paid another way" close records on
+that same client, under the `Payment` row: the close takes `lock(1)`, then that
+row, before it writes its record, so the writer sees a close whole or waits for
+it. No key is added. Proved in both orders by
+`card-refund-reversal-bank-cash-floor.realdb.test.ts`.
 
 **One order for the refunded total: `Payment` row, then refund rows, then
 transaction rows** — and, in a transaction that also takes the per-member
@@ -4525,11 +4620,32 @@ both locks. `cron-confirm-pending` shares the per-lodge lock, so either the
 cancel wins and alone runs cancellation side effects, or the cron's confirmed /
 charged state survives and the stale sweep runs no side effect.
 
+The #4019 whole-lodge credit/$0 approval and new whole-lodge zero-cash edit
+settlements use `booking-ledger-confirmation-sync.ts` under their existing global
+then lodge locks (`INV-LOCK-001`/`INV-LOCK-002`). The cash settle uses the same
+extracted poster. It keeps the existing per-booking confirmation fence and fee
+posting keys (`INV-PAY-047`); edit callers invoke it after their guest/night
+writes and modification posting, so first settlement posts the final price
+and an already-confirmed ledger keeps its ordinary modification lines.
+
 `switch-to-internet-banking` also recomputes both the locked booking price and
 the authoritative `BOOKING_APPLIED` credit aggregate after acquiring global,
 lodge, then `lockMemberCreditLedger(memberId)` locks in that order;
 the IB payment mirror must never mix a pre-lock price with post-lock credit (or
-vice versa). The switch and both card mint doors (the pay route and the
+vice versa). Before any switch write, the post-lock payment source is also
+re-read: an already-Internet-Banking payment returns its persisted reference
+and hold fields (no hold once `internetBankingHoldReleasedAt` is set), without
+another PRIMARY row, credit consumption or hold reset. Both replays, this one
+and the early unlocked one, re-run the post-commit invoice and credit-allocation
+enqueue on a live booking (`internet-banking-switch-replay.ts`), after the
+transaction and holding nothing, re-reading the booking's live state first so
+a cancel that committed since the unlocked read queues nothing: both enqueues
+are idempotent, and the retry is what heals a first switch whose enqueue failed
+after its commit. For a request that reaches the locked switch path, a
+concurrent cancellation or deletion wins before the already-IB replay.
+Status alone cannot claim a switch: whole-lodge and ordinary no-hold switches
+leave the booking's status unchanged (#4019).
+The switch and both card mint doors (the pay route and the
 `/pay/<token>` link) also exclude each other on lock(1) (#3638,
 `INV-PAY-102`): the switch refuses unless Stripe confirms the card intent is
 dead before its transaction, and under the lock it refuses when the payment
@@ -5207,7 +5323,9 @@ ordinary additional-ask replay holds (`holdAdditionalIntentRecoveryClaim`): the
 Stripe intent is minted first, outside every lock, under a key that names the
 release; the request's row, its audit row and the cancellation rows of the asks
 it supersedes are written in one claimed transaction; the supersede cancels run
-after it. It takes no advisory key of its own. A cancel that commits between the
+after it. It takes no advisory key of its own; since #4442 the claim hold it
+shares takes the global key, then the `Payment` row, before the recovery row
+(`lockAdditionalAskQueue`). A cancel that commits between the
 runner's ended-booking read and its row write is caught by the second read
 (`INV-ADDPAY-044`), which retires the request.
 
@@ -5217,13 +5335,33 @@ holds no lock and reads Xero outside any transaction. A repeat is harmless
 because the Xero idempotency key is stable, and the retry cap bounds the
 operation rows a failing payment can create.
 
+The backlog batch (`runCreditReleaseBacklog`) is the same enqueue with a ceiling, one more
+read of two `XeroSyncCursor` rows and one audit write; it takes no lock and no claim, and a
+release it has taken is never taken again because the enqueue keys on the release
+(`INV-ADDPAY-050`). The row is inserted once (`createAdditionalPaymentIntentRecoveryOnce`,
+`ON CONFLICT DO NOTHING`), and a pass counts and audits only the rows it inserted, so two
+overlapping payment cycles (the cron leader and a manual run) can each take up to `perRun`
+releases but never the same one, and never write two batch rows for one release. The reminder chase for these requests (`INV-ADDPAY-048`) changes only
+the stamp boundary of the existing guarded claim in `cron-additional-payment-reminders.ts`
+(the slot's start, or half an interval before now, whichever is earlier). The Xero invoice
+read and the bank-transfer offer that decide whether a released-credit reminder goes
+(`credit-release-reminder-gate.ts`, `INV-ADDPAY-051`) run before that claim and outside any
+transaction, in the cron and in the manual re-send alike; a withheld reminder claims nothing,
+and its one audit note is written outside any lock. A release waiting behind an unpaid edit
+request goes back through the recovery runner's one failure write
+(`markPaymentRecoveryOperationFailed`), fenced on the attempt its worker holds, with that
+attempt handed back; it takes no lock and changes no money.
+
 Closing a request Xero shows paid (`credit-release-ask-close.ts`) is a
 settlement-money writer: it cancels the card payment at Stripe first, outside
 any lock, and leaves a succeeded or processing intent alone. It then takes the
 global key and the `Payment` row lock (`INV-LOCK-001`: the global key alone, then the row), fences the
-request row (unpaid, unwithdrawn, carrying nothing) with a status-guarded
-`updateMany`, and writes the bank-cash row in the same transaction; a lost fence writes
-nothing. Registered in `advisory-lock-guard.test.ts`
+request row (unpaid, unwithdrawn, and carrying exactly what it carried when it was read)
+with a status-guarded `updateMany`, and writes the bank-cash row in the same transaction; a
+lost fence writes nothing. A request that carried earlier ones is closed only when every row
+it carried is a credit-release request (read before the provider call; carried rows never
+change once carried, and the re-read requires the payment still to name this request as its
+live ask, so nothing can have been folded in since). Registered in `advisory-lock-guard.test.ts`
 (`closeCreditReleaseAsksPaidInXero#1`).
 
 ## Credit restoration: exactly-once is now STRUCTURAL (#1636)
@@ -5550,6 +5688,18 @@ and the debt's writes come last, on `PaymentRecoveryOperation`:
   its own** (the event between the door's record and its plan write) leaves a
   marked slice whose refund is refused: the owed figure reads it filled by the
   failed-later row, and the runner never sends a marked slice, so it is owed once.
+- **A "Paid another way" close on a row that may have made the refund**
+  (#4210, `INV-PAY-142`) is read on the writer's client after that lock,
+  before the new row is inserted: a completed close record keyed on any such
+  row (`cardRefundPaidAnotherWayClosesWhere`). The close takes `lock(1)`, then
+  the same Payment row, and writes its record and its claim there, so the two
+  serialise on the row: a close that committed first is seen and the new row
+  is raised held (attempts spent, never claimed). Where the open row that
+  counted the refund exists, a failure that committed first re-planned it, and
+  the close against the figure it read is refused (409). Where the dead row
+  that sent the refund does not count it, a failure first raises a live row
+  and the close still goes through: the gap #4492 tracks. A read only - no new
+  key, no new order.
 
 **The cancel card refund shortfall's completion** (`cardShortfallSettlement`,
 #4097) reads these rows under the same Payment row lock beside the cancel's

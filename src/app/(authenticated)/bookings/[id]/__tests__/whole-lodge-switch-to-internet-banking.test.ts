@@ -4,7 +4,7 @@ import { isSwitchableToInternetBanking } from "@/lib/booking-payment-flow";
 import { resolveBookingDetailPayment } from "../_lib/booking-detail-payment";
 
 /*
-  Fork, booking-fixes — the switch-to-Internet-Banking door on an approved
+  #4019 — the switch-to-Internet-Banking door on an approved
   member whole-lodge booking.
 
   The approval leaves the payment method to the member when the Internet
@@ -25,6 +25,7 @@ const ownerViewer = {
   canManageBooking: true,
   isBookingOwner: true,
   nonOwnerAdminViewer: false,
+  canSeeOwnerCredit: true,
 } as unknown as Parameters<typeof resolveBookingDetailPayment>[0]["viewer"];
 
 const liveAccess = { isDeleted: false } as unknown as Parameters<
@@ -47,7 +48,7 @@ function booking(overrides: Record<string, unknown> = {}) {
     payment: null,
     creditsFromCancellation: [],
     refundRequests: [],
-    manualRefundTasks: [], // read by upstream's Net Collected cash parts (#3811)
+    manualRefundTasks: [],
     parentBooking: null,
     deletedAt: null,
     ...overrides,
@@ -77,12 +78,11 @@ describe("the booking page's pay doors on an approved whole-lodge booking", () =
   it("opens the Complete Payment card and the Internet Banking switch", () => {
     const payment = resolveBookingDetailPayment({
       booking: booking(),
-      // #3991 (upstream): the page's one ledger read of applied credit, now part of the input.
-      amountOwed: { owedCents: 30000, dueCents: 30000, appliedCreditCents: 0 },
       modules: modulesOn,
       viewer: ownerViewer,
       access: liveAccess,
       party: noLinkedParty,
+      amountOwed: { owedCents: 30000, dueCents: 30000, appliedCreditCents: 0 },
     });
     expect(payment.showCompletePaymentCard).toBe(true);
     expect(payment.canSwitchToInternetBanking).toBe(true);
@@ -99,17 +99,18 @@ describe("the booking page's pay doors on an approved whole-lodge booking", () =
           refundedAmountCents: 0,
           creditAppliedCents: 0,
           transactions: [],
-          // read by upstream's card-refund and appeal-ceiling readers (#4124, #3827)
+          _count: { transactions: 0 },
           recoveryOperations: [],
           refunds: [],
+          manualRefundTasks: [],
+          changeFeeCents: 0,
         },
       }),
-      // #3991 (upstream): the page's one ledger read of applied credit, now part of the input.
-      amountOwed: { owedCents: 30000, dueCents: 30000, appliedCreditCents: 0 },
       modules: modulesOn,
       viewer: ownerViewer,
       access: liveAccess,
       party: noLinkedParty,
+      amountOwed: { owedCents: 30000, dueCents: 30000, appliedCreditCents: 0 },
     });
     expect(payment.showCompletePaymentCard).toBe(false);
     expect(payment.canSwitchToInternetBanking).toBe(false);
@@ -119,12 +120,11 @@ describe("the booking page's pay doors on an approved whole-lodge booking", () =
   it("keeps the switch closed on a CONFIRMED booking without a hold, and with either module off", () => {
     const noHold = resolveBookingDetailPayment({
       booking: booking({ wholeLodgeHold: false }),
-      // #3991 (upstream): the page's one ledger read of applied credit, now part of the input.
-      amountOwed: { owedCents: 30000, dueCents: 30000, appliedCreditCents: 0 },
       modules: modulesOn,
       viewer: ownerViewer,
       access: liveAccess,
       party: noLinkedParty,
+      amountOwed: { owedCents: 30000, dueCents: 30000, appliedCreditCents: 0 },
     });
     expect(noHold.canSwitchToInternetBanking).toBe(false);
 
@@ -134,12 +134,11 @@ describe("the booking page's pay doors on an approved whole-lodge booking", () =
     ]) {
       const payment = resolveBookingDetailPayment({
         booking: booking(),
-        // #3991 (upstream): the page's one ledger read of applied credit, now part of the input.
-        amountOwed: { owedCents: 30000, dueCents: 30000, appliedCreditCents: 0 },
         modules: modules as unknown as typeof modulesOn,
         viewer: ownerViewer,
         access: liveAccess,
         party: noLinkedParty,
+        amountOwed: { owedCents: 30000, dueCents: 30000, appliedCreditCents: 0 },
       });
       expect(payment.canSwitchToInternetBanking, JSON.stringify(modules)).toBe(false);
     }
@@ -148,16 +147,16 @@ describe("the booking page's pay doors on an approved whole-lodge booking", () =
   it("never offers the switch to a non-owner admin viewing the booking", () => {
     const payment = resolveBookingDetailPayment({
       booking: booking(),
-      // #3991 (upstream): the page's one ledger read of applied credit, now part of the input.
-      amountOwed: { owedCents: 30000, dueCents: 30000, appliedCreditCents: 0 },
       modules: modulesOn,
       viewer: {
         canManageBooking: false,
         isBookingOwner: false,
         nonOwnerAdminViewer: true,
+        canSeeOwnerCredit: false,
       } as unknown as typeof ownerViewer,
       access: liveAccess,
       party: noLinkedParty,
+      amountOwed: { owedCents: 30000, dueCents: 30000, appliedCreditCents: 0 },
     });
     expect(payment.canSwitchToInternetBanking).toBe(false);
     expect(payment.showCompletePaymentCard).toBe(false);

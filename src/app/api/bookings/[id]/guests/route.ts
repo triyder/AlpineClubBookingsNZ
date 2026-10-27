@@ -977,7 +977,7 @@ export async function POST(
        * one home directly rather than restating a bare delta (`INV-SSOT-001`).
        * It is fully wired into the same machinery -
        * `createModificationAdditionalPaymentIntent` below mints through
-       * `queueSupersededAdditionalIntentCancellations`, which RETIRES every other
+       * `queueSupersededAdditionalIntentCancellationRows`, which RETIRES every other
        * outstanding ADDITIONAL intent on this payment - so a delta-sized ask here
        * deletes the unpaid balance of the ask it replaces. A $130 booking paid,
        * edited +$70 unpaid, then a guest added at +$70 asked for $70 and left $70

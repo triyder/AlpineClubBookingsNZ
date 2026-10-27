@@ -19,6 +19,7 @@ import { getIntegrationCredentialValue } from "@/lib/integration-credentials";
 import { OWNED_CENTRAL_LODGE_ID_MAX } from "@/lib/other-lodges";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { loadServerNzSettings } from "@/lib/servernz-settings";
+import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import {
   centralAvailabilitySignedText,
   SERVERNZ_SIGNATURE_HEADER,
@@ -121,6 +122,14 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Invalid stay" }, { status: 400, headers: noStore });
   }
 
+  // The module's master switch (`alpineCentralServer`, src/config/feature-routes.ts)
+  // is checked as well as the Other lodges sharing toggle: a club that turns the
+  // module off can no longer reach the setup page, so this is the only place its
+  // answer can stop. Same 404 as every other refusal, after the signature.
+  const modules = await loadEffectiveModuleFlags();
+  if (modules.alpineCentralServer !== true) {
+    return NextResponse.json(NOT_FOUND, { status: 404, headers: noStore });
+  }
   const settings = await loadServerNzSettings();
   if (!settings.otherLodgesEnabled) {
     return NextResponse.json(NOT_FOUND, { status: 404, headers: noStore });

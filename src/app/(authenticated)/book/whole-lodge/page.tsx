@@ -1,3 +1,5 @@
+import { memberWholeLodgeChoosesPaymentMethod } from "@/lib/booking-payment-flow";
+import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import Link from "next/link";
 import { auth } from "@/lib/auth";
 import { getMemberCreditBalance } from "@/lib/member-credit";
@@ -23,9 +25,17 @@ export const metadata = {
  */
 export default async function WholeLodgeRequestPage() {
   const session = await auth();
-  const availableCreditCents = session?.user?.id
-    ? await getMemberCreditBalance(session.user.id)
-    : 0;
+  // The election is offered only when approval will leave the payment method
+  // to the member (#4019); with either module off the approval keeps its
+  // legacy shape and would ignore it, so it is not shown (the one rule:
+  // `memberWholeLodgeChoosesPaymentMethod`).
+  const offersCreditElection = memberWholeLodgeChoosesPaymentMethod(
+    await loadEffectiveModuleFlags(),
+  );
+  const availableCreditCents =
+    offersCreditElection && session?.user?.id
+      ? await getMemberCreditBalance(session.user.id)
+      : 0;
   return (
     <div className="max-w-2xl space-y-6">
       <div className="space-y-1">

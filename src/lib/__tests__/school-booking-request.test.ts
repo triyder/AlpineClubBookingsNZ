@@ -27,9 +27,14 @@ vi.mock("@/lib/prisma", () => ({
     booking: {
       create: vi.fn(),
       findUnique: vi.fn(),
+      findUniqueOrThrow: vi.fn(),
       findMany: vi.fn().mockResolvedValue([]),
       update: vi.fn(),
       updateMany: vi.fn(),
+    },
+    bookingLedgerLine: {
+      findFirst: vi.fn().mockResolvedValue(null),
+      createMany: vi.fn().mockImplementation(async ({ data }: { data: unknown[] }) => ({ count: data.length })),
     },
     // MG4 (#2309): the pipeline computes the family boundary for its linked
     // members against the converted booking's owner. That owner is a non-login
@@ -161,7 +166,7 @@ vi.mock("@/lib/admin-modules", () => ({
   isEffectiveModuleEnabled: vi.fn().mockResolvedValue(true),
 }));
 
-// Fork, booking-fixes: the member whole-lodge approval applies the credit a
+// #4019: the member whole-lodge approval applies the credit a
 // member asked for through the ordinary create path's writer. Stubbed so the
 // tests assert the WIRING (owner, clamped amount, booking, lock order) without
 // a real ledger; the manual-invoice alert's ledger read keeps answering zero,
@@ -2534,7 +2539,7 @@ function memberWholeLodgeRequest(overrides: Partial<Record<string, unknown>> = {
 }
 
 /**
- * Fork, booking-fixes: the approval leaves the payment method to the member
+ * #4019: the approval leaves the payment method to the member
  * only when BOTH the Internet Banking and Xero modules are on (the default
  * stub below answers true for every key). This puts a test on the LEGACY
  * pay-on-account path — the Internet Banking module off, Xero as given — which
@@ -3511,7 +3516,7 @@ describe("approveMemberWholeLodgeRequest (#2263)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Fork, booking-fixes: the member chooses the payment method
+  // #4019: the member chooses the payment method
   // -------------------------------------------------------------------------
   // With the Internet Banking AND Xero modules on (the beforeEach default), the
   // approval leaves the method to the member: no receivable, no invoice, no
@@ -3519,6 +3524,13 @@ describe("approveMemberWholeLodgeRequest (#2263)", () => {
   // the member asked for on the request is applied here, under the ledger lock.
   describe("member chooses the payment method (both modules on)", () => {
     beforeEach(() => {
+      vi.mocked(prisma.booking.findUniqueOrThrow).mockImplementation((async () => {
+        const data = vi.mocked(prisma.booking.create).mock.calls.at(-1)![0].data as Record<string, unknown>;
+        const guests = (data.guests as { create: Array<Record<string, unknown>> }).create;
+        return { ...data, id: "booking-member", payment: null, guests: guests.map((guest, index) => ({
+          ...guest, id: `approved-guest-${index}`, nights: (guest.nights as { create: unknown[] }).create,
+        })) };
+      }) as never);
       mockedCreditBalance.mockResolvedValue(0 as never);
       mockedApplyCredit.mockResolvedValue(undefined as never);
     });
@@ -3663,7 +3675,12 @@ describe("approveMemberWholeLodgeRequest (#2263)", () => {
         where: { id: "booking-wl" },
         data: { status: BookingStatus.PAID },
       });
-      expect(mockedEnqueueInvoice).not.toHaveBeenCalled();
+      // #4264 review F2: PAID still raises the revenue invoice, as every other
+      // route to PAID does, so Xero has something to allocate against.
+      expect(mockedEnqueueInvoice).toHaveBeenCalledWith("booking-wl", {
+        createdByMemberId: "admin-1",
+        invoiceEmailDelivery: null,
+      });
     });
 
     it("applies nothing, and still approves, when the member asked but holds no credit", async () => {

@@ -105,7 +105,11 @@ vi.mock("@/lib/prisma", () => ({
       })),
     },
     // #3954 round 7: the door re-reads its new intent (`isMintedAskStillLive`).
-    paymentTransaction: { findUnique: vi.fn().mockResolvedValue({ status: "PENDING", withdrawnAt: null }) },
+    paymentTransaction: {
+      findUnique: vi.fn().mockResolvedValue({ status: "PENDING", withdrawnAt: null }),
+      // #4442: the supersede now reads the live asks inside the mint's queue - none here.
+      findMany: vi.fn().mockResolvedValue([]),
+    },
     member: { count: mockMemberCount, findUnique: mockFindUnique, findMany: mockFindMany },
     familyGroupMember: { findMany: mockFindMany },
     auditLog: { create: vi.fn().mockResolvedValue({}) },
@@ -171,6 +175,8 @@ vi.mock("@/lib/payment-transactions", () => ({
   },
   refundPaymentTransactions: (...args: unknown[]) =>
     mockRefundPaymentTransactions(...args),
+  // #4442: the mint's queue takes the Payment row; nothing to wait on here.
+  lockPaymentForRefundedTotal: vi.fn(),
   upsertPaymentIntentTransaction: (...args: unknown[]) =>
     mockUpsertPaymentIntentTransaction(...args),
 }));
@@ -544,6 +550,8 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
       // #3980: an edit that read no invoice link claims the payment row.
       updateMany: vi.fn(async () => ({ count: 1 })),
       upsert: vi.fn().mockResolvedValue({ id: "p1" }),
+      // #4442: the mint's queue re-reads the live ask it carries on this transaction - the fixture's own mirror.
+      findUnique: vi.fn(async () => booking.payment ?? null),
     },
     paymentTransaction: {
       findMany: vi.fn().mockResolvedValue([]),

@@ -27,13 +27,16 @@ import {
  *
  * The central server's public lodge search asks this site how many beds are
  * free, naming the lodge by its permanent central id. This card is where an
- * administrator links the two. A club with one active lodge that owns one
- * central lodge needs nothing here: the card says it is linked automatically.
+ * administrator links the two, and EVERY club saves its link here, a one-lodge
+ * club included (owner decision, 24 Oct 2026, #4262): an unlinked lodge
+ * answers nothing. For a club with one active lodge that owns one central
+ * lodge, Edit preselects that lodge, and Save is still what links it.
  *
  * The canonical settings pattern, as `lodge-roster-settings-card.tsx`: read-only
  * on mount, a staged Edit -> Save/Cancel step, Save dirty-gated, every edit
  * affordance a `ViewOnlyActionButton` under ONE `AdminViewOnlySectionBanner`
- * mounted in every branch.
+ * mounted in every branch, and focus returning to the Edit button and the
+ * card's title through the hook's own props after Save or Cancel (#4087).
  */
 
 interface OwnedLodge {
@@ -51,6 +54,8 @@ interface CentralLodgeResponse {
   ownedLodges: OwnedLodge[] | null;
   answersForCentralLodgeId: string | null;
   linkHeldBy: string | null;
+  /** Preselected on Edit for a one-lodge club (#4262); never an answer until saved. */
+  suggestedCentralLodgeId: string | null;
   otherLodgesEnabled: boolean;
   registeredWithCentralServer: boolean;
 }
@@ -68,6 +73,7 @@ function toDraft(body: CentralLodgeResponse): CentralLodgeDraft {
     ownedLodges: body.ownedLodges,
     answersForCentralLodgeId: body.answersForCentralLodgeId,
     linkHeldBy: body.linkHeldBy,
+    suggestedCentralLodgeId: body.suggestedCentralLodgeId,
     otherLodgesEnabled: body.otherLodgesEnabled,
     registeredWithCentralServer: body.registeredWithCentralServer,
   };
@@ -142,40 +148,59 @@ export function LodgeCentralLodgeCard({ lodgeId }: { lodgeId: string }) {
     );
   }
 
+  // The status line says what is SAVED, never the unsaved choice in the
+  // editor (#4262 review): before Save the lodge answers as it did.
+  const current = section.saved ?? draft;
   const owned = draft.ownedLodges;
-  const linkedName = nameOf(owned, draft.centralLodgeId);
-  // What the endpoint actually answers for, from the server's resolver: the
-  // card never re-derives the one-lodge rule.
-  const answersName = nameOf(owned, draft.answersForCentralLodgeId);
-  const defaultName = draft.centralLodgeId === null ? answersName : null;
+  const linkedName = nameOf(owned, current.centralLodgeId);
+  // The server's suggestion for a one-lodge club (#4262): offered on Edit,
+  // linked only by Save. The card never re-derives it.
+  const suggestedName = nameOf(owned, current.suggestedCentralLodgeId);
   // A stored link to a lodge the club no longer owns stays visible, so an
   // administrator can see why the lodge is not answering and clear it.
-  const staleLink = draft.centralLodgeId !== null && linkedName === null;
+  const staleLink = current.centralLodgeId !== null && linkedName === null;
+  // What to do about an unlinked lodge depends on who is reading (#4262
+  // review): a lodge:view administrator cannot Edit, so is not told to.
+  const viewOnly = canEdit === false;
+  const toLink = viewOnly
+    ? "An administrator with lodge edit access needs to choose this lodge's entry and save it."
+    : null;
 
   let state: string;
-  if (!draft.otherLodgesEnabled) {
+  if (!current.otherLodgesEnabled) {
     state =
       "Other lodges sharing with the Alpine Central Server is off, so the central server is told nothing about free beds.";
   } else if (owned === null) {
     state =
       "The central server has not yet said which lodges this club owns. Download from the central server first.";
-  } else if (!draft.registeredWithCentralServer) {
+  } else if (!current.registeredWithCentralServer) {
     state =
       "This site has not registered with the central server, so it cannot check that a question really came from it and answers none. Turn on the Message board module; the site's address must start with https://. The next sync registers it.";
-  } else if (!draft.lodgeActive) {
+  } else if (!current.lodgeActive) {
     state = "This lodge is inactive, so it never answers.";
-  } else if (draft.centralLodgeId !== null && !staleLink) {
+  } else if (current.centralLodgeId !== null && !staleLink) {
     state = `Linked to ${linkedName}. The central server's lodge search shows its free beds.`;
   } else if (staleLink) {
     state =
       "Linked to a lodge the central server no longer says this club owns, so nothing is answered. Choose again or clear it.";
-  } else if (defaultName) {
-    state = `Linked automatically to ${defaultName}, because this club has one lodge and owns one central lodge.`;
-  } else if (draft.linkHeldBy) {
-    state = `Not linked: the club's central lodge is linked to ${draft.linkHeldBy}. Unlink it there to use it here.`;
+  } else if (current.linkHeldBy) {
+    state = `Not linked: the club's central lodge is linked to ${current.linkHeldBy}. Unlink it there to use it here.`;
+  } else if (suggestedName) {
+    state = `Not linked yet, so the central server's lodge search shows its free beds as unknown. ${toLink ?? `Click Edit: ${suggestedName} is chosen for you, and Save links it.`} Every lodge needs its link saved here, even in a club with one lodge.`;
   } else {
-    state = "Not linked, so the central server's lodge search shows its free beds as unknown.";
+    state = `Not linked, so the central server's lodge search shows its free beds as unknown. ${toLink ?? "Click Edit, choose this lodge's entry and Save to link it."}`;
   }
+  if (editing && dirty) state = `${state} Your change is not saved yet.`;
+
+  // Edit preselects the suggestion (#4262) as an unsaved change, so Save is
+  // what links it and Cancel leaves the lodge unlinked.
+  const startEditing = () => {
+    section.startEditing();
+    const suggestion = draft.suggestedCentralLodgeId;
+    if (draft.centralLodgeId === null && suggestion !== null) {
+      section.setDraft({ centralLodgeId: suggestion });
+    }
+  };
 
   return (
     <div>
@@ -200,9 +225,9 @@ export function LodgeCentralLodgeCard({ lodgeId }: { lodgeId: string }) {
               describeReason={false}
               variant="outline"
               size="sm"
-              {...section.editTriggerProps}
-              onClick={section.startEditing}
+              onClick={startEditing}
               disabled={owned === null}
+              {...section.editTriggerProps}
             >
               Edit
             </ViewOnlyActionButton>
@@ -228,16 +253,14 @@ export function LodgeCentralLodgeCard({ lodgeId }: { lodgeId: string }) {
                   })
                 }
               >
-                <option value={NOT_LINKED}>
-                  {defaultName ? `Not linked (automatically ${defaultName})` : "Not linked"}
-                </option>
+                <option value={NOT_LINKED}>Not linked</option>
                 {owned.map((lodge) => (
                   <option key={lodge.id} value={lodge.id}>
                     {lodge.label}
                   </option>
                 ))}
-                {staleLink && draft.centralLodgeId !== null && (
-                  <option value={draft.centralLodgeId}>No longer owned (clear this)</option>
+                {staleLink && current.centralLodgeId !== null && (
+                  <option value={current.centralLodgeId}>No longer owned (clear this)</option>
                 )}
               </select>
               <p className="text-muted-foreground text-xs">

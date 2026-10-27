@@ -466,6 +466,9 @@ and adding one would require disabling default setup); `Semgrep OSS`
 SARIF — not a second scan);
 `semgrep-cloud-platform/scan` (a Semgrep AppSec Platform App
 configured outside this repository); `dependency-review`;
+`Real-PostgreSQL suites (all, advisory)` (`ci.yml` → `realdb-all`, #4458: every
+`*.realdb.test.ts` file against one Postgres service; no job may `needs:` it, and
+making it required is a separate owner step);
 `Markdown relative-link check (offline)`; `Scheduled secret sweep` (#2852),
 weekly and unrequirable; and the clock-rollover canary, which
 its own workflow comment says must never become a pull-request check.

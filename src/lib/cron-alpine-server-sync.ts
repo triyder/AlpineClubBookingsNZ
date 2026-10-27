@@ -32,10 +32,25 @@ import logger from "@/lib/logger";
  */
 
 export interface AlpineServerSyncResult {
-  status: "synced" | "skipped";
+  /**
+   * `stopped`: the pass ran, but its download did not record (`reason` is
+   * the download's `stopped`, #4262 review); the next pass repeats it.
+   */
+  status: "synced" | "skipped" | "stopped";
   reason?: string;
   upload?: UploadSummary;
   download?: DownloadSummary;
+}
+
+/**
+ * The cron-run status a pass is recorded under, for both schedulers (the cron
+ * route and the in-process leader). A pass whose download stopped before
+ * recording (#4262 review) is SKIPPED, not SUCCESS: nothing was recorded, and
+ * the next pass repeats it. Its `status: "stopped"` and reason stay in the
+ * run's summary.
+ */
+export function alpineServerSyncRunStatus(result: AlpineServerSyncResult): "SUCCESS" | "SKIPPED" {
+  return result.status === "synced" ? "SUCCESS" : "SKIPPED";
 }
 
 export async function syncOtherClubsWithServer(): Promise<AlpineServerSyncResult> {
@@ -114,6 +129,13 @@ export async function syncOtherClubsWithServer(): Promise<AlpineServerSyncResult
       },
       "Alpine Central Server Other Clubs sync complete",
     );
+    if (download.stopped) {
+      logger.warn(
+        { job: "alpine-server-other-lodges-sync", reason: download.stopped },
+        "Alpine Central Server Other Clubs download stopped before recording; the next pass repeats it",
+      );
+      return { status: "stopped", reason: download.stopped, upload, download };
+    }
     return { status: "synced", upload, download };
   } catch (err) {
     if (err instanceof ServerNzNotConfiguredError) {

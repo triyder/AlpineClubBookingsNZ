@@ -2454,7 +2454,7 @@ model BookingRequest {
   // Additive/expand-only; default false.
   exclusivityRequested Boolean            @default(false)
 
-  // Member whole-lodge requests only (fork, booking-fixes): the member's ask to
+  // Member whole-lodge requests only (#4019): the member's ask to
   // put their account credit towards the booking if the request is approved.
   // The price is not known when the request is made, so this is a yes/no
   // election rather than an amount; approval applies min(balance, price) under

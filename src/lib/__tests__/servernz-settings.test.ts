@@ -1,6 +1,6 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   findUnique: vi.fn(),
@@ -16,6 +16,7 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 import { Prisma } from "@prisma/client";
+import { prisma } from "@/lib/prisma";
 import {
   SERVERNZ_SETTINGS_ID,
   clearOtherLodgesOwnedNames,
@@ -29,6 +30,7 @@ import {
   recordOtherLodgesDownload,
   recordServerVersionCheck,
   validateCentralServerBaseUrl,
+  type ServerNzConnectionTx,
 } from "@/lib/servernz-settings";
 
 beforeEach(() => {
@@ -60,6 +62,11 @@ describe("loadServerNzSettings", () => {
     expect(settings.otherLodgesEnabled).toBe(false);
     expect(settings.baseUrl).toBeNull();
   });
+});
+
+it("propagates a fenced settings read failure instead of reporting defaults (#4436)", async () => {
+  const db = { serverNzSettings: { findUnique: vi.fn().mockRejectedValue(new Error("database unavailable")) } };
+  await expect(loadServerNzSettings(db as never)).rejects.toThrow("database unavailable");
 });
 
 describe("normalizeBaseUrl", () => {
@@ -94,6 +101,7 @@ describe("serverNzDefaultBaseUrl (#81)", () => {
     expect(serverNzDefaultBaseUrl()).toBeNull();
   });
 });
+
 describe("validateCentralServerBaseUrl", () => {
   it("accepts an ordinary public https URL", () => {
     const result = validateCentralServerBaseUrl("https://central.alpineclub.nz");
@@ -161,14 +169,14 @@ describe("recordOtherLodgesDownload", () => {
   it("never overwrites a stored cursor with a null one", async () => {
     // A server that omits the cursor must not silently reset the club to a full
     // re-fetch of the entire registry.
-    await recordOtherLodgesDownload(null);
+    await recordOtherLodgesDownload(null, undefined, { db: prisma });
     const [args] = mocks.upsert.mock.calls[0];
     expect(args.where).toEqual({ id: SERVERNZ_SETTINGS_ID });
     expect(args.update).not.toHaveProperty("otherLodgesCursor");
   });
 
   it("persists a cursor the server did return", async () => {
-    await recordOtherLodgesDownload("c-900");
+    await recordOtherLodgesDownload("c-900", undefined, { db: prisma });
     const [args] = mocks.upsert.mock.calls[0];
     expect(args.update.otherLodgesCursor).toBe("c-900");
   });
@@ -206,7 +214,10 @@ describe("the server's reported API version (#49)", () => {
   });
 
   it("forgets the owned list AND the version in ONE write when the connection ends", async () => {
-    await forgetServerConnectionAnswers();
+    // The writer's own write, on the mocked client. Only the connection fence
+    // mints this type in production (#4436); `servernz-config.test.ts` covers it.
+    const unfencedClientForUnitTest = prisma as unknown as ServerNzConnectionTx;
+    await forgetServerConnectionAnswers(unfencedClientForUnitTest);
     expect(mocks.upsert).toHaveBeenCalledTimes(1);
     const [args] = mocks.upsert.mock.calls[0];
     expect(args.where).toEqual({ id: SERVERNZ_SETTINGS_ID });
@@ -303,7 +314,7 @@ describe("the owned lodge list, by central id (#52, #62, #69)", () => {
   });
 
   it("stores the list the download carried with its timestamp, and leaves the old name-only list alone", async () => {
-    await recordOtherLodgesDownload("c-900", AORANGI);
+    await recordOtherLodgesDownload("c-900", AORANGI, { db: prisma });
     const [args] = mocks.upsert.mock.calls[0];
     expect(args.update.otherLodgesOwnedLodges).toEqual(AORANGI);
     expect(args.update.otherLodgesOwnedNamesAt).toBeInstanceOf(Date);
@@ -313,13 +324,13 @@ describe("the owned lodge list, by central id (#52, #62, #69)", () => {
   });
 
   it("stores an empty list, the server's answer that the club owns nothing", async () => {
-    await recordOtherLodgesDownload("c-900", []);
+    await recordOtherLodgesDownload("c-900", [], { db: prisma });
     expect(mocks.upsert.mock.calls[0][0].update.otherLodgesOwnedLodges).toEqual([]);
   });
 
   it("leaves the stored list and its timestamp untouched when the download carried none", async () => {
     // A list refused for its bounds, or not sent, must not clear what is stored.
-    await recordOtherLodgesDownload("c-900");
+    await recordOtherLodgesDownload("c-900", undefined, { db: prisma });
     const [args] = mocks.upsert.mock.calls[0];
     for (const key of ["otherLodgesOwnedLodges", "otherLodgesOwnedNames", "otherLodgesOwnedNamesAt"]) {
       expect(args.update).not.toHaveProperty(key);
@@ -343,9 +354,9 @@ describe("the version column has one writer (#4366)", () => {
 });
 describe("recordOtherLodgesDownload: the keyed marker (#64)", () => {
   it("sets otherLodgesKeyedAt only when told the whole registry merged", async () => {
-    await recordOtherLodgesDownload("c-1", undefined, { keyed: true });
+    await recordOtherLodgesDownload("c-1", undefined, { keyed: true, db: prisma });
     expect(mocks.upsert.mock.calls[0][0].update.otherLodgesKeyedAt).toBeInstanceOf(Date);
-    await recordOtherLodgesDownload("c-2");
+    await recordOtherLodgesDownload("c-2", undefined, { db: prisma });
     expect(mocks.upsert.mock.calls[1][0].update).not.toHaveProperty("otherLodgesKeyedAt");
   });
 

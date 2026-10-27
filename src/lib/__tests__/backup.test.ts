@@ -34,6 +34,14 @@ vi.mock("@/lib/logger", () => ({
   },
 }));
 
+// #4453: the validation restore streams file -> gunzip -> filter -> psql, which
+// `backup-restore-validation.test.ts` and the real-PostgreSQL suite prove; here
+// only the call is observed. PARTIAL: the live-database guard stays real.
+vi.mock("@/lib/backup-restore-validation", async (importOriginal) => {
+  const actual = (await importOriginal()) as typeof import("@/lib/backup-restore-validation");
+  return { ...actual, restoreDumpWithoutOwnershipOrPrivileges: vi.fn(async () => {}) };
+});
+
 // Backup config is DB-only (#2095): mock the resolver rather than setting env.
 // PARTIAL, not wholesale: the module also exports the pure
 // `isAnyBackupDestinationEnabled` predicate the engine now gates on, and
@@ -58,6 +66,7 @@ import {
   type ResolvedBackupConfig,
 } from "@/lib/backup-config";
 import logger from "@/lib/logger";
+import { restoreDumpWithoutOwnershipOrPrivileges } from "@/lib/backup-restore-validation";
 
 const BACKUP_DIRECTORY_FRAGMENT =
   path.join("/tmp", "tacbookings-backups") + path.sep;
@@ -619,11 +628,28 @@ describe("backup", () => {
         env: expect.objectContaining({ PGPASSWORD: "postgres" }),
       })
     );
-    expect(execFileSyncMock).toHaveBeenCalledWith(
-      "gunzip",
-      ["-c", expect.stringContaining(BACKUP_DIRECTORY_FRAGMENT)],
-      expect.any(Object)
+    // Streamed, owners and grants stripped, as the password-free argv URL.
+    expect(vi.mocked(restoreDumpWithoutOwnershipOrPrivileges)).toHaveBeenCalledWith({
+      sourcePath: expect.stringContaining(BACKUP_DIRECTORY_FRAGMENT),
+      argvUrl: "postgresql://postgres@postgres:5432/tacbookings_restore",
+      env: expect.objectContaining({ PGPASSWORD: "postgres" }),
+      timeoutMs: expect.any(Number),
+    });
+    expect(execFileSyncMock).not.toHaveBeenCalledWith("gunzip", expect.anything(), expect.anything());
+  });
+
+  it("fails the backup when the streamed validation restore fails", async () => {
+    setConfig({
+      restoreValidationUrl: "postgresql://postgres:postgres@postgres:5432/tacbookings_restore",
+    });
+    vi.mocked(restoreDumpWithoutOwnershipOrPrivileges).mockRejectedValueOnce(
+      new Error("Restore-validation psql exited 3: ERROR:  must be owner of table"),
     );
+
+    await expect(runDatabaseBackup()).resolves.toMatchObject({
+      success: false,
+      error: expect.stringContaining("must be owner of table"),
+    });
   });
 
   it("fails backup when restore validation smoke counts are empty", async () => {
@@ -657,7 +683,27 @@ describe("backup", () => {
     );
   });
 
-  it("refuses restore validation when the shadow URL points at the source database", async () => {
+  /**
+   * #4453 review R4: a refused validation target skips ONLY the destructive
+   * validation restore. The dump is still taken and stored, nothing touches the
+   * refused database, and the run reports failure with the reason.
+   */
+  async function expectBackupTakenValidationRefused(reason: string) {
+    const result = await runDatabaseBackup();
+    expect(result).toMatchObject({
+      success: false,
+      filename: expect.stringMatching(/^tacbookings-.*\.sql\.gz$/),
+      sizeBytes: 1024,
+      error: `${reason}. The backup was taken and stored; its restore validation was skipped.`,
+    });
+    expect(execFileSyncMock).toHaveBeenCalledWith("pg_dump", expect.anything(), expect.anything());
+    expect(execFileSyncMock).not.toHaveBeenCalledWith("psql", expect.anything(), expect.anything());
+    expect(vi.mocked(restoreDumpWithoutOwnershipOrPrivileges)).not.toHaveBeenCalled();
+    // A misconfigured URL now dumps every night, so the old dumps still age out.
+    expect(readdirSyncMock).toHaveBeenCalled();
+  }
+
+  it("refuses restore validation when the shadow URL points at the source database, still taking the backup", async () => {
     process.env.DATABASE_URL =
       "postgresql://postgres:postgres@postgres:5432/tacbookings?connection_limit=5";
     setConfig({
@@ -665,12 +711,32 @@ describe("backup", () => {
         "postgresql://postgres:postgres@postgres:5432/tacbookings",
     });
 
-    await expect(runDatabaseBackup()).resolves.toEqual({
-      success: false,
-      error:
-        "The restore-validation URL must point at a disposable shadow database, not the live DATABASE_URL",
+    await expectBackupTakenValidationRefused(
+      "The restore-validation URL must point at a disposable shadow database, not the live DATABASE_URL",
+    );
+  });
+
+  it("refuses a validation URL naming the audit archive database, still taking the backup (#4453 review N5)", async () => {
+    process.env.AUDIT_ARCHIVE_DATABASE_URL = "postgresql://archive:archive-fixture-pw@archive-host:5432/audit_archive";
+    setConfig({ restoreValidationUrl: "postgresql://check:check-pw@shadow/audit_archive" });
+
+    await expectBackupTakenValidationRefused(
+      "The restore-validation URL must point at a disposable shadow database, not the audit archive database",
+    );
+  });
+
+  it("refuses the live database under another role, as after the #4453 role split, still taking the backup", async () => {
+    // The app connects as the application role; a validation URL naming the live
+    // database as any other role used to slip past a whole-URL comparison, and
+    // the validation step starts with DROP SCHEMA public CASCADE.
+    process.env.DATABASE_URL =
+      "postgresql://tac_app:app-pw@postgres:5432/tacbookings?connection_limit=10&pool_timeout=10";
+    setConfig({
+      restoreValidationUrl: "postgresql://tac_restore_check:other-pw@postgres/tacbookings?sslmode=disable",
     });
 
-    expect(execFileSyncMock).not.toHaveBeenCalled();
+    await expectBackupTakenValidationRefused(
+      "The restore-validation URL must point at a disposable shadow database, not the live DATABASE_URL",
+    );
   });
 });

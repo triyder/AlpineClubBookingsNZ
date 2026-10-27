@@ -69,6 +69,14 @@ description = "The fabricated temporary AUTH_SECRET used only by the #4164 teard
 regexes = ['''^race-4164-temporary-secret$''']
 
 [[allowlists]]
+description = "The two fabricated role passwords PR #4479's first commits wrote into `database-roles.test.ts` to check the provisioning SQL's password quoting. They are readable labels that were never a credential for any database, and the test now builds its passwords at runtime (`\"m\".repeat(20)`), so the tree no longer carries them. Forgive these exact literals in their historical commits only, without exempting any path or password shape."
+regexes = ['''^migrator-secret-0123456789$''', '''^retention-secret-0123456789$''']
+
+[[allowlists]]
+description = "The fabricated audit-archive password one PR #4479 commit wrote into `backup.test.ts` for the restore-validation guard's archive-name refusal. It is a readable label for a host that does not exist and was never a credential; the test now spells it with the `fixture` stopword, so the tree no longer carries it. Forgive this exact literal in its historical commit only, without exempting any path or password shape."
+regexes = ['''^archive-pw$''']
+
+[[allowlists]]
 description = "The three Stripe TEST-mode placeholders this repository writes down, as exact literals: the diagnostics knowledge-bundle fixtures, the Playwright environment's publishable placeholder, and the booking-payment wrapper's fixture key. Any OTHER Stripe test key still fails the gate — `sk_test_` is a real test-mode credential and only these three named strings are forgiven. Live keys (`sk_live_`, `pk_live_`, `rk_live_`) are never allowlisted by shape. 51 findings across history."
 regexes = [
   '''^sk_test_placeholder$''',

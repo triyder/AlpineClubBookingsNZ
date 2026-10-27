@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { describe, expect, it } from "vitest";
 
+import { balancedBrackets } from "./support/balanced-brackets";
 import {
   blankLiterals,
   blankLiteralsWithSpans,
@@ -127,6 +128,14 @@ const TWO_TIER_LOCK_INVARIANTS = ["INV-LOCK-001", "INV-LOCK-002", "INV-LOCK-003"
  * the order is half of what makes the site correct.
  */
 const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
+  {
+    // The one spelling of the carrying-ask queue's order, taken by the inline
+    // mint, the re-issue's completion and the recovery runner's claim hold.
+    site: "lockAdditionalAskQueue#1",
+    tier: "GLOBAL",
+    reason: "#4442: a new additional ask re-reads the live ask's balance it carries before its row and its supersede's cancel rows commit; global before the Payment row and any recovery-row claim, so a capture of that ask is either seen and refused or owned by the cancel row.",
+    invariant: "INV-LOCK-002",
+  },
   // ── App Router handlers ───────────────────────────────────────────────────
   {
     site: "POST /api/admin/bookings/[id]/confirm-pending-guests#1",
@@ -279,7 +288,7 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     site: "POST /api/payments/switch-to-internet-banking#1",
     tier: "GLOBAL",
     reason:
-      "Switching to Internet Banking with holdBedSlots flips the booking to CONFIRMED — a net-new capacity claim and a money side effect — and re-reads under the locks, because the pre-transaction snapshot was read with no lock at all.",
+      "Switching to Internet Banking with holdBedSlots flips the booking to CONFIRMED — a net-new capacity claim and a money side effect — and re-reads under the locks, because the pre-transaction snapshot was read with no lock at all. #4019: re-read the payment source before any switch write; an already-IB payment returns its persisted holds (none once released) without a second PRIMARY or credit spend, even when the booking status did not change, and re-queues the idempotent invoice only after the commit, holding no lock.",
     invariant: "INV-LOCK-002",
   },
   {
@@ -416,7 +425,7 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     site: "modifyBookingBatch#1",
     tier: "GLOBAL",
     reason:
-      "A batch modification moves money and re-claims capacity. With the per-lodge key alone a concurrent cancel could interleave and both paths compute a refund against the same captured payment, or the modify's status commit could clobber a just-cancelled booking.",
+      "A batch modification moves money and re-claims capacity. With the per-lodge key alone a concurrent cancel could interleave and both paths compute a refund against the same captured payment, or the modify's status commit could clobber a just-cancelled booking.. #4019: its new whole-lodge zero-cash PAID transition posts the final stored charge through the shared confirmation poster under these same keys (INV-PAY-047), after guest/night writes",
     invariant: "INV-LOCK-002",
   },
   {
@@ -479,7 +488,7 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     site: "modifyBookingDates#1",
     tier: "GLOBAL",
     reason:
-      "A date change refunds or charges and claims capacity for the new range, so it takes the global tier first for mutual exclusion with cancel, settlement and hold-release.",
+      "A date change refunds or charges and claims capacity for the new range, so it takes the global tier first for mutual exclusion with cancel, settlement and hold-release.. #4019: its new whole-lodge zero-cash PAID transition posts the final stored charge through the shared confirmation poster under these same keys (INV-PAY-047), after guest/night writes",
     invariant: "INV-LOCK-002",
   },
   {
@@ -528,7 +537,7 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     site: "removeBookingGuestInTransaction#1",
     tier: "GLOBAL",
     reason:
-      "A single-guest removal computes a reduction refund and re-checks capacity, so it excludes cancel, settlement and hold-release before taking the booking's lodge key; the caller opens the transaction, so this is its first lock.",
+      "A single-guest removal computes a reduction refund and re-checks capacity, so it excludes cancel, settlement and hold-release before taking the booking's lodge key; the caller opens the transaction, so this is its first lock.. #4019: its new whole-lodge zero-cash PAID transition posts the final stored charge through the shared confirmation poster under these same keys (INV-PAY-047), after guest/night writes",
     invariant: "INV-LOCK-002",
   },
   {
@@ -877,7 +886,7 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     site: "approveMemberWholeLodgeRequest#1",
     tier: "GLOBAL",
     reason:
-      "Whole-lodge conversion composes a booking lifecycle transition with allocation pruning, so it joins the global cohort before the booking's lodge capacity key; the held reconcile reuses that prefix.",
+      "Whole-lodge conversion composes a booking lifecycle transition with allocation pruning, so it joins the global cohort before the booking's lodge capacity key; the held reconcile reuses that prefix.. #4019: its new whole-lodge zero-cash PAID transition posts the final stored charge through the shared confirmation poster under these same keys (INV-PAY-047), after guest/night writes",
     invariant: "INV-LOCK-002",
   },
 
@@ -1425,20 +1434,34 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // advisory lock; disjoint from booking/money writers. See
   // docs/CONCURRENCY_AND_LOCKING.md → "Member photo writer".
   "src/app/api/members/[id]/photo/route.ts": 2,
-  // Alpine Central Server version recorder (#4366): `lockServerNzSettings`
+  // Central lodge link writer (#62, #4262 review): the PUT takes the settings
+  // row (`lockServerNzSettings`, counted under servernz-settings.ts) and
+  // re-checks the owned list under it, then locks its own `Lodge` row
+  // (`SELECT 1 … FOR UPDATE`, the one statement counted here), re-reads the
+  // link it replaces, writes the new one and its `LODGE_CENTRAL_LINK_UPDATED`
+  // audit row on the same client. Settings -> Lodge is the Other lodges
+  // download's own order, so no inversion. No advisory key; disjoint from
+  // booking/money writers. See docs/CONCURRENCY_AND_LOCKING.md ->
+  // "Central lodge link writer".
+  "src/app/api/admin/lodges/[id]/central-lodge/route.ts": 1,
+  // Alpine Central Server connection/recorder (#4366, #4436): `lockServerNzSettings`
   // locks the singleton settings row (`SELECT 1 … FOR UPDATE`) so
   // `recordServerVersionIfCurrent` re-reads the connection (address and API-key
   // credential version) under it before it records the server's answer; a
-  // connection change writes the same row, so the two serialise. #4277 adds a
-  // second caller of the same one statement (the download record step). No
-  // advisory key; disjoint from booking/money writers. See
-  // docs/CONCURRENCY_AND_LOCKING.md -> "Alpine Central Server version recorder".
-  // Alpine Central Server owned-lodge list (#64): `lockServerNzSettings` locks
-  // the singleton settings row (`SELECT 1 … FOR UPDATE`) for the download's
-  // record step and an admin's Other lodges rename, the two writers that derive
-  // the stored owned names from OtherLodge rows. No advisory key; disjoint from
-  // booking/money writers. See docs/CONCURRENCY_AND_LOCKING.md -> "Owned-lodge
-  // list writers".
+  // connection change and request capture now take the same fence before
+  // touching credentials (settings -> credential -> audit). No advisory key;
+  // disjoint from booking/money writers. See docs/CONCURRENCY_AND_LOCKING.md ->
+  // "Alpine Central Server connection and version recorder".
+  // Other lodges download writes (triyder/AlpineClubBookingsNZ#64, #69; #4262
+  // review): the same one statement, reached through the same fence
+  // (`withCurrentServerNzConnection` / `serverNzAnswerWriter`), takes the
+  // settings row before EVERY write the download makes from an answer (hides
+  // and unlinks, each merge write, the record step) and re-reads the address
+  // and credential version under it, so an answer from a connection replaced
+  // in flight writes nothing. Order: settings -> credential read -> OtherLodge/
+  // Amenity/Lodge rows -> audit. No advisory key; disjoint from booking/money
+  // writers. See docs/CONCURRENCY_AND_LOCKING.md -> "Owned-lodge list writer,
+  // and every Other lodges download write".
   "src/lib/servernz-settings.ts": 1,
   // Adult-member-hosting queue participants (#2597): the shared helper mints
   // one reviewed `FOR UPDATE` protocol for member merge over master, loser and
@@ -1728,22 +1751,13 @@ const ADVISORY_LOCK_CALL = /pg_(?:try_)?advisory_xact_lock\(/g;
  * would score `SELECT pg_advisory_xact_lock(\n  1\n)` as a scoped key.
  */
 function firstLockArgument(text: string, openParenIndex: number): string | null {
-  let depth = 0;
-  const limit = Math.min(text.length, openParenIndex + 2000);
-  for (let i = openParenIndex; i < limit; i += 1) {
-    const character = text[i];
-    if (character === "(") {
-      depth += 1;
-      continue;
-    }
-    if (character === ")") {
-      depth -= 1;
-      if (depth === 0) return text.slice(openParenIndex + 1, i);
-      continue;
-    }
-    if (character === "," && depth === 1) return text.slice(openParenIndex + 1, i);
+  try {
+    // `text` is already masked (`maskedSource`), and a raw statement it restored
+    // must be read as code, so it is its own structure.
+    return balancedBrackets(text, openParenIndex, text).parts[0] ?? "";
+  } catch {
+    return null;
   }
-  return null;
 }
 
 /**

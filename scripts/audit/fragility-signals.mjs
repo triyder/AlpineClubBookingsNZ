@@ -3,6 +3,12 @@
  * Turn the collected evidence into candidate "bugs that came back" pairs.
  *
  *   pnpm run audit:fragility:signals
+ *   pnpm run audit:fragility:signals -- --github-until <ISO time>
+ *
+ * `--github-until` ignores every issue, PR, comment and reopen event created
+ * after that time. GitHub text is collected live, so this is how a rerun on a
+ * later day sees the evidence an earlier run saw (the ranking doc records the
+ * time its run used).
  *
  * Reads `tmp/fragility/{github,fix-units,code-repeats}.json` (written by
  * `fragility-collect.mjs`) and writes `tmp/fragility/repeats.json`: one entry
@@ -119,6 +125,7 @@ export function buildRepeats({ units, codePairs, github, reverts }) {
       add(unitRef(earlier), later ? unitRef(later) : issueRef(byNumber.get(text.number), text.date, text.number), {
         kind: "mention",
         url: text.url,
+        wording: mention.wording,
         note: `cites #${mention.number} ("${mention.wording}"): ${mention.excerpt}`,
       });
     }
@@ -174,6 +181,24 @@ function issueRef(issue, date, number) {
   return { key: `issue-${number}`, issue: number, title: issue?.title ?? null, labels: issue?.labels ?? [], date, url: issueUrl(number) };
 }
 
+/** `github` as it stood at `until` (an ISO time), or unchanged when `until` is null. */
+export function githubAsOf(github, until) {
+  if (!until) return github;
+  const bound = Date.parse(until);
+  if (Number.isNaN(bound)) throw new Error(`--github-until needs an ISO time, got ${until}`);
+  const before = (item) => Date.parse(item.createdAt) <= bound;
+  return { ...github, issues: github.issues.filter(before), comments: github.comments.filter(before), reopened: github.reopened.filter(before) };
+}
+
+/** The `--github-until <ISO time>` argument, or null. */
+export function githubUntilFromArgs(argv) {
+  const index = argv.findIndex((arg) => arg === "--github-until" || arg.startsWith("--github-until="));
+  if (index === -1) return null;
+  const value = argv[index].startsWith("--github-until=") ? argv[index].slice("--github-until=".length) : argv[index + 1];
+  if (!value || value.startsWith("--")) throw new Error("--github-until needs an ISO time, for example --github-until 2026-10-11T16:33:33Z");
+  return value;
+}
+
 function readRevertCommits(ref) {
   const raw = execFileSync("git", ["log", ref, "--grep=This reverts commit", "--format=%x1e%H%x1f%aI%x1f%s%x1f%b%x1f", "--name-only", "--no-renames"], {
     cwd: ROOT,
@@ -199,7 +224,7 @@ function readJson(name) {
 }
 
 function main() {
-  const github = readJson("github.json");
+  const github = githubAsOf(readJson("github.json"), githubUntilFromArgs(process.argv.slice(2)));
   const { units, ref = DEFAULT_REF } = readJson("fix-units.json");
   const { pairs } = readJson("code-repeats.json");
   const repeats = buildRepeats({ units, codePairs: pairs, github, reverts: readRevertCommits(ref) });
