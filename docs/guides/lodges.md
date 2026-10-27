@@ -95,6 +95,7 @@ same **lodge edit** permission as the properties above.
    leader is a ticked kind; ticking teachers also makes approving a school
    booking at this lodge give its teachers hut-leader assignments and PIN
    emails. See [Hut Leaders](hut-leaders.md#school-groups).
+
 4. The **Central lodge** card opens `/admin/lodges/[id]/central-lodge`, where you
    say which lodge in the Alpine Central Server's registry this one is. The
    central server's public lodge search then asks this site how many beds are
