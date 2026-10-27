@@ -466,8 +466,9 @@ describe("this repository", () => {
 
     // Fork (triyder, #89): `BUDGET_BASE` is written to the job environment by the
     // preceding "Pick the ratchet base" step — upstream's expression for every
-    // event, thatskiff33 main for a `sync/*` pull request — so the ratchet step
-    // itself carries no `env:` block. The step stays verify's actual final step.
+    // event, thatskiff33 main for a `sync/*` pull request and (#95) for a push
+    // whose range brings upstream main in — so the ratchet step itself carries
+    // no `env:` block. The step stays verify's actual final step.
     const picker = verify.steps.at(-2);
     expect(picker.name).toBe("Pick the ratchet base (a fork sync judges against upstream main)");
     expect(picker.env.DEFAULT_BUDGET_BASE).toBe(
@@ -475,7 +476,15 @@ describe("this repository", () => {
         "!startsWith(github.ref, 'refs/heads/epic/')) && github.event.before || " +
         "'origin/main' }}",
     );
+    expect(picker.env.BEFORE_SHA).toBe("${{ github.event.before }}");
     expect(picker.run).toContain("thatskiff33/AlpineClubBookingsNZ.git main");
+    // #95: the push case asks whether the pushed range holds commits reachable
+    // from upstream main — that is what makes a push "the sync's merge" rather
+    // than an ordinary fork change — and judges against the upstream commit it
+    // merged (the merge base), since upstream's tip may already have moved on.
+    expect(picker.run).toContain('git rev-list --count "$BEFORE_SHA..HEAD" ^FETCH_HEAD');
+    expect(picker.run).toContain('"$(git merge-base HEAD FETCH_HEAD)"');
+    expect(picker.run).toContain('"$BEFORE_SHA" != "0000000000000000000000000000000000000000"');
     expect(verify.steps.at(-1)).toEqual({
       name: "File-size budget ratchet",
       run: 'pnpm run quality:budget --base "$BUDGET_BASE"',
