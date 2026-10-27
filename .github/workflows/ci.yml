@@ -1016,18 +1016,31 @@ jobs:
       # own accepted growth (its allowance files, measured against ITS history) as
       # new debt here — 173 findings on the 26 Oct 2026 sync (#89). The honest base
       # for a sync is upstream's main: the ratchet then judges exactly the fork's
-      # fit-up. Every other event keeps upstream's expression unchanged.
+      # fit-up. The same holds for the merge's push to main (#95): a push whose
+      # range (`before..HEAD`) contains commits reachable from upstream main
+      # brought upstream in, and judges against the upstream commit it merged
+      # (the merge base of HEAD and upstream main — upstream's tip may already
+      # have moved on), or the Publish job is skipped and no image exists for
+      # the synced main. Every other event keeps upstream's expression unchanged.
       - name: Pick the ratchet base (a fork sync judges against upstream main)
         env:
           DEFAULT_BUDGET_BASE: ${{ (github.event_name == 'push' && github.event.created == false && !startsWith(github.ref, 'refs/heads/epic/')) && github.event.before || 'origin/main' }}
           HEAD_REF: ${{ github.head_ref }}
           EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
         run: |
+          use_upstream_base() {
+            git branch --force fork-sync-upstream-main "$2"
+            echo "BUDGET_BASE=fork-sync-upstream-main" >> "$GITHUB_ENV"
+            echo "$1: the ratchet judges against thatskiff33/main $(git rev-parse --short "$2")"
+          }
           if [ "$EVENT_NAME" = "pull_request" ] && [ "${HEAD_REF#sync/}" != "$HEAD_REF" ]; then
             git fetch --no-tags --quiet https://github.com/thatskiff33/AlpineClubBookingsNZ.git main
-            git branch --force fork-sync-upstream-main FETCH_HEAD
-            echo "BUDGET_BASE=fork-sync-upstream-main" >> "$GITHUB_ENV"
-            echo "Fork sync branch: the ratchet judges against thatskiff33/main $(git rev-parse --short FETCH_HEAD)"
+            use_upstream_base "Fork sync branch" FETCH_HEAD
+          elif [ "$EVENT_NAME" = "push" ] && [ -n "$BEFORE_SHA" ] && [ "$BEFORE_SHA" != "0000000000000000000000000000000000000000" ] \
+            && git fetch --no-tags --quiet https://github.com/thatskiff33/AlpineClubBookingsNZ.git main \
+            && [ "$(git rev-list --count "$BEFORE_SHA..HEAD" ^FETCH_HEAD)" != "$(git rev-list --count "$BEFORE_SHA..HEAD")" ]; then
+            use_upstream_base "This push brought upstream main in" "$(git merge-base HEAD FETCH_HEAD)"
           else
             echo "BUDGET_BASE=$DEFAULT_BUDGET_BASE" >> "$GITHUB_ENV"
           fi
