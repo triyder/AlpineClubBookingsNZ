@@ -263,6 +263,7 @@ import "./booking-outstanding-observation.realdb.test";
 // cleans its own `race-3864-` fixtures, and its Stripe and session doubles pass
 // through for every other suite.
 import "./election-double-pay-race.realdb.test";
+import "./whole-lodge-payment-review.realdb.test";
 // #3835 reuses it to prove a review completed after the REAL cancel of a
 // captured payment gives back only what the cancellation's refund left owed,
 // by card and by credit plus card at three tiers, on both captured routes and
@@ -338,6 +339,19 @@ import "./cancel-card-refund-event.realdb.test";
 // failed-later writer and "paid another way" close. Skipped unless
 // RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4166-` fixtures.
 import "./cancel-card-refund-failed-later.realdb.test";
+// #4280 reuses it to prove a card refund's reversal keeps the bank cash a "Paid
+// another way" close recorded: full and part closes, a late pending or
+// succeeded refund then failed or cancelled, each note state, several charges,
+// credit beside it, shortfalls and undone hand-backs never counted, the close
+// and the refund racing in both orders, and a rolled-back failure. Skipped
+// unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4280-` fixtures.
+import "./card-refund-reversal-bank-cash-floor.realdb.test";
+// #4210 reuses it to prove a card refund that fails later after its row was
+// closed "Paid another way" is held for an officer and alerted, never re-sent:
+// full and part closes, duplicate deliveries, no close and a close on another
+// row unchanged, and the close and the failure racing in both orders. Skipped
+// unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4210-` fixtures.
+import "./card-refund-failed-later-after-paid-another-way.realdb.test";
 // #4147 reuses it to prove the booking-ledger census reads a capacity race's
 // cancel by its own refund rows: through the REAL capacity race, back-post and
 // recovery runner, a refund still being sent is IN_FLIGHT_REFUND (the back-post
@@ -601,6 +615,14 @@ import "./own-live-refund-note-coverage.realdb.test";
 // row and then refuses rather than writing over the forget. Skipped unless
 // RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans the singleton settings row.
 import "./servernz-version-record-race.realdb.test";
+
+// #4436: address/key replacement and request capture share the settings fence.
+import "./servernz-connection-race.realdb.test";
+// #4262: the other-lodge name-index pair's windowed declaration measured, not
+// asserted: the previous release's name-keyed upsert refused once it applies,
+// and each reverse script's duplicate-name refusal and order. Skipped unless
+// RUN_CONCURRENCY_RACE_TESTS=1; it owns and drops its own scratch schema.
+import "./other-lodge-name-index-window.realdb.test";
 // #4421 reuses it to prove "Resolve by hand" on a refund-note create that
 // names no note records the officer's note, and that note then records no
 // other refund: the real resolve route and the real hand-made answer, in

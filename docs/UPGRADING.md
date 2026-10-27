@@ -119,6 +119,88 @@ as a red flag and check the release notes before deploying.
 
 ## Unreleased
 
+### Optional: stop connecting the app as the database superuser (#4453)
+
+**What changes for everyone.** Two small migrations, plus one behaviour change in backups.
+
+- **`20261125010000_restrict_booking_ledger_key_updates`** adds a trigger to
+  `Booking` and to `Lodge` that refuses any change to a row's key, so a key change
+  can never rewrite the ledger lines that name it. Nothing in the system ever
+  changes those keys. The foreign keys are unchanged. It deploys in the normal
+  window with no override: creating each trigger briefly holds back writes to
+  that table, and reads carry on.
+- **`20261125020000_audit_request_data_update_only_clears`** adds a trigger to
+  `AuditLog`: an update may clear an entry's IP address or browser details, but never
+  set them. Only the nightly anonymisation updates them, and it clears them.
+- **Backup restore-validation** now leaves the dump's owner and grant statements out
+  of its trial restore. So a validation database can be owned by an ordinary role
+  instead of a superuser.
+  - The app also refuses to validate against a URL that names the same database as
+    the live one or the audit archive, on any host and under any role. It still
+    takes and stores the backup, skips only the validation restore, and reports the
+    run as failed. **If your shadow
+    database shares the live database's name** (on another server, say), rename it.
+  - If your validation URL names a superuser, replace it with a dedicated role that
+    owns only the shadow database
+    ([`DEPLOYMENT.md`](../DEPLOYMENT.md#least-privilege-database-roles), "Restore
+    validation").
+- **AI Diagnostics:** `pnpm run diagnostics:provision-role` now refuses a password
+  containing a backslash.
+- **Compose:** the stack renders one new, empty variable, `AUDIT_RETENTION_DATABASE_URL`,
+  on the cron leader. It behaves exactly as before while it is empty.
+
+**What changes if you opt in.** You can split the Compose stack's single superuser
+connection into separate roles:
+- a migration role owns the schema;
+- an application role may change ordinary tables, but may only **INSERT and
+  SELECT** the booking ledger and the audit log;
+- a narrow audit-retention role runs the nightly audit clean-up.
+
+The superuser is kept for people. With the split, the application cannot change a
+ledger line or an audit entry by any route, even if its credential leaks. **Deleting
+a booking still deletes its ledger lines**, through the foreign key's
+`ON DELETE CASCADE`, exactly as today.
+
+The new settings are `APP_DB_USER`, `APP_DB_PASSWORD`, `MIGRATION_DB_USER`,
+`MIGRATION_DB_PASSWORD` and `AUDIT_RETENTION_DATABASE_URL`. Each one left empty
+keeps today's behaviour.
+
+**The roles are created by an operator script, not by a migration:**
+`pnpm run db:provision-roles`, a dry run unless you add `--apply`. The first
+`--apply` takes an exclusive lock on each table in turn while it hands the tables to
+the migration role, so run it in a quiet window. If it cannot get a lock within
+5 seconds, it stops with nothing changed.
+
+**To adopt it**, follow [`DEPLOYMENT.md` → "Least-privilege database roles"](../DEPLOYMENT.md#least-privilege-database-roles).
+Rehearse it on staging first. In short:
+1. Choose three hex passwords.
+2. Run the script with `--apply` as the operator.
+3. Set the five variables in `.env`.
+4. Deploy.
+
+Set all five together. The deploy script refuses `APP_DB_USER` without
+`MIGRATION_DB_USER` and `AUDIT_RETENTION_DATABASE_URL`, because the nightly audit
+retention job needs its own role once the application role is split.
+
+To roll back, unset the variables and deploy. Re-run `--apply` before switching
+back on.
+
+**After you adopt it:**
+
+- Restoring a backup over the live database from **Admin → Backups** is refused.
+  Restore as the operator with `psql` instead. Backups themselves keep working.
+- Run `pnpm run diagnostics:provision-role` with
+  `AI_DIAGNOSTICS_PROVISION_DATABASE_URL` set to the operator connection.
+- Re-run `pnpm run db:provision-roles --apply` whenever a later release's notes ask
+  you to. That happens when a release changes the append-only list
+  (`APPEND_ONLY_RELATIONS`) or the anonymised audit columns
+  (`AUDIT_ANONYMISED_REQUEST_COLUMNS`). Also re-run it after anyone creates a table
+  as the superuser. The deploy script stops after the migrate and says so if that
+  happened.
+- Every `--apply` resets all three passwords, so deploy straight after one.
+- A future migration that needs a superuser fails under the migration role; its
+  release notes will say so. Every migration in the repository today runs without one.
+
 ### The Xero connection moves to its own table; some installs reconnect Xero once (#3806)
 
 **What changes.** Release R2 of #3806. The Xero refresh lease and the "is Xero

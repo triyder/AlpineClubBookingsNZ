@@ -91,6 +91,14 @@ describe("AlpineServerSetup version display (#49)", () => {
     expect(message.textContent).toMatch(/does not report a version/);
   });
 
+  it("says free beds need a saved Central lodge link, even for a one-lodge club (#4262)", async () => {
+    versionRouteAnswers({ status: "match", serverVersion: "2.6", expected: "2.6", checkedAt: "2026-07-01T00:00:00.000Z", couldNotCheck: false, missingBaseUrl: false });
+    render(<AlpineServerSetup initialState={initial()} />);
+    expect(
+      await screen.findByText(/Until a lodge's Central lodge link is saved .*shows\s+its free beds as unknown, even for a club with one lodge/),
+    ).toBeTruthy();
+  });
+
   it("shows 0 and no message while no API key is stored", async () => {
     versionRouteAnswers({ status: "no-key", serverVersion: "0", expected: "2.6", checkedAt: null, couldNotCheck: false, missingBaseUrl: false });
     render(<AlpineServerSetup initialState={initial({ apiKeySet: false, apiKeyUpdatedAt: null })} />);

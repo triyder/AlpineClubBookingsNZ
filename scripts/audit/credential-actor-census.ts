@@ -27,7 +27,8 @@
  *  3. `deleteIntegrationCredential(params)`  — the store's remover
  *
  * and the in-transaction forms of 1 and 3 (`…InTransaction(params)`, #3454),
- * which take the same params object plus the caller's `tx`;
+ * which take the same params object plus the caller's `tx` (including ServerNZ
+ * connection replacement and its answer reset under one fence, #4436);
  *
  * and one way to go round them all:
  *

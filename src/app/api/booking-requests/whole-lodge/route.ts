@@ -1,3 +1,5 @@
+import { memberWholeLodgeChoosesPaymentMethod } from "@/lib/booking-payment-flow";
+import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import {
@@ -172,7 +174,12 @@ export async function POST(request: NextRequest) {
       groupDescription: parsed.data.groupDescription,
       notes: parsed.data.notes,
       lodgeId,
-      applyAccountCredit: parsed.data.applyAccountCredit === true,
+      // Recorded only when approval will leave the payment method to the
+      // member (#4019); the legacy approval ignores it, so a tick sent with
+      // either module off is dropped rather than stored as a promise.
+      applyAccountCredit:
+        parsed.data.applyAccountCredit === true &&
+        memberWholeLodgeChoosesPaymentMethod(await loadEffectiveModuleFlags()),
     });
 
     return NextResponse.json(WHOLE_LODGE_REQUEST_ACCEPTED, { status: 201 });

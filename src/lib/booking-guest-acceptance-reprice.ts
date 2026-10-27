@@ -10,6 +10,7 @@ import { logAudit } from "@/lib/audit";
 import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 import { postModificationLedgerLines } from "@/lib/booking-ledger-modification-sync";
+import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
 import {
   loadModificationLinesAuditFields,
   pricingSideFromStoredGuests,
@@ -26,9 +27,10 @@ import {
   applyLifecycleTransitions,
   applyPaymentAdjustments,
   isQuotePricedBooking,
-  type LoadedBookingForModify,
+  type LoadedBookingForLifecycle,
 } from "@/lib/booking-modify";
 import { bookingOwner } from "@/lib/booking-owner";
+import { isUnpaidConfirmedWholeLodge } from "@/lib/booking-payment-flow";
 import {
   canAskCardForIncrease,
   hasCapturedPayment,
@@ -57,6 +59,7 @@ import {
   clampAppliedCreditToBookingPrice,
 } from "@/lib/member-credit";
 import { recordBookingNightAdjustments } from "@/lib/night-adjustment-write";
+import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 import { prisma } from "@/lib/prisma";
 import { formatCents } from "@/lib/utils";
 import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
@@ -182,7 +185,6 @@ export type GuestAcceptanceReprice =
       owner: { memberId: string | null; email: string; firstName: string };
     };
 
-
 export async function repriceBookingAfterGuestAcceptance(
   tx: Prisma.TransactionClient,
   params: {
@@ -204,7 +206,8 @@ export async function repriceBookingAfterGuestAcceptance(
           nights: { select: { stayDate: true, priceCents: true, priceSource: true } },
         },
       },
-      payment: true,
+      // #4019 review: with its transactions, which `isUnpaidConfirmedWholeLodge` reads.
+      payment: { include: { transactions: { orderBy: [...LEDGER_ROWS_OLDEST_FIRST] } } },
       member: true,
       organisation: { select: { name: true, email: true } },
       promoRedemptions: {
@@ -267,7 +270,7 @@ export async function repriceBookingAfterGuestAcceptance(
     promoAdjustmentCents: newPromoAdjustmentCents,
   });
   const priceDiffCents = newFinalPriceCents - booking.finalPriceCents;
-  const loaded = booking as unknown as LoadedBookingForModify;
+  const loaded = booking as unknown as LoadedBookingForLifecycle;
   // #3502: a credit-paid ($0) booking too - this path never mints a card ask.
   const priceSettled =
     hasCapturedPayment(booking.payment) ||
@@ -501,6 +504,10 @@ export async function repriceBookingAfterGuestAcceptance(
     sides,
     site: "guest-acceptance",
   });
+  // #4019: a whole-lodge PAID at $0 bypasses the settle; post as the other edit doors do.
+  if (lifecycle.zeroDollarAutoPaid && isUnpaidConfirmedWholeLodge(booking)) {
+    await postStoredBookingConfirmationLedgerLines(tx, bookingId);
+  }
   // D-3813-6 (`INV-PAY-117`): the cash share of a reduction on a booking paid
   // by internet banking or by hand is the treasurer's to send back.
   await raiseEditRefundHandBackIfOwed(tx, {

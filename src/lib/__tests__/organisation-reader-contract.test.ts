@@ -65,7 +65,7 @@ const ADDED_COLUMN = "organisationId";
 // Columns added to BookingRequest independently of the organisation rollout,
 // in schema order. Keep the original pre-stage column order proof while
 // acknowledging each reviewed later field: `applyAccountCredit` (the member
-// whole-lodge credit election, fork booking-fixes / upstream #4019) sits after
+// whole-lodge credit election, #4019) sits after
 // `exclusivityRequested`; `pendingAdultCount` is #3413.
 const LATER_REQUEST_COLUMNS = ["applyAccountCredit", "pendingAdultCount"];
 

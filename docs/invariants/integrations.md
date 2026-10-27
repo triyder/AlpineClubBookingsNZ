@@ -482,7 +482,8 @@ re-run, never offered for retry, never re-minted beside (owner decision,
 
 - **One predicate.** `isResolvedInXero` (`xero-operation-resolution.ts`); a
   `where` clause spells it on `manuallyResolvedAt`. The mark leaves the row
-  `FAILED`/`PARTIAL`, so status alone reads it as live.
+  `FAILED`/`PARTIAL`, so status alone reads it as live; a late success lands
+  and alerts (`INV-INT-029`).
 - **Retries refuse it.** `getXeroOperationRetryMeta` refuses first; retry and
   requeue answer 409; the drain closes that queued row `CANCELLED`.
 - **Enqueues and the outbox respect it.** A resolved refund note covers its
@@ -495,15 +496,15 @@ re-run, never offered for retry, never re-minted beside (owner decision,
 - **Resolve and retry.** The route refuses while the operation is RUNNING, a
   live copy is queued, or a queued retry is RUNNING or started before the mark
   and completed after it - checked after the mark is written, which is then
-  withdrawn. What remains: clock skew between instances, and a caller of
+  withdrawn. Gaps: clock skew between instances, and a caller of
   `retryXeroSyncOperation` that bypasses the drain.
 - **Applied-credit operations are retry-only.** The route refuses them, and a
-  mark on one written before this release is void on the retry path.
+  pre-release mark on one is void on the retry path.
 - **Done is not absent.** `getBlockingOperation` returns `retryable`, `blocked`
   or `resolved`; a resolved row never outranks a live one and is never dropped.
   `buildRetryAction` takes only `retryable`. Where no document is recorded, the
-  repair tool reports `RESOLVED_IN_XERO_BY_OFFICER` (info, no action), and the
-  booking page says the same.
+  repair tool reports `RESOLVED_IN_XERO_BY_OFFICER` (info, no action), as does
+  the booking page.
 
 Pinned by `xero-operation-retry.test.ts`, `xero-operation-queue.test.ts`,
 `xero-operation-routes.test.ts`, `xero-operations-panel-failed-default.test.tsx`,
@@ -548,36 +549,36 @@ Pinned by `xero-resolve-refund-note.test.ts`,
 ### INV-INT-029
 
 A recorded Xero outcome is never replaced by a worse one, and never lands on
-another attempt's claim. Two callers can hold one operation row: a start that
-loses the insert race on the one-ACTIVE-row index (#1354) is handed the
-winner's row, and both make the same keyed Xero call and record their own
-outcome there.
+another attempt's claim. Two callers can hold one row: a start losing the
+one-ACTIVE-row insert race (#1354) takes the winner's row, each recording its
+outcome of the same keyed Xero call there.
 
 - **One guard, in the two writers.** `completeXeroSyncOperation` and
-  `failXeroSyncOperation` (`xero-sync.ts`) take `outcomeWriteGuard`
-  (`xero-operation-outcome-guard.ts`) and write every outcome as a
-  status-guarded write. Only SUCCEEDED lands on SUCCEEDED, and only SUCCEEDED
-  or PARTIAL on PARTIAL; `keepCancelled` also keeps CANCELLED.
-- **Every outcome carries its claim (#4373).** Each writer takes the claim
-  the outcome was made under: the row's id and the `startedAt` its RUNNING
-  claim was stamped with, from the started row, the outbox or REQUEUE claim
+  `failXeroSyncOperation` (`xero-sync.ts`) guard every outcome write with
+  `outcomeWriteGuard` (`xero-operation-outcome-guard.ts`). Only SUCCEEDED
+  lands on SUCCEEDED, only SUCCEEDED or PARTIAL on PARTIAL; `keepCancelled`
+  also keeps CANCELLED.
+- **Every outcome carries its claim (#4373):** the row's id and its RUNNING
+  claim's `startedAt`, from the started row, the outbox or REQUEUE claim
   (`claimXeroSyncOperationToRunning`) or a retry's claim. No outcome, a
-  success included, lands on a RUNNING row another claim holds, so an earlier
-  attempt's late outcome never lands on a retry's claim, after a stale reset
-  or a failure.
-- **A repair's claim is kept too.** The PARTIAL repair and the FAILED
-  refund-note repair stamp a marker code on their RUNNING claim, and no outcome
+  success included, lands on a RUNNING row another claim holds, such as a
+  retry's after a stale reset or failure.
+- **A repair's claim is kept too.** The PARTIAL repair and FAILED
+  refund-note repair stamp a marker code on their RUNNING claim; no outcome
   but SUCCEEDED lands there unless written onto that claim (`retryClaim`).
-- **A success lands on any row no claim holds.** It is Xero's answer to the
-  same keyed call.
+- **A success lands on any row no claim holds** (Xero's answer to the same
+  keyed call), even one resolved in Xero (#4374). The write leaves the mark;
+  if it recorded a Xero object, after commit it warns and alerts officers
+  once per operation: Xero may hold it twice. Limit: an alert reaching
+  nobody is retried only if another success lands.
 - **A refused write changes nothing.** It answers null, writes no link and
   raises no alert. A missing row throws, or is logged for a guarded caller.
   A success refused for a later claim still records its links, warned.
 - **Claims, resets and marks write directly,** guarded as before. The outbox
   and REQUEUE hand-backs to PENDING touch only their own claim.
 
-Pinned by `xero-sync.test.ts` and, against real PostgreSQL,
-`xero-shared-operation-outcome.realdb.test.ts`.
+Pinned by `xero-sync.test.ts`, `xero-success-after-resolution-alert.test.ts`
+and, against real PostgreSQL, `xero-shared-operation-outcome.realdb.test.ts`.
 
 ## Stored outbox payloads (#3971)
 
@@ -640,3 +641,14 @@ Pinned by `servernz-api-version.test.ts`, `servernz-api-version-gate.test.ts`,
 `servernz-version-check.test.ts`, `cron-alpine-server-sync.test.ts`,
 `club-post-sharing.test.ts`, `club-post-mirror.test.ts`,
 `admin-daily-digest-server-version.test.ts`.
+
+## Alpine Central Server free-beds answer (triyder/AlpineClubBookingsNZ#62)
+
+### INV-INT-030
+The central server's public lodge search may ask this site how many beds are free at one of its lodges, and the answer is counts only, given only when the club has said yes twice.
+
+- **Two switches, both on.** `GET /api/webhooks/servernz-availability` answers only while the `alpineCentralServer` module is on AND `ServerNzSettings.otherLodgesEnabled` is set; either off is the same 404 as an unknown lodge, so a club that turns the module off (and can no longer reach the setup page) stops answering at once.
+- **Signed before read.** The question is verified with the push secret over a route-specific text (`centralAvailabilitySignedText`) within a five-minute window before its query is parsed, and the posts webhook refuses any body that is not a JSON object before its own check, so a captured request of either route cannot be replayed to the other.
+- **Counts only.** The body is the free beds per night and their minimum, for the active lodge an administrator has explicitly linked to its central id (`Lodge.centralLodgeId`), a one-lodge club included: there is no automatic one-lodge fallback (owner decision, 24 Oct 2026, #4262); never a guest, member or booking, and every refusal is one 404.
+
+Pinned by `webhooks/servernz-availability/__tests__/route.test.ts`, `webhooks/servernz-posts/__tests__/route.test.ts`, `central-lodge-link.test.ts`.

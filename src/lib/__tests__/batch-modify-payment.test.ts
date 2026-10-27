@@ -42,7 +42,7 @@ const mockUpsertPaymentIntentTransaction = vi.fn();
 const mockPaymentTransactionUpdateMany = vi.fn();
 const mockEnqueuePaymentIntentCancellationRecovery = vi.fn();
 /**
- * #3341: the ledger read `queueSupersededAdditionalIntentCancellations` makes
+ * #3341: the ledger read `queueSupersededAdditionalIntentCancellationRows` makes
  * for the live ADDITIONAL asks a mint retires. PR #543 added this double as a
  * bare `[]`, which made the supersede a no-op in every case here; `[]` is honest
  * only while the fixture carries no live ask, and the carry case below answers
@@ -273,6 +273,8 @@ vi.mock("@/lib/payment-transactions", () => ({
     mockApplyLocalRefundAllocation(...args),
   upsertPaymentIntentTransaction: (...args: unknown[]) =>
     mockUpsertPaymentIntentTransaction(...args),
+  // #4442: the mint's queue takes the Payment row; nothing to wait on here.
+  lockPaymentForRefundedTotal: vi.fn(),
 }));
 vi.mock("@/lib/payment-recovery", () => ({
   enqueuePaymentIntentCancellationRecovery: (...args: unknown[]) =>
@@ -608,6 +610,8 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
       update: vi.fn().mockResolvedValue(undefined),
       // #3980: an edit that read no invoice link claims the payment row.
       updateMany: vi.fn(async () => ({ count: 1 })),
+      // #4442: the mint's queue re-reads the live ask it carries on this transaction - the fixture's own mirror.
+      findUnique: vi.fn(async () => booking.payment ?? null),
       upsert: vi.fn().mockResolvedValue({
         id: booking.payment?.id ?? "pay_zero",
         amountCents: 0,
@@ -625,7 +629,11 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
       aggregate: vi.fn().mockResolvedValue({ _sum: { amountCents: 0 } }),
     },
     paymentTransaction: {
-      findMany: vi.fn().mockResolvedValue([]),
+      // #4442: the supersede's read of the live asks now runs in the mint's
+      // queue transaction; it is answered by the suite's ledger as before.
+      findMany: vi.fn((args: { where?: { stripePaymentIntentId?: { not?: unknown } } }) =>
+        args?.where?.stripePaymentIntentId?.not !== undefined ? mockSupersedeRead(args) : Promise.resolve([]),
+      ),
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
     season: {
@@ -1935,6 +1943,8 @@ describe("PUT /api/bookings/[id]/modify", () => {
       paymentTransactionId: "txn_old",
       paymentIntentId: "pi_old",
       amountCents: 7000,
+      // #4442: queued in the mint's own transaction, beside its row.
+      store: expect.anything(),
     });
   });
 

@@ -155,7 +155,7 @@ export async function PUT(
   })
 
   // This club's own Other lodge follows the Fees page (#77).
-  await syncOwnOtherLodgesFromFees("fees season updated")
+  await syncOwnOtherLodgesFromFees("fees season updated", session.user.id)
   revalidatePublicPageContent()
   return NextResponse.json(season)
 }
@@ -186,7 +186,7 @@ export async function DELETE(
     details: `Deleted season: ${existing.name}`,
   })
 
-  await syncOwnOtherLodgesFromFees("fees season deleted")
+  await syncOwnOtherLodgesFromFees("fees season deleted", session.user.id)
   revalidatePublicPageContent()
   return NextResponse.json({ success: true })
 }

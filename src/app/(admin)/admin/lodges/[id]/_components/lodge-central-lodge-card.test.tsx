@@ -43,6 +43,7 @@ type GetBody = {
   ownedLodges: Array<{ id: string; name: string }> | null;
   answersForCentralLodgeId: string | null;
   linkHeldBy: string | null;
+  suggestedCentralLodgeId: string | null;
   otherLodgesEnabled: boolean;
   registeredWithCentralServer: boolean;
 };
@@ -56,6 +57,7 @@ function body(over: Partial<GetBody> = {}): GetBody {
     ownedLodges: [A, B],
     answersForCentralLodgeId: null,
     linkHeldBy: null,
+    suggestedCentralLodgeId: null,
     otherLodgesEnabled: true,
     registeredWithCentralServer: true,
     ...over,
@@ -82,17 +84,64 @@ afterEach(() => {
 });
 
 describe("LodgeCentralLodgeCard", () => {
-  it("says it is linked automatically under the one-lodge default", async () => {
-    serve(body({ ownedLodges: [A], answersForCentralLodgeId: "ol_a" }));
+  // #4262 (owner decision, 24 Oct 2026): every club links explicitly. A
+  // one-lodge club is offered its only central lodge, preselected on Edit,
+  // and nothing is linked (or answered) until Save.
+  it("never says a one-lodge club is linked automatically: it is not linked until Save", async () => {
+    serve(body({ ownedLodges: [A], suggestedCentralLodgeId: "ol_a" }));
     render(<LodgeCentralLodgeCard lodgeId="lodge_1" />);
-    expect(await screen.findByText(/Linked automatically to Aorangi Ski Club/)).toBeTruthy();
+    expect(
+      await screen.findByText(/Not linked yet, so the central server's lodge search shows its free beds as unknown\. Click Edit: Aorangi Ski Club is chosen for you, and Save links it\./),
+    ).toBeTruthy();
+    expect(screen.queryByText(/automatically/i)).toBeNull();
+    const select = screen.getByRole("combobox", { name: "Central lodge" }) as HTMLSelectElement;
+    expect(select.value).toBe("");
+    expect(screen.getByRole("option", { name: "Not linked" })).toBeTruthy();
+  });
+
+  it("preselects the suggestion on Edit and links it only on Save", async () => {
+    serve(
+      body({ ownedLodges: [A], suggestedCentralLodgeId: "ol_a" }),
+      body({ ownedLodges: [A], centralLodgeId: "ol_a", answersForCentralLodgeId: "ol_a" }),
+    );
+    render(<LodgeCentralLodgeCard lodgeId="lodge_1" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    const select = screen.getByRole("combobox", { name: "Central lodge" }) as HTMLSelectElement;
+    expect(select.value).toBe("ol_a");
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === "PUT")).toBe(false);
+    const save = screen.getByRole("button", { name: "Save central lodge" }) as HTMLButtonElement;
+    expect(save.disabled).toBe(false);
+
+    fireEvent.click(save);
+
+    await waitFor(() => expect(screen.getByText(/Linked to Aorangi Ski Club/)).toBeTruthy());
+    const [, init] = fetchMock.mock.calls.find(([, i]) => i?.method === "PUT")!;
+    expect(JSON.parse(init.body)).toEqual({ centralLodgeId: "ol_a" });
+  });
+
+  it("leaves the lodge unlinked when the preselected Edit is cancelled", async () => {
+    serve(body({ ownedLodges: [A], suggestedCentralLodgeId: "ol_a" }));
+    render(<LodgeCentralLodgeCard lodgeId="lodge_1" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    const select = screen.getByRole("combobox", { name: "Central lodge" }) as HTMLSelectElement;
+    expect(select.value).toBe("");
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === "PUT")).toBe(false);
+  });
+
+  it("says an unlinked lodge with no suggestion must be chosen and saved", async () => {
+    serve(body());
+    render(<LodgeCentralLodgeCard lodgeId="lodge_1" />);
+    expect(await screen.findByText(/Not linked, so the central server's lodge search shows its free beds as unknown\. Click Edit, choose/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    expect((screen.getByRole("combobox", { name: "Central lodge" }) as HTMLSelectElement).value).toBe("");
   });
 
   it("says when the central server has not said which lodges are owned, and offers no editor", async () => {
     serve(body({ ownedLodges: null }));
     render(<LodgeCentralLodgeCard lodgeId="lodge_1" />);
     expect(await screen.findByText(/has not yet said which lodges this club owns/)).toBeTruthy();
-    expect(screen.queryByLabelText("Central lodge", { selector: "select" })).toBeNull();
+    expect(screen.queryByRole("combobox", { name: "Central lodge" })).toBeNull();
   });
 
   it("says why nothing is answered when another lodge holds the link", async () => {
@@ -124,7 +173,7 @@ describe("LodgeCentralLodgeCard", () => {
     serve(body(), body({ centralLodgeId: "ol_b", answersForCentralLodgeId: "ol_b" }));
     render(<LodgeCentralLodgeCard lodgeId="lodge_1" />);
     fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
-    fireEvent.change(screen.getByLabelText("Central lodge", { selector: "select" }), { target: { value: "ol_b" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Central lodge" }), { target: { value: "ol_b" } });
     expect(fetchMock.mock.calls.some(([, init]) => init?.method === "PUT")).toBe(false);
 
     fireEvent.click(screen.getByRole("button", { name: "Save central lodge" }));
@@ -133,6 +182,32 @@ describe("LodgeCentralLodgeCard", () => {
     const [url, init] = fetchMock.mock.calls.find(([, i]) => i?.method === "PUT")!;
     expect(url).toBe("/api/admin/lodges/lodge_1/central-lodge");
     expect(JSON.parse(init.body)).toEqual({ centralLodgeId: "ol_b" });
+  });
+
+  // #4262 review (C1): before Save the lodge answers as it did, so the status
+  // line describes the SAVED link, never the choice in the editor.
+  it("never says Linked to before Save, and says the change is not saved yet", async () => {
+    serve(body({ ownedLodges: [A], suggestedCentralLodgeId: "ol_a" }));
+    render(<LodgeCentralLodgeCard lodgeId="lodge_1" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+
+    expect((screen.getByRole("combobox", { name: "Central lodge" }) as HTMLSelectElement).value).toBe("ol_a");
+    expect(screen.queryByText(/Linked to/)).toBeNull();
+    expect(screen.getByText(/Not linked yet.*Your change is not saved yet\./)).toBeTruthy();
+  });
+
+  // #4262 review (C2): a lodge:view administrator cannot Edit, so is not told to.
+  it.each([
+    ["with a suggestion", { ownedLodges: [A], suggestedCentralLodgeId: "ol_a" }],
+    ["without one", {}],
+  ])("tells a lodge:view administrator who can link it, not to click Edit (%s)", async (_case, over) => {
+    lodgeLevel = "view";
+    serve(body(over));
+    render(<LodgeCentralLodgeCard lodgeId="lodge_1" />);
+    expect(
+      await screen.findByText(/An administrator with lodge edit access needs to choose this lodge's entry and save it\./),
+    ).toBeTruthy();
+    expect(screen.queryByText(/Click Edit/)).toBeNull();
   });
 
   it("gives a lodge:view administrator no working editor", async () => {

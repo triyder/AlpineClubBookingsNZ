@@ -74,7 +74,7 @@ export function resolveBookingDetailPayment({
   // Switch-at-pay: a card PAYMENT_PENDING booking can move to Internet Banking
   // when the module is on (an organiser-settled or already-IB booking cannot).
   //
-  // Fork, booking-fixes: an approved member whole-lodge booking is the one
+  // #4019: an approved member whole-lodge booking is the one
   // CONFIRMED booking that can still owe its whole price with no receivable
   // minted — the approval leaves the payment method to the member when both
   // modules are on — so it gets the same switch. It is already capacity-holding

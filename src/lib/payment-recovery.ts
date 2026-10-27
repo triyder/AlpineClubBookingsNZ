@@ -1,4 +1,10 @@
 import {
+  ADDITIONAL_ASK_QUEUE_TRANSACTION_OPTIONS,
+  assertAdditionalAskSizingCurrent,
+  lockAdditionalAskQueue,
+} from "@/lib/additional-ask-queue-transaction";
+import { askSizedOnBalanceCents } from "@/lib/additional-payment-ask";
+import {
   PaymentSource,
   PaymentRecoveryOperationStatus,
   PaymentRecoveryOperationType,
@@ -440,22 +446,45 @@ export async function enqueueAdditionalPaymentIntentRecovery({
 }) {
   return store.paymentRecoveryOperation.upsert({
     where: { idempotencyKey },
-    create: {
-      type: PaymentRecoveryOperationType.CREATE_ADDITIONAL_PAYMENT_INTENT,
-      status: PaymentRecoveryOperationStatus.PENDING,
-      bookingId,
-      paymentId,
-      paymentIntentId: stripeIdempotencyKey,
-      amountCents,
-      hadIssuedXeroInvoice,
-      idempotencyKey,
-      nextRetryAt,
-    },
+    create: additionalIntentRecoveryRow({ bookingId, paymentId, idempotencyKey, amountCents, stripeIdempotencyKey, hadIssuedXeroInvoice, nextRetryAt }),
     update: {
       bookingId,
       paymentId,
     },
   });
+}
+
+type AdditionalIntentRecoveryRowInput = Omit<Parameters<typeof enqueueAdditionalPaymentIntentRecovery>[0], "store"> & { nextRetryAt: Date };
+
+/** The row an additional-intent recovery is created as: one shape for the upsert above and the insert below. */
+function additionalIntentRecoveryRow(input: AdditionalIntentRecoveryRowInput) {
+  return {
+    type: PaymentRecoveryOperationType.CREATE_ADDITIONAL_PAYMENT_INTENT,
+    status: PaymentRecoveryOperationStatus.PENDING,
+    bookingId: input.bookingId,
+    paymentId: input.paymentId,
+    paymentIntentId: input.stripeIdempotencyKey,
+    amountCents: input.amountCents,
+    hadIssuedXeroInvoice: input.hadIssuedXeroInvoice,
+    idempotencyKey: input.idempotencyKey,
+    nextRetryAt: input.nextRetryAt,
+  };
+}
+
+/**
+ * #4253 release 2 (`INV-ADDPAY-050`): the same row, created only where no row has the key, and
+ * whether THIS call created it (`INSERT ... ON CONFLICT DO NOTHING`). For a caller that counts and
+ * audits the rows it raised: two overlapping payment cycles both see the upsert succeed, so both
+ * counted the same release and wrote two batch rows for it.
+ */
+export async function createAdditionalPaymentIntentRecoveryOnce(
+  input: Omit<AdditionalIntentRecoveryRowInput, "nextRetryAt"> & { nextRetryAt?: Date },
+): Promise<boolean> {
+  const created = await prisma.paymentRecoveryOperation.createMany({
+    data: [additionalIntentRecoveryRow({ ...input, nextRetryAt: input.nextRetryAt ?? new Date() })],
+    skipDuplicates: true,
+  });
+  return created.count === 1;
 }
 
 /**
@@ -1190,6 +1219,7 @@ async function markPaymentRecoveryOperationFailed({
   fromProcessingStartedAt,
   fromAttempts,
   format,
+  handBackAttempt = false,
 }: {
   operation: PaymentRecoveryOperation;
   /** Recorded verbatim on `lastError`, and quoted in the exhaustion alert. */
@@ -1230,6 +1260,12 @@ async function markPaymentRecoveryOperationFailed({
   fromAttempts?: number;
   /** The club's format (#3565), resolved before any transaction by the caller. */
   format: ClubFormat;
+  /**
+   * #4253 release 2: hand back the attempt this worker's claim took, for a row that is WAITING on
+   * something that clears on its own rather than failing (`waitPaymentRecoveryOperation`). Only
+   * with `terminal: false`, which it can never make terminal.
+   */
+  handBackAttempt?: boolean;
 }): Promise<PaymentRecoveryFailureOutcome> {
   // Both fences apply when both are given: each is its own clause, so neither
   // can overwrite the other's `processingStartedAt`.
@@ -1245,7 +1281,9 @@ async function markPaymentRecoveryOperationFailed({
       status: PaymentRecoveryOperationStatus.FAILED,
       lastError: message,
       processingStartedAt: null,
-      ...(terminal ? { nextRetryAt: null, attempts: Math.max(operation.attempts, MAX_PAYMENT_RECOVERY_ATTEMPTS) } : { nextRetryAt }),
+      ...(terminal
+        ? { nextRetryAt: null, attempts: Math.max(operation.attempts, MAX_PAYMENT_RECOVERY_ATTEMPTS) }
+        : { nextRetryAt, ...(handBackAttempt ? { attempts: Math.max(operation.attempts - 1, 0) } : {}) }),
     },
   });
 
@@ -1568,6 +1606,26 @@ async function failPaymentRecoveryOperation(
    * that no reader has asked for.
    */
   return outcome === "gone" ? (terminal ? "failed" : "retry") : outcome;
+}
+
+/**
+ * #4253 release 2 (`INV-ADDPAY-045`): a row that must WAIT, not fail - a released-credit request
+ * blocked by an unpaid edit request. Back to a non-terminal retry at the longest interval with its
+ * claim's attempt handed back, so it never runs out of attempts, goes terminal or alerts. Through
+ * the one chokepoint, fenced on this worker's own attempt.
+ */
+async function waitPaymentRecoveryOperation(operation: PaymentRecoveryOperation, message: string, format: ClubFormat) {
+  return markPaymentRecoveryOperationFailed({
+    operation,
+    format,
+    message,
+    terminal: false,
+    // The schedule's last (longest) step: the attempt index clamps to it.
+    nextRetryAt: nextRetryDate(MAX_PAYMENT_RECOVERY_ATTEMPTS),
+    fromStatuses: NON_TERMINAL_PAYMENT_RECOVERY_STATUSES,
+    fromAttempts: operation.attempts,
+    handBackAttempt: true,
+  });
 }
 
 async function claimPaymentRecoveryOperation(operationId: string) {
@@ -2262,10 +2320,12 @@ type DeferredSupplementaryInvoiceAttempt =
  * except that on the ordinary fork the retry cannot work: the replay has by then
  * written this edit's `ADDITIONAL` PaymentTransaction, and the processor's own
  * "a LATER edit superseded this one" check tests for an additional transaction
- * created after the operation, which that row now is. A second pass would find
- * its own transaction, read it as a supersession, and complete having done
- * nothing at all. So a throw here does not retry the invoice; it converts a
- * missing invoice into a missing invoice plus a spurious FAILED recovery row.
+ * created after the operation, which that row now is. Before #4442 a second
+ * pass found its own transaction, read it as a supersession, and completed
+ * having done nothing at all. A retry now recognises its own row and resumes
+ * these steps (`ownRow` in the replay), but a throw would still mark the
+ * recovery FAILED for a failure this function already records and alerts, so
+ * it stays best-effort.
  *
  * The failure is therefore recorded rather than retried, and it is recoverable
  * where it lands: the booking-vs-Xero repair pass classifies a positive-net
@@ -2308,10 +2368,11 @@ async function raiseDeferredSupplementaryInvoiceForRecoveredIntent(params: {
     // round). A module that fails to load throws exactly like a call that fails,
     // and this function's whole contract is that it does not throw - the docblock
     // above argues at length that a throw from here cannot retry, because the
-    // ordinary fork's replay has already written its ADDITIONAL transaction and
-    // the next pass would read that row as a supersession and complete having
-    // done nothing. An `await import` sitting outside the catch is precisely the
-    // throw that argument does not cover.
+    // ordinary fork's replay has already written its ADDITIONAL transaction (a
+    // retry now resumes from it rather than reading it as a supersession, #4442,
+    // but a throw still marks the recovery FAILED for a failure recorded here).
+    // An `await import` sitting outside the catch is precisely the throw that
+    // argument does not cover.
     const { completeDeferredXeroSupplementaryInvoice } = await import(
       "@/lib/xero-booking-edit-settlement"
     );
@@ -2381,10 +2442,16 @@ async function raiseDeferredSupplementaryInvoiceForRecoveredIntent(params: {
 async function holdAdditionalIntentRecoveryClaim<T>(
   operation: Pick<PaymentRecoveryOperation, "id" | "paymentId" | "attempts" | "processingStartedAt">,
   write: (store: Prisma.TransactionClient) => Promise<T>,
+  /**
+   * #4442 review C-F1: `"payment-row"` for a re-stamp that writes nothing - the
+   * reduction it fences orders on the Payment row, so it waits on no global holder.
+   */
+  locks: "queue" | "payment-row" = "queue",
 ): Promise<{ value: T; heldAt: Date } | null> {
   return prisma.$transaction(async (tx) => {
-    // #4217 (`INV-LOCK-002`): the Payment row before the recovery row, as a reduction netting this ask off takes them.
-    await lockPaymentForRefundedTotal(tx, operation.paymentId);
+    // #4217, #4442 (`INV-LOCK-002`): the global key, then the Payment row, before the recovery row, as a reduction netting this ask off takes them.
+    if (locks === "queue") await lockAdditionalAskQueue(tx, operation.paymentId);
+    else await lockPaymentForRefundedTotal(tx, operation.paymentId);
     const heldAt = new Date();
     const held = await tx.paymentRecoveryOperation.updateMany({
       where: {
@@ -2397,13 +2464,13 @@ async function holdAdditionalIntentRecoveryClaim<T>(
     });
     if (held.count !== 1) return null;
     return { value: await write(tx), heldAt };
-  });
+  }, ADDITIONAL_ASK_QUEUE_TRANSACTION_OPTIONS);
 }
 
 async function processCreateAdditionalPaymentIntentOperation(
   operation: PaymentRecoveryOperation,
   format: ClubFormat,
-) {
+): Promise<PaymentRecoveryProcessOutcome> {
   /**
    * #3170 (epic #2797): the `BookingModification` this operation belongs to, read
    * back through the ONE parser rather than by slicing a prefix off the key
@@ -2421,11 +2488,12 @@ async function processCreateAdditionalPaymentIntentOperation(
    */
   if (isCreditReleaseAskRecoveryKey(operation.idempotencyKey)) {
     const { processCreditReleaseAskOperation } = await import("@/lib/credit-release-ask");
-    await processCreditReleaseAskOperation(operation, format, {
+    const answer = await processCreditReleaseAskOperation(operation, format, {
       holdClaim: holdAdditionalIntentRecoveryClaim,
       complete: (operationId) => completePaymentRecoveryOperation(operationId),
+      wait: (waiting, message) => waitPaymentRecoveryOperation(waiting, message, format),
     });
-    return;
+    return answer === "waited" ? "waited" : "done";
   }
 
   const bookingModificationId =
@@ -2484,7 +2552,7 @@ async function processCreateAdditionalPaymentIntentOperation(
     // nobody can pay (#4272). Its uncollected shares are recorded and the row closed instead.
     const { closeCancelledEditReviewChargeReplay } = await import("@/lib/edit-financial-review-charge-cancelled");
     const cancelledReplay = { format, operation, bookingModificationId, memberId: bookingOwner(booking).member.id ?? null };
-    if (await closeCancelledEditReviewChargeReplay({ ...cancelledReplay, status: booking.status })) return;
+    if (await closeCancelledEditReviewChargeReplay({ ...cancelledReplay, status: booking.status })) return "done";
     const synced = await syncEditFinancialReviewChargeRequest({
       format,
       bookingId: operation.bookingId,
@@ -2695,14 +2763,14 @@ async function processCreateAdditionalPaymentIntentOperation(
      * one debt is a second debt.
      */
     // #4272: a cancellation landing mid-replay takes the cancelled path, not a retry.
-    if (synced.outcome === "not-raised" && (await closeCancelledEditReviewChargeReplay(cancelledReplay))) return;
+    if (synced.outcome === "not-raised" && (await closeCancelledEditReviewChargeReplay(cancelledReplay))) return "done";
     if (!EDIT_REVIEW_CHARGE_OUTCOME_CLOSES_REPLAY[synced.outcome]) {
       throw new Error(
         `Edit financial review charge request for booking modification ${bookingModificationId} was not raised (${formatCents(synced.totalCents, format)} still owed); leaving the recovery operation open to retry`,
       );
     }
     await completeEditFinancialReviewChargeRecovery(operation);
-    return;
+    return "done";
   }
 
   const payment = await prisma.payment.findUnique({
@@ -2728,11 +2796,12 @@ async function processCreateAdditionalPaymentIntentOperation(
    * happen HERE, and the position is the point (#3181 fix round). Below the
    * `upsertPaymentIntentTransaction` this replay is about to perform, a transient
    * database error on this one query throws into `failPaymentRecoveryOperation`,
-   * and the retry it buys cannot work: the ADDITIONAL transaction now exists, so
-   * the "a LATER edit superseded this one" check below would find the row THIS
-   * replay wrote, read it as a supersession, and complete the operation having
-   * done nothing at all. A $50 guest add would be collected with no invoice
-   * behind it and the recovery row would read SUCCEEDED.
+   * and before #4442 the retry it bought could not work: the "a LATER edit
+   * superseded this one" check found the row THIS replay wrote, read it as a
+   * supersession, and completed having done nothing, so a $50 guest add was
+   * collected with no invoice behind it. A retry now finds its own row first
+   * (`ownRow`) and resumes the invoice steps, but reading here still keeps a
+   * transient error before any intent or row exists, where it costs nothing.
    *
    * Read here instead and a throw costs nothing: no intent has been minted, no
    * transaction row written, and the next attempt re-runs the whole replay -
@@ -2765,7 +2834,132 @@ async function processCreateAdditionalPaymentIntentOperation(
   if (await guard.bookingEndedBeforeAskMint(operation.bookingId, bookingModificationId)) {
     await guard.retireOutstandingAskOnEndedBooking({ format, bookingId: operation.bookingId, paymentId: operation.paymentId });
     await completePaymentRecoveryOperation(operation.id);
-    return;
+    return "done";
+  }
+
+  /**
+   * The steps after this recovery's row is written: re-stamp the claim, point
+   * the edit's waiting invoice at the intent, raise the invoice the edit
+   * deferred, complete. One closure so a retry that finds its OWN row runs
+   * exactly them (#4442 review C-F1).
+   */
+  const finishRecoveredAsk = async (paymentIntentId: string, claimedAt: Date | null) => {
+    // #3954 round 6: the Stripe cancels before this can take a while. A price
+    // reduction may have netted this ask off since (a claim older than
+    // `RECENT_RECOVERY_CLAIM_MS` reads as a stalled worker), retiring the row
+    // just written - so the claim is re-checked, and re-stamped, before any
+    // invoice is queued to wait on this intent. A lost claim queues none: the
+    // reduction accounted for this ask's money in its own invoice and history.
+    const stillHeld = await holdAdditionalIntentRecoveryClaim(
+      { id: operation.id, paymentId: operation.paymentId, attempts: operation.attempts, processingStartedAt: claimedAt },
+      async () => true,
+      "payment-row",
+    );
+    if (stillHeld === null) {
+      logger.warn(
+        { operationId: operation.id, bookingId: operation.bookingId, paymentIntentId },
+        "Additional intent recovery lost its claim after writing its row (a price reduction retired the ask, #3954); no supplementary invoice queued for it",
+      );
+      return;
+    }
+
+    // A supplementary Xero invoice op enqueued at modification time waited on
+    // an intent that never existed; point it at the recovered one so the
+    // payment webhook can release it. The anchor comes from the shared parser at
+    // the top of this function, never from a prefix slice spelled here (#3170).
+    if (bookingModificationId) {
+      // #3641: a failed attach alerts an officer rather than stranding the
+      // invoice on no intent until the age backstop retires it.
+      await attachRecoveredIntentToWaitingSupplementaryInvoice({
+        bookingModificationId,
+        paymentIntentId,
+        recoveryOperationId: operation.id,
+      });
+    }
+
+    /**
+     * #3181: and now raise the invoice the edit deferred. The attach above only
+     * ever points an EXISTING waiting operation at the recovered intent; where the
+     * inline dispatch skipped the queue entirely there is nothing for it to point
+     * at, which is the whole defect.
+     *
+     * The figure comes from the `BookingModification` itself rather than from
+     * `operation.amountCents`. They are different quantities: the recovery row
+     * carries what Stripe is collecting, and the invoice bills the edit's SIGNED
+     * components, which a mixed-sign edit (a price reduction plus a larger
+     * late-change fee) separates - the pair is what `INV-MONEY`/#1356 requires and
+     * what the booking-vs-Xero repair pass reads for the same invoice.
+     */
+    // #3954 decision A: a re-issued ask's invoice is its reducing edit's own,
+    // sized by that edit (`queueReissuedAskSupplementaryInvoice`), not the edit's
+    // signed components - which are a reduction.
+    if (bookingModificationId && reissuesReducedAsk) {
+      await queueReissuedAskSupplementaryInvoice({
+        bookingId: operation.bookingId,
+        bookingModificationId,
+        paymentIntentId,
+      });
+    }
+    if (bookingModificationId && !reissuesReducedAsk) {
+      // Read above the mint, deliberately: see the hoist's own comment.
+      if (modificationToBill) {
+        await raiseDeferredSupplementaryInvoiceForRecoveredIntent({
+          operationId: operation.id,
+          bookingId: operation.bookingId,
+          bookingModificationId,
+          paymentIntentId,
+          priceDiffCents: modificationToBill.priceDiffCents,
+          changeFeeCents: modificationToBill.changeFeeCents,
+          // The EDIT's answer, frozen on this row when the mint failed. Re-reading
+          // `payment.xeroInvoiceId` here is the double-bill the helper describes.
+          hadIssuedXeroInvoice: operation.hadIssuedXeroInvoice,
+          originalPaymentStatus: payment.status,
+        });
+        // #3954 round 6: the re-issues this increase folded in are asked for on
+        // this intent, so their own invoices wait on it.
+        await queueFoldedReissuedAskInvoices({
+          bookingId: operation.bookingId,
+          increaseModificationId: bookingModificationId,
+          paymentIntentId,
+        });
+      } else {
+        logger.error(
+          {
+            operationId: operation.id,
+            bookingId: operation.bookingId,
+            bookingModificationId,
+          },
+          "Recovered additional intent has no booking modification to bill - no Xero supplementary invoice was raised",
+        );
+      }
+    }
+
+    await completePaymentRecoveryOperation(operation.id);
+  };
+
+  // #4442 review C-F1: THIS recovery's own row, written by an earlier attempt
+  // that then failed before the steps above (its re-stamp timed out behind a
+  // long holder, say). It is not an overtake: completing here would collect the
+  // ask with no invoice behind it, so the steps run now.
+  const ownRow = payment.transactions.find(
+    (row) => row.kind === PaymentTransactionKind.ADDITIONAL && row.stripePaymentIntentId === operation.paymentIntentId,
+  );
+  if (ownRow?.stripePaymentIntentId) {
+    // A reduction that retired the ask while this recovery sat PENDING has
+    // already accounted for its money; an invoice parked on the withdrawn
+    // intent would only wait for the reaper, so finish as the lost claim does.
+    // FAILED alone is not the test: a superseded row is FAILED with no
+    // `withdrawnAt`, and its invoice correctly follows the carry.
+    if (ownRow.withdrawnAt) {
+      logger.warn(
+        { operationId: operation.id, bookingId: operation.bookingId, paymentIntentId: ownRow.stripePaymentIntentId },
+        "Additional intent recovery found its own row already withdrawn by a price reduction (#4442); no supplementary invoice queued for it",
+      );
+      await completePaymentRecoveryOperation(operation.id);
+      return "done";
+    }
+    await finishRecoveredAsk(ownRow.stripePaymentIntentId, operation.processingStartedAt);
+    return "done";
   }
 
   // A later edit already created a fresh additional intent: it superseded
@@ -2780,7 +2974,7 @@ async function processCreateAdditionalPaymentIntentOperation(
     operation.amountCents <= 0
   ) {
     await completePaymentRecoveryOperation(operation.id);
-    return;
+    return "done";
   }
 
   // #3954 round 7: one resolution, shared with the door's re-issue mint, so
@@ -2804,7 +2998,8 @@ async function processCreateAdditionalPaymentIntentOperation(
    * components, already read above the mint for #3181's reasons; with no
    * modification to read from - or a modification whose own net is not positive,
    * which an ordinary edit's row should never be - there is nothing better than
-   * the frozen figure, and the frozen figure is what runs.
+   * the frozen figure. It runs only with no additional capture on the ledger;
+   * otherwise its carried part is unknown and the replay refuses below.
    *
    * The `EDIT_FINANCIAL_REVIEW` fork returns far above this, so the components
    * read here are always the ordinary edit's own. A review charge's debt is the
@@ -2816,13 +3011,26 @@ async function processCreateAdditionalPaymentIntentOperation(
   // this edit's own, and frozen at the edit - the ask it replaced was retired in
   // that edit's transaction, so there is nothing on the Payment to re-derive it
   // from.
+  // #4442: a frozen figure cannot separate this edit's debt from an earlier
+  // ask's balance. After a capture, accepting a fresh zero-balance snapshot
+  // would let the next retry charge that balance again. Refuse every retry
+  // rather than guess a subtraction; normal recovery exhaustion alerts officers.
+  // Read the ledger, not just the current mirror: a later ask can hide a capture.
+  if (replay.kind === "frozen" && payment.transactions.some(
+    (row) => row.kind === PaymentTransactionKind.ADDITIONAL && isCapturedTransactionStatus(row.status),
+  )) {
+    throw new Error(
+      "Additional intent recovery cannot safely replay its frozen amount after an additional capture; reconcile the booking's payments and collect only the unpaid balance",
+    );
+  }
+
   if (modificationToBill && replay.kind === "frozen") {
     // Belt and braces, and deliberately NOT a completion. An ordinary edit only
     // reaches this processor because its own net was positive, so a zero net
     // here means the modification row and the frozen figure disagree - and
     // completing on that reading would retire a real debt for an arithmetic
-    // reason nobody has checked. Fall back to exactly the pre-fix behaviour,
-    // which never loses money, and say so.
+    // reason nobody has checked. With no additional capture, keep the frozen
+    // amount and say so; after a capture the refusal above prevents overcharging.
     logger.warn(
       {
         operationId: operation.id,
@@ -2841,7 +3049,9 @@ async function processCreateAdditionalPaymentIntentOperation(
         // would be worse than recording none - a 0 says "nothing known to have
         // been absorbed", which is the truth about a figure frozen before this
         // column existed.
-        { amountCents: replay.amountCents, carriedCents: 0 }
+        // #4442 review C-F2: but the live balance it was minted over is still
+        // known - the read above - and the queue re-reads it like any other.
+        { amountCents: replay.amountCents, carriedCents: 0, paymentBalanceCents: askSizedOnBalanceCents(payment) }
       : replay.ask;
   const askCents = ask.amountCents;
 
@@ -2899,6 +3109,7 @@ async function processCreateAdditionalPaymentIntentOperation(
   const { queueSupersededAdditionalIntentCancellationRows, cancelSupersededAdditionalIntentsNow } =
     await import("@/lib/booking-payment-cleanup");
   const held = await holdAdditionalIntentRecoveryClaim(operation, async (store) => {
+    await assertAdditionalAskSizingCurrent(store, operation.paymentId, ask);
     // #4036 review: an adopted intent another ask recorded meanwhile is never written over.
     await refuseAdoptedIntentOnLedger(store, { intent: pi, adopted });
     await upsertPaymentIntentTransaction({
@@ -2940,7 +3151,7 @@ async function processCreateAdditionalPaymentIntentOperation(
       { operationId: operation.id, bookingId: operation.bookingId, paymentIntentId: pi.id },
       "Additional intent recovery lost its claim before writing its row (a price reduction netted it off, #3954); nothing written - the minted intent was never offered to anyone and is left uncollectable",
     );
-    return;
+    return "done";
   }
   await cancelSupersededAdditionalIntentsNow({
     format,
@@ -2954,108 +3165,26 @@ async function processCreateAdditionalPaymentIntentOperation(
   // cancel retires one (a failure throws, to retry), the debt closes - no invoice is owed.
   if (await guard.replayRetiresAskOnEndedBooking({ format, bookingId: operation.bookingId, paymentId: operation.paymentId, paymentIntentId: pi.id })) {
     await completePaymentRecoveryOperation(operation.id);
-    return;
+    return "done";
   }
 
-  // #3954 round 6: the Stripe cancels above can take a while. A price
-  // reduction may have netted this ask off since (a claim older than
-  // `RECENT_RECOVERY_CLAIM_MS` reads as a stalled worker), retiring the row
-  // just written - so the claim is re-checked, and re-stamped, before any
-  // invoice is queued to wait on this intent. A lost claim queues none: the
-  // reduction accounted for this ask's money in its own invoice and history.
-  const stillHeld = await holdAdditionalIntentRecoveryClaim(
-    { id: operation.id, paymentId: operation.paymentId, attempts: operation.attempts, processingStartedAt: held.heldAt },
-    async () => true,
-  );
-  if (stillHeld === null) {
-    logger.warn(
-      { operationId: operation.id, bookingId: operation.bookingId, paymentIntentId: pi.id },
-      "Additional intent recovery lost its claim after writing its row (a price reduction retired the ask, #3954); no supplementary invoice queued for it",
-    );
-    return;
-  }
-
-  // A supplementary Xero invoice op enqueued at modification time waited on
-  // an intent that never existed; point it at the recovered one so the
-  // payment webhook can release it. The anchor comes from the shared parser at
-  // the top of this function, never from a prefix slice spelled here (#3170).
-  if (bookingModificationId) {
-    // #3641: a failed attach alerts an officer rather than stranding the
-    // invoice on no intent until the age backstop retires it.
-    await attachRecoveredIntentToWaitingSupplementaryInvoice({
-      bookingModificationId,
-      paymentIntentId: pi.id,
-      recoveryOperationId: operation.id,
-    });
-  }
-
-  /**
-   * #3181: and now raise the invoice the edit deferred. The attach above only
-   * ever points an EXISTING waiting operation at the recovered intent; where the
-   * inline dispatch skipped the queue entirely there is nothing for it to point
-   * at, which is the whole defect.
-   *
-   * The figure comes from the `BookingModification` itself rather than from
-   * `operation.amountCents`. They are different quantities: the recovery row
-   * carries what Stripe is collecting, and the invoice bills the edit's SIGNED
-   * components, which a mixed-sign edit (a price reduction plus a larger
-   * late-change fee) separates - the pair is what `INV-MONEY`/#1356 requires and
-   * what the booking-vs-Xero repair pass reads for the same invoice.
-   */
-  // #3954 decision A: a re-issued ask's invoice is its reducing edit's own,
-  // sized by that edit (`queueReissuedAskSupplementaryInvoice`), not the edit's
-  // signed components - which are a reduction.
-  if (bookingModificationId && reissuesReducedAsk) {
-    await queueReissuedAskSupplementaryInvoice({
-      bookingId: operation.bookingId,
-      bookingModificationId,
-      paymentIntentId: pi.id,
-    });
-  }
-  if (bookingModificationId && !reissuesReducedAsk) {
-    // Read above the mint, deliberately: see the hoist's own comment.
-    if (modificationToBill) {
-      await raiseDeferredSupplementaryInvoiceForRecoveredIntent({
-        operationId: operation.id,
-        bookingId: operation.bookingId,
-        bookingModificationId,
-        paymentIntentId: pi.id,
-        priceDiffCents: modificationToBill.priceDiffCents,
-        changeFeeCents: modificationToBill.changeFeeCents,
-        // The EDIT's answer, frozen on this row when the mint failed. Re-reading
-        // `payment.xeroInvoiceId` here is the double-bill the helper describes.
-        hadIssuedXeroInvoice: operation.hadIssuedXeroInvoice,
-        originalPaymentStatus: payment.status,
-      });
-      // #3954 round 6: the re-issues this increase folded in are asked for on
-      // this intent, so their own invoices wait on it.
-      await queueFoldedReissuedAskInvoices({
-        bookingId: operation.bookingId,
-        increaseModificationId: bookingModificationId,
-        paymentIntentId: pi.id,
-      });
-    } else {
-      logger.error(
-        {
-          operationId: operation.id,
-          bookingId: operation.bookingId,
-          bookingModificationId,
-        },
-        "Recovered additional intent has no booking modification to bill - no Xero supplementary invoice was raised",
-      );
-    }
-  }
-
-  await completePaymentRecoveryOperation(operation.id);
+  await finishRecoveredAsk(pi.id, held.heldAt);
+  return "done";
 }
+
+/**
+ * What one processed operation came to: `done`, or `waited` when it was put back to wait
+ * (`waitPaymentRecoveryOperation`, #4253) - which the run counts as a retry, never a success.
+ */
+type PaymentRecoveryProcessOutcome = "done" | "waited";
 
 async function processPaymentRecoveryOperation(
   operation: PaymentRecoveryOperation,
   format: ClubFormat,
-) {
+): Promise<PaymentRecoveryProcessOutcome> {
   if (operation.type === PaymentRecoveryOperationType.CANCEL_PAYMENT_INTENT) {
     await processCancelPaymentIntentOperation(operation);
-    return;
+    return "done";
   }
 
   if (
@@ -3063,22 +3192,21 @@ async function processPaymentRecoveryOperation(
     PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION
   ) {
     await processBookingModificationRefundOperation(operation, format);
-    return;
+    return "done";
   }
 
   if (
     operation.type ===
     PaymentRecoveryOperationType.CREATE_ADDITIONAL_PAYMENT_INTENT
   ) {
-    await processCreateAdditionalPaymentIntentOperation(operation, format);
-    return;
+    return processCreateAdditionalPaymentIntentOperation(operation, format);
   }
 
   if (
     operation.type === PaymentRecoveryOperationType.REFUND_SUPERSEDED_PAYMENT
   ) {
     await processRefundSupersededPaymentOperation(operation, format);
-    return;
+    return "done";
   }
 
   // #2262: the dispatch is EXHAUSTIVE, never a fall-through. The final arm
@@ -3290,8 +3418,9 @@ export async function processPaymentRecoveryOperations(options?: {
     result.processed += 1;
 
     try {
-      await processPaymentRecoveryOperation(operation, format);
-      result.succeeded += 1;
+      // #4253: an operation put back to wait is a retry, never a completion.
+      if ((await processPaymentRecoveryOperation(operation, format)) === "waited") result.retried += 1;
+      else result.succeeded += 1;
     } catch (error) {
       logger.error(
         { err: error, operationId: operation.id, type: operation.type },

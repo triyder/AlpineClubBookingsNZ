@@ -36,13 +36,17 @@ export async function POST() {
     // claim is refused with nothing sent, rather than run alongside it.
     const result = await withOtherLodgesSyncClaim(() => downloadOtherClubsFromServer());
     if (result === null) return respondSyncRunning();
+    // A download that stopped (#4262 review) is its own outcome, with the
+    // reason, never a plain success.
     await createAuditLog({
       action: "alpine_server.other_lodges.download",
       category: "lodge",
-      severity: "info",
-      outcome: "success",
+      severity: result.stopped ? "important" : "info",
+      outcome: result.stopped ? "failure" : "success",
       memberId: guard.session.user.id,
-      summary: "Downloaded Other Clubs from Alpine Central Server",
+      summary: result.stopped
+        ? `Download from Alpine Central Server stopped (${result.stopped}); its cursor was not recorded`
+        : "Downloaded Other Clubs from Alpine Central Server",
       // Hidden (#58): lodges the central server deleted, now kept only for
       // the bookings and requests that name them.
       details: `fetched ${result.fetched}, added ${result.created}, updated ${result.updated}, hidden ${result.hiddenLodges.length}${result.hiddenLodges.length ? ` (${result.hiddenLodges.join(", ")})` : ""}`,

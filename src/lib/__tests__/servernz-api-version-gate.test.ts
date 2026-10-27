@@ -55,6 +55,10 @@ const mocks = vi.hoisted(() => {
 
 vi.mock("@/lib/servernz-config", () => ({
   SERVERNZ_PROVIDER: "servernz",
+  withServerNzConnectionTransaction: async (work: (tx: unknown) => Promise<unknown>) => {
+    await mocks.lockServerNzSettings();
+    return work(mocks.tx);
+  },
   getOperationalServerNzCredential: mocks.getOperationalServerNzCredential,
   readServerNzCredentialVersion: mocks.readServerNzCredentialVersion,
 }));
@@ -65,6 +69,7 @@ vi.mock("@/lib/integration-credentials", () => ({
 
 vi.mock("@/lib/servernz-settings", () => ({
   SERVERNZ_SETTINGS_ID: "default",
+  SERVERNZ_TRANSACTION_OPTIONS: { timeout: 150_000, maxWait: 10_000 },
   loadServerNzSettings: mocks.loadServerNzSettings,
   lockServerNzSettings: mocks.lockServerNzSettings,
   recordServerVersionCheck: mocks.recordServerVersionCheck,
@@ -403,7 +408,7 @@ describe("refreshStoredServerVersion: one path writes the column", () => {
     expectRecorded("3.0");
     expect(mocks.order[0]).toBe("lock");
     expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), { timeout: 150_000, maxWait: 10_000 });
-    expect(mocks.order.slice(1).sort()).toEqual(["read address", "read credential version"]);
+    expect(mocks.order).toEqual(["lock", "lock", "read address", "read credential version"]);
     // ...and the gate then enforces it: nothing else reaches the server.
     settings("3.0");
     fetchMock.mockClear();
@@ -542,5 +547,19 @@ describe("every request names this site's version", () => {
     fetchMock.mockResolvedValue(respond(200));
     await fetchSharedPostImage(`https://central.test/api/images/posts/${"b".repeat(32)}.webp`);
     expect(fetchMock.mock.calls[2][1].headers["X-Client-Api-Version"]).toBe(SERVERNZ_EXPECTED_SERVER_VERSION);
+  });
+});
+
+
+describe("request connection fence (#4436)", () => {
+  it("reads both halves through the transaction client before any HTTP", async () => {
+    fetchMock.mockImplementation(async () => {
+      expect(mocks.loadServerNzSettings).toHaveBeenCalledWith(mocks.tx);
+      expect(mocks.getOperationalServerNzCredential).toHaveBeenCalledWith(mocks.tx);
+      expect(mocks.order[0]).toBe("lock");
+      return respond(200, { lodges: [], cursor: null, count: 0 });
+    });
+    await pullOtherLodges();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

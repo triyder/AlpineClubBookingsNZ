@@ -310,7 +310,7 @@ export const REISSUED_ASK_REASON = "modification_reissued_ask";
 // a shared key Stripe answers the second review's mint with the FIRST review's
 // intent - now the DESIRED behaviour: the owner's 30 Aug 2026 decision on #3170
 // is that both reviews contribute to ONE request for the total. Two requests lost
-// money: `queueSupersededAdditionalIntentCancellations` cancels every OTHER
+// money: `queueSupersededAdditionalIntentCancellationRows` cancels every OTHER
 // outstanding additional on the payment when one is minted, and
 // `reconcilePaymentAggregates` carries one `additionalAmountCents`, so $200 then
 // $30 collected $30 of $230, both tasks COMPLETED.

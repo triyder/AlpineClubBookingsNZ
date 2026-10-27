@@ -8,17 +8,16 @@ import { prisma } from "@/lib/prisma";
  * The Alpine Central Server asks about a lodge by its permanent central id —
  * never by name, because a lodge can be renamed centrally. This site answers
  * only for a lodge the server says this club OWNS (`ownLodges` from the pull,
- * stored on `ServerNzSettings.otherLodgesOwnedLodges`), and maps it to one of
- * its own `Lodge` rows:
+ * stored on `ServerNzSettings.otherLodgesOwnedLodges`), and only for the
+ * ACTIVE lodge an administrator explicitly LINKED to it ("Central lodge",
+ * `Lodge.centralLodgeId`). Otherwise nothing: the route answers 404, the same
+ * as for an unknown id.
  *
- *  1. the active lodge an administrator linked to it ("Central lodge",
- *     `Lodge.centralLodgeId`), if any; otherwise
- *  2. the ONE-LODGE DEFAULT: when the club owns exactly one central lodge and
- *     has exactly one active lodge, that lodge — unless it is explicitly linked
- *     to something else. Resolved here, at request time, and never written, so
- *     adding a second lodge or a second owned lodge withdraws the default at
- *     once instead of leaving a stale link behind; otherwise
- *  3. nothing: the route answers 404, the same as for an unknown id.
+ * EVERY CLUB LINKS EXPLICITLY, a one-lodge club included (owner decision,
+ * 24 Oct 2026, #4262): there is no automatic one-lodge fallback. A club with
+ * one active lodge that owns one central lodge is only offered that lodge
+ * preselected on the Central lodge card (`suggestedCentralLodgeId`), and
+ * nothing is answered until an administrator saves it.
  *
  * An inactive lodge never answers: it takes no bookings, so it has no beds.
  */
@@ -32,23 +31,27 @@ function readActiveLodges() {
   });
 }
 
-/** The one-lodge default's rule, on values already read (pure, for the admin page too). */
-export function defaultCentralLodgeId(
+/**
+ * The central lodge the Central lodge card PRESELECTS when an administrator
+ * opens it to edit (pure, on values already read): the club owns exactly one
+ * central lodge, has exactly one active lodge, and that lodge is not linked
+ * yet. A suggestion only — never an answer: until it is saved, the lodge
+ * answers nothing (#4262). `null` otherwise.
+ */
+export function suggestedCentralLodgeId(
   owned: ReadonlyArray<OwnedCentralLodge> | null,
   activeLodges: ReadonlyArray<{ centralLodgeId: string | null }>,
 ): string | null {
   if (!owned || owned.length !== 1 || activeLodges.length !== 1) return null;
   const [only] = owned;
   const [lodge] = activeLodges;
-  if (!only || !lodge) return null;
-  return lodge.centralLodgeId === null || lodge.centralLodgeId === only.id ? only.id : null;
+  if (!only || !lodge || lodge.centralLodgeId !== null) return null;
+  return only.id;
 }
 
 export async function resolveLocalLodgeForCentralId(
   centralLodgeId: string,
   owned: ReadonlyArray<OwnedCentralLodge> | null,
-  /** The active lodges (at least two, if there are), when the caller already has them. */
-  activeLodges?: ReadonlyArray<{ id: string; centralLodgeId: string | null }>,
 ): Promise<string | null> {
   if (!owned?.some((l) => l.id === centralLodgeId)) return null;
 
@@ -56,12 +59,7 @@ export async function resolveLocalLodgeForCentralId(
     where: { centralLodgeId },
     select: { id: true, active: true },
   });
-  if (linked) return linked.active ? linked.id : null;
-
-  // Two rows is enough to know "not exactly one".
-  const active = activeLodges ?? (await readActiveLodges());
-  const [only] = active;
-  return only && defaultCentralLodgeId(owned, active) === centralLodgeId ? only.id : null;
+  return linked?.active ? linked.id : null;
 }
 
 /**
@@ -70,30 +68,35 @@ export async function resolveLocalLodgeForCentralId(
  * endpoint refuses (or the reverse):
  *
  *  - `answersFor`: the owned central lodge this local lodge actually answers
- *    for — by its own link or by the one-lodge default — or null;
- *  - `heldBy`: when this would be the one-lodge default but ANOTHER local lodge
- *    (typically an inactive one) holds the only owned central lodge's link,
- *    that lodge's name, so the page can say why nothing is answered.
+ *    for — by its own saved link — or null;
+ *  - `heldBy`: when the club owns exactly one central lodge and ANOTHER local
+ *    lodge (typically an inactive one) holds its link, that lodge's name, so
+ *    the page can say why nothing is answered here;
+ *  - `suggested`: the central lodge the card preselects on Edit
+ *    (`suggestedCentralLodgeId`), or null. Never what the lodge answers for.
  */
 export async function centralLinkStatus(
   localLodgeId: string,
   owned: ReadonlyArray<OwnedCentralLodge> | null,
-): Promise<{ answersFor: string | null; heldBy: string | null }> {
-  if (!owned) return { answersFor: null, heldBy: null };
-  const active = await readActiveLodges();
+): Promise<{ answersFor: string | null; heldBy: string | null; suggested: string | null }> {
+  if (!owned) return { answersFor: null, heldBy: null, suggested: null };
   for (const lodge of owned) {
-    if ((await resolveLocalLodgeForCentralId(lodge.id, owned, active)) === localLodgeId) {
-      return { answersFor: lodge.id, heldBy: null };
+    if ((await resolveLocalLodgeForCentralId(lodge.id, owned)) === localLodgeId) {
+      return { answersFor: lodge.id, heldBy: null, suggested: null };
     }
   }
   const [only] = owned;
-  if (owned.length !== 1 || !only) return { answersFor: null, heldBy: null };
+  if (owned.length !== 1 || !only) return { answersFor: null, heldBy: null, suggested: null };
   const holder = await prisma.lodge.findUnique({
     where: { centralLodgeId: only.id },
     select: { id: true, name: true },
   });
-  return {
-    answersFor: null,
-    heldBy: holder && holder.id !== localLodgeId ? holder.name : null,
-  };
+  if (holder && holder.id !== localLodgeId) {
+    return { answersFor: null, heldBy: holder.name, suggested: null };
+  }
+  const active = await readActiveLodges();
+  const [onlyActive] = active;
+  const suggested =
+    onlyActive?.id === localLodgeId && !holder ? suggestedCentralLodgeId(owned, active) : null;
+  return { answersFor: null, heldBy: null, suggested };
 }

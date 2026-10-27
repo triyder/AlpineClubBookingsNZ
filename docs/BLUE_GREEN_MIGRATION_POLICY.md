@@ -226,6 +226,17 @@ Most rows in [`BLUE_GREEN_MIGRATION_SAFETY.tsv`](BLUE_GREEN_MIGRATION_SAFETY.tsv
 
 The measurement behind the 5 s default, both of its bounds, and the recovery an operator runs are in [`CONCURRENCY_AND_LOCKING.md`](CONCURRENCY_AND_LOCKING.md#the-migration-lock-timeout-3377) and [`PRODUCTION_UPGRADE_RUNBOOK.md` §2.1a](PRODUCTION_UPGRADE_RUNBOOK.md#21a-step-1320-stopped-on-a-lock-timeout).
 
+## Which role a migration runs as (#4453)
+
+A deployment that uses the [least-privilege roles](../DEPLOYMENT.md#least-privilege-database-roles) runs `prisma migrate deploy` as the **migration role**. That role owns every object in schema `public` but is not a superuser. The old colour keeps serving as the **application role** throughout. Four rules follow, and each one is how "every migration stays readable by the deployed old code" holds when the roles differ:
+
+- **A new table or sequence reaches the old colour's role without a grant in the migration.** The migration role's default privileges give the application role SELECT, INSERT, UPDATE and DELETE on each new table, and USAGE and SELECT on each new sequence, the moment the migration creates it. Do not add a `GRANT` to a migration, and do not `REVOKE` from the application role in one either. A migration that narrowed a right the live colour depends on would break it mid-deploy, and the roles' declared shape lives in `src/lib/database-roles.ts`, not in the migration history.
+- **An append-only relation, and the retention role's columns, are declared in code, not in a migration.** A release that changes `APPEND_ONLY_RELATIONS` or `AUDIT_ANONYMISED_REQUEST_COLUMNS` tells operators to re-run `pnpm run db:provision-roles --apply` *after* the deploy, in its [`UPGRADING.md`](UPGRADING.md) entry. Until then a new append-only relation carries the default privileges, and the nightly retention job cannot clear a new column. A change to the anonymised columns also needs a migration that extends the `AuditLog` request-data trigger (`20261125020000_audit_request_data_update_only_clears`). A migration that drops and re-creates `BookingLedgerLine` or `AuditLog` (a table rewrite by copy) needs the same note, because the new table starts with the default privileges too.
+- **A view is written through with its owner's rights.** A new view gets the default table grants, so the application could write through it until provisioning narrows views to SELECT. The deploy script's post-migrate check stops a deploy that leaves a view writable by the application role, and asks for a re-run of `--apply`.
+- **Nothing a migration does may need a superuser.** An untrusted extension, `ALTER SYSTEM`, `ALTER ROLE` or a cross-database statement fails under the migration role. So does a `SECURITY DEFINER` routine, which provisioning refuses unless `SECURITY_DEFINER_ROUTINE_ALLOWLIST` names it. Such a statement is a separate operator step, and the release's `UPGRADING.md` entry names it. Trusted extensions (`pgcrypto`, `btree_gist`) work, because the migration role has CREATE on the database. `CREATE TEMP TABLE` works, because provisioning grants the migration role `TEMPORARY` directly; AI Diagnostics provisioning revokes it from PUBLIC. `src/lib/__tests__/database-roles.realdb.test.ts` applies every committed migration as that role to an empty database.
+
+A deployment that has not switched still migrates as the superuser, so all four rules hold for it trivially.
+
 ## Marker migrations are never squashed
 
 Three migrations exist only so their finish time on an install can be read

@@ -797,8 +797,7 @@ test("the officer sees the member badges and the admin-only availability strip, 
   expect(approved.priceCents).toBeGreaterThan(0);
   expect(approved.guestCount).toBe(REQUEST_BODY.headcount);
   // This file turned BOTH the Internet Banking and Xero modules on in
-  // beforeAll, so the approval leaves the payment method to the member (fork,
-  // booking-fixes): nothing is invoiced here, the member pays from the booking
+  // beforeAll, so the approval leaves the payment method to the member (#4019): nothing is invoiced here, the member pays from the booking
   // page, and a switch to internet banking raises the invoice then. Alice holds
   // no account credit, so the booking is not settled by credit ("paid").
   expect(approved.invoiceMode).toBe("member");
@@ -902,8 +901,8 @@ test("the approved booking tells its owner what is still owing, and never that t
   await page.goto(`/bookings/${approvedBookingId}`);
 
   // The booking is CONFIRMED and UNPAID with no receivable yet (both modules
-  // are on, so the approval left the method to the member — fork,
-  // booking-fixes): the owner gets the ordinary Complete Payment card, the
+  // are on, so the approval left the method to the member — #4019): the
+  // owner gets the ordinary Complete Payment card, the
   // door every card booking pays through, and the switch to internet banking
   // beside it. No Internet Banking card, no reference: nothing has been
   // minted for the member to quote until they choose. Scoped to <main> for

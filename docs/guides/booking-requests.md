@@ -454,6 +454,15 @@ booking as paid on the spot. With either module off there is no choice to
 offer, so the approval works as it always did: a pay-on-account receivable is
 created and invoiced through Xero, or admins are emailed to invoice by hand.
 
+The queue describes credit against the **current** payment modules. If either
+was turned off after the member submitted their choice, the row says credit
+will not be applied on approval. A paid approval says nothing is owing, whether
+credit covered the price or the officer set a zero price.
+
+Opening card payment and leaving it unfinished does not pay the booking. A
+sanctioned price reduction, such as linking a placeholder to a member below,
+still returns excess applied credit and settles a fully covered booking; an unpaid finished stay still appears in the collection queue.
+
 **If you link a guest row to a real member account** (#2309). A request's guest
 list is free-text names, but you can attach a place to an actual member so it
 prices at member rates. With the **Add another member as a guest** module on,

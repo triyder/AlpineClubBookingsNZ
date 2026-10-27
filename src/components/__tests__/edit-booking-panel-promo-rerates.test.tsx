@@ -111,7 +111,7 @@ function makeBooking() {
     },
     requiresAdminReview: false,
     adminReviewStatus: null,
-    otherLodges: [{ id: "lodge-a", name: "Aorangi Lodge", label: "Aorangi Lodge" }], // `label` is the fork's Other lodges field (triyder #61)
+    otherLodges: [{ id: "lodge-a", name: "Aorangi Lodge", label: "Aorangi Lodge" }],
     otherLodgeId: null,
     otherLodgeRateEligibleGuestIds: ["g-visitor"],
   };

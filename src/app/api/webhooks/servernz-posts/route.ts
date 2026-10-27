@@ -74,6 +74,14 @@ export async function POST(request: NextRequest) {
     throw error;
   }
 
+  // A push body is a JSON object. The free-beds question signs a newline-
+  // separated text with the same secret, so a captured, still-fresh question
+  // would verify here and ring the doorbell once; refusing anything that is
+  // not an object BEFORE the signature closes that replay in both directions.
+  if (!body.trimStart().startsWith("{")) {
+    return NextResponse.json({ error: "Invalid body" }, { status: 400 });
+  }
+
   const verified = verifyServerNzSignature({
     secret,
     timestamp: request.headers.get(SERVERNZ_TIMESTAMP_HEADER) ?? "",

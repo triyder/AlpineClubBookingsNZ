@@ -33,6 +33,11 @@ import {
   resolveBackupConfig,
 } from "@/lib/backup-config";
 import { pruneLocalBackups, storeLocalBackup } from "@/lib/backup-local";
+import { configuredAuditArchiveDatabaseUrl } from "@/lib/audit-retention";
+import {
+  isSameDatabaseTarget,
+  restoreDumpWithoutOwnershipOrPrivileges,
+} from "@/lib/backup-restore-validation";
 
 const BACKUP_DIR = "/tmp/tacbookings-backups";
 const S3_BACKUP_PREFIX = "tacbookings_s3backup";
@@ -119,16 +124,17 @@ export async function runDatabaseBackup(): Promise<BackupResult> {
 
   const sanitizedDatabaseUrl = sanitizePostgresUrlForPgDump(databaseUrl);
   const restoreValidationDatabaseUrl = config.restoreValidationUrl ?? undefined;
-  if (
-    restoreValidationDatabaseUrl &&
-    sanitizePostgresUrlForPgDump(restoreValidationDatabaseUrl) === sanitizedDatabaseUrl
-  ) {
-    return {
-      success: false,
-      error:
-        "The restore-validation URL must point at a disposable shadow database, not the live DATABASE_URL",
-    };
-  }
+  // The same database NAME as the live database or the audit archive refuses the
+  // VALIDATION, whoever connects and wherever (#4453): it starts with DROP SCHEMA.
+  // The backup itself is still taken and stored; the run then reports failure.
+  const archiveUrl = configuredAuditArchiveDatabaseUrl();
+  const validationRefusal = !restoreValidationDatabaseUrl
+    ? undefined
+    : archiveUrl && isSameDatabaseTarget(restoreValidationDatabaseUrl, archiveUrl)
+      ? "The restore-validation URL must point at a disposable shadow database, not the audit archive database"
+      : isSameDatabaseTarget(restoreValidationDatabaseUrl, databaseUrl)
+        ? "The restore-validation URL must point at a disposable shadow database, not the live DATABASE_URL"
+        : undefined;
 
   try {
     // Ensure backup directory exists
@@ -248,10 +254,27 @@ export async function runDatabaseBackup(): Promise<BackupResult> {
       }
     }
 
+    if (validationRefusal) {
+      logger.error({ job: "backup" }, validationRefusal);
+      cleanupS3Readback(s3ReadbackPath);
+      cleanupOldBackups(config.retentionDays);
+      return {
+        success: false,
+        filename,
+        filepath,
+        uploadedToS3,
+        s3Key,
+        s3ReadbackVerified,
+        s3ReadbackSizeBytes,
+        sizeBytes: stats.size,
+        error: `${validationRefusal}. The backup was taken and stored; its restore validation was skipped.`,
+      };
+    }
+
     if (restoreValidationDatabaseUrl) {
       const sourcePath = s3ReadbackPath ?? filepath;
       try {
-        restoreValidation = validateBackupRestore(
+        restoreValidation = await validateBackupRestore(
           sourcePath,
           restoreValidationDatabaseUrl,
           s3ReadbackPath ? "s3-readback" : "local-file"
@@ -611,11 +634,11 @@ function cleanupS3Readback(readbackPath?: string) {
   }
 }
 
-function validateBackupRestore(
+async function validateBackupRestore(
   sourcePath: string,
   restoreValidationDatabaseUrl: string,
   source: BackupRestoreValidation["source"]
-): BackupRestoreValidation {
+): Promise<BackupRestoreValidation> {
   const { argvUrl: sanitizedRestoreUrl, password: restorePassword } =
     splitPostgresPassword(
       sanitizePostgresUrlForPgDump(restoreValidationDatabaseUrl),
@@ -638,18 +661,14 @@ function validateBackupRestore(
     }
   );
 
-  const sql = execFileSync("gunzip", ["-c", sourcePath], {
-    timeout: BACKUP_COMMAND_TIMEOUT_MS,
-    maxBuffer: BACKUP_COMMAND_MAX_BUFFER_BYTES,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-
-  execFileSync("psql", [sanitizedRestoreUrl, "-v", "ON_ERROR_STOP=1"], {
-    input: sql,
-    timeout: BACKUP_COMMAND_TIMEOUT_MS,
-    maxBuffer: BACKUP_COMMAND_MAX_BUFFER_BYTES,
+  // Owners and grants are left out of the validation restore only, so a
+  // non-superuser that owns just the shadow database can run it; streamed, so
+  // the dump is never held in memory (#4453). The backup file is unchanged.
+  await restoreDumpWithoutOwnershipOrPrivileges({
+    sourcePath,
+    argvUrl: sanitizedRestoreUrl,
     env: restoreEnv,
-    stdio: ["pipe", "pipe", "pipe"],
+    timeoutMs: BACKUP_COMMAND_TIMEOUT_MS,
   });
 
   const counts = execFileSync(

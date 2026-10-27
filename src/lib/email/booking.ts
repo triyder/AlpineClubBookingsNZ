@@ -57,9 +57,8 @@ import {
 } from "../email-message-notes";
 import { bookingPaymentDueNote, type BookingPaymentDueInstruction } from "../email-payment-due-note";
 import { CLUB_NAME } from "@/config/club-identity";
-import {
-  CREDIT_RELEASE_ASK_REASON,
-} from "@/lib/credit-release-ask-keys";
+import { paymentRequestCauseSentence, preArrivalOutstandingNote, type AdditionalAskCause } from "@/lib/additional-ask-cause";
+import { bankTransferNoteText, type BankTransferOffer } from "@/lib/credit-release-bank-transfer";
 import { EMAIL_DEFAULT_LODGE_NAME } from "@/lib/email-message-settings";
 import { financialReviewNote } from "@/lib/booking-financial-review-copy";
 import { appliedCreditGiveBackNote, unpaidAskCancelledNote } from "@/lib/booking-credit-give-back-copy";
@@ -1159,6 +1158,8 @@ export async function sendPreArrivalReminderEmail(params: {
   // the pre-arrival cron when the delta is uncollected; zero/omitted otherwise,
   // which leaves the message byte-for-byte as it was.
   outstandingAdditionalAmountCents?: number;
+  // #4253: why it is owed; absent reads as a change to the stay.
+  outstandingAdditionalCause?: AdditionalAskCause;
 },
   format: ClubFormat,
 ) {
@@ -1243,7 +1244,7 @@ export async function sendPreArrivalReminderEmail(params: {
       // to write the conditional itself (the {{doorCodeNote}} convention).
       outstandingAdditionalNote:
         outstandingAdditionalAmountCents > 0
-          ? `There is still ${formatMoneyCents(outstandingAdditionalAmountCents, format)} to pay on this booking after a change to your stay. Please pay it from your booking page before you arrive.`
+          ? preArrivalOutstandingNote(params.outstandingAdditionalCause ?? "edit", formatMoneyCents(outstandingAdditionalAmountCents, format))
           : "",
     },
     lodgeId: params.lodgeId,
@@ -1343,15 +1344,26 @@ export async function sendAdditionalPaymentReminderEmail(params: {
   requestedOn: Date;
   lodgeId?: string | null;
   /**
-   * #4253: the unpaid request's cause (its ledger `reason`). A request for credit
-   * that was used elsewhere in the club's accounts is worded as that, never as
-   * "a change to your booking increased the total" (`INV-ADDPAY-045`).
+   * #4253: why the request exists (`additionalAskCause` over its ledger rows). A request for
+   * credit that was used elsewhere in the club's accounts is worded as that, never as "a
+   * change to your booking increased the total" (`INV-ADDPAY-045`); one an edit merged into
+   * says both (`INV-ADDPAY-048`). Absent reads as a change, the wording this email always had.
    */
-  askReason?: string | null;
+  askCause?: AdditionalAskCause;
+  /**
+   * #4253 release 2 (D6): the bank-transfer offer, resolved by the caller BEFORE it claimed the
+   * reminder's stamp (`resolveCreditReleaseReminderGate`), so nothing here can fail between the
+   * claim and the mailer. Only a request purely for credit used elsewhere carries one; absent,
+   * the email is card-only.
+   */
+  bankTransfer?: BankTransferOffer | null;
 },
   format: ClubFormat,
 ) {
-  const creditRelease = params.askReason === CREDIT_RELEASE_ASK_REASON;
+  const creditRelease = params.askCause === "credit-release" || params.askCause === "mixed";
+  // Only a request that is purely the released credit offers a transfer: a merged one's amount
+  // includes the edit's own money, which is not owed on the booking's invoice a transfer would quote.
+  const bankTransfer = params.askCause === "credit-release" ? (params.bankTransfer ?? null) : null;
   // Returns the outcome rather than swallowing it (#2350): both callers write a
   // stamp BEFORE sending, and that stamp is also the 60-minute cooldown, so a
   // withheld/suppressed/placeholder send — which returns, it does not throw —
@@ -1362,7 +1374,9 @@ export async function sendAdditionalPaymentReminderEmail(params: {
       ? "Payment needed for your lodge booking"
       : `Payment Still Needed - ${EMAIL_DEFAULT_LODGE_NAME}`,
     html: await renderEmailHtml(() =>
-      creditRelease ? creditReleasedPaymentRequestTemplate(params, format) : additionalPaymentReminderTemplate(params, format),
+      creditRelease
+        ? creditReleasedPaymentRequestTemplate({ ...params, cause: params.askCause === "mixed" ? "mixed" : "credit-release", bankTransfer }, format)
+        : additionalPaymentReminderTemplate(params, format),
     ),
     bookingContext: bookingOwnerEmailContext(params.bookingId, params.recipientMemberId),
     templateName: creditRelease ? "credit-released-payment-request" : "additional-payment-reminder",
@@ -1372,6 +1386,15 @@ export async function sendAdditionalPaymentReminderEmail(params: {
       requestedOn: emailClubDate(params.requestedOn),
       checkIn: emailCalendarDay(params.checkIn),
       checkOut: emailCalendarDay(params.checkOut),
+      ...(creditRelease
+        ? {
+            askCauseSentence: paymentRequestCauseSentence(
+              params.askCause === "mixed" ? "mixed" : "credit-release",
+              formatMoneyCents(params.additionalAmountCents, format),
+            ),
+            bankTransferNote: bankTransferNoteText(bankTransfer),
+          }
+        : {}),
     },
     lodgeId: params.lodgeId,
   });

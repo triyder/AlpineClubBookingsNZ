@@ -1056,7 +1056,7 @@ export async function register() {
       );
 
       try {
-        const { syncOtherClubsWithServer } = await import(
+        const { alpineServerSyncRunStatus, syncOtherClubsWithServer } = await import(
           "./lib/cron-alpine-server-sync"
         );
         const result = await syncOtherClubsWithServer();
@@ -1067,7 +1067,7 @@ export async function register() {
         await recordCronRun(
           "alpine-server-other-lodges-sync",
           startedAt,
-          result.status === "skipped" ? "SKIPPED" : "SUCCESS",
+          alpineServerSyncRunStatus(result),
           { ...result },
         );
         Sentry.captureCheckIn({

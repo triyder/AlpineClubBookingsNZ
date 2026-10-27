@@ -1,3 +1,4 @@
+import { additionalAskCause } from "@/lib/additional-ask-cause";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { BoundClubFormat } from "@/lib/club-format-bound";
 import { BookingPaymentSection } from "@/components/booking-payment-section";
@@ -350,15 +351,7 @@ export function BookingPaymentCards({
                 ) : null}
                 <SwitchToInternetBankingButton
                   bookingId={booking.id}
-                  // An approved whole-lodge booking is already CONFIRMED and
-                  // held, so the club's configured sentence — which promises
-                  // to confirm the booking once the transfer reconciles —
-                  // would be untrue here. Fixed wording for that one case.
-                  description={
-                    booking.wholeLodgeHold && booking.status === "CONFIRMED"
-                      ? "Prefer to pay by internet banking? We will email a Xero invoice. Your whole-lodge booking stays confirmed while the payment is outstanding."
-                      : switchToInternetBankingDescription
-                  }
+                  description={switchToInternetBankingDescription}
                 />
               </>
             )}
@@ -401,6 +394,7 @@ export function BookingPaymentCards({
             latestAdditionalTransactionCreatedAt:
               booking.payment.transactions[0]?.createdAt ?? null,
           })}
+          askCause={additionalAskCause(booking.payment.transactions)}
           canResend={canSeeAdminTools}
           canWithdraw={canEditFinance}
         />

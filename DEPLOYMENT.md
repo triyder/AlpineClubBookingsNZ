@@ -38,6 +38,7 @@ Postgres `max_connections=40`:
 | `app_blue` / `app_green` | web slots | 10 each |
 | `app` | cron leader + warm fallback web | 5 |
 | `migrate` | deploy-window migrations | 2 |
+| `app` (cron leader), `AUDIT_RETENTION_DATABASE_URL` | nightly audit retention, only when set (#4453) | 2 |
 
 The ceiling holds per container because `src/lib/prisma.ts` shares one client
 through `globalThis` (#4269). Before that, each of Next's server bundles built its
@@ -55,12 +56,15 @@ app_blue(10) + app_green(10) + app(5) = 25 steady
                                  + migrate(2) = 27
 ```
 
-That leaves the pools **13 slots** under the 40 ceiling — but those slots are
-**not** a protected admin reservation. The app connects as role `tac`, which the
-`postgres` image creates as a **superuser** (`POSTGRES_USER`), so
-`superuser_reserved_connections` (the 3 slots Postgres nominally holds back) does
-**not** fence the app's own pools off: once the pools reach the ceiling, even a
-superuser `psql` is refused. The headroom is therefore best-effort room for the
+That leaves the pools **13 slots** under the 40 ceiling. The audit-retention pool
+(2, only while the nightly job runs, and only once the roles are split) brings the
+worst case to 29. Those slots are **not** a protected admin reservation while the
+app connects as role `tac`, which the `postgres` image creates as a **superuser**
+(`POSTGRES_USER`) and which is still the default: `superuser_reserved_connections`
+(the 3 slots Postgres nominally holds back) does **not** fence the app's own pools
+off, so once the pools reach the ceiling even a superuser `psql` is refused. With
+the [least-privilege roles](#least-privilege-database-roles) in place no pool
+connects as a superuser, and those 3 slots really are kept for the operator. The headroom is therefore best-effort room for the
 **non-pool** consumers you must budget alongside the pools:
 
 - the nightly `pg_dump` backup (its own backend, outside every pool)
@@ -96,34 +100,216 @@ they needed to diagnose. 40 restores real headroom for those consumers. The 768m
 `mem_limit` covers the extra backends plus their `work_mem` (~256m more per host —
 negligible above ~1 GiB free).
 
-A true protected admin slot would need a dedicated **`NOSUPERUSER`** application
-role (so `superuser_reserved_connections` can hold slots back from it). This is a
-**consciously accepted limitation**: because the pools are hard-capped at 27 well
-under the 40 ceiling, the ~13-slot margin covers the non-pool consumers in
-practice, so the simpler single-superuser model is retained. Revisit the
-`NOSUPERUSER` split only if a future change makes the margin tight (a new pooled
-consumer, a much larger replica count, or enabling the audit-archive client via
-`AUDIT_ARCHIVE_DATABASE_URL`, which opens its own pool). A constrained-VPS fork
-may lower both values, but keep the invariant above whenever you change a pool
-size, `max_connections`, or the replica count.
+A true protected admin slot needs a **`NOSUPERUSER`** application role, so that
+`superuser_reserved_connections` can hold slots back from it. The
+[least-privilege roles](#least-privilege-database-roles) provide one (#4453, which
+replaces #2240's decision to keep the single superuser). Until a deployment
+switches, the hard-capped pools leave the ~13-slot margin described above. A
+constrained-VPS fork may lower both values, but keep the invariant above whenever
+you change a pool size, `max_connections`, or the replica count.
+
+## Least-privilege database roles
+
+Audience: Operator.
+
+By default every container connects as `tac`, the PostgreSQL superuser. Since
+#4453 a deployment can split that into roles that each hold only what their job
+needs. The application then cannot change a booking-ledger line or an audit entry,
+even if its credential leaks (owner decision, 27 Oct 2026). One route remains on
+purpose: **deleting a booking still deletes its ledger lines** (below).
+
+| Role | Default name | Used by | May |
+| --- | --- | --- | --- |
+| Operator | `tac` (`POSTGRES_USER`) | people: provisioning, restores, repairs | everything (superuser) |
+| Migration | `tac_migrator` | the `migrate` service | own every object in schema `public`; run `prisma migrate deploy`; create temporary tables |
+| Application | `tac_app` | both web slots and the cron leader | SELECT, INSERT, UPDATE, DELETE on ordinary tables; only SELECT on views; only **INSERT and SELECT** on `BookingLedgerLine` and `AuditLog`; only SELECT on `_prisma_migrations`; temporary tables |
+| Audit retention | `tac_audit_retention` | the nightly audit retention job, on the cron leader only | SELECT and DELETE on `AuditLog`; UPDATE of `ipAddress` and `userAgent`, which a trigger lets it set only to empty |
+
+None of the three new roles is a superuser, may create roles or databases, or is a
+member of any role. The application role cannot TRUNCATE, `SELECT … FOR UPDATE` an
+append-only row, alter or drop a table, `SET ROLE`, or run superuser-only
+statements. It cannot reach a ledger line or audit row by another route either:
+- a view or rule over them is SELECT-only;
+- a `SECURITY DEFINER` routine is refused;
+- changing a booking's or a lodge's key is refused (a trigger on each parent,
+  so the foreign keys' `ON UPDATE CASCADE` can never fire).
+
+`src/lib/__tests__/database-roles.realdb.test.ts` proves each of these against
+PostgreSQL. The AI Diagnostics role (ADR-007) and the audit archive database's
+role are separate and unchanged.
+
+**Deleting a booking still deletes its ledger lines.** `BookingLedgerLine.bookingId`
+is `ON DELETE CASCADE`, and a cascade runs with the table owner's rights, not the
+application's. That is how booking deletion works today. Whether it should change
+belongs to the ledger design, not to these grants; #4482 tracks it.
+
+### Switching a deployment over (blue/green)
+
+Rehearse every step on staging first (`.env.staging`, the `-p tacbookings-staging`
+stack in [Staging](#staging)), then repeat on production.
+
+1. **Choose three passwords**, hex so they need no URL encoding:
+   `openssl rand -hex 24`. Put them in `.env` as `MIGRATION_DB_PASSWORD`,
+   `APP_DB_PASSWORD` and `AUDIT_RETENTION_DB_PASSWORD`. A password alone switches
+   nothing. **Do not set `APP_DB_USER` or `MIGRATION_DB_USER` in `.env` yet**: they
+   are the switch (step 3). If you want role names other than the defaults
+   (`tac_app`, `tac_migrator`, `tac_audit_retention`), export them in the shell for
+   step 2 only.
+2. **Preview, then provision, in a quiet window**, as the operator. The first
+   `--apply` hands every table to the migration role, and `ALTER … OWNER TO` holds
+   an exclusive lock on each table until the run commits. So run it when no long
+   report, merge or open `psql` transaction is going. Each lock wait is bounded at
+   5 seconds. A run that cannot get a lock stops with nothing changed and says
+   "retry in a quiet window". The tables it has already handed over stay locked
+   until the run commits. Each statement, not the whole run, is bounded at 120
+   seconds: handing the tables over is one statement and can take that long on a
+   slow server, and the checks after it run while the locks are still held. App
+   requests that touch those tables wait meanwhile. Later runs only
+   grant and revoke, and wait on nothing the app holds. Nothing connects without
+   `--apply`.
+
+   Export the values in the shell first. Docker then reads each bare `-e NAME` from
+   that environment, so no password appears on the command line or in a process
+   listing:
+
+   ```bash
+   export DB_ROLES_PROVISION_DATABASE_URL="postgresql://tac:<your-operator-password>@postgres:5432/tacbookings"
+   export MIGRATION_DB_PASSWORD=<your-migration-password> APP_DB_PASSWORD=<your-app-password> \
+     AUDIT_RETENTION_DB_PASSWORD=<your-retention-password>
+   # and, only if you chose other names: export APP_DB_USER=… MIGRATION_DB_USER=… AUDIT_RETENTION_DB_USER=…
+   docker compose --profile migrate run --rm --no-deps \
+     -e DB_ROLES_PROVISION_DATABASE_URL \
+     -e MIGRATION_DB_PASSWORD -e APP_DB_PASSWORD -e AUDIT_RETENTION_DB_PASSWORD \
+     -e APP_DB_USER -e MIGRATION_DB_USER -e AUDIT_RETENTION_DB_USER \
+     migrate ./node_modules/.bin/tsx scripts/provision-database-roles.ts          # dry run
+   # …the same command with --apply at the end
+   ```
+
+   From a checkout with dependencies installed, `pnpm run db:provision-roles
+   [--apply]` does the same. The run is one transaction:
+   - it creates or repairs the roles;
+   - it hands every object in schema `public` to the migration role;
+   - it grants the rights above, and sets default privileges so tables that later
+     migrations create reach the application at once;
+   - it re-checks the result, and rolls back if the application role could still
+     change a ledger or audit row.
+
+   The running app still connects as `tac` and keeps working.
+3. **Set the switch** in `.env`: `APP_DB_USER=tac_app`, `MIGRATION_DB_USER=tac_migrator`
+   (their passwords are already there) and
+   `AUDIT_RETENTION_DATABASE_URL=postgresql://tac_audit_retention:<your-retention-password>@postgres:5432/tacbookings?connection_limit=2&pool_timeout=10`.
+   Compose gives that last one to the cron leader only. All three belong together:
+   once the app role is split, the retention job needs its own role, because the
+   application role may no longer change audit rows. The deploy script refuses
+   `APP_DB_USER` without the other two. It also refuses a role password still
+   exported from step 2 that differs from `.env`, because Compose would use the
+   shell value; `unset` it, or open a fresh shell, before deploying.
+4. **Deploy** as usual (`scripts/run-production-blue-green-deploy.sh`). The
+   `migrate` service now runs as the migration role, and the new colour and the cron
+   leader start as the application role. The old colour keeps its superuser
+   connection until it is stopped, and no grant it relies on is removed. After the
+   migrate, the deploy script checks two things: every relation in `public` is
+   owned by the migration role and readable by the application role, and no view
+   is writable by the application role. If either fails, it stops before the new
+   colour starts and tells you to re-run `--apply`.
+5. **Check**: the next `data-pruning` cron run succeeds, and
+   `psql -U tac -d tacbookings -c "\du"` lists the three roles without
+   `Superuser`.
+
+**Rollback** is the reverse of step 3: unset `APP_DB_USER`, `MIGRATION_DB_USER`
+and `AUDIT_RETENTION_DATABASE_URL`, and deploy. Ownership stays with the migration
+role, which the superuser can still use, so nothing needs undoing in the database.
+**Before switching back on**, re-run `--apply`. Tables that migrations created while
+the stack ran as `tac` belong to `tac`, and the application role cannot see them.
+The deploy script's post-migrate check would stop the deploy and tell you so.
+
+**Rotating a password.** Every `--apply` sets all three passwords to the values it
+is given. Running containers keep their open connections, but each new connection
+needs the new password. So rotate in this order:
+1. Put the new password in `.env`, and update `AUDIT_RETENTION_DATABASE_URL` if it
+   is the retention one.
+2. Run `--apply`.
+3. Deploy straight away.
+
+A "repair" re-run with a freshly generated password is a rotation too.
+
+**Re-run `--apply`** in these cases:
+- after the first migration of a brand-new database;
+- after a release whose upgrade note changes `APPEND_ONLY_RELATIONS` or
+  `AUDIT_ANONYMISED_REQUEST_COLUMNS` (`src/lib/database-roles.ts`,
+  `src/lib/audit-retention-classes.ts`);
+- after anyone creates an object as `tac`, including a `rollback.sql` or a
+  hand-applied statement;
+- to rotate a password.
+
+It is idempotent and repairs drift. A hand-granted UPDATE on the ledger, a stray
+role membership, a writable view, or a table someone created as `tac` is put back
+on the next run.
+
+### What changes for operators
+
+- **Backups** keep working: the nightly `pg_dump` runs as the application role,
+  which can read every table. A dump now carries `OWNER TO tac_migrator` and the
+  grants. It restores with them **as the operator** on a cluster where the roles
+  exist. On a new cluster, run step 2 against the empty database first.
+- **Restore validation** (the optional shadow database on Admin → Backups) never
+  needs a superuser. Give it a dedicated role that owns only the shadow database:
+
+  ```sql
+  CREATE ROLE tac_restore_check LOGIN PASSWORD '<your-restore-check-password>';
+  CREATE DATABASE tacbookings_restore_check OWNER tac_restore_check;
+  ```
+
+  The validation restore leaves out the dump's owner and grant statements, so this
+  role can replay it. **Never enter a superuser connection string there.** The app
+  stores and uses that credential, so a compromised app would become a superuser.
+  The app will not validate against a URL that names the same database as its own
+  `DATABASE_URL` or the audit archive, whatever host, port or role it gives. It
+  still takes and stores that night's backup, skips only the validation restore,
+  and reports the run as failed with the reason. So give the shadow database its
+  own name. A URL with no database names the
+  database after its user, as libpq does.
+- **Restoring over the live database from Admin → Backups no longer works** once
+  the app is split: the application role may not drop the schema, so PostgreSQL
+  refuses the restore before anything is touched. Restore as the operator with
+  `psql`, on a cluster that has the roles.
+- **AI Diagnostics provisioning** (`pnpm run diagnostics:provision-role`) needs the
+  operator connection. Set `AI_DIAGNOSTICS_PROVISION_DATABASE_URL` to it once
+  `DATABASE_URL` is no longer a superuser. Its `TEMPORARY` revoke no longer affects
+  the migration or application role: provisioning grants both `TEMPORARY` directly.
+- **A migration that needs a superuser**, such as an untrusted extension or
+  `ALTER SYSTEM`, fails under the migration role. Apply that one statement as the
+  operator, re-run `--apply`, then re-run the deploy. Every migration in the
+  repository today runs without one.
+- **A role password may not contain a backslash**, as well as `@ / : ? # %` or
+  whitespace. The provisioning SQL refuses one rather than rely on
+  `standard_conforming_strings`.
 
 **The ceiling is a setting, and the pool arithmetic above is not what a live host
-measures (fork, booking-fixes).** `POSTGRES_MAX_CONNECTIONS` in `.env` sets
-`max_connections` (default `40`, upstream's figure); it is applied when the
-`postgres` container is next created, which a blue/green deploy does at step 11
-when the compose model has changed. It became a setting because a routine
-handover on a live host was sampled, two seconds apart, at **39 client
-connections**: the serving web slot at 11, the cron leader at 18 and the
-freshly warmed target slot at 8 to 11 — against documented `connection_limit`s
-of 10, 5 and 10. One container holding 18 means the app opens **more than one
-pool per container** (each `PrismaClient` carries its own `pg` pool, and the
-production bundle evidently instantiates more than one), so the 27 budget is
-an undercount by roughly a factor of two, and the warm-up gate's page renders
-fail with `P2037: too many database connections opened` exactly when three app
-containers are live. Until that multi-pool behaviour is pinned and fixed, a
-host that sees that error should raise the ceiling — `80` is comfortable under
-the 768m `mem_limit` — rather than lower a pool, because a smaller pool just
-moves the failure to `P2024` pool timeouts under real traffic.
+measured.** `POSTGRES_MAX_CONNECTIONS` in `.env` sets `max_connections`
+(default `40`, unchanged); it is applied when the `postgres` container is next
+created, which a blue/green deploy does at step 11 when the compose model has
+changed. The deploy refuses it at step 3, before that, unless the value the
+`postgres` command would carry is a whole number above the pools the resolved
+Compose model can open together (27 with the shipped pools) and at most `1000`:
+Compose passes any string through, and PostgreSQL would reject `abc` only once
+the container is being recreated. It became a setting because a routine
+handover on a live host, before the
+[#4269](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4269) fix
+above, was sampled two seconds apart at **39 client connections** (the serving
+web slot at 11, the cron leader at 18 and the freshly warmed target slot at 8
+to 11) against the 27-connection budget — about 1.44 times it — and the
+warm-up gate's page renders failed with `P2037: too many database connections
+opened` while three app containers were live. With #4269's one pool per
+container the default should hold again; a host that still sees that error
+raises the ceiling rather than lowering a pool (a smaller pool moves the
+failure to `P2024` pool timeouts under real traffic), and raises
+`POSTGRES_MEM_LIMIT` with it: each
+backend costs its `work_mem` and connection overhead, so going from 40 to 80
+wants the limit taken from the default `768m` towards `1g`. The pairing
+`POSTGRES_MAX_CONNECTIONS=80` with the default `768m` has run on one fork host
+since mid-October 2026 without memory pressure, which is one host's evidence,
+not a measurement of the headroom.
 
 ## App CPU sizing
 
@@ -491,11 +677,15 @@ Minimum production categories:
   one of `USE_AWS_SES`, `USE_SMTP_RELAY` or `USE_LOCAL_CAPTURE` may be true,
   and the step-3 preflight requires only that provider's keys: `SMTP_HOST`,
   `SMTP_PORT`, `AWS_SES_ACCESS_KEY_ID`, `AWS_SES_SECRET_ACCESS_KEY` and
-  `SES_SNS_TOPIC_ARN` for AWS SES (also the default when none of the three
-  flags is named at all), or `EMAIL_SERVER_HOST`, `EMAIL_SERVER_PORT`,
-  `EMAIL_SERVER_USER` and `EMAIL_SERVER_PASSWORD` for an SMTP relay. A flag
-  named but false with no other true is refused, as the app refuses it, and
-  `USE_LOCAL_CAPTURE=true` is refused on a production-role site. `EMAIL_FROM` is
+  `SES_SNS_TOPIC_ARN` for AWS SES, or `EMAIL_SERVER_HOST`, `EMAIL_SERVER_PORT`,
+  `EMAIL_SERVER_USER` and `EMAIL_SERVER_PASSWORD` for an SMTP relay or a
+  capture mailbox. It checks what each app service would **receive** — the
+  `docker compose config` values, after Compose's defaults and any shell
+  export — not the `.env` lines. `docker-compose.yml` defaults `USE_AWS_SES`
+  to `true`, so a relay sets **both** `USE_SMTP_RELAY=true` and
+  `USE_AWS_SES=false`; naming no flag at all leaves AWS SES selected. Every flag
+  false is refused, as the app refuses it, and `USE_LOCAL_CAPTURE=true` is
+  refused because this deploy only runs a production-role site. `EMAIL_FROM` is
   the only email-identity env var (besides these transport secrets): it is the
   envelope / Return-Path sender and must be a provider-verified (SES) address.
   Email identity — from display name, support address, and contact-form
@@ -606,10 +796,11 @@ For a fork, set `GHCR_APP_IMAGE_REPOSITORY` and
 `GHCR_MIGRATE_IMAGE_REPOSITORY` if your image names differ from the defaults —
 either in the shell environment or, more durably, in the source repository's
 `.env`. The shell wins over the file, the file wins over the upstream default,
-and step 3/8 prints which source each name came from, because a default that
-silently points at the upstream registry is how a fork's deploy fails at step
-9 with "not found". Note that `sudo` strips the shell environment; the `.env`
-route survives it.
+and the file is read with Compose's own `.env` rules (quotes removed, `export`
+allowed, the last duplicate wins). Step 3/8 prints which source each name came
+from, because a default that silently points at the upstream registry is how
+a fork's deploy fails at step 9 with "not found". Note that `sudo` strips the
+shell environment; the `.env` route survives it.
 
 ### The deploy refuses a commit that exists on no remote (#3539)
 
@@ -767,6 +958,10 @@ Caddy appended closest to the app container, then falls back to `X-Real-IP`.
 Do not expose app containers directly to the Internet or through another proxy
 that preserves attacker-supplied `X-Forwarded-For` values without appending its
 own trusted peer address.
+Caddy sets that header to its resolved client IP (`header_up X-Forwarded-For
+{client_ip}` in `deploy/caddy/tacbookings-active.caddy`), which is the connecting
+peer when Caddy is the edge and, in `CADDY_TLS_MODE=local`, the address the
+trusted proxy forwarded — see "Client IPs behind the proxy" below.
 
 ### Behind a TLS-terminating proxy: `CADDY_TLS_MODE=local`
 
@@ -781,22 +976,87 @@ relays Caddy's `308` back to the browser forever. The deploy's outside check
 (`https://<DOMAIN>/api/health/ready`) fails the same way the browser does, so
 step 17 reports an empty health payload and rolls the upstream back.
 
-Set `CADDY_TLS_MODE=local` in `.env` for that shape. The Caddyfile's global
+Set `CADDY_TLS_MODE=local` in `.env` for that shape, with
+`CADDY_TRUSTED_PROXIES` set to the proxy's address (see "Client IPs behind the
+proxy" below; the deploy refuses local mode without it). The Caddyfile's global
 options import `deploy/caddy/tls-local.caddy`, which turns on `local_certs`:
 Caddy issues every site's certificate from its own internal CA and never
 contacts Let's Encrypt. Then point the proxy at the VM's **443** with scheme
 **https** and tell it to accept a certificate that is not publicly trusted
 (Nginx Proxy Manager: "Ignore Invalid SSL"). The browser only ever sees the
-proxy's certificate. A `.env` change is picked up when the Caddy container is
-next created; to apply it to a running one:
+proxy's certificate.
+
+A `.env` change reaches Caddy when its container is next created, and every
+deploy recreates it at step 17 from that deploy's workspace. **Apply it by
+running the deploy wrapper**, as for a release: it validates the Caddyfile with
+the resolved `CADDY_TLS_MODE` and `CADDY_TRUSTED_PROXIES` at step 4, before the
+migration, and carries the live upstream into its workspace at step 5/8. If
+`main` has moved on and no release is due, set `DEPLOY_REF` to the commit that
+is live — but only once the live commit already carries the `CADDY_TLS_MODE`
+wiring (the Caddyfile import, the `deploy/caddy/tls-*.caddy` snippets and the
+compose settings). Turning local mode on for the first time takes a deploy of a
+commit that has them, because the deploy builds its workspace from the commit,
+not from the checkout.
+
+Do **not** run `docker compose up -d caddy` from the source checkout. The
+running Caddy bind-mounts the live deploy workspace, whose
+`deploy/caddy/tacbookings-active.caddy` names the serving colour. Compose run
+from the checkout recreates Caddy with the checkout's mounts instead, and the
+tracked copy of that file names `app_blue` and the cron leader `app`: on a host
+serving green, whose blue container the last deploy removed, every request
+then reaches the cron leader.
+
+If a deploy is not possible, the manual route is equivalent to the deploy's
+step 17 (`docker compose up -d caddy` in its workspace), run by hand in the live
+workspace with the edited `.env` copied into it; the deploy's own call needs
+neither flag below, because it already runs in that project and workspace:
 
 ```bash
-docker compose --project-name <project> up -d caddy
+cid=$(docker compose --project-name <project> -f <checkout>/docker-compose.yml ps -q caddy)
+live=$(docker inspect "$cid" --format '{{range .Mounts}}{{if eq .Destination "/etc/caddy/deploy"}}{{.Source}}{{end}}{{end}}')
+workspace=$(dirname "$(dirname "$live")")
+cp <checkout>/.env "$workspace/.env"
+cd "$workspace" && docker compose --project-name <project> up -d --no-deps caddy
 ```
+
+`<project>` is the deploy's Compose project (by default the checkout's
+directory name, lower-cased); without `--project-name` Compose names a new
+project after the workspace directory and starts a second Caddy. This route
+skips the step-3 and step-4 checks, so a mistyped or missing value stops Caddy
+instead of the deploy: an unset `CADDY_TRUSTED_PROXIES` reaches Caddy as a
+placeholder it rejects.
 
 Do **not** edit `Caddyfile` on the host for this: the deploy refuses a dirty
 checkout, and the workspace it builds is a clean `git archive` that would drop
 the edit on the next release.
+
+#### Client IPs behind the proxy
+
+Behind another proxy, the only peer Caddy sees is that proxy, so without more
+the app would take the proxy's address as every visitor's: the per-IP rate
+limits on login, registration, forgotten-password and magic-link requests would
+share one bucket for the whole site (ten failed logins from anyone would lock
+every member out for the window), and the audit log would record the proxy's
+IP on every row. `tls-local.caddy` therefore declares the proxy as a trusted
+proxy (`servers { trusted_proxies static … }`, from `CADDY_TRUSTED_PROXIES`)
+with `trusted_proxies_strict`, and reads the visitor's address from the
+proxy's `X-Forwarded-For`; the app's `reverse_proxy` then sends that resolved
+address as the one `X-Forwarded-For` value the app reads.
+
+`CADDY_TRUSTED_PROXIES` is **required** in local mode and has no usable
+default: left unset, Compose hands Caddy a placeholder that Caddy rejects. Set
+it to the proxy's own IP address or CIDR, for example `10.0.0.2/32`. Caddy
+believes the forwarded address from any peer on the list, so the list should
+be the proxy and nothing else. The step-3 preflight refuses local mode without
+it, and refuses `private_ranges` (it trusts every private address on the
+network, and the setting exists to make the trust explicit), any `/0` range,
+and any entry that is not an IP address or CIDR. With
+`trusted_proxies_strict`, Caddy reads `X-Forwarded-For` from the right and
+takes the first address not on the list. The proxy must therefore append the
+connecting address to `X-Forwarded-For` (Nginx Proxy Manager's default) or
+overwrite the header; a proxy that passes the client's header through
+unchanged is not suitable for local mode.
+
 
 ### Keep-alive windows must stay ordered (#3293)
 
@@ -1381,7 +1641,10 @@ them at **Admin → Integrations → Database Backups** (`/admin/backups`):
 - the S3 **access key ID** / **secret access key** (Full Admin only, write-only,
   encrypted at rest in the `IntegrationCredential` store),
 - an optional **restore-validation shadow database URL** (Full Admin,
-  write-only) — each backup is restored into it and smoke-checked.
+  write-only) — each backup is restored into it and smoke-checked. Use a
+  non-superuser role that owns only that database, never a superuser; the
+  restore leaves out owners and grants so such a role can run it (see
+  [Least-privilege database roles](#least-privilege-database-roles)).
 
 `BACKUP_CRON_SCHEDULE` remains an environment variable (cron-leader timing). The
 legacy `BACKUP_ENABLED`, `BACKUP_S3_*`, `BACKUP_RETENTION_DAYS`, and
@@ -1419,7 +1682,9 @@ policy (or equivalent object-expiry rule) so uploaded dumps do not accumulate
 indefinitely.
 
 Operators should also keep provider-level snapshots or equivalent independent
-backups. Test restore procedures before relying on backups.
+backups. Test restore procedures before relying on backups. With the
+[least-privilege roles](#least-privilege-database-roles), restore as the operator
+role: the in-app restore over the live database is refused.
 
 ## Webhooks
 

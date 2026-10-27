@@ -50,6 +50,14 @@ export const SERVER_VERSION_MISMATCH_CODE = "server-version-mismatch";
 export const OTHER_LODGES_SYNC_RUNNING_CODE = "sync-already-running";
 
 /**
+ * Why an Other lodges download did not record its cursor (#4262 review):
+ * `DownloadSummary.stopped`. Here, beside the other sync codes, for the same
+ * reason: the setup page (a client module) words each one, and the sync
+ * module is server-only.
+ */
+export type DownloadStopReason = "connection-changed" | "superseded";
+
+/**
  * How long a recorded answer is trusted before the setup page's version route
  * asks the server again (#49 review). The page asks once on entry and after a
  * save; this is what keeps a second tab, a reload or a quick re-save from

@@ -73,6 +73,7 @@ const JAVASCRIPT_VITEST_TESTS = [
   "scripts/ci/check-pr-changelog-fragment.test.mjs",
   "scripts/ci/check-pr-concurrency-declaration.test.mjs",
   "scripts/ci/check-prerendered-script-nonces.test.mjs",
+  "scripts/ci/check-realdb-ran.test.mjs",
   "scripts/ci/check-semgrep-coverage.test.mjs",
   "scripts/ci/check-website-prerender-manifest.test.mjs",
   "scripts/ci/check-website-render-modes.test.mjs",
@@ -96,6 +97,9 @@ const JAVASCRIPT_VITEST_TESTS = [
   // their shared suite stays JavaScript under the same convention.
   "scripts/audit/fragility.test.mjs",
   "scripts/issue-thread.test.mjs",
+  // #4452: `lanes:stale` is a read-only `.mjs` tool run with bare node; its
+  // suite stays JavaScript like the other script suites here.
+  "scripts/lanes-stale.test.mjs",
   "scripts/release/compile-changelog.test.mjs",
   // #3673: the `.mjs` worktree-removal tool's own suite; it stays JavaScript
   // for the same reason as the stale-containers and issue-thread suites.

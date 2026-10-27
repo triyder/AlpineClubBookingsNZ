@@ -23,6 +23,7 @@ import { alertCardRefundCapOverflow, readCardRefundCapOverflow, type CardRefundC
 import logger from "@/lib/logger";
 import { IntentLedgerRowOnAnotherPaymentError, writePaymentIntentTransaction } from "@/lib/payment-intent-ledger-row-write";
 import { accountCreditDispositionCents } from "@/lib/stripe-cash-refund-evidence";
+import { readPaidAnotherWayCloseBankCashByPayment } from "@/lib/card-refund-paid-another-way-cash";
 import type { ClubFormat } from "@/lib/club-format";
 import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sync";
 import { compareLedgerRowsNewestFirst, LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
@@ -651,15 +652,26 @@ export async function lockPaymentForRefundedTotal(
 /**
  * #3640 (delta review, D2): the lowest a counted -> failed subtraction may take
  * one transaction's mirror to. The payment as a whole must still hold its
- * account-credit dispositions plus the card refunds still counted - the same
- * floor the refunded-total audit reports against (`expectedRefundedFloorCents`)
- * - less what its other transactions already carry.
+ * account-credit dispositions plus the card refunds still counted plus (#4280)
+ * the bank cash its "Paid another way" closes recorded - the same floor the
+ * refunded-total audit reports against (`expectedRefundedFloorCents`), capped
+ * at what it captured - less what its other transactions already carry.
  *
  * Why it is needed. A card refund recorded by the OLD max-based arithmetic on a
  * transaction that also held a credit never entered the mirror ($100 credit,
  * $50 card refund, mirror $100). If that refund later fails, subtracting it
  * would take the mirror to $50 and overstate the headroom by $50 - the over-
  * refund #3640 closes. The floor keeps it at $100.
+ *
+ * #4280: likewise a late card refund the cap kept out of the mirror. $200
+ * captured and closed as paid another way for $200 (mirror $200); the lost
+ * card refund recorded late adds nothing (capped); when it fails, subtracting
+ * it would take the mirror to $0 while the bank refund stands, and reopen $200
+ * of headroom. The close's cash is read payment-wide, like the rest - a close
+ * records no per-charge link the floor could trust - so the other charges'
+ * mirrors, which may already hold it, come off it rather than count it twice.
+ * Read on the caller's client, under the Payment row it holds: a close takes
+ * that row before it writes its record.
  */
 async function reversalFloorForTransaction(
   db: PaymentStore,
@@ -683,6 +695,7 @@ async function reversalFloorForTransaction(
       .reduce((sum, transaction) => sum + transaction.amountCents, 0),
     cardRefundCents: counted._sum.amountCents ?? 0,
     accountCreditCents: await accountCreditDispositionCents(db, payment.bookingId),
+    paidAnotherWayCents: (await readPaidAnotherWayCloseBankCashByPayment(db, { paymentId })).get(paymentId) ?? 0,
   });
   const otherTransactionsCents = payment.transactions
     .filter((transaction) => transaction.id !== paymentTransactionId)
@@ -750,8 +763,9 @@ export async function refundLedgerStartSeconds(db: PaymentStore): Promise<number
  *   no money went back after all. Exactly one writer sees the transition (a
  *   guarded write in `recordStripeRefundLedgerEntry`), and the subtraction never
  *   takes the payment below its account credit plus the card refunds still
- *   counted (`reversalFloorForTransaction`) - so a refund the OLD arithmetic
- *   never added cannot be taken out of money that was never its.
+ *   counted plus its "Paid another way" closes' bank cash
+ *   (`reversalFloorForTransaction`, #4280) - so a refund the OLD arithmetic,
+ *   or the cap, never added cannot be taken out of money that was never its.
  *
  * The card refunds on record remain a FLOOR, never the value (#4104: Stripe's
  * own `amount_refunded` no longer is - the sync reads every refund live, and a

@@ -15,6 +15,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   getIntegrationCredentialValue: vi.fn(),
   loadServerNzSettings: vi.fn(),
+  loadEffectiveModuleFlags: vi.fn(),
   resolveLocalLodgeForCentralId: vi.fn(),
   freeBedsForStay: vi.fn(),
   applyRateLimit: vi.fn(),
@@ -25,6 +26,10 @@ vi.mock("@/lib/integration-credentials", () => ({
 }));
 vi.mock("@/lib/club-post-mirror", () => ({ SERVERNZ_PUSH_SECRET_KEY: "push_secret" }));
 vi.mock("@/lib/servernz-settings", () => ({ loadServerNzSettings: mocks.loadServerNzSettings }));
+vi.mock("@/lib/module-settings", async (importOriginal) => ({
+  ...((await importOriginal()) as object),
+  loadEffectiveModuleFlags: mocks.loadEffectiveModuleFlags,
+}));
 vi.mock("@/lib/central-lodge-link", () => ({
   resolveLocalLodgeForCentralId: mocks.resolveLocalLodgeForCentralId,
 }));
@@ -72,6 +77,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.applyRateLimit.mockResolvedValue(null);
   mocks.getIntegrationCredentialValue.mockResolvedValue(SECRET);
+  mocks.loadEffectiveModuleFlags.mockResolvedValue({ alpineCentralServer: true });
   mocks.loadServerNzSettings.mockResolvedValue({
     otherLodgesEnabled: true,
     otherLodgesOwnedLodges: OWNED,
@@ -182,6 +188,14 @@ describe("GET /api/webhooks/servernz-availability (#62)", () => {
   });
 
   describe("which lodge: every refusal is the same 404", () => {
+    it("when the Alpine Central Server module is off, whatever the sharing toggle says", async () => {
+      mocks.loadEffectiveModuleFlags.mockResolvedValue({ alpineCentralServer: false });
+      const res = await GET(request());
+      expect(res.status).toBe(404);
+      expect(await res.json()).toEqual({ error: "Lodge not available" });
+      expect(mocks.freeBedsForStay).not.toHaveBeenCalled();
+    });
+
     it("when Other lodges sharing is off", async () => {
       mocks.loadServerNzSettings.mockResolvedValue({ otherLodgesEnabled: false, otherLodgesOwnedLodges: OWNED });
       const res = await GET(request());

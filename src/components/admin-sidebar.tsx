@@ -81,7 +81,7 @@ import { useClubTime } from "@/components/club-time-provider";
 import {
   buildUnpaidFinishedStaysHref,
   buildUnsettledAdditionalStaysHref,
-} from "@/lib/unpaid-finished-stays";
+} from "@/lib/unpaid-finished-stays-hrefs";
 import { openAdminCommandPalette } from "@/lib/admin-command-palette-events";
 
 interface NavSection {
@@ -142,8 +142,8 @@ const NAV_SECTION_ORDER_PROBE_DAY = requireCalendarDate("1970-01-01");
  * every booking whose upward modification delta was never collected, whether the
  * stay has finished or is still ahead. Unlike the queue above this needs no date
  * in the URL — the owed filter alone is the queue — so the two halves the badge
- * sums both land here. Same drift rule: the href and the count come from the
- * shared helpers in src/lib/unpaid-finished-stays.ts.
+ * sums both land here. Same drift rule: href from src/lib/unpaid-finished-stays-hrefs.ts,
+ * count from the shared predicate in src/lib/unpaid-finished-stays.ts.
  */
 const UNSETTLED_ADDITIONS_HREF = buildUnsettledAdditionalStaysHref();
 

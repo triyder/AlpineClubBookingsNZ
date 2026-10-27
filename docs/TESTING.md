@@ -1247,6 +1247,27 @@ So:
    raises a conflict and a human classifies both — which is exactly the review a
    bare integer skipped.
 
+Censuses reading balanced call arguments or object bodies share
+[`balancedBrackets`](../src/lib/__tests__/support/balanced-brackets.ts).
+It returns original text, the inclusive closing offset and top-level comma-separated
+parts, using the shared literal masker so comments and quoted brackets cannot
+end a region early. An invalid opener or unclosed region fails the scan. Its
+sibling `expressionAt` reads a value that has no opener, up to its first top-level
+comma or the bracket closing the object that holds it.
+
+Two rules follow from the scan throwing rather than skipping:
+
+- **Find call sites over masked text.** Run the call-site regex over
+  `blankLiterals(source)` and hand the same text in as `structure`, so a call named
+  in a comment or string is not a call site. A hit inside a comment or string has
+  no opening bracket, and the reader throws on it. Read the arguments from the
+  original `source`, which keeps its string contents.
+- **Pass already-masked code as `structure`.** When the code has been through
+  `blankLiterals`, `blankLiteralsWithSpans` or `stripCommentsAndStrings`, pass it
+  as both `source` and `structure`. Masking twice is unsafe: a blanked regex has
+  lost its closing slash. `structure` must be the same length as `source`, and the
+  scan fails if it is not.
+
 ### Running the fast censuses on a composed tree
 
 `pnpm run ci:fast-censuses` runs the tree-wide censuses that compositions have
@@ -1528,6 +1549,24 @@ blocking, because several suites' barriers count ungranted advisory rows in
 on. Expect a batch of realdb files to
 take as long as running them one after another. Inside one file the old rules
 still apply: a suite owns its own fixtures and queued work.
+
+CI runs every one of these files in the advisory `realdb-all` job (#4458), in
+one `vitest run` on one Postgres service, with `RUN_CONCURRENCY_RACE_TESTS=1`.
+The file list is `scripts/ci/realdb-files.mjs`: every `*.realdb.test.*` file
+under `src/` minus `scripts/ci/realdb-quarantine.txt`, which names a suite that
+is red for a known reason, or cannot share the process, with its issue or PR.
+Add a realdb file and it joins the job with no edit. `realdb-ci-coverage-census.test.ts` fails when a file is
+neither run nor quarantined, when the job stops setting
+`RUN_CONCURRENCY_RACE_TESTS=1`, or when any other job names `realdb-all`. The
+job points `DATA_MIGRATION_VERIFICATION_DATABASE_URL` at the same race service
+(those three suites create scratch databases of their own), and its last step,
+`scripts/ci/check-realdb-ran.mjs`, reads Vitest's JSON report and fails when a
+listed file is missing from it, passed no test, or skipped any: a suite whose
+gate is unset skips green otherwise. The seed suite
+(`booking-ledger-history-seed`) is quarantined because
+`scripts/booking-ledger-seed-gate.sh` runs it against a database of its own. The
+per-file steps in `migration-drift` and `data-migration-verification` stay: they
+are required checks and this job is not.
 
 ## Mocking a money seam: never in a test that asserts its money
 
