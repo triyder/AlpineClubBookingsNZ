@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
  * Mirroring shared posts from the central server (epic #2992).
@@ -45,6 +45,18 @@ const mocks = vi.hoisted(() => ({
   deletePostImage: vi.fn(),
   loggerWarn: vi.fn(),
   checkServerVersion: vi.fn(),
+  invalidateCache: vi.fn(),
+  fencedOn: vi.fn(),
+  connectionMoved: vi.fn(() => false),
+  FakeNotConfigured: class FakeNotConfigured extends Error {},
+  FakeApiError: class FakeApiError extends Error {
+    status: number;
+    constructor(status: number) {
+      super(`refused ${status}`);
+      this.status = status;
+      this.name = "ServerNzApiError";
+    }
+  },
 }));
 
 // #49: the version check runs before the comms claim. Matching by default so
@@ -83,6 +95,8 @@ vi.mock("@/lib/prisma", () => ({
 
 vi.mock("@/lib/servernz-api", () => ({
   ServerNzVersionMismatchError: mocks.FakeVersionError,
+  ServerNzApiError: mocks.FakeApiError,
+  ServerNzNotConfiguredError: mocks.FakeNotConfigured,
   pullSharedPostSync: mocks.pullSharedPostSync,
   fetchSharedPostImage: mocks.fetchSharedPostImage,
   registerPushTarget: mocks.registerPushTarget,
@@ -90,11 +104,23 @@ vi.mock("@/lib/servernz-api", () => ({
 
 vi.mock("@/lib/servernz-config", () => ({
   getServerNzSetupState: mocks.getServerNzSetupState,
+  SERVERNZ_PROVIDER: "servernz",
+  SERVERNZ_CREDENTIAL_KEYS: { apiKey: "api_key", pushSecret: "push_secret" },
 }));
 
 vi.mock("@/lib/integration-credentials", () => ({
   getIntegrationCredentialValue: mocks.getIntegrationCredentialValue,
-  setIntegrationCredential: mocks.setIntegrationCredential,
+  setIntegrationCredentialInTransaction: mocks.setIntegrationCredential,
+  invalidateProviderCredentialCache: mocks.invalidateCache,
+}));
+// The push secret is stored in the connection fence: this double runs the
+// write on a fake client unless a test says the connection moved.
+vi.mock("@/lib/servernz-version-record", () => ({
+  serverNzAnswerWriter: (identity: unknown) => async (work: (tx: unknown) => Promise<unknown>) => {
+    mocks.fencedOn(identity);
+    if (mocks.connectionMoved()) throw new Error("connection changed");
+    return work({ tx: "fenced" });
+  },
 }));
 
 vi.mock("@/lib/post-image-storage", () => ({
@@ -102,7 +128,7 @@ vi.mock("@/lib/post-image-storage", () => ({
   deletePostImage: mocks.deletePostImage,
 }));
 
-import { runMirrorSync } from "@/lib/club-post-mirror";
+import { ensurePushRegistration, registerAfterKeySave, runMirrorSync } from "@/lib/club-post-mirror";
 
 const NOW = new Date("2026-07-01T00:00:00.000Z");
 const SERVER_IMAGE = "c".repeat(32);
@@ -940,3 +966,76 @@ describe("runMirrorSync cursor overlap", () => {
   });
 });
 
+
+// The setup page shows what registering this site's address came to, straight
+// after a key save (server onboarding, B1).
+describe("ensurePushRegistration outcome", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.getIntegrationCredentialValue.mockResolvedValue(null);
+    process.env.NEXTAUTH_URL = "https://club.example.nz";
+  });
+  afterEach(() => {
+    delete process.env.NEXTAUTH_URL;
+  });
+
+  it("asks nothing while a secret is stored", async () => {
+    mocks.getIntegrationCredentialValue.mockResolvedValue("secret");
+    await expect(ensurePushRegistration()).resolves.toBe("already-registered");
+    expect(mocks.registerPushTarget).not.toHaveBeenCalled();
+  });
+
+  it("stays poll-only when this site's address is not https", async () => {
+    process.env.NEXTAUTH_URL = "http://club.example.nz";
+    await expect(ensurePushRegistration()).resolves.toBe("not-https");
+    delete process.env.NEXTAUTH_URL;
+    await expect(ensurePushRegistration()).resolves.toBe("not-https");
+    expect(mocks.registerPushTarget).not.toHaveBeenCalled();
+  });
+
+  it("registers this site's address, read through getAppBaseUrl, and stores the secret", async () => {
+    process.env.NEXTAUTH_URL = "https://club.example.nz/some/path";
+    mocks.registerPushTarget.mockResolvedValue({ secret: "s3cret", secretVersion: 2, sentOn: "conn-1" });
+    await expect(ensurePushRegistration()).resolves.toBe("registered");
+    expect(mocks.registerPushTarget).toHaveBeenCalledWith(
+      "https://club.example.nz/api/webhooks/servernz-posts",
+    );
+    // Stored only for the connection the registration went out on.
+    expect(mocks.fencedOn).toHaveBeenCalledWith("conn-1");
+    expect(mocks.setIntegrationCredential).toHaveBeenCalledWith(
+      expect.objectContaining({ tx: { tx: "fenced" }, provider: "servernz", key: "push_secret", value: "s3cret" }),
+    );
+    expect(mocks.invalidateCache).toHaveBeenCalledWith("servernz");
+  });
+
+  it("stores no secret when the key or address changed while it registered", async () => {
+    mocks.registerPushTarget.mockResolvedValue({ secret: "old", secretVersion: 1, sentOn: "conn-old" });
+    mocks.connectionMoved.mockReturnValueOnce(true);
+    await expect(ensurePushRegistration()).resolves.toBe("failed");
+    expect(mocks.setIntegrationCredential).not.toHaveBeenCalled();
+  });
+
+  it("says when there is no server address to register with", async () => {
+    mocks.registerPushTarget.mockRejectedValueOnce(new mocks.FakeNotConfigured("no address"));
+    await expect(ensurePushRegistration()).resolves.toBe("no-address");
+  });
+
+  it("reports a 403 as awaiting the server's approval, and anything else as failed", async () => {
+    mocks.registerPushTarget.mockRejectedValueOnce(new mocks.FakeApiError(403));
+    await expect(ensurePushRegistration()).resolves.toBe("awaiting-approval");
+    mocks.registerPushTarget.mockRejectedValueOnce(new mocks.FakeApiError(500));
+    await expect(ensurePushRegistration()).resolves.toBe("failed");
+    mocks.registerPushTarget.mockRejectedValueOnce(new Error("network"));
+    await expect(ensurePushRegistration()).resolves.toBe("failed");
+    expect(mocks.setIntegrationCredential).not.toHaveBeenCalled();
+  });
+
+  it("never throws after a key save: a version pause and any other failure are outcomes", async () => {
+    mocks.registerPushTarget.mockRejectedValueOnce(new mocks.FakeVersionError());
+    await expect(registerAfterKeySave()).resolves.toBe("server-version-mismatch");
+    mocks.getIntegrationCredentialValue.mockRejectedValueOnce(new Error("database down"));
+    await expect(registerAfterKeySave()).resolves.toBe("failed");
+    mocks.registerPushTarget.mockResolvedValueOnce({ secret: "s", secretVersion: 1, sentOn: "conn-1" });
+    await expect(registerAfterKeySave()).resolves.toBe("registered");
+  });
+});
