@@ -50,6 +50,12 @@ export const SERVERNZ_PROVIDER = "servernz";
 
 export const SERVERNZ_CREDENTIAL_KEYS = {
   apiKey: "api_key",
+  /**
+   * The secret the central server signs its pushes and free-beds questions
+   * with, issued when this site registers its address
+   * (`ensurePushRegistration`). Never admin-writable.
+   */
+  pushSecret: "push_secret",
 } as const;
 
 /**
@@ -131,8 +137,31 @@ export async function setServerNzApiKey(
       expect: { expect: "any" },
       request,
     });
-    await forgetServerConnectionAnswers(tx);
+    await forgetServerConnection(actor, tx);
     return saved;
+  });
+}
+
+/**
+ * Forget the ending connection, in its fence: the server's answers
+ * (`forgetServerConnectionAnswers`) and the push secret it issued. The secret
+ * belonged to the old key's registration; kept, `ensurePushRegistration` would
+ * find it and never register this site with the new connection, so the server
+ * could neither push nor ask about free beds. Deleted, the next registration
+ * (straight after a key save, or the 3-hourly mirror pass) issues a fresh one.
+ */
+async function forgetServerConnection(
+  actor: CredentialActor,
+  tx: ServerNzConnectionTx,
+): Promise<void> {
+  await forgetServerConnectionAnswers(tx);
+  await deleteIntegrationCredentialInTransaction({
+    tx,
+    provider: SERVERNZ_PROVIDER,
+    key: SERVERNZ_CREDENTIAL_KEYS.pushSecret,
+    actor,
+    // Gone whatever it held: no read-modify-write to be stale against.
+    expect: { expect: "any" },
   });
 }
 
@@ -160,7 +189,7 @@ export async function clearServerNzApiKey(
     actor,
     expect: { expect: "any" },
   });
-  await forgetServerConnectionAnswers(tx);
+  await forgetServerConnection(actor, tx);
 }
 
 /**
