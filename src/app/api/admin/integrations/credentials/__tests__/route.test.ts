@@ -17,6 +17,9 @@ const mocks = vi.hoisted(() => ({
   loggerError: vi.fn(),
   findMany: vi.fn(),
   forgetServerConnectionAnswers: vi.fn(),
+  deleteIntegrationCredential: vi.fn(),
+  ensurePushRegistration: vi.fn(),
+  loggerWarn: vi.fn(),
   lockServerNzSettings: vi.fn(),
   tx: { serverNzSettings: { createMany: vi.fn() } },
 }));
@@ -48,6 +51,10 @@ vi.mock("@/lib/integration-credentials", async (importOriginal) => ({
   // The in-transaction write is the same writer with the caller's `tx`, so the
   // same double serves both and every assertion below reads either.
   setIntegrationCredentialInTransaction: mocks.setIntegrationCredential,
+  deleteIntegrationCredentialInTransaction: mocks.deleteIntegrationCredential,
+}));
+vi.mock("@/lib/club-post-mirror", () => ({
+  registerAfterKeySave: mocks.ensurePushRegistration,
 }));
 vi.mock("@/lib/stripe-config", () => ({
   STRIPE_PROVIDER: "stripe",
@@ -68,7 +75,7 @@ vi.mock("@/lib/xero-verify-reset", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/xero-verify-reset")),
   withXeroVerifyReset: mocks.withXeroVerifyReset,
 }));
-vi.mock("@/lib/logger", () => ({ default: { error: mocks.loggerError } }));
+vi.mock("@/lib/logger", () => ({ default: { error: mocks.loggerError, warn: mocks.loggerWarn } }));
 
 import { WeakAuthSecretError } from "@/lib/integration-crypto";
 import { GET, POST } from "../route";
@@ -235,6 +242,60 @@ describe("POST /api/admin/integrations/credentials", () => {
     expect(mocks.lockServerNzSettings).toHaveBeenCalledWith(mocks.tx);
     expect(mocks.lockServerNzSettings.mock.invocationCallOrder[0]).toBeLessThan(mocks.setIntegrationCredential.mock.invocationCallOrder[0]);
     expect(mocks.setIntegrationCredential.mock.invocationCallOrder[0]).toBeLessThan(mocks.forgetServerConnectionAnswers.mock.invocationCallOrder[0]);
+  });
+
+  it("forgets the push secret with the old key, so the new connection registers again", async () => {
+    asFullAdmin();
+    mocks.setIntegrationCredential.mockResolvedValue({
+      provider: "servernz",
+      key: "api_key",
+      secretSource: "AUTH_SECRET",
+      labelVersion: "integration-credential:v1",
+      updatedAt: new Date(),
+    });
+    mocks.ensurePushRegistration.mockResolvedValue("registered");
+    const res = await POST(makeRequest({ provider: "servernz", key: "api_key", value: "acs_replacement" }));
+    expect(res.status).toBe(200);
+    expect(mocks.deleteIntegrationCredential).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tx: mocks.tx,
+        provider: "servernz",
+        key: "push_secret",
+        actor: { kind: "admin", memberId: "admin-1" },
+      }),
+    );
+    // Registration runs after the fenced write has committed, never inside it.
+    expect(mocks.deleteIntegrationCredential.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.ensurePushRegistration.mock.invocationCallOrder[0]!,
+    );
+    expect(await res.json()).toMatchObject({ ok: true, pushRegistration: "registered" });
+  });
+
+  it.each([
+    ["awaiting-approval", "awaiting-approval"],
+    ["not-https", "not-https"],
+    ["failed", "failed"],
+    ["server-version-mismatch", "server-version-mismatch"],
+  ])("reports a %s registration without failing the key save", async (outcome, shown) => {
+    asFullAdmin();
+    mocks.setIntegrationCredential.mockResolvedValue({
+      provider: "servernz",
+      key: "api_key",
+      secretSource: "AUTH_SECRET",
+      labelVersion: "integration-credential:v1",
+      updatedAt: new Date(),
+    });
+    mocks.ensurePushRegistration.mockResolvedValue(outcome);
+    const res = await POST(makeRequest({ provider: "servernz", key: "api_key", value: "acs_new" }));
+    expect(res.status).toBe(200);
+    expect((await res.json()).pushRegistration).toBe(shown);
+  });
+
+  it("does not register on another provider's write", async () => {
+    asFullAdmin();
+    const res = await POST(makeRequest({ provider: "xero", key: "client_secret", value: SECRET_VALUE }));
+    expect(mocks.ensurePushRegistration).not.toHaveBeenCalled();
+    expect(await res.json()).not.toHaveProperty("pushRegistration");
   });
 
   it("does not report success when the connection-answer reset fails", async () => {

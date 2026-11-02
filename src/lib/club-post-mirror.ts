@@ -5,6 +5,8 @@ import logger from "@/lib/logger";
 import { deletePostImage, writePostImage } from "@/lib/post-image-storage";
 import { prisma } from "@/lib/prisma";
 import {
+  ServerNzApiError,
+  ServerNzNotConfiguredError,
   ServerNzVersionMismatchError,
   fetchSharedPostImage,
   pullSharedPostSync,
@@ -12,7 +14,11 @@ import {
   type SyncPost,
 } from "@/lib/servernz-api";
 import { SERVER_VERSION_MISMATCH_CODE } from "@/lib/servernz-api-version";
-import { getServerNzSetupState } from "@/lib/servernz-config";
+import {
+  getServerNzSetupState,
+  SERVERNZ_CREDENTIAL_KEYS,
+  SERVERNZ_PROVIDER,
+} from "@/lib/servernz-config";
 import {
   advancedDownloadCursor,
   overlappedRequestCursor,
@@ -20,8 +26,11 @@ import {
 import { checkServerVersion } from "@/lib/servernz-version-check";
 import {
   getIntegrationCredentialValue,
-  setIntegrationCredential,
+  invalidateProviderCredentialCache,
+  setIntegrationCredentialInTransaction,
 } from "@/lib/integration-credentials";
+import { serverNzAnswerWriter } from "@/lib/servernz-version-record";
+import { getAppBaseUrl } from "@/lib/app-url";
 
 /**
  * Mirroring shared posts from the central server (epic #2992).
@@ -48,8 +57,7 @@ import {
  */
 
 /** Provider key the push-verification secret is stored under, beside the API key. */
-export const SERVERNZ_PUSH_SECRET_KEY = "push_secret";
-const SERVERNZ_PROVIDER = "servernz";
+export const SERVERNZ_PUSH_SECRET_KEY = SERVERNZ_CREDENTIAL_KEYS.pushSecret;
 
 /** A claim older than this belongs to a process that died mid-pass. */
 export const STALE_SYNC_CLAIM_MS = 10 * 60 * 1000;
@@ -363,53 +371,84 @@ async function applyRemoval(serverPostId: string): Promise<boolean> {
   return true;
 }
 
+/** One registration's outcome. `awaiting-approval`: the server's 403 for a
+ * pending or suspended club; it and `failed` are retried by the mirror pass. */
+export type PushRegistrationOutcome =
+  "registered" | "already-registered" | "not-https" | "no-address" | "awaiting-approval" | "failed";
+
 /**
  * Make sure the central server knows where to push for this install.
  *
  * Idempotent and cheap to call from the sync pass: it does nothing when a
- * secret is already stored. The callback URL is derived from NEXTAUTH_URL —
- * the address this install already knows itself by — so there is no second
- * base-URL setting to drift.
+ * secret is already stored (a key change deletes it, `forgetServerConnection`).
+ * The callback URL is derived from this install's own address
+ * (`getAppBaseUrl`) so there is no second base-URL setting to drift.
  */
-export async function ensurePushRegistration(): Promise<void> {
+export async function ensurePushRegistration(): Promise<PushRegistrationOutcome> {
   const existing = await getIntegrationCredentialValue(
     SERVERNZ_PROVIDER,
     SERVERNZ_PUSH_SECRET_KEY,
   );
-  if (existing) return;
+  if (existing) return "already-registered";
 
-  const base = process.env.NEXTAUTH_URL?.trim();
+  const base = getAppBaseUrl();
   // Push needs a URL the central server can reach over https; a localhost dev
   // install simply stays poll-only, which loses nothing but latency.
-  if (!base || !base.startsWith("https://")) return;
+  if (!base.startsWith("https://")) return "not-https";
 
   const callback = new URL("/api/webhooks/servernz-posts", base).toString();
   try {
     const result = await registerPushTarget(callback);
-    await setIntegrationCredential({
-      provider: SERVERNZ_PROVIDER,
-      key: SERVERNZ_PUSH_SECRET_KEY,
-      value: result.secret,
-      actor: { kind: "system", actor: "servernz-push-registration" },
-      // Declared last-writer-wins, and deliberately NOT create-only (#2723).
-      // `registerPushTarget` is a PUT: the central server keeps the most
-      // recent registration and issues it a new secret version. So if two
-      // containers both register, the secret worth storing is the LAST one
-      // issued — refusing to overwrite would leave this install holding a
-      // superseded secret and rejecting every push the server signs.
-      expect: { expect: "any" },
-    });
+    // Fenced on the connection it went out on: a key or address replaced
+    // meanwhile deleted the old secret, which must not come back (`failed`).
+    try {
+      await serverNzAnswerWriter(result.sentOn)((tx) =>
+        setIntegrationCredentialInTransaction({
+          tx,
+          provider: SERVERNZ_PROVIDER,
+          key: SERVERNZ_PUSH_SECRET_KEY,
+          value: result.secret,
+          actor: { kind: "system", actor: "servernz-push-registration" },
+          // Last-writer-wins, NOT create-only (#2723): the server keeps the most
+          // recent registration (a PUT), so the secret worth storing is the last.
+          expect: { expect: "any" },
+        }),
+      );
+    } finally {
+      invalidateProviderCredentialCache(SERVERNZ_PROVIDER);
+    }
     logger.info(
       { callback, secretVersion: result.secretVersion },
       "Registered this install for shared-post pushes",
     );
+    return "registered";
   } catch (error) {
     // A version pause is the pass's answer, not registration's: let the pass
     // report it (#49 review item 1).
     if (error instanceof ServerNzVersionMismatchError) throw error;
-    // Poll-only is a working state, so registration failing must not fail the
-    // sync pass that attempted it.
+    // Poll-only works, so a failed registration does not fail the sync pass.
     logger.warn({ err: error }, "Could not register the shared-post push target");
+    if (error instanceof ServerNzNotConfiguredError) return "no-address";
+    // A pending or suspended club's key is refused with 403 (server #44).
+    return error instanceof ServerNzApiError && error.status === 403
+      ? "awaiting-approval"
+      : "failed";
+  }
+}
+
+/**
+ * Register straight after an API key save, as an outcome for the setup page.
+ * Never throws: the key is stored whatever this comes to; the pass retries.
+ */
+export async function registerAfterKeySave(): Promise<
+  PushRegistrationOutcome | typeof SERVER_VERSION_MISMATCH_CODE
+> {
+  try {
+    return await ensurePushRegistration();
+  } catch (error) {
+    if (error instanceof ServerNzVersionMismatchError) return SERVER_VERSION_MISMATCH_CODE;
+    logger.warn({ err: error }, "Push registration after a key save failed");
+    return "failed";
   }
 }
 

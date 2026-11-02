@@ -571,7 +571,7 @@ export async function fetchSharedPostImage(
  */
 export async function registerPushTarget(
   callbackUrl: string,
-): Promise<PushTargetResult> {
+): Promise<PushTargetResult & { sentOn: ServerNzConnectionIdentity }> {
   const { baseUrl, apiKey, identity } = await resolveConnection();
   const res = await fetch(`${baseUrl}/api/v1/push-target`, {
     method: "PUT",
@@ -581,7 +581,8 @@ export async function registerPushTarget(
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
   if (!res.ok) await refuse(res, identity);
-  return pushTargetResultSchema.parse(await res.json());
+  // The connection it was sent on, so the secret is stored only for that one.
+  return { ...pushTargetResultSchema.parse(await res.json()), sentOn: identity };
 }
 
 /** Upload the club's Other Clubs entries to the central server. */
