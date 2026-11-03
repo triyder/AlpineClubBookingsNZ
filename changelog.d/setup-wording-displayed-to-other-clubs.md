@@ -1,0 +1,1 @@
+- **The Alpine Central Server setup page no longer says *only* the booking officer's name and email go to other clubs.** It now says they are displayed to other clubs to enable booking sharing when a lodge is at capacity, so it no longer contradicts the integrations guide, which lists everything else the lodge's entry shares.
