@@ -147,7 +147,7 @@ const CREDENTIAL_WRITE_SITES: Record<string, string> = {
     "setIntegrationCredentialInTransaction admin / any",
   "src/app/api/admin/integrations/credentials/route.ts::POST#1":
     "setIntegrationCredential admin / any",
-  "src/lib/club-post-mirror.ts::ensurePushRegistration#0":
+  "src/lib/servernz-push-registration.ts::ensurePushRegistration#0":
     "setIntegrationCredentialInTransaction system / any",
   "src/lib/google-config.ts::clearGoogleVerified#0":
     "deleteIntegrationCredential (forwarded) actor / any",

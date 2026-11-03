@@ -5,32 +5,22 @@ import logger from "@/lib/logger";
 import { deletePostImage, writePostImage } from "@/lib/post-image-storage";
 import { prisma } from "@/lib/prisma";
 import {
-  ServerNzApiError,
-  ServerNzNotConfiguredError,
   ServerNzVersionMismatchError,
   fetchSharedPostImage,
   pullSharedPostSync,
-  registerPushTarget,
   type SyncPost,
 } from "@/lib/servernz-api";
 import { SERVER_VERSION_MISMATCH_CODE } from "@/lib/servernz-api-version";
 import {
   getServerNzSetupState,
   SERVERNZ_CREDENTIAL_KEYS,
-  SERVERNZ_PROVIDER,
 } from "@/lib/servernz-config";
 import {
   advancedDownloadCursor,
   overlappedRequestCursor,
 } from "@/lib/servernz-cursor-overlap";
 import { checkServerVersion } from "@/lib/servernz-version-check";
-import {
-  getIntegrationCredentialValue,
-  invalidateProviderCredentialCache,
-  setIntegrationCredentialInTransaction,
-} from "@/lib/integration-credentials";
-import { serverNzAnswerWriter } from "@/lib/servernz-version-record";
-import { getAppBaseUrl } from "@/lib/app-url";
+import { ensurePushRegistration } from "@/lib/servernz-push-registration";
 
 /**
  * Mirroring shared posts from the central server (epic #2992).
@@ -369,87 +359,6 @@ async function applyRemoval(serverPostId: string): Promise<boolean> {
     await deletePostImage(image.storageKey);
   }
   return true;
-}
-
-/** One registration's outcome. `awaiting-approval`: the server's 403 for a
- * pending or suspended club; it and `failed` are retried by the mirror pass. */
-export type PushRegistrationOutcome =
-  "registered" | "already-registered" | "not-https" | "no-address" | "awaiting-approval" | "failed";
-
-/**
- * Make sure the central server knows where to push for this install.
- *
- * Idempotent and cheap to call from the sync pass: it does nothing when a
- * secret is already stored (a key change deletes it, `forgetServerConnection`).
- * The callback URL is derived from this install's own address
- * (`getAppBaseUrl`) so there is no second base-URL setting to drift.
- */
-export async function ensurePushRegistration(): Promise<PushRegistrationOutcome> {
-  const existing = await getIntegrationCredentialValue(
-    SERVERNZ_PROVIDER,
-    SERVERNZ_PUSH_SECRET_KEY,
-  );
-  if (existing) return "already-registered";
-
-  const base = getAppBaseUrl();
-  // Push needs a URL the central server can reach over https; a localhost dev
-  // install simply stays poll-only, which loses nothing but latency.
-  if (!base.startsWith("https://")) return "not-https";
-
-  const callback = new URL("/api/webhooks/servernz-posts", base).toString();
-  try {
-    const result = await registerPushTarget(callback);
-    // Fenced on the connection it went out on: a key or address replaced
-    // meanwhile deleted the old secret, which must not come back (`failed`).
-    try {
-      await serverNzAnswerWriter(result.sentOn)((tx) =>
-        setIntegrationCredentialInTransaction({
-          tx,
-          provider: SERVERNZ_PROVIDER,
-          key: SERVERNZ_PUSH_SECRET_KEY,
-          value: result.secret,
-          actor: { kind: "system", actor: "servernz-push-registration" },
-          // Last-writer-wins, NOT create-only (#2723): the server keeps the most
-          // recent registration (a PUT), so the secret worth storing is the last.
-          expect: { expect: "any" },
-        }),
-      );
-    } finally {
-      invalidateProviderCredentialCache(SERVERNZ_PROVIDER);
-    }
-    logger.info(
-      { callback, secretVersion: result.secretVersion },
-      "Registered this install for shared-post pushes",
-    );
-    return "registered";
-  } catch (error) {
-    // A version pause is the pass's answer, not registration's: let the pass
-    // report it (#49 review item 1).
-    if (error instanceof ServerNzVersionMismatchError) throw error;
-    // Poll-only works, so a failed registration does not fail the sync pass.
-    logger.warn({ err: error }, "Could not register the shared-post push target");
-    if (error instanceof ServerNzNotConfiguredError) return "no-address";
-    // A pending or suspended club's key is refused with 403 (server #44).
-    return error instanceof ServerNzApiError && error.status === 403
-      ? "awaiting-approval"
-      : "failed";
-  }
-}
-
-/**
- * Register straight after an API key save, as an outcome for the setup page.
- * Never throws: the key is stored whatever this comes to; the pass retries.
- */
-export async function registerAfterKeySave(): Promise<
-  PushRegistrationOutcome | typeof SERVER_VERSION_MISMATCH_CODE
-> {
-  try {
-    return await ensurePushRegistration();
-  } catch (error) {
-    if (error instanceof ServerNzVersionMismatchError) return SERVER_VERSION_MISMATCH_CODE;
-    logger.warn({ err: error }, "Push registration after a key save failed");
-    return "failed";
-  }
 }
 
 const PAUSED: MirrorSyncResult = {

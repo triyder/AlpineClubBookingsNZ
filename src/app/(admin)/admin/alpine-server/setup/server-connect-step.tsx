@@ -10,7 +10,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
-import type { PushRegistrationOutcome } from "@/lib/club-post-mirror";
+import type { PushRegistrationOutcome } from "@/lib/servernz-push-registration";
 import type { SERVER_VERSION_MISMATCH_CODE } from "@/lib/servernz-api-version";
 import type { LodgeLinkStep, LodgeLinkStepResult } from "@/lib/servernz-lodge-link-step";
 

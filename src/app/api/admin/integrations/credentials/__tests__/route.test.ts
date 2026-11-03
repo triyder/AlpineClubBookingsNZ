@@ -53,7 +53,7 @@ vi.mock("@/lib/integration-credentials", async (importOriginal) => ({
   setIntegrationCredentialInTransaction: mocks.setIntegrationCredential,
   deleteIntegrationCredentialInTransaction: mocks.deleteIntegrationCredential,
 }));
-vi.mock("@/lib/club-post-mirror", () => ({
+vi.mock("@/lib/servernz-push-registration", () => ({
   registerAfterKeySave: mocks.ensurePushRegistration,
 }));
 vi.mock("@/lib/stripe-config", () => ({

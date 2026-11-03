@@ -105,7 +105,11 @@ vi.mock("@/lib/servernz-api", () => ({
 vi.mock("@/lib/servernz-config", () => ({
   getServerNzSetupState: mocks.getServerNzSetupState,
   SERVERNZ_PROVIDER: "servernz",
-  SERVERNZ_CREDENTIAL_KEYS: { apiKey: "api_key", pushSecret: "push_secret" },
+  SERVERNZ_CREDENTIAL_KEYS: {
+    apiKey: "api_key",
+    pushSecret: "push_secret",
+    pushRegisteredUrl: "push_registered_url",
+  },
 }));
 
 vi.mock("@/lib/integration-credentials", () => ({
@@ -128,7 +132,8 @@ vi.mock("@/lib/post-image-storage", () => ({
   deletePostImage: mocks.deletePostImage,
 }));
 
-import { ensurePushRegistration, registerAfterKeySave, runMirrorSync } from "@/lib/club-post-mirror";
+import { runMirrorSync } from "@/lib/club-post-mirror";
+import { ensurePushRegistration, registerAfterKeySave } from "@/lib/servernz-push-registration";
 
 const NOW = new Date("2026-07-01T00:00:00.000Z");
 const SERVER_IMAGE = "c".repeat(32);
@@ -979,10 +984,73 @@ describe("ensurePushRegistration outcome", () => {
     delete process.env.NEXTAUTH_URL;
   });
 
-  it("asks nothing while a secret is stored", async () => {
-    mocks.getIntegrationCredentialValue.mockResolvedValue("secret");
+  const CALLBACK = "https://club.example.nz/api/webhooks/servernz-posts";
+  /** The credential store holding these values, by key. */
+  function stored(values: Record<string, string>) {
+    mocks.getIntegrationCredentialValue.mockImplementation(
+      async (_provider: string, key: string) => values[key] ?? null,
+    );
+  }
+  function storedKeys() {
+    return mocks.setIntegrationCredential.mock.calls.map(([args]) => [args.key, args.value]);
+  }
+
+  it("asks nothing while a secret is stored for this site's current address", async () => {
+    stored({ push_secret: "secret", push_registered_url: CALLBACK });
     await expect(ensurePushRegistration()).resolves.toBe("already-registered");
     expect(mocks.registerPushTarget).not.toHaveBeenCalled();
+    expect(mocks.setIntegrationCredential).not.toHaveBeenCalled();
+  });
+
+  it("registers again when this site's address moved since it registered", async () => {
+    // LWTC moved from new.lwtc.org.nz: the server kept pushing to, and asking
+    // free beds of, a name that no longer resolved.
+    stored({
+      push_secret: "old-secret",
+      push_registered_url: "https://new.club.example.nz/api/webhooks/servernz-posts",
+    });
+    mocks.registerPushTarget.mockResolvedValue({ secret: "rotated", secretVersion: 3, sentOn: "conn-1" });
+    await expect(ensurePushRegistration()).resolves.toBe("registered");
+    expect(mocks.registerPushTarget).toHaveBeenCalledWith(CALLBACK);
+    // The server rotates the secret for a new URL; the pair is stored together.
+    expect(mocks.fencedOn).toHaveBeenCalledTimes(1);
+    expect(storedKeys()).toEqual([
+      ["push_secret", "rotated"],
+      ["push_registered_url", CALLBACK],
+    ]);
+  });
+
+  it("registers once more when a secret was stored before its address was", async () => {
+    stored({ push_secret: "secret" });
+    mocks.registerPushTarget.mockResolvedValue({ secret: "secret", secretVersion: 2, sentOn: "conn-1" });
+    await expect(ensurePushRegistration()).resolves.toBe("registered");
+    expect(mocks.registerPushTarget).toHaveBeenCalledTimes(1);
+    expect(storedKeys()).toEqual([
+      ["push_secret", "secret"],
+      ["push_registered_url", CALLBACK],
+    ]);
+
+    // Now the address is stored, the next pass asks nothing.
+    stored({ push_secret: "secret", push_registered_url: CALLBACK });
+    await expect(ensurePushRegistration()).resolves.toBe("already-registered");
+    expect(mocks.registerPushTarget).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a working registration when this site's address is no longer https", async () => {
+    stored({ push_secret: "secret", push_registered_url: CALLBACK });
+    process.env.NEXTAUTH_URL = "http://club.example.nz";
+    await expect(ensurePushRegistration()).resolves.toBe("already-registered");
+    expect(mocks.registerPushTarget).not.toHaveBeenCalled();
+  });
+
+  it("keeps the stored address when a re-registration is refused", async () => {
+    stored({
+      push_secret: "old-secret",
+      push_registered_url: "https://new.club.example.nz/api/webhooks/servernz-posts",
+    });
+    mocks.registerPushTarget.mockRejectedValueOnce(new mocks.FakeApiError(403));
+    await expect(ensurePushRegistration()).resolves.toBe("awaiting-approval");
+    expect(mocks.setIntegrationCredential).not.toHaveBeenCalled();
   });
 
   it("stays poll-only when this site's address is not https", async () => {
@@ -1004,6 +1072,14 @@ describe("ensurePushRegistration outcome", () => {
     expect(mocks.fencedOn).toHaveBeenCalledWith("conn-1");
     expect(mocks.setIntegrationCredential).toHaveBeenCalledWith(
       expect.objectContaining({ tx: { tx: "fenced" }, provider: "servernz", key: "push_secret", value: "s3cret" }),
+    );
+    expect(mocks.setIntegrationCredential).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tx: { tx: "fenced" },
+        provider: "servernz",
+        key: "push_registered_url",
+        value: "https://club.example.nz/api/webhooks/servernz-posts",
+      }),
     );
     expect(mocks.invalidateCache).toHaveBeenCalledWith("servernz");
   });
