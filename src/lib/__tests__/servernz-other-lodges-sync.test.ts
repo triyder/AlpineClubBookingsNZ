@@ -387,7 +387,8 @@ describe("uploadOtherClubsToServer", () => {
     mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesOwnedLodges: null });
     await uploadOtherClubsToServer();
     mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesOwnedLodgesUnreadable: true });
-    await uploadOtherClubsToServer();
+    // Said as unreadable, so a save's notice does not read it as already sent.
+    await expect(uploadOtherClubsToServer()).resolves.toMatchObject({ sent: 0, ownedUnreadable: true });
     expect(mockFeesSync).not.toHaveBeenCalled();
   });
 });
@@ -846,7 +847,8 @@ describe("sync loop hygiene", () => {
       ],
     });
 
-    await uploadOtherClubsToServer();
+    // Two sent, one accepted: the save's notice reads `accepted` (#4720 review).
+    await expect(uploadOtherClubsToServer()).resolves.toMatchObject({ sent: 2, accepted: 1, skipped: 1 });
 
     // Strictly BELOW the rejected row, even though a newer row was accepted, so
     // the next run re-sends it rather than stepping over it forever.
@@ -867,7 +869,7 @@ describe("sync loop hygiene", () => {
       results: [{ name: "Rejected Club", status: "skipped", reason: "duplicate" }],
     });
 
-    await uploadOtherClubsToServer();
+    await expect(uploadOtherClubsToServer()).resolves.toMatchObject({ sent: 1, accepted: 0 });
 
     expect(mockRecordUpload).not.toHaveBeenCalled();
   });
