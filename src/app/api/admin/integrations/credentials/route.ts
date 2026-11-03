@@ -52,7 +52,7 @@ import {
   SERVERNZ_PROVIDER,
   SERVERNZ_WRITABLE_CREDENTIAL_KEYS,
 } from "@/lib/servernz-config";
-import { registerAfterKeySave } from "@/lib/club-post-mirror";
+import { registerAfterKeySave } from "@/lib/servernz-push-registration";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 
