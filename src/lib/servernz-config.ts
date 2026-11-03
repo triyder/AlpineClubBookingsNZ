@@ -56,6 +56,13 @@ export const SERVERNZ_CREDENTIAL_KEYS = {
    * (`ensurePushRegistration`). Never admin-writable.
    */
   pushSecret: "push_secret",
+  /**
+   * The callback URL the push secret was issued for, written with it. The
+   * server pushes to, and asks free beds of, that address; when this site's
+   * own address moves, `ensurePushRegistration` sees the difference and
+   * registers again. Never admin-writable.
+   */
+  pushRegisteredUrl: "push_registered_url",
 } as const;
 
 /**
@@ -144,25 +151,31 @@ export async function setServerNzApiKey(
 
 /**
  * Forget the ending connection, in its fence: the server's answers
- * (`forgetServerConnectionAnswers`) and the push secret it issued. The secret
- * belonged to the old key's registration; kept, `ensurePushRegistration` would
- * find it and never register this site with the new connection, so the server
- * could neither push nor ask about free beds. Deleted, the next registration
- * (straight after a key save, or the 3-hourly mirror pass) issues a fresh one.
+ * (`forgetServerConnectionAnswers`) and the push secret it issued, with the
+ * address it was issued for. The secret belonged to the old key's
+ * registration; kept, `ensurePushRegistration` would find it and never
+ * register this site with the new connection, so the server could neither
+ * push nor ask about free beds. Deleted, the next registration (straight after
+ * a key save, or the 3-hourly mirror pass) issues a fresh one.
  */
 async function forgetServerConnection(
   actor: CredentialActor,
   tx: ServerNzConnectionTx,
 ): Promise<void> {
   await forgetServerConnectionAnswers(tx);
-  await deleteIntegrationCredentialInTransaction({
-    tx,
-    provider: SERVERNZ_PROVIDER,
-    key: SERVERNZ_CREDENTIAL_KEYS.pushSecret,
-    actor,
-    // Gone whatever it held: no read-modify-write to be stale against.
-    expect: { expect: "any" },
-  });
+  for (const key of [
+    SERVERNZ_CREDENTIAL_KEYS.pushSecret,
+    SERVERNZ_CREDENTIAL_KEYS.pushRegisteredUrl,
+  ]) {
+    await deleteIntegrationCredentialInTransaction({
+      tx,
+      provider: SERVERNZ_PROVIDER,
+      key,
+      actor,
+      // Gone whatever it held: no read-modify-write to be stale against.
+      expect: { expect: "any" },
+    });
+  }
 }
 
 /**

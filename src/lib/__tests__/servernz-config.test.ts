@@ -163,9 +163,10 @@ describe("ServerNZ credential wiring", () => {
     expect(mocks.forgetServerConnectionAnswers).toHaveBeenLastCalledWith(mocks.tx);
   });
 
-  it("deletes the push secret on both replacement and address move, in the fence", async () => {
+  it("deletes the push secret and its address on both replacement and address move, in the fence", async () => {
     // Kept, `ensurePushRegistration` would find it and never register this
-    // site with the new connection (server onboarding, B1).
+    // site with the new connection (server onboarding, B1). The address it
+    // was issued for goes with it.
     const actor = { kind: "admin", memberId: "member-1" } as const;
     const pushSecretDelete = {
       tx: mocks.tx,
@@ -175,8 +176,12 @@ describe("ServerNZ credential wiring", () => {
       expect: { expect: "any" },
     };
     await setServerNzApiKey("acs_new", actor);
-    expect(mocks.deleteIntegrationCredential).toHaveBeenCalledTimes(1);
+    expect(mocks.deleteIntegrationCredential).toHaveBeenCalledTimes(2);
     expect(mocks.deleteIntegrationCredential).toHaveBeenCalledWith(pushSecretDelete);
+    expect(mocks.deleteIntegrationCredential).toHaveBeenCalledWith({
+      ...pushSecretDelete,
+      key: "push_registered_url",
+    });
     expect(mocks.setIntegrationCredential.mock.invocationCallOrder[0])
       .toBeLessThan(mocks.deleteIntegrationCredential.mock.invocationCallOrder[0]!);
 
@@ -185,6 +190,7 @@ describe("ServerNZ credential wiring", () => {
     expect(mocks.deleteIntegrationCredential.mock.calls.map(([args]) => args.key)).toEqual([
       "api_key",
       "push_secret",
+      "push_registered_url",
     ]);
   });
 });
