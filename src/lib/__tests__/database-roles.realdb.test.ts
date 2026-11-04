@@ -156,6 +156,17 @@ function runTool(command: string, args: string[], input?: string) {
 }
 
 /**
+ * `pg_dump`, its output loadable into this server. A client newer than the
+ * server (the runner's tools against the postgres:16 service) writes
+ * `SET transaction_timeout`, which 16 rejects; it is a session setting of the
+ * dump, not schema, so it is dropped.
+ */
+function runPgDump(args: string[]) {
+  const result = runTool("pg_dump", args);
+  return { ...result, stdout: result.stdout.replace(/^SET transaction_timeout = .*;$/gm, "") };
+}
+
+/**
  * The deploy script's post-migrate grants check (#4453 review, O-F2), lifted out
  * of `scripts/run-production-blue-green-deploy.sh` between its markers and run
  * here as shipped, with the same psql variables.
@@ -287,7 +298,7 @@ async function privilegeSnapshot(database: string, { includeDatabaseAcl = true }
       // UPGRADE: the fresh schema re-created with every object owned by the
       // superuser and no grants — an existing single-superuser deployment.
       await admin.query(`CREATE DATABASE "${DATABASES.upgrade}"`);
-      const schemaDump = runTool("pg_dump", ["--no-owner", "--no-privileges", urlFor(DATABASES.fresh)]);
+      const schemaDump = runPgDump(["--no-owner", "--no-privileges", urlFor(DATABASES.fresh)]);
       if (schemaDump.status !== 0) throw new Error(`pg_dump of the fresh database failed: ${schemaDump.stderr}`);
       const load = runTool("psql", ["-q", "-v", "ON_ERROR_STOP=1", urlFor(DATABASES.upgrade)], schemaDump.stdout);
       if (load.status !== 0) throw new Error(`loading the upgrade database failed: ${load.stderr}`);
@@ -588,7 +599,7 @@ async function privilegeSnapshot(database: string, { includeDatabaseAcl = true }
       });
 
       it("takes a pg_dump backup as the application role, which the operator restores with the role split intact", async () => {
-        const dump = runTool("pg_dump", [urlFor(DATABASES.upgrade, "app")]);
+        const dump = runPgDump([urlFor(DATABASES.upgrade, "app")]);
         expect(dump.status, dump.stderr).toBe(0);
         appDumpSql = dump.stdout;
         expect(appDumpSql).toContain(`CREATE TABLE public."BookingLedgerLine"`);
