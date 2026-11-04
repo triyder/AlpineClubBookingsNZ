@@ -256,6 +256,8 @@ describe("POST /api/admin/integrations/credentials", () => {
     mocks.ensurePushRegistration.mockResolvedValue("registered");
     const res = await POST(makeRequest({ provider: "servernz", key: "api_key", value: "acs_replacement" }));
     expect(res.status).toBe(200);
+    // Registered in the saving administrator's name (#4720 review).
+    expect(mocks.ensurePushRegistration).toHaveBeenCalledWith("admin-1");
     expect(mocks.deleteIntegrationCredential).toHaveBeenCalledWith(
       expect.objectContaining({
         tx: mocks.tx,

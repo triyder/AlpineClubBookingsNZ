@@ -6,6 +6,7 @@ import {
   invalidateProviderCredentialCache,
   setIntegrationCredentialInTransaction,
 } from "@/lib/integration-credentials";
+import type { CredentialActor } from "@/lib/integration-credential-actor";
 import logger from "@/lib/logger";
 import {
   ServerNzApiError,
@@ -42,9 +43,12 @@ export type PushRegistrationOutcome =
  *
  * Registering again is safe: the server keeps the same secret for a repeat of
  * the same URL and rotates it only when the URL changes, and either way the
- * secret it returns is the one stored.
+ * secret it returns is the one stored. Both are written as `actor`: the mirror
+ * pass's system actor, or the administrator whose key save started it.
  */
-export async function ensurePushRegistration(): Promise<PushRegistrationOutcome> {
+export async function ensurePushRegistration(
+  actor: CredentialActor = { kind: "system", actor: "servernz-push-registration" },
+): Promise<PushRegistrationOutcome> {
   const base = getAppBaseUrl();
   // Push needs a URL the central server can reach over https; a localhost dev
   // install simply stays poll-only, which loses nothing but latency.
@@ -88,7 +92,7 @@ export async function ensurePushRegistration(): Promise<PushRegistrationOutcome>
             provider: SERVERNZ_PROVIDER,
             key,
             value,
-            actor: { kind: "system", actor: "servernz-push-registration" },
+            actor,
             // Last-writer-wins, NOT create-only (#2723): the server keeps the
             // most recent registration (a PUT), so the pair worth storing is
             // the last.
@@ -119,14 +123,15 @@ export async function ensurePushRegistration(): Promise<PushRegistrationOutcome>
 }
 
 /**
- * Register straight after an API key save, as an outcome for the setup page.
+ * Register straight after an API key save, as an outcome for the setup page,
+ * stored in the name of `memberId`, the administrator who saved the key.
  * Never throws: the key is stored whatever this comes to; the pass retries.
  */
-export async function registerAfterKeySave(): Promise<
+export async function registerAfterKeySave(memberId: string): Promise<
   PushRegistrationOutcome | typeof SERVER_VERSION_MISMATCH_CODE
 > {
   try {
-    return await ensurePushRegistration();
+    return await ensurePushRegistration({ kind: "admin", memberId });
   } catch (error) {
     if (error instanceof ServerNzVersionMismatchError) return SERVER_VERSION_MISMATCH_CODE;
     logger.warn({ err: error }, "Push registration after a key save failed");

@@ -1108,10 +1108,15 @@ describe("ensurePushRegistration outcome", () => {
 
   it("never throws after a key save: a version pause and any other failure are outcomes", async () => {
     mocks.registerPushTarget.mockRejectedValueOnce(new mocks.FakeVersionError());
-    await expect(registerAfterKeySave()).resolves.toBe("server-version-mismatch");
+    await expect(registerAfterKeySave("admin-1")).resolves.toBe("server-version-mismatch");
     mocks.getIntegrationCredentialValue.mockRejectedValueOnce(new Error("database down"));
-    await expect(registerAfterKeySave()).resolves.toBe("failed");
+    await expect(registerAfterKeySave("admin-1")).resolves.toBe("failed");
     mocks.registerPushTarget.mockResolvedValueOnce({ secret: "s", secretVersion: 1, sentOn: "conn-1" });
-    await expect(registerAfterKeySave()).resolves.toBe("registered");
+    await expect(registerAfterKeySave("admin-1")).resolves.toBe("registered");
+    // Stored in the saving administrator's name, not the mirror pass's
+    // system actor (thatskiff33/AlpineClubBookingsNZ#4720 review).
+    expect(mocks.setIntegrationCredential).toHaveBeenLastCalledWith(
+      expect.objectContaining({ actor: { kind: "admin", memberId: "admin-1" } }),
+    );
   });
 });
