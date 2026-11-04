@@ -6,7 +6,7 @@
  * counts behind the badges, the "Search…" trigger, and the role-panel switcher
  * (#108).
  */
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 import { Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { openAdminCommandPalette } from "@/lib/admin-command-palette-events";
@@ -153,7 +153,10 @@ export function PanelSwitcher({
 /**
  * The panel shown, and the switcher's choices (#108). Starts on the person's
  * default panel so server and first client render agree; a remembered choice
- * is applied after mount, and only if it is still one of their choices.
+ * is applied after mount, and only if it is still one of their choices. A
+ * LAYOUT effect, so it lands before the first paint: an admin who chose the
+ * full menu never sees the short one flash on a hard load or on the remount
+ * between the /admin and /finance layouts.
  */
 export function useAdminNavPanel(
   permissionMatrix: AdminPermissionMatrix | undefined,
@@ -167,7 +170,7 @@ export function useAdminNavPanel(
     choices[0] ?? "admin",
   );
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     let stored: string | null = null;
     try {
       stored = window.localStorage.getItem(ADMIN_NAV_PANEL_STORAGE_KEY);

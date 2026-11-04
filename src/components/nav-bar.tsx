@@ -23,7 +23,9 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { useClubIdentity } from "@/components/club-identity-provider";
+import { isFeatureHrefVisible } from "@/config/feature-routes";
 import type { FeatureFlags } from "@/config/schema";
+import { FINANCE_WORKSPACE_PATH } from "@/lib/admin-permissions";
 import { buildProfilePathWithReturnTo } from "@/lib/internal-return-path";
 import { cn } from "@/lib/utils";
 
@@ -67,7 +69,10 @@ const memberLinks: NavBarLink[] = [
   { href: "/profile", label: "Profile" },
 ];
 
-const financeLink: NavBarLink = { href: "/finance", label: "Finance" };
+const financeLink: NavBarLink = {
+  href: FINANCE_WORKSPACE_PATH,
+  label: "Finance",
+};
 
 // The member lodge roster (#2942). Off unless the club turns the module on,
 // so the link is conditional rather than part of `memberLinks` above.
@@ -120,7 +125,10 @@ export function getNavBarLinks(
   const hutLeaderLink = { href: "/lodge/kiosk", label: hutLeaderLabel };
   const links: NavBarLink[] = [
     ...memberLinks,
-    ...(user.canAccessFinance && features.financeDashboard ? [financeLink] : []),
+    ...(user.canAccessFinance &&
+    isFeatureHrefVisible(FINANCE_WORKSPACE_PATH, features)
+      ? [financeLink]
+      : []),
     ...(features.memberLodgeRoster ? [lodgeRosterLink] : []),
     ...(features.kiosk
       ? user.isHutLeader && features.hutLeaders

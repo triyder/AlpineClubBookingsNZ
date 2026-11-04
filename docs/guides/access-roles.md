@@ -98,13 +98,15 @@ from its name (so custom roles follow the same rule):
 
 | Menu | Who opens on it | What it shows |
 | --- | --- | --- |
-| Admin Panel | Full Admins; anyone who can only view, with Membership, Content or Support among their areas (Read-only Admin) | The full admin menu, as before |
-| Finance Panel | Anyone who edits Finance, or only views it (Treasurer, Finance Viewer) | Finance Dashboard, the Finance section, Subscriptions, Integrations, and the refund and unpaid-stay queues |
-| Bookings Panel | Anyone who edits Bookings & Beds or Lodge Operations (Booking Officer) | Bookings & Beds, Bookings Setup, Rates & Policies, Finance, Lodge Operations, and the booking-request, unpaid-stay and hut-leader queues |
+| Admin Panel | Full Admins; anyone who edits nothing, unless Finance is the only area they view (Read-only Admin); anyone who edits only Membership, Content or Support (Membership Officer, Content Manager) | The full admin menu, as before |
+| Finance Panel | Anyone who edits Finance; anyone whose only area is Finance at View (Treasurer, Finance Viewer) | Admin Dashboard (when the role has Admin Overview), Finance Dashboard, the Finance section, Subscriptions, Integrations, and the refund and unpaid-stay queues |
+| Bookings Panel | Anyone who edits Bookings & Beds or Lodge Operations (Booking Officer) | Admin Dashboard (when the role has Admin Overview), Bookings & Beds, Bookings Setup, Rates & Policies, Finance, Lodge Operations, and the booking-request, unpaid-stay and hut-leader queues |
 
-Someone whose edit areas span more than one menu gets a switcher at the top of
-the sidebar, and every menu has a **Full admin** button that shows every page
-their areas allow. The sidebar remembers the last choice in that browser. The
+Anyone on the Finance or Bookings Panel sees a switcher at the top of the
+sidebar with a **Full admin** button that shows every page their areas allow.
+Someone who edits areas belonging to more than one menu (for example a
+Treasurer who is also a Booking Officer) gets a button for each of those menus
+as well. The sidebar remembers the last choice in that browser. The
 menus are display only: a page left out of a short menu can still be opened
 from the full menu or the search (Ctrl K), and a page the role cannot open
 appears in neither. On staff pages (`/admin` and the `/finance` workspace) the

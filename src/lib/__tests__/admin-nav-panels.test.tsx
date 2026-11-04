@@ -17,6 +17,7 @@ import {
   ADMIN_NAV_PANELS,
   ADMIN_NAV_PANEL_KEYS,
   ADMIN_NAV_PANEL_STORAGE_KEY,
+  NEEDS_ATTENTION_LABEL,
   getAdminNavPanelChoices,
   pickStoredAdminNavPanel,
   resolveAdminNavPanels,
@@ -124,6 +125,25 @@ describe("which panels a person is offered (#108)", () => {
     expect(resolveAdminNavPanels(custom, false)).toEqual(["bookings"]);
   });
 
+  it("keeps a view-only grid on the full menu unless finance is all it views", () => {
+    const none = matrixFor();
+    const auditor = {
+      ...none,
+      overview: "view",
+      bookings: "view",
+      finance: "view",
+    } as AdminPermissionMatrix;
+    const lodgeViewer = { ...none, lodge: "view" } as AdminPermissionMatrix;
+    const financeOnly = {
+      ...none,
+      overview: "view",
+      finance: "view",
+    } as AdminPermissionMatrix;
+    expect(resolveAdminNavPanels(auditor, false)).toEqual(["admin"]);
+    expect(resolveAdminNavPanels(lodgeViewer, false)).toEqual(["admin"]);
+    expect(resolveAdminNavPanels(financeOnly, false)).toEqual(["finance"]);
+  });
+
   it("keeps the historical full menu when no matrix is supplied", () => {
     expect(resolveAdminNavPanels(undefined, false)).toEqual(["admin"]);
   });
@@ -160,6 +180,22 @@ describe("panel contents (#108)", () => {
         expect(catalogueHrefs).toContain(entry.href);
         expect(ADMIN_NAV_SECTION_ORDER).toContain(entry.into);
       }
+    }
+  });
+
+  it("names only queues the Needs Attention section actually has", () => {
+    // A queue whose href moves must not silently drop out of a panel.
+    const queuePaths = new Set(
+      getVisibleAdminNavSections(CLUB_DAY, allOn)
+        .filter((section) => section.label === NEEDS_ATTENTION_LABEL)
+        .flatMap((section) =>
+          section.items.map((item) => item.href.split(/[?#]/)[0]),
+        ),
+    );
+    for (const key of ADMIN_NAV_PANEL_KEYS) {
+      const paths = ADMIN_NAV_PANELS[key].attentionPaths;
+      if (paths === "all") continue;
+      for (const path of paths) expect(queuePaths).toContain(path);
     }
   });
 

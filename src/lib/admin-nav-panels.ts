@@ -124,14 +124,14 @@ const DEDICATED_PANELS = ADMIN_NAV_PANEL_KEYS.filter(
  *
  * - Full Admin (or no matrix at all, the sidebar's historical fail-open
  *   contract) → the Admin panel, unchanged.
- * - Otherwise the areas the person can EDIT decide; someone who edits nothing
- *   is placed by the areas they can VIEW.
- * - Each dedicated panel serving one of those areas is offered, in
- *   {@link ADMIN_NAV_PANEL_KEYS} order.
- * - An area no dedicated panel serves (membership, content, support) adds the
- *   Admin panel, because only the full menu shows it. A view-only person with
- *   such an area (Read-only Admin) gets the Admin panel alone: they browse
- *   everything and work in nothing, so the full menu is their panel.
+ * - Someone who edits nothing → the Admin panel, with ONE exception: a person
+ *   who can view nothing but finance (Finance Viewer) gets the Finance panel
+ *   (issue #108, as written). An "Auditor" viewing bookings and finance, or a
+ *   view-only lodge grid, browses across areas and keeps the full menu.
+ * - Otherwise the areas the person can EDIT decide: each dedicated panel
+ *   serving one of them is offered, in {@link ADMIN_NAV_PANEL_KEYS} order, and
+ *   an edit area no dedicated panel serves (membership, content, support) adds
+ *   the Admin panel, because only the full menu shows it.
  */
 export function resolveAdminNavPanels(
   permissionMatrix: AdminPermissionMatrix | undefined,
@@ -141,21 +141,26 @@ export function resolveAdminNavPanels(
 
   const areas = ADMIN_PERMISSION_AREAS.map((area) => area.key);
   const editAreas = areas.filter((area) => permissionMatrix[area] === "edit");
-  const basis =
-    editAreas.length > 0
-      ? editAreas
-      : areas.filter((area) => permissionMatrix[area] !== "none");
+
+  if (editAreas.length === 0) {
+    const viewed = areas.filter(
+      (area) =>
+        permissionMatrix[area] !== "none" && !PANEL_NEUTRAL_AREAS.includes(area),
+    );
+    return viewed.length === 1 && viewed[0] === "finance"
+      ? ["finance"]
+      : ["admin"];
+  }
 
   const dedicated = DEDICATED_PANELS.filter((key) =>
-    ADMIN_NAV_PANELS[key].areas.some((area) => basis.includes(area)),
+    ADMIN_NAV_PANELS[key].areas.some((area) => editAreas.includes(area)),
   );
-  const uncovered = basis.filter(
+  const uncovered = editAreas.filter(
     (area) =>
       !PANEL_NEUTRAL_AREAS.includes(area) &&
       !DEDICATED_PANELS.some((key) => ADMIN_NAV_PANELS[key].areas.includes(area)),
   );
 
-  if (uncovered.length > 0 && editAreas.length === 0) return ["admin"];
   const panels: AdminNavPanelKey[] = [...dedicated];
   if (uncovered.length > 0 || panels.length === 0) panels.push("admin");
   return panels;

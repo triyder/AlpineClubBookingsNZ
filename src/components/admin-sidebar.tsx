@@ -73,6 +73,8 @@ import type { FeatureFlags } from "@/config/schema";
 import {
   canAccessConsolidatedFeesPage,
   canViewAdminHrefWithMatrix,
+  FINANCE_WORKSPACE_PATH,
+  hasFinanceViewerAccessFromMatrix,
   type AdminPermissionMatrix,
 } from "@/lib/admin-permissions";
 import { requireCalendarDate, type CalendarDate } from "@/lib/club-time";
@@ -788,13 +790,12 @@ type NavItem = NavSection["items"][number];
 /**
  * The Finance panel's link to the `/finance` workspace (#108). Not an admin
  * page, so not in the catalogue (the Admin panel stays as it was), and only on
- * the Finance panel (the Bookings panel shows the catalogue's Finance section
- * as it is); shown only
- * where the workspace itself would admit the person — the module is on and
- * they hold the finance area, which is `requireFinanceViewer`'s rule.
+ * the Finance panel. Shown exactly where the workspace admits the person: its
+ * route gate is on and `hasFinanceViewerAccessFromMatrix`, the rule
+ * `requireFinanceViewer` itself applies.
  */
 const FINANCE_WORKSPACE_ITEM: NavItem = {
-  href: "/finance",
+  href: FINANCE_WORKSPACE_PATH,
   label: "Finance Dashboard",
   icon: LayoutDashboard,
 };
@@ -817,7 +818,7 @@ export function getPanelAdminNavSections(
     panelKey === "finance" &&
     isFeatureHrefVisible(FINANCE_WORKSPACE_ITEM.href, features) &&
     permissionMatrix !== undefined &&
-    permissionMatrix.finance !== "none";
+    hasFinanceViewerAccessFromMatrix(permissionMatrix);
   return projectAdminNavPanel(
     getVisibleAdminNavSections(
       clubToday,
