@@ -92,11 +92,31 @@ administrator would do next. A role change takes effect on the very next lookup,
 removing an area mid-conversation stops the evidence immediately. Full detail in
 [`docs/ai-diagnostics/tool-pack-support.md`](../ai-diagnostics/tool-pack-support.md).
 
+**Areas also decide which admin menu someone opens on.** The admin sidebar
+shows a short menu for the work a role does, worked out from its areas, never
+from its name (so custom roles follow the same rule):
+
+| Menu | Who opens on it | What it shows |
+| --- | --- | --- |
+| Admin Panel | Full Admins; anyone who can only view, with Membership, Content or Support among their areas (Read-only Admin) | The full admin menu, as before |
+| Finance Panel | Anyone who edits Finance, or only views it (Treasurer, Finance Viewer) | Finance Dashboard, the Finance section, Subscriptions, Integrations, and the refund and unpaid-stay queues |
+| Bookings Panel | Anyone who edits Bookings & Beds or Lodge Operations (Booking Officer) | Bookings & Beds, Bookings Setup, Rates & Policies, Finance, Lodge Operations, and the booking-request, unpaid-stay and hut-leader queues |
+
+Someone whose edit areas span more than one menu gets a switcher at the top of
+the sidebar, and every menu has a **Full admin** button that shows every page
+their areas allow. The sidebar remembers the last choice in that browser. The
+menus are display only: a page left out of a short menu can still be opened
+from the full menu or the search (Ctrl K), and a page the role cannot open
+appears in neither. On staff pages (`/admin` and the `/finance` workspace) the
+top bar also leaves out Book, My Bookings and Who's at the lodge; those stay on
+the member pages.
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | No Access Roles entry in the sidebar | You are not a Full Admin | Only Full Admins can manage roles; ask one |
+| A page is missing from the sidebar | You are on the Finance or Bookings menu | Press **Full admin** at the top of the sidebar, or search with Ctrl K |
 | A role won't delete | Members still hold it | Reassign those members first, then delete |
 | A member still can't reach an area | Their role's level for it is None/View, or the change hasn't taken effect | Adjust the role; changes apply on the member's next request |
 | A system role can't be edited | It is a protected built-in role | Create a custom role instead |

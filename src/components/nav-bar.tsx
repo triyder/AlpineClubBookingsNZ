@@ -37,24 +37,45 @@ interface NavBarUser {
   isStayingGuest?: boolean;
 }
 
+/**
+ * Which shell is drawing the bar (#108). The staff shells — `/admin` and the
+ * `/finance` workspace — leave out the member-journey links (Book, My Bookings,
+ * Who's at the lodge): an administrator at work reaches booking through "Book
+ * on Behalf" in the sidebar and their own bookings from the Member Dashboard.
+ * The member shell is unchanged.
+ */
+export type NavBarSurface = "member" | "staff";
+
 interface NavBarProps {
   user: NavBarUser;
   features: FeatureFlags;
+  surface?: NavBarSurface;
 }
 
-const memberLinks = [
+interface NavBarLink {
+  href: string;
+  label: string;
+  /** Left out of the bar on the staff shells (#108). */
+  memberSurfaceOnly?: boolean;
+}
+
+const memberLinks: NavBarLink[] = [
   { href: "/", label: "Home" },
   { href: "/dashboard", label: "Dashboard" },
-  { href: "/book", label: "Book" },
-  { href: "/bookings", label: "My Bookings" },
+  { href: "/book", label: "Book", memberSurfaceOnly: true },
+  { href: "/bookings", label: "My Bookings", memberSurfaceOnly: true },
   { href: "/profile", label: "Profile" },
 ];
 
-const financeLink = { href: "/finance", label: "Finance" };
+const financeLink: NavBarLink = { href: "/finance", label: "Finance" };
 
 // The member lodge roster (#2942). Off unless the club turns the module on,
 // so the link is conditional rather than part of `memberLinks` above.
-const lodgeRosterLink = { href: "/lodge-roster", label: "Who's at the lodge" };
+const lodgeRosterLink: NavBarLink = {
+  href: "/lodge-roster",
+  label: "Who's at the lodge",
+  memberSurfaceOnly: true,
+};
 /*
   The Admin link is the SHELL entrance, not a page this user is known to hold
   (#2984). Portal standing is any one of the seven areas, so a finance-only
@@ -94,9 +115,10 @@ export function getNavBarLinks(
   user: NavBarUser,
   features: FeatureFlags,
   hutLeaderLabel = "Hut Leader",
-) {
+  surface: NavBarSurface = "member",
+): NavBarLink[] {
   const hutLeaderLink = { href: "/lodge/kiosk", label: hutLeaderLabel };
-  return [
+  const links: NavBarLink[] = [
     ...memberLinks,
     ...(user.canAccessFinance && features.financeDashboard ? [financeLink] : []),
     ...(features.memberLodgeRoster ? [lodgeRosterLink] : []),
@@ -109,9 +131,12 @@ export function getNavBarLinks(
       : []),
     ...(user.canAccessAdmin || user.role === "ADMIN" ? [adminLink] : []),
   ];
+  return surface === "staff"
+    ? links.filter((link) => !link.memberSurfaceOnly)
+    : links;
 }
 
-export function NavBar({ user, features }: NavBarProps) {
+export function NavBar({ user, features, surface = "member" }: NavBarProps) {
   const club = useClubIdentity();
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -120,7 +145,7 @@ export function NavBar({ user, features }: NavBarProps) {
       ? "/profile"
       : buildProfilePathWithReturnTo(pathname);
 
-  const links = getNavBarLinks(user, features, club.hutLeaderLabel);
+  const links = getNavBarLinks(user, features, club.hutLeaderLabel, surface);
 
   const isActive = (href: string) => {
     if (href === "/") return pathname === "/";
