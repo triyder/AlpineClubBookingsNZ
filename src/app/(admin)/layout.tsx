@@ -75,7 +75,7 @@ export default async function AdminLayout({
         >
           Skip to main content
         </a>
-        <NavBar user={user} features={effectiveModules} />
+        <NavBar user={user} features={effectiveModules} surface="staff" />
         <HelpWidgetProvider>
         <div className="flex flex-1 flex-col md:flex-row">
           <AdminSidebar

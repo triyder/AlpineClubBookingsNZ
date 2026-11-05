@@ -54,7 +54,6 @@ import {
   DatabaseBackup,
   DollarSign,
   LockKeyhole,
-  Search,
   Bot,
   Coins,
   Globe,
@@ -74,6 +73,8 @@ import type { FeatureFlags } from "@/config/schema";
 import {
   canAccessConsolidatedFeesPage,
   canViewAdminHrefWithMatrix,
+  FINANCE_WORKSPACE_PATH,
+  hasFinanceViewerAccessFromMatrix,
   type AdminPermissionMatrix,
 } from "@/lib/admin-permissions";
 import { requireCalendarDate, type CalendarDate } from "@/lib/club-time";
@@ -82,7 +83,17 @@ import {
   buildUnpaidFinishedStaysHref,
   buildUnsettledAdditionalStaysHref,
 } from "@/lib/unpaid-finished-stays-hrefs";
-import { openAdminCommandPalette } from "@/lib/admin-command-palette-events";
+import {
+  NEEDS_ATTENTION_LABEL,
+  projectAdminNavPanel,
+  type AdminNavPanelKey,
+} from "@/lib/admin-nav-panels";
+import {
+  PanelSwitcher,
+  SidebarSearchButton,
+  useAdminNavPanel,
+  usePendingCounts,
+} from "@/components/admin-sidebar-controls";
 
 interface NavSection {
   label?: string;
@@ -108,12 +119,12 @@ interface NavSection {
   }>;
 }
 
-/**
- * Label of the queue-driven section whose items are shown only when they have
- * something pending. The section (and its header) disappears entirely once all
- * its queues are clear, so it never implies work that isn't there.
+/*
+ * NEEDS_ATTENTION_LABEL (from `admin-nav-panels`) names the queue-driven
+ * section whose items are shown only when they have something pending. The
+ * section (and its header) disappears entirely once all its queues are clear,
+ * so it never implies work that isn't there.
  */
-const NEEDS_ATTENTION_LABEL = "Needs Attention";
 
 /**
  * localStorage key holding the admin's per-section expand/collapse state, as a
@@ -774,6 +785,52 @@ export function getAdminFeatureSearchIndex(
 }
 
 type AdminNavBadgeMap = Record<string, number>;
+type NavItem = NavSection["items"][number];
+
+/**
+ * The Finance panel's link to the `/finance` workspace (#108). Not an admin
+ * page, so not in the catalogue (the Admin panel stays as it was), and only on
+ * the Finance panel. Shown exactly where the workspace admits the person: its
+ * route gate is on and `hasFinanceViewerAccessFromMatrix`, the rule
+ * `requireFinanceViewer` itself applies.
+ */
+const FINANCE_WORKSPACE_ITEM: NavItem = {
+  href: FINANCE_WORKSPACE_PATH,
+  label: "Finance Dashboard",
+  icon: LayoutDashboard,
+};
+
+/**
+ * The visible sections narrowed to one role panel (#108). Every item has
+ * already passed {@link getVisibleAdminNavSections}' filter; the panel only
+ * chooses among them (see `src/lib/admin-nav-panels.ts`).
+ */
+// test seam
+export function getPanelAdminNavSections(
+  clubToday: CalendarDate,
+  features: FeatureFlags,
+  panelKey: AdminNavPanelKey,
+  permissionMatrix?: AdminPermissionMatrix,
+  isFullAdmin?: boolean,
+  hutLeaderLabel = "Hut Leader",
+): NavSection[] {
+  const showFinanceWorkspace =
+    panelKey === "finance" &&
+    isFeatureHrefVisible(FINANCE_WORKSPACE_ITEM.href, features) &&
+    permissionMatrix !== undefined &&
+    hasFinanceViewerAccessFromMatrix(permissionMatrix);
+  return projectAdminNavPanel(
+    getVisibleAdminNavSections(
+      clubToday,
+      features,
+      permissionMatrix,
+      isFullAdmin,
+      hutLeaderLabel,
+    ),
+    panelKey,
+    showFinanceWorkspace ? { Finance: [FINANCE_WORKSPACE_ITEM] } : {},
+  );
+}
 
 // test seam
 export function getRenderedAdminNavSections(
@@ -783,10 +840,12 @@ export function getRenderedAdminNavSections(
   permissionMatrix?: AdminPermissionMatrix,
   isFullAdmin?: boolean,
   hutLeaderLabel = "Hut Leader",
+  panelKey: AdminNavPanelKey = "admin",
 ): NavSection[] {
-  return getVisibleAdminNavSections(
+  return getPanelAdminNavSections(
     clubToday,
     features,
+    panelKey,
     permissionMatrix,
     isFullAdmin,
     hutLeaderLabel,
@@ -802,64 +861,19 @@ export function getRenderedAdminNavSections(
     .filter((section) => section.items.length > 0);
 }
 
-import type { AdminPendingCounts } from "@/lib/admin-pending-counts";
-
-const ZERO_PENDING_COUNTS: AdminPendingCounts = {
-  familyRequests: 0,
-  memberApplications: 0,
-  refundAppeals: 0,
-  manualRefundTasks: 0,
-  creditApprovals: 0,
-  bookingReviews: 0,
-  bookingChangeRequests: 0,
-  newBookingPolicyExceptionRequests: 0,
-  publicBookingRequests: 0,
-  unpaidFinishedStays: 0,
-  unsettledAdditionalFinishedStays: 0,
-  unsettledAdditionalUpcomingStays: 0,
-  membershipCancellations: 0,
-  archiveRequests: 0,
-  deletionRequests: 0,
-  memberDeleteRequests: 0,
-  issueReports: 0,
-  unassignedHutLeaderDates: 0,
-};
-
-/** Fetch every queue count for the sidebar badges in a single request. */
-function usePendingCounts(): AdminPendingCounts {
-  const [counts, setCounts] = useState<AdminPendingCounts>(ZERO_PENDING_COUNTS);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    fetch("/api/admin/pending-counts")
-      .then((response) => (response.ok ? response.json() : null))
-      .then((data) => {
-        if (!cancelled && data) {
-          setCounts({ ...ZERO_PENDING_COUNTS, ...data });
-        }
-      })
-      .catch(() => {});
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  return counts;
-}
-
 function SidebarLinks({
   features,
   permissionMatrix,
   isFullAdmin,
   hutLeaderLabel = "Hut Leader",
+  panelKey,
   onNavigate,
 }: {
   features: FeatureFlags;
   permissionMatrix?: AdminPermissionMatrix;
   isFullAdmin?: boolean;
   hutLeaderLabel?: string;
+  panelKey: AdminNavPanelKey;
   onNavigate?: () => void;
 }) {
   const pathname = usePathname();
@@ -986,10 +1000,12 @@ function SidebarLinks({
     permissionMatrix,
     isFullAdmin,
     hutLeaderLabel,
+    panelKey,
   );
-  const visibleNavSections = getVisibleAdminNavSections(
+  const visibleNavSections = getPanelAdminNavSections(
     clubToday,
     features,
+    panelKey,
     permissionMatrix,
     isFullAdmin,
     hutLeaderLabel,
@@ -1093,50 +1109,6 @@ function SidebarLinks({
   );
 }
 
-/**
- * "Search…" trigger shown in the sidebar header (#2092). Opens the same command
- * palette as Ctrl/Cmd-K via a window event, so mouse users get a discoverable
- * entry point. The keyboard hint resolves to ⌘K on macOS and Ctrl K elsewhere,
- * computed after mount to avoid a hydration mismatch.
- */
-function SidebarSearchButton({ onOpen }: { onOpen?: () => void }) {
-  const [isMac, setIsMac] = useState(false);
-
-  useEffect(() => {
-    setIsMac(/Mac|iP(hone|ad|od)/.test(window.navigator.platform));
-  }, []);
-
-  return (
-    <button
-      type="button"
-      onClick={() => {
-        // The mobile Sheet closes (onOpen -> setMobileOpen(false)) at the same
-        // moment the palette opens. The Sheet's exit focus handling and the
-        // palette's focus trap briefly compete, and the palette captures its
-        // focus-restore target (this button) just before the Sheet unmounts it.
-        // The palette guards the restore with document.contains, so restoring to
-        // a detached node is a no-op. This stacked-layer focus race is not
-        // meaningfully reproducible in jsdom — it is a manual mobile check.
-        onOpen?.();
-        openAdminCommandPalette();
-      }}
-      // The ⌘K / Ctrl K glyphs are decorative (aria-hidden); expose the shortcut
-      // semantically instead so the accessible name stays just "Search…".
-      aria-keyshortcuts="Meta+K Control+K"
-      className="mb-2 flex w-full items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
-    >
-      <Search className="h-4 w-4 shrink-0" />
-      <span className="flex-1 text-left">Search…</span>
-      <kbd
-        aria-hidden
-        className="pointer-events-none hidden items-center gap-0.5 rounded border border-border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground sm:inline-flex"
-      >
-        {isMac ? "⌘" : "Ctrl"} K
-      </kbd>
-    </button>
-  );
-}
-
 export function AdminSidebar({
   features,
   permissionMatrix,
@@ -1149,6 +1121,10 @@ export function AdminSidebar({
   hutLeaderLabel?: string;
 }) {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const { choices, panelKey, choose, title } = useAdminNavPanel(
+    permissionMatrix,
+    isFullAdmin,
+  );
 
   return (
     <>
@@ -1158,15 +1134,21 @@ export function AdminSidebar({
           <span className="app-brand-mark h-9 w-9">
             <Mountain className="h-5 w-5" />
           </span>
-          <span>Admin Panel</span>
+          <span>{title}</span>
         </div>
         <div className="flex-1 overflow-y-auto p-3 pb-8">
+          <PanelSwitcher
+            choices={choices}
+            current={panelKey}
+            onChange={choose}
+          />
           <SidebarSearchButton />
           <SidebarLinks
             features={features}
             permissionMatrix={permissionMatrix}
             isFullAdmin={isFullAdmin}
             hutLeaderLabel={hutLeaderLabel}
+            panelKey={panelKey}
           />
         </div>
       </aside>
@@ -1184,21 +1166,27 @@ export function AdminSidebar({
               <span className="app-brand-mark h-9 w-9">
                 <Mountain className="h-5 w-5" />
               </span>
-              <SheetTitle>Admin Panel</SheetTitle>
+              <SheetTitle>{title}</SheetTitle>
             </SheetHeader>
             <div className="flex-1 overflow-y-auto p-3 pb-8">
+              <PanelSwitcher
+                choices={choices}
+                current={panelKey}
+                onChange={choose}
+              />
               <SidebarSearchButton onOpen={() => setMobileOpen(false)} />
               <SidebarLinks
                 features={features}
                 permissionMatrix={permissionMatrix}
                 isFullAdmin={isFullAdmin}
                 hutLeaderLabel={hutLeaderLabel}
+                panelKey={panelKey}
                 onNavigate={() => setMobileOpen(false)}
               />
             </div>
           </SheetContent>
         </Sheet>
-        <span className="font-semibold text-foreground">Admin Panel</span>
+        <span className="font-semibold text-foreground">{title}</span>
       </div>
     </>
   );
