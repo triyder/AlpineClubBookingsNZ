@@ -3,11 +3,11 @@ import { z } from "zod";
 
 import { createAuditLog } from "@/lib/audit";
 import { centralLinkStatus, labelOwnedLodges, saveCentralLodgeLinks } from "@/lib/central-lodge-link";
-import { SERVERNZ_PUSH_SECRET_KEY } from "@/lib/club-post-mirror";
 import { getIntegrationCredentialValue } from "@/lib/integration-credentials";
 import { syncOwnOtherLodgesFromFees } from "@/lib/other-lodge-fees-sync";
 import { OWNED_CENTRAL_LODGE_ID_MAX } from "@/lib/other-lodges";
 import { prisma } from "@/lib/prisma";
+import { SERVERNZ_CREDENTIAL_KEYS, SERVERNZ_PROVIDER } from "@/lib/servernz-config";
 import { loadServerNzSettings } from "@/lib/servernz-settings";
 import { requireAdmin } from "@/lib/session-guards";
 
@@ -57,7 +57,7 @@ async function readSettings(lodgeId: string) {
   if (!lodge) return null;
   const [settings, pushSecret] = await Promise.all([
     loadServerNzSettings(),
-    getIntegrationCredentialValue("servernz", SERVERNZ_PUSH_SECRET_KEY),
+    getIntegrationCredentialValue(SERVERNZ_PROVIDER, SERVERNZ_CREDENTIAL_KEYS.pushSecret),
   ]);
   const owned = settings.otherLodgesOwnedLodges;
   // The endpoint's own resolver decides, so this page and the endpoint agree.

@@ -1,0 +1,260 @@
+/** Durable Xero execution for organiser-extra waivers and bank-refund notes. */
+import { CreditNote, Invoice, LineAmountTypes } from "xero-node";
+import { prisma } from "@/lib/prisma";
+import { callXeroApi, getAuthenticatedXeroClient } from "@/lib/xero-api-client";
+import { completeXeroSyncOperation } from "@/lib/xero-sync";
+import { providerAmountToCents } from "@/lib/money-provider-amount";
+import { getResolvedAccountMapping } from "@/lib/xero-mappings";
+import { xeroDocumentDateForClubToday } from "@/lib/xero-provider-dates";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { settleRefundNoteFromXero } from "@/lib/xero-refund-note-settlement";
+import { syncOrganiserExtraInvoiceCash } from "@/lib/organiser-extra-receipt";
+import { reserveOrganiserExtraRacedCash } from "@/lib/organiser-extra-raced-cash";
+import { recordCreatedOrganiserNote, traceOrganiserRunStoodDown, traceOrganiserVoidStoodDown, type OrganiserStandDownStep } from "@/lib/organiser-extra-note-record";
+import { holdsXeroOperationClaim } from "@/lib/xero-operation-claim";
+import { XeroAppliedCreditOperationBusyError } from "@/lib/xero-applied-credit-operation-serialization";
+import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
+import type { OrganiserExtraAdjustmentPayload } from "@/lib/organiser-extra-adjustment-payload";
+
+const WAIVER_LINE = "Unpaid organiser extra released; no cancellation percentage applies";
+const REFUND_LINE = "Refund paid back to the group organiser by bank transfer";
+
+/**
+ * `completed`: the row's outcome was written under the run's claim.
+ * `stood-down`: #4655, the created note was recorded on a row queued again, or
+ * on no row (traced); or #4680, the run no longer held its claim before a
+ * money-moving call after the record, or #4701 before a waiver's invoice void
+ * (traced). This run wrote no outcome.
+ */
+export type OrganiserExtraAdjustmentRun = "completed" | "stood-down";
+
+export interface OrganiserExtraAdjustmentHooks {
+  /**
+   * #4655 (#4672 review S1/S2, `INV-INT-029`): the run's late note re-took a
+   * row a reset failed, under a fresh claim. Every outcome of this run from
+   * then on - the outbox's give-backs and failure write included - is written
+   * under that claim, so the caller holds it before anything else can throw.
+   */
+  onRetake: (claim: XeroOperationClaim) => void;
+}
+
+export async function executeOrganiserExtraAdjustment(
+  payload: OrganiserExtraAdjustmentPayload,
+  startedClaim: XeroOperationClaim,
+  hooks: OrganiserExtraAdjustmentHooks,
+): Promise<OrganiserExtraAdjustmentRun> {
+  let claim = startedClaim;
+  const operation = await prisma.xeroSyncOperation.findUniqueOrThrow({
+    where: { id: claim.id },
+    select: { xeroObjectId: true, xeroObjectNumber: true, correlationKey: true },
+  });
+  let invoiceId = payload.invoiceId;
+  if (!invoiceId && payload.modificationId) {
+    const link = await prisma.xeroObjectLink.findFirst({
+      where: { localModel: "BookingModification", localId: payload.modificationId, role: "SUPPLEMENTARY_INVOICE", active: true },
+      select: { xeroObjectId: true },
+    });
+    invoiceId = link?.xeroObjectId ?? null;
+  }
+  if (!invoiceId) throw new XeroAppliedCreditOperationBusyError("Organiser extra adjustment waits for its queued invoice", "PENDING");
+  const extraInvoiceId = invoiceId;
+  const { xero, tenantId } = await getAuthenticatedXeroClient();
+  const readInvoice = async (context: string) => {
+    const response = await callXeroApi(() => xero.accountingApi.getInvoice(tenantId, extraInvoiceId), {
+      operation: "getInvoice", resourceType: "INVOICE", workflow: "organiserExtraAdjustment", context: `${context} ${extraInvoiceId}`,
+    });
+    return response.body.invoices?.[0];
+  };
+  const invoice = await readInvoice("organiser extra");
+  if (!invoice?.invoiceID) throw new Error("Organiser extra invoice was not found");
+  let dueCents = providerAmountToCents(invoice.amountDue);
+  const { classifyXeroInvoiceCashEvidence, quantifyXeroInvoiceCashCents } = await import("@/lib/xero-inbound/invoice-paid-effects");
+  const cash = quantifyXeroInvoiceCashCents(invoice);
+  let cashCents = cash.knownCents;
+  if (dueCents === null || !cash.complete || classifyXeroInvoiceCashEvidence(invoice) === "indeterminate") {
+    throw new Error("Organiser extra invoice amounts are unreadable");
+  }
+  if (payload.modificationId) await syncOrganiserExtraInvoiceCash(invoice);
+  const key = operation.correlationKey ?? claim.id;
+  const date = xeroDocumentDateForClubToday(await readClubTimeZoneOutsideRequest());
+  const payment = await prisma.payment.findUniqueOrThrow({ where: { bookingId: payload.bookingId }, select: { id: true } });
+
+  if (payload.purpose === "waive" && !operation.xeroObjectId) {
+    // A bank-feed reconciliation may race the app's local read. Recognise that
+    // cash and reserve its policy refund before completing the old waiver.
+    if (payload.modificationId) await reserveOrganiserExtraRacedCash(payload.bookingId, { modificationId: payload.modificationId, invoiceId: extraInvoiceId, cashCents });
+    // F3: Xero voids only an invoice with no money on it - no payment, and no
+    // credit allocated (an earlier waiver's note is one). The combined
+    // invoice's own classifier answers that (`INV-SSOT`).
+    const { classifyGroupSettlementInvoiceState } = await import("@/lib/xero-group-settlement-invoice-voids");
+    const state = classifyGroupSettlementInvoiceState(invoice);
+    if (state.kind === "void") {
+      await completeXeroSyncOperation(claim, { responsePayload: { alreadyVoided: true } });
+      return "completed";
+    }
+    if (state.kind === "open" && dueCents > 0 && payload.amountCents >= dueCents) {
+      // #4701 (`INV-INT-034`): the void moves money too. A run that stalled in
+      // the invoice read past a reset (then perhaps an officer's Resolve or
+      // Retry) voids nothing: it stands down, traced, and writes no outcome.
+      if (!(await holdsXeroOperationClaim(claim))) {
+        await traceOrganiserVoidStoodDown({
+          claim, bookingId: payload.bookingId, invoiceId: extraInvoiceId, invoiceNumber: invoice.invoiceNumber ?? null, amountCents: dueCents,
+        });
+        return "stood-down";
+      }
+      await callXeroApi(
+        () => xero.accountingApi.updateInvoice(tenantId, extraInvoiceId, { invoices: [{ invoiceID: extraInvoiceId, status: Invoice.StatusEnum.VOIDED }] }, undefined, `${key}:void`),
+        { operation: "updateInvoice", resourceType: "INVOICE", workflow: "organiserExtraAdjustment", context: `void organiser extra ${extraInvoiceId}` },
+      );
+      await completeXeroSyncOperation(claim, { responsePayload: { voided: true, invoiceId: extraInvoiceId } });
+      return "completed";
+    }
+    if (dueCents <= 0) {
+      await completeXeroSyncOperation(claim, { responsePayload: { nothingDue: true, invoiceId: extraInvoiceId } });
+      return "completed";
+    }
+  }
+
+  if (payload.purpose === "refund") {
+    // Refund notes mirror a bank transfer already sent. Do not pay one out
+    // while a delayed/failed waiver still leaves this invoice collectible.
+    if (dueCents > 0) throw new XeroAppliedCreditOperationBusyError("Organiser refund awaits its unpaid-balance waiver", "PENDING");
+    if (!payload.handBackTaskId) throw new Error("Organiser refund note has no completed bank-transfer hand-back");
+    const task = await prisma.manualRefundTask.findUniqueOrThrow({ where: { id: payload.handBackTaskId }, select: { status: true } });
+    if (task.status !== "COMPLETED") throw new XeroAppliedCreditOperationBusyError("Organiser refund awaits its bank-transfer hand-back", "PENDING");
+  }
+  const amountCents = payload.purpose === "waive" ? Math.min(payload.amountCents, dueCents) : payload.amountCents;
+  let noteId = operation.xeroObjectId;
+  // #4672 review N2: the completion writes the number too, so carry it rather than blank the recorded one.
+  let noteNumber = operation.xeroObjectNumber;
+  if (!noteId) {
+    const account = await getResolvedAccountMapping("hutFeeRefunds");
+    if (!invoice.contact?.contactID) throw new Error("Organiser invoice has no Xero contact");
+    const waive = payload.purpose === "waive";
+    const reference = `Booking ${payload.bookingId} — ${waive ? "unpaid extra waived" : "organiser bank-transfer refund"} (${invoice.invoiceNumber ?? extraInvoiceId})`;
+    const created = await callXeroApi(
+      () => xero.accountingApi.createCreditNotes(tenantId, { creditNotes: [{
+        type: CreditNote.TypeEnum.ACCRECCREDIT, contact: { contactID: invoice.contact!.contactID }, date,
+        status: CreditNote.StatusEnum.AUTHORISED, lineAmountTypes: LineAmountTypes.Inclusive, reference,
+        lineItems: [{ description: waive ? WAIVER_LINE : REFUND_LINE, quantity: 1, unitAmount: amountCents / 100, accountCode: account.code ?? "200" }],
+      }] }, undefined, undefined, `${key}:credit-note`),
+      { operation: "createCreditNotes", resourceType: "CREDIT_NOTE", workflow: "organiserExtraAdjustment", context: `credit organiser invoice ${extraInvoiceId}` },
+    );
+    const createdNote = created.body.creditNotes?.[0];
+    noteId = createdNote?.creditNoteID ?? null;
+    if (!noteId) throw new Error("Xero did not create the organiser credit note");
+    noteNumber = createdNote?.creditNoteNumber ?? null;
+    // Persist the returned identity BEFORE allocation/payment. A retry never
+    // depends solely on the provider's expiring idempotency cache. #4655
+    // (`INV-INT-029`): a run that stalled past a reset still records it on a
+    // row no claim holds - a FAILED one it takes back RUNNING under a fresh
+    // claim, which the rest of this run is written under; one it may not land
+    // on is audited and alerted, and this run stops without failing the row an
+    // officer reset, resolved or queued.
+    const record = await recordCreatedOrganiserNote({
+      claim, bookingId: payload.bookingId, purpose: payload.purpose, creditNoteId: noteId, creditNoteNumber: noteNumber, amountCents,
+    });
+    if (record.outcome === "not-recorded" || record.outcome === "queued") return "stood-down";
+    if (record.outcome === "retaken") {
+      claim = record.claim;
+      hooks.onRetake(claim);
+    }
+  }
+  const creditNoteId = noteId;
+  /**
+   * #4680 (`INV-INT-034`): asked immediately before each money-moving Xero call
+   * after the record. A run whose claim a stale reset took (then perhaps an
+   * officer's Resolve or Retry, or a later claim) makes no such call: it
+   * stands down, traced, and writes no outcome. The window narrows to the one
+   * call in flight; it cannot close. `noteCents` is the note's own amount, for
+   * the trace (#4703 review): a waiver's total as read from Xero, since a run
+   * continuing from an earlier run's note sized `amountCents` from what is due
+   * now; a refund note's is its payload's, as raised and never resized.
+   */
+  const holdsClaim = async (step: OrganiserStandDownStep, noteCents: number) => {
+    if (await holdsXeroOperationClaim(claim)) return true;
+    await traceOrganiserRunStoodDown(
+      { claim, bookingId: payload.bookingId, purpose: payload.purpose, creditNoteId, creditNoteNumber: noteNumber, amountCents: noteCents },
+      step,
+    );
+    return false;
+  };
+  if (payload.purpose === "waive") {
+    const noteResponse = await callXeroApi(() => xero.accountingApi.getCreditNote(tenantId, creditNoteId), {
+      operation: "getCreditNote", resourceType: "CREDIT_NOTE", workflow: "organiserExtraAdjustment", context: `read waiver ${creditNoteId}`,
+    });
+    const note = noteResponse.body.creditNotes?.[0];
+    if (!note?.creditNoteID || String(note.status) === "VOIDED" || String(note.status) === "DELETED") {
+      throw new Error("Organiser waiver credit note is missing or voided");
+    }
+    // Note creation/read can take long enough for a bank-feed payment to land.
+    // Size the allocation from a fresh invoice, not the pre-create snapshot.
+    const latestInvoice = await readInvoice("refresh organiser extra");
+    const latestCash = latestInvoice && quantifyXeroInvoiceCashCents(latestInvoice);
+    dueCents = latestInvoice ? providerAmountToCents(latestInvoice.amountDue) : null;
+    if (!latestInvoice?.invoiceID || dueCents === null || !latestCash?.complete || classifyXeroInvoiceCashEvidence(latestInvoice) === "indeterminate") {
+      throw new Error("Organiser extra invoice amounts are unreadable");
+    }
+    cashCents = latestCash.knownCents;
+    if (payload.modificationId) await syncOrganiserExtraInvoiceCash(latestInvoice);
+    const alreadyAllocated = (note.allocations ?? []).reduce(
+      (sum, a) => sum + (a.invoice?.invoiceID === extraInvoiceId ? providerAmountToCents(a.amount) ?? 0 : 0), 0,
+    );
+    let totalCents = providerAmountToCents(note.total);
+    if (totalCents === null) throw new Error("Organiser waiver note total is unreadable");
+    // A payment between create and allocate can make the first note too large.
+    // Re-read on every attempt and shrink an unallocated note before applying it.
+    if (payload.modificationId) await reserveOrganiserExtraRacedCash(payload.bookingId, { modificationId: payload.modificationId, invoiceId: extraInvoiceId, cashCents });
+    const revisedTotalCents = Math.min(totalCents, dueCents + alreadyAllocated);
+    let resized = false;
+    if (revisedTotalCents < totalCents) {
+      if (alreadyAllocated > 0 || (note.payments?.length ?? 0) > 0 || (note.allocations?.length ?? 0) > 0) {
+        throw new Error("Organiser waiver was settled elsewhere before it could be resized");
+      }
+      if (!(await holdsClaim("resize", totalCents))) return "stood-down";
+      const revision = revisedTotalCents === 0
+        ? { status: CreditNote.StatusEnum.VOIDED }
+        : { lineItems: [{ ...note.lineItems?.[0], description: WAIVER_LINE, quantity: 1, unitAmount: revisedTotalCents / 100 }] };
+      await callXeroApi(
+        () => xero.accountingApi.updateCreditNote(tenantId, creditNoteId, { creditNotes: [{ creditNoteID: creditNoteId, ...revision }] }, undefined, `${key}:resize:${cashCents}:${revisedTotalCents}`),
+        { operation: "updateCreditNote", resourceType: "CREDIT_NOTE", workflow: "organiserExtraAdjustment", context: `resize organiser waiver ${creditNoteId}` },
+      );
+      totalCents = revisedTotalCents;
+      resized = true;
+    }
+    const remainingCents = totalCents - alreadyAllocated;
+    // With nothing to allocate and no resize made, the completion is this run's next write: it waits on the claim too.
+    if ((remainingCents > 0 || !resized) && !(await holdsClaim(remainingCents > 0 ? "allocation" : "completion", totalCents))) return "stood-down";
+    if (remainingCents > 0) {
+      await callXeroApi(
+        () => xero.accountingApi.createCreditNoteAllocation(tenantId, creditNoteId, { allocations: [{ invoice: { invoiceID: extraInvoiceId }, amount: remainingCents / 100, date }] }, undefined, `${key}:allocation:${remainingCents}`),
+        { operation: "createCreditNoteAllocation", resourceType: "ALLOCATION", workflow: "organiserExtraAdjustment", context: `allocate organiser waiver ${creditNoteId}` },
+      );
+    }
+    await completeXeroSyncOperation(claim, {
+      xeroObjectId: creditNoteId, xeroObjectType: "CREDIT_NOTE", xeroObjectNumber: note.creditNoteNumber ?? noteNumber,
+      responsePayload: { invoiceId: extraInvoiceId, amountCents: totalCents, allocated: true },
+      extraLinks: [{ localModel: "Booking", localId: payload.bookingId, xeroObjectType: "CREDIT_NOTE", xeroObjectId: creditNoteId, role: "ORGANISER_EXTRA_WAIVER", metadata: { invoiceId: extraInvoiceId, amountCents: totalCents } }],
+    });
+  } else {
+    if (!(await holdsClaim("refund-payment", amountCents))) return "stood-down";
+    let reachedPayment = false;
+    const settlement = await settleRefundNoteFromXero({
+      paymentId: payment.id, creditNoteId, creationKeys: [key], refundMethod: "internet-banking", refundMethodRecorded: true, fallbackPaymentDate: async () => date,
+      beforePayment: () => { reachedPayment = true; return holdsClaim("refund-payment", amountCents); },
+    });
+    if (settlement.stoodDown) return "stood-down";
+    if (settlement.outcome.refundPaymentErr) throw settlement.outcome.refundPaymentErr;
+    // #4703 review: a settlement that returned before its payment (Xero already
+    // shows the note settled, perhaps by an officer's hand, or the app has none
+    // to record) made no call after its note read, the run's likeliest stall:
+    // its completion is this run's next write, so it waits on the claim too.
+    if (!reachedPayment && !(await holdsClaim("completion", amountCents))) return "stood-down";
+    await completeXeroSyncOperation(claim, {
+      xeroObjectId: creditNoteId, xeroObjectType: "CREDIT_NOTE", xeroObjectNumber: settlement.creditNoteNumber ?? noteNumber,
+      responsePayload: { invoiceId: extraInvoiceId, amountCents, refundPayment: settlement.outcome.refundPaymentResponseBody, refundPaymentSkipped: settlement.outcome.refundPaymentSkipReason },
+      extraLinks: [{ localModel: "Payment", localId: payment.id, xeroObjectType: "CREDIT_NOTE", xeroObjectId: creditNoteId, role: "ORGANISER_EXTRA_REFUND", metadata: { invoiceId: extraInvoiceId, amountCents, handBackTaskId: payload.handBackTaskId } }],
+    });
+  }
+  return "completed";
+}

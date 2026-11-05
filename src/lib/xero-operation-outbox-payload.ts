@@ -1,4 +1,5 @@
 import type { EntranceFeeCategory } from "@prisma/client";
+import { readOrganiserExtraAdjustmentPayload, XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE, type OrganiserExtraAdjustmentPayload } from "@/lib/organiser-extra-adjustment-payload";
 import { asRecord, readNumber, readString } from "@/lib/xero-json";
 import {
   parseRefundMethod, readModificationNoteWording, readRefundNoteWording,
@@ -38,8 +39,8 @@ export const XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE = "KEPT_LATE_CAPTURE_INV
  * (`processQueuedXeroOutboxOperations`) filters `queueType IN (...)` on this
  * list, and the canonical per-type parse switch in `readQueuedOutboxPayload`
  * covers exactly these members. Ordered to mirror the historical scan
- * predicate for an obvious 1:1 audit. REQUEUE/BACKFILL/inbound rows carry no
- * queueType and are intentionally excluded.
+ * predicate for an obvious 1:1 audit, later types appended. REQUEUE/BACKFILL/
+ * inbound rows carry no queueType and are intentionally excluded.
  */
 export const XERO_OUTBOX_QUEUE_TYPES = [
   XERO_OUTBOX_ENTRANCE_FEE_TYPE,
@@ -60,6 +61,7 @@ export const XERO_OUTBOX_QUEUE_TYPES = [
   XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE,
   XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE,
   XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE,
+  XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE, // #4299 (`INV-PAY-148`)
 ] as const;
 
 interface QueuedEntranceFeeOutboxPayload {
@@ -101,6 +103,13 @@ interface QueuedRefundCreditNoteOutboxPayload {
 interface QueuedAccountCreditNoteOutboxPayload {
   queueType: typeof XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE;
   refundAmountCents: number;
+  memberCreditId?: string; // #4685: the credit the note is for; absent on rows queued before it
+}
+
+/** #4685: the account-credit note's own credit, read the same way from the queued and executed shapes. */
+export function readAccountCreditNoteCredit(payload: Record<string, unknown>): { memberCreditId?: string } {
+  const memberCreditId = readString(payload.memberCreditId);
+  return memberCreditId ? { memberCreditId } : {};
 }
 
 interface QueuedSupplementaryInvoiceOutboxPayload {
@@ -237,6 +246,7 @@ interface QueuedKeptLateCaptureInvoiceOutboxPayload {
 }
 
 export type QueuedOutboxPayload =
+  | OrganiserExtraAdjustmentPayload
   | QueuedEntranceFeeOutboxPayload
   | QueuedBookingInvoiceOutboxPayload
   | QueuedBookingInvoiceUpdateOutboxPayload
@@ -308,6 +318,7 @@ export function readQueuedOutboxPayload(
     return null;
   }
 
+  if (queueType === XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE) return readOrganiserExtraAdjustmentPayload(value);
   if (queueType === XERO_OUTBOX_BOOKING_INVOICE_TYPE) {
     const bookingId = readString(payload.bookingId);
     return bookingId ? { queueType, bookingId } : null;
@@ -348,14 +359,7 @@ export function readQueuedOutboxPayload(
 
   if (queueType === XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE) {
     const refundAmountCents = readNumber(payload.refundAmountCents);
-    if (refundAmountCents === null) {
-      return null;
-    }
-
-    return {
-      queueType,
-      refundAmountCents,
-    };
+    return refundAmountCents === null ? null : { queueType, refundAmountCents, ...readAccountCreditNoteCredit(payload) };
   }
 
   if (queueType === XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE) {
@@ -652,6 +656,7 @@ export function getQueuedOutboxExpectedOperation(
   }
 
   if (
+    queueType === XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE ||
     queueType === XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE ||
     queueType === XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE ||
     queueType === XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE ||
@@ -662,6 +667,7 @@ export function getQueuedOutboxExpectedOperation(
       entityType: "CREDIT_NOTE",
       operationType: "CREATE",
       localModels:
+        queueType === XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE ||
         queueType === XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE ||
         queueType === XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE
           ? ["Booking", "BookingModification"]

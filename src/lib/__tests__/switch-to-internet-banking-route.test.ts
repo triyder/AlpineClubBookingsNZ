@@ -28,9 +28,13 @@ const mocks = vi.hoisted(() => ({
   getMemberCreditBalance: vi.fn(),
   deriveBookingAppliedCreditCents: vi.fn(),
   acquireLodgeCapacityLock: vi.fn(),
+  postBindingCharge: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({ auth: mocks.auth }));
+// #4628: the binding R01 runs on PostgreSQL (`booking-ledger-pending-charge.realdb.test.ts`); here, that the switch calls it.
+vi.mock("@/lib/member-money/doors", () => ({ resolveBookingMoneyPostingContext: vi.fn(async () => ({ journal: "context" })) }));
+vi.mock("@/lib/booking-ledger-pending-charge", () => ({ postBindingCharge: mocks.postBindingCharge }));
 vi.mock("@/lib/session-guards", () => ({
   requireActiveSessionUser: mocks.requireActiveSessionUser,
 }));
@@ -277,6 +281,9 @@ describe("POST /api/payments/switch-to-internet-banking", () => {
     const res = await POST(postRequest());
     expect(res.status).toBe(200);
     expect(mocks.upsert).toHaveBeenCalled();
+    // #4628: the switch binds the charge inside its locked transaction, with the context read before it.
+    expect(mocks.postBindingCharge).toHaveBeenCalledTimes(1);
+    expect(mocks.postBindingCharge.mock.calls[0]![1]).toEqual({ journal: "context" });
   });
 
   it("rejects an organiser-settled booking with 400", async () => {
@@ -288,22 +295,39 @@ describe("POST /api/payments/switch-to-internet-banking", () => {
     expect(mocks.upsert).not.toHaveBeenCalled();
   });
 
-  it("is idempotent when the booking is already Internet Banking", async () => {
+  it.each(["PAYMENT_PENDING", "CONFIRMED"])("is idempotent when the %s booking is already Internet Banking", async (status) => {
+    const holdUntil = new Date("2026-07-20T12:00:00.000Z");
     mocks.findUnique.mockResolvedValueOnce(
       stripeBooking({
+        status,
         payment: {
           source: PaymentSource.INTERNET_BANKING,
           status: PaymentStatus.PENDING,
           stripePaymentIntentId: null,
+          reference: "PERSISTED-REFERENCE",
+          internetBankingHoldSlots: true,
+          internetBankingHoldUntil: holdUntil,
+          internetBankingHoldReleasedAt: null,
         },
       })
     );
+    // An invoice already queued or linked needs no outbox write or provider kick.
+    mocks.enqueueXeroBookingInvoiceOperation.mockResolvedValueOnce({ queueOperationId: null });
     const res = await POST(postRequest());
     expect(res.status).toBe(200);
-    await expect(res.json()).resolves.toEqual({ reference: REFERENCE });
+    await expect(res.json()).resolves.toEqual({
+      reference: "PERSISTED-REFERENCE", holdBedSlots: true, holdUntil: holdUntil.toISOString(),
+    });
     // No re-conversion work: no transaction, no payment write.
     expect(mocks.transaction).not.toHaveBeenCalled();
     expect(mocks.upsert).not.toHaveBeenCalled();
+    expect(mocks.bookingUpdate).not.toHaveBeenCalled();
+    expect(mocks.bookingUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.applyCreditToBooking).not.toHaveBeenCalled();
+    expect(mocks.recordInternetBankingPaymentTransaction).not.toHaveBeenCalled();
+    expect(mocks.cancelPaymentIntentIfCancellableWithResult).not.toHaveBeenCalled();
+    expect(mocks.isXeroConnected).not.toHaveBeenCalled();
+    expect(mocks.kickQueuedXeroOutboxOperationsIfConnected).not.toHaveBeenCalled();
     // #4019 review: the idempotent invoice enqueue re-runs for a live booking,
     // so a first switch whose post-commit enqueue failed is healed by a retry.
     expect(mocks.enqueueXeroBookingInvoiceOperation).toHaveBeenCalledWith(BOOKING_ID, {
@@ -328,14 +352,36 @@ describe("POST /api/payments/switch-to-internet-banking", () => {
     expect(mocks.kickQueuedXeroOutboxOperationsIfConnected).toHaveBeenCalledTimes(1);
   });
 
-  it.each(["CANCELLED", "PAID"])("does not re-queue the invoice when the already-switched booking is %s", async (status) => {
+  it.each([
+    ["cancelled", { status: "CANCELLED" }],
+    ["soft-deleted", { deletedAt: new Date("2026-06-30T12:00:00.000Z") }],
+    ["paid", { status: "PAID" }],
+  ])("refuses an initially %s IB booking without payment instructions or side effects (#4365)", async (_label, lifecycle) => {
     mocks.findUnique.mockResolvedValueOnce(
-      stripeBooking({ status, payment: { source: PaymentSource.INTERNET_BANKING, status: PaymentStatus.PENDING, stripePaymentIntentId: null } })
+      stripeBooking({ ...lifecycle, payment: {
+        source: PaymentSource.INTERNET_BANKING, status: PaymentStatus.PENDING,
+        stripePaymentIntentId: null, reference: "STALE-BANK-REFERENCE",
+        internetBankingHoldSlots: true,
+        internetBankingHoldUntil: new Date("2026-07-20T12:00:00.000Z"),
+        internetBankingHoldReleasedAt: null,
+      } })
     );
     const res = await POST(postRequest());
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toEqual({
+      error: "This booking can no longer switch to Internet Banking.",
+    });
+    expect(mocks.transaction).not.toHaveBeenCalled();
+    expect(mocks.upsert).not.toHaveBeenCalled();
+    expect(mocks.bookingUpdate).not.toHaveBeenCalled();
+    expect(mocks.bookingUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.applyCreditToBooking).not.toHaveBeenCalled();
+    expect(mocks.recordInternetBankingPaymentTransaction).not.toHaveBeenCalled();
+    expect(mocks.cancelPaymentIntentIfCancellableWithResult).not.toHaveBeenCalled();
     expect(mocks.enqueueXeroBookingInvoiceOperation).not.toHaveBeenCalled();
     expect(mocks.enqueueXeroAppliedCreditAllocationOperation).not.toHaveBeenCalled();
+    expect(mocks.isXeroConnected).not.toHaveBeenCalled();
+    expect(mocks.kickQueuedXeroOutboxOperationsIfConnected).not.toHaveBeenCalled();
   });
 
   it("does not offer a released hold on the already-switched answer (#4019 review)", async () => {

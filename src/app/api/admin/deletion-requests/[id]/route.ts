@@ -1,3 +1,5 @@
+import { MEMBER_CONTACT_ERASURE_PATCH } from "@/lib/member-contact-erasure";
+import { leavingDateForDeactivation } from "@/lib/member-leaving-date";
 /**
  * F-COMP-04: Admin — Approve, Reject, or Release a Deletion Request
  * POST /api/admin/deletion-requests/[id]
@@ -17,6 +19,7 @@ import { isDeletedAccountRecord } from "@/lib/deleted-account";
 import { DELETED_CONTACT_EMAIL_DOMAIN } from "@/lib/deleted-account-email";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { prisma } from "@/lib/prisma";
+import { isTransactionContention } from "@/lib/prisma-errors";
 import { cancelBooking } from "@/lib/booking-cancel";
 import { createAuditLog, getAuditRequestContext, logAudit } from "@/lib/audit";
 import { recordErasureTwoFactorClear } from "@/lib/two-factor-audit";
@@ -71,7 +74,6 @@ import {
   deletionApprovalWasReleased,
   DeletionRequestClaimNotHeldError,
   DeletionRequestDecisionLostError,
-  isDeletionRequestTransactionContention,
   releaseDeletionRequestApprovalClaim,
   type DeletionRequestApprovalOrigin,
   type DeletionRequestRejectionOrigin,
@@ -456,7 +458,7 @@ export async function POST(
         // cannot act on. Scoped to this branch on purpose — the approval's own
         // transaction reports contention through its partial-cleanup contract,
         // which must not be replaced by a bare retry-later.
-        if (isDeletionRequestTransactionContention(releaseError)) {
+        if (isTransactionContention(releaseError)) {
           logger.warn(
             { err: releaseError, requestId: id },
             "Deletion approval release contended with a committing decision",
@@ -926,27 +928,11 @@ export async function POST(
       await tx.member.update({
         where: { id: member.id },
         data: {
-          firstName: "Deleted",
-          lastName: "Member",
+          ...MEMBER_CONTACT_ERASURE_PATCH,
           email: anonymisedEmail,
-          phoneCountryCode: null,
-          phoneAreaCode: null,
-          phoneNumber: null,
-          dateOfBirth: null,
-          streetAddressLine1: null,
-          streetAddressLine2: null,
-          streetCity: null,
-          streetRegion: null,
-          streetPostalCode: null,
-          streetCountry: null,
-          postalAddressLine1: null,
-          postalAddressLine2: null,
-          postalCity: null,
-          postalRegion: null,
-          postalPostalCode: null,
-          postalCountry: null,
           passwordHash: DELETED_ACCOUNT_PASSWORD_HASH,
           active: false,
+          leavingDate: leavingDateForDeactivation(member, clubTodayForSweep),
           // #3541: make account erasure structural in the same row write as
           // the anonymisation. No reader consumes this marker until #3542.
           deletedAt: new Date(),

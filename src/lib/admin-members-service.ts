@@ -3,6 +3,7 @@ import { AGE_TIER_VALUES, ageTierEnum } from "@/lib/age-tier-schema";
 import { genderEnum, titleEnum } from "@/lib/member-enums-schema";
 import type { AgeTier, Prisma } from "@prisma/client";
 import { hash } from "bcryptjs";
+import { PASSWORD_BCRYPT_COST } from "@/lib/password-hashing";
 import { randomBytes } from "crypto";
 import { prisma } from "@/lib/prisma";
 import { exactContains, exactPrefix } from "@/lib/prisma-exact-prefix";
@@ -17,6 +18,7 @@ import {
 } from "@/lib/xero";
 import { sendMemberSetupInviteEmail } from "@/lib/email";
 import {
+  clubToday,
   dateOnlyInstantOf,
   fixedClubClock,
   parseCalendarDate,
@@ -1459,9 +1461,9 @@ export async function createAdminMember(
   // NOT_REQUIRED subscription row seeded inside that transaction must agree, and a
   // zone read from inside it would be an uncached query on the GLOBAL client while
   // the transaction holds a connection.
-  const clubCurrentSeasonYear = clubSeasonYear(
-    await readClubTimeZoneOutsideRequest(),
-  );
+  const clubZoneForCreate = await readClubTimeZoneOutsideRequest();
+  const clubCurrentSeasonYear = clubSeasonYear(clubZoneForCreate);
+  const clubTodayForCreate = dateOnlyInstantOf(clubToday(clubZoneForCreate));
   const clubCurrentSeasonStart = getSeasonStartDate(clubCurrentSeasonYear);
   // Determine age tier from DOB if provided, otherwise use explicit value or default
   let ageTier = data.ageTier || "ADULT";
@@ -1561,7 +1563,7 @@ export async function createAdminMember(
   }
 
   // Random unguessable password
-  const placeholderHash = await hash(randomBytes(32).toString("hex"), 13);
+  const placeholderHash = await hash(randomBytes(32).toString("hex"), PASSWORD_BCRYPT_COST);
 
   const postalAddress = data.postalSameAsPhysical
     ? copyStreetAddressToPostal({
@@ -1611,6 +1613,7 @@ export async function createAdminMember(
           financeAccessLevel,
           ageTier: ageTier as AgeTier,
           active: data.active,
+          leavingDate: data.active === false ? clubTodayForCreate : null,
           canLogin,
           parentMemberId: data.parentMemberId?.trim() || null,
           // #2282 review: the flag now follows the SOURCE, and never stands

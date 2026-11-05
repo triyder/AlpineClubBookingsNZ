@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import type { AgeTier, Gender, Title } from "@prisma/client";
 import { z } from "zod";
 import { hash } from "bcryptjs";
+import { PASSWORD_BCRYPT_COST } from "@/lib/password-hashing";
 import { randomBytes } from "crypto";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
@@ -604,7 +605,7 @@ export async function POST(req: NextRequest) {
   const membersToCreate = await Promise.all(
     validatedRows.map(async (row) => ({
       ...row,
-      passwordHash: await hash(randomBytes(16).toString("hex"), 13),
+      passwordHash: await hash(randomBytes(16).toString("hex"), PASSWORD_BCRYPT_COST),
     })),
   );
 
@@ -653,6 +654,8 @@ export async function POST(req: NextRequest) {
               // no CSV column and stays null.
               active: row.cancelledAt ? false : true,
               cancelledAt: row.cancelledAt,
+              // Cancellation history is not evidence of an explicit leaving date.
+              leavingDate: null,
               canLogin: row.canLogin,
               emailVerified: true, // Admin-imported members don't need email verification
               passwordHash: row.passwordHash,

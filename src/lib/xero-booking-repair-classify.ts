@@ -34,7 +34,7 @@ import {
   resolveObjectFromCandidates,
 } from "./xero-booking-repair-object-resolution";
 import {
-  getCancellationCreditAmountCents,
+  cancellationCreditNoteTarget, getCancellationCreditAmountCents,
   getCashCancellationRefundCandidateCents,
   getExpectedSupplementaryInvoiceAsk,
   getKnownModificationRefundTotalCents,
@@ -87,9 +87,9 @@ import {
   scopedGiveBackNote,
   withoutScopedSideNotes,
 } from "@/lib/xero-booking-repair-side-notes";
-import { addUnallocatedCardAppliedCreditFindings, waitForAppliedCreditWorkBeforeClearing } from "./xero-booking-repair-applied-credit";
+import { addAppliedCreditFindings, waitForAppliedCreditWorkBeforeClearing } from "./xero-booking-repair-applied-credit";
 import { addKeptLateCaptureRefundByHandFinding, addLateCaptureCardRefundByHandFindings, addPaidAnotherWayReceiptFinding } from "./xero-booking-repair-paid-another-way";
-import { addUnrecordedAdditionalCaptureFindings } from "./xero-booking-repair-additional-capture";
+import { addKeptChangeCaptureFinding, addUnrecordedAdditionalCaptureFindings, keptInvoiceBillsChange } from "./xero-booking-repair-additional-capture";
 import { addRefundRequestNoteNotQueuedFindings, paidBackRefundRequestCents } from "./xero-booking-repair-request-notes";
 import { isRecordedBookingInvoicePayment } from "@/lib/xero-inbound/object-links";
 import { PART_PAYMENT_RECOGNISED_REASON } from "@/lib/part-payment-recognition-reason";
@@ -110,6 +110,7 @@ import {
   keptLateCaptureRecordRoute,
 } from "@/lib/late-capture-kept-xero-rules";
 import { compareLedgerRowsNewestFirst } from "@/lib/payment-ledger-order";
+import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 
 /**
  * #3643: a booking's invoice-clearing credit note create that still stands -
@@ -283,6 +284,22 @@ export function classifyBookingContext(
           paymentId: payment.id,
           manuallyMarkedPaidAt: payment.manuallyMarkedPaidAt,
         },
+        actionKeys: [],
+      });
+    } else if (payment && !primaryInvoice && paidByOrganiserInternetBanking(booking)) {
+      // #4299 B1 (`INV-PAY-148`): the organiser paid this place by internet
+      // banking, so its money sits on the organiser's combined invoice and the
+      // place has no invoice of its own BY DESIGN. Queuing a primary invoice
+      // would raise, and email the joiner, an awaiting-payment invoice for the
+      // whole place. Informational and action-free, like the arm above; the
+      // enqueue choke point refuses the same place.
+      addFinding(findings, {
+        code: "ORGANISER_SETTLED_ON_COMBINED_INVOICE",
+        severity: "info",
+        summary:
+          "The group organiser paid this place by internet banking; it is settled on the organiser's combined invoice, so no invoice of its own is expected.",
+        safeToAutoApply: false,
+        details: { paymentId: payment.id },
         actionKeys: [],
       });
     } else if (payment && !primaryInvoice) {
@@ -607,6 +624,8 @@ export function classifyBookingContext(
             },
             actionKeys: [action.key],
           });
+        } else if (!blockingOperation && keptInvoiceBillsChange(context, modification.id, capturedPaymentTransactions)) {
+          // #4324 (`INV-PAY-144`): a kept late capture's own invoice bills and records this change; never a second invoice.
         } else if (!blockingOperation && primaryInvoiceEditTimingRefusal) {
           /**
            * REPORTED, NEVER APPLIED, AND NEVER SILENTLY SKIPPED (#3199).
@@ -1471,7 +1490,7 @@ export function classifyBookingContext(
 
   if (payment) addUnsettledRefundCreditNoteFindings(findings, actionMap, booking.id, context.paymentRefundPaymentLinks, paymentOperations, paymentLinks);
   addRefundRequestNoteNotQueuedFindings({ findings, actionMap, context }); // #4231
-  addUnallocatedCardAppliedCreditFindings(findings, actionMap, context);
+  addAppliedCreditFindings(findings, actionMap, context); // #4220: and the early warning
   if (payment && refundCreditNote) {
     const refundAmountCents = getCashCancellationRefundCandidateCents(booking, paidBackRefundRequestCents(context), context.modificationOperationsById);
     if (refundAmountCents !== null && refundAmountCents > 0) {
@@ -2001,8 +2020,10 @@ export function classifyBookingContext(
             paymentXeroInvoiceId: payment.xeroInvoiceId,
             paymentLinks,
           }),
-        }) !== "kept-invoice"
+        }) !== "kept-invoice" && !keptLateCaptureInvoiceAsked(kept.operations)
       ) {
+        // #4324 (`INV-PAY-144`): decided by its change's evidence; one given a kept-capture invoice is retried below.
+        addKeptChangeCaptureFinding({ findings, actionMap, booking, payment, transaction, kept, found: context.keptChangeCaptures?.get(transaction.stripePaymentIntentId) });
         continue;
       }
       const { recordCents } = decideLateCapture({
@@ -2280,7 +2301,7 @@ export function classifyBookingContext(
             safeToAutoApply: true,
             payload: {
               paymentId: payment.id,
-              refundAmountCents: cancellationCreditAmountCents,
+              refundAmountCents: cancellationCreditAmountCents, ...cancellationCreditNoteTarget(booking), // #4685
             },
           });
           addFinding(findings, {

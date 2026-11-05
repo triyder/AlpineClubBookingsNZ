@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Prisma } from "@prisma/client";
 
 const mocks = vi.hoisted(() => ({
+  executeOrganiserExtraAdjustment: vi.fn(),
+  findUniqueGroupBooking: vi.fn(),
   readPaidAnotherWayCloseShare: vi.fn(),
   createAuditLog: vi.fn(),
   findFirstLink: vi.fn(),
@@ -32,6 +34,8 @@ const mocks = vi.hoisted(() => ({
   getPaymentIntent: vi.fn(),
   // #3403: the reaper's backstop move; its own module is tested on its own.
   followSupersededAskInvoicesSafely: vi.fn(),
+  // #4665: whether the superseded ask's cancel is still in flight; its own module reads the rows.
+  supersededAskCancelInFlight: vi.fn(),
   returnMovedInvoicesToCapturedIntent: vi.fn(async () => 0),
   alertTakenBackInvoicesPaidAgain: vi.fn(async () => 0),
   updateManyOperation: vi.fn(),
@@ -64,11 +68,14 @@ const mocks = vi.hoisted(() => ({
   enqueueAdditionalCaptureReceiptOperation: vi.fn(),
   anchorCaptureHasReceipt: vi.fn(),
   bookingHasUnattributedCaptures: vi.fn(),
+  keptInvoiceBillsChangeCapture: vi.fn(),
   createXeroMembershipCancellationCreditNote: vi.fn(),
   syncXeroMembershipCancellationContact: vi.fn(),
   isXeroConnected: vi.fn().mockResolvedValue(false),
   executeRaw: vi.fn(),
 }));
+
+vi.mock("@/lib/organiser-extra-adjustment", () => ({ executeOrganiserExtraAdjustment: mocks.executeOrganiserExtraAdjustment }));
 
 /**
  * #3193 fix round: the double-bill regression below drives the REAL
@@ -108,6 +115,8 @@ vi.mock("@/lib/prisma", () => {
     groupBookingSettlement: {
       findUnique: mocks.findUniqueGroupSettlement,
     },
+    // #4299: an organiser-paid place's combined invoice (none unless a case says so).
+    groupBooking: { findUnique: mocks.findUniqueGroupBooking },
     paymentTransaction: {
       findFirst: mocks.findFirstPaymentTransaction,
     },
@@ -262,6 +271,8 @@ vi.mock("@/lib/additional-capture-receipt-enqueue", () => ({
 vi.mock("@/lib/additional-capture-receipt-link", () => ({
   anchorCaptureHasReceipt: (...args: unknown[]) => mocks.anchorCaptureHasReceipt(...args),
   bookingHasUnattributedCaptures: async (...args: unknown[]) => (await mocks.bookingHasUnattributedCaptures(...args)) ?? false,
+  // #4324: no change is billed by a kept-capture invoice unless a case says so.
+  keptInvoiceBillsChangeCapture: async (...args: unknown[]) => (await mocks.keptInvoiceBillsChangeCapture(...args)) ?? false,
 }));
 vi.mock("@/lib/additional-capture-xero-receipt", () => ({
   recordAdditionalCaptureReceipt: mocks.recordAdditionalCaptureReceipt,
@@ -275,6 +286,7 @@ vi.mock("@/lib/xero-token-store", () => ({
 // was cancelled at the provider (locally a cancel and a decline are both FAILED).
 vi.mock("@/lib/superseded-ask-invoice-carry", () => ({
   followSupersededAskInvoicesSafely: mocks.followSupersededAskInvoicesSafely,
+  supersededAskCancelInFlight: mocks.supersededAskCancelInFlight,
   followSupersededAskInvoicesForIntentSafely: vi.fn(async () => undefined),
 }));
 // #3403 review (M1): proven in its own suite and against PostgreSQL; here it returns nothing.
@@ -330,6 +342,7 @@ import {
   restatePendingSupplementaryInvoiceAmount,
 } from "@/lib/xero-operation-outbox";
 import { enqueueXeroRefundRequestCreditNoteOperation } from "@/lib/xero-refund-request-credit-note-outbox";
+import { ORGANISER_COMBINED_INVOICE_PLACE_REFUSAL } from "@/lib/organiser-billing";
 import {
   attachRecoveredIntentToWaitingSupplementaryInvoice,
   releaseXeroSupplementaryInvoiceForCapturedPaymentIntent,
@@ -340,7 +353,10 @@ import {
   queueXeroBookingEditSettlement,
 } from "@/lib/xero-booking-edit-settlement";
 import { XERO_OUTBOX_QUEUE_TYPES } from "@/lib/xero-operation-outbox-payload";
-import { XeroAppliedCreditOperationBusyError, XeroRefundCreditNoteInFlightError } from "@/lib/xero-applied-credit-operation-serialization";
+import { XeroAppliedCreditOperationBusyError, XeroRefundCreditNoteInFlightError, XeroRefundCreditNoteUnrecordedError } from "@/lib/xero-applied-credit-operation-serialization";
+import { XERO_REFUND_NOTE_AWAITING_RESOLVE_CODE } from "@/lib/xero-operation-error-codes";
+import { REFUND_NOTE_AWAITING_RESOLVE_RECHECK_MS } from "@/lib/xero-refund-note-in-flight";
+import { matchesWhere } from "./support/prisma-where";
 import { NOT_A_XERO_REPAIR_CLAIM } from "@/lib/xero-operation-outcome-guard";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { TEST_XERO_CLAIMED_AT, xeroClaim } from "@/lib/__tests__/helpers/xero-claim";
@@ -518,6 +534,32 @@ describe("enqueueXeroBookingInvoiceOperation", () => {
       queueOperationId: "op_booking_1",
       overrodeResolvedInXeroOperationId: "op_resolved_invoice",
     });
+  });
+
+  it("#4299 B1: refuses, with no row, a place the group organiser paid by internet banking", async () => {
+    mocks.findUniqueBooking.mockResolvedValue({
+      id: "booking_1",
+      organiserSettled: true,
+      parentBookingId: "organiser_booking",
+      payment: { id: "payment_1", xeroInvoiceId: null, manuallyMarkedPaidAt: null, source: "INTERNET_BANKING" },
+    });
+
+    await expect(enqueueXeroBookingInvoiceOperation("booking_1", { invoiceEmailDelivery: null, overrideResolvedInXero: true }))
+      .resolves.toMatchObject({ queueOperationId: null, refusal: ORGANISER_COMBINED_INVOICE_PLACE_REFUSAL });
+    expect(mocks.startXeroSyncOperation).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { organiserSettled: true, parentBookingId: "organiser_booking", source: "STRIPE" },
+    { organiserSettled: false, parentBookingId: null, source: "INTERNET_BANKING" },
+  ])("#4299 B1: still queues $source / organiserSettled=$organiserSettled", async ({ organiserSettled, parentBookingId, source }) => {
+    mocks.findUniqueBooking.mockResolvedValue({
+      id: "booking_1", organiserSettled, parentBookingId,
+      payment: { id: "payment_1", xeroInvoiceId: null, manuallyMarkedPaidAt: null, source },
+    });
+
+    await expect(enqueueXeroBookingInvoiceOperation("booking_1", { invoiceEmailDelivery: null }))
+      .resolves.toMatchObject({ queueOperationId: "op_booking_1" });
   });
 
   it("skips queueing when the booking payment is already linked to Xero", async () => {
@@ -828,6 +870,54 @@ describe("enqueueXeroSupplementaryInvoiceOperation", () => {
     });
     mocks.findFirstOperation.mockResolvedValue(null);
     mocks.startXeroSyncOperation.mockResolvedValue({ id: "op_supplementary_1" });
+  });
+
+  it("MUTATION #4324 item 11 (INV-PAY-144): raises no invoice, paid or unpaid, for a change a kept-capture invoice bills", async () => {
+    mocks.keptInvoiceBillsChangeCapture.mockResolvedValueOnce(true);
+    await expect(
+      enqueueXeroSupplementaryInvoiceOperation({ bookingId: "booking_1", priceDiffCents: 8000, changeFeeCents: 0, bookingModificationId: "mod_1" }),
+    ).resolves.toMatchObject({ queueOperationId: null, outcome: "none", refusedBy: "kept-late-capture-invoice" });
+    expect(mocks.startXeroSyncOperation).not.toHaveBeenCalled();
+    expect(mocks.keptInvoiceBillsChangeCapture).toHaveBeenCalledWith(expect.anything(), "mod_1");
+  });
+
+  it("MUTATION #4324 (4384-R2): a gap invoice takes the key of every change it bills, sorted, and is refused where a kept capture's invoice bills ANY of them", async () => {
+    mocks.keptInvoiceBillsChangeCapture.mockImplementation(async (_tx: unknown, id: string) => id === "mod_a_second");
+    await expect(
+      enqueueXeroSupplementaryInvoiceOperation(
+        { bookingId: "booking_1", priceDiffCents: 16000, changeFeeCents: 0, bookingModificationId: "mod_b_first" },
+        { recordPayment: false, primaryInvoiceGap: { coveredCaptures: [], billedChangeIds: ["mod_b_first", "mod_a_second"] } },
+      ),
+    ).resolves.toMatchObject({ queueOperationId: null, outcome: "none", refusedBy: "kept-late-capture-invoice", keptBilledChangeId: "mod_a_second" });
+    expect(mocks.startXeroSyncOperation).not.toHaveBeenCalled();
+    // Every anchor's key, sorted - the one order - before the read.
+    const locks = mocks.executeRaw.mock.calls.map((call) => (call as unknown[]).slice(1).join("|"));
+    expect(locks).toEqual([expect.stringContaining("mod_a_second"), expect.stringContaining("mod_b_first")]);
+    expect(mocks.executeRaw.mock.invocationCallOrder[1]).toBeLessThan(mocks.keptInvoiceBillsChangeCapture.mock.invocationCallOrder[0]!);
+    mocks.keptInvoiceBillsChangeCapture.mockReset();
+  });
+
+  it("#4299 S1: refuses, under the anchor lock, an organiser extra a waiver retired whole before it was raised", async () => {
+    mocks.findUniqueBooking.mockResolvedValue({ id: "booking_1", organiserSettled: true, parentBookingId: "organiser_booking", payment: { xeroInvoiceId: null, source: "INTERNET_BANKING" } });
+    mocks.findUniqueGroupBooking.mockResolvedValue({ organiserBookingId: "organiser_booking", organiserMemberId: "organiser", organiserMember: null,
+      settlement: { id: "settlement", source: "INTERNET_BANKING", xeroInvoiceId: "combined" } });
+    mocks.findFirstOperation.mockImplementation(async ({ where }: { where: Record<string, unknown> }) =>
+      where.status === "SKIPPED" && where.lastErrorCode === "ORGANISER_EXTRA_WAIVED_BEFORE_RAISED" && where.localId === "mod_1" ? { id: "op_skipped" } : null);
+    mocks.executeRaw.mockClear();
+    await expect(
+      enqueueXeroSupplementaryInvoiceOperation({ bookingId: "booking_1", priceDiffCents: 5000, changeFeeCents: 1000, bookingModificationId: "mod_1" }, { recordPayment: false }),
+    ).resolves.toMatchObject({ queueOperationId: null, outcome: "none", refusedBy: "organiser-extra-waived" });
+    expect(mocks.startXeroSyncOperation).not.toHaveBeenCalled();
+    expect(mocks.executeRaw.mock.invocationCallOrder[0]).toBeLessThan(mocks.findFirstOperation.mock.invocationCallOrder[0]!);
+    mocks.findFirstOperation.mockReset();
+    mocks.findUniqueGroupBooking.mockReset();
+  });
+
+  it("4384-R2 control: an ordinary change invoice takes its own key alone", async () => {
+    mocks.executeRaw.mockClear();
+    await enqueueXeroSupplementaryInvoiceOperation({ bookingId: "booking_1", priceDiffCents: 8000, changeFeeCents: 0, bookingModificationId: "mod_1" });
+    expect(mocks.executeRaw).toHaveBeenCalledTimes(1);
+    expect(mocks.keptInvoiceBillsChangeCapture).toHaveBeenCalledTimes(1);
   });
 
   it("creates a pending Xero sync operation for supplementary invoices", async () => {
@@ -1865,6 +1955,18 @@ describe("enqueueXeroAccountCreditNoteOperation", () => {
     );
   });
 
+  it("#4685: names the credit the note is for, additively, so its stamp writes that credit by id", async () => {
+    await enqueueXeroAccountCreditNoteOperation("payment_1", 4200, { memberCreditId: "credit_1" });
+
+    expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        // The key is unchanged: a row the deployed release queued still dedups this one.
+        correlationKey: "payment:payment_1:unapplied-credit-note:4200:v1",
+        requestPayload: { queueType: "ACCOUNT_CREDIT_NOTE", refundAmountCents: 4200, memberCreditId: "credit_1" },
+      })
+    );
+  });
+
   it("skips queueing when the account-credit note is already linked", async () => {
     mocks.findFirstLink.mockResolvedValue({ id: "link_account_credit_1" });
 
@@ -2365,6 +2467,40 @@ describe("processQueuedXeroOutboxOperations", () => {
     mocks.updateManyOperation.mockResolvedValue({ count: 1 });
   });
 
+  // #4663: `createdAt` is JS-filled, so rows queued in one millisecond tie (all
+  // of them under the frozen test clock). Without an `id` tiebreak PostgreSQL
+  // hands tied rows back in arbitrary physical order and a `limit: 1` worker
+  // claims whichever it likes. Mutation probe: dropping `{ id: "asc" }` fails
+  // both the shape check and the ordering check below.
+  it("breaks createdAt ties by id, so the scan order is deterministic (#4663)", async () => {
+    mocks.findManyOperations.mockResolvedValue([]);
+    await processQueuedXeroOutboxOperations({ limit: 1 });
+    const { orderBy } = mocks.findManyOperations.mock.calls[0][0];
+    expect(orderBy).toEqual([{ createdAt: "asc" }, { id: "asc" }]);
+
+    // Apply that orderBy to rows that all tie on createdAt, shuffled each way:
+    // the result is the same whatever the stored order.
+    const tied = new Date("2026-07-01T00:00:00.000Z");
+    const rows = [
+      { id: "c3", createdAt: tied },
+      { id: "c1", createdAt: tied },
+      { id: "c2", createdAt: tied },
+      { id: "c0", createdAt: new Date(tied.getTime() - 1) },
+    ];
+    const sortBy = (stored: typeof rows) =>
+      [...stored].sort((a, b) =>
+        (orderBy as Array<Record<string, "asc">>).reduce((cmp, key) => {
+          if (cmp !== 0) return cmp;
+          const [field] = Object.keys(key) as Array<"id" | "createdAt">;
+          const av = a[field] instanceof Date ? (a[field] as Date).getTime() : a[field];
+          const bv = b[field] instanceof Date ? (b[field] as Date).getTime() : b[field];
+          return av < bv ? -1 : av > bv ? 1 : 0;
+        }, 0),
+      ).map((row) => row.id);
+    expect(sortBy(rows)).toEqual(["c0", "c1", "c2", "c3"]);
+    expect(sortBy([...rows].reverse())).toEqual(["c0", "c1", "c2", "c3"]);
+  });
+
   it("scans the pending outbox by the indexed queueType column, not a requestPayload JSON predicate (#1272)", async () => {
     mocks.findManyOperations.mockResolvedValue([]);
 
@@ -2378,15 +2514,21 @@ describe("processQueuedXeroOutboxOperations", () => {
       status: "PENDING",
       direction: "OUTBOUND",
       queueType: { in: [...XERO_OUTBOX_QUEUE_TYPES] },
-      // #3954 round 8: a note waiting for its edit's own note is spaced out.
-      // #3954 round 8 and #3953 round 3: rows waiting their turn are spaced out.
-      AND: [expect.objectContaining({ OR: expect.any(Array) }), expect.objectContaining({ OR: expect.any(Array) })],
+      // #3954 round 8, #3953 round 3 and #4692 review: rows waiting their turn are spaced out.
+      AND: [
+        expect.objectContaining({ OR: expect.any(Array) }),
+        expect.objectContaining({ OR: expect.any(Array) }),
+        expect.objectContaining({ OR: expect.any(Array) }),
+      ],
     });
-    expect(args.where.queueType.in).toHaveLength(18);
+    // #4299: the eighteen pinned types and the organiser extra adjustment.
+    expect(args.where.queueType.in).toHaveLength(19);
+    expect(args.where.queueType.in).toContain("ORGANISER_EXTRA_ADJUSTMENT");
     // The legacy `requestPayload->>'queueType'` OR predicate is gone.
     expect(args.where.OR).toBeUndefined();
     expect(JSON.stringify(args.where)).not.toContain("requestPayload");
-    expect(args.orderBy).toEqual({ createdAt: "asc" });
+    // #4663: oldest first, `createdAt` ties broken by `id`.
+    expect(args.orderBy).toEqual([{ createdAt: "asc" }, { id: "asc" }]);
     expect(args.take).toBe(7);
   });
 
@@ -2528,7 +2670,61 @@ describe("processQueuedXeroOutboxOperations", () => {
           { updatedAt: { lte: new Date(Date.now() - ADDITIONAL_CAPTURE_RECEIPT_RECHECK_MS) } },
         ],
       },
+      // #4692 review: a refund note held by an unrecorded one, the same way.
+      {
+        OR: [
+          { lastErrorCode: null },
+          { lastErrorCode: { not: XERO_REFUND_NOTE_AWAITING_RESOLVE_CODE } },
+          { updatedAt: { lte: new Date(Date.now() - REFUND_NOTE_AWAITING_RESOLVE_RECHECK_MS) } },
+        ],
+      },
     ]);
+  });
+
+  describe("#4692 review (finding 1): a refund note held by an unrecorded one never stalls the outbox", () => {
+    it("MUTATION: hands the row back to PENDING under its wait code", async () => {
+      mocks.findManyOperations.mockResolvedValue([
+        {
+          id: "op_fenced",
+          localId: "payment_1",
+          localModel: "Payment",
+          entityType: "CREDIT_NOTE",
+          operationType: "CREATE",
+          createdByMemberId: null,
+          requestPayload: { queueType: "REFUND_CREDIT_NOTE", refundAmountCents: 3_000, watermarkCents: 8_000 },
+        },
+      ]);
+      mocks.createXeroCreditNote.mockRejectedValue(new XeroRefundCreditNoteUnrecordedError("payment_1", "op_unrecorded"));
+
+      await expect(processQueuedXeroOutboxOperations({ limit: 1 })).resolves.toMatchObject({ skipped: 1, failed: 0 });
+      expect(mocks.updateManyOperation).toHaveBeenCalledWith({
+        where: { id: "op_fenced", status: "RUNNING", startedAt: TEST_XERO_CLAIMED_AT, ...NOT_A_XERO_REPAIR_CLAIM },
+        data: expect.objectContaining({ status: "PENDING", startedAt: null, lastErrorCode: XERO_REFUND_NOTE_AWAITING_RESOLVE_CODE }),
+      });
+    });
+
+    it("MUTATION: with ten fenced notes waiting ahead of it, a limit-1 kick's scan still reaches the invoice queued after them", async () => {
+      const now = Date.now();
+      const fenced = Array.from({ length: 10 }, (_, i) => ({
+        id: `op_fenced_${i}`,
+        status: "PENDING",
+        direction: "OUTBOUND",
+        queueType: "REFUND_CREDIT_NOTE",
+        lastErrorCode: XERO_REFUND_NOTE_AWAITING_RESOLVE_CODE,
+        updatedAt: new Date(now - 1_000),
+        createdAt: new Date(now - 86_400_000 + i),
+      }));
+      const invoice = { id: "op_invoice", status: "PENDING", direction: "OUTBOUND", queueType: "BOOKING_INVOICE", lastErrorCode: null, updatedAt: new Date(now), createdAt: new Date(now) };
+      const scanned: string[][] = [];
+      mocks.findManyOperations.mockImplementation(async (args: { where: Record<string, unknown>; take: number }) => {
+        const rows = [...fenced, invoice].filter((row) => matchesWhere(row, args.where)).slice(0, args.take);
+        scanned.push(rows.map((row) => row.id));
+        return [];
+      });
+
+      await processQueuedXeroOutboxOperations({ limit: 1 });
+      expect(scanned).toEqual([["op_invoice"]]);
+    });
   });
 
   it("busy-requeues a manual retry, then executes its checkpointed deallocation once", async () => {
@@ -2908,6 +3104,27 @@ describe("processQueuedXeroOutboxOperations", () => {
     expect(mocks.createUnappliedXeroCreditNote).toHaveBeenCalledWith("payment_1", 4200, CLUB_FORMAT_TEST, {
       createdByMemberId: "admin_1",
       syncOperation: xeroClaim("op_account_credit_1"),
+    });
+  });
+
+  it("#4685: hands a queued account-credit note's credit to the create, and none for a row queued before it", async () => {
+    mocks.findManyOperations.mockResolvedValue([
+      {
+        id: "op_account_credit_named",
+        localId: "payment_1",
+        localModel: "Payment",
+        createdByMemberId: null,
+        requestPayload: { queueType: "ACCOUNT_CREDIT_NOTE", refundAmountCents: 4200, memberCreditId: "credit_1" },
+      },
+    ]);
+    mocks.createUnappliedXeroCreditNote.mockResolvedValue("cn_account_1");
+
+    await expect(processQueuedXeroOutboxOperations({ limit: 5 })).resolves.toMatchObject({ succeeded: 1, failed: 0 });
+
+    expect(mocks.createUnappliedXeroCreditNote).toHaveBeenCalledWith("payment_1", 4200, CLUB_FORMAT_TEST, {
+      createdByMemberId: undefined,
+      syncOperation: xeroClaim("op_account_credit_named"),
+      memberCreditId: "credit_1",
     });
   });
 
@@ -3511,6 +3728,14 @@ describe("processQueuedXeroOutboxOperations dispatch domain (#1272)", () => {
       },
       handler: mocks.createXeroMembershipSubscriptionInvoice,
     },
+    // #4299: an organiser's extra-invoice waiver, run by its own executor.
+    ORGANISER_EXTRA_ADJUSTMENT: {
+      op: {
+        id: "op_organiser_adjustment_1", localId: "booking_1", localModel: "Booking", createdByMemberId: "admin_1",
+        requestPayload: { queueType: "ORGANISER_EXTRA_ADJUSTMENT", bookingId: "booking_1", scopeId: "cancel", modificationId: "mod_1", invoiceId: "extra_1", amountCents: 4000, purpose: "waive", cashAtPlanCents: 2000, refundPercentage: 50 },
+      },
+      handler: mocks.executeOrganiserExtraAdjustment,
+    },
     // #3635: a late capture a treasurer kept, anchored on its approval task.
     KEPT_LATE_CAPTURE_INVOICE: {
       op: {
@@ -3552,6 +3777,7 @@ describe("processQueuedXeroOutboxOperations dispatch domain (#1272)", () => {
     vi.clearAllMocks();
     mocks.updateManyOperation.mockResolvedValue({ count: 1 });
     // Every dispatch target resolves so a routed op reports success.
+    mocks.executeOrganiserExtraAdjustment.mockResolvedValue(undefined);
     mocks.createXeroEntranceFeeInvoice.mockResolvedValue("inv");
     mocks.createXeroInvoiceForBooking.mockResolvedValue("inv");
     mocks.updateXeroBookingInvoiceForBooking.mockResolvedValue("inv");
@@ -3633,6 +3859,17 @@ describe("processQueuedXeroOutboxOperations dispatch domain (#1272)", () => {
       return fixture.handler.mock.calls;
     };
 
+    // #4655: a hook the worker hands a handler (the organiser adjustment's `onRetake`) is a
+    // fresh closure per dispatch and carries no payload value, so it is matched as a function.
+    const hooksAsAnyFunction = (value: unknown): unknown => {
+      if (typeof value === "function") return expect.any(Function);
+      if (Array.isArray(value)) return value.map(hooksAsAnyFunction);
+      if (value && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype) {
+        return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, hooksAsAnyFunction(entry)]));
+      }
+      return value;
+    };
+
     for (const queueType of XERO_OUTBOX_QUEUE_TYPES) {
       const queued = fixtures[queueType].op.requestPayload;
       const stored = sanitizeForJson(queued);
@@ -3646,12 +3883,61 @@ describe("processQueuedXeroOutboxOperations dispatch domain (#1272)", () => {
       expect(
         fromStored,
         `INV-INT-026 (#3971): ${queueType}'s worker resolves a different target once its payload is stored through the persisting redactor. A load-bearing id is being blanked; take it from the row's localId or rename the key, never weaken the redactor.`
-      ).toEqual(fromQueued);
+      ).toEqual(hooksAsAnyFunction(fromQueued));
       expect(
         JSON.stringify(fromStored),
         `INV-INT-026 (#3971): ${queueType}'s handler received a redacted value`
       ).not.toContain("[REDACTED]");
     }
+  });
+
+  describe("#4655 (#4672 review S1/S2): an organiser adjustment whose late note re-took its row", () => {
+    const op = () => fixtures.ORGANISER_EXTRA_ADJUSTMENT.op;
+    const RETAKEN = xeroClaim("op_organiser_adjustment_1", new Date("2026-07-01T00:20:00.000Z"));
+    type Hooks = { onRetake: (claim: typeof RETAKEN) => void };
+
+    it("MUTATION: a run that stood down (its note on a queued row, or traced) counts as skipped and writes no outcome", async () => {
+      mocks.findManyOperations.mockResolvedValue([op()]);
+      mocks.executeOrganiserExtraAdjustment.mockResolvedValueOnce("stood-down");
+      await expect(processQueuedXeroOutboxOperations({ limit: 1 })).resolves.toEqual({ found: 1, processed: 1, succeeded: 0, failed: 0, skipped: 1 });
+      expect(mocks.failXeroSyncOperation).not.toHaveBeenCalled();
+    });
+
+    it("MUTATION: a failure after the re-take is written under the new claim, never the stalled one", async () => {
+      mocks.findManyOperations.mockResolvedValue([op()]);
+      const failure = new Error("allocation refused");
+      mocks.executeOrganiserExtraAdjustment.mockImplementationOnce(async (_payload: unknown, _claim: unknown, hooks: Hooks) => {
+        hooks.onRetake(RETAKEN);
+        throw failure;
+      });
+      await expect(processQueuedXeroOutboxOperations({ limit: 1 })).resolves.toEqual(expect.objectContaining({ failed: 1 }));
+      expect(mocks.failXeroSyncOperation).toHaveBeenCalledExactlyOnceWith(RETAKEN, failure, undefined, { keepCancelled: true });
+    });
+
+    it("MUTATION: a cooldown refusal after the re-take gives the row back under the new claim", async () => {
+      mocks.findManyOperations.mockResolvedValue([op()]);
+      mocks.executeOrganiserExtraAdjustment.mockImplementationOnce(async (_payload: unknown, _claim: unknown, hooks: Hooks) => {
+        hooks.onRetake(RETAKEN);
+        throw Object.assign(new Error("Xero cooldown"), { name: "XeroTransientOutageError", preHttp: true });
+      });
+      await processQueuedXeroOutboxOperations({ limit: 1 });
+      expect(mocks.updateManyOperation).toHaveBeenCalledWith(expect.objectContaining({
+        where: expect.objectContaining({ AND: [{ status: { in: ["RUNNING", "FAILED"] }, startedAt: RETAKEN.startedAt }] }),
+        data: expect.objectContaining({ status: "PENDING" }),
+      }));
+    });
+
+    it("MUTATION: a busy wait after the re-take hands back only the new claim", async () => {
+      mocks.findManyOperations.mockResolvedValue([op()]);
+      mocks.executeOrganiserExtraAdjustment.mockImplementationOnce(async (_payload: unknown, _claim: unknown, hooks: Hooks) => {
+        hooks.onRetake(RETAKEN);
+        throw new XeroAppliedCreditOperationBusyError("waits", "PENDING");
+      });
+      await processQueuedXeroOutboxOperations({ limit: 1 });
+      expect(mocks.updateManyOperation).toHaveBeenCalledWith(expect.objectContaining({
+        where: expect.objectContaining({ status: "RUNNING", startedAt: RETAKEN.startedAt }),
+      }));
+    });
   });
 
   it("invoices the row's localId for a subscription row stored before #3971 with a blanked chargeId", async () => {
@@ -3810,6 +4096,8 @@ describe("reapStaleWaitingPaymentXeroOutboxOperations", () => {
     mocks.findUniquePayment.mockResolvedValue(null);
     mocks.followSupersededAskInvoicesSafely.mockReset();
     mocks.followSupersededAskInvoicesSafely.mockResolvedValue(null);
+    mocks.supersededAskCancelInFlight.mockReset();
+    mocks.supersededAskCancelInFlight.mockResolvedValue(false);
     mocks.findFirstOperation.mockReset();
     mocks.getPaymentIntent.mockReset();
     mocks.getPaymentIntent.mockResolvedValue({ status: "requires_payment_method" });
@@ -3897,6 +4185,76 @@ describe("reapStaleWaitingPaymentXeroOutboxOperations", () => {
       const result = await reapStaleWaitingPaymentXeroOutboxOperations();
 
       expect(result.reaped).toBe(1);
+    });
+
+    describe("#4665: the superseded ask's cancel is still in flight", () => {
+      it("KEEPS it when the move found nothing: the cancel's last step moves it", async () => {
+        supersededAsk();
+        mocks.followSupersededAskInvoicesSafely.mockResolvedValue({ moved: 0 });
+        mocks.supersededAskCancelInFlight.mockResolvedValue(true);
+
+        const result = await reapStaleWaitingPaymentXeroOutboxOperations();
+
+        expect(mocks.supersededAskCancelInFlight).toHaveBeenCalledWith("pi_superseded");
+        expect(retireCall()).toBeUndefined();
+        expect(result).toEqual({ reaped: 0, released: 0, moved: 0, queueOperationIds: [] });
+      });
+
+      it("KEEPS it when the move failed outright", async () => {
+        supersededAsk();
+        mocks.followSupersededAskInvoicesSafely.mockResolvedValue(null);
+        mocks.supersededAskCancelInFlight.mockResolvedValue(true);
+
+        const result = await reapStaleWaitingPaymentXeroOutboxOperations();
+
+        expect(retireCall()).toBeUndefined();
+        expect(result.reaped).toBe(0);
+      });
+
+      it("KEEPS it when a move elsewhere left THIS row waiting on the ask", async () => {
+        supersededAsk();
+        mocks.followSupersededAskInvoicesSafely.mockResolvedValue({ moved: 1 });
+        mocks.findFirstOperation.mockResolvedValue({ id: "op_superseded_ask" });
+        mocks.supersededAskCancelInFlight.mockResolvedValue(true);
+
+        const result = await reapStaleWaitingPaymentXeroOutboxOperations();
+
+        expect(retireCall()).toBeUndefined();
+        expect(result.reaped).toBe(0);
+      });
+
+      it("counts it as moved once the move took the row, in flight or not", async () => {
+        supersededAsk();
+        mocks.followSupersededAskInvoicesSafely.mockResolvedValue({ moved: 1 });
+        mocks.findFirstOperation.mockResolvedValue(null);
+        mocks.supersededAskCancelInFlight.mockResolvedValue(true);
+
+        const result = await reapStaleWaitingPaymentXeroOutboxOperations();
+
+        expect(retireCall()).toBeUndefined();
+        expect(result.moved).toBe(1);
+      });
+
+      it("KEEPS it when the cancel lands between the read and a move that took nothing", async () => {
+        supersededAsk();
+        // In flight when read; the cancel then marks the ask FAILED, its own
+        // move fails (swallowed) and it marks itself SUCCEEDED - after the
+        // reaper's move already found the ask open and moved nothing.
+        let cancelLanded = false;
+        mocks.supersededAskCancelInFlight.mockImplementation(async () => !cancelLanded);
+        mocks.followSupersededAskInvoicesSafely.mockImplementation(async () => {
+          cancelLanded = true;
+          return { moved: 0 };
+        });
+
+        const result = await reapStaleWaitingPaymentXeroOutboxOperations();
+
+        expect(mocks.supersededAskCancelInFlight.mock.invocationCallOrder[0]).toBeLessThan(
+          mocks.followSupersededAskInvoicesSafely.mock.invocationCallOrder[0],
+        );
+        expect(retireCall()).toBeUndefined();
+        expect(result).toEqual({ reaped: 0, released: 0, moved: 0, queueOperationIds: [] });
+      });
     });
 
     it("never retires a row moved after its verdict: the reap is guarded on the intent it judged", async () => {

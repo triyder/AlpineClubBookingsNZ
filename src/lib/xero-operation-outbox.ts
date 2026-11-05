@@ -1,3 +1,8 @@
+import { ORGANISER_COMBINED_INVOICE_PLACE_MESSAGE, ORGANISER_COMBINED_INVOICE_PLACE_REFUSAL, resolveOrganiserBilling } from "@/lib/organiser-billing";
+import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
+import { organiserExtraWaivedBeforeRaised } from "@/lib/organiser-extra-state";
+import { executeOrganiserExtraAdjustment } from "@/lib/organiser-extra-adjustment";
+import { XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE } from "@/lib/organiser-extra-adjustment-payload";
 import { PaymentSource, Prisma } from "@prisma/client";
 import logger from "@/lib/logger";
 import {
@@ -29,7 +34,7 @@ import {
   startXeroSyncOperation,
   upsertXeroObjectLink,
 } from "@/lib/xero-sync";
-import { holdsRecordedXeroSuccess, NOT_A_XERO_REPAIR_CLAIM } from "@/lib/xero-operation-outcome-guard";
+import { holdsRecordedXeroSuccess, NOT_A_XERO_REPAIR_CLAIM, ownRunningClaim, type XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
 import {
   createXeroInvoiceForBooking,
   updateXeroBookingInvoiceForBooking,
@@ -42,6 +47,7 @@ import {
 } from "@/lib/xero-credit-notes";
 import { readRefundRequestIdFromPayload } from "@/lib/refund-request-credit-note";
 import { refundNoteKeyAfterVoidParts } from "@/lib/xero-refund-note-status";
+import { RefundNoteNotRecordedError, refundNoteRecordedElsewhere } from "@/lib/xero-refund-note-record";
 import {
   readModificationNoteWording,
   readRefundNoteWording,
@@ -65,6 +71,7 @@ import { isXeroAppliedCreditOperationBusyError } from "@/lib/xero-applied-credit
 import {
   findResolvedBookingInvoiceCreate,
   findResolvedSiblingSince,
+  resolvedSiblingCopySkippedPayload,
   readResolvedRefundCreditNoteCoverage,
   sumRefundCreditNoteCoverageCents,
 } from "@/lib/xero-resolved-in-xero-fences";
@@ -72,8 +79,9 @@ import { createXeroSupplementaryInvoice } from "@/lib/xero-supplementary-invoice
 import { createXeroKeptLateCaptureInvoice } from "@/lib/xero-kept-late-capture-invoice";
 import { recordAdditionalCaptureReceipt } from "@/lib/additional-capture-xero-receipt";
 import { outboxScanSpacesWaitingReceipts } from "@/lib/additional-capture-receipt-gate";
+import { scanSpacesRefundNotesAwaitingResolve } from "@/lib/xero-refund-note-in-flight";
 import { primaryInvoiceGapPayload } from "@/lib/additional-capture-receipt-payload";
-import { anchorCaptureHasReceipt, bookingHasUnattributedCaptures } from "@/lib/additional-capture-receipt-link";
+import { anchorCaptureHasReceipt, bookingHasUnattributedCaptures, keptInvoiceBillsChangeCapture } from "@/lib/additional-capture-receipt-link";
 import { isXeroConnected } from "@/lib/xero-token-store";
 import { createXeroInvoiceForGroupSettlement } from "@/lib/xero-group-settlement-invoices";
 import {
@@ -481,11 +489,14 @@ export async function enqueueXeroBookingInvoiceOperation(
     where: { id: bookingId },
     select: {
       id: true,
+      organiserSettled: true,
+      parentBookingId: true,
       payment: {
         select: {
           id: true,
           xeroInvoiceId: true,
           manuallyMarkedPaidAt: true,
+          source: true,
         },
       },
     },
@@ -543,6 +554,24 @@ export async function enqueueXeroBookingInvoiceOperation(
       queueOperationId: null,
       message:
         "Booking was manually marked paid (cash / off-Xero) — no Xero invoice is expected.",
+    };
+  }
+
+  // #4299 B1 (`INV-PAY-148`): a place the group organiser paid by internet
+  // banking is settled on the organiser's combined invoice and has no invoice
+  // of its own by design. A primary invoice here would bill, and email, the
+  // joiner for the whole place, so no enqueuer may mint one - the same
+  // choke-point placement as the manual-settlement fence above. Its extras go
+  // to the organiser on supplementary invoices, never through here.
+  if (paidByOrganiserInternetBanking(booking)) {
+    logger.warn(
+      { bookingId, paymentId: booking.payment.id },
+      "Refusing to queue a Xero booking invoice for an organiser-paid internet-banking place (#4299)"
+    );
+    return {
+      queueOperationId: null,
+      refusal: ORGANISER_COMBINED_INVOICE_PLACE_REFUSAL,
+      message: ORGANISER_COMBINED_INVOICE_PLACE_MESSAGE,
     };
   }
 
@@ -1139,7 +1168,7 @@ export async function enqueueXeroRefundCreditNoteOperation(
 export async function enqueueXeroAccountCreditNoteOperation(
   paymentId: string,
   refundAmountCents: number,
-  options?: { createdByMemberId?: string; store?: Prisma.TransactionClient }
+  options?: { createdByMemberId?: string; store?: Prisma.TransactionClient; memberCreditId?: string }
 ) {
   if (refundAmountCents <= 0) {
     return {
@@ -1226,7 +1255,8 @@ export async function enqueueXeroAccountCreditNoteOperation(
     correlationKey,
     requestPayload: {
       queueType: XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE,
-      refundAmountCents,
+      refundAmountCents, // #4685: and the credit it is for, which its stamp writes by id
+      ...(options?.memberCreditId ? { memberCreditId: options.memberCreditId } : {}),
     },
     createdByMemberId: options?.createdByMemberId ?? null,
     store: db,
@@ -1487,8 +1517,14 @@ interface XeroSupplementaryInvoiceEnqueueOptions {
   paymentIntentId?: string | null;
   waitForConfirmedAdditionalPayment?: boolean;
   recordPayment?: boolean;
-  /** #3953 (`INV-PAY-139`): a #3980 gap invoice, and the captures its own payment takes (none when unpaid). */
-  primaryInvoiceGap?: { coveredCaptures: ReadonlyArray<{ paymentIntentId: string; cents: number }> };
+  /**
+   * #3953 (`INV-PAY-139`): a #3980 gap invoice, and the captures its own payment takes (none when unpaid).
+   * #4324 (4384-R2): `billedChangeIds`, every racing edit its combined amount bills (its anchors).
+   */
+  primaryInvoiceGap?: {
+    coveredCaptures: ReadonlyArray<{ paymentIntentId: string; cents: number }>;
+    billedChangeIds?: readonly string[];
+  };
 }
 
 /**
@@ -1601,9 +1637,12 @@ async function enqueueSupplementaryInvoiceForAnchor(
     where: { id: bookingId },
     select: {
       id: true,
+      organiserSettled: true,
+      parentBookingId: true,
       payment: {
         select: {
           xeroInvoiceId: true,
+          source: true,
         },
       },
     },
@@ -1613,7 +1652,8 @@ async function enqueueSupplementaryInvoiceForAnchor(
     throw new Error(`Booking not found: ${bookingId}`);
   }
 
-  if (!booking.payment?.xeroInvoiceId) {
+  const organiserBilling = await resolveOrganiserBilling(store ?? prisma, booking);
+  if (!booking.payment?.xeroInvoiceId && !organiserBilling) {
     return {
       queueOperationId: null,
       outcome: "none" as XeroSupplementaryInvoiceEnqueueOutcome,
@@ -1658,7 +1698,13 @@ async function enqueueSupplementaryInvoiceForAnchor(
   const decide = async (tx: Prisma.TransactionClient) => {
     // #3953 round 7: where the booking has a change capture no change can be read from, its receipt decides under the BOOKING's key, so this takes that key first (booking, then anchor - the one order; nothing takes them the other way). Round 9: only for an invoice naming no capture, the one kind that might record such a capture.
     if (localId !== bookingId && (options?.recordPayment ?? true) && !options?.primaryInvoiceGap && !options?.paymentIntentId && (await bookingHasUnattributedCaptures(tx, bookingId))) await lockSupplementaryInvoiceAnchor(tx, bookingId);
-    await lockSupplementaryInvoiceAnchor(tx, localId);
+    // #4324 (4384-R2, `INV-PAY-144`): a gap invoice bills every anchor its amount covers, so it takes each one's key, sorted (the one order), before asking whether a kept capture's own invoice bills any of them.
+    const billedChangeIds = [...new Set([localId, ...(options?.primaryInvoiceGap?.billedChangeIds ?? [])])].sort();
+    for (const anchorId of billedChangeIds) await lockSupplementaryInvoiceAnchor(tx, anchorId);
+    // #4299 S1 (`INV-PAY-148`): a waiver retired this organiser extra whole before it was raised; nothing is owed, so no row raises it.
+    if (organiserBilling && localModel === "BookingModification" && (await organiserExtraWaivedBeforeRaised(tx, localId))) {
+      return { queueOperationId: null, outcome: "none" as XeroSupplementaryInvoiceEnqueueOutcome, refusedBy: "organiser-extra-waived" as const, message: "This organiser extra was waived whole before it was raised, so no invoice is queued." };
+    }
 
     const existingLink = await tx.xeroObjectLink.findFirst({
       where: {
@@ -1736,6 +1782,10 @@ async function enqueueSupplementaryInvoiceForAnchor(
       };
     }
 
+    // #4324 (`INV-PAY-144`): a change its kept late capture's own invoice bills gets no second invoice, paid or unpaid.
+    let keptBilledChangeId: string | undefined;
+    for (const id of localModel === "BookingModification" ? billedChangeIds : []) if (!keptBilledChangeId && (await keptInvoiceBillsChangeCapture(tx, id))) keptBilledChangeId = id;
+    if (keptBilledChangeId) return { queueOperationId: null, outcome: "none" as XeroSupplementaryInvoiceEnqueueOutcome, refusedBy: "kept-late-capture-invoice" as const, keptBilledChangeId, message: "A kept late card payment's own Xero invoice already bills this booking change." };
     // #3953 round 6: a capture its own receipt records (or is recording) is never recorded again here; a gap invoice decides its own cash.
     const recordPayment = (options?.recordPayment ?? true) && (Boolean(options?.primaryInvoiceGap) || !(await anchorCaptureHasReceipt(tx, { bookingId, bookingModificationId: localModel === "BookingModification" ? localId : null, paymentIntentId: options?.paymentIntentId ?? null })));
     const queuedOperation = await startXeroSyncOperation({
@@ -2821,11 +2871,11 @@ export async function queueApprovedMembershipCancellationXeroOperations(params: 
   const queuedResults: Array<{ queueOperationId: string | null; message: string }> = [];
 
   // Enqueue the credit note BEFORE the contact cleanup. The outbox processes
-  // operations oldest-first (orderBy createdAt asc), so this ensures the credit
-  // note is pushed to Xero before the contact is archived. Archiving first
-  // would block the credit note, because Xero rejects credit notes raised
-  // against an archived contact. The contact operation also re-checks this at
-  // run time and defers if the credit note has not settled yet.
+  // operations oldest-first (createdAt, then id: a same-millisecond pair is not
+  // guaranteed in call order, #4663), so this puts the credit note ahead of the
+  // contact archive. Archiving first would block it: Xero rejects credit notes
+  // against an archived contact. The contact operation re-checks this at run
+  // time and defers if the credit note has not settled yet.
   if (subscription) {
     queuedResults.push(
       await enqueueXeroMembershipCancellationCreditNoteOperation(
@@ -2913,13 +2963,12 @@ export async function processQueuedXeroOutboxOperations(options?: {
       queueType: {
         in: [...XERO_OUTBOX_QUEUE_TYPES],
       },
-      // #3954 round 8: a billed-offset note waiting for its edit's own note
-      // is looked at again only every few minutes, not on every kick.
-      AND: [outboxScanLeavesAwaitingOwnNote(new Date()), outboxScanSpacesWaitingReceipts(new Date())],
+      // Rows waiting their turn are looked at only every few minutes, not on every kick (#3954, #3953, #4692 `INV-INT-035`).
+      AND: [outboxScanLeavesAwaitingOwnNote(new Date()), outboxScanSpacesWaitingReceipts(new Date()), scanSpacesRefundNotesAwaitingResolve(new Date())],
     },
-    orderBy: {
-      createdAt: "asc",
-    },
+    // Ties on `createdAt` (same ms; all rows under the frozen clock) fall to `id`:
+    // deterministic, not insertion order (#4663; STATE_MACHINES.md).
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     take: limit,
   });
   // The club's format (#3565), once for the whole batch: three of the documents
@@ -3000,15 +3049,7 @@ export async function processQueuedXeroOutboxOperations(options?: {
     // hand-made document stands for it. Closed CANCELLED, before any Xero call.
     const resolvedSibling = await findResolvedSiblingSince(queuedOperation);
     if (resolvedSibling) {
-      await completeXeroSyncOperation(claimed, {
-        status: "CANCELLED",
-        responsePayload: {
-          skipped: "resolved-in-xero",
-          resolvedOperationId: resolvedSibling.id,
-          reason:
-            "An officer resolved this document by hand in Xero after this copy was queued, so it was not sent.",
-        },
-      });
+      await completeXeroSyncOperation(claimed, { status: "CANCELLED", responsePayload: resolvedSiblingCopySkippedPayload(resolvedSibling.id) });
       result.skipped += 1;
       continue;
     }
@@ -3017,6 +3058,10 @@ export async function processQueuedXeroOutboxOperations(options?: {
       ? buildPrecomputedEntranceFeeContext(payload)
       : null;
     const subscriptionChargeId = subscriptionInvoiceChargeId(queuedOperation);
+    // #4655 (#4672 review S1/S2, `INV-INT-029`): the claim this dispatch's outcome is
+    // written under. An organiser adjustment whose late note re-took a row a reset
+    // failed hands back its fresh claim; every give-back and failure below follows it.
+    let outcomeClaim: XeroOperationClaim = claimed;
 
     try {
       if (
@@ -3105,10 +3150,7 @@ export async function processQueuedXeroOutboxOperations(options?: {
           queuedOperation.localId,
           payload.refundAmountCents,
           format,
-          {
-            createdByMemberId: queuedOperation.createdByMemberId ?? undefined,
-            syncOperation: claimed,
-          }
+          { createdByMemberId: queuedOperation.createdByMemberId ?? undefined, syncOperation: claimed, memberCreditId: payload.memberCreditId }
         );
       } else if (
         payload?.queueType === XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE
@@ -3131,6 +3173,13 @@ export async function processQueuedXeroOutboxOperations(options?: {
       } else if (payload?.queueType === XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE) {
         // #3953: a change's card capture nothing waited on, recorded against the invoice billing it.
         await recordAdditionalCaptureReceipt({ syncOperation: claimed, createdByMemberId: queuedOperation.createdByMemberId ?? undefined });
+      } else if (payload?.queueType === XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE) {
+        const ran = await executeOrganiserExtraAdjustment(payload, claimed, { onRetake: (retaken) => { outcomeClaim = retaken; } });
+        // #4655, #4680, #4701: a stood-down run wrote no outcome, whether its note landed on a re-queued row, on none, or it lost its claim before a money-moving call.
+        if (ran === "stood-down") {
+          result.skipped += 1;
+          continue;
+        }
       } else if (payload?.queueType === XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE) {
         await createXeroSupplementaryInvoice({
           bookingId: payload.bookingId,
@@ -3214,6 +3263,14 @@ export async function processQueuedXeroOutboxOperations(options?: {
 
       result.succeeded += 1;
     } catch (error) {
+      if (error instanceof RefundNoteNotRecordedError) {
+        // #4656 (`INV-INT-029`): a note this run did not record, already traced; the row stays as the record left it.
+        // Skipped, never succeeded: this run completed nothing, even where the row records this very note.
+        const level = refundNoteRecordedElsewhere(error.outcome) ? "info" : "warn";
+        logger[level]({ queueOperationId: queuedOperation.id, outcome: error.outcome }, error.message);
+        result.skipped += 1;
+        continue;
+      }
       if (isXeroAppliedCreditOperationBusyError(error)) {
         // Two independent outbox runners can claim allocation and deallocation
         // for the same Payment before either handler observes the other. That
@@ -3223,7 +3280,7 @@ export async function processQueuedXeroOutboxOperations(options?: {
         // deallocation says what it is waiting for.
         await prisma.xeroSyncOperation.updateMany({
           // #4356: never take back a repair's marked claim; #4373: nor any claim but this dispatch's (`INV-INT-029`).
-          where: { id: queuedOperation.id, status: "RUNNING", startedAt: claimed.startedAt, ...NOT_A_XERO_REPAIR_CLAIM },
+          where: { id: queuedOperation.id, ...ownRunningClaim(outcomeClaim), ...NOT_A_XERO_REPAIR_CLAIM },
           data: {
             status: "PENDING",
             startedAt: null,
@@ -3280,8 +3337,8 @@ export async function processQueuedXeroOutboxOperations(options?: {
         const returned = await prisma.xeroSyncOperation.updateMany({
           where: {
             id: queuedOperation.id,
-            // #4373: RUNNING only as this dispatch's own claim, never a later retry's (`INV-INT-029`).
-            AND: [{ OR: [{ status: "RUNNING", startedAt: claimed.startedAt }, { status: "FAILED" }] }],
+            // #4373/#4687: RUNNING or self-failed FAILED only under this dispatch's own claim, never a later one's (`INV-INT-029`).
+            AND: [{ status: { in: ["RUNNING", "FAILED"] }, startedAt: outcomeClaim.startedAt }],
             // Never revive a row an officer resolved (#3635, `INV-INT-025`), nor a repair's marked claim (#4356).
             manuallyResolvedAt: null,
             ...NOT_A_XERO_REPAIR_CLAIM,
@@ -3315,12 +3372,12 @@ export async function processQueuedXeroOutboxOperations(options?: {
           result.skipped += 1;
           continue;
         }
-        // The row was in neither RUNNING nor FAILED (e.g. a concurrent worker
-        // moved it out from under us). Do NOT report a return-to-PENDING that
-        // did not happen — that false "skipped" is what let an incident summary
-        // tell an operator the queue would self-heal while invoices sat stuck.
-        // Fall through to the honest FAILED path so the log and the failed
-        // counter reflect a row that was NOT recovered.
+        // The row was not this claim's RUNNING or FAILED row (e.g. a concurrent
+        // worker moved it out from under us). Do NOT report a return-to-PENDING
+        // that did not happen — that false "skipped" is what let an incident
+        // summary tell an operator the queue would self-heal while invoices sat
+        // stuck. Fall through to the failure path: the row counts failed when the
+        // failure lands, and skipped when INV-INT-029 refuses it (#4673).
         logger.warn(
           {
             err: error,
@@ -3329,6 +3386,38 @@ export async function processQueuedXeroOutboxOperations(options?: {
           },
           "Xero cooldown refused an outbox operation but the row was not in a returnable state; failing it"
         );
+      }
+      // F4 (#1354): fail the operation for EVERY queue type, not just the two
+      // membership-cancellation types and payload-shape errors. An operation
+      // erroring BEFORE its handler overwrote requestPayload (token refresh,
+      // contact resolution, account mapping) previously stayed RUNNING with
+      // the queued payload; after an operator stale-reset the retry stack
+      // could not parse that shape — a permanent manual dead-end. FAILED rows
+      // are replayable, and the retry parser now understands the queued
+      // payload shape, so failing fast here closes the dead-end for all
+      // types.
+      let failedRow: Awaited<ReturnType<typeof failXeroSyncOperation>> | undefined;
+      try {
+        // #3635 round-3 N5: never over a row withdrawn in the meantime (an
+        // approval cancels a kept row it finds FAILED); CANCELLED stands.
+        failedRow = await failXeroSyncOperation(
+          outcomeClaim,
+          error instanceof Error ? error : new Error(String(error)),
+          undefined,
+          { keepCancelled: true }
+        );
+      } catch (failErr) {
+        logger.error(
+          { err: failErr, queueOperationId: queuedOperation.id },
+          "Failed to mark queued Xero outbox operation FAILED after an error"
+        );
+      }
+      // #4673 (`INV-INT-029`): refused - no longer this run's row (a Retry queued it again, a later claim
+      // holds or ended it) or it keeps a success or a withdrawal. Nothing failed: no charge error, not counted failed.
+      if (failedRow === null) {
+        logger.warn({ err: error, queueOperationId: queuedOperation.id, queueType: payload?.queueType ?? null }, "Queued Xero outbox operation's failure was not recorded: the row is no longer this run's (INV-INT-029)");
+        result.skipped += 1;
+        continue;
       }
       if (payload?.queueType === XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE && subscriptionChargeId) {
         const currentCharge = await prisma.membershipSubscriptionCharge.findUnique({
@@ -3352,30 +3441,6 @@ export async function processQueuedXeroOutboxOperations(options?: {
           });
         }
       }
-      // F4 (#1354): fail the operation for EVERY queue type, not just the two
-      // membership-cancellation types and payload-shape errors. An operation
-      // erroring BEFORE its handler overwrote requestPayload (token refresh,
-      // contact resolution, account mapping) previously stayed RUNNING with
-      // the queued payload; after an operator stale-reset the retry stack
-      // could not parse that shape — a permanent manual dead-end. FAILED rows
-      // are replayable, and the retry parser now understands the queued
-      // payload shape, so failing fast here closes the dead-end for all
-      // types.
-      try {
-        // #3635 round-3 N5: never over a row withdrawn in the meantime (an
-        // approval cancels a kept row it finds FAILED); CANCELLED stands.
-        await failXeroSyncOperation(
-          claimed,
-          error instanceof Error ? error : new Error(String(error)),
-          undefined,
-          { keepCancelled: true }
-        );
-      } catch (failErr) {
-        logger.error(
-          { err: failErr, queueOperationId: queuedOperation.id },
-          "Failed to mark queued Xero outbox operation FAILED after an error"
-        );
-      }
       logger.error(
         {
           err: error,
@@ -3390,4 +3455,9 @@ export async function processQueuedXeroOutboxOperations(options?: {
   }
 
   return result;
+}
+
+/** #4299: the edit queues its organiser invoice in its own transaction. */
+export async function enqueueOrganiserExtraInvoiceInTransaction(params: { bookingId: string; bookingModificationId: string; priceDiffCents: number; changeFeeCents: number; createdByMemberId?: string }, store: Prisma.TransactionClient) {
+  return enqueueSupplementaryInvoiceForAnchor(params, { recordPayment: false, createdByMemberId: params.createdByMemberId }, store);
 }

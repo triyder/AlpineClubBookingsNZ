@@ -17,11 +17,11 @@ const thread = (comments = [claim], extra = {}) => ({
 });
 
 describe("staleReservations", () => {
-  it("reports the claimed lane, activity and owner question for an old claim", () => {
+  it("reports the claimed lane, activity and release action for an old claim", () => {
     expect(staleReservations([thread()], now)).toEqual([{
       number: 42, url: "https://github.com/o/r/issues/42", kind: "Issue",
       holder: "Alpine lane", lastActivity: "2026-06-26T00:00:00.000Z",
-      question: "Extend, reassign or release Alpine lane's reservation on #42?",
+      action: "Release Alpine lane's reservation on #42 (auto-release after 72 hours, #4452).",
     }]);
   });
 

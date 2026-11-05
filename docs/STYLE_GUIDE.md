@@ -148,6 +148,10 @@ re-creatable.
   capture names (`pnpm exec tsx e2e/tools/capture-screenshots.ts <name...>`), never
   the whole manifest — a full run commits images for pages other batches/PRs
   own, stranding orphan PNGs that their real PR then has to re-refresh.
+- **Member-guide refresh:** `pnpm run docs:screenshots --user-guide` selects
+  the named captures embedded by `docs/user-guide/*.md`, including its index.
+  Use `--user-guide --list` to inspect the selection without launching a browser.
+  The wiki mirror reads the same image references; do not duplicate its PNGs.
 - **Screenshot density:** one screenshot per capturable distinct route or tab
   (a guide covering six sub-pages embeds six captures). Client-side wizard or
   dialog sub-steps the URL-driven harness cannot reach are described in prose —
@@ -286,9 +290,11 @@ needs (owner decision, #2049).
   leaving bare arrows.
 - Quote node labels containing spaces or punctuation (`A["Next.js app"]`) so the
   parser does not choke.
-- Verify a diagram parses before committing: `pnpm dlx @mermaid-js/mermaid-cli -i
-  file.md -o /tmp/out.svg` (or paste into the mermaid live editor). Note in the
-  PR how you validated.
+- Verify a diagram parses before committing. A person can run `pnpm dlx
+  @mermaid-js/mermaid-cli -i file.md -o /tmp/out.svg` or paste it into the
+  mermaid live editor; an agent may not use `pnpm dlx` (`AGENTS.md` -> Safety),
+  so it relies on the diagram rendering in the PR's preview and says so. Note in
+  the PR how you validated.
 - A diagram must match the code. When the code moves, update the diagram in the
   same PR — the same lockstep rule as screenshots.
 

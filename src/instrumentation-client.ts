@@ -4,7 +4,11 @@ import {
   redactSensitiveQueryParams,
   redactSensitiveText,
 } from "@/lib/redact-sensitive-json";
-import { SENTRY_PRIVACY_INIT_OPTIONS } from "@/lib/sentry-privacy-options";
+import {
+  dropBreachedPasswordRangeBreadcrumb,
+  scrubBreachedPasswordRangeDeep,
+  SENTRY_PRIVACY_INIT_OPTIONS,
+} from "@/lib/sentry-privacy-options";
 
 Sentry.init({
   // Sentry 11's dataCollection defaults collect IPs, cookies and bodies; keep v10's.
@@ -16,9 +20,10 @@ Sentry.init({
   // Performance tracing
   tracesSampleRate: process.env.NODE_ENV === "production" ? 0.2 : 1.0,
 
-  // Session Replay sampling
-  replaysSessionSampleRate: process.env.NODE_ENV === "production" ? 0.1 : 0,
-  replaysOnErrorSampleRate: 1.0,
+  // Replay is started only by SentryReplayPolicy after a club setting opts in.
+  // No error-triggered recording or buffering before that decision.
+  replaysSessionSampleRate: 0,
+  replaysOnErrorSampleRate: 0,
 
   integrations: [
     // Console breadcrumbs come from Sentry's default consoleIntegration since
@@ -28,7 +33,6 @@ Sentry.init({
       fetch: true,
       history: true,
     }),
-    Sentry.replayIntegration(),
   ],
 
   // Scrub sensitive data from Sentry payloads
@@ -69,11 +73,15 @@ Sentry.init({
       ) as typeof event.exception.values;
     }
 
-    return event;
+    // #4610: no event carries the breached-password range prefix; one the
+    // scrub cannot vouch for comes back null and is dropped.
+    return scrubBreachedPasswordRangeDeep(event);
   },
 
   beforeBreadcrumb(breadcrumb) {
-    return redactSensitiveJson(breadcrumb) as typeof breadcrumb;
+    // #4610: a fetch breadcrumb to the breached-password range is dropped.
+    const kept = dropBreachedPasswordRangeBreadcrumb(breadcrumb);
+    return kept && (redactSensitiveJson(kept) as typeof breadcrumb);
   },
 
   // Filter out noisy errors. `ignoreErrors` string patterns are SUBSTRING

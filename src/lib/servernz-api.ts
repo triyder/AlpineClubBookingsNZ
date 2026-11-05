@@ -502,7 +502,7 @@ export async function withdrawClubPost(serverPostId: string): Promise<void> {
 export async function pullSharedPostSync(cursor: {
   since?: string | null;
   sinceId?: string | null;
-}): Promise<SyncEnvelope> {
+}): Promise<SyncEnvelope & { sentOn: ServerNzConnectionIdentity }> {
   const { baseUrl, apiKey, identity } = await resolveConnection();
   const url = new URL(`${baseUrl}/api/v1/feed/sync`);
   if (cursor.since) {
@@ -516,7 +516,10 @@ export async function pullSharedPostSync(cursor: {
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
   if (!res.ok) await refuse(res, identity);
-  return syncEnvelopeSchema.parse(await res.json());
+  // The connection it was sent on (#4470): the mirror writes this page through
+  // `serverNzAnswerWriter(sentOn)`, so a page from a replaced connection
+  // writes no post, cursor or failure count over the replacement's reset.
+  return { ...syncEnvelopeSchema.parse(await res.json()), sentOn: identity };
 }
 
 /**
@@ -567,7 +570,10 @@ export async function fetchSharedPostImage(
  *
  * Returns the signing secret the webhook must verify pushes with. The caller
  * stores it in the encrypted credential store — it is a secret exactly like
- * the API key beside it, and it never belongs in a plain settings row.
+ * the API key beside it, and it never belongs in a plain settings row — and
+ * stores it through `serverNzAnswerWriter(sentOn)` (#4470): the secret belongs
+ * to the server it was registered with, so a registration whose connection
+ * was replaced in flight must not land beside the new address.
  */
 export async function registerPushTarget(
   callbackUrl: string,
@@ -581,15 +587,24 @@ export async function registerPushTarget(
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
   if (!res.ok) await refuse(res, identity);
-  // The connection it was sent on, so the secret is stored only for that one.
   return { ...pushTargetResultSchema.parse(await res.json()), sentOn: identity };
 }
 
-/** Upload the club's Other Clubs entries to the central server. */
+/** Capture upload settings and the sender together, as the download does. */
+export async function prepareOtherLodgesUpload() {
+  const connection = await resolveConnection();
+  return {
+    settings: connection.settings,
+    upload: (lodges: OtherLodgeUploadItem[]) => uploadOtherLodges(lodges, connection),
+  };
+}
+
+/** Upload the club's entries, returning the request identity for fenced recording. */
 export async function uploadOtherLodges(
   lodges: OtherLodgeUploadItem[],
-): Promise<OtherLodgesUploadResult> {
-  const { baseUrl, apiKey, identity } = await resolveConnection();
+  connection?: ServerNzConnection,
+): Promise<OtherLodgesUploadResult & { sentOn: ServerNzConnectionIdentity }> {
+  const { baseUrl, apiKey, identity } = connection ?? await resolveConnection();
   const res = await fetch(`${baseUrl}/api/v1/other-lodges`, {
     method: "POST",
     cache: "no-store",
@@ -598,7 +613,7 @@ export async function uploadOtherLodges(
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
   if (!res.ok) await refuse(res, identity);
-  return uploadResultSchema.parse(await res.json());
+  return { ...uploadResultSchema.parse(await res.json()), sentOn: identity };
 }
 
 /**

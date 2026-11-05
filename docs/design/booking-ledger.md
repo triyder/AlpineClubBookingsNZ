@@ -4,6 +4,8 @@
 Nothing in this document changes runtime behaviour. Its outputs are the model,
 the posting rules, the projection guard, the cut-over order, the invariant gap
 analysis in §9, and the child issues in §10, each of which ships on its own.
+The proposed successor, extending this design to all member money, is the
+[member money ledger design](member-money-ledger.md) (#4461).
 
 **Audience:** developer / agent. An operator reads §1 and §2 and stops.
 
@@ -151,13 +153,19 @@ the code path (`database-roles.realdb.test.ts`). The other routes are closed too
 - `SECURITY DEFINER` routines are refused;
 - a booking's or lodge's key cannot be changed at all: a `BEFORE UPDATE OF "id"`
   trigger on each parent raises `restrict_violation`
-  (`20261125010000_restrict_booking_ledger_key_updates`), so the foreign keys'
-  `ON UPDATE CASCADE` never rewrites `bookingId` or `lodgeId`.
+  (`20261125010000_restrict_booking_ledger_key_updates`), and since #4514 the
+  foreign keys are `ON UPDATE RESTRICT` as well, so nothing rewrites `bookingId`
+  or `lodgeId`.
 
-Two things the grant does not cover. Migrations run as the role that owns the
-table. And `bookingId`'s `ON DELETE CASCADE` runs with the owner's rights, so
-**deleting a booking still removes its lines**. That is booking deletion's
-behaviour, and whether it should change belongs to this design, not to the grant (#4482).
+Migrations run as the role that owns the table, which the grant does not
+cover. Referential actions run with the owner's rights too, so a cascade would
+be a route around the grant; **none reaches a line**. Owner decision D1 on
+[#4482](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4482), delivered by
+[#4514](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4514)
+(`20261127050000_retain_ledger_history_on_booking_delete`, `INV-MONEY-043`), made
+every key a line holds `ON DELETE RESTRICT ON UPDATE RESTRICT`. Deleting a booking
+that has lines is refused for every role, so a booking with money is
+soft-deleted or left as it is, never hard-deleted.
 
 ### 4.1 Derived quantities, and the one place they are derived
 
@@ -359,7 +367,7 @@ proves the ledger was in step rather than assuming it. The completion takes
 
 | Event today | Lines posted | Anchor | Writer |
 | --- | --- | --- | --- |
-| Booking confirmed / paid for the first time (`booking-create.ts`, the pay routes, waitlist confirm, quote conversion) | one `GUEST_NIGHT` (+) per `BookingGuestNight` row, quantity 1, `unitCents = priceCents`, rate tier and age tier from the guest's snapshot (`INV-MOD-010`); one `PROMOTION` (−) for `promoAdjustmentCents` when non-zero. As built (C1, `booking-ledger-confirmation-posting.ts`), nothing else: no `GROUP_DISCOUNT` (`discountCents` is a projection of the promotion, `INV-MONEY-031`, so a line would count it twice) and no `CHANGE_FEE` — a change fee charged before the booking was confirmed on the ledger has no line, which #3583 back-posts, and counts until then as coverage `UNPOSTED_CHANGE_FEE` (review of #3611, V4) | `CONFIRMATION` / booking id | the settle body (`INV-PAY-038`: mark-paid, card and IB all enter it) and #4019's whole-lodge credit/$0 approval and zero-cash edit settlements, through the shared `booking-ledger-confirmation-sync.ts` poster after PAID; for a group organiser's settled child, which never enters it, the group settle, through the same planner and per-booking fence (#3854) |
+| Booking confirmed / paid for the first time (`booking-create.ts`, the pay routes, waitlist confirm, quote conversion) | one `GUEST_NIGHT` (+) per `BookingGuestNight` row, quantity 1, `unitCents = priceCents`, rate tier and age tier from the guest's snapshot (`INV-MOD-010`); one `PROMOTION` (−) for `promoAdjustmentCents` when non-zero. As built (C1, `booking-ledger-confirmation-posting.ts`), nothing else: no `GROUP_DISCOUNT` (`discountCents` is a projection of the promotion, `INV-MONEY-031`, so a line would count it twice) and no `CHANGE_FEE` — a change fee charged before the booking was confirmed on the ledger has no line, which #3583 back-posts, and counts until then as coverage `UNPOSTED_CHANGE_FEE` (review of #3611, V4) | `CONFIRMATION` / booking id | the settle body (`INV-PAY-038`: mark-paid, card and IB all enter it) and #4019's whole-lodge credit/$0 approval and zero-cash edit settlements, and (#4660) a $0 or fully credit-covered create or pay-step settle, and (#4738) the zero-price confirm-draft, waitlist-confirm, confirm-pending-guests, pending-confirm cron and force-confirm doors, through the shared `booking-ledger-confirmation-sync.ts` poster after PAID; for a group organiser's settled child, which never enters it, the group settle, through the same planner and per-booking fence (#3854) |
 | Whole-lodge / officer flat price (`INV-MONEY-004`) | the same `GUEST_NIGHT` lines from the night rows the rebase wrote; a flat price that does not divide is a `GUEST_NIGHT` per strand at the rebased strand figure (`INV-MOD-038`) | `CONFIRMATION` | same |
 | Booking edited and priced (four doors + batch, `INV-MOD-044`) | per guest-night, all or nothing (the rule above); a `PROMOTION` reversal + re-post when the promo delta is non-zero; a `CHANGE_FEE` (+) when the edit charged one | `MODIFICATION` / modification id | the four edit services and the batch path, in the transaction that already writes `priceLines` (`INV-MOD-058`) |
 | Admin date shift (`adminShiftBookingDates`, #3741) | the same per-night rule: each old-date night's live line reversed, each new-date night posted at the same figure, netting to the row's zero; both sides read as written rows, since a shift sells nothing | `MODIFICATION` / the `ADMIN_DATE_SHIFT` row | `adminShiftBookingDates`, under the `lock(1)` it takes first |
@@ -415,8 +423,8 @@ was restored instead, anchored on the `CANCELLATION` because it returns
 credit the member already spent, where every other `CREDIT_ISSUED` converts
 money the booking held. The anchor says nothing about `refundedAmountCents`:
 whether a credit row moved it depends on its writer, and C4 must not classify
-by anchor. (Deleting a booking nulls its credit rows' link — the one change
-the database makes — and its lines cascade with it.)
+by anchor. (The database refuses to delete a booking that a credit row or a
+line names, so neither a link nor a line goes with it: `INV-MONEY-043`, #4514.)
 
 | Event today | Lines posted | Anchor | Writer |
 | --- | --- | --- | --- |
@@ -591,7 +599,9 @@ it is left to a later change.
 
 `pnpm run booking-ledger:census` (#3583, `INV-MONEY-037`; read-only, one
 `RepeatableRead`, `READ ONLY` snapshot — the `censusBookingMoneyReconciliation`
-pattern, `INV-MONEY-031`) evaluates those seven identities for every booking and
+pattern, `INV-MONEY-031`) evaluates those seven identities, and since #4627 an
+eighth, `JOURNAL` (the member-money journal's charges against the lines it
+links, `INV-MONEY-044`), for every booking and
 reports, per identity, the count that applies, agrees, disagrees, is
 classified or is a coverage gap, and per disagreeing booking both figures and
 the delta — never a repair. It also reports **coverage** (bookings with money
@@ -978,7 +988,7 @@ to bundle.
 | [#3581](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3581) | Settlement lines from payment rows — card capture, bank receipt, cash recorded, card refund, and their reversals — converging where the payment mirror is derived | lines nothing reads | High (money writers touched, no behaviour change) |
 | [#3599](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3599) | Settlement lines from account credit (applied, issued, restored) and the hand-back — split from #3581, whose chokepoint never sees them | lines nothing reads | High |
 | [#3582](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3582) | Posting from the edit, review-share, rebase and cancellation writers | lines nothing reads | High |
-| [#3583](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3583) | The back-post script for every existing booking, and `pnpm run booking-ledger:census`: the seven identities (§6), coverage, the invariant entry, the CI seed run | a dry-run report and a read-only census — **the cut-over gate** | High |
+| [#3583](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3583) | The back-post script for every existing booking, and `pnpm run booking-ledger:census`: the seven identities (§6; `JOURNAL` joined them in #4627), coverage, the invariant entry, the CI seed run | a dry-run report and a read-only census — **the cut-over gate** | High |
 | [#3854](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3854) | A group organiser's settlement: the `GROUP_SETTLEMENT` anchor (expand), each settled child's confirmation and share, the organiser cancel's plan refunds — owner decision 2A on #3583, before #3584 moves a reader that shows a group child | lines nothing reads | High (schema, money writers) |
 | [#3584](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3584) | Reads switch, one surface per PR: statement, emails, history, reports, officer panel | member-visible figures from the ledger, census-proven equal | High |
 | [#3585](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3585) | Xero renderers read ledger slices; `settlementMethod` names the method on every credit note | Xero documents unchanged in content | High |

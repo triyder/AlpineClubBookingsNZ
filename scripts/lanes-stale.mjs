@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /** Read-only reservation report. No GitHub writes or automatic release. */
-import { pathToFileURL } from "node:url";
 
 import { ghJson } from "./lib/github-cli.mjs";
+import { isMainModule } from "./lib/is-main-module.mjs";
 
 const STALE_HOURS = 72;
 const STALE_MS = STALE_HOURS * 60 * 60 * 1000;
@@ -53,7 +53,7 @@ export function staleReservations(threads, now) {
     const holder = claim.text.split(/\s+Branch\b|\s+Scope:/i)[0].trim().replace(/[.,;:]+$/, "") || "Unnamed lane (inspect CLAIM)";
     stale.push({ number: thread.number, url: thread.html_url, kind: thread.pull_request ? "PR" : "Issue",
       holder, ...(thread.pushWarning ? { pushWarning: thread.pushWarning } : {}), lastActivity: new Date(lastActivity).toISOString(),
-      question: `Extend, reassign or release ${holder}'s reservation on #${thread.number}?` });
+      action: `Release ${holder}'s reservation on #${thread.number} (auto-release after 72 hours, #4452).` });
   }
   return stale;
 }
@@ -98,7 +98,7 @@ export async function collectReservations(repo, read = readGithub) {
       branchRepo = pr.head.repo?.full_name;
     }
     if (!branch || !branchRepo) {
-      thread.pushWarning = "Branch unavailable: check push activity manually before asking the owner.";
+      thread.pushWarning = "Branch unavailable: check push activity manually before releasing.";
       continue;
     }
     const key = `${branchRepo}:${branch}`;
@@ -123,13 +123,13 @@ async function main() {
     throw new Error("Usage: pnpm run lanes:stale [owner/repo]");
   }
   const stale = staleReservations(await collectReservations(repo), Date.now());
-  console.log(`Stale reservations (>${STALE_HOURS} hours). Report only; check the thread before asking the owner once.`);
+  console.log(`Stale reservations (>${STALE_HOURS} hours). Report only; check the thread, then post a RELEASE: on each (#4452).`);
   for (const row of stale) {
-    console.log(`\n${row.kind} #${row.number} ${row.url}\nHolder: ${row.holder}\nLast activity: ${row.lastActivity}${row.pushWarning ? `\n${row.pushWarning}` : ""}\nOwner question: ${row.question}`);
+    console.log(`\n${row.kind} #${row.number} ${row.url}\nHolder: ${row.holder}\nLast activity: ${row.lastActivity}${row.pushWarning ? `\n${row.pushWarning}` : ""}\nAction: ${row.action}`);
   }
   if (!stale.length) console.log("No stale reservations.");
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isMainModule(import.meta.url)) {
   main().catch((error) => { console.error(error.message); process.exitCode = 1; });
 }

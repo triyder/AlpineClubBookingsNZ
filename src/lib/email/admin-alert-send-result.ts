@@ -52,8 +52,19 @@ export function adminAlertSendOutcome(result: AdminAlertSendResult): AdminAlertS
 }
 
 /**
+ * What `sendUnmuteableAdminAlert` reports: it reads no delivery policy and its
+ * recipient set is never empty. `queued-for-retry` (#4669) is a caller-retried
+ * alert nobody received whose copies the email retry cron already holds, so
+ * its owner must not send it again.
+ */
+export type UnmuteableAdminAlertOutcome = Extract<
+  AdminAlertSendOutcome,
+  "sent" | "queued-for-retry" | "undelivered"
+>;
+
+/**
  * What a once-only caller reads after an UNMUTEABLE alert's send returned
- * (#4149): `sendUnmuteableAdminAlert` returns nothing, sends to a fallback
+ * (#4149): the caller discards the unmuteable sender's outcome; it sends to a fallback
  * audience when the owning area has nobody, and records its own escalation when
  * no copy went out, so a send that returns has done all it can and the claim is
  * kept. One that throws is given back by `sendAdminAlertOnceEver`.
