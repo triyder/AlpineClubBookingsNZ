@@ -23,6 +23,7 @@ import { loadFailedLaterOwedCents } from "./xero-booking-repair-failed-later";
 import { readPaidBackRefundRequests } from "@/lib/xero-inbound/refund-request-paid-back";
 import { groupOpenIntentRecoveriesByBooking, intentRecoveryKeyMaps } from "./xero-booking-repair-intent-recoveries";
 import { unallocatedAppliedCreditCentsByBooking } from "@/lib/xero-applied-credit-ledger-state";
+import { findCreditNotesSpentOutsideApp } from "@/lib/xero-credit-note-spent-outside-flag";
 import {
   editReviewChargeShareTaskSelect,
   editReviewChargeShareTaskWhere,
@@ -30,7 +31,7 @@ import {
   type EditReviewChargeShareRow,
 } from "@/lib/edit-financial-review-charge-shape";
 import logger from "@/lib/logger";
-import { loadAdditionalCaptureReceiptEvidence } from "./xero-booking-repair-additional-capture";
+import { loadAdditionalCaptureReceiptEvidence, loadKeptChangeCaptureEvidence } from "./xero-booking-repair-additional-capture";
 import type { RepairDependencies } from "./xero-booking-repair-deps";
 import { makeLocalKey, parseRepairScopeDay } from "./xero-booking-repair-utils";
 import {
@@ -434,6 +435,8 @@ export async function loadAuditData(
   // #4215 (`INV-PAY-118`): the one reader the inbound recount uses too.
   const paidBackRefundRequests = await readPaidBackRefundRequests(paymentIds, deps.prisma);
   const unallocatedAppliedCreditByBookingId = await unallocatedAppliedCreditCentsByBooking(bookingIds, deps.prisma);
+  // #4220: the reading kept at ingest, judged now; database reads only, no Xero call.
+  const creditNotesSpentOutside = await findCreditNotesSpentOutsideApp(deps.prisma, { bookingIds });
   const allocatedAppliedCreditByBookingId = new Map(
     appliedCreditAllocations.map((row) => [
       row.appliedToBookingId,
@@ -595,10 +598,13 @@ export async function loadAuditData(
 
   // #3953: the change captures each booking's Xero records hold, or do not.
   const additionalCaptureReceipts = await loadAdditionalCaptureReceiptEvidence(deps.prisma, bookings);
+  // #4324: the kept change captures on cancelled, invoiced bookings.
+  const keptChangeCaptures = await loadKeptChangeCaptureEvidence(deps.prisma, bookings, keptApprovalsByBookingId);
 
   return bookings.map<BookingClassificationContext>((booking) => ({
     booking,
     additionalCaptureReceipts: additionalCaptureReceipts.get(booking.id),
+    keptChangeCaptures: keptChangeCaptures.get(booking.id),
     paymentLinks: booking.payment
       ? linksByLocalKey.get(makeLocalKey("Payment", booking.payment.id)) ?? []
       : [],
@@ -670,6 +676,9 @@ export async function loadAuditData(
     xeroAllocatedAppliedCreditCents:
       allocatedAppliedCreditByBookingId.get(booking.id) ?? 0,
     unallocatedAppliedCreditCents: unallocatedAppliedCreditByBookingId.get(booking.id) ?? 0,
+    creditNotesSpentOutsideApp: creditNotesSpentOutside.filter(
+      (note) => note.bookingIds.includes(booking.id) || note.resolvedAllocations.some((entry) => entry.bookingId === booking.id),
+    ),
     openEditReviewChargeIntentRecoveryModificationIds:
       openIntentRecoveries.review.get(booking.id) ?? new Set<string>(),
     openAdditionalIntentRecoveryModificationIds:

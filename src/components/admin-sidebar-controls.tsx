@@ -8,6 +8,7 @@
  */
 import { useEffect, useLayoutEffect, useState } from "react";
 import { Search } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { openAdminCommandPalette } from "@/lib/admin-command-palette-events";
 import type { AdminPendingCounts } from "@/lib/admin-pending-counts";
@@ -80,8 +81,9 @@ export function SidebarSearchButton({ onOpen }: { onOpen?: () => void }) {
   }, []);
 
   return (
-    <button
+    <Button
       type="button"
+      variant="outline"
       onClick={() => {
         // The mobile Sheet closes (onOpen -> setMobileOpen(false)) at the same
         // moment the palette opens. The Sheet's exit focus handling and the
@@ -96,17 +98,17 @@ export function SidebarSearchButton({ onOpen }: { onOpen?: () => void }) {
       // The ⌘K / Ctrl K glyphs are decorative (aria-hidden); expose the shortcut
       // semantically instead so the accessible name stays just "Search…".
       aria-keyshortcuts="Meta+K Control+K"
-      className="mb-2 flex w-full items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+      className="mb-2 w-full justify-start px-3 font-normal text-muted-foreground shadow-none"
     >
       <Search className="h-4 w-4 shrink-0" />
       <span className="flex-1 text-left">Search…</span>
       <kbd
         aria-hidden
-        className="pointer-events-none hidden items-center gap-0.5 rounded border border-border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground sm:inline-flex"
+        className="pointer-events-none hidden items-center gap-0.5 rounded border border-border bg-muted px-1.5 font-mono text-xs font-medium text-muted-foreground sm:inline-flex"
       >
         {isMac ? "⌘" : "Ctrl"} K
       </kbd>
-    </button>
+    </Button>
   );
 }
 
@@ -131,20 +133,22 @@ export function PanelSwitcher({
       className="mb-2 flex gap-1 rounded-md bg-muted p-1"
     >
       {choices.map((key) => (
-        <button
+        <Button
           key={key}
           type="button"
+          variant="ghost"
+          size="sm"
           aria-pressed={key === current}
           onClick={() => onChange(key)}
           className={cn(
-            "flex-1 rounded px-2 py-1 text-xs font-medium transition-colors",
+            "h-auto flex-1 rounded px-2 py-1",
             key === current
-              ? "bg-background text-foreground shadow-sm"
-              : "text-muted-foreground hover:text-foreground",
+              ? "bg-background text-foreground shadow-sm hover:bg-background"
+              : "text-muted-foreground hover:bg-transparent hover:text-foreground",
           )}
         >
           {ADMIN_NAV_PANELS[key].switcherLabel}
-        </button>
+        </Button>
       ))}
     </div>
   );

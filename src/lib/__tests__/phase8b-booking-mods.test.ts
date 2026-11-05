@@ -169,12 +169,25 @@ vi.mock("@/lib/stripe", () => ({
   createPaymentIntent: (...args: unknown[]) => mockCreatePaymentIntent(...args),
   findOrCreateCustomer: (...args: unknown[]) => mockFindOrCreateCustomer(...args),
 }));
+const frozenEditPlan = vi.hoisted(() => ({
+  plan: async (...args: unknown[]) => {
+    const { amountCents } = args[0] as { amountCents: number };
+    return { slices: [{ paymentTransactionId: "txn_refund", amountCents }], plannedAmountCents: amountCents, totalRefundableCents: amountCents };
+  },
+  // The door reads each answer against the slice it sent.
+  refund: async (...args: unknown[]): Promise<unknown> => {
+    const result = (await mockRefundPaymentTransactions(...args)) as { refunds?: Array<Record<string, unknown>> } | undefined;
+    const allocation = (args[0] as { allocation?: unknown[] }).allocation;
+    return { ...result, refunds: result?.refunds?.map((refund, index) => ({ status: "succeeded", slice: allocation?.[index], ...refund })) };
+  },
+}));
 vi.mock("@/lib/payment-transactions", () => ({
   PartialRefundError: class PartialRefundError extends Error {
     completedRefundCents = 0;
   },
-  refundPaymentTransactions: (...args: unknown[]) =>
-    mockRefundPaymentTransactions(...args),
+  // #3984: edit doors freeze a plan first and read each answer against its slice.
+  planStripeRefundAllocation: (...args: unknown[]) => frozenEditPlan.plan(...args),
+  refundPaymentTransactions: (...args: unknown[]) => frozenEditPlan.refund(...args),
   // #4442: the mint's queue takes the Payment row; nothing to wait on here.
   lockPaymentForRefundedTotal: vi.fn(),
   upsertPaymentIntentTransaction: (...args: unknown[]) =>
@@ -3224,6 +3237,35 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
     expect(body.additionalPaymentClientSecret).toBeNull();
     expect(sendBookingModifiedEmail).toHaveBeenCalledWith(
       expect.objectContaining({ additionalAmountCents: 0, additionalPaymentMethod: undefined }),
+      CLUB_FORMAT_TEST,
+    );
+  });
+
+  // #4052: the removal door used to read "no card request came back" as "pay
+  // by Internet Banking" (or say nothing without an invoice). A card ask whose
+  // mint failed waits for its retry and is still a card ask.
+  it.each([
+    ["with the primary invoice issued", "inv_primary"],
+    ["with no invoice issued", null],
+  ])("MUTATION (#4052): a card-paid booking's increase whose mint failed is named as a card payment %s", async (_label, xeroInvoiceId) => {
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
+    const base = makePromoIncreaseBooking();
+    const booking = makePromoIncreaseBooking({ payment: { ...base.payment, xeroInvoiceId } });
+    const tx = makeTx(booking);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockPromoInvalidatedRepricing();
+    mockCreatePaymentIntent.mockRejectedValueOnce(new Error("Stripe is down"));
+
+    const res = await DELETE(
+      new NextRequest("http://localhost/api/bookings/bk1/guests/g2", { method: "DELETE" }),
+      { params: Promise.resolve({ id: "bk1", guestId: "g2" }) },
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+
+    expect(body.additionalPaymentClientSecret).toBeNull();
+    expect(sendBookingModifiedEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ additionalAmountCents: 2000, additionalPaymentMethod: "STRIPE" }),
       CLUB_FORMAT_TEST,
     );
   });

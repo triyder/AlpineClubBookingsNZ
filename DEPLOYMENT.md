@@ -115,14 +115,14 @@ Audience: Operator.
 By default every container connects as `tac`, the PostgreSQL superuser. Since
 #4453 a deployment can split that into roles that each hold only what their job
 needs. The application then cannot change a booking-ledger line or an audit entry,
-even if its credential leaks (owner decision, 27 Oct 2026). One route remains on
-purpose: **deleting a booking still deletes its ledger lines** (below).
+even if its credential leaks (owner decision, 27 Oct 2026). Deleting a booking
+cannot remove its ledger lines either (below).
 
 | Role | Default name | Used by | May |
 | --- | --- | --- | --- |
 | Operator | `tac` (`POSTGRES_USER`) | people: provisioning, restores, repairs | everything (superuser) |
 | Migration | `tac_migrator` | the `migrate` service | own every object in schema `public`; run `prisma migrate deploy`; create temporary tables |
-| Application | `tac_app` | both web slots and the cron leader | SELECT, INSERT, UPDATE, DELETE on ordinary tables; only SELECT on views; only **INSERT and SELECT** on `BookingLedgerLine` and `AuditLog`; only SELECT on `_prisma_migrations`; temporary tables |
+| Application | `tac_app` | both web slots and the cron leader | SELECT, INSERT, UPDATE, DELETE on ordinary tables; only SELECT on views; only **INSERT and SELECT** on `BookingLedgerLine`, `AuditLog` and the member-money journal tables; only SELECT on `_prisma_migrations`; temporary tables |
 | Audit retention | `tac_audit_retention` | the nightly audit retention job, on the cron leader only | SELECT and DELETE on `AuditLog`; UPDATE of `ipAddress` and `userAgent`, which a trigger lets it set only to empty |
 
 None of the three new roles is a superuser, may create roles or databases, or is a
@@ -132,16 +132,19 @@ statements. It cannot reach a ledger line or audit row by another route either:
 - a view or rule over them is SELECT-only;
 - a `SECURITY DEFINER` routine is refused;
 - changing a booking's or a lodge's key is refused (a trigger on each parent,
-  so the foreign keys' `ON UPDATE CASCADE` can never fire).
+  and since #4514 the ledger's keys are `ON UPDATE RESTRICT` as well).
 
 `src/lib/__tests__/database-roles.realdb.test.ts` proves each of these against
 PostgreSQL. The AI Diagnostics role (ADR-007) and the audit archive database's
 role are separate and unchanged.
 
-**Deleting a booking still deletes its ledger lines.** `BookingLedgerLine.bookingId`
-is `ON DELETE CASCADE`, and a cascade runs with the table owner's rights, not the
-application's. That is how booking deletion works today. Whether it should change
-belongs to the ledger design, not to these grants; #4482 tracks it.
+**Deleting a booking cannot remove its ledger lines.** A cascade would run with
+the table owner's rights, not the application's, so since #4514 every key a ledger
+line holds, a member-credit row's booking links and a group settlement's group
+key are `ON DELETE RESTRICT ON UPDATE RESTRICT` (#4482's decision D1,
+`INV-MONEY-043`). The database refuses to delete a booking any of those rows, or
+a payment or refund record, names, for every role, including on a single-role
+install. Such a booking is soft-deleted or left as it is.
 
 ### Switching a deployment over (blue/green)
 
@@ -208,10 +211,12 @@ stack in [Staging](#staging)), then repeat on production.
    `migrate` service now runs as the migration role, and the new colour and the cron
    leader start as the application role. The old colour keeps its superuser
    connection until it is stopped, and no grant it relies on is removed. After the
-   migrate, the deploy script checks two things: every relation in `public` is
-   owned by the migration role and readable by the application role, and no view
-   is writable by the application role. If either fails, it stops before the new
-   colour starts and tells you to re-run `--apply`.
+   migrate, the deploy script checks the grants: every relation in `public` is
+   owned by the migration role and readable by the application role, no view is
+   writable by the application role, and the application role can only INSERT
+   and SELECT each append-only relation (`BookingLedgerLine`, `AuditLog` and the
+   member-money journal). If any of that fails, it stops before the new colour
+   starts and tells you to re-run `--apply`.
 5. **Check**: the next `data-pruning` cron run succeeds, and
    `psql -U tac -d tacbookings -c "\du"` lists the three roles without
    `Superuser`.
@@ -234,7 +239,14 @@ needs the new password. So rotate in this order:
 A "repair" re-run with a freshly generated password is a rotation too.
 
 **Re-run `--apply`** in these cases:
-- after the first migration of a brand-new database;
+- after the first migration of a brand-new database. If you provisioned the
+  database while it was empty (step 2 on a new install), the first deploy's
+  migrate creates `BookingLedgerLine` and `AuditLog` with the application's
+  default UPDATE and DELETE, and the post-migrate check stops the deploy at
+  step 13 naming both. The migrations have applied and, if an old colour
+  exists, it is still serving: run the step 2 `--apply` command, then run the
+  deploy again.
+  Its migrate has nothing left to do, and the check passes;
 - after a release whose upgrade note changes `APPEND_ONLY_RELATIONS` or
   `AUDIT_ANONYMISED_REQUEST_COLUMNS` (`src/lib/database-roles.ts`,
   `src/lib/audit-retention-classes.ts`);
@@ -310,6 +322,52 @@ wants the limit taken from the default `768m` towards `1g`. The pairing
 `POSTGRES_MAX_CONNECTIONS=80` with the default `768m` has run on one fork host
 since mid-October 2026 without memory pressure, which is one host's evidence,
 not a measurement of the headroom.
+
+### Member money journal grants (M1)
+
+The journal is inert: this release changes no production money reader or writer.
+#4453's append-only treatment now covers `MemberMoneyEvent`, `MemberMoneyJournal`,
+`MemberMoneyLine`, `MemberMoneyObligation`, `MemberMoneyApplication`,
+`MemberMoneySourceLink` and `MemberMoneySourcePosting`: the migration role owns
+them, the app gets INSERT and SELECT only, and audit retention gets no rights.
+
+No provisioning step is needed. Migration `20261127010000_member_money_journal`
+narrows its own seven tables itself: it revokes UPDATE, DELETE, TRUNCATE, TRIGGER
+and REFERENCES from every role but their owner, so the post-migrate check passes
+as it stands. On a single-role install, or one whose app connects as the owner,
+it revokes nothing, and nothing changes. If the check ever names a journal
+table, re-running `pnpm run db:provision-roles --apply` (step 2 above) is the
+repair. A deployment still using the operator as its app connection has not
+established least privilege.
+
+Run `pnpm run member-money:verify` with the application `DATABASE_URL`. If running
+through a separate read-only/operator connection, set `APP_DB_USER` to the actual
+application role to check its effective grants. The command opens a read-only
+repeatable-read transaction and reports structural findings and exits nonzero
+on unsafe grants; a missing, disabled, changed or unexpected journal trigger;
+a disabled foreign-key trigger, on a journal table or its parent; an
+enforcement function whose body, volatility, security mode or `SET search_path`
+changed; a missing, unvalidated or changed constraint; a missing, invalid,
+unready or changed unique index; orphan events or invalid batches.
+Constraint, trigger and index definitions are compared, as text, with the ones
+the migration installs on PostgreSQL 16; a changed or unexpected one is printed
+as found.
+When the role it checks is a superuser or owns the journal, as on a
+single-role install, it prints `"grantCheck": "not_applicable"` for that role:
+no grant can narrow it. Whichever role it checks, it still fails if any role
+but the owner, PUBLIC included, holds UPDATE, DELETE, TRUNCATE, TRIGGER or
+REFERENCES on a journal table, or one of those rights on a column.
+A successful empty journal is valid M1 evidence, not proof of backfill,
+legacy posting coverage, historical parity or readiness to switch readers.
+No provider credentials are needed. Source links can later attach legacy
+confirmation evidence without extending sealed legs. This migration does not
+change old writers; M2 (#4514) removed the booking-ledger deletion cascade.
+
+M1 adds no Xero account-mapping setting and changes nothing on the Xero
+setup screen. The internal chart in `src/lib/member-money/` names the mapping
+keys the design proposes in one list, `PROPOSED_MEMBER_MONEY_MAPPING_KEYS`; the
+ledger step that first reads a key registers it as a setting. Nothing exports
+in M1.
 
 ## App CPU sizing
 
@@ -737,6 +795,40 @@ echo "$GHCR_READ_TOKEN" | docker login ghcr.io -u <owner> --password-stdin
 
 Do not store that token in the repository or `.env`.
 
+### Supply chain
+
+Builds use reviewed, immutable inputs. Every third-party Action is pinned to a
+full commit SHA with its version in a comment; the CI Lint job rejects unpinned
+workflow and composite-action references, including `docker://` actions.
+External images in the Dockerfile and Compose files keep readable tags and pin
+the multi-architecture index digest. Dependabot proposes Action and Docker
+updates for review. The pnpm minimum release age matches the npm Dependabot
+cooldown: seven days (`10080` minutes).
+The already-locked `nodemailer@10.2.1` has an exact-version exception so frozen
+installs work during rollout; remove it after the next Nodemailer update.
+
+Both published images include a BuildKit SBOM and maximum build provenance,
+plus a GitHub build provenance attestation tied to the pushed image digest.
+Before deploying a published image, verify it with GitHub CLI (replace the
+placeholders with the registry owner, image name and release tag):
+
+```bash
+gh attestation verify oci://ghcr.io/<owner>/<image>:<tag> --owner <owner>
+```
+
+Check that the verified repository and workflow are the expected publisher.
+For an immutable deployment reference, set `APP_IMAGE` and `MIGRATE_IMAGE` to
+the verified images' `ghcr.io/<owner>/<image>@sha256:<digest>` references.
+Their Compose defaults remain local build outputs, whose digests exist only
+after building. Verify the first published image after this change merges and
+record the result in the release close-out.
+
+The weekly and main-push OpenSSF Scorecard workflow uploads advisory SARIF
+findings to code scanning; it is never a required check. App containers
+(including staging and blue/green slots) drop all Linux capabilities and use
+`no-new-privileges`. PostgreSQL and Caddy retain their existing capabilities;
+Caddy binds privileged ports 80/443 and needs `NET_BIND_SERVICE`.
+
 ## First Bootstrap
 
 From the target host:
@@ -801,6 +893,32 @@ allowed, the last duplicate wins). Step 3/8 prints which source each name came
 from, because a default that silently points at the upstream registry is how
 a fork's deploy fails at step 9 with "not found". Note that `sudo` strips the
 shell environment; the `.env` route survives it.
+
+### Cut the release first (#4465)
+
+Every production deploy runs a tagged release, so adopting clubs and forks can
+tell which `main` commit is a known-good release, and a rollback has a version
+to name. Before the deploy, cut the release with `pnpm run release:cut`
+([`scripts/release/cut-release.mjs`](scripts/release/cut-release.mjs)) — the
+full order, its refusals and its recovery messages are in
+[`docs/MAINTENANCE.md`](docs/MAINTENANCE.md#public-reference-release-checklist),
+"Public Reference Release Checklist":
+
+1. `pnpm run release:cut prepare --execute` on a clean checkout of
+   `origin/main` builds the `release/v<version>` commit; push it and merge it
+   as the release-prep pull request.
+2. `pnpm run release:cut publish --execute` tags the merged commit, pushes the
+   tag and publishes the GitHub release.
+3. Deploy that tag from the host's source checkout:
+
+   ```bash
+   git fetch origin tag v0.14.0
+   DEPLOY_REF=v0.14.0 ./scripts/run-production-blue-green-deploy.sh
+   ```
+
+   `DEPLOY_REF` pins the deploy to the tagged commit even if `main` has moved
+   since; while nothing has merged after the release, `origin/main` is that
+   commit and the plain command deploys the same thing.
 
 ### The deploy refuses a commit that exists on no remote (#3539)
 
@@ -1661,13 +1779,21 @@ and the Backups page shows a "re-enter credentials" banner. Re-enter the S3
 credentials in-app after any auth-secret rotation.
 
 Do not treat local backup files as durable. The production Docker service runs
-with `read_only: true` and mounts `/tmp` as tmpfs, so `/tmp/tacbookings-backups`
-is RAM-backed and is wiped whenever the app container is recreated, including
-routine blue/green deploys. If backups are enabled but no S3 bucket is
-configured, the job no longer reports healthy: the dump is marked
+with `read_only: true` and mounts `/tmp` as tmpfs, but `/tmp/tacbookings-backups`
+is the disk-backed `backup_spool` named volume (#4487): dumps are compressed into
+it as they stream, so a large database never has to fit in RAM. It is only a
+working area on the same host as the database, so it is not a backup destination.
+Each run that starts a dump, failed or not, removes its own files and anything
+over an hour old, so another backup still running is untouched; it keeps its own
+dump only while no destination received it. A dump in progress is written as
+`<name>.partial` and given its final name only once complete. A healthy scheduled backup
+needs at least one destination to hold the dump: a verified S3 upload (upload,
+then readback with a size check) or a copy in the configured local backup
+directory. If neither does, the job does not report healthy: the dump is marked
 `backup-not-durable`, the cron run records `FAILURE`, and the Sentry monitor
-check-in is sent as an error. A healthy scheduled backup requires S3 upload and
-readback verification.
+check-in is sent as an error. A local directory sits on the same host as the
+database, so only S3 is off-site; see
+[docs/guides/backups.md](docs/guides/backups.md).
 
 **Run-now and concurrency:** the Backups page has a "Run backup now" button that
 executes off the request path as a background job. Both it and the nightly cron

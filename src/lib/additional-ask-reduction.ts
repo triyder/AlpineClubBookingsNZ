@@ -59,6 +59,8 @@ import {
   type Prisma,
 } from "@prisma/client";
 
+import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
+import { readOrganiserExtraReduction, organiserExtraUnpaidCents, type OrganiserExtraReduction } from "@/lib/organiser-extra-state";
 import { isAdditionalPaymentOwed } from "@/lib/additional-payment-chase";
 import { reductionLeftAfterUnpaidAskCents, setReductionAgainstUnpaidAsk } from "@/lib/additional-payment-ask";
 import { pendingAskRecoveries, type AskRecoveryOperation } from "@/lib/additional-ask-pending-recoveries";
@@ -120,8 +122,9 @@ export type PendingAskRecovery = {
   processingStartedAt: Date | null;
   /**
    * What the recovery adds to the rows' ask (`recoveryAskBeyondPaymentAskCents`).
-   * 0 for a claimed retry a later row already overtook: nothing more is owed
-   * for it, but it is still closed (or refuses the edit) so it cannot write.
+   * 0 for a claimed retry whose own row is written (`findOwnRecoveryRow`):
+   * that row already carries it, but it is still closed (or refuses the edit)
+   * so it cannot write.
    */
   askCents: number;
   /**
@@ -180,6 +183,7 @@ export const NO_UNPAID_PRICE_ASK: UnpaidPriceAsk = { askCents: 0, rows: [], reco
 export type ReductionAgainstUnpaidAsk = {
   readonly netChargeCents: number;
   readonly ask: UnpaidPriceAsk;
+  readonly organiserExtras?: OrganiserExtraReduction;
 } & ReturnType<typeof setReductionAgainstUnpaidAsk>;
 
 /**
@@ -214,10 +218,18 @@ export function noReductionAgainstUnpaidAsk(netChargeCents: number): ReductionAg
  */
 export async function readReductionAgainstUnpaidAsk(
   db: UnpaidAskDb,
-  booking: UnpaidAskBooking,
+  booking: ReductionBooking,
   netChargeCents: number,
 ): Promise<ReductionAgainstUnpaidAsk> {
   if (netChargeCents >= 0) return noReductionAgainstUnpaidAsk(netChargeCents);
+  // #4299 (N1-N4): an organiser-paid bank place's reduction nets its unpaid extra invoices first.
+  if (paidByOrganiserInternetBanking(booking)) {
+    const organiserExtras = await readOrganiserExtraReduction(db, booking.id, -netChargeCents);
+    if (organiserExtras.invoices.length > 0) {
+      const unpaidAskCents = organiserExtras.invoices.reduce((sum, invoice) => sum + organiserExtraUnpaidCents(invoice), 0);
+      return { netChargeCents, ask: NO_UNPAID_PRICE_ASK, organiserExtras, ...setReductionAgainstUnpaidAsk({ netChargeCents, unpaidAskCents }) };
+    }
+  }
   const ask = await readUnpaidPriceAsk(db, booking);
   return {
     netChargeCents,
@@ -245,7 +257,7 @@ export function assertReductionReadForNet(
 export type UnpaidAskDb = Pick<
   Prisma.TransactionClient,
   // #4217: `$executeRaw` for the Payment row lock a fold-close takes first.
-  "paymentTransaction" | "bookingModification" | "paymentRecoveryOperation" | "$executeRaw"
+  "paymentTransaction" | "bookingModification" | "paymentRecoveryOperation" | "$executeRaw" | "xeroObjectLink" | "xeroSyncOperation"
 >;
 
 export type UnpaidAskBooking = {
@@ -257,6 +269,13 @@ export type UnpaidAskBooking = {
     additionalPaymentStatus: string | null;
     additionalPaymentIntentId: string | null;
   } | null;
+};
+
+/** #4299: what the reduction reader also needs, to know an organiser-paid bank place. */
+export type ReductionBooking = UnpaidAskBooking & {
+  organiserSettled: boolean;
+  parentBookingId: string | null;
+  payment: (NonNullable<UnpaidAskBooking["payment"]> & { source: string }) | null;
 };
 
 /**

@@ -2,6 +2,7 @@ import "server-only";
 import { Prisma } from "@prisma/client";
 import { ownedCentralLodgesSchema, type OwnedCentralLodge } from "@/lib/other-lodges";
 import { prisma } from "@/lib/prisma";
+import { normalizeBaseUrl } from "@/lib/servernz-base-url";
 import { isBlockedDestinationHost } from "@/lib/private-destination-hosts";
 
 /**
@@ -29,6 +30,22 @@ export type ServerNzConnectionTx = Prisma.TransactionClient & {
   readonly [SERVERNZ_CONNECTION_FENCE]: true;
 };
 
+declare const SERVERNZ_ANSWER_FENCE: unique symbol;
+
+/**
+ * A transaction client that holds the ANSWER fence (#4366, #4470): the settings
+ * row is locked and the stored address and API-key version were re-read under
+ * it and found to be the ones a request was sent on. Only
+ * `withCurrentServerNzConnection` (`servernz-version-record.ts`) mints one,
+ * after that check. The writers that record a central-server answer require
+ * it, so an answer recorded on the global client, or on a transaction that
+ * never compared the connection, does not compile, and one from a connection
+ * replaced in flight is dropped by the fence before it can run.
+ */
+export type ServerNzAnswerTx = Prisma.TransactionClient & {
+  readonly [SERVERNZ_ANSWER_FENCE]: true;
+};
+
 export interface ServerNzSettingsValues {
   baseUrl: string | null;
   otherLodgesEnabled: boolean;
@@ -46,10 +63,9 @@ export interface ServerNzSettingsValues {
   /**
    * True when the column HOLDS a value that does not parse as the owned list.
    * `otherLodgesOwnedLodges` is then `null` — read-only everywhere, like
-   * never-told. The upload sends nothing on `null` either way; the committee
-   * sync, which on never-told falls back to its pre-#52 building-name rule,
-   * reads this flag and writes NOTHING instead (fail closed): a column that
-   * was written and is now unreadable is a defect, not a fresh install.
+   * never-told. The upload sends nothing and the committee sync writes nothing
+   * on `null` either way (fail closed). A column that was written and is now
+   * unreadable is a defect, not a fresh install.
    */
   otherLodgesOwnedLodgesUnreadable: boolean;
   /**
@@ -92,9 +108,9 @@ export interface StoredOwnedOtherLodges {
  * The stored owned list, read back through the same schema it was validated
  * with on the way in. A value that does not parse reads as UNKNOWN
  * (`lodges: null`) so that nothing treats junk as a lodge or as "owns
- * nothing", AND is flagged `unreadable` so the writers that have a permissive
- * fallback on `null` (the upload, the committee officer sync) can fail closed
- * instead. Exported so the committee sync, which runs inside a caller's
+ * nothing". It is also flagged `unreadable` to distinguish corrupt data from
+ * ownership not yet recorded. Upload and committee sync both fail closed on
+ * `null`. Exported so the committee sync, which runs inside a caller's
  * transaction and cannot use `loadServerNzSettings`, reads the column through
  * the same rule.
  */
@@ -130,9 +146,10 @@ export async function loadOwnedOtherLodges(
  * the recorder can safely decline an answer when the row is absent.
  * Every answer writer goes through the one fence built on it,
  * `withCurrentServerNzConnection` / `serverNzAnswerWriter`
- * (`servernz-version-record.ts`): the version recorder and every write of the
- * Other lodges download (#4262 review). The Central lodge link writer takes it
- * before its `Lodge` row to re-check the owned list.
+ * (`servernz-version-record.ts`): the version recorder, every write of the
+ * Other lodges download and upload watermark (#4485), and the push secret a
+ * registration stores (#4470). The Central lodge link
+ * writer takes it before its `Lodge` row to re-check the owned list.
  */
 export async function lockServerNzSettings(
   db: Pick<Prisma.TransactionClient, "$executeRaw">,
@@ -171,13 +188,6 @@ export async function loadServerNzSettings(
     if (db !== prisma) throw error;
     return { ...DEFAULTS };
   }
-}
-
-/** Normalise a base URL: trim, drop a trailing slash, or null when blank. */
-export function normalizeBaseUrl(value: string | null | undefined): string | null {
-  const trimmed = value?.trim();
-  if (!trimmed) return null;
-  return trimmed.replace(/\/+$/, "");
 }
 
 /**
@@ -277,11 +287,14 @@ export async function updateServerNzSettings(input: {
  * `otherLodgesLastUploadAt` doubles as the incremental-upload watermark: the
  * next upload only sends local rows whose `updatedAt` is newer than this. Pass
  * the newest `updatedAt` among the rows just uploaded so the watermark advances
- * on the same clock as the rows themselves (both DB-generated). Falls back to
- * `now()` when no explicit watermark is given.
+ * on the same clock as the rows themselves (both DB-generated). `db` is the
+ * upload response's fenced transaction (`serverNzAnswerWriter`), by type.
  */
-export async function recordOtherLodgesUpload(at: Date = new Date()): Promise<void> {
-  await prisma.serverNzSettings.upsert({
+export async function recordOtherLodgesUpload(
+  at: Date,
+  db: ServerNzAnswerTx,
+): Promise<void> {
+  await db.serverNzSettings.upsert({
     where: { id: SERVERNZ_SETTINGS_ID },
     create: {
       id: SERVERNZ_SETTINGS_ID,
@@ -321,11 +334,15 @@ export async function recordOtherLodgesDownload(
     /** This download asked for the whole registry and merged all of it (#64). */
     keyed?: boolean;
     /**
-     * REQUIRED (#4262 review): the download's fenced transaction client
-     * (`serverNzAnswerWriter`). There is no default client, so an unfenced
-     * record does not compile.
+     * REQUIRED (#4262 review; by type since #4470): the download's fenced
+     * transaction client (`serverNzAnswerWriter` for the identity its pull was
+     * sent on). There is no default, and the global client or any other
+     * transaction is not a `ServerNzAnswerTx`, so a record outside the
+     * settings-row fence does not compile. The fence drops the record when the
+     * connection the pull captured is no longer the stored one: an address
+     * move or key change while the download ran leaves the reset standing.
      */
-    db: Pick<Prisma.TransactionClient, "serverNzSettings">;
+    db: ServerNzAnswerTx;
   },
 ): Promise<void> {
   const { db } = options;
@@ -396,7 +413,7 @@ export async function clearOtherLodgesOwnedNames(): Promise<void> {
 export async function recordServerVersionCheck(
   version: string,
   at: Date,
-  db: Pick<Prisma.TransactionClient, "serverNzSettings">,
+  db: ServerNzAnswerTx,
 ): Promise<void> {
   await db.serverNzSettings.upsert({
     where: { id: SERVERNZ_SETTINGS_ID },
@@ -426,10 +443,10 @@ export async function clearServerVersionCheck(): Promise<void> {
 
 /**
  * Forget everything the central server told this connection, in ONE write:
- * the owned-lodge list (#52) and the last reported version (#49). Called when
- * the connection ends - the key is removed or replaced, or the address moves -
- * because both answers belonged to it. One upsert rather than the two
- * single-purpose writers above in sequence, so a crash between them cannot
+ * the owned-lodge list (#52), transfer cursors and last reported version (#49).
+ * Called when the connection ends - the key is removed or replaced, or the
+ * address moves - because all answers and sync positions belonged to it. One
+ * upsert rather than separate writes, so a crash between them cannot
  * leave the row half-forgotten: a stale version pausing a new connection, or a
  * stale owned list editable under a new key. `db` is a fenced client (#4436):
  * the connection change it belongs to runs in
@@ -447,6 +464,15 @@ export async function forgetServerConnectionAnswers(
       otherLodgesOwnedNamesAt: null,
       // The owned ids are the same connection's answer (#62).
       otherLodgesOwnedLodges: Prisma.DbNull,
+      // Neither transfer may resume from the previous connection's position.
+      otherLodgesLastUploadAt: null,
+      otherLodgesLastDownloadAt: null,
+      otherLodgesCursor: null,
+      commsCursorSince: null,
+      commsCursorSinceId: null,
+      commsLastSyncAt: null,
+      commsPoisonChangeId: null,
+      commsPoisonCount: 0,
       // A new connection keys the registry again with a whole download (#64).
       otherLodgesKeyedAt: null,
       serverVersion: null,

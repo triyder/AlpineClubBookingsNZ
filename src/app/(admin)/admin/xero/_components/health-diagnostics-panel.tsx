@@ -21,6 +21,7 @@ import {
   isXeroPartialSuccessRecovery,
 } from "@/lib/xero-partial-success"
 import { fetchJson, postJson } from "./api"
+import { CreditUsedInXeroCard } from "./credit-used-in-xero-card"
 import {
   BudgetStatusChip,
   HealthStatCard,
@@ -358,6 +359,7 @@ export function HealthAndDiagnosticsPanels({
                 badge={!health.contactLinkMismatches.cacheReady ? <ToneChip tone="neutral" icon={Circle}>Cache needed</ToneChip> : health.contactLinkMismatches.count > 0 ? <ToneChip tone="warning" icon={AlertTriangle}>Review</ToneChip> : <ToneChip tone="success" icon={CheckCircle2}>Clear</ToneChip>}
                 onClick={() => scrollToSection("contactLinkMismatches")}
               />
+              <CreditUsedInXeroCard count={health.creditNotesSpentOutsideApp?.count ?? null} />
               <HealthStatCard
                 label="API budget"
                 value={health.apiBudget.usagePercent != null ? `${Math.round(health.apiBudget.usagePercent * 100)}%` : "Unknown"}
@@ -703,8 +705,8 @@ function ContactLinkMismatchPanel({
                       <p className="text-xs text-warning">{mismatch.reasons.join(", ")}</p>
                     </div>
                     <div className="flex flex-wrap gap-2">
-                      <a href={buildHrefWithReturnTo(`/admin/members/${mismatch.memberId}`, currentXeroPath)} className="inline-flex"><Button variant="outline" size="sm">Open Member</Button></a>
-                      <a href={buildXeroContactUrl(mismatch.xeroContactId, { shortCode })} target="_blank" rel="noopener noreferrer" className="inline-flex"><Button variant="outline" size="sm">Open in Xero</Button></a>
+                      <Button asChild variant="outline" size="sm"><a href={buildHrefWithReturnTo(`/admin/members/${mismatch.memberId}`, currentXeroPath)}>Open Member</a></Button>
+                      <Button asChild variant="outline" size="sm"><a href={buildXeroContactUrl(mismatch.xeroContactId, { shortCode })} target="_blank" rel="noopener noreferrer">Open in Xero</a></Button>
                       <Button size="sm" variant="outline" onClick={() => void onUnlink(mismatch.memberId, mismatch.memberName)} disabled={recoveryActive || unlinkingMemberId === mismatch.memberId}>
                         {unlinkingMemberId === mismatch.memberId ? "Unlinking..." : "Unlink"}
                       </Button>

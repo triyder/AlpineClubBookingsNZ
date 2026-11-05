@@ -134,17 +134,30 @@ another's contact details current. Instead of every club retyping every other
 club's booking officer by hand, each club maintains its own entry and the hub
 distributes it.
 
+Changing the server address clears the previous server's API key and answers
+in the same save. A sync running at that moment either uses the previous
+connection together or waits for the change; it cannot send the old key to
+the new address. Enter a key issued by the new server before syncing again.
+The same save clears every sync position and the previous server's push
+secret (replacing the API key clears the push secret too), so this site
+registers with the new server for pushes as soon as the new key is saved
+(step 4 below), or at the next sync if that could not. Pushes and free-beds
+questions signed with the old secret stop being accepted within 45 seconds
+(the time another running copy of the site may still hold it in memory). A
+download, upload, message-board sync or push registration still running
+against the old connection writes nothing more from it; lodges and posts it
+had already brought over stay. **Save key** stays off while the address box
+holds an address you have not saved: save the address first. A key saved
+from a page that still shows the old address is refused with "The central
+server address was changed after this page was loaded": reload the page,
+check the address, and enter the key again.
+
 **Connecting a new site.** The setup page's server address is pre-filled from
 the deployment's `SERVERNZ_DEFAULT_BASE_URL` while nothing is saved, and says
 so; press **Save** to use it (nothing is contacted before then). Then **Request
 a Connection**: register on the central server, copy the API key it shows you
 once, paste it into the API key field, Save, and Download. The key starts
 working once the central server's administrator approves the connection.
-
-Changing the server address clears the previous server's API key and answers
-in the same save. A sync running at that moment either uses the previous
-connection together or waits for the change; it cannot send the old key to
-the new address. Enter a key issued by the new server before syncing again.
 
 **Read this before you turn it on.** This is the one integration that sends data
 *out* of your club. When you enable a shared item, everything recorded on **your
@@ -201,7 +214,8 @@ server proves each question is genuine with the same signing secret it uses
 for the message board, so this only works once this site has registered for
 the message board's pushes: the **Message board** module is on (see
 [Modules](modules.md#settings-reference)) and the site's own address is
-`https://`, then the next sync registers it. Until then the search shows "beds
+`https://`, then saving the API key, or failing that the next sync, registers
+it. Until then the search shows "beds
 available unknown". It also answers nothing while **Other
 lodges** sharing is off. The server names the lodge by its **permanent central
 id**, and your site answers for the local lodge linked to it under **Admin →
@@ -215,11 +229,11 @@ the owned lodges' ids beside their names, and they are forgotten with the list.
 The same list decides which entries your **Booking Officer** committee role is
 written into: when a member takes or leaves that role, the officer's name,
 role email and (if published) phone are written into the lodge entries the
-central server names as yours — and, until it has named any, into entries whose
-name exactly matches one of your own lodges. That name rule is the one place a
-lodge is still taken as yours by its name: once a **Download** has said which
-lodges are yours, only their ids count, and another club's lodge of the same
-name is never written into.
+central server names as yours, matched only by their ids. Until a **Download**
+has recorded that list, the sync writes nothing and logs why it skipped.
+Disconnecting, replacing the API key or changing the server address clears the
+list, so the sync again writes nothing until the next **Download** records it.
+Another club's lodge of the same name is never treated as yours.
 
 Only one sync with the central server runs at a time, across every copy of
 the site: the nightly job, the **Upload** button and the **Download** button
@@ -294,7 +308,11 @@ Alpine Central Server**, for you to check its bookings and **Hide** it.
   that download is forgotten, so your own lodge is neither uploaded nor
   editable until a later download links it again, and another club's is
   marked **Not found**. A download that was running while
-  the address or key changed records nothing.
+  the address or key changed records nothing. The upload watermark and download
+  cursor are cleared too, along with the shared-feed sync position and failed
+  change tracking, so the first upload after relinking sends all your
+  owned lodges. An upload already in flight cannot advance the new connection's
+  watermark.
 - **Your lodge's name is yours.** If the central server's administrator renames
   your own lodge, this site keeps the name you gave it, and your next upload
   of that lodge sets it back on the server.
@@ -315,7 +333,8 @@ Alpine Central Server**, for you to check its bookings and **Hide** it.
    the central lodge search cannot ask about free beds); the central server has
    not approved your connection yet (this site registers itself every 3 hours
    until it is approved, so come back afterwards); no server address is saved
-   yet; or it could not be reached (tried again every 3 hours).
+   yet; syncing is paused because the server runs a different software
+   version; or it could not be reached (tried again every 3 hours).
    If this site's own address (`NEXTAUTH_URL`) later changes, the next 3-hourly
    pass registers the new one, so the central server stops pushing to, and
    asking free beds of, the old name.

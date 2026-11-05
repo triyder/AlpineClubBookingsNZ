@@ -7,10 +7,13 @@ import type { RetiredAdditionalAsk } from "@/lib/additional-ask-reduction";
 import {
   cancelRetiredAdditionalAsksNow,
   readReissuedAskRecovery,
+  reissueClosedUnminted,
   type ReissuedAskRecovery,
   writeReissuedAskUnderRecovery,
 } from "@/lib/additional-ask-reissue";
-import { PENDING_ASK_NETTED_BY_REDUCTION_NOTE } from "@/lib/additional-ask-recovery-close";
+import { asksMemberCard } from "@/lib/additional-ask-email-terms";
+import { settleLostReissuedAskFence } from "@/lib/reissued-ask-abandoned-intent";
+import { sweepAskRecoveriesClosedByEdit } from "@/lib/abandoned-ask-intent-sweep";
 import { queueFoldedReissuedAskInvoices, queueReissuedAskSupplementaryInvoice } from "@/lib/reissued-ask-invoice";
 import {
   mintedIntentCustomerId,
@@ -47,7 +50,7 @@ import {
 } from "@/lib/payment-recovery-keys";
 import { prisma } from "@/lib/prisma";
 import {
-  PartialRefundError,
+  planStripeRefundAllocation,
   type RefundAllocationSlice,
   refundPaymentTransactions,
   upsertPaymentIntentTransaction,
@@ -58,13 +61,12 @@ import {
 } from "@/lib/stripe";
 import type { ClubFormat } from "@/lib/club-format";
 import { chargeCurrencyRefusal } from "@/lib/stripe-charge-currency";
-import { ownCardRefundMade } from "@/lib/payment-transaction-status";
+import { ownCardRefundMade, STRIPE_REFUND_EXCEEDS_CAPTURED_MESSAGE } from "@/lib/payment-transaction-status";
 import {
   alertRefusedCardRefund,
-  planAfterRefusals,
-  refusedAnswers,
-  refusedRefundCents,
-  refusedRefundSlices,
+  inlineRefundAfterAttempt,
+  refundSliceCents,
+  type InlineRefundRead,
 } from "@/lib/refused-card-refund-retry";
 
 export type BookingModificationPaymentContext = {
@@ -230,37 +232,45 @@ export async function executeBookingModificationRefund({
       return null;
     });
 
+  const keepUnmade = async (read: InlineRefundRead) => {
+    if (read.unmadeCents <= 0) return;
+    const queued = await keepOwed(refundSliceCents(read.plan), read.plan);
+    // #4117: when no row could be written, the alert is the only record.
+    if (read.refusedCents > 0 && (queued === null || queued?.created)) {
+      await alertRefusedCardRefund({
+        bookingId,
+        paymentIntentId: read.refused[0]?.paymentIntentId || queued?.paymentIntentId || "",
+        refusedCents: read.refusedCents,
+      }, format);
+    }
+  };
+
+  let plan: RefundAllocationSlice[] | undefined;
   try {
+    // #3984: freeze before Stripe; a webhook may record an unrecorded refund
+    // before recovery runs, but must never shift its slice amount and key.
+    const planned = await planStripeRefundAllocation({ paymentId, amountCents: result.pendingRefundAmountCents });
+    if (planned.plannedAmountCents < result.pendingRefundAmountCents) {
+      throw new Error(STRIPE_REFUND_EXCEEDS_CAPTURED_MESSAGE);
+    }
+    plan = planned.slices;
     const refundResult = await refundPaymentTransactions({
       format,
       paymentId,
       amountCents: result.pendingRefundAmountCents,
+      allocation: plan,
       // #1507: build the Stripe metadata from the shared helper so a recovery
       // replay (which reconstructs this same reason from the stored key prefix)
       // sends a byte-identical body and Stripe replays the original refund
       // instead of rejecting the reused idempotency key.
       metadata: buildBookingModificationRefundMetadata(bookingId, bookingModificationRefundReasonForKeyPrefix(idempotencyKeyPrefix)),
-      // Scope the Stripe idempotency key to this modification. Without it two
-      // reductions on the same booking that resolve to the same refund amount
-      // (e.g. removing two identically-priced guests) produce an identical key
-      // and Stripe replays the first refund, silently under-refunding the
-      // member while the ledger records a second refund that never happened.
+      // Each edit gets its own prefix: two equal reductions must create two
+      // refunds, while this edit's recovery replays its original request.
       idempotencyKeyPrefix: stripeKeyPrefix,
     });
-    // #4083 (`INV-PAY-128`): Stripe answered a slice `failed` or `canceled`
-    // without throwing. It is still owed: queued as exactly those slices,
-    // already moved to their next key, since each was read refused here.
-    const refused = refusedRefundSlices(refundResult.refunds);
-    if (refused.length > 0) {
-      const refusedCents = refusedRefundCents(refused);
-      logger.error({ bookingId, refusedCents }, failureMessage);
-      const queued = await keepOwed(refusedCents, planAfterRefusals(refused, refused));
-      // Alerted when this wrote the row, and when no row could be written: then the alert is the only record.
-      if (queued === null || queued?.created) {
-        const paymentIntentId = refusedAnswers(refundResult.refunds)[0]?.paymentIntentId || queued?.paymentIntentId || "";
-        await alertRefusedCardRefund({ bookingId, paymentIntentId, refusedCents }, format);
-      }
-    }
+    const read = inlineRefundAfterAttempt(plan, refundResult);
+    if (read.refusedCents > 0) logger.error({ bookingId, refusedCents: read.refusedCents }, failureMessage);
+    await keepUnmade(read);
     return {
       stripeRefundId: refundResult.refunds[0]?.refundId,
       refundDestination: ownCardRefundMade(refundResult.refunds) ? "own" : "own_card_pending",
@@ -270,18 +280,14 @@ export async function executeBookingModificationRefund({
       { err: refundErr, bookingId, amount: result.pendingRefundAmountCents },
       failureMessage,
     );
-    // Enqueue only what is still owed (#1097): slices that already refunded
-    // and recorded before the failure must not be requested again, or a
-    // multi-transaction recovery would re-derive a shifted allocation over
-    // the full amount and over-refund. A slice Stripe refused is not among
-    // them (#4083): it sent nothing back, so it stays in the remainder.
-    const completedRefundCents =
-      refundErr instanceof PartialRefundError
-        ? refundErr.completedRefundCents
-        : 0;
-    const remainingRefundCents =
-      result.pendingRefundAmountCents - completedRefundCents;
-    if (remainingRefundCents > 0) await keepOwed(remainingRefundCents);
+    if (plan) {
+      // Made slices stay marked, refusals move keys, unanswered slices keep
+      // theirs: a made-but-unrecorded refund must replay the original request.
+      await keepUnmade(inlineRefundAfterAttempt(plan, { error: refundErr }));
+    } else {
+      // Planning failed before Stripe was asked: keep today's whole debt.
+      await keepOwed(result.pendingRefundAmountCents);
+    }
     // #4070: not made here, so the email says it is on its way.
     return { stripeRefundId: undefined, refundDestination: "own_card_pending" };
   }
@@ -321,10 +327,7 @@ const ASK_RETIRED_UNMINTED: ModificationAdditionalAskMint = { ...NOTHING_MINTED,
 function reissueNotMinted(
   recovery: Pick<ReissuedAskRecovery, "status" | "lastError"> | null,
 ): ModificationAdditionalAskMint {
-  const nettedOff =
-    recovery?.status === PaymentRecoveryOperationStatus.SUCCEEDED &&
-    recovery.lastError === PENDING_ASK_NETTED_BY_REDUCTION_NOTE;
-  return nettedOff ? ASK_RETIRED_UNMINTED : NOTHING_MINTED;
+  return reissueClosedUnminted(recovery) === "netted" ? ASK_RETIRED_UNMINTED : NOTHING_MINTED;
 }
 
 function mintedAsk(pi: { id: string; client_secret: string | null }, live: boolean): ModificationAdditionalAskMint {
@@ -333,18 +336,6 @@ function mintedAsk(pi: { id: string; client_secret: string | null }, live: boole
     additionalPaymentIntentId: pi.id,
     additionalAskRetired: !live,
   };
-}
-
-/**
- * #3954 round 9: the additional figure a member-facing message may name as
- * due. An ask a reduction retired before it was offered is owed by nobody -
- * that reduction's own message told the member - so it is never named.
- */
-export function additionalAmountToName(
-  amountCents: number,
-  mint: Pick<ModificationAdditionalAskMint, "additionalAskRetired">,
-): number {
-  return mint.additionalAskRetired ? 0 : amountCents;
 }
 
 /**
@@ -389,6 +380,19 @@ export function additionalAmountToName(
  * than wait for an exception that never comes.
  */
 export async function createModificationAdditionalPaymentIntent(
+  params: Parameters<typeof mintModificationAdditionalAsk>[0],
+): Promise<ModificationAdditionalAskMint> {
+  try {
+    return await mintModificationAdditionalAsk(params);
+  } finally {
+    // #4693 (`INV-PAY-120`): a waiting ask's recovery this edit netted off or folded in is swept
+    // for intents an earlier attempt minted and never wrote - AFTER the mint (review of PR #4698),
+    // so its bounded Stripe reads never hold the member's own ask past the re-issue's grace.
+    await sweepAskRecoveriesClosedByEdit({ bookingId: params.bookingId, bookingModificationId: params.result.bookingModificationId });
+  }
+}
+
+async function mintModificationAdditionalAsk(
   params: {
     bookingId: string;
     result: BookingModificationPaymentContext;
@@ -435,15 +439,10 @@ export async function createModificationAdditionalPaymentIntent(
     retired: result.retiredAdditionalAsks,
   });
 
-  if (
-    result.additionalAsk.amountCents <= 0 ||
-    // #3954: a re-issued ask was already asked of this card, so a credit-paid
-    // ($0) booking whose reduction captured nothing still mints it.
-    !(result.hasSucceededPayment || result.additionalAsk.reissuesUnpaidAsk) ||
-    !result.paymentId
-  ) {
-    return NOTHING_MINTED;
-  }
+  // #3954: a re-issued ask was already asked of this card, so a credit-paid
+  // ($0) booking whose reduction captured nothing still mints it. #4052: the
+  // member's email names the method by this same test.
+  if (!asksMemberCard(result) || !result.paymentId) return NOTHING_MINTED;
 
   // #4316: a booking ended since the edit committed is asked nothing, and owes nothing.
   if (await bookingEndedBeforeAskMint(bookingId, result.bookingModificationId)) return ASK_RETIRED_UNMINTED;
@@ -547,12 +546,9 @@ export async function createModificationAdditionalPaymentIntent(
           "A re-issued additional ask's recovery moved while the door minted it (#3954); nothing written - the recovery's owner asks the member",
         );
         // Final review: whoever moved it decides whether it is still owed. A
-        // failed re-read names it, as before.
-        const moved = await readReissuedAskRecovery(result.bookingModificationId).catch((err) => {
-          logger.error({ err, bookingId }, "Could not re-read a re-issued ask's recovery; the email names it (#3954)");
-          return null;
-        });
-        return reissueNotMinted(moved);
+        // failed re-read names it, as before. #4052: an intent this mint left
+        // with no owner is cancelled at Stripe, outside any transaction.
+        return reissueNotMinted(await settleLostReissuedAskFence({ bookingId, bookingModificationId: result.bookingModificationId, paymentIntentId: pi.id, stripeKey: reissueRecovery.paymentIntentId }));
       }
       await cancelSupersededAdditionalIntentsNow({ format, bookingId, paymentId, queued: superseded, newPaymentIntentId: pi.id });
       // #4316: a cancel that committed while this minted could not see it.

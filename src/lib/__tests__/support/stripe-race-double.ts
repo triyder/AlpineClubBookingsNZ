@@ -9,8 +9,26 @@
  * case has hooked runs the REAL function.
  */
 import type * as StripeModule from "@/lib/stripe";
+import { refundRequestStripeMetadata } from "@/lib/refund-slice-evidence";
 
 type Stripe = typeof StripeModule;
+type StripeRefund = Awaited<ReturnType<Stripe["processRefund"]>>;
+
+/**
+ * #4359 (INV-PAY-145): every refund a case's `refund` hook answered with, by
+ * intent, as Stripe itself keeps them. A charge-backed recovery reads Stripe's
+ * refunds for the intent before it sends again; a case that doubles the refunds
+ * Stripe makes but not that list is answered with these, which is what the real
+ * list would return. Only a hooked `refund` writes here.
+ */
+const refundsMadeByIntent = new Map<string, Map<string, StripeRefund>>();
+
+function recordRefundMade(paymentIntentId: string, refund: unknown): void {
+  if (!refund || typeof refund !== "object" || typeof (refund as { id?: unknown }).id !== "string") return;
+  const made = refundsMadeByIntent.get(paymentIntentId) ?? new Map<string, StripeRefund>();
+  made.set((refund as StripeRefund).id, refund as StripeRefund);
+  refundsMadeByIntent.set(paymentIntentId, made);
+}
 
 export const stripeRaceHooks: {
   update: null | ((id: string, amountCents: number) => Promise<unknown>);
@@ -30,7 +48,11 @@ export const stripeRaceHooks: {
   customer: null | ((args: Parameters<Stripe["findOrCreateCustomer"]>[0]) => Promise<unknown>);
   /** #4357: a saved card's off-session charge, which every saved-card door makes. */
   charge: null | ((args: Parameters<Stripe["chargePaymentMethod"]>[0]) => Promise<unknown>);
-} = { update: null, get: null, create: null, findByMetadata: null, list: null, cancel: null, refund: null, listRefunds: null, listChargeRefunds: null, customer: null, charge: null };
+  /** #4532: the Checkout Session a payment the app did not create went through. */
+  checkoutSession: null | ((paymentIntentId: string) => Promise<unknown>);
+  /** #4693: the runner's metadata stamp on the intent it minted. */
+  stamp: null | ((paymentIntentId: string, metadata: Readonly<Record<string, string>>) => Promise<void>);
+} = { update: null, get: null, create: null, findByMetadata: null, list: null, cancel: null, refund: null, listRefunds: null, listChargeRefunds: null, customer: null, charge: null, checkoutSession: null, stamp: null };
 
 export function resetStripeRaceHooks(): void {
   stripeRaceHooks.update = null;
@@ -44,6 +66,9 @@ export function resetStripeRaceHooks(): void {
   stripeRaceHooks.listChargeRefunds = null;
   stripeRaceHooks.customer = null;
   stripeRaceHooks.charge = null;
+  stripeRaceHooks.checkoutSession = null;
+  stripeRaceHooks.stamp = null;
+  refundsMadeByIntent.clear();
 }
 
 export function stripeRaceDouble(actual: Stripe): Stripe {
@@ -69,12 +94,20 @@ export function stripeRaceDouble(actual: Stripe): Stripe {
       stripeRaceHooks.cancel
         ? stripeRaceHooks.cancel(args[0])
         : actual.cancelPaymentIntentIfCancellableWithResult(...args)) as Stripe["cancelPaymentIntentIfCancellableWithResult"],
-    processRefund: ((args: Parameters<Stripe["processRefund"]>[0]) =>
-      stripeRaceHooks.refund ? stripeRaceHooks.refund(args) : actual.processRefund(args)) as Stripe["processRefund"],
-    listRefundsForPaymentIntent: ((...args: Parameters<Stripe["listRefundsForPaymentIntent"]>) =>
-      stripeRaceHooks.listRefunds
-        ? stripeRaceHooks.listRefunds(args[0])
-        : actual.listRefundsForPaymentIntent(...args)) as Stripe["listRefundsForPaymentIntent"],
+    processRefund: (async (args: Parameters<Stripe["processRefund"]>[0]) => {
+      if (!stripeRaceHooks.refund) return actual.processRefund(args);
+      // #4510 (INV-PAY-147): a case's hook answers for Stripe, so it is handed
+      // the metadata Stripe receives - the slice-key evidence stamped in.
+      const refund = await stripeRaceHooks.refund({ ...args, metadata: refundRequestStripeMetadata(args) });
+      recordRefundMade(args.paymentIntentId, refund);
+      return refund;
+    }) as Stripe["processRefund"],
+    listRefundsForPaymentIntent: (async (...args: Parameters<Stripe["listRefundsForPaymentIntent"]>) => {
+      if (stripeRaceHooks.listRefunds) return stripeRaceHooks.listRefunds(args[0]);
+      // A case doubling Stripe's refunds is answered with the ones it made.
+      if (stripeRaceHooks.refund) return [...(refundsMadeByIntent.get(args[0])?.values() ?? [])];
+      return actual.listRefundsForPaymentIntent(...args);
+    }) as Stripe["listRefundsForPaymentIntent"],
     listRefundsForCharge: ((...args: Parameters<Stripe["listRefundsForCharge"]>) =>
       stripeRaceHooks.listChargeRefunds
         ? stripeRaceHooks.listChargeRefunds(args[0])
@@ -83,5 +116,13 @@ export function stripeRaceDouble(actual: Stripe): Stripe {
       stripeRaceHooks.customer ? stripeRaceHooks.customer(args) : actual.findOrCreateCustomer(args)) as Stripe["findOrCreateCustomer"],
     chargePaymentMethod: ((args: Parameters<Stripe["chargePaymentMethod"]>[0]) =>
       stripeRaceHooks.charge ? stripeRaceHooks.charge(args) : actual.chargePaymentMethod(args)) as Stripe["chargePaymentMethod"],
+    stampPaymentIntentMetadata: ((...args: Parameters<Stripe["stampPaymentIntentMetadata"]>) =>
+      stripeRaceHooks.stamp
+        ? stripeRaceHooks.stamp(args[0], args[1])
+        : actual.stampPaymentIntentMetadata(...args)) as Stripe["stampPaymentIntentMetadata"],
+    findCheckoutSessionForPaymentIntent: ((paymentIntentId: string) =>
+      stripeRaceHooks.checkoutSession
+        ? stripeRaceHooks.checkoutSession(paymentIntentId)
+        : actual.findCheckoutSessionForPaymentIntent(paymentIntentId)) as Stripe["findCheckoutSessionForPaymentIntent"],
   };
 }

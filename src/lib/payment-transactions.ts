@@ -7,6 +7,7 @@ import {
 import { prisma } from "@/lib/prisma";
 import { refundSliceStripeIdempotencyKey } from "@/lib/payment-recovery-keys";
 import { processRefund } from "@/lib/stripe";
+import { stripeErrorApiType } from "@/lib/stripe-errors";
 import { stripeReferenceId, type StripeReference } from "@/lib/stripe-references";
 import Stripe from "stripe";
 import { formatCents } from "@/lib/utils";
@@ -41,7 +42,7 @@ import {
   isRefusedRefundStatus,
   LEGACY_ADDITIONAL_BACKFILL_REASON,
   LEGACY_PRIMARY_BACKFILL_REASON,
-  latestTransactionOfKind,
+  latestTransactionOfKind, STRIPE_REFUND_EXCEEDS_CAPTURED_MESSAGE,
 } from "@/lib/payment-transaction-status";
 
 export { isCapturedTransactionStatus };
@@ -133,6 +134,13 @@ export async function loadPaymentWithTransactions(store: PaymentStore, paymentId
       },
     },
   });
+}
+
+/** Captured Stripe rows: what the executor refunds and the #4359 preflight checks. */
+export function capturedStripeTransactions<
+  T extends { source: PaymentSource; stripePaymentIntentId: string | null; status: Parameters<typeof isCapturedTransactionStatus>[0] },
+>(transactions: readonly T[]) {
+  return transactions.filter(isStripeTransaction).filter((transaction) => isCapturedTransactionStatus(transaction.status));
 }
 
 export function isStripeTransaction<
@@ -627,6 +635,16 @@ export function refundHeadroomIncrementCents(row: { amountCents: number; refunde
  */
 const REFUND_LEDGER_WRITERS_MIGRATION = "20260509090000_enrich_payment_refund_ledger";
 
+
+/**
+ * #4656: the budget of a short transaction that waits on a `Payment` row and
+ * must not lose its write to Prisma's 2s/5s defaults. The row's longest
+ * documented holder runs a 30s transaction: the nightly bank-refund void
+ * follow-up (`followUpVoidedBankRefundNote`, `{ timeout: 30_000 }`). Shared by
+ * the inbound recount's claim (#4288) and the refund credit-note create's
+ * record (`recordCreatedRefundNote`).
+ */
+export const PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS = { maxWait: 10_000, timeout: 30_000 } as const;
 
 /**
  * #3640: THE lock order for a payment's refunded total - the `Payment` row
@@ -1477,9 +1495,7 @@ export async function refundPaymentTransactions({
     throw new Error("Payment not found");
   }
 
-  const stripeTransactions = payment.transactions
-    .filter(isStripeTransaction)
-    .filter((transaction) => isCapturedTransactionStatus(transaction.status));
+  const stripeTransactions = capturedStripeTransactions(payment.transactions);
 
   let slices: Array<{
     transaction: (typeof stripeTransactions)[number];
@@ -1507,7 +1523,7 @@ export async function refundPaymentTransactions({
     const derived = buildRefundAllocationSlices(stripeTransactions, amountCents);
 
     if (amountCents > derived.totalRefundableCents) {
-      throw new Error("Refund amount exceeds captured Stripe payments");
+      throw new Error(STRIPE_REFUND_EXCEEDS_CAPTURED_MESSAGE);
     }
 
     slices = derived.slices;
@@ -1523,18 +1539,39 @@ export async function refundPaymentTransactions({
 
   for (const { transaction, amountCents: refundAmountForTransaction, stripeKeySuffix } of slices) {
     const slice: RefundAllocationSlice = { paymentTransactionId: transaction.id, amountCents: refundAmountForTransaction, ...(stripeKeySuffix ? { stripeKeySuffix } : {}) };
+    const idempotencyKey = idempotencyKeyPrefix
+      ? refundSliceStripeIdempotencyKey(idempotencyKeyPrefix, slice)
+      : undefined;
     let refund;
     try {
-      refund = await processRefund({
+      // Stripe metadata values allow 500 characters. Never truncate the evidence.
+      if (idempotencyKey && idempotencyKey.length > 500) {
+        throw new Error("Refund slice key exceeds Stripe metadata value limit");
+      }
+      const sendSlice = (stampRefundSliceKey: boolean) => processRefund({
         paymentIntentId: transaction.stripePaymentIntentId,
         amountCents: refundAmountForTransaction,
         reason:
           typeof reason === "string" ? reason : "requested_by_customer",
         metadata,
-        idempotencyKey: idempotencyKeyPrefix
-          ? refundSliceStripeIdempotencyKey(idempotencyKeyPrefix, slice)
-          : undefined,
+        idempotencyKey,
+        // INV-PAY-147: a keyed slice carries its own key as `refundSliceKey`.
+        stampRefundSliceKey,
       });
+      try {
+        refund = await sendSlice(idempotencyKey !== undefined);
+      } catch (err) {
+        if (!idempotencyKey || stripeErrorApiType(err) !== "idempotency_error") throw err;
+        // #4510 review (F1): code before the evidence sent this key with the
+        // body alone, and Stripe refuses another body under it for 24 hours.
+        // That exact body once more is answered with the original refund, and
+        // a key cannot make a second one. Its error too moves no money.
+        logger.warn(
+          { paymentId, paymentTransactionId: transaction.id, idempotencyKey },
+          "Stripe refused this key as reused with a different body; resending the pre-evidence body once (INV-PAY-147)",
+        );
+        refund = await sendSlice(false);
+      }
     } catch (err) {
       throw new PartialRefundError({
         completedRefundCents,

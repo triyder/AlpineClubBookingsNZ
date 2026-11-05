@@ -40,8 +40,10 @@
  * WAITS while the gap invoice is still being sent. Where the primary cannot
  * take the capture and no gap invoice exists, #3980's own check
  * (`recheckPrimaryInvoiceWorthGap`) raises one, never a second, and the
- * receipt waits for it. A capture on a booking since cancelled, or paid by
- * internet banking, is closed unsent.
+ * receipt waits for it. A capture on a booking since cancelled - save one a
+ * treasurer KEPT, whose change the primary bills (#4324, `INV-PAY-144`,
+ * `kept-late-capture-change-receipt.ts`) - or paid by internet banking, is
+ * closed unsent.
  *
  * NEVER TWICE. One row per capture, queued under the per-anchor
  * supplementary-invoice lock; the payment link returns early; an earlier run's
@@ -52,7 +54,6 @@
  * No provider call is made under a lock or inside a transaction (`INV-LOCK-004`).
  */
 import { XERO_ACTIVE_OPERATION_STATUSES } from "./xero-active-operation-statuses";
-import type { Invoice } from "xero-node";
 import { PaymentSource } from "@prisma/client";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
@@ -65,7 +66,6 @@ import { xeroDocumentDateForClubToday } from "@/lib/xero-provider-dates";
 import { providerAmountToCents } from "@/lib/money-provider-amount";
 import { isCapturedTransactionStatus } from "@/lib/payment-transaction-status";
 import { buildXeroBookingInvoiceCorrelationKey } from "@/lib/xero-booking-invoice-key";
-import { readXeroInvoiceOperationOutcome } from "@/lib/xero-booking-invoice-outcome";
 import { XeroAppliedCreditOperationBusyError } from "@/lib/xero-applied-credit-operation-serialization";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import { asRecord } from "@/lib/xero-json";
@@ -84,6 +84,15 @@ import {
   bookingHasPaidUnnamedSupplementary,
   captureChangeId,
 } from "@/lib/additional-capture-receipt-link";
+import {
+  answerKeptLateCaptureRefunds,
+  closeKeptReceiptNotKept,
+  hasLateCaptureApprovalTask,
+  keptCaptureAnchorId,
+  keptReceiptStillKeptElseClosed,
+  lateCaptureStillKept,
+} from "@/lib/kept-late-capture-change-receipt";
+import { amountDueOn, findRecordedPayment, ownPaymentPending, type InvoiceRead } from "@/lib/additional-capture-receipt-invoice-read";
 import {
   readAdditionalCaptureReceiptPayload,
   type AdditionalCaptureReceiptPlan,
@@ -206,8 +215,6 @@ async function alertOfficer(paymentIntentId: string, operationId: string, messag
   }
 }
 
-type InvoiceRead = { status: string; amountDueCents: number; invoice: Invoice };
-
 async function readInvoice(
   providers: AdditionalCaptureReceiptProviders,
   client: { xero: Awaited<ReturnType<typeof getAuthenticatedXeroClient>>["xero"]; tenantId: string },
@@ -228,37 +235,6 @@ async function readInvoice(
   const amountDueCents = providerAmountToCents(invoice?.amountDue);
   if (!invoice || amountDueCents === null) return null;
   return { status: String(invoice.status ?? ""), amountDueCents, invoice };
-}
-
-/** An earlier run's payment of this capture on the invoice, found by its reference. */
-function findRecordedPayment(read: InvoiceRead | null, reference: string) {
-  return (
-    (read?.invoice.payments ?? []).find(
-      (payment) =>
-        Boolean(payment.paymentID) &&
-        payment.reference === reference &&
-        String(payment.status ?? "").toUpperCase() !== "DELETED",
-    ) ?? null
-  );
-}
-
-function amountDueOn(read: InvoiceRead | null): number {
-  return read && read.status === "AUTHORISED" ? Math.max(0, read.amountDueCents) : 0;
-}
-
-/**
- * Whether a create's row says its own Stripe payment failed and is still owed
- * (PARTIAL, payment fault) - never one an officer resolved in Xero
- * (`INV-INT-025`), whose payment was recorded by hand.
- */
-function ownPaymentPending(
-  operation: { status: string; responsePayload: unknown; manuallyResolvedAt: Date | null } | null,
-): boolean {
-  return (
-    operation?.status === "PARTIAL" &&
-    operation.manuallyResolvedAt === null &&
-    readXeroInvoiceOperationOutcome(operation.responsePayload)?.paymentFailed === true
-  );
 }
 
 /**
@@ -284,11 +260,14 @@ export async function recordAdditionalCaptureReceipt(
   const refuse = async (reason: AdditionalCaptureReceiptRefusal, details: Record<string, unknown> = {}) => {
     const message = `The card payment for this booking change was not recorded in Xero: ${REFUSAL_TEXT[reason]}.`;
     logger.error({ operationId, bookingId, paymentIntentId, reason, ...details }, message);
-    await failXeroSyncOperation(params.syncOperation, new Error(message), { refused: reason, ...details }, {
+    const failed = await failXeroSyncOperation(params.syncOperation, new Error(message), { refused: reason, ...details }, {
       lastErrorMessage: message,
     });
+    // #4673 (PR #4687 review): the row is no longer this run's (`INV-INT-029`): the
+    // run that holds it decides, so no refusal stamp and no officer alert from here.
+    if (failed === null) return null;
     await prisma.xeroSyncOperation.updateMany({
-      where: { id: operationId, status: "FAILED" },
+      where: { id: operationId, status: "FAILED", startedAt: params.syncOperation.startedAt },
       data: { lastErrorCode: ADDITIONAL_CAPTURE_RECEIPT_REFUSED_CODE },
     });
     await alertOfficer(paymentIntentId, operationId, message);
@@ -298,8 +277,10 @@ export async function recordAdditionalCaptureReceipt(
   const standDown = async (status: "SUCCEEDED" | "CANCELLED", skipped: string, details: Record<string, unknown> = {}) => {
     await completeXeroSyncOperation(params.syncOperation, { status, responsePayload: { skipped, ...details } });
     // A CANCELLED completion keeps its code: the planning stamp is not an error.
+    // #4707 (`INV-INT-029`): cleared only on the end this claim just wrote - never on a
+    // newer claim's row (a retry after a stale reset), whose own planning stamp stays.
     await prisma.xeroSyncOperation.updateMany({
-      where: { id: operationId, lastErrorCode: ADDITIONAL_CAPTURE_RECEIPT_PLANNING_CODE },
+      where: { id: operationId, status, startedAt: params.syncOperation.startedAt, lastErrorCode: ADDITIONAL_CAPTURE_RECEIPT_PLANNING_CODE },
       data: { lastErrorCode: null },
     });
     return null;
@@ -395,7 +376,9 @@ export async function recordAdditionalCaptureReceipt(
     const payment = transaction.payment;
     // Review round 1 (K, H): the cancellation answers a cancelled booking's
     // invoice; a booking paid by internet banking is the treasurer's to settle.
-    if (payment.booking.status === "CANCELLED") return standDown("CANCELLED", "booking-cancelled");
+    // #4324: save a late capture whose approval task decides it (kept, below).
+    const cancelled = payment.booking.status === "CANCELLED";
+    if (cancelled && !(await hasLateCaptureApprovalTask(paymentIntentId))) return standDown("CANCELLED", "booking-cancelled");
     if (payment.source !== PaymentSource.STRIPE) return standDown("CANCELLED", "not-a-card-booking");
     const primaryInvoiceId = payment.xeroInvoiceId;
     if (!primaryInvoiceId) return refuse("no-primary-invoice");
@@ -404,7 +387,10 @@ export async function recordAdditionalCaptureReceipt(
     // reaches the outbox, which dispatches to this worker.
     const { lateCaptureRefundState } = await import("@/lib/xero-supplementary-invoice-late-capture");
     const refundState = await lateCaptureRefundState({ paymentIntentId, bookingStatus: payment.booking.status });
-    if (refundState !== "kept") return standDown("CANCELLED", "capture-not-kept", { refundState });
+    if (refundState !== "kept" && !cancelled) return standDown("CANCELLED", "capture-not-kept", { refundState });
+    // #4324 (review C1): on a cancelled booking its approval task decides, read again and closed under the anchor.
+    const anchorId = keptCaptureAnchorId(transaction, bookingId);
+    if (refundState !== "kept" && !(await keptReceiptStillKeptElseClosed({ claim: params.syncOperation, anchorId, paymentIntentId }, { refundState }))) return null;
 
     // Review round 1: one recorder per capture.
     const recorder = await readCaptureRecorder({
@@ -416,8 +402,8 @@ export async function recordAdditionalCaptureReceipt(
     if (recorder.kind === "primary-invoice") {
       return standDown("SUCCEEDED", "recorded-by-primary-invoice", { primaryInvoiceId });
     }
-    if (recorder.kind === "supplementary-invoice") {
-      return standDown("SUCCEEDED", "recorded-by-supplementary-invoice", { operationId: recorder.operationId });
+    if (recorder.kind === "supplementary-invoice" || recorder.kind === "kept-late-capture-invoice") {
+      return standDown("SUCCEEDED", `recorded-by-${recorder.kind}`, { operationId: recorder.operationId });
     }
     if (recorder.kind === "credit-release-sweep") return standDown("SUCCEEDED", "recorded-by-credit-release-sweep");
     const { gap, target: supplementary, alreadyRecordedCents } = recorder;
@@ -478,7 +464,8 @@ export async function recordAdditionalCaptureReceipt(
     const roomCents = target === "PRIMARY_INVOICE" ? await primaryRoom(read, payment, capturedCents) : amountDueOn(read);
     const chosen = chooseAdditionalCaptureReceiptTarget(capturedCents, [{ target, invoiceId, roomCents }]);
 
-    if (!gap && target === "PRIMARY_INVOICE" && (!chosen || chosen.amountCents < capturedCents)) {
+    // #4324: never on a cancelled booking - nothing new is billed there.
+    if (!cancelled && !gap && target === "PRIMARY_INVOICE" && (!chosen || chosen.amountCents < capturedCents)) {
       // The primary cannot take it all and no gap invoice exists: the primary
       // may bill less than the booking was worth at its link. #3980's own check
       // raises that gap, or finds it raised, and never a second. This capture
@@ -516,7 +503,13 @@ export async function recordAdditionalCaptureReceipt(
     const { lockSupplementaryInvoiceAnchor } = await import("@/lib/xero-operation-outbox");
     const stored = await prisma.$transaction(async (tx) => {
       const changeId = captureChangeId(transaction);
-      await lockSupplementaryInvoiceAnchor(tx, changeId ?? bookingId);
+      await lockSupplementaryInvoiceAnchor(tx, keptCaptureAnchorId(transaction, bookingId));
+      // #4324: a kept capture is still kept, read under the lock the approval
+      // withdraws an undecided receipt under, and closed there if not (C1).
+      if (cancelled && !(await lateCaptureStillKept(tx, paymentIntentId))) {
+        await closeKeptReceiptNotKept(tx, params.syncOperation, {});
+        return "not-kept" as const;
+      }
       const now = await readCaptureRecorder({ bookingId, primaryInvoiceId, paymentIntentId, bookingModificationId: changeId }, tx);
       if (now.kind !== "receipt") return now.kind;
       // Round 7: a capture no change can be read from decides under the
@@ -533,6 +526,7 @@ export async function recordAdditionalCaptureReceipt(
       return "stored" as const;
     });
     if (stored === "change-unknown") return refuse("change-unknown");
+    if (stored === "not-kept") return null;
     if (stored === "target-moved") {
       throw waitFor("The invoice this card payment belongs to changed while it was being decided; it is decided again on the next run");
     }
@@ -557,7 +551,7 @@ export async function recordAdditionalCaptureReceipt(
     if (recorder.kind === "receipt") return null;
     return {
       kind: recorder.kind,
-      operationId: recorder.kind === "supplementary-invoice" ? recorder.operationId : null,
+      operationId: "operationId" in recorder ? recorder.operationId : null,
       changeId: captureChangeId(capture),
     };
   }
@@ -565,6 +559,7 @@ export async function recordAdditionalCaptureReceipt(
   /** Rounds 6 and 9: this receipt's payment is in Xero and another invoice would record it too - set unpaid where unsent (`switchUnsentRecorderUnpaid`); an officer checks Xero either way. */
   async function settleOtherRecorder(other: OtherRecorder, invoiceId: string): Promise<void> {
     const switched =
+      other.kind === "supplementary-invoice" &&
       other.operationId !== null &&
       (await switchUnsentRecorderUnpaid(other.operationId, { paymentIntentId, bookingModificationId: other.changeId }));
     await alertOfficer(
@@ -659,6 +654,7 @@ export async function recordAdditionalCaptureReceipt(
       await alertOfficer(paymentIntentId, operationId, message);
     }
     if (plan.target !== "PRIMARY_INVOICE") await flagRefundNotesNamingAnotherInvoice(plan.invoiceId);
+    await answerKeptLateCaptureRefunds(paymentIntentId);
   }
 
   /**

@@ -150,6 +150,17 @@ export function latestTransactionOfKind<
  */
 export const LEGACY_PRIMARY_BACKFILL_REASON = "legacy_primary_backfill";
 export const LEGACY_ADDITIONAL_BACKFILL_REASON = "legacy_additional_backfill";
+
+/**
+ * #4052: the `reason` STORED on a transaction row the cancel processor failed
+ * because a later ask superseded it (`markSupersededTransactionFailed`). A
+ * stored value - rows written before this constant hold the same string - read
+ * by the just-minted ask's liveness re-read as supersession evidence
+ * (`isMintedAskStillLive`). The same characters as the refund metadata's
+ * `SUPERSEDED_PAYMENT_REFUND_METADATA_REASON`, which is a different field with
+ * its own meaning; neither may follow the other.
+ */
+export const SUPERSEDED_ASK_TRANSACTION_REASON = "zero_dollar_batch_modification_superseded";
 export const LEGACY_BACKFILL_REASONS: readonly string[] = [LEGACY_PRIMARY_BACKFILL_REASON, LEGACY_ADDITIONAL_BACKFILL_REASON];
 
 /** Stripe refund states that returned no money and are not counted. */
@@ -277,3 +288,6 @@ export function predatesRefundLedger(
   if (typeof createdSeconds !== "number") return undated === "pre-ledger";
   return ledgerStartSeconds !== null && createdSeconds < ledgerStartSeconds;
 }
+
+/** The card-refund shortfall refusal, shared by the inline planner and the edit door (#3984). */
+export const STRIPE_REFUND_EXCEEDS_CAPTURED_MESSAGE = "Refund amount exceeds captured Stripe payments";

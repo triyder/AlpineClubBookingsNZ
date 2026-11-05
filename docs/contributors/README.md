@@ -171,8 +171,9 @@ method, scope and finish line for each.
   preflight (Windows and Linux/WSL), and lane-owned Docker teardown with the report-only
   `pnpm run stale-containers` debris check.
 - [`../agents/COORDINATION.md`](../agents/COORDINATION.md) — on-demand
-  coordination: where work state lives, when a coordinator runs, reservations
-  that never time out, handoffs, choosing review lenses, asking the owner.
+  coordination: where work state lives (and the generated status board), when a
+  coordinator runs, reservations, handoffs, choosing review lenses, asking the
+  owner.
 - [`../agents/SEKRETON_ORCHESTRATOR.md`](../agents/SEKRETON_ORCHESTRATOR.md) — the Sekreton lane's standing orchestrator: gaps it fills, one pass, owner queue, resuming.
 - [`../agents/ISSUE_WORKFLOW.md`](../agents/ISSUE_WORKFLOW.md) — issue
   contracts: the human-first issue-body order, reading the whole thread,
@@ -181,7 +182,8 @@ method, scope and finish line for each.
 - [`../agents/EPIC_PLAYBOOK.md`](../agents/EPIC_PLAYBOOK.md) — the
   four-question test for whether work is an atomic epic at all (and how an
   epic differs from a programme, a standalone issue and a GitHub Project), how
-  an epic ships from its integration branch, and running a multi-issue wave.
+  multi-step work ships on `main` behind flags or inert modules (an integration
+  branch only by exception), and running a multi-issue wave.
 - [`../agents/MODELS.md`](../agents/MODELS.md) — the current models, the
   cost-aware defaults, and when to escalate.
 - [`../agents/CODEX_PROMPTS.md`](../agents/CODEX_PROMPTS.md) — invocation
@@ -209,6 +211,10 @@ Larger subsystems keep their own hub, and each links back here.
   `BookingLedgerLine` design from programme #3527 — the model, every money
   event's posting rule, the projection guard, the cut-over order, and the
   invariant gap analysis (#3532). A design, not yet an implementation.
+- **Member money ledger (design)** —
+  [`../design/member-money-ledger.md`](../design/member-money-ledger.md):
+  proposed double-entry accounts, two-way Xero ownership and sync, posting
+  rules, cut-over gates, parked-bug scenarios and ordered children (#4461).
 - **Finance dashboard** —
   [`../finance-dashboard/README.md`](../finance-dashboard/README.md): reporting
   contracts, architecture decisions, data contracts, and the test plan.

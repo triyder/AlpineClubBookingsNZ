@@ -4,6 +4,7 @@ import {
   type BookingCancelledRefundMethod,
   type BookingModifiedRefundDestination,
   bookingModifiedRefundSentence,
+  organiserBilledSentence,
 } from "@/lib/booking-modified-email-copy";
 import { resolveBookingEmailLink } from "@/lib/booking-email-authority";
 import {
@@ -1433,6 +1434,8 @@ export async function sendBookingModifiedEmail(params: {
    */
   appliedCreditGivenBackCents: number;
   additionalAmountCents: number;
+  /** #4299 (`INV-PAY-148`): the increase invoiced to the group organiser instead (`billedToOrganiserCents`); 0 or absent where none was. */
+  billedToOrganiserCents?: number;
   /**
    * #3954: this edit's price drop cancelled the member's unpaid additional payment
    * outright (`unpaidAskOffsetCents > 0` and nothing re-issued). REQUIRED, as
@@ -1558,7 +1561,9 @@ export async function sendBookingModifiedEmail(params: {
           ? params.additionalPaymentMethod === "INTERNET_BANKING"
             ? `An additional Internet Banking payment of ${formatMoneyCents(params.additionalAmountCents, format)} is required.${xeroInvoicePaymentContext}${paymentReferenceContext} Xero reconciliation confirms the payment before it is treated as paid.`
             : `An additional payment of ${formatMoneyCents(params.additionalAmountCents, format)} is required.`
-          : "";
+          : (params.billedToOrganiserCents ?? 0) > 0
+            ? organiserBilledSentence(formatMoneyCents(params.billedToOrganiserCents!, format))
+            : "";
   // #3809: true beside a card refund on a booking paid by card and credit, so
   // composed with the settlement note rather than one of its arms.
   const giveBackNote = appliedCreditGiveBackNote(params.appliedCreditGivenBackCents, format);
@@ -1786,17 +1791,17 @@ export async function sendSupersededPaymentRefundedEmail(params: {
   refundedAmountCents: number;
   amountOwingCents: number;
   lodgeId?: string | null;
+  idempotencyKey: string;
 },
   format: ClubFormat,
 ) {
   await sendEmail({
     to: params.email,
     subject: `Payment Refunded - ${EMAIL_DEFAULT_LODGE_NAME}`,
+    // #4690: recorded once per recovery row (`idempotencyKey`) for the email retry worker to send.
+    idempotencyKey: params.idempotencyKey, deferDelivery: true,
     html: await renderEmailHtml(() => supersededPaymentRefundedTemplate(params, format)),
-    bookingContext: bookingOwnerEmailContext(
-      params.bookingId,
-      params.recipientMemberId,
-    ),
+    bookingContext: bookingOwnerEmailContext(params.bookingId, params.recipientMemberId),
     templateName: "superseded-payment-refunded",
     templateData: {
       firstName: params.firstName,

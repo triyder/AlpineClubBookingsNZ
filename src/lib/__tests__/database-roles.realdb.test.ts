@@ -45,7 +45,8 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { FROZEN_TEST_CLOCK_BASE_ISO } from "./helpers/clock";
 import { assertSafeRaceDbUrl } from "./support/race-db-url";
 import { restoreDumpWithoutOwnershipOrPrivileges } from "@/lib/backup-restore-validation";
-import { buildDatabaseRolesSql } from "@/lib/database-roles";
+import { APPEND_ONLY_FORBIDDEN_TABLE_PRIVILEGES, APPEND_ONLY_SCHEMA_MIGRATION, buildDatabaseRolesSql } from "@/lib/database-roles";
+import { MEMBER_MONEY_RELATIONS } from "@/lib/member-money-tables";
 import { buildAiDiagnosticsRoleSql } from "@/lib/diagnostics/tools/provision-role";
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
@@ -53,6 +54,7 @@ const RACE_DB_URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
 const REPO_ROOT = process.cwd();
 const INSUFFICIENT_PRIVILEGE = "42501";
 const RESTRICT_VIOLATION = "23001";
+const FOREIGN_KEY_VIOLATION = "23503";
 const CHECK_VIOLATION = "23514";
 
 const PREFIX = `tac_test_4453_${randomBytes(3).toString("hex")}`;
@@ -77,6 +79,7 @@ const DATABASES = {
   upgrade: `${PREFIX}_upgrade`,
   restore: `${PREFIX}_restore`,
   restoreCheck: `${PREFIX}_restorecheck`,
+  journal: `${PREFIX}_journal`,
 } as const;
 
 type RoleKey = keyof typeof ROLES;
@@ -240,6 +243,7 @@ async function privilegeSnapshot(database: string, { includeDatabaseAcl = true }
   () => {
     let admin: Client;
     let migrateResult: ReturnType<typeof spawnSync>;
+    let freshCheckBeforeReprovision = "";
     let firstCliRun: ReturnType<typeof spawnSync>;
     let diagnosticsBefore: unknown;
     let appPrisma: PrismaClient;
@@ -293,6 +297,7 @@ async function privilegeSnapshot(database: string, { includeDatabaseAcl = true }
       if (migrateResult.status !== 0) {
         throw new Error(`prisma migrate deploy as the migration role failed:\n${migrateResult.stdout}\n${migrateResult.stderr}`);
       }
+      freshCheckBeforeReprovision = deployGrantsCheck(DATABASES.fresh);
       await provisionWithBuilder(DATABASES.fresh);
 
       // UPGRADE: the fresh schema re-created with every object owned by the
@@ -430,6 +435,45 @@ async function privilegeSnapshot(database: string, { includeDatabaseAcl = true }
       });
     });
 
+    describe("the member-money journal migration on a provisioned database (#4513)", () => {
+      it("leaves only the older append-only tables for provisioning on a database provisioned while empty (DEPLOYMENT.md)", async () => {
+        // The journal's migration narrowed its own tables; the deploy check stops
+        // on the two that provisioning narrows, until --apply runs again.
+        expect(freshCheckBeforeReprovision).toBe("AuditLog, BookingLedgerLine");
+        expect(deployGrantsCheck(DATABASES.fresh)).toBe("");
+      });
+
+      it("narrows its own tables as the migration role, so the deploy grants check passes without re-provisioning", async () => {
+        const database = DATABASES.journal;
+        await admin.query(`CREATE DATABASE "${database}" TEMPLATE "${DATABASES.fresh}"`);
+        // The release before the journal, provisioned: take the journal away again.
+        await withClient(urlFor(database), (client) => client.query(`
+          DROP TABLE ${MEMBER_MONEY_RELATIONS.map((name) => `"${name}"`).join(", ")} CASCADE;
+          DROP FUNCTION member_money_require_complete(), member_money_batch_errors(text),
+            member_money_check_seal(), member_money_refuse_mutation(), member_money_system_identifier();
+          DROP TYPE "MemberMoneyAccount", "MemberMoneySide", "MemberMoneyEventKind", "MemberMoneyOrigin",
+            "MemberMoneySourceKind", "MemberMoneyObligationKind", "MemberMoneyDebtorKind";
+          DELETE FROM "_prisma_migrations" WHERE migration_name = '${APPEND_ONLY_SCHEMA_MIGRATION}'`));
+        expect(deployGrantsCheck(database)).toBe("");
+        // Applied as prisma migrate deploy applies it: one file, as the migration role.
+        await withClient(urlFor(database, "migrator"), (client) => client.query(
+          readFileSync(path.join(REPO_ROOT, `prisma/migrations/${APPEND_ONLY_SCHEMA_MIGRATION}/migration.sql`), "utf8"),
+        ));
+        expect(deployGrantsCheck(database)).toBe("");
+        const { rows } = await withClient(urlFor(database), (client) => client.query(
+          `SELECT t.name, has_table_privilege($1, to_regclass(format('public.%I', t.name)), 'SELECT')
+                    AND has_table_privilege($1, to_regclass(format('public.%I', t.name)), 'INSERT') AS inserts,
+                  has_table_privilege($1, to_regclass(format('public.%I', t.name)), '${APPEND_ONLY_FORBIDDEN_TABLE_PRIVILEGES}') AS changes,
+                  pg_get_userbyid(c.relowner) AS owner
+             FROM unnest($2::text[]) AS t(name) JOIN pg_class c ON c.oid = to_regclass(format('public.%I', t.name))
+             ORDER BY t.name`,
+          [ROLES.app, [...MEMBER_MONEY_RELATIONS]],
+        ));
+        expect(rows).toEqual([...MEMBER_MONEY_RELATIONS].sort().map((name) => (
+          { name, inserts: true, changes: false, owner: ROLES.migrator })));
+      });
+    });
+
     describe("the application role", () => {
       const lodgeId = "tac4453-lodge";
       const bookingId = "tac4453-booking";
@@ -533,28 +577,117 @@ async function privilegeSnapshot(database: string, { includeDatabaseAcl = true }
         expect(lines).toEqual([{ bookingId, lodgeId }]);
       });
 
-      it("still deletes a booking's ledger lines with the booking: the documented ON DELETE CASCADE", async () => {
-        const doomed = "tac4453-deleted-booking";
+      // #4514 (Ledger M2), the #4482 acceptance criterion: an application-role
+      // booking delete cannot remove ledger lines. D1 (owner, 28 Oct 2026) made
+      // every financial key RESTRICT; a referential action runs with the table
+      // owner's rights, so before it the cascade was a route around the grant.
+      // Each booking below carries ONE kind of history, so each refusal is that
+      // key's own: a booking held by a credit row too would mask a ledger cascade.
+      const createHistoryBooking = (id: string, checkIn: string, checkOut: string) => appPrisma.booking.create({
+        data: {
+          id,
+          lodgeId,
+          organisationId: "tac4453-organisation",
+          checkIn: new Date(`${checkIn}T00:00:00.000Z`),
+          checkOut: new Date(`${checkOut}T00:00:00.000Z`),
+          totalPriceCents: 100,
+          finalPriceCents: 100,
+        },
+      });
+
+      it("cannot remove a booking's ledger lines by deleting the booking, by any route (#4482, D1)", async () => {
+        const kept = "tac4514-booking-with-lines";
+        await createHistoryBooking(kept, "2026-09-01", "2026-09-02");
+        const line = await appPrisma.bookingLedgerLine.create({
+          data: {
+            bookingId: kept, lodgeId, side: "ADJUSTMENT", kind: "AGREED_ADJUSTMENT", sign: 1, quantity: 1,
+            unitCents: 100, amountCents: 100, guestNames: [], anchorKind: "REVIEW_TASK", anchorId: "tac4514-delete",
+            narration: "Adjustment agreed with member: outlives its booking",
+          },
+        });
+
+        // Every route the application role has to the booking row.
+        await expect(appPrisma.booking.delete({ where: { id: kept } })).rejects.toMatchObject({ code: "P2003" });
+        await expect(appPrisma.booking.deleteMany({ where: { id: kept } })).rejects.toMatchObject({ code: "P2003" });
+        await withClient(urlFor(DATABASES.upgrade, "app"), async (client) => {
+          await client.query("BEGIN");
+          expect(await sqlstate(client, `DELETE FROM "Booking" WHERE "id" = $1`, [kept])).toBe(FOREIGN_KEY_VIOLATION);
+          expect(await sqlstate(client, `TRUNCATE "Booking" CASCADE`)).toBe(INSUFFICIENT_PRIVILEGE);
+          // The parent-key routes: a line's own key is not the application's to
+          // change, and the booking's key stays refused (S-F1).
+          expect(await sqlstate(client, `UPDATE "BookingLedgerLine" SET "id" = 'tac4514-renamed' WHERE "id" = $1`, [line.id])).toBe(INSUFFICIENT_PRIVILEGE);
+          expect(await sqlstate(client, `UPDATE "Booking" SET "id" = 'tac4514-renamed' WHERE "id" = $1`, [kept])).toBe(RESTRICT_VIOLATION);
+          await client.query("ROLLBACK");
+        });
+        // The owner is refused too: RESTRICT binds whoever deletes.
+        await withClient(urlFor(DATABASES.upgrade), async (client) => {
+          await client.query("BEGIN");
+          expect(await sqlstate(client, `DELETE FROM "Booking" WHERE "id" = $1`, [kept])).toBe(FOREIGN_KEY_VIOLATION);
+          await client.query("ROLLBACK");
+        });
+
+        expect(await appPrisma.bookingLedgerLine.findMany({ where: { bookingId: kept }, select: { id: true } })).toEqual([{ id: line.id }]);
+        expect(await appPrisma.booking.count({ where: { id: kept } })).toBe(1);
+      });
+
+      it("cannot blank a credit row's booking link by deleting the booking (D1, INV-MONEY-035)", async () => {
+        const credited = "tac4514-booking-with-credit";
+        const memberId = "tac4514-member";
+        await appPrisma.member.create({
+          data: { id: memberId, email: `${memberId}@example.invalid`, passwordHash: "not-a-real-password", firstName: "Ledger", lastName: "Keeper" },
+        });
+        await createHistoryBooking(credited, "2026-09-05", "2026-09-06");
+        const credit = await appPrisma.memberCredit.create({
+          data: { memberId, amountCents: -100, type: "BOOKING_APPLIED", description: "tac4514 applied", appliedToBookingId: credited },
+        });
+
+        await expect(appPrisma.booking.delete({ where: { id: credited } })).rejects.toMatchObject({ code: "P2003" });
+        expect(await appPrisma.memberCredit.findUniqueOrThrow({ where: { id: credit.id }, select: { appliedToBookingId: true } }))
+          .toEqual({ appliedToBookingId: credited });
+      });
+
+      it("still hard-deletes a draft that carries no money, as the previous release's draft paths do", async () => {
+        const draft = "tac4514-money-free-draft";
         await appPrisma.booking.create({
           data: {
-            id: doomed,
+            id: draft,
             lodgeId,
             organisationId: "tac4453-organisation",
-            checkIn: new Date("2026-09-01T00:00:00.000Z"),
-            checkOut: new Date("2026-09-02T00:00:00.000Z"),
+            status: "DRAFT",
+            checkIn: new Date("2026-09-03T00:00:00.000Z"),
+            checkOut: new Date("2026-09-04T00:00:00.000Z"),
             totalPriceCents: 100,
             finalPriceCents: 100,
+            guests: { create: [{ firstName: "Draft", lastName: "Guest", ageTier: "ADULT", priceCents: 100, stayStart: new Date("2026-09-03T00:00:00.000Z"), stayEnd: new Date("2026-09-04T00:00:00.000Z") }] },
           },
         });
-        await appPrisma.bookingLedgerLine.create({
-          data: {
-            bookingId: doomed, lodgeId, side: "ADJUSTMENT", kind: "AGREED_ADJUSTMENT", sign: 1, quantity: 1,
-            unitCents: 100, amountCents: 100, guestNames: [], anchorKind: "REVIEW_TASK", anchorId: "tac4453-delete",
-            narration: "Adjustment agreed with member: deleted with its booking",
-          },
-        });
-        await appPrisma.booking.delete({ where: { id: doomed } });
-        expect(await appPrisma.bookingLedgerLine.count({ where: { bookingId: doomed } })).toBe(0);
+        await appPrisma.booking.delete({ where: { id: draft } });
+        expect(await appPrisma.booking.count({ where: { id: draft } })).toBe(0);
+        expect(await appPrisma.bookingGuest.count({ where: { bookingId: draft } })).toBe(0);
+      });
+
+      it("holds every key a money line, a credit row's booking link or a group settlement has as RESTRICT both ways, so no referential action can reach one", async () => {
+        const { rows } = await withClient(urlFor(DATABASES.upgrade), (client) => client.query(
+          `SELECT c.conrelid::regclass::text AS relation, a.attname AS "column", c.confdeltype AS "onDelete",
+                  c.confupdtype AS "onUpdate", c.convalidated AS validated
+             FROM pg_constraint c
+             JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = c.conkey[1]
+            WHERE c.contype = 'f' AND c.connamespace = 'public'::regnamespace
+              AND (c.conrelid::regclass::text = ANY($1::text[])
+                OR (c.conrelid = '"MemberCredit"'::regclass
+                  AND a.attname IN ('sourceBookingId', 'appliedToBookingId', 'sourceBookingModificationId'))
+                OR (c.conrelid = '"GroupBookingSettlement"'::regclass AND a.attname = 'groupBookingId'))
+            ORDER BY 1, 2`,
+          [["\"BookingLedgerLine\"", ...MEMBER_MONEY_RELATIONS.map((name) => `"${name}"`)]],
+        ));
+        // Not vacuous: the legacy ledger's three keys, the credit links and the journal's keys are all here.
+        expect(rows.filter((row) => row.relation === '"BookingLedgerLine"').map((row) => row.column).sort())
+          .toEqual(["bookingId", "lodgeId", "reversesLineId"]);
+        expect(rows.filter((row) => row.relation === '"MemberCredit"')).toHaveLength(3);
+        expect(rows.filter((row) => row.relation === '"GroupBookingSettlement"').map((row) => row.column)).toEqual(["groupBookingId"]);
+        expect(rows.filter((row) => row.relation === '"MemberMoneyLine"').map((row) => row.column))
+          .toEqual(expect.arrayContaining(["bookingId", "lodgeId", "journalId"]));
+        expect(rows.filter((row) => row.onDelete !== "r" || row.onUpdate !== "r" || !row.validated)).toEqual([]);
       });
 
       it("may create a temporary table, which nothing else grants it once AI Diagnostics revoked PUBLIC's", async () => {
@@ -844,8 +977,8 @@ async function privilegeSnapshot(database: string, { includeDatabaseAcl = true }
             `CREATE FUNCTION tac4453_definer() RETURNS int LANGUAGE sql SECURITY DEFINER AS 'SELECT 1'`,
             // O-F8: a migrated schema missing an append-only relation.
             `ALTER TABLE "AuditLog" RENAME TO "Tac4453AuditLogMoved"`,
-            // N10: a database still on a release before the ledger existed.
-            `DROP TABLE "BookingLedgerLine" CASCADE; DELETE FROM "_prisma_migrations" WHERE migration_name = '20261006010000_add_booking_ledger_line'`,
+            // N10: a database still on a release before the current append-only schema.
+            `DROP TABLE "BookingLedgerLine" CASCADE; DELETE FROM "_prisma_migrations" WHERE migration_name = '${APPEND_ONLY_SCHEMA_MIGRATION}'`,
           ]) {
             await client.query("BEGIN");
             await client.query(breach);

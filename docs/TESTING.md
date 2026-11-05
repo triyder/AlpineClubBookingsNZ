@@ -14,6 +14,166 @@ an unreachable dummy is correct and a live seeded database is not — so
 `prisma.config.ts` resolves. See [`../CONTRIBUTING.md`](../CONTRIBUTING.md) for
 the full local gate.
 
+## Accessibility lint ratchets (#4466)
+
+The full `eslint-plugin-jsx-a11y` recommended configuration applies to JSX/TSX.
+The local `accessibility/minimum-text-size` rule rejects static sizes below 12px
+in Tailwind classes, inline `fontSize` properties, CSS declarations and CSS
+`@apply` classes. Absolute CSS units (including `pt`) are converted to pixels;
+`rem`/`em` literals assume 16px. Runtime sizes and computed
+expressions still need browser/design review. CSS uses the tolerant parser for
+Tailwind syntax; it is not a general CSS validity gate.
+
+The local `accessibility/no-nested-interactive` rule (#4553) rejects a link or
+button inside another one: a `next/link` `Link`, the ui `Button`, `<a>` or
+`<button>` nested in any of them: two tab stops for one action, and invalid
+HTML. axe's `nested-interactive` reports only a link inside a button, never a
+button inside a link, so this rule is the check for that direction. Write `<Button asChild><Link>…</Link></Button>`; an `asChild` Button renders no
+element of its own (only a bare `asChild` or `asChild={true}` counts). Link
+and Button are matched by import, so a wrapper
+component that renders one is outside the rule.
+
+[`eslint-suppressions.json`](../eslint-suppressions.json) records existing debt
+using ESLint's built-in per-file/per-rule counts. Normal `pnpm run lint` applies
+it automatically: new files and increased counts fail, and unused suppressions
+also fail. It is a count ratchet: replacing a violation in the same file with
+another of the same rule does not increase the count. Do not regenerate or grow
+the baseline to pass lint. After fixing debt, run
+`pnpm exec eslint src --prune-suppressions` and commit the reductions. Check
+commands do not modify it.
+
+Focused rule and ratchet contracts run with
+`pnpm run test:named scripts/eslint/accessibility.test.mjs scripts/eslint/ratchet.test.mjs scripts/eslint/fixture-import.test.mjs scripts/eslint/design-system.test.mjs`.
+The shared axe fixture and mobile project are described in
+[`E2E_PLAYWRIGHT.md`](E2E_PLAYWRIGHT.md#accessibility-and-mobile-checks-4466).
+
+### Design-system control ratchet (#4467)
+
+Five local rules in `scripts/eslint/design-system.mjs` report what bypasses the
+primitives in `src/components/ui/`, each naming the one to use:
+`design-system/no-raw-button`, `no-raw-input`, `no-raw-select` and
+`no-raw-table` for the intrinsic JSX element, and `no-native-confirm` for the
+browser's confirm box: called through `window`, `globalThis`, `self`, `top` or
+`parent`, destructured from one of them, or called bare when the name resolves
+to the global. A `confirm` from `useConfirm()` is the sanctioned one.
+Today's usages are recorded in `eslint-suppressions.json` with the debt above,
+per file and per rule, so swapping a raw `<select>` for a raw `<button>` still
+fails. Migrate, then prune; never add a count.
+
+**Never an eslint-disable comment: migrate to the primitive.**
+`design-system.test.mjs` fails on any disable or rule-config comment naming a
+`design-system/` rule, and on a disable naming no rule where they apply.
+
+A suppression is keyed by path, so `ratchet.test.mjs` fails on an entry whose
+file no longer exists: a new file at that path would inherit the allowance. A
+deleted file's entries go in the same PR. A moved or renamed file's entries
+move to the new path in the same PR, at the same count; the count never rises.
+
+The exceptions are named:
+
+- **By path** (`eslint.config.mjs`): `src/components/ui/` itself; test files
+  (`__tests__/`, `*.test.*`, `src/test/`), which are not app UI and mock
+  primitives with raw stand-ins; and the files in `PRIMITIVE_IMPLEMENTATIONS`,
+  each excused one rule with a written reason: the admin table shell and sort
+  header (#1805).
+- **By element** (the rule): `<input type="hidden">`, and an
+  `<input type="file">` hidden by a literal `hidden` attribute or an
+  unprefixed `hidden` or `sr-only` class, the picker a `Button` opens. Neither
+  holds when a JSX spread comes after an attribute it relies on, or when a
+  class could show the input again (`block`, `md:flex`, `focus:not-sr-only`).
+  A visible file input uses `<Input type="file">`.
+
+Not covered: `React.createElement`, an element named through a variable
+(`const Tag = "button"; <Tag />`), a `confirm` reached through an alias, and
+`<textarea>`.
+
+### Testing a form on the shared form layer (#4467)
+
+The pattern is in [`UX_FLOW_MAP.md`](UX_FLOW_MAP.md#forms-4467). A form on it
+is tested in jsdom, like
+`src/app/(admin)/admin/committee/__tests__/committee-role-form.test.tsx`:
+
+- **Assert the wiring by resolving it.** Read the control's
+  `aria-describedby`, look each id up with `document.getElementById`, and
+  check the text and the order: error first, example last. Testing Library's
+  `toHaveAccessibleDescription` does the same in one step where the order does
+  not matter.
+- **Assert the summary holds focus, not that it got it.** Use
+  `expectToHoldFocus` from `src/lib/__tests__/helpers/focus.ts`.
+  react-hook-form's own focus-the-first-error runs again on a timer, so a
+  bare `waitFor` passes even while it steals focus a tick later.
+- **Wrap a submit in `act`.** The submit is asynchronous: the resolver, then
+  the handler, then the state update that raises `submitCount` and moves
+  focus.
+- **Assert the payload and the route, as well as the errors.** A migrated
+  form must send what it sent before.
+
+`src/components/ui/__tests__/form.test.tsx` pins the primitives themselves.
+`src/lib/__tests__/shared-form-schema-census.test.ts` reads source from disk,
+so `test:related` cannot select it; run it with `test:named` when you add or
+move a schema in `src/lib/forms/`, its route or its form.
+
+## Stateful Xero and Stripe fakes
+
+Tests can keep provider state across a whole money journey instead of returning
+unrelated responses from each mock. Import
+[`XeroFake`](../src/test/providers/xero-fake.ts) or
+[`StripeFake`](../src/test/providers/stripe-fake.ts), and create a fresh instance
+per test. These helpers have no credentials, network calls, database or Vitest
+dependency. Unit and realdb tests can use them directly; Playwright's Node-side
+fixtures can use them behind a test transport adapter. They do not install HTTP
+routes or replace either provider SDK automatically.
+
+```ts
+const xero = new XeroFake();
+const contact = xero.createContact("contact", "member-a");
+const invoice = xero.createInvoice("charge", contact.contactID, 8000);
+xero.payInvoice("receipt", invoice.invoiceID, 5000);
+expect(xero.snapshot().invoices[0].amountDueCents).toBe(3000);
+```
+
+All amounts are integer cents. Methods accepting an operation key take it first:
+retrying the same request returns its original response, while changed parameters
+reject. Keys live for the instance's lifetime; expiry is not modeled. Snapshots
+are detached copies, so retaining a reading before a later void models delayed
+delivery. `invoiceWire` in the
+[`round-trip harness`](../src/test/providers/round-trip-harness.ts) converts
+invoice reads to the native Xero JSON boundary used by the production observer.
+
+Xero models contacts, authorised invoices, receipts, credit notes, allocations,
+allocation removal, payment deletion and voids. A paid invoice refuses a new
+allocation; remove existing allocations/payments before voiding a document.
+`payCreditNote` records a hand-back separately from an allocation. Stripe models
+manual authorisation, one full or partial capture, cancellation, pending and
+successful refunds, later failure, and dashboard refunds. Pending refunds reserve
+capture capacity; failed refunds release it. `snapshot().events` retains immutable
+Stripe event payloads for delivery/replay tests, including the subscribed
+`charge.refunded` (with a charge/refund-list projection) and `refund.failed` events.
+Tests still need transport/SDK adapters to drive production webhook handlers.
+Taxes, fees, FX, API pagination,
+authentication, rate limits and transport failures are outside these models.
+
+The fixture contract suite pins selected behavior to
+[`provider-contracts.json`](../src/test/providers/fixtures/provider-contracts.json).
+**These fixtures are synthetic examples, not sandbox recordings.** Their public
+API references and repository error-example source are recorded in the JSON;
+sandbox conformance remains unverified. Do not regenerate expectations from the
+fake. Future sandbox captures need sanitized, independently reviewed fixtures.
+
+Run the four new suites with:
+
+```sh
+pnpm exec vitest run src/test/providers/provider-fakes.test.ts src/test/providers/provider-contracts.test.ts src/test/providers/ledger-scenarios.test.ts src/test/providers/round-trip.test.ts --maxWorkers=1
+```
+
+The fast-check properties use fixed seeds (4460 and 4461) and the shared frozen
+clock. They compare independently imported state with outbound journal totals
+after every prefix, require no new postings on round trips, and check external
+refund corrections and redelivery. The journal and adapters are test models for
+#4461, not production ledger implementations. Scenario witnesses cover #3911,
+#4336, #4434 and #4380; passing them does not close those application bugs or
+prove production sync correctness.
+
 ## CI shards and the required check
 
 Pull-request and `main` CI run the complete unit suite in four independent
@@ -32,8 +192,9 @@ duplicate, skipped, cancelled, failed or timed-out shards, API errors and a
 bounded wait all fail `verify`; a job that never reported cannot silently pass.
 Re-run the whole workflow rather than only a failed job if a partial re-run
 leaves successful shards absent from the new attempt. This does not add a
-branch-protection context. Coverage collection and thresholds were absent
-before sharding and remain absent; adding them is a separate project.
+branch-protection context. The required shards do not collect coverage: the
+money modules' coverage and mutation score are measured by two separate,
+non-required workflows ([below](#coverage-and-mutation-testing-of-the-money-modules)).
 
 `scripts/ci/require-test-shards.test.mjs` checks the gate and exercises Vitest
 5's actual run sequencer against the discovered file set. `vitest list --shard`
@@ -49,6 +210,184 @@ the seeded ledger-history database derives its URL from that same endpoint.
 Missing or unsafe endpoint metadata fails the job. Port-range exhaustion or
 service startup failure also stays a failure; neither skips nor passes the
 real database checks.
+
+## Coverage and mutation testing of the money modules
+
+Two separate measures, both advisory, answer "which money paths does no test
+reach" and "which tests would still pass if the code were wrong" (#4459,
+programme #4450). Neither is a required check, neither is part of `verify`, and
+neither may become one without the owner adding a context to branch protection
+([`CONTRIBUTING.md`](../CONTRIBUTING.md#branch-protection)).
+
+**What counts as a money module** is decided by `.github/CODEOWNERS`, the owner's
+own list of the `src/lib` modules that mint, charge, refund, credit, settle or
+size money, and `scripts/lib/money-modules.mjs` reads it: every `/src/lib/`
+pattern in CODEOWNERS is a coverage glob, so a module is measured the day it is
+owned. The same file adds what the issue names beyond that ownership: every Xero
+module (the inbound handlers in `xero-inbound/` included), the booking ledger,
+and the refund, credit, settlement and money-named helpers. `MONEY_MODULE_GLOBS`
+is the result. `vitest.config.mts` (`test.coverage.include`) and the ratchet
+script read it; the Stryker config reads `MUTATION_TARGET_GLOBS`, the narrower
+set it mutates, and `vitest.stryker.config.mts` reads `MUTATION_TEST_FILES`. Do
+not spell the list again. The module never throws on import (`vitest.config.mts`
+loads it, so one odd CODEOWNERS line must not stop every test run); a pattern it
+cannot read is reported as data and the ratchet test fails on it.
+`scripts/ci/money-test-ratchet.test.ts` fails a glob that matches no file, a
+CODEOWNERS-owned `src/lib` file the set leaves out, and a module the
+[CODEOWNERS census](../src/lib/__tests__/codeowners-census.test.ts) says must
+stay owned that is not measured.
+
+### Coverage
+
+- **Where it runs.** `.github/workflows/money-coverage.yml`, on a pull request
+  or push to `main` that changes code, tests, scripts, the schema, dependencies,
+  the measurement's own configuration or CODEOWNERS (a docs-only change skips it
+  and leaves no check), and on demand. Four shard jobs run the unit suite exactly as the
+  required shards do, with `--coverage --reporter=blob`; one job merges the four
+  blobs with `vitest --merge-reports --coverage` and judges the result. It is a
+  separate workflow because turning coverage on in the required shards would
+  slow jobs `verify` depends on and let an instrumentation timeout redden a
+  required check. The cost is five more jobs per pull request (four shard
+  runners and the merge), in parallel with the required ones, so the wait is
+  about one shard plus a short merge.
+  Coverage is off unless `--coverage` is passed, so `pnpm test` is unchanged. A
+  test that fails under instrumentation (a disk-scanning census can time out)
+  does not stop the report: the required shards own test failures, and the job
+  warns.
+- **How it reports.** Open the `Money coverage ratchet` job's summary: for lines,
+  statements, functions and branches, what the figure is compared with, the bar,
+  now and the change, then the ten files with the most uncovered lines. The job
+  goes red when a figure is lower than the bar, or when the pull request lowers
+  the committed floor. Because it is not a required check, red informs and
+  blocks nothing, and nothing else makes anyone read it, so a pull request that
+  touches money modules says `Money coverage ratchet: green` or `red` and why in
+  its ready comment (`agents/ISSUE_WORKFLOW.md`, "The ready comment"). The lane
+  either adds the missing tests or says why not.
+- **The bar** is the latest successful `main` run's own figure, read from that
+  run's `money-coverage-summary` artifact (kept 30 days), less 0.1 percentage
+  points for measurement noise (a flaky test, a timing-dependent branch), and
+  never below the committed floor. Figures are compared to two decimals, so a
+  pull request that moves lines from 87.96 to 87.01 fails, and one that moves
+  them to 87.90 passes; because of the floor, `main` cannot drift down 0.09
+  points a pull request for ever. With no such artifact (a first run, or none
+  within 30 days) the bar is the floor, `scripts/ci/money-test-baseline.json`,
+  and the summary says "committed floor". A pull request into a branch other
+  than `main` (an `epic/**` branch) is held to the floor too, and the summary
+  says so, because `main`'s figures do not describe that branch. The judge job
+  needs `actions: read` to find and download the artifact.
+- **Recovering from a red `main`.** On a push to `main` the judge records and
+  does not fail (its step is `continue-on-error` for the `push` event), so a drop
+  that was accepted at review becomes `main`'s figure and the next pull request
+  is held to that. The summary still shows the table. If a drop is real but
+  accepted, nothing more is needed, unless it takes `main` below the committed
+  floor: then lower the floor in the same pull request that accepts it, say why
+  in the PR, and expect the job on that PR to go red (a lowered
+  floor turns it red). Re-run `coverage --update` from a later green `main` artifact to
+  tighten the floor again.
+- **The floor** is `scripts/ci/money-test-baseline.json`. Judging a pull request
+  never writes it, so lanes do not collide on it (the
+  [fragment-directory rule](../changelog.d/README.md) is for an artifact every
+  lane adds to; this file is raised on purpose). To raise it after coverage
+  improves, download the `money-coverage-summary` artifact from a green `main`
+  run and run
+  `node scripts/ci/money-test-ratchet.mjs coverage --update --summary <file>`:
+  it keeps the higher of each stored and measured figure and never lowers one.
+  A pull request that lowers it turns the job red (`--base-ref`, the branch the
+  pull request targets), so removing well-covered code is a visible decision.
+- **Measured** (5 Nov 2026, 498 files): lines 88.99%, statements 87.97%,
+  functions 89.29%, branches 82.01%. The floor holds 88, 87, 88 and 81: the
+  whole-percent floor of each, with a point more room on functions and branches,
+  where the margin to a whole number was under half a point (a CI reading 0.3
+  lower would otherwise sit under the floor). It was
+  measured on a development machine rather than in CI, so it is deliberately a
+  little loose until a green `main` run's artifact tightens it with `--update`
+  (and the bar is `main`'s own figure whenever one exists). The figure counts
+  only what the unit shards run. Real-database suites (`*.realdb.test.ts`) are skipped
+  there, so a module they alone exercise, such as `booking-ledger-back-post.ts`,
+  reads 0% however well they cover it. The summary's worst-files list is the
+  answer to "which money paths does no test reach".
+- **Locally**, without running the whole suite: coverage of a file only comes
+  from tests that import it, so `vitest related` over the money files measures
+  the same figure as the full run.
+
+  ```sh
+  pnpm exec vitest related --run --coverage --testTimeout=60000 $(node scripts/ci/money-test-ratchet.mjs list-files)
+  node scripts/ci/money-test-ratchet.mjs coverage
+  ```
+
+  This runs a large part of the suite (the disk-scanning censuses import money
+  modules too: 1,237 test files, about seventeen minutes on four cores) and a
+  census with its own explicit timeout can still fail under the load; the longer
+  `--testTimeout` covers the rest.
+
+### Mutation testing
+
+- **What it does.** [Stryker](https://stryker-mutator.io) changes the code a
+  little (flips a sign, drops a guard, moves a boundary) and runs the unit tests
+  against each change. A mutant the tests catch is *killed*; one they miss
+  *survived*, which is a place the code could be wrong with the suite still
+  green. `MUTATION_TARGET_GLOBS` in `scripts/lib/money-modules.mjs` names the
+  modules: the pure ledger planners (confirmation, edit, cancellation,
+  settlement, credit), the balance and posting-key helpers, the write door's
+  validators, and the cancellation, refund-method and edit-refund hand-back
+  arithmetic. They are the ones a fast unit test can kill; the Prisma-facing
+  `*-sync.ts` modules are exercised by real-database suites a mutation run has
+  no database for. `MUTATION_TEST_FILES` names the suites it runs, through
+  `vitest.stryker.config.mts`.
+- **When it runs.** `.github/workflows/money-mutation.yml`: nightly at 14:30 UTC
+  and on demand (`workflow_dispatch`), never on a pull request. It takes about
+  eight minutes.
+- **Where the report is.** Runs are listed at
+  <https://github.com/thatskiff33/AlpineClubBookingsNZ/actions/workflows/money-mutation.yml>;
+  the first nightly run after this merges produces the first report. Open a
+  run's `money-mutation-report` artifact (kept 30 days): `index.html` shows every
+  mutant in the source with its status, and `mutation.json` is the same data. The
+  job summary lists the score and each survivor by file and line. The recorded
+  score below is from a local run before the workflow existed.
+- **Locally.** `pnpm run mutation` runs the whole set;
+  `pnpm exec stryker run --mutate src/lib/booking-ledger-balance.ts` runs one
+  module (under a minute) and the report lands in `reports/mutation/`
+  (gitignored). Then `node scripts/ci/money-test-ratchet.mjs mutation` prints the
+  score and the survivors.
+- **The score is recorded and ratcheted** in the same baseline file:
+  `mutation.score` is the last recorded figure and `mutation.breakBelowPercent`
+  (one point under it) is Stryker's `thresholds.break`, so a run below it fails.
+  Raise both with
+  `node scripts/ci/money-test-ratchet.mjs mutation --update` after a run that
+  improved the score.
+- **Recorded score** (5 Nov 2026, 938 mutants): **78.04%**. 731 killed, 1 timed
+  out, 122 survived, 84 not covered by any test. By module: `booking-ledger-balance`,
+  `cancel-refund-method` 100%; `booking-ledger-cancellation-posting` 98.3%;
+  `-confirmation-posting` 92.5%; `-modification-posting` 92.4%;
+  `-settlement-posting` 86.6%; `-credit-posting` 86.8%; `-write` 85.5%;
+  `-posting-keys` 83.8%; `paid-cancellation-money` 76.7%;
+  `booking-ledger-charge-line` 55.2% (the survivors are narration strings and
+  the promotion line, which only the edit and cancellation suites reach);
+  `edit-refund-hand-back` 27.3%, 75 of its mutants reached by no test.
+
+### A model-based test of the ledger
+
+`src/lib/__tests__/booking-ledger-model.property.test.ts` drives the five pure
+ledger planners (confirmation, edit, cancellation, settlement, credit) with
+`fast-check`'s `commands` through random histories of booking, edit, payment,
+refund, credit and cancellation events, against an in-memory store that behaves
+like the write door. After **every** step it asserts the ledger identities
+against a model that holds only the events' own sums: `charged` is the stay as it
+stands (or what the club kept once cancelled), `settled` is captures less
+recorded refunds plus credit consumed less credit issued, per method, and
+`owed = charged + adjusted - settled`. It also asserts the structural rules the
+sums lean on (append-only, a reversal mirrors exactly the line it names and a
+line is reversed once, charge lines that still stand add up to `charged`) and
+that running every sync again, and re-posting every line ever posted, changes
+nothing. The seed is fixed (4459, as the provider round trips pin 4460 and 4461),
+nothing reads the clock, and it runs in about a second.
+
+Write a new event as a `Cmd` class with a `check` precondition and a `run` that
+goes through `step()`, so no command can skip the identities. A shrunk
+counterexample prints as the command list, for example
+`confirm(0 cents, promo -1),replay()`. The model is the specification: when a
+planner changes on purpose, change the model's sum, never the assertion to match
+the code.
 
 ## Shared setup
 
@@ -571,6 +910,10 @@ generalised.
    await shouldNotHaveWaited();
    expect(realElapsedMs(before)).toBeLessThan(20);
    ```
+
+   `pnpm run lint` reports a `Date.now()` stopwatch or deadline in a Vitest
+   file (`test-clock/no-date-now-elapsed`, #4462): `Date.now()` measured against
+   an earlier `Date.now()` reading held inline or in a plain variable.
 
    `process.hrtime.bigint()` is monotonic, so neither the freeze nor the canary's
    libfaketime shim touches it. `performance.now()` also stays real, but it is
@@ -1525,6 +1868,19 @@ A declared role is not a fix for a path a suite should never reach. #4013's H1
 case reached the remainder-note mint because its credit lots tied on the
 frozen clock; the cure was an explicit fixture chronology and a regression that
 names the path (`INV-PAY-127`), not a declaration that let the mint go further.
+
+### Proving provider calls run outside transactions
+
+Use `openClientTransactionsElsewhere` from
+`src/lib/__tests__/support/open-client-transactions.ts` at the fake provider
+callback. It checks other client backends in the disposable database, allowing
+up to one second for in-flight work to settle. A transaction awaiting that
+callback cannot commit during the probe and still fails. A nonzero result logs
+`pid`, `query`, `xact_start` and `application_name` for diagnosis (#4695).
+The intentionally held webhook connection can be excluded by its application
+name; PostgreSQL background workers are always excluded. Do not filter to a
+process: the file lock below already serialises suites, and a connection left
+behind by an earlier suite must remain visible.
 
 ### Realdb files take turns on the race database
 

@@ -1473,9 +1473,24 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // 128/390 -> 130/392: the central-server lane (#4262) merged, its two
     // pinned and two unpinned sites. RE-MEASURED with `pnpm run audit:census`
     // on the merged tree (main b7466a631, 27 Oct 2026), never added.
-    // 130/392 -> 130/393 (server onboarding, B2): the link dialog's `admin` row,
-    // on a finance-gated route, so outside the lodge-gated keep: unpinned.
-    ).toEqual({ pinned: 130, unpinned: 393 });
+    // 392 -> 393 unpinned (#4359): the card-refund re-send hold, unpinned `payment`.
+    // RE-MEASURED with `pnpm run audit:census`.
+    // 393 -> 396 unpinned (#4432): the two sync-now rows and the webhook threshold, unpinned `xero`.
+    // RE-MEASURED with `pnpm run audit:census`.
+    // 396 -> 398 unpinned (#4457): the retention settings and member-anonymisation rows.
+    // 398 -> 399 unpinned (#4533): the officer's finished-stay promo correction request.
+    // RE-MEASURED with `pnpm run audit:census`.
+    // 399 -> 400 unpinned (#4426): the late refund note's row, unpinned `xero`.
+    // RE-MEASURED with `pnpm run audit:census`.
+    // 400 -> 401 unpinned (#4655): the late organiser adjustment note's row, unpinned `xero`.
+    // RE-MEASURED with `pnpm run audit:census`.
+    // 401 -> 402 unpinned (#4680): the organiser adjustment run's stand-down row, unpinned `xero`.
+    // RE-MEASURED with `pnpm run audit:census`.
+    // 402 -> 403 unpinned (#4686): the lost-claim part-success's row, unpinned `xero`.
+    // RE-MEASURED with `pnpm run audit:census`.
+    // 403 -> 404 unpinned (triyder/AlpineClubBookingsNZ#97): the link dialog's `admin`
+    // row, on a finance-gated route, so outside the lodge-gated keep: unpinned.
+    ).toEqual({ pinned: 130, unpinned: 404 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {

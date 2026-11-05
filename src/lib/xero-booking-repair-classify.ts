@@ -34,7 +34,7 @@ import {
   resolveObjectFromCandidates,
 } from "./xero-booking-repair-object-resolution";
 import {
-  getCancellationCreditAmountCents,
+  cancellationCreditNoteTarget, getCancellationCreditAmountCents,
   getCashCancellationRefundCandidateCents,
   getExpectedSupplementaryInvoiceAsk,
   getKnownModificationRefundTotalCents,
@@ -87,9 +87,9 @@ import {
   scopedGiveBackNote,
   withoutScopedSideNotes,
 } from "@/lib/xero-booking-repair-side-notes";
-import { addUnallocatedCardAppliedCreditFindings, waitForAppliedCreditWorkBeforeClearing } from "./xero-booking-repair-applied-credit";
+import { addAppliedCreditFindings, waitForAppliedCreditWorkBeforeClearing } from "./xero-booking-repair-applied-credit";
 import { addKeptLateCaptureRefundByHandFinding, addLateCaptureCardRefundByHandFindings, addPaidAnotherWayReceiptFinding } from "./xero-booking-repair-paid-another-way";
-import { addUnrecordedAdditionalCaptureFindings } from "./xero-booking-repair-additional-capture";
+import { addKeptChangeCaptureFinding, addUnrecordedAdditionalCaptureFindings, keptInvoiceBillsChange } from "./xero-booking-repair-additional-capture";
 import { addRefundRequestNoteNotQueuedFindings, paidBackRefundRequestCents } from "./xero-booking-repair-request-notes";
 import { isRecordedBookingInvoicePayment } from "@/lib/xero-inbound/object-links";
 import { PART_PAYMENT_RECOGNISED_REASON } from "@/lib/part-payment-recognition-reason";
@@ -110,6 +110,7 @@ import {
   keptLateCaptureRecordRoute,
 } from "@/lib/late-capture-kept-xero-rules";
 import { compareLedgerRowsNewestFirst } from "@/lib/payment-ledger-order";
+import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 
 /**
  * #3643: a booking's invoice-clearing credit note create that still stands -
@@ -130,16 +131,17 @@ function isOutstandingClearingNoteCreate(operation: XeroOperationRecord): boolea
 /** A live clearing allocation: reported, never retried here or queued beside. */
 function addBlockedClearingAllocationFinding(
   findings: MutableFinding[],
-  operation: XeroOperationRecord
+  operation: XeroOperationRecord,
+  summary?: string // #4259: the clearing note's own row, held by a retry's repair claim
 ) {
   addFinding(findings, {
     code: "BLOCKED_BY_XERO_OPERATION",
     severity: "warning",
-    summary: ["FAILED", "PARTIAL"].includes(operation.status)
+    summary: summary ?? (["FAILED", "PARTIAL"].includes(operation.status)
       ? "A Xero invoice-clearing allocation operation failed and is not retried here - resolve it by hand so the cancelled unpaid booking's invoice closes."
       : isStuckOperation(operation)
         ? "A pending or running Xero invoice-clearing allocation operation looks stuck."
-        : "A Xero invoice-clearing allocation operation is already pending or running.",
+        : "A Xero invoice-clearing allocation operation is already pending or running."),
     safeToAutoApply: false,
     details: { operationId: operation.id, operationStatus: operation.status },
     actionKeys: [],
@@ -283,6 +285,22 @@ export function classifyBookingContext(
           paymentId: payment.id,
           manuallyMarkedPaidAt: payment.manuallyMarkedPaidAt,
         },
+        actionKeys: [],
+      });
+    } else if (payment && !primaryInvoice && paidByOrganiserInternetBanking(booking)) {
+      // #4299 B1 (`INV-PAY-148`): the organiser paid this place by internet
+      // banking, so its money sits on the organiser's combined invoice and the
+      // place has no invoice of its own BY DESIGN. Queuing a primary invoice
+      // would raise, and email the joiner, an awaiting-payment invoice for the
+      // whole place. Informational and action-free, like the arm above; the
+      // enqueue choke point refuses the same place.
+      addFinding(findings, {
+        code: "ORGANISER_SETTLED_ON_COMBINED_INVOICE",
+        severity: "info",
+        summary:
+          "The group organiser paid this place by internet banking; it is settled on the organiser's combined invoice, so no invoice of its own is expected.",
+        safeToAutoApply: false,
+        details: { paymentId: payment.id },
         actionKeys: [],
       });
     } else if (payment && !primaryInvoice) {
@@ -607,6 +625,8 @@ export function classifyBookingContext(
             },
             actionKeys: [action.key],
           });
+        } else if (!blockingOperation && keptInvoiceBillsChange(context, modification.id, capturedPaymentTransactions)) {
+          // #4324 (`INV-PAY-144`): a kept late capture's own invoice bills and records this change; never a second invoice.
         } else if (!blockingOperation && primaryInvoiceEditTimingRefusal) {
           /**
            * REPORTED, NEVER APPLIED, AND NEVER SILENTLY SKIPPED (#3199).
@@ -1471,7 +1491,7 @@ export function classifyBookingContext(
 
   if (payment) addUnsettledRefundCreditNoteFindings(findings, actionMap, booking.id, context.paymentRefundPaymentLinks, paymentOperations, paymentLinks);
   addRefundRequestNoteNotQueuedFindings({ findings, actionMap, context }); // #4231
-  addUnallocatedCardAppliedCreditFindings(findings, actionMap, context);
+  addAppliedCreditFindings(findings, actionMap, context); // #4220: and the early warning
   if (payment && refundCreditNote) {
     const refundAmountCents = getCashCancellationRefundCandidateCents(booking, paidBackRefundRequestCents(context), context.modificationOperationsById);
     if (refundAmountCents !== null && refundAmountCents > 0) {
@@ -1758,6 +1778,9 @@ export function classifyBookingContext(
             operation.status === "PARTIAL" &&
             operation.xeroObjectId === cancellationCreditNote.objectId
         );
+        // #4259: a RUNNING row naming this note is working on it now (a PARTIAL repair's claim): reported, never queued beside.
+        const repairingNoteOperation = bookingOperations.find((operation) => operation.entityType === "CREDIT_NOTE" &&
+          operation.operationType === "CREATE" && operation.status === "RUNNING" && operation.xeroObjectId === cancellationCreditNote.objectId);
         // #3635 (`INV-INT-025`): an officer who resolved the PARTIAL note in
         // Xero finished its allocations by hand. That is done: no retry, and no
         // fresh allocation queued below, which would be a second one beside
@@ -1766,8 +1789,8 @@ export function classifyBookingContext(
           partialNoteOperation && isResolvedInXero(partialNoteOperation)
         );
         // Only while a planned invoice still has no allocation link from this
-        // note: a repaired PARTIAL row stays PARTIAL, so its status alone
-        // would report a whole note as broken forever.
+        // note: a row repaired before #4259 stays PARTIAL until a retry closes
+        // it, so its status alone would report a whole note as broken forever.
         const partialNoteRetry =
           partialNoteOperation &&
           partialClearingNoteIsIncomplete(
@@ -1827,6 +1850,8 @@ export function classifyBookingContext(
           if (liveAllocation && liveAllocation.kind !== "resolved") {
             addBlockedClearingAllocationFinding(findings, liveAllocation.operation);
           }
+        } else if (repairingNoteOperation) {
+          addBlockedClearingAllocationFinding(findings, repairingNoteOperation, "A retry is working on this invoice-clearing credit note now; check again when it finishes.");
         } else if (partialNoteOperation && partialNoteRetry) {
           const action = addAction(
             actionMap,
@@ -2001,8 +2026,10 @@ export function classifyBookingContext(
             paymentXeroInvoiceId: payment.xeroInvoiceId,
             paymentLinks,
           }),
-        }) !== "kept-invoice"
+        }) !== "kept-invoice" && !keptLateCaptureInvoiceAsked(kept.operations)
       ) {
+        // #4324 (`INV-PAY-144`): decided by its change's evidence; one given a kept-capture invoice is retried below.
+        addKeptChangeCaptureFinding({ findings, actionMap, booking, payment, transaction, kept, found: context.keptChangeCaptures?.get(transaction.stripePaymentIntentId) });
         continue;
       }
       const { recordCents } = decideLateCapture({
@@ -2280,7 +2307,7 @@ export function classifyBookingContext(
             safeToAutoApply: true,
             payload: {
               paymentId: payment.id,
-              refundAmountCents: cancellationCreditAmountCents,
+              refundAmountCents: cancellationCreditAmountCents, ...cancellationCreditNoteTarget(booking), // #4685
             },
           });
           addFinding(findings, {

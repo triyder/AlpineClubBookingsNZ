@@ -1251,7 +1251,7 @@ test/demo mode or disabled:
 | `AUTH_SECRET`           | Auth.js session secret. Also the root of 2FA-secret and in-app provider-credential encryption (#2079) — use a strong value (>= 32 chars); rotating it is a planned maintenance event (see `DEPLOYMENT.md`). |
 | `NEXTAUTH_SECRET`       | Legacy Auth.js secret fallback; keep aligned with `AUTH_SECRET`. |
 | `NEXTAUTH_URL`          | Exact app origin, for example `http://localhost:3000`.           |
-| `SERVERNZ_DEFAULT_BASE_URL` | The Alpine Central Server this deployment pairs with, for example `https://central.example.org`; empty by default. Offered only: the setup page pre-fills its address field from it while no address is saved, and an administrator's Save stores it; the sync and the Request a Connection link read the saved address alone. Must be `https` on a public host, or it is ignored as if unset (#81). |
+| `SERVERNZ_DEFAULT_BASE_URL` | The Alpine Central Server this deployment pairs with, for example `https://central.example.org`; empty by default. Offered only: the setup page pre-fills its address field from it while no address is saved, and an administrator's Save stores it; the sync and the Request a Connection link read the saved address alone. Must be `https` on a public host, or it is ignored as if unset (triyder/AlpineClubBookingsNZ#81). |
 | `AUTH_TRUST_HOST`       | Set `true` behind trusted proxies/Compose.                       |
 | `CRON_SECRET`           | Shared secret for cron and deploy status endpoints.              |
 | `SEED_ADMIN_EMAIL`      | Email for the first seeded admin account.                        |
@@ -1264,8 +1264,11 @@ test/demo mode or disabled:
 | `DEMO_SECOND_LODGE`     | Local-only; set to `1` to also seed a second demo lodge (rooms + a few bookings) so two-lodge flows are demoable. Default demo dataset is unchanged when unset. |
 
 `prisma/seed.ts` fails before seeding if `SEED_ADMIN_EMAIL` or
-`SEED_ADMIN_PASSWORD` is unset, and fails before creating the lodge kiosk
-account if `SEED_LODGE_PASSWORD` is unset. The seeded admin is created with
+`SEED_ADMIN_PASSWORD` is unset, or if the lodge kiosk account is missing and
+`SEED_LODGE_PASSWORD` is unset. Before it writes anything, it checks the
+password of each account it is about to create against the public
+breached-password service and stops if one is listed (#4610); if the service
+cannot be reached, the password is accepted unchecked. The seeded admin is created with
 `role: ADMIN`, `canLogin: true`, `emailVerified: true`, and a `NOT_REQUIRED`
 membership subscription for the current season, and is forced through
 `/change-password` on first login. The seed also writes the normalized
@@ -1294,8 +1297,10 @@ the seed does not overwrite existing seasonal assignments.
 for disposable local demo databases and must never be run on a deployment host.
 It requires `ALLOW_DEMO_SEED=1`, refuses `NODE_ENV=production`, refuses
 non-local `DATABASE_URL` hosts, and refuses to run when the `Member` table
-contains any email outside `demo.alpineclub.test`. The demo seed then deletes
-demo plus transactional rows before rebuilding a broad sample dataset. The demo
+contains any email outside `demo.alpineclub.test`. It also refuses, before
+deleting anything, a database where a booking carries booking-ledger or journal
+lines: that history is never deleted (#4514), so recreate such a database instead. The demo seed then
+deletes demo plus transactional rows before rebuilding a broad sample dataset. The demo
 seed uses fake emails under `demo.alpineclub.test` and fake provider
 identifiers only. Set `DEMO_SEED_PASSWORD` to override the default local demo
 password.
@@ -2126,6 +2131,7 @@ the `security` category.
 | Require a number | off | on/off | `0–9` |
 | Require a symbol | off | on/off | any non-alphanumeric character |
 | Magic-link TTL (minutes) | 15 | 5–60 | Read by the magic-link sign-in flow (#2034). Shown on the Login & Security page's Email sign-in link card; editing the value from that page is a planned follow-up, so it is read-only there for now. |
+| Refuse passwords found in public data breaches | on | on/off | `breachedPasswordCheck` (#4610). Checks a newly chosen password against a public breached-password list; see [below](#breached-password-check-and-outbound-access). |
 
 The policy governs only the paths where a member **chooses** a password —
 `/change-password` and the reset/setup-invite redemption at `/reset-password`.
@@ -2142,6 +2148,25 @@ A public, unauthenticated endpoint (`GET /api/auth/password-policy`) discloses
 the active rules so the reset and change-password forms can show live hints and
 validate length client-side; disclosing the policy is standard and the server
 enforces it regardless.
+
+### Breached-password check and outbound access
+
+With **Refuse passwords found in public data breaches** on (the default), the
+same set-time paths, plus an officer setting a kiosk password under Lodge
+settings, refuse a password that a public breached-password service lists
+(#4610, `INV-AUTH-006`). Only the first five characters of the password's
+SHA-1 hash are sent; the match is made on the server.
+
+#### Outbound network access
+
+The check makes an HTTPS `GET` from the app server to
+`https://api.pwnedpasswords.com/range/<5 hex characters>`. No key or
+environment variable is needed. A deployment whose firewall or proxy restricts
+outbound traffic must allow HTTPS to `api.pwnedpasswords.com`, or switch the
+setting off. If the host cannot be reached, or does not answer within three
+seconds, the password is accepted and a warning is logged, so a blocked host
+weakens the check without stopping anyone setting a password. Details and
+stated limits: [`docs/SECURITY.md`](docs/SECURITY.md#breached-password-check-4610).
 
 ## Two-Factor Authentication
 
@@ -2523,6 +2548,26 @@ Existing env-configured deployments upgrading past #2079 must re-enter Xero
 credentials in-app and reconnect Xero — see the **upgrade runbook** in
 `DEPLOYMENT.md`.
 
+## GST treatment (member-money ledger)
+
+The club's GST treatment is a database setting, `ClubTaxSettings`
+(`INV-CONFIG-007`, #4626). It records three things: whether the club is
+GST-registered, the rate in basis points (1500 is 15%), and the club date it
+applies from. There is no environment variable and, for now, no screen.
+
+- **Default.** With no row, the club is GST-registered at 15% from 1 October
+  2010, with GST included in every price. That is the treatment the Xero
+  invoices already show (the inclusive `OUTPUT2` code), so a deployment that
+  never sets it records charges exactly as it invoices them.
+- **Who reads it.** Only the member-money ledger, which splits tax out of each
+  charge in whole cents. Xero does not read it yet: its documents still
+  hard-code the inclusive 15% code until #4632.
+- **Nothing writes it yet,** on purpose. Changing it before Xero reads it would
+  give the ledger and the invoices two different answers, so a census fails on
+  any code that writes the row. A club that is not GST-registered needs the
+  screen #4632 brings before the ledger starts recording its booking charges
+  (M3b). Until then the ledger posts nothing for any club.
+
 ## Finance dashboard
 
 ### Membership and joining fee authority
@@ -2787,3 +2832,10 @@ straight after one.
 Public forks should keep live provider credentials out of GitHub Actions. Use
 Stripe test mode, Xero demo tenants, SES sandbox credentials, and non-production
 databases for validation.
+
+The status board reads one repository variable (Settings, then Secrets and
+variables, then Actions):
+
+| Variable | Description |
+| --- | --- |
+| `STATUS_BOARD_ISSUE` | Optional. The number of the issue whose body `.github/workflows/status-board.yml` overwrites hourly with the generated lane status board (#4464). Only the repository owner can set it. While it is unset the job exits with a notice and writes nothing; it also refuses an issue that is a pull request or whose body is neither empty nor an earlier board. |
