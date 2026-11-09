@@ -348,8 +348,12 @@ elsewhere never stops a member setting a password or finishing setup.
 `passwordHash` writer under `src/`, `prisma/` and `scripts/`: property writes,
 and raw-SQL `INSERT` or `UPDATE` literals naming the column. A writer must
 either be guarded — a `const` bound to the awaited `screenChosenPassword`
-result, then an `if (!result.ok)` that returns, both in a block enclosing the
-write and before it, where the screened argument and the written hash's
+result (a conditional, `||` or `??` chain must screen on every branch, or leave
+the unscreened one to a write inside a matching `if` or ternary arm, as in
+`password ? await screen(password) : { ok: true }` guarded by `if (password)`;
+the matching test names only stable values: an unreassigned `const`, a
+parameter or a literal), then an `if (!result.ok)` that returns, both in a block
+enclosing the write and before it, where the screened argument and the written hash's
 `bcrypt.hash` input resolve to the same unreassigned `const` or parameter, and
 the call does not switch the check off — or be listed as exempt with its reason (placeholders, imports,
 erasure, the local demo seed and SQL fixtures store generated or unusable
@@ -361,10 +365,21 @@ exemption cannot come to cover a typed password. A writer that stores a
 parameter, or copies the `passwordHash` of an object built in the same
 function, names the writer that produced the value (`valueFrom`), which must
 be screened or traced to a generated value; a copy counts only when its object
-was built by a generated or screened writer. Only the local demo seed is
-listed as untraced. A new
+was built by a generated or screened writer and nothing changes that object
+afterwards (a write, an alias that writes, or any call that receives it or one
+of its elements; a read-only array method that calls back with the elements is
+exempt only when given an inline function that does not read `arguments`,
+whose element and array parameters are followed as aliases; a named one is a
+hand-over). A screen likewise stops counting
+when, after it, an alias or a call changes the screened object, and for a write
+inside a loop, anywhere in that loop, or inside a function, anywhere after the
+function is made; a function declaration can run before the screen, so a screen
+outside it never counts. Only the local
+demo seed is listed as untraced. A new
 writer in neither list fails the build. It cannot see SQL assembled by
-concatenating separate literals or read from a `.sql` file at run time.
+concatenating separate literals or read from a `.sql` file at run time, or a
+change made while an earlier call is suspended (`const p = save(...);
+Object.assign(b, ...); await p`): there is no async-flow analysis (#4764).
 
 **Stated limits.**
 
@@ -525,6 +540,124 @@ tokens from before it, or ones not minted by the app.
 member change- and reset-password routes do, so `isRevokedMemberSession` ends
 every kiosk session issued before the rotation at its next refresh, whatever
 window it holds. `admin-lodge-route.test.ts` feeds the written row to that rule.
+
+## Data-encryption key ring (#4456)
+
+Audience: Operator, Developer.
+
+**The threat.** `AUTH_SECRET` signs every session. Before #4456 it was also the
+root of every key protecting data at rest — the integration credentials (Xero,
+Stripe, Google, backup, AI and Alpine Central Server keys, the Xero token set),
+members' authenticator-app secrets and the two-factor code hashes. One leaked
+value therefore let someone forge an admin session **and** decrypt every
+stored credential from a backup, and the secret could not be rotated after a
+leak without destroying all of that data.
+
+**The design.** `DATA_ENCRYPTION_KEYS` holds a ring of 32-byte keys, one module
+(`src/lib/data-encryption-keys.ts`) is the only source of them, and sessions
+keep `AUTH_SECRET`. The operator view is in
+[`CONFIGURATION.md`](../CONFIGURATION.md#data-encryption-keys-4456); the rules
+the code holds to are:
+
+- **A write uses the current (first) key**, recorded on the row: a
+  credential's `secretSource` becomes `DATA_ENCRYPTION_KEY:<id>` (label
+  `integration-credential:v2`), an authenticator secret is `v2:<id>:…`, a code
+  hash is `<id>:<hex>`. No schema change; nothing old is rewritten.
+- **A read uses the key its row names and no other.** Keys are never tried in
+  turn, so there is one deterministic answer, and a row naming a key the
+  deployment no longer holds is the existing "needs re-entry" state, not a
+  guess or a crash.
+- **Each use has its own HKDF-SHA256 sub-key** of a ring key (credentials,
+  authenticator secrets, code hashes), so no two uses share key material.
+- **With no ring set, nothing stored changes**: the auth secret is the current
+  key and every format is byte-for-byte what it was. That is what makes the
+  release safe to deploy blue/green. Only the setup step differs: red while a
+  credential or an authenticator secret is stored under the auth secret alone,
+  so `setup:check` exits 1 until a key is set.
+- **A bad ring fails closed.** Any malformed, short, single-byte, duplicate-id
+  or duplicate entry makes the whole ring invalid, and so does a key that is
+  the auth secret (its text, or its bytes as base64, hex or UTF-8) or one whose
+  bytes are all printable ASCII (a password). Readiness (`/api/health/ready`)
+  fails, capture refuses, ring rows report "cannot be read", rows still on the
+  auth secret stay readable, and setup readiness goes red naming the entry —
+  never its value.
+- **No write falls back to the auth secret over ring data.** While no ring is
+  set but a credential, authenticator secret or recovery code names a ring key,
+  credential capture, the Xero refresh, two-factor enrolment and recovery-code
+  replacement refuse (`data-encryption-legacy-write-guard.ts`), so a lost ring
+  never quietly puts new secrets back under the auth secret. The setup step's
+  "ring missing" verdict reads the same predicate. Email codes and sign-in
+  challenges live minutes and leave nothing behind, so they are still issued.
+- **No key material is logged.** Errors and readiness name an id or a position
+  only, a key object prints as its id, and a spread copy of it carries no
+  material.
+
+**Recovery codes at cut-over.** A keyed hash cannot be re-keyed, so recovery
+codes issued under the auth secret stop working the moment a ring is set. The
+owner chose this over keeping the auth secret in the ring for them (decision
+of 1 Nov 2026 on #4456): it lets the auth secret leave the data path entirely.
+A member still holding such codes is told on the sign-in challenge and on their
+profile to generate a new set. Under the ring they are only refused, so an
+instance started without it would accept them;
+`pnpm run data-keys:reencrypt --expect-fingerprint <fingerprint from Admin → Setup> --retire-legacy-recovery-codes` rewrites each one
+so that no release accepts it, and keeps it unused so the notice still shows
+([`TOKEN_HASHING.md`](TOKEN_HASHING.md#keyed-code-hashes-and-the-data-encryption-key-ring-4456)).
+
+**Moving rows off the auth secret.** `pnpm run data-keys:reencrypt` re-encrypts
+every credential and authenticator secret not under the ring's current key,
+one row per short transaction, through the writers that already own each row:
+the credential store's compare-and-set (audited as the named
+`data-key-reencrypt` job, `INV-PRIV-020`), and a claim on the exact stored
+value for an authenticator secret (audited as
+`security.two_factor.secret_rewrapped`). A concurrent writer wins and the row is
+retried. The Xero token set is moved only while no refresh holds its lease, so
+a refresh that has spent its token at Xero always saves the new one
+([`CONCURRENCY_AND_LOCKING.md`](CONCURRENCY_AND_LOCKING.md#the-data-key-re-encrypt-joins-the-row-claims-and-takes-no-advisory-key-4456)).
+It prints counts and key ids only: an unexpected error is reported by its class
+and code, because a database error's message can echo the row it failed on.
+Because its ring comes from its own environment (and `.env` fills anything not
+exported), a run that writes needs `--expect-fingerprint`, copied from Admin →
+Setup's fingerprint of the app's current key in the browser, and refuses unless
+its own target key has it; this also stops a stale ring whose first key is an
+older one from moving rows back. Only the running app's page shows that
+fingerprint: `setup:check` reads the same shell environment as the command, so
+it calls its key "this shell's key" and prints none, and the command's own
+output prints its fingerprint only as something to compare. A value that is
+not fingerprint-shaped is refused without being repeated, in case a key was
+pasted. As a second guard it decrypts a row already stored under the target id
+and refuses if that fails. Setup stays amber while a credential or an
+authenticator secret is under an older ring key, so a key is removed only once
+none names it (recovery codes under it are retired with it). The fingerprint is 64 bits
+of SHA-256 over a fixed domain label and the key, used for nothing else, so it
+says nothing usable about a 256-bit key and is never a sub-key or a hash the
+app stores.
+
+**Retiring the legacy key.** Until `DATA_ENCRYPTION_LEGACY_KEY=retired` is set,
+a row naming the auth secret is still READ under it, so someone holding a leaked
+auth secret and write access to the database could plant a credential or an
+authenticator secret the app would accept. Once the re-encrypt reports nothing
+left, the switch refuses those reads: the auth secret then signs sessions and
+links and nothing else. It is a read switch only; the ring already decides every
+write. Set without a ring, or to any other value, it fails readiness and refuses
+writes rather than letting the auth secret back in
+([`DEPLOYMENT.md` → Retiring the legacy key](../DEPLOYMENT.md#retiring-the-legacy-key-4456)).
+
+**Stated limits.**
+
+- Rows written before the ring stay readable under `AUTH_SECRET` until the
+  re-encrypt moves them and the legacy-read switch is set; until then the
+  current auth secret reads them. Both are operator steps, so a club that sets
+  a ring and stops there keeps that coupling for its old rows.
+- The re-encrypt retries a row that lost its claim a bounded number of times
+  (three passes, two seconds apart), then reports it and exits 2; running it
+  again moves it.
+- An older release cannot read ring rows, so the variable must not be set until
+  the previous release has drained (the runbook's first step).
+- The keys live in the environment of each app container, like `AUTH_SECRET`;
+  a host compromise exposes them. A cloud KMS was rejected as the default
+  because clubs self-host on one server; the ring leaves room for one later.
+- Authenticator secrets carry no row binding (no GCM associated data), as
+  before; credentials keep theirs (`provider:key:label`).
 
 ## Dietary/allergy information (special-category data)
 

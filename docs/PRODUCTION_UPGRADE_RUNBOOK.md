@@ -1766,6 +1766,19 @@ a `v0.9.0`-era tag straight to `v0.10.0` does not need this check.
   captured amounts, and refunds/credits should read identically to before the
   upgrade.
 
+### 3.4a Data-encryption key cut-over, when the owner chooses (#4456)
+
+Not part of the upgrade itself: nothing changes until `DATA_ENCRYPTION_KEYS` is
+set, and these are the owner's production steps. In order, each in
+[`DEPLOYMENT.md` → Adding a data-encryption key](../DEPLOYMENT.md#adding-a-data-encryption-key-4456):
+set the ring once the previous release has drained; run
+`pnpm run data-keys:reencrypt --dry-run`, then
+`pnpm run data-keys:reencrypt --expect-fingerprint <fingerprint> --retire-legacy-recovery-codes`,
+with the fingerprint Admin → Setup → "Data Encryption Key" shows, until it reports
+`remaining on old keys: 0` for both tables; then, with Admin → Setup → "Data
+Encryption Key" green, set `DATA_ENCRYPTION_LEGACY_KEY=retired` and redeploy.
+Only then rotate `AUTH_SECRET`, if that is the goal.
+
 ### 3.5 Manual E2E-critical journeys
 
 Drive each critical journey by hand against the live site
@@ -1877,6 +1890,20 @@ rows as an owner-approved data operation (see below).
   backup. Nothing reads those labels — that is why the drop is safe — so this is a
   record-keeping loss, not a behavioural one, with the single fail-closed exception
   named in §2.4.1's rollback boundary.
+
+- **Data written under a data-encryption key (#4456).** Once
+  `DATA_ENCRYPTION_KEYS` is set and the new colour or the cron leader has
+  written a credential, an authenticator secret or a recovery code under it,
+  re-pointing Caddy to a colour started without the ring, rolling back to a
+  release older than #4456, or unsetting the variable leaves those rows
+  unreadable (credentials need re-entry, authenticators stop verifying,
+  recovery codes stop matching), and makes the recovery codes issued before the
+  ring work again there unless `pnpm run data-keys:reencrypt
+  --expect-fingerprint <fingerprint from Admin → Setup> --retire-legacy-recovery-codes`
+  has retired them. Keep the
+  ring set and go forward
+  ([`DEPLOYMENT.md` → Adding a data-encryption key](../DEPLOYMENT.md#adding-a-data-encryption-key-4456));
+  the pre-deploy backup is the only route back to a ring-less state.
 
 If a rollback becomes necessary, capture evidence, re-point to the old color to
 restore service, and escalate to the owner before any data-repair action.
