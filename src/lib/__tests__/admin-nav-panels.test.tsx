@@ -29,7 +29,6 @@ vi.mock("next/navigation", () => ({
 }));
 
 import {
-  ADMIN_NAV_SECTION_ORDER,
   AdminSidebar,
   getPanelAdminNavSections,
   getVisibleAdminNavSections,
@@ -164,21 +163,21 @@ describe("which panels a person is offered (#108)", () => {
 
 describe("panel contents (#108)", () => {
   it("names only catalogue sections and catalogue pages", () => {
+    const catalogue = getVisibleAdminNavSections(CLUB_DAY, allOn);
+    const catalogueLabels = catalogue.map((section) => section.label);
     const catalogueHrefs = new Set(
-      getVisibleAdminNavSections(CLUB_DAY, allOn).flatMap((section) =>
-        section.items.map((item) => item.href),
-      ),
+      catalogue.flatMap((section) => section.items.map((item) => item.href)),
     );
     for (const key of ADMIN_NAV_PANEL_KEYS) {
       const panel = ADMIN_NAV_PANELS[key];
       if (panel.sections !== "all") {
         for (const label of panel.sections) {
-          expect(ADMIN_NAV_SECTION_ORDER).toContain(label);
+          expect(catalogueLabels).toContain(label);
         }
       }
       for (const entry of panel.borrowed) {
         expect(catalogueHrefs).toContain(entry.href);
-        expect(ADMIN_NAV_SECTION_ORDER).toContain(entry.into);
+        expect(catalogueLabels).toContain(entry.into);
       }
     }
   });
