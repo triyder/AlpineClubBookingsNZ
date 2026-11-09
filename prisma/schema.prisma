@@ -3310,7 +3310,7 @@ model PaymentTransaction {
   insertionSeq          Int                    @default(autoincrement())
   updatedAt             DateTime               @updatedAt
 
-  payment            Payment                    @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  payment            Payment                    @relation(fields: [paymentId], references: [id], onDelete: Restrict)
   refunds            PaymentRefund[]
   recoveryOperations PaymentRecoveryOperation[]
 
@@ -3341,7 +3341,7 @@ model PaymentRefund {
   updatedAt              DateTime  @updatedAt
 
   payment            Payment             @relation(fields: [paymentId], references: [id], onDelete: Restrict)
-  paymentTransaction PaymentTransaction? @relation(fields: [paymentTransactionId], references: [id], onDelete: SetNull)
+  paymentTransaction PaymentTransaction? @relation(fields: [paymentTransactionId], references: [id], onDelete: Restrict)
 
   @@index([paymentId, createdAt])
   @@index([paymentTransactionId])
@@ -3430,7 +3430,7 @@ model PaymentRecoveryOperation {
 
   booking            Booking             @relation(fields: [bookingId], references: [id], onDelete: Restrict)
   payment            Payment             @relation(fields: [paymentId], references: [id], onDelete: Restrict)
-  paymentTransaction PaymentTransaction? @relation(fields: [paymentTransactionId], references: [id], onDelete: SetNull)
+  paymentTransaction PaymentTransaction? @relation(fields: [paymentTransactionId], references: [id], onDelete: Restrict)
 
   @@index([bookingId])
   @@index([paymentId])
@@ -4292,12 +4292,14 @@ model IntegrationCredential {
   ciphertext   String
   iv           String
   authTag      String
-  // Which auth-secret env var the wrapping key was derived from at write time
-  // (AUTH_SECRET | NEXTAUTH_SECRET) — a silent fallback flip stays diagnosable
-  // without ever exposing the value.
+  // What wrapped the row at write time, never a value: the auth-secret env var
+  // its key was derived from (AUTH_SECRET | NEXTAUTH_SECRET, so a silent
+  // fallback flip stays diagnosable), or "DATA_ENCRYPTION_KEY:<id>" for a row
+  // under that DATA_ENCRYPTION_KEYS ring key (#4456).
   secretSource String
   // HKDF info-label version used to derive the wrapping key, e.g.
-  // "integration-credential:v1" / "xero-token-key:v1".
+  // "integration-credential:v1" (auth secret), "integration-credential:v2"
+  // (a ring key, #4456) / "xero-token-key:v1" (retired).
   labelVersion String
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
@@ -9054,6 +9056,7 @@ model MemberMoneyJournal {
   sources MemberMoneySourceLink[]
   obligations MemberMoneyObligation[]
   applications MemberMoneyApplication[]
+  refundReservations MemberMoneyRefundReservation[]
 }
 
 model MemberMoneySourceLink {
@@ -9130,6 +9133,7 @@ model MemberMoneyObligation {
   lines MemberMoneyLine[]
   applications MemberMoneyApplication[]
   @@index([journalId])
+  refundReservations MemberMoneyRefundReservation[]
   /// Member hard delete counts the obligations naming a debtor (#4514).
   @@index([memberId])
 }
@@ -9148,6 +9152,7 @@ model MemberMoneyApplication {
   reverses MemberMoneyApplication? @relation("MemberMoneyApplicationReversal", fields: [reversesApplicationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   reversedBy MemberMoneyApplication? @relation("MemberMoneyApplicationReversal")
   @@index([journalId])
+  reservationReleases MemberMoneyRefundReservationRelease[]
   @@index([sourceLineId])
   @@index([obligationId])
 }
@@ -9162,4 +9167,42 @@ model MemberMoneySourcePosting {
   line MemberMoneyLine @relation(fields: [lineId, journalId], references: [id, journalId], onDelete: Restrict, onUpdate: Restrict)
   @@unique([sourceLinkId, lineId])
   @@index([lineId, journalId])
+}
+
+/// M4a: a durable claim on a refund family, using Stripe's attempt key verbatim.
+model MemberMoneyRefundReservation {
+  id String @id @default(cuid())
+  attemptKey String @unique
+  obligationId String
+  stripePaymentIntentId String
+  paymentTransactionId String
+  amountCents Int
+  fundingJournalId String
+  createdAt DateTime @default(now())
+  obligation MemberMoneyObligation @relation(fields: [obligationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  fundingJournal MemberMoneyJournal @relation(fields: [fundingJournalId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  release MemberMoneyRefundReservationRelease?
+  @@index([obligationId, stripePaymentIntentId], map: "mm_refund_reservation_obligation_capture_idx")
+  @@index([fundingJournalId])
+}
+
+enum MemberMoneyRefundReservationReleaseReason {
+  ANSWERED
+  REFUSED
+  SUPERSEDED_KEY
+  CLOSED_WITHOUT_REFUND
+  OPERATOR
+}
+
+/// Releases append evidence; neither the reservation nor its funding is edited.
+model MemberMoneyRefundReservationRelease {
+  id String @id @default(cuid())
+  reservationId String @unique
+  reason MemberMoneyRefundReservationReleaseReason
+  stripeRefundId String?
+  applicationId String?
+  createdAt DateTime @default(now())
+  reservation MemberMoneyRefundReservation @relation(fields: [reservationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  application MemberMoneyApplication? @relation(fields: [applicationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  @@index([applicationId])
 }

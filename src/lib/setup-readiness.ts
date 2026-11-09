@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { bookableAgeTierEnum } from "@/lib/age-tier-schema";
 import { isHttpUrl } from "@/lib/http-url";
+import { adminTabHref } from "@/lib/admin-hubs";
 import {
   CLUB_TIME_ZONE_FALLBACK,
   CLUB_TIME_ZONE_MAX_LENGTH,
@@ -44,6 +45,8 @@ import {
   detectLegacyProviderEnv,
 } from "@/lib/xero-config";
 import { authSecretWeaknessReason } from "@/lib/integration-crypto";
+import { DATA_ENCRYPTION_KEYS_ENV, DATA_ENCRYPTION_LEGACY_KEY_ENV } from "@/lib/data-encryption-key-material";
+import { buildDataEncryptionKeyCheck, type DataKeyRingSource, type DataKeyUsageSnapshot } from "@/lib/setup-readiness-data-keys";
 
 export const SETUP_STEP_IDS = [
   "club-config",
@@ -51,6 +54,7 @@ export const SETUP_STEP_IDS = [
   "environment-role",
   "runtime-env",
   "auth-secret-strength",
+  "data-encryption-keys",
   "seed-admin",
   "feature-flags",
   "booking-policies",
@@ -221,6 +225,8 @@ export interface SetupDatabaseSnapshot {
   // created before #3407, imported without settings, or cleared to no capacity
   // took no booking with nothing saying so. Undefined when not checked.
   lodgesNotSetUpForBookings?: string[];
+  /** Stored data by the key each row names (#4456). Undefined when not checked. */
+  dataKeyUsage?: DataKeyUsageSnapshot;
 }
 
 /*
@@ -1456,9 +1462,9 @@ function buildMembershipCancellationCheck(
         required: false,
         message: "Membership cancellation settings were not checked.",
         details: [
-          "Review this in /admin/setup/cancellation after migrations have run.",
+          "Review this on the Settings tab of Membership Cancellations after migrations have run.",
         ],
-        href: "/admin/setup/cancellation",
+        href: adminTabHref("membership-cancellations", "settings"),
       },
       progress,
     );
@@ -1483,7 +1489,7 @@ function buildMembershipCancellationCheck(
           db.membershipCancellationArchiveContacts ? "enabled" : "disabled"
         }`,
       ],
-      href: "/admin/setup/cancellation",
+      href: adminTabHref("membership-cancellations", "settings"),
     },
     progress,
   );
@@ -2145,6 +2151,8 @@ export function buildSetupReadiness(
      * gives no warning.
      */
     xeroBaseCurrency?: string | null;
+    /** Whose data-encryption ring `env` is (#4456): `app` only from the app's own route; default `shell`. */
+    dataKeySource?: DataKeyRingSource;
   } = {},
 ): SetupReadiness {
   const env = input.env ?? process.env;
@@ -2159,6 +2167,7 @@ export function buildSetupReadiness(
       buildEnvironmentRoleCheck(input.database, progress),
       buildRuntimeEnvCheck(env, progress),
       buildAuthSecretStrengthCheck(env, progress),
+      applyProgress(buildDataEncryptionKeyCheck(readEnv(env, DATA_ENCRYPTION_KEYS_ENV), input.database?.dataKeyUsage, readEnv(env, "AUTH_SECRET") ?? readEnv(env, "NEXTAUTH_SECRET"), readEnv(env, DATA_ENCRYPTION_LEGACY_KEY_ENV), input.dataKeySource ?? "shell"), progress),
       buildSeedAdminCheck(input.database, progress),
       buildFeatureFlagCheck(input.database, progress),
     ],

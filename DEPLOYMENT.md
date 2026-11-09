@@ -1772,11 +1772,14 @@ shows a "no longer used — re-enter in-app, then remove from the environment"
 warning) and then removes the variables from the environment.
 
 **Encryption-key coupling:** backup credentials are wrapped with a key derived
-from `AUTH_SECRET`/`NEXTAUTH_SECRET` (HKDF-SHA256). Rotating that secret makes
-stored credentials undecryptable, so the nightly backup fails **loudly** — it
-records a `FAILURE` cron run and an error Sentry check-in (never a silent skip),
-and the Backups page shows a "re-enter credentials" banner. Re-enter the S3
-credentials in-app after any auth-secret rotation.
+from `AUTH_SECRET`/`NEXTAUTH_SECRET` (HKDF-SHA256), or, once
+`DATA_ENCRYPTION_KEYS` is set and they are re-saved, from that ring key instead
+([Adding a data-encryption key](#adding-a-data-encryption-key-4456)). Losing
+the key they are under (rotating the auth secret while they are still on it,
+or removing or unsetting their ring key) makes them undecryptable, so the
+nightly backup fails **loudly** — it records a `FAILURE` cron run and an error
+Sentry check-in (never a silent skip), and the Backups page shows a "re-enter
+credentials" banner. Re-enter the S3 credentials in-app after that.
 
 Do not treat local backup files as durable. The production Docker service runs
 with `read_only: true` and mounts `/tmp` as tmpfs, but `/tmp/tacbookings-backups`
@@ -2016,9 +2019,208 @@ web slot is observed by the cron-leader within the credential cache TTL
 (30–60s), no restart required. Analytics is off for the same kind of gap — from
 the deploy until the measurement id is saved.
 
+### Adding a data-encryption key (#4456)
+
+`DATA_ENCRYPTION_KEYS` moves stored provider credentials and authenticator
+secrets off `AUTH_SECRET`, so the auth secret can afterwards be rotated (or
+replaced after a leak) without losing them. The variable, its format and its
+rules are in [`CONFIGURATION.md` → Data-encryption keys](CONFIGURATION.md#data-encryption-keys-4456).
+Production operator steps are the owner's.
+
+1. **Drain the previous release first.** A release older than #4456 cannot read
+   data written under a data key, so deploy this release with the variable
+   still unset and wait until no container runs the old one (blue/green: the
+   old slot has stopped).
+2. **Generate and store a key**: `openssl rand -base64 32`. Keep it with the
+   database backups' secrets, but **not in the same place as the backups
+   themselves** — a backup plus its key decrypts every stored credential.
+3. **Set** `DATA_ENCRYPTION_KEYS=<id>:<key>` (for example `k2026:...`) in the
+   environment and redeploy. From then on every new credential save,
+   authenticator enrolment, Xero token refresh and two-factor code uses it.
+4. **Tell members about recovery codes.** Recovery codes issued before this step
+   stop working now (owner decision on #4456). Members holding them see a
+   notice on the sign-in challenge and their profile telling them to generate a
+   new set; an admin should regenerate their own straight away. Until step 5
+   retires them in the database they are only refused, so they **work again on
+   any instance without the ring** (the previous colour during this redeploy,
+   or anywhere the variable is unset).
+5. **Move what is still on `AUTH_SECRET`, and retire the old recovery codes**,
+   once no container runs without the ring. Copy the fingerprint Admin → Setup
+   → "Data Encryption Key" shows for the current key, run
+   `pnpm run data-keys:reencrypt --dry-run`, then
+   `pnpm run data-keys:reencrypt --expect-fingerprint <that fingerprint> --retire-legacy-recovery-codes`
+   ([Moving stored data to the current key](#moving-stored-data-to-the-current-key-4456)).
+   It refuses unless its own key has that fingerprint. Run it again until it
+   reports `remaining on old keys: 0` for both tables.
+6. When Admin → Setup → "Data Encryption Key" is **green**, nothing stored
+   depends on `AUTH_SECRET`; rotating it now only signs everyone out and
+   invalidates links signed with it. To stop the app reading anything under it
+   at all, set `DATA_ENCRYPTION_LEGACY_KEY=retired`
+   ([Retiring the legacy key](#retiring-the-legacy-key-4456)).
+
+**Once rows are written under the ring, there is no going back without it.**
+Data written under a data key can only be read by a container that holds that
+key. So:
+
+- during the redeploy that sets the variable, the previous colour (the same
+  release, started without the ring) cannot read rows the new colour or the
+  recreated cron leader has already written — a Xero token refresh, a saved
+  credential, a member enrolling an authenticator or regenerating recovery
+  codes. Set it in a quiet window and expect that colour to show "needs
+  re-entry" or refuse those members' codes until traffic has moved;
+- rolling back to a release older than #4456, routing Caddy back to a colour
+  started without the ring, or unsetting the variable strands every
+  ring-keyed credential, authenticator secret and recovery code (the setup
+  step goes red and says so, and credential capture, two-factor enrolment and
+  recovery-code regeneration refuse rather than quietly saving under
+  `AUTH_SECRET`; short-lived email codes are still issued). The same instance
+  accepts the recovery codes issued before the ring again, unless the
+  re-encrypt has retired them in the database (step 5). If the old key is lost
+  for good, set a new one and re-enter the credentials and re-enrol the
+  authenticators it held.
+
+**The safe sequence if that deploy fails:** once the engine has recreated the
+cron leader with the ring (it does so before the step-16 warm-up gate), keep
+the ring set and either let the deploy complete or redeploy the same release
+with it; never route traffic back to a colour without it. If you must roll
+back to an older release, restore the ring-less state from the pre-deploy
+backup instead, as an owner-approved data operation.
+
+**Adding a newer key later: two redeploys, never one.** A colour reads only the
+keys its own ring lists, so putting the new key first in one step repeats the
+first cut-over's overlap: during that redeploy the previous colour (ring
+`k2026` alone) cannot read what the new colour writes under `k2027`. Instead:
+
+1. Add the new key **second**: `DATA_ENCRYPTION_KEYS=k2026:<old>,k2027:<new>`,
+   and redeploy. Writes stay on `k2026`; both colours read everything.
+2. Once no container runs without `k2027`, promote it:
+   `DATA_ENCRYPTION_KEYS=k2027:<new>,k2026:<old>`, and redeploy. New writes use
+   `k2027`; the previous colour already holds it, so it reads them.
+3. Once that redeploy has finished, move the rows still on the old key with
+   `pnpm run data-keys:reencrypt --expect-fingerprint <fingerprint from Admin → Setup>`,
+   taking the fingerprint Admin → Setup now shows for `k2027`. A command still holding
+   the step-1 ring (`k2026` first) refuses, rather than moving the app's
+   `k2027` rows back to `k2026`.
+4. Remove the old entry only once Admin → Setup → "Data Encryption Key" shows
+   **no provider credential or authenticator secret under it**; until then the
+   step stays amber and names them. Removing a key any earlier strands every
+   such row. Unused recovery codes under it are listed but do not hold the step
+   amber: they cannot be moved, and removing the key retires them (their
+   members are told to generate a new set).
+
+#### Moving stored data to the current key (#4456)
+
+`pnpm run data-keys:reencrypt` re-encrypts every stored provider credential and
+authenticator-app secret that is not under the **first** key of
+`DATA_ENCRYPTION_KEYS` (whether under `AUTH_SECRET` or an older ring key) under
+that key, unchanged. Run it from a checkout of the deployed release with the
+running release's `DATABASE_URL`, `AUTH_SECRET` and `DATA_ENCRYPTION_KEYS`:
+without the auth secret it cannot read what is still under it. Production runs
+are the owner's.
+
+**Where its settings come from.** The command loads `.env` from the directory
+it is run in, for every variable not already exported in the shell; an
+exported value always wins. A stale `.env` in that directory can hand it a ring
+that is not the app's: the right id with the wrong bytes, which would
+re-encrypt everything under a key the app does not hold, or an old ring whose
+first key is the app's previous one, which would move the app's newer rows
+back. Two checks stop that:
+
+- **A run that writes needs `--expect-fingerprint`**, copied from Admin →
+  Setup → "Data Encryption Key" **in the browser**, which shows the running
+  app's current key's fingerprint (a one-way hash, never the key). Never take
+  it from `pnpm run setup:check` or from this command's own output: both read
+  this shell's environment and `.env`, the very ring being checked, and
+  `setup:check` labels its key "this shell's key" and prints no fingerprint for
+  that reason. The command refuses before reading anything unless the key it
+  would write under has the fingerprint given, and refuses a value that is not
+  fingerprint-shaped without repeating it. A `--dry-run` needs none: it prints
+  its own key's fingerprint on a line of its own, to compare with Setup's and
+  never to copy into the command.
+- **It also decrypts a row already stored under that key id**, and refuses if
+  it cannot ("Refused before writing anything …": the environment's ring is
+  not the app's, or that row is damaged). On the first cut-over nothing is
+  stored under the key yet, and the report says only the fingerprint vouched
+  for it.
+
+```bash
+pnpm run data-keys:reencrypt --dry-run                                  # count only, writes nothing
+pnpm run data-keys:reencrypt --expect-fingerprint <fp>                  # move
+pnpm run data-keys:reencrypt --expect-fingerprint <fp> --retire-legacy-recovery-codes
+```
+
+- **Safe beside live traffic.** It moves one row per short transaction through
+  the same compare-and-set writers the app uses, and calls no provider. A row
+  that changes while it is being moved (a Xero token refresh, an admin saving
+  a credential, a member re-enrolling) wins; the re-encrypt changes nothing for
+  that row and retries it on its next pass. A Xero token set is never moved
+  while any refresh lease is set, even an expired one, so a refresh that has
+  already spent its refresh token always gets to save the new one. A lease left
+  by a refresh that died is cleared by the next refresh; if the report still
+  shows the token set on an old key, run the command again later. An administrator with a
+  credential form open while it runs may be told the value changed and asked
+  to reload the form; the value itself is the same.
+- **Run it only once no container runs without the ring.** A colour started
+  without it cannot read what this writes.
+- **The report** gives, per table, how many rows moved, lost their claim or were
+  unreadable, and `remaining on old keys: N`, then the unused recovery codes
+  still under `AUTH_SECRET` and under older ring keys. It never prints a key or
+  a stored value. Exit status 0 means nothing is left on an old key, 2 that
+  something is (run it again), 1 that it refused or failed.
+- **Unreadable rows** are under a key this environment does not hold (a removed
+  ring key, a changed `AUTH_SECRET`, or `DATA_ENCRYPTION_LEGACY_KEY=retired`).
+  Restore the key and run again, or re-enter those credentials and ask those
+  members to re-enrol.
+- **`--retire-legacy-recovery-codes`** rewrites each unused recovery code
+  issued before the ring so that no release, with or without the ring, accepts
+  it again (owner decision on #4456: they are invalidated at cut-over). The rows
+  stay, unused, so their members keep seeing the notice to generate a new set
+  until they do. There is no undo, and none is needed: those codes already
+  stopped working under the ring.
+- **What it records.** Each credential moved gets an
+  `integration.credential.set` audit entry naming the `data-key-reencrypt` job
+  (`cause: data-key-reencrypt`); each authenticator secret moved and each
+  member whose codes were retired gets a `security.two_factor.secret_rewrapped`
+  or `security.two_factor.recovery_codes_retired` entry
+  ([audit-log guide](docs/guides/audit-log.md#xero-connection-and-two-factor-entries-3454)).
+- It refuses to run when `DATA_ENCRYPTION_KEYS` is unset or invalid, or when
+  `DATA_ENCRYPTION_LEGACY_KEY` is set without it.
+
+#### Retiring the legacy key (#4456)
+
+Even once nothing is stored under `AUTH_SECRET`, the app still **reads** a row
+that names it, so a row planted in the database under a leaked auth secret
+would still be accepted. `DATA_ENCRYPTION_LEGACY_KEY=retired` stops that: no
+credential or authenticator secret is read under the auth secret any more, and
+`AUTH_SECRET` signs sessions and links only.
+
+1. Run `pnpm run data-keys:reencrypt --expect-fingerprint <fingerprint>` until it reports `remaining on old keys: 0`
+   for both tables, and Admin → Setup → "Data Encryption Key" is green.
+2. Set `DATA_ENCRYPTION_LEGACY_KEY=retired` and redeploy. The two colours may
+   differ during the redeploy: they disagree only about rows under
+   `AUTH_SECRET`, and there are none.
+3. The setup step now says nothing is read under `AUTH_SECRET`. If something
+   was written under it after all, the step goes red and names it: those rows
+   read as "needs re-entry" until you roll back.
+
+**Rollback:** unset `DATA_ENCRYPTION_LEGACY_KEY` and redeploy; anything still
+under `AUTH_SECRET` reads again, provided the auth secret has not changed since
+it was written. **Refused configurations:** any value other than `retired`, or
+the switch set while `DATA_ENCRYPTION_KEYS` is unset, fails
+`/api/health/ready` (so blue/green never switches to that colour), refuses
+every write, and turns the setup step red; no write ever falls back to
+`AUTH_SECRET`.
+
 ### Auth-secret rotation runbook
 
-Rotating `AUTH_SECRET`/`NEXTAUTH_SECRET` is a **planned maintenance event**, not
+**If `DATA_ENCRYPTION_KEYS` is set and Admin → Setup → "Data Encryption Key"
+is green**, rotating `AUTH_SECRET`/`NEXTAUTH_SECRET` drops only the sessions
+and the links and tokens signed with it; stored credentials and 2FA enrolments
+are unaffected. Do that first if you can
+([Adding a data-encryption key](#adding-a-data-encryption-key-4456)). The rest
+of this runbook is for a deployment where the step is not green.
+
+Rotating `AUTH_SECRET`/`NEXTAUTH_SECRET` is then a **planned maintenance event**, not
 a casual refresh. Rotation drops, all at once:
 
 - **all sessions** (everyone is signed out);
@@ -2047,11 +2249,12 @@ a casual refresh. Rotation drops, all at once:
    credentials (Admin > Integrations) and reconnect Xero.
 5. Communicate to members that they must re-enroll 2FA on next sign-in.
 
-**Security consequence (see `docs/SECURITY-ATTACK-SURFACE.md`):** because all
+**Security consequence (see `docs/SECURITY-ATTACK-SURFACE.md`):** while
 provider credentials are encrypted under key material derived from this one
 secret, a database backup **plus** the auth secret is enough to decrypt every
-stored credential. Production and staging/clones must therefore **never** share
-an auth secret.
+stored credential; once they are on a data key, the backup plus that key is.
+Production and staging/clones must therefore **never** share an auth secret or
+a data key.
 
 ## Cron Schedule
 
@@ -2132,6 +2335,12 @@ before deployment; Admin Modules do not replace that safety check.
 Preferred rollback is to route Caddy back to the previous healthy color while it
 is still running. If schema changes have already applied, rollback must respect
 the migration policy and any compatibility constraints in the migration PR.
+
+**Not once a data-encryption key is in use (#4456).** Rows written under
+`DATA_ENCRYPTION_KEYS` cannot be read by an older release or by a colour started
+without the ring, so routing back to one strands those credentials, two-factor
+secrets and recovery codes. Keep the ring set and go forward; the safe sequence
+is in [Adding a data-encryption key](#adding-a-data-encryption-key-4456).
 
 **The previous release's images are held back from the deploy's own prune
 (#3539).** That rollback needs the previous images on the host, and the deploy

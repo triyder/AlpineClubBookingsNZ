@@ -116,4 +116,50 @@ describe("runtime-config", () => {
       error: "AUTH_SECRET or NEXTAUTH_SECRET is required; CRON_SECRET is required",
     });
   });
+
+  describe("the data-encryption key ring (#4456)", () => {
+    const VALID = Buffer.from(Array.from({ length: 32 }, (_, index) => (index * 29 + 3) % 256)).toString("base64");
+
+    function readyEnv() {
+      process.env.AUTH_SECRET = "secret";
+      process.env.NEXTAUTH_URL = "https://example.org";
+      process.env.CRON_SECRET = "cron-secret";
+    }
+
+    it("is ready with the ring unset or valid", () => {
+      readyEnv();
+      delete process.env.DATA_ENCRYPTION_KEYS;
+      expect(getRuntimeConfigIssues()).toEqual([]);
+      process.env.DATA_ENCRYPTION_KEYS = `k1:${VALID}`;
+      expect(getRuntimeConfigIssues()).toEqual([]);
+    });
+
+    it("is NOT ready with an invalid ring, naming why but never the value", () => {
+      readyEnv();
+      process.env.DATA_ENCRYPTION_KEYS = `k1:${VALID},k1:${VALID}`;
+      const check = getRuntimeConfigCheck();
+      expect(check.status).toBe("error");
+      expect(check.error).toMatch(/DATA_ENCRYPTION_KEYS: the id "k1" appears more than once/);
+      expect(check.error).not.toContain(VALID);
+    });
+
+    it("is NOT ready with the legacy-read switch set without a ring, or to anything but retired (#4456 PR 2)", () => {
+      readyEnv();
+      process.env.DATA_ENCRYPTION_LEGACY_KEY = "retired";
+      delete process.env.DATA_ENCRYPTION_KEYS;
+      expect(getRuntimeConfigIssues()).toEqual([expect.stringMatching(/DATA_ENCRYPTION_LEGACY_KEY=retired needs DATA_ENCRYPTION_KEYS/)]);
+      process.env.DATA_ENCRYPTION_KEYS = `k1:${VALID}`;
+      expect(getRuntimeConfigIssues()).toEqual([]);
+      process.env.DATA_ENCRYPTION_LEGACY_KEY = "yes";
+      expect(getRuntimeConfigIssues()).toEqual([expect.stringMatching(/the only accepted value is "retired"/)]);
+      delete process.env.DATA_ENCRYPTION_LEGACY_KEY;
+    });
+
+    it("is NOT ready when a ring key is the auth secret itself", () => {
+      readyEnv();
+      process.env.AUTH_SECRET = VALID;
+      process.env.DATA_ENCRYPTION_KEYS = `k1:${VALID}`;
+      expect(getRuntimeConfigIssues()).toEqual([expect.stringMatching(/is weak: it is the auth secret/)]);
+    });
+  });
 });

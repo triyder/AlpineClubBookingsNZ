@@ -36,8 +36,18 @@ import {
 } from "@/lib/xero-connection";
 import { invalidateXeroOrganisationCaches } from "@/lib/xero-organisation-cache-bus";
 import { XERO_TOKEN_ROW_ORDER } from "@/lib/xero-token-row-order";
-import { getAuthSecretWithSource, isAuthSecretStrongEnough } from "@/lib/integration-crypto";
-import { XeroTokenDecryptError } from "@/lib/xero-token-errors";
+import {
+  XeroTokenDecryptError,
+  xeroTokenSaveRefusal,
+  type XeroTokenSaveRefusal,
+} from "@/lib/xero-token-errors";
+
+/**
+ * Why a Xero connection needs attention: its stored tokens cannot be read
+ * (a reconnect fixes it), or a refreshed pair could not be stored (only the
+ * server's configuration fixes it; see `XeroTokenSaveRefusal`).
+ */
+export type XeroReentryCause = "tokens-unreadable" | XeroTokenSaveRefusal;
 import {
   freshRowMirror,
   serializeStoredTokenSet,
@@ -436,6 +446,24 @@ export async function getXeroTokenReadability(): Promise<XeroTokenReadability> {
 /** The claim lost to a lease held on `XeroConnection` alone; rolls our claim back. */
 class XeroConnectionLeaseHeld extends Error {}
 
+/** A lease row nobody holds at `now`: never claimed, or its lease has run out. */
+const leaseIsFreeAt = (now: Date) => ({ OR: [{ refreshInProgressUntil: null }, { refreshInProgressUntil: { lte: now } }] });
+
+/**
+ * The data-key re-encrypt's fence (#4456): rule 2's row locks, each guarded on NO lease at all, never taking one over
+ * (an expired one may be a stalled refresh). False while either is set; no connection row, no lease. CONCURRENCY_AND_LOCKING.md.
+ */
+export async function fenceXeroTokenSetRewrite(tx: XeroTokenDb): Promise<boolean> {
+  const unheld = { refreshInProgressUntil: null };
+  const tokenRow = await tx.xeroToken.findFirst({ select: { id: true }, orderBy: XERO_TOKEN_ROW_ORDER });
+  if (tokenRow) {
+    const previousRelease = await tx.xeroToken.updateMany({ where: { id: tokenRow.id, ...unheld }, data: unheld });
+    if (previousRelease.count !== 1) return false;
+  }
+  const ours = await tx.xeroConnection.updateMany({ where: { id: XERO_CONNECTION_ID, ...unheld }, data: unheld });
+  return ours.count === 1 || !(await tx.xeroConnection.findUnique({ where: { id: XERO_CONNECTION_ID }, select: { id: true } }));
+}
+
 export async function claimXeroTokenRefreshLease(options?: {
   now?: Date;
   leaseMs?: number;
@@ -444,12 +472,7 @@ export async function claimXeroTokenRefreshLease(options?: {
   const leaseUntil = new Date(
     now.getTime() + (options?.leaseMs ?? XERO_TOKEN_REFRESH_LEASE_MS)
   );
-  const leaseIsFree = {
-    OR: [
-      { refreshInProgressUntil: null },
-      { refreshInProgressUntil: { lte: now } },
-    ],
-  };
+  const leaseIsFree = leaseIsFreeAt(now);
 
   try {
     return await prisma.$transaction(async (tx): Promise<XeroTokenRefreshLeaseClaim> => {
@@ -581,6 +604,8 @@ export async function isXeroConnected(): Promise<boolean> {
 export async function getXeroConnectionStatus(): Promise<{
   connected: boolean;
   needsReentry: boolean;
+  /** Why it needs re-entry, so the panel advises the fix that works (#4456). */
+  reentryCause?: XeroReentryCause;
   tenantId: string | null;
   tokenExpiresAt: Date | null;
 }> {
@@ -593,16 +618,17 @@ export async function getXeroConnectionStatus(): Promise<{
       tokenExpiresAt: null,
     };
   }
-  // Readable is not enough: under an auth secret the capture gate now refuses,
-  // the tokens still decrypt but no refresh can store its rotated pair, so every
-  // call fails once the access token expires. "Connected" must not sit over
-  // that (#3454 review).
-  const usable =
-    (await getXeroTokenReadability()) === "readable" &&
-    isAuthSecretStrongEnough(getAuthSecretWithSource()?.secret);
+  // Readable is not enough: when no refresh could store its rotated pair, the
+  // tokens still decrypt but every call fails once the access token expires.
+  // "Connected" must not sit over that (#3454 review). The SAME predicate as the
+  // refresh pre-flight, so the two never disagree (#4456 review).
+  const readable = (await getXeroTokenReadability()) === "readable";
+  const refusal = await xeroTokenSaveRefusal();
+  const usable = readable && refusal === null;
   return {
     connected: usable,
     needsReentry: !usable,
+    ...(usable ? {} : { reentryCause: refusal?.reason ?? "tokens-unreadable" }),
     tenantId: connection.tenantId,
     tokenExpiresAt: connection.expiresAt,
   };

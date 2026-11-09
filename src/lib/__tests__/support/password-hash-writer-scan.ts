@@ -17,8 +17,11 @@ import ts from "typescript";
 //
 // Each writer is reported with its enclosing named function ("scope", see
 // `scopeName`) and whether it is GUARDED by the screen: a `const` bound to
-// `await screenChosenPassword(x, ...)` (or a conditional with that await as a
-// branch the test does not rule out), where `x` and the input of the
+// `await screenChosenPassword(x, ...)` (or a conditional, `||` or `??` chain
+// that screens on every branch a constant test leaves live; a branch with no
+// screen is allowed only where the writer cannot run when it is taken, as in
+// `password ? await screen(password) : { ok: true }` with the writer inside
+// `if (password) { ... }`, #4764), where `x` and the input of the
 // `bcrypt.hash(x, ...)` that made the written value (traced as below) resolve
 // to the SAME `const` or parameter declaration, with the same property path,
 // and nothing reassigns it; followed by an `if` that tests `!name.ok` and
@@ -27,6 +30,23 @@ import ts from "typescript";
 // in a block that encloses the writer and come before it, so a screen in a
 // different handler, a callback or a sibling branch never counts. The `if`
 // condition is the bare `!name.ok` or a `||` chain holding it, nothing weaker.
+// When the screened reference has a property path (`b.pw`), the screen is void
+// if, from the start of its arguments to the writer, an alias of its root is
+// written through (`const al = b; al.pw = x`), or a call, a tagged template or a
+// method call receives the root or a part of the path above the value
+// (`Object.assign(b, ...)`, `log({ b })`, `b.reset()`), or a function nested in
+// the scope does either (#4746). One definition of that change test serves the
+// copy rule below (`objectChanged`). For a writer inside a loop that starts after
+// the screen, that window runs to the end of the outermost such loop, since a
+// change later in the body runs before the writer on the next pass; for a writer
+// in a function, it runs to the end of the screen's block, since the function can
+// be called later; and a screen does not count for a writer in a hoisted function
+// declaration, which can run before it (#4764). These
+// rules are a best-effort guard against accidental changes, not a defence against a determined author: deliberately
+// contrived forms (getters, functions that return the object or a closure over
+// it, generators, access to an inline literal such as `[b][0]`, a `var`
+// redeclared in a block to defeat a stable value (`{ var skip = false; }`), a
+// local `const undefined`) are out of scope.
 //
 // Each property writer also carries the SOURCE of the value it writes
 // (`traceWrittenValue`): the expression is followed back through `const`
@@ -37,8 +57,11 @@ import ts from "typescript";
 // literal has no template holes, no `$n` or `?` placeholders and no bind
 // arguments beside it.
 //
-// Stated limits: SQL assembled by concatenating separate literals, or read
-// from a `.sql` file at run time, is not seen (no writer here does either;
+// Stated limits: a change made while an earlier call is suspended
+// (`const p = save({ passwordHash: await hash(b.pw, 12) }); Object.assign(b, ...);
+// await p`) is a change after the writer outside a loop, so it is not seen; there
+// is no async-flow analysis (#4764). SQL assembled by concatenating separate
+// literals, or read from a `.sql` file at run time, is not seen (no writer here does either;
 // `prisma/migrations` is schema, not a runtime writer, and is the one directory
 // skipped by path). Only `.ts`/`.js` sources under the scan roots are read.
 
@@ -53,7 +76,8 @@ export type PasswordHashWriterKind = "property" | "sql";
  * holes, placeholders or bind arguments. `parameter`: a parameter of the enclosing function (or a property of
  * one), so the caller decides. `copy`: the `passwordHash` of an object built in
  * the same function by a writer that is generated or screened
- * (`copiedWriters`).
+ * (`copiedWriters`), and never written, aliased and written, or handed to a
+ * call afterwards (#4746).
  * `unknown`: anything the trace cannot follow, a typed password included.
  */
 export type PasswordHashValueSource =
@@ -220,38 +244,165 @@ function switchesCheckOff(options: ts.Expression | undefined): boolean {
   );
 }
 
-/** True when `node` is `await screenChosenPassword(x, ...)` screening `hashed`. */
-function awaitsScreenOf(node: ts.Expression, hashed: Reference): boolean {
+/** The call in `node` when it is `await screenChosenPassword(x, ...)` screening `hashed`, else null. */
+function screenCallOf(node: ts.Expression, hashed: Reference): ts.CallExpression | null {
   const value = unwrapParens(node);
-  if (!ts.isAwaitExpression(value)) return false;
+  if (!ts.isAwaitExpression(value)) return null;
   const call = unwrapParens(value.expression);
-  if (!ts.isCallExpression(call) || !ts.isIdentifier(call.expression)) return false;
-  if (call.expression.text !== SCREEN_HELPER || switchesCheckOff(call.arguments[1])) return false;
+  if (!ts.isCallExpression(call) || !ts.isIdentifier(call.expression)) return null;
+  if (call.expression.text !== SCREEN_HELPER || switchesCheckOff(call.arguments[1])) return null;
   const screened = call.arguments[0] ? referenceOf(call.arguments[0]) : null;
-  return screened !== null && sameReference(screened, hashed);
+  return screened !== null && sameReference(screened, hashed) ? call : null;
 }
 
 /**
- * The names `statement` binds to an awaited screen of `hashed`: a `const`
- * whose initializer is `await screenChosenPassword(x, ...)` itself, or a
- * conditional with that await as one branch and a test that does not rule the
- * branch out. Any other shape (a `let`, an object literal or comma expression
- * that discards the result) binds nothing.
+ * A fact about a value that cannot change once it is set (`stableKey`), true on
+ * some path through the code: `key` is that value or a comparison of two, and
+ * `truthy` whether it holds or is ruled out.
  */
-function screenBinding(statement: ts.Statement, hashed: Reference): string[] {
-  if (!ts.isVariableStatement(statement)) return [];
-  if ((statement.declarationList.flags & ts.NodeFlags.Const) === 0) return [];
-  const names: string[] = [];
+type Fact = { key: string; truthy: boolean };
+
+/**
+ * Names a value that is the same wherever it is read in the scope: a `const` or a
+ * parameter nothing reassigns (by declaration), `null`, `undefined`, a boolean,
+ * number or string literal. Anything else (a property, a call, a `let`) is null,
+ * since it could change between the test and a later check.
+ */
+function stableKey(node: ts.Expression): string | null {
+  const value = unwrapParens(node);
+  if (value.kind === ts.SyntaxKind.NullKeyword) return "null";
+  if (value.kind === ts.SyntaxKind.TrueKeyword) return "true";
+  if (value.kind === ts.SyntaxKind.FalseKeyword) return "false";
+  if (ts.isNumericLiteral(value)) return `n${value.text}`;
+  if (ts.isStringLiteral(value) || ts.isNoSubstitutionTemplateLiteral(value)) return JSON.stringify(value.text);
+  if (!ts.isIdentifier(value)) return null;
+  if (value.text === "undefined") return "undefined";
+  const declaration = findDeclaration(value.text, value);
+  if (declaration?.kind !== "const" && declaration?.kind !== "parameter") return null;
+  return isReassigned({ id: declaration.id, path: [] }, declarationScope(declaration)) ? null : `#${declaration.id.getStart()}`;
+}
+
+const EQUALITY_OPERATORS = new Map<ts.SyntaxKind, { key: string; negated: boolean }>([
+  [ts.SyntaxKind.EqualsEqualsEqualsToken, { key: "===", negated: false }],
+  [ts.SyntaxKind.ExclamationEqualsEqualsToken, { key: "===", negated: true }],
+  [ts.SyntaxKind.EqualsEqualsToken, { key: "==", negated: false }],
+  [ts.SyntaxKind.ExclamationEqualsToken, { key: "==", negated: true }],
+]);
+
+/**
+ * What is certain when `condition` is truthy (or, with `truthy` false, falsy):
+ * a stable value, its negation, a comparison of two stable values, and each part
+ * of a `&&` that held or a `||` that did not. A part that names no stable value
+ * says nothing, so the list may be empty.
+ */
+function factsOf(condition: ts.Expression, truthy: boolean): Fact[] {
+  const node = unwrapParens(condition);
+  if (ts.isPrefixUnaryExpression(node) && node.operator === ts.SyntaxKind.ExclamationToken) {
+    return factsOf(node.operand, !truthy);
+  }
+  if (ts.isBinaryExpression(node)) {
+    const kind = node.operatorToken.kind;
+    if (kind === ts.SyntaxKind.AmpersandAmpersandToken && truthy) {
+      return [...factsOf(node.left, true), ...factsOf(node.right, true)];
+    }
+    if (kind === ts.SyntaxKind.BarBarToken && !truthy) {
+      return [...factsOf(node.left, false), ...factsOf(node.right, false)];
+    }
+    const equality = EQUALITY_OPERATORS.get(kind);
+    if (equality) {
+      const keys = [stableKey(node.left), stableKey(node.right)];
+      return keys.every((key) => key !== null) ? [{ key: `${equality.key} ${keys.sort().join(" ")}`, truthy: truthy !== equality.negated }] : [];
+    }
+    return [];
+  }
+  const key = stableKey(node);
+  return key === null ? [] : [{ key, truthy }];
+}
+
+/** True when no path can satisfy every fact in `path` and every fact in `guards`. */
+const excludes = (guards: readonly Fact[], path: readonly Fact[]): boolean =>
+  path.some((fact) => guards.some((guard) => guard.key === fact.key && guard.truthy !== fact.truthy));
+
+/** The calls that screen, and the facts of each path that does not (#4764). */
+type Screens = { calls: ts.CallExpression[]; gaps: Fact[][] };
+
+/**
+ * What `node` evaluates to when it screens `hashed` (#4764): the awaited call
+ * itself, a conditional, or a `||` or `??` chain. Every branch not ruled out by a
+ * constant test must screen, or be a GAP: a branch that gives a result with no
+ * screen, listed with the facts that must hold to take it (`skip ? { ok: true } :
+ * await screen(x)` has a gap that needs `skip`). A gap is harmless only where the
+ * writer cannot run on its path (`excludes`). Null when nothing screens.
+ */
+function screensOf(node: ts.Expression, hashed: Reference, path: readonly Fact[] = []): Screens | null {
+  const value = unwrapParens(node);
+  let parts: Screens[] | null = null;
+  if (ts.isConditionalExpression(value)) {
+    const branches = [
+      { node: value.whenTrue, ruledOut: isConstantTest(value.condition, false), facts: factsOf(value.condition, true) },
+      { node: value.whenFalse, ruledOut: isConstantTest(value.condition, true), facts: factsOf(value.condition, false) },
+    ];
+    parts = branches
+      .filter((branch) => !branch.ruledOut)
+      .map((branch) => {
+        const taken = [...path, ...branch.facts];
+        return screensOf(branch.node, hashed, taken) ?? { calls: [], gaps: [taken] };
+      });
+  } else if (
+    ts.isBinaryExpression(value) &&
+    (value.operatorToken.kind === ts.SyntaxKind.BarBarToken || value.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken)
+  ) {
+    parts = [value.left, value.right].map((operand) => screensOf(operand, hashed, path) ?? { calls: [], gaps: [[...path]] });
+  } else {
+    const call = screenCallOf(value, hashed);
+    return call && { calls: [call], gaps: [] };
+  }
+  const calls = parts.flatMap((part) => part.calls);
+  return calls.length === 0 ? null : { calls, gaps: parts.flatMap((part) => part.gaps) };
+}
+
+/**
+ * The names `statement` binds to an awaited screen of `hashed`, each with its
+ * gaps, and where the screen starts (its first argument): a `const` whose
+ * initializer is `await screenChosenPassword(x, ...)` itself, or a conditional or
+ * `||`/`??` chain with a screen on it (`screensOf`). Any other shape (a `let`, an
+ * object literal or comma expression that discards the result) binds nothing.
+ */
+function screenBinding(
+  statement: ts.Statement,
+  hashed: Reference,
+): { names: Map<string, Fact[][]>; from: number } {
+  const bound = { names: new Map<string, Fact[][]>(), from: Infinity };
+  if (!ts.isVariableStatement(statement)) return bound;
+  if ((statement.declarationList.flags & ts.NodeFlags.Const) === 0) return bound;
   for (const declaration of statement.declarationList.declarations) {
     if (!ts.isIdentifier(declaration.name) || !declaration.initializer) continue;
-    const initializer = unwrapParens(declaration.initializer);
-    const bound = ts.isConditionalExpression(initializer)
-      ? (awaitsScreenOf(initializer.whenTrue, hashed) && !isConstantTest(initializer.condition, false)) ||
-        (awaitsScreenOf(initializer.whenFalse, hashed) && !isConstantTest(initializer.condition, true))
-      : awaitsScreenOf(initializer, hashed);
-    if (bound) names.push(declaration.name.text);
+    const screens = screensOf(declaration.initializer, hashed);
+    if (!screens) continue;
+    bound.names.set(declaration.name.text, screens.gaps);
+    for (const call of screens.calls) bound.from = Math.min(bound.from, call.arguments[0].getStart());
   }
-  return names;
+  return bound;
+}
+
+/**
+ * What must hold for the writer to run, from the `if` statements and conditionals
+ * between it and `block` that take it in one branch (#4764). A gap in the screen
+ * is harmless exactly when these rule it out (`excludes`):
+ * `password ? await screen(password) : { ok: true }` with the writer inside
+ * `if (password) { ... }`.
+ */
+function writerFacts(writer: ts.Node, block: ts.Node): Fact[] {
+  const facts: Fact[] = [];
+  for (let child: ts.Node = writer; child.parent && child.parent !== block; child = child.parent) {
+    const parent = child.parent;
+    if (ts.isIfStatement(parent) && (child === parent.thenStatement || child === parent.elseStatement)) {
+      facts.push(...factsOf(parent.expression, child === parent.thenStatement));
+    } else if (ts.isConditionalExpression(parent) && (child === parent.whenTrue || child === parent.whenFalse)) {
+      facts.push(...factsOf(parent.condition, child === parent.whenTrue));
+    }
+  }
+  return facts;
 }
 
 /** True when `statement` leaves the function on every path through it. */
@@ -289,10 +440,50 @@ function testsNotOk(condition: ts.Expression, names: ReadonlySet<string>): boole
 }
 
 /**
+ * True when, after the screen, `hashed` (a property path under a `const` or
+ * parameter) is changed through an alias of its root or by a call that receives
+ * the root (#4746): `const al = b; al.pw = x`, `Object.assign(b, ...)`, `f(b)`,
+ * `b.reset()`. `isReassigned` already covers a write through the root's own
+ * name; a path-less reference (a plain string) cannot be changed from outside.
+ */
+function changedAfterScreen(
+  hashedInput: ts.Expression,
+  hashed: Reference,
+  window: { from: number; to: number },
+): boolean {
+  if (hashed.path.length === 0) return false;
+  const access = accessPath(hashedInput);
+  const declaration = access && findDeclaration(access.root.text, access.root);
+  if (declaration?.kind !== "const" && declaration?.kind !== "parameter") return true;
+  return objectChanged(hashed.id, declarationScope(declaration), hashed.path, window, false);
+}
+
+/**
+ * Where a change can still reach the writer, past its own start (#4764): the end
+ * of the outermost loop between the writer and `block`, since a change later in
+ * the body runs before the writer on the next pass; and, when a function lies
+ * between them, the end of `block`, since the function can be called at any point
+ * after it is made (`const w = () => save(...); change(); w();`, a callback given
+ * to `$transaction` or `setTimeout`). The screen is a statement of `block`, so a
+ * loop always starts after it; one that holds the screen too is outside `block`,
+ * screens again on each pass, and never counts. The copy rule's window already
+ * runs to the end of its scope (`copiedWriters`).
+ */
+function windowEnd(writer: ts.Node, block: ts.Node): number {
+  let end = writer.getStart();
+  for (let current = writer.parent; current && current !== block; current = current.parent) {
+    if (ts.isIterationStatement(current, false)) end = Math.max(end, current.getEnd());
+    if (isFunctionLike(current)) end = Math.max(end, block.getEnd());
+  }
+  return end;
+}
+
+/**
  * True when the writer is guarded: in some block enclosing it (up to its
  * function boundary and beyond, so a transaction callback inherits its
  * handler's guard), a screen binding is followed by an `if (!x.ok)` that exits,
- * both before the writer. The screen's first argument must resolve to the same
+ * both before the writer, and nothing changes the screened object between the
+ * start of the screen's arguments and the writer. The screen's first argument must resolve to the same
  * declaration and property path as the input of the `bcrypt.hash(...)` that
  * produced the written value (`hashedInput`), so screening one password and
  * hashing another (or a shadowing callback parameter of the same name) does
@@ -302,13 +493,32 @@ function guardedByScreen(writer: ts.Node, hashedInput: ts.Expression | null): bo
   const hashed = hashedInput ? referenceOf(hashedInput) : null;
   if (hashed === null) return false;
   const position = writer.getStart();
+  // A function declaration is hoisted, so one around the writer can run before a
+  // screen that precedes it in text: no block outside it holds a screen for it.
+  let hoisted = false;
   for (let current = writer.parent; current; current = current.parent) {
-    if (!ts.isBlock(current) && !ts.isSourceFile(current)) continue;
+    if (ts.isFunctionDeclaration(current)) hoisted = true;
+    if (hoisted || (!ts.isBlock(current) && !ts.isSourceFile(current))) continue;
     const bound = new Set<string>();
+    let screenedAt = Infinity;
+    let facts: Fact[] | null = null;
     for (const statement of current.statements) {
       if (statement.getEnd() > position) break;
-      for (const name of screenBinding(statement, hashed)) bound.add(name);
-      if (ts.isIfStatement(statement) && exits(statement.thenStatement) && testsNotOk(statement.expression, bound)) {
+      const screen = screenBinding(statement, hashed);
+      for (const [name, gaps] of screen.names) {
+        const guards: Fact[] = (facts ??= writerFacts(writer, current));
+        if (gaps.every((gap) => excludes(guards, gap))) bound.add(name);
+      }
+      screenedAt = Math.min(screenedAt, screen.from);
+      if (
+        ts.isIfStatement(statement) &&
+        exits(statement.thenStatement) &&
+        testsNotOk(statement.expression, bound) &&
+        !changedAfterScreen(hashedInput as ts.Expression, hashed, {
+          from: screenedAt,
+          to: windowEnd(writer, current),
+        })
+      ) {
         return true;
       }
     }
@@ -343,17 +553,24 @@ function unwrapValue(node: ts.Expression): ts.Expression {
   }
 }
 
-type Binding = { kind: "const"; initializer: ts.Expression } | { kind: "parameter" } | null;
+/** A `const` with a plain identifier name and an initializer: the one kind of constant we follow. */
+type FollowedConst = {
+  kind: "const";
+  id: ts.Identifier;
+  declaration: ts.VariableDeclaration;
+  initializer: ts.Expression;
+};
+type Binding = FollowedConst | { kind: "parameter" } | null;
+
+/** Every identifier a binding name (plain or destructuring) declares. */
+function declaredIdentifiers(name: ts.BindingName): ts.Identifier[] {
+  if (ts.isIdentifier(name)) return [name];
+  return name.elements.flatMap((element) => (ts.isOmittedExpression(element) ? [] : declaredIdentifiers(element.name)));
+}
 
 /** The identifier in `name` (a plain or destructuring binding) that binds `wanted`. */
 function bindingIdentifier(name: ts.BindingName, wanted: string): ts.Identifier | null {
-  if (ts.isIdentifier(name)) return name.text === wanted ? name : null;
-  for (const element of name.elements) {
-    if (ts.isOmittedExpression(element)) continue;
-    const found = bindingIdentifier(element.name, wanted);
-    if (found) return found;
-  }
-  return null;
+  return declaredIdentifiers(name).find((identifier) => identifier.text === wanted) ?? null;
 }
 
 /**
@@ -368,7 +585,7 @@ type Declaration =
   | { kind: "const"; id: ts.Identifier; declaration: ts.VariableDeclaration }
   | { kind: "parameter"; id: ts.Identifier; scope: ts.Node }
   | { kind: "loop"; id: ts.Identifier; statement: ts.ForStatement | ts.ForInStatement | ts.ForOfStatement }
-  | { kind: "other" }
+  | { kind: "other"; id: ts.Identifier }
   | null;
 
 function findDeclaration(name: string, from: ts.Node): Declaration {
@@ -390,7 +607,8 @@ function findDeclaration(name: string, from: ts.Node): Declaration {
       }
     }
     if (ts.isCatchClause(current) && current.variableDeclaration) {
-      if (bindingIdentifier(current.variableDeclaration.name, name)) return { kind: "other" };
+      const id = bindingIdentifier(current.variableDeclaration.name, name);
+      if (id) return { kind: "other", id };
     }
     if (!ts.isBlock(current) && !ts.isSourceFile(current)) continue;
     for (const statement of current.statements) {
@@ -399,7 +617,7 @@ function findDeclaration(name: string, from: ts.Node): Declaration {
       for (const declaration of list.declarations) {
         const id = bindingIdentifier(declaration.name, name);
         if (!id) continue;
-        return (list.flags & ts.NodeFlags.Const) !== 0 ? { kind: "const", id, declaration } : { kind: "other" };
+        return (list.flags & ts.NodeFlags.Const) !== 0 ? { kind: "const", id, declaration } : { kind: "other", id };
       }
     }
   }
@@ -408,28 +626,44 @@ function findDeclaration(name: string, from: ts.Node): Declaration {
 
 /**
  * What `name` is bound to where `from` reads it. A `const` with a plain
- * identifier gives its initializer; a parameter (destructured or not) says the
- * caller decides; `let`, a destructured `const`, a loop or `catch` variable or
- * an import is not followed, and an inner one shadows an outer `const`.
+ * identifier gives its declaration and initializer; a parameter (destructured
+ * or not) says the caller decides; `let`, a destructured `const`, a loop or
+ * `catch` variable or an import is not followed, and an inner one shadows an
+ * outer `const`. The one definition of a constant the scanner follows.
  */
 function resolveBinding(name: string, from: ts.Node): Binding {
   const declaration = findDeclaration(name, from);
   if (declaration?.kind === "parameter") return { kind: "parameter" };
   if (declaration?.kind !== "const") return null;
   const { declaration: node } = declaration;
-  return ts.isIdentifier(node.name) && node.initializer ? { kind: "const", initializer: node.initializer } : null;
+  return ts.isIdentifier(node.name) && node.initializer
+    ? { kind: "const", id: declaration.id, declaration: node, initializer: node.initializer }
+    : null;
 }
 
 /** A read of a `const` or parameter declaration, and the property path after it. */
 type Reference = { id: ts.Identifier; path: readonly string[] };
 
-/** The identifier and property names of an identifier or a property-access chain. */
+/** Stands for a computed key (`a[k]`) in a path: it matches any name. */
+const ANY_KEY = "*";
+
+/** The key an element access names: its string literal, else any key (`a[0]`, `a[k]`). */
+function elementKey(argument: ts.Expression): string {
+  return ts.isStringLiteral(argument) || ts.isNoSubstitutionTemplateLiteral(argument) ? argument.text : ANY_KEY;
+}
+
+/**
+ * The identifier and key names of an identifier or a chain of property and
+ * element accesses: `a.b[0]["c"]` is `a` with `b`, `*` (a number or a computed
+ * key) and `c`.
+ */
 function accessPath(node: ts.Expression): { root: ts.Identifier; path: string[] } | null {
   const value = unwrapValue(node);
   if (ts.isIdentifier(value)) return { root: value, path: [] };
-  if (!ts.isPropertyAccessExpression(value)) return null;
+  if (!ts.isPropertyAccessExpression(value) && !ts.isElementAccessExpression(value)) return null;
   const receiver = accessPath(value.expression);
-  return receiver && { root: receiver.root, path: [...receiver.path, value.name.text] };
+  const key = ts.isPropertyAccessExpression(value) ? value.name.text : elementKey(value.argumentExpression);
+  return receiver && { root: receiver.root, path: [...receiver.path, key] };
 }
 
 function sameReference(a: Reference, b: Reference): boolean {
@@ -476,20 +710,269 @@ function assignmentTargets(node: ts.Node): ts.Expression[] {
   return [];
 }
 
-/** Stands for a computed key (`a[k]`) in a written path: it matches any name. */
-const ANY_KEY = "*";
+/** The declaration node `identifier` resolves to, or null (an import or a global). */
+function declarationId(identifier: ts.Identifier): ts.Identifier | null {
+  return findDeclaration(identifier.text, identifier)?.id ?? null;
+}
+
+
+/** An object the scan follows: the path from the root a name stands for, and whether it only holds it. */
+type Alias = { path: readonly string[]; container: boolean };
+
+/** A read in an expression of a followed object, or of a part of it on the watched path. */
+type Reach = { path: readonly string[]; container: boolean; node: ts.Expression };
 
 /**
- * The slot an assignment target writes, as a root and a property path:
- * `a.b.c = x` writes `b.c` under `a`, and `a.b[k] = x` writes `b.*`.
+ * Methods that only read the object or array they are called on, so calling
+ * one on it is not a hand-over. Any other method may change it, and a method
+ * that returns an element (`at`, `find`, `slice`) hands an element out.
  */
-function writtenPath(target: ts.Expression): { root: ts.Identifier; path: string[] } | null {
-  const value = unwrapValue(target);
-  if (ts.isElementAccessExpression(value)) {
-    const receiver = writtenPath(value.expression);
-    return receiver && { root: receiver.root, path: [...receiver.path, nameText(value.argumentExpression) ?? ANY_KEY] };
+const READ_ONLY_METHODS = new Set([
+  "some",
+  "every",
+  "map",
+  "forEach",
+  "includes",
+  "indexOf",
+  "join",
+  "hasOwnProperty",
+  "toString",
+]);
+
+/** Read-only methods that call back with the elements: only an inline function is vetted. */
+const CALLBACK_METHODS = new Set(["some", "every", "map", "forEach"]);
+
+/** The arrow or function expression a method call is given as its first argument, if inline. */
+function inlineCallback(call: ts.CallExpression): ts.ArrowFunction | ts.FunctionExpression | null {
+  const callback = call.arguments[0] && unwrapValue(call.arguments[0]);
+  return callback && (ts.isArrowFunction(callback) || ts.isFunctionExpression(callback)) ? callback : null;
+}
+
+/** True when `node` or anything inside it names `arguments`. */
+function usesArguments(node: ts.Node): boolean {
+  return (ts.isIdentifier(node) && node.text === "arguments") || ts.forEachChild(node, (child) => usesArguments(child) || undefined) === true;
+}
+
+/**
+ * True when calling `method` on a followed object only reads it: the method is
+ * in `READ_ONLY_METHODS`, and one that calls back with the elements has an inline
+ * function that does not use `arguments` (a named one gets the elements to
+ * change, and an inline one is covered by the aliases of its parameters).
+ */
+function onlyReads(call: ts.CallExpression, method: string): boolean {
+  if (!READ_ONLY_METHODS.has(method)) return false;
+  if (!CALLBACK_METHODS.has(method)) return true;
+  const callback = inlineCallback(call);
+  return callback !== null && !usesArguments(callback);
+}
+
+const ALIASING_ASSIGNMENTS = new Set([
+  ts.SyntaxKind.EqualsToken,
+  ts.SyntaxKind.BarBarEqualsToken,
+  ts.SyntaxKind.QuestionQuestionEqualsToken,
+  ts.SyntaxKind.AmpersandAmpersandEqualsToken,
+]);
+
+/** The expressions a call, `new` or tagged template hands its callee. */
+function callArguments(node: ts.Node): ts.Expression[] {
+  if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
+    return (node.arguments ?? []).map((argument) => (ts.isSpreadElement(argument) ? argument.expression : argument));
   }
-  return accessPath(value);
+  if (ts.isTaggedTemplateExpression(node) && ts.isTemplateExpression(node.template)) {
+    return node.template.templateSpans.map((span) => span.expression);
+  }
+  return [];
+}
+
+/**
+ * True when, within `window` of `scope`, something changes the object `id`
+ * declares, or hands it to code that could (#4746). Conservative by design: any
+ * of these counts, wherever the call goes.
+ *
+ * `watched` is the path under `id` the caller reads; `*` in it is any element
+ * of an array. Only a part that path reads through (a strict prefix of it) can
+ * be changed in a way that matters, so `hash(id.pw)` for `watched = ["pw"]` is
+ * not a hand-over but `log(id)` is.
+ *
+ * - an alias of the object, to a fixpoint: `const al = id`, a destructuring or
+ *   `al = id`, `al ||= id`, either branch of `c ? id : x`, an operand of `||`,
+ *   `??` or `&&`, a literal that holds it (`{ id }`, `[id]`), the variable of a
+ *   `for…of` over an array of it, every parameter of an inline callback given to
+ *   one of its methods, or the root of a property that stores it (`h.d = id`);
+ *   an assignment used as an expression evaluates to what it assigned;
+ * - a write through an alias (`al.k = v`, `al[i] = v`);
+ * - a call, `new` or tagged template that receives the object or an alias
+ *   (also inside a literal or a conditional), which covers `Object.assign(id, ...)`;
+ * - a call of a method on it (or on a literal that holds it), unless it is in
+ *   `READ_ONLY_METHODS` and, when it calls back with the elements, is given an
+ *   inline function that does not use `arguments` (`onlyReads`);
+ * - with `direct`, also a write through `id` itself (`id.k = v`, `id[i] = v`).
+ *   Without it the caller already sees those writes (`isReassigned`).
+ *
+ * A change inside a function nested in `scope` counts wherever it sits, since
+ * it can run at any time (a hoisted declaration, or a closure called later),
+ * unless the function holds the whole window.
+ *
+ * `followed` are reads the caller itself traced through, which are not uses.
+ */
+function objectChanged(
+  id: ts.Identifier,
+  scope: ts.Node,
+  watched: readonly string[],
+  window: { from: number; to: number },
+  direct: boolean,
+  followed: ReadonlySet<ts.Node> = new Set(),
+): boolean {
+  const matches = (name: string, wanted: string) =>
+    name === wanted || name === ANY_KEY || (wanted === ANY_KEY && /^\d+$/.test(name));
+  const isPrefix = (path: readonly string[]) =>
+    path.length < watched.length && path.every((name, i) => matches(name, watched[i]));
+  // `id` and everything bound to it, or to a part of it on the watched path.
+  const sources = new Map<ts.Identifier, Alias>([[id, { path: [], container: false }]]);
+  // A container alias stands for the object wherever it is read: `h.d` for
+  // `const h = { d: id }` is `id`.
+  const rootOf = (node: ts.Expression) => {
+    const access = accessPath(node);
+    const source = access && declarationId(access.root);
+    const alias = source && sources.get(source);
+    if (!access || !source || !alias) return null;
+    return { source, path: alias.container ? alias.path : [...alias.path, ...access.path], container: alias.container };
+  };
+  // The followed objects an expression can evaluate to or hold.
+  const reach = (expression: ts.Expression, container = false): Reach[] => {
+    const value = unwrapValue(expression);
+    if (ts.isConditionalExpression(value)) {
+      return [...reach(value.whenTrue, container), ...reach(value.whenFalse, container)];
+    }
+    if (ts.isBinaryExpression(value)) {
+      const kind = value.operatorToken.kind;
+      if (kind === ts.SyntaxKind.CommaToken) return reach(value.right, container);
+      // An assignment used as an expression evaluates to what it assigned; the
+      // logical forms may also give back the target they left alone.
+      if (ALIASING_ASSIGNMENTS.has(kind)) {
+        return kind === ts.SyntaxKind.EqualsToken
+          ? reach(value.right, container)
+          : [...reach(value.left, container), ...reach(value.right, container)];
+      }
+      return kind === ts.SyntaxKind.QuestionQuestionToken ||
+        kind === ts.SyntaxKind.BarBarToken ||
+        kind === ts.SyntaxKind.AmpersandAmpersandToken
+        ? [...reach(value.left, container), ...reach(value.right, container)]
+        : [];
+    }
+    if (ts.isObjectLiteralExpression(value)) {
+      return value.properties.flatMap((property) => {
+        if (ts.isPropertyAssignment(property)) return reach(property.initializer, true);
+        if (ts.isShorthandPropertyAssignment(property)) return reach(property.name, true);
+        return ts.isSpreadAssignment(property) ? reach(property.expression, true) : [];
+      });
+    }
+    if (ts.isArrayLiteralExpression(value)) {
+      return value.elements.flatMap((element) => reach(ts.isSpreadElement(element) ? element.expression : element, true));
+    }
+    const found = rootOf(value);
+    return found ? [{ path: found.path, container: container || found.container, node: value }] : [];
+  };
+  const noteAlias = (names: readonly ts.Identifier[], candidates: readonly Reach[], element = false): boolean => {
+    let grew = false;
+    for (const candidate of candidates) {
+      // An element of an array that holds the object is the object itself, so a
+      // container keeps its path; an element of an array of objects is a part of it.
+      const path = element && !candidate.container ? [...candidate.path, ANY_KEY] : candidate.path;
+      if (!isPrefix(path)) continue;
+      for (const name of names) {
+        if (sources.has(name)) continue;
+        // The element of a holder is the object itself, not another holder.
+        sources.set(name, { path, container: element ? false : candidate.container });
+        grew = true;
+      }
+    }
+    return grew;
+  };
+  const collectAliases = (node: ts.Node): boolean => {
+    let grew = false;
+    if (ts.isVariableDeclaration(node) && node.initializer) {
+      grew = noteAlias(declaredIdentifiers(node.name), reach(node.initializer));
+    } else if (ts.isBinaryExpression(node) && ALIASING_ASSIGNMENTS.has(node.operatorToken.kind)) {
+      const names = assignmentTargets(node).flatMap((target) => {
+        const declared = ts.isIdentifier(target) ? declarationId(target) : null;
+        return declared ? [declared] : [];
+      });
+      grew = noteAlias(names, reach(node.right));
+      // Storing it in a property (`h.d = id`, `h[0] = id`) makes the root of the
+      // target a container of it.
+      const holders = assignmentTargets(node).flatMap((target) => {
+        const access = ts.isIdentifier(unwrapParens(target)) ? null : accessPath(target);
+        const declared = access && declarationId(access.root);
+        return declared ? [declared] : [];
+      });
+      grew = noteAlias(holders, reach(node.right).map((found) => ({ ...found, container: true }))) || grew;
+    } else if (ts.isForOfStatement(node)) {
+      const names = ts.isVariableDeclarationList(node.initializer)
+        ? node.initializer.declarations.flatMap((declaration) => declaredIdentifiers(declaration.name))
+        : assignmentTargets(node).flatMap((target) => {
+            const declared = ts.isIdentifier(target) ? declarationId(target) : null;
+            return declared ? [declared] : [];
+          });
+      grew = noteAlias(names, reach(node.expression), true);
+    } else if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
+      // Every parameter of an inline callback can hold what the method gives it:
+      // the first an element, the third the array, and a rest any of them. The
+      // second is the index, a number.
+      const callback = inlineCallback(node);
+      const receivers = reach(node.expression.expression);
+      callback?.parameters.forEach((parameter, index) => {
+        const names = declaredIdentifiers(parameter.name);
+        if (parameter.dotDotDotToken) {
+          grew = noteAlias(names, receivers.map((found) => ({ ...found, container: true }))) || grew;
+        } else if (index !== 1) {
+          grew = noteAlias(names, receivers, index === 0) || grew;
+        }
+      });
+    }
+    ts.forEachChild(node, (child) => {
+      grew = collectAliases(child) || grew;
+    });
+    return grew;
+  };
+  while (collectAliases(scope));
+  // Whether a function nested in `scope` can run inside the window, which it
+  // does anywhere unless it holds the whole of it.
+  const holdsWindow = (fn: ts.Node) =>
+    fn.getStart() <= window.from && fn.getEnd() >= Math.min(window.to, scope.getEnd());
+  const canRun = (fn: ts.Node) =>
+    !holdsWindow(fn) && (ts.isFunctionDeclaration(fn) || fn.getStart() < window.to);
+  let changed = false;
+  const visit = (node: ts.Node, inClosure: boolean): void => {
+    if (changed) return;
+    const closure = inClosure || (node !== scope && isFunctionLike(node) && canRun(node));
+    const start = node.getStart();
+    if (closure || (start >= window.from && start < window.to)) {
+      for (const target of assignmentTargets(node)) {
+        const write = accessPath(target);
+        const source = write && declarationId(write.root);
+        if (write && source && sources.has(source) && write.path.length > 0 && (direct || source !== id)) {
+          changed = true;
+        }
+      }
+      for (const argument of callArguments(node)) {
+        if (reach(argument).some((received) => !followed.has(received.node) && isPrefix(received.path))) {
+          changed = true;
+        }
+      }
+      const call = ts.isCallExpression(node) ? node : null;
+      const callee = call ? unwrapValue(call.expression) : null;
+      if (call && callee && (ts.isPropertyAccessExpression(callee) || ts.isElementAccessExpression(callee))) {
+        const method = ts.isPropertyAccessExpression(callee) ? callee.name.text : elementKey(callee.argumentExpression);
+        // A literal receiver (`[id].forEach(...)`) holds the object as well.
+        const receivers = reach(callee.expression);
+        if (receivers.some((receiver) => isPrefix(receiver.path)) && !onlyReads(call, method)) changed = true;
+      }
+    }
+    ts.forEachChild(node, (child) => visit(child, closure));
+  };
+  visit(scope, false);
+  return changed;
 }
 
 /**
@@ -501,9 +984,8 @@ function isReassigned(reference: Reference, scope: ts.Node): boolean {
   const visit = (node: ts.Node): void => {
     if (written) return;
     for (const target of assignmentTargets(node)) {
-      const write = writtenPath(target);
-      const declaration = write && findDeclaration(write.root.text, write.root);
-      if (!write || !declaration || !("id" in declaration) || declaration.id !== reference.id) continue;
+      const write = accessPath(target);
+      if (!write || declarationId(write.root) !== reference.id) continue;
       // Writing the declaration, or any property its path reads through.
       if (
         write.path.length <= reference.path.length &&
@@ -518,9 +1000,16 @@ function isReassigned(reference: Reference, scope: ts.Node): boolean {
   return written;
 }
 
+/** The block (or function) a `const` or parameter is visible in. */
+function declarationScope(
+  declaration: { kind: "const"; declaration: ts.VariableDeclaration } | { kind: "parameter"; scope: ts.Node },
+): ts.Node {
+  return declaration.kind === "parameter" ? declaration.scope : declaration.declaration.parent.parent.parent;
+}
+
 /**
- * The declaration and path `node` reads, when it is an identifier or a
- * property-access chain rooted in a `const` or a parameter that nothing in its
+ * The declaration and path `node` reads, when it is an identifier or a chain of
+ * property accesses and literal-key element accesses rooted in a `const` or a parameter that nothing in its
  * scope reassigns; otherwise null.
  */
 function referenceOf(node: ts.Expression): Reference | null {
@@ -528,9 +1017,10 @@ function referenceOf(node: ts.Expression): Reference | null {
   if (!access) return null;
   const declaration = findDeclaration(access.root.text, access.root);
   if (declaration?.kind !== "const" && declaration?.kind !== "parameter") return null;
+  // A computed key names no one property, so two reads of `b[k]` need not match.
+  if (access.path.includes(ANY_KEY)) return null;
   const reference = { id: declaration.id, path: access.path };
-  const scope = declaration.kind === "parameter" ? declaration.scope : declaration.declaration.parent.parent.parent;
-  return isReassigned(reference, scope) ? null : reference;
+  return isReassigned(reference, declarationScope(declaration)) ? null : reference;
 }
 
 const MAX_TRACE_DEPTH = 8;
@@ -634,21 +1124,38 @@ function returnedExpressions(fn: ts.Node): ts.Expression[] | null {
 }
 
 /**
+ * The `const`s `objectLiterals` followed (each with whether it holds an array
+ * of the objects or one object), and the reads of them it followed through.
+ */
+type LiteralTrace = {
+  consts: { binding: FollowedConst; elements: boolean }[];
+  followed: Set<ts.Node>;
+};
+
+/**
  * The object literals `node` evaluates to; with `elements`, the literals each
  * element of the array it evaluates to is built from. Followed through `const`
  * bindings, array literals, `Promise.all(...)` and `.map(callback)`; anything
  * else is null.
  */
-function objectLiterals(node: ts.Expression, elements: boolean, depth = 0): ts.ObjectLiteralExpression[] | null {
+function objectLiterals(
+  node: ts.Expression,
+  elements: boolean,
+  trace: LiteralTrace,
+  depth = 0,
+): ts.ObjectLiteralExpression[] | null {
   const value = unwrapValue(node);
   if (depth > MAX_TRACE_DEPTH) return null;
   if (ts.isIdentifier(value)) {
     const binding = resolveBinding(value.text, value);
-    return binding?.kind === "const" ? objectLiterals(binding.initializer, elements, depth + 1) : null;
+    if (binding?.kind !== "const") return null;
+    trace.consts.push({ binding, elements });
+    trace.followed.add(value);
+    return objectLiterals(binding.initializer, elements, trace, depth + 1);
   }
   if (!elements) return ts.isObjectLiteralExpression(value) ? [value] : null;
   const all = (parts: readonly ts.Expression[], each: boolean) => {
-    const found = parts.map((part) => objectLiterals(part, each, depth + 1));
+    const found = parts.map((part) => objectLiterals(part, each, trace, depth + 1));
     return found.every((literals) => literals !== null) ? found.flat() : null;
   };
   if (ts.isArrayLiteralExpression(value)) return all(value.elements, false);
@@ -674,19 +1181,52 @@ function objectLiterals(node: ts.Expression, elements: boolean, depth = 0): ts.O
 function copiedWriters(copy: ts.PropertyAccessExpression): ts.Node[] | null {
   const root = unwrapValue(copy.expression);
   if (!ts.isIdentifier(root)) return null;
-  const declaration = findDeclaration(root.text, root);
+  const binding = resolveBinding(root.text, root);
+  const declaration = binding ? null : findDeclaration(root.text, root);
   let literals: ts.ObjectLiteralExpression[] | null = null;
-  if (declaration?.kind === "const" && ts.isIdentifier(declaration.declaration.name)) {
-    literals = declaration.declaration.initializer ? objectLiterals(declaration.declaration.initializer, false) : null;
+  const trace: LiteralTrace = { consts: [], followed: new Set() };
+  // The object, or the loop variable, and each array it came from, with where
+  // each is built and the path of the value a copy reads.
+  const changeWindows: { id: ts.Identifier; scope: ts.Node; from: number; watched: readonly string[] }[] = [];
+  const objectPath = ["passwordHash"];
+  if (binding?.kind === "const") {
+    changeWindows.push({
+      id: binding.id,
+      scope: declarationScope(binding),
+      from: binding.declaration.getEnd(),
+      watched: objectPath,
+    });
+    literals = objectLiterals(binding.initializer, false, trace);
   } else if (
     declaration?.kind === "loop" &&
     ts.isForOfStatement(declaration.statement) &&
     declaration.id.parent === (declaration.statement.initializer as ts.VariableDeclarationList).declarations[0] &&
     (declaration.statement.initializer.flags & ts.NodeFlags.Const) !== 0
   ) {
-    literals = objectLiterals(declaration.statement.expression, true);
+    changeWindows.push({
+      id: declaration.id,
+      scope: declaration.statement,
+      from: declaration.statement.getStart(),
+      watched: objectPath,
+    });
+    literals = objectLiterals(declaration.statement.expression, true, trace);
   }
   if (!literals) return null;
+  for (const { binding: followed, elements } of trace.consts) {
+    changeWindows.push({
+      id: followed.id,
+      scope: declarationScope(followed),
+      from: followed.declaration.getEnd(),
+      watched: elements ? [ANY_KEY, ...objectPath] : objectPath,
+    });
+  }
+  // #4746: a write after the build (`x.k = v`, `rows[0] = v`), an alias that
+  // writes, `Object.assign(x, ...)` or any call that receives the object, an
+  // element of the array or the array can replace the value the literal
+  // vetted, so the copy is refused.
+  for (const { id, scope, from, watched } of changeWindows) {
+    if (objectChanged(id, scope, watched, { from, to: Infinity }, true, trace.followed)) return null;
+  }
   const writers: ts.Node[] = [];
   for (const literal of literals) {
     let writer: ts.Node | null = null;

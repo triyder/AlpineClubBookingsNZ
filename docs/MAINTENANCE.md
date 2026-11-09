@@ -1448,6 +1448,41 @@ also manual-review (not auto-queued) when the payment captured money and no
 stored evidence records the policy-limited settlement — the report tells you
 to size the credit note (or confirm the note's total) by hand from the
 cancellation-policy history before acting; `--apply` will not touch these.
+Since #4757, an edit's note whose own operation went PARTIAL (the note made,
+its allocation refused) reports `MISSING_CREDIT_NOTE_ALLOCATION` with that
+operation's retry, never a fresh allocation; while a retry is running on it,
+or where the retry is refused, the report says the allocation is blocked and
+offers nothing, and you check again later or allocate it by hand in Xero.
+Since #4762 the same holds for an invoice-clearing note whose operation the
+retry refuses: reported blocked with the reason and the invoices left to
+allocate by hand, never a fresh allocation of the whole note against the
+primary invoice; where its recorded plan was redacted, the invoices left are
+not listed. For either note, whether its retry is offered or refused, an
+allocation operation still pending or running is reported instead (let it
+finish, then run the report again), and so is a failed one that is not the
+note's own attempt at a planned invoice and amount - such as an older,
+differently sized allocation the tool once queued: it is retried first, or
+reported if it cannot be, or reported as done if resolved in Xero and it
+names the same credit note (one resolved for another note is left to that
+note's own report). The report reads the edit's own operations, or for an
+invoice-clearing note the whole booking's. The note's own failed attempts
+are covered by its retry. Since #4767 that retry, and the report, also
+count an allocation an older version of this tool retried on its own
+(linked as `CREDIT_NOTE_ALLOCATION`) as done when it names the same credit
+note, invoice and amount, so the retry never sends it to Xero again; a
+note whose planned invoices are all covered that way is no longer reported.
+Its operation stays partial on the Xero operations screen until one retry
+closes it, which makes no Xero call. Invoices you allocated by hand through
+one of the note's own attempts are not listed: if none is left, the note is
+reported as done; otherwise the report asks you to allocate the planned
+invoices it lists as left by hand, and offers nothing.
+Since #4763, a note whose own operation was marked resolved in Xero is
+listed as an information-only "resolved in Xero by an officer" finding
+naming the note, with nothing offered. Any other allocation operation still
+failed or pending beside it is reported too, and not retried from this
+report: a retry of one of that note's own could allocate it a second time,
+since the allocation you made by hand is not linked in the app. Check such
+an operation in Xero, then retry or resolve it on the Xero operations panel.
 Since #1491, `LATE_CAPTURE_AFTER_CANCELLATION` is also never auto-applied:
 it now fires only when a cancelled booking retains captured value with NO
 recorded cancellation-refund decision (no cancellation credit, no
@@ -1903,6 +1938,39 @@ the effect of the parking gate's grain (#3531 3a) and the rate-derived backfill
 ```bash
 DATABASE_URL=<non-prod copy or, read-only, production> pnpm run booking-money:census
 ```
+
+### Catch up and census member-money receipts (M4b)
+
+Before enabling card-refund journal posting (M4c), account for every receipt on
+a booking whose R01 charge is already in the journal. This fills the gap between
+M3 and M4b without guessing which charge historical cash paid.
+
+```bash
+pnpm run member-money:receipt-catch-up --dry-run
+pnpm run member-money:receipt-catch-up --execute
+pnpm run member-money:receipt-catch-up --dry-run
+```
+
+Only the owner runs `--execute`, using the application database role. It posts
+missing receipts and their exact reversals, one Payment-row transaction at a
+time. It never calls a provider or creates collection applications. A repeated
+run posts nothing. It includes archived bookings with R01; older bookings and
+organiser-share mirrors stay outside this population. Catch-up dates are the
+legacy settlement line's recorded instant and are labelled `app-record`.
+
+The default and `--dry-run` perform read-only checks. JSON findings distinguish
+`RECEIPT_WITHOUT_EVENT`, `UNBRIDGED_SETTLEMENT_LINE`, `RECEIPT_AMOUNT_DRIFT`,
+`OVER_COLLECTED`, `UNAPPLIED_RECEIPT_ON_OPEN_CHARGE`, `MERGED_DEBTOR_BALANCE` and
+`COLLECTION_ON_REVERSED_RECEIPT` (a reversed receipt whose collection still applies cash).
+Missing receipts give exit status 2 and hold M4c's deployment. Unapplied cash is
+expected after catch-up; it remains available without inferring collection, and
+no later receipt hook collects a receipt the catch-up posted.
+`OVER_COLLECTED` is also expected until M4c records refunds. A booking whose
+price fell after it was paid, or that was cancelled and not yet refunded, still
+holds its full collection against the lower charge.
+A drift finding needs investigation; the command never rewrites an existing
+journal or silently resizes cash. Failure rolls back the current payment's
+transaction; earlier committed payments remain safe to replay.
 
 ### Census the booking ledger against its money columns (#3583)
 
@@ -2616,7 +2684,11 @@ reading applied credit from the same allocation ledger the release reads), and
 lists each booking whose notes ALLOCATED less than that: booking id, invoice
 ref, the notes raised, expected clearing, what was allocated, and the open
 delta. It reads only local rows (no Xero calls). Only allocations count — the
-allocation links the builder and the inbound reconcile write — so a FAILED
+allocation links the builder and the inbound reconcile write, with the note's
+own role or `CREDIT_NOTE_ALLOCATION` (since #4786 a link with any other role
+counts nothing), one per note and invoice: the newest with the note's role and
+an amount, else the newest role-less one, since the inbound reconcile's link
+carries the note's applications to that invoice summed — so a FAILED
 clearing operation (nothing created), a PARTIAL one, and a pre-#3535 refund note
 (never allocated by the system) all show as not clearing. A refund note someone
 allocated by hand in Xero counts as far as it was allocated; every clearing

@@ -26,6 +26,7 @@ import { useClubIdentity } from "@/components/club-identity-provider";
 import { isFeatureHrefVisible } from "@/config/feature-routes";
 import type { FeatureFlags } from "@/config/schema";
 import { FINANCE_WORKSPACE_PATH } from "@/lib/admin-permissions";
+import { servedAdminPathname } from "@/lib/admin-hubs";
 import { buildProfilePathWithReturnTo } from "@/lib/internal-return-path";
 import { cn } from "@/lib/utils";
 
@@ -146,7 +147,10 @@ export function getNavBarLinks(
 
 export function NavBar({ user, features, surface = "member" }: NavBarProps) {
   const club = useClubIdentity();
-  const pathname = usePathname();
+  // The served form of a moved admin page's URL, the same on the server and in
+  // the browser (C3 #4800): the profile link returns here. Not an admin path,
+  // unchanged.
+  const pathname = servedAdminPathname(usePathname());
   const [mobileOpen, setMobileOpen] = useState(false);
   const profileHref =
     pathname === "/profile"
