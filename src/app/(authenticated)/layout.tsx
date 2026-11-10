@@ -19,6 +19,7 @@ import {
   hasFinanceViewerAccess,
 } from "@/lib/admin-permissions";
 import { hasAccessRole } from "@/lib/access-roles";
+import { classifyAccountRecord } from "@/lib/member-roles";
 import { addCalendarDays, dateOnlyInstantOf } from "@/lib/club-time";
 import { clubTime } from "@/lib/club-time/server";
 import { recordAuthBounce } from "@/lib/auth-diagnostics";
@@ -170,6 +171,7 @@ export default async function AuthenticatedLayout({
     canAccessFinance: hasFinanceViewerAccess(member),
     isHutLeader: isHutLeaderActive,
     isStayingGuest,
+    isAdminUserType: classifyAccountRecord(member) === "admin",
   };
   // Single-action token routes (e.g. `/nominations/<token>`) are exempt from the
   // mandatory onboarding gate so a member can complete that action without first

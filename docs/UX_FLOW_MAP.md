@@ -996,8 +996,10 @@ Screen: every `/admin` page and the `/finance` workspace.
 
 Shows: a sidebar panel for each role held — Admin (the full menu), Bookings,
 Membership, Content, Finance or Treasurer — chosen from each role's permission
-matrix, never its name. Staff pages drop Book, My Bookings and Who's at the
-lodge from the top bar, and the sidebar leaves both dashboards to the top bar.
+matrix, never its name. Staff pages drop Book and My Bookings from the top
+bar, an Admin User Type never sees My Bookings there, and the sidebar leaves
+both dashboards to the top bar. Who's at the lodge is a Lodge Kiosk card button
+on `/dashboard`, not a top-bar link.
 
 Journey: open a staff page on the first panel, or use the switcher's buttons
 when more than one role gives a panel; the choice is remembered per browser. A

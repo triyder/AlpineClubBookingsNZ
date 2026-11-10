@@ -219,6 +219,18 @@ describe("DashboardPage summary card drill-downs", () => {
     expect(html).not.toContain('href="/lodge-roster"');
   });
 
+  it("keeps the roster's card while the kiosk module is off", async () => {
+    mocks.loadEffectiveModuleFlags.mockResolvedValue({
+      ...moduleFlags(),
+      kiosk: false,
+      memberLodgeRoster: true,
+    });
+    const html = await renderDashboardPage();
+
+    expect(html).toContain('href="/lodge-roster"');
+    expect(html).not.toContain('href="/lodge/kiosk"');
+  });
+
   it("shows a lodge occupancy meter for the next stay's dates", async () => {
     const html = await renderDashboardPage();
 

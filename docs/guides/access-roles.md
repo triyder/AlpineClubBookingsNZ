@@ -112,10 +112,12 @@ sidebar remembers the last choice in that browser. The Admin Dashboard and the
 Member Dashboard are not in the sidebar: use **Admin** and **Dashboard** in the
 top bar. The menus are display only: a page left out of a menu can still be
 opened from the search (Ctrl K) or a direct link if the role allows it, and a
-page the role cannot open appears in neither. On staff pages (`/admin` and the `/finance` workspace) the
-top bar also leaves out Book, My Bookings and Who's at the lodge; those stay on
-the member pages, and Who's at the lodge is also on the Lodge Kiosk card of the
-member dashboard.
+page the role cannot open appears in neither. On staff pages (`/admin` and the
+`/finance` workspace) the top bar also leaves out Book and My Bookings. An
+account whose User Type is **Admin** never sees My Bookings in the top bar:
+its holder books from their own member login. **Who's at the lodge** is not in
+the top bar for anyone; it is a button under **Open Kiosk** on the member
+dashboard's Lodge Kiosk card.
 
 ## Troubleshooting
 

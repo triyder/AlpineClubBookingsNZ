@@ -476,8 +476,28 @@ describe("staff top bar (#108)", () => {
 
   it("keeps them on the member shell", () => {
     const shown = getNavBarLinks(user, allOn).map((link) => link.label);
-    expect(shown).toEqual(
-      expect.arrayContaining(["Book", "My Bookings", "Who's at the lodge"]),
+    expect(shown).toEqual(expect.arrayContaining(["Book", "My Bookings"]));
+  });
+
+  it("drops My Bookings for an Admin user type, who books from their own login", () => {
+    const shown = getNavBarLinks({ ...user, isAdminUserType: true }, allOn).map(
+      (link) => link.label,
     );
+    expect(shown).not.toContain("My Bookings");
+    expect(shown).toEqual(
+      expect.arrayContaining(["Home", "Dashboard", "Book", "Profile", "Admin"]),
+    );
+  });
+
+  it("never carries Who's at the lodge: it lives on the Lodge Kiosk card", () => {
+    for (const surface of ["member", "staff"] as const) {
+      const shown = getNavBarLinks(
+        { ...user, role: "USER", canAccessAdmin: false },
+        allOn,
+        "Hut Leader",
+        surface,
+      ).map((link) => link.label);
+      expect(shown).not.toContain("Who's at the lodge");
+    }
   });
 });
