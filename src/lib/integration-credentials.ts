@@ -48,12 +48,13 @@ import {
 } from "@/lib/integration-credential-actor";
 import {
   CredentialDecryptError,
-  INTEGRATION_CREDENTIAL_LABEL,
+  DATA_KEY_SOURCE_PREFIX,
   decryptCredential,
   encryptCredential,
   getAuthSecretWithSource,
-  type AuthSecretSource,
+  type WrappingKeySource,
 } from "@/lib/integration-crypto";
+import { assertLegacyWriteAllowed } from "@/lib/data-encryption-legacy-write-guard";
 
 /** Cross-process cache TTL. Kept inside the binding 30-60s window. */
 export const CACHE_TTL_MS = 45_000;
@@ -126,8 +127,11 @@ export type CredentialResolution =
   | {
       status: "configured";
       value: string;
-      secretSource: AuthSecretSource;
-      /** Value unchanged, but the secret env var it was written under flipped. */
+      secretSource: WrappingKeySource;
+      /**
+       * A legacy row whose value is unchanged, but the auth-secret env var it
+       * was written under flipped. Always false for a ring row (#4456).
+       */
       sourceFlipped: boolean;
       labelVersion: string;
       /**
@@ -149,7 +153,7 @@ export type CredentialResolution =
  * Resolve one credential. Distinguishes:
  *   - configured (decrypts; may flag a secret-source flip),
  *   - not_configured (no row),
- *   - needs_reentry (row present but GCM fails — the auth secret changed).
+ *   - needs_reentry (row present but unreadable — its key changed or is gone).
  * A DB error propagates to the caller (it is neither "not configured" nor a
  * decrypt failure).
  */
@@ -197,14 +201,16 @@ function resolveStoredRow(
       iv: row.iv,
       authTag: row.authTag,
       labelVersion: row.labelVersion,
+      secretSource: row.secretSource,
     });
+    const legacyRow = row.secretSource === "AUTH_SECRET" || row.secretSource === "NEXTAUTH_SECRET";
     const currentSource = getAuthSecretWithSource()?.source;
     return {
       status: "configured",
       value,
-      secretSource: row.secretSource as AuthSecretSource,
+      secretSource: row.secretSource as WrappingKeySource,
       sourceFlipped:
-        currentSource !== undefined && currentSource !== row.secretSource,
+        legacyRow && currentSource !== undefined && currentSource !== row.secretSource,
       labelVersion: row.labelVersion,
       version: credentialVersionOf(row),
     };
@@ -269,7 +275,7 @@ export async function getIntegrationCredentialValue(
 export interface SetCredentialResult {
   provider: string;
   key: string;
-  secretSource: AuthSecretSource;
+  secretSource: WrappingKeySource;
   labelVersion: string;
   updatedAt: Date;
   /** The token of the row as it now stands, for a follow-on compare-and-set. */
@@ -280,9 +286,11 @@ export interface SetCredentialResult {
  * Encrypt and persist a credential. Invalidates the writing process's cache
  * immediately once the transaction commits.
  *
- * The capture-time strong-secret gate runs inside `encryptCredential` BEFORE the
- * transaction opens — a weak/placeholder secret throws `WeakAuthSecretError`,
- * nothing is written and nothing is audited.
+ * The capture-time gate runs inside `encryptCredential` BEFORE the row is
+ * claimed — an unusable key (a weak/placeholder auth secret with no ring, or an
+ * invalid `DATA_ENCRYPTION_KEYS`) throws `WeakAuthSecretError`, nothing is
+ * written and nothing is audited. The write always wraps under the CURRENT data
+ * key, which also chooses the stored label (#4456).
  *
  * COMPARE-AND-SET, by the expectation the caller declared:
  *   absent  → `create`; a P2002 means somebody created it first and we lose.
@@ -315,10 +323,41 @@ export interface SetIntegrationCredentialParams {
   value: string;
   actor: CredentialActor;
   expect: CredentialWriteExpectation;
-  label?: string;
   request?: CredentialRequestContext;
   /** Why, when the write is the consequence of something else (#3454). */
   cause?: CredentialMutationCause;
+  /**
+   * The row's own `updatedAt`, kept rather than bumped. ONLY the data-key
+   * re-encrypt passes it (#4456 review): it writes the same value under a new
+   * key, which is not a newer credential, and the verified-marker freshness
+   * rules compare `updatedAt` (`getGoogleSetupState`, the Stripe webhook
+   * marker), so a bump would quietly unverify a provider. Every real change
+   * omits it and gets a fresh timestamp.
+   */
+  keepUpdatedAt?: Date;
+}
+
+/** `keepUpdatedAt` from anything but the data-key re-encrypt's compare-and-set. */
+export class KeepUpdatedAtRefusedError extends Error {
+  constructor() {
+    super(
+      "keepUpdatedAt is only for the data-key re-encrypt (cause data-key-reencrypt) on a version compare-and-set; a real change gets a fresh timestamp.",
+    );
+    this.name = "KeepUpdatedAtRefusedError";
+  }
+}
+
+/**
+ * Refuse, before anything is written, a kept timestamp on any write but the
+ * re-encrypt's (#4456 review): anywhere else it would hide a real change from
+ * the verified-marker freshness rules, and without a version claim it could
+ * stamp a value it never read.
+ */
+function assertKeepUpdatedAtIsAReencrypt(params: SetIntegrationCredentialParams): void {
+  if (params.keepUpdatedAt === undefined) return;
+  if (params.cause?.kind !== "data-key-reencrypt" || params.expect.expect !== "version") {
+    throw new KeepUpdatedAtRefusedError();
+  }
 }
 
 /**
@@ -355,14 +394,17 @@ export async function setIntegrationCredentialInTransaction(
 ): Promise<SetCredentialResult> {
   assertCredentialActor(CREDENTIAL_AUDIT_ACTIONS.set, params.actor);
   assertCredentialWriteExpectation(CREDENTIAL_AUDIT_ACTIONS.set, params.expect);
+  assertKeepUpdatedAtIsAReencrypt(params);
 
-  const label = params.label ?? INTEGRATION_CREDENTIAL_LABEL;
   const encrypted = encryptCredential({
     provider: params.provider,
     key: params.key,
     plaintext: params.value,
-    label,
   });
+  // #4456 review: no AUTH_SECRET write while stored data names a ring key.
+  if (!encrypted.secretSource.startsWith(DATA_KEY_SOURCE_PREFIX)) {
+    await assertLegacyWriteAllowed(params.tx);
+  }
   const written: CredentialRowWrite = {
     ciphertext: encrypted.ciphertext,
     iv: encrypted.iv,
@@ -370,6 +412,7 @@ export async function setIntegrationCredentialInTransaction(
     secretSource: encrypted.secretSource,
     labelVersion: encrypted.labelVersion,
     updatedByUserId: credentialActorMemberId(params.actor),
+    ...(params.keepUpdatedAt === undefined ? {} : { updatedAt: params.keepUpdatedAt }),
   };
 
   const updatedAt = await applyCredentialWrite(params.tx, {
@@ -610,8 +653,8 @@ export async function providerNeedsReentry(provider: string): Promise<boolean> {
 export async function providerUnreadableKeys(provider: string): Promise<string[]> {
   const rows = await loadProviderRows(provider);
   if (rows.size === 0) return [];
-  // Rows exist but nothing can decrypt them.
-  if (!getAuthSecretWithSource()) return [...rows.keys()];
+  // Each row is tried under the key IT names; a key this deployment lacks is a
+  // CredentialDecryptError like any other, so it needs no special case here.
   const unreadable: string[] = [];
   for (const row of rows.values()) {
     try {
@@ -622,6 +665,7 @@ export async function providerUnreadableKeys(provider: string): Promise<string[]
         iv: row.iv,
         authTag: row.authTag,
         labelVersion: row.labelVersion,
+        secretSource: row.secretSource,
       });
     } catch (error) {
       if (error instanceof CredentialDecryptError) unreadable.push(row.key);
