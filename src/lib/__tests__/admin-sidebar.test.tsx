@@ -299,13 +299,7 @@ describe("AdminSidebar", () => {
         isFullAdmin={false}
       />,
     );
-    // #108: a finance-only admin opens on the Finance panel, which carries
-    // neither admission page; both are on the full admin menu one press away,
-    // which is the menu this test is about.
-    expect(
-      screen.queryByRole("link", { name: "Club Currency & Locale" }),
-    ).toBeNull();
-    fireEvent.click(screen.getAllByRole("button", { name: "Full admin" })[0]);
+    // #108: rendered with no `panels`, so the full menu this test is about.
     expect(
       screen
         .getByRole("link", { name: "Club Currency & Locale" })

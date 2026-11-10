@@ -38,14 +38,21 @@ interface NavBarUser {
   canAccessFinance?: boolean;
   isHutLeader?: boolean;
   isStayingGuest?: boolean;
+  /**
+   * The account's User Type is Admin (`classifyAccountRecord`, the Edit Member
+   * page's classification) and it is not also a club member (no `USER`): its
+   * holder books from their own member login, so the bar leaves out My
+   * Bookings. An Admin who is also a club member keeps it.
+   */
+  isAdminOnlyAccount?: boolean;
 }
 
 /**
  * Which shell is drawing the bar (#108). The staff shells — `/admin` and the
- * `/finance` workspace — leave out the member-journey links (Book, My Bookings,
- * Who's at the lodge): an administrator at work reaches booking through "Book
- * on Behalf" in the sidebar and their own bookings from the Member Dashboard.
- * The member shell is unchanged.
+ * `/finance` workspace — leave out the member-journey links (Book, My
+ * Bookings): an administrator at work reaches booking through "Book on Behalf"
+ * in the sidebar. The bar never carries Who's at the lodge: it is a button on
+ * the member dashboard's Lodge Kiosk card.
  */
 export type NavBarSurface = "member" | "staff";
 
@@ -60,13 +67,20 @@ interface NavBarLink {
   label: string;
   /** Left out of the bar on the staff shells (#108). */
   memberSurfaceOnly?: boolean;
+  /** Left out for an Admin account that is not also a club member. */
+  hiddenForAdminOnlyAccount?: boolean;
 }
 
 const memberLinks: NavBarLink[] = [
   { href: "/", label: "Home" },
   { href: "/dashboard", label: "Dashboard" },
   { href: "/book", label: "Book", memberSurfaceOnly: true },
-  { href: "/bookings", label: "My Bookings", memberSurfaceOnly: true },
+  {
+    href: "/bookings",
+    label: "My Bookings",
+    memberSurfaceOnly: true,
+    hiddenForAdminOnlyAccount: true,
+  },
   { href: "/profile", label: "Profile" },
 ];
 
@@ -75,13 +89,6 @@ const financeLink: NavBarLink = {
   label: "Finance",
 };
 
-// The member lodge roster (#2942). Off unless the club turns the module on,
-// so the link is conditional rather than part of `memberLinks` above.
-const lodgeRosterLink: NavBarLink = {
-  href: "/lodge-roster",
-  label: "Who's at the lodge",
-  memberSurfaceOnly: true,
-};
 /*
   The Admin link is the SHELL entrance, not a page this user is known to hold
   (#2984). Portal standing is any one of the seven areas, so a finance-only
@@ -130,7 +137,6 @@ export function getNavBarLinks(
     isFeatureHrefVisible(FINANCE_WORKSPACE_PATH, features)
       ? [financeLink]
       : []),
-    ...(features.memberLodgeRoster ? [lodgeRosterLink] : []),
     ...(features.kiosk
       ? user.isHutLeader && features.hutLeaders
         ? [hutLeaderLink]
@@ -140,9 +146,11 @@ export function getNavBarLinks(
       : []),
     ...(user.canAccessAdmin || user.role === "ADMIN" ? [adminLink] : []),
   ];
-  return surface === "staff"
-    ? links.filter((link) => !link.memberSurfaceOnly)
-    : links;
+  return links.filter(
+    (link) =>
+      !(surface === "staff" && link.memberSurfaceOnly) &&
+      !(user.isAdminOnlyAccount && link.hiddenForAdminOnlyAccount),
+  );
 }
 
 export function NavBar({ user, features, surface = "member" }: NavBarProps) {
