@@ -16,6 +16,7 @@ import { requireFinanceViewer } from "@/lib/finance-auth";
 import { AdminSidebar } from "@/components/admin-sidebar";
 import { AdminCommandPalette } from "@/components/admin-command-palette";
 import { isFullAdmin } from "@/lib/access-roles";
+import { resolveMemberAdminNavPanels } from "@/lib/admin-nav-panels";
 import {
   getAdminPermissionMatrix,
   hasAdminPortalAccess,
@@ -34,6 +35,7 @@ export default async function FinanceLayout({
   // item exactly as on /admin; every admin page still runs its own guard.
   const permissionMatrix = getAdminPermissionMatrix(member);
   const actorIsFullAdmin = isFullAdmin(member);
+  const adminNavPanels = resolveMemberAdminNavPanels(member);
   const [effectiveModules, lodgeCapacity, theme, clubIdentity] = await Promise.all([
     loadEffectiveModuleFlags(),
     getDefaultLodgeCapacity(),
@@ -75,6 +77,7 @@ export default async function FinanceLayout({
           features={effectiveModules}
           permissionMatrix={permissionMatrix}
           isFullAdmin={actorIsFullAdmin}
+          panels={adminNavPanels}
           hutLeaderLabel={liveClubIdentity.hutLeaderLabel}
         />
         <AdminCommandPalette

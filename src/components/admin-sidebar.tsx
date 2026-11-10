@@ -30,7 +30,6 @@ import {
   UserCheck,
   Trash2,
   Sliders,
-  House,
   Tablet,
   Tv,
   UsersRound,
@@ -84,10 +83,12 @@ import {
   buildUnsettledAdditionalStaysHref,
 } from "@/lib/unpaid-finished-stays-hrefs";
 import {
+  ADMIN_NAV_PANELS,
   NEEDS_ATTENTION_LABEL,
   projectAdminNavPanel,
   type AdminNavPanelKey,
 } from "@/lib/admin-nav-panels";
+import { getContentPanelSections } from "@/lib/admin-appearance-pages";
 import {
   PanelSwitcher,
   SidebarSearchButton,
@@ -822,11 +823,11 @@ export function getPanelAdminNavSections(
   hutLeaderLabel = "Hut Leader",
 ): NavSection[] {
   const showFinanceWorkspace =
-    panelKey === "finance" &&
+    ADMIN_NAV_PANELS[panelKey].financeWorkspace === true &&
     isFeatureHrefVisible(FINANCE_WORKSPACE_ITEM.href, features) &&
     permissionMatrix !== undefined &&
     hasFinanceViewerAccessFromMatrix(permissionMatrix);
-  return projectAdminNavPanel(
+  const sections = projectAdminNavPanel(
     getVisibleAdminNavSections(
       clubToday,
       features,
@@ -837,6 +838,9 @@ export function getPanelAdminNavSections(
     panelKey,
     showFinanceWorkspace ? { Finance: [FINANCE_WORKSPACE_ITEM] } : {},
   );
+  return panelKey === "content"
+    ? [...sections, ...getContentPanelSections(features, permissionMatrix)]
+    : sections;
 }
 
 // test seam
@@ -865,7 +869,7 @@ export function getRenderedAdminNavSections(
           }
         : section,
     )
-    .filter((section) => section.items.length > 0);
+    .filter((section) => section.label && section.items.length > 0);
 }
 
 function SidebarLinks({
@@ -1032,18 +1036,9 @@ function SidebarLinks({
 
   return (
     <nav aria-label="Admin sections" className="flex flex-col gap-0.5">
-      <Link
-        href="/dashboard"
-        onClick={onNavigate}
-        className="flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
-      >
-        <House className="h-4 w-4 shrink-0 text-muted-foreground" />
-        Member Dashboard
-      </Link>
-      <div className="my-1.5 border-t border-border" />
       {renderedNavSections.map((section, sIdx) => {
-        // Every labeled section collapses except "Needs Attention"; the
-        // label-less top section (Admin Dashboard) is always shown.
+        // Every section collapses except "Needs Attention". The label-less
+        // top section (Admin Dashboard) feeds search only: the top bar has it.
         const collapsible =
           Boolean(section.label) && section.label !== NEEDS_ATTENTION_LABEL;
         const open =
@@ -1125,17 +1120,17 @@ export function AdminSidebar({
   permissionMatrix,
   isFullAdmin,
   hutLeaderLabel = "Hut Leader",
+  panels = ["admin"],
 }: {
   features: FeatureFlags;
   permissionMatrix?: AdminPermissionMatrix;
   isFullAdmin?: boolean;
   hutLeaderLabel?: string;
+  /** The menus this person's roles give them, default first (#108). */
+  panels?: readonly AdminNavPanelKey[];
 }) {
   const [mobileOpen, setMobileOpen] = useState(false);
-  const { choices, panelKey, choose, title } = useAdminNavPanel(
-    permissionMatrix,
-    isFullAdmin,
-  );
+  const { choices, panelKey, choose, title } = useAdminNavPanel(panels);
 
   return (
     <>

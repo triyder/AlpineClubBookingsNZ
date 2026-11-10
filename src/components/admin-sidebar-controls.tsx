@@ -12,13 +12,10 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { openAdminCommandPalette } from "@/lib/admin-command-palette-events";
 import type { AdminPendingCounts } from "@/lib/admin-pending-counts";
-import type { AdminPermissionMatrix } from "@/lib/admin-permissions";
 import {
   ADMIN_NAV_PANELS,
   ADMIN_NAV_PANEL_STORAGE_KEY,
-  getAdminNavPanelChoices,
   pickStoredAdminNavPanel,
-  resolveAdminNavPanels,
   type AdminNavPanelKey,
 } from "@/lib/admin-nav-panels";
 
@@ -130,7 +127,7 @@ export function PanelSwitcher({
     <div
       role="group"
       aria-label="Admin menu"
-      className="mb-2 flex gap-1 rounded-md bg-muted p-1"
+      className="mb-2 flex flex-wrap gap-1 rounded-md bg-muted p-1"
     >
       {choices.map((key) => (
         <Button
@@ -158,17 +155,11 @@ export function PanelSwitcher({
  * The panel shown, and the switcher's choices (#108). Starts on the person's
  * default panel so server and first client render agree; a remembered choice
  * is applied after mount, and only if it is still one of their choices. A
- * LAYOUT effect, so it lands before the first paint: an admin who chose the
- * full menu never sees the short one flash on a hard load or on the remount
- * between the /admin and /finance layouts.
+ * LAYOUT effect, so it lands before the first paint: an admin who chose another
+ * menu never sees the default flash on a hard load or on the remount between
+ * the /admin and /finance layouts.
  */
-export function useAdminNavPanel(
-  permissionMatrix: AdminPermissionMatrix | undefined,
-  isFullAdmin: boolean | undefined,
-) {
-  const choices = getAdminNavPanelChoices(
-    resolveAdminNavPanels(permissionMatrix, isFullAdmin),
-  );
+export function useAdminNavPanel(choices: readonly AdminNavPanelKey[]) {
   const choicesKey = choices.join(",");
   const [panelKey, setPanelKey] = useState<AdminNavPanelKey>(
     choices[0] ?? "admin",

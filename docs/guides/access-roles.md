@@ -92,33 +92,37 @@ administrator would do next. A role change takes effect on the very next lookup,
 removing an area mid-conversation stops the evidence immediately. Full detail in
 [`docs/ai-diagnostics/tool-pack-support.md`](../ai-diagnostics/tool-pack-support.md).
 
-**Areas also decide which admin menu someone opens on.** The admin sidebar
-shows a short menu for the work a role does, worked out from its areas, never
+**Areas also decide which admin menu someone sees.** The admin sidebar shows
+a menu for the work each role does, worked out from that role's areas, never
 from its name (so custom roles follow the same rule):
 
-| Menu | Who opens on it | What it shows |
+| Menu | Which roles get it | What it shows |
 | --- | --- | --- |
-| Admin Panel | Full Admins; anyone who edits nothing, unless Finance is the only area they view (Read-only Admin); anyone who edits only Membership, Content or Support (Membership Officer, Content Manager) | The full admin menu, as before |
-| Finance Panel | Anyone who edits Finance; anyone whose only area is Finance at View (Treasurer, Finance Viewer) | Admin Dashboard (when the role has Admin Overview), Finance Dashboard, the Finance section, Subscriptions, Integrations, and the refund and unpaid-stay queues |
-| Bookings Panel | Anyone who edits Bookings & Beds or Lodge Operations (Booking Officer) | Admin Dashboard (when the role has Admin Overview), Bookings & Beds, Bookings Setup, Rates & Policies, Finance, Lodge Operations, and the booking-request, unpaid-stay and hut-leader queues |
+| Admin | A role with Edit on every area (Full Admin); a view-only role that spans several menus (Read-only Admin); a role that edits Support & System | The full admin menu |
+| Bookings | A role that edits Bookings & Beds or Lodge Operations, or views only those (Booking Officer) | Bookings & Beds, Bookings Setup, Rates & Policies, Finance, Lodge Operations, and the booking-request, unpaid-stay and hut-leader alerts |
+| Membership | A role that edits Membership, or views only that (Membership Officer) | The Members section, Membership & Members setup, and the application, family, cancellation and deletion alerts |
+| Content | A role that edits Content, or views only that (Content Manager) | The Site Appearance & Content pages |
+| Finance | A role that views Finance and nothing else, without editing it (Finance Viewer) | Finance Dashboard and the Finance section |
+| Treasurer | A role that edits Finance (Treasurer) | The Finance menu, plus Subscriptions, Integrations, and the refund and unpaid-stay alerts |
 
-Anyone on the Finance or Bookings Panel sees a switcher at the top of the
-sidebar with a **Full admin** button that shows every page their areas allow.
-Someone who edits areas belonging to more than one menu (for example a
-Treasurer who is also a Booking Officer) gets a button for each of those menus
-as well. The sidebar remembers the last choice in that browser. The
-menus are display only: a page left out of a short menu can still be opened
-from the full menu or the search (Ctrl K), and a page the role cannot open
-appears in neither. On staff pages (`/admin` and the `/finance` workspace) the
+Someone with more than one menu sees a selector at the top of the sidebar, one
+button per menu, and opens on the first. Each role a person holds counts on its
+own, so a Full Admin sees only Admin unless they also hold another role. The
+sidebar remembers the last choice in that browser. The Admin Dashboard and the
+Member Dashboard are not in the sidebar: use **Admin** and **Dashboard** in the
+top bar. The menus are display only: a page left out of a menu can still be
+opened from the search (Ctrl K) or a direct link if the role allows it, and a
+page the role cannot open appears in neither. On staff pages (`/admin` and the `/finance` workspace) the
 top bar also leaves out Book, My Bookings and Who's at the lodge; those stay on
-the member pages.
+the member pages, and Who's at the lodge is also on the Lodge Kiosk card of the
+member dashboard.
 
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | No Access Roles entry in the sidebar | You are not a Full Admin | Only Full Admins can manage roles; ask one |
-| A page is missing from the sidebar | You are on the Finance or Bookings menu | Press **Full admin** at the top of the sidebar, or search with Ctrl K |
+| A page is missing from the sidebar | It belongs to a menu your roles don't give you | Search with Ctrl K, or pick another menu at the top of the sidebar if you have one |
 | A role won't delete | Members still hold it | Reassign those members first, then delete |
 | A member still can't reach an area | Their role's level for it is None/View, or the change hasn't taken effect | Adjust the role; changes apply on the member's next request |
 | A system role can't be edited | It is a protected built-in role | Create a custom role instead |

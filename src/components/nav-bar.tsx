@@ -23,6 +23,7 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { useClubIdentity } from "@/components/club-identity-provider";
+import { MEMBER_LODGE_ROSTER_LINK } from "@/lib/member-lodge-roster-link";
 import { isFeatureHrefVisible } from "@/config/feature-routes";
 import type { FeatureFlags } from "@/config/schema";
 import { FINANCE_WORKSPACE_PATH } from "@/lib/admin-permissions";
@@ -77,8 +78,7 @@ const financeLink: NavBarLink = {
 // The member lodge roster (#2942). Off unless the club turns the module on,
 // so the link is conditional rather than part of `memberLinks` above.
 const lodgeRosterLink: NavBarLink = {
-  href: "/lodge-roster",
-  label: "Who's at the lodge",
+  ...MEMBER_LODGE_ROSTER_LINK,
   memberSurfaceOnly: true,
 };
 /*

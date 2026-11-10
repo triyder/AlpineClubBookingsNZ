@@ -1000,15 +1000,15 @@ Journey: Inspect flagged records and use the documented recovery for the selecte
 
 Screen: every `/admin` page and the `/finance` workspace.
 
-Shows: the sidebar panel the role works in — Admin (the full menu), Finance or
-Bookings — chosen from the permission matrix, never the role name. Staff pages
-drop Book, My Bookings and Who's at the lodge from the top bar.
+Shows: a sidebar panel for each role held — Admin (the full menu), Bookings,
+Membership, Content, Finance or Treasurer — chosen from each role's permission
+matrix, never its name. Staff pages drop Book, My Bookings and Who's at the
+lodge from the top bar, and the sidebar leaves both dashboards to the top bar.
 
-Journey: open a staff page on the default panel, or use the switcher's
-**Full admin** button or a panel button; the choice is remembered per browser.
-A panel only narrows the per-item permission filter, so it never shows a link
-the full menu would hide; other pages stay reachable through Full admin and
-Ctrl K.
+Journey: open a staff page on the first panel, or use the switcher's buttons
+when more than one role gives a panel; the choice is remembered per browser. A
+panel only narrows the per-item permission filter, so it never shows a link the
+full menu would hide; other pages stay reachable through Ctrl K.
 
 [Guide](guides/access-roles.md)
 

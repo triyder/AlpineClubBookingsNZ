@@ -10,6 +10,7 @@ import type { FeatureFlags } from "@/config/schema";
 import type { AppAccessRole } from "@/lib/access-roles";
 import {
   ADMIN_PERMISSION_AREAS,
+  canViewAdminHrefWithMatrix,
   getAdminPermissionMatrix,
   type AdminPermissionMatrix,
 } from "@/lib/admin-permissions";
@@ -18,10 +19,11 @@ import {
   ADMIN_NAV_PANEL_KEYS,
   ADMIN_NAV_PANEL_STORAGE_KEY,
   NEEDS_ATTENTION_LABEL,
-  getAdminNavPanelChoices,
   pickStoredAdminNavPanel,
   resolveAdminNavPanels,
+  resolveMemberAdminNavPanels,
 } from "@/lib/admin-nav-panels";
+import { ADMIN_APPEARANCE_PAGES } from "@/lib/admin-appearance-pages";
 import { requireCalendarDate } from "@/lib/club-time";
 
 vi.mock("next/navigation", () => ({
@@ -44,6 +46,11 @@ const CLUB_DAY = requireCalendarDate("2026-07-01");
 
 function matrixFor(...roles: AppAccessRole[]): AdminPermissionMatrix {
   return getAdminPermissionMatrix({ canLogin: true, accessRoles: roles });
+}
+
+/** The panels for roles held together, each judged by its own matrix. */
+function panelsFor(...roles: AppAccessRole[]) {
+  return resolveMemberAdminNavPanels({ canLogin: true, accessRoles: roles });
 }
 
 function hrefs(
@@ -94,26 +101,40 @@ describe("which panels a person is offered (#108)", () => {
     ["ADMIN", ["admin"]],
     ["ADMIN_READONLY", ["admin"]],
     ["ADMIN_BOOKINGS", ["bookings"]],
-    ["ADMIN_MEMBERSHIP", ["admin"]],
-    ["ADMIN_CONTENT", ["admin"]],
-    ["FINANCE_ADMIN", ["finance"]],
+    ["ADMIN_MEMBERSHIP", ["membership"]],
+    ["ADMIN_CONTENT", ["content"]],
     ["FINANCE_USER", ["finance"]],
-  ] as const)("%s → %j", (role, expected) => {
-    expect(
-      resolveAdminNavPanels(matrixFor(role), role === "ADMIN"),
-    ).toEqual(expected);
+    ["FINANCE_ADMIN", ["treasurer"]],
+  ] as const)("%s \u2192 %j", (role, expected) => {
+    expect(panelsFor(role)).toEqual(expected);
   });
 
-  it("offers both panels to a Treasurer who is also a Booking Officer", () => {
-    expect(
-      resolveAdminNavPanels(matrixFor("FINANCE_ADMIN", "ADMIN_BOOKINGS"), false),
-    ).toEqual(["finance", "bookings"]);
+  it("offers one menu per role held, in switcher order", () => {
+    expect(panelsFor("FINANCE_ADMIN", "ADMIN_BOOKINGS")).toEqual([
+      "bookings",
+      "treasurer",
+    ]);
+    expect(panelsFor("ADMIN_BOOKINGS", "ADMIN_MEMBERSHIP")).toEqual([
+      "bookings",
+      "membership",
+    ]);
   });
 
-  it("adds the full menu for an edit area no dedicated panel serves", () => {
-    expect(
-      resolveAdminNavPanels(matrixFor("ADMIN_BOOKINGS", "ADMIN_MEMBERSHIP"), false),
-    ).toEqual(["bookings", "admin"]);
+  it("gives a Full Admin only Admin, plus any other role they hold", () => {
+    expect(panelsFor("ADMIN")).toEqual(["admin"]);
+    expect(panelsFor("ADMIN", "FINANCE_ADMIN")).toEqual(["admin", "treasurer"]);
+  });
+
+  it("does not offer Admin to someone who holds no admin role", () => {
+    for (const role of [
+      "ADMIN_BOOKINGS",
+      "ADMIN_MEMBERSHIP",
+      "ADMIN_CONTENT",
+      "FINANCE_USER",
+      "FINANCE_ADMIN",
+    ] as const) {
+      expect(panelsFor(role)).not.toContain("admin");
+    }
   });
 
   it("reads a club-made role from its matrix, not its name", () => {
@@ -122,10 +143,15 @@ describe("which panels a person is offered (#108)", () => {
       overview: "view",
       lodge: "edit",
     } as AdminPermissionMatrix;
-    expect(resolveAdminNavPanels(custom, false)).toEqual(["bookings"]);
+    expect(resolveAdminNavPanels([custom])).toEqual(["bookings"]);
   });
 
-  it("keeps a view-only grid on the full menu unless finance is all it views", () => {
+  it("gives a role that only edits support the full menu it needs", () => {
+    const custom = { ...matrixFor(), support: "edit" } as AdminPermissionMatrix;
+    expect(resolveAdminNavPanels([custom])).toEqual(["admin"]);
+  });
+
+  it("puts a view-only role on the one panel covering it, else the full menu", () => {
     const none = matrixFor();
     const auditor = {
       ...none,
@@ -139,26 +165,32 @@ describe("which panels a person is offered (#108)", () => {
       overview: "view",
       finance: "view",
     } as AdminPermissionMatrix;
-    expect(resolveAdminNavPanels(auditor, false)).toEqual(["admin"]);
-    expect(resolveAdminNavPanels(lodgeViewer, false)).toEqual(["admin"]);
-    expect(resolveAdminNavPanels(financeOnly, false)).toEqual(["finance"]);
+    const overviewOnly = { ...none, overview: "view" } as AdminPermissionMatrix;
+    expect(resolveAdminNavPanels([auditor])).toEqual(["admin"]);
+    expect(resolveAdminNavPanels([lodgeViewer])).toEqual(["bookings"]);
+    expect(resolveAdminNavPanels([financeOnly])).toEqual(["finance"]);
+    expect(resolveAdminNavPanels([overviewOnly])).toEqual(["admin"]);
   });
 
-  it("keeps the historical full menu when no matrix is supplied", () => {
-    expect(resolveAdminNavPanels(undefined, false)).toEqual(["admin"]);
+  it("ignores a role with no admin area beside a role that has one", () => {
+    expect(resolveAdminNavPanels([matrixFor(), matrixFor("FINANCE_USER")])).toEqual(
+      ["finance"],
+    );
   });
 
-  it("always keeps the full admin menu one press away", () => {
-    expect(getAdminNavPanelChoices(["finance"])).toEqual(["finance", "admin"]);
-    expect(getAdminNavPanelChoices(["admin"])).toEqual(["admin"]);
+  it("falls back to the full menu when no role yields a panel", () => {
+    expect(resolveAdminNavPanels([])).toEqual(["admin"]);
+    expect(resolveAdminNavPanels([matrixFor()])).toEqual(["admin"]);
   });
 
   it("ignores a remembered panel the person no longer has", () => {
-    expect(pickStoredAdminNavPanel("bookings", ["finance", "admin"])).toBe(
+    expect(pickStoredAdminNavPanel("admin", ["treasurer"])).toBe("treasurer");
+    expect(pickStoredAdminNavPanel("finance", ["bookings", "finance"])).toBe(
       "finance",
     );
-    expect(pickStoredAdminNavPanel("admin", ["finance", "admin"])).toBe("admin");
-    expect(pickStoredAdminNavPanel(null, ["bookings", "admin"])).toBe("bookings");
+    expect(pickStoredAdminNavPanel(null, ["bookings", "treasurer"])).toBe(
+      "bookings",
+    );
   });
 });
 
@@ -211,6 +243,12 @@ describe("panel contents (#108)", () => {
             expect(matrix.finance).not.toBe("none");
             continue;
           }
+          // The Content panel lists the hub's pages, which the full menu reaches
+          // through the one hub link: each is held to the page's own rule.
+          if (ADMIN_APPEARANCE_PAGES.some((page) => page.href === href)) {
+            expect(canViewAdminHrefWithMatrix(matrix, href)).toBe(true);
+            continue;
+          }
           expect(full).toContain(href);
         }
       }
@@ -225,7 +263,7 @@ describe("panel contents (#108)", () => {
   });
 
   it("gives a Treasurer the finance pages, wherever the catalogue files them", () => {
-    const shown = labels("finance", matrixFor("FINANCE_ADMIN"));
+    const shown = labels("treasurer", matrixFor("FINANCE_ADMIN"));
     expect(shown).toEqual(
       expect.arrayContaining([
         "Finance Dashboard",
@@ -243,6 +281,60 @@ describe("panel contents (#108)", () => {
     expect(shown).not.toContain("Members");
     expect(shown).not.toContain("Booking Policies");
     expect(shown).not.toContain("System Health");
+  });
+
+  it("gives the Finance menu less than the Treasurer's", () => {
+    const matrix = matrixFor("FINANCE_ADMIN");
+    const finance = labels("finance", matrix);
+    expect(finance).toEqual(
+      expect.arrayContaining(["Finance Dashboard", "Payments", "Reports"]),
+    );
+    expect(finance).not.toContain("Subscriptions");
+    expect(finance).not.toContain("Integrations");
+    for (const label of finance) {
+      expect(labels("treasurer", matrix)).toContain(label);
+    }
+  });
+
+  it("gives a Membership Officer the member pages and their queues", () => {
+    const shown = labels("membership", matrixFor("ADMIN_MEMBERSHIP"));
+    expect(shown).toEqual(
+      expect.arrayContaining([
+        "Members",
+        "Applications",
+        "Family Groups",
+        "Communications",
+        "Membership & Members",
+      ]),
+    );
+    expect(shown).not.toContain("Bookings");
+    expect(shown).not.toContain("Payments");
+  });
+
+  it("lists the appearance hub's pages for a Content Manager", () => {
+    const shown = labels("content", matrixFor("ADMIN_CONTENT"));
+    expect(shown).toEqual(
+      expect.arrayContaining(["Site Style", "Page Content", "Image Manager"]),
+    );
+    expect(shown).not.toContain("Members");
+    expect(shown).not.toContain("Payments");
+  });
+
+  it("keeps the Content panel to the pages a role and the modules allow", () => {
+    const pages = ADMIN_APPEARANCE_PAGES.map((page) => page.href);
+    const viewOnly = hrefs("content", { ...matrixFor() } as AdminPermissionMatrix);
+    for (const href of pages) expect(viewOnly).not.toContain(href);
+
+    const moduleOff = getPanelAdminNavSections(
+      CLUB_DAY,
+      { ...allOn, skifieldConditions: false } as FeatureFlags,
+      "content",
+      matrixFor("ADMIN_CONTENT"),
+    ).flatMap((section) => section.items.map((item) => item.label));
+    expect(labels("content", matrixFor("ADMIN_CONTENT"))).toContain(
+      "Mountain Conditions",
+    );
+    expect(moduleOff).not.toContain("Mountain Conditions");
   });
 
   it("gives a Booking Officer bookings, rates, finance and lodge operations", () => {
@@ -277,38 +369,55 @@ describe("AdminSidebar panels (#108)", () => {
     );
   });
 
-  it("opens a Treasurer on the Finance panel and switches to the full menu", () => {
+  it("offers only the menus passed in, and switches between them", () => {
     render(
       <AdminSidebar
         features={allOn}
-        permissionMatrix={matrixFor("FINANCE_ADMIN")}
+        permissionMatrix={matrixFor("FINANCE_ADMIN", "ADMIN_BOOKINGS")}
         isFullAdmin={false}
+        panels={["bookings", "treasurer"]}
       />,
     );
 
-    expect(screen.getAllByText("Finance Panel").length).toBeGreaterThan(0);
-    expect(screen.queryByRole("link", { name: "Members" })).toBeNull();
+    expect(screen.getAllByText("Bookings Panel").length).toBeGreaterThan(0);
+    expect(screen.queryByRole("button", { name: "Admin" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Subscriptions" })).toBeNull();
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Treasurer" })[0]);
+
+    expect(screen.getAllByText("Treasurer Panel").length).toBeGreaterThan(0);
     expect(
       screen.getAllByRole("link", { name: "Subscriptions" }).length,
     ).toBeGreaterThan(0);
-
-    fireEvent.click(screen.getAllByRole("button", { name: "Full admin" })[0]);
-
-    expect(screen.getAllByText("Admin Panel").length).toBeGreaterThan(0);
-    expect(screen.getAllByRole("link", { name: "Members" }).length).toBeGreaterThan(0);
-    expect(window.localStorage.getItem(ADMIN_NAV_PANEL_STORAGE_KEY)).toBe("admin");
+    expect(window.localStorage.getItem(ADMIN_NAV_PANEL_STORAGE_KEY)).toBe(
+      "treasurer",
+    );
   });
 
   it("restores a remembered panel after mount", () => {
-    window.localStorage.setItem(ADMIN_NAV_PANEL_STORAGE_KEY, "admin");
+    window.localStorage.setItem(ADMIN_NAV_PANEL_STORAGE_KEY, "treasurer");
+    render(
+      <AdminSidebar
+        features={allOn}
+        permissionMatrix={matrixFor("FINANCE_ADMIN", "ADMIN_BOOKINGS")}
+        isFullAdmin={false}
+        panels={["bookings", "treasurer"]}
+      />,
+    );
+    expect(screen.getAllByText("Treasurer Panel").length).toBeGreaterThan(0);
+  });
+
+  it("shows one role its menu with no switcher", () => {
     render(
       <AdminSidebar
         features={allOn}
         permissionMatrix={matrixFor("FINANCE_ADMIN")}
         isFullAdmin={false}
+        panels={["treasurer"]}
       />,
     );
-    expect(screen.getAllByText("Admin Panel").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Treasurer Panel").length).toBeGreaterThan(0);
+    expect(screen.queryByRole("group", { name: "Admin menu" })).toBeNull();
   });
 
   it("shows a Full Admin the Admin Panel with no switcher", () => {
@@ -321,6 +430,27 @@ describe("AdminSidebar panels (#108)", () => {
     );
     expect(screen.getAllByText("Admin Panel").length).toBeGreaterThan(0);
     expect(screen.queryByRole("group", { name: "Admin menu" })).toBeNull();
+  });
+
+  it("leaves the dashboard links to the top bar, on every menu", () => {
+    render(
+      <AdminSidebar
+        features={allOn}
+        permissionMatrix={matrixFor("ADMIN")}
+        isFullAdmin
+      />,
+    );
+    expect(screen.queryByRole("link", { name: "Member Dashboard" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Admin Dashboard" })).toBeNull();
+    expect(screen.getAllByRole("link", { name: "Payments" }).length).toBeGreaterThan(0);
+  });
+
+  it("still finds the Admin Dashboard through search", () => {
+    expect(
+      getVisibleAdminNavSections(CLUB_DAY, allOn, matrixFor("ADMIN"), true).flatMap(
+        (section) => section.items.map((item) => item.label),
+      ),
+    ).toContain("Admin Dashboard");
   });
 });
 
