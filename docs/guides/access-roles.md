@@ -98,7 +98,7 @@ from its name (so custom roles follow the same rule):
 
 | Menu | Which roles get it | What it shows |
 | --- | --- | --- |
-| Admin | A role with Edit on every area (Full Admin); a view-only role that spans several menus (Read-only Admin); a role that edits Support & System | The full admin menu |
+| Admin | A role with Edit on every area (Full Admin); a view-only role that spans several menus (Read-only Admin); a role that edits Support & System, or only views Admin Overview or Support & System | The full admin menu |
 | Bookings | A role that edits Bookings & Beds or Lodge Operations, or views only those (Booking Officer) | Bookings & Beds, Bookings Setup, Rates & Policies, Finance, Lodge Operations, and the booking-request, unpaid-stay and hut-leader alerts |
 | Membership | A role that edits Membership, or views only that (Membership Officer) | The Members section, Membership & Members setup, and the application, family, cancellation and deletion alerts |
 | Content | A role that edits Content, or views only that (Content Manager) | The Site Appearance & Content pages |
@@ -114,8 +114,9 @@ top bar. The menus are display only: a page left out of a menu can still be
 opened from the search (Ctrl K) or a direct link if the role allows it, and a
 page the role cannot open appears in neither. On staff pages (`/admin` and the
 `/finance` workspace) the top bar also leaves out Book and My Bookings. An
-account whose User Type is **Admin** never sees My Bookings in the top bar:
-its holder books from their own member login. **Who's at the lodge** is not in
+account whose User Type is **Admin** and that is not also a club member never
+sees My Bookings in the top bar: its holder books from their own member login.
+An Admin who is also a club member keeps it. **Who's at the lodge** is not in
 the top bar for anyone; it is a button under **Open Kiosk** on the member
 dashboard's Lodge Kiosk card.
 

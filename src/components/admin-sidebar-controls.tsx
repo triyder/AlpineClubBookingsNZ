@@ -110,8 +110,9 @@ export function SidebarSearchButton({ onOpen }: { onOpen?: () => void }) {
 }
 
 /**
- * Switch between the role panels this person works in and the full admin menu
- * (#108). Rendered only when there is more than one choice.
+ * Switch between the menus this person's roles give (#108): the full Admin
+ * menu is one of them only when a role earns it. Rendered only when there is
+ * more than one choice.
  */
 export function PanelSwitcher({
   choices,

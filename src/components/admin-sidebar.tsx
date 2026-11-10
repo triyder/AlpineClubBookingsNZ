@@ -1002,7 +1002,8 @@ function SidebarLinks({
     <nav aria-label="Admin sections" className="flex flex-col gap-0.5">
       {renderedNavSections.map((section, sIdx) => {
         // Every section collapses except "Needs Attention". The label-less
-        // top section (Admin Dashboard) feeds search only: the top bar has it.
+        // top section (Admin Dashboard) is never drawn (the top bar has it);
+        // it stays in `navHrefs` for the active-link match.
         const collapsible =
           Boolean(section.label) && section.label !== NEEDS_ATTENTION_LABEL;
         const open =

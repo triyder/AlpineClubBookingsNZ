@@ -6,65 +6,73 @@ import {
   Mountain,
   Palette,
   PanelBottom,
+  type LucideIcon,
 } from "lucide-react";
 import type { AdminHubSection } from "@/components/admin-hub-page";
 import { isFeatureHrefVisible } from "@/config/feature-routes";
 import type { FeatureFlags } from "@/config/schema";
+import { adminHref, getAdminPage } from "@/lib/admin-hubs";
 import {
-  canViewAdminHrefWithMatrix,
+  canOpenAdminPathWithMatrix,
   type AdminPermissionMatrix,
 } from "@/lib/admin-permissions";
 
+type AppearancePageId =
+  | "club-identity"
+  | "site-style"
+  | "site-content"
+  | "page-content"
+  | "site-banners"
+  | "mountain-conditions"
+  | "image-manager";
+
 /**
- * The Site Appearance & Content pages: the hub's cards and the Content sidebar
- * panel (#108) both read this list, so a new page appears in both.
+ * The hub's own card copy, in card order. Each page's link and title come from
+ * the admin hub registry (`WEBSITE_HUB`), so a renamed or moved page follows.
  */
-export const ADMIN_APPEARANCE_PAGES: AdminHubSection[] = [
+const APPEARANCE_CARDS: ReadonlyArray<{
+  id: AppearancePageId;
+  description: string;
+  icon: LucideIcon;
+}> = [
   {
-    href: "/admin/appearance/identity",
-    title: "Club Identity",
+    id: "club-identity",
     description:
       "Set the club name, short name, hut-leader label, and your lodge's public details.",
     icon: BadgeInfo,
   },
   {
-    href: "/admin/site-style",
-    title: "Site Style",
+    id: "site-style",
     description:
       "Set the public theme, logo, colours, fonts, and first-run style completion.",
     icon: Palette,
   },
   {
-    href: "/admin/site-content",
-    title: "Site Content",
+    id: "site-content",
     description:
       "Edit shared public site chrome such as footer columns and reusable site text.",
     icon: PanelBottom,
   },
   {
-    href: "/admin/page-content",
-    title: "Page Content",
+    id: "page-content",
     description:
       "Manage public website pages, menus, rich text, tokens, and publishing state.",
     icon: FilePenLine,
   },
   {
-    href: "/admin/site-banners",
-    title: "Site Banners",
+    id: "site-banners",
     description:
       "Publish dated notice banners for public visitors and signed-in members.",
     icon: Megaphone,
   },
   {
-    href: "/admin/mountain-conditions",
-    title: "Mountain Conditions",
+    id: "mountain-conditions",
     description:
       "Configure Snow.nz condition widgets and public mountain condition content.",
     icon: Mountain,
   },
   {
-    href: "/admin/image-manager",
-    title: "Image Manager",
+    id: "image-manager",
     description:
       "Upload and organise filesystem images used by public content editors.",
     icon: Images,
@@ -72,8 +80,22 @@ export const ADMIN_APPEARANCE_PAGES: AdminHubSection[] = [
 ];
 
 /**
+ * The Site Appearance & Content pages: the hub's cards and the Content sidebar
+ * panel (#108) both read this list, so a new page appears in both.
+ */
+export const ADMIN_APPEARANCE_PAGES: AdminHubSection[] = APPEARANCE_CARDS.map(
+  ({ id, description, icon }) => ({
+    href: adminHref(id),
+    title: getAdminPage(id).label,
+    description,
+    icon,
+  }),
+);
+
+/**
  * The Content panel's section: the catalogue reaches these pages through one
- * hub link, so the panel lists them under the rules the hub's cards use.
+ * hub link, so the panel lists them under the rule the hub's cards use
+ * (`AdminHubPage`: module flags, then `canOpenAdminPathWithMatrix`).
  */
 export function getContentPanelSections(
   features: FeatureFlags,
@@ -83,7 +105,7 @@ export function getContentPanelSections(
     (page) =>
       isFeatureHrefVisible(page.href, features) &&
       (!permissionMatrix ||
-        canViewAdminHrefWithMatrix(permissionMatrix, page.href)),
+        canOpenAdminPathWithMatrix(permissionMatrix, page.href)),
   ).map(({ href, title, icon }) => ({ href, label: title, icon }));
   return items.length > 0 ? [{ label: "Site Content", items }] : [];
 }

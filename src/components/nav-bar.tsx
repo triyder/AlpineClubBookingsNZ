@@ -40,10 +40,11 @@ interface NavBarUser {
   isStayingGuest?: boolean;
   /**
    * The account's User Type is Admin (`classifyAccountRecord`, the Edit Member
-   * page's classification): its holder books from their own member login, so
-   * the bar leaves out My Bookings.
+   * page's classification) and it is not also a club member (no `USER`): its
+   * holder books from their own member login, so the bar leaves out My
+   * Bookings. An Admin who is also a club member keeps it.
    */
-  isAdminUserType?: boolean;
+  isAdminOnlyAccount?: boolean;
 }
 
 /**
@@ -66,8 +67,8 @@ interface NavBarLink {
   label: string;
   /** Left out of the bar on the staff shells (#108). */
   memberSurfaceOnly?: boolean;
-  /** Left out for an account whose User Type is Admin. */
-  hiddenForAdminUserType?: boolean;
+  /** Left out for an Admin account that is not also a club member. */
+  hiddenForAdminOnlyAccount?: boolean;
 }
 
 const memberLinks: NavBarLink[] = [
@@ -78,7 +79,7 @@ const memberLinks: NavBarLink[] = [
     href: "/bookings",
     label: "My Bookings",
     memberSurfaceOnly: true,
-    hiddenForAdminUserType: true,
+    hiddenForAdminOnlyAccount: true,
   },
   { href: "/profile", label: "Profile" },
 ];
@@ -148,7 +149,7 @@ export function getNavBarLinks(
   return links.filter(
     (link) =>
       !(surface === "staff" && link.memberSurfaceOnly) &&
-      !(user.isAdminUserType && link.hiddenForAdminUserType),
+      !(user.isAdminOnlyAccount && link.hiddenForAdminOnlyAccount),
   );
 }
 

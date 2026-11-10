@@ -33,6 +33,7 @@ vi.mock("next/navigation", () => ({
 import {
   AdminSidebar,
   getPanelAdminNavSections,
+  getAdminFeatureSearchIndex,
   getVisibleAdminNavSections,
 } from "@/components/admin-sidebar";
 import { getNavBarLinks } from "@/components/nav-bar";
@@ -446,10 +447,10 @@ describe("AdminSidebar panels (#108)", () => {
 
   it("still finds the Admin Dashboard through search", () => {
     expect(
-      getVisibleAdminNavSections(CLUB_DAY, allOn, matrixFor("ADMIN"), true).flatMap(
-        (section) => section.items.map((item) => item.label),
+      getAdminFeatureSearchIndex(CLUB_DAY, allOn, matrixFor("ADMIN"), true).map(
+        (entry) => entry.href,
       ),
-    ).toContain("Admin Dashboard");
+    ).toContain("/admin/dashboard");
   });
 });
 
@@ -479,14 +480,21 @@ describe("staff top bar (#108)", () => {
     expect(shown).toEqual(expect.arrayContaining(["Book", "My Bookings"]));
   });
 
-  it("drops My Bookings for an Admin user type, who books from their own login", () => {
-    const shown = getNavBarLinks({ ...user, isAdminUserType: true }, allOn).map(
+  it("drops My Bookings for an Admin account that is not a club member", () => {
+    const shown = getNavBarLinks({ ...user, isAdminOnlyAccount: true }, allOn).map(
       (link) => link.label,
     );
     expect(shown).not.toContain("My Bookings");
     expect(shown).toEqual(
       expect.arrayContaining(["Home", "Dashboard", "Book", "Profile", "Admin"]),
     );
+  });
+
+  it("keeps My Bookings for an Admin who is also a club member", () => {
+    const shown = getNavBarLinks({ ...user, isAdminOnlyAccount: false }, allOn).map(
+      (link) => link.label,
+    );
+    expect(shown).toContain("My Bookings");
   });
 
   it("never carries Who's at the lodge: it lives on the Lodge Kiosk card", () => {

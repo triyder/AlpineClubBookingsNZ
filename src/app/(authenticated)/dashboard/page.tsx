@@ -804,10 +804,11 @@ export default async function DashboardPage() {
           </Card>
         )}
 
-        {/* Kiosk tile. `/lodge` is feature-routed on `kiosk`, hence the gate.
-            Deliberately NOT gated on kiosk access tier: a member with no tier
-            gets the read-only lodge view rather than a refusal, which is the
-            "who is in the lodge" this card offers. */}
+        {/* Kiosk tile: Open Kiosk (`/lodge` is feature-routed on `kiosk`)
+            and the roster's only entrance (`memberLodgeRoster`), so it shows
+            while either module is on. Deliberately NOT gated on kiosk access
+            tier: a member with no tier gets the read-only lodge view rather
+            than a refusal, which is the "who is in the lodge" this card offers. */}
         {(modules.kiosk || modules.memberLodgeRoster) && (
           <LodgeKioskCard
             showKiosk={modules.kiosk}

@@ -1392,6 +1392,8 @@ describe("the registry is inert", () => {
     "src/components/help-widget/help-widget-admin.tsx":
       "C3: admin help reads the pathname through canonicalAdminPathname",
     "src/components/nav-bar.tsx": "C3: the profile return-to uses servedAdminPathname",
+    "src/lib/admin-appearance-pages.ts":
+      "#108: the website hub cards and the Content menu take each page's link and label from the registry",
     "src/app/(admin)/admin/xero/page.tsx": "C3: currentXeroPath uses servedAdminPathname",
     "src/app/(admin)/admin/xero/_components/operations-panel.tsx":
       "C3: router.replace targets use servedAdminPathname",

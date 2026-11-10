@@ -19,13 +19,17 @@ export function LodgeKioskCard({
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-        <CardTitle className="text-sm font-medium">Lodge Kiosk</CardTitle>
+        <CardTitle className="text-sm font-medium">
+          {showKiosk ? "Lodge Kiosk" : "Lodge"}
+        </CardTitle>
         <Users className="h-4 w-4 text-muted-foreground" />
       </CardHeader>
       <CardContent>
         <div className="text-lg font-semibold">Who is in the lodge</div>
         <p className="text-xs text-muted-foreground mt-1">
-          The lodge kiosk will show you who is arriving and leaving the lodge.
+          {showKiosk
+            ? "The lodge kiosk will show you who is arriving and leaving the lodge."
+            : "See who is staying at the lodge over the next 30 nights."}
         </p>
         {showKiosk && (
           <Button asChild size="sm" variant="outline" className="mt-4 w-full">

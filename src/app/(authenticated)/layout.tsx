@@ -171,7 +171,9 @@ export default async function AuthenticatedLayout({
     canAccessFinance: hasFinanceViewerAccess(member),
     isHutLeader: isHutLeaderActive,
     isStayingGuest,
-    isAdminUserType: classifyAccountRecord(member) === "admin",
+    isAdminOnlyAccount:
+      classifyAccountRecord(member) === "admin" &&
+      !hasAccessRole(member, "USER"),
   };
   // Single-action token routes (e.g. `/nominations/<token>`) are exempt from the
   // mandatory onboarding gate so a member can complete that action without first
