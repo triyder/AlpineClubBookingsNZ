@@ -96,8 +96,8 @@ export async function prepareBookingInvoiceDownload(
   if (xeroInvoiceId) {
     // With Xero switched off or disconnected the call cannot succeed, and a
     // generated copy is still not offered in its place (owner decision 3).
-    if (!(await dependencies.xeroReachable())) return { kind: "XERO_NOT_CONNECTED" };
     try {
+      if (!(await dependencies.xeroReachable())) return { kind: "XERO_NOT_CONNECTED" };
       const body = await dependencies.fetchXeroInvoicePdf(xeroInvoiceId);
       if (body.length === 0) return { kind: "XERO_UNAVAILABLE" };
       return {
