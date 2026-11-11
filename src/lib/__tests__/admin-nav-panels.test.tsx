@@ -10,7 +10,7 @@ import type { FeatureFlags } from "@/config/schema";
 import type { AppAccessRole } from "@/lib/access-roles";
 import {
   ADMIN_PERMISSION_AREAS,
-  canViewAdminHrefWithMatrix,
+  canOpenAdminPathWithMatrix,
   getAdminPermissionMatrix,
   type AdminPermissionMatrix,
 } from "@/lib/admin-permissions";
@@ -19,10 +19,13 @@ import {
   ADMIN_NAV_PANEL_KEYS,
   ADMIN_NAV_PANEL_STORAGE_KEY,
   NEEDS_ATTENTION_LABEL,
+  adminNavPageKey,
   pickStoredAdminNavPanel,
+  projectAdminNavPanel,
   resolveAdminNavPanels,
   resolveMemberAdminNavPanels,
 } from "@/lib/admin-nav-panels";
+import { adminHref, getAdminPage, type AdminPageId } from "@/lib/admin-hubs";
 import { ADMIN_APPEARANCE_PAGES } from "@/lib/admin-appearance-pages";
 import { requireCalendarDate } from "@/lib/club-time";
 
@@ -198,8 +201,10 @@ describe("panel contents (#108)", () => {
   it("names only catalogue sections and catalogue pages", () => {
     const catalogue = getVisibleAdminNavSections(CLUB_DAY, allOn);
     const catalogueLabels = catalogue.map((section) => section.label);
-    const catalogueHrefs = new Set(
-      catalogue.flatMap((section) => section.items.map((item) => item.href)),
+    const cataloguePages = new Set(
+      catalogue.flatMap((section) =>
+        section.items.map((item) => adminNavPageKey(item.href)),
+      ),
     );
     for (const key of ADMIN_NAV_PANEL_KEYS) {
       const panel = ADMIN_NAV_PANELS[key];
@@ -209,7 +214,7 @@ describe("panel contents (#108)", () => {
         }
       }
       for (const entry of panel.borrowed) {
-        expect(catalogueHrefs).toContain(entry.href);
+        expect(cataloguePages).toContain(getAdminPage(entry.page).oldPath);
         expect(catalogueLabels).toContain(entry.into);
       }
     }
@@ -217,18 +222,39 @@ describe("panel contents (#108)", () => {
 
   it("names only queues the Needs Attention section actually has", () => {
     // A queue whose href moves must not silently drop out of a panel.
-    const queuePaths = new Set(
+    const queuePages = new Set(
       getVisibleAdminNavSections(CLUB_DAY, allOn)
         .filter((section) => section.label === NEEDS_ATTENTION_LABEL)
-        .flatMap((section) =>
-          section.items.map((item) => item.href.split(/[?#]/)[0]),
-        ),
+        .flatMap((section) => section.items.map((item) => adminNavPageKey(item.href))),
     );
     for (const key of ADMIN_NAV_PANEL_KEYS) {
-      const paths = ADMIN_NAV_PANELS[key].attentionPaths;
-      if (paths === "all") continue;
-      for (const path of paths) expect(queuePaths).toContain(path);
+      const pages = ADMIN_NAV_PANELS[key].attentionPages;
+      if (pages === "all") continue;
+      for (const id of pages) {
+        expect(queuePages).toContain(getAdminPage(id).oldPath);
+      }
     }
+  });
+
+  it("follows a page to its hub path, whichever URL the catalogue links", () => {
+    // Moved Finance and System pages, linked at their hub paths as they will be
+    // once ADMIN_HUBS_LIVE is on: the menu still finds each by its registry id.
+    const hub = (id: AdminPageId) => ({ href: getAdminPage(id).hubPath });
+    const projected = projectAdminNavPanel(
+      [
+        {
+          label: NEEDS_ATTENTION_LABEL,
+          items: [hub("refund-requests"), hub("issue-reports")],
+        },
+        { label: "Finance", items: [hub("payments")] },
+        { label: "Members", items: [hub("subscriptions")] },
+      ],
+      "treasurer",
+    );
+    expect(projected).toEqual([
+      { label: NEEDS_ATTENTION_LABEL, items: [hub("refund-requests")] },
+      { label: "Finance", items: [hub("payments"), hub("subscriptions")] },
+    ]);
   });
 
   it.each(GRIDS)(
@@ -246,7 +272,7 @@ describe("panel contents (#108)", () => {
           // The Content panel lists the hub's pages, which the full menu reaches
           // through the one hub link: each is held to the page's own rule.
           if (ADMIN_APPEARANCE_PAGES.some((page) => page.href === href)) {
-            expect(canViewAdminHrefWithMatrix(matrix, href)).toBe(true);
+            expect(canOpenAdminPathWithMatrix(matrix, href)).toBe(true);
             continue;
           }
           expect(full).toContain(href);
@@ -311,10 +337,20 @@ describe("panel contents (#108)", () => {
     expect(shown).not.toContain("Payments");
   });
 
-  it("lists the appearance hub's pages for a Content Manager", () => {
+  it("lists the Website hub's pages for a Content Manager", () => {
     const shown = labels("content", matrixFor("ADMIN_CONTENT"));
     expect(shown).toEqual(
       expect.arrayContaining(["Site Style", "Page Content", "Image Manager"]),
+    );
+    // Every Website hub page but the hub page itself, at its adminHref.
+    expect(hrefs("content", matrixFor("ADMIN_CONTENT"))).toEqual(
+      expect.arrayContaining(ADMIN_APPEARANCE_PAGES.map((page) => page.href)),
+    );
+    expect(ADMIN_APPEARANCE_PAGES.map((page) => page.href)).toEqual(
+      expect.arrayContaining([adminHref("site-style"), adminHref("club-identity")]),
+    );
+    expect(ADMIN_APPEARANCE_PAGES.map((page) => page.href)).not.toContain(
+      adminHref("appearance"),
     );
     expect(shown).not.toContain("Members");
     expect(shown).not.toContain("Payments");

@@ -741,7 +741,15 @@ export const AUDIT_CENSUS_TOTALS = {
   // Central lodge card's own site is unchanged; both pass their audit writer to the
   // shared `saveCentralLodgeLinks`. Categorised `admin` at the site, like the card's.
   // RE-MEASURED with `pnpm run audit:census`.
-  writeSites: 534,
+  // 534 -> 536 (#4516, Ledger M4c): `booking-payment.card-refund.reservation-refused`, the row a card
+  // refund the journal refused to reserve writes, and the owner's OPERATOR release of a reservation
+  // (`src/lib/card-refund-reservation-operator.ts`, run from the owner's command); both `createAuditLog`, both `payment`.
+  // RE-MEASURED with `pnpm run audit:census`.
+  // 536 -> 538 (#4368): `booking-payment.card-refund.nothing-left-owed` and
+  // `booking-payment.card-refund.try-card-again`, the treasurer closing a dead card refund
+  // a later Stripe refund covers and putting one back to try the card, each awaited on its
+  // own transaction (`card-refund-dead-row-actions.ts`), both `payment`. RE-MEASURED with `pnpm run audit:census`.
+  writeSites: 538,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -965,7 +973,8 @@ export const AUDIT_CENSUS_TOTALS = {
     // 169 -> 170 (#4680): the organiser adjustment run's stand-down row, above.
     // 170 -> 171 (#4686): the lost-claim part-success's row, above.
     // 171 -> 172 (triyder/AlpineClubBookingsNZ#97): the link dialog's row, above.
-    createAuditLog: { total: 172, uncategorised: 0 },
+    // 172 -> 174 (#4516): the refused reservation and the OPERATOR release, above.
+    createAuditLog: { total: 176, uncategorised: 0 }, // 174 -> 176 (#4368): the two dead card refund settlements.
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.
     // Same row, same dedupe keys (`action` + `subjectMemberId` + `outcome`) —
@@ -1178,7 +1187,9 @@ export const AUDIT_CENSUS_TOTALS = {
     // 64 -> 65 (#4253 release 2): the backlog run's batch row, read by the same people.
     // 65 -> 66 (#4253 release 2 fix round): the left-to-officers note, read by the same people.
     // 66 -> 67 (#4359): the re-send hold's row - the payment's figures, read by the same people.
-    payment: 67,
+    // 67 -> 69 (#4516): a refused card refund reservation, and its OPERATOR release - read by the same people.
+    // 69 -> 71 (#4368): a dead card refund closed with nothing left owed, and one put back to try the card.
+    payment: 71,
     // 27 -> 34 (#2581 child 2): the five family-group writers and the two
     // dependants writers. Both dependants writers also moved off a hand-built
     // Prisma literal and onto the audit boundary in the same change.

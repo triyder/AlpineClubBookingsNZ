@@ -1,0 +1,1 @@
+- Fork sync with thatskiff33 `main` at 3bcbb7f6e (11 Nov 2026): 308 upstream commits, including the fork's role-based admin menus (#108) in their upstream form (thatskiff33#4996).

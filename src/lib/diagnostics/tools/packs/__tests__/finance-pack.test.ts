@@ -697,11 +697,10 @@ describe("AID-6C finance pack: the grant allowlist matches the SQL (#2377)", () 
   });
 
   it("never names a credential-bearing relation anywhere in the pack", () => {
-    // ADR-007 §1. `XeroToken` and `IntegrationCredential` both hold encrypted OAuth
-    // tokens or provider secrets (#3454); neither is granted,
-    // and neither is named in any pack module — including the server-owned source,
-    // which runs on the application's own full-privilege connection where a grant
-    // would not stop it.
+    // ADR-007 §1. `IntegrationCredential` holds encrypted provider secrets and the
+    // Xero OAuth token set (#3454) and stays permanently out of scope. `XeroToken`
+    // is gone; naming it again is still a failure, including in the server-owned
+    // source, which runs on the application's own full-privilege connection.
     for (const name of FINANCE_PACK_MODULES) {
       const source = packSource(name);
       for (const relation of ["XeroToken", "IntegrationCredential"]) {
@@ -1124,6 +1123,8 @@ describe("AID-6C finance pack: the recovery scenario catalogue (#4076)", () => {
     BOOKING_MODIFICATION_REFUND_RECOVERY_PREFIX: "booking_modification_refund",
     CAPACITY_CLAIM_FAILED_REFUND_RECOVERY_PREFIX: "capacity_claim_failed_refund",
     CARD_REFUND_FAILED_LATER_RECOVERY_PREFIX: "card_refund_failed_later",
+    CARD_REFUND_STILL_OWED_RECOVERY_PREFIX: "card_refund_still_owed",
+    buildCardRefundStillOwedRecoveryKey: "card_refund_still_owed",
     CREDIT_RELEASE_ASK_RECOVERY_PREFIX: "credit_release_ask",
     DUPLICATE_CAPTURE_REFUND_RECOVERY_PREFIX: "duplicate_capture_refund",
     EDIT_FINANCIAL_REVIEW_ADDITIONAL_INTENT_RECOVERY_PREFIX:
@@ -1173,6 +1174,8 @@ describe("AID-6C finance pack: the recovery scenario catalogue (#4076)", () => {
    */
   const NOT_A_RECOVERY_KEY: Record<string, string> = {
     CARD_REFUND_FAILED_LATER_REASON: "Stripe refund metadata",
+    CARD_REFUND_STILL_OWED_REASON: "Stripe refund metadata (#4516)",
+    cardRefundStillOwedCloseRecordId: "parser of a mapped key",
     SUPERSEDED_PAYMENT_REFUND_METADATA_REASON: "Stripe refund metadata",
     cardRefundOperationRefundMetadata: "Stripe metadata",
     cardRefundFailedLaterRefundId: "parser of a mapped key",
@@ -1213,6 +1216,7 @@ describe("AID-6C finance pack: the recovery scenario catalogue (#4076)", () => {
     nextRefusedRefundKeySuffix: "Stripe idempotency key suffix",
     organiserChildRefundReasonForKey: "Stripe metadata reason",
     refundSliceStripeIdempotencyKey: "Stripe idempotency key",
+    isStripeKeyOfSenderPrefix: "predicate over Stripe idempotency keys (#4516: which sender built a key)",
     stripeIdempotencyKeyForAskAmount: "Stripe idempotency key",
   };
 

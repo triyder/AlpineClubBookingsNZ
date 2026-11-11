@@ -10,19 +10,22 @@ import {
   isRewrite,
 } from "next/experimental/testing/server";
 import { prepareDestination } from "next/dist/shared/lib/router/utils/prepare-destination";
+import { getPathMatch } from "next/dist/shared/lib/router/utils/path-match";
 import { ASSET_NOT_FOUND_PATH, ASSET_NOT_FOUND_REWRITES } from "@/lib/asset-url-404";
-import { ADMIN_RETIRED_PAGES } from "@/lib/admin-hubs";
+import { ADMIN_PAGES, ADMIN_RETIRED_PAGES, isInexactAdminPagePath } from "@/lib/admin-hubs";
 
 // ---------------------------------------------------------------------------
 // `next.config.ts` and the admin hub URLs (epic #4468, C3 #4800).
 //
 // The config's `redirects()` and `rewrites().beforeFiles` are generated from
-// the hub registry. Today no page has moved, so there are no rewrites and the
-// only redirects are the five retired pages' (S1 #4796); over a registry whose Finance hub has moved, the
-// REAL config yields the rules the epic plan fixes for each switch state. Both
-// are run through Next's own pipeline (`unstable_getResponseFromNextConfig`,
-// which calls the real `loadCustomRoutes()`). `admin-hubs-registry.test.ts`
-// walks every page of the registry through the generated rules themselves.
+// the hub registry. C4 (#4801) has moved the Website pages, C5 (#4802) the
+// Finance pages, C6 (#4803) the Fees & booking rules pages, C7 (#4804) the
+// Help & system pages and C8 (#4805) the Messages & email pages, and the switch is off, so each of those hub URLs
+// redirects to its old URL and each old URL is rewritten to the moved file. The five retired pages (S1 #4796) still redirect
+// in both states. All of this is run through
+// Next's own pipeline (`unstable_getResponseFromNextConfig`, which calls the
+// real `loadCustomRoutes()`). `admin-hubs-registry.test.ts` walks every page
+// of the registry through the generated rules themselves.
 // ---------------------------------------------------------------------------
 
 type Config = NextConfig & {
@@ -31,27 +34,14 @@ type Config = NextConfig & {
 };
 
 /**
- * The real `next.config.ts`, loaded fresh. With `movedHub`, that hub's fragment
- * has every page moved; with `live`, the switch reads that value. Nothing else
- * is replaced.
+ * The real `next.config.ts`, loaded fresh. With `live`, the switch reads that
+ * value. Nothing else is replaced.
  */
-async function loadConfig(options: { live?: boolean; movedHub?: string } = {}) {
+async function loadConfig(options: { live?: boolean } = {}) {
   vi.resetModules();
   vi.doUnmock("@/lib/admin-hubs/release");
-  vi.doUnmock("@/lib/admin-hubs/hubs/finance");
   if (options.live !== undefined) {
     vi.doMock("@/lib/admin-hubs/release", () => ({ ADMIN_HUBS_LIVE: options.live }));
-  }
-  if (options.movedHub) {
-    vi.doMock(`@/lib/admin-hubs/hubs/${options.movedHub}`, async (importOriginal) => {
-      const original = await importOriginal<Record<string, { pages: { moved: boolean }[] }>>();
-      return Object.fromEntries(
-        Object.entries(original).map(([name, fragment]) => [
-          name,
-          { ...fragment, pages: fragment.pages.map((page) => ({ ...page, moved: true })) },
-        ]),
-      );
-    });
   }
   return (await import("../../../next.config")).default as Config;
 }
@@ -83,21 +73,121 @@ async function location(nextConfig: NextConfig, url: string) {
   return { status: response.status, location: getRedirectUrl(response) };
 }
 
-describe("next.config.ts today: no page has moved", () => {
-  it("has only the retired pages' redirects, no beforeFiles rewrites, and keeps the asset rewrites as they were", async () => {
-    const config = await loadConfig();
-    expect((await config.redirects()).map(({ source, permanent }) => ({ source, permanent }))).toEqual(
-      ADMIN_RETIRED_PAGES.map(({ oldPath }) => ({ source: oldPath, permanent: false })),
+/** `[name]` -> `:name`, the spelling `buildAdminUrlRules` hands to Next. */
+function nextPattern(path: string): string {
+  return path
+    .split("/")
+    .map((segment) => {
+      const simple = /^\[([A-Za-z][A-Za-z0-9]*)\]$/.exec(segment);
+      return simple ? `:${simple[1]}` : segment;
+    })
+    .join("/");
+}
+
+function dynamicSegmentCount(path: string): number {
+  return path.split("/").filter((segment) => segment.startsWith("[")).length;
+}
+
+/** A concrete URL for a dynamic page, so the smoke request can match `:name`. */
+function samplePath(path: string): string {
+  return path.replace(/\[[^\]/]+\]/g, "sample");
+}
+
+describe("next.config.ts with the switch off", () => {
+  const movedPages = () =>
+    ADMIN_PAGES.filter((page) => page.moved && page.hubPath !== page.oldPath).sort(
+      (a, b) =>
+        dynamicSegmentCount(a.oldPath) - dynamicSegmentCount(b.oldPath) ||
+        a.oldPath.localeCompare(b.oldPath),
     );
+
+  it("redirects each moved page's hub URL, rewrites its old URL, and keeps the asset rewrites", async () => {
+    const config = await loadConfig();
+    const moved = movedPages();
+    expect(new Set(moved.map((page) => page.hub))).toEqual(
+      new Set(["website", "finance", "rules", "system", "messages"]),
+    );
+    const retired = ADMIN_RETIRED_PAGES.map(({ oldPath }) => oldPath);
+    expect(
+      (await config.redirects()).map(({ source, permanent }) => ({ source, permanent })),
+    ).toEqual([
+      ...retired.map((source) => ({ source, permanent: false as const })),
+      ...moved.map((page) => ({ source: nextPattern(page.hubPath), permanent: false as const })),
+    ]);
     const rewrites = await config.rewrites();
     expect(rewrites).toEqual({
-      beforeFiles: [],
+      beforeFiles: moved.map((page) => ({
+        source: nextPattern(page.oldPath),
+        destination: nextPattern(page.hubPath),
+      })),
       afterFiles: [...ASSET_NOT_FOUND_REWRITES],
       fallback: [],
     });
   });
 
-  it.each(["/admin/payments", "/admin/finance/payments", "/admin/members/x1"])(
+  /**
+   * C4 (#4801), C5 (#4802), C6 (#4803), C7 (#4804) and C8 (#4805) off-state smoke. Next's config pipeline answers a
+   * `beforeFiles` rewrite as 200 and a redirect as 307. The old URL is served
+   * from the moved file; the hub URL redirects to the old URL.
+   */
+  it("serves each moved page's old URL (200) and redirects its hub URL there", async () => {
+    const config = await loadConfig();
+    const moved = movedPages();
+    expect(moved.length).toBeGreaterThan(0);
+    for (const page of moved) {
+      const oldUrl = samplePath(page.oldPath);
+      const hubUrl = samplePath(page.hubPath);
+      const served = await unstable_getResponseFromNextConfig({
+        url: `https://example.org${oldUrl}`,
+        nextConfig: config,
+      });
+      expect(served.status, oldUrl).toBe(200);
+      expect(isRewrite(served), oldUrl).toBe(true);
+      expect(new URL(getRewrittenUrl(served)!, "https://example.org").pathname).toBe(hubUrl);
+
+      const hub = await unstable_getResponseFromNextConfig({
+        url: `https://example.org${hubUrl}`,
+        nextConfig: config,
+      });
+      expect(hub.status, hubUrl).toBe(307);
+      expect(new URL(getRedirectUrl(hub)!, "https://example.org").pathname).toBe(oldUrl);
+    }
+  });
+
+  it("off: the server matches a moved page's rewrite in any letter case, which is why the proxy refuses those spellings", async () => {
+    // The server compiles each `beforeFiles` rewrite with `getPathMatch` and no
+    // `sensitive` option (`buildCustomRoute('before_files_rewrite', item)` in
+    // `next/dist/server/lib/router-utils/filesystem.js`), which path-to-regexp
+    // reads as case-insensitive. (The testing util above matches its regex
+    // without that flag, so it cannot show this.) The same call, on the real
+    // rules: a respelled old URL reaches the moved file while the proxy and the
+    // guards read the path as written. `admin-page-exact-path-proxy.test.ts`
+    // proves the proxy answers it with a 404 first; here, the premise.
+    const rules = ((await (await loadConfig()).rewrites()) as {
+      beforeFiles: { source: string; destination: string }[];
+    }).beforeFiles;
+    const serverMatch = (url: string) =>
+      rules.find(({ source }) =>
+        getPathMatch(source, { strict: true, removeUnnamedParams: true })(url),
+      )?.destination;
+    for (const [url, destination] of [
+      ["/admin/Site-Style", "/admin/website/site-style"],
+      ["/ADMIN/PAGE-CONTENT", "/admin/website/page-content"],
+      ["/admin/Appearance/Identity", "/admin/website/appearance/identity"],
+    ] as const) {
+      expect(serverMatch(url), url).toBe(destination);
+      expect(isInexactAdminPagePath(url), url).toBe(true);
+    }
+    expect(serverMatch("/admin/site-style")).toBe("/admin/website/site-style");
+    expect(isInexactAdminPagePath("/admin/site-style")).toBe(false);
+    // An escaped spelling matches no rule (they match the raw path), and on
+    // next@16.4.3 it renders the public catch-all; it is refused anyway, as a
+    // precaution against a Next that starts rendering decoded paths.
+    expect(serverMatch("/admin/site%2Dstyle")).toBeUndefined();
+    expect(isInexactAdminPagePath("/admin/site%2Dstyle")).toBe(true);
+  });
+
+  it.each(["/admin/members", "/admin/lockers", "/admin/members/x1"])(
     "routes %s untouched",
     async (url) => {
       await expect(resolve(await loadConfig(), url)).resolves.toEqual({ kind: "none" });
@@ -168,11 +258,20 @@ describe("next.config.ts today: no page has moved", () => {
 
   it("leaves the pages the retired ones were merged into, and their neighbours, alone", async () => {
     const config = await loadConfig();
+    // Bookings Setup (C6 #4803) and System Health (C7 #4804) have moved: each
+    // old URL is served from the moved file, as every moved page's is, and
+    // nothing redirects it.
+    await expect(resolve(config, "/admin/bookings-setup")).resolves.toEqual({
+      kind: "rewrite",
+      url: "/admin/rules/bookings-setup",
+    });
+    await expect(resolve(config, "/admin/health")).resolves.toEqual({
+      kind: "rewrite",
+      url: "/admin/system/health",
+    });
     for (const url of [
       "/admin/family-groups",
       "/admin/membership-cancellations",
-      "/admin/bookings-setup",
-      "/admin/health",
       "/admin/setup",
       "/admin/setup/finance",
       "/admin/setup/foundations",
@@ -184,9 +283,16 @@ describe("next.config.ts today: no page has moved", () => {
   });
 });
 
-describe("next.config.ts over a moved Finance hub", () => {
+describe("next.config.ts over the moved Finance hub", () => {
+  // Finance moved for real in C5 (#4802); until then this block mocked the move.
+  it("PREMISE: every Finance page has moved", () => {
+    const finance = ADMIN_PAGES.filter((page) => page.hub === "finance");
+    expect(finance.length).toBeGreaterThan(0);
+    expect(finance.filter((page) => !page.moved).map((page) => page.id)).toEqual([]);
+  });
+
   it("off: the hub URL redirects (307) to the old URL, query kept; the old URL is rewritten to the moved file", async () => {
-    const config = await loadConfig({ live: false, movedHub: "finance" });
+    const config = await loadConfig({ live: false });
     await expect(resolve(config, "/admin/finance/payments?tab=open")).resolves.toEqual({
       kind: "redirect",
       status: 307,
@@ -204,7 +310,7 @@ describe("next.config.ts over a moved Finance hub", () => {
   });
 
   it("on: the old URL redirects (307) to the hub URL, query kept, and nothing is rewritten", async () => {
-    const config = await loadConfig({ live: true, movedHub: "finance" });
+    const config = await loadConfig({ live: true });
     await expect(resolve(config, "/admin/payments?tab=open")).resolves.toEqual({
       kind: "redirect",
       status: 307,
@@ -219,7 +325,7 @@ describe("next.config.ts over a moved Finance hub", () => {
   it.each([false, true])(
     "keeps the asset rewrites working and in place alongside the admin rules (live=%s)",
     async (live) => {
-      const config = await loadConfig({ live, movedHub: "finance" });
+      const config = await loadConfig({ live });
       const rewrites = (await config.rewrites()) as { afterFiles: unknown[]; fallback: unknown[] };
       expect(rewrites.afterFiles).toEqual([...ASSET_NOT_FOUND_REWRITES]);
       expect(rewrites.fallback).toEqual([]);
@@ -231,12 +337,135 @@ describe("next.config.ts over a moved Finance hub", () => {
   );
 
   it("PREMISE: the moved state really does produce rules, so the state above is not vacuous", async () => {
-    const off = await loadConfig({ live: false, movedHub: "finance" });
+    const off = await loadConfig({ live: false });
     // The moved pages' own redirects, beside the retired pages'.
     const retired = new Set<string>(ADMIN_RETIRED_PAGES.map(({ oldPath }) => oldPath));
     expect((await off.redirects()).filter((rule) => !retired.has(rule.source)).length).toBeGreaterThan(0);
     const rewrites = (await off.rewrites()) as { beforeFiles: unknown[] };
     expect(rewrites.beforeFiles.length).toBeGreaterThan(0);
+  });
+});
+
+describe("next.config.ts over the moved Rules hub", () => {
+  // Fees & booking rules moved in C6 (#4803).
+  it("PREMISE: every Fees & booking rules page has moved", () => {
+    const rules = ADMIN_PAGES.filter((page) => page.hub === "rules");
+    expect(rules.length).toBeGreaterThan(0);
+    expect(rules.filter((page) => !page.moved).map((page) => page.id)).toEqual([]);
+  });
+
+  it("off: the fee console's hub URL redirects to its old URL, and the old URL is served from the moved file, query kept", async () => {
+    const config = await loadConfig({ live: false });
+    await expect(resolve(config, "/admin/rules/fees?lodgeId=l-1")).resolves.toEqual({
+      kind: "redirect",
+      status: 307,
+      url: "/admin/fees?lodgeId=l-1",
+    });
+    await expect(resolve(config, "/admin/fees?lodgeId=l-1")).resolves.toEqual({
+      kind: "rewrite",
+      url: "/admin/rules/fees?lodgeId=l-1",
+    });
+  });
+
+  it("on: Booking Rules, merged into Bookings Setup, redirects once, straight to its hub URL", async () => {
+    const config = await loadConfig({ live: true });
+    await expect(resolve(config, "/admin/setup/booking-rules?x=1")).resolves.toEqual({
+      kind: "redirect",
+      status: 307,
+      url: "/admin/rules/bookings-setup?x=1",
+    });
+    await expect(resolve(config, "/admin/rules/bookings-setup")).resolves.toEqual({ kind: "none" });
+  });
+});
+
+describe("next.config.ts over the moved Help & system hub", () => {
+  // Help & system moved in C7 (#4804).
+  it("PREMISE: every Help & system page has moved", () => {
+    const system = ADMIN_PAGES.filter((page) => page.hub === "system");
+    expect(system.length).toBeGreaterThan(0);
+    expect(system.filter((page) => !page.moved).map((page) => page.id)).toEqual([]);
+  });
+
+  it("off: the audit log's hub URL redirects to its old URL, and the old URL is served from the moved file, query kept", async () => {
+    const config = await loadConfig({ live: false });
+    await expect(resolve(config, "/admin/system/audit-log?q=b-1")).resolves.toEqual({
+      kind: "redirect",
+      status: 307,
+      url: "/admin/audit-log?q=b-1",
+    });
+    await expect(resolve(config, "/admin/audit-log?q=b-1")).resolves.toEqual({
+      kind: "rewrite",
+      url: "/admin/system/audit-log?q=b-1",
+    });
+  });
+
+  it("on: Integrations Setup, merged into System Health, redirects once, straight to its hub URL and section", async () => {
+    const config = await loadConfig({ live: true });
+    const { status, location: actual } = await location(config, "/admin/setup/integrations");
+    expect(status).toBe(307);
+    const parsed = new URL(actual!, "https://example.org");
+    expect(parsed.pathname + parsed.hash).toBe("/admin/system/health#integration-readiness");
+    await expect(resolve(config, "/admin/system/health")).resolves.toEqual({ kind: "none" });
+  });
+});
+
+describe("next.config.ts over the moved Messages & email hub", () => {
+  // Messages & email moved in C8 (#4805).
+  it("PREMISE: every Messages & email page has moved", () => {
+    const messages = ADMIN_PAGES.filter((page) => page.hub === "messages");
+    expect(messages).toHaveLength(10);
+    expect(messages.filter((page) => !page.moved).map((page) => page.id)).toEqual([]);
+  });
+
+  it("off: a notice's hub URL redirects to its old URL, and the old URL is served from the moved file, query kept", async () => {
+    const config = await loadConfig({ live: false });
+    await expect(resolve(config, "/admin/messages/notices/n-1?page=2")).resolves.toEqual({
+      kind: "redirect",
+      status: 307,
+      url: "/admin/notices/n-1?page=2",
+    });
+    await expect(resolve(config, "/admin/notices/n-1?page=2")).resolves.toEqual({
+      kind: "rewrite",
+      url: "/admin/messages/notices/n-1?page=2",
+    });
+  });
+
+  it("off: the new-notice page is served from its own file, and the Message Board keeps its tab and search", async () => {
+    const config = await loadConfig({ live: false });
+    await expect(resolve(config, "/admin/notices/new")).resolves.toEqual({
+      kind: "rewrite",
+      url: "/admin/messages/notices/new",
+    });
+    await expect(resolve(config, "/admin/messages/message-board?tab=hidden&q=ski")).resolves.toEqual({
+      kind: "redirect",
+      status: 307,
+      url: "/admin/message-board?tab=hidden&q=ski",
+    });
+    await expect(resolve(config, "/admin/message-board?tab=hidden&q=ski")).resolves.toEqual({
+      kind: "rewrite",
+      url: "/admin/messages/message-board?tab=hidden&q=ski",
+    });
+  });
+
+  it.each([false, true])("leaves the hub's root alone, which no page is at yet (live=%s)", async (live) => {
+    await expect(resolve(await loadConfig({ live }), "/admin/messages")).resolves.toEqual({
+      kind: "none",
+    });
+  });
+
+  it("on: the old URL redirects once, straight to the hub URL", async () => {
+    const config = await loadConfig({ live: true });
+    await expect(resolve(config, "/admin/notifications")).resolves.toEqual({
+      kind: "redirect",
+      status: 307,
+      url: "/admin/messages/notifications",
+    });
+    await expect(resolve(config, "/admin/notices/new")).resolves.toEqual({
+      kind: "redirect",
+      status: 307,
+      url: "/admin/messages/notices/new",
+    });
+    await expect(resolve(config, "/admin/messages/notifications")).resolves.toEqual({ kind: "none" });
   });
 });
 

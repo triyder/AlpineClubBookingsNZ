@@ -388,11 +388,10 @@ public."FamilyGroup": id, name
 <!-- ai-diagnostics-exact-grants:end -->
 
 Every other relation in the schema is unreadable — including `IntegrationCredential`
-(encrypted provider secrets, and since #3454 the Xero OAuth token set), `XeroToken`,
-which holds the same Xero OAuth access and refresh tokens, encrypted, for the
-blue-green window, and `FamilyGroupJoinRequest`, which carries requester
-free text and children's dates of birth. The first two are permanently out of scope
-under ADR-007 §1 and no tool pack may grant them.
+(encrypted provider secrets, and since #3454 the Xero OAuth token set), which
+stays permanently out of scope under ADR-007 §1, and `FamilyGroupJoinRequest`,
+which carries requester free text and children's dates of birth. `XeroToken` is
+gone, not a second live secret store. No tool pack may grant `IntegrationCredential`.
 
 So is every other **column** of the twenty-six. The grants are by column, so as the
 diagnostics role `SELECT "ipAddress" FROM "AuditLog"`,
@@ -488,7 +487,7 @@ still be misread as partly working: check readiness rather than a single tool.
 provisions to let them read.** An earlier release note here said the packs shipped
 "dormant" with "no production call site" because there was no `/admin/ai-diagnostics`
 page — that was true up to AID-6C and is **false now**. AID-7 (#2378) shipped the
-surface: the admin page at `src/app/(admin)/admin/ai-diagnostics/page.tsx`, the ask
+surface: the admin page at `src/app/(admin)/admin/system/ai-diagnostics/page.tsx`, the ask
 route at `src/app/api/admin/ai-diagnostics/ask/route.ts`, and the bounded answer loop
 (`src/lib/diagnostics/answer/loop.ts`), which calls `invokeDiagnosticsTool` on every
 tool round the model asks for. An admin reaches it from the Help bubble on any admin

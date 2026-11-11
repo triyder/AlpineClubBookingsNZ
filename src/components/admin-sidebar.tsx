@@ -73,6 +73,8 @@ import {
   ADMIN_MENU_DESTINATIONS,
   ADMIN_RETIRED_PAGES,
   activeAdminHref,
+  adminHref,
+  adminLink,
   canonicalAdminPathname,
   getAdminPage,
   retiredAdminPageHref,
@@ -210,7 +212,7 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
     // something pending (see the filtering in SidebarLinks).
     label: NEEDS_ATTENTION_LABEL,
     items: [
-      { href: "/admin/xero", label: "Silent Xero Webhook", icon: Bell },
+      { href: adminHref("xero"), label: "Silent Xero Webhook", icon: Bell },
       {
         href: "/admin/booking-requests",
         label: "Booking Requests",
@@ -227,11 +229,7 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
         icon: ClipboardList,
       },
       { href: "/admin/family-groups", label: "Family Groups", icon: Users },
-      {
-        href: "/admin/refund-requests",
-        label: "Refunds & Credits",
-        icon: RotateCcw,
-      },
+      { ...adminLink("refund-requests"), icon: RotateCcw },
       {
         href: "/admin/membership-cancellations",
         label: "Cancellation Requests",
@@ -242,7 +240,7 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
         label: "Deletion Requests",
         icon: Trash2,
       },
-      { href: "/admin/issue-reports", label: "Issue Reports", icon: Bug },
+      { ...adminLink("issue-reports"), icon: Bug },
       { href: "/admin/hut-leaders", label: "Hut Leaders", icon: Bell },
     ],
   },
@@ -272,21 +270,9 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
       // windows and stays lodge-scoped (#130, ADR-005) — reached from Fees → Hut
       // Fees and the lodge hub's "Seasons & Rates" card, not a standalone entry.
       // The command palette offers it (S2 #4797); the page picks a lodge itself.
-      {
-        href: "/admin/age-tier-settings",
-        label: "Age Groups",
-        icon: Sliders,
-      },
-      {
-        href: "/admin/promo-codes",
-        label: "Promo Codes",
-        icon: Tag,
-      },
-      {
-        href: "/admin/booking-policies",
-        label: "Booking Policies",
-        icon: XCircle,
-      },
+      { ...adminLink("age-tier-settings"), icon: Sliders },
+      { ...adminLink("promo-codes"), icon: Tag },
+      { ...adminLink("booking-policies"), icon: XCircle },
     ],
   },
   {
@@ -296,41 +282,16 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
       // Annual Fees (finance). Shown to anyone with view on either area via the
       // OR predicate, since its prefix resolves to bookings only.
       {
-        href: "/admin/fees",
-        label: "Fees",
+        ...adminLink("fees"),
         icon: DollarSign,
         orAccess: canAccessConsolidatedFeesPage,
       },
-      {
-        href: "/admin/payments",
-        label: "Payments",
-        icon: CreditCard,
-      },
-      {
-        href: "/admin/internet-banking",
-        label: "Internet Banking",
-        icon: Landmark,
-      },
-      {
-        href: "/admin/refund-requests",
-        label: "Refunds & Credits",
-        icon: RotateCcw,
-      },
-      {
-        href: "/admin/reports",
-        label: "Reports",
-        icon: BarChart2,
-      },
-      {
-        href: "/admin/xero",
-        label: "Xero Sync",
-        icon: RefreshCw,
-      },
-      {
-        href: "/admin/xero/member-grouping",
-        label: "Xero Member Grouping",
-        icon: Users,
-      },
+      { ...adminLink("payments"), icon: CreditCard },
+      { ...adminLink("internet-banking"), icon: Landmark },
+      { ...adminLink("refund-requests"), icon: RotateCcw },
+      { ...adminLink("reports"), icon: BarChart2 },
+      { ...adminLink("xero"), icon: RefreshCw },
+      { ...adminLink("xero-member-grouping"), icon: Users },
     ],
   },
   {
@@ -341,7 +302,7 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
         label: "Members",
         icon: Users,
       },
-      { href: "/admin/subscriptions", label: "Subscriptions", icon: FileText },
+      { ...adminLink("subscriptions"), icon: FileText },
       {
         href: "/admin/member-applications",
         label: "Applications",
@@ -353,21 +314,9 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
         icon: UserX,
       },
       { href: "/admin/induction", label: "Induction", icon: ClipboardCheck },
-      {
-        href: "/admin/communications",
-        label: "Communications",
-        icon: Mail,
-      },
-      {
-        href: "/admin/message-board",
-        label: "Message Board",
-        icon: MessageSquare,
-      },
-      {
-        href: "/admin/notices",
-        label: "Member Notices",
-        icon: Newspaper,
-      },
+      { ...adminLink("communications"), icon: Mail },
+      { ...adminLink("message-board"), icon: MessageSquare },
+      { ...adminLink("notices"), icon: Newspaper },
       // Lockers is lodge-scoped (#130, ADR-005) — reached via the lodge hub's
       // "Lockers" card, not a standalone sidebar entry. The command palette
       // offers it (S2 #4797); the page picks a lodge itself.
@@ -424,38 +373,18 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
   {
     label: "Monitoring & Support",
     items: [
-      { href: "/admin/issue-reports", label: "Issue Reports", icon: Bug },
-      {
-        href: "/admin/stuck-states",
-        label: "Stuck States",
-        icon: AlertTriangle,
-      },
-      {
-        href: "/admin/health",
-        label: "System Health",
-        icon: Activity,
-      },
-      {
-        href: "/admin/email-deliverability",
-        label: "Email Deliverability",
-        icon: Mail,
-      },
-      { href: "/admin/background-jobs", label: "Background Jobs", icon: Clock },
+      { ...adminLink("issue-reports"), icon: Bug },
+      { ...adminLink("stuck-states"), icon: AlertTriangle },
+      { ...adminLink("health"), icon: Activity },
+      { ...adminLink("email-deliverability"), icon: Mail },
+      { ...adminLink("background-jobs"), icon: Clock },
       {
         href: "/admin/privacy-retention",
         label: "Privacy & Retention",
         icon: Shield,
       },
-      {
-        href: "/admin/backups",
-        label: "Database Backups",
-        icon: DatabaseBackup,
-      },
-      {
-        href: "/admin/ai-assistant",
-        label: "AI help assistant",
-        icon: Bot,
-      },
+      { ...adminLink("backups"), icon: DatabaseBackup },
+      { ...adminLink("ai-assistant"), icon: Bot },
       {
         // AI Diagnostics (AID-7, #2378) — a separate read-only investigation
         // product, not the help assistant above. Listed here because "why is this
@@ -463,10 +392,10 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
         // comes looking.
         //
         // No explicit flag is needed: `isFeatureHrefVisible` derives visibility
-        // from the href against FEATURE_ROUTE_RULES, and this PR registered
-        // "/admin/ai-diagnostics" under the `aiDiagnostics` rule — so with the
-        // module off the entry disappears from the sidebar, matching the 404 the
-        // route itself now returns.
+        // from the href against FEATURE_ROUTE_RULES, whose `aiDiagnostics` rule
+        // has been generated from this page's registry entry since #4799, at its
+        // old and its hub path — so with the module off the entry disappears from
+        // the sidebar, matching the 404 the route itself returns.
         //
         // ADMISSION, NOT AN AREA (ADR-002 §1, owner-ratified #2370): any admitted
         // administrator may open the shell, and the link follows that rule with
@@ -474,15 +403,10 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
         // `ANY_ADMIN_ADMISSION_PATHS` entry as `canOpenAdminPath` does (#3596).
         // The href's `overview` map area stopped meaning "any admin" when #2984
         // made portal standing any one of the seven areas.
-        href: "/admin/ai-diagnostics",
-        label: "AI Diagnostics",
+        ...adminLink("ai-diagnostics"),
         icon: Stethoscope,
       },
-      {
-        href: "/admin/audit-log",
-        label: "Audit Log",
-        icon: Shield,
-      },
+      { ...adminLink("audit-log"), icon: Shield },
       {
         href: "/admin/deletion-requests",
         label: "Deletion Requests",
@@ -506,26 +430,14 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
         label: "Membership & Members",
         icon: BadgeCheck,
       },
-      {
-        href: "/admin/appearance",
-        label: "Site Appearance & Content",
-        icon: Palette,
-      },
-      {
-        href: "/admin/bookings-setup",
-        label: "Bookings Setup",
-        icon: BedDouble,
-      },
+      { ...adminLink("appearance"), icon: Palette },
+      { ...adminLink("bookings-setup"), icon: BedDouble },
       {
         href: "/admin/integrations",
         label: "Integrations",
         icon: Plug,
       },
-      {
-        href: "/admin/notifications",
-        label: "Notifications & Email",
-        icon: Bell,
-      },
+      { ...adminLink("notifications"), icon: Bell },
       // Chores is lodge-scoped (#130, ADR-005) — reached via the lodge hub's
       // "Chores" card, not a standalone sidebar entry. The command palette
       // offers it (S2 #4797); the page picks a lodge itself.
@@ -805,7 +717,10 @@ export function getPanelAdminNavSections(
     showFinanceWorkspace ? { Finance: [FINANCE_WORKSPACE_ITEM] } : {},
   );
   return panelKey === "content"
-    ? [...sections, ...getContentPanelSections(features, permissionMatrix)]
+    ? [
+        ...sections,
+        ...getContentPanelSections(features, permissionMatrix, isFullAdmin),
+      ]
     : sections;
 }
 
@@ -943,13 +858,13 @@ function SidebarLinks({
     badges[UNSETTLED_ADDITIONS_HREF] = unsettledAdditionsCount;
   }
   if (counts.refundAppeals + counts.creditApprovals > 0) {
-    badges["/admin/refund-requests"] =
+    badges[adminHref("refund-requests")] =
       counts.refundAppeals + counts.creditApprovals;
   }
   // B5 (#2262): open cash hand-back tasks live on the payments board, which is
   // where an admin closes them once the money has actually been paid back.
   if (counts.manualRefundTasks > 0) {
-    badges["/admin/payments"] = counts.manualRefundTasks;
+    badges[adminHref("payments")] = counts.manualRefundTasks;
   }
   if (counts.membershipCancellations + counts.archiveRequests > 0) {
     badges["/admin/membership-cancellations"] =
@@ -964,14 +879,14 @@ function SidebarLinks({
       counts.deletionRequests + counts.memberDeleteRequests;
   }
   if (counts.issueReports > 0) {
-    badges["/admin/issue-reports"] = counts.issueReports;
+    badges[adminHref("issue-reports")] = counts.issueReports;
   }
   if (counts.unassignedHutLeaderDates > 0) {
     badges["/admin/hut-leaders"] = counts.unassignedHutLeaderDates;
   }
 
   if ((counts.xeroSilentWebhook ?? 0) > 0) {
-    badges["/admin/xero"] = counts.xeroSilentWebhook!;
+    badges[adminHref("xero")] = counts.xeroSilentWebhook!;
   }
 
   const renderedNavSections = getRenderedAdminNavSections(
@@ -1037,7 +952,7 @@ function SidebarLinks({
                 const active = href === activeHref;
                 const badgeCount = badges[href];
                 const badgeClasses =
-                  href === "/admin/refund-requests"
+                  href === adminHref("refund-requests")
                     ? "bg-danger text-danger-foreground"
                     : "bg-warning text-warning-foreground";
 
