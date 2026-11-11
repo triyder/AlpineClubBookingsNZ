@@ -1,4 +1,5 @@
 import type { Lodge, Prisma, PrismaClient } from "@prisma/client";
+import { z } from "zod";
 
 // Callers pass their own Prisma client/transaction so this module stays free
 // of the app prisma singleton and safe to import from prisma/seed.ts.
@@ -160,6 +161,14 @@ export const LODGE_INVOICE_DETAIL_FIELDS = [
 ] as const;
 
 export type LodgeInvoiceDetailField = (typeof LODGE_INVOICE_DETAIL_FIELDS)[number];
+
+/** The PATCH rules for those fields: the `address` rule, bounded by each column's length. */
+export const lodgeInvoiceDetailsSchemaShape = {
+  postalAddress: z.string().trim().max(300).nullable().optional(),
+  bankAccountName: z.string().trim().max(200).nullable().optional(),
+  bankAccountDetails: z.string().trim().max(300).nullable().optional(),
+  gstNumber: z.string().trim().max(40).nullable().optional(),
+} satisfies Record<LodgeInvoiceDetailField, z.ZodTypeAny>;
 
 export function normalizeLodgeText(value: string | null | undefined) {
   const trimmed = value?.trim();

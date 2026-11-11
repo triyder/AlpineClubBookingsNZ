@@ -7,6 +7,8 @@ import {
 import {
   buildUniqueLodgeSlug,
   LODGE_INVOICE_DETAIL_FIELDS,
+  lodgeInvoiceDetailsSchemaShape,
+  type LodgeInvoiceDetailField,
   lodgeSelect,
   normalizeLodgeText,
   redactLodgeForAudit,
@@ -30,11 +32,7 @@ const patchSchema = z
   .object({
     name: z.string().trim().min(1).max(120).optional(),
     address: z.string().trim().max(300).nullable().optional(),
-    // Invoice details (fork #115), same trim/max/nullable rule as `address`.
-    postalAddress: z.string().trim().max(300).nullable().optional(),
-    bankAccountName: z.string().trim().max(200).nullable().optional(),
-    bankAccountDetails: z.string().trim().max(300).nullable().optional(),
-    gstNumber: z.string().trim().max(40).nullable().optional(),
+    ...lodgeInvoiceDetailsSchemaShape,
     doorCode: z.string().trim().max(80).nullable().optional(),
     travelNote: z.string().trim().max(2000).nullable().optional(),
     active: z.boolean().optional(),
@@ -108,14 +106,10 @@ export async function PATCH(
     name?: string;
     slug?: string;
     address?: string | null;
-    postalAddress?: string | null;
-    bankAccountName?: string | null;
-    bankAccountDetails?: string | null;
-    gstNumber?: string | null;
     doorCode?: string | null;
     travelNote?: string | null;
     active?: boolean;
-  } = {};
+  } & Partial<Record<LodgeInvoiceDetailField, string | null>> = {};
 
   const nameChanges = parsed.data.name !== undefined && parsed.data.name !== existing.name;
   if (nameChanges) {
