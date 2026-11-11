@@ -4,6 +4,7 @@
  *
  * Section per the sidebar's `buildAdminNavSections`.
  */
+import { getAdminPage } from "@/lib/admin-hubs";
 import { entry, help, type HelpEntry } from "../types";
 
 export const adminMembersHelpEntries: HelpEntry[] = [
@@ -153,8 +154,9 @@ export const adminMembersHelpEntries: HelpEntry[] = [
       ],
     ),
   ),
+  // Keyed by its registry old path: see the note on `admin/finance.ts` (C5 #4802).
   entry(
-    "/admin/subscriptions",
+    getAdminPage("subscriptions").oldPath,
     help(
       "Subscriptions",
       "Subscriptions tracks membership subscription invoices, payment state, lockout behavior, and season-specific dues.",
@@ -217,8 +219,9 @@ export const adminMembersHelpEntries: HelpEntry[] = [
       ],
     ),
   ),
+  // Keyed by its registry old path: see the note on `admin/finance.ts` (C8 #4805).
   entry(
-    "/admin/communications",
+    getAdminPage("communications").oldPath,
     help(
       "Communications",
       "Communications sends and reviews member email or notification messages.",
@@ -249,11 +252,12 @@ export const adminMembersHelpEntries: HelpEntry[] = [
       ],
     ),
   ),
+  // Keyed by its registry old path: see the note on `admin/finance.ts` (C8 #4805).
   entry(
-    "/admin/notices",
+    getAdminPage("notices").oldPath,
     help(
-      "Member Notices",
-      "Member Notices posts committee news to targeted member audiences and tracks who has read each notice.",
+      getAdminPage("notices").label,
+      `${getAdminPage("notices").label} posts committee news to targeted member audiences and tracks who has read each notice.`,
       [
         "Target a notice to everyone or to specific members, membership types, lodges, or committee roles.",
         "Publish when ready; optionally email the notice to the audience once on publish.",

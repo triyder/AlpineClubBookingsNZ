@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { bookableAgeTierEnum } from "@/lib/age-tier-schema";
 import { isHttpUrl } from "@/lib/http-url";
-import { adminTabHref } from "@/lib/admin-hubs";
+import { adminAnchorHref, adminHref, adminTabHref, getAdminPage } from "@/lib/admin-hubs";
 import {
   CLUB_TIME_ZONE_FALLBACK,
   CLUB_TIME_ZONE_MAX_LENGTH,
@@ -1293,7 +1293,7 @@ function buildAuthSecretStrengthCheck(
             "Generate a strong value, e.g. node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\", then restart.",
           ]
         : ["Secret is set and passes the length and placeholder checks."],
-      href: "/admin/health",
+      href: adminHref("health"),
     },
     progress,
   );
@@ -1416,7 +1416,7 @@ function buildBookingPolicyCheck(
         details: [
           "Review this in /admin/setup after migrations and seed data have run.",
         ],
-        href: "/admin/booking-policies",
+        href: adminHref("booking-policies"),
       },
       progress,
     );
@@ -1441,7 +1441,7 @@ function buildBookingPolicyCheck(
         `Booking defaults: ${hasDefaults ? "configured" : "not configured"}`,
         `Group discount: ${db?.groupDiscountConfigured ? "configured" : "using defaults"}`,
       ],
-      href: "/admin/booking-policies",
+      href: adminHref("booking-policies"),
     },
     progress,
   );
@@ -1513,7 +1513,7 @@ function buildAgeTierCheck(
         details: [
           "The CLI validated config age tiers; seeded database settings are checked in /admin/setup.",
         ],
-        href: "/admin/age-tier-settings",
+        href: adminHref("age-tier-settings"),
       },
       progress,
     );
@@ -1564,7 +1564,7 @@ function buildAgeTierCheck(
             ]
           : []),
       ],
-      href: "/admin/age-tier-settings",
+      href: adminHref("age-tier-settings"),
     },
     progress,
   );
@@ -1585,9 +1585,9 @@ function buildSeasonRateCheck(
         required: true,
         message: "Database seasons and rates were not checked.",
         details: [
-          "Run seed data or configure seasons from /admin/seasons after login.",
+          `Run seed data or configure seasons from ${adminHref("seasons")} after login.`,
         ],
-        href: "/admin/seasons",
+        href: adminHref("seasons"),
       },
       progress,
     );
@@ -1652,7 +1652,7 @@ function buildSeasonRateCheck(
               ? "The public hut-fees page block would show fewer than two nightly-rate columns for some seasons; publish at least two membership types' rates so visitors can compare them."
               : `${seasonCount} season${seasonCount === 1 ? "" : "s"} configured.`,
       details: [`Configured seasons: ${seasonCount}`, ...gapDetails, ...embedDetails],
-      href: "/admin/seasons",
+      href: adminHref("seasons"),
     },
     progress,
   );
@@ -1822,7 +1822,7 @@ function buildEmailCheck(
           ? `Email delivery is configured (${emailDelivery.modeLabel}).`
           : `Email delivery setup needs attention (${emailDelivery.modeLabel}).`,
       details: issues.length === 0 ? details : [...details, ...issues],
-      href: "/admin/health",
+      href: adminHref("health"),
       action: {
         type: "provider-test",
         provider: "smtp",
@@ -1860,7 +1860,7 @@ function buildSentryCheck(
         missing.length === 0
           ? ["Sentry DSN/project variables are set; values are not displayed."]
           : missing.map((name) => `${name} is missing`),
-      href: "/admin/health",
+      href: adminHref("health"),
       action: {
         type: "provider-test",
         provider: "sentry",
@@ -1958,7 +1958,7 @@ function buildOperationalXeroCheck(
       ],
       // Land on the page where credentials can actually be entered (#2079); the
       // Integrations hub also links here.
-      href: "/admin/xero/setup",
+      href: adminHref("xero-setup"),
       action: {
         type: "provider-test",
         provider: "xero",
@@ -2073,8 +2073,8 @@ function buildXeroMappingCheck(
         status: "warning",
         required: false,
         message: "Xero mapping database state was not checked.",
-        details: ["Review mappings from /admin/xero after connecting Xero."],
-        href: "/admin/xero#xero-section-mappings",
+        details: [`Review mappings on ${getAdminPage("xero").label} after connecting Xero.`],
+        href: adminAnchorHref("xero", "xero-section-mappings"),
       },
       progress,
     );
@@ -2129,7 +2129,7 @@ function buildXeroMappingCheck(
         `Hut fee item mappings: ${hutFeeMappings}`,
         `Joining fee mappings: ${entranceFeeMappings}`,
       ],
-      href: "/admin/xero#xero-section-mappings",
+      href: adminAnchorHref("xero", "xero-section-mappings"),
     },
     progress,
   );

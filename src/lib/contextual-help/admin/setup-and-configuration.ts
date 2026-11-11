@@ -8,6 +8,7 @@
  * and the booking messages under Bookings setup.
  */
 import { entry, help, type HelpEntry } from "../types";
+import { getAdminPage } from "@/lib/admin-hubs";
 import {
   CLUB_FORMAT_AI_RATE_CLEARED,
   CLUB_FORMAT_CARD_PAYMENTS,
@@ -135,8 +136,9 @@ export const adminSetupAndConfigurationHelpEntries: HelpEntry[] = [
       ],
     ),
   ),
+  // Keyed by its registry old path: see the note on `admin/finance.ts` (C6 #4803).
   entry(
-    "/admin/bookings-setup",
+    getAdminPage("bookings-setup").oldPath,
     help(
       "Bookings Setup",
       "Bookings Setup groups the setup pages that shape booking eligibility, pricing, capacity, and member-facing booking copy. It also holds what was the Booking Rules page.",
@@ -190,8 +192,9 @@ export const adminSetupAndConfigurationHelpEntries: HelpEntry[] = [
       ],
     ),
   ),
+  // Keyed by its registry old path: see the note on `admin/finance.ts` (C8 #4805).
   entry(
-    "/admin/notifications",
+    getAdminPage("notifications").oldPath,
     help(
       "Notifications & Email",
       "Notifications & Email groups delivery rules, recipients, automated message wording, and member-facing notification copy.",
@@ -397,8 +400,9 @@ export const adminSetupAndConfigurationHelpEntries: HelpEntry[] = [
       ],
     ),
   ),
+  // Keyed by its registry old path: see the note on `admin/finance.ts` (C8 #4805).
   entry(
-    "/admin/booking-messages",
+    getAdminPage("booking-messages").oldPath,
     help(
       "Booking Messages",
       "Booking Messages edits reusable wording shown or sent during booking workflows.",

@@ -334,7 +334,7 @@ Journey: Read club posts and use the moderation actions allowed by the current r
 
 [Guide](guides/message-board.md) · [History](UX_FLOW_HISTORY.md#club-message-board-2994-epic-2992)
 
-### Member Notices — notices
+### Member notices — notices
 
 Screen: `/admin/notices`.
 
@@ -985,6 +985,11 @@ Screen: `/admin/stuck-states`.
 Shows: Operational incidents and guided repair actions.
 
 Journey: Inspect flagged records and use the documented recovery for the selected state.
+A card refund Stripe gave up on is settled on its row, never with a new Stripe
+dashboard refund (#4368): **Paid another way**, or **Try the card again** after a
+confirm dialog; a row a later Stripe refund covers reads "nothing left owed" and
+offers only **Nothing left owed**, whose dialog names that refund. Each is
+view-only without Finance edit.
 
 [Guide](guides/stuck-states.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 

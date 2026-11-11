@@ -156,9 +156,14 @@ const nextConfig: NextConfig = {
    * each state yields). While `ADMIN_HUBS_LIVE` is off, a moved page's hub URL
    * redirects (307) to its old URL, and the `beforeFiles` rewrite above serves
    * the old URL from the moved file, so the proxy, the module gate and the
-   * layout guard still see the old path. Once on, the old URL redirects to the
-   * hub URL and there are no rewrites. No page has moved yet, so there are no
-   * rewrites and no moved-page redirects.
+   * layout guard still see the old path. Next matches these rules whatever the
+   * letter case, and the guards do not, so the proxy answers a page path spelled
+   * any other way with a 404 (`isInexactAdminPagePath`): admin page URLs are
+   * served only at their exact spelling. Once on, the old URL redirects to the
+   * hub URL and there are no rewrites. C4 (#4801) has moved the Website pages,
+   * C5 (#4802) the Finance pages, C6 (#4803) the Fees & booking rules pages,
+   * C7 (#4804) the Help & system pages and C8 (#4805) the Messages & email
+   * pages, so those rules are live while the switch stays off.
    *
    * The pages S1 (#4796) merged into others (`src/lib/admin-hubs/retired.ts`)
    * each have a redirect in both states, FIRST in the list so no moved page's

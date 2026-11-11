@@ -43,6 +43,8 @@ import {
   adminPageRoutePath,
   adminTabHref,
   buildAdminUrlRules,
+  getAdminPage,
+  isInexactAdminPagePath,
   parseAdminPageTab,
   resolveAdminHref,
   type AdminUrlRules,
@@ -58,6 +60,8 @@ import {
   adminHubOwnedPaths,
 } from "@/lib/admin-hubs/security-map";
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
+import { xeroSectionId } from "@/app/(admin)/admin/finance/xero/_components/types";
+import { BANK_REFUND_VOIDS_ANCHOR } from "@/components/admin/bank-refund-voids-to-answer-panel";
 
 // ---------------------------------------------------------------------------
 // The admin hub registry (epic #4468, C1 #4798).
@@ -513,17 +517,108 @@ describe("the hub prefix census", () => {
   });
 
   it("lets a hub own the pages that have moved under it, and no others", () => {
-    const pages = ADMIN_PAGES.map((page) =>
-      page.id === "payments" ? { ...page, moved: true } : page,
-    );
-    const moved = pages.find((page) => page.id === "payments")!;
-    const sources = { ...TODAYS_SOURCES, pagePaths: [...ON_DISK_PAGE_PATHS, moved.hubPath] };
-    expect(ownedPagePaths("finance", pages)).toEqual([moved.hubPath]);
-    expect(hubPrefixCollisions("finance", ownedBy("finance", pages), sources)).toEqual([]);
+    // C5 (#4802) moved every Finance page, so their files sit under the hub.
+    const financeHubPaths = [
+      "/admin/finance/payments",
+      "/admin/finance/internet-banking",
+      "/admin/finance/refund-requests",
+      "/admin/finance/subscriptions",
+      "/admin/finance/reports",
+      "/admin/finance/xero",
+      "/admin/finance/xero/member-grouping",
+      "/admin/finance/xero/records/[localModel]/[localId]",
+      "/admin/finance/xero/setup",
+    ];
+    expect(ownedPagePaths("finance")).toEqual(financeHubPaths);
+    expect(hubPrefixCollisions("finance", ownedBy("finance"))).toEqual([]);
     // Unmoved in the registry, so the file under the hub is not the hub's.
-    expect(hubPrefixCollisions("finance", ownedBy("finance"), sources)).toEqual([
-      `the existing page ${moved.hubPath} sits under it`,
+    const pages = ADMIN_PAGES.map((page) =>
+      page.id === "payments" ? { ...page, moved: false } : page,
+    );
+    expect(ownedPagePaths("finance", pages)).toEqual(financeHubPaths.slice(1));
+    expect(hubPrefixCollisions("finance", ownedBy("finance", pages))).toEqual([
+      "the existing page /admin/finance/payments sits under it",
     ]);
+  });
+
+  it("lets the Rules hub own its moved pages and the fee console's rule beneath it (C6 #4803)", () => {
+    // C6 moved every Fees & booking rules page under `/admin/rules`. The fee
+    // console's bookings-OR-finance rule followed it there, generated from its
+    // entry, so it is the hub's own rule and no collision.
+    expect(ownedPagePaths("rules")).toEqual([
+      "/admin/rules/fees",
+      "/admin/rules/fee-configuration",
+      "/admin/rules/seasons",
+      "/admin/rules/age-tier-settings",
+      "/admin/rules/promo-codes",
+      "/admin/rules/booking-policies",
+      "/admin/rules/booking-policies/adult-member-hosting",
+      "/admin/rules/booking-policies/cancellation",
+      "/admin/rules/booking-policies/group-discount",
+      "/admin/rules/booking-policies/minimum-stay",
+      "/admin/rules/booking-policies/periods",
+      "/admin/rules/booking-policies/public-requests",
+      "/admin/rules/bookings-setup",
+    ]);
+    expect(TODAYS_SOURCES.specialPaths).toContain("/admin/rules/fees");
+    expect(hubPrefixCollisions("rules", ownedBy("rules"))).toEqual([]);
+    // Owning nothing, the fee console's rule and its page are both reported.
+    const unowned = hubPrefixCollisions("rules").join("\n");
+    expect(unowned).toMatch(/the special path \/admin\/rules\/fees sits under it/);
+    expect(unowned).toMatch(/the existing page \/admin\/rules\/fees sits under it/);
+  });
+
+  it("lets the Help & system hub own its moved pages and the rules generated beneath it (C7 #4804)", () => {
+    // C7 moved every Help & system page under `/admin/system`. AI Diagnostics'
+    // any-admin admission and the AI pages' module gates followed them there,
+    // generated from their entries, so they are the hub's own rules.
+    expect(ownedPagePaths("system")).toEqual([
+      "/admin/system/health",
+      "/admin/system/issue-reports",
+      "/admin/system/stuck-states",
+      "/admin/system/background-jobs",
+      "/admin/system/email-deliverability",
+      "/admin/system/audit-log",
+      "/admin/system/ai-diagnostics",
+      "/admin/system/ai-assistant",
+      "/admin/system/backups",
+      "/admin/system/backups/setup",
+      "/admin/system/testing/route-error",
+    ]);
+    expect(TODAYS_SOURCES.specialPaths).toContain("/admin/system/ai-diagnostics");
+    expect(hubPrefixCollisions("system", ownedBy("system"))).toEqual([]);
+    // Owning nothing, the moved pages and the rules generated for them are reported.
+    const unowned = hubPrefixCollisions("system").join("\n");
+    expect(unowned).toMatch(/the special path \/admin\/system\/ai-diagnostics sits under it/);
+    expect(unowned).toMatch(/\/admin\/system\/ai-assistant \([^)]*\) sits under it/);
+    expect(unowned).toMatch(/the existing page \/admin\/system\/health sits under it/);
+  });
+
+  it("lets the Messages & email hub own its moved pages and the rules generated beneath it (C8 #4805)", () => {
+    // C8 moved every Messages & email page under `/admin/messages`. The hub
+    // mixes the membership and support areas, so no rule is generated AT its
+    // root: each page's area, and the Communications, Member Notices and
+    // Message Board module gates, followed it there as a rule of its own.
+    expect(ownedPagePaths("messages")).toEqual([
+      "/admin/messages/notifications",
+      "/admin/messages/communications",
+      "/admin/messages/notices",
+      "/admin/messages/notices/[id]",
+      "/admin/messages/notices/new",
+      "/admin/messages/message-board",
+      "/admin/messages/email-messages",
+      "/admin/messages/booking-messages",
+      "/admin/messages/notification-rules",
+      "/admin/messages/notification-recipients",
+    ]);
+    expect(adminHubOwnedPaths("messages")).not.toContain("/admin/messages");
+    expect(TODAYS_SOURCES.routeMapPrefixes).not.toContain("/admin/messages");
+    expect(hubPrefixCollisions("messages", ownedBy("messages"))).toEqual([]);
+    // Owning nothing, the moved pages and the rules generated for them are reported.
+    const unowned = hubPrefixCollisions("messages").join("\n");
+    expect(unowned).toMatch(/the route-map prefix \/admin\/messages\/notices sits under it/);
+    expect(unowned).toMatch(/\/admin\/messages\/communications \([^)]*\) sits under it/);
+    expect(unowned).toMatch(/the existing page \/admin\/messages\/notifications sits under it/);
   });
 
   /**
@@ -583,8 +678,73 @@ describe("the entries' shape", () => {
     expect(roots).toEqual(["dashboard"]);
   });
 
-  it("has moved no page yet (C4 #4801 makes the first move)", () => {
-    expect(ADMIN_PAGES.filter((page) => page.moved).map((page) => page.id)).toEqual([]);
+  it("has moved the Website, Finance, Fees & booking rules, Help & system and Messages & email hubs, and nothing else (C4 #4801, C5 #4802, C6 #4803, C7 #4804, C8 #4805)", () => {
+    expect(
+      ADMIN_PAGES.filter((page) => page.moved)
+        .map((page) => page.id)
+        .sort(),
+    ).toEqual([
+      "age-tier-settings",
+      "ai-assistant",
+      "ai-diagnostics",
+      "appearance",
+      "audit-log",
+      "background-jobs",
+      "backups",
+      "backups-setup",
+      "booking-messages",
+      "booking-policies",
+      "booking-policies-adult-member-hosting",
+      "booking-policies-cancellation",
+      "booking-policies-group-discount",
+      "booking-policies-minimum-stay",
+      "booking-policies-periods",
+      "booking-policies-public-requests",
+      "bookings-setup",
+      "club-identity",
+      "communications",
+      "email-deliverability",
+      "email-messages",
+      "fee-configuration",
+      "fees",
+      "health",
+      "image-manager",
+      "internet-banking",
+      "issue-reports",
+      "message-board",
+      "mountain-conditions",
+      "notice-detail",
+      "notice-new",
+      "notices",
+      "notification-recipients",
+      "notification-rules",
+      "notifications",
+      "page-content",
+      "payments",
+      "promo-codes",
+      "refund-requests",
+      "reports",
+      "seasons",
+      "site-banners",
+      "site-content",
+      "site-style",
+      "stuck-states",
+      "subscriptions",
+      "testing-route-error",
+      "xero",
+      "xero-member-grouping",
+      "xero-record",
+      "xero-setup",
+    ]);
+    expect(new Set(ADMIN_PAGES.filter((page) => page.moved).map((page) => page.hub))).toEqual(
+      new Set(["website", "finance", "rules", "messages", "system"]),
+    );
+    // Each of those hubs moved whole: no page of theirs was left behind.
+    expect(
+      ADMIN_PAGES.filter((page) => ["website", "finance", "rules", "messages", "system"].includes(page.hub) && !page.moved).map(
+        (page) => page.id,
+      ),
+    ).toEqual([]);
   });
 
   /**
@@ -762,6 +922,97 @@ describe("adminHref", () => {
 // Merged pages (S1 #4796): tabs, anchors and the retired pages.
 // ---------------------------------------------------------------------------
 
+/**
+ * A registry path spelled another way at each static segment below `/admin`:
+ * `case` capitalises it, `escape` percent-encodes its first character. Dynamic
+ * segments are filled with `x123` either way.
+ */
+function respell(registryPath: string, how: "case" | "escape"): string {
+  return registryPath
+    .split("/")
+    .map((segment, index) => {
+      if (index < 2 || segment.startsWith("[")) return segment.startsWith("[") ? "x123" : segment;
+      return how === "case"
+        ? segment.charAt(0).toUpperCase() + segment.slice(1)
+        : `%${segment.charCodeAt(0).toString(16).toUpperCase()}${segment.slice(1)}`;
+    })
+    .join("/");
+}
+
+describe("isInexactAdminPagePath", () => {
+  it("passes every page's old and hub path as written, with a query, a trailing slash or a path beneath", () => {
+    const refused = ADMIN_PAGES.flatMap((page) =>
+      [page.oldPath, page.hubPath].flatMap((registryPath) => {
+        const url = concrete(registryPath);
+        return [url, `${url}/`, `${url}?tab=x&Q=Y`, `${url}/beneath/More`].filter((candidate) =>
+          isInexactAdminPagePath(candidate),
+        );
+      }),
+    );
+    expect(refused).toEqual([]);
+  });
+
+  it.each(["case", "escape"] as const)(
+    "refuses every page's old and hub path respelled by %s, and beneath it",
+    (how) => {
+      const passed = ADMIN_PAGES.flatMap((page) =>
+        [page.oldPath, page.hubPath]
+          .filter((registryPath) => registryPath.split("/").length > 2)
+          .flatMap((registryPath) => {
+            const url = respell(registryPath, how);
+            return [url, `${url}/`, `${url}?q=1`, `${url}/beneath`].filter(
+              (candidate) => !isInexactAdminPagePath(candidate),
+            );
+          }),
+      );
+      expect(passed).toEqual([]);
+      expect(respell("/admin/site-style", how)).not.toBe("/admin/site-style");
+    },
+  );
+
+  it("refuses the whole prefix respelled, and one child below an exact parent", () => {
+    for (const url of [
+      "/ADMIN/site-style",
+      "/Admin/website/site-style",
+      "/admin/appearance/Identity",
+      "/admin/website/appearance/IDENTITY",
+      "/admin/notices/NEW",
+    ]) {
+      expect(isInexactAdminPagePath(url), url).toBe(true);
+    }
+  });
+
+  it("lets a dynamic segment carry any value, and leaves paths no page has alone", () => {
+    for (const url of [
+      "/admin/members/AbC%20D",
+      "/admin/members/AbC/merge",
+      "/admin/xero/records/Booking/b-1",
+      "/admin/lodges/Main-Lodge/setup",
+      "/admin/Nope",
+      "/admin/payments/Unknown",
+      "/finance/Payments",
+      "/Dashboard",
+      "/",
+      "",
+    ]) {
+      expect(isInexactAdminPagePath(url), url).toBe(false);
+    }
+  });
+
+  it("still compares a registry whose static segment is not lower case", () => {
+    // The lower-case shortcut must not apply to it.
+    const weird = { ...ADMIN_PAGES[0]!, oldPath: "/admin/Weird", hubPath: "/admin/zz/Weird" };
+    expect(isInexactAdminPagePath("/admin/weird", [weird])).toBe(true);
+    expect(isInexactAdminPagePath("/admin/zz/weird", [weird])).toBe(true);
+    expect(isInexactAdminPagePath("/admin/Weird", [weird])).toBe(false);
+  });
+
+  it("leaves a malformed escape as it is rather than throwing", () => {
+    expect(isInexactAdminPagePath("/admin/site-%E0%A4%A")).toBe(false);
+    expect(isInexactAdminPagePath("/admin/%E0%A4%A/x")).toBe(false);
+  });
+});
+
 describe("tabs and anchors", () => {
   it("links a tab, the default one without a query, and a section", () => {
     expect(adminTabHref("family-groups", "suggestions")).toBe("/admin/family-groups?tab=suggestions");
@@ -772,6 +1023,14 @@ describe("tabs and anchors", () => {
     expect(adminAnchorHref("health", "integration-readiness")).toBe(
       "/admin/health#integration-readiness",
     );
+    expect(adminAnchorHref("xero", "xero-section-mappings")).toBe("/admin/xero#xero-section-mappings");
+  });
+
+  it("declares Xero's mappings anchor as the id its card is given (C5 #4802)", () => {
+    // The card writes `id={xeroSectionId("mappings")}`; the links go through the
+    // registry. One spelling, or a renamed section would leave every link short.
+    expect(xeroSectionId("mappings")).toBe("xero-section-mappings");
+    expect(getAdminPage("xero").anchors).toEqual([xeroSectionId("mappings")]);
   });
 
   it("reads a tab, falling back to the first for anything it does not declare", () => {
@@ -791,14 +1050,16 @@ describe("tabs and anchors", () => {
     expect(() => adminAnchorHref("health", "nowhere")).toThrow(/no "nowhere" anchor/);
   });
 
-  it("names tabs and anchors only on the pages that hold a merged page", () => {
+  it("names tabs and anchors only on the pages that hold a merged page or a linked section", () => {
     expect(
       ADMIN_PAGES.filter((page) => page.tabs.length > 0 || page.anchors.length > 0)
         .map((page) => [page.id, [...page.tabs], [...page.anchors]]),
     ).toEqual([
+      ["xero", [], ["xero-section-mappings"]],
       ["membership-cancellations", ["requests", "settings"], []],
       ["family-groups", ["groups", "suggestions"], []],
       ["health", [], ["integration-readiness"]],
+      ["stuck-states", [], ["bank-refund-voids"]],
     ]);
   });
 
@@ -832,13 +1093,59 @@ describe("tabs and anchors", () => {
     expect(drift).toEqual([]);
   });
 
+  /**
+   * An anchor whose element id is minted by a helper, not written out: the
+   * expression the page must render instead, pinned equal to the anchor above.
+   */
+  const MINTED_ANCHORS: Record<string, string> = {
+    "xero-section-mappings": 'id={xeroSectionId("mappings")}',
+  };
+
+  /**
+   * An anchor whose element is a shared component's, outside the page's
+   * directory: the page must render the component, and the component must give
+   * its element the id through the registry-typed constant pinned below.
+   */
+  const COMPONENT_ANCHORS: Record<
+    string,
+    { readonly renders: string; readonly file: string; readonly id: string }
+  > = {
+    "bank-refund-voids": {
+      renders: "<BankRefundVoidsToAnswerPanel",
+      file: "src/components/admin/bank-refund-voids-to-answer-panel.tsx",
+      id: "id={BANK_REFUND_VOIDS_ANCHOR}",
+    },
+  };
+
+  /** Why `anchor` is not rendered by `page`, or `null` when it is. */
+  function anchorDrift(page: AdminHubPage, anchor: string): string | null {
+    const source = pageSources(page);
+    const component = COMPONENT_ANCHORS[anchor];
+    if (component !== undefined) {
+      if (!source.includes(component.renders)) return `${page.id}: no ${component.renders}`;
+      const own = stripComments(fs.readFileSync(path.join(process.cwd(), component.file), "utf8"));
+      return own.includes(component.id) ? null : `${page.id}: ${component.file} has no ${component.id}`;
+    }
+    const minted = MINTED_ANCHORS[anchor];
+    const found = minted === undefined ? source.includes(`"${anchor}"`) : source.includes(minted);
+    return found ? null : `${page.id}: no "${anchor}"`;
+  }
+
   it("has each anchored page render every anchor as an element id", () => {
     const drift = ADMIN_PAGES.flatMap((page) =>
-      page.anchors
-        .filter((anchor) => !pageSources(page).includes(`"${anchor}"`))
-        .map((anchor) => `${page.id}: no "${anchor}"`),
+      page.anchors.flatMap((anchor) => anchorDrift(page, anchor) ?? []),
     );
     expect(drift).toEqual([]);
+  });
+
+  it("declares the voided bank refund notes anchor as the id its panel is given (C7 #4804)", () => {
+    // The panel writes `id={BANK_REFUND_VOIDS_ANCHOR}`; its stuck-state row links
+    // with adminAnchorHref. One spelling, typed against the registry.
+    expect(BANK_REFUND_VOIDS_ANCHOR).toBe("bank-refund-voids");
+    expect(getAdminPage("stuck-states").anchors).toEqual([BANK_REFUND_VOIDS_ANCHOR]);
+    expect(adminAnchorHref("stuck-states", BANK_REFUND_VOIDS_ANCHOR)).toBe(
+      "/admin/stuck-states#bank-refund-voids",
+    );
   });
 });
 
@@ -936,11 +1243,17 @@ describe("retired pages", () => {
     const payments = ADMIN_PAGES.find((page) => page.id === "payments")!;
     const retired: AdminRetiredPage = { oldPath: "/admin/zz/old", label: "Old", mergedInto: "payments" };
     const rules = buildAdminUrlRules(true, [payments, zz], [retired]);
+    // Payments has moved (C5 #4802), so live, its content is served at the hub URL.
+    expect(payments.moved).toBe(true);
     await expect(resolveThrough(rules, "/admin/zz/old")).resolves.toEqual({
       kind: "redirect",
       status: 307,
-      url: "/admin/payments",
+      url: "/admin/finance/payments",
     });
+    // Off, the retired redirect goes to the old URL, where Payments is served.
+    await expect(
+      resolveThrough(buildAdminUrlRules(false, [payments, zz], [retired]), "/admin/zz/old"),
+    ).resolves.toEqual({ kind: "redirect", status: 307, url: "/admin/payments" });
     await expect(resolveThrough(rules, "/admin/zz/x1")).resolves.toEqual({
       kind: "redirect",
       status: 307,
@@ -970,6 +1283,7 @@ describe("retired pages", () => {
       expect(destinations).toContain(
         live ? "/admin/system/health#integration-readiness" : "/admin/health#integration-readiness",
       );
+      expect(destinations).toContain(live ? "/admin/rules/bookings-setup" : "/admin/bookings-setup");
     },
   );
 
@@ -1200,43 +1514,143 @@ async function walkRegistry(
 }
 
 describe("buildAdminUrlRules", () => {
-  it("returns only the retired pages' redirects for today's registry, in either state", () => {
-    // No page has moved, so every destination is served at its old path either way.
-    const retired = {
-      redirects: [
-        {
-          source: "/admin/family-suggestions",
-          destination: "/admin/family-groups?tab=suggestions",
-          permanent: false,
-        },
-        {
-          source: "/admin/membership-cancellation",
-          destination: "/admin/membership-cancellations?tab=settings",
-          permanent: false,
-        },
-        {
-          source: "/admin/setup/cancellation",
-          destination: "/admin/membership-cancellations?tab=settings",
-          permanent: false,
-        },
-        {
-          source: "/admin/setup/booking-rules",
-          destination: "/admin/bookings-setup",
-          permanent: false,
-        },
-        {
-          source: "/admin/setup/integrations",
-          destination: "/admin/health#integration-readiness",
-          permanent: false,
-        },
+  it("returns the retired redirects and the Website, Finance, Rules, Help & system and Messages pages' move rules", () => {
+    // C4 (#4801) moved the Website pages under `/admin/website`, C5 (#4802)
+    // the Finance pages under `/admin/finance`, C6 (#4803) the Fees & booking
+    // rules pages under `/admin/rules`, C7 (#4804) the Help & system pages
+    // under `/admin/system`, and C8 (#4805) the Messages & email pages under
+    // `/admin/messages`. Off: each hub URL redirects to the old URL, and a
+    // beforeFiles rewrite serves the old URL from the moved file. On: the old
+    // URL redirects to the hub URL, and there are no rewrites. Retired pages
+    // still come first. Bookings Setup, which Booking Rules was merged into,
+    // and System Health, which Integrations Setup was merged into, have moved,
+    // so once on those two redirects go straight to the hub URL; the others
+    // keep their old destinations in both states.
+    const retiredRedirects = (live: boolean) => [
+      {
+        source: "/admin/family-suggestions",
+        destination: "/admin/family-groups?tab=suggestions",
+        permanent: false,
+      },
+      {
+        source: "/admin/membership-cancellation",
+        destination: "/admin/membership-cancellations?tab=settings",
+        permanent: false,
+      },
+      {
+        source: "/admin/setup/cancellation",
+        destination: "/admin/membership-cancellations?tab=settings",
+        permanent: false,
+      },
+      {
+        source: "/admin/setup/booking-rules",
+        destination: live ? "/admin/rules/bookings-setup" : "/admin/bookings-setup",
+        permanent: false,
+      },
+      {
+        source: "/admin/setup/integrations",
+        destination: live
+          ? "/admin/system/health#integration-readiness"
+          : "/admin/health#integration-readiness",
+        permanent: false,
+      },
+    ];
+    // Static paths in old-path order, then the two dynamic pages, fewest
+    // dynamic segments first, their `[name]` segments as Next's `:name`.
+    const staticMoves = [
+      ["/admin/age-tier-settings", "/admin/rules/age-tier-settings"],
+      ["/admin/ai-assistant", "/admin/system/ai-assistant"],
+      ["/admin/ai-diagnostics", "/admin/system/ai-diagnostics"],
+      ["/admin/appearance", "/admin/website/appearance"],
+      ["/admin/appearance/identity", "/admin/website/appearance/identity"],
+      ["/admin/audit-log", "/admin/system/audit-log"],
+      ["/admin/background-jobs", "/admin/system/background-jobs"],
+      ["/admin/backups", "/admin/system/backups"],
+      ["/admin/backups/setup", "/admin/system/backups/setup"],
+      ["/admin/booking-messages", "/admin/messages/booking-messages"],
+      ["/admin/booking-policies", "/admin/rules/booking-policies"],
+      ["/admin/booking-policies/adult-member-hosting", "/admin/rules/booking-policies/adult-member-hosting"],
+      ["/admin/booking-policies/cancellation", "/admin/rules/booking-policies/cancellation"],
+      ["/admin/booking-policies/group-discount", "/admin/rules/booking-policies/group-discount"],
+      ["/admin/booking-policies/minimum-stay", "/admin/rules/booking-policies/minimum-stay"],
+      ["/admin/booking-policies/periods", "/admin/rules/booking-policies/periods"],
+      ["/admin/booking-policies/public-requests", "/admin/rules/booking-policies/public-requests"],
+      ["/admin/bookings-setup", "/admin/rules/bookings-setup"],
+      ["/admin/communications", "/admin/messages/communications"],
+      ["/admin/email-deliverability", "/admin/system/email-deliverability"],
+      ["/admin/email-messages", "/admin/messages/email-messages"],
+      ["/admin/fee-configuration", "/admin/rules/fee-configuration"],
+      ["/admin/fees", "/admin/rules/fees"],
+      ["/admin/health", "/admin/system/health"],
+      ["/admin/image-manager", "/admin/website/image-manager"],
+      ["/admin/internet-banking", "/admin/finance/internet-banking"],
+      ["/admin/issue-reports", "/admin/system/issue-reports"],
+      ["/admin/message-board", "/admin/messages/message-board"],
+      ["/admin/mountain-conditions", "/admin/website/mountain-conditions"],
+      ["/admin/notices", "/admin/messages/notices"],
+      ["/admin/notices/new", "/admin/messages/notices/new"],
+      ["/admin/notification-recipients", "/admin/messages/notification-recipients"],
+      ["/admin/notification-rules", "/admin/messages/notification-rules"],
+      ["/admin/notifications", "/admin/messages/notifications"],
+      ["/admin/page-content", "/admin/website/page-content"],
+      ["/admin/payments", "/admin/finance/payments"],
+      ["/admin/promo-codes", "/admin/rules/promo-codes"],
+      ["/admin/refund-requests", "/admin/finance/refund-requests"],
+      ["/admin/reports", "/admin/finance/reports"],
+      ["/admin/seasons", "/admin/rules/seasons"],
+      ["/admin/site-banners", "/admin/website/site-banners"],
+      ["/admin/site-content", "/admin/website/site-content"],
+      ["/admin/site-style", "/admin/website/site-style"],
+      ["/admin/stuck-states", "/admin/system/stuck-states"],
+      ["/admin/subscriptions", "/admin/finance/subscriptions"],
+      ["/admin/testing/route-error", "/admin/system/testing/route-error"],
+      ["/admin/xero", "/admin/finance/xero"],
+      ["/admin/xero/member-grouping", "/admin/finance/xero/member-grouping"],
+      ["/admin/xero/setup", "/admin/finance/xero/setup"],
+    ] as const;
+    const noticeDetail = ["/admin/notices/[id]", "/admin/messages/notices/[id]"] as const;
+    const xeroRecord = [
+      "/admin/xero/records/[localModel]/[localId]",
+      "/admin/finance/xero/records/[localModel]/[localId]",
+    ] as const;
+    expect(
+      ADMIN_PAGES.filter((page) => page.moved)
+        .map((page) => [page.oldPath, page.hubPath])
+        .sort((a, b) => a[0].localeCompare(b[0])),
+    ).toEqual([...staticMoves, noticeDetail, xeroRecord].sort((a, b) => a[0].localeCompare(b[0])));
+    const moves = [
+      ...staticMoves,
+      ["/admin/notices/:id", "/admin/messages/notices/:id"],
+      [
+        "/admin/xero/records/:localModel/:localId",
+        "/admin/finance/xero/records/:localModel/:localId",
       ],
+    ] as const;
+    const off = moves.map(([oldUrl, hubUrl]) => ({
+      source: hubUrl,
+      destination: oldUrl,
+      permanent: false as const,
+    }));
+    const on = moves.map(([oldUrl, hubUrl]) => ({
+      source: oldUrl,
+      destination: hubUrl,
+      permanent: false as const,
+    }));
+    const beforeFiles = moves.map(([oldUrl, hubUrl]) => ({
+      source: oldUrl,
+      destination: hubUrl,
+    }));
+    expect(buildAdminUrlRules(false)).toEqual({
+      redirects: [...retiredRedirects(false), ...off],
+      rewrites: { beforeFiles },
+    });
+    expect(buildAdminUrlRules(true)).toEqual({
+      redirects: [...retiredRedirects(true), ...on],
       rewrites: { beforeFiles: [] },
-    };
-    expect(buildAdminUrlRules(false)).toEqual(retired);
-    expect(buildAdminUrlRules(true)).toEqual(retired);
+    });
     expect(buildAdminUrlRules(false, ADMIN_PAGES, [])).toEqual({
-      redirects: [],
-      rewrites: { beforeFiles: [] },
+      redirects: off,
+      rewrites: { beforeFiles },
     });
   });
 
@@ -1387,19 +1801,22 @@ describe("the registry is inert", () => {
       "takes COVERAGE_MATRIX.md's areas from the registry's old paths",
     "next.config.ts": "C3: the redirects and beforeFiles rewrites are generated",
     "src/components/admin-sidebar.tsx":
-      "C3: the active link is the registry's activeAdminHref; S2: the palette index is ADMIN_MENU_DESTINATIONS",
+      "C3: the active link is the registry's activeAdminHref; S2: the palette index is ADMIN_MENU_DESTINATIONS; " +
+      "C7: the Help & system links and the Issue Reports badge are adminLink and adminHref; " +
+      "C8: the Messages & email links are adminLink",
     "src/lib/admin-page-revalidation.ts": "C3: revalidateAdminPage revalidates a page's file path",
     "src/components/help-widget/help-widget-admin.tsx":
       "C3: admin help reads the pathname through canonicalAdminPathname",
     "src/components/nav-bar.tsx": "C3: the profile return-to uses servedAdminPathname",
-    "src/lib/admin-appearance-pages.ts":
-      "#108: the website hub cards and the Content menu take each page's link and label from the registry",
-    "src/app/(admin)/admin/xero/page.tsx": "C3: currentXeroPath uses servedAdminPathname",
-    "src/app/(admin)/admin/xero/_components/operations-panel.tsx":
+    "src/app/(admin)/admin/finance/xero/page.tsx":
+      "C3: currentXeroPath uses servedAdminPathname; C5: the setup link is adminHref",
+    "src/app/(admin)/admin/finance/xero/_components/operations-panel.tsx":
       "C3: router.replace targets use servedAdminPathname",
-    "src/app/(admin)/admin/xero/_components/inbound-events-panel.tsx":
+    "src/app/(admin)/admin/finance/xero/_components/inbound-events-panel.tsx":
       "C3: router.replace targets use servedAdminPathname",
     "src/lib/__tests__/admin-hubs-active-link.test.ts": "C3: activeAdminHref and its census",
+    "src/lib/__tests__/feature-navigation.test.ts":
+      "C4: a nav href's page file is the hub path once the Website pages have moved",
     "src/components/__tests__/admin-sidebar-active-link.test.tsx":
       "C3: the real sidebar over a moved Finance hub",
     "src/lib/__tests__/admin-page-revalidation.test.ts":
@@ -1408,22 +1825,193 @@ describe("the registry is inert", () => {
       "S1: the tab shell reads and links a page's tabs through the registry",
     "src/components/admin/membership-cancellation-settings-tab.tsx":
       "S1: the Settings tab links Email Messages with adminHref",
-    "src/app/(admin)/admin/bookings-setup/page.tsx": "S1: its cards link with adminHref",
-    "src/app/(admin)/admin/health/_components/integration-readiness-section.tsx":
+    "src/app/(admin)/admin/rules/bookings-setup/page.tsx": "S1: its cards link with adminHref",
+    "src/app/(admin)/admin/system/health/_components/integration-readiness-section.tsx":
       "S1: its cards link with adminHref; its id is the registry's anchor",
     "src/app/(admin)/admin/setup/setup-page-client.tsx":
-      "S1: the cards for the merged setup pages link with adminHref",
-    "src/app/(admin)/admin/notifications/page.tsx":
-      "S1: the cancellation settings card links the Settings tab",
+      "S1: the cards for the merged setup pages link with adminHref; C8: and the Notifications & Email card",
+    "src/app/(admin)/admin/messages/notifications/page.tsx":
+      "S1: the cancellation settings card links the Settings tab; C8: its other cards link with adminHref; " +
+      "#4878: the Delivery Rules and Recipients titles are the registry labels",
     "src/components/admin/membership-cancellation-blocker-notice.tsx":
       "S1: the settings link is the queue's Settings tab",
-    "src/lib/setup-readiness.ts": "S1: the cancellation step links the Settings tab",
+    "src/lib/setup-readiness.ts":
+      "S1: the cancellation step links the Settings tab; C5: Xero setup, and the mappings anchor and label; " +
+      "C6: the booking policies, age tier and seasons steps; C7: the System Health steps",
     "src/lib/__tests__/admin-feature-search-index.test.ts":
       "S2: the palette census and its fail-closed property over every grid and seeded role",
+    "src/lib/__tests__/contextual-help.test.ts":
+      "#4878: the Member notices help title is the page's registry label",
+    "src/app/(admin)/admin/messages/notifications/__tests__/hub-card-labels.test.tsx":
+      "#4878: the Delivery Rules and Recipients cards show the registry labels",
     "src/lib/__tests__/admin-palette-lodge-scoped-pages.test.tsx":
       "S2: the lodge-scoped pages open from their palette href",
     "src/lib/__tests__/next-config-admin-hub-urls.test.ts":
       "S1: walks each retired page's redirect through the real config",
+    "src/app/(admin)/layout.tsx": "C4: the site-style banner links with adminHref",
+    "src/app/(admin)/admin/website/appearance/page.tsx": "C4: its title is the registry label",
+    "src/lib/admin-appearance-pages.ts":
+      "#108: the Website hub's cards and the Content sidebar menu, linked with adminHref",
+    "src/lib/admin-nav-panels.ts":
+      "#108: the role menus name their pages by registry id, matched in old-path form",
+    "src/lib/__tests__/admin-nav-panels.test.tsx":
+      "#108: every page a role menu names is a sidebar page, at its adminHref",
+    "src/app/(admin)/admin/website/appearance/identity/page.tsx":
+      "C4: its back link is adminLink",
+    "src/app/(admin)/admin/website/site-style/page.tsx":
+      "C4: its back link is adminLink; C8: the Email Messages link is adminHref",
+    "src/app/(admin)/admin/website/site-content/page.tsx": "C4: its back link is adminLink",
+    "src/app/(admin)/admin/website/site-banners/page.tsx": "C4: its back link is adminLink",
+    "src/app/(admin)/admin/website/page-content/page.tsx": "C4: its back link is adminLink",
+    "src/app/(admin)/admin/website/image-manager/page.tsx": "C4: its back link is adminLink",
+    "src/app/(admin)/admin/website/mountain-conditions/page.tsx":
+      "C4: its back link is adminLink",
+    "src/app/(admin)/admin/setup/foundations/page.tsx":
+      "C4: the Club Identity card links with adminHref; C7: and the System Health card",
+    "src/app/(admin)/admin/rules/booking-policies/cancellation/page.tsx":
+      "C4: the public-pages link is adminHref; C6: its back link is adminLink",
+    "src/lib/analytics-privacy-policy.ts": "C4: the privacy-policy editor link is adminHref",
+    "src/components/admin/analytics-integration-card.tsx":
+      "C4: the privacy-policy fallback link is adminHref",
+    "src/proxy.ts": "C4: a page reached only by another spelling of its path is a 404",
+    "src/lib/contextual-help/admin/appearance-and-website.ts":
+      "C4: the Website pages' help is keyed by each page's registry old path",
+    "src/lib/__tests__/admin-page-exact-path-proxy.test.ts":
+      "C4: the proxy's 404 for every registered page spelled another way",
+    "src/app/(admin)/admin/book/page.tsx": "C5: the Xero setup link is adminHref",
+    "src/app/(admin)/admin/dashboard/page.tsx":
+      "C5: the payments and refunds links, and the payments permission check, are adminHref; " +
+      "C6: the seasons and promo-code links",
+    "src/app/(admin)/admin/finance/internet-banking/page.tsx": "C5: its back link is adminLink",
+    "src/app/(admin)/admin/finance/xero/_components/health-diagnostics-panel.tsx":
+      "C5: the member-grouping link is adminHref",
+    "src/app/(admin)/admin/finance/xero/_components/webhook-amber-badge.tsx":
+      "C5: the webhook setup link is adminHref",
+    "src/app/(admin)/admin/finance/xero/_components/xero-setup-page-client.tsx":
+      "C5: its back link is adminHref",
+    "src/app/(admin)/admin/finance/xero/setup/xero-completion-steps.tsx":
+      "C5: the Xero admin link is adminHref",
+    "src/app/(admin)/admin/integrations/page.tsx":
+      "C5: the Xero setup card is adminHref; C7: and the backup setup and AI assistant cards",
+    "src/app/(admin)/admin/modules/page.tsx": "C5: the Xero module setup link is adminHref",
+    "src/app/(admin)/admin/setup/finance/page.tsx":
+      "C5: the Xero cards are adminHref and the mappings card adminAnchorHref",
+    "src/app/(admin)/admin/stripe/setup/page.tsx": "C5: the payments link is adminHref",
+    "src/components/admin/booking-requests/booking-approvals-panel.tsx":
+      "C5: the refunds link is adminHref",
+    "src/components/admin/subscription-lockout-settings-panel.tsx":
+      "C5: the Xero setup links are adminHref; C6: the fee console and age tier links",
+    "src/lib/__tests__/asset-url-404.test.ts":
+      "C5: the beforeFiles pin follows the moved Website and Finance pages",
+    "src/lib/admin-member-detail-helpers.ts":
+      "C5: the member back-link label is the registry label of the Bookings or Finance page it returns to",
+    "src/lib/audit-query.ts":
+      "C5, C6: audit deep links use adminHref; C7: and the lifecycle audit link; C8: and the communications links",
+    "src/lib/booking-provider-mismatches.ts": "C5: the settlement-queue link is adminHref",
+    "src/lib/diagnostics/page-context/__tests__/registry.test.ts":
+      "C5: a diagnostics row's file is the hub path once its page has moved",
+    "src/lib/email-message-audit-defaults.ts": "C5: default email deep links use adminHref",
+    "src/lib/email-templates/admin-finance.ts": "C5: finance alert buttons use adminHref",
+    "src/lib/email-templates/admin-ops.ts": "C5: the digest's finance links use adminHref",
+    "src/lib/email-templates/admin-xero-reports.ts": "C5: the report buttons use adminHref",
+    "src/lib/email/admin-alerts-finance.ts": "C5: payment review links use adminHref",
+    "src/lib/email/admin-alerts-internet-banking-started-stay.ts":
+      "C5: the payments review link is adminHref",
+    "src/lib/email/admin-alerts-internet-banking.ts": "C5: the payments review link is adminHref",
+    "src/lib/email/admin-alerts-late-capture.ts": "C5: the payments review links are adminHref",
+    "src/lib/email/admin-alerts-settlement.ts": "C5: the payments review links are adminHref",
+    "src/lib/finance-dashboard-page/sync-health-view.ts": "C5: the Xero admin link is adminHref",
+    "src/lib/finance-sync-health.ts": "C5: the Xero admin link is adminHref",
+    "src/lib/stuck-state-dashboard.ts":
+      "C5, C7: stuck-state links use adminHref; C7: the voided bank refund notes row is adminAnchorHref",
+    "src/lib/xero-record-activity.ts": "C5: the payments back link is adminLink",
+    "src/lib/xero-record-links.ts": "C5: a Xero record's URL is adminHref",
+    "src/lib/contextual-help/admin/finance.ts":
+      "C5: the Finance pages' help is keyed by each page's registry old path; C6: and the fee console's",
+    "src/lib/contextual-help/admin/members.ts":
+      "C5: the Subscriptions help is keyed by its registry old path; C8: and Communications' and Member Notices'",
+    "src/lib/contextual-help/questions-admin.ts":
+      "C5: the Finance pages' question chips are keyed by each page's registry old path; C6: and Seasons'; " +
+      "C7: and the Audit Log's; C8: and Communications'",
+    "src/app/(admin)/admin/finance/payments/page.tsx": "C5: its own address is adminHref",
+    "src/app/(admin)/admin/finance/refund-requests/page.tsx": "C5: its own address is adminHref",
+    "src/app/(admin)/admin/finance/subscriptions/page.tsx": "C5: its own address is adminHref",
+    "src/app/(admin)/admin/finance/xero/records/[localModel]/[localId]/page.tsx":
+      "C5: the fallback back link is adminLink",
+    "src/app/(admin)/admin/finance/xero/setup/xero-wizard-steps.tsx":
+      "C5: the OAuth connect step returns to Xero Setup at its adminHref",
+    "src/app/api/admin/xero/callback/route.ts":
+      "C5: the OAuth callback's default landing is Xero Sync at its adminHref",
+    "src/lib/cron-credit-reconciliation.ts": "C5: the refund credit-note alert links Xero Sync at its adminHref",
+    "src/lib/__tests__/admin-member-detail-helpers.test.ts":
+      "C5: the member back-link labels are the registry's",
+    "src/lib/__tests__/admin-moved-page-literals.test.ts":
+      "C5: no production code spells a moved page's old URL as a literal",
+    "src/lib/__tests__/xero-oauth-return-path.test.ts":
+      "C5: the OAuth return-path check accepts both Xero landing pages at either place",
+    "src/app/(admin)/admin/rules/booking-policies/page.tsx": "C6: its cards link with adminHref",
+    "src/app/(admin)/admin/rules/booking-policies/adult-member-hosting/page.tsx":
+      "C6: its back link is adminLink",
+    "src/app/(admin)/admin/rules/booking-policies/group-discount/page.tsx":
+      "C6: its back link is adminLink",
+    "src/app/(admin)/admin/rules/booking-policies/minimum-stay/page.tsx":
+      "C6: its back link is adminLink",
+    "src/app/(admin)/admin/rules/booking-policies/periods/page.tsx": "C6: its back link is adminLink",
+    "src/app/(admin)/admin/rules/booking-policies/public-requests/page.tsx":
+      "C6: its back link is adminLink",
+    "src/app/(admin)/admin/rules/fee-configuration/page.tsx": "C6: it redirects to the fee console's adminHref",
+    "src/lib/__tests__/fee-configuration-redirect.test.ts":
+      "C6: pins the Fee Configuration stub's redirect to the fee console's adminHref",
+    "src/app/(admin)/admin/rules/fees/_components/hut-fees-section.tsx": "C6: the Seasons link is adminHref",
+    "src/app/(admin)/admin/rules/seasons/page.tsx": "C6: the Fees link is adminHref",
+    "src/app/(admin)/admin/finance/xero/_components/mappings-panel.tsx":
+      "C6: the fee console link is adminHref",
+    "src/app/(admin)/admin/lodges/[id]/page.tsx":
+      "C6: the Seasons & Rates card's link, and the fees and seasons permission checks, are adminHref",
+    "src/app/(admin)/admin/lodges/[id]/setup/page.tsx": "C6: the seasons link is adminHref",
+    "src/app/(admin)/admin/lodges/_components/other-lodge-season-rates.tsx": "C6: the Fees link is adminHref",
+    "src/app/(admin)/admin/membership-types/page.tsx": "C6: the age tier settings link is adminHref",
+    "src/app/(admin)/admin/rooms-beds/page.tsx": "C6: its back link is adminLink",
+    "src/lib/contextual-help/admin/rates-and-policies.ts":
+      "C6: the Rules pages' help is keyed by each page's registry old path",
+    "src/lib/contextual-help/admin/setup-and-configuration.ts":
+      "C6: the Bookings Setup help is keyed by its registry old path; " +
+      "C8: and Notifications & Email's and Booking Messages'",
+    "src/app/(admin)/admin/system/audit-log/page.tsx": "C7: its own address is adminHref",
+    "src/app/(admin)/admin/system/background-jobs/page.tsx": "C7: its back link is adminLink",
+    "src/app/(admin)/admin/system/email-deliverability/page.tsx": "C7: its back link is adminLink",
+    "src/app/(admin)/admin/system/backups/backups-client.tsx": "C7: the backup setup link is adminHref",
+    "src/app/(admin)/admin/system/backups/setup/backup-wizard-steps.tsx":
+      "C7: the Database Backups link is adminHref",
+    "src/app/(admin)/admin/system/health/_components/health-dashboard.tsx":
+      "C7: the Email Deliverability and Background Jobs cards link with adminHref",
+    "src/app/(admin)/admin/system/stuck-states/page.tsx": "C7: the System Health link is adminHref",
+    "src/app/(admin)/admin/waitlist/page.tsx":
+      "C7: the audit-log and email deliverability links are adminHref",
+    "src/app/api/issue-reports/route.ts": "C7: the alert email's Issue Reports link is adminHref",
+    "src/components/admin/admin-booking-tools-card.tsx": "C7: the audit log link is adminHref",
+    "src/components/admin/booking-withheld-emails-banner.tsx":
+      "C7: the email deliverability link is adminHref",
+    "src/lib/contextual-help/admin/monitoring-and-support.ts":
+      "C7: the Help & system pages' help is keyed by each page's registry old path",
+    "src/lib/route-error-probe.ts": "C7: the probe's path is adminHref",
+    "src/components/admin/bank-refund-voids-to-answer-panel.tsx":
+      "C7: its card's id is the Stuck States page's registry anchor",
+    "src/lib/__tests__/stuck-state-dashboard.test.ts":
+      "C7: the voided bank refund notes row links the registry anchor",
+    "src/lib/setup-readiness-data-keys.ts": "C7: the data-key check links System Health with adminHref",
+    "src/app/(admin)/admin/messages/notification-rules/page.tsx": "C8: its back link is adminLink",
+    "src/app/(admin)/admin/messages/notification-recipients/page.tsx": "C8: its back link is adminLink",
+    "src/app/(admin)/admin/messages/email-messages/page.tsx": "C8: its back link is adminLink",
+    "src/app/(admin)/admin/messages/booking-messages/page.tsx": "C8: its back link is adminLink",
+    "src/app/(admin)/admin/messages/notices/page.tsx":
+      "C8: the notice and new-notice links are adminHref",
+    "src/app/(admin)/admin/messages/notices/[id]/page.tsx": "C8: its back link is adminLink",
+    "src/app/(admin)/admin/messages/notices/new/page.tsx": "C8: its back link is adminLink",
+    "src/components/admin/notice-editor.tsx":
+      "C8: saving and cancelling return to Member Notices at its adminHref",
+    "src/components/admin/club-posts/club-posts-admin.tsx":
+      "C8: the Message Board's tab links and search form address it at its adminHref",
   };
   const SOURCE = /\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
   const IMPORT = /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|^\s*import\s+)["'][^"']*admin-hubs(?:\/[^"']*)?["']/m;

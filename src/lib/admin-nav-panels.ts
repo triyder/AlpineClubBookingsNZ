@@ -20,6 +20,11 @@
  * input but `finance: edit` is.
  */
 import {
+  canonicalAdminPathname,
+  getAdminPage,
+  type AdminPageId,
+} from "@/lib/admin-hubs";
+import {
   ADMIN_PERMISSION_AREAS,
   getAdminPermissionMatrix,
   type AdminPermissionArea,
@@ -61,13 +66,13 @@ export interface AdminNavPanelDefinition {
   /** Catalogue sections shown whole, by label; `"all"` for the full menu. */
   sections: readonly string[] | "all";
   /** Pages borrowed from other catalogue sections, appended to `into`. */
-  borrowed: ReadonlyArray<{ href: string; into: string }>;
+  borrowed: ReadonlyArray<{ page: AdminPageId; into: string }>;
   /**
-   * The "Needs Attention" queues this panel keeps, by pathname (a queue's
-   * query string is ignored, so both unpaid-stay deep links match
-   * `/admin/bookings`).
+   * The "Needs Attention" queues this panel keeps, by the page each links (a
+   * queue's query string is ignored, so both unpaid-stay deep links are the
+   * `bookings` page).
    */
-  attentionPaths: readonly string[] | "all";
+  attentionPages: readonly AdminPageId[] | "all";
   /** Opens its Finance section with a link to the `/finance` workspace. */
   financeWorkspace?: boolean;
 }
@@ -83,7 +88,7 @@ export const ADMIN_NAV_PANELS: Readonly<
     viewAreas: [],
     sections: "all",
     borrowed: [],
-    attentionPaths: "all",
+    attentionPages: "all",
   },
   bookings: {
     key: "bookings",
@@ -99,12 +104,8 @@ export const ADMIN_NAV_PANELS: Readonly<
       "Finance",
       "Lodge Operations",
     ],
-    borrowed: [{ href: "/admin/bookings-setup", into: "Bookings & Beds" }],
-    attentionPaths: [
-      "/admin/booking-requests",
-      "/admin/bookings",
-      "/admin/hut-leaders",
-    ],
+    borrowed: [{ page: "bookings-setup", into: "Bookings & Beds" }],
+    attentionPages: ["booking-requests", "bookings", "hut-leaders"],
   },
   membership: {
     key: "membership",
@@ -113,12 +114,12 @@ export const ADMIN_NAV_PANELS: Readonly<
     editAreas: ["membership"],
     viewAreas: ["membership"],
     sections: ["Members"],
-    borrowed: [{ href: "/admin/membership-setup", into: "Members" }],
-    attentionPaths: [
-      "/admin/member-applications",
-      "/admin/family-groups",
-      "/admin/membership-cancellations",
-      "/admin/deletion-requests",
+    borrowed: [{ page: "membership-setup", into: "Members" }],
+    attentionPages: [
+      "member-applications",
+      "family-groups",
+      "membership-cancellations",
+      "deletion-requests",
     ],
   },
   content: {
@@ -128,10 +129,10 @@ export const ADMIN_NAV_PANELS: Readonly<
     editAreas: ["content"],
     viewAreas: ["content"],
     // The catalogue reaches these pages through one hub link, so the sidebar
-    // lists the hub's own pages here (`ADMIN_APPEARANCE_PAGES`).
+    // lists the Website hub's own pages here (`ADMIN_APPEARANCE_PAGES`).
     sections: [],
     borrowed: [],
-    attentionPaths: [],
+    attentionPages: [],
   },
   // Finance and Treasurer differ by LEVEL: viewing finance is the short menu,
   // editing it adds the pages and queues a treasurer works.
@@ -143,7 +144,7 @@ export const ADMIN_NAV_PANELS: Readonly<
     viewAreas: ["finance"],
     sections: ["Finance"],
     borrowed: [],
-    attentionPaths: [],
+    attentionPages: [],
     financeWorkspace: true,
   },
   treasurer: {
@@ -154,10 +155,10 @@ export const ADMIN_NAV_PANELS: Readonly<
     viewAreas: [],
     sections: ["Finance"],
     borrowed: [
-      { href: "/admin/subscriptions", into: "Finance" },
-      { href: "/admin/integrations", into: "Finance" },
+      { page: "subscriptions", into: "Finance" },
+      { page: "integrations", into: "Finance" },
     ],
-    attentionPaths: ["/admin/refund-requests", "/admin/bookings"],
+    attentionPages: ["refund-requests", "bookings"],
     financeWorkspace: true,
   },
 };
@@ -248,9 +249,17 @@ export function pickStoredAdminNavPanel(
   return choices.find((key) => key === stored) ?? choices[0] ?? "admin";
 }
 
-function pathnameOf(href: string) {
-  return href.split(/[?#]/)[0] ?? href;
+/**
+ * The registry key of the page an href links: its pathname (query and fragment
+ * dropped) in old-path form, the same whether the href is a moved page's old or
+ * hub URL.
+ */
+export function adminNavPageKey(href: string): string {
+  return canonicalAdminPathname(href.split(/[?#]/)[0] ?? href);
 }
+
+/** The key {@link adminNavPageKey} gives any href of registry page `id`. */
+const pageKeyOf = (id: AdminPageId) => getAdminPage(id).oldPath;
 
 /**
  * Project already-filtered sidebar sections onto one panel.
@@ -270,12 +279,17 @@ export function projectAdminNavPanel<
   const panel = ADMIN_NAV_PANELS[panelKey];
   if (panel.sections === "all") return [...sections];
   const shown = panel.sections;
+  const keep =
+    panel.attentionPages === "all"
+      ? "all"
+      : new Set(panel.attentionPages.map(pageKeyOf));
 
-  const byHref = new Map<string, I>();
+  const byPage = new Map<string, I>();
   for (const section of sections) {
     if (section.label === NEEDS_ATTENTION_LABEL) continue;
     for (const item of section.items) {
-      if (!byHref.has(item.href)) byHref.set(item.href, item);
+      const key = adminNavPageKey(item.href);
+      if (!byPage.has(key)) byPage.set(key, item);
     }
   }
 
@@ -288,20 +302,19 @@ export function projectAdminNavPanel<
     )
     .map((section) => {
       if (section.label === NEEDS_ATTENTION_LABEL) {
-        const keep = panel.attentionPaths;
         return {
           ...section,
           items: section.items.filter(
-            (item) => keep === "all" || keep.includes(pathnameOf(item.href)),
+            (item) => keep === "all" || keep.has(adminNavPageKey(item.href)),
           ),
         };
       }
       if (section.label === undefined) return section;
       const label = section.label;
-      const own = new Set(section.items.map((item) => item.href));
+      const own = new Set(section.items.map((item) => adminNavPageKey(item.href)));
       const borrowed = panel.borrowed
-        .filter((entry) => entry.into === label && !own.has(entry.href))
-        .map((entry) => byHref.get(entry.href))
+        .filter((entry) => entry.into === label && !own.has(pageKeyOf(entry.page)))
+        .map((entry) => byPage.get(pageKeyOf(entry.page)))
         .filter((item): item is I => item !== undefined);
       return {
         ...section,

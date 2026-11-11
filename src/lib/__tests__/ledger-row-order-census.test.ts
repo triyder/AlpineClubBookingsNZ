@@ -84,7 +84,7 @@ const UNORDERED_ROW_SETS: Record<string, string> = {
     "the ids of the rows the officer settle is about to write, a set the receipt hook selects by membership (`includes`).",
   "src/lib/xero-inbound/invoice-paid-effects.ts > syncInternetBankingPaymentsForPaidInvoice":
     "the ids of the PRIMARY bank rows this delivery moves to captured, a set the receipt hook selects by membership (`includes`).",
-  "src/lib/additional-ask-reissue.ts > foldWaitingReissuedAsks":
+  "src/lib/additional-ask-reissue.ts > foldWaitingAsks":
     "hands the ADDITIONAL rows to isRecoveryReplaySettled, which asks only whether SOME row carries an " +
     "intent or was written after the recovery (`.some`), never which row comes first.",
   "src/lib/additional-ledger-gap.ts > netCollectedPaymentSelect":
@@ -119,6 +119,9 @@ const UNORDERED_ROW_SETS: Record<string, string> = {
     "reads only which candidate intents are already recorded (a Set of intent ids).",
   "src/lib/orphaned-applied-credit-backfill.ts > CANDIDATE_BOOKING_SELECT":
     "reads only each row's status to ask whether ANY row was captured (`.some`).",
+  "src/lib/superseded-capture-hold-back.ts > readSupersededCaptureHeldBack":
+    "#4866: each live superseded row looks its own charge up by id (`find` on its paymentTransactionId); the " +
+    "per-charge cents are a map and their total a sum, neither depending on the order.",
   "src/lib/refund-allocation-unwind.ts > unwindableHandBackCents":
     "#4162: sums each row's refunded total less its card refunds; a sum does not depend on the order " +
     "(the unwind itself orders its rows, oldest first).",

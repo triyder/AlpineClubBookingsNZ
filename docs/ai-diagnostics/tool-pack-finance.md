@@ -316,9 +316,9 @@ above they are **outside the grant**, so PostgreSQL refuses them (`42501`) in a
 
 No API key, OAuth access or refresh token, webhook signing secret, encrypted
 credential value, card number or bank account number is readable by this credential
-at all: `IntegrationCredential` and `XeroToken` are permanently out of scope
-(ADR-007 §1), and a contract test asserts that no pack module so much as names
-either one.
+at all: `IntegrationCredential` stays permanently out of scope (ADR-007 §1).
+`XeroToken` is gone, not a second live secret store, and a contract test
+asserts that no pack module names either.
 
 **One free-text value IS projected: the internet-banking payment reference.** It is
 whatever the payer typed into their own bank, it is the only way to match a bank
@@ -583,7 +583,7 @@ under `admin`, which this tool cannot read; and the audit category is optional, 
 row recorded with **no** category is matched by no diagnostics tool at all. **82**
 production write paths used to record that way, several of them money-adjacent
 (subscription billing, member-credit adjustments, fee configuration); #2676
-classified all 82 at the source, so the census now reads **534 write sites and zero
+classified all 82 at the source, so the census now reads **538 write sites and zero
 uncategorised** and no *new* finance audit row is born invisible to this tool. Rows
 written before that runtime deployed still carry no category, and back-filling them
 is a separate data change that has not run — so for historical events an empty
