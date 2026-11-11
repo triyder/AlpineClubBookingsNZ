@@ -14,6 +14,7 @@ import { bookingOwner } from "@/lib/booking-owner";
 import { recordedChangeFeeCents } from "@/lib/booking-payment-state";
 import { getClubFormat } from "@/lib/club-format-settings";
 import { loadClubTaxSettings } from "@/lib/club-tax-settings";
+import { formatClubDate } from "@/lib/club-time";
 import { clubTime } from "@/lib/club-time/server";
 import { getNetCollectedCashParts } from "@/lib/payment-net-collected";
 import { prisma } from "@/lib/prisma";
@@ -161,7 +162,7 @@ export async function prepareBookingInvoiceDownload(
       lodge,
       gstRegistered: taxSettings.gstRegistered,
       amountPaidCents: heldCashCents + amountOwed.appliedCreditCents,
-      today: club.today(),
+      invoiceDate: formatClubDate(club.today(), format),
       format,
       ageTierLabels: new Map(ageTierSettings.map((setting) => [setting.tier, setting.label])),
       rateMembershipLabelResolver: rateResolver,

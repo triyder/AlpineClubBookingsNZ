@@ -13,7 +13,7 @@ import {
 } from "@/lib/booking-invoice";
 import { canDownloadBookingInvoice } from "@/lib/booking-invoice-access";
 import { pdfSafeText, renderBookingInvoicePdf } from "@/lib/booking-invoice-pdf";
-import { requireCalendarDate } from "@/lib/club-time";
+import { formatClubDate, requireCalendarDate } from "@/lib/club-time";
 
 // Fork #115: the generated booking invoice — lines, totals, optional blocks,
 // the PDF, and who may download it.
@@ -58,7 +58,7 @@ function input(overrides: Partial<BookingInvoiceInput> = {}): BookingInvoiceInpu
     },
     gstRegistered: true,
     amountPaidCents: 0,
-    today: requireCalendarDate("2026-07-01"),
+    invoiceDate: formatClubDate(requireCalendarDate("2026-07-01"), FORMAT),
     format: FORMAT,
     ageTierLabels: new Map([["ADULT", "Adult"]]),
     rateMembershipLabelResolver: null,

@@ -27,9 +27,7 @@ import { formatBookingReference } from "@/lib/booking-reference";
 import { isPaymentOwedBookingStatus } from "@/lib/booking-status";
 import {
   calendarDateOfDateOnlyInstant,
-  formatClubDate,
   formatClubLongWeekdayDate,
-  type CalendarDate,
   type ClubDateFormat,
 } from "@/lib/club-time";
 import { getStayNights } from "@/lib/policies/pricing";
@@ -85,8 +83,12 @@ export interface BookingInvoiceInput {
   gstRegistered: boolean;
   /** Cash still held plus account credit applied, in cents. */
   amountPaidCents: number;
-  /** The club's today, for the invoice date. */
-  today: CalendarDate;
+  /**
+   * The invoice date, already formatted: the club's today through
+   * `formatClubDate`, by the caller. Kept out of this module so it never pairs
+   * a stay-date decoder with `formatClubDate` (`INV-SSOT-001`).
+   */
+  invoiceDate: string;
   format: ClubDateFormat;
   ageTierLabels: ReadonlyMap<string, string>;
   rateMembershipLabelResolver: RateMembershipLabelResolver | null;
@@ -249,7 +251,7 @@ export function buildBookingInvoiceData(input: BookingInvoiceInput): BookingInvo
       gstNumber: input.lodge.gstNumber?.trim() || null,
     },
     invoiceNumber: null,
-    invoiceDate: formatClubDate(input.today, input.format),
+    invoiceDate: input.invoiceDate,
     billTo: input.billToName,
     stay: {
       checkIn: formatClubLongWeekdayDate(calendarDateOfDateOnlyInstant(input.checkIn), input.format),
