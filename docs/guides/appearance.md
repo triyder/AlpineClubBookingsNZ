@@ -70,6 +70,14 @@ change these pages.
    use — the same values the [Email Messages](email-messages.md) templates
    reference; a multi-lodge club sets them per lodge under **Setup → Lodges**
    ([Lodges](../multi-lodge/README.md)) instead.
+4. Also under **Lodge details**, and all optional, are the details the booking
+   invoice prints: a **Postal address** (beside **Address**; the invoice uses it
+   instead of the address when set), **Bank details for bookings** (an
+   **Account name** and **Account details**, under **Door code**) and a **GST
+   number**. They are saved by the same **Save lodge details** button and appear
+   only on the invoice a booker or officer downloads from a booking that has no
+   Xero invoice — never on the public site or in emails. This panel shows them
+   for a single-lodge club only.
 
 ## Settings reference
 
@@ -90,6 +98,9 @@ change these pages.
 | Address | Public lodge address (`{{lodge-address}}` token) | Blank | Appears on the contact page; while it is blank the contact page shows no address block and the token renders nothing |
 | Travel note | Extra travel/access note for visitors | Blank | Optional |
 | Door code | The lodge door/access code | Blank | Shared **only** in confirmation emails, never public |
+| Postal address | The issuer address on the booking invoice | Blank | Up to 300 characters; when blank the invoice uses the address |
+| Bank details for bookings | Account name and account details in the invoice's payment box | Blank | Up to 200 and 300 characters; the box appears only when one is set |
+| GST number | "GST Number" on the booking invoice | Blank | Up to 40 characters; printed only when set |
 
 ## Troubleshooting
 
