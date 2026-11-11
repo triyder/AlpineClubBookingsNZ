@@ -15,8 +15,12 @@ export const lodgeSelect = {
   slug: true,
   active: true,
   address: true,
+  postalAddress: true,
   doorCode: true,
   travelNote: true,
+  bankAccountName: true,
+  bankAccountDetails: true,
+  gstNumber: true,
   createdAt: true,
   updatedAt: true,
 } satisfies Prisma.LodgeSelect;
@@ -78,8 +82,13 @@ export interface SerializedLodge {
   slug: string;
   active: boolean;
   address: string | null;
+  /** Invoice details (fork #115): admin-only, printed on the generated booking invoice. */
+  postalAddress: string | null;
   doorCode: string | null;
   travelNote: string | null;
+  bankAccountName: string | null;
+  bankAccountDetails: string | null;
+  gstNumber: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -91,8 +100,12 @@ export function serializeLodge(lodge: LodgeRecord): SerializedLodge {
     slug: lodge.slug,
     active: lodge.active,
     address: lodge.address,
+    postalAddress: lodge.postalAddress,
     doorCode: lodge.doorCode,
     travelNote: lodge.travelNote,
+    bankAccountName: lodge.bankAccountName,
+    bankAccountDetails: lodge.bankAccountDetails,
+    gstNumber: lodge.gstNumber,
     createdAt: lodge.createdAt.toISOString(),
     updatedAt: lodge.updatedAt.toISOString(),
   };
@@ -133,6 +146,20 @@ export function lodgeOrderBy() {
   return [{ createdAt: "asc" }, { id: "asc" }] satisfies
     Prisma.LodgeOrderByWithRelationInput[];
 }
+
+/**
+ * The optional lodge invoice details (fork #115), edited in the Lodge details
+ * panel and read only by the generated booking invoice. One list, so the PATCH
+ * route, the panel and the invoice builder cannot disagree about which they are.
+ */
+export const LODGE_INVOICE_DETAIL_FIELDS = [
+  "postalAddress",
+  "bankAccountName",
+  "bankAccountDetails",
+  "gstNumber",
+] as const;
+
+export type LodgeInvoiceDetailField = (typeof LODGE_INVOICE_DETAIL_FIELDS)[number];
 
 export function normalizeLodgeText(value: string | null | undefined) {
   const trimmed = value?.trim();
