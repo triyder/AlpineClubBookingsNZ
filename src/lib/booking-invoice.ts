@@ -22,7 +22,9 @@ import {
   guestInvoiceLineAmountCents,
 } from "@/lib/booking-guest-invoice-lines";
 import { buildInternetBankingPaymentReference } from "@/lib/booking-payment-methods";
-import { bookingWorthCents } from "@/lib/booking-payment-state";
+import { bookingWorthCents, isSettledBookingStatus } from "@/lib/booking-payment-state";
+import { formatBookingReference } from "@/lib/booking-reference";
+import { isPaymentOwedBookingStatus } from "@/lib/booking-status";
 import {
   calendarDateOfDateOnlyInstant,
   formatClubDate,
@@ -127,6 +129,21 @@ export interface BookingInvoiceData {
   } | null;
 }
 
+/**
+ * The statuses a generated invoice may be made for: a booking that owes its
+ * price or has paid it, and one awaiting the club's approval — the group
+ * booking an organisation needs an invoice for before approval (owner decision
+ * 9). A cancelled, draft or waitlisted booking owes nothing, so an invoice for
+ * it would ask for money that is not due.
+ */
+export function canGenerateBookingInvoiceForStatus(status: string): boolean {
+  return (
+    isPaymentOwedBookingStatus(status) ||
+    isSettledBookingStatus(status) ||
+    status === "AWAITING_REVIEW"
+  );
+}
+
 /** A guest night whose price is not known yet blocks the generated invoice. */
 export class BookingInvoiceUnpricedNightError extends Error {
   constructor() {
@@ -167,9 +184,10 @@ function adjustmentDescription(
   if (promos.length > 1) return "Discounts and promotions";
   const [promo] = promos;
   if (promo!.internal) {
+    // The booking page's own words for a work party's discount.
     return promo!.workPartyEvent?.name
-      ? `Work party discount - ${promo!.workPartyEvent.name}`
-      : "Discount";
+      ? `Working bee discount (${promo!.workPartyEvent.name})`
+      : "Working bee discount";
   }
   return promoAdjustmentLineDescription(promo!.code);
 }
@@ -265,7 +283,7 @@ export function bookingInvoiceFileName(
   bookingId: string,
   xeroInvoiceNumber: string | null | undefined,
 ): string {
-  const label = (xeroInvoiceNumber?.trim() || bookingId.slice(0, 8).toUpperCase()).replace(
+  const label = (xeroInvoiceNumber?.trim() || formatBookingReference(bookingId)).replace(
     /[^A-Za-z0-9._-]/g,
     "-",
   );

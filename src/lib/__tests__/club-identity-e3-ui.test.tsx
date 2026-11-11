@@ -289,6 +289,11 @@ describe("LodgeDetailsPanel — cross-area denial (E3 #1929)", () => {
               address: null,
               doorCode: null,
               travelNote: null,
+              // #115: the invoice details are detail fields too.
+              postalAddress: null,
+              bankAccountName: null,
+              bankAccountDetails: null,
+              gstNumber: null,
             },
           ],
         }),

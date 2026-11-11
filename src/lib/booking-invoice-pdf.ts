@@ -56,6 +56,12 @@ export function renderBookingInvoicePdf(
     options?: { align?: "left" | "right" | "center"; maxWidth?: number },
   ) => doc.text(pdfSafeText(value), x, y, options);
   const right = { align: "right" as const };
+  // Long text wraps onto several lines; every caller advances by the lines it
+  // actually drew, so a wrapped row never overlaps the next one.
+  const wrap = (value: string, width: number): string[] =>
+    doc.splitTextToSize(pdfSafeText(value), width) as string[];
+  const drawLines = (lines: readonly string[], x: number, top: number) =>
+    lines.forEach((line, index) => doc.text(line, x, top + index * LINE));
 
   // --- Header: issuer on the left, INVOICE on the right --------------------
   let y = PAGE.margin + 4;
@@ -97,7 +103,8 @@ export function renderBookingInvoicePdf(
   text("Stay", COLUMNS.category + 20, y);
   doc.setFont("helvetica", "normal");
   y += LINE;
-  text(data.billTo, PAGE.margin, y, { maxWidth: COLUMNS.category - PAGE.margin + 14 });
+  const billToLines = wrap(data.billTo, COLUMNS.category - PAGE.margin + 14);
+  drawLines(billToLines, PAGE.margin, y);
   text(`Check-in: ${data.stay.checkIn}`, COLUMNS.category + 20, y);
   text(`Check-out: ${data.stay.checkOut}`, COLUMNS.category + 20, y + LINE);
   text(
@@ -105,7 +112,7 @@ export function renderBookingInvoicePdf(
     COLUMNS.category + 20,
     y + LINE * 2,
   );
-  y += LINE * 3 + 6;
+  y += LINE * Math.max(3, billToLines.length) + 6;
 
   // --- Line table ----------------------------------------------------------
   const drawTableHeader = () => {
@@ -129,17 +136,22 @@ export function renderBookingInvoicePdf(
 
   drawTableHeader();
   const drawLine = (line: BookingInvoiceLine) => {
-    ensureRoom(LINE + 1, true);
+    const columns =
+      line.kind === "GUEST"
+        ? [
+            { lines: wrap(line.guest, COLUMNS.category - COLUMNS.guest - 3), x: COLUMNS.guest + 1 },
+            { lines: wrap(line.category, COLUMNS.nightsRight - COLUMNS.category - 14), x: COLUMNS.category },
+          ]
+        : [{ lines: wrap(line.description, COLUMNS.rateRight - COLUMNS.guest - 20), x: COLUMNS.guest + 1 }];
+    const rows = Math.max(...columns.map((column) => column.lines.length));
+    ensureRoom(rows * LINE + 1, true);
+    for (const column of columns) drawLines(column.lines, column.x, y);
     if (line.kind === "GUEST") {
-      text(line.guest, COLUMNS.guest + 1, y, { maxWidth: COLUMNS.category - COLUMNS.guest - 3 });
-      text(line.category, COLUMNS.category, y, { maxWidth: COLUMNS.nightsRight - COLUMNS.category - 14 });
       text(String(line.nights), COLUMNS.nightsRight, y, right);
       text(money(line.ratePerNightCents), COLUMNS.rateRight, y, right);
-    } else {
-      text(line.description, COLUMNS.guest + 1, y, { maxWidth: COLUMNS.rateRight - COLUMNS.guest - 20 });
     }
     text(money(line.amountCents), COLUMNS.amountRight - 1, y, right);
-    y += LINE + 1;
+    y += rows * LINE + 1;
   };
   data.lines.forEach(drawLine);
 
@@ -182,14 +194,18 @@ export function renderBookingInvoicePdf(
         .filter(Boolean),
       `Reference: ${data.paymentDetails.reference}`,
     ];
-    const height = rows.length * LINE + 6;
+    const wrapped = rows.map((row) => wrap(row, PAGE.width - PAGE.margin * 2 - 8));
+    const lineCount = wrapped.reduce((sum, lines) => sum + lines.length, 0);
+    const height = lineCount * LINE + 6;
     ensureRoom(height + 8, false);
     y += 6;
     doc.setDrawColor(150, 150, 150);
     doc.rect(PAGE.margin, y - 5, PAGE.width - PAGE.margin * 2, height);
-    rows.forEach((row, index) => {
+    let rowY = y;
+    wrapped.forEach((lines, index) => {
       doc.setFont("helvetica", index === 0 ? "bold" : "normal");
-      text(row, PAGE.margin + 4, y + index * LINE, { maxWidth: PAGE.width - PAGE.margin * 2 - 8 });
+      drawLines(lines, PAGE.margin + 4, rowY);
+      rowY += lines.length * LINE;
     });
     doc.setFont("helvetica", "normal");
     y += height;

@@ -125,6 +125,9 @@ This is useful when your club doesn't use Xero, or when a school or other
 organisation needs an invoice before its group booking is approved. A guest on
 someone else's booking doesn't see the button.
 
+There is no invoice for a cancelled booking, or for a place in a group that the
+group organiser pays for: ask the organiser for the group's invoice instead.
+
 ## Split charges for non-member guests
 
 When a **Members First** hold splits a mixed party (your members are booked now,

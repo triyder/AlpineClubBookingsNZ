@@ -8,6 +8,7 @@ import {
   BookingInvoiceUnpricedNightError,
   bookingInvoiceFileName,
   buildBookingInvoiceData,
+  canGenerateBookingInvoiceForStatus,
   type BookingInvoiceInput,
 } from "@/lib/booking-invoice";
 import { canDownloadBookingInvoice } from "@/lib/booking-invoice-access";
@@ -170,7 +171,7 @@ describe("buildBookingInvoiceData", () => {
       }),
     );
     const adjustment = data.lines.at(-1)!;
-    expect(adjustment).toMatchObject({ description: "Work party discount - Spring working bee" });
+    expect(adjustment).toMatchObject({ description: "Working bee discount (Spring working bee)" });
     expect(JSON.stringify(data)).not.toContain("WP-SECRET");
   });
 
@@ -277,6 +278,26 @@ describe("renderBookingInvoicePdf", () => {
     expect((content.match(/\(Rate \/ night\)/g) ?? []).length).toBe(pages);
   });
 
+  it("wraps long names and bank details instead of letting them overlap", () => {
+    const long = "A very long guest name that will certainly not fit in its column";
+    const data = buildBookingInvoiceData(
+      input({
+        guests: [guest({ firstName: long }), guest()],
+        finalPriceCents: 18000,
+        lodge: {
+          ...input().lodge,
+          bankAccountName: "Alpine Club Incorporated",
+          bankAccountDetails: `12-3456-7890123-00
+${"Please include your booking reference and name ".repeat(3)}`,
+        },
+      }),
+    );
+    const content = pdfText(renderBookingInvoicePdf(data, FORMAT));
+    // The wrapped name is drawn as more than one text run, each its own line.
+    expect(content).not.toContain(`(${long} Smith)`);
+    expect(content).toContain("Please pay by direct credit to");
+  });
+
   it("folds letters outside the PDF font to their base letter", () => {
     expect(pdfSafeText("Māui Ōtaki")).toBe("Maui Otaki");
     expect(pdfSafeText("José • Zoë")).toBe("José • Zoë");
@@ -291,10 +312,35 @@ describe("bookingInvoiceFileName", () => {
 });
 
 describe("canDownloadBookingInvoice", () => {
+  const live = { deletedAt: null };
+  const viewer = (overrides: Partial<{ isAdmin: boolean; canManageBooking: boolean; canViewAsAdmin: boolean }>) => ({
+    isAdmin: false,
+    canManageBooking: false,
+    canViewAsAdmin: false,
+    ...overrides,
+  });
+
   it("allows the booking's manager and admin viewers, and nobody else", () => {
-    expect(canDownloadBookingInvoice({ canManageBooking: true, canViewAsAdmin: false })).toBe(true);
-    expect(canDownloadBookingInvoice({ canManageBooking: false, canViewAsAdmin: true })).toBe(true);
+    expect(canDownloadBookingInvoice(viewer({ canManageBooking: true }), live)).toBe(true);
+    expect(canDownloadBookingInvoice(viewer({ canViewAsAdmin: true }), live)).toBe(true);
     // A linked guest viewer neither manages the booking nor views it as an admin.
-    expect(canDownloadBookingInvoice({ canManageBooking: false, canViewAsAdmin: false })).toBe(false);
+    expect(canDownloadBookingInvoice(viewer({}), live)).toBe(false);
+  });
+
+  it("keeps a deleted booking admin-only", () => {
+    const deleted = { deletedAt: new Date("2026-07-01T00:00:00.000Z") };
+    expect(canDownloadBookingInvoice(viewer({ canManageBooking: true }), deleted)).toBe(false);
+    expect(canDownloadBookingInvoice(viewer({ isAdmin: true, canManageBooking: true }), deleted)).toBe(true);
+  });
+});
+
+describe("canGenerateBookingInvoiceForStatus", () => {
+  it("generates for owed, paid and awaiting-approval bookings only", () => {
+    for (const status of ["PAYMENT_PENDING", "CONFIRMED", "PAID", "COMPLETED", "AWAITING_REVIEW"]) {
+      expect(canGenerateBookingInvoiceForStatus(status), status).toBe(true);
+    }
+    for (const status of ["CANCELLED", "DRAFT", "WAITLISTED", "WAITLIST_OFFERED"]) {
+      expect(canGenerateBookingInvoiceForStatus(status), status).toBe(false);
+    }
   });
 });

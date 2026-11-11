@@ -150,8 +150,8 @@ export function lodgeOrderBy() {
 
 /**
  * The optional lodge invoice details (fork #115), edited in the Lodge details
- * panel and read only by the generated booking invoice. One list, so the PATCH
- * route, the panel and the invoice builder cannot disagree about which they are.
+ * panel and read only by the generated booking invoice. The PATCH route writes
+ * exactly these and the invoice download selects exactly these, from this list.
  */
 export const LODGE_INVOICE_DETAIL_FIELDS = [
   "postalAddress",

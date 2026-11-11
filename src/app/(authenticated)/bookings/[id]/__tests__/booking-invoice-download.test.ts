@@ -41,6 +41,8 @@ function booking(overrides: Record<string, unknown> = {}) {
     id: "ckbooking1234567",
     lodgeId: "lodge-1",
     deletedAt: null,
+    status: "CONFIRMED",
+    organiserSettled: false,
     checkIn: day("2026-07-03"),
     checkOut: day("2026-07-05"),
     finalPriceCents: 6000,
@@ -90,7 +92,10 @@ beforeEach(() => {
   mocks.netCollected.mockReturnValue({ heldCashCents: 0 });
 });
 
-const neverXero = () => ({ fetchXeroInvoicePdf: vi.fn(async () => Buffer.from("unused")) });
+const neverXero = () => ({
+  xeroReachable: vi.fn(async () => true),
+  fetchXeroInvoicePdf: vi.fn(async () => Buffer.from("unused")),
+});
 
 describe("prepareBookingInvoiceDownload", () => {
   it("refuses an unknown booking", async () => {
@@ -127,7 +132,7 @@ describe("prepareBookingInvoiceDownload", () => {
     mocks.loadBookingDetail.mockResolvedValue(
       booking({ payment: { xeroInvoiceId: "xero-inv-1", xeroInvoiceNumber: "INV-0042" } }),
     );
-    const xero = { fetchXeroInvoicePdf: vi.fn(async () => Buffer.from("%PDF-xero")) };
+    const xero = { xeroReachable: async () => true, fetchXeroInvoicePdf: vi.fn(async () => Buffer.from("%PDF-xero")) };
     const result = await prepareBookingInvoiceDownload("b", session, xero);
     expect(xero.fetchXeroInvoicePdf).toHaveBeenCalledWith("xero-inv-1");
     expect(result).toMatchObject({ kind: "PDF", source: "XERO", fileName: "Invoice-INV-0042.pdf" });
@@ -139,6 +144,7 @@ describe("prepareBookingInvoiceDownload", () => {
       booking({ payment: { xeroInvoiceId: "xero-inv-1", xeroInvoiceNumber: "INV-0042" } }),
     );
     const xero = {
+      xeroReachable: async () => true,
       fetchXeroInvoicePdf: vi.fn(async () => {
         throw new Error("Xero down");
       }),
@@ -161,6 +167,28 @@ describe("prepareBookingInvoiceDownload", () => {
     const content = (result as { body: Buffer }).body.toString("latin1");
     expect(content).toContain("Hilltop School");
     expect(content).toContain("Amount paid");
+  });
+
+  it("says Xero is not connected, and generates nothing, when Xero is off for a Xero-invoiced booking", async () => {
+    mocks.loadBookingDetail.mockResolvedValue(
+      booking({ payment: { xeroInvoiceId: "xero-inv-1", xeroInvoiceNumber: "INV-0042" } }),
+    );
+    const xero = { xeroReachable: async () => false, fetchXeroInvoicePdf: vi.fn() };
+    expect((await prepareBookingInvoiceDownload("b", session, xero)).kind).toBe("XERO_NOT_CONNECTED");
+    expect(xero.fetchXeroInvoicePdf).not.toHaveBeenCalled();
+    expect(mocks.lodgeFindUnique).not.toHaveBeenCalled();
+  });
+
+  it("does not invoice a joiner for a booking the group organiser pays for", async () => {
+    mocks.loadBookingDetail.mockResolvedValue(booking({ organiserSettled: true }));
+    const result = await prepareBookingInvoiceDownload("b", session, neverXero());
+    expect(result).toMatchObject({ kind: "CANNOT_GENERATE" });
+    expect((result as { message: string }).message).toContain("group organiser");
+  });
+
+  it("does not invoice a cancelled booking", async () => {
+    mocks.loadBookingDetail.mockResolvedValue(booking({ status: "CANCELLED" }));
+    expect((await prepareBookingInvoiceDownload("b", session, neverXero())).kind).toBe("CANNOT_GENERATE");
   });
 
   it("refuses to generate while a night is still awaiting a price", async () => {

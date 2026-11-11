@@ -6,6 +6,7 @@ import { readBookingAmountOwed } from "@/lib/booking-amount-owed";
 import {
   bookingInvoiceFileName,
   buildBookingInvoiceData,
+  canGenerateBookingInvoiceForStatus,
 } from "@/lib/booking-invoice";
 import { canDownloadBookingInvoice } from "@/lib/booking-invoice-access";
 import { renderBookingInvoicePdf } from "@/lib/booking-invoice-pdf";
@@ -17,7 +18,10 @@ import { clubTime } from "@/lib/club-time/server";
 import { getNetCollectedCashParts } from "@/lib/payment-net-collected";
 import { prisma } from "@/lib/prisma";
 import { loadRateMembershipLabelResolver } from "@/lib/rate-membership-label";
-import { getAuthenticatedXeroClient } from "@/lib/xero-api-client";
+import { LODGE_INVOICE_DETAIL_FIELDS } from "@/lib/lodges";
+import { loadEffectiveModuleFlags } from "@/lib/module-settings";
+import { callXeroApi, getAuthenticatedXeroClient } from "@/lib/xero-api-client";
+import { isXeroConnected } from "@/lib/xero-token-store";
 import { resolveBookingDetailViewer } from "./booking-detail-viewer";
 import { loadBookingDetail } from "./load-booking-detail";
 
@@ -43,12 +47,35 @@ export type BookingInvoiceDownload =
   | { kind: "PDF"; body: Buffer; fileName: string; source: "XERO" | "GENERATED" }
   | { kind: "NOT_FOUND" }
   | { kind: "XERO_UNAVAILABLE" }
+  | { kind: "XERO_NOT_CONNECTED" }
   | { kind: "CANNOT_GENERATE"; message: string };
 
+const ORGANISER_PAID_MESSAGE =
+  "This booking is paid through your group's invoice, so it has no invoice of its own. Please ask your group organiser for the group's invoice.";
+const NOT_DUE_MESSAGE =
+  "This booking has nothing to pay, so there is no invoice to download.";
+
 const defaultDependencies = {
+  xeroReachable: async (): Promise<boolean> =>
+    (await loadEffectiveModuleFlags()).xeroIntegration && (await isXeroConnected()),
   fetchXeroInvoicePdf: async (invoiceId: string): Promise<Buffer> => {
     const { xero, tenantId } = await getAuthenticatedXeroClient();
-    const result = await xero.accountingApi.getInvoiceAsPdf(tenantId, invoiceId);
+    // Through the metered wrapper like every Xero call (usage row, daily-limit
+    // memory, outage breaker). A failed download is inconsequential, so it
+    // neither retries nor arms the process-wide breaker (#2394's rule for a
+    // read behind a person's button).
+    const result = await callXeroApi(
+      () => xero.accountingApi.getInvoiceAsPdf(tenantId, invoiceId),
+      {
+        operation: "getInvoiceAsPdf",
+        resourceType: "INVOICE",
+        workflow: "bookingInvoiceDownload",
+        maxRetries: 0,
+        maxTransientRetries: 0,
+        maxWaitSec: 0,
+        armTransientBreaker: false,
+      },
+    );
     return Buffer.from(result.body);
   },
 };
@@ -61,12 +88,15 @@ export async function prepareBookingInvoiceDownload(
   const booking = await loadBookingDetail(bookingId);
   if (!booking) return { kind: "NOT_FOUND" };
   const viewer = resolveBookingDetailViewer({ session, booking });
-  if ((booking.deletedAt && !viewer.isAdmin) || !canDownloadBookingInvoice(viewer)) {
+  if (!canDownloadBookingInvoice(viewer, booking)) {
     return { kind: "NOT_FOUND" };
   }
 
   const xeroInvoiceId = booking.payment?.xeroInvoiceId ?? null;
   if (xeroInvoiceId) {
+    // With Xero switched off or disconnected the call cannot succeed, and a
+    // generated copy is still not offered in its place (owner decision 3).
+    if (!(await dependencies.xeroReachable())) return { kind: "XERO_NOT_CONNECTED" };
     try {
       const body = await dependencies.fetchXeroInvoicePdf(xeroInvoiceId);
       if (body.length === 0) return { kind: "XERO_UNAVAILABLE" };
@@ -81,6 +111,14 @@ export async function prepareBookingInvoiceDownload(
     }
   }
 
+  // A group child the organiser pays for is billed on the group's settlement
+  // invoice, never to the joiner; an invoice from this booking would ask the
+  // joiner for money the organiser is paying.
+  if (booking.organiserSettled) return { kind: "CANNOT_GENERATE", message: ORGANISER_PAID_MESSAGE };
+  if (!canGenerateBookingInvoiceForStatus(booking.status)) {
+    return { kind: "CANNOT_GENERATE", message: NOT_DUE_MESSAGE };
+  }
+
   const [lodge, format, club, taxSettings, ageTierSettings, rateResolver, amountOwed] =
     await Promise.all([
       prisma.lodge.findUnique({
@@ -88,11 +126,8 @@ export async function prepareBookingInvoiceDownload(
         select: {
           name: true,
           address: true,
-          postalAddress: true,
-          bankAccountName: true,
-          bankAccountDetails: true,
-          gstNumber: true,
-        },
+          ...Object.fromEntries(LODGE_INVOICE_DETAIL_FIELDS.map((field) => [field, true])),
+        } as { name: true; address: true } & Record<(typeof LODGE_INVOICE_DETAIL_FIELDS)[number], true>,
       }),
       getClubFormat(),
       clubTime(),

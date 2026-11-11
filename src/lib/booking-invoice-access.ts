@@ -8,11 +8,12 @@
  * /api/bookings/[id]/invoice` (`INV-SSOT`). It reads the page's own
  * `resolveBookingDetailViewer` answer, so the button can never be shown to
  * someone the route refuses, or the reverse. A deleted booking stays admin-only,
- * as on the page; the caller checks that beside this.
+ * as on the page.
  */
-export function canDownloadBookingInvoice(viewer: {
-  canManageBooking: boolean;
-  canViewAsAdmin: boolean;
-}): boolean {
+export function canDownloadBookingInvoice(
+  viewer: { isAdmin: boolean; canManageBooking: boolean; canViewAsAdmin: boolean },
+  booking: { deletedAt: Date | null },
+): boolean {
+  if (booking.deletedAt && !viewer.isAdmin) return false;
   return viewer.canManageBooking || viewer.canViewAsAdmin;
 }

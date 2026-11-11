@@ -22,7 +22,9 @@ export async function GET(
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
   }
-  const inactiveResponse = await requireActiveSessionUser(session.user.id);
+  const inactiveResponse = await requireActiveSessionUser(session.user.id, {
+    sessionUser: session.user,
+  });
   if (inactiveResponse) return inactiveResponse;
 
   const limited = await checkRateLimit(
@@ -39,6 +41,11 @@ export async function GET(
       return NextResponse.json(
         { error: "The invoice could not be fetched from Xero; please try again." },
         { status: 502 },
+      );
+    case "XERO_NOT_CONNECTED":
+      return NextResponse.json(
+        { error: "Xero is not connected right now, so this booking's Xero invoice cannot be downloaded. Please ask the club for a copy." },
+        { status: 503 },
       );
     case "CANNOT_GENERATE":
       return NextResponse.json({ error: download.message }, { status: 409 });

@@ -360,7 +360,7 @@ export default async function BookingDetailPage({
           booking={editorData}
           canModify={canModify}
           canAdminOverride={canAdminOverride}
-          canDownloadInvoice={canDownloadBookingInvoice(viewer)}
+          canDownloadInvoice={canDownloadBookingInvoice(viewer, booking)}
         />
       </section>
 
