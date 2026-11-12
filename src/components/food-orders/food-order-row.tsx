@@ -220,7 +220,9 @@ export function FoodOrderRow({
         ) : null}
 
         {order.canManage ? (
-          <div className="flex flex-col gap-3 border-t pt-4 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
+          // One level line: every control is h-9 and centred, the Price label
+          // sits inline beside its box, and each wrapped row stays level.
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t pt-4 sm:justify-between">
             {checklist ? (
               <div className="flex flex-wrap items-center gap-2">
                 <Button
@@ -242,19 +244,21 @@ export function FoodOrderRow({
             ) : (
               <span aria-hidden="true" className="hidden sm:block" />
             )}
-            <div className="flex flex-wrap items-end gap-2">
-              <div className="space-y-1">
-                <Label htmlFor={priceInputId}>Price</Label>
-                <MoneyInput
-                  id={priceInputId}
-                  className="w-32"
-                  value={priceDraft}
-                  onValueChange={setPriceDraft}
-                  minCents={0}
-                  maxCents={FOOD_ORDER_PRICE_CENTS_MAX}
-                  disabled={busy}
-                />
-              </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Label htmlFor={priceInputId} className="whitespace-nowrap">
+                Price
+              </Label>
+              {/* Typed only: no step buttons (owner, 13 Nov 2026). */}
+              <MoneyInput
+                id={priceInputId}
+                className="w-32"
+                value={priceDraft}
+                onValueChange={setPriceDraft}
+                minCents={0}
+                maxCents={FOOD_ORDER_PRICE_CENTS_MAX}
+                stepButtons={false}
+                disabled={busy}
+              />
               <Button
                 type="button"
                 variant="outline"
