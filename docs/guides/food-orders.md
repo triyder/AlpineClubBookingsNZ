@@ -20,10 +20,10 @@ arrived. It has three parts:
   the person who buys the food.
 
 Food orders is the `foodOrders` module, **off by default**. Turn it on under
-**Admin → Setup → Modules** once you have an address to send orders to. While it
-is off, the order and history pages, their APIs and the settings page return Not
-Found, and the dashboard card and sidebar entry are hidden. Orders already placed
-are kept.
+**Admin → Setup → Modules**, then set the address orders go to. While it is off,
+the order and history pages, their APIs and the settings page return Not Found,
+and the dashboard card and sidebar entry are hidden. Orders already placed are
+kept.
 
 Orders are **not linked to bookings**. The food officer matches an order to a
 stay by its lodge and needed-by date. Organisation accounts (schools and similar
@@ -41,18 +41,20 @@ groups) cannot order: their catering is arranged through the booking officer.
 
 ### Set up food ordering
 
-1. Open **Admin → Lodge Operations → Food Orders** and click **Edit**.
-2. Enter the **Email address for orders**, usually the food officer's committee
+1. Turn on **Food orders** under **Admin → Setup → Modules**. The settings page
+   only exists while the module is on.
+2. Open **Admin → Lodge Operations → Food Orders** and click **Edit**.
+3. Enter the **Email address for orders**, usually the food officer's committee
    address. The app checks only that it is a valid email address. It does not
    check it against your members or committee roles, so keeping it current when
    the role changes hands is the committee's job.
-3. If your club calls the role something else, change **What your club calls
-   them** (default "Food officer"). It is used on the order page, the history and
-   the email.
-4. Click **Save**, then turn on **Food orders** under **Admin → Setup → Modules**.
+4. If your club calls the role something else, change **What your club calls
+   them** (default "Food officer"). It is shown as you type it on the order page,
+   the history and the email.
+5. Click **Save**.
 
-With no address saved, the order page tells members that ordering is not set up
-and accepts nothing.
+Between steps 1 and 5 — and whenever the address is empty — members who open
+**Order food** are told that ordering is not set up, and nothing is accepted.
 
 ### Place an order (members)
 
@@ -65,8 +67,17 @@ and accepts nothing.
 4. Add a note if you need to, then **Send this order**.
 
 The order is saved as **Open** first, and only then is the food officer emailed,
-with every item and quantity, the note, and a link to the order. Each member can
-place up to 10 orders an hour.
+with every item and quantity, the note, and a link to the order. The member is
+told the order was placed and that the officer is notified by email; the email
+itself can be muted under Delivery Rules or fail to send, and the order is in the
+history either way. Each member can place up to 10 orders an hour.
+
+The link in the email opens **Food orders** with that order pinned at the top as
+**Linked order**, whichever page of the history it would fall on. It shows the
+order only to someone who may see it: the member who placed it, or a committee
+member, current hut leader or Lodge Operations admin. Anyone else sees the
+history with nothing extra, the same as for a link to an order that does not
+exist.
 
 ### Mark an order received
 
@@ -89,6 +100,9 @@ reopened.
 
 The same people who can mark an order received can record its price. Every
 change is written to the audit log with who made it and the old and new amounts.
+The save carries the price your screen was showing: if somebody else changed it
+in the meantime, nothing is saved, you are told so, and the order reloads with
+their price for you to check.
 **The price is a record only**: it is never charged to the member, added to a
 booking or invoice, posted to the booking ledger, or sent to Xero.
 
@@ -133,7 +147,8 @@ emails; orders are still saved and shown in the history.
 | The food officer is not getting orders | The address is wrong or out of date, or the email is muted under Delivery Rules | Check the address on the settings page and the `food-order-placed` rule. Every order is still in the history |
 | A hut leader cannot mark an order received | Their access window does not cover today, or the order is for a different lodge | A committee member or a Lodge Operations edit admin can close it |
 | An organisation account cannot order | By design | Catering for organisation stays is arranged through the booking officer |
-| A price save says somebody else changed it | Two people edited the price at once | Reload the history and enter the price again |
+| A price save says somebody else changed it | Somebody saved a different price after your screen loaded | The order reloads with the stored price; check it and enter yours again if it is still right |
+| Saving the settings says somebody else saved at the same moment | Two admins saved at once; one save was refused and nothing was changed by it | Reload the page and save again |
 
 ## Related links
 
@@ -144,4 +159,5 @@ emails; orders are still saved and shown in the history.
 - Reference: lodge scoping in
   [Lodge Scoping Contract](../multi-lodge/lodge-scoping-contract.md); integer
   cents in [money invariants](../invariants/money.md); the routes in
-  [`SECURITY-ATTACK-SURFACE.md`](../SECURITY-ATTACK-SURFACE.md).
+  [`SECURITY-ATTACK-SURFACE.md`](../SECURITY-ATTACK-SURFACE.md); the Open to
+  Received transition in [State Machines](../STATE_MACHINES.md#food-order-lifecycle).

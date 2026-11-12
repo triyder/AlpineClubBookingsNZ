@@ -752,7 +752,7 @@ export const AUDIT_CENSUS_TOTALS = {
   // 538 -> 542 (fork #121): the four food-order writers, all `lodge` — the order
   // placed, the Received close and the price change (each an awaited
   // `createAuditLog` inside its own transaction, `src/lib/food-orders.ts`) and the
-  // Food Orders settings save (`logAudit`). RE-MEASURED with the census.
+  // Food Orders settings save (also `createAuditLog`, in its Serializable transaction). RE-MEASURED with the census.
   writeSites: 542,
   /**
    * Of those, sites whose event object carries no `category` key.
@@ -857,7 +857,7 @@ export const AUDIT_CENSUS_TOTALS = {
     // and the lost-record recovery's own entry.
     // 273 -> 274 (#4170): the refunded-outside-the-app entry.
     // 274 -> 275 (#4533): the officer's finished-stay promo correction request, above.
-    logAudit: { total: 276, uncategorised: 0 }, // 275 -> 276 (fork #121): the Food Orders settings save.
+    logAudit: { total: 275, uncategorised: 0 }, // 275 -> 276 -> 275 (fork #121): the Food Orders settings save moved to createAuditLog in its transaction.
     // 101 -> 102 (#2627): the deletion-approval release, above.
     // 102 -> 104 (#2595): the two reviewed-move writes, above.
     // 104 -> 105 (#2649): the return-to-waitlist repair, above.
@@ -978,7 +978,7 @@ export const AUDIT_CENSUS_TOTALS = {
     // 170 -> 171 (#4686): the lost-claim part-success's row, above.
     // 171 -> 172 (triyder/AlpineClubBookingsNZ#97): the link dialog's row, above.
     // 172 -> 174 (#4516): the refused reservation and the OPERATOR release, above.
-    createAuditLog: { total: 179, uncategorised: 0 }, // 174 -> 176 (#4368): the two dead card refund settlements. 176 -> 179 (fork #121): food order placed, received, price changed.
+    createAuditLog: { total: 180, uncategorised: 0 }, // 174 -> 176 (#4368): the two dead card refund settlements. 176 -> 180 (fork #121): food order placed, received, price changed, and the Food Orders settings save (awaited in its Serializable transaction).
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.
     // Same row, same dedupe keys (`action` + `subjectMemberId` + `outcome`) —

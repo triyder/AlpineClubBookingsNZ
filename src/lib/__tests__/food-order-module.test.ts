@@ -100,6 +100,21 @@ describe("foodOrders route gate", () => {
   });
 });
 
+describe("foodOrders member pages gate themselves", () => {
+  // Both pages re-check the module on the server, so the 404 does not live only
+  // in the proxy (#2780). Read as source: rendering them needs the whole app.
+  for (const page of ["food-order", "food-orders"]) {
+    it(`/${page} calls notFound() when the module is off`, () => {
+      const source = fs.readFileSync(
+        path.join(process.cwd(), "src", "app", "(authenticated)", page, "page.tsx"),
+        "utf8",
+      );
+      expect(source).not.toMatch(/^"use client"/);
+      expect(source).toMatch(/if \(!modules\.foodOrders\) notFound\(\);/);
+    });
+  }
+});
+
 describe("foodOrders migration", () => {
   const sql = fs.readFileSync(
     path.join(process.cwd(), "prisma", "migrations", MIGRATION, "migration.sql"),

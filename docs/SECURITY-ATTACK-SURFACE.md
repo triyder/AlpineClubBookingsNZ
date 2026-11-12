@@ -304,8 +304,10 @@ These family rules are enforced by automated tests (issue #1132):
   `[id]/received` and `[id]/price` are decided by one rule,
   `canManageFoodOrder` (committee, a hut leader at that order's lodge today, or
   Lodge Operations edit). An order the caller may not see answers 404 rather
-  than 403, so ids are not confirmed. The price is a record only and moves no
-  money.
+  than 403, so ids are not confirmed, and `history?order=<id>` returns a null
+  `linkedOrder` for it, the same as for a missing id. A price change must carry
+  the price the caller saw (`expectedCents`), so a stale screen is refused. The
+  price is a record only and moves no money.
 - `src/app/api/issue-reports/route.ts`
 - `src/app/api/lodges/route.ts`
 - `src/app/api/member/**/route.ts`
