@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useClubFormat } from "@/components/club-format-provider";
 import { Alert } from "@/components/ui/alert";
@@ -39,6 +39,8 @@ type HistoryPayload = {
   orderCount: number;
   pricedCount: number;
   priceTotalCents: number;
+  /** The order the page was opened for (`?order=`), when the viewer may see it. */
+  linkedOrder: FoodOrderHistoryItem | null;
   officerLabel: string;
   lodges: Array<{ id: string; name: string }>;
 };
@@ -48,8 +50,9 @@ type Filters = { lodgeId: string; status: string; from: string; to: string };
 const ALL = "all";
 const EMPTY_FILTERS: Filters = { lodgeId: ALL, status: ALL, from: "", to: "" };
 
-function queryFor(filters: Filters, page: number): string {
+function queryFor(filters: Filters, page: number, linkedOrderId: string | null): string {
   const params = new URLSearchParams();
+  if (linkedOrderId) params.set("order", linkedOrderId);
   if (filters.lodgeId !== ALL) params.set("lodgeId", filters.lodgeId);
   if (filters.status !== ALL) params.set("status", filters.status);
   if (filters.from) params.set("from", filters.from);
@@ -69,7 +72,7 @@ export function FoodOrderHistory({ highlightOrderId }: { highlightOrderId: strin
   const load = useCallback(async () => {
     setError("");
     try {
-      const query = queryFor(applied, page);
+      const query = queryFor(applied, page, highlightOrderId);
       const res = await fetch(`/api/food-orders/history${query ? `?${query}` : ""}`);
       if (!res.ok) {
         throw new Error(
@@ -80,7 +83,17 @@ export function FoodOrderHistory({ highlightOrderId }: { highlightOrderId: strin
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not load your food orders.");
     }
-  }, [applied, page]);
+  }, [applied, page, highlightOrderId]);
+
+  // Bring the linked order into view once, when it first arrives.
+  const linkedRef = useRef<HTMLDivElement>(null);
+  const scrolledToLinked = useRef(false);
+  const linkedOrderId = payload?.linkedOrder?.id ?? null;
+  useEffect(() => {
+    if (!linkedOrderId || scrolledToLinked.current) return;
+    scrolledToLinked.current = true;
+    linkedRef.current?.scrollIntoView?.({ block: "start" });
+  }, [linkedOrderId]);
 
   useEffect(() => {
     void load();
@@ -189,8 +202,25 @@ export function FoodOrderHistory({ highlightOrderId }: { highlightOrderId: strin
                   ? ` (${payload.pricedCount} of ${payload.orderCount} priced)`
                   : ""}
               </span>
+              <span className="text-muted-foreground">
+                New orders are emailed to the club&apos;s {payload.officerLabel}.
+              </span>
             </CardContent>
           </Card>
+
+          {payload.linkedOrder ? (
+            <section ref={linkedRef} aria-labelledby="food-linked-order" className="space-y-2">
+              <h2 id="food-linked-order" className="text-sm font-semibold">
+                Linked order
+              </h2>
+              <FoodOrderRow
+                order={payload.linkedOrder}
+                showOrderedBy={payload.canViewAll}
+                highlighted
+                onChanged={() => void load()}
+              />
+            </section>
+          ) : null}
 
           {payload.orders.length === 0 ? (
             <p className="text-sm text-muted-foreground">No food orders match.</p>
@@ -201,7 +231,7 @@ export function FoodOrderHistory({ highlightOrderId }: { highlightOrderId: strin
                   key={order.id}
                   order={order}
                   showOrderedBy={payload.canViewAll}
-                  highlighted={order.id === highlightOrderId}
+                  highlighted={false}
                   onChanged={() => void load()}
                 />
               ))}

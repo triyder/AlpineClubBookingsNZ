@@ -1,14 +1,11 @@
 import {
-  isOrganisationMember,
-  resolveAccessRoleTokens,
-} from "@/lib/access-roles";
-import {
   hasAdminAreaAccess,
   type AdminPermissionInput,
 } from "@/lib/admin-permissions";
 import { isActiveCommitteeMember } from "@/lib/calendar-access";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { hutLeaderAccessWindowCoversDayWhere } from "@/lib/hut-leader-access-window";
+import { isOrganisationAccount } from "@/lib/organisation-account";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -48,20 +45,13 @@ export type FoodOrderViewer = {
   hasLodgeOperationsEdit: boolean;
 };
 
-function isOrganisationActor(actor: AdminPermissionInput): boolean {
-  return isOrganisationMember({
-    accessRoleTokens: resolveAccessRoleTokens(actor),
-    legacyRole: typeof actor.role === "string" ? actor.role : null,
-  });
-}
-
 /**
  * Whether this account may use food orders at all — the synchronous half of
  * the rules, for a surface that only needs to know whether to offer the
  * feature (the dashboard card). Organisation accounts may not.
  */
 export function canActorUseFoodOrders(actor: AdminPermissionInput): boolean {
-  return !isOrganisationActor(actor);
+  return !isOrganisationAccount(actor);
 }
 
 /**

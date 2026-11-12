@@ -20,7 +20,7 @@ import {
   FOOD_ORDER_NOTES_MAX_LENGTH,
   foodOrderItemsProblem,
 } from "@/lib/food-order-rules";
-import { loadFoodOrderSettings } from "@/lib/food-order-settings";
+import { foodOfficerEmail, loadFoodOrderSettings } from "@/lib/food-order-settings";
 import { createFoodOrder } from "@/lib/food-orders";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
@@ -133,8 +133,8 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const [settings, lodge] = await Promise.all([
-    loadFoodOrderSettings(),
+  const [officerEmail, lodge] = await Promise.all([
+    foodOfficerEmail(),
     prisma.lodge.findFirst({
       where: { id: parsed.data.lodgeId, active: true },
       select: { id: true },
@@ -142,7 +142,7 @@ export async function POST(request: NextRequest) {
   ]);
   // Refused, never stored: an order nobody would be told about is worse than
   // an error the member can see.
-  if (!settings.officerEmail) {
+  if (!officerEmail) {
     return NextResponse.json({ error: NOT_SET_UP }, { status: 409 });
   }
   if (!lodge) {

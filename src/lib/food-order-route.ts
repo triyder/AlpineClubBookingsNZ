@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import {
+  canPlaceFoodOrder,
   resolveFoodOrderViewer,
   type FoodOrderViewer,
 } from "@/lib/food-order-access";
@@ -48,7 +49,7 @@ export async function requireFoodOrderViewer(
   if (!guard.ok) return { ok: false, response: guard.response as NextResponse };
 
   const viewer = await resolveFoodOrderViewer(guard.session.user);
-  if (viewer.isOrganisation) {
+  if (!canPlaceFoodOrder(viewer)) {
     return {
       ok: false,
       response: NextResponse.json(

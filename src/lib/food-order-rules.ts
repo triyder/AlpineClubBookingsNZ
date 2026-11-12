@@ -26,6 +26,9 @@ export const FOOD_ORDER_ITEM_QUANTITY_MAX = 999;
 /** The optional note on an order. Matches the `FoodOrder.notes` column. */
 export const FOOD_ORDER_NOTES_MAX_LENGTH = 1000;
 
+/** What the officer's email says for an order with no note, in HTML and text alike. */
+export const FOOD_ORDER_NO_NOTE_TEXT = "No note was added.";
+
 /** The officer label (INV-CONFIG-001) and its default. */
 export const DEFAULT_FOOD_OFFICER_LABEL = "Food officer";
 export const FOOD_OFFICER_LABEL_MAX_LENGTH = 60;

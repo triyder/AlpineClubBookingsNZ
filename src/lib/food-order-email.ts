@@ -3,6 +3,7 @@ import { formatStayDate } from "@/lib/club-time";
 import { clubTime } from "@/lib/club-time/server";
 import { sendFoodOrderPlacedEmail } from "@/lib/email";
 import { loadFoodOrderSettings } from "@/lib/food-order-settings";
+import { memberDisplayName } from "@/lib/member-serialization";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -44,8 +45,7 @@ export async function notifyFoodOfficerOfOrder(
   if (!settings.officerEmail || !order) return;
 
   const orderedBy = order.member
-    ? `${order.member.firstName} ${order.member.lastName}`.trim() ||
-      order.member.email
+    ? memberDisplayName(order.member)
     : "A former member";
   const baseUrl = getAppBaseUrl(request?.nextUrl.origin);
 

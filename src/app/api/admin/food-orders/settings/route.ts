@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
-import { logAudit } from "@/lib/audit";
+import { createAuditLog } from "@/lib/audit";
 import {
   FOOD_ORDER_NOT_FOUND,
   foodOrderAuditContext,
@@ -15,6 +15,7 @@ import {
   normaliseFoodOrderSettings,
 } from "@/lib/food-order-settings";
 import logger from "@/lib/logger";
+import { isPrismaUniqueConstraintError, isTransactionContention } from "@/lib/prisma-errors";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 
@@ -79,37 +80,61 @@ export async function PUT(request: NextRequest) {
   };
 
   try {
-    const before = await loadFoodOrderSettings();
-    const saved = await prisma.foodOrderSettings.upsert({
-      where: { id: FOOD_ORDER_SETTINGS_ID },
-      create: {
-        id: FOOD_ORDER_SETTINGS_ID,
-        ...data,
-        updatedByMemberId: admin.session.user.id,
+    const settings = await prisma.$transaction(
+      async (tx) => {
+        // Read, write and audit in ONE Serializable transaction, the repository's
+        // singleton-write pattern (environment-safety-override-write.ts): the
+        // isolation level keeps `before` true at commit, so the audit row's
+        // "from" is the value actually replaced, and the change can never land
+        // without its audit row. A concurrent save aborts one side (P2034, or
+        // P2002 on a racing first insert) and writes nothing; it is answered 503.
+        const before = normaliseFoodOrderSettings(
+          await tx.foodOrderSettings.findUnique({
+            where: { id: FOOD_ORDER_SETTINGS_ID },
+            select: { officerEmail: true, officerLabel: true },
+          }),
+        );
+        const saved = await tx.foodOrderSettings.upsert({
+          where: { id: FOOD_ORDER_SETTINGS_ID },
+          create: {
+            id: FOOD_ORDER_SETTINGS_ID,
+            ...data,
+            updatedByMemberId: admin.session.user.id,
+          },
+          update: { ...data, updatedByMemberId: admin.session.user.id },
+          select: { officerEmail: true, officerLabel: true },
+        });
+        await createAuditLog(
+          {
+            action: "food_order.settings.updated",
+            category: "lodge",
+            memberId: admin.session.user.id,
+            entityType: "FoodOrderSettings",
+            entityId: FOOD_ORDER_SETTINGS_ID,
+            // The officer address is the club's own operational address,
+            // recorded so "when did orders start going somewhere else, and who
+            // changed it" has an answer.
+            details: JSON.stringify({
+              officerEmail: { from: before.officerEmail, to: data.officerEmail },
+              officerLabel: { from: before.officerLabel, to: data.officerLabel },
+            }),
+            ipAddress: foodOrderAuditContext(request).ipAddress,
+            outcome: "success",
+          },
+          tx,
+        );
+        return normaliseFoodOrderSettings(saved);
       },
-      update: { ...data, updatedByMemberId: admin.session.user.id },
-      select: { officerEmail: true, officerLabel: true },
-    });
-
-    logAudit({
-      action: "food_order.settings.updated",
-      category: "lodge",
-      memberId: admin.session.user.id,
-      entityType: "FoodOrderSettings",
-      entityId: FOOD_ORDER_SETTINGS_ID,
-      // The officer address is the club's own operational address, recorded so
-      // "when did orders start going somewhere else, and who changed it" has an
-      // answer.
-      details: JSON.stringify({
-        officerEmail: { from: before.officerEmail, to: data.officerEmail },
-        officerLabel: { from: before.officerLabel, to: data.officerLabel },
-      }),
-      ipAddress: foodOrderAuditContext(request).ipAddress,
-      outcome: "success",
-    });
-
-    return NextResponse.json({ settings: normaliseFoodOrderSettings(saved) });
+      { isolationLevel: "Serializable" },
+    );
+    return NextResponse.json({ settings });
   } catch (err) {
+    if (isTransactionContention(err) || isPrismaUniqueConstraintError(err)) {
+      return NextResponse.json(
+        { error: "Somebody else saved these settings at the same moment. Please try again." },
+        { status: 503 },
+      );
+    }
     logger.error({ err }, "Failed to save food order settings");
     return NextResponse.json(
       { error: "Failed to save these settings" },

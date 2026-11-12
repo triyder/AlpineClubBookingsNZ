@@ -19,10 +19,12 @@ const mocks = vi.hoisted(() => ({
   findThrows: false,
   upsert: vi.fn(),
   logAudit: vi.fn(),
+  transactionError: null as null | { code: string },
+  transactionOptions: [] as unknown[],
 }));
 
-vi.mock("@/lib/prisma", () => ({
-  prisma: {
+vi.mock("@/lib/prisma", () => {
+  const prisma: Record<string, unknown> = {
     foodOrderSettings: {
       findUnique: async () => {
         if (mocks.findThrows) throw new Error("relation does not exist");
@@ -41,8 +43,17 @@ vi.mock("@/lib/prisma", () => ({
       findFirst: vi.fn(),
       findMany: vi.fn(),
     },
-  },
-}));
+  };
+  prisma.$transaction = async (
+    fn: (tx: unknown) => Promise<unknown>,
+    options: unknown,
+  ) => {
+    mocks.transactionOptions.push(options);
+    if (mocks.transactionError) throw mocks.transactionError;
+    return fn(prisma);
+  };
+  return { prisma };
+});
 vi.mock("@/lib/module-settings", () => ({
   loadEffectiveModuleFlags: async () => mocks.modules,
 }));
@@ -54,7 +65,8 @@ vi.mock("@/lib/session-guards", () => ({
       : { ok: false, response: NextResponse.json({ error: "Forbidden" }, { status: 403 }) };
   },
 }));
-vi.mock("@/lib/audit", () => ({ logAudit: mocks.logAudit }));
+// The settings save audits with the awaited writer inside its transaction.
+vi.mock("@/lib/audit", () => ({ createAuditLog: mocks.logAudit }));
 vi.mock("@/lib/logger", () => ({
   default: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
@@ -79,6 +91,8 @@ beforeEach(() => {
   mocks.findThrows = false;
   mocks.upsert.mockReset();
   mocks.logAudit.mockReset();
+  mocks.transactionError = null;
+  mocks.transactionOptions.length = 0;
 });
 
 describe("Food Orders settings API", () => {
@@ -90,6 +104,9 @@ describe("Food Orders settings API", () => {
       officerLabel: "Catering officer",
     });
     expect(mocks.logAudit).toHaveBeenCalledOnce();
+    // Read, write and audit in one Serializable transaction, the audit on its client.
+    expect(mocks.transactionOptions).toEqual([{ isolationLevel: "Serializable" }]);
+    expect(mocks.logAudit.mock.calls[0]![1]).toBeDefined();
     const audit = mocks.logAudit.mock.calls[0]![0] as { action: string; details: string };
     expect(audit.action).toBe("food_order.settings.updated");
     expect(JSON.parse(audit.details).officerEmail).toEqual({
@@ -118,6 +135,27 @@ describe("Food Orders settings API", () => {
     expect(res.status).toBe(200);
     expect(await foodOfficerEmail()).toBeNull();
   });
+
+  it("records the value actually replaced as the audit's from", async () => {
+    mocks.stored = { officerEmail: "old@example.org", officerLabel: "Food officer" };
+    await put({ officerEmail: "new@example.org", officerLabel: "Catering officer" });
+    const details = JSON.parse(
+      (mocks.logAudit.mock.calls[0]![0] as { details: string }).details,
+    );
+    expect(details).toEqual({
+      officerEmail: { from: "old@example.org", to: "new@example.org" },
+      officerLabel: { from: "Food officer", to: "Catering officer" },
+    });
+  });
+
+  for (const code of ["P2034", "P2028", "P2002"]) {
+    it(`answers 503 and audits nothing when a concurrent save aborts it (${code})`, async () => {
+      mocks.transactionError = { code };
+      const res = await put({ officerEmail: "a@b.co", officerLabel: "Food officer" });
+      expect(res.status).toBe(503);
+      expect(mocks.logAudit).not.toHaveBeenCalled();
+    });
+  }
 
   it("view access reads but cannot save", async () => {
     mocks.allowedLevel = "view";

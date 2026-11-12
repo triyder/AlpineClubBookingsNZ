@@ -22,6 +22,7 @@ import {
   paragraph,
 } from "./layout";
 import { emailPalette } from "@/lib/email-theme";
+import { FOOD_ORDER_NO_NOTE_TEXT } from "@/lib/food-order-rules";
 import { describeServerVersionPause } from "@/lib/servernz-api-version";
 
 // ---- N-13: Admin Daily Digest ----
@@ -226,7 +227,7 @@ export function foodOrderPlacedTemplate(data: {
       "A food order has been placed for " +
         escapeHtml(data.lodgeName) +
         ". You are receiving it as the club's " +
-        escapeHtml(data.officerLabel.toLowerCase()) +
+        escapeHtml(data.officerLabel) +
         ".",
     )}
     ${infoTable([
@@ -240,7 +241,7 @@ export function foodOrderPlacedTemplate(data: {
         value: `${item.quantity} &times; ${escapeHtml(item.description)}`,
       })),
     )}
-    ${data.notes ? multilineBlock(escapeHtml(data.notes)) : paragraph("No note was added.")}
+    ${data.notes ? multilineBlock(escapeHtml(data.notes)) : paragraph(FOOD_ORDER_NO_NOTE_TEXT)}
     ${button("View Food Order", data.foodOrderUrl, { sameOrigin: true })}
   `);
 }

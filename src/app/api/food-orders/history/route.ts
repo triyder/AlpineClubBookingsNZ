@@ -5,6 +5,7 @@ import { requireFoodOrderViewer } from "@/lib/food-order-route";
 import { FOOD_ORDER_STATUSES } from "@/lib/food-order-rules";
 import { loadFoodOrderSettings } from "@/lib/food-order-settings";
 import {
+  findFoodOrderHistoryRow,
   listFoodOrderHistory,
   type FoodOrderHistoryFilters,
 } from "@/lib/food-orders";
@@ -21,6 +22,11 @@ import { requireActiveSession } from "@/lib/session-guards";
  *
  * A malformed filter value is refused rather than ignored, so a typo never
  * silently widens the totals a club is forecasting from.
+ *
+ * `?order=<id>` (the link in the food officer's email) adds `linkedOrder`: that
+ * one order, whichever page it falls on, when the viewer may see it, and null
+ * otherwise. An order they may not see and one that does not exist answer the
+ * same null, so the parameter cannot confirm another member's order exists.
  */
 
 function parseFilters(
@@ -72,8 +78,12 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: filters.error }, { status: 400 });
   }
 
-  const [history, settings, lodges] = await Promise.all([
+  const linkedId = request.nextUrl.searchParams.get("order")?.trim() ?? "";
+  const [history, linkedOrder, settings, lodges] = await Promise.all([
     listFoodOrderHistory(guard.viewer, filters),
+    linkedId && linkedId.length <= 64
+      ? findFoodOrderHistoryRow(guard.viewer, linkedId)
+      : Promise.resolve(null),
     loadFoodOrderSettings(),
     prisma.lodge.findMany({
       orderBy: [{ isDefault: "desc" }, { name: "asc" }],
@@ -83,6 +93,7 @@ export async function GET(request: NextRequest) {
 
   return NextResponse.json({
     ...history,
+    linkedOrder,
     officerLabel: settings.officerLabel,
     lodges,
   });

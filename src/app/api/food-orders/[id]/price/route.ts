@@ -10,7 +10,7 @@ import {
   foodOrderAuditContext,
   requireFoodOrderViewer,
 } from "@/lib/food-order-route";
-import { isValidFoodOrderPriceCents } from "@/lib/food-order-rules";
+import { FOOD_ORDER_PRICE_CENTS_MAX } from "@/lib/food-order-rules";
 import { findFoodOrderForAction, setFoodOrderPrice } from "@/lib/food-orders";
 import { requireActiveSession } from "@/lib/session-guards";
 
@@ -19,16 +19,29 @@ import { requireActiveSession } from "@/lib/session-guards";
  *
  * The SAME rule as confirming receipt (`canManageFoodOrder`), and allowed on a
  * closed order too. The amount is integer cents, at least 0
- * (`isValidFoodOrderPriceCents`, INV-MONEY). It is a record only: nothing is
+ * (INV-MONEY, the `cents` schema below). It is a record only: nothing is
  * charged, invoiced, posted to the ledger or sent to Xero.
  *
  * Every change writes an audit row with who changed it and the old and new
- * amounts, in the same transaction as the change. The update is guarded on the
- * price this request read, so a concurrent edit answers 409 instead of being
- * recorded against the wrong old amount.
+ * amounts, in the same transaction as the change.
+ *
+ * STALE SCREENS ARE REFUSED. The client sends `expectedCents`, the price it was
+ * showing (null for none). If the stored price is no longer that, the request
+ * answers 409 and changes nothing, so a person never overwrites a price they
+ * have not seen. The update itself is guarded on the same amount
+ * (`setFoodOrderPrice`), which closes the gap between this read and the write.
  */
 
-const patchSchema = z.object({ priceCents: z.unknown() }).strict();
+// Integer cents, 0 to the integer-cents ceiling (INV-MONEY-001), the same
+// bounds the form checks with `isValidFoodOrderPriceCents`. `expectedCents` is required: null
+// means the screen showed no price.
+const cents = z.number().int().min(0).max(FOOD_ORDER_PRICE_CENTS_MAX);
+const patchSchema = z
+  .object({ priceCents: cents, expectedCents: cents.nullable() })
+  .strict();
+
+const STALE_PRICE =
+  "Somebody else changed this price just now. Reload to see it before changing it again.";
 
 export async function PATCH(
   request: NextRequest,
@@ -44,13 +57,13 @@ export async function PATCH(
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
   const parsed = patchSchema.safeParse(body);
-  if (!parsed.success || !isValidFoodOrderPriceCents(parsed.data.priceCents)) {
+  if (!parsed.success) {
     return NextResponse.json(
       { error: "Enter the price as an amount of zero or more." },
       { status: 400 },
     );
   }
-  const priceCents = parsed.data.priceCents;
+  const { priceCents, expectedCents } = parsed.data;
 
   const { id } = await params;
   const order = await findFoodOrderForAction(id);
@@ -67,23 +80,16 @@ export async function PATCH(
     );
   }
 
+  if (order.priceCents !== expectedCents) {
+    return NextResponse.json({ error: STALE_PRICE }, { status: 409 });
+  }
+
   const result = await setFoodOrderPrice(
-    {
-      orderId: order.id,
-      actorId: guard.memberId,
-      expectedCents: order.priceCents,
-      priceCents,
-    },
+    { orderId: order.id, actorId: guard.memberId, expectedCents, priceCents },
     foodOrderAuditContext(request),
   );
   if (result.outcome === "conflict") {
-    return NextResponse.json(
-      {
-        error:
-          "Somebody else changed this price just now. Reload to see it before changing it again.",
-      },
-      { status: 409 },
-    );
+    return NextResponse.json({ error: STALE_PRICE }, { status: 409 });
   }
   return NextResponse.json({ id: order.id, priceCents });
 }

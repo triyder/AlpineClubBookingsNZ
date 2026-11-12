@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { dateOnlyInstantOf, requireCalendarDate } from "@/lib/club-time";
 
-import { fakeDb, resetFakeDb } from "./support/food-order-fake-db";
+import { fakeDb, fakePrisma, resetFakeDb } from "./support/food-order-fake-db";
 
 /**
  * Fork #121: the food-order member routes end to end over an in-memory
@@ -170,9 +170,17 @@ const params = (id: string) => ({ params: Promise.resolve({ id }) });
 function receive(id: string) {
   return receivedPost(jsonRequest(`/api/food-orders/${id}/received`, "POST"), params(id));
 }
-function price(id: string, priceCents: unknown) {
+/**
+ * PATCH a price. `expectedCents` defaults to what is stored now — the screen is
+ * up to date — so each test states only what it is about.
+ */
+function price(id: string, priceCents: unknown, expectedCents?: unknown) {
+  const stored = fakeDb.orders.find((order) => order.id === id)?.priceCents ?? null;
   return pricePatch(
-    jsonRequest(`/api/food-orders/${id}/price`, "PATCH", { priceCents }),
+    jsonRequest(`/api/food-orders/${id}/price`, "PATCH", {
+      priceCents,
+      expectedCents: expectedCents === undefined ? stored : expectedCents,
+    }),
     params(id),
   );
 }
@@ -424,6 +432,47 @@ describe("recording the price", () => {
     });
   }
 
+  it("refuses a stale screen: the price it showed is no longer stored (409, nothing written)", async () => {
+    const order = seedOrder({ priceCents: 1000 });
+    mocks.session = ROLES.committee();
+    const res = await price(order.id, 2000, null);
+    expect(res.status).toBe(409);
+    expect(fakeDb.orders[0]?.priceCents).toBe(1000);
+    expect(fakeDb.audit).toHaveLength(0);
+  });
+
+  it("refuses a request without expectedCents, or with an invalid one", async () => {
+    const order = seedOrder();
+    mocks.session = ROLES.committee();
+    const noExpected = await pricePatch(
+      jsonRequest(`/api/food-orders/${order.id}/price`, "PATCH", { priceCents: 100 }),
+      params(order.id),
+    );
+    expect(noExpected.status).toBe(400);
+    expect((await price(order.id, 100, -5)).status).toBe(400);
+    expect((await price(order.id, 100, 1.5)).status).toBe(400);
+    expect(fakeDb.audit).toHaveLength(0);
+  });
+
+  it("a price changed between the route's read and its write answers 409 and writes no audit row", async () => {
+    const order = seedOrder({ priceCents: 1000 });
+    mocks.session = ROLES.committee();
+    // Another officer's save lands after this request read the order but
+    // before its guarded update runs.
+    const original = fakePrisma.foodOrder.updateMany;
+    const spy = vi
+      .spyOn(fakePrisma.foodOrder, "updateMany")
+      .mockImplementationOnce(async (args) => {
+        fakeDb.orders[0]!.priceCents = 1500;
+        return original(args);
+      });
+    const res = await price(order.id, 2000, 1000);
+    spy.mockRestore();
+    expect(res.status).toBe(409);
+    expect(fakeDb.orders[0]?.priceCents).toBe(1500);
+    expect(fakeDb.audit).toHaveLength(0);
+  });
+
   it("accepts zero cents", async () => {
     const order = seedOrder();
     mocks.session = ROLES.committee();
@@ -509,5 +558,34 @@ describe("the history", () => {
   it("refuses an organisation account", async () => {
     mocks.session = ROLES.organisation();
     expect((await history()).status).toBe(403);
+  });
+
+  describe("the emailed link (?order=)", () => {
+    it("returns the linked order even when it is not on the page shown", async () => {
+      for (let i = 0; i < 30; i += 1) {
+        seedOrder({ memberId: "bulk", neededBy: day("2026-12-01") });
+      }
+      mocks.session = ROLES.committee();
+      const target = fakeDb.orders.find((row) => row.memberId === "other-2")!;
+      const { body } = await history(`?order=${target.id}`);
+      expect(body.orders.some((row: { id: string }) => row.id === target.id)).toBe(false);
+      expect(body.linkedOrder).toMatchObject({ id: target.id, canManage: true });
+    });
+
+    it("returns the orderer their own order", async () => {
+      const own = fakeDb.orders.find((row) => row.memberId === "member-1")!;
+      const { body } = await history(`?order=${own.id}`);
+      expect(body.linkedOrder).toMatchObject({ id: own.id, isOwn: true, canManage: false });
+    });
+
+    it("shows nothing for an order the viewer may not see, exactly as for one that does not exist", async () => {
+      const other = fakeDb.orders.find((row) => row.memberId === "other-1")!;
+      const hidden = await history(`?order=${other.id}`);
+      const missing = await history("?order=no-such-order");
+      expect(hidden.status).toBe(200);
+      expect(hidden.body.linkedOrder).toBeNull();
+      expect(missing.body.linkedOrder).toBeNull();
+      expect(JSON.stringify(hidden.body)).not.toContain(other.id);
+    });
   });
 });

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { useClubFormat } from "@/components/club-format-provider";
 import { useClubTime } from "@/components/club-time-provider";
@@ -14,6 +14,7 @@ import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
 import {
   FOOD_ORDER_PRICE_CENTS_MAX,
   FOOD_ORDER_STATUS_LABELS,
+  isValidFoodOrderPriceCents,
   type FoodOrderStatusValue,
 } from "@/lib/food-order-rules";
 import { parseDecimalDollarsToCents } from "@/lib/money-input";
@@ -62,6 +63,12 @@ export function FoodOrderRow({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
+  // A reload brings the stored price; the box follows it rather than keeping
+  // what was typed against an older one.
+  useEffect(() => {
+    setPriceDraft(order.priceCents === null ? "" : formatCentsPlain(order.priceCents));
+  }, [order.priceCents]);
+
   async function markReceived() {
     setBusy(true);
     setError("");
@@ -69,6 +76,11 @@ export function FoodOrderRow({
       const res = await fetch(`/api/food-orders/${encodeURIComponent(order.id)}/received`, {
         method: "POST",
       });
+      if (res.status === 409) {
+        setError(await apiErrorMessageFromResponse(res, "This order changed. It has been reloaded."));
+        onChanged();
+        return;
+      }
       if (!res.ok) throw new Error(await apiErrorMessageFromResponse(res, "Could not mark it received."));
       onChanged();
     } catch (err) {
@@ -80,7 +92,7 @@ export function FoodOrderRow({
 
   async function savePrice() {
     const priceCents = parseDecimalDollarsToCents(priceDraft);
-    if (priceCents === null || priceCents > FOOD_ORDER_PRICE_CENTS_MAX) {
+    if (!isValidFoodOrderPriceCents(priceCents)) {
       setError("Enter the price as an amount of zero or more, such as 42.50.");
       return;
     }
@@ -90,8 +102,14 @@ export function FoodOrderRow({
       const res = await fetch(`/api/food-orders/${encodeURIComponent(order.id)}/price`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ priceCents }),
+        // The price this screen showed: the server refuses (409) if it changed.
+        body: JSON.stringify({ priceCents, expectedCents: order.priceCents }),
       });
+      if (res.status === 409) {
+        setError(await apiErrorMessageFromResponse(res, "This order changed. It has been reloaded."));
+        onChanged();
+        return;
+      }
       if (!res.ok) throw new Error(await apiErrorMessageFromResponse(res, "Could not save the price."));
       onChanged();
     } catch (err) {
@@ -101,12 +119,15 @@ export function FoodOrderRow({
     }
   }
 
-  const priceInputId = `food-order-price-${order.id}`;
+  // The linked copy of an order can sit above the same order in the list, so
+  // its element ids differ.
+  const domKey = highlighted ? `linked-${order.id}` : order.id;
+  const priceInputId = `food-order-price-${domKey}`;
   const parsedDraft = parseDecimalDollarsToCents(priceDraft);
   const priceDirty = parsedDraft !== order.priceCents;
 
   return (
-    <Card id={`food-order-${order.id}`} className={highlighted ? "ring-2 ring-primary" : undefined}>
+    <Card id={`food-order-${domKey}`} className={highlighted ? "ring-2 ring-primary" : undefined}>
       <CardContent className="space-y-3 pt-6">
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div>

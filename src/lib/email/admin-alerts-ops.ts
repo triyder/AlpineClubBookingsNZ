@@ -14,6 +14,7 @@ import {
   shouldSendDirectAdminSystemEmail,
 } from "./admin-alerts-shared";
 import { sendEmail } from "./core";
+import { FOOD_ORDER_NO_NOTE_TEXT } from "@/lib/food-order-rules";
 import { renderEmailHtml } from "@/lib/email-theme";
 import { describeServerVersionPause } from "@/lib/servernz-api-version";
 import logger from "@/lib/logger";
@@ -245,7 +246,8 @@ export async function sendFoodOrderPlacedEmail(data: {
       neededBy: data.neededBy,
       orderedBy: data.orderedBy,
       itemsText,
-      notes: data.notes ?? "",
+      // The same fallback the HTML shows, so an override reads correctly too.
+      notes: data.notes ?? FOOD_ORDER_NO_NOTE_TEXT,
       foodOrderUrl: data.foodOrderUrl,
     },
     // A food order is not linked to a booking (owner decision 9).

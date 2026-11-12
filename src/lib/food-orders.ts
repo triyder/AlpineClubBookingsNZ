@@ -6,8 +6,10 @@ import { FOOD_ORDER_HISTORY_PAGE_SIZE } from "@/lib/food-order-rules";
 import {
   canManageFoodOrder,
   canViewAllFoodOrders,
+  canViewFoodOrder,
   type FoodOrderViewer,
 } from "@/lib/food-order-access";
+import { memberName } from "@/lib/member-serialization";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -221,9 +223,97 @@ export type FoodOrderHistory = {
   priceTotalCents: number;
 };
 
-function memberName(member: { firstName: string; lastName: string } | null | undefined) {
-  if (!member) return null;
-  return `${member.firstName} ${member.lastName}`.trim() || null;
+function nameOrNull(member: { firstName: string; lastName: string } | null | undefined) {
+  return member ? memberName(member) || null : null;
+}
+
+/** The columns one history row is built from, shared by the list and the linked order. */
+const HISTORY_ROW_SELECT = {
+  id: true,
+  lodgeId: true,
+  memberId: true,
+  neededBy: true,
+  notes: true,
+  status: true,
+  receivedAt: true,
+  receivedById: true,
+  priceCents: true,
+  priceUpdatedAt: true,
+  priceUpdatedById: true,
+  createdAt: true,
+  lodge: { select: { name: true } },
+  member: { select: { firstName: true, lastName: true } },
+  items: {
+    orderBy: { sortOrder: "asc" },
+    select: { description: true, quantity: true },
+  },
+} satisfies Prisma.FoodOrderSelect;
+
+type HistoryRowRecord = Prisma.FoodOrderGetPayload<{ select: typeof HISTORY_ROW_SELECT }>;
+
+/**
+ * Shape stored rows for the viewer. receivedById / priceUpdatedById are
+ * snapshot ids, not relations, so their names are read in one batch.
+ */
+async function toHistoryRows(
+  viewer: FoodOrderViewer,
+  rows: readonly HistoryRowRecord[],
+): Promise<FoodOrderHistoryRow[]> {
+  const actorIds = [
+    ...new Set(
+      rows.flatMap((row) =>
+        [row.receivedById, row.priceUpdatedById].filter(
+          (id): id is string => typeof id === "string",
+        ),
+      ),
+    ),
+  ];
+  const actors = actorIds.length
+    ? await prisma.member.findMany({
+        where: { id: { in: actorIds } },
+        select: { id: true, firstName: true, lastName: true },
+      })
+    : [];
+  const actorName = new Map(actors.map((actor) => [actor.id, nameOrNull(actor)]));
+
+  return rows.map((row) => ({
+    id: row.id,
+    lodgeId: row.lodgeId,
+    lodgeName: row.lodge.name,
+    orderedBy: nameOrNull(row.member),
+    isOwn: row.memberId === viewer.memberId,
+    neededBy: row.neededBy,
+    notes: row.notes,
+    status: row.status,
+    items: row.items,
+    receivedAt: row.receivedAt,
+    receivedBy: row.receivedById ? (actorName.get(row.receivedById) ?? null) : null,
+    priceCents: row.priceCents,
+    priceUpdatedAt: row.priceUpdatedAt,
+    priceUpdatedBy: row.priceUpdatedById
+      ? (actorName.get(row.priceUpdatedById) ?? null)
+      : null,
+    createdAt: row.createdAt,
+    canManage: canManageFoodOrder(viewer, row),
+  }));
+}
+
+/**
+ * One order by id, for the link in the food officer's email: the row when the
+ * viewer may see it (their own, or any when they see all), and null otherwise —
+ * an order they may not see and one that does not exist answer the same.
+ */
+export async function findFoodOrderHistoryRow(
+  viewer: FoodOrderViewer,
+  orderId: string,
+): Promise<FoodOrderHistoryRow | null> {
+  const row = await prisma.foodOrder.findUnique({
+    where: { id: orderId },
+    select: HISTORY_ROW_SELECT,
+  });
+  if (!row || !canViewFoodOrder(viewer, row)) return null;
+  const [shaped] = await toHistoryRows(viewer, [row]);
+  return shaped ?? null;
 }
 
 /**
@@ -254,26 +344,7 @@ export async function listFoodOrderHistory(
       orderBy: [{ neededBy: "desc" }, { createdAt: "desc" }, { id: "asc" }],
       skip: (page - 1) * FOOD_ORDER_HISTORY_PAGE_SIZE,
       take: FOOD_ORDER_HISTORY_PAGE_SIZE,
-      select: {
-        id: true,
-        lodgeId: true,
-        memberId: true,
-        neededBy: true,
-        notes: true,
-        status: true,
-        receivedAt: true,
-        receivedById: true,
-        priceCents: true,
-        priceUpdatedAt: true,
-        priceUpdatedById: true,
-        createdAt: true,
-        lodge: { select: { name: true } },
-        member: { select: { firstName: true, lastName: true } },
-        items: {
-          orderBy: { sortOrder: "asc" },
-          select: { description: true, quantity: true },
-        },
-      },
+      select: HISTORY_ROW_SELECT,
     }),
     prisma.foodOrder.aggregate({
       where,
@@ -282,25 +353,6 @@ export async function listFoodOrderHistory(
     }),
   ]);
 
-  // receivedById / priceUpdatedById are snapshot ids, not relations, so their
-  // names are read in one batch for the page.
-  const actorIds = [
-    ...new Set(
-      rows.flatMap((row) =>
-        [row.receivedById, row.priceUpdatedById].filter(
-          (id): id is string => typeof id === "string",
-        ),
-      ),
-    ),
-  ];
-  const actors = actorIds.length
-    ? await prisma.member.findMany({
-        where: { id: { in: actorIds } },
-        select: { id: true, firstName: true, lastName: true },
-      })
-    : [];
-  const actorName = new Map(actors.map((actor) => [actor.id, memberName(actor)]));
-
   return {
     canViewAll,
     page,
@@ -308,26 +360,7 @@ export async function listFoodOrderHistory(
     orderCount: totals._count._all,
     pricedCount: totals._count.priceCents,
     priceTotalCents: totals._sum.priceCents ?? 0,
-    orders: rows.map((row) => ({
-      id: row.id,
-      lodgeId: row.lodgeId,
-      lodgeName: row.lodge.name,
-      orderedBy: memberName(row.member),
-      isOwn: row.memberId === viewer.memberId,
-      neededBy: row.neededBy,
-      notes: row.notes,
-      status: row.status,
-      items: row.items,
-      receivedAt: row.receivedAt,
-      receivedBy: row.receivedById ? (actorName.get(row.receivedById) ?? null) : null,
-      priceCents: row.priceCents,
-      priceUpdatedAt: row.priceUpdatedAt,
-      priceUpdatedBy: row.priceUpdatedById
-        ? (actorName.get(row.priceUpdatedById) ?? null)
-        : null,
-      createdAt: row.createdAt,
-      canManage: canManageFoodOrder(viewer, row),
-    })),
+    orders: await toHistoryRows(viewer, rows),
   };
 }
 

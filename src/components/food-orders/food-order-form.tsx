@@ -15,6 +15,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { compareCalendarDates, parseCalendarDate } from "@/lib/club-time";
 import {
   FOOD_ORDER_ITEM_DESCRIPTION_MAX_LENGTH,
   FOOD_ORDER_ITEM_QUANTITY_MAX,
@@ -97,7 +98,10 @@ export function FoodOrderForm({
       setError("Choose the lodge the food is for.");
       return;
     }
-    if (!neededBy || neededBy < today) {
+    // Compared as club calendar dates (INV-DATE), never as strings or instants.
+    const neededDay = parseCalendarDate(neededBy);
+    const todayDay = parseCalendarDate(today);
+    if (!neededDay || (todayDay && compareCalendarDates(neededDay, todayDay) < 0)) {
       setError("Choose the date the food is needed by: today or later.");
       return;
     }
@@ -151,8 +155,8 @@ export function FoodOrderForm({
           onChange={(event) => setNeededBy(event.target.value)}
         />
         <p className="text-xs text-muted-foreground">
-          The {officerLabel.toLowerCase()} matches your order to your stay by the
-          lodge and this date.
+          Your order goes to the club&apos;s {officerLabel}, who matches it to
+          your stay by the lodge and this date.
         </p>
       </div>
 
