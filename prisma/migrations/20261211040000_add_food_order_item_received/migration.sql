@@ -5,8 +5,8 @@
 -- and by the same person.
 
 -- AlterTable
-ALTER TABLE "FoodOrderItem" ADD COLUMN     "receivedAt" TIMESTAMP(3),
-ADD COLUMN     "receivedById" TEXT;
+ALTER TABLE "FoodOrderItem" ADD COLUMN IF NOT EXISTS "receivedAt" TIMESTAMP(3),
+ADD COLUMN IF NOT EXISTS "receivedById" TEXT;
 
 -- Backfill: only items of RECEIVED orders that have no item-level mark yet.
 UPDATE "FoodOrderItem" i
