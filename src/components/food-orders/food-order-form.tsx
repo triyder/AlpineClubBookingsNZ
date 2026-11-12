@@ -216,21 +216,23 @@ export function FoodOrderForm({
               </div>
               <div className="space-y-1">
                 <Label htmlFor={typeId}>Type</Label>
-                <select
-                  id={typeId}
+                <Select
                   value={line.unit}
-                  onChange={(event) => {
-                    const unit = event.target.value;
+                  onValueChange={(unit) => {
                     if (isFoodOrderUnit(unit)) updateLine(line.key, { unit });
                   }}
-                  className="flex h-11 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm text-foreground shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
-                  {FOOD_ORDER_UNITS.map((unit) => (
-                    <option key={unit} value={unit}>
-                      {foodOrderUnitLabel(line.quantity, unit)}
-                    </option>
-                  ))}
-                </select>
+                  <SelectTrigger id={typeId} className="h-11">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {FOOD_ORDER_UNITS.map((unit) => (
+                      <SelectItem key={unit} value={unit}>
+                        {foodOrderUnitLabel(line.quantity, unit)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
               <Button
                 type="button"
