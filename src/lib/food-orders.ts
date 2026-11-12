@@ -1,8 +1,12 @@
 import type { FoodOrderStatus, Prisma } from "@prisma/client";
 
 import { createAuditLog } from "@/lib/audit";
-import type { FoodOrderItemInput } from "@/lib/food-order-rules";
-import { FOOD_ORDER_HISTORY_PAGE_SIZE } from "@/lib/food-order-rules";
+import {
+  FOOD_ORDER_HISTORY_PAGE_SIZE,
+  formatFoodOrderQuantity,
+  normaliseStoredFoodOrderQuantity,
+  type FoodOrderUnitValue,
+} from "@/lib/food-order-rules";
 import {
   canManageFoodOrder,
   canViewAllFoodOrders,
@@ -36,7 +40,8 @@ export async function createFoodOrder(
     /** The club calendar day, as a `@db.Date` instant (`dateOnlyInstantOf`). */
     neededBy: Date;
     notes: string | null;
-    items: readonly FoodOrderItemInput[];
+    /** Already validated: quantity normalised by `parseFoodOrderQuantity`. */
+    items: ReadonlyArray<{ description: string; quantity: string; unit: FoodOrderUnitValue }>;
   },
   context: AuditContext,
 ): Promise<{ id: string }> {
@@ -50,7 +55,9 @@ export async function createFoodOrder(
         items: {
           create: input.items.map((item, index) => ({
             description: item.description.trim(),
+            // A decimal string ("0.5"): Prisma writes it exactly, never via a float.
             quantity: item.quantity,
+            unit: item.unit,
             sortOrder: index,
           })),
         },
@@ -129,7 +136,7 @@ export async function markFoodOrderItemsReceived(
           receivedAt: null,
         },
         orderBy: { sortOrder: "asc" },
-        select: { id: true, description: true },
+        select: { id: true, description: true, quantity: true, unit: true },
       });
       if (toMark.length === 0) throw new NothingToMark();
 
@@ -154,7 +161,11 @@ export async function markFoodOrderItemsReceived(
           entityType: "FoodOrder",
           entityId: input.orderId,
           details: JSON.stringify({
-            items: toMark.map((item) => ({ id: item.id, description: item.description })),
+            items: toMark.map((item) => ({
+              id: item.id,
+              description: item.description,
+              quantity: formatFoodOrderQuantity(storedQuantity(item.quantity), item.unit),
+            })),
             markedCount: toMark.length,
             remaining,
           }),
@@ -283,7 +294,9 @@ export type FoodOrderHistoryRow = {
   items: Array<{
     id: string;
     description: string;
-    quantity: number;
+    /** Normalised decimal text ("0.5", "2"), never a float. */
+    quantity: string;
+    unit: FoodOrderUnitValue;
     receivedAt: Date | null;
     receivedBy: string | null;
   }>;
@@ -309,6 +322,16 @@ export type FoodOrderHistory = {
   /** The sum of recorded prices across the filter, in cents. */
   priceTotalCents: number;
 };
+
+/**
+ * A stored `Decimal(7,2)` as normalised text: `toFixed(2)` is Decimal.js's exact
+ * rendering, then the shared normaliser drops trailing zeros. No float.
+ */
+export function storedQuantity(value: Prisma.Decimal | string): string {
+  return normaliseStoredFoodOrderQuantity(
+    typeof value === "string" ? value : value.toFixed(2),
+  );
+}
 
 function nameOrNull(member: { firstName: string; lastName: string } | null | undefined) {
   return member ? memberName(member) || null : null;
@@ -336,6 +359,7 @@ const HISTORY_ROW_SELECT = {
       id: true,
       description: true,
       quantity: true,
+      unit: true,
       receivedAt: true,
       receivedById: true,
     },
@@ -383,7 +407,8 @@ async function toHistoryRows(
     items: row.items.map((item) => ({
       id: item.id,
       description: item.description,
-      quantity: item.quantity,
+      quantity: storedQuantity(item.quantity),
+      unit: item.unit,
       receivedAt: item.receivedAt,
       receivedBy: item.receivedById ? (actorName.get(item.receivedById) ?? null) : null,
     })),

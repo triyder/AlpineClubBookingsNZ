@@ -29,6 +29,7 @@ import addXeroConnection from "./20261124010000_add_xero_connection";
 import memberMoneyApplications from "./20261210080000_member_money_applications";
 import memberMoneyJournal from "./20261127010000_member_money_journal";
 import addFoodOrderItemReceived from "./20261211040000_add_food_order_item_received";
+import foodOrderItemUnit from "./20261211050000_food_order_item_unit";
 import type { DataMigrationVerification } from "./types";
 
 /**
@@ -80,4 +81,5 @@ export const DATA_MIGRATION_VERIFICATIONS: DataMigrationVerification[] = [
   memberMoneyJournal,
   memberMoneyApplications,
   addFoodOrderItemReceived,
+  foodOrderItemUnit,
 ];

@@ -15,7 +15,9 @@
 export type FakeFoodOrderItem = {
   id: string;
   description: string;
-  quantity: number;
+  /** Decimal text, as the service writes it ("0.5"). */
+  quantity: string;
+  unit: string;
   sortOrder: number;
   receivedAt: Date | null;
   receivedById: string | null;
@@ -86,10 +88,11 @@ function projectOrder(order: FakeFoodOrder) {
     member,
     items: [...order.items]
       .sort((a, b) => a.sortOrder - b.sortOrder)
-      .map(({ id, description, quantity, receivedAt, receivedById }) => ({
+      .map(({ id, description, quantity, unit, receivedAt, receivedById }) => ({
         id,
         description,
         quantity,
+        unit,
         receivedAt,
         receivedById,
       })),
@@ -101,7 +104,7 @@ const foodOrder = {
     data,
   }: {
     data: Record<string, unknown> & {
-      items: { create: Array<{ description: string; quantity: number; sortOrder: number }> };
+      items: { create: Array<{ description: string; quantity: string; unit: string; sortOrder: number }> };
     };
   }) => {
     const id = `order-${fakeDb.nextId++}`;
@@ -181,7 +184,7 @@ const foodOrderItem = {
   findMany: async ({ where }: { where: ItemWhere }) =>
     itemRows(where)
       .sort((a, b) => a.sortOrder - b.sortOrder)
-      .map(({ id, description }) => ({ id, description })),
+      .map(({ id, description, quantity, unit }) => ({ id, description, quantity, unit })),
   updateMany: async ({
     where,
     data,

@@ -4,6 +4,7 @@ import { clubTime } from "@/lib/club-time/server";
 import { sendFoodOrderPlacedEmail } from "@/lib/email";
 import { loadFoodOrderSettings } from "@/lib/food-order-settings";
 import { memberDisplayName } from "@/lib/member-serialization";
+import { storedQuantity } from "@/lib/food-orders";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -36,7 +37,7 @@ export async function notifyFoodOfficerOfOrder(
         member: { select: { firstName: true, lastName: true, email: true } },
         items: {
           orderBy: { sortOrder: "asc" },
-          select: { description: true, quantity: true },
+          select: { description: true, quantity: true, unit: true },
         },
       },
     }),
@@ -57,7 +58,11 @@ export async function notifyFoodOfficerOfOrder(
     lodgeName: order.lodge.name,
     neededBy: formatStayDate(order.neededBy, club.format),
     orderedBy,
-    items: order.items,
+    items: order.items.map((item) => ({
+      description: item.description,
+      quantity: storedQuantity(item.quantity),
+      unit: item.unit,
+    })),
     notes: order.notes,
     // Built from our own origin and the order id only (`sameOrigin` in the
     // template): a member cannot put a link of their choosing in the email.

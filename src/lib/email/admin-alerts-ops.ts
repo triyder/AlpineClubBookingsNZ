@@ -14,7 +14,11 @@ import {
   shouldSendDirectAdminSystemEmail,
 } from "./admin-alerts-shared";
 import { sendEmail } from "./core";
-import { FOOD_ORDER_NO_NOTE_TEXT } from "@/lib/food-order-rules";
+import {
+  FOOD_ORDER_NO_NOTE_TEXT,
+  formatFoodOrderItemLine,
+  type FoodOrderUnitValue,
+} from "@/lib/food-order-rules";
 import { renderEmailHtml } from "@/lib/email-theme";
 import { describeServerVersionPause } from "@/lib/servernz-api-version";
 import logger from "@/lib/logger";
@@ -223,7 +227,7 @@ export async function sendFoodOrderPlacedEmail(data: {
   lodgeName: string;
   neededBy: string;
   orderedBy: string;
-  items: Array<{ description: string; quantity: number }>;
+  items: Array<{ description: string; quantity: string; unit: FoodOrderUnitValue }>;
   notes: string | null;
   foodOrderUrl: string;
 }) {
@@ -232,7 +236,7 @@ export async function sendFoodOrderPlacedEmail(data: {
   }
 
   const itemsText = data.items
-    .map((item) => `${item.quantity} x ${item.description}`)
+    .map((item) => formatFoodOrderItemLine(item))
     .join("\n");
 
   await sendEmail({

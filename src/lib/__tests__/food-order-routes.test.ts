@@ -141,7 +141,8 @@ function seedItems(orderId: string, descriptions: string[]) {
   return descriptions.map((description, index) => ({
     id: `${orderId}-item-${index}`,
     description,
-    quantity: 1,
+    quantity: "1",
+    unit: "ITEMS",
     sortOrder: index,
     receivedAt: null as Date | null,
     receivedById: null as string | null,
@@ -212,14 +213,19 @@ function price(id: string, priceCents: unknown, expectedCents?: unknown) {
   );
 }
 
+/** One order line as the form sends it. */
+function line(description: string, quantity = "1", unit = "ITEMS") {
+  return { description, quantity, unit };
+}
+
 const VALID_ORDER = {
   lodgeId: "lodge-a",
   neededBy: "2026-07-03",
   notes: "For the work party",
   items: [
-    { description: "1 kg bags of flour", quantity: 3 },
-    { description: "Dozen eggs", quantity: 2 },
-    { description: "Coffee", quantity: 1 },
+    { description: "Flour", quantity: "1.5", unit: "KILOGRAMS" },
+    { description: "Dozen eggs", quantity: "2", unit: "ITEMS" },
+    { description: "Wholemeal", quantity: "1", unit: "LOAVES" },
   ],
 };
 function placeOrder(body: unknown = VALID_ORDER) {
@@ -312,10 +318,10 @@ describe("placing an order", () => {
     expect(stored.status).toBe("OPEN");
     expect(stored.memberId).toBe("member-1");
     expect(stored.neededBy.toISOString()).toBe("2026-07-03T00:00:00.000Z");
-    expect(stored.items.map((item) => [item.description, item.quantity])).toEqual([
-      ["1 kg bags of flour", 3],
-      ["Dozen eggs", 2],
-      ["Coffee", 1],
+    expect(stored.items.map((item) => [item.description, item.quantity, item.unit])).toEqual([
+      ["Flour", "1.5", "KILOGRAMS"],
+      ["Dozen eggs", "2", "ITEMS"],
+      ["Wholemeal", "1", "LOAVES"],
     ]);
     expect(fakeDb.audit.map((row) => row.action)).toEqual(["food_order.placed"]);
 
@@ -324,15 +330,10 @@ describe("placing an order", () => {
     expect(email.to).toBe("food@club.test");
     expect(email.lodgeName).toBe("Lodge A");
     expect(email.notes).toBe("For the work party");
-    // The fake ignores Prisma's select, so compare the two fields the email uses.
-    expect(
-      (email.items as Array<{ description: string; quantity: number }>).map(
-        ({ description, quantity }) => ({ description, quantity }),
-      ),
-    ).toEqual([
-      { description: "1 kg bags of flour", quantity: 3 },
-      { description: "Dozen eggs", quantity: 2 },
-      { description: "Coffee", quantity: 1 },
+    expect(email.items).toEqual([
+      { description: "Flour", quantity: "1.5", unit: "KILOGRAMS" },
+      { description: "Dozen eggs", quantity: "2", unit: "ITEMS" },
+      { description: "Wholemeal", quantity: "1", unit: "LOAVES" },
     ]);
     expect(String(email.foodOrderUrl)).toContain(`/food-orders?order=${stored.id}`);
   });
@@ -361,14 +362,21 @@ describe("placing an order", () => {
       "51 items",
       {
         ...VALID_ORDER,
-        items: Array.from({ length: 51 }, (_, i) => ({ description: `Item ${i}`, quantity: 1 })),
+        items: Array.from({ length: 51 }, (_, i) => line(`Item ${i}`)),
       },
     ],
-    ["an empty description", { ...VALID_ORDER, items: [{ description: "   ", quantity: 1 }] }],
-    ["a 201-character description", { ...VALID_ORDER, items: [{ description: "x".repeat(201), quantity: 1 }] }],
-    ["quantity 0", { ...VALID_ORDER, items: [{ description: "Milk", quantity: 0 }] }],
-    ["quantity 1000", { ...VALID_ORDER, items: [{ description: "Milk", quantity: 1000 }] }],
-    ["a fractional quantity", { ...VALID_ORDER, items: [{ description: "Milk", quantity: 1.5 }] }],
+    ["an empty description", { ...VALID_ORDER, items: [line("   ")] }],
+    ["a 201-character description", { ...VALID_ORDER, items: [line("x".repeat(201))] }],
+    ["quantity 0", { ...VALID_ORDER, items: [line("Milk", "0")] }],
+    ["quantity 0.00", { ...VALID_ORDER, items: [line("Milk", "0.00")] }],
+    ["a negative quantity", { ...VALID_ORDER, items: [line("Milk", "-1")] }],
+    ["three decimal places", { ...VALID_ORDER, items: [line("Milk", "1.005")] }],
+    ["more than 99999.99", { ...VALID_ORDER, items: [line("Milk", "100000")] }],
+    ["an exponent", { ...VALID_ORDER, items: [line("Milk", "1e3")] }],
+    ["NaN", { ...VALID_ORDER, items: [line("Milk", "NaN")] }],
+    ["a JSON number, not a string", { ...VALID_ORDER, items: [{ description: "Milk", quantity: 1.5, unit: "ITEMS" }] }],
+    ["an unknown type", { ...VALID_ORDER, items: [line("Milk", "1", "CRATES")] }],
+    ["no type", { ...VALID_ORDER, items: [{ description: "Milk", quantity: "1" }] }],
     ["yesterday as needed-by", { ...VALID_ORDER, neededBy: "2026-06-30" }],
     ["a malformed date", { ...VALID_ORDER, neededBy: "2026-13-01" }],
     ["an inactive or unknown lodge", { ...VALID_ORDER, lodgeId: "nowhere" }],
@@ -382,14 +390,34 @@ describe("placing an order", () => {
     });
   }
 
-  it("accepts the boundaries: 50 items, quantities 1 and 999, and today as needed-by", async () => {
-    const items = Array.from({ length: 50 }, (_, i) => ({
-      description: `Item ${i}`,
-      quantity: i === 0 ? 999 : 1,
-    }));
+  it("accepts the boundaries: 50 items, 0.01 and 99999.99, and today as needed-by", async () => {
+    const items = Array.from({ length: 50 }, (_, i) =>
+      line(`Item ${i}`, i === 0 ? "99999.99" : i === 1 ? "0.01" : "1"),
+    );
     const res = await placeOrder({ ...VALID_ORDER, neededBy: "2026-07-01", items });
     expect(res.status).toBe(201);
     expect(fakeDb.orders[0]?.items).toHaveLength(50);
+    expect(fakeDb.orders[0]?.items.slice(0, 2).map((item) => item.quantity)).toEqual([
+      "99999.99",
+      "0.01",
+    ]);
+  });
+
+  it("stores a decimal quantity normalised, and it round-trips to the history as text", async () => {
+    mocks.session = ROLES.committee();
+    const res = await placeOrder({
+      ...VALID_ORDER,
+      items: [line("Rice", "0.50", "PACKETS"), line("Flour", "250.00", "GRAMS")],
+    });
+    expect(res.status).toBe(201);
+    expect(fakeDb.orders[0]?.items.map((item) => item.quantity)).toEqual(["0.5", "250"]);
+    const history = await (await historyGet(jsonRequest("/api/food-orders/history", "GET"))).json();
+    expect(
+      history.orders[0].items.map((item: { quantity: string; unit: string }) => [item.quantity, item.unit]),
+    ).toEqual([
+      ["0.5", "PACKETS"],
+      ["250", "GRAMS"],
+    ]);
   });
 
   it("is rate limited per member", async () => {
@@ -460,8 +488,8 @@ describe("receiving items (a checklist)", () => {
     expect(fakeDb.audit.map((row) => row.action)).toEqual(["food_order.items_received"]);
     expect(JSON.parse(fakeDb.audit[0]!.details ?? "{}")).toEqual({
       items: [
-        { id: `${order.id}-item-0`, description: "Bread" },
-        { id: `${order.id}-item-2`, description: "Eggs" },
+        { id: `${order.id}-item-0`, description: "Bread", quantity: "1 Item" },
+        { id: `${order.id}-item-2`, description: "Eggs", quantity: "1 Item" },
       ],
       markedCount: 2,
       remaining: 3,

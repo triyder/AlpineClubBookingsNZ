@@ -9280,13 +9280,31 @@ model FoodOrder {
   @@index([memberId])
 }
 
-/// One line of a food order: a description and a whole-number quantity.
-/// 1-50 lines per order, 1-999 each, units in the description.
+/// The unit a food-order quantity is counted in (owner change, 13 Nov 2026).
+/// Labels, singular and plural, live in src/lib/food-order-rules.ts.
+enum FoodOrderUnit {
+  ITEMS
+  GRAMS
+  KILOGRAMS
+  LITERS
+  LOAVES
+  PACKETS
+  BOTTLES
+  BAGS
+  BOXES
+  PUNNETS
+  MILLILITERS
+}
+
+/// One line of a food order: a description, a quantity and its unit.
+/// 1-50 lines per order; the quantity is more than 0 and at most 99999.99,
+/// to two decimal places (grams need more than 999).
 model FoodOrderItem {
-  id          String @id @default(cuid())
+  id          String        @id @default(cuid())
   foodOrderId String
-  description String @db.VarChar(200)
-  quantity    Int
+  description String        @db.VarChar(200)
+  quantity    Decimal       @db.Decimal(7, 2)
+  unit        FoodOrderUnit @default(ITEMS)
   sortOrder   Int
 
   /// Set once when this line is ticked received (owner change, 13 Nov 2026:

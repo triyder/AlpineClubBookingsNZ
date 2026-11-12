@@ -14,11 +14,13 @@ import {
 } from "@/lib/food-order-route";
 import {
   FOOD_ORDER_ITEM_DESCRIPTION_MAX_LENGTH,
+  DEFAULT_FOOD_ORDER_UNIT,
   FOOD_ORDER_ITEM_QUANTITY_MAX,
-  FOOD_ORDER_ITEM_QUANTITY_MIN,
   FOOD_ORDER_MAX_ITEMS,
   FOOD_ORDER_NOTES_MAX_LENGTH,
   foodOrderItemsProblem,
+  isFoodOrderUnit,
+  parseFoodOrderQuantity,
 } from "@/lib/food-order-rules";
 import { foodOfficerEmail, loadFoodOrderSettings } from "@/lib/food-order-settings";
 import { createFoodOrder } from "@/lib/food-orders";
@@ -55,7 +57,12 @@ const postSchema = z
             description: z
               .string()
               .max(FOOD_ORDER_ITEM_DESCRIPTION_MAX_LENGTH * 2),
-            quantity: z.number(),
+            // A decimal STRING ("0.5"), parsed strictly by
+            // `parseFoodOrderQuantity` in `foodOrderItemsProblem`; a JSON
+            // number is refused so no float ever carries a quantity.
+            quantity: z.string().max(16),
+            // Required: the form sends its default, Items.
+            unit: z.string().max(20),
           })
           .strict(),
       )
@@ -87,7 +94,6 @@ export async function GET() {
     limits: {
       maxItems: FOOD_ORDER_MAX_ITEMS,
       descriptionMaxLength: FOOD_ORDER_ITEM_DESCRIPTION_MAX_LENGTH,
-      quantityMin: FOOD_ORDER_ITEM_QUANTITY_MIN,
       quantityMax: FOOD_ORDER_ITEM_QUANTITY_MAX,
       notesMaxLength: FOOD_ORDER_NOTES_MAX_LENGTH,
     },
@@ -161,7 +167,12 @@ export async function POST(request: NextRequest) {
         lodgeId: lodge.id,
         neededBy: dateOnlyInstantOf(neededBy),
         notes,
-        items: parsed.data.items,
+        // Validated above, so the parse and the unit check both hold here.
+        items: parsed.data.items.map((item) => ({
+          description: item.description,
+          quantity: parseFoodOrderQuantity(item.quantity) ?? item.quantity,
+          unit: isFoodOrderUnit(item.unit) ? item.unit : DEFAULT_FOOD_ORDER_UNIT,
+        })),
       },
       foodOrderAuditContext(request),
     );

@@ -22,7 +22,11 @@ import {
   paragraph,
 } from "./layout";
 import { emailPalette } from "@/lib/email-theme";
-import { FOOD_ORDER_NO_NOTE_TEXT } from "@/lib/food-order-rules";
+import {
+  FOOD_ORDER_NO_NOTE_TEXT,
+  formatFoodOrderItemLine,
+  type FoodOrderUnitValue,
+} from "@/lib/food-order-rules";
 import { describeServerVersionPause } from "@/lib/servernz-api-version";
 
 // ---- N-13: Admin Daily Digest ----
@@ -217,7 +221,7 @@ export function foodOrderPlacedTemplate(data: {
   lodgeName: string;
   neededBy: string;
   orderedBy: string;
-  items: Array<{ description: string; quantity: number }>;
+  items: Array<{ description: string; quantity: string; unit: FoodOrderUnitValue }>;
   notes: string | null;
   foodOrderUrl: string;
 }): string {
@@ -238,7 +242,8 @@ export function foodOrderPlacedTemplate(data: {
     ${infoTable(
       data.items.map((item, index) => ({
         label: `Item ${index + 1}`,
-        value: `${item.quantity} &times; ${escapeHtml(item.description)}`,
+        // The one line format (`formatFoodOrderItemLine`), escaped whole.
+        value: escapeHtml(formatFoodOrderItemLine(item)),
       })),
     )}
     ${data.notes ? multilineBlock(escapeHtml(data.notes)) : paragraph(FOOD_ORDER_NO_NOTE_TEXT)}

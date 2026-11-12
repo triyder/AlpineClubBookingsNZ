@@ -36,8 +36,9 @@ const ORDER = {
   neededBy: "3 July 2026",
   orderedBy: "Mere Member",
   items: [
-    { description: "1 kg bags of flour", quantity: 3 },
-    { description: "<b>Eggs</b>", quantity: 12 },
+    { description: "Flour", quantity: "1.5", unit: "KILOGRAMS" as const },
+    { description: "<b>Eggs</b>", quantity: "12", unit: "ITEMS" as const },
+    { description: "Wholemeal", quantity: "1", unit: "LOAVES" as const },
   ],
   notes: "Leave at the back door",
   foodOrderUrl: "https://club.example.test/food-orders?order=order-1",
@@ -60,8 +61,11 @@ describe("sendFoodOrderPlacedEmail", () => {
     expect(args.templateName).toBe("food-order-placed");
     expect(args.bookingContext).toBe("none");
     expect(args.idempotencyKey).toBe("food-order-placed:order-1");
-    expect(args.templateData.itemsText).toBe("3 x 1 kg bags of flour\n12 x <b>Eggs</b>");
-    expect(args.html).toContain("1 kg bags of flour");
+    // The one shared line format, singular only for exactly 1.
+    expect(args.templateData.itemsText).toBe(
+      "1.5 Kilograms — Flour\n12 Items — <b>Eggs</b>\n1 Loaf — Wholemeal",
+    );
+    expect(args.html).toContain("1.5 Kilograms — Flour");
     expect(args.html).toContain("&lt;b&gt;Eggs&lt;/b&gt;");
     expect(args.html).not.toContain("<b>Eggs</b>");
     expect(args.html).toContain("Leave at the back door");
@@ -78,7 +82,8 @@ describe("food-order-placed template", () => {
   it("renders each item as quantity and description", () => {
     const html = foodOrderPlacedTemplate(ORDER);
     expect(html).toContain("Item 1");
-    expect(html).toContain("3 &times; 1 kg bags of flour");
+    expect(html).toContain("1.5 Kilograms — Flour");
+    expect(html).toContain("1 Loaf — Wholemeal");
     expect(html).toContain("Item 2");
   });
 
