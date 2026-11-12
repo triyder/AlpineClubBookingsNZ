@@ -5,6 +5,7 @@ import { Check } from "lucide-react";
 import { useClubTime } from "@/components/club-time-provider";
 import { Checkbox } from "@/components/ui/checkbox";
 import { requireInstant } from "@/lib/club-time";
+import { formatFoodOrderItemLine, type FoodOrderUnitValue } from "@/lib/food-order-rules";
 
 /**
  * A food order's item lines (fork #121; owner change, 13 Nov 2026: food can
@@ -20,7 +21,8 @@ import { requireInstant } from "@/lib/club-time";
 export type FoodOrderItemView = {
   id: string;
   description: string;
-  quantity: number;
+  quantity: string;
+  unit: FoodOrderUnitValue;
   receivedAt: string | null;
   receivedBy: string | null;
 };
@@ -63,7 +65,7 @@ export function FoodOrderItems({
               <span className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
             )}
             <span>
-              {item.quantity} × {item.description}
+              {formatFoodOrderItemLine(item)}
               <ReceivedNote item={item} />
             </span>
           </li>
@@ -89,7 +91,7 @@ export function FoodOrderItems({
               />
             </span>
             <label htmlFor={inputId} className="leading-snug">
-              {item.quantity} × {item.description}
+              {formatFoodOrderItemLine(item)}
               <ReceivedNote item={item} />
             </label>
           </div>

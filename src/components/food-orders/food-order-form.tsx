@@ -18,16 +18,22 @@ import { Textarea } from "@/components/ui/textarea";
 import { compareCalendarDates, parseCalendarDate } from "@/lib/club-time";
 import {
   FOOD_ORDER_ITEM_DESCRIPTION_MAX_LENGTH,
-  FOOD_ORDER_ITEM_QUANTITY_MAX,
-  FOOD_ORDER_ITEM_QUANTITY_MIN,
+  DEFAULT_FOOD_ORDER_UNIT,
+  FOOD_ORDER_UNITS,
   FOOD_ORDER_MAX_ITEMS,
   FOOD_ORDER_NOTES_MAX_LENGTH,
   foodOrderItemsProblem,
+  foodOrderUnitLabel,
+  isFoodOrderUnit,
+  parseFoodOrderQuantity,
+  type FoodOrderUnitValue,
 } from "@/lib/food-order-rules";
 
 /**
- * The Order food form (fork #121). One line per item, each a description and a
- * whole-number quantity, with Add item and Remove; at least one line.
+ * The Order food form (fork #121). One line per item — a description, a
+ * decimal quantity and its Type (owner change, 13 Nov 2026), whose labels are
+ * singular when the quantity is exactly 1 — with Add item and Remove; at least
+ * one line.
  *
  * The limits and the item rule are imported from `food-order-rules`, the same
  * module the create route validates with, so the form cannot accept something
@@ -39,10 +45,15 @@ export type FoodOrderFormSubmission = {
   lodgeId: string;
   neededBy: string;
   notes: string;
-  items: Array<{ description: string; quantity: number }>;
+  /** Quantity as normalised decimal text ("0.5"), never a float. */
+  items: Array<{ description: string; quantity: string; unit: FoodOrderUnitValue }>;
 };
 
-type Line = { key: number; description: string; quantity: string };
+type Line = { key: number; description: string; quantity: string; unit: FoodOrderUnitValue };
+
+function blankLine(key: number): Line {
+  return { key, description: "", quantity: "1", unit: DEFAULT_FOOD_ORDER_UNIT };
+}
 
 export function FoodOrderForm({
   lodges,
@@ -59,9 +70,7 @@ export function FoodOrderForm({
   const [lodgeId, setLodgeId] = useState(lodges.length === 1 ? (lodges[0]?.id ?? "") : "");
   const [neededBy, setNeededBy] = useState("");
   const [notes, setNotes] = useState("");
-  const [lines, setLines] = useState<Line[]>([
-    { key: 0, description: "", quantity: "1" },
-  ]);
+  const [lines, setLines] = useState<Line[]>([blankLine(0)]);
   const [nextKey, setNextKey] = useState(1);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -74,10 +83,7 @@ export function FoodOrderForm({
 
   function addLine() {
     if (lines.length >= FOOD_ORDER_MAX_ITEMS) return;
-    setLines((current) => [
-      ...current,
-      { key: nextKey, description: "", quantity: "1" },
-    ]);
+    setLines((current) => [...current, blankLine(nextKey)]);
     setNextKey((key) => key + 1);
   }
 
@@ -88,11 +94,12 @@ export function FoodOrderForm({
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
     setError("");
-    const items = lines.map((line) => ({
+    // The shared rule decides (`foodOrderItemsProblem` and its
+    // `parseFoodOrderQuantity`); the quantity stays text throughout.
+    const lineInputs = lines.map((line) => ({
       description: line.description.trim(),
-      quantity: /^\d+$/.test(line.quantity.trim())
-        ? Number(line.quantity.trim())
-        : Number.NaN,
+      quantity: line.quantity,
+      unit: line.unit,
     }));
     if (!lodgeId) {
       setError("Choose the lodge the food is for.");
@@ -105,11 +112,15 @@ export function FoodOrderForm({
       setError("Choose the date the food is needed by: today or later.");
       return;
     }
-    const problem = foodOrderItemsProblem(items);
+    const problem = foodOrderItemsProblem(lineInputs);
     if (problem) {
       setError(problem);
       return;
     }
+    const items = lineInputs.map((line) => ({
+      ...line,
+      quantity: parseFoodOrderQuantity(line.quantity) ?? line.quantity,
+    }));
     setSubmitting(true);
     try {
       await onSubmit({ lodgeId, neededBy, notes: notes.trim(), items });
@@ -163,52 +174,78 @@ export function FoodOrderForm({
       <fieldset className="space-y-3">
         <legend className="text-sm font-medium">Items</legend>
         <p className="text-xs text-muted-foreground">
-          One line per item. Put the unit in the description, for example
-          &quot;1 kg bags of flour&quot;, and a whole number from{" "}
-          {FOOD_ORDER_ITEM_QUANTITY_MIN} to {FOOD_ORDER_ITEM_QUANTITY_MAX} as the
-          quantity.
+          One line per item: what it is, how many or how much (more than 0, up to
+          two decimal places, for example 0.5 or 250), and its type.
         </p>
-        {lines.map((line, index) => (
-          <div key={line.key} className="flex items-end gap-2">
-            <div className="flex-1 space-y-1">
-              <Label htmlFor={`food-item-description-${line.key}`}>
-                Item {index + 1}
-              </Label>
-              <Input
-                id={`food-item-description-${line.key}`}
-                className="h-11"
-                maxLength={FOOD_ORDER_ITEM_DESCRIPTION_MAX_LENGTH}
-                value={line.description}
-                onChange={(event) =>
-                  updateLine(line.key, { description: event.target.value })
-                }
-              />
-            </div>
-            <div className="w-20 space-y-1">
-              <Label htmlFor={`food-item-quantity-${line.key}`}>Quantity</Label>
-              <Input
-                id={`food-item-quantity-${line.key}`}
-                className="h-11"
-                inputMode="numeric"
-                value={line.quantity}
-                onChange={(event) =>
-                  updateLine(line.key, { quantity: event.target.value })
-                }
-              />
-            </div>
-            <Button
-              type="button"
-              variant="outline"
-              className="h-11"
-              onClick={() => removeLine(line.key)}
-              disabled={lines.length <= 1}
-              aria-label={`Remove item ${index + 1}`}
+        {lines.map((line, index) => {
+          const typeId = `food-item-type-${line.key}`;
+          return (
+            <div
+              key={line.key}
+              className="grid grid-cols-[5.5rem_minmax(0,1fr)_auto] items-end gap-2 sm:grid-cols-[minmax(0,1fr)_5.5rem_9rem_auto]"
             >
-              <X className="h-4 w-4" aria-hidden="true" />
-              <span className="sr-only sm:not-sr-only sm:ml-1">Remove</span>
-            </Button>
-          </div>
-        ))}
+              <div className="col-span-3 space-y-1 sm:col-span-1">
+                <Label htmlFor={`food-item-description-${line.key}`}>
+                  Item {index + 1}
+                </Label>
+                <Input
+                  id={`food-item-description-${line.key}`}
+                  className="h-11"
+                  maxLength={FOOD_ORDER_ITEM_DESCRIPTION_MAX_LENGTH}
+                  value={line.description}
+                  onChange={(event) =>
+                    updateLine(line.key, { description: event.target.value })
+                  }
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor={`food-item-quantity-${line.key}`}>Quantity</Label>
+                {/* Text with a decimal keypad, not type="number": the browser
+                    would blank a value it cannot parse before validation sees it
+                    (see src/lib/money-input.ts). */}
+                <Input
+                  id={`food-item-quantity-${line.key}`}
+                  className="h-11"
+                  inputMode="decimal"
+                  autoComplete="off"
+                  value={line.quantity}
+                  onChange={(event) =>
+                    updateLine(line.key, { quantity: event.target.value })
+                  }
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor={typeId}>Type</Label>
+                <select
+                  id={typeId}
+                  value={line.unit}
+                  onChange={(event) => {
+                    const unit = event.target.value;
+                    if (isFoodOrderUnit(unit)) updateLine(line.key, { unit });
+                  }}
+                  className="flex h-11 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm text-foreground shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  {FOOD_ORDER_UNITS.map((unit) => (
+                    <option key={unit} value={unit}>
+                      {foodOrderUnitLabel(line.quantity, unit)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                className="h-11"
+                onClick={() => removeLine(line.key)}
+                disabled={lines.length <= 1}
+                aria-label={`Remove item ${index + 1}`}
+              >
+                <X className="h-4 w-4" aria-hidden="true" />
+                <span className="sr-only sm:not-sr-only sm:ml-1">Remove</span>
+              </Button>
+            </div>
+          );
+        })}
         <Button
           type="button"
           variant="outline"
