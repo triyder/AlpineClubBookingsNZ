@@ -22,7 +22,10 @@ import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
-import { LodgeInvoiceDetailsFields } from "@/components/admin/lodge-invoice-details-fields";
+import {
+  LodgeBankAndGstFields,
+  LodgePostalAddressField,
+} from "@/components/admin/lodge-invoice-details-fields";
 import { LODGE_INVOICE_DETAIL_FIELDS } from "@/lib/lodges";
 import {
   NEW_LODGE_CAPACITY_REQUIRED_MESSAGE,
@@ -279,6 +282,14 @@ export default function AdminLodgesPage() {
   }
 
   const showForm = creating || editingId !== null;
+  // The invoice details (#115), shown on the edit form only (#123).
+  const invoiceFieldProps = {
+    idPrefix: "lodge",
+    values: form,
+    disabled: !canEdit,
+    onChange: (field: LodgeDetailField, value: string) =>
+      setForm((prev) => ({ ...prev, [field]: value })),
+  };
 
   /*
     #2160: the view-only explanation lives here, once, at the top of the section —
@@ -353,18 +364,21 @@ export default function AdminLodgesPage() {
                 errorId="lodges-page-error"
               />
             ) : null}
-            <div className="space-y-2">
-              <Label htmlFor="lodge-address">Address</Label>
-              <Textarea
-                id="lodge-address"
-                value={form.address}
-                maxLength={300}
-                rows={2}
-                placeholder="Optional — feeds the public {{lodge-address}} token"
-                onChange={(event) =>
-                  setForm((prev) => ({ ...prev, address: event.target.value }))
-                }
-              />
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className={creating ? "space-y-2 sm:col-span-2" : "space-y-2"}>
+                <Label htmlFor="lodge-address">Address</Label>
+                <Textarea
+                  id="lodge-address"
+                  value={form.address}
+                  maxLength={300}
+                  rows={2}
+                  placeholder="Optional — feeds the public {{lodge-address}} token"
+                  onChange={(event) =>
+                    setForm((prev) => ({ ...prev, address: event.target.value }))
+                  }
+                />
+              </div>
+              {creating ? null : <LodgePostalAddressField {...invoiceFieldProps} />}
             </div>
             <div className="space-y-2">
               <Label htmlFor="lodge-door-code">Door code</Label>
@@ -392,14 +406,7 @@ export default function AdminLodgesPage() {
                 }
               />
             </div>
-            {creating ? null : (
-              <LodgeInvoiceDetailsFields
-                idPrefix="lodge"
-                values={form}
-                disabled={!canEdit}
-                onChange={(field, value) => setForm((prev) => ({ ...prev, [field]: value }))}
-              />
-            )}
+            {creating ? null : <LodgeBankAndGstFields {...invoiceFieldProps} />}
             <div className="flex gap-2">
               <ViewOnlyActionButton canEdit={canEdit} describeReason={false} onClick={() => void submitForm()} disabled={saving}>
                 {saving ? "Saving..." : "Save"}

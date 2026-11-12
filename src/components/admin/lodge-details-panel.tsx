@@ -11,7 +11,11 @@ import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
-import { LodgeInvoiceDetailsFields } from "@/components/admin/lodge-invoice-details-fields";
+import {
+  LodgeBankAndGstFields,
+  LodgePostalAddressField,
+} from "@/components/admin/lodge-invoice-details-fields";
+import type { LodgeInvoiceDetailField } from "@/lib/lodges";
 
 type Lodge = {
   id: string;
@@ -193,6 +197,15 @@ export function LodgeDetailsPanel() {
     }
   }
 
+  const invoiceFieldProps = {
+    idPrefix: "lodge-details",
+    values: lodge,
+    disabled: !canEdit,
+    describedBy: !canEdit ? viewOnlyReasonId : undefined,
+    onChange: (field: LodgeInvoiceDetailField, value: string) =>
+      setLodge({ ...lodge, [field]: value }),
+  };
+
   return (
     <div>
       {viewOnlyBanner}
@@ -214,19 +227,22 @@ export function LodgeDetailsPanel() {
           onChange={(event) => setLodge({ ...lodge, name: event.target.value })}
         />
       </div>
-      <div className="space-y-1.5">
-        <Label htmlFor="lodge-details-address">Address</Label>
-        <Textarea
-          id="lodge-details-address"
-          value={lodge.address ?? ""}
-          rows={2}
-          placeholder="Optional — shown on the public contact page when set"
-          disabled={!canEdit}
-          aria-describedby={!canEdit ? viewOnlyReasonId : undefined}
-          onChange={(event) =>
-            setLodge({ ...lodge, address: event.target.value })
-          }
-        />
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div className="space-y-1.5">
+          <Label htmlFor="lodge-details-address">Address</Label>
+          <Textarea
+            id="lodge-details-address"
+            value={lodge.address ?? ""}
+            rows={2}
+            placeholder="Optional — shown on the public contact page when set"
+            disabled={!canEdit}
+            aria-describedby={!canEdit ? viewOnlyReasonId : undefined}
+            onChange={(event) =>
+              setLodge({ ...lodge, address: event.target.value })
+            }
+          />
+        </div>
+        <LodgePostalAddressField {...invoiceFieldProps} />
       </div>
       <div className="space-y-1.5">
         <Label htmlFor="lodge-details-travel">Travel note</Label>
@@ -253,13 +269,7 @@ export function LodgeDetailsPanel() {
           }
         />
       </div>
-      <LodgeInvoiceDetailsFields
-        idPrefix="lodge-details"
-        values={lodge}
-        disabled={!canEdit}
-        describedBy={!canEdit ? viewOnlyReasonId : undefined}
-        onChange={(field, value) => setLodge({ ...lodge, [field]: value })}
-      />
+      <LodgeBankAndGstFields {...invoiceFieldProps} />
       <ViewOnlyActionButton canEdit={canEdit} describeReason={false} disabled={saving} onClick={save}>
         {saving ? "Saving…" : "Save lodge details"}
       </ViewOnlyActionButton>

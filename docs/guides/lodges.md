@@ -74,7 +74,7 @@ same **lodge edit** permission as the properties above.
    `{{lodge-address}}` content token; the door code and travel note appear in that
    lodge's booking and pre-arrival emails.
 2. The same form, when editing, also has the lodge's optional invoice details:
-   a **Postal address**, **Bank details for bookings** (**Account name** and
+   a **Postal address** (beside **Address**), **Bank details for bookings** (**Account name** and
    **Account details**) and a **GST number**. They are printed only on the
    invoice a booker or officer downloads from a booking at this lodge with no
    Xero invoice, never on the public site or in emails; a blank field saves as
