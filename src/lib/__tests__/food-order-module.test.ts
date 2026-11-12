@@ -136,7 +136,9 @@ describe("foodOrders migration", () => {
   });
 
   it("backs the item and price rules with CHECK constraints", () => {
-    expect(sql).toMatch(/CHECK \("quantity" BETWEEN 1 AND 999\)/);
+    expect(sql).toMatch(/CHECK \("quantity" > 0 AND "quantity" <= 99999\.99\)/);
+    expect(sql).toMatch(/"quantity" DECIMAL\(7,2\) NOT NULL/);
+    expect(sql).toMatch(/"unit" "FoodOrderUnit" NOT NULL DEFAULT 'ITEMS'/);
     expect(sql).toMatch(/CHECK \("priceCents" IS NULL OR "priceCents" >= 0\)/);
   });
 
