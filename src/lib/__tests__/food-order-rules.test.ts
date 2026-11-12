@@ -20,7 +20,7 @@ import {
  */
 
 describe("the Type list", () => {
-  it("holds the owner's eleven types, in the owner's order, defaulting to Items", () => {
+  it("holds the owner's twelve types, in the owner's order, defaulting to Items", () => {
     expect(FOOD_ORDER_UNITS.map((unit) => FOOD_ORDER_UNIT_LABELS[unit].plural)).toEqual([
       "Items",
       "Grams",
@@ -29,6 +29,7 @@ describe("the Type list", () => {
       "Loaves",
       "Packets",
       "Bottles",
+      "Cans",
       "Bags",
       "Boxes",
       "Punnets",

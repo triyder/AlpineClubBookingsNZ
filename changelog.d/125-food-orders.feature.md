@@ -5,7 +5,7 @@
   the lodge and the date the food is needed by, adds one line per item (a
   description, a quantity of more than 0 with up to two decimal places, and a
   **Type** — Items by default, or Grams, Kilograms, Liters, Loaves, Packets,
-  Bottles, Bags, Boxes, Punnets or Milliliters, shown singular for exactly 1 as
+  Bottles, Cans, Bags, Boxes, Punnets or Milliliters, shown singular for exactly 1 as
   in "1 Packet" and plural otherwise as in "0.5 Packets"; up to 50 lines) and an
   optional note. The order is saved as Open and then emailed to the address in
   the new **Food Orders** settings (**Admin → Lodge Operations → Food Orders**),

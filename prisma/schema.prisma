@@ -9290,6 +9290,7 @@ enum FoodOrderUnit {
   LOAVES
   PACKETS
   BOTTLES
+  CANS
   BAGS
   BOXES
   PUNNETS

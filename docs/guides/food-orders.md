@@ -65,8 +65,8 @@ Between steps 1 and 5 — and whenever the address is empty — members who open
    calendar).
 3. Add one line per item: what it is, the **Quantity** (more than 0, up to two
    decimal places, for example 0.5 or 250), and its **Type** — Items, Grams,
-   Kilograms, Liters, Loaves, Packets, Bottles, Bags, Boxes, Punnets or
-   Milliliters, Items by default. The type reads singular when the quantity is
+   Kilograms, Liters, Loaves, Packets, Bottles, Cans, Bags, Boxes, Punnets
+   or Milliliters, Items by default. The type reads singular when the quantity is
    exactly 1 ("1 Packet") and plural otherwise ("0.5 Packets", "2 Packets"), and
    the order, the history and the email all show the line that way, for example
    "2 Loaves — Wholemeal". Use **Add item** and **Remove**; an order holds 1 to 50
@@ -151,7 +151,7 @@ listed, and when there are no earlier years there is nothing to open.
 | Items per order | 1 to 50 |
 | Item description | Required, up to 200 characters |
 | Item quantity | More than 0, at most 99999.99, up to two decimal places |
-| Item type | Items (default), Grams, Kilograms, Liters, Loaves, Packets, Bottles, Bags, Boxes, Punnets, Milliliters; singular for exactly 1 |
+| Item type | Items (default), Grams, Kilograms, Liters, Loaves, Packets, Bottles, Cans, Bags, Boxes, Punnets, Milliliters; singular for exactly 1 |
 | Note | Optional, up to 1,000 characters |
 | Needed by | A club calendar day, today or later |
 | Orders per member | 10 an hour |
