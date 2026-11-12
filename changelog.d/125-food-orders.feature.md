@@ -15,9 +15,12 @@
   every order, filterable by lodge, status and needed-by dates, with the order
   count and the total of recorded prices for the filter. A committee member, a
   hut leader whose access window covers today at that order's lodge, or a Lodge
-  Operations edit admin can mark an order **Received** (two clicks at once close
-  it once) and can record or change its price at any time. Every price change is
+  Operations edit admin ticks items received as they arrive, since food does not
+  always come in one delivery: the order shows "Open — 2 of 5 items received"
+  until the last item is ticked, then closes as **Received** (two people ticking
+  at once are recorded once; received is final). They can record or change the
+  price at any time. Every price change is
   audited with the old and new amounts. The price is a record only: nothing is
-  charged, invoiced, posted to the booking ledger or sent to Xero. The four new
-  audit writers (order placed, received, price changed, settings saved) are all
-  in the `lodge` category.
+  charged, invoiced, posted to the booking ledger or sent to Xero. The five new
+  audit writers (order placed, items received, order received, price changed,
+  settings saved) are all in the `lodge` category.

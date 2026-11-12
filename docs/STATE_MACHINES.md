@@ -3113,12 +3113,20 @@ contactable published assignment can receive server-routed contact form mail thr
 Fork #121 (`src/lib/food-orders.ts`, guide [Food Orders](guides/food-orders.md)).
 
 ```text
-member places an order -> OPEN (order, items and audit row in one transaction;
-  the food officer email is queued only after it commits)
-OPEN -> RECEIVED: updateMany WHERE status = 'OPEN' (the claim), receivedAt and
-  receivedById set, audit row in the same transaction; a lost claim (count 0)
-  answers 409 and writes nothing, so two confirmations close it once
-RECEIVED is terminal: there is no reopening
+member places an order -> OPEN, every item unreceived (order, items and audit
+  row in one transaction; the food officer email is queued only after it commits)
+items received (one or more, OPEN only), in ONE transaction:
+  1. take the order row: updateMany WHERE id AND status = 'OPEN' (touch
+     updatedAt); count 0 -> 409 "already received", nothing written. This row
+     lock serialises concurrent receipts on one order.
+  2. mark the chosen items still unreceived (receivedAt, receivedById); none
+     left to mark -> 409, rolled back
+  3. audit food_order.items_received (items marked, count remaining)
+  4. if no item remains unreceived: OPEN -> RECEIVED by updateMany WHERE
+     status = 'OPEN', receivedAt/receivedById = this moment and person, audit
+     food_order.received
+  partly received stays OPEN ("2 of 5 items received")
+item received and order RECEIVED are terminal: no unticking, no reopening
 price (either status): updateMany WHERE priceCents = the amount the caller's
   screen showed; a mismatch answers 409 and writes nothing; each change audits
   the old and new cents; the price moves no money

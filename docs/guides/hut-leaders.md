@@ -394,6 +394,6 @@ away.
 - Sibling guides: [Lodge Kiosk](lodge.md), [Chore Roster](roster.md),
   [Chore Templates](chores.md), [Lodges](lodges.md),
   [Bed Allocation](bed-allocation.md), [Food Orders](food-orders.md) (a hut
-  leader at a lodge today can mark its food orders received).
+  leader at a lodge today can tick its food orders received).
 - Reference: [Admin and Lodge](../ARCHITECTURE.md#admin-and-lodge) and the
   `hut-leader-auto-assign` job in [Cron Jobs](../ARCHITECTURE.md#cron-jobs).

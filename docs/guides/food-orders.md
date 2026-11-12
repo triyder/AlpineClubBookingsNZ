@@ -6,7 +6,8 @@ Audience: Operator
 
 A way for members to order food for a lodge stay, for the club's food officer
 to receive each order by email, and for the people at the lodge to say the food
-arrived. It has three parts:
+arrived — item by item, because food does not always come in one delivery. It
+has three parts:
 
 - **Order food** (`/food-order`), in the members' area. A signed-in member picks
   the lodge and the date the food is needed by, adds one line per item (a
@@ -79,18 +80,30 @@ member, current hut leader or Lodge Operations admin. Anyone else sees the
 history with nothing extra, the same as for a link to an order that does not
 exist.
 
-### Mark an order received
+### Tick off what arrived
+
+Food does not always arrive in one delivery, so an order is received item by
+item.
 
 1. Open **Food orders** from the dashboard card.
-2. Find the order and click **Mark received**. It closes: the history records who
-   confirmed it and when.
+2. On the order, tick each item that has arrived (or **Select all**), then click
+   **Mark selected received**. Each ticked item records who received it and when.
+3. While some items are still to come the order stays **Open** and shows, for
+   example, "Open — 2 of 5 items received". When the last item is ticked the
+   order closes as **Received**, recorded with that moment and person.
 
 Who can do this: any member with an active committee role, a hut leader whose
 access window covers today **at that order's lodge** (from the day before their
 first night to the day after their last), and admins with Lodge Operations
-**edit**. If two people confirm at the same moment, the order is closed once and
-the second is told it has already been received. A received order cannot be
-reopened.
+**edit**. Everyone else who can see the order sees the same list with each
+received item marked. If two people tick the same items at the same moment, the
+items are recorded once and the second is told they were already received; the
+page reloads to show who did. The **Status** filter counts a partly received
+order as Open.
+
+A limit, by design: **received is final**. An item cannot be unticked and a
+received order cannot be reopened, so check before you click. The price can
+still be changed after the order is received.
 
 ### Record the price
 
@@ -98,7 +111,7 @@ reopened.
    **Save price**.
 2. You can change it at any time, including after the order is received.
 
-The same people who can mark an order received can record its price. Every
+The same people who can tick items received can record its price. Every
 change is written to the audit log with who made it and the old and new amounts.
 The save carries the price your screen was showing: if somebody else changed it
 in the meantime, nothing is saved, you are told so, and the order reloads with
@@ -145,7 +158,8 @@ emails; orders are still saved and shown in the history.
 | The pages 404 and the dashboard card is missing | The `foodOrders` module is off | Turn it on under **Admin → Setup → Modules** |
 | Members see "Food ordering is not set up yet" | No email address is saved | Enter one on the Food Orders settings page |
 | The food officer is not getting orders | The address is wrong or out of date, or the email is muted under Delivery Rules | Check the address on the settings page and the `food-order-placed` rule. Every order is still in the history |
-| A hut leader cannot mark an order received | Their access window does not cover today, or the order is for a different lodge | A committee member or a Lodge Operations edit admin can close it |
+| A hut leader cannot tick items received | Their access window does not cover today, or the order is for a different lodge | A committee member or a Lodge Operations edit admin can tick them |
+| An item was ticked by mistake | Received is final; there is no untick | Note it on the order with the officer; the audit log records who ticked what and when |
 | An organisation account cannot order | By design | Catering for organisation stays is arranged through the booking officer |
 | A price save says somebody else changed it | Somebody saved a different price after your screen loaded | The order reloads with the stored price; check it and enter yours again if it is still right |
 | Saving the settings says somebody else saved at the same moment | Two admins saved at once; one save was refused and nothing was changed by it | Reload the page and save again |

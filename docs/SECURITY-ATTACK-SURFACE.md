@@ -301,7 +301,8 @@ These family rules are enforced by automated tests (issue #1132):
   (member-scoped rate limit, items and needed-by date validated, stored before
   the officer email is queued); `history` returns the caller's own orders, or
   every order for committee, a current hut leader or Lodge Operations view;
-  `[id]/received` and `[id]/price` are decided by one rule,
+  `[id]/received` (strict body `{ itemIds }`, 1-50 distinct items of that
+  order, else 400 with nothing written) and `[id]/price` are decided by one rule,
   `canManageFoodOrder` (committee, a hut leader at that order's lodge today, or
   Lodge Operations edit). An order the caller may not see answers 404 rather
   than 403, so ids are not confirmed, and `history?order=<id>` returns a null
