@@ -20,12 +20,19 @@ import {
 import { parseDecimalDollarsToCents } from "@/lib/money-input";
 import { formatCents, formatCentsPlain } from "@/lib/utils";
 
+import { FoodOrderItems, type FoodOrderItemView } from "./food-order-items";
+
 /**
  * One order in the food-order history (fork #121).
  *
- * The Received button and the price editor appear only when the server said
+ * The received checklist and the price editor appear only when the server said
  * `canManage` for this row — the value `canManageFoodOrder` computed. This
  * component has no access rule of its own (INV-SSOT); the routes re-check.
+ *
+ * Items are ticked received one or several at a time (owner change, 13 Nov
+ * 2026); the order closes on the server when its last item is. The footer
+ * holds both actions — "Mark selected received" and the price — as one row of
+ * default-height controls that wraps on a narrow screen.
  */
 
 export type FoodOrderHistoryItem = {
@@ -36,7 +43,7 @@ export type FoodOrderHistoryItem = {
   neededBy: string;
   notes: string | null;
   status: FoodOrderStatusValue;
-  items: Array<{ description: string; quantity: number }>;
+  items: FoodOrderItemView[];
   receivedAt: string | null;
   receivedBy: string | null;
   priceCents: number | null;
@@ -62,6 +69,29 @@ export function FoodOrderRow({
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  const unreceivedIds = order.items
+    .filter((item) => item.receivedAt === null)
+    .map((item) => item.id);
+  const receivedCount = order.items.length - unreceivedIds.length;
+  const checklist = order.canManage && order.status === "OPEN";
+
+  // After a reload, drop any selection the server has since received.
+  const unreceivedKey = unreceivedIds.join(",");
+  useEffect(() => {
+    const open = new Set(unreceivedKey ? unreceivedKey.split(",") : []);
+    setSelected((current) => new Set([...current].filter((itemId) => open.has(itemId))));
+  }, [unreceivedKey]);
+
+  function toggle(itemId: string, checked: boolean) {
+    setSelected((current) => {
+      const next = new Set(current);
+      if (checked) next.add(itemId);
+      else next.delete(itemId);
+      return next;
+    });
+  }
 
   // A reload brings the stored price; the box follows it rather than keeping
   // what was typed against an older one.
@@ -69,22 +99,26 @@ export function FoodOrderRow({
     setPriceDraft(order.priceCents === null ? "" : formatCentsPlain(order.priceCents));
   }, [order.priceCents]);
 
-  async function markReceived() {
+  async function markSelectedReceived() {
+    if (selected.size === 0) return;
     setBusy(true);
     setError("");
     try {
       const res = await fetch(`/api/food-orders/${encodeURIComponent(order.id)}/received`, {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ itemIds: [...selected] }),
       });
       if (res.status === 409) {
         setError(await apiErrorMessageFromResponse(res, "This order changed. It has been reloaded."));
         onChanged();
         return;
       }
-      if (!res.ok) throw new Error(await apiErrorMessageFromResponse(res, "Could not mark it received."));
+      if (!res.ok) throw new Error(await apiErrorMessageFromResponse(res, "Could not mark those items received."));
+      setSelected(new Set());
       onChanged();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not mark it received.");
+      setError(err instanceof Error ? err.message : "Could not mark those items received.");
     } finally {
       setBusy(false);
     }
@@ -143,16 +177,20 @@ export function FoodOrderRow({
           </div>
           <Badge variant={order.status === "RECEIVED" ? "success" : "warning"}>
             {FOOD_ORDER_STATUS_LABELS[order.status]}
+            {order.status === "OPEN" && receivedCount > 0
+              ? ` — ${receivedCount} of ${order.items.length} items received`
+              : ""}
           </Badge>
         </div>
 
-        <ul className="list-inside list-disc text-sm">
-          {order.items.map((item, index) => (
-            <li key={index}>
-              {item.quantity} × {item.description}
-            </li>
-          ))}
-        </ul>
+        <FoodOrderItems
+          orderKey={domKey}
+          items={order.items}
+          selectable={checklist}
+          selected={selected}
+          disabled={busy}
+          onToggle={toggle}
+        />
         {order.notes ? (
           <p className="whitespace-pre-wrap text-sm text-muted-foreground">{order.notes}</p>
         ) : null}
@@ -160,8 +198,8 @@ export function FoodOrderRow({
         <div className="text-sm text-muted-foreground">
           {order.status === "RECEIVED" && order.receivedAt ? (
             <p>
-              Received {club.instantDate(requireInstant(order.receivedAt))}
-              {order.receivedBy ? `, confirmed by ${order.receivedBy}` : ""}
+              All items received {club.instantDate(requireInstant(order.receivedAt))}
+              {order.receivedBy ? `, the last confirmed by ${order.receivedBy}` : ""}
             </p>
           ) : null}
           <p>
@@ -182,32 +220,50 @@ export function FoodOrderRow({
         ) : null}
 
         {order.canManage ? (
-          <div className="flex flex-wrap items-end gap-3 border-t pt-3">
-            {order.status === "OPEN" ? (
-              <Button size="sm" onClick={() => void markReceived()} disabled={busy}>
-                Mark received
+          <div className="flex flex-col gap-3 border-t pt-4 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
+            {checklist ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setSelected(new Set(unreceivedIds))}
+                  disabled={busy || selected.size === unreceivedIds.length}
+                >
+                  Select all
+                </Button>
+                <Button
+                  type="button"
+                  onClick={() => void markSelectedReceived()}
+                  disabled={busy || selected.size === 0}
+                >
+                  Mark selected received
+                </Button>
+              </div>
+            ) : (
+              <span aria-hidden="true" className="hidden sm:block" />
+            )}
+            <div className="flex flex-wrap items-end gap-2">
+              <div className="space-y-1">
+                <Label htmlFor={priceInputId}>Price</Label>
+                <MoneyInput
+                  id={priceInputId}
+                  className="w-32"
+                  value={priceDraft}
+                  onValueChange={setPriceDraft}
+                  minCents={0}
+                  maxCents={FOOD_ORDER_PRICE_CENTS_MAX}
+                  disabled={busy}
+                />
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => void savePrice()}
+                disabled={busy || !priceDirty || priceDraft.trim() === ""}
+              >
+                Save price
               </Button>
-            ) : null}
-            <div className="space-y-1">
-              <Label htmlFor={priceInputId}>Price</Label>
-              <MoneyInput
-                id={priceInputId}
-                className="w-32"
-                value={priceDraft}
-                onValueChange={setPriceDraft}
-                minCents={0}
-                maxCents={FOOD_ORDER_PRICE_CENTS_MAX}
-                disabled={busy}
-              />
             </div>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => void savePrice()}
-              disabled={busy || !priceDirty || priceDraft.trim() === ""}
-            >
-              Save price
-            </Button>
           </div>
         ) : null}
       </CardContent>

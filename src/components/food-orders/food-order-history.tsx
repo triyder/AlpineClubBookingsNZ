@@ -239,10 +239,10 @@ export function FoodOrderHistory({ highlightOrderId }: { highlightOrderId: strin
           )}
 
           {pageCount > 1 ? (
-            <div className="flex items-center justify-between text-sm">
+            <div className="flex items-center justify-between gap-3 border-t pt-4 text-sm">
               <Button
+                type="button"
                 variant="outline"
-                size="sm"
                 disabled={page <= 1}
                 onClick={() => setPage((current) => current - 1)}
               >
@@ -252,8 +252,8 @@ export function FoodOrderHistory({ highlightOrderId }: { highlightOrderId: strin
                 Page {payload.page} of {pageCount}
               </span>
               <Button
+                type="button"
                 variant="outline"
-                size="sm"
                 disabled={page >= pageCount}
                 onClick={() => setPage((current) => current + 1)}
               >
