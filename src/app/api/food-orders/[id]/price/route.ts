@@ -12,6 +12,7 @@ import {
 } from "@/lib/food-order-route";
 import { isValidFoodOrderPriceCents } from "@/lib/food-order-rules";
 import { findFoodOrderForAction, setFoodOrderPrice } from "@/lib/food-orders";
+import { requireActiveSession } from "@/lib/session-guards";
 
 /**
  * Record or change a food order's price (fork #121, owner decisions 8, 11, 12).
@@ -33,7 +34,7 @@ export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const guard = await requireFoodOrderViewer();
+  const guard = await requireFoodOrderViewer(() => requireActiveSession());
   if (!guard.ok) return guard.response;
 
   let body: unknown;

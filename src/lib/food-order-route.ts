@@ -6,7 +6,7 @@ import {
 } from "@/lib/food-order-access";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { getClientIp } from "@/lib/rate-limit";
-import { requireActiveSession } from "@/lib/session-guards";
+import type { requireActiveSession } from "@/lib/session-guards";
 
 /**
  * The guard every member food-order route opens with (fork #121), so the four
@@ -16,7 +16,10 @@ import { requireActiveSession } from "@/lib/session-guards";
  *    proxy's feature-route rule gives, signed in or not — a module gate that
  *    lived only in middleware shipped bypassed once already (#2780).
  *    `loadEffectiveModuleFlags` fails closed on a read error.
- * 2. An active session (401/403 from `requireActiveSession`).
+ * 2. An active session (401/403 from `requireActiveSession`). The handler
+ *    passes the session guard in as a callback, so each method body names
+ *    `requireActiveSession()` itself (the per-method boundary census,
+ *    `api-route-boundaries.test.ts`) while the module is still checked first.
  * 3. Not an organisation account (issue item 10): 403.
  */
 
@@ -31,7 +34,9 @@ export type FoodOrderGuardResult =
   | { ok: true; viewer: FoodOrderViewer; memberId: string }
   | { ok: false; response: NextResponse };
 
-export async function requireFoodOrderViewer(): Promise<FoodOrderGuardResult> {
+export async function requireFoodOrderViewer(
+  requireSession: () => ReturnType<typeof requireActiveSession>,
+): Promise<FoodOrderGuardResult> {
   if (await foodOrderModuleOff()) {
     return {
       ok: false,
@@ -39,7 +44,7 @@ export async function requireFoodOrderViewer(): Promise<FoodOrderGuardResult> {
     };
   }
 
-  const guard = await requireActiveSession();
+  const guard = await requireSession();
   if (!guard.ok) return { ok: false, response: guard.response as NextResponse };
 
   const viewer = await resolveFoodOrderViewer(guard.session.user);

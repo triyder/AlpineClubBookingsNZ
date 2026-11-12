@@ -24,6 +24,7 @@ import {
   FOOD_OFFICER_EMAIL_MAX_LENGTH,
   FOOD_OFFICER_LABEL_MAX_LENGTH,
 } from "@/lib/food-order-rules";
+import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
 
 /**
  * The Food Orders settings card (fork #121). Lodge Operations.
@@ -71,9 +72,8 @@ export function FoodOrderSettingsSection() {
       });
       if (!res.ok) {
         if (res.status === 403) throw new ForbiddenSaveError();
-        const data = (await res.json().catch(() => ({}))) as { error?: unknown };
         throw new Error(
-          typeof data.error === "string" ? data.error : "Failed to save",
+          await apiErrorMessageFromResponse(res, "Failed to save"),
         );
       }
       return toDraft(((await res.json()) as { settings: Settings }).settings);

@@ -20,6 +20,7 @@ import {
   FOOD_ORDER_STATUS_LABELS,
 } from "@/lib/food-order-rules";
 import { formatCents } from "@/lib/utils";
+import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
 
 import { FoodOrderRow, type FoodOrderHistoryItem } from "./food-order-row";
 
@@ -71,9 +72,8 @@ export function FoodOrderHistory({ highlightOrderId }: { highlightOrderId: strin
       const query = queryFor(applied, page);
       const res = await fetch(`/api/food-orders/history${query ? `?${query}` : ""}`);
       if (!res.ok) {
-        const data = (await res.json().catch(() => ({}))) as { error?: unknown };
         throw new Error(
-          typeof data.error === "string" ? data.error : "Could not load your food orders.",
+          await apiErrorMessageFromResponse(res, "Could not load your food orders."),
         );
       }
       setPayload((await res.json()) as HistoryPayload);

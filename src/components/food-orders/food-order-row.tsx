@@ -10,6 +10,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { MoneyInput } from "@/components/ui/money-input";
 import { formatStayDate, requireInstant } from "@/lib/club-time";
+import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
 import {
   FOOD_ORDER_PRICE_CENTS_MAX,
   FOOD_ORDER_STATUS_LABELS,
@@ -42,11 +43,6 @@ export type FoodOrderHistoryItem = {
   canManage: boolean;
 };
 
-async function readError(res: Response, fallback: string): Promise<string> {
-  const data = (await res.json().catch(() => ({}))) as { error?: unknown };
-  return typeof data.error === "string" ? data.error : fallback;
-}
-
 export function FoodOrderRow({
   order,
   showOrderedBy,
@@ -73,7 +69,7 @@ export function FoodOrderRow({
       const res = await fetch(`/api/food-orders/${encodeURIComponent(order.id)}/received`, {
         method: "POST",
       });
-      if (!res.ok) throw new Error(await readError(res, "Could not mark it received."));
+      if (!res.ok) throw new Error(await apiErrorMessageFromResponse(res, "Could not mark it received."));
       onChanged();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not mark it received.");
@@ -96,7 +92,7 @@ export function FoodOrderRow({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ priceCents }),
       });
-      if (!res.ok) throw new Error(await readError(res, "Could not save the price."));
+      if (!res.ok) throw new Error(await apiErrorMessageFromResponse(res, "Could not save the price."));
       onChanged();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not save the price.");

@@ -9,6 +9,7 @@ import {
   type FoodOrderHistoryFilters,
 } from "@/lib/food-orders";
 import { prisma } from "@/lib/prisma";
+import { requireActiveSession } from "@/lib/session-guards";
 
 /**
  * The food-order history (fork #121). A member gets their own orders; a viewer
@@ -63,7 +64,7 @@ function parseFilters(
 }
 
 export async function GET(request: NextRequest) {
-  const guard = await requireFoodOrderViewer();
+  const guard = await requireFoodOrderViewer(() => requireActiveSession());
   if (!guard.ok) return guard.response;
 
   const filters = parseFilters(request.nextUrl.searchParams);

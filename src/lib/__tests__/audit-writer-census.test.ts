@@ -1494,7 +1494,8 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // RE-MEASURED with `pnpm run audit:census`.
     // 406 -> 408 unpinned (#4368): a dead card refund's "Nothing left owed" and "Try the card again", `payment`.
     // RE-MEASURED with `pnpm run audit:census`.
-    ).toEqual({ pinned: 130, unpinned: 408 });
+    // 408 -> 412 unpinned (fork #121): the four food-order writers.
+    ).toEqual({ pinned: 130, unpinned: 412 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {

@@ -17,6 +17,7 @@ import {
   FoodOrderForm,
   type FoodOrderFormSubmission,
 } from "@/components/food-orders/food-order-form";
+import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
 
 /**
  * The members' Order food page (fork #121), shaped like `/maintenance-report`:
@@ -44,11 +45,8 @@ export default function FoodOrderPage() {
     try {
       const res = await fetch("/api/food-orders");
       if (!res.ok) {
-        const data = (await res.json().catch(() => ({}))) as { error?: unknown };
         throw new Error(
-          typeof data.error === "string"
-            ? data.error
-            : "The order form could not be loaded. Please try again.",
+          await apiErrorMessageFromResponse(res, "The order form could not be loaded. Please try again."),
         );
       }
       setPayload((await res.json()) as FormPayload);
@@ -72,11 +70,8 @@ export default function FoodOrderPage() {
       body: JSON.stringify(submission),
     });
     if (!res.ok) {
-      const data = (await res.json().catch(() => ({}))) as { error?: unknown };
       throw new Error(
-        typeof data.error === "string"
-          ? data.error
-          : "Something went wrong placing that order. Please try again.",
+        await apiErrorMessageFromResponse(res, "Something went wrong placing that order. Please try again."),
       );
     }
     setSubmitted(true);

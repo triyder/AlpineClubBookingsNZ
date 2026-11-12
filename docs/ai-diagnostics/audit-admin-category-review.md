@@ -584,10 +584,10 @@ land.
 manifest moving with it. The numbers this page was written against:
 
 ```
-row-producing sites:  538
+row-producing sites:  542
 uncategorised:        0
 category values: admin 112, booking 109, xero 51, family 35, payment 71,
-                 lodge 68, account 19, security 25, privacy 22,
+                 lodge 72, account 19, security 25, privacy 22,
                  communication 21, system 4
 ```
 
@@ -816,6 +816,12 @@ lodges, no member. A library writer, so it joins no keep.
 Fees page (`OTHER_LODGE_RATES_FROM_FEES`, `lodge` 67 -> 68, 500 -> 501,
 MEASURED): the lodge, the trigger and the fields that changed, no member. A
 library writer, so it joins no keep.
+
+Fork #121 added the four food-order writers (`lodge` 68 -> 72, 538 -> 542,
+MEASURED with the census): an order placed, an order marked received, a price
+recorded or changed (old and new cents), and the Food Orders settings saved.
+Food orders are Lodge Operations, so `lodge` under the domain rule; none joins a
+keep, and `lodge` is not readable with `support:view` alone.
 `main` then added #3750's executed approval of a change request on a finished
 stay (`booking` 107 -> 108, `booking-change-request.approve` with
 `executed: true`). The sync of `main` into epic #3789 composed #3819's addition

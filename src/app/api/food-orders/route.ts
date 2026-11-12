@@ -25,6 +25,7 @@ import { createFoodOrder } from "@/lib/food-orders";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { applyMemberScopedRateLimit, rateLimiters } from "@/lib/rate-limit";
+import { requireActiveSession } from "@/lib/session-guards";
 
 /**
  * The member's Order food door (fork #121): `GET` returns what the form needs,
@@ -63,7 +64,7 @@ const postSchema = z
   .strict();
 
 export async function GET() {
-  const guard = await requireFoodOrderViewer();
+  const guard = await requireFoodOrderViewer(() => requireActiveSession());
   if (!guard.ok) return guard.response;
 
   const [settings, lodges, club] = await Promise.all([
@@ -94,7 +95,7 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
-  const guard = await requireFoodOrderViewer();
+  const guard = await requireFoodOrderViewer(() => requireActiveSession());
   if (!guard.ok) return guard.response;
   const { memberId } = guard;
 

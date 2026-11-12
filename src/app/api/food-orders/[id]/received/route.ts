@@ -10,6 +10,7 @@ import {
   requireFoodOrderViewer,
 } from "@/lib/food-order-route";
 import { findFoodOrderForAction, markFoodOrderReceived } from "@/lib/food-orders";
+import { requireActiveSession } from "@/lib/session-guards";
 
 /**
  * Mark a food order Received, which closes it (fork #121, owner decision 7).
@@ -27,7 +28,7 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const guard = await requireFoodOrderViewer();
+  const guard = await requireFoodOrderViewer(() => requireActiveSession());
   if (!guard.ok) return guard.response;
 
   const { id } = await params;
