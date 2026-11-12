@@ -203,6 +203,49 @@ export function adminMaintenanceReportTemplate(data: {
 }
 
 /**
+ * `food-order-placed` (fork #121): a member ordered food for a lodge, delivered
+ * to the address in the Food Orders settings (the club's food officer).
+ *
+ * Every member-typed value — the item descriptions and the note — is escaped,
+ * and the items render through the shared `infoTable` block, one row per item.
+ * The only link is one this application built from the order id
+ * (`sameOrigin`), never anything the member supplied.
+ */
+export function foodOrderPlacedTemplate(data: {
+  officerLabel: string;
+  lodgeName: string;
+  neededBy: string;
+  orderedBy: string;
+  items: Array<{ description: string; quantity: number }>;
+  notes: string | null;
+  foodOrderUrl: string;
+}): string {
+  return layout(`
+    ${heading("Food Order Placed")}
+    ${paragraph(
+      "A food order has been placed for " +
+        escapeHtml(data.lodgeName) +
+        ". You are receiving it as the club's " +
+        escapeHtml(data.officerLabel.toLowerCase()) +
+        ".",
+    )}
+    ${infoTable([
+      { label: "Lodge", value: escapeHtml(data.lodgeName) },
+      { label: "Needed by", value: escapeHtml(data.neededBy) },
+      { label: "Ordered by", value: escapeHtml(data.orderedBy) },
+    ])}
+    ${infoTable(
+      data.items.map((item, index) => ({
+        label: `Item ${index + 1}`,
+        value: `${item.quantity} &times; ${escapeHtml(item.description)}`,
+      })),
+    )}
+    ${data.notes ? multilineBlock(escapeHtml(data.notes)) : paragraph("No note was added.")}
+    ${button("View Food Order", data.foodOrderUrl, { sameOrigin: true })}
+  `);
+}
+
+/**
  * The public website's contact form, delivered to whoever the committee
  * assignment routes it to.
  *

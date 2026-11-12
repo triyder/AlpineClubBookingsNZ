@@ -259,6 +259,9 @@ const ROUTE_AREA_PREFIXES: Array<{
       // audience is `{ area: "lodge", level: "edit" }` — see
       // ADMIN_NOTIFICATION_PREFERENCE_REQUIREMENT.
       "/api/admin/maintenance-reports",
+      // Food orders (fork #121): the settings card (food officer email and
+      // label). Lodge Operations, like the maintenance settings.
+      "/api/admin/food-orders",
     ],
   },
   {
