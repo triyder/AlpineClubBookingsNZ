@@ -11,6 +11,7 @@ import {
   getAdminAlertEmails,
   sendAdminAlertTo,
   sendToAdmins,
+  shouldSendDirectAdminSystemEmail,
 } from "./admin-alerts-shared";
 import { sendEmail } from "./core";
 import { renderEmailHtml } from "@/lib/email-theme";
@@ -225,18 +226,7 @@ export async function sendFoodOrderPlacedEmail(data: {
   notes: string | null;
   foodOrderUrl: string;
 }) {
-  const delivery = await shouldSendAdminSystemEmail({
-    templateName: FOOD_ORDER_PLACED_TEMPLATE,
-  });
-  if (!delivery.send) {
-    logger.info(
-      {
-        templateName: FOOD_ORDER_PLACED_TEMPLATE,
-        deliveryMode: delivery.mode,
-        reason: delivery.reason,
-      },
-      "Skipped food order email by delivery policy",
-    );
+  if (!(await shouldSendDirectAdminSystemEmail(FOOD_ORDER_PLACED_TEMPLATE))) {
     return;
   }
 
