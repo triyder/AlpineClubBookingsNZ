@@ -82,42 +82,123 @@ export async function createFoodOrder(
   });
 }
 
-export type FoodOrderClaimOutcome = "received" | "already_received";
+export type FoodOrderReceiptOutcome =
+  /** The order is no longer OPEN: nothing was written. */
+  | { outcome: "already_received" }
+  /** Every chosen item was already received: nothing was written. */
+  | { outcome: "items_already_received" }
+  | { outcome: "received"; markedCount: number; remaining: number; closed: boolean };
+
+/** Rolls the receipt transaction back when there was nothing to mark. */
+class NothingToMark extends Error {}
 
 /**
- * Close an OPEN order as RECEIVED. The claim is a status-guarded `updateMany`
- * (`OPEN` -> `RECEIVED`): of two confirmations at once exactly one matches the
- * row, and the loser changes nothing and writes no audit row.
+ * Tick items of an OPEN order received (owner change, 13 Nov 2026: food can
+ * arrive in parts). The order closes as RECEIVED when its last item is.
+ *
+ * THE ORDER ROW IS TAKEN FIRST. A status-guarded `updateMany`
+ * (`WHERE status = 'OPEN'`, touching `updatedAt`) locks the order row before any
+ * item is read, so concurrent receipts on one order run one after the other and
+ * the "is anything left?" count below always sees the other's committed work.
+ * When it matches nothing the order is already closed and nothing is written.
+ *
+ * Then only the chosen items that are still unreceived are marked. If none are
+ * left to mark the transaction is rolled back, so the order's `updatedAt` is
+ * not touched either. One audit row records the items marked and how many
+ * remain; if none remain, a guarded OPEN -> RECEIVED close follows with the
+ * existing received audit row, in the same transaction. Received is final:
+ * there is no unticking.
  */
-export async function markFoodOrderReceived(
-  orderId: string,
-  actorId: string,
+export async function markFoodOrderItemsReceived(
+  input: { orderId: string; actorId: string; itemIds: readonly string[] },
   context: AuditContext,
-): Promise<FoodOrderClaimOutcome> {
-  return prisma.$transaction(async (tx) => {
-    const receivedAt = new Date();
-    const claim = await tx.foodOrder.updateMany({
-      where: { id: orderId, status: "OPEN" },
-      data: { status: "RECEIVED", receivedAt, receivedById: actorId },
-    });
-    if (claim.count === 0) return "already_received";
+): Promise<FoodOrderReceiptOutcome> {
+  try {
+    return await prisma.$transaction(async (tx) => {
+      const now = new Date();
+      const lock = await tx.foodOrder.updateMany({
+        where: { id: input.orderId, status: "OPEN" },
+        data: { updatedAt: now },
+      });
+      if (lock.count === 0) return { outcome: "already_received" as const };
 
-    await createAuditLog(
-      {
-        action: "food_order.received",
-        category: "lodge",
-        memberId: actorId,
-        targetId: orderId,
-        entityType: "FoodOrder",
-        entityId: orderId,
-        details: JSON.stringify({ from: "OPEN", to: "RECEIVED" }),
-        ipAddress: context.ipAddress,
-        outcome: "success",
-      },
-      tx,
-    );
-    return "received";
-  });
+      const toMark = await tx.foodOrderItem.findMany({
+        where: {
+          id: { in: [...input.itemIds] },
+          foodOrderId: input.orderId,
+          receivedAt: null,
+        },
+        orderBy: { sortOrder: "asc" },
+        select: { id: true, description: true },
+      });
+      if (toMark.length === 0) throw new NothingToMark();
+
+      await tx.foodOrderItem.updateMany({
+        where: {
+          id: { in: toMark.map((item) => item.id) },
+          foodOrderId: input.orderId,
+          receivedAt: null,
+        },
+        data: { receivedAt: now, receivedById: input.actorId },
+      });
+      const remaining = await tx.foodOrderItem.count({
+        where: { foodOrderId: input.orderId, receivedAt: null },
+      });
+
+      await createAuditLog(
+        {
+          action: "food_order.items_received",
+          category: "lodge",
+          memberId: input.actorId,
+          targetId: input.orderId,
+          entityType: "FoodOrder",
+          entityId: input.orderId,
+          details: JSON.stringify({
+            items: toMark.map((item) => ({ id: item.id, description: item.description })),
+            markedCount: toMark.length,
+            remaining,
+          }),
+          ipAddress: context.ipAddress,
+          outcome: "success",
+        },
+        tx,
+      );
+
+      let closed = false;
+      if (remaining === 0) {
+        const close = await tx.foodOrder.updateMany({
+          where: { id: input.orderId, status: "OPEN" },
+          data: { status: "RECEIVED", receivedAt: now, receivedById: input.actorId },
+        });
+        closed = close.count === 1;
+        if (closed) {
+          await createAuditLog(
+            {
+              action: "food_order.received",
+              category: "lodge",
+              memberId: input.actorId,
+              targetId: input.orderId,
+              entityType: "FoodOrder",
+              entityId: input.orderId,
+              details: JSON.stringify({ from: "OPEN", to: "RECEIVED", lastItems: toMark.length }),
+              ipAddress: context.ipAddress,
+              outcome: "success",
+            },
+            tx,
+          );
+        }
+      }
+      return {
+        outcome: "received" as const,
+        markedCount: toMark.length,
+        remaining,
+        closed,
+      };
+    });
+  } catch (err) {
+    if (err instanceof NothingToMark) return { outcome: "items_already_received" };
+    throw err;
+  }
 }
 
 export type FoodOrderPriceOutcome =
@@ -199,7 +280,13 @@ export type FoodOrderHistoryRow = {
   neededBy: Date;
   notes: string | null;
   status: FoodOrderStatus;
-  items: Array<{ description: string; quantity: number }>;
+  items: Array<{
+    id: string;
+    description: string;
+    quantity: number;
+    receivedAt: Date | null;
+    receivedBy: string | null;
+  }>;
   receivedAt: Date | null;
   receivedBy: string | null;
   priceCents: number | null;
@@ -245,7 +332,13 @@ const HISTORY_ROW_SELECT = {
   member: { select: { firstName: true, lastName: true } },
   items: {
     orderBy: { sortOrder: "asc" },
-    select: { description: true, quantity: true },
+    select: {
+      id: true,
+      description: true,
+      quantity: true,
+      receivedAt: true,
+      receivedById: true,
+    },
   },
 } satisfies Prisma.FoodOrderSelect;
 
@@ -262,9 +355,11 @@ async function toHistoryRows(
   const actorIds = [
     ...new Set(
       rows.flatMap((row) =>
-        [row.receivedById, row.priceUpdatedById].filter(
-          (id): id is string => typeof id === "string",
-        ),
+        [
+          row.receivedById,
+          row.priceUpdatedById,
+          ...row.items.map((item) => item.receivedById),
+        ].filter((id): id is string => typeof id === "string"),
       ),
     ),
   ];
@@ -285,7 +380,13 @@ async function toHistoryRows(
     neededBy: row.neededBy,
     notes: row.notes,
     status: row.status,
-    items: row.items,
+    items: row.items.map((item) => ({
+      id: item.id,
+      description: item.description,
+      quantity: item.quantity,
+      receivedAt: item.receivedAt,
+      receivedBy: item.receivedById ? (actorName.get(item.receivedById) ?? null) : null,
+    })),
     receivedAt: row.receivedAt,
     receivedBy: row.receivedById ? (actorName.get(row.receivedById) ?? null) : null,
     priceCents: row.priceCents,
@@ -374,6 +475,7 @@ export async function findFoodOrderForAction(orderId: string) {
       memberId: true,
       status: true,
       priceCents: true,
+      items: { select: { id: true } },
     },
   });
 }

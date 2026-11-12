@@ -6,9 +6,20 @@
  * status-guarded `updateMany`, the price guard, the history filters, the
  * committee and hut-leader access-window reads — rather than returning canned
  * answers, so a guard that is dropped or widened changes what these fakes do.
- * `$transaction(fn)` runs `fn` against the same tables: enough for the order
- * of effects, not a model of PostgreSQL isolation.
+ * `$transaction(fn)` runs `fn` against the same tables, one transaction at a
+ * time: it stands in for the order-row lock the receipt takes first, so two
+ * receipts at once run one after the other as they do on PostgreSQL. It is not
+ * a model of isolation in general.
  */
+
+export type FakeFoodOrderItem = {
+  id: string;
+  description: string;
+  quantity: number;
+  sortOrder: number;
+  receivedAt: Date | null;
+  receivedById: string | null;
+};
 
 export type FakeFoodOrder = {
   id: string;
@@ -23,7 +34,7 @@ export type FakeFoodOrder = {
   priceUpdatedAt: Date | null;
   priceUpdatedById: string | null;
   createdAt: Date;
-  items: Array<{ description: string; quantity: number; sortOrder: number }>;
+  items: FakeFoodOrderItem[];
 };
 
 export const fakeDb = {
@@ -75,12 +86,24 @@ function projectOrder(order: FakeFoodOrder) {
     member,
     items: [...order.items]
       .sort((a, b) => a.sortOrder - b.sortOrder)
-      .map(({ description, quantity }) => ({ description, quantity })),
+      .map(({ id, description, quantity, receivedAt, receivedById }) => ({
+        id,
+        description,
+        quantity,
+        receivedAt,
+        receivedById,
+      })),
   };
 }
 
 const foodOrder = {
-  create: async ({ data }: { data: Record<string, unknown> & { items: { create: FakeFoodOrder["items"] } } }) => {
+  create: async ({
+    data,
+  }: {
+    data: Record<string, unknown> & {
+      items: { create: Array<{ description: string; quantity: number; sortOrder: number }> };
+    };
+  }) => {
     const id = `order-${fakeDb.nextId++}`;
     fakeDb.orders.push({
       id,
@@ -95,7 +118,12 @@ const foodOrder = {
       priceUpdatedAt: null,
       priceUpdatedById: null,
       createdAt: new Date(fakeDb.nextId * 1000),
-      items: data.items.create,
+      items: data.items.create.map((item) => ({
+        ...item,
+        id: `${id}-item-${item.sortOrder}`,
+        receivedAt: null,
+        receivedById: null,
+      })),
     });
     return { id };
   },
@@ -132,8 +160,48 @@ const foodOrder = {
   },
 };
 
+type ItemWhere = {
+  id?: { in: string[] };
+  foodOrderId?: string;
+  receivedAt?: null;
+};
+
+function itemRows(where: ItemWhere) {
+  return fakeDb.orders
+    .filter((order) => where.foodOrderId === undefined || order.id === where.foodOrderId)
+    .flatMap((order) => order.items)
+    .filter(
+      (item) =>
+        (where.id === undefined || where.id.in.includes(item.id)) &&
+        (where.receivedAt === undefined || item.receivedAt === null),
+    );
+}
+
+const foodOrderItem = {
+  findMany: async ({ where }: { where: ItemWhere }) =>
+    itemRows(where)
+      .sort((a, b) => a.sortOrder - b.sortOrder)
+      .map(({ id, description }) => ({ id, description })),
+  updateMany: async ({
+    where,
+    data,
+  }: {
+    where: ItemWhere;
+    data: { receivedAt: Date; receivedById: string };
+  }) => {
+    const rows = itemRows(where);
+    for (const row of rows) Object.assign(row, data);
+    return { count: rows.length };
+  },
+  count: async ({ where }: { where: ItemWhere }) => itemRows(where).length,
+};
+
+/** One transaction at a time (see the header). */
+let transactionQueue: Promise<unknown> = Promise.resolve();
+
 export const fakePrisma = {
   foodOrder,
+  foodOrderItem,
   auditLog: {
     create: async ({ data }: { data: Record<string, unknown> }) => {
       fakeDb.audit.push({
@@ -198,5 +266,9 @@ export const fakePrisma = {
         )
         .map((row) => ({ lodgeId: row.lodgeId })),
   },
-  $transaction: async <T>(fn: (tx: unknown) => Promise<T>): Promise<T> => fn(fakePrisma),
+  $transaction: <T>(fn: (tx: unknown) => Promise<T>): Promise<T> => {
+    const run = transactionQueue.then(() => fn(fakePrisma));
+    transactionQueue = run.catch(() => undefined);
+    return run;
+  },
 };

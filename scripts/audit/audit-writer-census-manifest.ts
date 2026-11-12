@@ -753,7 +753,11 @@ export const AUDIT_CENSUS_TOTALS = {
   // placed, the Received close and the price change (each an awaited
   // `createAuditLog` inside its own transaction, `src/lib/food-orders.ts`) and the
   // Food Orders settings save (also `createAuditLog`, in its Serializable transaction). RE-MEASURED with the census.
-  writeSites: 542,
+  // 542 -> 543 (fork #121 owner change, 13 Nov 2026): receipt is item by item,
+  // so `markFoodOrderItemsReceived` writes `food_order.items_received` for every
+  // receipt and the existing `food_order.received` when the last item closes the
+  // order — two `createAuditLog` sites where the single close had one. `lodge`.
+  writeSites: 543,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -978,7 +982,7 @@ export const AUDIT_CENSUS_TOTALS = {
     // 170 -> 171 (#4686): the lost-claim part-success's row, above.
     // 171 -> 172 (triyder/AlpineClubBookingsNZ#97): the link dialog's row, above.
     // 172 -> 174 (#4516): the refused reservation and the OPERATOR release, above.
-    createAuditLog: { total: 180, uncategorised: 0 }, // 174 -> 176 (#4368): the two dead card refund settlements. 176 -> 180 (fork #121): food order placed, received, price changed, and the Food Orders settings save (awaited in its Serializable transaction).
+    createAuditLog: { total: 181, uncategorised: 0 }, // 174 -> 176 (#4368): the two dead card refund settlements. 176 -> 180 (fork #121): food order placed, received, price changed, and the Food Orders settings save (awaited in its Serializable transaction). 180 -> 181: items received, beside the order close.
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.
     // Same row, same dedupe keys (`action` + `subjectMemberId` + `outcome`) —
@@ -1448,7 +1452,8 @@ export const AUDIT_CENSUS_TOTALS = {
     // 68 -> 72 (fork #121): the four food-order writers (placed, received,
     // price changed, settings saved). Food orders are Lodge Operations; `lodge`
     // is not readable with `support:view` alone, so nobody gains a read.
-    lodge: 72,
+    // 72 -> 73 (fork #121 owner change): `food_order.items_received`.
+    lodge: 73,
     // 19 -> 34 (#2581 child 2): the fifteen Xero settings, mapping, replay and
     // retry writers. `xero` is `support` plus `finance`.
     //

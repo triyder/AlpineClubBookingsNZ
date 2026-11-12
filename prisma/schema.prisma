@@ -9289,6 +9289,12 @@ model FoodOrderItem {
   quantity    Int
   sortOrder   Int
 
+  /// Set once when this line is ticked received (owner change, 13 Nov 2026:
+  /// food can arrive in parts). The order closes when its last line is.
+  /// receivedById is a snapshot member id, not a relation, like the order's.
+  receivedAt   DateTime?
+  receivedById String?
+
   foodOrder FoodOrder @relation(fields: [foodOrderId], references: [id], onDelete: Cascade)
 
   @@index([foodOrderId, sortOrder])

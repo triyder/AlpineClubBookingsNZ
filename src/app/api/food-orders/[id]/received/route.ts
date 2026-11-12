@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 
 import {
   canManageFoodOrder,
@@ -9,21 +10,41 @@ import {
   foodOrderAuditContext,
   requireFoodOrderViewer,
 } from "@/lib/food-order-route";
-import { findFoodOrderForAction, markFoodOrderReceived } from "@/lib/food-orders";
+import { FOOD_ORDER_MAX_ITEMS } from "@/lib/food-order-rules";
+import {
+  findFoodOrderForAction,
+  markFoodOrderItemsReceived,
+} from "@/lib/food-orders";
 import { requireActiveSession } from "@/lib/session-guards";
 
 /**
- * Mark a food order Received, which closes it (fork #121, owner decision 7).
+ * Tick items of a food order received (fork #121; owner change, 13 Nov 2026:
+ * food can arrive in parts). The order closes as Received when its last item
+ * is (owner decision 7).
  *
  * Who: `canManageFoodOrder` — committee, a hut leader at THIS order's lodge
  * today, or Lodge Operations edit. An order the caller may not even see answers
  * 404, so the route is not an oracle for other members' order ids; one they can
  * see but not manage answers 403.
  *
- * The close is a status-guarded claim (`OPEN` -> `RECEIVED`) inside
- * `markFoodOrderReceived`: two confirmations at once close it once, and the
- * second gets a 409 and changes nothing.
+ * The body is `{ itemIds }`: 1-50 distinct ids, every one an item of THIS
+ * order, or 400 with nothing written. `markFoodOrderItemsReceived` takes the
+ * order row first with a status-guarded update, so concurrent ticks run one
+ * after the other and the last item closes the order once. An order already
+ * received, or a choice whose items were all already received, answers 409 and
+ * changes nothing. Received is final: there is no unticking.
  */
+
+const bodySchema = z
+  .object({
+    itemIds: z
+      .array(z.string().trim().min(1).max(64))
+      .min(1)
+      .max(FOOD_ORDER_MAX_ITEMS)
+      .refine((ids) => new Set(ids).size === ids.length, "duplicate item"),
+  })
+  .strict();
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -40,22 +61,47 @@ export async function POST(
     return NextResponse.json(
       {
         error:
-          "Only a committee member, a hut leader at this lodge, or a Lodge Operations admin can mark this order received.",
+          "Only a committee member, a hut leader at this lodge, or a Lodge Operations admin can mark this order's items received.",
       },
       { status: 403 },
     );
   }
 
-  const outcome = await markFoodOrderReceived(
-    order.id,
-    guard.memberId,
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+  const parsed = bodySchema.safeParse(body);
+  const ownItemIds = new Set(order.items.map((item) => item.id));
+  if (!parsed.success || !parsed.data.itemIds.every((itemId) => ownItemIds.has(itemId))) {
+    return NextResponse.json(
+      { error: "Choose one or more items of this order." },
+      { status: 400 },
+    );
+  }
+
+  const result = await markFoodOrderItemsReceived(
+    { orderId: order.id, actorId: guard.memberId, itemIds: parsed.data.itemIds },
     foodOrderAuditContext(request),
   );
-  if (outcome === "already_received") {
+  if (result.outcome === "already_received") {
     return NextResponse.json(
       { error: "This order has already been marked received." },
       { status: 409 },
     );
   }
-  return NextResponse.json({ id: order.id, status: "RECEIVED" });
+  if (result.outcome === "items_already_received") {
+    return NextResponse.json(
+      { error: "Those items were already received. The order has been reloaded." },
+      { status: 409 },
+    );
+  }
+  return NextResponse.json({
+    id: order.id,
+    status: result.closed ? "RECEIVED" : "OPEN",
+    markedCount: result.markedCount,
+    remaining: result.remaining,
+  });
 }

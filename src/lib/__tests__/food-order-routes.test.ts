@@ -136,9 +136,25 @@ const ROLES = {
     user("admin-edit", { adminPermissionMatrix: { ...NO_ACCESS, lodge: "edit" } }),
 };
 
-function seedOrder(overrides: Partial<(typeof fakeDb.orders)[number]> = {}) {
+/** Item lines for a seeded order; ids are `<orderId>-item-<n>`. */
+function seedItems(orderId: string, descriptions: string[]) {
+  return descriptions.map((description, index) => ({
+    id: `${orderId}-item-${index}`,
+    description,
+    quantity: 1,
+    sortOrder: index,
+    receivedAt: null as Date | null,
+    receivedById: null as string | null,
+  }));
+}
+
+function seedOrder(
+  overrides: Partial<(typeof fakeDb.orders)[number]> = {},
+  descriptions: string[] = ["Bread"],
+) {
+  const id = overrides.id ?? `seed-${fakeDb.orders.length + 1}`;
   const order = {
-    id: `seed-${fakeDb.orders.length + 1}`,
+    id,
     lodgeId: "lodge-a",
     memberId: "owner-1",
     neededBy: day("2026-07-05"),
@@ -150,7 +166,7 @@ function seedOrder(overrides: Partial<(typeof fakeDb.orders)[number]> = {}) {
     priceUpdatedAt: null,
     priceUpdatedById: null,
     createdAt: new Date(Date.UTC(2026, 5, 1 + fakeDb.orders.length)),
-    items: [{ description: "Bread", quantity: 2, sortOrder: 0 }],
+    items: seedItems(id, descriptions),
     ...overrides,
   };
   fakeDb.orders.push(order);
@@ -167,8 +183,19 @@ function jsonRequest(url: string, method: string, body?: unknown) {
 
 const params = (id: string) => ({ params: Promise.resolve({ id }) });
 
-function receive(id: string) {
-  return receivedPost(jsonRequest(`/api/food-orders/${id}/received`, "POST"), params(id));
+/** Tick items received; by default every item of the order still unreceived. */
+function receive(id: string, itemIds?: unknown) {
+  const open =
+    fakeDb.orders
+      .find((order) => order.id === id)
+      ?.items.filter((item) => item.receivedAt === null)
+      .map((item) => item.id) ?? [`${id}-item-0`];
+  return receivedPost(
+    jsonRequest(`/api/food-orders/${id}/received`, "POST", {
+      itemIds: itemIds === undefined ? open : itemIds,
+    }),
+    params(id),
+  );
 }
 /**
  * PATCH a price. `expectedCents` defaults to what is stored now — the screen is
@@ -297,7 +324,12 @@ describe("placing an order", () => {
     expect(email.to).toBe("food@club.test");
     expect(email.lodgeName).toBe("Lodge A");
     expect(email.notes).toBe("For the work party");
-    expect(email.items).toEqual([
+    // The fake ignores Prisma's select, so compare the two fields the email uses.
+    expect(
+      (email.items as Array<{ description: string; quantity: number }>).map(
+        ({ description, quantity }) => ({ description, quantity }),
+      ),
+    ).toEqual([
       { description: "1 kg bags of flour", quantity: 3 },
       { description: "Dozen eggs", quantity: 2 },
       { description: "Coffee", quantity: 1 },
@@ -396,6 +428,152 @@ describe("closing an order", () => {
     expect((await receive(order.id)).status).toBe(409);
     expect(fakeDb.orders[0]?.receivedById).toBe("x");
     expect(fakeDb.audit).toHaveLength(0);
+  });
+
+  it("an order the previous release closed, with its items unmarked, cannot be ticked", async () => {
+    // The draining colour closes an order without marking its items. The
+    // order-row guard (status OPEN) is what refuses it: nothing is written.
+    const order = seedOrder({ status: "RECEIVED", receivedById: "x" }, ["Bread", "Milk"]);
+    mocks.session = ROLES.committee();
+    const res = await receive(order.id, [`${order.id}-item-0`]);
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toMatch(/already been marked received/);
+    expect(fakeDb.orders[0]?.items.every((item) => item.receivedAt === null)).toBe(true);
+    expect(fakeDb.audit).toHaveLength(0);
+  });
+});
+
+describe("receiving items (a checklist)", () => {
+  const FIVE = ["Bread", "Milk", "Eggs", "Flour", "Coffee"];
+
+  it("ticks some items, records who and when, and leaves the order Open", async () => {
+    const order = seedOrder({}, FIVE);
+    mocks.session = ROLES.hutLeaderInWindow();
+    const res = await receive(order.id, [`${order.id}-item-0`, `${order.id}-item-2`]);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ status: "OPEN", markedCount: 2, remaining: 3 });
+    const stored = fakeDb.orders[0]!;
+    expect(stored.status).toBe("OPEN");
+    expect(stored.items.map((item) => item.receivedById)).toEqual([
+      "leader-1", null, "leader-1", null, null,
+    ]);
+    expect(fakeDb.audit.map((row) => row.action)).toEqual(["food_order.items_received"]);
+    expect(JSON.parse(fakeDb.audit[0]!.details ?? "{}")).toEqual({
+      items: [
+        { id: `${order.id}-item-0`, description: "Bread" },
+        { id: `${order.id}-item-2`, description: "Eggs" },
+      ],
+      markedCount: 2,
+      remaining: 3,
+    });
+  });
+
+  it("the last item closes the order, stamped with that moment and person, and writes the received audit", async () => {
+    const order = seedOrder({}, ["Bread", "Milk"]);
+    mocks.session = ROLES.committee();
+    expect((await receive(order.id, [`${order.id}-item-0`])).status).toBe(200);
+    expect(fakeDb.orders[0]?.status).toBe("OPEN");
+    const res = await receive(order.id, [`${order.id}-item-1`]);
+    expect(await res.json()).toMatchObject({ status: "RECEIVED", remaining: 0 });
+    const stored = fakeDb.orders[0]!;
+    expect(stored.status).toBe("RECEIVED");
+    expect(stored.receivedById).toBe("committee-1");
+    expect(stored.receivedAt?.getTime()).toBe(stored.items[1]!.receivedAt?.getTime());
+    expect(fakeDb.audit.map((row) => row.action)).toEqual([
+      "food_order.items_received",
+      "food_order.items_received",
+      "food_order.received",
+    ]);
+  });
+
+  it("two people ticking the last items at once close the order once", async () => {
+    const order = seedOrder({}, ["Bread", "Milk"]);
+    mocks.session = ROLES.committee();
+    const [first, second] = await Promise.all([
+      receive(order.id, [`${order.id}-item-0`, `${order.id}-item-1`]),
+      receive(order.id, [`${order.id}-item-1`]),
+    ]);
+    expect([first.status, second.status].sort()).toEqual([200, 409]);
+    expect(fakeDb.orders[0]?.status).toBe("RECEIVED");
+    expect(fakeDb.audit.filter((row) => row.action === "food_order.received")).toHaveLength(1);
+    expect(fakeDb.audit.filter((row) => row.action === "food_order.items_received")).toHaveLength(1);
+  });
+
+  it("items already received answer 409 and change nothing", async () => {
+    const order = seedOrder({}, ["Bread", "Milk"]);
+    mocks.session = ROLES.committee();
+    await receive(order.id, [`${order.id}-item-0`]);
+    const before = fakeDb.audit.length;
+    const updatedAt = fakeDb.orders[0]!.items[0]!.receivedAt;
+    const res = await receive(order.id, [`${order.id}-item-0`]);
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toMatch(/already received/);
+    expect(fakeDb.audit).toHaveLength(before);
+    expect(fakeDb.orders[0]!.items[0]!.receivedAt).toBe(updatedAt);
+    expect(fakeDb.orders[0]?.status).toBe("OPEN");
+  });
+
+  it("an item of another order is refused with 400 and nothing is written", async () => {
+    const order = seedOrder({}, ["Bread"]);
+    const other = seedOrder({ id: "other-order" }, ["Milk"]);
+    mocks.session = ROLES.committee();
+    const res = await receive(order.id, [`${order.id}-item-0`, `${other.id}-item-0`]);
+    expect(res.status).toBe(400);
+    expect(fakeDb.orders.flatMap((row) => row.items).every((item) => item.receivedAt === null)).toBe(true);
+    expect(fakeDb.audit).toHaveLength(0);
+  });
+
+  const badBodies: Array<[string, unknown]> = [
+    ["no items", []],
+    ["a duplicated item", ["seed-1-item-0", "seed-1-item-0"]],
+    ["a non-string id", [7]],
+    ["51 items", Array.from({ length: 51 }, (_, i) => `seed-1-item-${i}`)],
+    ["not an array", "seed-1-item-0"],
+  ];
+  for (const [label, itemIds] of badBodies) {
+    it(`refuses ${label} with 400`, async () => {
+      seedOrder({}, ["Bread"]);
+      mocks.session = ROLES.committee();
+      expect((await receive("seed-1", itemIds)).status).toBe(400);
+      expect(fakeDb.audit).toHaveLength(0);
+    });
+  }
+
+  it("refuses an unknown body field and a missing body", async () => {
+    const order = seedOrder();
+    mocks.session = ROLES.committee();
+    const extra = await receivedPost(
+      jsonRequest(`/api/food-orders/${order.id}/received`, "POST", {
+        itemIds: [`${order.id}-item-0`],
+        all: true,
+      }),
+      params(order.id),
+    );
+    expect(extra.status).toBe(400);
+    const empty = await receivedPost(
+      jsonRequest(`/api/food-orders/${order.id}/received`, "POST"),
+      params(order.id),
+    );
+    expect(empty.status).toBe(400);
+    expect(fakeDb.orders[0]?.status).toBe("OPEN");
+  });
+
+  it("the history lists each item with when and by whom it was received", async () => {
+    fakeDb.members.push({ id: "committee-1", firstName: "Cara", lastName: "Committee", email: "c@x.test" });
+    const order = seedOrder({ memberId: "member-1" }, ["Bread", "Milk"]);
+    mocks.session = ROLES.committee();
+    await receive(order.id, [`${order.id}-item-1`]);
+    const res = await historyGet(jsonRequest("/api/food-orders/history", "GET"));
+    const row = (await res.json()).orders[0];
+    expect(row.status).toBe("OPEN");
+    expect(row.items.map((item: { id: string; receivedBy: string | null; receivedAt: string | null }) => [
+      item.id,
+      item.receivedBy,
+      item.receivedAt !== null,
+    ])).toEqual([
+      [`${order.id}-item-0`, null, false],
+      [`${order.id}-item-1`, "Cara Committee", true],
+    ]);
   });
 });
 

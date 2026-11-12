@@ -197,6 +197,8 @@ export const MEMBER_MERGE_SNAPSHOT_SCALAR_COLUMNS: readonly string[] = [
   // own member, FoodOrder.memberId, is a real relation classified `move`.)
   "FoodOrder.receivedById",
   "FoodOrder.priceUpdatedById",
+  // Fork #121 owner change: who ticked a food-order item received. Same kind.
+  "FoodOrderItem.receivedById",
   // #4513 (M1): the actor recorded on an immutable member-money event. A bare
   // String the detector cannot see; the database refuses any UPDATE of a posted
   // event, so a merge could not rewrite it even if it tried.
