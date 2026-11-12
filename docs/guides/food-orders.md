@@ -11,7 +11,8 @@ has three parts:
 
 - **Order food** (`/food-order`), in the members' area. A signed-in member picks
   the lodge and the date the food is needed by, adds one line per item (a
-  description and a whole-number quantity), and can add a note. A card on the
+  description, a quantity and its type, such as "2 Loaves" or "250 Grams"), and
+  can add a note. A card on the
   member dashboard, beside **Report an issue**, links to it.
 - **Food orders** (`/food-orders`), the order history. Members see their own
   orders. Committee members, hut leaders at a lodge today and Lodge Operations
@@ -62,9 +63,14 @@ Between steps 1 and 5 — and whenever the address is empty — members who open
 1. From the dashboard, click **Order food**.
 2. Choose the lodge and the **Needed by** date (today or later, in the club's own
    calendar).
-3. Add one line per item. Put the unit in the description, for example "1 kg bags
-   of flour", and a whole number from 1 to 999 as the quantity. Use **Add item**
-   and **Remove**; an order holds 1 to 50 items.
+3. Add one line per item: what it is, the **Quantity** (more than 0, up to two
+   decimal places, for example 0.5 or 250), and its **Type** — Items, Grams,
+   Kilograms, Liters, Loaves, Packets, Bottles, Bags, Boxes, Punnets or
+   Milliliters, Items by default. The type reads singular when the quantity is
+   exactly 1 ("1 Packet") and plural otherwise ("0.5 Packets", "2 Packets"), and
+   the order, the history and the email all show the line that way, for example
+   "2 Loaves — Wholemeal". Use **Add item** and **Remove**; an order holds 1 to 50
+   items.
 4. Add a note if you need to, then **Send this order**.
 
 The order is saved as **Open** first, and only then is the food officer emailed,
@@ -138,7 +144,8 @@ what forecasting next season's food spending needs.
 | --- | --- |
 | Items per order | 1 to 50 |
 | Item description | Required, up to 200 characters |
-| Item quantity | Whole number, 1 to 999 |
+| Item quantity | More than 0, at most 99999.99, up to two decimal places |
+| Item type | Items (default), Grams, Kilograms, Liters, Loaves, Packets, Bottles, Bags, Boxes, Punnets, Milliliters; singular for exactly 1 |
 | Note | Optional, up to 1,000 characters |
 | Needed by | A club calendar day, today or later |
 | Orders per member | 10 an hour |

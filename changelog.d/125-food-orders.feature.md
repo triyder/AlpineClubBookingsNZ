@@ -3,7 +3,10 @@
   admin turns it on under **Admin → Setup → Modules**, adds an **Order food** page
   (a dashboard card beside **Report an issue**) where a signed-in member chooses
   the lodge and the date the food is needed by, adds one line per item (a
-  description and a whole-number quantity from 1 to 999, up to 50 lines) and an
+  description, a quantity of more than 0 with up to two decimal places, and a
+  **Type** — Items by default, or Grams, Kilograms, Liters, Loaves, Packets,
+  Bottles, Bags, Boxes, Punnets or Milliliters, shown singular for exactly 1 as
+  in "1 Packet" and plural otherwise as in "0.5 Packets"; up to 50 lines) and an
   optional note. The order is saved as Open and then emailed to the address in
   the new **Food Orders** settings (**Admin → Lodge Operations → Food Orders**),
   which also holds what the club calls the role ("Food officer" by default). The
