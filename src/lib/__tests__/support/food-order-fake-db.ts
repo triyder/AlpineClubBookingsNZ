@@ -149,6 +149,25 @@ const foodOrder = {
       )
       .slice(skip, skip + take)
       .map(projectOrder),
+  groupBy: async ({ where }: { where: Where }) => {
+    const byDay = new Map<number, FakeFoodOrder[]>();
+    for (const row of fakeDb.orders.filter((order) => matchesOrder(order, where))) {
+      const key = row.neededBy.getTime();
+      byDay.set(key, [...(byDay.get(key) ?? []), row]);
+    }
+    return [...byDay.entries()].map(([key, rows]) => {
+      const priced = rows.filter((row) => row.priceCents !== null);
+      return {
+        neededBy: new Date(key),
+        _count: { _all: rows.length, priceCents: priced.length },
+        _sum: {
+          priceCents: priced.length
+            ? priced.reduce((sum, row) => sum + (row.priceCents ?? 0), 0)
+            : null,
+        },
+      };
+    });
+  },
   aggregate: async ({ where }: { where: Where }) => {
     const rows = fakeDb.orders.filter((row) => matchesOrder(row, where));
     const priced = rows.filter((row) => row.priceCents !== null);

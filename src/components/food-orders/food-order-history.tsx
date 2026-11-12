@@ -2,10 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { useClubFormat } from "@/components/club-format-provider";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -19,10 +17,10 @@ import {
   FOOD_ORDER_STATUSES,
   FOOD_ORDER_STATUS_LABELS,
 } from "@/lib/food-order-rules";
-import { formatCents } from "@/lib/utils";
 import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
 
 import { FoodOrderRow, type FoodOrderHistoryItem } from "./food-order-row";
+import { FoodOrderTotals, type FoodOrderYearTotalView } from "./food-order-totals";
 
 /**
  * The food-order history (fork #121): filters, the order count and price total
@@ -39,6 +37,9 @@ type HistoryPayload = {
   orderCount: number;
   pricedCount: number;
   priceTotalCents: number;
+  yearTotals: FoodOrderYearTotalView[];
+  /** The club's year today, from the server's club clock. */
+  currentYear: number;
   /** The order the page was opened for (`?order=`), when the viewer may see it. */
   linkedOrder: FoodOrderHistoryItem | null;
   officerLabel: string;
@@ -62,7 +63,6 @@ function queryFor(filters: Filters, page: number, linkedOrderId: string | null):
 }
 
 export function FoodOrderHistory({ highlightOrderId }: { highlightOrderId: string | null }) {
-  const format = useClubFormat();
   const [draft, setDraft] = useState<Filters>(EMPTY_FILTERS);
   const [applied, setApplied] = useState<Filters>(EMPTY_FILTERS);
   const [page, setPage] = useState(1);
@@ -189,24 +189,14 @@ export function FoodOrderHistory({ highlightOrderId }: { highlightOrderId: strin
 
       {payload ? (
         <>
-          <Card>
-            <CardContent className="flex flex-wrap gap-6 pt-6 text-sm" role="status">
-              <span>
-                <strong>{payload.orderCount}</strong>{" "}
-                {payload.orderCount === 1 ? "order" : "orders"}
-              </span>
-              <span>
-                Recorded prices:{" "}
-                <strong>{formatCents(payload.priceTotalCents, format)}</strong>
-                {payload.pricedCount < payload.orderCount
-                  ? ` (${payload.pricedCount} of ${payload.orderCount} priced)`
-                  : ""}
-              </span>
-              <span className="text-muted-foreground">
-                New orders are emailed to the club&apos;s {payload.officerLabel}.
-              </span>
-            </CardContent>
-          </Card>
+          <FoodOrderTotals
+            orderCount={payload.orderCount}
+            pricedCount={payload.pricedCount}
+            priceTotalCents={payload.priceTotalCents}
+            yearTotals={payload.yearTotals}
+            currentYear={payload.currentYear}
+            officerLabel={payload.officerLabel}
+          />
 
           {payload.linkedOrder ? (
             <section ref={linkedRef} aria-labelledby="food-linked-order" className="space-y-2">

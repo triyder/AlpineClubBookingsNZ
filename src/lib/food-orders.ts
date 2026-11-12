@@ -13,6 +13,7 @@ import {
   canViewFoodOrder,
   type FoodOrderViewer,
 } from "@/lib/food-order-access";
+import { calendarDateOfDateOnlyInstant, calendarDateParts } from "@/lib/club-time";
 import { memberName } from "@/lib/member-serialization";
 import { prisma } from "@/lib/prisma";
 
@@ -321,7 +322,46 @@ export type FoodOrderHistory = {
   pricedCount: number;
   /** The sum of recorded prices across the filter, in cents. */
   priceTotalCents: number;
+  /**
+   * The same three figures per calendar year of the needed-by date, across the
+   * whole filter, newest year first; years with no orders are absent.
+   */
+  yearTotals: FoodOrderYearTotal[];
 };
+
+export type FoodOrderYearTotal = {
+  year: number;
+  orderCount: number;
+  pricedCount: number;
+  priceTotalCents: number;
+};
+
+/**
+ * Fold per-day totals into per-year totals. The year is the CALENDAR year of
+ * the stored date-only needed-by day (`calendarDateOfDateOnlyInstant`), never
+ * an instant read in a time zone (INV-DATE). Cents stay integers (INV-MONEY).
+ */
+export function foldFoodOrderYearTotals(
+  days: ReadonlyArray<{
+    neededBy: Date;
+    orderCount: number;
+    pricedCount: number;
+    priceTotalCents: number;
+  }>,
+): FoodOrderYearTotal[] {
+  const byYear = new Map<number, FoodOrderYearTotal>();
+  for (const day of days) {
+    const { year } = calendarDateParts(calendarDateOfDateOnlyInstant(day.neededBy));
+    const total = byYear.get(year) ?? { year, orderCount: 0, pricedCount: 0, priceTotalCents: 0 };
+    total.orderCount += day.orderCount;
+    total.pricedCount += day.pricedCount;
+    total.priceTotalCents += day.priceTotalCents;
+    byYear.set(year, total);
+  }
+  return [...byYear.values()]
+    .filter((total) => total.orderCount > 0)
+    .sort((a, b) => b.year - a.year);
+}
 
 /**
  * A stored `Decimal(7,2)` as normalised text: `toFixed(2)` is Decimal.js's exact
@@ -464,7 +504,7 @@ export async function listFoodOrderHistory(
   };
   const page = Math.max(1, Math.trunc(filters.page));
 
-  const [rows, totals] = await Promise.all([
+  const [rows, totals, days] = await Promise.all([
     prisma.foodOrder.findMany({
       where,
       orderBy: [{ neededBy: "desc" }, { createdAt: "desc" }, { id: "asc" }],
@@ -473,6 +513,14 @@ export async function listFoodOrderHistory(
       select: HISTORY_ROW_SELECT,
     }),
     prisma.foodOrder.aggregate({
+      where,
+      _count: { _all: true, priceCents: true },
+      _sum: { priceCents: true },
+    }),
+    // Per needed-by DAY over the same filter, folded into years below; Prisma
+    // groups by the stored date, so no raw SQL and no time-zone reading.
+    prisma.foodOrder.groupBy({
+      by: ["neededBy"],
       where,
       _count: { _all: true, priceCents: true },
       _sum: { priceCents: true },
@@ -486,6 +534,14 @@ export async function listFoodOrderHistory(
     orderCount: totals._count._all,
     pricedCount: totals._count.priceCents,
     priceTotalCents: totals._sum.priceCents ?? 0,
+    yearTotals: foldFoodOrderYearTotals(
+      days.map((day) => ({
+        neededBy: day.neededBy,
+        orderCount: day._count._all,
+        pricedCount: day._count.priceCents,
+        priceTotalCents: day._sum.priceCents ?? 0,
+      })),
+    ),
     orders: await toHistoryRows(viewer, rows),
   };
 }

@@ -471,6 +471,60 @@ describe("closing an order", () => {
   });
 });
 
+describe("history totals by year", () => {
+  async function history(query = "") {
+    const res = await historyGet(jsonRequest(`/api/food-orders/history${query}`, "GET"));
+    return (await res.json()) as {
+      currentYear: number;
+      orderCount: number;
+      priceTotalCents: number;
+      yearTotals: Array<{ year: number; orderCount: number; pricedCount: number; priceTotalCents: number }>;
+    };
+  }
+
+  beforeEach(() => {
+    mocks.session = ROLES.committee();
+    seedOrder({ neededBy: day("2025-12-31"), priceCents: 100 });
+    seedOrder({ neededBy: day("2026-01-01"), priceCents: 200 });
+    seedOrder({ neededBy: day("2026-07-05"), priceCents: null });
+    seedOrder({ neededBy: day("2024-06-01"), priceCents: null, lodgeId: "lodge-b" });
+    seedOrder({ neededBy: day("2027-02-01"), priceCents: 50, status: "RECEIVED" });
+  });
+
+  it("splits 31 Dec and 1 Jan into their own calendar years, newest first, across the whole filter", async () => {
+    const body = await history();
+    expect(body.currentYear).toBe(2026);
+    expect(body.yearTotals).toEqual([
+      { year: 2027, orderCount: 1, pricedCount: 1, priceTotalCents: 50 },
+      { year: 2026, orderCount: 2, pricedCount: 1, priceTotalCents: 200 },
+      { year: 2025, orderCount: 1, pricedCount: 1, priceTotalCents: 100 },
+      { year: 2024, orderCount: 1, pricedCount: 0, priceTotalCents: 0 },
+    ]);
+    // The headline is unchanged: the whole filter.
+    expect(body.orderCount).toBe(5);
+    expect(body.priceTotalCents).toBe(350);
+  });
+
+  it("honours the filters and omits years with no orders", async () => {
+    expect((await history("?lodgeId=lodge-b")).yearTotals).toEqual([
+      { year: 2024, orderCount: 1, pricedCount: 0, priceTotalCents: 0 },
+    ]);
+    expect((await history("?status=RECEIVED")).yearTotals.map((total) => total.year)).toEqual([2027]);
+    expect(
+      (await history("?from=2025-12-31&to=2026-01-01")).yearTotals.map((total) => total.year),
+    ).toEqual([2026, 2025]);
+  });
+
+  it("a member's totals cover only their own orders", async () => {
+    mocks.session = ROLES.owner();
+    const body = await history();
+    // Every seeded order here belongs to owner-1.
+    expect(body.yearTotals.reduce((sum, total) => sum + total.orderCount, 0)).toBe(5);
+    mocks.session = ROLES.member();
+    expect((await history()).yearTotals).toEqual([]);
+  });
+});
+
 describe("receiving items (a checklist)", () => {
   const FIVE = ["Bread", "Milk", "Eggs", "Flour", "Coffee"];
 

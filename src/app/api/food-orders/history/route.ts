@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { dateOnlyInstantOf, parseCalendarDate } from "@/lib/club-time";
+import {
+  calendarDateParts,
+  dateOnlyInstantOf,
+  parseCalendarDate,
+} from "@/lib/club-time";
+import { clubTime } from "@/lib/club-time/server";
 import { requireFoodOrderViewer } from "@/lib/food-order-route";
 import { FOOD_ORDER_STATUSES } from "@/lib/food-order-rules";
 import { loadFoodOrderSettings } from "@/lib/food-order-settings";
@@ -79,7 +84,7 @@ export async function GET(request: NextRequest) {
   }
 
   const linkedId = request.nextUrl.searchParams.get("order")?.trim() ?? "";
-  const [history, linkedOrder, settings, lodges] = await Promise.all([
+  const [history, linkedOrder, settings, lodges, club] = await Promise.all([
     listFoodOrderHistory(guard.viewer, filters),
     linkedId && linkedId.length <= 64
       ? findFoodOrderHistoryRow(guard.viewer, linkedId)
@@ -89,11 +94,15 @@ export async function GET(request: NextRequest) {
       orderBy: [{ isDefault: "desc" }, { name: "asc" }],
       select: { id: true, name: true },
     }),
+    clubTime(),
   ]);
 
   return NextResponse.json({
     ...history,
     linkedOrder,
+    // The club's own year today (club-time kernel): this year and later show
+    // openly in the totals panel, earlier years inside "Previous years".
+    currentYear: calendarDateParts(club.today()).year,
     officerLabel: settings.officerLabel,
     lodges,
   });

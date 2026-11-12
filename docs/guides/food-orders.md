@@ -113,8 +113,8 @@ still be changed after the order is received.
 
 ### Record the price
 
-1. On the order in **Food orders**, enter the amount in **Price** and click
-   **Save price**.
+1. On the order in **Food orders**, type the amount in **Price** (there are no
+   up and down buttons) and click **Save price**.
 2. You can change it at any time, including after the order is received.
 
 The same people who can tick items received can record its price. Every
@@ -128,9 +128,15 @@ booking or invoice, posted to the booking ledger, or sent to Xero.
 ### Review the history and totals
 
 Filter by **Lodge**, **Status** and a **Needed from / to** range, then **Apply**.
-The summary shows how many orders match and the total of the recorded prices
+The totals panel shows how many orders match and the total of the recorded prices
 (with how many of them have a price), across every page of the filter, which is
 what forecasting next season's food spending needs.
+
+Under **By year** the panel splits the same figures by the calendar year of each
+order's needed-by date, with the same filters applied. This year, and any later
+year with orders, are listed openly; earlier years sit inside **Previous years**,
+closed until you open it, newest first. A year with no matching orders is not
+listed, and when there are no earlier years there is nothing to open.
 
 ## Settings reference
 

@@ -16,7 +16,10 @@
   cost.** The **Food orders** history shows members their own orders, and shows
   committee members, a hut leader at a lodge today and Lodge Operations admins
   every order, filterable by lodge, status and needed-by dates, with the order
-  count and the total of recorded prices for the filter. A committee member, a
+  count and the total of recorded prices for the filter, then the same totals by
+  year of the needed-by date (this year and later shown openly, earlier years in
+  a "Previous years" section that opens on request). The price is typed, with no
+  up and down buttons. A committee member, a
   hut leader whose access window covers today at that order's lodge, or a Lodge
   Operations edit admin ticks items received as they arrive, since food does not
   always come in one delivery: the order shows "Open — 2 of 5 items received"
