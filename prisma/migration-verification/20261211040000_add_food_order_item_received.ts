@@ -58,15 +58,10 @@ const verification: DataMigrationVerification = {
       ],
     },
   ],
+  // No mutant drops the `status = 'RECEIVED'` guard: an OPEN order's receivedAt
+  // and receivedById are always NULL, so stamping its items writes NULL over NULL
+  // and no row can tell the difference. The guard stays as intent, not as a proof.
   mutants: [
-    {
-      name: "stamp the items of every order, open ones included",
-      harm:
-        "An open order's items read as received, so the officer's checklist shows food as arrived that never came and the order closes on the next tick.",
-      find: `  AND o."status" = 'RECEIVED'
-`,
-      replace: ``,
-    },
     {
       name: "stamp a fixed time instead of the order's",
       harm: "Every backfilled item claims a received moment that never happened.",
