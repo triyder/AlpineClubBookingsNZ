@@ -524,7 +524,7 @@ Journey: Choose lodge content, preview the instructions, and save staged wording
 
 Screen: `/admin/lodges`.
 
-Shows: The lodge list and each lodge’s settings and feature controls.
+Shows: The lodge list and each lodge’s settings and feature controls. A lodge’s **Edit** form also holds its optional invoice details (postal address, bank details, GST number) for the downloadable booking invoice.
 
 Journey: Choose a lodge, open its settings, and manage only that lodge’s configuration.
 

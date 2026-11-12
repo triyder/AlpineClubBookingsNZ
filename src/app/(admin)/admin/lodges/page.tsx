@@ -22,6 +22,8 @@ import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
+import { LodgeInvoiceDetailsFields } from "@/components/admin/lodge-invoice-details-fields";
+import { LODGE_INVOICE_DETAIL_FIELDS } from "@/lib/lodges";
 import {
   NEW_LODGE_CAPACITY_REQUIRED_MESSAGE,
   parseConfiguredLodgeCapacity,
@@ -30,10 +32,13 @@ import { AddLodgeCapacityField } from "./_components/add-lodge-capacity-field";
 import { OtherLodgesPanel } from "./_components/other-lodges-panel";
 
 /**
- * The three lodge DETAIL fields, which `GET /api/admin/lodges` omits for a
- * caller holding no `lodge:view` (#2925).
+ * The lodge DETAIL fields, which `GET /api/admin/lodges` omits for a caller
+ * holding no `lodge:view` (#2925): the three the create form also takes, then
+ * the invoice details (#115), which only the edit form shows (#123) because
+ * `POST /api/admin/lodges` does not accept them.
  */
-const LODGE_DETAIL_FIELDS = ["address", "doorCode", "travelNote"] as const;
+const CREATE_DETAIL_FIELDS = ["address", "doorCode", "travelNote"] as const;
+const LODGE_DETAIL_FIELDS = [...CREATE_DETAIL_FIELDS, ...LODGE_INVOICE_DETAIL_FIELDS] as const;
 type LodgeDetailField = (typeof LODGE_DETAIL_FIELDS)[number];
 
 type LodgeRecord = {
@@ -41,17 +46,11 @@ type LodgeRecord = {
   name: string;
   slug: string;
   active: boolean;
-  // Optional since #2925: a narrowed payload carries none of the three.
-  address?: string | null;
-  doorCode?: string | null;
-  travelNote?: string | null;
-};
+} & Partial<Record<LodgeDetailField, string | null>>; // absent when narrowed (#2925)
 
 type LodgeFormState = {
   name: string;
-  address: string;
-  doorCode: string;
-  travelNote: string;
+} & Record<LodgeDetailField, string> & {
   /** Maximum guests, as typed. Sent on create only (#3407). */
   capacity: string;
   /**
@@ -74,33 +73,31 @@ type LodgeFormState = {
 
 const emptyForm: LodgeFormState = {
   name: "",
-  address: "",
-  doorCode: "",
-  travelNote: "",
+  ...(Object.fromEntries(LODGE_DETAIL_FIELDS.map((field) => [field, ""])) as Record<
+    LodgeDetailField,
+    string
+  >),
   capacity: "",
-  // A create starts from a blank form the admin filled in themselves, so all
-  // three values are theirs to send.
-  detailFields: LODGE_DETAIL_FIELDS,
+  // A create starts from a blank form the admin filled in themselves, so the
+  // three create fields are theirs to send.
+  detailFields: CREATE_DETAIL_FIELDS,
 };
 
 function formFromLodge(lodge: LodgeRecord): LodgeFormState {
   return {
     name: lodge.name,
-    address: lodge.address ?? "",
-    doorCode: lodge.doorCode ?? "",
-    travelNote: lodge.travelNote ?? "",
+    ...(Object.fromEntries(
+      LODGE_DETAIL_FIELDS.map((field) => [field, lodge[field] ?? ""]),
+    ) as Record<LodgeDetailField, string>),
     capacity: "",
     detailFields: LODGE_DETAIL_FIELDS.filter((field) => field in lodge),
   };
 }
 
 function formPayload(form: LodgeFormState) {
-  const payload: {
-    name: string;
-    address?: string | null;
-    doorCode?: string | null;
-    travelNote?: string | null;
-  } = { name: form.name.trim() };
+  const payload: { name: string } & Partial<Record<LodgeDetailField, string | null>> = {
+    name: form.name.trim(),
+  };
   for (const field of form.detailFields) {
     payload[field] = form[field].trim() || null;
   }
@@ -331,6 +328,9 @@ export default function AdminLodgesPage() {
               The address feeds the public {"{{lodge-address}}"} content token.
               The door code and travel note appear in booking and pre-arrival
               emails for this lodge.
+              {creating
+                ? null
+                : " The postal address, bank details and GST number are printed only on the invoice a booker can download from their booking."}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -392,6 +392,14 @@ export default function AdminLodgesPage() {
                 }
               />
             </div>
+            {creating ? null : (
+              <LodgeInvoiceDetailsFields
+                idPrefix="lodge"
+                values={form}
+                disabled={!canEdit}
+                onChange={(field, value) => setForm((prev) => ({ ...prev, [field]: value }))}
+              />
+            )}
             <div className="flex gap-2">
               <ViewOnlyActionButton canEdit={canEdit} describeReason={false} onClick={() => void submitForm()} disabled={saving}>
                 {saving ? "Saving..." : "Save"}

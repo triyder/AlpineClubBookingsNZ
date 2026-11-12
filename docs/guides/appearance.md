@@ -71,13 +71,15 @@ change these pages.
    reference; a multi-lodge club sets them per lodge under **Setup → Lodges**
    ([Lodges](../multi-lodge/README.md)) instead.
 4. Also under **Lodge details**, and all optional, are the details the booking
-   invoice prints: a **Postal address** (beside **Address**; the invoice uses it
+   invoice prints, under **Door code**: a **Postal address** (the invoice uses it
    instead of the address when set), **Bank details for bookings** (an
-   **Account name** and **Account details**, under **Door code**) and a **GST
-   number**. They are saved by the same **Save lodge details** button and appear
-   only on the invoice a booker or officer downloads from a booking that has no
-   Xero invoice — never on the public site or in emails. This panel shows them
-   for a single-lodge club only.
+   **Account name** and **Account details**) and a **GST number**. They are
+   saved by the same **Save lodge details** button and appear only on the
+   invoice a booker or officer downloads from a booking that has no Xero
+   invoice — never on the public site or in emails. A multi-lodge club sets them
+   per lodge in the **Edit** form under **Setup → Lodges**
+   ([Lodges](lodges.md#edit-a-lodges-identity)); both screens edit the same
+   lodge record.
 
 ## Settings reference
 

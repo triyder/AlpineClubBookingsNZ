@@ -11,6 +11,7 @@ import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
+import { LodgeInvoiceDetailsFields } from "@/components/admin/lodge-invoice-details-fields";
 
 type Lodge = {
   id: string;
@@ -152,7 +153,8 @@ export function LodgeDetailsPanel() {
     return (
       <p className="text-sm text-muted-foreground">
         This club has more than one lodge. Manage each lodge&apos;s name,
-        address, travel note, and door code under Admin &gt; Setup &gt; Lodges.
+        address, travel note, door code and invoice details under Admin &gt;
+        Setup &gt; Lodges.
       </p>
     );
   if (!lodge)
@@ -212,35 +214,19 @@ export function LodgeDetailsPanel() {
           onChange={(event) => setLodge({ ...lodge, name: event.target.value })}
         />
       </div>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div className="space-y-1.5">
-          <Label htmlFor="lodge-details-address">Address</Label>
-          <Textarea
-            id="lodge-details-address"
-            value={lodge.address ?? ""}
-            rows={2}
-            placeholder="Optional — shown on the public contact page when set"
-            disabled={!canEdit}
-            aria-describedby={!canEdit ? viewOnlyReasonId : undefined}
-            onChange={(event) =>
-              setLodge({ ...lodge, address: event.target.value })
-            }
-          />
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="lodge-details-postal">Postal address</Label>
-          <Textarea
-            id="lodge-details-postal"
-            value={lodge.postalAddress ?? ""}
-            rows={2}
-            placeholder="Optional — used on invoices instead of the address"
-            disabled={!canEdit}
-            aria-describedby={!canEdit ? viewOnlyReasonId : undefined}
-            onChange={(event) =>
-              setLodge({ ...lodge, postalAddress: event.target.value })
-            }
-          />
-        </div>
+      <div className="space-y-1.5">
+        <Label htmlFor="lodge-details-address">Address</Label>
+        <Textarea
+          id="lodge-details-address"
+          value={lodge.address ?? ""}
+          rows={2}
+          placeholder="Optional — shown on the public contact page when set"
+          disabled={!canEdit}
+          aria-describedby={!canEdit ? viewOnlyReasonId : undefined}
+          onChange={(event) =>
+            setLodge({ ...lodge, address: event.target.value })
+          }
+        />
       </div>
       <div className="space-y-1.5">
         <Label htmlFor="lodge-details-travel">Travel note</Label>
@@ -267,51 +253,13 @@ export function LodgeDetailsPanel() {
           }
         />
       </div>
-      <fieldset className="space-y-3">
-        <legend className="text-sm font-medium">Bank details for bookings</legend>
-        <p className="text-sm text-muted-foreground">
-          Optional. Shown in the payment box of the booking invoice.
-        </p>
-        <div className="space-y-1.5">
-          <Label htmlFor="lodge-details-bank-name">Account name</Label>
-          <Input
-            id="lodge-details-bank-name"
-            value={lodge.bankAccountName ?? ""}
-            disabled={!canEdit}
-            aria-describedby={!canEdit ? viewOnlyReasonId : undefined}
-            onChange={(event) =>
-              setLodge({ ...lodge, bankAccountName: event.target.value })
-            }
-          />
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="lodge-details-bank-details">Account details</Label>
-          <Textarea
-            id="lodge-details-bank-details"
-            value={lodge.bankAccountDetails ?? ""}
-            rows={2}
-            placeholder="Account number, and any other payment details"
-            disabled={!canEdit}
-            aria-describedby={!canEdit ? viewOnlyReasonId : undefined}
-            onChange={(event) =>
-              setLodge({ ...lodge, bankAccountDetails: event.target.value })
-            }
-          />
-        </div>
-      </fieldset>
-      <div className="space-y-1.5">
-        <Label htmlFor="lodge-details-gst">GST number</Label>
-        <Input
-          id="lodge-details-gst"
-          value={lodge.gstNumber ?? ""}
-          placeholder="Optional — printed on invoices when set"
-          disabled={!canEdit}
-          aria-describedby={!canEdit ? viewOnlyReasonId : undefined}
-          onChange={(event) =>
-            setLodge({ ...lodge, gstNumber: event.target.value })
-          }
-        />
-      </div>
+      <LodgeInvoiceDetailsFields
+        idPrefix="lodge-details"
+        values={lodge}
+        disabled={!canEdit}
+        describedBy={!canEdit ? viewOnlyReasonId : undefined}
+        onChange={(field, value) => setLodge({ ...lodge, [field]: value })}
+      />
       <ViewOnlyActionButton canEdit={canEdit} describeReason={false} disabled={saving} onClick={save}>
         {saving ? "Saving…" : "Save lodge details"}
       </ViewOnlyActionButton>
