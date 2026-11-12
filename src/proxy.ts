@@ -1193,11 +1193,7 @@ export const config = {
     "/api/cron/xero/:path*",
     "/api/display/:path*",
     "/api/finance/:path*",
-    // Food orders (fork #121): the foodOrders rule in
-    // src/config/feature-routes.ts gates "/api/food-orders", and the first
-    // matcher entry excludes every "/api/..." path, so without this entry the
-    // module gate never runs in front of the member order, history and action
-    // routes. Each handler re-checks the module itself as well.
+    // Food orders (fork #121): the foodOrders gate on "/api/food-orders" (same reason as above).
     "/api/food-orders/:path*",
     "/api/group-bookings/:path*",
     "/api/inductions/:path*",

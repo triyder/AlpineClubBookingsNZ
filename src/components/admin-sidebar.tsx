@@ -360,9 +360,7 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
         icon: Wrench,
       },
       {
-        // Food orders (fork #121): the Food Orders settings card. Visibility is
-        // derived from the href, which the `foodOrders` module gates through
-        // the hub registry, so the entry disappears while the module is off.
+        // Food orders (fork #121): hidden with the `foodOrders` module, like the entry above.
         href: "/admin/food-orders",
         label: "Food Orders",
         icon: ShoppingBasket,

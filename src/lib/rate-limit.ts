@@ -673,14 +673,7 @@ export const rateLimiters = {
    * fault report at the moment somebody is standing in front of the fault.
    */
   maintenanceReportMember: { id: "maintenance-report-member", limit: 10, windowSeconds: 60 * 60 } as RateLimitConfig,
-  /**
-   * Food order submissions (fork #121): 10 per hour, applied per member AND per
-   * IP (the IP key at ten times the budget, via applyMemberScopedRateLimit), the
-   * same shape as the maintenance form. Every order emails the food officer, so
-   * this is what stops one account flooding their inbox.
-   *
-   * Deliberately NOT `authSensitive`: there is no credential behind it.
-   */
+  /** Food orders (fork #121): 10/hour per member (and 10x per IP), like maintenanceReportMember; not authSensitive. */
   foodOrderMember: { id: "food-order-member", limit: 10, windowSeconds: 60 * 60 } as RateLimitConfig,
   /**
    * Club message board: 10 posts per hour per member (#2994).

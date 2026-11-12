@@ -164,11 +164,8 @@ const ADMIN_SYSTEM_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
   // LOCKED_DELIVERY_TEMPLATE_NAMES: no money moves, and a club that would rather
   // read the queue than the mail must be allowed to mute it.
   "admin-maintenance-report",
-  // Fork #121: a member placed a food order. Sent to the ONE address in the Food
-  // Orders settings (the food officer), not through sendToAdmins, but it is the
-  // same kind of operational notice, so it sits here: the club-wide delivery
-  // rules can mute it, and it is NOT delivery-locked because no money moves and
-  // every order stays visible in the history.
+  // Fork #121: a food order, to the Food Orders settings address. Mutable, not
+  // delivery-locked: no money moves and every order stays in the history.
   "food-order-placed",
   // #49 (owner decision "second template"): the version-only notice a Lodge
   // Operations editor who does not receive the Daily digest is sent while
@@ -500,8 +497,7 @@ const REQUIRED_TOKEN_ALTERNATIVES: Partial<
 };
 
 const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>> = {
-  // Fork #121: the item list is the order. An override that dropped it would
-  // send the food officer an order with nothing in it.
+  // Fork #121: an override that dropped the item list would send an empty order.
   "food-order-placed": ["itemsText"],
   "booking-confirmed": [
     "CLUB_LODGE_TRAVEL_NOTE",
@@ -2384,11 +2380,7 @@ const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   "summary",
   "answersText",
   "maintenanceReportUrl",
-  // Fork #121: the food-order email. `officerLabel` is what the club calls the
-  // food officer; `neededBy` is the formatted club date; `orderedBy` names the
-  // member; `itemsText` is the composed "quantity x description" list; `notes`
-  // is the member's optional note; `foodOrderUrl` links to the order history.
-  // None carries a bearer token or account secret.
+  // Fork #121: the food-order email's tokens; none carries a bearer token or secret.
   "officerLabel",
   "neededBy",
   "orderedBy",
