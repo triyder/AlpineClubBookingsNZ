@@ -207,6 +207,7 @@ export function FoodOrderForm({
                   id={`food-item-quantity-${line.key}`}
                   className="h-11"
                   inputMode="decimal"
+                  data-testid="food-item-quantity-input"
                   autoComplete="off"
                   value={line.quantity}
                   onChange={(event) =>
