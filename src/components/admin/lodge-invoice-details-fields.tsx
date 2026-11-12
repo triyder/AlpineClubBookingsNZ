@@ -4,6 +4,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import type { LodgeInvoiceDetailField } from "@/lib/lodges";
+import {
+  joinNzBankAccountParts,
+  NZ_BANK_ACCOUNT_PARTS,
+  splitNzBankAccountNumber,
+  type NzBankAccountParts,
+} from "@/lib/nz-bank-account";
 
 export type LodgeInvoiceDetailValues = Record<LodgeInvoiceDetailField, string | null | undefined>;
 
@@ -52,6 +58,92 @@ export function LodgePostalAddressField({
   );
 }
 
+/**
+ * A New Zealand bank account number as its four parts, BB-bbbb-AAAAAAA-SSS.
+ * Reports the parts joined by hyphens (empty when all are empty), so a partly
+ * typed number round-trips; the form checks it on save with
+ * `nzBankAccountNumberForSave`. Digits only; a part that fills moves to the
+ * next, and pasting a whole number into any part fills all four.
+ */
+function NzBankAccountNumberInput({
+  idPrefix,
+  value,
+  onChange,
+  disabled,
+  describedBy,
+}: {
+  idPrefix: string;
+  value: string | null | undefined;
+  onChange: (value: string) => void;
+  disabled: boolean;
+  describedBy?: string;
+}) {
+  const parsed = splitNzBankAccountNumber(value);
+  const parts: NzBankAccountParts = parsed ?? ["", "", "", ""];
+  const hintId = `${idPrefix}-hint`;
+  const partId = (key: string) => `${idPrefix}-${key}`;
+
+  function setPart(index: number, raw: string) {
+    const spec = NZ_BANK_ACCOUNT_PARTS[index];
+    if (!spec) return;
+    const digits = raw.replace(/\D/g, "").slice(0, spec.maxLength);
+    const next = [...parts] as NzBankAccountParts;
+    next[index] = digits;
+    onChange(joinNzBankAccountParts(next));
+    const following = NZ_BANK_ACCOUNT_PARTS[index + 1];
+    if (digits.length === spec.maxLength && following) {
+      document.getElementById(partId(following.key))?.focus();
+    }
+  }
+
+  return (
+    <div className="space-y-1.5">
+      <Label id={`${idPrefix}-label`}>Account number</Label>
+      <div
+        role="group"
+        aria-labelledby={`${idPrefix}-label`}
+        aria-describedby={[hintId, describedBy].filter(Boolean).join(" ")}
+        className="flex flex-wrap items-center gap-1.5"
+      >
+        {NZ_BANK_ACCOUNT_PARTS.map((part, index) => (
+          <span key={part.key} className="flex items-center gap-1.5">
+            {index > 0 ? (
+              <span aria-hidden="true" className="text-muted-foreground">
+                -
+              </span>
+            ) : null}
+            <Input
+              id={partId(part.key)}
+              aria-label={part.label}
+              inputMode="numeric"
+              autoComplete="off"
+              value={parts[index]}
+              maxLength={part.maxLength}
+              placeholder={"0".repeat(part.maxLength)}
+              disabled={disabled}
+              style={{ width: `${part.maxLength + 2.5}ch` }}
+              className="px-2 text-center font-mono"
+              onChange={(event) => setPart(index, event.target.value)}
+              onPaste={(event) => {
+                const pasted = splitNzBankAccountNumber(event.clipboardData.getData("text"));
+                if (pasted && pasted.join("").length >= 15) {
+                  event.preventDefault();
+                  onChange(joinNzBankAccountParts(pasted));
+                }
+              }}
+            />
+          </span>
+        ))}
+      </div>
+      <p id={hintId} className="text-sm text-muted-foreground">
+        {parsed
+          ? "Bank, branch, account and suffix (the suffix is 2 or 3 digits)."
+          : `The saved value "${value}" is not a New Zealand account number. Enter the number again.`}
+      </p>
+    </div>
+  );
+}
+
 /** Bank details for bookings and the GST number. */
 export function LodgeBankAndGstFields({
   idPrefix,
@@ -78,18 +170,13 @@ export function LodgeBankAndGstFields({
             onChange={(event) => onChange("bankAccountName", event.target.value)}
           />
         </div>
-        <div className="space-y-1.5">
-          <Label htmlFor={`${idPrefix}-bank-details`}>Account details</Label>
-          <Textarea
-            id={`${idPrefix}-bank-details`}
-            value={values.bankAccountDetails ?? ""}
-            rows={2}
-            maxLength={300}
-            placeholder="Account number, and any other payment details"
-            {...common}
-            onChange={(event) => onChange("bankAccountDetails", event.target.value)}
-          />
-        </div>
+        <NzBankAccountNumberInput
+          idPrefix={`${idPrefix}-bank-number`}
+          value={values.bankAccountDetails}
+          onChange={(value) => onChange("bankAccountDetails", value)}
+          disabled={disabled}
+          describedBy={describedBy}
+        />
       </fieldset>
       <div className="space-y-1.5">
         <Label htmlFor={`${idPrefix}-gst`}>GST number</Label>

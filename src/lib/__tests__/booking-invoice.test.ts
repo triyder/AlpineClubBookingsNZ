@@ -240,7 +240,12 @@ describe("renderBookingInvoicePdf", () => {
       input({
         billToName: "Hilltop School",
         amountPaidCents: 4000,
-        lodge: { ...input().lodge, bankAccountName: "Alpine Club Inc", gstNumber: "123-456-789" },
+        lodge: {
+          ...input().lodge,
+          bankAccountName: "Alpine Club Inc",
+          bankAccountDetails: "12-3456-7890123-000",
+          gstNumber: "123-456-789",
+        },
       }),
     );
     const pdf = renderBookingInvoicePdf(data, FORMAT);
@@ -256,6 +261,7 @@ describe("renderBookingInvoicePdf", () => {
       "Balance due",
       "This amount includes GST",
       "Please pay by direct credit to",
+      "Account number: 12-3456-7890123-000",
       "Thank you for your booking",
     ]) {
       expect(content).toContain(expected);
@@ -286,9 +292,8 @@ describe("renderBookingInvoicePdf", () => {
         finalPriceCents: 18000,
         lodge: {
           ...input().lodge,
-          bankAccountName: "Alpine Club Incorporated",
-          bankAccountDetails: `12-3456-7890123-00
-${"Please include your booking reference and name ".repeat(3)}`,
+          bankAccountName: `Alpine Club Incorporated ${"trading as the Mountain Lodge Trust ".repeat(3)}`,
+          bankAccountDetails: "12-3456-7890123-00",
         },
       }),
     );

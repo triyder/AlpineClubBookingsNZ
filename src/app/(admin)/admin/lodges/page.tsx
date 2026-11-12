@@ -26,86 +26,21 @@ import {
   LodgeBankAndGstFields,
   LodgePostalAddressField,
 } from "@/components/admin/lodge-invoice-details-fields";
-import { LODGE_INVOICE_DETAIL_FIELDS } from "@/lib/lodges";
 import {
   NEW_LODGE_CAPACITY_REQUIRED_MESSAGE,
   parseConfiguredLodgeCapacity,
 } from "@/lib/lodge-effective-capacity";
 import { AddLodgeCapacityField } from "./_components/add-lodge-capacity-field";
 import { OtherLodgesPanel } from "./_components/other-lodges-panel";
-
-/**
- * The lodge DETAIL fields, which `GET /api/admin/lodges` omits for a caller
- * holding no `lodge:view` (#2925): the three the create form also takes, then
- * the invoice details (#115), which only the edit form shows (#123) because
- * `POST /api/admin/lodges` does not accept them.
- */
-const CREATE_DETAIL_FIELDS = ["address", "doorCode", "travelNote"] as const;
-const LODGE_DETAIL_FIELDS = [...CREATE_DETAIL_FIELDS, ...LODGE_INVOICE_DETAIL_FIELDS] as const;
-type LodgeDetailField = (typeof LODGE_DETAIL_FIELDS)[number];
-
-type LodgeRecord = {
-  id: string;
-  name: string;
-  slug: string;
-  active: boolean;
-} & Partial<Record<LodgeDetailField, string | null>>; // absent when narrowed (#2925)
-
-type LodgeFormState = {
-  name: string;
-} & Record<LodgeDetailField, string> & {
-  /** Maximum guests, as typed. Sent on create only (#3407). */
-  capacity: string;
-  /**
-   * Which detail fields the record this form was seeded from actually carried
-   * (#2925). A field missing here is OMITTED from the PATCH body rather than
-   * sent as an empty string, because the PATCH route treats an absent key as
-   * "leave unchanged" and a `null` as "clear it" — so seeding a form from a
-   * narrowed record and saving it would otherwise WIPE the door code.
-   *
-   * BELT-AND-BRACES, and worth knowing which: the wipe is already impossible at
-   * the server. The PATCH needs `lodge:edit`, the list narrows below
-   * `lodge:view`, and `edit` outranks `view` in `LEVEL_RANK` — so any caller who
-   * can write here was served the full record. This is kept because it is a few
-   * lines and directly tested; it is deliberately not replicated in the lodge
-   * setup wizard, where a second copy bought no reachable safety and made the
-   * page reject any lodge fixture that omitted `doorCode`.
-   */
-  detailFields: readonly LodgeDetailField[];
-};
-
-const emptyForm: LodgeFormState = {
-  name: "",
-  ...(Object.fromEntries(LODGE_DETAIL_FIELDS.map((field) => [field, ""])) as Record<
-    LodgeDetailField,
-    string
-  >),
-  capacity: "",
-  // A create starts from a blank form the admin filled in themselves, so the
-  // three create fields are theirs to send.
-  detailFields: CREATE_DETAIL_FIELDS,
-};
-
-function formFromLodge(lodge: LodgeRecord): LodgeFormState {
-  return {
-    name: lodge.name,
-    ...(Object.fromEntries(
-      LODGE_DETAIL_FIELDS.map((field) => [field, lodge[field] ?? ""]),
-    ) as Record<LodgeDetailField, string>),
-    capacity: "",
-    detailFields: LODGE_DETAIL_FIELDS.filter((field) => field in lodge),
-  };
-}
-
-function formPayload(form: LodgeFormState) {
-  const payload: { name: string } & Partial<Record<LodgeDetailField, string | null>> = {
-    name: form.name.trim(),
-  };
-  for (const field of form.detailFields) {
-    payload[field] = form[field].trim() || null;
-  }
-  return payload;
-}
+import {
+  emptyForm,
+  formFromLodge,
+  formPayload,
+  lodgeFormBankAccountError,
+  type LodgeDetailField,
+  type LodgeFormState,
+  type LodgeRecord,
+} from "./_components/lodge-form";
 
 export default function AdminLodgesPage() {
   const router = useRouter();
@@ -166,6 +101,11 @@ export default function AdminLodgesPage() {
   async function submitForm() {
     if (!form.name.trim()) {
       setError("Lodge name is required.");
+      return;
+    }
+    const bankAccountError = lodgeFormBankAccountError(form);
+    if (bankAccountError) {
+      setError(bankAccountError);
       return;
     }
     // Required on create only (#3407): an existing lodge's capacity is edited

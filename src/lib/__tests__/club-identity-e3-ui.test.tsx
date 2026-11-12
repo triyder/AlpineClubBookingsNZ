@@ -252,9 +252,16 @@ describe("Lodges page — invoice details on the edit form (#123)", () => {
     expect(screen.getByLabelText("Postal address")).toHaveValue("PO Box 9, Ohakune");
     expect(screen.getByRole("group", { name: "Bank details for bookings" })).toBeInTheDocument();
     expect(screen.getByLabelText("Account name")).toHaveValue("West Peak Club");
-    fireEvent.change(screen.getByLabelText("Account details"), {
-      target: { value: "  02-1111-2222222-00  " },
-    });
+    // The account number is four parts, loaded from the stored hyphenated form.
+    const account = screen.getByRole("group", { name: "Account number" });
+    expect(account).toBeInTheDocument();
+    expect(screen.getByLabelText("Bank")).toHaveValue("01");
+    expect(screen.getByLabelText("Branch")).toHaveValue("2345");
+    expect(screen.getByLabelText("Account")).toHaveValue("0123456");
+    expect(screen.getByLabelText("Suffix")).toHaveValue("00");
+    // Digits only; a three-digit suffix is allowed.
+    fireEvent.change(screen.getByLabelText("Bank"), { target: { value: "0x2" } });
+    fireEvent.change(screen.getByLabelText("Suffix"), { target: { value: "001" } });
     fireEvent.change(screen.getByLabelText("GST number"), { target: { value: "" } });
     fireEvent.click(screen.getByRole("button", { name: /^Save$/i }));
 
@@ -268,10 +275,35 @@ describe("Lodges page — invoice details on the edit form (#123)", () => {
         travelNote: null,
         postalAddress: "PO Box 9, Ohakune",
         bankAccountName: "West Peak Club",
-        bankAccountDetails: "02-1111-2222222-00",
+        bankAccountDetails: "02-2345-0123456-001",
         gstNumber: null,
       },
     });
+  });
+
+  it("fills all four account parts from a pasted number", async () => {
+    stubFetch([{ ...FULL_LODGE, bankAccountDetails: null }]);
+    render(<AdminLodgesPage />);
+    fireEvent.click(await screen.findByRole("button", { name: /Edit/i }));
+    fireEvent.paste(screen.getByLabelText("Bank"), {
+      clipboardData: { getData: () => "12 3456 7890123 000" },
+    });
+    expect(screen.getByLabelText("Bank")).toHaveValue("12");
+    expect(screen.getByLabelText("Branch")).toHaveValue("3456");
+    expect(screen.getByLabelText("Account")).toHaveValue("7890123");
+    expect(screen.getByLabelText("Suffix")).toHaveValue("000");
+  });
+
+  it("refuses to save a partly entered account number", async () => {
+    const writes = stubFetch([{ ...FULL_LODGE, bankAccountDetails: null }]);
+    render(<AdminLodgesPage />);
+    fireEvent.click(await screen.findByRole("button", { name: /Edit/i }));
+    fireEvent.change(screen.getByLabelText("Bank"), { target: { value: "12" } });
+    fireEvent.change(screen.getByLabelText("Branch"), { target: { value: "345" } });
+    fireEvent.click(screen.getByRole("button", { name: /^Save$/i }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/BB-bbbb-AAAAAAA-SSS/);
+    expect(writes).toHaveLength(0);
   });
 
   it("leaves them off the create form and out of the create payload", async () => {

@@ -1,5 +1,9 @@
 import type { Lodge, Prisma, PrismaClient } from "@prisma/client";
 import { z } from "zod";
+import {
+  NZ_BANK_ACCOUNT_INVALID_MESSAGE,
+  NZ_BANK_ACCOUNT_NUMBER_PATTERN,
+} from "./nz-bank-account";
 
 // Callers pass their own Prisma client/transaction so this module stays free
 // of the app prisma singleton and safe to import from prisma/seed.ts.
@@ -162,11 +166,19 @@ export const LODGE_INVOICE_DETAIL_FIELDS = [
 
 export type LodgeInvoiceDetailField = (typeof LODGE_INVOICE_DETAIL_FIELDS)[number];
 
-/** The PATCH rules for those fields: the `address` rule, bounded by each column's length. */
+/** The PATCH rules for those fields: the `address` rule, bounded by each column's length; the bank account must be a NZ account number. */
 export const lodgeInvoiceDetailsSchemaShape = {
   postalAddress: z.string().trim().max(300).nullable().optional(),
   bankAccountName: z.string().trim().max(200).nullable().optional(),
-  bankAccountDetails: z.string().trim().max(300).nullable().optional(),
+  // A New Zealand bank account number, BB-bbbb-AAAAAAA-SSS; blank clears it.
+  bankAccountDetails: z
+    .string()
+    .trim()
+    .refine((value) => value === "" || NZ_BANK_ACCOUNT_NUMBER_PATTERN.test(value), {
+      message: NZ_BANK_ACCOUNT_INVALID_MESSAGE,
+    })
+    .nullable()
+    .optional(),
   gstNumber: z.string().trim().max(40).nullable().optional(),
 } satisfies Record<LodgeInvoiceDetailField, z.ZodTypeAny>;
 

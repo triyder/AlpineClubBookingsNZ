@@ -188,10 +188,9 @@ export function renderBookingInvoicePdf(
     const rows = [
       "Please pay by direct credit to",
       ...(data.paymentDetails.accountName ? [`Account name: ${data.paymentDetails.accountName}`] : []),
-      ...(data.paymentDetails.accountDetails ?? "")
-        .split(/\r?\n/)
-        .map((row) => row.trim())
-        .filter(Boolean),
+      ...(data.paymentDetails.accountDetails
+        ? [`Account number: ${data.paymentDetails.accountDetails}`]
+        : []),
       `Reference: ${data.paymentDetails.reference}`,
     ];
     const wrapped = rows.map((row) => wrap(row, PAGE.width - PAGE.margin * 2 - 8));

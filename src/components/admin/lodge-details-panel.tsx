@@ -16,6 +16,10 @@ import {
   LodgePostalAddressField,
 } from "@/components/admin/lodge-invoice-details-fields";
 import type { LodgeInvoiceDetailField } from "@/lib/lodges";
+import {
+  NZ_BANK_ACCOUNT_INVALID_MESSAGE,
+  nzBankAccountNumberForSave,
+} from "@/lib/nz-bank-account";
 
 type Lodge = {
   id: string;
@@ -171,6 +175,11 @@ export function LodgeDetailsPanel() {
 
   async function save() {
     if (!lodge) return;
+    const bankAccountNumber = nzBankAccountNumberForSave(lodge.bankAccountDetails);
+    if (bankAccountNumber.kind === "INVALID") {
+      toast.error(NZ_BANK_ACCOUNT_INVALID_MESSAGE);
+      return;
+    }
     setSaving(true);
     try {
       const response = await fetch(`/api/admin/lodges/${lodge.id}`, {
@@ -183,7 +192,7 @@ export function LodgeDetailsPanel() {
           doorCode: lodge.doorCode ?? null,
           postalAddress: lodge.postalAddress ?? null,
           bankAccountName: lodge.bankAccountName ?? null,
-          bankAccountDetails: lodge.bankAccountDetails ?? null,
+          bankAccountDetails: bankAccountNumber.value,
           gstNumber: lodge.gstNumber ?? null,
         }),
       });

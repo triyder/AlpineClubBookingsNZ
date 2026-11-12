@@ -530,5 +530,12 @@ describe("PATCH /api/admin/lodges/[id]", () => {
       params("lodge-1"),
     );
     expect(tooLong.status).toBe(400);
+
+    // The bank account is a NZ account number, BB-bbbb-AAAAAAA-SSS, or blank.
+    const notAnAccountNumber = await PATCH(
+      jsonRequest("PATCH", { bankAccountDetails: "12-3456-789-00" }),
+      params("lodge-1"),
+    );
+    expect(notAnAccountNumber.status).toBe(400);
   });
 });
