@@ -50,6 +50,43 @@ Work-party events are a **lodge** permission area: lodge view to read, lodge
 2. **Delete** is available only while an event has **no** attending bookings; once
    bookings have claimed it, deactivate it instead to preserve the discount history.
 
+### Add an existing booking to a work party
+
+For a member who booked nights inside a work party but forgot to tick "I am
+attending a working bee". You need **bookings edit** (a Booking Officer or Full
+Admin).
+
+1. Open the booking. In the **Admin tools** card, click **Add to work party**.
+2. Choose the work party. Only active work parties that overlap the stay are
+   listed. One that cannot be used says why: it is at another lodge, none of
+   the booking's nights fall inside it, or the booking already has a work party.
+3. Click **Show the new total**. You see the booking's new total and how much
+   comes back to the member as **account credit**.
+4. Leave **Email the member about the change** ticked (or untick it), then click
+   **Add to work party**.
+
+What happens:
+
+- The booking is repriced exactly as if the member had ticked the box when
+  booking. The discount applies to each guest's nights inside the window.
+- **Unpaid:** the amount owed drops.
+- **Paid:** what was paid above the new total goes back as **account credit**,
+  in full. It is never refunded to the card, and no cancellation-policy tier
+  cuts it. A joiner's booking that the group organiser paid goes back to the
+  organiser instead, as every change to such a booking does.
+- **No change fee** is charged: this is an officer correcting a missed tick, not
+  the member changing their stay.
+- It goes through the normal booking change, so the booking's history, the
+  ledger and Xero (an account credit note for a paid booking) record it like
+  any other change.
+- If the booking changed between the preview and the save, you are shown the
+  new figures and asked to confirm again; nothing is saved meanwhile.
+
+A booking can only be added to one work party, and only while it is current:
+not cancelled, finished, a draft or on the waitlist. A stay that has already
+started keeps its agreed prices, so it cannot be added. Removing a booking from
+a work party is not available.
+
 ## Settings reference
 
 | Field | What it controls | Default | Notes / constraints |
@@ -71,6 +108,7 @@ Work-party events are a **lodge** permission area: lodge view to read, lodge
 | --- | --- | --- |
 | Work Parties is missing from the sidebar / 404s | The `workParties` module is off | Enable it under **Admin → Setup → Modules** — see [`CONFIGURATION.md`](../../CONFIGURATION.md#module-controls-and-admin-modules) |
 | Everything is read-only ("… can view work parties but cannot change them") | Your admin role has lodge view but not edit | Ask a full admin for **lodge edit** access |
+| A work party is "not available" in **Add to work party** | The booking is at another lodge, has no night inside the window, or already has a work party | The dialog names the reason; a booking can carry only one work party |
 | There's no Delete button on an event | It already has attending bookings | Deactivate it instead — delete is blocked to keep the discount history |
 | A member says the discount didn't apply | The event is inactive, their nights fall outside the window, or they didn't tick the working-bee option | Check the event is Active, its dates cover their nights, and that they selected it when booking |
 | "Discount must be a whole number between 1 and 100" | A non-integer or out-of-range discount was entered | Enter a whole number from 1 to 100 |
