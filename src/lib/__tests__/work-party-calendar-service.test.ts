@@ -7,7 +7,7 @@ import {
 } from "@/lib/club-time";
 
 /**
- * Fork #118: `replaceWorkPartyCalendarEvents` is the one writer of
+ * Fork #118: `replaceWorkPartyCalendarEvents` (calendar-work-party-entries.ts) is the one writer of
  * `CalendarEvent.workPartyEventId`, and the calendar's own update and delete
  * refuse a linked entry. Prisma is a recording fake: the transaction callback
  * runs against `tx`, so each case asserts the exact writes.
@@ -43,10 +43,10 @@ vi.mock("@/lib/club-time/server", () => ({
 
 import {
   deleteCalendarEvent,
-  replaceWorkPartyCalendarEvents,
   updateCalendarEvent,
   WorkPartyManagedCalendarEventError,
 } from "@/lib/calendar-service";
+import { replaceWorkPartyCalendarEvents } from "@/lib/calendar-work-party-entries";
 import { MAX_OCCURRENCES } from "@/lib/calendar-recurrence";
 
 const zone = requireClubTimeZone("Pacific/Auckland");

@@ -12,7 +12,7 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock("server-only", () => ({}));
-vi.mock("@/lib/calendar-service", () => ({
+vi.mock("@/lib/calendar-work-party-entries", () => ({
   replaceWorkPartyCalendarEvents: h.replace,
 }));
 vi.mock("@/lib/module-settings", () => ({

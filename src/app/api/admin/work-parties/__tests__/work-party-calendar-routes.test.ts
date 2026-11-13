@@ -35,17 +35,17 @@ vi.mock("@/lib/audit", () => ({ logAudit: h.logAudit }));
 vi.mock("@/lib/module-settings", () => ({
   loadEffectiveModuleFlags: vi.fn(async () => h.modules),
 }));
-vi.mock("@/lib/calendar-service", () => ({
+vi.mock("@/lib/calendar-work-party-entries", () => ({
   replaceWorkPartyCalendarEvents: h.replace,
 }));
 vi.mock("@/lib/work-party-calendar", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/work-party-calendar")>()),
+  ...((await importOriginal()) as typeof import("@/lib/work-party-calendar")),
   syncCreatedWorkPartyCalendar: h.syncCreated,
   syncUpdatedWorkPartyCalendar: h.syncUpdated,
   removeWorkPartyCalendar: h.remove,
 }));
 vi.mock("@/lib/work-party", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/work-party")>()),
+  ...((await importOriginal()) as typeof import("@/lib/work-party")),
   createWorkPartyEventWithPromo: h.createWorkParty,
   updateWorkPartyEventAndPromo: h.updateWorkParty,
 }));

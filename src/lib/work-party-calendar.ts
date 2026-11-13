@@ -2,7 +2,7 @@
  * Keeping a work party's Events Calendar entries in step with it (fork #118).
  *
  * The rows themselves are written only by `replaceWorkPartyCalendarEvents` in
- * `calendar-service.ts`; this module decides WHEN and WHAT:
+ * `calendar-work-party-entries.ts`; this module decides WHEN and WHAT:
  *
  * - **Create:** a new work party goes on the calendar when the Events Calendar
  *   module is on, and not otherwise.
@@ -31,7 +31,7 @@ import {
 import {
   replaceWorkPartyCalendarEvents,
   type WorkPartyCalendarEntry,
-} from "@/lib/calendar-service";
+} from "@/lib/calendar-work-party-entries";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";

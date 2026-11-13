@@ -3692,7 +3692,7 @@ model WorkPartyEvent {
   lodge     Lodge?    @relation(fields: [lodgeId], references: [id], onDelete: SetNull)
   // The Events Calendar entries this work party manages (fork #118): one
   // all-day occurrence per night of the window, as one series. Written only by
-  // src/lib/calendar-service.ts (replaceWorkPartyCalendarEvents).
+  // src/lib/calendar-work-party-entries.ts (replaceWorkPartyCalendarEvents).
   calendarEvents CalendarEvent[]
 
   @@index([active])

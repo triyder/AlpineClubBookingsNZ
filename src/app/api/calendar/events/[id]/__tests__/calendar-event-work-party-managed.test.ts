@@ -32,7 +32,7 @@ vi.mock("@/lib/session-guards", () => ({
   })),
 }));
 vi.mock("@/lib/calendar-service", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/calendar-service")>()),
+  ...((await importOriginal()) as typeof import("@/lib/calendar-service")),
   updateCalendarEvent: h.updateCalendarEvent,
   deleteCalendarEvent: h.deleteCalendarEvent,
 }));

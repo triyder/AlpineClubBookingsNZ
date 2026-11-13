@@ -3,7 +3,7 @@ import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
-import { replaceWorkPartyCalendarEvents } from "@/lib/calendar-service";
+import { replaceWorkPartyCalendarEvents } from "@/lib/calendar-work-party-entries";
 import { workPartyCalendarEntry } from "@/lib/work-party-calendar";
 
 /**

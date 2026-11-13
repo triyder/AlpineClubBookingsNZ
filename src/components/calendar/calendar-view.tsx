@@ -13,7 +13,8 @@ import {
 import type { CalendarDate } from "@/lib/club-time";
 import { groupEventsByDay, monthGridRange } from "@/lib/calendar-client";
 import { MonthCalendar } from "./month-calendar";
-import { EventDialog, type CalendarWorkPartyLink } from "./event-dialog";
+import { EventDialog } from "./event-dialog";
+import type { CalendarWorkPartyLink } from "./event-details-view";
 import { DayEventsDialog } from "./day-events-dialog";
 
 interface CalendarViewProps {
