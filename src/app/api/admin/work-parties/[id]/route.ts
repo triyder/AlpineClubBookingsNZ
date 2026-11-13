@@ -104,19 +104,17 @@ export async function PUT(
 
   // Deactivating only stops new applications; existing redemptions and
   // bookings are never altered.
-  let lodge: { name: string } | null = null;
   if (parsed.data.lodgeId) {
-    const found = await prisma.lodge.findUnique({
+    const lodge = await prisma.lodge.findUnique({
       where: { id: parsed.data.lodgeId },
-      select: { active: true, name: true },
+      select: { active: true },
     });
-    if (!found?.active) {
+    if (!lodge?.active) {
       return NextResponse.json(
         { error: "Lodge not found or not active" },
         { status: 400 }
       );
     }
-    lodge = { name: found.name };
   }
 
   const event = await updateWorkPartyEventAndPromo(id, {
@@ -150,10 +148,10 @@ export async function PUT(
   });
 
   // Fork #118: a work party that has calendar entries keeps them in step with
-  // its new dates and details. Deactivating writes nothing: the calendar hides
-  // an inactive work party's entries.
+  // its new dates and details. Deactivated, they stay but the calendar hides
+  // them.
   const calendarWarning = await syncUpdatedWorkPartyCalendar(
-    { ...event, lodge },
+    event.id,
     session.user.id
   );
 

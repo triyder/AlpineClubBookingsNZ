@@ -3,8 +3,7 @@ import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
-import { replaceWorkPartyCalendarEvents } from "@/lib/calendar-work-party-entries";
-import { workPartyCalendarEntry } from "@/lib/work-party-calendar";
+import { addWorkPartyToCalendar } from "@/lib/work-party-calendar";
 
 /**
  * "Add to calendar" (fork #118): put an existing work party on the Events
@@ -38,14 +37,7 @@ export async function POST(
 
   const workParty = await prisma.workPartyEvent.findUnique({
     where: { id },
-    select: {
-      id: true,
-      name: true,
-      description: true,
-      startDate: true,
-      endDate: true,
-      lodge: { select: { name: true } },
-    },
+    select: { id: true, name: true },
   });
   if (!workParty) {
     return NextResponse.json(
@@ -54,9 +46,8 @@ export async function POST(
     );
   }
 
-  const entryCount = await replaceWorkPartyCalendarEvents(
+  const entryCount = await addWorkPartyToCalendar(
     workParty.id,
-    workPartyCalendarEntry(workParty),
     session.user.id
   );
 

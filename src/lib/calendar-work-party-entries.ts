@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { MAX_OCCURRENCES } from "@/lib/calendar-recurrence";
 import {
@@ -21,9 +22,14 @@ export interface WorkPartyCalendarEntry {
   days: CalendarDate[];
 }
 
+/** Builds the entry inside the writer's transaction; null = no entries. */
+export type WorkPartyCalendarEntryResolver = (
+  tx: Prisma.TransactionClient,
+) => Promise<WorkPartyCalendarEntry | null>;
+
 /**
- * Replace every calendar entry linked to a work party with `entry`, or remove
- * them all when `entry` is null. The ONE writer of
+ * Replace every calendar entry linked to a work party with the entry
+ * `resolveEntry` builds, or remove them all when it builds none. The ONE writer of
  * `CalendarEvent.workPartyEventId` (fork #118): the work-party routes call it
  * on create, edit, delete and "Add to calendar", and the calendar's own edit
  * and delete refuse linked entries, so the two cannot drift.
@@ -36,20 +42,31 @@ export interface WorkPartyCalendarEntry {
  * interleave and duplicate its entries. Capped at MAX_OCCURRENCES days, the
  * calendar's own series limit.
  *
+ * `resolveEntry` is called inside the transaction, after the lock, so the
+ * entries are built from the work party as it is now rather than from a
+ * caller's earlier read; null means "no entries" (deleted or removed).
+ * `onlyIfLinked` leaves a work party with no entries alone — the edit path,
+ * which must not add one that was never on the calendar.
+ *
  * Returns the number of entries now linked.
  */
 export async function replaceWorkPartyCalendarEvents(
   workPartyEventId: string,
-  entry: WorkPartyCalendarEntry | null,
+  resolveEntry: WorkPartyCalendarEntryResolver,
   actorId: string,
+  options: { onlyIfLinked?: boolean } = {},
 ): Promise<number> {
-  const zone = entry ? await clubTimeZone() : null;
+  const zone = await clubTimeZone();
   return prisma.$transaction(async (tx) => {
     await lockCalendarSeries(tx, `work-party:${workPartyEventId}`);
     const linked = await tx.calendarEvent.findMany({
       where: { workPartyEventId },
       select: { seriesId: true },
     });
+    if (options.onlyIfLinked && linked.length === 0) return 0;
+    // Read the work party AFTER the lock: of two saves racing, the one that
+    // writes last also reads last, so the entries always match the newest row.
+    const entry = await resolveEntry(tx);
     const seriesIds = [
       ...new Set(
         linked
@@ -63,7 +80,7 @@ export async function replaceWorkPartyCalendarEvents(
         where: { id: { in: seriesIds }, events: { none: {} } },
       });
     }
-    if (!entry || !zone) return 0;
+    if (!entry) return 0;
 
     const starts = entry.days
       .slice(0, MAX_OCCURRENCES)

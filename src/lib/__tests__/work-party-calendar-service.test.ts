@@ -62,12 +62,12 @@ describe("replaceWorkPartyCalendarEvents", () => {
   it("creates one all-day occurrence per day, as a daily series, across a month boundary", async () => {
     const count = await replaceWorkPartyCalendarEvents(
       "wp-1",
-      {
+      async () => ({
         title: "Work party: Spring",
         location: "Main Lodge",
         details: "Bring gloves",
         days: days("2026-09-30", "2026-10-01", "2026-10-02"),
-      },
+      }),
       "admin-1",
     );
 
@@ -112,7 +112,7 @@ describe("replaceWorkPartyCalendarEvents", () => {
   it("stores a one-night work party as a standalone entry, not a series", async () => {
     await replaceWorkPartyCalendarEvents(
       "wp-1",
-      { title: "Work party: Day", location: null, details: null, days: days("2026-07-04") },
+      async () => ({ title: "Work party: Day", location: null, details: null, days: days("2026-07-04") }),
       "admin-1",
     );
     expect(h.tx.calendarEventSeries.create).not.toHaveBeenCalled();
@@ -132,7 +132,7 @@ describe("replaceWorkPartyCalendarEvents", () => {
     ]);
     await replaceWorkPartyCalendarEvents(
       "wp-1",
-      { title: "t", location: null, details: null, days: days("2026-07-04") },
+      async () => ({ title: "t", location: null, details: null, days: days("2026-07-04") }),
       "admin-1",
     );
     expect(h.tx.calendarEvent.deleteMany).toHaveBeenCalledWith({
@@ -147,15 +147,31 @@ describe("replaceWorkPartyCalendarEvents", () => {
   });
 
   it("with no entry, only removes", async () => {
-    const count = await replaceWorkPartyCalendarEvents("wp-1", null, "admin-1");
+    const count = await replaceWorkPartyCalendarEvents("wp-1", async () => null, "admin-1");
     expect(count).toBe(0);
     expect(h.tx.calendarEvent.deleteMany).toHaveBeenCalledTimes(1);
     expect(h.tx.calendarEvent.create).not.toHaveBeenCalled();
     expect(h.tx.calendarEvent.createMany).not.toHaveBeenCalled();
   });
 
+  it("reads the work party after the lock, and skips an unlinked one with onlyIfLinked", async () => {
+    const resolve = vi.fn(async () => null);
+    await expect(
+      replaceWorkPartyCalendarEvents("wp-1", resolve, "admin-1", { onlyIfLinked: true }),
+    ).resolves.toBe(0);
+    expect(resolve).not.toHaveBeenCalled();
+    expect(h.tx.calendarEvent.deleteMany).not.toHaveBeenCalled();
+
+    h.tx.calendarEvent.findMany.mockResolvedValue([{ seriesId: null }]);
+    await replaceWorkPartyCalendarEvents("wp-1", resolve, "admin-1", { onlyIfLinked: true });
+    expect(resolve).toHaveBeenCalledWith(h.tx);
+    expect(h.tx.$executeRaw.mock.invocationCallOrder.at(-1)!).toBeLessThan(
+      resolve.mock.invocationCallOrder[0],
+    );
+  });
+
   it("takes the calendar-series lock under a work-party key", async () => {
-    await replaceWorkPartyCalendarEvents("wp-9", null, "admin-1");
+    await replaceWorkPartyCalendarEvents("wp-9", async () => null, "admin-1");
     const [strings, key] = h.tx.$executeRaw.mock.calls[0] as unknown as [
       TemplateStringsArray,
       string,
@@ -171,7 +187,7 @@ describe("replaceWorkPartyCalendarEvents", () => {
     });
     const count = await replaceWorkPartyCalendarEvents(
       "wp-1",
-      { title: "t", location: null, details: null, days: many },
+      async () => ({ title: "t", location: null, details: null, days: many }),
       "admin-1",
     );
     expect(count).toBe(MAX_OCCURRENCES);

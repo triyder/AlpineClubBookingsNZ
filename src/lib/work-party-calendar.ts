@@ -7,21 +7,27 @@
  * - **Create:** a new work party goes on the calendar when the Events Calendar
  *   module is on, and not otherwise.
  * - **Edit:** a work party that already has entries has them regenerated from
- *   its new name, dates, description and lodge, whatever the module state — an
- *   entry that exists must never show stale dates. One without entries (made
- *   before this feature, or while the calendar was off) is left alone, so a
- *   club that typed it on the calendar by hand does not get a duplicate.
+ *   its name, dates, description and lodge as saved, whatever the module state
+ *   — an entry that exists must never show stale dates. One without entries
+ *   (made before this feature, or while the calendar was off) is left alone, so
+ *   a club that typed it on the calendar by hand does not get a duplicate.
  * - **"Add to calendar":** the officer's explicit link for such a work party;
- *   refused while the module is off.
+ *   refused while the module is off (the route checks).
  * - **Delete:** its entries go with it.
- * - **Deactivate / reactivate:** nothing is written. The calendar readers hide
- *   an inactive work party's entries (`VISIBLE_CALENDAR_EVENT_WHERE`), so
- *   reactivating shows them again unchanged.
+ * - **Deactivate / reactivate:** an ordinary edit. The entries stay, and the
+ *   calendar readers hide an inactive work party's entries
+ *   (`VISIBLE_CALENDAR_EVENT_WHERE`), so reactivating shows them again.
+ *
+ * Every write builds the entry from the work party read INSIDE the writer's
+ * transaction, after its lock (`loadWorkPartyCalendarEntry`), never from the
+ * route's own copy: two officers saving the same work party at once therefore
+ * leave the entries matching whichever save landed last.
  *
  * Dates come from the work party's date-only columns through the club-time
  * kernel — `calendarDateOfDateOnlyInstant` then `eachCalendarDate` over the
  * inclusive window — never by hand (INV-DATE, INV-CONFIG-002).
  */
+import type { Prisma } from "@prisma/client";
 import {
   addCalendarDays,
   calendarDateOfDateOnlyInstant,
@@ -33,11 +39,9 @@ import {
   type WorkPartyCalendarEntry,
 } from "@/lib/calendar-work-party-entries";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
-import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 
 export interface WorkPartyCalendarSource {
-  id: string;
   name: string;
   description: string | null;
   startDate: Date;
@@ -66,15 +70,34 @@ export function workPartyCalendarEntry(
   };
 }
 
-/** Whether any calendar entry is linked to this work party. */
-export async function workPartyHasCalendarEntries(
+/** The work party as it is now, as calendar entries; null once it is gone. */
+async function loadWorkPartyCalendarEntry(
+  db: Prisma.TransactionClient,
   workPartyEventId: string,
-): Promise<boolean> {
-  const linked = await prisma.calendarEvent.findFirst({
-    where: { workPartyEventId },
-    select: { id: true },
+): Promise<WorkPartyCalendarEntry | null> {
+  const workParty = await db.workPartyEvent.findUnique({
+    where: { id: workPartyEventId },
+    select: {
+      name: true,
+      description: true,
+      startDate: true,
+      endDate: true,
+      lodge: { select: { name: true } },
+    },
   });
-  return linked !== null;
+  return workParty ? workPartyCalendarEntry(workParty) : null;
+}
+
+/** Put a work party on the calendar now, replacing any entries it has. */
+export function addWorkPartyToCalendar(
+  workPartyEventId: string,
+  actorId: string,
+): Promise<number> {
+  return replaceWorkPartyCalendarEvents(
+    workPartyEventId,
+    (tx) => loadWorkPartyCalendarEntry(tx, workPartyEventId),
+    actorId,
+  );
 }
 
 /** The message an officer sees when the work party saved but its calendar did not. */
@@ -105,39 +128,43 @@ async function afterWorkPartySaved(
 
 /** On create: add the entries when the Events Calendar module is on. */
 export async function syncCreatedWorkPartyCalendar(
-  source: WorkPartyCalendarSource,
+  workPartyEventId: string,
   actorId: string,
 ): Promise<string | null> {
   const modules = await loadEffectiveModuleFlags();
   if (!modules.eventsCalendar) return null;
-  return afterWorkPartySaved(source.id, () =>
+  return afterWorkPartySaved(workPartyEventId, () =>
+    addWorkPartyToCalendar(workPartyEventId, actorId),
+  );
+}
+
+/** On edit: regenerate the entries of a work party that already has some. */
+export function syncUpdatedWorkPartyCalendar(
+  workPartyEventId: string,
+  actorId: string,
+): Promise<string | null> {
+  return afterWorkPartySaved(workPartyEventId, () =>
     replaceWorkPartyCalendarEvents(
-      source.id,
-      workPartyCalendarEntry(source),
+      workPartyEventId,
+      (tx) => loadWorkPartyCalendarEntry(tx, workPartyEventId),
       actorId,
+      { onlyIfLinked: true },
     ),
   );
 }
 
-/** On edit: regenerate the entries a linked work party already has. */
-export async function syncUpdatedWorkPartyCalendar(
-  source: WorkPartyCalendarSource,
-  actorId: string,
-): Promise<string | null> {
-  return afterWorkPartySaved(source.id, async () => {
-    if (!(await workPartyHasCalendarEntries(source.id))) return;
-    await replaceWorkPartyCalendarEvents(
-      source.id,
-      workPartyCalendarEntry(source),
-      actorId,
-    );
-  });
-}
-
-/** Before delete: remove the entries (and their series row). */
+/**
+ * Before delete: remove the entries and their series row. The foreign key
+ * cascades the entries on delete anyway — including any a racing edit wrote
+ * in between — but not the series row, which this removes.
+ */
 export async function removeWorkPartyCalendar(
   workPartyEventId: string,
   actorId: string,
 ): Promise<void> {
-  await replaceWorkPartyCalendarEvents(workPartyEventId, null, actorId);
+  await replaceWorkPartyCalendarEvents(
+    workPartyEventId,
+    async () => null,
+    actorId,
+  );
 }

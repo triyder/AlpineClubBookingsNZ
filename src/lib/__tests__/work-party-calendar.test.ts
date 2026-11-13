@@ -6,9 +6,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * `work-party-calendar-service.test.ts`.
  */
 const h = vi.hoisted(() => ({
-  replace: vi.fn(async () => 3),
+  replace: vi.fn(async (..._args: unknown[]) => 3),
   modules: { eventsCalendar: true },
-  findFirst: vi.fn(),
+  tx: { workPartyEvent: { findUnique: vi.fn() } },
 }));
 
 vi.mock("server-only", () => ({}));
@@ -18,12 +18,10 @@ vi.mock("@/lib/calendar-work-party-entries", () => ({
 vi.mock("@/lib/module-settings", () => ({
   loadEffectiveModuleFlags: vi.fn(async () => h.modules),
 }));
-vi.mock("@/lib/prisma", () => ({
-  prisma: { calendarEvent: { findFirst: h.findFirst } },
-}));
 vi.mock("@/lib/logger", () => ({ default: { error: vi.fn() } }));
 
 import {
+  addWorkPartyToCalendar,
   removeWorkPartyCalendar,
   syncCreatedWorkPartyCalendar,
   syncUpdatedWorkPartyCalendar,
@@ -33,7 +31,6 @@ import {
 } from "@/lib/work-party-calendar";
 
 const workParty = {
-  id: "wp-1",
   name: "Spring Working Bee",
   description: "Bring gloves",
   // Date-only columns: UTC midnight encodings of the first and LAST night.
@@ -45,7 +42,7 @@ const workParty = {
 beforeEach(() => {
   vi.clearAllMocks();
   h.modules.eventsCalendar = true;
-  h.findFirst.mockResolvedValue(null);
+  h.tx.workPartyEvent.findUnique.mockResolvedValue(workParty);
 });
 
 describe("workPartyCalendarDays", () => {
@@ -82,57 +79,72 @@ describe("workPartyCalendarEntry", () => {
   });
 });
 
+/** Run the resolver the writer was handed, as the writer would inside its tx. */
+async function resolvedEntry(callIndex = 0) {
+  const resolve = (h.replace.mock.calls[callIndex] as unknown[])[1] as (
+    tx: unknown,
+  ) => Promise<unknown>;
+  return resolve(h.tx);
+}
+
 describe("syncCreatedWorkPartyCalendar", () => {
-  it("adds the entries when the Events Calendar is on", async () => {
-    await expect(syncCreatedWorkPartyCalendar(workParty, "admin-1")).resolves.toBeNull();
-    expect(h.replace).toHaveBeenCalledWith(
-      "wp-1",
-      expect.objectContaining({ title: "Work party: Spring Working Bee" }),
-      "admin-1",
+  it("adds the entries, built from the work party read inside the writer", async () => {
+    await expect(syncCreatedWorkPartyCalendar("wp-1", "admin-1")).resolves.toBeNull();
+    expect(h.replace).toHaveBeenCalledWith("wp-1", expect.any(Function), "admin-1");
+    expect(h.tx.workPartyEvent.findUnique).not.toHaveBeenCalled();
+    await expect(resolvedEntry()).resolves.toMatchObject({
+      title: "Work party: Spring Working Bee",
+      location: "Main Lodge",
+      days: ["2026-10-30", "2026-10-31", "2026-11-01", "2026-11-02"],
+    });
+    expect(h.tx.workPartyEvent.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "wp-1" } }),
     );
   });
 
   it("adds nothing when the Events Calendar is off", async () => {
     h.modules.eventsCalendar = false;
-    await expect(syncCreatedWorkPartyCalendar(workParty, "admin-1")).resolves.toBeNull();
+    await expect(syncCreatedWorkPartyCalendar("wp-1", "admin-1")).resolves.toBeNull();
     expect(h.replace).not.toHaveBeenCalled();
   });
 
   it("reports a calendar failure instead of throwing", async () => {
     h.replace.mockRejectedValueOnce(new Error("db down"));
-    await expect(syncCreatedWorkPartyCalendar(workParty, "admin-1")).resolves.toBe(
+    await expect(syncCreatedWorkPartyCalendar("wp-1", "admin-1")).resolves.toBe(
       WORK_PARTY_CALENDAR_SYNC_FAILED,
     );
   });
 });
 
 describe("syncUpdatedWorkPartyCalendar", () => {
-  it("regenerates the entries of a work party already on the calendar", async () => {
-    h.findFirst.mockResolvedValue({ id: "evt-1" });
-    await syncUpdatedWorkPartyCalendar(workParty, "admin-1");
-    expect(h.findFirst).toHaveBeenCalledWith({
-      where: { workPartyEventId: "wp-1" },
-      select: { id: true },
+  it("regenerates only a work party already on the calendar (no duplicate of a hand-typed one)", async () => {
+    await syncUpdatedWorkPartyCalendar("wp-1", "admin-1");
+    expect(h.replace).toHaveBeenCalledWith("wp-1", expect.any(Function), "admin-1", {
+      onlyIfLinked: true,
     });
-    expect(h.replace).toHaveBeenCalledTimes(1);
   });
 
   it("keeps linked entries in step even while the calendar module is off", async () => {
     h.modules.eventsCalendar = false;
-    h.findFirst.mockResolvedValue({ id: "evt-1" });
-    await syncUpdatedWorkPartyCalendar(workParty, "admin-1");
+    await syncUpdatedWorkPartyCalendar("wp-1", "admin-1");
     expect(h.replace).toHaveBeenCalledTimes(1);
   });
 
-  it("leaves a work party with no entries off the calendar (no duplicate of a hand-typed one)", async () => {
-    await syncUpdatedWorkPartyCalendar(workParty, "admin-1");
-    expect(h.replace).not.toHaveBeenCalled();
+  it("builds no entry for a work party deleted meanwhile", async () => {
+    h.tx.workPartyEvent.findUnique.mockResolvedValueOnce(null);
+    await syncUpdatedWorkPartyCalendar("wp-1", "admin-1");
+    await expect(resolvedEntry()).resolves.toBeNull();
   });
 });
 
-describe("removeWorkPartyCalendar", () => {
-  it("replaces the entries with nothing", async () => {
+describe("addWorkPartyToCalendar and removeWorkPartyCalendar", () => {
+  it("add replaces the entries from the work party as it is now", async () => {
+    await expect(addWorkPartyToCalendar("wp-1", "admin-1")).resolves.toBe(3);
+    expect(h.replace).toHaveBeenCalledWith("wp-1", expect.any(Function), "admin-1");
+  });
+
+  it("remove replaces the entries with nothing", async () => {
     await removeWorkPartyCalendar("wp-1", "admin-1");
-    expect(h.replace).toHaveBeenCalledWith("wp-1", null, "admin-1");
+    await expect(resolvedEntry()).resolves.toBeNull();
   });
 });

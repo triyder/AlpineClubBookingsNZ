@@ -35,14 +35,12 @@ vi.mock("@/lib/audit", () => ({ logAudit: h.logAudit }));
 vi.mock("@/lib/module-settings", () => ({
   loadEffectiveModuleFlags: vi.fn(async () => h.modules),
 }));
-vi.mock("@/lib/calendar-work-party-entries", () => ({
-  replaceWorkPartyCalendarEvents: h.replace,
-}));
 vi.mock("@/lib/work-party-calendar", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/work-party-calendar")),
   syncCreatedWorkPartyCalendar: h.syncCreated,
   syncUpdatedWorkPartyCalendar: h.syncUpdated,
   removeWorkPartyCalendar: h.remove,
+  addWorkPartyToCalendar: h.replace,
 }));
 vi.mock("@/lib/work-party", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/work-party")),
@@ -101,14 +99,11 @@ beforeEach(() => {
 });
 
 describe("create", () => {
-  it("syncs the new work party, with its lodge name, and returns any warning", async () => {
+  it("syncs the new work party by id and returns any warning", async () => {
     h.syncCreated.mockResolvedValueOnce("calendar failed");
     const res = await createRoute(json("POST", body));
     expect(res.status).toBe(201);
-    expect(h.syncCreated).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "wp-1", lodge: { name: "Main Lodge" } }),
-      "admin-1",
-    );
+    expect(h.syncCreated).toHaveBeenCalledWith("wp-1", "admin-1");
     expect((await res.json()).calendarWarning).toBe("calendar failed");
   });
 });
@@ -117,16 +112,13 @@ describe("edit", () => {
   it("syncs the updated work party", async () => {
     const res = await updateRoute(json("PUT", body), { params });
     expect(res.status).toBe(200);
-    expect(h.syncUpdated).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "wp-1", lodge: { name: "Main Lodge" } }),
-      "admin-1",
-    );
+    expect(h.syncUpdated).toHaveBeenCalledWith("wp-1", "admin-1");
   });
 
-  it("deactivating goes through the same sync, which writes nothing new", async () => {
+  it("deactivating is an ordinary edit for the calendar (its entries stay, hidden)", async () => {
     await updateRoute(json("PUT", { ...body, active: false }), { params });
-    expect(h.syncUpdated).toHaveBeenCalledTimes(1);
-    expect(h.replace).not.toHaveBeenCalled();
+    expect(h.syncUpdated).toHaveBeenCalledWith("wp-1", "admin-1");
+    expect(h.remove).not.toHaveBeenCalled();
   });
 });
 
@@ -156,15 +148,7 @@ describe("Add to calendar", () => {
     const res = await addToCalendarRoute(json("POST"), { params });
     expect(res.status).toBe(200);
     expect((await res.json()).entryCount).toBe(3);
-    expect(h.replace).toHaveBeenCalledWith(
-      "wp-1",
-      expect.objectContaining({
-        title: "Work party: Spring",
-        location: "Main Lodge",
-        days: ["2026-07-10", "2026-07-11", "2026-07-12"],
-      }),
-      "admin-1",
-    );
+    expect(h.replace).toHaveBeenCalledWith("wp-1", "admin-1");
     expect(h.logAudit).toHaveBeenCalledWith(
       expect.objectContaining({ action: "workparty.calendar.add" }),
     );

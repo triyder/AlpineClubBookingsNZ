@@ -76,19 +76,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: datesError }, { status: 400 });
   }
 
-  let lodge: { name: string } | null = null;
   if (parsed.data.lodgeId) {
-    const found = await prisma.lodge.findUnique({
+    const lodge = await prisma.lodge.findUnique({
       where: { id: parsed.data.lodgeId },
-      select: { active: true, name: true },
+      select: { active: true },
     });
-    if (!found?.active) {
+    if (!lodge?.active) {
       return NextResponse.json(
         { error: "Lodge not found or not active" },
         { status: 400 }
       );
     }
-    lodge = { name: found.name };
   }
 
   const event = await createWorkPartyEventWithPromo({
@@ -123,7 +121,7 @@ export async function POST(req: NextRequest) {
   // Fork #118: with the Events Calendar on, the work party also goes on the
   // calendar. A calendar failure is reported, never a reason to lose the save.
   const calendarWarning = await syncCreatedWorkPartyCalendar(
-    { ...event, lodge },
+    event.id,
     session.user.id
   );
 
