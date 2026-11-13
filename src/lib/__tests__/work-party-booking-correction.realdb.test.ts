@@ -63,12 +63,16 @@ const OTHER_PROMO_CODE = "RACE119OTHERBEE";
 const PUBLIC_PROMO_ID = "race-119-public-promo";
 const PUBLIC_PROMO_CODE = "RACE119PUBLIC";
 const XERO_INVOICE_ID = "race-119-xero-invoice";
+const ORGANISER_BOOKING_ID = "race-119-organiser-booking";
+const STARTED_EVENT_ID = "race-119-started-event";
+const STARTED_PROMO_ID = "race-119-started-promo";
+const STARTED_PROMO_CODE = "RACE119STARTEDBEE";
+const ALL_PROMO_IDS = [PROMO_ID, OTHER_PROMO_ID, PUBLIC_PROMO_ID, STARTED_PROMO_ID];
 
 // FUTURE against the frozen suite clock (1 July 2026): 31 days out.
 const NIGHTS = ["2026-08-01", "2026-08-02", "2026-08-03", "2026-08-04"].map(
   (day) => new Date(`${day}T00:00:00.000Z`),
 );
-const CHECK_IN = NIGHTS[0]!;
 const CHECK_OUT = new Date("2026-08-05T00:00:00.000Z");
 // The working bee covers the last two nights only (end date inclusive).
 const WINDOW_START = new Date("2026-08-03T00:00:00.000Z");
@@ -80,6 +84,18 @@ const DISCOUNT_PERCENT = 50;
 const DISCOUNT_CENTS = 2 * NIGHT_CENTS * (DISCOUNT_PERCENT / 100);
 /** Part-paid: an earlier increase's card ask still unpaid. */
 const ASK_CENTS = 3_000;
+/** A stay that began on the frozen today (1 July 2026); a work party covers it. */
+const STARTED_STAY = {
+  nights: [new Date("2026-07-01T00:00:00.000Z"), new Date("2026-07-02T00:00:00.000Z")],
+  checkOut: new Date("2026-07-03T00:00:00.000Z"),
+};
+/** The marker the modification and its audit carry (`OFFICER_WORK_PARTY_MONEY_RULE`). */
+const WORK_PARTY_MARKER = {
+  workPartyEventId: EVENT_ID,
+  promoCodeId: PROMO_ID,
+  changeFee: "none",
+  reduction: "returned in full",
+};
 
 let prisma: PrismaClient;
 let correction: typeof import("@/lib/work-party-booking-correction");
@@ -148,7 +164,7 @@ async function clean(): Promise<void> {
   await prisma.promoRedemptionAllocation.deleteMany({ where: { bookingId: BOOKING_ID } });
   await prisma.promoRedemption.deleteMany({ where: { bookingId: BOOKING_ID } });
   await prisma.promoCode.updateMany({
-    where: { id: { in: [PROMO_ID, OTHER_PROMO_ID, PUBLIC_PROMO_ID] } },
+    where: { id: { in: ALL_PROMO_IDS } },
     data: { currentRedemptions: 0 },
   });
   await prisma.bookingModification.deleteMany({ where: { bookingId: BOOKING_ID } });
@@ -161,14 +177,16 @@ async function clean(): Promise<void> {
   await prisma.bookingGuestNight.deleteMany({ where: { bookingGuest: { bookingId: BOOKING_ID } } });
   await prisma.bookingGuest.deleteMany({ where: { bookingId: BOOKING_ID } });
   await prisma.booking.deleteMany({ where: { id: BOOKING_ID } });
+  // The organiser's booking after its joiner's, which points at it.
+  await prisma.booking.deleteMany({ where: { id: ORGANISER_BOOKING_ID } });
   if (enqueueErrors.length > 0) {
     throw new AggregateError(enqueueErrors, "#119: real Xero fixture enqueues failed; owned fixtures cleaned");
   }
 }
 
 async function teardownFixtures(): Promise<void> {
-  await prisma.workPartyEvent.deleteMany({ where: { id: { in: [EVENT_ID, OTHER_EVENT_ID] } } });
-  await prisma.promoCode.deleteMany({ where: { id: { in: [PROMO_ID, OTHER_PROMO_ID, PUBLIC_PROMO_ID] } } });
+  await prisma.workPartyEvent.deleteMany({ where: { id: { in: [EVENT_ID, OTHER_EVENT_ID, STARTED_EVENT_ID] } } });
+  await prisma.promoCode.deleteMany({ where: { id: { in: ALL_PROMO_IDS } } });
   await prisma.membershipTypeSeasonRate.deleteMany({ where: { seasonId: SEASON_ID } });
   await prisma.season.deleteMany({ where: { id: SEASON_ID } });
   await prisma.cancellationPolicy.deleteMany({ where: { lodgeId: LODGE_ID } });
@@ -178,7 +196,7 @@ async function teardownFixtures(): Promise<void> {
   await prisma.member.deleteMany({ where: { id: { in: [OWNER_ID, OFFICER_ID] } } });
 }
 
-type Shape = "unpaid" | "paid" | "part-paid";
+type Shape = "unpaid" | "paid" | "part-paid" | "credit-paid" | "organiser-paid";
 
 /**
  * The owner as their own guest, four nights at the season rate, as the booking
@@ -187,19 +205,43 @@ type Shape = "unpaid" | "paid" | "part-paid";
  *  - paid: PAID, the price captured by card against an issued Xero invoice, the
  *    confirmation's ledger lines posted;
  *  - part-paid: as paid, but an earlier increase of `ASK_CENTS` is an unpaid
- *    card ask (the primary invoice raised after it, so it bills the whole price).
+ *    card ask (the primary invoice raised after it, so it bills the whole price);
+ *  - credit-paid: PAID wholly with the member's account credit, no card money;
+ *  - organiser-paid: a joiner's booking its group organiser settled by card
+ *    (`paidByOrganiserCard`: organiser-settled, a parent, a STRIPE mirror).
+ * `stay` defaults to the four August nights.
  */
-async function seed(shape: Shape): Promise<void> {
+async function seed(
+  shape: Shape,
+  stay: { nights: Date[]; checkOut: Date } = { nights: NIGHTS, checkOut: CHECK_OUT },
+): Promise<void> {
+  const checkIn = stay.nights[0]!;
+  const price = stay.nights.length * NIGHT_CENTS;
+  if (shape === "organiser-paid") {
+    await prisma.booking.create({
+      data: {
+        id: ORGANISER_BOOKING_ID,
+        memberId: OWNER_ID,
+        lodgeId: LODGE_ID,
+        checkIn,
+        checkOut: stay.checkOut,
+        status: "PAID",
+        totalPriceCents: 0,
+        finalPriceCents: 0,
+      },
+    });
+  }
   await prisma.booking.create({
     data: {
       id: BOOKING_ID,
       memberId: OWNER_ID,
       lodgeId: LODGE_ID,
-      checkIn: CHECK_IN,
-      checkOut: CHECK_OUT,
+      checkIn,
+      checkOut: stay.checkOut,
       status: shape === "unpaid" ? "PAYMENT_PENDING" : "PAID",
-      totalPriceCents: PRICE_CENTS,
-      finalPriceCents: PRICE_CENTS,
+      totalPriceCents: price,
+      finalPriceCents: price,
+      ...(shape === "organiser-paid" ? { parentBookingId: ORGANISER_BOOKING_ID, organiserSettled: true } : {}),
     },
   });
   await prisma.bookingGuest.create({
@@ -211,11 +253,11 @@ async function seed(shape: Shape): Promise<void> {
       ageTier: "ADULT",
       isMember: true,
       memberId: OWNER_ID,
-      stayStart: CHECK_IN,
-      stayEnd: CHECK_OUT,
-      priceCents: PRICE_CENTS,
+      stayStart: checkIn,
+      stayEnd: stay.checkOut,
+      priceCents: price,
       nights: {
-        create: NIGHTS.map((stayDate) => ({ stayDate, priceCents: NIGHT_CENTS, priceSource: "SOLD" as const })),
+        create: stay.nights.map((stayDate) => ({ stayDate, priceCents: NIGHT_CENTS, priceSource: "SOLD" as const })),
       },
     },
   });
@@ -244,7 +286,44 @@ async function seed(shape: Shape): Promise<void> {
     return;
   }
 
-  const capturedCents = shape === "paid" ? PRICE_CENTS : PRICE_CENTS - ASK_CENTS;
+  if (shape === "credit-paid") {
+    // Paid wholly from the member's balance: the opening credit, then the
+    // booking's BOOKING_APPLIED row, so the balance stands at 0.
+    await prisma.payment.create({
+      data: {
+        id: PAYMENT_ID,
+        bookingId: BOOKING_ID,
+        amountCents: 0,
+        creditAppliedCents: price,
+        source: "STRIPE",
+        status: "SUCCEEDED",
+      },
+    });
+    await prisma.memberCredit.create({
+      data: { memberId: OWNER_ID, amountCents: price, type: "ADMIN_ADJUSTMENT", description: "race 119 opening balance" },
+    });
+    await prisma.$transaction((tx) =>
+      memberCredit.applyCreditToBooking(OWNER_ID, price, BOOKING_ID, tx, CLUB_FORMAT_TEST),
+    );
+  } else if (shape === "organiser-paid") {
+    // The child's mirror of the organiser's card settlement: no intent of its own.
+    await prisma.payment.create({
+      data: { id: PAYMENT_ID, bookingId: BOOKING_ID, amountCents: price, source: "STRIPE", status: "SUCCEEDED" },
+    });
+  } else {
+    await seedCardPayment(shape, price);
+  }
+  // The stay's confirmation lines, as its settle posted them: an edit posts
+  // its own ledger lines only onto a booking the ledger already holds.
+  const ledger = await import("@/lib/booking-ledger-confirmation-sync");
+  await prisma.$transaction((tx) =>
+    ledger.postStoredBookingConfirmationLedgerLines(tx, BOOKING_ID, memberMoneyTestContext()),
+  );
+}
+
+/** Paid or part-paid: the capture by card against an issued Xero invoice, and any unpaid ask. */
+async function seedCardPayment(shape: "paid" | "part-paid", price: number): Promise<void> {
+  const capturedCents = shape === "part-paid" ? price - ASK_CENTS : price;
   await prisma.payment.create({
     data: {
       id: PAYMENT_ID,
@@ -299,18 +378,12 @@ async function seed(shape: Shape): Promise<void> {
     const { reconcilePaymentAggregates } = await import("@/lib/payment-transactions");
     await reconcilePaymentAggregates({ paymentId: PAYMENT_ID });
     expect(await prisma.payment.findUniqueOrThrow({ where: { id: PAYMENT_ID } })).toMatchObject({
-      amountCents: PRICE_CENTS - ASK_CENTS,
+      amountCents: price - ASK_CENTS,
       status: "SUCCEEDED",
       additionalAmountCents: ASK_CENTS,
       additionalPaymentStatus: "PENDING",
     });
   }
-  // The stay's confirmation lines, as its settle posted them: an edit posts
-  // its own ledger lines only onto a booking the ledger already holds.
-  const ledger = await import("@/lib/booking-ledger-confirmation-sync");
-  await prisma.$transaction((tx) =>
-    ledger.postStoredBookingConfirmationLedgerLines(tx, BOOKING_ID, memberMoneyTestContext()),
-  );
 }
 
 type Figures = import("@/lib/work-party-booking-correction").WorkPartyCorrectionFigures;
@@ -374,6 +447,26 @@ async function bookingRow() {
   });
 }
 
+/** The service's refusal as status and message, or null if it quoted. */
+async function correctionRefusal(workPartyEventId = EVENT_ID): Promise<{ status: number; message: string } | null> {
+  return correction.addBookingToWorkParty({ ...(await common(workPartyEventId)), dryRun: true }).then(
+    () => null,
+    (error: { status: number; message: string }) => ({ status: error.status, message: error.message }),
+  );
+}
+
+/** The batch edit's audit row for a modification: written after commit, so polled. */
+async function batchAuditRow(modificationId: string) {
+  const started = process.hrtime.bigint();
+  for (;;) {
+    const row = await prisma.auditLog.findFirst({
+      where: { action: "booking.modify.batch", targetId: BOOKING_ID, entityId: modificationId },
+    });
+    if (row || realElapsedMs(started) > 5_000) return row;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+
 /** Any refund hand-back the edit queued: there must be none. */
 async function refundOperations() {
   return prisma.paymentRecoveryOperation.findMany({
@@ -389,22 +482,30 @@ async function workPartyRedemptions() {
 /** What the ordinary batch edit says when handed the internal code, or null if it took it. */
 async function batchRefusal(params: {
   actor: { id: string; role: Role };
-  officerWorkPartyCorrection?: { promoCodeId: string };
+  officerWorkPartyCorrection?: { workPartyEventId: string; promoCodeId: string };
+  /** Run as the correction runs it: on a caller transaction (the argument requires one). */
+  callerTransaction?: boolean;
 }): Promise<string | null> {
-  return batchService
-    .modifyBookingBatch({
-      bookingId: BOOKING_ID,
-      actor: params.actor,
-      input: { promoCodes: [{ code: PROMO_CODE }], notifyMember: false },
-      ipAddress: "127.0.0.1",
-      todayAtClub: (await clubTimeServer.clubTime()).today(),
-      format: CLUB_FORMAT_TEST,
-      ...(params.officerWorkPartyCorrection ? { officerWorkPartyCorrection: params.officerWorkPartyCorrection } : {}),
-    })
-    .then(
-      () => null,
-      (error: Error) => error.message,
-    );
+  const base = {
+    bookingId: BOOKING_ID,
+    actor: params.actor,
+    input: { promoCodes: [{ code: PROMO_CODE }], notifyMember: false },
+    ipAddress: "127.0.0.1",
+    todayAtClub: (await clubTimeServer.clubTime()).today(),
+    format: CLUB_FORMAT_TEST,
+    ...(params.officerWorkPartyCorrection ? { officerWorkPartyCorrection: params.officerWorkPartyCorrection } : {}),
+  };
+  const run = params.callerTransaction
+    ? batchService
+        .prepareBatchModificationForCallerTransaction({ audience: "admin" })
+        .then((preTransaction) =>
+          prisma.$transaction((tx) => batchService.modifyBookingBatch({ ...base, tx, preTransaction })),
+        )
+    : batchService.modifyBookingBatch(base);
+  return run.then(
+    () => null,
+    (error: Error) => error.message,
+  );
 }
 
 (RUN ? describe : describe.skip)("adding a booking to a work party, on PostgreSQL (fork #119)", () => {
@@ -483,6 +584,7 @@ async function batchRefusal(params: {
     for (const [eventId, promoId, code, name] of [
       [EVENT_ID, PROMO_ID, PROMO_CODE, "Race 119 working bee"],
       [OTHER_EVENT_ID, OTHER_PROMO_ID, OTHER_PROMO_CODE, "Race 119 other working bee"],
+      [STARTED_EVENT_ID, STARTED_PROMO_ID, STARTED_PROMO_CODE, "Race 119 July working bee"],
     ] as const) {
       await prisma.promoCode.create({
         data: {
@@ -500,8 +602,9 @@ async function batchRefusal(params: {
         data: {
           id: eventId,
           name,
-          startDate: WINDOW_START,
-          endDate: WINDOW_END,
+          // The July one covers the started stay, so only its start refuses it.
+          startDate: eventId === STARTED_EVENT_ID ? STARTED_STAY.nights[0]! : WINDOW_START,
+          endDate: eventId === STARTED_EVENT_ID ? STARTED_STAY.nights[1]! : WINDOW_END,
           discountPercent: DISCOUNT_PERCENT,
           active: true,
           lodgeId: LODGE_ID,
@@ -546,6 +649,8 @@ async function batchRefusal(params: {
       newFinalPriceCents: PRICE_CENTS - DISCOUNT_CENTS,
       priceDiffCents: -DISCOUNT_CENTS,
       accountCreditAmountCents: 0,
+      appliedCreditGivenBackCents: 0,
+      additionalAmountCents: 0,
       refundAmountCents: 0,
       settlementMethod: "credit",
     });
@@ -591,6 +696,8 @@ async function batchRefusal(params: {
       priceDiffCents: -DISCOUNT_CENTS,
       // The whole reduction: the 50% tier the stay sits in does not touch it.
       accountCreditAmountCents: DISCOUNT_CENTS,
+      appliedCreditGivenBackCents: 0,
+      additionalAmountCents: 0,
       refundAmountCents: 0,
       settlementMethod: "credit",
     });
@@ -668,6 +775,8 @@ async function batchRefusal(params: {
       newFinalPriceCents: PRICE_CENTS - DISCOUNT_CENTS,
       priceDiffCents: -DISCOUNT_CENTS,
       accountCreditAmountCents: DISCOUNT_CENTS - ASK_CENTS,
+      appliedCreditGivenBackCents: 0,
+      additionalAmountCents: 0,
       refundAmountCents: 0,
       settlementMethod: "credit",
     });
@@ -751,11 +860,116 @@ async function batchRefusal(params: {
     expect(
       await batchRefusal({
         actor: { id: OFFICER_ID, role: Role.ADMIN },
-        officerWorkPartyCorrection: { promoCodeId: OTHER_PROMO_ID },
+        officerWorkPartyCorrection: { workPartyEventId: "other", promoCodeId: OTHER_PROMO_ID },
+        callerTransaction: true,
       }),
     ).toBe("Promo code not found");
+    // The argument is refused outright on a member's actor or a self-committing
+    // call, before anything is read: it lifts the fee and the tier.
+    expect(
+      await batchRefusal({
+        actor: { id: OWNER_ID, role: Role.USER },
+        officerWorkPartyCorrection: { workPartyEventId: EVENT_ID, promoCodeId: PROMO_ID },
+        callerTransaction: true,
+      }),
+    ).toMatch(/needs an officer and a caller transaction/);
+    expect(
+      await batchRefusal({
+        actor: { id: OFFICER_ID, role: Role.ADMIN },
+        officerWorkPartyCorrection: { workPartyEventId: EVENT_ID, promoCodeId: PROMO_ID },
+      }),
+    ).toMatch(/needs an officer and a caller transaction/);
 
     expect(await snapshot()).toEqual(before);
     expect(await workPartyRedemptions()).toEqual([]);
+  }, 60_000);
+
+  it("credit-paid: the discount goes back to the member's balance as applied credit given back", async () => {
+    await seed("credit-paid");
+    expect(await memberCredit.getMemberCreditBalance(OWNER_ID)).toBe(0);
+
+    const figures = await quote();
+    expect(figures).toEqual({
+      previousFinalPriceCents: PRICE_CENTS,
+      newFinalPriceCents: PRICE_CENTS - DISCOUNT_CENTS,
+      priceDiffCents: -DISCOUNT_CENTS,
+      accountCreditAmountCents: 0,
+      appliedCreditGivenBackCents: DISCOUNT_CENTS,
+      additionalAmountCents: 0,
+      refundAmountCents: 0,
+      settlementMethod: "credit",
+    });
+    const result = await apply(figures);
+    // What was saved is exactly what was quoted.
+    expect(result, JSON.stringify(result)).toMatchObject({ outcome: "applied", figures });
+
+    expect(await memberCredit.getMemberCreditBalance(OWNER_ID)).toBe(DISCOUNT_CENTS);
+    expect(await bookingRow()).toMatchObject({ finalPriceCents: PRICE_CENTS - DISCOUNT_CENTS });
+    expect(await workPartyRedemptions()).toHaveLength(1);
+    expect(await prisma.payment.findUniqueOrThrow({ where: { id: PAYMENT_ID } })).toMatchObject({
+      amountCents: 0,
+      creditAppliedCents: PRICE_CENTS - DISCOUNT_CENTS,
+    });
+    expect(await prisma.paymentRefund.count({ where: { paymentId: PAYMENT_ID } })).toBe(0);
+    expect(await refundOperations()).toEqual([]);
+  }, 60_000);
+
+  it("refuses an organiser-paid joiner's booking, and writes nothing", async () => {
+    await seed("organiser-paid");
+    const before = await snapshot();
+
+    expect(await correctionRefusal()).toEqual({
+      status: 409,
+      message: expect.stringContaining("paid by its group organiser"),
+    });
+    // The apply is refused the same way, before the figures are compared.
+    const applied = await apply({
+      previousFinalPriceCents: PRICE_CENTS,
+      newFinalPriceCents: PRICE_CENTS - DISCOUNT_CENTS,
+      priceDiffCents: -DISCOUNT_CENTS,
+      accountCreditAmountCents: 0,
+      appliedCreditGivenBackCents: 0,
+      additionalAmountCents: 0,
+      refundAmountCents: DISCOUNT_CENTS,
+      settlementMethod: "card",
+    }).then(
+      () => null,
+      (error: { status: number; message: string }) => ({ status: error.status, message: error.message }),
+    );
+    expect(applied).toEqual({ status: 409, message: expect.stringContaining("paid by its group organiser") });
+
+    expect(await snapshot()).toEqual(before);
+    expect(await workPartyRedemptions()).toEqual([]);
+  }, 60_000);
+
+  it("refuses a stay that has already started, and writes nothing", async () => {
+    // Check-in on the frozen today, with a work party covering both nights.
+    await seed("paid", STARTED_STAY);
+    const before = await snapshot();
+
+    expect(await correctionRefusal(STARTED_EVENT_ID)).toEqual({
+      status: 409,
+      message: expect.stringContaining("already started"),
+    });
+
+    expect(await snapshot()).toEqual(before);
+    expect(await prisma.promoRedemption.count({ where: { bookingId: BOOKING_ID } })).toBe(0);
+  }, 60_000);
+
+  it("records the work party and its money rule on the modification and its audit row", async () => {
+    await seed("paid");
+    const result = await apply(await quote());
+    if (result.outcome !== "applied") throw new Error(`not applied: ${JSON.stringify(result)}`);
+
+    const modification = await prisma.bookingModification.findUniqueOrThrow({
+      where: { id: result.bookingModificationId! },
+    });
+    expect((modification.newData as Record<string, unknown>).officerWorkPartyCorrection).toEqual(WORK_PARTY_MARKER);
+
+    const audit = await batchAuditRow(modification.id);
+    expect(audit, "the batch edit's audit row").not.toBeNull();
+    expect(audit).toMatchObject({ memberId: OFFICER_ID, subjectMemberId: OWNER_ID, outcome: "success" });
+    expect(JSON.parse(audit!.details!).officerWorkPartyCorrection).toEqual(WORK_PARTY_MARKER);
+    expect((audit!.metadata as Record<string, unknown>).officerWorkPartyCorrection).toEqual(WORK_PARTY_MARKER);
   }, 60_000);
 });
