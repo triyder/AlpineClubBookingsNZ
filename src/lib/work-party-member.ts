@@ -17,8 +17,15 @@
  * a request.
  */
 import { prisma } from "@/lib/prisma";
-import { addDaysDateOnly, formatDateOnly } from "@/lib/date-only";
-import { OPEN_WORK_PARTY_EVENT_WHERE } from "@/lib/work-party";
+import {
+  calendarDateOfDateOnlyInstant,
+  compareCalendarDates,
+} from "@/lib/club-time";
+import {
+  OPEN_WORK_PARTY_EVENT_WHERE,
+  workPartyCheckOutDay,
+  workPartyFirstNight,
+} from "@/lib/work-party-rules";
 
 const MEMBER_WORK_PARTY_SELECT = {
   id: true,
@@ -72,13 +79,13 @@ export function workPartyJoinStay(
   workParty: { startDate: Date; endDate: Date },
   today: Date,
 ): { checkIn: string; checkOut: string } | null {
-  const todayKey = formatDateOnly(today);
-  const endKey = formatDateOnly(workParty.endDate);
-  if (endKey < todayKey) return null;
-  const startKey = formatDateOnly(workParty.startDate);
+  const todayDay = calendarDateOfDateOnlyInstant(today);
+  const lastNight = calendarDateOfDateOnlyInstant(workParty.endDate);
+  if (compareCalendarDates(lastNight, todayDay) < 0) return null;
+  const firstNight = workPartyFirstNight(workParty);
   return {
-    checkIn: startKey < todayKey ? todayKey : startKey,
-    checkOut: formatDateOnly(addDaysDateOnly(workParty.endDate, 1)),
+    checkIn: compareCalendarDates(firstNight, todayDay) < 0 ? todayDay : firstNight,
+    checkOut: workPartyCheckOutDay(workParty),
   };
 }
 
@@ -90,8 +97,8 @@ function toMemberWorkParty(
     id: row.id,
     name: row.name,
     description: row.description,
-    startDate: formatDateOnly(row.startDate),
-    endDate: formatDateOnly(row.endDate),
+    startDate: workPartyFirstNight(row),
+    endDate: calendarDateOfDateOnlyInstant(row.endDate),
     discountPercent: row.discountPercent,
     lodgeId: row.lodgeId,
     lodgeName: row.lodge?.name ?? null,

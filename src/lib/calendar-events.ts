@@ -9,6 +9,7 @@ import {
   MAX_OCCURRENCES,
   type RecurrenceEndMode,
 } from "@/lib/calendar-recurrence";
+import { OPEN_WORK_PARTY_EVENT_WHERE } from "@/lib/work-party-rules";
 
 /**
  * Request body for creating / updating a calendar event. Dates arrive as ISO
@@ -130,13 +131,14 @@ export type CalendarEventDTO = {
 
 /**
  * Which calendar rows a reader shows (fork #118): every ordinary event, and a
- * work party's entries only while that work party is active. Deactivating a
+ * work party's entries only while that work party is open (active, with its
+ * internal promo active — `OPEN_WORK_PARTY_EVENT_WHERE`). Deactivating a
  * work party hides its entries rather than deleting them, so reactivating it
  * brings them back unchanged. Every calendar read — the list API and the
  * dashboard's Events card — spreads this into its `where`.
  */
 export const VISIBLE_CALENDAR_EVENT_WHERE = {
-  OR: [{ workPartyEventId: null }, { workPartyEvent: { active: true } }],
+  OR: [{ workPartyEventId: null }, { workPartyEvent: OPEN_WORK_PARTY_EVENT_WHERE }],
 } satisfies Prisma.CalendarEventWhereInput;
 
 /**

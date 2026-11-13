@@ -5,6 +5,7 @@ import { parseJsonRequestBody } from "@/lib/api-json";
 import { logAudit } from "@/lib/audit";
 import { formatDateOnly } from "@/lib/date-only";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
+import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import {
   createWorkPartyEventWithPromo,
   workPartyEventDatesError,
@@ -18,7 +19,7 @@ export async function GET() {
   });
   if (!guard.ok) return guard.response;
 
-  const [events, modules] = await Promise.all([
+  const [events, modules, today] = await Promise.all([
     prisma.workPartyEvent.findMany({
       include: {
         lodge: { select: { name: true } },
@@ -35,15 +36,22 @@ export async function GET() {
       orderBy: { startDate: "desc" },
     }),
     loadEffectiveModuleFlags(),
+    clubTodayDateOnlyInstant(),
   ]);
+  const todayKey = formatDateOnly(today);
 
   return NextResponse.json({
-    // Fork #118: "Add to calendar" is offered only while the calendar is on.
-    calendarEnabled: modules.eventsCalendar,
     events: events.map(({ promoCode, lodge, _count, ...event }) => ({
       ...event,
       lodgeName: lodge?.name ?? null,
       onCalendar: _count.calendarEvents > 0,
+      // Fork #118: "Add to calendar" is offered for an existing UPCOMING active
+      // work party with no entries, while the Events Calendar is on.
+      canAddToCalendar:
+        modules.eventsCalendar &&
+        _count.calendarEvents === 0 &&
+        event.active &&
+        formatDateOnly(event.endDate) >= todayKey,
       bookingCount: promoCode.redemptions.length,
       totalDiscountCents: promoCode.redemptions.reduce(
         (sum, redemption) => sum + redemption.discountCents,
@@ -99,6 +107,13 @@ export async function POST(req: NextRequest) {
     lodgeId: parsed.data.lodgeId ?? null,
   });
 
+  // Fork #118: with the Events Calendar on, the work party also goes on the
+  // calendar. A calendar failure is reported, never a reason to lose the save.
+  const calendarWarning = await syncCreatedWorkPartyCalendar(
+    event.id,
+    session.user.id
+  );
+
   logAudit({
     action: "workparty.create",
     memberId: session.user.id,
@@ -115,15 +130,9 @@ export async function POST(req: NextRequest) {
       endDate: formatDateOnly(event.endDate),
       discountPercent: event.discountPercent,
       active: event.active,
+      calendarSyncFailed: calendarWarning !== null,
     },
   });
-
-  // Fork #118: with the Events Calendar on, the work party also goes on the
-  // calendar. A calendar failure is reported, never a reason to lose the save.
-  const calendarWarning = await syncCreatedWorkPartyCalendar(
-    event.id,
-    session.user.id
-  );
 
   return NextResponse.json({ event, calendarWarning }, { status: 201 });
 }

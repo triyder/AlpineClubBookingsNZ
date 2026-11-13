@@ -53,6 +53,8 @@ interface WorkPartyEventRow {
   totalDiscountCents: number;
   /** Fork #118: whether it has Events Calendar entries. */
   onCalendar: boolean;
+  /** Fork #118: upcoming, active, not on the calendar, calendar module on. */
+  canAddToCalendar: boolean;
 }
 
 interface AttendingBooking {
@@ -170,7 +172,6 @@ export default function AdminWorkPartiesPage() {
   const [error, setError] = useState("");
   // Fork #118: the work party saved but its calendar entries did not.
   const [calendarNotice, setCalendarNotice] = useState("");
-  const [calendarEnabled, setCalendarEnabled] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<EventFormState>(emptyForm);
@@ -226,7 +227,6 @@ export default function AdminWorkPartiesPage() {
         return;
       }
       setEvents(data.events);
-      setCalendarEnabled(data.calendarEnabled === true);
     } catch {
       setError("Failed to load work party events");
     } finally {
@@ -322,6 +322,7 @@ export default function AdminWorkPartiesPage() {
   async function toggleActive(event: WorkPartyEventRow) {
     if (!lodgeScopeReady) return;
     setError("");
+    setCalendarNotice("");
     const res = await fetch(`/api/admin/work-parties/${event.id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -344,6 +345,7 @@ export default function AdminWorkPartiesPage() {
       setError(data.error || "Failed to update work party event");
       return;
     }
+    setCalendarNotice(data.calendarWarning || "");
     await fetchEvents();
   }
 
@@ -370,6 +372,7 @@ export default function AdminWorkPartiesPage() {
     if (!lodgeScopeReady) return;
     if (!confirm(`Delete work party event "${event.name}"?`)) return;
     setError("");
+    setCalendarNotice("");
     const res = await fetch(`/api/admin/work-parties/${event.id}`, {
       method: "DELETE",
     });
@@ -612,7 +615,7 @@ export default function AdminWorkPartiesPage() {
                     <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="outline" size="sm" onClick={() => toggleActive(event)}>
                       {event.active ? "Deactivate" : "Activate"}
                     </ViewOnlyActionButton>
-                    {calendarEnabled && !event.onCalendar && (
+                    {event.canAddToCalendar && (
                       <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="outline" size="sm" onClick={() => addToCalendar(event)}>
                         Add to calendar
                       </ViewOnlyActionButton>

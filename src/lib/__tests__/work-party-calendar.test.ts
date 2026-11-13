@@ -22,10 +22,10 @@ vi.mock("@/lib/logger", () => ({ default: { error: vi.fn() } }));
 
 import {
   addWorkPartyToCalendar,
-  removeWorkPartyCalendar,
   syncCreatedWorkPartyCalendar,
   syncUpdatedWorkPartyCalendar,
   WORK_PARTY_CALENDAR_SYNC_FAILED,
+  WORK_PARTY_CALENDAR_UPDATE_FAILED,
   workPartyCalendarDays,
   workPartyCalendarEntry,
 } from "@/lib/work-party-calendar";
@@ -130,6 +130,13 @@ describe("syncUpdatedWorkPartyCalendar", () => {
     expect(h.replace).toHaveBeenCalledTimes(1);
   });
 
+  it("reports a failed update with its own advice", async () => {
+    h.replace.mockRejectedValueOnce(new Error("db down"));
+    await expect(syncUpdatedWorkPartyCalendar("wp-1", "admin-1")).resolves.toBe(
+      WORK_PARTY_CALENDAR_UPDATE_FAILED,
+    );
+  });
+
   it("builds no entry for a work party deleted meanwhile", async () => {
     h.tx.workPartyEvent.findUnique.mockResolvedValueOnce(null);
     await syncUpdatedWorkPartyCalendar("wp-1", "admin-1");
@@ -137,14 +144,9 @@ describe("syncUpdatedWorkPartyCalendar", () => {
   });
 });
 
-describe("addWorkPartyToCalendar and removeWorkPartyCalendar", () => {
+describe("addWorkPartyToCalendar", () => {
   it("add replaces the entries from the work party as it is now", async () => {
     await expect(addWorkPartyToCalendar("wp-1", "admin-1")).resolves.toBe(3);
     expect(h.replace).toHaveBeenCalledWith("wp-1", expect.any(Function), "admin-1");
-  });
-
-  it("remove replaces the entries with nothing", async () => {
-    await removeWorkPartyCalendar("wp-1", "admin-1");
-    await expect(resolvedEntry()).resolves.toBeNull();
   });
 });

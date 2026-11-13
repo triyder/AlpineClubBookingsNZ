@@ -3,6 +3,8 @@ import { prisma } from "@/lib/prisma";
 import { MAX_OCCURRENCES } from "@/lib/calendar-recurrence";
 import {
   buildOccurrenceRows,
+  buildSeriesRow,
+  buildStandaloneEventRow,
   type ResolvedEventData,
 } from "@/lib/calendar-occurrences";
 import { lockCalendarSeries } from "@/lib/calendar-service";
@@ -50,6 +52,44 @@ export type WorkPartyCalendarEntryResolver = (
  *
  * Returns the number of entries now linked.
  */
+async function clearLinkedEntries(
+  tx: Prisma.TransactionClient,
+  workPartyEventId: string,
+  linked: ReadonlyArray<{ seriesId: string | null }>,
+): Promise<void> {
+  const seriesIds = [
+    ...new Set(
+      linked
+        .map((row) => row.seriesId)
+        .filter((id): id is string => id !== null),
+    ),
+  ];
+  await tx.calendarEvent.deleteMany({ where: { workPartyEventId } });
+  if (seriesIds.length > 0) {
+    await tx.calendarEventSeries.deleteMany({
+      where: { id: { in: seriesIds }, events: { none: {} } },
+    });
+  }
+}
+
+/**
+ * Remove a work party's entries and their emptied series INSIDE the caller's
+ * transaction, under the same lock — the work-party delete, so the entries and
+ * the work party go together or not at all. A racing "Add to calendar" waits
+ * on the lock, then re-reads the work party, finds it gone and writes nothing.
+ */
+export async function removeWorkPartyCalendarEventsInTransaction(
+  tx: Prisma.TransactionClient,
+  workPartyEventId: string,
+): Promise<void> {
+  await lockCalendarSeries(tx, `work-party:${workPartyEventId}`);
+  const linked = await tx.calendarEvent.findMany({
+    where: { workPartyEventId },
+    select: { seriesId: true },
+  });
+  await clearLinkedEntries(tx, workPartyEventId, linked);
+}
+
 export async function replaceWorkPartyCalendarEvents(
   workPartyEventId: string,
   resolveEntry: WorkPartyCalendarEntryResolver,
@@ -67,19 +107,7 @@ export async function replaceWorkPartyCalendarEvents(
     // Read the work party AFTER the lock: of two saves racing, the one that
     // writes last also reads last, so the entries always match the newest row.
     const entry = await resolveEntry(tx);
-    const seriesIds = [
-      ...new Set(
-        linked
-          .map((row) => row.seriesId)
-          .filter((id): id is string => id !== null),
-      ),
-    ];
-    await tx.calendarEvent.deleteMany({ where: { workPartyEventId } });
-    if (seriesIds.length > 0) {
-      await tx.calendarEventSeries.deleteMany({
-        where: { id: { in: seriesIds }, events: { none: {} } },
-      });
-    }
+    await clearLinkedEntries(tx, workPartyEventId, linked);
     if (!entry) return 0;
 
     const starts = entry.days
@@ -100,30 +128,16 @@ export async function replaceWorkPartyCalendarEvents(
 
     if (starts.length === 1) {
       await tx.calendarEvent.create({
-        data: {
-          title: template.title,
-          location: template.location,
-          details: template.details,
-          allDay: true,
-          startsAt: firstStart,
-          endsAt: null,
-          isMeeting: false,
-          meetingRoom: null,
-          createdById: actorId,
-          workPartyEventId,
-        },
+        data: { ...buildStandaloneEventRow(template, actorId), workPartyEventId },
       });
       return 1;
     }
 
     const series = await tx.calendarEventSeries.create({
-      data: {
-        frequency: "DAILY",
-        interval: 1,
-        until: null,
-        count: starts.length,
-        createdById: actorId,
-      },
+      data: buildSeriesRow(
+        { frequency: "DAILY", interval: 1, endMode: "count", count: starts.length },
+        actorId,
+      ),
     });
     const rows = buildOccurrenceRows(starts, template, series.id, actorId).map(
       (row) => ({ ...row, workPartyEventId }),

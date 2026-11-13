@@ -66,12 +66,14 @@ calendar shows an **On calendar** badge.
   never show old dates.
 - **Deactivating** hides the entries; **activating** shows them again.
 - The entries are read-only on the calendar. Change the work party instead.
-- **Add to calendar** appears on a work party that has no entries — one made
+- **Add to calendar** appears, while the Events calendar module is on, on an
+  active work party with nights still to come and no entries — one made
   before this feature, or while the calendar was off. Nothing is added to the
   calendar for those automatically, because you may already have typed them in
   by hand. Delete any hand-made entry first so it does not show twice.
-- If the work party saves but its calendar entries cannot be updated, the page
-  says so. Use **Add to calendar** to try again.
+- If the work party saves but its calendar entries cannot be written, the page
+  says so: use **Add to calendar** to try again for a new work party, or save
+  an edited one again.
 
 ### Members: join a work party
 
@@ -91,7 +93,11 @@ has passed.
 
 Only **members** see the card, the page and the button — not organisation
 accounts (schools), non-member logins, or kiosk or admin-only accounts. A
-finished work party has no Join button, and an inactive one is not shown at all.
+finished work party has no Join button, and an inactive one (or one whose internal
+promo code has been switched off or archived) is not shown at all.
+
+If the work party can no longer be joined, or it is held at a lodge the member
+cannot book, Book a Stay opens empty with a short notice saying so.
 
 ## Settings reference
 
@@ -116,7 +122,8 @@ finished work party has no Join button, and an inactive one is not shown at all.
 | Everything is read-only ("… can view work parties but cannot change them") | Your admin role has lodge view but not edit | Ask a full admin for **lodge edit** access |
 | There's no Delete button on an event | It already has attending bookings | Deactivate it instead — delete is blocked to keep the discount history |
 | A work party is not on the Events Calendar | It was made before this feature or while the calendar was off, or the calendar module is off | Turn the **Events calendar** module on, then click **Add to calendar** on its card |
-| A member can't see the Work Parties card | The account is not a member (an organisation, a non-member login, or an admin-only account), the work party is inactive, or its last night has passed | Check the account's user type and that the work party is **Active** with dates still to come |
+| A member can't see the Work Parties card at all | The **Work parties** module is off, or the account is not a member (an organisation, a non-member login, or an admin-only account) | Check the module under **Admin → Setup → Modules** and the account's user type |
+| The card says "No upcoming work parties" | Every work party is inactive, has finished (its last night has passed), or has had its internal promo code switched off or archived | Check the work party is **Active** with nights still to come |
 | A member says the discount didn't apply | The event is inactive, their nights fall outside the window, or they didn't tick the working-bee option | Check the event is Active, its dates cover their nights, and that they selected it when booking |
 | "Discount must be a whole number between 1 and 100" | A non-integer or out-of-range discount was entered | Enter a whole number from 1 to 100 |
 

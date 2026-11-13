@@ -9,6 +9,8 @@ import {
 } from "@/lib/calendar-recurrence";
 import {
   buildOccurrenceRows,
+  buildSeriesRow,
+  buildStandaloneEventRow,
   clubDayKey,
   durationMsOf,
   nextMeetingRoom,
@@ -118,13 +120,7 @@ async function createSeriesRows(
   zone: ClubTimeZone,
 ): Promise<CalendarEvent> {
   const series = await tx.calendarEventSeries.create({
-    data: {
-      frequency: data.recurrence.frequency,
-      interval: data.recurrence.interval,
-      until: seriesUntil(data.recurrence),
-      count: seriesCount(data.recurrence),
-      createdById: actorId,
-    },
+    data: buildSeriesRow(data.recurrence, actorId),
   });
 
   const starts = generateOccurrenceStarts(
@@ -206,18 +202,7 @@ export async function createCalendarEvent(
     // so no zone is needed and none is resolved.
     try {
       return await prisma.calendarEvent.create({
-        data: {
-          title: data.title,
-          location: data.location,
-          details: data.details,
-          allDay: data.allDay,
-          startsAt: data.startsAt,
-          endsAt: data.endsAt,
-          isMeeting: data.isMeeting,
-          meetingRoom: data.isMeeting ? randomUUID() : null,
-          createdById: actorId,
-          idempotencyKey: key,
-        },
+        data: buildStandaloneEventRow(data, actorId, key),
       });
     } catch (error) {
       if (key && isPrismaUniqueConstraintError(error)) {

@@ -6,6 +6,7 @@ import {
   canViewCalendarEvents,
 } from "@/lib/calendar-access";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
+import { hasAdminAreaAccess } from "@/lib/admin-permissions";
 import { CalendarView } from "@/components/calendar/calendar-view";
 
 export const metadata = {
@@ -52,7 +53,12 @@ export default async function AdminCalendarPage() {
       <CalendarView
         canManage={canManage}
         allowEditExisting={canEdit}
-        workPartyLink={modules.workParties ? "admin" : null}
+        workPartyLink={
+          modules.workParties &&
+          hasAdminAreaAccess(session.user, { area: "lodge", level: "view" })
+            ? "admin"
+            : null
+        }
       />
     </div>
   );

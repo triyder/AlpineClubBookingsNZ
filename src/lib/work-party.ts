@@ -26,6 +26,10 @@ import {
   isDateOnlyString,
   parseDateOnly,
 } from "@/lib/date-only";
+import {
+  isOpenWorkPartyEvent,
+  OPEN_WORK_PARTY_EVENT_WHERE,
+} from "@/lib/work-party-rules";
 
 type WorkPartyDbClient = typeof prisma | Prisma.TransactionClient;
 
@@ -159,18 +163,6 @@ export async function getWorkPartyNightWindowForPromo(
 }
 
 /**
- * A work party members can still select: the event is active and its internal
- * promo is active and not archived — the same three facts
- * `resolveWorkPartyEventPromoForBooking` re-checks at create. The booking
- * picker and the member work party page and dashboard card (fork #118) all
- * filter on this one shape, so "open" means one thing.
- */
-export const OPEN_WORK_PARTY_EVENT_WHERE = {
-  active: true,
-  promoCode: { active: true, archivedAt: null },
-} satisfies Prisma.WorkPartyEventWhereInput;
-
-/**
  * Active events whose window overlaps the requested stay, for the booking
  * form's "I am attending a working bee" picker.
  */
@@ -243,7 +235,7 @@ export async function resolveWorkPartyEventPromoForBooking(
   if (!event) {
     return { ok: false, error: "Working bee event not found" };
   }
-  if (!event.active || !event.promoCode.active || event.promoCode.archivedAt) {
+  if (!isOpenWorkPartyEvent(event)) {
     return { ok: false, error: "This working bee event is no longer active" };
   }
   if (!workPartyWindowOverlapsStay(event, checkIn, checkOut)) {

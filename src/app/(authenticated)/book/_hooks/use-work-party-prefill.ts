@@ -31,30 +31,43 @@ export const WORK_PARTY_PREFILL_LODGE_NOTICE =
  * Steps, each taken once:
  * 1. Fetch the work party. Unknown, inactive, past, or not visible to this
  *    account (the API's 404) → a short notice and nothing filled in.
- * 2. Once the lodge list has loaded, select the work party's lodge (a club-wide
- *    work party keeps the member's own lodge). A lodge the member cannot book
- *    → a notice and nothing filled in.
- * 3. Once that lodge is the settled scope and the wizard is on the dates step,
- *    select the stay.
+ * 2. Once the lodge list has loaded successfully, select the work party's
+ *    lodge (a club-wide work party keeps the member's own lodge). A lodge the
+ *    member cannot book → a notice and nothing filled in. A list that failed
+ *    to load decides nothing; the wizard's own "Try again" reloads it.
+ * 3. Once that lodge is the settled scope, the wizard is on the dates step and
+ *    the subscription check has answered, select the stay — unless bookings
+ *    are blocked (an unpaid subscription), where the dates step's own message
+ *    stands and nothing is filled in.
+ *
+ * A member who has already picked dates or moved past the dates step before
+ * the work party arrives keeps their own choice: the prefill is dropped.
  * 4. When the review step lists the working bees for the stay, tick this one
  *    (`takePendingSelection`), unless the member has already chosen.
  */
 export function useWorkPartyPrefill({
   workPartyId,
   lodgeIds,
-  lodgesLoading,
+  lodgesSettled,
   lodgeId,
   scopedLodgeId,
   onDatesStep,
+  memberStarted,
+  bookingBlocked,
   selectLodge,
   selectDates,
 }: {
   workPartyId: string | null;
   lodgeIds: readonly string[];
-  lodgesLoading: boolean;
+  /** The lodge list loaded successfully (not loading, failed or forbidden). */
+  lodgesSettled: boolean;
   lodgeId: string | null;
   scopedLodgeId: string | null;
   onDatesStep: boolean;
+  /** The member has picked dates or left the dates step. */
+  memberStarted: boolean;
+  /** Bookings are blocked (unpaid subscription); null while still checking. */
+  bookingBlocked: boolean | null;
   selectLodge: (lodgeId: string) => void;
   selectDates: (checkIn: string, checkOut: string) => void;
 }) {
@@ -95,29 +108,44 @@ export function useWorkPartyPrefill({
 
   const lodgeRefused =
     prefill?.lodgeId != null &&
-    !lodgesLoading &&
+    lodgesSettled &&
     !lodgeIds.includes(prefill.lodgeId);
 
+  // Drop the prefill for good: nothing more is selected or ticked.
+  function abandon() {
+    lodgeAppliedRef.current = true;
+    datesAppliedRef.current = true;
+    pendingSelectionRef.current = null;
+  }
+
   useEffect(() => {
-    if (!prefill || lodgeAppliedRef.current || lodgesLoading) return;
+    if (!prefill || datesAppliedRef.current || !memberStarted) return;
+    abandon();
+  }, [prefill, memberStarted]);
+
+  useEffect(() => {
+    if (!prefill || lodgeAppliedRef.current || !lodgesSettled) return;
     lodgeAppliedRef.current = true;
     if (!prefill.lodgeId) return;
     if (lodgeRefused) {
-      pendingSelectionRef.current = null;
-      datesAppliedRef.current = true;
+      abandon();
       setNotice(WORK_PARTY_PREFILL_LODGE_NOTICE);
       return;
     }
     if (lodgeId !== prefill.lodgeId) selectLodge(prefill.lodgeId);
-  }, [prefill, lodgesLoading, lodgeRefused, lodgeId, selectLodge]);
+  }, [prefill, lodgesSettled, lodgeRefused, lodgeId, selectLodge]);
 
   useEffect(() => {
     if (!prefill || datesAppliedRef.current || !lodgeAppliedRef.current) return;
-    if (!onDatesStep || !scopedLodgeId) return;
+    if (!onDatesStep || !scopedLodgeId || bookingBlocked === null) return;
+    if (bookingBlocked) {
+      abandon();
+      return;
+    }
     if (prefill.lodgeId && scopedLodgeId !== prefill.lodgeId) return;
     datesAppliedRef.current = true;
     selectDates(prefill.checkIn, prefill.checkOut);
-  }, [prefill, onDatesStep, scopedLodgeId, selectDates]);
+  }, [prefill, onDatesStep, scopedLodgeId, bookingBlocked, selectDates]);
 
   /**
    * The work party to tick on the review step, once: returns its id when it is

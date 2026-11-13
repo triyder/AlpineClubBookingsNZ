@@ -84,10 +84,12 @@ export default async function MemberWorkPartyPage({
       <Card>
         <CardHeader>
           <CardTitle>Details</CardTitle>
-          <CardDescription>
-            Book nights inside the work party and tick &ldquo;I am attending a
-            working bee&rdquo; to get the discount.
-          </CardDescription>
+          {workParty.join && (
+            <CardDescription>
+              Book nights inside the work party and tick &ldquo;I am attending
+              a working bee&rdquo; to get the discount.
+            </CardDescription>
+          )}
         </CardHeader>
         <CardContent className="space-y-3 text-sm">
           <p className="flex items-center gap-2">
@@ -126,7 +128,7 @@ export default async function MemberWorkPartyPage({
             </Link>
           </Button>
           <p className="text-xs text-muted-foreground">
-            Opens the booking page with these dates
+            Opens the booking page with the stay
             {workParty.lodgeName ? " and lodge" : ""} filled in. You still
             choose your guests and pay as usual, and the usual booking rules
             apply.

@@ -37,10 +37,12 @@ function setup(initial: Partial<Props> = {}) {
   const props: Props = {
     workPartyId: "wp-1",
     lodgeIds: ["lodge-1", "lodge-2"],
-    lodgesLoading: false,
+    lodgesSettled: true,
     lodgeId: null,
     scopedLodgeId: null,
     onDatesStep: true,
+    memberStarted: false,
+    bookingBlocked: false,
     selectLodge,
     selectDates,
     ...initial,
@@ -155,5 +157,52 @@ describe("useWorkPartyPrefill", () => {
     expect(selectDates).not.toHaveBeenCalled();
     hook.rerender({ ...props, scopedLodgeId: "lodge-1", onDatesStep: true });
     await waitFor(() => expect(selectDates).toHaveBeenCalledTimes(1));
+  });
+
+  it("fills nothing in while bookings are blocked by an unpaid subscription", async () => {
+    fetchMock.mockResolvedValue(workPartyResponse({ lodgeId: null }));
+    const { hook, props, selectDates } = setup({
+      scopedLodgeId: "lodge-1",
+      bookingBlocked: null,
+    });
+    await waitFor(() =>
+      expect(hook.result.current.workPartyPrefillName).toBe("Spring"),
+    );
+    expect(selectDates).not.toHaveBeenCalled();
+    hook.rerender({ ...props, scopedLodgeId: "lodge-1", bookingBlocked: true });
+    hook.rerender({ ...props, scopedLodgeId: "lodge-1", bookingBlocked: false });
+    expect(selectDates).not.toHaveBeenCalled();
+    expect(
+      hook.result.current.takePendingWorkPartySelection([{ id: "wp-1" }]),
+    ).toBeNull();
+  });
+
+  it("keeps the member's own dates when they picked before the work party arrived", async () => {
+    let resolve: (value: unknown) => void = () => {};
+    fetchMock.mockReturnValue(new Promise((r) => (resolve = r)));
+    const { hook, props, selectLodge, selectDates } = setup({
+      scopedLodgeId: "lodge-1",
+      lodgeId: "lodge-1",
+      memberStarted: true,
+    });
+    await act(async () => resolve(workPartyResponse()));
+    await waitFor(() =>
+      expect(hook.result.current.workPartyPrefillName).toBe("Spring"),
+    );
+    hook.rerender({ ...props, scopedLodgeId: "lodge-1", lodgeId: "lodge-1" });
+    expect(selectLodge).not.toHaveBeenCalled();
+    expect(selectDates).not.toHaveBeenCalled();
+  });
+
+  it("decides nothing while the lodge list has failed, and goes on once it loads", async () => {
+    fetchMock.mockResolvedValue(workPartyResponse());
+    const { hook, props, selectLodge } = setup({ lodgesSettled: false, lodgeIds: [] });
+    await waitFor(() =>
+      expect(hook.result.current.workPartyPrefillName).toBe("Spring"),
+    );
+    expect(hook.result.current.workPartyPrefillNotice).toBeNull();
+    expect(selectLodge).not.toHaveBeenCalled();
+    hook.rerender({ ...props, lodgesSettled: true, lodgeIds: ["lodge-2"] });
+    await waitFor(() => expect(selectLodge).toHaveBeenCalledWith("lodge-2"));
   });
 });

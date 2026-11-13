@@ -15,7 +15,7 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 import { canViewWorkParties } from "@/lib/work-party-access";
-import { OPEN_WORK_PARTY_EVENT_WHERE } from "@/lib/work-party";
+import { OPEN_WORK_PARTY_EVENT_WHERE } from "@/lib/work-party-rules";
 import {
   findMemberWorkParty,
   listUpcomingMemberWorkParties,

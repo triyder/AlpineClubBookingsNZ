@@ -9,10 +9,8 @@ import {
   workPartyEventDatesError,
   workPartyEventSchema,
 } from "@/lib/work-party";
-import {
-  removeWorkPartyCalendar,
-  syncUpdatedWorkPartyCalendar,
-} from "@/lib/work-party-calendar";
+import { syncUpdatedWorkPartyCalendar } from "@/lib/work-party-calendar";
+import { removeWorkPartyCalendarEventsInTransaction } from "@/lib/calendar-work-party-entries";
 
 export async function GET(
   _req: NextRequest,
@@ -127,6 +125,14 @@ export async function PUT(
     lodgeId: parsed.data.lodgeId ?? null,
   });
 
+  // Fork #118: a work party that has calendar entries keeps them in step with
+  // its new dates and details. Deactivated, they stay but the calendar hides
+  // them.
+  const calendarWarning = await syncUpdatedWorkPartyCalendar(
+    event.id,
+    session.user.id
+  );
+
   logAudit({
     action: "workparty.update",
     memberId: session.user.id,
@@ -144,16 +150,9 @@ export async function PUT(
       discountPercent: event.discountPercent,
       active: event.active,
       deactivated: existing.active && !event.active,
+      calendarSyncFailed: calendarWarning !== null,
     },
   });
-
-  // Fork #118: a work party that has calendar entries keeps them in step with
-  // its new dates and details. Deactivated, they stay but the calendar hides
-  // them.
-  const calendarWarning = await syncUpdatedWorkPartyCalendar(
-    event.id,
-    session.user.id
-  );
 
   return NextResponse.json({ event, calendarWarning });
 }
@@ -189,11 +188,10 @@ export async function DELETE(
     );
   }
 
-  // Fork #118: its calendar entries (and their series row) go first. The
-  // foreign key cascades the entries anyway; this also removes the series.
-  await removeWorkPartyCalendar(id, session.user.id);
-
   await prisma.$transaction(async (tx) => {
+    // Fork #118: its calendar entries and their series row go in the same
+    // transaction, so a delete that fails leaves the calendar untouched.
+    await removeWorkPartyCalendarEventsInTransaction(tx, id);
     await tx.workPartyEvent.delete({ where: { id } });
     await tx.promoCode.delete({ where: { id: existing.promoCodeId } });
   });

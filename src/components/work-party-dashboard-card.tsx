@@ -53,7 +53,10 @@ export function WorkPartyDashboardCard({
                   <span className="shrink-0 text-xs font-medium text-muted-foreground">
                     {formatWindow(workParty, format)}
                   </span>
-                  <span className="min-w-0 flex-1 truncate text-foreground">
+                  <span
+                    className="min-w-0 flex-1 truncate text-foreground"
+                    title={workParty.name}
+                  >
                     {workParty.name}
                     {workParty.lodgeName && (
                       <span className="ml-1 text-xs text-muted-foreground">

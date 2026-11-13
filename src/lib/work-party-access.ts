@@ -17,10 +17,15 @@ import { isOrganisationAccount } from "@/lib/organisation-account";
  * admin-only accounts, and any login without club membership. Organisation
  * accounts (the `ORG` role or the legacy `SCHOOL` role) are refused explicitly
  * through `isOrganisationAccount`, the shared organisation check, so the rule
- * still holds for a record that somehow carries both.
+ * still holds for a record that somehow carries both. A login-disabled account
+ * is refused outright, as every privilege gate does (#3603).
  */
 export function canViewWorkParties(
   user: AccessRoleInput & { canLogin: boolean },
 ): boolean {
-  return hasAccessRole(user, "USER") && !isOrganisationAccount(user);
+  return (
+    user.canLogin === true &&
+    hasAccessRole(user, "USER") &&
+    !isOrganisationAccount(user)
+  );
 }

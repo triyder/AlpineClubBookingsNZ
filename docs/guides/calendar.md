@@ -107,17 +107,24 @@ a member cannot use are never shown — and even a stale page could not save.
 
 ### Work party entries
 
-With the **Work parties** module on, each work party can put itself on the
-calendar: one all-day entry, titled "Work party: {name}", for each night of its
+With the **Events calendar** and **Work parties** modules on, each work party
+can put itself on the calendar: one all-day entry, titled "Work party: {name}", for each night of its
 window, stored as a daily series. See [Work Parties](work-parties.md#the-events-calendar).
 
-- They open **read-only** for everyone, admins included, with **Open the work
-  party**: admins go to **Admin → Work Parties**, members to the work party page.
+- They open **read-only** for everyone, admins included. While the Work parties
+  module is on, **Open the work party** takes admins (on the admin calendar) to
+  **Admin → Work Parties** and members to the work party page; other accounts
+  see the note without a link.
   Change or delete the work party there and its entries follow.
 - The calendar API refuses to edit or delete them (**409**), so they cannot drift
   from the work party.
 - While a work party is **inactive**, its entries are hidden from the calendar
   and the dashboard **Events** card; activating it shows them again.
+- They are part of the club calendar, so everyone who can see the calendar
+  sees them (including non-member logins), even though only members see the
+  Work Parties card and page.
+- A window longer than 366 nights, the calendar's series limit, shows its
+  first 366 nights.
 
 ## Recurring events
 

@@ -9,7 +9,7 @@ calendar dialog's read-only view out of `event-dialog.tsx`, leaving that file
 shorter than its base). `calendar-service.ts` stays under its budget.
 
 file: src/app/(admin)/admin/work-parties/page.tsx
-lines: 656
+lines: 659
 reason: the work party card gains an "On calendar" badge, an "Add to calendar"
   button and its click handler, and a notice when a save could not update the
   calendar. They sit beside the card's existing Edit, Activate and Delete

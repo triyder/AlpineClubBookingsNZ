@@ -2201,10 +2201,12 @@ export function useBookingWizard() {
   const workPartyPrefill = useWorkPartyPrefill({
     workPartyId: searchParams?.get("workParty")?.trim() || null,
     lodgeIds: lodges.map((lodge) => lodge.id),
-    lodgesLoading,
+    lodgesSettled: !lodgesLoading && !lodgesFailed && !lodgesForbidden,
     lodgeId,
     scopedLodgeId,
     onDatesStep: step === "dates",
+    memberStarted: checkIn !== null || step !== "dates",
+    bookingBlocked: subscriptionLoading ? null : subscriptionUnpaid,
     selectLodge: handleLodgeChange,
     selectDates: (ci, co) => void handleDateSelect(ci, co),
   });

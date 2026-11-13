@@ -54,7 +54,15 @@ describe("GET /api/calendar/events view gate", () => {
     expect(res.status).toBe(200);
     const where = mocks.calendarEventFindMany.mock.calls[0][0].where;
     expect(where.AND).toContainEqual({
-      OR: [{ workPartyEventId: null }, { workPartyEvent: { active: true } }],
+      OR: [
+        { workPartyEventId: null },
+        {
+          workPartyEvent: {
+            active: true,
+            promoCode: { active: true, archivedAt: null },
+          },
+        },
+      ],
     });
   });
 
