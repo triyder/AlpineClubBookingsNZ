@@ -27,6 +27,7 @@ const booking: WorkPartyEligibilityBooking = {
   hasOtherPromoCode: false,
   paidByOrganiser: false,
   quotePriced: false,
+  memberOwned: true,
 };
 
 const context: WorkPartyEligibilityContext = {
@@ -108,6 +109,12 @@ describe("workPartyBookingEligibility", () => {
     expect(
       workPartyBookingEligibility({ ...booking, paidByOrganiser: true }, context, event),
     ).toMatchObject(refusal(/paid by its group organiser/));
+  });
+
+  it("refuses an organisation's booking, which holds no account credit", () => {
+    expect(
+      workPartyBookingEligibility({ ...booking, memberOwned: false }, context, event),
+    ).toMatchObject(refusal(/belongs to an organisation/));
   });
 
   it("refuses a quote-priced booking", () => {

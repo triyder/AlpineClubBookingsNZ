@@ -90,6 +90,7 @@ reason:
 - the stay has already started, so its prices are fixed;
 - the group organiser paid for it (its money would go back to the organiser, so
   this action never applies);
+- it belongs to an organisation (a school), which has no account credit;
 - it is priced by its quote (a school or booking-request quote);
 - it already has another promo code and the club allows only one discount per
   booking (the same rule as when booking);

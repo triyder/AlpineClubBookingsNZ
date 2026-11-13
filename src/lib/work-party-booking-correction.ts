@@ -41,6 +41,7 @@ import { paidByOrganiser } from "@/lib/group-organiser-paid";
 import { reauthorizeBookingOfficerFromDb } from "@/lib/booking-exception-approval";
 import { defaultCorrectionSettlementMethod } from "@/lib/booking-finished-stay-correction";
 import { bookingPromoRedemptions } from "@/lib/booking-promo-redemptions";
+import { bookingOwner } from "@/lib/booking-owner";
 import {
   activeLifecycleEditRefusal,
   bookingStayHasStarted,
@@ -72,6 +73,8 @@ export interface WorkPartyEligibilityBooking {
   paidByOrganiser: boolean;
   /** A quote-priced booking (school, request quote), priced by its quote. */
   quotePriced: boolean;
+  /** A member owns it (`bookingOwner`); an organisation's booking holds no credit. */
+  memberOwned: boolean;
 }
 
 /** The facts outside the booking the rule reads. */
@@ -124,6 +127,12 @@ export function workPartyBookingEligibility(
     return {
       ok: false,
       reason: "This booking was paid by its group organiser, so it can't be added to a work party.",
+    };
+  }
+  if (!booking.memberOwned) {
+    return {
+      ok: false,
+      reason: "This booking belongs to an organisation, which has no account credit to return the discount to.",
     };
   }
   if (booking.quotePriced) {
@@ -259,6 +268,7 @@ export async function addBookingToWorkParty(
           checkIn: true,
           checkOut: true,
           lodgeId: true,
+          memberId: true,
           finalPriceCents: true,
           organiserSettled: true,
           parentBookingId: true,
@@ -301,6 +311,7 @@ export async function addBookingToWorkParty(
           hasOtherPromoCode: redemptions.some((row) => row.promoCode && !row.promoCode.workPartyEvent),
           paidByOrganiser: paidByOrganiser(booking),
           quotePriced: await isQuotePricedBooking(tx, params.bookingId),
+          memberOwned: bookingOwner(booking).memberId !== null,
         },
         {
           bookingLodgeId,

@@ -16,6 +16,7 @@ import { isQuotePricedBooking } from "@/lib/booking-modify-validation";
 import { multiPromoCodesEnabled } from "@/lib/promo-redemption-slot";
 import { findActiveWorkPartyEventsForRange } from "@/lib/work-party";
 import { bookingPromoRedemptions } from "@/lib/booking-promo-redemptions";
+import { bookingOwner } from "@/lib/booking-owner";
 import { prepareBatchModificationForCallerTransaction } from "@/lib/booking-batch-modification-service";
 import { EditFinancialReviewPendingError } from "@/lib/edit-financial-review";
 import { getXeroLockGuardErrorResponse } from "@/lib/xero-period-lock-guard";
@@ -74,6 +75,7 @@ export async function GET(
       checkIn: true,
       checkOut: true,
       lodgeId: true,
+      memberId: true,
       organiserSettled: true,
       parentBookingId: true,
       payment: { select: { source: true } },
@@ -110,6 +112,7 @@ export async function GET(
     hasOtherPromoCode: redemptions.some((row) => row.promoCode && !row.promoCode.workPartyEvent),
     paidByOrganiser: paidByOrganiser(booking),
     quotePriced,
+    memberOwned: bookingOwner(booking).memberId !== null,
   };
 
   return NextResponse.json({

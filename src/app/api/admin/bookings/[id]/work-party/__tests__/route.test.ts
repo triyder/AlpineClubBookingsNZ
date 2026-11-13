@@ -183,6 +183,7 @@ describe("GET", () => {
       checkIn: new Date("2026-08-01T00:00:00.000Z"),
       checkOut: new Date("2026-08-04T00:00:00.000Z"),
       lodgeId: "lodge-1",
+      memberId: "member-1",
       organiserSettled: false,
       parentBookingId: null,
       payment: { source: "STRIPE" },
