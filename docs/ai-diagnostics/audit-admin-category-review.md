@@ -584,9 +584,9 @@ land.
 manifest moving with it. The numbers this page was written against:
 
 ```
-row-producing sites:  543
+row-producing sites:  544
 uncategorised:        0
-category values: admin 112, booking 109, xero 51, family 35, payment 71,
+category values: admin 113, booking 109, xero 51, family 35, payment 71,
                  lodge 73, account 19, security 25, privacy 22,
                  communication 21, system 4
 ```
@@ -823,7 +823,9 @@ recorded or changed (old and new cents), and the Food Orders settings saved.
 Food orders are Lodge Operations, so `lodge` under the domain rule; none joins a
 keep, and `lodge` is not readable with `support:view` alone. The owner's
 change to receive orders item by item (13 Nov 2026) added one more,
-`food_order.items_received` (`lodge` 72 -> 73, 542 -> 543, MEASURED).
+`food_order.items_received` (`lodge` 72 -> 73, 542 -> 543, MEASURED). Fork #118 added
+`workparty.calendar.add`, "Add to calendar" on a work party (`admin` 112 -> 113,
+543 -> 544, MEASURED), pinned with its three work-party siblings in the #2765 keep.
 `main` then added #3750's executed approval of a change request on a finished
 stay (`booking` 107 -> 108, `booking-change-request.approve` with
 `executed: true`). The sync of `main` into epic #3789 composed #3819's addition
