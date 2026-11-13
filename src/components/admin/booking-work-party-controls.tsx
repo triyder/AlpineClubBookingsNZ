@@ -13,7 +13,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
-import { Checkbox } from "@/components/ui/checkbox";
+import { BookingNoEmailsNotice } from "@/components/booking-no-emails-notice";
 import {
   Select,
   SelectContent,
@@ -25,6 +25,7 @@ import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { useClubFormat } from "@/components/club-format-provider";
 import { formatCents } from "@/lib/pricing";
+import { unverifiedWriteMessage } from "@/lib/unverified-write-copy";
 import type { WorkPartyCorrectionFigures } from "@/lib/work-party-booking-correction";
 
 type WorkPartyOption = {
@@ -63,7 +64,6 @@ export function BookingWorkPartyControls({
   const [current, setCurrent] = useState<{ name: string } | null>(null);
   const [selectedId, setSelectedId] = useState("");
   const [figures, setFigures] = useState<WorkPartyCorrectionFigures | null>(null);
-  const [notifyMember, setNotifyMember] = useState(!noEmails);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const money = (cents: number) => formatCents(cents, format);
@@ -75,7 +75,6 @@ export function BookingWorkPartyControls({
     setOptions(null);
     setCurrent(null);
     setSelectedId("");
-    setNotifyMember(!noEmails);
     setLoading(true);
     try {
       const res = await fetch(`/api/admin/bookings/${bookingId}/work-party`);
@@ -95,7 +94,12 @@ export function BookingWorkPartyControls({
     }
   }
 
-  async function send(mode: "preview" | "apply") {
+  /**
+   * `notify` is the officer's email choice, offered only while the booking's
+   * "No emails" switch is off. With it on there is no choice, and the field is
+   * not sent: the mailer withholds the change email and records that (#2259).
+   */
+  async function send(mode: "preview" | "apply", notify?: boolean) {
     if (!selectedId) return;
     setBusy(true);
     setError("");
@@ -106,7 +110,14 @@ export function BookingWorkPartyControls({
         body: JSON.stringify(
           mode === "preview"
             ? { mode, workPartyEventId: selectedId }
-            : { mode, workPartyEventId: selectedId, notifyMember, expectedFigures: figures },
+            : {
+                mode,
+                workPartyEventId: selectedId,
+                // Silenced: undefined, so the field is dropped and the mailer
+                // withholds and records the send (#2259 H1).
+                notifyMember: noEmails ? undefined : notify,
+                expectedFigures: figures,
+              },
         ),
       });
       const data = await res.json().catch(() => ({}));
@@ -132,7 +143,15 @@ export function BookingWorkPartyControls({
       }
       router.refresh();
     } catch {
-      setError("The request did not reach the server. Nothing was changed; try again.");
+      // fetch also rejects after a commit, so this cannot say nothing moved.
+      setError(
+        mode === "preview"
+          ? "Could not check the new total. Check your connection and try again."
+          : unverifiedWriteMessage(
+              "the booking was added to the work party",
+              "Reload the booking and check its price and history before trying again.",
+            ),
+      );
     } finally {
       setBusy(false);
     }
@@ -231,21 +250,7 @@ export function BookingWorkPartyControls({
                     Still to pay: <strong>{money(figures.additionalAmountCents)}</strong>
                   </p>
                 )}
-                <div className="flex items-center gap-2 pt-1">
-                  <Checkbox
-                    id={`work-party-notify-${bookingId}`}
-                    checked={notifyMember}
-                    onCheckedChange={(checked) => setNotifyMember(checked === true)}
-                  />
-                  <Label htmlFor={`work-party-notify-${bookingId}`}>
-                    Email the member about the change
-                  </Label>
-                  {noEmails && (
-                    <span className="text-xs text-muted-foreground">
-                      (this booking has No emails on)
-                    </span>
-                  )}
-                </div>
+                {noEmails && <BookingNoEmailsNotice />}
               </div>
             )}
             {error && (
@@ -258,7 +263,20 @@ export function BookingWorkPartyControls({
             <Button variant="outline" onClick={() => setOpen(false)} disabled={busy}>
               Cancel
             </Button>
-            {figures ? (
+            {!noEmails && figures ? (
+              <>
+                <Button
+                  variant="outline"
+                  onClick={() => send("apply", false)}
+                  disabled={busy || !selectedId}
+                >
+                  Add without emailing
+                </Button>
+                <Button onClick={() => send("apply", true)} disabled={busy || !selectedId}>
+                  {busy ? "Saving…" : "Add and email member"}
+                </Button>
+              </>
+            ) : figures ? (
               <Button onClick={() => send("apply")} disabled={busy || !selectedId}>
                 {busy ? "Saving…" : "Add to work party"}
               </Button>

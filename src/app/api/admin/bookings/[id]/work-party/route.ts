@@ -7,7 +7,7 @@ import { ApiError } from "@/lib/api-error";
 import logger from "@/lib/logger";
 import { clubTime } from "@/lib/club-time/server";
 import { clubFormatValues } from "@/lib/club-format-server";
-import { formatDateOnly } from "@/lib/date-only";
+import { calendarDateOfDateOnlyInstant } from "@/lib/club-time";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
@@ -112,7 +112,7 @@ export async function GET(
     hasOtherPromoCode: redemptions.some((row) => row.promoCode && !row.promoCode.workPartyEvent),
     paidByOrganiser: paidByOrganiser(booking),
     quotePriced,
-    memberOwned: bookingOwner(booking).memberId !== null,
+    memberOwned: Boolean(bookingOwner(booking).memberId),
   };
 
   return NextResponse.json({
@@ -126,8 +126,8 @@ export async function GET(
       return {
         id: event.id,
         name: event.name,
-        startDate: formatDateOnly(event.startDate),
-        endDate: formatDateOnly(event.endDate),
+        startDate: calendarDateOfDateOnlyInstant(event.startDate),
+        endDate: calendarDateOfDateOnlyInstant(event.endDate),
         discountPercent: event.discountPercent,
         lodgeName: event.lodge?.name ?? null,
         eligible: eligibility.ok,

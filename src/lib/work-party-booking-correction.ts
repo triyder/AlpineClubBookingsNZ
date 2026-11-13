@@ -311,7 +311,7 @@ export async function addBookingToWorkParty(
           hasOtherPromoCode: redemptions.some((row) => row.promoCode && !row.promoCode.workPartyEvent),
           paidByOrganiser: paidByOrganiser(booking),
           quotePriced: await isQuotePricedBooking(tx, params.bookingId),
-          memberOwned: bookingOwner(booking).memberId !== null,
+          memberOwned: Boolean(bookingOwner(booking).memberId),
         },
         {
           bookingLodgeId,
