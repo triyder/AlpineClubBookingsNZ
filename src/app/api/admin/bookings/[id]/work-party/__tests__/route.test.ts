@@ -11,7 +11,8 @@ const h = vi.hoisted(() => ({
   requirements: [] as unknown[],
   addBookingToWorkParty: vi.fn(),
   bookingFindUnique: vi.fn(),
-  workPartyFindMany: vi.fn(),
+  findActiveWorkParties: vi.fn(),
+  modules: { workParties: true },
 }));
 
 vi.mock("server-only", () => ({}));
@@ -26,12 +27,26 @@ vi.mock("@/lib/session-guards", () => ({
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     booking: { findUnique: h.bookingFindUnique },
-    workPartyEvent: { findMany: h.workPartyFindMany },
   },
 }));
 vi.mock("@/lib/lodges", () => ({ getDefaultLodgeId: vi.fn(async () => "lodge-1") }));
 vi.mock("@/lib/club-time/server", () => ({
   clubTime: vi.fn(async () => ({ today: () => "2026-07-01" })),
+  clubTodayDateOnlyInstant: vi.fn(async () => new Date("2026-07-01T00:00:00.000Z")),
+}));
+vi.mock("@/lib/module-settings", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/module-settings")),
+  loadEffectiveModuleFlags: vi.fn(async () => h.modules),
+}));
+vi.mock("@/lib/booking-modify-validation", () => ({
+  isQuotePricedBooking: vi.fn(async () => false),
+}));
+vi.mock("@/lib/promo-redemption-slot", () => ({
+  multiPromoCodesEnabled: vi.fn(async () => false),
+}));
+vi.mock("@/lib/work-party", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/work-party")),
+  findActiveWorkPartyEventsForRange: h.findActiveWorkParties,
 }));
 vi.mock("@/lib/club-format-server", () => ({ clubFormatValues: vi.fn(async () => ({})) }));
 vi.mock("@/lib/booking-batch-modification-service", () => ({
@@ -52,6 +67,8 @@ const figures = {
   newFinalPriceCents: 25_000,
   priceDiffCents: -5_000,
   accountCreditAmountCents: 5_000,
+  appliedCreditGivenBackCents: 0,
+  additionalAmountCents: 0,
   refundAmountCents: 0,
   settlementMethod: "credit" as const,
 };
@@ -71,6 +88,17 @@ beforeEach(() => {
   vi.clearAllMocks();
   h.guard = { ok: true };
   h.requirements = [];
+  h.modules.workParties = true;
+});
+
+describe("the Work Parties module", () => {
+  it("404s both methods while the module is off, and changes nothing", async () => {
+    h.modules.workParties = false;
+    expect((await GET(new Request("http://localhost/x") as never, { params })).status).toBe(404);
+    expect((await post({ mode: "preview", workPartyEventId: "wp-1" })).status).toBe(404);
+    expect(h.addBookingToWorkParty).not.toHaveBeenCalled();
+    expect(h.bookingFindUnique).not.toHaveBeenCalled();
+  });
 });
 
 describe("access", () => {
@@ -155,9 +183,12 @@ describe("GET", () => {
       checkIn: new Date("2026-08-01T00:00:00.000Z"),
       checkOut: new Date("2026-08-04T00:00:00.000Z"),
       lodgeId: "lodge-1",
+      organiserSettled: false,
+      parentBookingId: null,
+      payment: { source: "STRIPE" },
       promoRedemptions: [],
     });
-    h.workPartyFindMany.mockResolvedValue([
+    h.findActiveWorkParties.mockResolvedValue([
       {
         id: "wp-1",
         name: "Here",

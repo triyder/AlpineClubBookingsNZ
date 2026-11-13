@@ -15,9 +15,8 @@
  *    receives beside `tx`; no request body can carry it), and the money rule
  *    that comes with it — no change fee, and the reduction returned in full;
  *  - the settlement: account credit (owner decision 6, #118), never a refund.
- *    A joiner's booking its group organiser paid keeps the organiser's
- *    disposition, as #4533's promo correction does
- *    (`defaultCorrectionSettlementMethod`);
+ *    A joiner's booking its group organiser paid — whose money would go back to
+ *    the organiser — is refused instead (#119 decision 4);
  *  - the eligibility rule (`workPartyBookingEligibility`), shared with the UI;
  *  - a dry run for the confirm dialog and a figures check on the save, so the
  *    officer is charged-or-credited exactly what they were shown (#4030 C4).
@@ -30,13 +29,12 @@
  * the second waits on the global key, then re-reads a booking that already
  * carries the work party and is refused, so the discount applies once.
  */
-import { BookingStatus } from "@prisma/client";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { lockBookingRowForOwnerRead } from "@/lib/booking-row-lock";
-import type { CalendarDate } from "@/lib/club-time";
+import { dateOnlyInstantOf, type CalendarDate } from "@/lib/club-time";
 import type { ClubFormat } from "@/lib/club-format";
 import { ApiError } from "@/lib/api-error";
 import { paidByOrganiser } from "@/lib/group-organiser-paid";
@@ -44,31 +42,46 @@ import { reauthorizeBookingOfficerFromDb } from "@/lib/booking-exception-approva
 import { defaultCorrectionSettlementMethod } from "@/lib/booking-finished-stay-correction";
 import { bookingPromoRedemptions } from "@/lib/booking-promo-redemptions";
 import {
+  activeLifecycleEditRefusal,
+  bookingStayHasStarted,
+} from "@/lib/booking-edit-policy";
+import { isQuotePricedBooking } from "@/lib/booking-modify-validation";
+import type { BookingModificationSettlementMethod } from "@/lib/booking-modify";
+import { multiPromoCodesEnabled } from "@/lib/promo-redemption-slot";
+import { PROMO_WORK_PARTY_EXCLUSION_MESSAGE } from "@/lib/promo-code-list-rules";
+import {
   modifyBookingBatch,
   type BatchModificationPreTransaction,
 } from "@/lib/booking-batch-modification-service";
-import { workPartyWindowOverlapsStay } from "@/lib/work-party";
-
-/** Statuses a booking may be added to a work party in: live, not finished. */
-export const WORK_PARTY_CORRECTABLE_BOOKING_STATUSES: readonly BookingStatus[] = [
-  BookingStatus.PENDING,
-  BookingStatus.PAYMENT_PENDING,
-  BookingStatus.CONFIRMED,
-  BookingStatus.PAID,
-  BookingStatus.AWAITING_REVIEW,
-];
+import { workPartyEventRefusal } from "@/lib/work-party";
 
 export type WorkPartyBookingEligibility =
   | { ok: true }
   | { ok: false; reason: string };
 
+/** What the rule needs to know about the booking, read by the caller. */
 export interface WorkPartyEligibilityBooking {
-  status: BookingStatus | string;
+  status: string;
   checkIn: Date;
   checkOut: Date;
-  lodgeId: string | null;
-  /** Whether a work party's internal promo is already on the booking. */
+  /** A work party's internal promo is already on the booking. */
   hasWorkParty: boolean;
+  /** Another (non-work-party) promo code is on the booking. */
+  hasOtherPromoCode: boolean;
+  /** A joiner's booking its group organiser paid (`paidByOrganiser`). */
+  paidByOrganiser: boolean;
+  /** A quote-priced booking (school, request quote), priced by its quote. */
+  quotePriced: boolean;
+}
+
+/** The facts outside the booking the rule reads. */
+export interface WorkPartyEligibilityContext {
+  /** The booking's effective lodge (its own, or the club default). */
+  bookingLodgeId: string | null;
+  /** The club's today as a date-only instant (`dateOnlyInstantOf(today)`). */
+  today: Date;
+  /** The club's several-codes switch (`multiPromoCodesEnabled`). */
+  multiPromoCodes: boolean;
 }
 
 export interface WorkPartyEligibilityEvent {
@@ -82,41 +95,64 @@ export interface WorkPartyEligibilityEvent {
 }
 
 /**
- * Whether this booking may be added to this work party — the ONE rule the route,
- * the service (again, under the locks) and the admin UI's list all use.
- * `bookingLodgeId` is the booking's effective lodge (its own, or the club's
- * default for a pre-multi-lodge row).
+ * Whether this booking may be added to this work party — the ONE rule the GET
+ * list, the service (again, under the locks) and so the dialog all use. Each
+ * refusal is one the canonical edit would make anyway, stated up front in an
+ * officer's words rather than discovered at the preview, plus the owner's two
+ * (#119 decisions 3 and 4): a started stay, and an organiser-paid joiner. The
+ * editable-status answer is the edit doors' own (`activeLifecycleEditRefusal`,
+ * #3245) and the event answer is `workPartyEventRefusal`; neither is copied.
  */
 export function workPartyBookingEligibility(
   booking: WorkPartyEligibilityBooking,
-  bookingLodgeId: string | null,
+  context: WorkPartyEligibilityContext,
   event: WorkPartyEligibilityEvent,
 ): WorkPartyBookingEligibility {
-  if (!WORK_PARTY_CORRECTABLE_BOOKING_STATUSES.includes(booking.status as BookingStatus)) {
+  if (activeLifecycleEditRefusal(booking.status, "ADMIN") !== null) {
     return {
       ok: false,
-      reason: "Only a current booking can be added to a work party (not cancelled, finished, a draft or on the waitlist).",
+      reason: "This booking can't be changed in its current status (only a pending, confirmed or paid booking can).",
     };
   }
-  if (!event.active || !event.promoCode.active || event.promoCode.archivedAt) {
-    return { ok: false, reason: `"${event.name}" is not active.` };
+  if (bookingStayHasStarted(booking.checkIn, context.today)) {
+    return {
+      ok: false,
+      reason: "This stay has already started, so its prices are fixed and a work party can't be added.",
+    };
+  }
+  if (booking.paidByOrganiser) {
+    return {
+      ok: false,
+      reason: "This booking was paid by its group organiser, so it can't be added to a work party.",
+    };
+  }
+  if (booking.quotePriced) {
+    return {
+      ok: false,
+      reason: "This booking is priced by its quote, so a work party discount can't be added.",
+    };
   }
   if (booking.hasWorkParty) {
     return { ok: false, reason: "This booking already has a work party." };
   }
-  if (!workPartyWindowOverlapsStay(event, booking.checkIn, booking.checkOut)) {
-    return {
-      ok: false,
-      reason: `None of this booking's nights fall inside "${event.name}".`,
-    };
+  if (booking.hasOtherPromoCode && !context.multiPromoCodes) {
+    return { ok: false, reason: PROMO_WORK_PARTY_EXCLUSION_MESSAGE };
   }
-  if (event.lodgeId && bookingLodgeId && event.lodgeId !== bookingLodgeId) {
-    return {
-      ok: false,
-      reason: `"${event.name}" is held at ${event.lodge?.name ?? "another lodge"}, not this booking's lodge.`,
-    };
+  switch (
+    workPartyEventRefusal(event, booking.checkIn, booking.checkOut, context.bookingLodgeId)
+  ) {
+    case "inactive":
+      return { ok: false, reason: `"${event.name}" is not active.` };
+    case "no-overlap":
+      return { ok: false, reason: `None of this booking's nights fall inside "${event.name}".` };
+    case "other-lodge":
+      return {
+        ok: false,
+        reason: `"${event.name}" is held at ${event.lodge?.name ?? "another lodge"}, not this booking's lodge.`,
+      };
+    case null:
+      return { ok: true };
   }
-  return { ok: true };
 }
 
 /** What the correction does to the booking's money, shown before and checked on save. */
@@ -125,13 +161,17 @@ export interface WorkPartyCorrectionFigures {
   previousFinalPriceCents: number;
   /** The booking's price after (integer cents). */
   newFinalPriceCents: number;
-  /** The change in price: negative, or zero when no night is discounted. */
+  /** The change in price: negative. */
   priceDiffCents: number;
   /** Paid money returned as account credit. */
   accountCreditAmountCents: number;
-  /** Paid money refunded — zero except on an organiser-paid joiner's booking. */
+  /** Account credit the booking had used, given back to the member's balance. */
+  appliedCreditGivenBackCents: number;
+  /** Still to pay after the change (an unpaid ask's remainder), or 0. */
+  additionalAmountCents: number;
+  /** Always 0: organiser-paid bookings are refused, so nothing is refunded. */
   refundAmountCents: number;
-  settlementMethod: "card" | "credit";
+  settlementMethod: BookingModificationSettlementMethod;
 }
 
 export const WORK_PARTY_CORRECTION_FIGURES_CHANGED_MESSAGE =
@@ -162,13 +202,16 @@ export type WorkPartyCorrectionResult =
     };
 
 export type WorkPartyCorrectionMode =
-  | { dryRun: true }
+  | { dryRun: true; expectedFigures?: never }
   | { dryRun: false; expectedFigures: WorkPartyCorrectionFigures };
 
+/** Every money figure the officer sees; any that moved refuses the save. */
 const FIGURE_KEYS = [
   "newFinalPriceCents",
   "priceDiffCents",
   "accountCreditAmountCents",
+  "appliedCreditGivenBackCents",
+  "additionalAmountCents",
   "refundAmountCents",
 ] as const satisfies ReadonlyArray<keyof WorkPartyCorrectionFigures>;
 
@@ -251,19 +294,29 @@ export async function addBookingToWorkParty(
       const redemptions = bookingPromoRedemptions(booking);
       const eligibility = workPartyBookingEligibility(
         {
-          ...booking,
+          status: booking.status,
+          checkIn: booking.checkIn,
+          checkOut: booking.checkOut,
           hasWorkParty: redemptions.some((row) => row.promoCode?.workPartyEvent),
+          hasOtherPromoCode: redemptions.some((row) => row.promoCode && !row.promoCode.workPartyEvent),
+          paidByOrganiser: paidByOrganiser(booking),
+          quotePriced: await isQuotePricedBooking(tx, params.bookingId),
         },
-        bookingLodgeId,
+        {
+          bookingLodgeId,
+          today: dateOnlyInstantOf(params.todayAtClub),
+          multiPromoCodes: await multiPromoCodesEnabled(tx),
+        },
         event,
       );
       if (!eligibility.ok) throw new ApiError(eligibility.reason, 409);
 
       // (4) The canonical edit, on THIS transaction: the booking's codes in
-      // their order, then the work party's. Its refusals throw and roll back.
+      // their order, then the work party's (the promotion engine applies an
+      // internal code first regardless). Its refusals throw and roll back.
+      // Organiser-paid bookings were refused above, so this is always credit.
       const settlementMethod = defaultCorrectionSettlementMethod(booking.payment, {
         changesPromoCodes: true,
-        paidByOrganiser: paidByOrganiser(booking),
       });
       const modified = await modifyBookingBatch({
         bookingId: params.bookingId,
@@ -281,7 +334,10 @@ export async function addBookingToWorkParty(
         format: params.format,
         tx,
         preTransaction: params.preTransaction,
-        officerWorkPartyCorrection: { promoCodeId: event.promoCode.id },
+        officerWorkPartyCorrection: {
+          workPartyEventId: params.workPartyEventId,
+          promoCodeId: event.promoCode.id,
+        },
       });
 
       // (5) The discount must actually have landed, and can only lower the
@@ -307,9 +363,16 @@ export async function addBookingToWorkParty(
         newFinalPriceCents: modified.booking.finalPriceCents,
         priceDiffCents: modified.priceDiffCents,
         accountCreditAmountCents: modified.accountCreditAmountCents,
+        appliedCreditGivenBackCents: modified.appliedCreditGivenBackCents,
+        additionalAmountCents: modified.additionalAmountCents,
         refundAmountCents: modified.refundAmountCents,
         settlementMethod,
       };
+      // Decision 2 (#119): account credit, never a refund. A refund here would
+      // mean a path the eligibility rule missed; refuse rather than pay it.
+      if (figures.refundAmountCents > 0) {
+        throw new ApiError("This booking's change would be refunded, not credited, so it can't be added here.", 409);
+      }
       if (params.dryRun) throw new WorkPartyCorrectionDryRun(figures);
 
       // (6) Only what the officer was shown (#4030 C4). A throw rolls it all back.

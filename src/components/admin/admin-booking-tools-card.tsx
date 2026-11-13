@@ -298,7 +298,10 @@ export function AdminBookingToolsCard({
           )}
           {/* Fork #119: add the booking to a work party the member missed. */}
           {!isDeleted && features.workParties && (
-            <BookingWorkPartyControls bookingId={bookingId} />
+            <BookingWorkPartyControls
+              bookingId={bookingId}
+              noEmails={noEmails?.noEmails ?? false}
+            />
           )}
           {/* #3214: recording what a guest's nights sold for. It sits with the
               other money controls on this card rather than on the finance

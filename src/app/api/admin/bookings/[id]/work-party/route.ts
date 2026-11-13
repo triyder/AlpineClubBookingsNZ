@@ -9,6 +9,12 @@ import { clubTime } from "@/lib/club-time/server";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { formatDateOnly } from "@/lib/date-only";
 import { getDefaultLodgeId } from "@/lib/lodges";
+import { loadEffectiveModuleFlags } from "@/lib/module-settings";
+import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
+import { paidByOrganiser } from "@/lib/group-organiser-paid";
+import { isQuotePricedBooking } from "@/lib/booking-modify-validation";
+import { multiPromoCodesEnabled } from "@/lib/promo-redemption-slot";
+import { findActiveWorkPartyEventsForRange } from "@/lib/work-party";
 import { bookingPromoRedemptions } from "@/lib/booking-promo-redemptions";
 import { prepareBatchModificationForCallerTransaction } from "@/lib/booking-batch-modification-service";
 import { EditFinancialReviewPendingError } from "@/lib/edit-financial-review";
@@ -34,6 +40,8 @@ const bodySchema = z.discriminatedUnion("mode", [
       newFinalPriceCents: centsField,
       priceDiffCents: centsField,
       accountCreditAmountCents: centsField,
+      appliedCreditGivenBackCents: centsField,
+      additionalAmountCents: centsField,
       refundAmountCents: centsField,
       settlementMethod: z.enum(["card", "credit"]),
     }),
@@ -52,6 +60,11 @@ export async function GET(
 ) {
   const guard = await requireAdmin({ permission: { area: "bookings", level: "view" } });
   if (!guard.ok) return guard.response;
+  // The action exists only with the Work Parties module on: a switched-off
+  // module can never affect a booking's price (as at booking create).
+  if (!(await loadEffectiveModuleFlags()).workParties) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
   const { id } = await params;
 
   const booking = await prisma.booking.findUnique({
@@ -61,6 +74,9 @@ export async function GET(
       checkIn: true,
       checkOut: true,
       lodgeId: true,
+      organiserSettled: true,
+      parentBookingId: true,
+      payment: { select: { source: true } },
       promoRedemptions: {
         select: {
           id: true,
@@ -75,38 +91,33 @@ export async function GET(
   if (!booking) {
     return NextResponse.json({ error: "Booking not found" }, { status: 404 });
   }
-  const bookingLodgeId = booking.lodgeId ?? (await getDefaultLodgeId(prisma));
+  const redemptions = bookingPromoRedemptions(booking);
   const current =
-    bookingPromoRedemptions(booking).find((row) => row.promoCode?.workPartyEvent)
-      ?.promoCode?.workPartyEvent ?? null;
-
-  const events = await prisma.workPartyEvent.findMany({
-    where: {
-      active: true,
-      startDate: { lt: booking.checkOut },
-      endDate: { gte: booking.checkIn },
-      promoCode: { active: true, archivedAt: null },
-    },
-    select: {
-      id: true,
-      name: true,
-      active: true,
-      startDate: true,
-      endDate: true,
-      discountPercent: true,
-      lodgeId: true,
-      lodge: { select: { name: true } },
-      promoCode: { select: { active: true, archivedAt: true } },
-    },
-    orderBy: { startDate: "asc" },
-  });
+    redemptions.find((row) => row.promoCode?.workPartyEvent)?.promoCode?.workPartyEvent ?? null;
+  const [bookingLodgeId, today, quotePriced, multiPromoCodes, events] = await Promise.all([
+    booking.lodgeId ?? getDefaultLodgeId(prisma),
+    clubTodayDateOnlyInstant(),
+    isQuotePricedBooking(prisma, id),
+    multiPromoCodesEnabled(prisma),
+    // Every lodge's, so one at another lodge is listed with its reason.
+    findActiveWorkPartyEventsForRange(booking.checkIn, booking.checkOut, prisma),
+  ]);
+  const eligibilityBooking = {
+    status: booking.status,
+    checkIn: booking.checkIn,
+    checkOut: booking.checkOut,
+    hasWorkParty: current !== null,
+    hasOtherPromoCode: redemptions.some((row) => row.promoCode && !row.promoCode.workPartyEvent),
+    paidByOrganiser: paidByOrganiser(booking),
+    quotePriced,
+  };
 
   return NextResponse.json({
     currentWorkParty: current,
     workParties: events.map((event) => {
       const eligibility = workPartyBookingEligibility(
-        { ...booking, hasWorkParty: current !== null },
-        bookingLodgeId,
+        eligibilityBooking,
+        { bookingLodgeId, today, multiPromoCodes },
         event,
       );
       return {
@@ -138,6 +149,9 @@ export async function POST(
   const guard = await requireAdmin({ permission: { area: "bookings", level: "edit" } });
   if (!guard.ok) return guard.response;
   const session = guard.session;
+  if (!(await loadEffectiveModuleFlags()).workParties) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
   const { id } = await params;
 
   let body: unknown;

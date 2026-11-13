@@ -46,7 +46,14 @@ type WorkPartyOption = {
  * The figures shown are the figures saved — the route refuses if they moved.
  * Bookings edit; a bookings-view admin sees the button disabled.
  */
-export function BookingWorkPartyControls({ bookingId }: { bookingId: string }) {
+export function BookingWorkPartyControls({
+  bookingId,
+  noEmails = false,
+}: {
+  bookingId: string;
+  /** The booking's "No emails" switch: when on, the member is not emailed. */
+  noEmails?: boolean;
+}) {
   const canEdit = useAdminAreaEditAccess("bookings");
   const format = useClubFormat();
   const router = useRouter();
@@ -56,7 +63,7 @@ export function BookingWorkPartyControls({ bookingId }: { bookingId: string }) {
   const [current, setCurrent] = useState<{ name: string } | null>(null);
   const [selectedId, setSelectedId] = useState("");
   const [figures, setFigures] = useState<WorkPartyCorrectionFigures | null>(null);
-  const [notifyMember, setNotifyMember] = useState(true);
+  const [notifyMember, setNotifyMember] = useState(!noEmails);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const money = (cents: number) => formatCents(cents, format);
@@ -65,6 +72,10 @@ export function BookingWorkPartyControls({ bookingId }: { bookingId: string }) {
     setOpen(true);
     setError("");
     setFigures(null);
+    setOptions(null);
+    setCurrent(null);
+    setSelectedId("");
+    setNotifyMember(!noEmails);
     setLoading(true);
     try {
       const res = await fetch(`/api/admin/bookings/${bookingId}/work-party`);
@@ -77,6 +88,8 @@ export function BookingWorkPartyControls({ bookingId }: { bookingId: string }) {
       setCurrent(data.currentWorkParty ?? null);
       const firstEligible = (data.workParties ?? []).find((o: WorkPartyOption) => o.eligible);
       setSelectedId(firstEligible?.id ?? "");
+    } catch {
+      setError("Could not load the work parties for this booking. Check your connection and try again.");
     } finally {
       setLoading(false);
     }
@@ -113,9 +126,13 @@ export function BookingWorkPartyControls({ bookingId }: { bookingId: string }) {
       setOpen(false);
       toast.success("Booking added to the work party.");
       if (data.followUpFailed) {
-        toast.warning("Saved, but a follow-up step (email or accounting) did not complete; it will retry.");
+        toast.warning(
+          "Saved, but a follow-up step (email or accounting) did not complete. Check the booking.",
+        );
       }
       router.refresh();
+    } catch {
+      setError("The request did not reach the server. Nothing was changed; try again.");
     } finally {
       setBusy(false);
     }
@@ -165,7 +182,11 @@ export function BookingWorkPartyControls({ bookingId }: { bookingId: string }) {
                     setError("");
                   }}
                 >
-                  <SelectTrigger id={`work-party-${bookingId}`} className="w-full">
+                  <SelectTrigger
+                    id={`work-party-${bookingId}`}
+                    className="w-full"
+                    aria-describedby={`work-party-reasons-${bookingId}`}
+                  >
                     <SelectValue placeholder="Choose a work party…" />
                   </SelectTrigger>
                   <SelectContent>
@@ -178,34 +199,36 @@ export function BookingWorkPartyControls({ bookingId }: { bookingId: string }) {
                     ))}
                   </SelectContent>
                 </Select>
-                {options
-                  .filter((o) => !o.eligible && o.reason)
-                  .map((o) => (
-                    <p key={o.id} className="text-xs text-muted-foreground">
-                      {o.name}: {o.reason}
-                    </p>
-                  ))}
+                <div id={`work-party-reasons-${bookingId}`}>
+                  {options
+                    .filter((o) => !o.eligible && o.reason)
+                    .map((o) => (
+                      <p key={o.id} className="text-xs text-muted-foreground">
+                        {o.name}: {o.reason}
+                      </p>
+                    ))}
+                </div>
               </div>
             )}
             {figures && selected && (
-              <div className="space-y-1 rounded-md border p-3" data-testid="work-party-figures">
+              <div
+                className="space-y-1 rounded-md border p-3"
+                data-testid="work-party-figures"
+                aria-live="polite"
+              >
                 <p>
                   New total: <strong>{money(figures.newFinalPriceCents)}</strong>{" "}
                   (was {money(figures.previousFinalPriceCents)})
                 </p>
                 <p>
                   Account credit to the member:{" "}
-                  <strong>{money(figures.accountCreditAmountCents)}</strong>
+                  <strong>
+                    {money(figures.accountCreditAmountCents + figures.appliedCreditGivenBackCents)}
+                  </strong>
                 </p>
-                {figures.refundAmountCents > 0 && (
+                {figures.additionalAmountCents > 0 && (
                   <p>
-                    Returned to the group organiser:{" "}
-                    <strong>{money(figures.refundAmountCents)}</strong>
-                  </p>
-                )}
-                {figures.priceDiffCents === 0 && (
-                  <p className="text-muted-foreground">
-                    No night of this booking is discounted, so nothing changes in price.
+                    Still to pay: <strong>{money(figures.additionalAmountCents)}</strong>
                   </p>
                 )}
                 <div className="flex items-center gap-2 pt-1">
@@ -217,6 +240,11 @@ export function BookingWorkPartyControls({ bookingId }: { bookingId: string }) {
                   <Label htmlFor={`work-party-notify-${bookingId}`}>
                     Email the member about the change
                   </Label>
+                  {noEmails && (
+                    <span className="text-xs text-muted-foreground">
+                      (this booking has No emails on)
+                    </span>
+                  )}
                 </div>
               </div>
             )}
