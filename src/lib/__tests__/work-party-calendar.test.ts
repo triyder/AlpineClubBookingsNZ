@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * `work-party-calendar-service.test.ts`.
  */
 const h = vi.hoisted(() => ({
-  replace: vi.fn(async (..._args: unknown[]) => 3),
+  replace: vi.fn<(...args: unknown[]) => Promise<number>>(async () => 3),
   modules: { eventsCalendar: true },
   tx: { workPartyEvent: { findUnique: vi.fn() } },
 }));

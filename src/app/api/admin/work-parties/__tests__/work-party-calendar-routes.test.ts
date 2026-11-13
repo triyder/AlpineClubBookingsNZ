@@ -10,7 +10,7 @@ const h = vi.hoisted(() => ({
   modules: { eventsCalendar: true },
   syncCreated: vi.fn(async () => null as string | null),
   syncUpdated: vi.fn(async () => null as string | null),
-  remove: vi.fn(async (..._args: unknown[]) => undefined),
+  remove: vi.fn<(...args: unknown[]) => Promise<void>>(async () => undefined),
   replace: vi.fn(async () => 3),
   createWorkParty: vi.fn(),
   updateWorkParty: vi.fn(),
