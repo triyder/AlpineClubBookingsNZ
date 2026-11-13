@@ -711,6 +711,7 @@ export async function modifyBookingBatch({
   waiveChangeFee,
   preTransaction,
   finishedStayCorrection,
+  officerWorkPartyCorrection,
 }: {
   bookingId: string;
   actor: { id: string; role: Role };
@@ -843,6 +844,22 @@ export async function modifyBookingBatch({
    * second fee told the member it was waived and charged it anyway.
    */
   waiveChangeFee?: boolean;
+  /**
+   * Fork #119: an officer adding the booking to a work party the member was
+   * entitled to and missed ("Add booking to work party",
+   * `work-party-booking-correction.ts`, its ONE caller, pinned by
+   * `work-party-booking-correction.test.ts`). A SERVICE argument, like
+   * `waiveChangeFee` above and for the same reason: `input` is a parsed request
+   * body on the member routes.
+   *
+   * It does three things and nothing else:
+   *  - admits that one internal promo code (`applyPromoCodeChanges`);
+   *  - charges no change fee — an officer correction, not the member's change;
+   *  - returns the reduction IN FULL (`calculateFullReductionSettlementOptions`,
+   *    as #4533's promo correction does), not cut by the cancellation tier,
+   *    because the member is given what ticking the box would have given them.
+   */
+  officerWorkPartyCorrection?: { promoCodeId: string };
   /**
    * The work that has to happen BEFORE the transaction, done by the caller that
    * owns the transaction (#3232, `INV-LOCK-004`).
@@ -1471,6 +1488,7 @@ export async function modifyBookingBatch({
           // as its fee tiers are — on the real today an expired code would be
           // released and its discount billed back to the member.
           todayAtClub: finishedStayCorrection ? finishedStayNoticeDay(booking) : todayAtClub,
+          officerWorkPartyPromoCodeId: officerWorkPartyCorrection?.promoCodeId ?? null,
         });
 
     /**
@@ -1549,9 +1567,11 @@ export async function modifyBookingBatch({
       finishedStayChangeFeeRule !== null && finishedStayRemovalIsCharged(finishedStayChangeFeeRule);
     // #4533: and a correction that applies a promo code returns its reduction
     // in full too — the same untiered settlement, with no removal fee.
+    // Fork #119: so does an officer's work-party correction (see the argument).
     const finishedStayReductionInFull =
-      finishedStayChangeFeeRule !== null &&
-      finishedStayReductionReturnedInFull(finishedStayChangeFeeRule, requestChangesPromoCodes(input));
+      Boolean(officerWorkPartyCorrection) ||
+      (finishedStayChangeFeeRule !== null &&
+        finishedStayReductionReturnedInFull(finishedStayChangeFeeRule, requestChangesPromoCodes(input)));
     const removedPortion = finishedStayRemovalCharged
       ? finishedStayRemovedPortion({
           storedGuests: booking.guests,
@@ -1577,7 +1597,9 @@ export async function modifyBookingBatch({
     // #3750 (owner, 7 Oct 2026, "Same-day fee on removed nights"): a finished-
     // stay correction is charged ONLY the same-day retention on what it removes
     // — never the ordinary late-change fee across the whole booking.
+    // Fork #119: an officer's work-party correction charges none either.
     const chargeableChangeFeeCents =
+      officerWorkPartyCorrection ||
       finishedStayChangeFeeRule === "ADD_ONLY_NO_FEE" || finishedStayChangeFeeRule === "PROMO_ONLY_NO_FEE"
       ? 0
       : finishedStayCorrection

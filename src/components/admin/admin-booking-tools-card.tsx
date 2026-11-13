@@ -12,6 +12,7 @@ import {
 } from "@/components/admin/booking-manual-payment-controls";
 import { BookingStoredNightPriceControls } from "@/components/admin/booking-stored-night-price-controls";
 import { AdminReturnToWaitlistControls } from "@/components/admin/admin-return-to-waitlist-controls";
+import { BookingWorkPartyControls } from "@/components/admin/booking-work-party-controls";
 import { ConfirmPendingGuestsButton } from "@/components/admin/confirm-pending-guests-button";
 import { CopyBookingButton } from "@/components/admin/copy-booking-button";
 import type {
@@ -294,6 +295,10 @@ export function AdminBookingToolsCard({
               state={manualPayment}
               noEmails={noEmails?.noEmails ?? false}
             />
+          )}
+          {/* Fork #119: add the booking to a work party the member missed. */}
+          {!isDeleted && features.workParties && (
+            <BookingWorkPartyControls bookingId={bookingId} />
           )}
           {/* #3214: recording what a guest's nights sold for. It sits with the
               other money controls on this card rather than on the finance
