@@ -757,7 +757,10 @@ export const AUDIT_CENSUS_TOTALS = {
   // so `markFoodOrderItemsReceived` writes `food_order.items_received` for every
   // receipt and the existing `food_order.received` when the last item closes the
   // order — two `createAuditLog` sites where the single close had one. `lodge`.
-  writeSites: 543,
+  // 543 -> 544 (fork #118): "Add to calendar" on a work party,
+  // `workparty.calendar.add`, a `logAudit` in its lodge-edit route, `admin`
+  // like its three siblings. RE-MEASURED with the census.
+  writeSites: 544,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -861,7 +864,7 @@ export const AUDIT_CENSUS_TOTALS = {
     // and the lost-record recovery's own entry.
     // 273 -> 274 (#4170): the refunded-outside-the-app entry.
     // 274 -> 275 (#4533): the officer's finished-stay promo correction request, above.
-    logAudit: { total: 275, uncategorised: 0 }, // 275 -> 276 -> 275 (fork #121): the Food Orders settings save moved to createAuditLog in its transaction.
+    logAudit: { total: 276, uncategorised: 0 }, // 275 -> 276 (fork #118): workparty.calendar.add. // 275 -> 276 -> 275 (fork #121): the Food Orders settings save moved to createAuditLog in its transaction.
     // 101 -> 102 (#2627): the deletion-approval release, above.
     // 102 -> 104 (#2595): the two reviewed-move writes, above.
     // 104 -> 105 (#2649): the return-to-waitlist repair, above.
@@ -1356,7 +1359,7 @@ export const AUDIT_CENSUS_TOTALS = {
     // booking officer's contact - and no member.
     // 110/107 -> 108 (hand sync of `main` f1ecdb5ff into epic #3789): #3819's
     // one and #52's two removals are disjoint. RE-MEASURED on the composed tree.
-    admin: 112, // 108/109 -> 110 (central-server lane, 20 Oct 2026): #62 and #58 are disjoint from upstream's. RE-MEASURED.
+    admin: 113, // 112 -> 113 (fork #118): workparty.calendar.add. // 108/109 -> 110 (central-server lane, 20 Oct 2026): #62 and #58 are disjoint from upstream's. RE-MEASURED.
     // 110 -> 111 (#4457): `privacy.retention.settings_updated`. A deliberate +1 to the
     // support:view-only population: it records only retention settings, never a member.
     // 111 -> 112 (triyder/AlpineClubBookingsNZ#97): the setup page's link dialog row,
@@ -2881,6 +2884,9 @@ export const LODGE_GATED_ADMIN_CATEGORIES_2765: Readonly<
   "src/app/api/admin/work-parties/route.ts::POST#0": "admin",
   "src/app/api/admin/work-parties/[id]/route.ts::PUT#0": "admin",
   "src/app/api/admin/work-parties/[id]/route.ts::DELETE#0": "admin",
+  // Fork #118: "Add to calendar", the fourth writer in the subsystem; files
+  // `admin` under INV-PRIV-013's uniformity rule, as its siblings do.
+  "src/app/api/admin/work-parties/[id]/calendar/route.ts::POST#0": "admin",
 
   // ─── Other-lodges registry (#2749, arrived after the #2765 decision) ────────
   // Classified under INV-PRIV-013's rule rather than re-decided, and not merely
@@ -2966,6 +2972,8 @@ export const LODGE_GATED_ADMIN_ACTIONS_2765: readonly string[] = [
   "workparty.create",
   "workparty.update",
   "workparty.delete",
+  // Fork #118: no access-shaped word, so the seven-year retention class (INV-OPS-012).
+  "workparty.calendar.add",
   "OTHER_LODGE_UPDATED",
   // #58: no access-shaped word, so the seven-year retention class (INV-OPS-012).
   "OTHER_LODGE_HIDDEN",

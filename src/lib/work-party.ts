@@ -26,6 +26,14 @@ import {
   isDateOnlyString,
   parseDateOnly,
 } from "@/lib/date-only";
+import {
+  isOpenWorkPartyEvent,
+  OPEN_WORK_PARTY_EVENT_WHERE,
+} from "@/lib/work-party-rules";
+
+// Re-exported for the booking routes that already import this module; the
+// rule itself lives in work-party-rules.ts.
+export { isOpenWorkPartyEvent };
 
 type WorkPartyDbClient = typeof prisma | Prisma.TransactionClient;
 
@@ -174,13 +182,12 @@ export async function findActiveWorkPartyEventsForRange(
 ) {
   return db.workPartyEvent.findMany({
     where: {
-      active: true,
+      ...OPEN_WORK_PARTY_EVENT_WHERE,
       // startDate < checkOut means the event starts on or before the last
       // booking night; endDate >= checkIn means it ends on or after the
       // first night.
       startDate: { lt: checkOut },
       endDate: { gte: checkIn },
-      promoCode: { active: true, archivedAt: null },
       ...(lodgeId ? { OR: [{ lodgeId: null }, { lodgeId }] } : {}),
     },
     select: {
@@ -276,9 +283,7 @@ export function workPartyEventRefusal(
   checkOut: Date,
   bookingLodgeId: string | null | undefined,
 ): WorkPartyEventRefusal | null {
-  if (!event.active || !event.promoCode.active || event.promoCode.archivedAt) {
-    return "inactive";
-  }
+  if (!isOpenWorkPartyEvent(event)) return "inactive";
   if (!workPartyWindowOverlapsStay(event, checkIn, checkOut)) return "no-overlap";
   if (event.lodgeId && bookingLodgeId && event.lodgeId !== bookingLodgeId) {
     return "other-lodge";
