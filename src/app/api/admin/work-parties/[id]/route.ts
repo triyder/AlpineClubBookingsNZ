@@ -9,6 +9,10 @@ import {
   workPartyEventDatesError,
   workPartyEventSchema,
 } from "@/lib/work-party";
+import {
+  removeWorkPartyCalendar,
+  syncUpdatedWorkPartyCalendar,
+} from "@/lib/work-party-calendar";
 
 export async function GET(
   _req: NextRequest,
@@ -100,17 +104,19 @@ export async function PUT(
 
   // Deactivating only stops new applications; existing redemptions and
   // bookings are never altered.
+  let lodge: { name: string } | null = null;
   if (parsed.data.lodgeId) {
-    const lodge = await prisma.lodge.findUnique({
+    const found = await prisma.lodge.findUnique({
       where: { id: parsed.data.lodgeId },
-      select: { active: true },
+      select: { active: true, name: true },
     });
-    if (!lodge?.active) {
+    if (!found?.active) {
       return NextResponse.json(
         { error: "Lodge not found or not active" },
         { status: 400 }
       );
     }
+    lodge = { name: found.name };
   }
 
   const event = await updateWorkPartyEventAndPromo(id, {
@@ -143,7 +149,15 @@ export async function PUT(
     },
   });
 
-  return NextResponse.json({ event });
+  // Fork #118: a work party that has calendar entries keeps them in step with
+  // its new dates and details. Deactivating writes nothing: the calendar hides
+  // an inactive work party's entries.
+  const calendarWarning = await syncUpdatedWorkPartyCalendar(
+    { ...event, lodge },
+    session.user.id
+  );
+
+  return NextResponse.json({ event, calendarWarning });
 }
 
 export async function DELETE(
@@ -176,6 +190,10 @@ export async function DELETE(
       { status: 400 }
     );
   }
+
+  // Fork #118: its calendar entries (and their series row) go first. The
+  // foreign key cascades the entries anyway; this also removes the series.
+  await removeWorkPartyCalendar(id, session.user.id);
 
   await prisma.$transaction(async (tx) => {
     await tx.workPartyEvent.delete({ where: { id } });

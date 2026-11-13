@@ -49,7 +49,11 @@ export default async function AdminCalendarPage() {
           a read-only view.
         </p>
       </div>
-      <CalendarView canManage={canManage} allowEditExisting={canEdit} />
+      <CalendarView
+        canManage={canManage}
+        allowEditExisting={canEdit}
+        workPartyLink={modules.workParties ? "admin" : null}
+      />
     </div>
   );
 }

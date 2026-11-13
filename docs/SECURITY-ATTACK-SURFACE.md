@@ -329,6 +329,14 @@ These family rules are enforced by automated tests (issue #1132):
   booking exists, the booker's family; answered by guest reference, never member
   id, with only code and benefit; a booking the caller does not own answers as
   a missing one; per-member rate limit and a `privacy` audit row per lookup.
+- `src/app/api/work-parties/**/route.ts` — module-gated (`workParties`; 404 in
+  the proxy). `active` lists the open work parties overlapping a stay for the
+  booking form. `[id]` (fork #118) returns one open work party for the member
+  page `/work-parties/[id]` and the "Join Work Party" prefill: members only
+  (`canViewWorkParties`: the `USER` access role and not an organisation
+  account), with the module re-checked in the handler; every other caller, and
+  an inactive or unknown id, gets the same 404, so ids are not confirmed. It
+  never returns the work party's internal promo code. Booking rate limit.
 
 ### Lodge And Kiosk Routes
 

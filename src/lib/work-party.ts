@@ -159,6 +159,18 @@ export async function getWorkPartyNightWindowForPromo(
 }
 
 /**
+ * A work party members can still select: the event is active and its internal
+ * promo is active and not archived — the same three facts
+ * `resolveWorkPartyEventPromoForBooking` re-checks at create. The booking
+ * picker and the member work party page and dashboard card (fork #118) all
+ * filter on this one shape, so "open" means one thing.
+ */
+export const OPEN_WORK_PARTY_EVENT_WHERE = {
+  active: true,
+  promoCode: { active: true, archivedAt: null },
+} satisfies Prisma.WorkPartyEventWhereInput;
+
+/**
  * Active events whose window overlaps the requested stay, for the booking
  * form's "I am attending a working bee" picker.
  */
@@ -174,13 +186,12 @@ export async function findActiveWorkPartyEventsForRange(
 ) {
   return db.workPartyEvent.findMany({
     where: {
-      active: true,
+      ...OPEN_WORK_PARTY_EVENT_WHERE,
       // startDate < checkOut means the event starts on or before the last
       // booking night; endDate >= checkIn means it ends on or after the
       // first night.
       startDate: { lt: checkOut },
       endDate: { gte: checkIn },
-      promoCode: { active: true, archivedAt: null },
       ...(lodgeId ? { OR: [{ lodgeId: null }, { lodgeId }] } : {}),
     },
     select: {

@@ -13,7 +13,7 @@ import {
 import type { CalendarDate } from "@/lib/club-time";
 import { groupEventsByDay, monthGridRange } from "@/lib/calendar-client";
 import { MonthCalendar } from "./month-calendar";
-import { EventDialog } from "./event-dialog";
+import { EventDialog, type CalendarWorkPartyLink } from "./event-dialog";
 import { DayEventsDialog } from "./day-events-dialog";
 
 interface CalendarViewProps {
@@ -25,11 +25,14 @@ interface CalendarViewProps {
    * create-and-view only; /admin/calendar leaves it true for full editing.
    */
   allowEditExisting?: boolean;
+  /** Where a work party's entry links to (fork #118); see EventDialog. */
+  workPartyLink?: CalendarWorkPartyLink;
 }
 
 export function CalendarView({
   canManage,
   allowEditExisting = true,
+  workPartyLink = null,
 }: CalendarViewProps) {
   const canCreate = canManage;
   const canEditExisting = canManage && allowEditExisting;
@@ -219,6 +222,7 @@ export function CalendarView({
         canCreate={canCreate}
         canManage={canManage}
         canEditExisting={canEditExisting}
+        workPartyLink={workPartyLink}
         onSaved={fetchEvents}
       />
     </div>

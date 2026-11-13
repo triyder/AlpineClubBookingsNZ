@@ -74,8 +74,27 @@ interface EventDialogProps {
    * calendar creates but does not edit; /admin/calendar keeps full editing.
    */
   canEditExisting: boolean;
+  /**
+   * Where a work party's entry points (fork #118): the admin Work Parties page,
+   * the member work party page, or nowhere (a viewer who cannot open either).
+   */
+  workPartyLink?: CalendarWorkPartyLink;
   /** Called after a successful create/update/delete so the caller can refetch. */
   onSaved: () => void;
+}
+
+/** See {@link EventDialogProps.workPartyLink}. */
+export type CalendarWorkPartyLink = "admin" | "member" | null;
+
+function workPartyHref(
+  mode: CalendarWorkPartyLink,
+  workPartyEventId: string,
+): string | null {
+  if (mode === "admin") return "/admin/work-parties";
+  if (mode === "member") {
+    return `/work-parties/${encodeURIComponent(workPartyEventId)}`;
+  }
+  return null;
 }
 
 /** Fresh idempotency key for a create submit; empty string if unavailable. */
@@ -94,6 +113,7 @@ export function EventDialog({
   canCreate,
   canManage,
   canEditExisting,
+  workPartyLink = null,
   onSaved,
 }: EventDialogProps) {
   /*
@@ -301,7 +321,13 @@ export function EventDialog({
   // member calendar (where existing events are not editable). A meeting shows a
   // "Join meeting" button only to managers (committee members / admins) — an
   // ordinary member sees the event details but cannot join the meeting.
-  if (event && !canEditExisting) {
+  //
+  // A work party's entry (fork #118) is always read-only here, editor or not:
+  // it is managed from Work Parties, and the calendar API refuses to change it.
+  if (event && (!canEditExisting || event.workPartyEventId)) {
+    const managedHref = event.workPartyEventId
+      ? workPartyHref(workPartyLink, event.workPartyEventId)
+      : null;
     // The series summary describes a pattern anchored at a real instant, so it
     // is rendered only when that instant parses. There is nothing honest to say
     // about the shape of a series whose anchor is unreadable, and a placeholder
@@ -360,8 +386,28 @@ export function EventDialog({
                 {event.details}
               </p>
             )}
-            {!event.location && !event.details && !event.recurrence && (
-              <p className="text-muted-foreground">No further details.</p>
+            {!event.location &&
+              !event.details &&
+              !event.recurrence &&
+              !event.workPartyEventId && (
+                <p className="text-muted-foreground">No further details.</p>
+              )}
+            {event.workPartyEventId && (
+              <p className="text-muted-foreground">
+                This work party is managed from Work Parties.
+                {managedHref && (
+                  <>
+                    {" "}
+                    <a
+                      href={managedHref}
+                      className="inline-flex items-center gap-1 font-medium text-primary underline-offset-4 hover:underline"
+                    >
+                      Open the work party
+                      <ExternalLink aria-hidden className="h-3 w-3" />
+                    </a>
+                  </>
+                )}
+              </p>
             )}
             {joinError && (
               <p role="alert" className="text-sm font-medium text-destructive">

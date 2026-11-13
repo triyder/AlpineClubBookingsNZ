@@ -4,11 +4,13 @@ import { prisma } from "@/lib/prisma";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { logAudit } from "@/lib/audit";
 import { formatDateOnly } from "@/lib/date-only";
+import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import {
   createWorkPartyEventWithPromo,
   workPartyEventDatesError,
   workPartyEventSchema,
 } from "@/lib/work-party";
+import { syncCreatedWorkPartyCalendar } from "@/lib/work-party-calendar";
 
 export async function GET() {
   const guard = await requireAdmin({
@@ -16,23 +18,32 @@ export async function GET() {
   });
   if (!guard.ok) return guard.response;
 
-  const events = await prisma.workPartyEvent.findMany({
-    include: {
-      lodge: { select: { name: true } },
-      promoCode: {
-        select: {
-          id: true,
-          redemptions: { select: { discountCents: true } },
+  const [events, modules] = await Promise.all([
+    prisma.workPartyEvent.findMany({
+      include: {
+        lodge: { select: { name: true } },
+        // Fork #118: whether the work party already has calendar entries, so the
+        // card offers "Add to calendar" only for one that does not.
+        _count: { select: { calendarEvents: true } },
+        promoCode: {
+          select: {
+            id: true,
+            redemptions: { select: { discountCents: true } },
+          },
         },
       },
-    },
-    orderBy: { startDate: "desc" },
-  });
+      orderBy: { startDate: "desc" },
+    }),
+    loadEffectiveModuleFlags(),
+  ]);
 
   return NextResponse.json({
-    events: events.map(({ promoCode, lodge, ...event }) => ({
+    // Fork #118: "Add to calendar" is offered only while the calendar is on.
+    calendarEnabled: modules.eventsCalendar,
+    events: events.map(({ promoCode, lodge, _count, ...event }) => ({
       ...event,
       lodgeName: lodge?.name ?? null,
+      onCalendar: _count.calendarEvents > 0,
       bookingCount: promoCode.redemptions.length,
       totalDiscountCents: promoCode.redemptions.reduce(
         (sum, redemption) => sum + redemption.discountCents,
@@ -65,17 +76,19 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: datesError }, { status: 400 });
   }
 
+  let lodge: { name: string } | null = null;
   if (parsed.data.lodgeId) {
-    const lodge = await prisma.lodge.findUnique({
+    const found = await prisma.lodge.findUnique({
       where: { id: parsed.data.lodgeId },
-      select: { active: true },
+      select: { active: true, name: true },
     });
-    if (!lodge?.active) {
+    if (!found?.active) {
       return NextResponse.json(
         { error: "Lodge not found or not active" },
         { status: 400 }
       );
     }
+    lodge = { name: found.name };
   }
 
   const event = await createWorkPartyEventWithPromo({
@@ -107,5 +120,12 @@ export async function POST(req: NextRequest) {
     },
   });
 
-  return NextResponse.json({ event }, { status: 201 });
+  // Fork #118: with the Events Calendar on, the work party also goes on the
+  // calendar. A calendar failure is reported, never a reason to lose the save.
+  const calendarWarning = await syncCreatedWorkPartyCalendar(
+    { ...event, lodge },
+    session.user.id
+  );
+
+  return NextResponse.json({ event, calendarWarning }, { status: 201 });
 }

@@ -51,6 +51,8 @@ interface WorkPartyEventRow {
   lodgeName: string | null;
   bookingCount: number;
   totalDiscountCents: number;
+  /** Fork #118: whether it has Events Calendar entries. */
+  onCalendar: boolean;
 }
 
 interface AttendingBooking {
@@ -166,6 +168,9 @@ export default function AdminWorkPartiesPage() {
   const [events, setEvents] = useState<WorkPartyEventRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  // Fork #118: the work party saved but its calendar entries did not.
+  const [calendarNotice, setCalendarNotice] = useState("");
+  const [calendarEnabled, setCalendarEnabled] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<EventFormState>(emptyForm);
@@ -221,6 +226,7 @@ export default function AdminWorkPartiesPage() {
         return;
       }
       setEvents(data.events);
+      setCalendarEnabled(data.calendarEnabled === true);
     } catch {
       setError("Failed to load work party events");
     } finally {
@@ -301,6 +307,7 @@ export default function AdminWorkPartiesPage() {
         setError(data.error || "Failed to save work party event");
         return;
       }
+      setCalendarNotice(data.calendarWarning || "");
       setShowForm(false);
       setEditingId(null);
       setForm(emptyForm);
@@ -335,6 +342,25 @@ export default function AdminWorkPartiesPage() {
     const data = await res.json();
     if (!res.ok) {
       setError(data.error || "Failed to update work party event");
+      return;
+    }
+    await fetchEvents();
+  }
+
+  async function addToCalendar(event: WorkPartyEventRow) {
+    if (!lodgeScopeReady) return;
+    setError("");
+    setCalendarNotice("");
+    const res = await fetch(`/api/admin/work-parties/${event.id}/calendar`, {
+      method: "POST",
+    });
+    if (res.status === 403) {
+      setError(ADMIN_FORBIDDEN_SAVE_REASON);
+      return;
+    }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setError(data.error || "Failed to add the work party to the calendar");
       return;
     }
     await fetchEvents();
@@ -419,6 +445,9 @@ export default function AdminWorkPartiesPage() {
         what="work parties for a particular lodge"
       />
 
+      {lodgeScopeReady && calendarNotice && (
+        <div role="status" className="rounded-md border p-3 text-sm text-muted-foreground">{calendarNotice}</div>
+      )}
       {lodgeScopeReady && error && (
         <div className="rounded-md border border-danger/20 bg-danger-muted p-3 text-sm text-danger">{error}</div>
       )}
@@ -560,6 +589,9 @@ export default function AdminWorkPartiesPage() {
                       <Badge variant={event.active ? "default" : "secondary"}>
                         {event.active ? "Active" : "Inactive"}
                       </Badge>
+                      {event.onCalendar && (
+                        <Badge variant="outline">On calendar</Badge>
+                      )}
                     </CardTitle>
                     <CardDescription>
                       {formatStoredDate(event.startDate)} to {formatStoredDate(event.endDate)}
@@ -580,6 +612,11 @@ export default function AdminWorkPartiesPage() {
                     <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="outline" size="sm" onClick={() => toggleActive(event)}>
                       {event.active ? "Deactivate" : "Activate"}
                     </ViewOnlyActionButton>
+                    {calendarEnabled && !event.onCalendar && (
+                      <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="outline" size="sm" onClick={() => addToCalendar(event)}>
+                        Add to calendar
+                      </ViewOnlyActionButton>
+                    )}
                     {event.bookingCount === 0 && (
                       <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="outline" size="sm" onClick={() => handleDelete(event)}>
                         Delete
