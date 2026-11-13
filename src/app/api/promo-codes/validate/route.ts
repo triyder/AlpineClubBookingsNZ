@@ -39,8 +39,7 @@ import {
 } from "@/lib/booking-guest-stay-range-input";
 import { resolvePromoPreviewStaysOrRefusal } from "@/lib/promo-preview-stay-ranges";
 import { isDateOnlyString, parseDateOnly } from "@/lib/date-only";
-import { workPartyWindowOverlapsStay } from "@/lib/work-party";
-import { isOpenWorkPartyEvent } from "@/lib/work-party-rules";
+import { isOpenWorkPartyEvent, workPartyWindowOverlapsStay } from "@/lib/work-party";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 import { normalizePromoCodeInput } from "@/lib/promo-code-list-rules";
 import { computeMemberGuestBoundary } from "@/lib/booking-guests";

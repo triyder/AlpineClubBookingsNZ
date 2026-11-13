@@ -31,6 +31,10 @@ import {
   OPEN_WORK_PARTY_EVENT_WHERE,
 } from "@/lib/work-party-rules";
 
+// Re-exported for the booking routes that already import this module; the
+// rule itself lives in work-party-rules.ts.
+export { isOpenWorkPartyEvent };
+
 type WorkPartyDbClient = typeof prisma | Prisma.TransactionClient;
 
 export interface WorkPartyNightWindow {

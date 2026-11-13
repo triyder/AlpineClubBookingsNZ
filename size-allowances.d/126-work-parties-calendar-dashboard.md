@@ -17,10 +17,11 @@ reason: the work party card gains an "On calendar" badge, an "Add to calendar"
   out would split one row of buttons across two files.
 
 file: src/app/(authenticated)/book/_hooks/use-booking-wizard.ts
-lines: 2358
+lines: 2360
 reason: the call to `useWorkPartyPrefill` (the prefill itself lives in its own
   hook) and the few lines that tick the joined work party when the review step
-  lists the working bees. That tick has to sit inside the existing response
+  lists the working bees, and the inputs that tell the prefill when to stand
+  down (the lodge list, the subscription check, the member's own dates). That tick has to sit inside the existing response
   handler that sets the list, because the handler's sequence guard is what
   stops a stale response from ticking it.
 
