@@ -99,13 +99,14 @@ function seedBooking(change: Record<string, unknown> = {}) {
 }
 
 /** What the canonical edit reports back: a 5,000c reduction, settled as given. */
-function edit(money: Partial<Record<"refundAmountCents" | "accountCreditAmountCents" | "appliedCreditGivenBackCents", number>>) {
+function edit(money: Partial<Record<"refundAmountCents" | "accountCreditAmountCents" | "appliedCreditGivenBackCents" | "refundedExcessCreditCents", number>>) {
   h.modified = {
     booking: { finalPriceCents: 15_000 },
     priceDiffCents: -5_000,
     refundAmountCents: 0,
     accountCreditAmountCents: 0,
     appliedCreditGivenBackCents: 0,
+    refundedExcessCreditCents: 0,
     additionalAmountCents: 0,
     promoChangeNotApplied: null,
     bookingModificationId: "mod-1",
@@ -181,6 +182,7 @@ describe("own or family booking (#129 decision 6, 16 Nov)", () => {
       priceDiffCents: -5_000,
       accountCreditAmountCents: 0,
       appliedCreditGivenBackCents: 0,
+      refundedExcessCreditCents: 0,
       additionalAmountCents: 0,
       refundAmountCents: 0,
       ...money,
@@ -189,6 +191,32 @@ describe("own or family booking (#129 decision 6, 16 Nov)", () => {
     expect(
       await refusal(addBookingToWorkParty({ ...common, settlementMethod: method, dryRun: false, expectedFigures: shown })),
     ).toEqual({ status: 409, message: WORK_PARTY_OWN_MONEY_BACK_MESSAGE });
+  });
+
+  it("refuses the officer's own UNPAID booking whose applied credit the lower price frees (F1)", async () => {
+    seedBooking({
+      memberId: "officer-1",
+      status: "PAYMENT_PENDING",
+      payment: { status: "PENDING", amountCents: 2_000, creditAppliedCents: 18_000, source: "STRIPE" },
+    });
+    edit({ refundedExcessCreditCents: 3_000 });
+    expect(await refusal(addBookingToWorkParty({ ...common, dryRun: true }))).toEqual({
+      status: 409,
+      message: WORK_PARTY_OWN_MONEY_BACK_MESSAGE,
+    });
+  });
+
+  it("shows another member's freed applied credit as a figure, so a save is checked against it", async () => {
+    seedBooking({ status: "PAYMENT_PENDING", payment: { status: "PENDING", amountCents: 2_000, creditAppliedCents: 18_000, source: "STRIPE" } });
+    edit({ refundedExcessCreditCents: 3_000 });
+    const quoted = await addBookingToWorkParty({ ...common, dryRun: true });
+    expect(quoted.figures.refundedExcessCreditCents).toBe(3_000);
+    const refused = await addBookingToWorkParty({
+      ...common,
+      dryRun: false,
+      expectedFigures: { ...quoted.figures, refundedExcessCreditCents: 0 },
+    }).then(() => null, (error: unknown) => error);
+    expect(refused).toBeInstanceOf(WorkPartyCorrectionFiguresChangedError);
   });
 
   it("refuses a family member's booking when money comes back", async () => {
@@ -249,6 +277,7 @@ describe("the settlement method is a checked figure", () => {
       priceDiffCents: -5_000,
       accountCreditAmountCents: 5_000,
       appliedCreditGivenBackCents: 0,
+      refundedExcessCreditCents: 0,
       additionalAmountCents: 0,
       refundAmountCents: 0,
       settlementMethod: "credit",

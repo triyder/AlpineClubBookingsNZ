@@ -64,6 +64,7 @@ import {
   type BatchModificationPreTransaction,
 } from "@/lib/booking-batch-modification-service";
 import { workPartyEventRefusal } from "@/lib/work-party";
+import { editMoneyBackCents } from "@/lib/edit-money-back";
 
 export type WorkPartyBookingEligibility =
   | { ok: true }
@@ -267,8 +268,14 @@ export interface WorkPartyCorrectionFigures {
   priceDiffCents: number;
   /** Paid money returned as account credit. */
   accountCreditAmountCents: number;
-  /** Account credit the booking had used, given back to the member's balance. */
+  /** A PAID booking's applied credit given back to the member's balance (#3809). */
   appliedCreditGivenBackCents: number;
+  /**
+   * An UNPAID booking's applied credit above its new total, returned to the
+   * owner's balance by the lifecycle's clamp (F20, #1887). Never alongside
+   * `appliedCreditGivenBackCents` (`edit-money-back.ts` says why).
+   */
+  refundedExcessCreditCents: number;
   /** Still to pay after the change (an unpaid ask's remainder), or 0. */
   additionalAmountCents: number;
   /**
@@ -280,9 +287,12 @@ export interface WorkPartyCorrectionFigures {
   settlementMethod: BookingModificationSettlementMethod;
 }
 
-/** Money the change hands back: refunded, credited, or applied credit given back. */
+/**
+ * Every cent the change hands back: the settlement's (`editMoneyBackCents`)
+ * plus an unpaid booking's applied credit freed by the lower price.
+ */
 export function workPartyMoneyBackCents(figures: WorkPartyCorrectionFigures): number {
-  return figures.refundAmountCents + figures.accountCreditAmountCents + figures.appliedCreditGivenBackCents;
+  return editMoneyBackCents(figures) + figures.refundedExcessCreditCents;
 }
 
 export const WORK_PARTY_OWN_MONEY_BACK_MESSAGE =
@@ -290,8 +300,9 @@ export const WORK_PARTY_OWN_MONEY_BACK_MESSAGE =
 
 /**
  * #129 decision 6 (owner, 16 Nov 2026): an officer may add their own or their
- * family's booking while nothing comes back (an unpaid booking's price just
- * drops); once the change would refund or credit any money, another officer
+ * family's booking while nothing comes back (an unpaid booking with no account
+ * credit applied: its price just drops); once the change would refund or
+ * credit any money (`workPartyMoneyBackCents`), another officer
  * must. The money's recipient is the booking's owner, or for an organiser-paid
  * joiner the group organiser (the lane's reading, recorded on the issue).
  */
@@ -354,6 +365,7 @@ const FIGURE_KEYS = [
   "priceDiffCents",
   "accountCreditAmountCents",
   "appliedCreditGivenBackCents",
+  "refundedExcessCreditCents",
   "additionalAmountCents",
   "refundAmountCents",
   "settlementMethod",
@@ -537,6 +549,7 @@ export async function addBookingToWorkParty(
         priceDiffCents: modified.priceDiffCents,
         accountCreditAmountCents: modified.accountCreditAmountCents,
         appliedCreditGivenBackCents: modified.appliedCreditGivenBackCents,
+        refundedExcessCreditCents: modified.refundedExcessCreditCents,
         additionalAmountCents: modified.additionalAmountCents,
         refundAmountCents: modified.refundAmountCents,
         settlementMethod,

@@ -184,6 +184,11 @@ export function BookingWorkPartyControls({
     !settlementOptions.paidByOrganiser &&
     settlementOptions.methods.length > 1;
   const chosenMethod = settlementMethod ?? settlementOptions?.methods[0] ?? "credit";
+  // Every cent coming back as credit: paid money credited, a paid booking's
+  // applied credit given back, and an unpaid one's applied credit freed (#129).
+  const creditBackCents = figures
+    ? figures.accountCreditAmountCents + figures.appliedCreditGivenBackCents + figures.refundedExcessCreditCents
+    : 0;
 
   /** A new choice clears the figures and re-runs the dry run with it. */
   function chooseSettlement(method: BookingModificationSettlementMethod) {
@@ -312,12 +317,11 @@ export function BookingWorkPartyControls({
                     <strong>{money(figures.refundAmountCents)}</strong>
                   </p>
                 )}
-                {(figures.refundAmountCents === 0 ||
-                  figures.accountCreditAmountCents + figures.appliedCreditGivenBackCents > 0) && (
+                {(figures.refundAmountCents === 0 || creditBackCents > 0) && (
                   <p>
                     Account credit to the member:{" "}
                     <strong>
-                      {money(figures.accountCreditAmountCents + figures.appliedCreditGivenBackCents)}
+                      {money(creditBackCents)}
                     </strong>
                   </p>
                 )}

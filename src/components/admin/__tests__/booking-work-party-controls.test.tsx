@@ -26,6 +26,7 @@ const figures = (change: Record<string, unknown> = {}) => ({
   priceDiffCents: -5_000,
   accountCreditAmountCents: 5_000,
   appliedCreditGivenBackCents: 0,
+  refundedExcessCreditCents: 0,
   additionalAmountCents: 0,
   refundAmountCents: 0,
   settlementMethod: "credit",

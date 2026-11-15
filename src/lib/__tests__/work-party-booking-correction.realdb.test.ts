@@ -105,6 +105,9 @@ const DISCOUNT_PERCENT = 50;
 const DISCOUNT_CENTS = 2 * NIGHT_CENTS * (DISCOUNT_PERCENT / 100);
 /** Part-paid: an earlier increase's card ask still unpaid. */
 const ASK_CENTS = 3_000;
+/** Unpaid with credit applied: more than the new total, so the reprice frees some (F20, #1887). */
+const UNPAID_CREDIT_APPLIED_CENTS = 18_000;
+const FREED_CREDIT_CENTS = UNPAID_CREDIT_APPLIED_CENTS - (PRICE_CENTS - DISCOUNT_CENTS);
 /** A stay that began on the frozen today (1 July 2026); a work party covers it. */
 const STARTED_STAY = {
   nights: [new Date("2026-07-01T00:00:00.000Z"), new Date("2026-07-02T00:00:00.000Z")],
@@ -221,7 +224,7 @@ async function teardownFixtures(): Promise<void> {
   await prisma.member.deleteMany({ where: { id: { in: [OWNER_ID, OFFICER_ID] } } });
 }
 
-type Shape = "unpaid" | "paid" | "part-paid" | "credit-paid" | "organiser-paid" | "bank-paid";
+type Shape = "unpaid" | "unpaid-credit" | "paid" | "part-paid" | "credit-paid" | "organiser-paid" | "bank-paid";
 
 /**
  * The owner as their own guest, four nights at the season rate, as the booking
@@ -274,7 +277,7 @@ async function seed(
       lodgeId: LODGE_ID,
       checkIn,
       checkOut: stay.checkOut,
-      status: shape === "unpaid" ? "PAYMENT_PENDING" : "PAID",
+      status: shape === "unpaid" || shape === "unpaid-credit" ? "PAYMENT_PENDING" : "PAID",
       totalPriceCents: price,
       finalPriceCents: price,
       ...(shape === "organiser-paid" ? { parentBookingId: ORGANISER_BOOKING_ID, organiserSettled: true } : {}),
@@ -298,6 +301,40 @@ async function seed(
       },
     },
   });
+
+  if (shape === "unpaid-credit") {
+    // PAYMENT_PENDING with the owner's account credit applied and the rest
+    // still to pay by card: the opening credit, then its BOOKING_APPLIED row.
+    const cardCents = price - UNPAID_CREDIT_APPLIED_CENTS;
+    await prisma.payment.create({
+      data: {
+        id: PAYMENT_ID,
+        bookingId: BOOKING_ID,
+        amountCents: cardCents,
+        creditAppliedCents: UNPAID_CREDIT_APPLIED_CENTS,
+        source: "STRIPE",
+        status: "PENDING",
+        stripePaymentIntentId: "pi_race_129_open",
+        transactions: {
+          create: {
+            id: PRIMARY_TXN_ID,
+            kind: "PRIMARY",
+            source: "STRIPE",
+            amountCents: cardCents,
+            status: "PENDING",
+            stripePaymentIntentId: "pi_race_129_open",
+          },
+        },
+      },
+    });
+    await prisma.memberCredit.create({
+      data: { memberId: ownerId, amountCents: UNPAID_CREDIT_APPLIED_CENTS, type: "ADMIN_ADJUSTMENT", description: "race 129 opening balance" },
+    });
+    await prisma.$transaction((tx) =>
+      memberCredit.applyCreditToBooking(ownerId, UNPAID_CREDIT_APPLIED_CENTS, BOOKING_ID, tx, CLUB_FORMAT_TEST),
+    );
+    return;
+  }
 
   if (shape === "unpaid") {
     await prisma.payment.create({
@@ -714,6 +751,7 @@ async function batchRefusal(params: {
       priceDiffCents: -DISCOUNT_CENTS,
       accountCreditAmountCents: 0,
       appliedCreditGivenBackCents: 0,
+      refundedExcessCreditCents: 0,
       additionalAmountCents: 0,
       refundAmountCents: 0,
       settlementMethod: "credit",
@@ -761,6 +799,7 @@ async function batchRefusal(params: {
       // The whole reduction: the 50% tier the stay sits in does not touch it.
       accountCreditAmountCents: DISCOUNT_CENTS,
       appliedCreditGivenBackCents: 0,
+      refundedExcessCreditCents: 0,
       additionalAmountCents: 0,
       refundAmountCents: 0,
       settlementMethod: "credit",
@@ -840,6 +879,7 @@ async function batchRefusal(params: {
       priceDiffCents: -DISCOUNT_CENTS,
       accountCreditAmountCents: DISCOUNT_CENTS - ASK_CENTS,
       appliedCreditGivenBackCents: 0,
+      refundedExcessCreditCents: 0,
       additionalAmountCents: 0,
       refundAmountCents: 0,
       settlementMethod: "credit",
@@ -959,6 +999,7 @@ async function batchRefusal(params: {
       priceDiffCents: -DISCOUNT_CENTS,
       accountCreditAmountCents: 0,
       appliedCreditGivenBackCents: DISCOUNT_CENTS,
+      refundedExcessCreditCents: 0,
       additionalAmountCents: 0,
       refundAmountCents: 0,
       settlementMethod: "credit",
@@ -1011,6 +1052,7 @@ async function batchRefusal(params: {
     priceDiffCents: -DISCOUNT_CENTS,
     accountCreditAmountCents: DISCOUNT_CENTS,
     appliedCreditGivenBackCents: 0,
+    refundedExcessCreditCents: 0,
     additionalAmountCents: 0,
     refundAmountCents: 0,
     settlementMethod: "credit",
@@ -1143,6 +1185,7 @@ async function batchRefusal(params: {
       priceDiffCents: -DISCOUNT_CENTS,
       accountCreditAmountCents: 0,
       appliedCreditGivenBackCents: 0,
+      refundedExcessCreditCents: 0,
       additionalAmountCents: 0,
       refundAmountCents: 0,
       settlementMethod: "credit",
@@ -1154,6 +1197,45 @@ async function batchRefusal(params: {
     expect(await prisma.memberCredit.count({ where: { memberId: OFFICER_ID } })).toBe(0);
     expect(await refundOperations()).toEqual([]);
     expect(await prisma.paymentRefund.count({ where: { paymentId: PAYMENT_ID } })).toBe(0);
+  }, 60_000);
+
+  it("F1: an unpaid booking's applied credit freed by the lower price is a figure, and moves the balance by exactly it", async () => {
+    await seed("unpaid-credit");
+    expect(await memberCredit.getMemberCreditBalance(OWNER_ID)).toBe(0);
+    const figures = await quote();
+    expect(figures).toEqual({
+      previousFinalPriceCents: PRICE_CENTS,
+      newFinalPriceCents: PRICE_CENTS - DISCOUNT_CENTS,
+      priceDiffCents: -DISCOUNT_CENTS,
+      accountCreditAmountCents: 0,
+      appliedCreditGivenBackCents: 0,
+      refundedExcessCreditCents: FREED_CREDIT_CENTS,
+      additionalAmountCents: 0,
+      refundAmountCents: 0,
+      settlementMethod: "credit",
+    });
+    // A save shown without it is refused, and writes nothing.
+    const before = await snapshot();
+    await expect(apply({ ...figures, refundedExcessCreditCents: 0 })).rejects.toBeInstanceOf(
+      correction.WorkPartyCorrectionFiguresChangedError,
+    );
+    expect(await snapshot()).toEqual(before);
+
+    const result = await apply(figures);
+    expect(result, JSON.stringify(result)).toMatchObject({ outcome: "applied", figures });
+    expect(await bookingRow()).toMatchObject({ finalPriceCents: PRICE_CENTS - DISCOUNT_CENTS });
+    expect(await memberCredit.getMemberCreditBalance(OWNER_ID)).toBe(FREED_CREDIT_CENTS);
+    expect(await refundOperations()).toEqual([]);
+  }, 60_000);
+
+  it("F1: the officer's own unpaid booking whose applied credit the lower price frees is refused, with nothing written", async () => {
+    await seed("unpaid-credit", undefined, OFFICER_ID);
+    const before = await snapshot();
+    const officerBalance = await memberCredit.getMemberCreditBalance(OFFICER_ID);
+    expect(await correctionRefusal()).toEqual({ status: 409, message: correction.WORK_PARTY_OWN_MONEY_BACK_MESSAGE });
+    expect(await snapshot()).toEqual(before);
+    expect(await memberCredit.getMemberCreditBalance(OFFICER_ID)).toBe(officerBalance);
+    expect(await workPartyRedemptions()).toEqual([]);
   }, 60_000);
 
   it("#129 decision 6: the officer's own card-paid booking is refused, by either method, with nothing written", async () => {

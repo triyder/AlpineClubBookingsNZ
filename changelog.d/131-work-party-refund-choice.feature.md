@@ -6,7 +6,8 @@
   credit only. A joiner's booking that the group organiser paid for can now be
   added: the money goes back to the organiser, as with any change to such a
   booking. An officer can add their own or a family member's booking when no
-  money comes back (for example an unpaid booking, whose price just drops);
-  when the change would refund or credit money to them or their family,
-  another officer must add it. The refund is the normal booking change's own
-  refund, recorded in the history, ledger and Xero like any other.
+  money comes back (for example an unpaid booking with no account credit
+  applied, whose price just drops); when the change would refund or credit
+  money to them or their family, including applied credit freed by the lower
+  price, another officer must add it. The refund is the normal booking
+  change's own refund, recorded in the history, ledger and Xero like any other.

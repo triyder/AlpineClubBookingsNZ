@@ -265,14 +265,23 @@ describe("own or family booking: refused only when money comes back (#129 decisi
     priceDiffCents: -5_000,
     accountCreditAmountCents: 0,
     appliedCreditGivenBackCents: 0,
+    refundedExcessCreditCents: 0,
     additionalAmountCents: 0,
     refundAmountCents: 0,
     settlementMethod: "credit",
   };
 
-  it("counts every way money comes back: refund, credit and applied credit given back", () => {
+  it("counts every way money comes back: refund, credit, applied credit given back, and an unpaid booking's freed credit", () => {
     expect(workPartyMoneyBackCents(unpaid)).toBe(0);
-    expect(workPartyMoneyBackCents({ ...unpaid, refundAmountCents: 1, accountCreditAmountCents: 2, appliedCreditGivenBackCents: 4 })).toBe(7);
+    expect(
+      workPartyMoneyBackCents({
+        ...unpaid,
+        refundAmountCents: 1,
+        accountCreditAmountCents: 2,
+        appliedCreditGivenBackCents: 4,
+        refundedExcessCreditCents: 8,
+      }),
+    ).toBe(15);
   });
 
   it("allows the officer's own or family's booking when nothing comes back (the price just drops)", () => {
@@ -285,6 +294,7 @@ describe("own or family booking: refused only when money comes back (#129 decisi
     ["a card refund", { refundAmountCents: 5_000, settlementMethod: "card" as const }],
     ["account credit", { accountCreditAmountCents: 5_000 }],
     ["applied credit given back", { appliedCreditGivenBackCents: 5_000 }],
+    ["an unpaid booking's applied credit freed by the lower price (F1)", { refundedExcessCreditCents: 3_000 }],
     ["one cent of credit", { accountCreditAmountCents: 1 }],
   ])("refuses when %s would go to the officer or their family", (_label, change) => {
     expect(workPartyOwnMoneyBackRefusal({ ...unpaid, ...change }, true)).toBe(WORK_PARTY_OWN_MONEY_BACK_MESSAGE);

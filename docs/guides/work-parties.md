@@ -121,7 +121,9 @@ What happens:
 - The booking is repriced exactly as if the member had ticked the box when
   booking. The discount applies to each guest's nights inside the window.
 - **Unpaid:** the amount owed drops. With a 100% discount an unpaid booking can
-  end up owing nothing, and is then settled as any $0 booking is.
+  end up owing nothing, and is then settled as any $0 booking is. If account
+  credit was applied to it and is now more than the new total, the extra goes
+  back to the member's balance, shown as account credit in the figures.
 - **Paid by card:** what was paid above the new total goes back as **club
   credit**, or, if you chose it, as a **refund to the card** ("Refunded to card"
   in the figures). Either way it comes back in full, and no cancellation-policy
@@ -156,9 +158,10 @@ reason:
 
 **Your own or your family's booking.** You can add your own booking, or one of
 someone in your family group, when nothing comes back, for example an unpaid
-booking whose price just drops. When the change would refund or credit any
-money, **Show the new total** says another officer must add it, and nothing is
-saved. For a joiner's booking the group organiser paid for, the same applies
+booking with no account credit applied, whose price just drops. When the change
+would refund or credit any money, including account credit an unpaid booking
+had applied that is now more than its new total, **Show the new total** says
+another officer must add it, and nothing is saved. For a joiner's booking the group organiser paid for, the same applies
 when you, or someone in your family group, organised the group, because the
 money goes back to the organiser.
 

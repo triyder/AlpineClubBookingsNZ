@@ -50,6 +50,7 @@ const bodySchema = z.discriminatedUnion("mode", [
       priceDiffCents: centsField,
       accountCreditAmountCents: centsField,
       appliedCreditGivenBackCents: centsField,
+      refundedExcessCreditCents: centsField,
       additionalAmountCents: centsField,
       refundAmountCents: centsField,
       settlementMethod: z.enum(["card", "credit"]),
