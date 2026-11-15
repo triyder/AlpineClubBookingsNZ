@@ -6166,7 +6166,9 @@ Order, in one transaction:
 2. Reauthorise the officer from fresh roles (`reauthorizeBookingOfficerFromDb`).
 3. Re-read the booking and the work party under the locks and apply the shared
    eligibility rule (`workPartyBookingEligibility`), including "already has a
-   work party" and (fork #129) the officer's family rows, read on this `tx`.
+   work party". Fork #129: the money's recipient's family rows are read on
+   this `tx` too, and the own-or-family refusal is decided on the edit's
+   figures, before the preview's rollback or the save's commit.
 4. Run `modifyBookingBatch` on the same `tx` with `officerWorkPartyCorrection`
    and a `preTransaction` resolved before the transaction (`INV-LOCK-004`). The
    service re-enters all three keys and takes the member keys after them. Any

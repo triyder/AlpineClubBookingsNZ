@@ -32,8 +32,10 @@
  *     Stripe leg, doubled to fail here, leaves a REFUND_BOOKING_MODIFICATION
  *     recovery row), with no credit. Paid by Internet Banking: "card" is
  *     refused. An organiser-paid joiner: the reduction goes back to the
- *     organiser's card as the organiser-child refund debt. The officer's own
- *     booking and a family member's booking: refused, nothing written.
+ *     organiser's card as the organiser-child refund debt. Decision 6 (16
+ *     Nov): the officer's own unpaid booking is allowed (nothing comes back);
+ *     their own or a family member's paid booking, and a joiner's booking whose
+ *     group organiser is the officer, are refused with nothing written.
  *
  * Ordinary Vitest runs skip the whole file. It reuses the guarded, disposable
  * loopback PostgreSQL the race harness provisions (#1881) and the `realdb-all`
@@ -240,6 +242,8 @@ async function seed(
   shape: Shape,
   stay: { nights: Date[]; checkOut: Date } = { nights: NIGHTS, checkOut: CHECK_OUT },
   ownerId: string = OWNER_ID,
+  /** organiser-paid only: who organised the group (owns the organiser booking). */
+  organiserId: string = OWNER_ID,
 ): Promise<void> {
   const checkIn = stay.nights[0]!;
   const price = stay.nights.length * NIGHT_CENTS;
@@ -247,7 +251,7 @@ async function seed(
     await prisma.booking.create({
       data: {
         id: ORGANISER_BOOKING_ID,
-        memberId: OWNER_ID,
+        memberId: organiserId,
         lodgeId: LODGE_ID,
         checkIn,
         checkOut: stay.checkOut,
@@ -257,7 +261,7 @@ async function seed(
       },
     });
     await prisma.groupBooking.create({
-      data: { id: GROUP_ID, organiserBookingId: ORGANISER_BOOKING_ID, organiserMemberId: OWNER_ID, joinCode: GROUP_ID, paymentMode: "ORGANISER_PAYS" },
+      data: { id: GROUP_ID, organiserBookingId: ORGANISER_BOOKING_ID, organiserMemberId: organiserId, joinCode: GROUP_ID, paymentMode: "ORGANISER_PAYS" },
     });
     await prisma.groupBookingSettlement.create({
       data: { id: SETTLEMENT_ID, groupBookingId: GROUP_ID, stripePaymentIntentId: SETTLEMENT_PI, source: "STRIPE", amountCents: price, status: "SUCCEEDED" },
@@ -284,7 +288,8 @@ async function seed(
       lastName: "Proof",
       ageTier: "ADULT",
       isMember: true,
-      memberId: ownerId,
+      // The owner member stays the guest; `ownerId` changes only who owns the booking.
+      memberId: OWNER_ID,
       stayStart: checkIn,
       stayEnd: stay.checkOut,
       priceCents: price,
@@ -587,7 +592,9 @@ async function batchRefusal(params: {
     await teardownFixtures();
     for (const [id, firstName, role] of [
       [OWNER_ID, "Owner", Role.USER],
-      [OFFICER_ID, "Officer", Role.ADMIN],
+      // A club member holding the booking-officer access role (below), as a
+      // real officer is, so their own booking is an ordinary bookable one.
+      [OFFICER_ID, "Officer", Role.USER],
     ] as const) {
       await prisma.member.create({
         data: {
@@ -1026,7 +1033,8 @@ async function batchRefusal(params: {
       refundAmountCents: DISCOUNT_CENTS,
       settlementMethod: "card",
     });
-    // The credit figures do not save a card refund: the method is a figure.
+    // The credit figures do not save a card refund (they differ in the money
+    // keys too; the method-only case is in work-party-booking-correction-guards.test.ts).
     await expect(apply(offered.figures, { settlementMethod: "card" })).rejects.toBeInstanceOf(
       correction.WorkPartyCorrectionFiguresChangedError,
     );
@@ -1126,19 +1134,41 @@ async function batchRefusal(params: {
     expect(await recoveryRows("own-card", 1)).toEqual(rows);
   }, 60_000);
 
-  it("#129 refuses the officer's own booking, and writes nothing", async () => {
+  it("#129 decision 6: the officer's own UNPAID booking is allowed, and its price just drops", async () => {
+    await seed("unpaid", undefined, OFFICER_ID);
+    const figures = await quote();
+    expect(figures).toEqual({
+      previousFinalPriceCents: PRICE_CENTS,
+      newFinalPriceCents: PRICE_CENTS - DISCOUNT_CENTS,
+      priceDiffCents: -DISCOUNT_CENTS,
+      accountCreditAmountCents: 0,
+      appliedCreditGivenBackCents: 0,
+      additionalAmountCents: 0,
+      refundAmountCents: 0,
+      settlementMethod: "credit",
+    });
+    const result = await apply(figures);
+    expect(result, JSON.stringify(result)).toMatchObject({ outcome: "applied", figures });
+    expect(await bookingRow()).toMatchObject({ finalPriceCents: PRICE_CENTS - DISCOUNT_CENTS });
+    expect(await workPartyRedemptions()).toHaveLength(1);
+    expect(await prisma.memberCredit.count({ where: { memberId: OFFICER_ID } })).toBe(0);
+    expect(await refundOperations()).toEqual([]);
+    expect(await prisma.paymentRefund.count({ where: { paymentId: PAYMENT_ID } })).toBe(0);
+  }, 60_000);
+
+  it("#129 decision 6: the officer's own card-paid booking is refused, by either method, with nothing written", async () => {
     await seed("paid", undefined, OFFICER_ID);
     const before = await snapshot();
-    expect(await correctionRefusal()).toEqual({ status: 409, message: expect.stringContaining("your own booking") });
+    expect(await correctionRefusal()).toEqual({ status: 409, message: correction.WORK_PARTY_OWN_MONEY_BACK_MESSAGE });
     expect(await correctionRefusal(EVENT_ID, { settlementMethod: "card" })).toEqual({
       status: 409,
-      message: expect.stringContaining("your own booking"),
+      message: correction.WORK_PARTY_OWN_MONEY_BACK_MESSAGE,
     });
     expect(await snapshot()).toEqual(before);
     expect(await prisma.memberCredit.count({ where: { memberId: OFFICER_ID } })).toBe(0);
   }, 60_000);
 
-  it("#129 refuses a booking owned by a member of the officer's family group, and writes nothing", async () => {
+  it("#129 decision 6: a paid booking owned by a member of the officer's family group is refused, preview and apply", async () => {
     await seed("paid");
     await prisma.familyGroup.create({
       data: {
@@ -1147,15 +1177,23 @@ async function batchRefusal(params: {
       },
     });
     const before = await snapshot();
-    expect(await correctionRefusal()).toEqual({ status: 409, message: expect.stringContaining("your family") });
-    // The apply too, before any figure is compared.
+    expect(await correctionRefusal()).toEqual({ status: 409, message: correction.WORK_PARTY_OWN_MONEY_BACK_MESSAGE });
     const applied = await apply(paidCreditFigures()).then(
       () => null,
       (error: { status: number; message: string }) => ({ status: error.status, message: error.message }),
     );
-    expect(applied).toEqual({ status: 409, message: expect.stringContaining("your family") });
+    expect(applied).toEqual({ status: 409, message: correction.WORK_PARTY_OWN_MONEY_BACK_MESSAGE });
     expect(await snapshot()).toEqual(before);
     expect(await workPartyRedemptions()).toEqual([]);
+  }, 60_000);
+
+  it("#129 decision 6 (lane's reading): a joiner's booking whose group organiser is the officer is refused", async () => {
+    await seed("organiser-paid", undefined, OWNER_ID, OFFICER_ID);
+    stripeRefundsFail();
+    const before = await snapshot();
+    expect(await correctionRefusal()).toEqual({ status: 409, message: correction.WORK_PARTY_OWN_MONEY_BACK_MESSAGE });
+    expect(await snapshot()).toEqual(before);
+    expect(await recoveryRows("organiser", 0)).toEqual([]);
   }, 60_000);
 
   it("refuses a stay that has already started, and writes nothing", async () => {

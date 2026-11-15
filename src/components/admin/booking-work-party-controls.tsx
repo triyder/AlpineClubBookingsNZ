@@ -27,9 +27,9 @@ import { useClubFormat } from "@/components/club-format-provider";
 import { formatCents } from "@/lib/pricing";
 import { unverifiedWriteMessage } from "@/lib/unverified-write-copy";
 import { OptionCard, OptionCardGroup } from "@/components/ui/option-card";
+import type { BookingModificationSettlementMethod } from "@/lib/booking-modify-validation";
 import type {
   WorkPartyCorrectionFigures,
-  WorkPartySettlementChoice,
   WorkPartySettlementOptions,
 } from "@/lib/work-party-booking-correction";
 
@@ -74,7 +74,7 @@ export function BookingWorkPartyControls({
   const [figures, setFigures] = useState<WorkPartyCorrectionFigures | null>(null);
   const [settlementOptions, setSettlementOptions] = useState<WorkPartySettlementOptions | null>(null);
   // Undefined until the officer chooses: the server's default (club credit).
-  const [settlementMethod, setSettlementMethod] = useState<WorkPartySettlementChoice | undefined>();
+  const [settlementMethod, setSettlementMethod] = useState<BookingModificationSettlementMethod | undefined>();
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const money = (cents: number) => formatCents(cents, format);
@@ -115,7 +115,7 @@ export function BookingWorkPartyControls({
   async function send(
     mode: "preview" | "apply",
     notify?: boolean,
-    method: WorkPartySettlementChoice | undefined = settlementMethod,
+    method: BookingModificationSettlementMethod | undefined = settlementMethod,
   ) {
     if (!selectedId) return;
     setBusy(true);
@@ -177,11 +177,16 @@ export function BookingWorkPartyControls({
   }
 
   const selected = options?.find((o) => o.id === selectedId) ?? null;
-  const cardOffered = settlementOptions?.methods.includes("card") ?? false;
+  // A choice only where there is one: never for an organiser-paid joiner,
+  // whose money has the organiser's one disposition (#129 decision 5).
+  const offersChoice =
+    settlementOptions !== null &&
+    !settlementOptions.paidByOrganiser &&
+    settlementOptions.methods.length > 1;
   const chosenMethod = settlementMethod ?? settlementOptions?.methods[0] ?? "credit";
 
   /** A new choice clears the figures and re-runs the dry run with it. */
-  function chooseSettlement(method: WorkPartySettlementChoice) {
+  function chooseSettlement(method: BookingModificationSettlementMethod) {
     if (busy || method === chosenMethod) return;
     setSettlementMethod(method);
     setFigures(null);
@@ -262,7 +267,14 @@ export function BookingWorkPartyControls({
                 </div>
               </div>
             )}
-            {selected && cardOffered && (
+            {selected && settlementOptions?.paidByOrganiser && (
+              <p data-testid="work-party-organiser-disposition">
+                The group organiser paid for this booking, so any money back
+                goes to the organiser, the way they paid: to their card, or by
+                bank transfer.
+              </p>
+            )}
+            {selected && offersChoice && (
               <OptionCardGroup label="How the discount comes back">
                 <OptionCard
                   title="Club credit"

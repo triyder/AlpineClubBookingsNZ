@@ -148,13 +148,19 @@ reason:
 - the booking isn't pending, confirmed or paid (for example cancelled, a draft,
   awaiting review, or on the waitlist);
 - the stay has already started, so its prices are fixed;
-- it is your own booking, or a booking of someone in your family group; another
-  officer must add it;
 - it belongs to an organisation (a school), which has no account credit;
 - it is priced by its quote (a school or booking-request quote);
 - it already has another promo code and the club allows only one discount per
   booking (the same rule as when booking);
 - the work party is held at another lodge.
+
+**Your own or your family's booking.** You can add your own booking, or one of
+someone in your family group, when nothing comes back, for example an unpaid
+booking whose price just drops. When the change would refund or credit any
+money, **Show the new total** says another officer must add it, and nothing is
+saved. For a joiner's booking the group organiser paid for, the same applies
+when you, or someone in your family group, organised the group, because the
+money goes back to the organiser.
 
 A booking can be on only one work party. Removing a booking from a work party is
 not available.
@@ -181,6 +187,7 @@ not available.
 | Work Parties is missing from the sidebar / 404s | The `workParties` module is off | Enable it under **Admin → Setup → Modules** — see [`CONFIGURATION.md`](../../CONFIGURATION.md#module-controls-and-admin-modules) |
 | Everything is read-only ("… can view work parties but cannot change them") | Your admin role has lodge view but not edit | Ask a full admin for **lodge edit** access |
 | A work party is "not available" in **Add to work party** | One of the reasons listed under "When a booking can't be added" | The dialog names the reason |
+| "Another officer must add this booking" after **Show the new total** | It is your own or your family's booking (or you organised the group that paid for it), and money would come back | Ask another Booking Officer or Full Admin to add it |
 | There's no Delete button on an event | It already has attending bookings | Deactivate it instead — delete is blocked to keep the discount history |
 | A work party is not on the Events Calendar | It was made before this feature or while the calendar was off, or the calendar module is off | Turn the **Events calendar** module on, then click **Add to calendar** on its card |
 | A member can't see the Work Parties card at all | The **Work parties** module is off, or the account is not a member (an organisation, a non-member login, or an admin-only account) | Check the module under **Admin → Setup → Modules** and the account's user type |

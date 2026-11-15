@@ -11,10 +11,6 @@ const h = vi.hoisted(() => ({
   requirements: [] as unknown[],
   addBookingToWorkParty: vi.fn(),
   bookingFindUnique: vi.fn(),
-  familyFindMany: vi.fn(
-    async (_args: { where: { memberId?: string; familyGroupId?: { in: string[] } } }) =>
-      [] as Array<{ memberId: string; familyGroupId: string }>,
-  ),
   findActiveWorkParties: vi.fn(),
   modules: { workParties: true },
 }));
@@ -31,7 +27,6 @@ vi.mock("@/lib/session-guards", () => ({
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     booking: { findUnique: h.bookingFindUnique },
-    familyGroupMember: { findMany: h.familyFindMany },
   },
 }));
 vi.mock("@/lib/lodges", () => ({ getDefaultLodgeId: vi.fn(async () => "lodge-1") }));
@@ -94,7 +89,6 @@ beforeEach(() => {
   h.guard = { ok: true };
   h.requirements = [];
   h.modules.workParties = true;
-  h.familyFindMany.mockImplementation(async () => []);
 });
 
 describe("the Work Parties module", () => {
@@ -247,29 +241,11 @@ describe("GET", () => {
     },
   ];
 
-  it("lists the signed-in officer's own booking as refused (#129)", async () => {
+  it("lists the officer's own booking like any other: the money-back rule is the preview's (#129 decision 6)", async () => {
     h.bookingFindUnique.mockResolvedValue(ownBooking("officer-1"));
     h.findActiveWorkParties.mockResolvedValue(oneWorkParty);
     const body = await (await GET(new Request("http://localhost/x") as never, { params })).json();
-    expect(body.workParties[0]).toMatchObject({ eligible: false, reason: expect.stringMatching(/your own booking/) });
-  });
-
-  it("lists a booking of the officer's family group as refused (#129)", async () => {
-    h.bookingFindUnique.mockResolvedValue(ownBooking("member-1"));
-    h.findActiveWorkParties.mockResolvedValue(oneWorkParty);
-    const links = [
-      { memberId: "member-1", familyGroupId: "fam-1" },
-      { memberId: "officer-1", familyGroupId: "fam-1" },
-    ];
-    h.familyFindMany.mockImplementation(async (args) =>
-      links.filter((row) =>
-        args.where.memberId !== undefined
-          ? row.memberId === args.where.memberId
-          : args.where.familyGroupId!.in.includes(row.familyGroupId),
-      ),
-    );
-    const body = await (await GET(new Request("http://localhost/x") as never, { params })).json();
-    expect(body.workParties[0]).toMatchObject({ eligible: false, reason: expect.stringMatching(/your family/) });
+    expect(body.workParties[0]).toMatchObject({ eligible: true, reason: null });
   });
 
   it("lists overlapping open work parties with the eligibility answer", async () => {

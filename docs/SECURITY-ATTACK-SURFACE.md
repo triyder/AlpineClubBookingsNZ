@@ -365,9 +365,11 @@ These family rules are enforced by automated tests (issue #1132):
     paid by card (any other method is refused, 409), and an organiser-paid
     joiner's money back to the organiser by the pipeline's organiser
     disposition. It adds no refund path, calls no provider itself, and refuses
-    any refund the offered options did not mean. It refuses the acting
-    officer's own booking and their family's (the member-guest family
-    boundary), re-read under its locks. It applies only the figures the
+    any refund the offered options did not mean. When the change would refund
+    or credit money to the acting officer or their family (the member-guest
+    family boundary; for an organiser-paid joiner, the group organiser's), it
+    refuses on the preview and the save alike, decided on the figures under
+    its locks. It applies only the figures the
     officer was shown, settlement method included, and answers 404 while the
     Work Parties module is off.
 

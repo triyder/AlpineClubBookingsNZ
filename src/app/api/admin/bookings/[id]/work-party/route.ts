@@ -20,7 +20,6 @@ import { prepareBatchModificationForCallerTransaction } from "@/lib/booking-batc
 import { EditFinancialReviewPendingError } from "@/lib/edit-financial-review";
 import { getXeroLockGuardErrorResponse } from "@/lib/xero-period-lock-guard";
 import {
-  actorIsBookingOwnerOrFamily,
   addBookingToWorkParty,
   workPartyBookingEligibility,
   WorkPartyCorrectionFiguresChangedError,
@@ -70,7 +69,6 @@ export async function GET(
 ) {
   const guard = await requireAdmin({ permission: { area: "bookings", level: "view" } });
   if (!guard.ok) return guard.response;
-  const session = guard.session;
   // The action exists only with the Work Parties module on: a switched-off
   // module can never affect a booking's price (as at booking create).
   if (!(await loadEffectiveModuleFlags()).workParties) {
@@ -104,24 +102,23 @@ export async function GET(
   const current =
     redemptions.find((row) => row.promoCode?.workPartyEvent)?.promoCode?.workPartyEvent ?? null;
   const ownerMemberId = bookingOwner(booking).memberId;
-  const [bookingLodgeId, today, quotePriced, multiPromoCodes, events, actorIsOwnerOrFamily] =
-    await Promise.all([
-      booking.lodgeId ?? getDefaultLodgeId(prisma),
-      clubTodayDateOnlyInstant(),
-      isQuotePricedBooking(prisma, id),
-      multiPromoCodesEnabled(prisma),
-      // Every lodge's, so one at another lodge is listed with its reason.
-      findActiveWorkPartyEventsForRange(booking.checkIn, booking.checkOut, prisma),
-      // #129: the signed-in officer's own or family's booking is listed refused.
-      actorIsBookingOwnerOrFamily(prisma, ownerMemberId, session.user.id),
-    ]);
+  // #129 decision 6: an officer's own or family's booking is listed like any
+  // other; whether money would come back to them is decided on the preview's
+  // figures, under the service's locks.
+  const [bookingLodgeId, today, quotePriced, multiPromoCodes, events] = await Promise.all([
+    booking.lodgeId ?? getDefaultLodgeId(prisma),
+    clubTodayDateOnlyInstant(),
+    isQuotePricedBooking(prisma, id),
+    multiPromoCodesEnabled(prisma),
+    // Every lodge's, so one at another lodge is listed with its reason.
+    findActiveWorkPartyEventsForRange(booking.checkIn, booking.checkOut, prisma),
+  ]);
   const eligibilityBooking = {
     status: booking.status,
     checkIn: booking.checkIn,
     checkOut: booking.checkOut,
     hasWorkParty: current !== null,
     hasOtherPromoCode: redemptions.some((row) => row.promoCode && !row.promoCode.workPartyEvent),
-    actorIsOwnerOrFamily,
     quotePriced,
     memberOwned: Boolean(ownerMemberId),
   };

@@ -3,11 +3,15 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { BookingStatus } from "@prisma/client";
 import {
-  actorIsBookingOwnerOrFamily,
+  actorIsMemberOrFamily,
   resolveWorkPartySettlementMethod,
+  WORK_PARTY_OWN_MONEY_BACK_MESSAGE,
   WORK_PARTY_SETTLEMENT_NOT_OFFERED_MESSAGE,
   workPartyBookingEligibility,
+  workPartyMoneyBackCents,
+  workPartyOwnMoneyBackRefusal,
   workPartySettlementOptions,
+  type WorkPartyCorrectionFigures,
   type WorkPartyEligibilityBooking,
   type WorkPartyEligibilityContext,
   type WorkPartyEligibilityEvent,
@@ -29,7 +33,6 @@ const booking: WorkPartyEligibilityBooking = {
   checkOut: d("2026-08-04"),
   hasWorkParty: false,
   hasOtherPromoCode: false,
-  actorIsOwnerOrFamily: false,
   quotePriced: false,
   memberOwned: true,
 };
@@ -109,12 +112,6 @@ describe("workPartyBookingEligibility", () => {
     ).toEqual({ ok: true });
   });
 
-  it("refuses the officer's own or family's booking (#129 decision 6)", () => {
-    expect(
-      workPartyBookingEligibility({ ...booking, actorIsOwnerOrFamily: true }, context, event),
-    ).toMatchObject(refusal(/your own booking or your family's/));
-  });
-
   it("no longer has an organiser-paid refusal (#129 decision 5)", () => {
     // The rule takes no organiser-paid input: such a joiner is eligible on the
     // same terms as any booking, and its money goes back to the organiser.
@@ -183,7 +180,7 @@ describe("workPartyBookingEligibility", () => {
   });
 });
 
-describe("actorIsBookingOwnerOrFamily (the member-guest family boundary)", () => {
+describe("actorIsMemberOrFamily (the member-guest family boundary)", () => {
   // Two family groups: the owner is in g1 with a partner; the partner is also
   // in g2 with a cousin. The owner's family is g1's members only.
   const links = [
@@ -201,7 +198,7 @@ describe("actorIsBookingOwnerOrFamily (the member-guest family boundary)", () =>
             : where.familyGroupId!.in.includes(row.familyGroupId),
         ),
     },
-  } as unknown as Parameters<typeof actorIsBookingOwnerOrFamily>[0];
+  } as unknown as Parameters<typeof actorIsMemberOrFamily>[0];
 
   it.each([
     ["the owner", "owner", true],
@@ -209,11 +206,11 @@ describe("actorIsBookingOwnerOrFamily (the member-guest family boundary)", () =>
     ["a member of another group of that co-member's", "cousin", false],
     ["anyone else", "stranger", false],
   ])("answers %s", async (_label, actor, expected) => {
-    expect(await actorIsBookingOwnerOrFamily(db, "owner", actor)).toBe(expected);
+    expect(await actorIsMemberOrFamily(db, "owner", actor)).toBe(expected);
   });
 
   it("is false for an organisation's booking, which has no member owner", async () => {
-    expect(await actorIsBookingOwnerOrFamily(db, null, "owner")).toBe(false);
+    expect(await actorIsMemberOrFamily(db, null, "owner")).toBe(false);
   });
 });
 
@@ -258,6 +255,43 @@ describe("workPartySettlementOptions and the settlement guard (#129)", () => {
     expect(() =>
       resolveWorkPartySettlementMethod({ methods: ["card"], paidByOrganiser: true }, "credit"),
     ).toThrow(expect.objectContaining({ status: 409, message: expect.stringMatching(/group organiser/) }));
+  });
+});
+
+describe("own or family booking: refused only when money comes back (#129 decision 6, 16 Nov)", () => {
+  const unpaid: WorkPartyCorrectionFigures = {
+    previousFinalPriceCents: 20_000,
+    newFinalPriceCents: 15_000,
+    priceDiffCents: -5_000,
+    accountCreditAmountCents: 0,
+    appliedCreditGivenBackCents: 0,
+    additionalAmountCents: 0,
+    refundAmountCents: 0,
+    settlementMethod: "credit",
+  };
+
+  it("counts every way money comes back: refund, credit and applied credit given back", () => {
+    expect(workPartyMoneyBackCents(unpaid)).toBe(0);
+    expect(workPartyMoneyBackCents({ ...unpaid, refundAmountCents: 1, accountCreditAmountCents: 2, appliedCreditGivenBackCents: 4 })).toBe(7);
+  });
+
+  it("allows the officer's own or family's booking when nothing comes back (the price just drops)", () => {
+    expect(workPartyOwnMoneyBackRefusal(unpaid, true)).toBeNull();
+    // An unpaid ask taking the reduction is not money back either.
+    expect(workPartyOwnMoneyBackRefusal({ ...unpaid, additionalAmountCents: 1_000 }, true)).toBeNull();
+  });
+
+  it.each([
+    ["a card refund", { refundAmountCents: 5_000, settlementMethod: "card" as const }],
+    ["account credit", { accountCreditAmountCents: 5_000 }],
+    ["applied credit given back", { appliedCreditGivenBackCents: 5_000 }],
+    ["one cent of credit", { accountCreditAmountCents: 1 }],
+  ])("refuses when %s would go to the officer or their family", (_label, change) => {
+    expect(workPartyOwnMoneyBackRefusal({ ...unpaid, ...change }, true)).toBe(WORK_PARTY_OWN_MONEY_BACK_MESSAGE);
+  });
+
+  it("allows money back to anyone else", () => {
+    expect(workPartyOwnMoneyBackRefusal({ ...unpaid, accountCreditAmountCents: 5_000 }, false)).toBeNull();
   });
 });
 
