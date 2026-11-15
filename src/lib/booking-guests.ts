@@ -738,12 +738,8 @@ export async function assertLinkedBookingMembersCanBeBooked(
   }
 }
 
-/**
- * The booker's family: the booker plus every co-member of all the booker's
- * family groups. The member-guest boundary above is this set; so is "the
- * officer's own booking or their family's", which "Add to work party" refuses
- * (fork #129, `actorIsBookingOwnerOrFamily`). One definition of family for both.
- */
+/** The booker plus every co-member of all their family groups: the member-guest
+ * boundary, and the family "Add to work party" refuses (fork #129). */
 export async function getAllowedGuestMemberIds(
   db: BookingGuestLookupDb,
   bookingMemberId: string

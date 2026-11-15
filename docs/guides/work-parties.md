@@ -109,10 +109,12 @@ Admin).
 2. Choose the work party. Every active work party that overlaps the stay is
    listed. If the booking is already on one, the dialog says so instead.
 3. Click **Show the new total**. You see the booking's new total, how much comes
-   back to the member as **account credit**, and anything still to pay.
-4. Leave **Email the member about the change** ticked (or untick it), then click
-   **Add to work party**. It starts unticked when the booking has **No emails**
-   on.
+   back and how, and anything still to pay.
+4. If the booking was paid by card, choose **Club credit** (the default) or
+   **Refund to card**. The figures are worked out again for your choice.
+5. Click **Add and email member** or **Add without emailing**. When the booking
+   has **No emails** on there is one **Add to work party** button and the member
+   is not emailed.
 
 What happens:
 
@@ -120,14 +122,23 @@ What happens:
   booking. The discount applies to each guest's nights inside the window.
 - **Unpaid:** the amount owed drops. With a 100% discount an unpaid booking can
   end up owing nothing, and is then settled as any $0 booking is.
-- **Paid:** what was paid above the new total goes back as **account credit**,
-  in full, including account credit the booking had used. Nothing is refunded,
-  and no cancellation-policy tier cuts it.
+- **Paid by card:** what was paid above the new total goes back as **club
+  credit**, or, if you chose it, as a **refund to the card** ("Refunded to card"
+  in the figures). Either way it comes back in full, and no cancellation-policy
+  tier cuts it.
+- **Paid by Internet Banking, or with account credit:** it goes back as club
+  credit only, in full. Account credit the booking had used always goes back to
+  the member's balance.
+- **Paid by the group organiser:** the money goes back to the organiser, the way
+  every change to a joiner's booking does: to the organiser's card, or by bank
+  transfer if they paid by Internet Banking. The figures show "Returned to the
+  group organiser".
 - **No change fee** is charged: this is an officer correcting a missed tick, not
   the member changing their stay.
 - It goes through the normal booking change, so the booking's history, the
-  ledger and Xero (an account credit note for a paid booking) record it like any
-  other change. The history marks it as a work-party correction.
+  ledger, Xero (a credit note for a paid booking) and any refund are recorded
+  and made like any other change's. The history marks it as a work-party
+  correction.
 - If the booking changed between the preview and the save, you are shown the
   new figures and asked to confirm again; nothing is saved meanwhile.
 
@@ -137,8 +148,8 @@ reason:
 - the booking isn't pending, confirmed or paid (for example cancelled, a draft,
   awaiting review, or on the waitlist);
 - the stay has already started, so its prices are fixed;
-- the group organiser paid for it (its money would go back to the organiser, so
-  this action never applies);
+- it is your own booking, or a booking of someone in your family group; another
+  officer must add it;
 - it belongs to an organisation (a school), which has no account credit;
 - it is priced by its quote (a school or booking-request quote);
 - it already has another promo code and the club allows only one discount per

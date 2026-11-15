@@ -900,10 +900,8 @@ export async function modifyBookingBatch({
    *  - admits that one internal promo code (`applyPromoCodeChanges`);
    *  - charges no change fee — an officer correction, not the member's change;
    *  - returns the reduction IN FULL (`calculateFullReductionSettlementOptions`,
-   *    as #4533's promo correction does), not cut by the cancellation tier,
-   *    because the member is given what ticking the box would have given them.
-   * How it settles is `input.settlementMethod`, as any edit's (credit, a card
-   * refund the officer chose, or the organiser's disposition; fork #129).
+   *    as #4533's), untiered: what ticking the box would have given. How it
+   *    settles is `input.settlementMethod`, as any edit's (fork #129).
    */
   officerWorkPartyCorrection?: OfficerWorkPartyCorrection;
   /**
