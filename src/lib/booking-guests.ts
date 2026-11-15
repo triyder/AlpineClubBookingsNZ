@@ -738,7 +738,13 @@ export async function assertLinkedBookingMembersCanBeBooked(
   }
 }
 
-async function getAllowedGuestMemberIds(
+/**
+ * The booker's family: the booker plus every co-member of all the booker's
+ * family groups. The member-guest boundary above is this set; so is "the
+ * officer's own booking or their family's", which "Add to work party" refuses
+ * (fork #129, `actorIsBookingOwnerOrFamily`). One definition of family for both.
+ */
+export async function getAllowedGuestMemberIds(
   db: BookingGuestLookupDb,
   bookingMemberId: string
 ): Promise<Set<string>> {

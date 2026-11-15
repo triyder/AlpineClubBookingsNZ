@@ -11,7 +11,6 @@ import { calendarDateOfDateOnlyInstant } from "@/lib/club-time";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
-import { paidByOrganiser } from "@/lib/group-organiser-paid";
 import { isQuotePricedBooking } from "@/lib/booking-modify-validation";
 import { multiPromoCodesEnabled } from "@/lib/promo-redemption-slot";
 import { findActiveWorkPartyEventsForRange } from "@/lib/work-party";
@@ -21,6 +20,7 @@ import { prepareBatchModificationForCallerTransaction } from "@/lib/booking-batc
 import { EditFinancialReviewPendingError } from "@/lib/edit-financial-review";
 import { getXeroLockGuardErrorResponse } from "@/lib/xero-period-lock-guard";
 import {
+  actorIsBookingOwnerOrFamily,
   addBookingToWorkParty,
   workPartyBookingEligibility,
   WorkPartyCorrectionFiguresChangedError,
@@ -28,11 +28,20 @@ import {
 
 const centsField = z.number().int().min(-100_000_000).max(100_000_000);
 
+// The officer's settlement choice (#129); absent is the default (club credit,
+// or the organiser's disposition). The service refuses one it does not offer.
+const settlementMethodField = z.enum(["credit", "card"]).optional();
+
 const bodySchema = z.discriminatedUnion("mode", [
-  z.object({ mode: z.literal("preview"), workPartyEventId: z.string().min(1) }),
+  z.object({
+    mode: z.literal("preview"),
+    workPartyEventId: z.string().min(1),
+    settlementMethod: settlementMethodField,
+  }),
   z.object({
     mode: z.literal("apply"),
     workPartyEventId: z.string().min(1),
+    settlementMethod: settlementMethodField,
     notifyMember: z.boolean().optional(),
     // The figures the officer was shown by the preview; the save refuses if
     // the booking would now come out differently (#4030 C4).
@@ -61,6 +70,7 @@ export async function GET(
 ) {
   const guard = await requireAdmin({ permission: { area: "bookings", level: "view" } });
   if (!guard.ok) return guard.response;
+  const session = guard.session;
   // The action exists only with the Work Parties module on: a switched-off
   // module can never affect a booking's price (as at booking create).
   if (!(await loadEffectiveModuleFlags()).workParties) {
@@ -76,9 +86,6 @@ export async function GET(
       checkOut: true,
       lodgeId: true,
       memberId: true,
-      organiserSettled: true,
-      parentBookingId: true,
-      payment: { select: { source: true } },
       promoRedemptions: {
         select: {
           id: true,
@@ -96,23 +103,27 @@ export async function GET(
   const redemptions = bookingPromoRedemptions(booking);
   const current =
     redemptions.find((row) => row.promoCode?.workPartyEvent)?.promoCode?.workPartyEvent ?? null;
-  const [bookingLodgeId, today, quotePriced, multiPromoCodes, events] = await Promise.all([
-    booking.lodgeId ?? getDefaultLodgeId(prisma),
-    clubTodayDateOnlyInstant(),
-    isQuotePricedBooking(prisma, id),
-    multiPromoCodesEnabled(prisma),
-    // Every lodge's, so one at another lodge is listed with its reason.
-    findActiveWorkPartyEventsForRange(booking.checkIn, booking.checkOut, prisma),
-  ]);
+  const ownerMemberId = bookingOwner(booking).memberId;
+  const [bookingLodgeId, today, quotePriced, multiPromoCodes, events, actorIsOwnerOrFamily] =
+    await Promise.all([
+      booking.lodgeId ?? getDefaultLodgeId(prisma),
+      clubTodayDateOnlyInstant(),
+      isQuotePricedBooking(prisma, id),
+      multiPromoCodesEnabled(prisma),
+      // Every lodge's, so one at another lodge is listed with its reason.
+      findActiveWorkPartyEventsForRange(booking.checkIn, booking.checkOut, prisma),
+      // #129: the signed-in officer's own or family's booking is listed refused.
+      actorIsBookingOwnerOrFamily(prisma, ownerMemberId, session.user.id),
+    ]);
   const eligibilityBooking = {
     status: booking.status,
     checkIn: booking.checkIn,
     checkOut: booking.checkOut,
     hasWorkParty: current !== null,
     hasOtherPromoCode: redemptions.some((row) => row.promoCode && !row.promoCode.workPartyEvent),
-    paidByOrganiser: paidByOrganiser(booking),
+    actorIsOwnerOrFamily,
     quotePriced,
-    memberOwned: Boolean(bookingOwner(booking).memberId),
+    memberOwned: Boolean(ownerMemberId),
   };
 
   return NextResponse.json({
@@ -139,7 +150,8 @@ export async function GET(
 
 /**
  * "Add booking to work party" (fork #119). `mode: "preview"` runs the whole
- * change and rolls it back, returning the figures for the confirm dialog;
+ * change and rolls it back, returning the figures and the settlement methods
+ * offered (`settlementOptions`, #129) for the confirm dialog;
  * `mode: "apply"` saves it, refusing if the figures moved since the preview.
  * Booking Officers and Full Admins (`bookings:edit`); the service re-authorises
  * the officer under its locks. The work and the money rules are in
@@ -180,6 +192,9 @@ export async function POST(
   const common = {
     bookingId: id,
     workPartyEventId: parsed.data.workPartyEventId,
+    ...(parsed.data.settlementMethod === undefined
+      ? {}
+      : { settlementMethod: parsed.data.settlementMethod }),
     actorMemberId: session.user.id,
     ipAddress: getClientIp(req),
     todayAtClub: club.today(),

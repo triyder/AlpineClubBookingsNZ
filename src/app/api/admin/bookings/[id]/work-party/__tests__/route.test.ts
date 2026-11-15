@@ -11,6 +11,10 @@ const h = vi.hoisted(() => ({
   requirements: [] as unknown[],
   addBookingToWorkParty: vi.fn(),
   bookingFindUnique: vi.fn(),
+  familyFindMany: vi.fn(
+    async (_args: { where: { memberId?: string; familyGroupId?: { in: string[] } } }) =>
+      [] as Array<{ memberId: string; familyGroupId: string }>,
+  ),
   findActiveWorkParties: vi.fn(),
   modules: { workParties: true },
 }));
@@ -27,6 +31,7 @@ vi.mock("@/lib/session-guards", () => ({
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     booking: { findUnique: h.bookingFindUnique },
+    familyGroupMember: { findMany: h.familyFindMany },
   },
 }));
 vi.mock("@/lib/lodges", () => ({ getDefaultLodgeId: vi.fn(async () => "lodge-1") }));
@@ -89,6 +94,7 @@ beforeEach(() => {
   h.guard = { ok: true };
   h.requirements = [];
   h.modules.workParties = true;
+  h.familyFindMany.mockImplementation(async () => []);
 });
 
 describe("the Work Parties module", () => {
@@ -176,7 +182,96 @@ describe("POST", () => {
   });
 });
 
+describe("POST settlement method (#129)", () => {
+  const settlementOptions = { methods: ["credit", "card"], paidByOrganiser: false };
+
+  it("returns the methods offered with the preview", async () => {
+    h.addBookingToWorkParty.mockResolvedValue({ outcome: "quoted", figures, settlementOptions });
+    const res = await post({ mode: "preview", workPartyEventId: "wp-1" });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ settlementOptions });
+    // Absent: the service default, so the field is not passed.
+    expect(h.addBookingToWorkParty.mock.calls[0][0]).not.toHaveProperty("settlementMethod");
+  });
+
+  it("passes the officer's choice through on preview and apply", async () => {
+    h.addBookingToWorkParty.mockResolvedValue({ outcome: "quoted", figures, settlementOptions });
+    await post({ mode: "preview", workPartyEventId: "wp-1", settlementMethod: "card" });
+    expect(h.addBookingToWorkParty).toHaveBeenLastCalledWith(
+      expect.objectContaining({ dryRun: true, settlementMethod: "card" }),
+    );
+    const cardFigures = { ...figures, accountCreditAmountCents: 0, refundAmountCents: 5_000, settlementMethod: "card" };
+    h.addBookingToWorkParty.mockResolvedValue({ outcome: "applied", figures: cardFigures, settlementOptions, bookingModificationId: "m-1" });
+    const res = await post({ mode: "apply", workPartyEventId: "wp-1", settlementMethod: "card", expectedFigures: cardFigures });
+    expect(res.status).toBe(200);
+    expect(h.addBookingToWorkParty).toHaveBeenLastCalledWith(
+      expect.objectContaining({ dryRun: false, settlementMethod: "card", expectedFigures: cardFigures }),
+    );
+  });
+
+  it.each(["bank", "CARD", 1, null])("refuses a settlement method of %j with 400, calling nothing", async (value) => {
+    expect((await post({ mode: "preview", workPartyEventId: "wp-1", settlementMethod: value })).status).toBe(400);
+    expect(h.addBookingToWorkParty).not.toHaveBeenCalled();
+  });
+
+  it("passes the service's not-offered refusal through", async () => {
+    h.addBookingToWorkParty.mockRejectedValue(
+      new ApiError("This booking wasn't paid by card, so the discount can only go back as club credit.", 409),
+    );
+    const res = await post({ mode: "preview", workPartyEventId: "wp-1", settlementMethod: "card" });
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toMatch(/only go back as club credit/);
+  });
+});
+
 describe("GET", () => {
+  const ownBooking = (memberId: string) => ({
+    status: "PAID",
+    checkIn: new Date("2026-08-01T00:00:00.000Z"),
+    checkOut: new Date("2026-08-04T00:00:00.000Z"),
+    lodgeId: "lodge-1",
+    memberId,
+    promoRedemptions: [],
+  });
+  const oneWorkParty = [
+    {
+      id: "wp-1",
+      name: "Here",
+      active: true,
+      startDate: new Date("2026-08-02T00:00:00.000Z"),
+      endDate: new Date("2026-08-03T00:00:00.000Z"),
+      discountPercent: 50,
+      lodgeId: "lodge-1",
+      lodge: { name: "Main" },
+      promoCode: { active: true, archivedAt: null },
+    },
+  ];
+
+  it("lists the signed-in officer's own booking as refused (#129)", async () => {
+    h.bookingFindUnique.mockResolvedValue(ownBooking("officer-1"));
+    h.findActiveWorkParties.mockResolvedValue(oneWorkParty);
+    const body = await (await GET(new Request("http://localhost/x") as never, { params })).json();
+    expect(body.workParties[0]).toMatchObject({ eligible: false, reason: expect.stringMatching(/your own booking/) });
+  });
+
+  it("lists a booking of the officer's family group as refused (#129)", async () => {
+    h.bookingFindUnique.mockResolvedValue(ownBooking("member-1"));
+    h.findActiveWorkParties.mockResolvedValue(oneWorkParty);
+    const links = [
+      { memberId: "member-1", familyGroupId: "fam-1" },
+      { memberId: "officer-1", familyGroupId: "fam-1" },
+    ];
+    h.familyFindMany.mockImplementation(async (args) =>
+      links.filter((row) =>
+        args.where.memberId !== undefined
+          ? row.memberId === args.where.memberId
+          : args.where.familyGroupId!.in.includes(row.familyGroupId),
+      ),
+    );
+    const body = await (await GET(new Request("http://localhost/x") as never, { params })).json();
+    expect(body.workParties[0]).toMatchObject({ eligible: false, reason: expect.stringMatching(/your family/) });
+  });
+
   it("lists overlapping open work parties with the eligibility answer", async () => {
     h.bookingFindUnique.mockResolvedValue({
       status: "PAID",
@@ -184,9 +279,6 @@ describe("GET", () => {
       checkOut: new Date("2026-08-04T00:00:00.000Z"),
       lodgeId: "lodge-1",
       memberId: "member-1",
-      organiserSettled: false,
-      parentBookingId: null,
-      payment: { source: "STRIPE" },
       promoRedemptions: [],
     });
     h.findActiveWorkParties.mockResolvedValue([

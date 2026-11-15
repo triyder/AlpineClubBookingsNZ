@@ -3,7 +3,11 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { BookingStatus } from "@prisma/client";
 import {
+  actorIsBookingOwnerOrFamily,
+  resolveWorkPartySettlementMethod,
+  WORK_PARTY_SETTLEMENT_NOT_OFFERED_MESSAGE,
   workPartyBookingEligibility,
+  workPartySettlementOptions,
   type WorkPartyEligibilityBooking,
   type WorkPartyEligibilityContext,
   type WorkPartyEligibilityEvent,
@@ -25,7 +29,7 @@ const booking: WorkPartyEligibilityBooking = {
   checkOut: d("2026-08-04"),
   hasWorkParty: false,
   hasOtherPromoCode: false,
-  paidByOrganiser: false,
+  actorIsOwnerOrFamily: false,
   quotePriced: false,
   memberOwned: true,
 };
@@ -105,10 +109,17 @@ describe("workPartyBookingEligibility", () => {
     ).toEqual({ ok: true });
   });
 
-  it("refuses an organiser-paid joiner's booking (owner decision 4)", () => {
+  it("refuses the officer's own or family's booking (#129 decision 6)", () => {
     expect(
-      workPartyBookingEligibility({ ...booking, paidByOrganiser: true }, context, event),
-    ).toMatchObject(refusal(/paid by its group organiser/));
+      workPartyBookingEligibility({ ...booking, actorIsOwnerOrFamily: true }, context, event),
+    ).toMatchObject(refusal(/your own booking or your family's/));
+  });
+
+  it("no longer has an organiser-paid refusal (#129 decision 5)", () => {
+    // The rule takes no organiser-paid input: such a joiner is eligible on the
+    // same terms as any booking, and its money goes back to the organiser.
+    expect(Object.keys(booking)).not.toContain("paidByOrganiser");
+    expect(workPartyBookingEligibility(booking, context, event)).toEqual({ ok: true });
   });
 
   it("refuses an organisation's booking, which holds no account credit", () => {
@@ -169,6 +180,84 @@ describe("workPartyBookingEligibility", () => {
     expect(
       workPartyBookingEligibility(booking, { ...context, bookingLodgeId: "lodge-2" }, event),
     ).toMatchObject(refusal(/held at Main Lodge/));
+  });
+});
+
+describe("actorIsBookingOwnerOrFamily (the member-guest family boundary)", () => {
+  // Two family groups: the owner is in g1 with a partner; the partner is also
+  // in g2 with a cousin. The owner's family is g1's members only.
+  const links = [
+    { memberId: "owner", familyGroupId: "g1" },
+    { memberId: "partner", familyGroupId: "g1" },
+    { memberId: "partner", familyGroupId: "g2" },
+    { memberId: "cousin", familyGroupId: "g2" },
+  ];
+  const db = {
+    familyGroupMember: {
+      findMany: async ({ where }: { where: { memberId?: string; familyGroupId?: { in: string[] } } }) =>
+        links.filter((row) =>
+          where.memberId !== undefined
+            ? row.memberId === where.memberId
+            : where.familyGroupId!.in.includes(row.familyGroupId),
+        ),
+    },
+  } as unknown as Parameters<typeof actorIsBookingOwnerOrFamily>[0];
+
+  it.each([
+    ["the owner", "owner", true],
+    ["a co-member of the owner's family group", "partner", true],
+    ["a member of another group of that co-member's", "cousin", false],
+    ["anyone else", "stranger", false],
+  ])("answers %s", async (_label, actor, expected) => {
+    expect(await actorIsBookingOwnerOrFamily(db, "owner", actor)).toBe(expected);
+  });
+
+  it("is false for an organisation's booking, which has no member owner", async () => {
+    expect(await actorIsBookingOwnerOrFamily(db, null, "owner")).toBe(false);
+  });
+});
+
+describe("workPartySettlementOptions and the settlement guard (#129)", () => {
+  const paidCard = {
+    status: BookingStatus.PAID,
+    organiserSettled: false,
+    parentBookingId: null,
+    payment: { status: "SUCCEEDED", amountCents: 20_000, creditAppliedCents: 0, source: "STRIPE" },
+  };
+
+  it.each([
+    ["paid by card", paidCard, ["credit", "card"], false],
+    ["paid by card with some credit", { ...paidCard, payment: { ...paidCard.payment, creditAppliedCents: 5_000 } }, ["credit", "card"], false],
+    ["paid by Internet Banking", { ...paidCard, payment: { ...paidCard.payment, source: "INTERNET_BANKING" } }, ["credit"], false],
+    ["paid wholly with account credit", { ...paidCard, payment: { ...paidCard.payment, amountCents: 0, creditAppliedCents: 20_000 } }, ["credit"], false],
+    ["unpaid (card intent open)", { ...paidCard, status: BookingStatus.PAYMENT_PENDING, payment: { ...paidCard.payment, status: "PENDING" } }, ["credit"], false],
+    ["with no payment row", { ...paidCard, status: BookingStatus.PENDING, payment: null }, ["credit"], false],
+    ["an organiser-paid joiner (card)", { ...paidCard, organiserSettled: true, parentBookingId: "parent" }, ["card"], true],
+    ["an organiser-paid joiner (Internet Banking)", { ...paidCard, organiserSettled: true, parentBookingId: "parent", payment: { ...paidCard.payment, source: "INTERNET_BANKING" } }, ["card"], true],
+  ] as const)("%s", (_label, shape, methods, organiser) => {
+    expect(workPartySettlementOptions(shape)).toEqual({ methods, paidByOrganiser: organiser });
+  });
+
+  it("defaults to the first method offered", () => {
+    expect(resolveWorkPartySettlementMethod({ methods: ["credit", "card"], paidByOrganiser: false }, undefined)).toBe("credit");
+    expect(resolveWorkPartySettlementMethod({ methods: ["card"], paidByOrganiser: true }, undefined)).toBe("card");
+  });
+
+  it("takes the officer's choice when it is offered", () => {
+    expect(resolveWorkPartySettlementMethod({ methods: ["credit", "card"], paidByOrganiser: false }, "card")).toBe("card");
+    expect(resolveWorkPartySettlementMethod({ methods: ["credit", "card"], paidByOrganiser: false }, "credit")).toBe("credit");
+  });
+
+  it("refuses card where only credit is offered, with 409", () => {
+    expect(() =>
+      resolveWorkPartySettlementMethod({ methods: ["credit"], paidByOrganiser: false }, "card"),
+    ).toThrow(expect.objectContaining({ status: 409, message: WORK_PARTY_SETTLEMENT_NOT_OFFERED_MESSAGE }));
+  });
+
+  it("refuses credit on an organiser-paid joiner, whose money goes back to the organiser", () => {
+    expect(() =>
+      resolveWorkPartySettlementMethod({ methods: ["card"], paidByOrganiser: true }, "credit"),
+    ).toThrow(expect.objectContaining({ status: 409, message: expect.stringMatching(/group organiser/) }));
   });
 });
 

@@ -26,7 +26,12 @@ import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { useClubFormat } from "@/components/club-format-provider";
 import { formatCents } from "@/lib/pricing";
 import { unverifiedWriteMessage } from "@/lib/unverified-write-copy";
-import type { WorkPartyCorrectionFigures } from "@/lib/work-party-booking-correction";
+import { OptionCard, OptionCardGroup } from "@/components/ui/option-card";
+import type {
+  WorkPartyCorrectionFigures,
+  WorkPartySettlementChoice,
+  WorkPartySettlementOptions,
+} from "@/lib/work-party-booking-correction";
 
 type WorkPartyOption = {
   id: string;
@@ -43,8 +48,11 @@ type WorkPartyOption = {
  * "Add booking to work party" (fork #119), on the admin tools card of a
  * booking. For a member who forgot to tick "I am attending a working bee": the
  * officer picks the work party, sees what the booking will cost and how much
- * comes back as account credit (a dry run of the real change), and confirms.
- * The figures shown are the figures saved — the route refuses if they moved.
+ * comes back (a dry run of the real change), and confirms. On a booking paid
+ * by card the officer chooses club credit or a refund to the card (#129); the
+ * choice re-runs the dry run. An organiser-paid joiner's money goes back to
+ * the organiser. The figures shown are the figures saved — the route refuses
+ * if they, or the choice, moved.
  * Bookings edit; a bookings-view admin sees the button disabled.
  */
 export function BookingWorkPartyControls({
@@ -64,6 +72,9 @@ export function BookingWorkPartyControls({
   const [current, setCurrent] = useState<{ name: string } | null>(null);
   const [selectedId, setSelectedId] = useState("");
   const [figures, setFigures] = useState<WorkPartyCorrectionFigures | null>(null);
+  const [settlementOptions, setSettlementOptions] = useState<WorkPartySettlementOptions | null>(null);
+  // Undefined until the officer chooses: the server's default (club credit).
+  const [settlementMethod, setSettlementMethod] = useState<WorkPartySettlementChoice | undefined>();
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const money = (cents: number) => formatCents(cents, format);
@@ -72,6 +83,8 @@ export function BookingWorkPartyControls({
     setOpen(true);
     setError("");
     setFigures(null);
+    setSettlementOptions(null);
+    setSettlementMethod(undefined);
     setOptions(null);
     setCurrent(null);
     setSelectedId("");
@@ -99,7 +112,11 @@ export function BookingWorkPartyControls({
    * "No emails" switch is off. With it on there is no choice, and the field is
    * not sent: the mailer withholds the change email and records that (#2259).
    */
-  async function send(mode: "preview" | "apply", notify?: boolean) {
+  async function send(
+    mode: "preview" | "apply",
+    notify?: boolean,
+    method: WorkPartySettlementChoice | undefined = settlementMethod,
+  ) {
     if (!selectedId) return;
     setBusy(true);
     setError("");
@@ -109,10 +126,11 @@ export function BookingWorkPartyControls({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(
           mode === "preview"
-            ? { mode, workPartyEventId: selectedId }
+            ? { mode, workPartyEventId: selectedId, settlementMethod: method }
             : {
                 mode,
                 workPartyEventId: selectedId,
+                settlementMethod: method,
                 // Silenced: undefined, so the field is dropped and the mailer
                 // withholds and records the send (#2259 H1).
                 notifyMember: noEmails ? undefined : notify,
@@ -132,6 +150,7 @@ export function BookingWorkPartyControls({
       }
       if (mode === "preview") {
         setFigures(data.figures);
+        setSettlementOptions(data.settlementOptions ?? null);
         return;
       }
       setOpen(false);
@@ -158,6 +177,16 @@ export function BookingWorkPartyControls({
   }
 
   const selected = options?.find((o) => o.id === selectedId) ?? null;
+  const cardOffered = settlementOptions?.methods.includes("card") ?? false;
+  const chosenMethod = settlementMethod ?? settlementOptions?.methods[0] ?? "credit";
+
+  /** A new choice clears the figures and re-runs the dry run with it. */
+  function chooseSettlement(method: WorkPartySettlementChoice) {
+    if (busy || method === chosenMethod) return;
+    setSettlementMethod(method);
+    setFigures(null);
+    void send("preview", undefined, method);
+  }
 
   return (
     <div className="space-y-1">
@@ -177,7 +206,9 @@ export function BookingWorkPartyControls({
               For a member who forgot to tick &ldquo;I am attending a working
               bee&rdquo;. The booking is repriced with the work party&apos;s
               discount, and anything already paid above the new total goes back
-              as account credit.
+              as account credit or, on a booking paid by card, a refund to the
+              card if you choose. A group organiser&apos;s payment goes back to
+              the organiser.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3 text-sm">
@@ -198,6 +229,8 @@ export function BookingWorkPartyControls({
                   onValueChange={(value) => {
                     setSelectedId(value);
                     setFigures(null);
+                    setSettlementOptions(null);
+                    setSettlementMethod(undefined);
                     setError("");
                   }}
                 >
@@ -229,6 +262,26 @@ export function BookingWorkPartyControls({
                 </div>
               </div>
             )}
+            {selected && cardOffered && (
+              <OptionCardGroup label="How the discount comes back">
+                <OptionCard
+                  title="Club credit"
+                  selected={chosenMethod === "credit"}
+                  onSelect={() => chooseSettlement("credit")}
+                  disabled={busy}
+                >
+                  Held on the member&apos;s account for a later booking.
+                </OptionCard>
+                <OptionCard
+                  title="Refund to card"
+                  selected={chosenMethod === "card"}
+                  onSelect={() => chooseSettlement("card")}
+                  disabled={busy}
+                >
+                  Back to the card the booking was paid with.
+                </OptionCard>
+              </OptionCardGroup>
+            )}
             {figures && selected && (
               <div
                 className="space-y-1 rounded-md border p-3"
@@ -239,12 +292,23 @@ export function BookingWorkPartyControls({
                   New total: <strong>{money(figures.newFinalPriceCents)}</strong>{" "}
                   (was {money(figures.previousFinalPriceCents)})
                 </p>
-                <p>
-                  Account credit to the member:{" "}
-                  <strong>
-                    {money(figures.accountCreditAmountCents + figures.appliedCreditGivenBackCents)}
-                  </strong>
-                </p>
+                {figures.refundAmountCents > 0 && (
+                  <p>
+                    {settlementOptions?.paidByOrganiser
+                      ? "Returned to the group organiser: "
+                      : "Refunded to card: "}
+                    <strong>{money(figures.refundAmountCents)}</strong>
+                  </p>
+                )}
+                {(figures.refundAmountCents === 0 ||
+                  figures.accountCreditAmountCents + figures.appliedCreditGivenBackCents > 0) && (
+                  <p>
+                    Account credit to the member:{" "}
+                    <strong>
+                      {money(figures.accountCreditAmountCents + figures.appliedCreditGivenBackCents)}
+                    </strong>
+                  </p>
+                )}
                 {figures.additionalAmountCents > 0 && (
                   <p>
                     Still to pay: <strong>{money(figures.additionalAmountCents)}</strong>
