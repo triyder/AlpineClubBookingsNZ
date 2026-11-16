@@ -1,0 +1,1 @@
+- Fork sync with thatskiff33 `main` at 1c7fa79f6 (17 Nov 2026): 1,841 upstream commits. The fork's work-party, food-order and invoice code now fits upstream's hard file-size ceiling (#4926), Add to work party asks for a fresh sign-in, and the lodge invoice migration is re-stamped `20261211020000` (rename its `_prisma_migrations` row before deploying).
