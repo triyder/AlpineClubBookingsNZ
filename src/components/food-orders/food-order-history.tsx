@@ -18,6 +18,7 @@ import {
   FOOD_ORDER_STATUS_LABELS,
 } from "@/lib/food-order-rules";
 import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
+import { setAdminListPageParam } from "@/lib/admin-list-page";
 
 import { FoodOrderRow, type FoodOrderHistoryItem } from "./food-order-row";
 import { FoodOrderTotals, type FoodOrderYearTotalView } from "./food-order-totals";
@@ -58,7 +59,7 @@ function queryFor(filters: Filters, page: number, linkedOrderId: string | null):
   if (filters.status !== ALL) params.set("status", filters.status);
   if (filters.from) params.set("from", filters.from);
   if (filters.to) params.set("to", filters.to);
-  if (page > 1) params.set("page", String(page));
+  setAdminListPageParam(params, page);
   return params.toString();
 }
 

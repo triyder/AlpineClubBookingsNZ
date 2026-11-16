@@ -83,7 +83,7 @@ export default async function MemberWorkPartyPage({
 
       <Card>
         <CardHeader>
-          <CardTitle>Details</CardTitle>
+          <CardTitle headingLevel={2}>Details</CardTitle>
           {workParty.join && (
             <CardDescription>
               Book nights inside the work party and tick &ldquo;I am attending
