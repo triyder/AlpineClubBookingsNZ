@@ -27,14 +27,9 @@
  *    or their family, which another officer must then do;
  *  - a dry run for the confirm dialog and a figures check on the save, so the
  *    officer is charged-or-credited exactly what they were shown (#4030 C4);
- *  - on a stay that has started (#127), the whole stay is priced
- *    (`getBookingEditPolicy`'s "work-party-correction" mode): every night keeps
- *    its stored value and the promotion re-runs, so every night inside the work
- *    party's window is discounted, slept or not;
- *  - "Remove from work party" (#130, `removeBookingFromWorkParty`): the same
- *    edit with the work party's code taken off. The price goes back up and the
- *    difference is owed on the booking, as any edit that raises the price;
- *    credit already given and refunds already paid are left alone.
+ *  - a started stay (#127) priced whole (`INV-MOD-062`), so every night in the
+ *    window is discounted, slept or not; and Remove (#130), the same edit with
+ *    the code taken off, its increase owed on the booking.
  *
  * LOCKS (`INV-LOCK-001`/`-002`), the order #4533's executor and every booking
  * money writer use: global `pg_advisory_xact_lock(1)` — this edit moves
@@ -445,13 +440,9 @@ export function addBookingToWorkParty(
 }
 
 /**
- * #130 (owner, 16 Nov 2026): take the booking off a work party. The same edit
- * as Add with the work party's code left out: the price goes back up, and the
- * difference is owed on the booking like any edit that raises the price — on a
- * paid booking the pipeline's ordinary additional payment (`INV-ADDPAY`), on an
- * unpaid one a higher amount owed. Credit already given and refunds already
- * paid are left alone; nothing is taken back from the member's balance. A
- * started stay is allowed, with the same nights as Add (#127).
+ * #130 (owner, 16 Nov 2026): Add with the work party's code left out. The
+ * difference is owed like any price rise (paid: the ordinary additional ask,
+ * `INV-ADDPAY`); credit given and refunds paid are left alone.
  */
 export function removeBookingFromWorkParty(
   params: WorkPartyCorrectionParams,

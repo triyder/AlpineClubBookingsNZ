@@ -608,7 +608,7 @@ async function workPartyRedemptions() {
 /** What the ordinary batch edit says when handed the internal code, or null if it took it. */
 async function batchRefusal(params: {
   actor: { id: string; role: Role };
-  officerWorkPartyCorrection?: { workPartyEventId: string; promoCodeId: string };
+  officerWorkPartyCorrection?: { workPartyEventId: string; promoCodeId: string; direction: "add" | "remove" };
   /** Run as the correction runs it: on a caller transaction (the argument requires one). */
   callerTransaction?: boolean;
 }): Promise<string | null> {
@@ -993,7 +993,7 @@ async function batchRefusal(params: {
     expect(
       await batchRefusal({
         actor: { id: OFFICER_ID, role: Role.ADMIN },
-        officerWorkPartyCorrection: { workPartyEventId: "other", promoCodeId: OTHER_PROMO_ID },
+        officerWorkPartyCorrection: { workPartyEventId: "other", promoCodeId: OTHER_PROMO_ID, direction: "add" },
         callerTransaction: true,
       }),
     ).toBe("Promo code not found");
@@ -1002,14 +1002,14 @@ async function batchRefusal(params: {
     expect(
       await batchRefusal({
         actor: { id: OWNER_ID, role: Role.USER },
-        officerWorkPartyCorrection: { workPartyEventId: EVENT_ID, promoCodeId: PROMO_ID },
+        officerWorkPartyCorrection: { workPartyEventId: EVENT_ID, promoCodeId: PROMO_ID, direction: "add" },
         callerTransaction: true,
       }),
     ).toMatch(/needs an officer and a caller transaction/);
     expect(
       await batchRefusal({
         actor: { id: OFFICER_ID, role: Role.ADMIN },
-        officerWorkPartyCorrection: { workPartyEventId: EVENT_ID, promoCodeId: PROMO_ID },
+        officerWorkPartyCorrection: { workPartyEventId: EVENT_ID, promoCodeId: PROMO_ID, direction: "add" },
       }),
     ).toMatch(/needs an officer and a caller transaction/);
 

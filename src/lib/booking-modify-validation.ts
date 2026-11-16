@@ -399,7 +399,7 @@ export function resolveTargetDates({
    * mode; never set by a route.
    */
   finishedStayCorrection?: boolean;
-  /** Fork #127/#130: an officer's work-party correction (`getBookingEditPolicy`). */
+  /** Fork #127/#130: an officer's work-party correction; it moves no night. */
   workPartyCorrection?: boolean;
   /**
    * The club's today, threaded straight into `getBookingEditPolicy` — see it for
@@ -547,16 +547,6 @@ export function resolveTargetDates({
     );
   }
 
-  // Fork #127/#130: a started stay priced whole for a work-party correction
-  // moves no night; the mode exists only to re-run the promotion.
-  if (
-    editPolicy.mode === "work-party-correction" &&
-    (finalRequestedCheckIn.getTime() !== booking.checkIn.getTime() ||
-      finalRequestedCheckOut.getTime() !== booking.checkOut.getTime())
-  ) {
-    throw new ApiError("A work-party correction cannot change a started stay's dates.", 400);
-  }
-
   const newCheckIn = isInProgressEdit ? booking.checkIn : finalRequestedCheckIn;
   const newCheckOut = finalRequestedCheckOut;
 
@@ -583,6 +573,9 @@ export function resolveTargetDates({
   const datesChanged =
     checkInChanged ||
     newCheckOut.getTime() !== new Date(booking.checkOut).getTime();
+  if (editPolicy.mode === "work-party-correction" && datesChanged) {
+    throw new ApiError("A work-party correction cannot change a started stay's dates.", 400);
+  }
 
   return {
     newCheckIn,

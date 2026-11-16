@@ -713,14 +713,6 @@ export type OfficerWorkPartyCorrection = {
   readonly direction: "add" | "remove";
 };
 
-/** Which internal code the promo engine admits (add) or drops (remove, #130). */
-function officerWorkPartyPromoArguments(correction: OfficerWorkPartyCorrection | undefined) {
-  return {
-    officerWorkPartyPromoCodeId: correction?.direction === "add" ? correction.promoCodeId : null,
-    officerWorkPartyRemovalPromoCodeId: correction?.direction === "remove" ? correction.promoCodeId : null,
-  };
-}
-
 /** The money rule a work-party correction carries, recorded with it. */
 const OFFICER_WORK_PARTY_MONEY_RULE = {
   changeFee: "none",
@@ -1554,7 +1546,10 @@ export async function modifyBookingBatch({
           // as its fee tiers are — on the real today an expired code would be
           // released and its discount billed back to the member.
           todayAtClub: finishedStayCorrection ? finishedStayNoticeDay(booking) : todayAtClub,
-          ...officerWorkPartyPromoArguments(officerWorkPartyCorrection),
+          // The internal code an Add admits, or (#130) a Remove drops.
+          officerWorkPartyPromoCodeId: officerWorkPartyCorrection?.direction === "add" ? officerWorkPartyCorrection.promoCodeId : null,
+          officerWorkPartyRemovalPromoCodeId:
+            officerWorkPartyCorrection?.direction === "remove" ? officerWorkPartyCorrection.promoCodeId : null,
         });
 
     /**

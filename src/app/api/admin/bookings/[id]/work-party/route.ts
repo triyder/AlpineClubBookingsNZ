@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { getClientIp } from "@/lib/rate-limit";
@@ -26,48 +25,7 @@ import {
   WorkPartyCorrectionFiguresChangedError,
   workPartyRemovalEligibility,
 } from "@/lib/work-party-booking-correction";
-
-const centsField = z.number().int().min(-100_000_000).max(100_000_000);
-
-// The officer's settlement choice (#129); absent is the default (club credit,
-// or the organiser's disposition). The service refuses one it does not offer.
-const settlementMethodField = z.enum(["credit", "card"]).optional();
-
-// #130: "remove" takes the booking off the work party; absent is "add". A
-// removal hands nothing back, so it carries no settlement method.
-const actionField = z.enum(["add", "remove"]).default("add");
-
-const bodySchema = z.discriminatedUnion("mode", [
-  z.object({
-    mode: z.literal("preview"),
-    action: actionField,
-    workPartyEventId: z.string().min(1),
-    settlementMethod: settlementMethodField,
-  }),
-  z.object({
-    mode: z.literal("apply"),
-    action: actionField,
-    workPartyEventId: z.string().min(1),
-    settlementMethod: settlementMethodField,
-    notifyMember: z.boolean().optional(),
-    // The figures the officer was shown by the preview; the save refuses if
-    // the booking would now come out differently (#4030 C4).
-    expectedFigures: z.object({
-      previousFinalPriceCents: centsField,
-      newFinalPriceCents: centsField,
-      priceDiffCents: centsField,
-      accountCreditAmountCents: centsField,
-      appliedCreditGivenBackCents: centsField,
-      refundedExcessCreditCents: centsField,
-      additionalAmountCents: centsField,
-      refundAmountCents: centsField,
-      settlementMethod: z.enum(["card", "credit"]).nullable(),
-    }),
-  }),
-]).refine((body) => body.action === "add" || body.settlementMethod === undefined, {
-  message: "A removal hands nothing back, so it takes no settlement method.",
-  path: ["settlementMethod"],
-});
+import { workPartyCorrectionBodySchema as bodySchema } from "@/lib/work-party-correction-request";
 
 /**
  * The work parties this booking could be added to (fork #119): every open work
