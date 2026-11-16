@@ -64,7 +64,7 @@ import {
   type BatchModificationPreTransaction,
 } from "@/lib/booking-batch-modification-service";
 import { workPartyEventRefusal } from "@/lib/work-party";
-import { editMoneyBackCents } from "@/lib/edit-money-back";
+import { editTotalMoneyBackCents } from "@/lib/edit-money-back";
 
 export type WorkPartyBookingEligibility =
   | { ok: true }
@@ -327,11 +327,12 @@ export interface WorkPartyCorrectionFigures {
 }
 
 /**
- * Every cent the change hands back: the settlement's (`editMoneyBackCents`)
- * plus an unpaid booking's applied credit freed by the lower price.
+ * Every cent the change hands back (`editTotalMoneyBackCents`, the one sum the
+ * linked move also uses, fork #132): the settlement's plus an unpaid booking's
+ * applied credit freed by the lower price.
  */
 export function workPartyMoneyBackCents(figures: WorkPartyCorrectionFigures): number {
-  return editMoneyBackCents(figures) + figures.refundedExcessCreditCents;
+  return editTotalMoneyBackCents(figures);
 }
 
 export const WORK_PARTY_OWN_MONEY_BACK_MESSAGE =

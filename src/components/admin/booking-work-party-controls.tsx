@@ -25,6 +25,7 @@ import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { useClubFormat } from "@/components/club-format-provider";
 import { formatCents } from "@/lib/pricing";
+import { editTotalMoneyBackCents } from "@/lib/edit-money-back";
 import { unverifiedWriteMessage } from "@/lib/unverified-write-copy";
 import { OptionCard, OptionCardGroup } from "@/components/ui/option-card";
 import { BookingWorkPartyRemoveControls } from "@/components/admin/booking-work-party-remove-controls";
@@ -204,11 +205,9 @@ function BookingWorkPartyAddControls({
     !settlementOptions.paidByOrganiser &&
     settlementOptions.methods.length > 1;
   const chosenMethod = settlementMethod ?? settlementOptions?.methods[0] ?? "credit";
-  // Every cent coming back as credit: paid money credited, a paid booking's
-  // applied credit given back, and an unpaid one's applied credit freed (#129).
-  const creditBackCents = figures
-    ? figures.accountCreditAmountCents + figures.appliedCreditGivenBackCents + figures.refundedExcessCreditCents
-    : 0;
+  // Every cent coming back as credit: all the money back (the one sum,
+  // `editTotalMoneyBackCents`) less what is refunded to the card (#129, #132).
+  const creditBackCents = figures ? editTotalMoneyBackCents(figures) - figures.refundAmountCents : 0;
 
   /** A new choice clears the figures and re-runs the dry run with it. */
   function chooseSettlement(method: BookingModificationSettlementMethod) {
