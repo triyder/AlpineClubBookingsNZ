@@ -125,6 +125,13 @@ What happens:
   lodge during the working bee. Every night inside the window is discounted,
   including nights already slept. Nights outside the window are not changed,
   and each night keeps the price it was sold at. The money comes back as below.
+- **Other promo codes on the booking** are re-applied, as on any change: a
+  night takes at most one code, so a member code gives up the nights the work
+  party now covers and keeps the rest. On a stay that has started they are
+  judged on the check-in day, so a code that has expired or been switched off
+  since the stay began is kept, not taken off and charged back.
+- A booking an officer overbooked can still be added: the change moves no guest
+  or night, so it claims no bed and the lodge's capacity is not re-checked.
 - **Unpaid:** the amount owed drops. With a 100% discount an unpaid booking can
   end up owing nothing, and is then settled as any $0 booking is. If account
   credit was applied to it and is now more than the new total, the extra goes
@@ -179,14 +186,19 @@ edit**.
 
 1. Open the booking. In the **Admin tools** card, click **Remove from work
    party**. It replaces **Add to work party** on a booking that is on one.
-2. The dialog shows the new total and how much is added to what is owed.
+2. The dialog shows the new total and how much is added to what is owed (or,
+   for a joiner's booking billed to the group organiser, how much is invoiced
+   to the organiser). If the booking can't be removed, it says why instead.
 3. Click **Remove and email member** or **Remove without emailing** (one
    **Remove from work party** button when the booking has **No emails** on).
 
 What happens:
 
 - The booking is repriced without the work party's discount, through the
-  normal booking change. The price goes back up by the discount.
+  normal booking change. The price goes back up by the discount, less anything
+  another code on the booking takes back on those nights. Other codes are
+  re-applied as for an Add, judged on the check-in day for a started stay, and
+  capacity is not re-checked.
 - **The difference is owed on the booking**, as with any change that raises the
   price. Unpaid: the amount owed goes up. Paid by card: the member is asked to
   pay the difference ("Asked of the member now"). Where an invoice was issued,
@@ -198,7 +210,9 @@ What happens:
 - No change fee is charged. Removing hands no money back, so you can remove
   your own or your family's booking.
 - A joiner's booking the group organiser paid by card can't be raised this way,
-  as with any change to one that raises its price.
+  as with any change to one that raises its price. Where the group organiser is
+  invoiced for a joiner's changes, the increase goes on the organiser's invoice
+  ("Invoiced to the group organiser").
 
 ## Settings reference
 

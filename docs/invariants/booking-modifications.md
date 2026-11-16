@@ -787,7 +787,12 @@ as a whole stay, not by the in-progress plan: every held night keeps its
 `INV-MOD-028` value, so no night is re-rated and history is not repriced,
 and the promotion re-runs over every night. The work party's discount
 therefore reaches every night inside its window, including nights already
-slept, and no night outside it. The money is #129's: no change fee, an Add's
+slept, and no night outside it. The booking's other codes are re-priced as on
+any edit (`INV-MONEY-039`) but judged on the earlier of today and the
+check-in day, so a code that lapsed during the stay is kept, never billed back.
+A correction moves no guest or night, so it claims no bed: the capacity pass is
+skipped (its own flag, not `skipBookingLifecycleRules`), future stays
+included. The money is #129's: no change fee, an Add's
 reduction returned in full and untiered, a Remove's increase owed on the
 booking, with credit already given and refunds already paid left alone. Every
 other in-progress edit still refuses a promo change (`INV-MOD-019`).

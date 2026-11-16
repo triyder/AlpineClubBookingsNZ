@@ -47,6 +47,8 @@ export function BookingWorkPartyRemoveControls({
   const [figures, setFigures] = useState<WorkPartyCorrectionFigures | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  // The shared removal rule's refusal, from the GET (`workPartyRemovalEligibility`).
+  const [refusal, setRefusal] = useState<string | null>(null);
   const money = (cents: number) => formatCents(cents, format);
 
   async function send(mode: "preview" | "apply", notify?: boolean) {
@@ -107,10 +109,30 @@ export function BookingWorkPartyRemoveControls({
     }
   }
 
-  function openDialog() {
+  /** Asks the removal rule first, as Add lists its eligibility; previews only when it allows. */
+  async function openDialog() {
     setOpen(true);
     setFigures(null);
     setError("");
+    setRefusal(null);
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/admin/bookings/${bookingId}/work-party`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(data.error || "Could not load this booking's work party.");
+        return;
+      }
+      if (data.removal && !data.removal.eligible) {
+        setRefusal(data.removal.reason ?? "This booking can't be removed from its work party.");
+        return;
+      }
+    } catch {
+      setError("Could not load this booking's work party. Check your connection and try again.");
+      return;
+    } finally {
+      setBusy(false);
+    }
     void send("preview");
   }
 
@@ -132,6 +154,11 @@ export function BookingWorkPartyRemoveControls({
           </DialogHeader>
           <div className="space-y-3 text-sm">
             {busy && !figures && <p className="text-muted-foreground">Checking the new total…</p>}
+            {refusal && (
+              <p data-testid="work-party-remove-refusal" className="text-muted-foreground">
+                {refusal}
+              </p>
+            )}
             {figures && (
               <div
                 className="space-y-1 rounded-md border p-3"
@@ -146,6 +173,11 @@ export function BookingWorkPartyRemoveControls({
                   Added to what is owed on the booking:{" "}
                   <strong>{money(figures.priceDiffCents)}</strong>
                 </p>
+                {figures.billedToOrganiserCents > 0 && (
+                  <p>
+                    Invoiced to the group organiser: <strong>{money(figures.billedToOrganiserCents)}</strong>
+                  </p>
+                )}
                 {figures.additionalAmountCents > 0 && (
                   <p>
                     Asked of the member now: <strong>{money(figures.additionalAmountCents)}</strong>

@@ -1492,6 +1492,7 @@ export async function modifyBookingBatch({
           // the party under the family boundary it was actually planned under.
           skipAuthorization: guestPlan.guestAuthorizationIsAdmin,
           skipBookingLifecycleRules: dates.skipBookingLifecycleRules,
+          movesNoBed: Boolean(officerWorkPartyCorrection),
           // Multi-lodge: season rates are resolved for the booking's lodge.
           seasonRateData: await loadActiveSeasonRates(tx, bookingLodgeId),
           // Issue #1668: over-capacity warns-and-confirms under admin override.
@@ -1544,8 +1545,13 @@ export async function modifyBookingBatch({
           guestNightRates: pricingResult.guestNightRates,
           // #3750 (F1): a finished stay's codes are judged on its check-in day,
           // as its fee tiers are — on the real today an expired code would be
-          // released and its discount billed back to the member.
-          todayAtClub: finishedStayCorrection ? finishedStayNoticeDay(booking) : todayAtClub,
+          // released and its discount billed back to the member. Fork #127: so
+          // are a work-party correction's on a started stay (the earlier day).
+          todayAtClub:
+            finishedStayCorrection ||
+            (officerWorkPartyCorrection && finishedStayNoticeDay(booking) < todayAtClub)
+              ? finishedStayNoticeDay(booking)
+              : todayAtClub,
           // The internal code an Add admits, or (#130) a Remove drops.
           officerWorkPartyPromoCodeId: officerWorkPartyCorrection?.direction === "add" ? officerWorkPartyCorrection.promoCodeId : null,
           officerWorkPartyRemovalPromoCodeId:

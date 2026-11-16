@@ -1600,6 +1600,7 @@ export async function calculateModifiedPricing(
     confirmOverCapacity = false,
     partnerSharedGuests = [],
     skipAuthorization = false,
+    movesNoBed = false,
   }: {
     booking: LoadedBookingForModify;
     bookingId: string;
@@ -1648,6 +1649,8 @@ export async function calculateModifiedPricing(
      * for a beyond-family target.
      */
     skipAuthorization?: boolean;
+    /** Fork #127/#130: a work-party correction moves no guest or night, so it claims no bed. */
+    movesNoBed?: boolean;
     /**
      * #2543 — the mode this request resolved, forwarded to every rate resolution
      * and to the price call below, so all four agree and none of them reads the
@@ -1759,7 +1762,7 @@ export async function calculateModifiedPricing(
   const pricingLodgeId = booking.lodgeId ?? (await getDefaultLodgeId(tx));
   let capacity: Awaited<ReturnType<typeof checkCapacityForGuestRanges>>;
   let capacityOverridden = false;
-  if (skipBookingLifecycleRules) {
+  if (skipBookingLifecycleRules || movesNoBed) {
     capacity = { available: true, minAvailable: Number.POSITIVE_INFINITY, nightDetails: [] };
   } else if (partnerSharedGuests.length > 0) {
     // Partner-shared admission (#1746): fail-loud on any rejection — the

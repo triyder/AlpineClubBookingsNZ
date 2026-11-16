@@ -9,7 +9,6 @@ import {
   WORK_PARTY_SETTLEMENT_NOT_OFFERED_MESSAGE,
   WORK_PARTY_NOT_ON_BOOKING_MESSAGE,
   workPartyBookingEligibility,
-  workPartyMoneyBackCents,
   workPartyRemovalEligibility,
   workPartyOwnMoneyBackRefusal,
   workPartySettlementOptions,
@@ -19,6 +18,7 @@ import {
   type WorkPartyEligibilityEvent,
 } from "@/lib/work-party-booking-correction";
 import { PROMO_WORK_PARTY_EXCLUSION_MESSAGE } from "@/lib/promo-code-list-rules";
+import { editTotalMoneyBackCents } from "@/lib/edit-money-back";
 
 /**
  * Fork #119: the eligibility rule for "Add booking to work party", one case per
@@ -330,14 +330,15 @@ describe("own or family booking: refused only when money comes back (#129 decisi
     appliedCreditGivenBackCents: 0,
     refundedExcessCreditCents: 0,
     additionalAmountCents: 0,
+    billedToOrganiserCents: 0,
     refundAmountCents: 0,
     settlementMethod: "credit",
   };
 
   it("counts every way money comes back: refund, credit, applied credit given back, and an unpaid booking's freed credit", () => {
-    expect(workPartyMoneyBackCents(unpaid)).toBe(0);
+    expect(editTotalMoneyBackCents(unpaid)).toBe(0);
     expect(
-      workPartyMoneyBackCents({
+      editTotalMoneyBackCents({
         ...unpaid,
         refundAmountCents: 1,
         accountCreditAmountCents: 2,
@@ -431,6 +432,16 @@ describe("the officer-only internal-code admission (census)", () => {
       .map(rel)
       .sort();
     expect(callers).toEqual(["src/lib/booking-batch-modification-service.ts"]);
+  });
+
+  it("M1: only the batch service tells the pricing pass that an edit moves no bed", () => {
+    const callers = files
+      .filter((file) => /\bmovesNoBed:/.test(readFileSync(file, "utf8")))
+      .map(rel)
+      .sort();
+    expect(callers).toEqual(["src/lib/booking-batch-modification-service.ts"]);
+    const plan = readFileSync(path.join(root, "lib", "booking-modify-plan.ts"), "utf8");
+    expect(plan).toContain("movesNoBed = false,");
   });
 
   it("is not a request-body field on any route", () => {

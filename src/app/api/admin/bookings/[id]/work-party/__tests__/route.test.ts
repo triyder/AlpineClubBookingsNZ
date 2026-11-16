@@ -72,6 +72,7 @@ const figures = {
   appliedCreditGivenBackCents: 0,
   refundedExcessCreditCents: 0,
   additionalAmountCents: 0,
+  billedToOrganiserCents: 0,
   refundAmountCents: 0,
   settlementMethod: "credit" as const,
 };
@@ -229,6 +230,7 @@ describe("POST action remove (#130)", () => {
     priceDiffCents: 5_000,
     accountCreditAmountCents: 0,
     additionalAmountCents: 5_000,
+    billedToOrganiserCents: 0,
     settlementMethod: null,
   };
 

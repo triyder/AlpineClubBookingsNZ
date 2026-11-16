@@ -314,6 +314,8 @@ export interface WorkPartyCorrectionFigures {
   refundedExcessCreditCents: number;
   /** Still to pay after the change (an unpaid ask's remainder), or 0. */
   additionalAmountCents: number;
+  /** A Remove's increase invoiced to the group organiser, not this member (#4299), or 0. */
+  billedToOrganiserCents: number;
   /**
    * Paid money refunded: to the member's card when the officer chose `card`,
    * or to the group organiser for an organiser-paid joiner; otherwise 0.
@@ -326,15 +328,6 @@ export interface WorkPartyCorrectionFigures {
   settlementMethod: BookingModificationSettlementMethod | null;
 }
 
-/**
- * Every cent the change hands back (`editTotalMoneyBackCents`, the one sum the
- * linked move also uses, fork #132): the settlement's plus an unpaid booking's
- * applied credit freed by the lower price.
- */
-export function workPartyMoneyBackCents(figures: WorkPartyCorrectionFigures): number {
-  return editTotalMoneyBackCents(figures);
-}
-
 export const WORK_PARTY_OWN_MONEY_BACK_MESSAGE =
   "This change would refund or credit money to you or your family, so another officer must add this booking to the work party.";
 
@@ -342,7 +335,7 @@ export const WORK_PARTY_OWN_MONEY_BACK_MESSAGE =
  * #129 decision 6 (owner, 16 Nov 2026): an officer may add their own or their
  * family's booking while nothing comes back (an unpaid booking with no account
  * credit applied: its price just drops); once the change would refund or
- * credit any money (`workPartyMoneyBackCents`), another officer
+ * credit any money (`editTotalMoneyBackCents`), another officer
  * must. The money's recipient is the booking's owner, or for an organiser-paid
  * joiner the group organiser (the lane's reading, recorded on the issue).
  */
@@ -350,7 +343,7 @@ export function workPartyOwnMoneyBackRefusal(
   figures: WorkPartyCorrectionFigures,
   recipientIsActorOrFamily: boolean,
 ): string | null {
-  return recipientIsActorOrFamily && workPartyMoneyBackCents(figures) > 0
+  return recipientIsActorOrFamily && editTotalMoneyBackCents(figures) > 0
     ? WORK_PARTY_OWN_MONEY_BACK_MESSAGE
     : null;
 }
@@ -407,6 +400,7 @@ const FIGURE_KEYS = [
   "appliedCreditGivenBackCents",
   "refundedExcessCreditCents",
   "additionalAmountCents",
+  "billedToOrganiserCents",
   "refundAmountCents",
   "settlementMethod",
 ] as const satisfies ReadonlyArray<keyof WorkPartyCorrectionFigures>;
@@ -619,6 +613,7 @@ async function correctWorkParty(
         appliedCreditGivenBackCents: modified.appliedCreditGivenBackCents,
         refundedExcessCreditCents: modified.refundedExcessCreditCents,
         additionalAmountCents: modified.additionalAmountCents,
+        billedToOrganiserCents: modified.billedToOrganiserCents,
         refundAmountCents: modified.refundAmountCents,
         settlementMethod,
       };
@@ -626,7 +621,7 @@ async function correctWorkParty(
         // #130: the money goes one way. Anything handed back is a path the
         // plan missed; refuse rather than pay it. So the own/family rule (#129
         // decision 6), which guards money coming back, has nothing to refuse.
-        if (workPartyMoneyBackCents(figures) > 0 || figures.refundAmountCents > 0) {
+        if (editTotalMoneyBackCents(figures) > 0) {
           throw new ApiError(WORK_PARTY_REMOVAL_MONEY_BACK_MESSAGE, 409);
         }
       } else {

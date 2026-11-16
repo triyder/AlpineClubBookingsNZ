@@ -39,6 +39,7 @@ export const workPartyCorrectionBodySchema = z.discriminatedUnion("mode", [
       appliedCreditGivenBackCents: centsField,
       refundedExcessCreditCents: centsField,
       additionalAmountCents: centsField,
+      billedToOrganiserCents: centsField,
       refundAmountCents: centsField,
       settlementMethod: z.enum(["card", "credit"]).nullable(),
     }),

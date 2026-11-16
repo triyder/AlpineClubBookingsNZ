@@ -111,6 +111,7 @@ function edit(money: Partial<Record<"refundAmountCents" | "accountCreditAmountCe
     appliedCreditGivenBackCents: 0,
     refundedExcessCreditCents: 0,
     additionalAmountCents: 0,
+    billedToOrganiserCents: 0,
     promoChangeNotApplied: null,
     bookingModificationId: "mod-1",
     ...money,
@@ -187,6 +188,7 @@ describe("own or family booking (#129 decision 6, 16 Nov)", () => {
       appliedCreditGivenBackCents: 0,
       refundedExcessCreditCents: 0,
       additionalAmountCents: 0,
+      billedToOrganiserCents: 0,
       refundAmountCents: 0,
       ...money,
       settlementMethod: method,
@@ -282,6 +284,7 @@ describe("the settlement method is a checked figure", () => {
       appliedCreditGivenBackCents: 0,
       refundedExcessCreditCents: 0,
       additionalAmountCents: 0,
+      billedToOrganiserCents: 0,
       refundAmountCents: 0,
       settlementMethod: "credit",
     };
@@ -315,6 +318,7 @@ describe("Remove from work party (#130): the service's own guards", () => {
       appliedCreditGivenBackCents: 0,
       refundedExcessCreditCents: 0,
       additionalAmountCents: 5_000,
+      billedToOrganiserCents: 0,
       promoChangeNotApplied: null,
       bookingModificationId: "mod-2",
       ...money,
@@ -375,6 +379,16 @@ describe("Remove from work party (#130): the service's own guards", () => {
       status: 409,
       message: expect.stringContaining("could not be removed"),
     });
+  });
+
+  it("Security L1: an increase invoiced to the group organiser is a figure, and a preview without it does not save", async () => {
+    raised({ additionalAmountCents: 0, billedToOrganiserCents: 5_000 });
+    const quoted = await removeBookingFromWorkParty({ ...common, dryRun: true });
+    expect(quoted.figures).toMatchObject({ billedToOrganiserCents: 5_000, additionalAmountCents: 0 });
+    const stale = { ...quoted.figures, billedToOrganiserCents: 0 };
+    await expect(
+      removeBookingFromWorkParty({ ...common, dryRun: false, expectedFigures: stale }),
+    ).rejects.toBeInstanceOf(WorkPartyCorrectionFiguresChangedError);
   });
 
   it("allows the officer's own booking: nothing comes back", async () => {
