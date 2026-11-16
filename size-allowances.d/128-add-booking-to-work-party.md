@@ -1,22 +1,23 @@
 # File-size allowances for fork #119, PR #128 (add an existing booking to a work party)
 
 The feature's own logic lives in a new module written to its own ceiling,
-`src/lib/work-party-booking-correction.ts`. Two already-over-budget files grow
-because the change must happen inside the one canonical booking-edit pipeline,
-not beside it (`INV-SSOT`; the issue rejects a second repricing path).
+`src/lib/work-party-booking-correction.ts`, and the batch service's argument
+in `src/lib/booking-batch-work-party-correction.ts`. Since upstream's hard
+ceiling (#4926), the batch service and `booking-modify-plan.ts` end at or under
+their upstream length (the identity-only echo moved to
+`booking-identity-only-pricing.ts`, as on thatskiff33#5149). Two functions
+grow because the change must happen inside the one canonical booking-edit
+pipeline, not beside it (`INV-SSOT`; the issue rejects a second repricing path).
 
-file: src/lib/booking-batch-modification-service.ts
-lines: 2852
-reason: the `officerWorkPartyCorrection` service argument and its explanation,
-  beside `waiveChangeFee` (the same kind of argument, for the same reason: a
-  request body must not be able to carry it), plus the two places it changes
-  the money: no change fee, and the untiered full-reduction settlement, plus
-  the guard that refuses it off its one path and the audit marker. Those
-  two decisions sit in the fee and settlement expressions they modify; moving
-  them out would split one calculation across two files.
+function: src/lib/booking-batch-modification-service.ts#modifyBookingBatch
+lines: 1837
+reason: the `officerWorkPartyCorrection` argument, its guard call, the promo id
+  it admits, the no-fee and full-reduction decisions inside the fee and
+  settlement expressions they modify, the audit marker, and fork #132's
+  `refundedExcessCreditCents` on the result shapes. Moving those decisions out
+  would split one calculation across two files.
 
-file: src/lib/booking-modify-plan.ts
-lines: 3028
-reason: the one internal-code admission in `applyPromoCodeChanges`, next to
-  the refusal it narrows, and the parameter that carries it. The refusal and its
-  single exception have to be read together.
+function: src/components/admin/admin-booking-tools-card.tsx#AdminBookingToolsCard
+lines: 324
+reason: the "Add to work party" control (its own component) and the props it
+  needs, rendered with the card's other booking tools.

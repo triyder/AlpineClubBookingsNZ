@@ -8,6 +8,18 @@
  * no club-time server reader.
  */
 import { MAX_INTEGER_CENTS } from "@/lib/money-input";
+import type { RateLimitConfig } from "@/lib/rate-limit";
+
+/**
+ * The order route's limiter: 10 an hour per member (and 10x per IP), like
+ * `maintenanceReportMember`; not authSensitive. Kept here rather than in
+ * `rateLimiters` so the fork adds no line to upstream's `rate-limit.ts`.
+ */
+export const FOOD_ORDER_RATE_LIMIT: RateLimitConfig = {
+  id: "food-order-member",
+  limit: 10,
+  windowSeconds: 60 * 60,
+};
 
 /** An order holds 1 to 50 item lines (owner decision 13, issue item 6). */
 export const FOOD_ORDER_MIN_ITEMS = 1;

@@ -15,7 +15,7 @@ import {
   requestedPromoCodeListFor,
   splitRequestedPromoCodes,
 } from "@/lib/booking-modify-promo-request";
-import { promoCodeListRefusal } from "@/lib/promo-code-list-rules";
+import { enteredPromoCodeAdmitted, promoCodeListRefusal } from "@/lib/promo-code-list-rules";
 import {
   AdminReviewStatus,
   type AgeTier,
@@ -2087,13 +2087,7 @@ export async function applyPromoCodeChanges(
     bookingId: string;
     input: BatchModifyInput;
     inProgressPlan: BookingEditGuestRangePlan | null;
-    /**
-     * Fork #119: the ONE internal (work-party) promo an officer's "Add booking
-     * to work party" may apply, by id. A service argument the batch service
-     * receives beside `tx`, never a request-body field, so no member route can
-     * set it; every other internal code is still refused as not found.
-     */
-    officerWorkPartyPromoCodeId?: string | null;
+    officerWorkPartyPromoCodeId?: string | null; // Fork #119: the one internal code `enteredPromoCodeAdmitted` admits
     newCheckIn: Date;
     newTotalPriceCents: number;
     guestNightRates: Array<{
@@ -2261,13 +2255,7 @@ export async function applyPromoCodeChanges(
     }
     const id = incomingIds.find((row) => row.code === entry.code)?.id;
     const promoCode = incomingRows.find((row) => row.id === id && row.code === entry.code);
-    // Internal promos (work party events) cannot be entered as codes; a code
-    // renamed between the unlocked read and the lock is not found. Fork #119:
-    // the one exception is the work party an officer is adding the booking to.
-    if (
-      !promoCode ||
-      (promoCode.internal && promoCode.id !== officerWorkPartyPromoCodeId)
-    ) {
+    if (!enteredPromoCodeAdmitted(promoCode, officerWorkPartyPromoCodeId)) {
       throw new ApiError("Promo code not found", 400);
     }
     applications.push({
@@ -2596,7 +2584,7 @@ export async function applyGuestChanges(
    *        parked call site passes an EMPTY future-night list on purpose, because
    *        a strand whose total is frozen is not buying anything, so a night the
    *        edit newly puts it on is unknown as well.
-   *      - `buildIdentityOnlyPricing` (`booking-batch-modification-service.ts`),
+   *      - `buildIdentityOnlyPricing` (`booking-identity-only-pricing.ts`),
    *        which echoes a strand's stored night prices back unchanged on a
    *        name-only correction — including the blanks, byte for byte. It
    *        creates no new blank; it declines to repair one.

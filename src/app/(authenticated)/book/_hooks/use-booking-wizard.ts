@@ -30,7 +30,8 @@ import {
   createRequestPromoFields,
 } from "@/components/promo-code-list-client";
 import { useWorkingBeeDiscount } from "./use-working-bee-discount";
-import { useWorkPartyPrefill } from "./use-work-party-prefill";
+import { useWizardWorkPartyPrefill } from "./use-work-party-prefill";
+import { clearGuestNights, clearGuestStayRanges } from "./booking-wizard-guest-list";
 import { useSelectionCancellationSchedule } from "./use-selection-cancellation-schedule";
 import { useWizardWorkPersistence } from "./use-wizard-work-persistence";
 import type { SavedWizardWork } from "@/lib/booking-wizard-work";
@@ -190,23 +191,6 @@ const UNKNOWN_SUBSCRIPTION_STATUS: SubscriptionStatus = {
   invoiceUrl: null,
   invoiceNumber: null,
 };
-
-function clearGuestStayRanges(guestList: GuestData[]): GuestData[] {
-  return guestList.map((guest) => {
-    const nextGuest = { ...guest };
-    delete nextGuest.stayStart;
-    delete nextGuest.stayEnd;
-    return nextGuest;
-  });
-}
-
-function clearGuestNights(guestList: GuestData[]): GuestData[] {
-  return guestList.map((guest) => {
-    const nextGuest = { ...guest };
-    delete nextGuest.nights;
-    return nextGuest;
-  });
-}
 
 // Booking wizard state machine (#1209). Extracted verbatim from the /book page
 // shell: the same 51 useState, 9 useEffect (identical bodies, deps, and order),
@@ -1772,15 +1756,7 @@ export function useBookingWizard() {
             const events: WorkPartyEvent[] = data.events || [];
             if (!ownsWorkPartyRequest()) return;
             setActiveWorkPartyEvents(events);
-            // Fork #118: tick the work party a Join came from, once. Read when
-            // the response lands, after render, so the hook declared below it
-            // has long been initialised.
-            const joined = workPartyPrefill.takePendingWorkPartySelection(events);
-            if (joined && !selectedWorkPartyEventId) {
-              setSelectedWorkPartyEventId(joined);
-              setAttendingWorkParty(true);
-              return;
-            }
+            if (workPartyPrefill.tickJoinedWorkParty(events, selectedWorkPartyEventId)) return; // Fork #118
             if (
               selectedWorkPartyEventId &&
               !events.some((e) => e.id === selectedWorkPartyEventId)
@@ -2524,20 +2500,9 @@ export function useBookingWizard() {
     setWorkPartyError,
   });
 
-  // Fork #118: "Join Work Party" opens /book?workParty=<id>. Added after every
-  // existing effect so their order is unchanged.
-  const workPartyPrefill = useWorkPartyPrefill({
-    workPartyId: searchParams?.get("workParty")?.trim() || null,
-    lodgeIds: lodges.map((lodge) => lodge.id),
-    lodgesSettled: !lodgesLoading && !lodgesFailed && !lodgesForbidden,
-    lodgeId,
-    scopedLodgeId,
-    onDatesStep: step === "dates",
-    memberStarted: checkIn !== null || step !== "dates",
-    bookingBlocked: subscriptionLoading ? null : bookingBlockedBySubscription,
-    selectLodge: handleLodgeChange,
-    selectDates: (ci, co) => void handleDateSelect(ci, co),
-  });
+  // Fork #118: "Join Work Party" (/book?workParty=<id>), after every existing effect.
+  const workPartyPrefill = useWizardWorkPartyPrefill({ searchParams, lodges, lodgesLoading, lodgesFailed, lodgesForbidden, lodgeId, scopedLodgeId,
+    step, checkIn, subscriptionLoading, bookingBlockedBySubscription, handleLodgeChange, handleDateSelect, setSelectedWorkPartyEventId, setAttendingWorkParty });
 
   const wizardSteps: Array<{ id: BookingWizardStep; label: string }> = [
     { id: "dates", label: "Select Dates" },

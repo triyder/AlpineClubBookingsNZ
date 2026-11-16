@@ -1,10 +1,8 @@
 import { LATE_CAPTURE_REFUNDED_OUTSIDE_APP_NOTE } from "@/lib/late-capture-outside-app-note";
 import { UNMATCHED_APP_LEDGER_MATCH_LABEL, UNMATCHED_APP_STRIPE_PAYMENT_NOTE, UNRECOGNISED_STRIPE_PAYMENT_NOTE } from "@/lib/unrecognised-stripe-payment-note";
 import { STRIPE_DISPUTE_HOLD_NOTE, STRIPE_DISPUTE_NEXT_STEP, stripeDisputeSubjectLabel } from "@/lib/stripe-dispute-note";
-import {
-  EMAIL_AUDIT_DEFAULTS,
-  type EmailAuditTemplateName,
-} from "@/lib/email-message-audit-defaults";
+import { EMAIL_AUDIT_DEFAULTS, type EmailAuditTemplateName } from "@/lib/email-message-audit-defaults";
+import { FORK_ADMIN_SYSTEM_TEMPLATE_NAMES, FORK_APPROVED_EMAIL_TEMPLATE_TOKENS, FORK_REQUIRED_TEMPLATE_TOKENS, FORK_TEMPLATE_TRIGGER_METADATA } from "@/lib/email-message-registry-fork";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import { creditReleaseCadenceSummary } from "@/lib/additional-payment-chase";
 import { paymentRequestCauseSentence } from "@/lib/additional-ask-cause";
@@ -67,7 +65,7 @@ export interface EmailTemplateDefinition {
   defaultDeliveryMode: NotificationDeliveryModeValue;
 }
 
-const ADMIN_SYSTEM_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
+const ADMIN_SYSTEM_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([...FORK_ADMIN_SYSTEM_TEMPLATE_NAMES,
   "admin-membership-application-pending",
   "admin-minors-review",
   "admin-owner-substitution",
@@ -168,9 +166,6 @@ const ADMIN_SYSTEM_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
   // LOCKED_DELIVERY_TEMPLATE_NAMES: no money moves, and a club that would rather
   // read the queue than the mail must be allowed to mute it.
   "admin-maintenance-report",
-  // Fork #121: a food order, to the Food Orders settings address. Mutable, not
-  // delivery-locked: no money moves and every order stays in the history.
-  "food-order-placed",
   // #49 (owner decision "second template"): the version-only notice a Lodge
   // Operations editor who does not receive the Daily digest is sent while
   // syncing with the Alpine Central Server is paused. Its own template so a
@@ -503,9 +498,7 @@ const REQUIRED_TOKEN_ALTERNATIVES: Partial<
   "pre-arrival-reminder": { doorCodeNote: ["doorCode"] },
 };
 
-const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>> = {
-  // Fork #121: an override that dropped the item list would send an empty order.
-  "food-order-placed": ["itemsText"],
+const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>> = { ...FORK_REQUIRED_TEMPLATE_TOKENS,
   "booking-confirmed": [
     "CLUB_LODGE_TRAVEL_NOTE",
     "doorCodeNote",
@@ -904,7 +897,7 @@ const FORBIDDEN_SUBJECT_PHRASES: Partial<
 
 const TEMPLATE_TRIGGER_METADATA: Partial<
   Record<EmailAuditTemplateName, { triggerSummary: string; frequency: string }>
-> = {
+> = { ...FORK_TEMPLATE_TRIGGER_METADATA,
   "officer-factor-reset": {
     triggerSummary:
       "A Full Admin, or the operator break-glass command, cleared this member's authenticator app and passkeys",
@@ -1175,11 +1168,6 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
   "bulk-communication": {
     triggerSummary: "Admin bulk communication send",
     frequency: "Per admin send action",
-  },
-  "food-order-placed": {
-    triggerSummary:
-      "A member placed a food order for a lodge; sent to the food officer email in the Food Orders settings",
-    frequency: "Per food order",
   },
   "website-contact": {
     triggerSummary: "Website contact form submission",
@@ -1980,7 +1968,7 @@ const EMAIL_TEMPLATE_KEYS = EMAIL_TEMPLATE_DEFINITIONS.map(
 
 export const EMAIL_TEMPLATE_KEY_SET = new Set<string>(EMAIL_TEMPLATE_KEYS);
 
-const APPROVED_EMAIL_TEMPLATE_TOKENS = [
+const APPROVED_EMAIL_TEMPLATE_TOKENS = [...FORK_APPROVED_EMAIL_TEMPLATE_TOKENS,
   "BASE_URL",
   "CLUB_BOOKINGS_NAME",
   "CLUB_EMAIL_FROM_NAME",
@@ -2425,13 +2413,6 @@ const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   "summary",
   "answersText",
   "maintenanceReportUrl",
-  // Fork #121: the food-order email's tokens; none carries a bearer token or secret.
-  "officerLabel",
-  "neededBy",
-  "orderedBy",
-  "itemsText",
-  "notes",
-  "foodOrderUrl",
   // #49: the Daily digest's central-server-version entry. `serverVersionNote`
   // is the composed sentence (empty while the versions match); the other two
   // are the raw numbers behind it. None carries a key, a URL or a member.
