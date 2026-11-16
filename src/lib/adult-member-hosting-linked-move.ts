@@ -128,9 +128,7 @@ export interface LinkedMoveQuote {
   /** What the member pays now, across both bookings. */
   combinedAmountDueCents: number;
   /** Every cent that comes back to the member, across both bookings, freed applied credit included (#132). */
-  combinedRefundCents: number;
-  /** The part of it that is an unpaid booking's freed applied credit (#132); for the offer's wording only. */
-  combinedFreedCreditCents: number;
+  combinedRefundCents: number; combinedFreedCreditCents: number; // #132: the freed applied credit inside it, for the wording only
   /**
    * What the club's cancellation policy KEEPS of the reductions, across every
    * booking that moves — the difference between what a booking's price fell by and
@@ -362,8 +360,7 @@ export function formatLinkedMoveOfferMessage(quote: LinkedMoveQuote, format: Clu
   // wordings, and had already drifted on the waiver clause.
   const moneySentence = formatLinkedMoveMoneySentence({
     combinedAmountDueCents: quote.combinedAmountDueCents,
-    combinedRefundCents: quote.combinedRefundCents,
-    combinedFreedCreditCents: quote.combinedFreedCreditCents,
+    combinedRefundCents: quote.combinedRefundCents, combinedFreedCreditCents: quote.combinedFreedCreditCents,
     combinedChangeFeeCents: quote.combinedChangeFeeCents,
     combinedPolicyRetainedCents: quote.combinedPolicyRetainedCents,
     combinedOrganiserRefundCents: quote.combinedOrganiserRefundCents, combinedOrganiserBankTransferRefundCents: quote.combinedOrganiserBankTransferRefundCents,
@@ -605,8 +602,7 @@ export function combineLinkedMoveQuote(input: {
     // does an unpaid booking's applied credit freed by the lower price (owner
     // decision on fork #132: one total, so it matches the balance change). The one
     // sum is `editTotalMoneyBackCents` (why it never double-counts is there).
-    combinedRefundCents: sum(editTotalMoneyBackCents),
-    combinedFreedCreditCents: sum((r) => r.refundedExcessCreditCents),
+    combinedRefundCents: sum(editTotalMoneyBackCents), combinedFreedCreditCents: sum((r) => r.refundedExcessCreditCents),
     combinedPolicyRetainedCents: sum((r) => r.policyRetainedAmountCents),
     combinedOrganiserRefundCents: input.organiserRefunds.totalCents, combinedOrganiserBankTransferRefundCents: input.organiserRefunds.bankTransferCents,
     // THE WRITE'S OWN TEST, never a reading of the resolved amounts. The refusal is
@@ -694,8 +690,7 @@ export function buildSameOwnerCoverageLinkedMoveBody(
     combinedPriceDiffCents: quote.combinedPriceDiffCents,
     combinedChangeFeeCents: quote.combinedChangeFeeCents,
     combinedAmountDueCents: quote.combinedAmountDueCents,
-    combinedRefundCents: quote.combinedRefundCents,
-    combinedFreedCreditCents: quote.combinedFreedCreditCents,
+    combinedRefundCents: quote.combinedRefundCents, combinedFreedCreditCents: quote.combinedFreedCreditCents,
     combinedPolicyRetainedCents: quote.combinedPolicyRetainedCents,
     combinedOrganiserRefundCents: quote.combinedOrganiserRefundCents, combinedOrganiserBankTransferRefundCents: quote.combinedOrganiserBankTransferRefundCents,
     settlementMethodRequired: quote.settlementMethodRequired,
