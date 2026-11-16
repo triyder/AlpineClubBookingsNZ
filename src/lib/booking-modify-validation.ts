@@ -387,6 +387,7 @@ export function resolveTargetDates({
   input,
   today,
   finishedStayCorrection = false,
+  workPartyCorrection = false,
 }: {
   booking: LoadedBookingForModify;
   role: Role;
@@ -398,6 +399,8 @@ export function resolveTargetDates({
    * mode; never set by a route.
    */
   finishedStayCorrection?: boolean;
+  /** Fork #127/#130: an officer's work-party correction (`getBookingEditPolicy`). */
+  workPartyCorrection?: boolean;
   /**
    * The club's today, threaded straight into `getBookingEditPolicy` — see it for
    * why this is a required value rather than a read (#3123). This function is
@@ -416,6 +419,7 @@ export function resolveTargetDates({
     checkOut: booking.checkOut,
     adminOverride: effectiveAdminOverride,
     finishedStayCorrection,
+    workPartyCorrection,
     today,
   });
   if (!editPolicy.canModify) {
@@ -541,6 +545,16 @@ export function resolveTargetDates({
       "NZ today and earlier are locked for self-service changes",
       400,
     );
+  }
+
+  // Fork #127/#130: a started stay priced whole for a work-party correction
+  // moves no night; the mode exists only to re-run the promotion.
+  if (
+    editPolicy.mode === "work-party-correction" &&
+    (finalRequestedCheckIn.getTime() !== booking.checkIn.getTime() ||
+      finalRequestedCheckOut.getTime() !== booking.checkOut.getTime())
+  ) {
+    throw new ApiError("A work-party correction cannot change a started stay's dates.", 400);
   }
 
   const newCheckIn = isInProgressEdit ? booking.checkIn : finalRequestedCheckIn;

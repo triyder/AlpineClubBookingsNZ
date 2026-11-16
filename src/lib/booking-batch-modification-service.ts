@@ -703,13 +703,23 @@ async function resolveOrdinaryXeroLockDateGuard(
 
 /**
  * Fork #119: what `officerWorkPartyCorrection` names — the work party an
- * officer is adding the booking to, and its internal promo. Built only by
- * `work-party-booking-correction.ts` (census in its test).
+ * officer is adding the booking to (or, #130, removing it from), and its
+ * internal promo. Built only by `work-party-booking-correction.ts` (census in
+ * its test).
  */
 export type OfficerWorkPartyCorrection = {
   readonly workPartyEventId: string;
   readonly promoCodeId: string;
+  readonly direction: "add" | "remove";
 };
+
+/** Which internal code the promo engine admits (add) or drops (remove, #130). */
+function officerWorkPartyPromoArguments(correction: OfficerWorkPartyCorrection | undefined) {
+  return {
+    officerWorkPartyPromoCodeId: correction?.direction === "add" ? correction.promoCodeId : null,
+    officerWorkPartyRemovalPromoCodeId: correction?.direction === "remove" ? correction.promoCodeId : null,
+  };
+}
 
 /** The money rule a work-party correction carries, recorded with it. */
 const OFFICER_WORK_PARTY_MONEY_RULE = {
@@ -1268,6 +1278,8 @@ export async function modifyBookingBatch({
       input,
       today: clubTodayDateOnly,
       finishedStayCorrection: Boolean(finishedStayCorrection),
+      // Fork #127/#130: a started stay is priced whole, so the promotion runs.
+      workPartyCorrection: Boolean(officerWorkPartyCorrection),
     });
     if (finishedStayCorrection) {
       // The flag only ASKS for the mode. A stay that has not finished took its
@@ -1542,7 +1554,7 @@ export async function modifyBookingBatch({
           // as its fee tiers are — on the real today an expired code would be
           // released and its discount billed back to the member.
           todayAtClub: finishedStayCorrection ? finishedStayNoticeDay(booking) : todayAtClub,
-          officerWorkPartyPromoCodeId: officerWorkPartyCorrection?.promoCodeId ?? null,
+          ...officerWorkPartyPromoArguments(officerWorkPartyCorrection),
         });
 
     /**

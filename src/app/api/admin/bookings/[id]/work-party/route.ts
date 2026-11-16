@@ -21,8 +21,10 @@ import { EditFinancialReviewPendingError } from "@/lib/edit-financial-review";
 import { getXeroLockGuardErrorResponse } from "@/lib/xero-period-lock-guard";
 import {
   addBookingToWorkParty,
+  removeBookingFromWorkParty,
   workPartyBookingEligibility,
   WorkPartyCorrectionFiguresChangedError,
+  workPartyRemovalEligibility,
 } from "@/lib/work-party-booking-correction";
 
 const centsField = z.number().int().min(-100_000_000).max(100_000_000);
@@ -31,14 +33,20 @@ const centsField = z.number().int().min(-100_000_000).max(100_000_000);
 // or the organiser's disposition). The service refuses one it does not offer.
 const settlementMethodField = z.enum(["credit", "card"]).optional();
 
+// #130: "remove" takes the booking off the work party; absent is "add". A
+// removal hands nothing back, so it carries no settlement method.
+const actionField = z.enum(["add", "remove"]).default("add");
+
 const bodySchema = z.discriminatedUnion("mode", [
   z.object({
     mode: z.literal("preview"),
+    action: actionField,
     workPartyEventId: z.string().min(1),
     settlementMethod: settlementMethodField,
   }),
   z.object({
     mode: z.literal("apply"),
+    action: actionField,
     workPartyEventId: z.string().min(1),
     settlementMethod: settlementMethodField,
     notifyMember: z.boolean().optional(),
@@ -53,10 +61,13 @@ const bodySchema = z.discriminatedUnion("mode", [
       refundedExcessCreditCents: centsField,
       additionalAmountCents: centsField,
       refundAmountCents: centsField,
-      settlementMethod: z.enum(["card", "credit"]),
+      settlementMethod: z.enum(["card", "credit"]).nullable(),
     }),
   }),
-]);
+]).refine((body) => body.action === "add" || body.settlementMethod === undefined, {
+  message: "A removal hands nothing back, so it takes no settlement method.",
+  path: ["settlementMethod"],
+});
 
 /**
  * The work parties this booking could be added to (fork #119): every open work
@@ -124,8 +135,18 @@ export async function GET(
     memberOwned: Boolean(ownerMemberId),
   };
 
+  // #130: whether the work party on the booking can be taken off it.
+  const removal = current
+    ? workPartyRemovalEligibility(
+        { status: booking.status, checkOut: booking.checkOut, quotePriced, workPartyEventId: current.id },
+        { today },
+        current.id,
+      )
+    : null;
+
   return NextResponse.json({
     currentWorkParty: current,
+    removal: removal && { eligible: removal.ok, reason: removal.ok ? null : removal.reason },
     workParties: events.map((event) => {
       const eligibility = workPartyBookingEligibility(
         eligibilityBooking,
@@ -147,7 +168,8 @@ export async function GET(
 }
 
 /**
- * "Add booking to work party" (fork #119). `mode: "preview"` runs the whole
+ * "Add booking to work party" (fork #119), and with `action: "remove"`
+ * "Remove from work party" (#130). `mode: "preview"` runs the whole
  * change and rolls it back, returning the figures and the settlement methods
  * offered (`settlementOptions`, #129) for the confirm dialog;
  * `mode: "apply"` saves it, refusing if the figures moved since the preview.
@@ -187,6 +209,7 @@ export async function POST(
     clubFormatValues(),
     prepareBatchModificationForCallerTransaction({ audience: "admin" }),
   ]);
+  const correct = parsed.data.action === "remove" ? removeBookingFromWorkParty : addBookingToWorkParty;
   const common = {
     bookingId: id,
     workPartyEventId: parsed.data.workPartyEventId,
@@ -203,8 +226,8 @@ export async function POST(
   try {
     const result =
       parsed.data.mode === "preview"
-        ? await addBookingToWorkParty({ ...common, dryRun: true })
-        : await addBookingToWorkParty({
+        ? await correct({ ...common, dryRun: true })
+        : await correct({
             ...common,
             dryRun: false,
             expectedFigures: parsed.data.expectedFigures,
@@ -231,11 +254,16 @@ export async function POST(
       return NextResponse.json({ error: error.message }, { status: error.status });
     }
     logger.error(
-      { err: error, bookingId: id, workPartyEventId: parsed.data.workPartyEventId },
-      "Adding a booking to a work party failed",
+      { err: error, bookingId: id, workPartyEventId: parsed.data.workPartyEventId, action: parsed.data.action },
+      "Changing a booking's work party failed",
     );
     return NextResponse.json(
-      { error: "The booking could not be added to the work party. Nothing was changed." },
+      {
+        error:
+          parsed.data.action === "remove"
+            ? "The booking could not be removed from the work party. Nothing was changed."
+            : "The booking could not be added to the work party. Nothing was changed.",
+      },
       { status: 500 },
     );
   }

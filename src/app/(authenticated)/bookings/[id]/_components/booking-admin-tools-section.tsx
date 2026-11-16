@@ -86,6 +86,9 @@ export function BookingAdminToolsSection({
           providerMismatches={providerMismatches}
           financialReviewWarnings={financialReviewWarnings}
           features={modules}
+          currentWorkParty={
+            booking.promoRedemptions.find((row) => row.promoCode.workPartyEvent)?.promoCode.workPartyEvent ?? null
+          }
           capacityHold={{
             hasAdminCapacityHold: Boolean(booking.adminCapacityHoldAt),
             adminCapacityHoldAt:

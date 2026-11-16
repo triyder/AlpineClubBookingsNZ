@@ -108,15 +108,21 @@ const ASK_CENTS = 3_000;
 /** Unpaid with credit applied: more than the new total, so the reprice frees some (F20, #1887). */
 const UNPAID_CREDIT_APPLIED_CENTS = 18_000;
 const FREED_CREDIT_CENTS = UNPAID_CREDIT_APPLIED_CENTS - (PRICE_CENTS - DISCOUNT_CENTS);
-/** A stay that began on the frozen today (1 July 2026); a work party covers it. */
+/**
+ * #127: a stay that began two nights before the frozen today (1 July 2026). Its
+ * work party covers one night already slept and tonight; the first and last
+ * nights are outside it.
+ */
 const STARTED_STAY = {
-  nights: [new Date("2026-07-01T00:00:00.000Z"), new Date("2026-07-02T00:00:00.000Z")],
+  nights: ["2026-06-29", "2026-06-30", "2026-07-01", "2026-07-02"].map((day) => new Date(`${day}T00:00:00.000Z`)),
   checkOut: new Date("2026-07-03T00:00:00.000Z"),
 };
+const STARTED_WINDOW = { start: new Date("2026-06-30T00:00:00.000Z"), end: new Date("2026-07-01T00:00:00.000Z") };
 /** The marker the modification and its audit carry (`OFFICER_WORK_PARTY_MONEY_RULE`). */
 const WORK_PARTY_MARKER = {
   workPartyEventId: EVENT_ID,
   promoCodeId: PROMO_ID,
+  direction: "add",
   changeFee: "none",
   reduction: "returned in full",
 };
@@ -491,18 +497,41 @@ async function common(workPartyEventId = EVENT_ID) {
 
 type Method = { settlementMethod?: "credit" | "card" };
 
-async function quoted(method: Method = {}) {
-  const result = await correction.addBookingToWorkParty({ ...(await common()), ...method, dryRun: true });
+async function quoted(method: Method = {}, workPartyEventId = EVENT_ID) {
+  const result = await correction.addBookingToWorkParty({ ...(await common(workPartyEventId)), ...method, dryRun: true });
   expect(result.outcome).toBe("quoted");
   return result;
 }
 
-async function quote(method: Method = {}): Promise<Figures> {
-  return (await quoted(method)).figures;
+async function quote(method: Method = {}, workPartyEventId = EVENT_ID): Promise<Figures> {
+  return (await quoted(method, workPartyEventId)).figures;
 }
 
-async function apply(expectedFigures: Figures, method: Method = {}) {
-  return correction.addBookingToWorkParty({ ...(await common()), ...method, dryRun: false, expectedFigures });
+async function apply(expectedFigures: Figures, method: Method = {}, workPartyEventId = EVENT_ID) {
+  return correction.addBookingToWorkParty({
+    ...(await common(workPartyEventId)),
+    ...method,
+    dryRun: false,
+    expectedFigures,
+  });
+}
+
+/** #130: the removal's dry run. */
+async function removalQuote(workPartyEventId = EVENT_ID): Promise<Figures> {
+  const result = await correction.removeBookingFromWorkParty({ ...(await common(workPartyEventId)), dryRun: true });
+  expect(result.outcome).toBe("quoted");
+  return result.figures;
+}
+
+async function removalApply(expectedFigures: Figures, workPartyEventId = EVENT_ID) {
+  return correction.removeBookingFromWorkParty({ ...(await common(workPartyEventId)), dryRun: false, expectedFigures });
+}
+
+async function removalRefusal(workPartyEventId = EVENT_ID): Promise<{ status: number; message: string } | null> {
+  return correction.removeBookingFromWorkParty({ ...(await common(workPartyEventId)), dryRun: true }).then(
+    () => null,
+    (error: { status: number; message: string }) => ({ status: error.status, message: error.message }),
+  );
 }
 
 /** Everything the correction could write, for the "writes nothing" claims. */
@@ -702,8 +731,8 @@ async function batchRefusal(params: {
           id: eventId,
           name,
           // The July one covers the started stay, so only its start refuses it.
-          startDate: eventId === STARTED_EVENT_ID ? STARTED_STAY.nights[0]! : WINDOW_START,
-          endDate: eventId === STARTED_EVENT_ID ? STARTED_STAY.nights[1]! : WINDOW_END,
+          startDate: eventId === STARTED_EVENT_ID ? STARTED_WINDOW.start : WINDOW_START,
+          endDate: eventId === STARTED_EVENT_ID ? STARTED_WINDOW.end : WINDOW_END,
           discountPercent: DISCOUNT_PERCENT,
           active: true,
           lodgeId: LODGE_ID,
@@ -1278,18 +1307,207 @@ async function batchRefusal(params: {
     expect(await recoveryRows("organiser", 0)).toEqual([]);
   }, 60_000);
 
-  it("refuses a stay that has already started, and writes nothing", async () => {
-    // Check-in on the frozen today, with a work party covering both nights.
+  /** The nights the work party's promo adjusted, as dates. */
+  async function discountedNights(promoCodeId: string): Promise<string[]> {
+    const rows = await prisma.bookingGuestNightAdjustment.findMany({
+      where: { bookingId: BOOKING_ID, promoCodeId, bookingGuestNightId: { not: null } },
+      select: { bookingGuestNight: { select: { stayDate: true } } },
+    });
+    return rows.map((row) => row.bookingGuestNight!.stayDate.toISOString().slice(0, 10)).sort();
+  }
+
+  /** The stored night prices and guest total: a correction never re-rates a night. */
+  async function storedNights() {
+    return prisma.bookingGuest.findUniqueOrThrow({
+      where: { id: GUEST_ID },
+      select: { priceCents: true, nights: { select: { priceCents: true }, orderBy: { stayDate: "asc" } } },
+    });
+  }
+
+  const STORED_NIGHTS = { priceCents: PRICE_CENTS, nights: STARTED_STAY.nights.map(() => ({ priceCents: NIGHT_CENTS })) };
+
+  it("#127 started stay, card-paid, Refund to card: every in-window night, slept or not, is discounted; refund untiered", async () => {
+    await seed("paid", STARTED_STAY);
+    stripeRefundsFail();
+
+    const offered = await quoted({}, STARTED_EVENT_ID);
+    expect(offered.settlementOptions).toEqual({ methods: ["credit", "card"], paidByOrganiser: false });
+    const figures = await quote({ settlementMethod: "card" }, STARTED_EVENT_ID);
+    expect(figures).toEqual({
+      ...paidCreditFigures(),
+      accountCreditAmountCents: 0,
+      // In full: the stay is past every tier, and the tier does not apply.
+      refundAmountCents: DISCOUNT_CENTS,
+      settlementMethod: "card",
+    });
+    const result = await apply(figures, { settlementMethod: "card" }, STARTED_EVENT_ID);
+    expect(result, JSON.stringify(result)).toMatchObject({ outcome: "applied", figures });
+
+    // 30 June (slept) and 1 July (tonight); not 29 June or 2 July, outside the window.
+    expect(await discountedNights(STARTED_PROMO_ID)).toEqual(["2026-06-30", "2026-07-01"]);
+    expect(await storedNights()).toEqual(STORED_NIGHTS);
+    expect(await bookingRow()).toMatchObject({
+      finalPriceCents: PRICE_CENTS - DISCOUNT_CENTS,
+      promoAdjustmentCents: -DISCOUNT_CENTS,
+    });
+    expect(await recoveryRows("own-card", 1)).toEqual([
+      expect.objectContaining({ type: "REFUND_BOOKING_MODIFICATION", amountCents: DISCOUNT_CENTS, paymentId: PAYMENT_ID }),
+    ]);
+    expect(await prisma.memberCredit.count({ where: { memberId: OWNER_ID } })).toBe(0);
+    expect(await prisma.bookingModification.findFirstOrThrow({ where: { bookingId: BOOKING_ID } })).toMatchObject({
+      changeFeeCents: 0,
+      priceDiffCents: -DISCOUNT_CENTS,
+    });
+  }, 60_000);
+
+  it("#127 started stay, Club credit: the whole in-window discount as credit, no refund", async () => {
+    await seed("paid", STARTED_STAY);
+    stripeRefundsFail();
+    const figures = await quote({}, STARTED_EVENT_ID);
+    expect(figures).toEqual(paidCreditFigures());
+    const result = await apply(figures, {}, STARTED_EVENT_ID);
+    expect(result, JSON.stringify(result)).toMatchObject({ outcome: "applied", figures });
+    expect(await discountedNights(STARTED_PROMO_ID)).toEqual(["2026-06-30", "2026-07-01"]);
+    expect(await storedNights()).toEqual(STORED_NIGHTS);
+    expect(await memberCredit.getMemberCreditBalance(OWNER_ID)).toBe(DISCOUNT_CENTS);
+    expect(await refundOperations()).toEqual([]);
+  }, 60_000);
+
+  it("#127 every other in-progress edit still refuses a promo change", async () => {
     await seed("paid", STARTED_STAY);
     const before = await snapshot();
-
-    expect(await correctionRefusal(STARTED_EVENT_ID)).toEqual({
-      status: 409,
-      message: expect.stringContaining("already started"),
-    });
-
+    const ordinary = await batchService
+      .modifyBookingBatch({
+        bookingId: BOOKING_ID,
+        actor: { id: OFFICER_ID, role: Role.ADMIN },
+        input: { promoCodes: [{ code: PUBLIC_PROMO_CODE }], settlementMethod: "credit", notifyMember: false },
+        ipAddress: "127.0.0.1",
+        todayAtClub: (await clubTimeServer.clubTime()).today(),
+        format: CLUB_FORMAT_TEST,
+      })
+      .then(
+        () => null,
+        (error: Error) => error.message,
+      );
+    expect(ordinary).toBe("Promo code changes are not available for in-progress bookings");
     expect(await snapshot()).toEqual(before);
-    expect(await prisma.promoRedemption.count({ where: { bookingId: BOOKING_ID } })).toBe(0);
+  }, 60_000);
+
+  it("#130 future card-paid booking: removal owes the discount back, and leaves the credit already given alone", async () => {
+    await seed("paid");
+    const added = await apply(await quote());
+    expect(added.outcome).toBe("applied");
+    expect(await memberCredit.getMemberCreditBalance(OWNER_ID)).toBe(DISCOUNT_CENTS);
+    const creditRows = await prisma.memberCredit.findMany({ where: { memberId: OWNER_ID }, orderBy: { id: "asc" } });
+    // The additional ask's mint is after commit; Stripe is not reached here.
+    stripeRaceHooks.create = async () => {
+      throw new Error("race 130: Stripe is not called in this proof");
+    };
+
+    const figures = await removalQuote();
+    expect(figures).toEqual({
+      previousFinalPriceCents: PRICE_CENTS - DISCOUNT_CENTS,
+      newFinalPriceCents: PRICE_CENTS,
+      priceDiffCents: DISCOUNT_CENTS,
+      accountCreditAmountCents: 0,
+      appliedCreditGivenBackCents: 0,
+      refundedExcessCreditCents: 0,
+      // Asked of the member's card, as any edit that raises a paid booking's price.
+      additionalAmountCents: DISCOUNT_CENTS,
+      refundAmountCents: 0,
+      settlementMethod: null,
+    });
+    const result = await removalApply(figures);
+    expect(result, JSON.stringify(result)).toMatchObject({ outcome: "applied", figures });
+    if (result.outcome !== "applied") throw new Error("not applied");
+
+    expect(await workPartyRedemptions()).toEqual([]);
+    expect(await bookingRow()).toMatchObject({ finalPriceCents: PRICE_CENTS, promoAdjustmentCents: 0 });
+    expect(
+      await prisma.bookingModification.findUniqueOrThrow({ where: { id: result.bookingModificationId! } }),
+    ).toMatchObject({ changeFeeCents: 0, priceDiffCents: DISCOUNT_CENTS });
+    // No clawback: the credit rows and the balance are exactly as the Add left them.
+    expect(await prisma.memberCredit.findMany({ where: { memberId: OWNER_ID }, orderBy: { id: "asc" } })).toEqual(creditRows);
+    expect(await memberCredit.getMemberCreditBalance(OWNER_ID)).toBe(DISCOUNT_CENTS);
+    expect(await prisma.paymentRefund.count({ where: { paymentId: PAYMENT_ID } })).toBe(0);
+  }, 60_000);
+
+  it("#130 unpaid booking: removal puts the price and the amount owed back up", async () => {
+    await seed("unpaid");
+    await apply(await quote());
+    expect((await amountOwed.readBookingAmountOwed(await bookingRow())).owedCents).toBe(PRICE_CENTS - DISCOUNT_CENTS);
+
+    const figures = await removalQuote();
+    expect(figures).toMatchObject({ newFinalPriceCents: PRICE_CENTS, priceDiffCents: DISCOUNT_CENTS, refundAmountCents: 0 });
+    const result = await removalApply(figures);
+    expect(result, JSON.stringify(result)).toMatchObject({ outcome: "applied", figures });
+    expect((await amountOwed.readBookingAmountOwed(await bookingRow())).owedCents).toBe(PRICE_CENTS);
+    expect(await workPartyRedemptions()).toEqual([]);
+    expect(await memberCredit.getMemberCreditBalance(OWNER_ID)).toBe(0);
+  }, 60_000);
+
+  it("#130 started stay: removal takes the discount off the same in-window nights", async () => {
+    await seed("paid", STARTED_STAY);
+    await apply(await quote({}, STARTED_EVENT_ID), {}, STARTED_EVENT_ID);
+    expect(await discountedNights(STARTED_PROMO_ID)).toEqual(["2026-06-30", "2026-07-01"]);
+    stripeRaceHooks.create = async () => {
+      throw new Error("race 130: Stripe is not called in this proof");
+    };
+
+    const figures = await removalQuote(STARTED_EVENT_ID);
+    expect(figures).toMatchObject({ newFinalPriceCents: PRICE_CENTS, priceDiffCents: DISCOUNT_CENTS });
+    const result = await removalApply(figures, STARTED_EVENT_ID);
+    expect(result, JSON.stringify(result)).toMatchObject({ outcome: "applied", figures });
+    expect(await discountedNights(STARTED_PROMO_ID)).toEqual([]);
+    expect(await storedNights()).toEqual(STORED_NIGHTS);
+    expect(await memberCredit.getMemberCreditBalance(OWNER_ID)).toBe(DISCOUNT_CENTS);
+  }, 60_000);
+
+  it("#130 with several codes switched on, the work party is dropped, not carried", async () => {
+    const settings = await prisma.clubModuleSettings.findUnique({ where: { id: "default" } });
+    await prisma.clubModuleSettings.upsert({
+      where: { id: "default" },
+      create: { id: "default", multiPromoCodes: true },
+      update: { multiPromoCodes: true },
+    });
+    try {
+      await seed("unpaid");
+      await apply(await quote());
+      const figures = await removalQuote();
+      expect(figures).toMatchObject({ newFinalPriceCents: PRICE_CENTS, priceDiffCents: DISCOUNT_CENTS });
+      await removalApply(figures);
+      expect(await workPartyRedemptions()).toEqual([]);
+    } finally {
+      if (settings) {
+        await prisma.clubModuleSettings.update({ where: { id: "default" }, data: { multiPromoCodes: settings.multiPromoCodes } });
+      } else {
+        await prisma.clubModuleSettings.delete({ where: { id: "default" } });
+      }
+    }
+  }, 60_000);
+
+  it("#130 refuses a booking that is not on that work party, writing nothing", async () => {
+    await seed("paid");
+    const before = await snapshot();
+    expect(await removalRefusal()).toEqual({ status: 409, message: correction.WORK_PARTY_NOT_ON_BOOKING_MESSAGE });
+    await apply(await quote());
+    // The Add's Xero note is queued after commit; wait for it before comparing.
+    expect(await modificationXeroOps(1)).toHaveLength(1);
+    const added = await snapshot();
+    expect(await removalRefusal(OTHER_EVENT_ID)).toEqual({ status: 409, message: correction.WORK_PARTY_NOT_ON_BOOKING_MESSAGE });
+    expect(await snapshot()).toEqual(added);
+    expect(before.redemptions).toBe(0);
+  }, 60_000);
+
+  it("#130 the officer's own paid booking: removal hands nothing back, so it is allowed", async () => {
+    await seed("paid");
+    await apply(await quote());
+    await prisma.booking.update({ where: { id: BOOKING_ID }, data: { memberId: OFFICER_ID } });
+    stripeRaceHooks.create = async () => {
+      throw new Error("race 130: Stripe is not called in this proof");
+    };
+    const figures = await removalQuote();
+    expect(figures).toMatchObject({ priceDiffCents: DISCOUNT_CENTS, refundAmountCents: 0, accountCreditAmountCents: 0 });
   }, 60_000);
 
   it("records the work party and its money rule on the modification and its audit row", async () => {

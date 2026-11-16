@@ -131,3 +131,41 @@ describe("BookingWorkPartyControls settlement (#129)", () => {
     expect(screen.getByText(/Returned to the group organiser:/)).toBeInTheDocument();
   });
 });
+
+describe("Remove from work party (#130)", () => {
+  const removal = figures({
+    previousFinalPriceCents: 15_000,
+    newFinalPriceCents: 20_000,
+    priceDiffCents: 5_000,
+    accountCreditAmountCents: 0,
+    additionalAmountCents: 5_000,
+    settlementMethod: null,
+  });
+
+  it("offers Remove instead of Add on a booking that carries a work party, and previews it", async () => {
+    serve(() => ({ outcome: "quoted", figures: removal }));
+    render(<BookingWorkPartyControls bookingId="booking-1" currentWorkParty={{ id: "wp-1", name: "Spring Bee" }} />);
+    expect(screen.queryByRole("button", { name: "Add to work party" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Remove from work party" }));
+    const shown = await screen.findByTestId("work-party-remove-figures");
+    expect(shown).toHaveTextContent("Added to what is owed on the booking");
+    expect(shown).toHaveTextContent("Asked of the member now");
+    expect(posts).toEqual([{ mode: "preview", action: "remove", workPartyEventId: "wp-1" }]);
+  });
+
+  it("applies with the figures it showed, and no settlement method", async () => {
+    serve((body) => (body.mode === "apply" ? { outcome: "applied", figures: removal } : { outcome: "quoted", figures: removal }));
+    render(<BookingWorkPartyControls bookingId="booking-1" currentWorkParty={{ id: "wp-1", name: "Spring Bee" }} />);
+    fireEvent.click(screen.getByRole("button", { name: "Remove from work party" }));
+    await screen.findByTestId("work-party-remove-figures");
+    fireEvent.click(screen.getByRole("button", { name: "Remove without emailing" }));
+    await waitFor(() => expect(posts).toHaveLength(2));
+    expect(posts[1]).toEqual({
+      mode: "apply",
+      action: "remove",
+      workPartyEventId: "wp-1",
+      notifyMember: false,
+      expectedFigures: removal,
+    });
+  });
+});

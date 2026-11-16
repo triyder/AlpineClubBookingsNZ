@@ -7,8 +7,10 @@ import {
   resolveWorkPartySettlementMethod,
   WORK_PARTY_OWN_MONEY_BACK_MESSAGE,
   WORK_PARTY_SETTLEMENT_NOT_OFFERED_MESSAGE,
+  WORK_PARTY_NOT_ON_BOOKING_MESSAGE,
   workPartyBookingEligibility,
   workPartyMoneyBackCents,
+  workPartyRemovalEligibility,
   workPartyOwnMoneyBackRefusal,
   workPartySettlementOptions,
   type WorkPartyCorrectionFigures,
@@ -58,6 +60,43 @@ const refusal = (pattern: RegExp | string) => ({
   reason: typeof pattern === "string" ? pattern : expect.stringMatching(pattern),
 });
 
+describe("workPartyRemovalEligibility (#130)", () => {
+  const onBooking = {
+    status: BookingStatus.PAID,
+    checkOut: d("2026-08-04"),
+    quotePriced: false,
+    workPartyEventId: "event-1",
+  };
+
+  it("accepts a booking that carries this work party, future or started", () => {
+    expect(workPartyRemovalEligibility(onBooking, context, "event-1")).toEqual({ ok: true });
+    expect(
+      workPartyRemovalEligibility({ ...onBooking, checkOut: d("2026-07-02") }, context, "event-1"),
+    ).toEqual({ ok: true });
+  });
+
+  it("refuses a booking without that work party", () => {
+    expect(workPartyRemovalEligibility(onBooking, context, "event-2")).toEqual(
+      refusal(WORK_PARTY_NOT_ON_BOOKING_MESSAGE),
+    );
+    expect(
+      workPartyRemovalEligibility({ ...onBooking, workPartyEventId: null }, context, "event-1"),
+    ).toEqual(refusal(WORK_PARTY_NOT_ON_BOOKING_MESSAGE));
+  });
+
+  it("refuses a finished stay, a status the edit doors refuse, and a quote-priced booking", () => {
+    expect(
+      workPartyRemovalEligibility({ ...onBooking, checkOut: d("2026-06-30") }, context, "event-1"),
+    ).toMatchObject(refusal(/has finished/));
+    expect(
+      workPartyRemovalEligibility({ ...onBooking, status: BookingStatus.CANCELLED }, context, "event-1"),
+    ).toMatchObject(refusal(/current status/));
+    expect(
+      workPartyRemovalEligibility({ ...onBooking, quotePriced: true }, context, "event-1"),
+    ).toMatchObject(refusal(/priced by its quote/));
+  });
+});
+
 describe("workPartyBookingEligibility", () => {
   it("accepts a future booking with a night inside an open work party at its lodge", () => {
     expect(workPartyBookingEligibility(booking, context, event)).toEqual({ ok: true });
@@ -96,10 +135,34 @@ describe("workPartyBookingEligibility", () => {
     );
   });
 
-  it("refuses a stay that has started (checking in today, owner decision 3)", () => {
+  it("#127: accepts a stay that has started, nights already slept included", () => {
     expect(
-      workPartyBookingEligibility({ ...booking, checkIn: d("2026-07-01") }, context, event),
-    ).toMatchObject(refusal(/already started/));
+      workPartyBookingEligibility(
+        { ...booking, checkIn: d("2026-06-28"), checkOut: d("2026-07-03") },
+        context,
+        { ...event, startDate: d("2026-06-29"), endDate: d("2026-07-01") },
+      ),
+    ).toEqual({ ok: true });
+  });
+
+  it("#127: accepts a stay on its check-out day (still in progress)", () => {
+    expect(
+      workPartyBookingEligibility(
+        { ...booking, checkIn: d("2026-06-28"), checkOut: d("2026-07-01") },
+        context,
+        { ...event, startDate: d("2026-06-28"), endDate: d("2026-06-30") },
+      ),
+    ).toEqual({ ok: true });
+  });
+
+  it("refuses a stay that has finished", () => {
+    expect(
+      workPartyBookingEligibility(
+        { ...booking, checkIn: d("2026-06-20"), checkOut: d("2026-06-30") },
+        context,
+        { ...event, startDate: d("2026-06-20"), endDate: d("2026-06-25") },
+      ),
+    ).toMatchObject(refusal(/has finished/));
   });
 
   it("accepts a stay checking in tomorrow", () => {
@@ -346,6 +409,28 @@ describe("the officer-only internal-code admission (census)", () => {
       "src/lib/booking-batch-modification-service.ts",
       "src/lib/booking-modify-plan.ts",
     ]);
+  });
+
+  it("#130: only the batch service hands the removal to the promo engine", () => {
+    const callers = files
+      .filter((file) => /\bofficerWorkPartyRemovalPromoCodeId\b/.test(readFileSync(file, "utf8")))
+      .map(rel)
+      .sort();
+    expect(callers).toEqual([
+      "src/lib/booking-batch-modification-service.ts",
+      "src/lib/booking-modify-plan.ts",
+    ]);
+    const plan = readFileSync(path.join(root, "lib", "booking-modify-plan.ts"), "utf8");
+    // Defaulted to null, so a caller that passes nothing drops nothing.
+    expect(plan).toContain("officerWorkPartyRemovalPromoCodeId = null,");
+  });
+
+  it("#127: only the batch service asks the edit policy for the work-party mode", () => {
+    const callers = files
+      .filter((file) => /\bworkPartyCorrection:/.test(readFileSync(file, "utf8")))
+      .map(rel)
+      .sort();
+    expect(callers).toEqual(["src/lib/booking-batch-modification-service.ts"]);
   });
 
   it("is not a request-body field on any route", () => {

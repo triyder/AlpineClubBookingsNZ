@@ -2087,6 +2087,7 @@ export async function applyPromoCodeChanges(
     guestNightRates,
     todayAtClub,
     officerWorkPartyPromoCodeId = null,
+    officerWorkPartyRemovalPromoCodeId = null,
   }: {
     booking: LoadedBookingForModify;
     bookingId: string;
@@ -2099,6 +2100,8 @@ export async function applyPromoCodeChanges(
      * set it; every other internal code is still refused as not found.
      */
     officerWorkPartyPromoCodeId?: string | null;
+    /** Fork #130: the work party an officer removes; dropped, never carried. */
+    officerWorkPartyRemovalPromoCodeId?: string | null;
     newCheckIn: Date;
     newTotalPriceCents: number;
     guestNightRates: Array<{
@@ -2169,7 +2172,11 @@ export async function applyPromoCodeChanges(
   const multiPromoCodes = promoRequestReadsMultiPromoSwitch(input, storedCodes)
     ? await multiPromoCodesEnabled(tx)
     : true;
-  const requested = requestedPromoCodeListFor(input, storedCodes, multiPromoCodes);
+  // Fork #130: with several codes on, a stored internal code a list leaves out
+  // is carried; the officer removing that work party drops it instead.
+  const removedCode = existing.find((row) => row.promoCodeId === officerWorkPartyRemovalPromoCodeId)?.promoCode.code;
+  const requested =
+    requestedPromoCodeListFor(input, storedCodes, multiPromoCodes)?.filter((entry) => entry.code !== removedCode) ?? null;
 
   if (requested === null) {
     // No promo change asked for: re-price every code the booking carries
