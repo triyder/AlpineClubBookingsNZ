@@ -288,6 +288,7 @@ type BatchModificationTransactionResult =
     xeroAdditionalAmountCents: number;
     xeroRefundAmountCents: number;
     appliedCreditGivenBackCents: number;
+    refundedExcessCreditCents: number; // F20 (#1887): an unpaid booking's applied credit the lower price freed
     settlementMethod: BookingModificationSettlementMethod | null;
     policyRetainedAmountCents: number;
     guestNameUpdates: ResolvedGuestNameUpdate[];
@@ -327,6 +328,8 @@ export type BatchModificationResponse = {
   accountCreditAmountCents: number;
   /** #3809: applied credit the reduction gave back, as account credit. */
   appliedCreditGivenBackCents: number;
+  /** F20 (#1887): an UNPAID booking's applied credit above its new worth, returned to the balance. */
+  refundedExcessCreditCents: number;
   additionalAmountCents: number;
   /** #4299 (`INV-PAY-148`): the increase invoiced to the group organiser instead of this member. */
   billedToOrganiserCents: number;
@@ -900,8 +903,8 @@ export async function modifyBookingBatch({
    *  - admits that one internal promo code (`applyPromoCodeChanges`);
    *  - charges no change fee — an officer correction, not the member's change;
    *  - returns the reduction IN FULL (`calculateFullReductionSettlementOptions`,
-   *    as #4533's promo correction does), not cut by the cancellation tier,
-   *    because the member is given what ticking the box would have given them.
+   *    as #4533's), untiered: what ticking the box would have given. How it
+   *    settles is `input.settlementMethod`, as any edit's (fork #129).
    */
   officerWorkPartyCorrection?: OfficerWorkPartyCorrection;
   /**
@@ -2311,6 +2314,7 @@ export async function modifyBookingBatch({
       xeroAdditionalAmountCents: payments.xeroAdditionalAmountCents,
       xeroRefundAmountCents: payments.xeroRefundAmountCents,
       appliedCreditGivenBackCents: payments.appliedCreditGivenBackCents,
+      refundedExcessCreditCents: lifecycle.refundedExcessCreditCents,
       organiserChildRefund: payments.organiserChildRefund,
       settlementMethod: payments.settlementMethod,
       policyRetainedAmountCents: payments.policyRetainedAmountCents,
@@ -2518,6 +2522,7 @@ export async function modifyBookingBatch({
       refundAmountCents: result.refundAmountCents,
       accountCreditAmountCents: result.accountCreditAmountCents,
       appliedCreditGivenBackCents: result.appliedCreditGivenBackCents,
+      refundedExcessCreditCents: result.refundedExcessCreditCents,
       additionalAmountCents: result.additionalAmountCents,
       billedToOrganiserCents: result.billedToOrganiserCents,
       settlementMethod: result.settlementMethod,
@@ -2564,6 +2569,7 @@ export async function modifyBookingBatch({
       refundAmountCents: result.refundAmountCents,
       accountCreditAmountCents: result.accountCreditAmountCents,
       appliedCreditGivenBackCents: result.appliedCreditGivenBackCents,
+      refundedExcessCreditCents: result.refundedExcessCreditCents,
       additionalAmountCents: result.additionalAmountCents,
       billedToOrganiserCents: result.billedToOrganiserCents,
       settlementMethod: result.settlementMethod,
