@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  releaseBookingPromoRedemptions: vi.fn(async () => 0),
   inboundFindMany: vi.fn(),
   inboundFindUnique: vi.fn(),
   inboundUpdateMany: vi.fn(),
@@ -111,6 +112,12 @@ const mocks = vi.hoisted(() => ({
   repairLegacyAppliedCreditNoteAllocationsForBooking: vi.fn(),
 }));
 
+// Promo arithmetic is exercised against PostgreSQL in cancelled-booking-promo-release.realdb.test.ts.
+vi.mock("@/lib/promo", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/promo")),
+  releaseBookingPromoRedemptions: mocks.releaseBookingPromoRedemptions,
+}));
+
 // #3599: the credit rows' ledger lines are posted by one sync, proved in its own
 // suites and against Postgres; this suite tests what it always tested.
 const syncCredits = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
@@ -135,6 +142,13 @@ vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/member-money/doors")),
   postBookingReceipts: receiptDoors.postBookingReceipts,
 }));
+// #4370: the failed-later recount reads in one read-only snapshot; here it
+// runs on the mocked client, and against a real database in
+// xero-recount-failed-later-refund.realdb.test.ts.
+vi.mock("@/lib/read-only-snapshot", () => ({
+  withReadOnlySnapshot: (client: unknown, run: (tx: unknown) => Promise<unknown>) => run(client),
+}));
+
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     xeroInboundEvent: {
@@ -204,7 +218,9 @@ vi.mock("@/lib/prisma", () => ({
           roles.includes("MODIFICATION_CREDIT_NOTE_ALLOCATION") &&
           roles.includes("CREDIT_NOTE_ALLOCATION") &&
           where.metadata != null;
-        if (snapshotRead || unlistedAllocationRead) return Promise.resolve([]);
+        // #4370: the recount's bulk read of each payment's card refund reversals.
+        const reversalRead = where.role === "CARD_REFUND_REVERSAL_INVOICE" && typeof where.localId === "object";
+        if (snapshotRead || unlistedAllocationRead || reversalRead) return Promise.resolve([]);
         return mocks.linkFindMany(args);
       },
       // #3642: the group-settlement arm looks up an abandoned invoice's link.
@@ -248,6 +264,10 @@ vi.mock("@/lib/prisma", () => ({
     },
     // #4215: the refunded-total recount reads refund requests paid back; none here.
     manualRefundTask: {
+      findMany: () => Promise.resolve([]),
+    },
+    // #4370: the recount reads card refunds Stripe failed later; none here.
+    paymentRecoveryOperation: {
       findMany: () => Promise.resolve([]),
     },
     $transaction: mocks.transaction,
@@ -362,33 +382,10 @@ vi.mock("@/lib/xero-links", async (importOriginal) => {
   };
 });
 
-vi.mock("@/lib/xero", async (importOriginal) => {
-  const actual = (await importOriginal()) as typeof import("@/lib/xero");
-
-  return {
-    ...actual,
-    checkMembershipStatus: mocks.checkMembershipStatus,
-    getAccountMapping: mocks.getAccountMapping,
-    getAuthenticatedXeroClient: mocks.getAuthenticatedXeroClient,
-    refreshXeroContactCachesFromContact: mocks.refreshXeroContactCachesFromContact,
-    syncContactsFromXero: mocks.syncContactsFromXero,
-    refreshAllMembershipStatuses: mocks.refreshAllMembershipStatuses,
-    withXeroRetry: mocks.withXeroRetry,
-    findSubscriptionInvoice: (
-      invoices: Array<{ lineItems?: Array<{ accountCode?: string }>; reference?: string }>
-    ) =>
-      invoices.find(
-        (invoice) =>
-          invoice.lineItems?.some((lineItem) => lineItem.accountCode === "203") ||
-          (invoice.reference ?? "").toLowerCase().includes("annual member subscription")
-      ) ?? null,
-  };
-});
-
-// #1208: xero-inbound-reconciliation now imports these from the source domain
-// modules directly (not the @/lib/xero facade), so the doubles are attached to
-// those modules. The (now-inert) facade mock above is left as-is; real
-// callXeroApi / XeroDailyLimitError from xero-api-client are preserved.
+// #1208: xero-inbound-reconciliation imports these from the source domain
+// modules directly, so the doubles are attached to those modules (the
+// `@/lib/xero` facade is gone, #4930); real callXeroApi / XeroDailyLimitError
+// from xero-api-client are preserved.
 vi.mock("@/lib/xero-api-client", async (importOriginal) => {
   const actual = (await importOriginal()) as typeof import("@/lib/xero-api-client");
 
@@ -2274,6 +2271,39 @@ describe("processStoredXeroInboundEvents", () => {
     expect(mocks.txExecuteRaw.mock.invocationCallOrder[memberLockCall]).toBeLessThan(
       mocks.memberCreditCreateMany.mock.invocationCallOrder[0],
     );
+  });
+
+  // #4909: the cancel gives back the booking's promo uses in the same
+  // transaction, after its guarded claim and every advisory key it holds.
+  it("releases the booking's promo uses inside the late capacity cancel transaction (#4909)", async () => {
+    const txRef = mockCapacityFailInboundEvent();
+    mocks.memberCreditFindMany.mockResolvedValue([
+      { id: "credit_applied_cap", memberId: "mem_cap", type: "BOOKING_APPLIED", amountCents: -8000, appliedToBookingId: "booking_ib_cap" },
+    ]);
+
+    await expect(processStoredXeroInboundEvents()).resolves.toMatchObject({ succeeded: 1, failed: 0 });
+
+    expect(mocks.releaseBookingPromoRedemptions.mock.calls).toEqual([[txRef.current, "booking_ib_cap"]]);
+    const cancelClaim = mocks.bookingUpdateMany.mock.calls.findIndex((call: unknown[]) =>
+      (call[0] as { data?: { status?: string } }).data?.status === "CANCELLED",
+    );
+    const memberLockCall = mocks.txExecuteRaw.mock.calls.findIndex((call: unknown[]) =>
+      call.includes("member-credit-ledger") && call.includes("mem_cap"),
+    );
+    const released = mocks.releaseBookingPromoRedemptions.mock.invocationCallOrder[0];
+    expect(mocks.bookingUpdateMany.mock.invocationCallOrder[cancelClaim]).toBeLessThan(released);
+    expect(mocks.txExecuteRaw.mock.invocationCallOrder[memberLockCall]).toBeLessThan(released);
+  });
+
+  it("releases no promo use when the late capacity cancel loses its claim (#4909)", async () => {
+    mockCapacityFailInboundEvent();
+    mocks.bookingUpdateMany.mockImplementation(async (args: { data?: { status?: string } }) =>
+      ({ count: args.data?.status === "CANCELLED" ? 0 : 1 }),
+    );
+
+    await expect(processStoredXeroInboundEvents()).resolves.toMatchObject({ succeeded: 0, failed: 1 });
+
+    expect(mocks.releaseBookingPromoRedemptions).not.toHaveBeenCalled();
   });
 
   it("refuses the late capacity cancel while an applied-credit deallocation has not converged, so the event retries (#3792)", async () => {

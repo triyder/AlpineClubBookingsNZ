@@ -1,24 +1,23 @@
 "use client";
+import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 
+import { adminHref } from "@/lib/admin-hubs";
 import Link from "next/link";
 import { useClubFormat } from "@/components/club-format-provider";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { pluralHutLeaderLabel } from "@/config/hut-leader-label";
 import { Button } from "@/components/ui/button";
 import { DatasetResetButton } from "@/components/admin/dataset-reset-button";
+import { Pagination } from "@/components/admin/admin-pagination";
+import { fetchOffPageQueueRecord, useAdminQueuePage } from "@/components/admin/use-admin-queue-page";
+import { PinnedQueueRecordNote } from "@/components/admin/pinned-queue-record-note";
+import { parseAdminListPageParam } from "@/lib/admin-list-page";
 import { buildBookingRequestDatasetPath } from "@/lib/admin-dataset-reset-state";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { NotifyChoiceDialog } from "@/components/admin/notify-choice-dialog";
 import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
@@ -411,6 +410,7 @@ function buildPublicRequestsPath(
   fixedSearchParams: Record<string, string>,
   status: PublicRequestFilter,
   requestId: string | null,
+  page: number,
 ) {
   return buildBookingRequestDatasetPath({
     basePath,
@@ -420,11 +420,12 @@ function buildPublicRequestsPath(
     defaultStatus: "QUEUE",
     recordKey: "requestId",
     recordId: requestId,
+    page,
   });
 }
 
 export function PublicBookingRequestsPanel({
-  basePath = "/admin/booking-requests",
+  basePath = adminHref("booking-requests"),
   fixedSearchParams = EMPTY_SEARCH_PARAMS,
   showHeading = true,
   canEdit = true,
@@ -467,6 +468,18 @@ export function PublicBookingRequestsPanel({
   const [requests, setRequests] = useState<PublicBookingRequestData[]>([]);
   const [filter, setFilter] = useState<PublicRequestFilter>(
     isPublicRequestFilter(initialFilter) ? initialFilter : "QUEUE"
+  );
+  const queuePage = useAdminQueuePage({
+    filterKey: filter,
+    initialPage: parseAdminListPageParam(searchParams.get("page")),
+  });
+  const { page, setPage, receive, beginLoad } = queuePage;
+  // INV-OPS-020: a deep-linked request that is not on the loaded page is read
+  // by id and pinned above it, so the link always lands on its request.
+  const [pinnedRequest, setPinnedRequest] = useState<PublicBookingRequestData | null>(null);
+  const shownRequests = useMemo(
+    () => (pinnedRequest ? [pinnedRequest, ...requests] : requests),
+    [pinnedRequest, requests],
   );
   const [loading, setLoading] = useState(true);
   const [actioningId, setActioningId] = useState<string | null>(null);
@@ -562,6 +575,7 @@ export function PublicBookingRequestsPanel({
     fixedSearchParams,
     filter,
     requestId,
+    page,
   );
 
   useEffect(() => {
@@ -569,26 +583,44 @@ export function PublicBookingRequestsPanel({
   }, [currentPath, router]);
 
   const fetchRequests = useCallback(async () => {
+    const isCurrent = beginLoad();
     setLoading(true);
     setError("");
     try {
-      const response = await fetch(`/api/admin/booking-requests?status=${filter}`);
+      const response = await fetch(`/api/admin/booking-requests?status=${filter}&page=${page}`);
       const data = await response.json();
       if (!response.ok) {
         throw new Error(data.error || "Failed to load booking requests");
       }
-      setRequests(Array.isArray(data?.data) ? data.data : []);
+      const rows: PublicBookingRequestData[] = Array.isArray(data?.data) ? data.data : [];
+      const pinned = await fetchOffPageQueueRecord("/api/admin/booking-requests", "requestId", requestId, rows);
+      if (!isCurrent()) return true; // a newer read owns the list
+      setRequests(rows);
+      receive(data, rows.length);
+      setPinnedRequest(pinned);
       setMemberChoosesPayment(data.memberWholeLodgeChoosesPaymentMethod === true);
       return true;
     } catch (err) {
+      if (!isCurrent()) return true;
       setError(err instanceof Error ? err.message : "Failed to load booking requests");
       return false;
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
     // setState functions are referentially stable; they are listed so the
     // manual dependencies match what the React Compiler infers.
-  }, [filter, setError, setLoading, setRequests, setMemberChoosesPayment]);
+  }, [
+    beginLoad,
+    filter,
+    page,
+    receive,
+    requestId,
+    setError,
+    setLoading,
+    setRequests,
+    setMemberChoosesPayment,
+    setPinnedRequest,
+  ]);
 
   useEffect(() => {
     fetchRequests();
@@ -1107,7 +1139,7 @@ export function PublicBookingRequestsPanel({
     setActioningId(request.id);
     setError("");
     try {
-      const response = await fetch(
+      const response = await fetchWithRecentAuth(
         `/api/admin/booking-requests/${request.id}/release-hold`,
         { method: "POST" }
       );
@@ -1209,14 +1241,14 @@ export function PublicBookingRequestsPanel({
   // ref only once fired so a request first seen without links still computes
   // when it later gains them.
   useEffect(() => {
-    for (const request of requests) {
+    for (const request of shownRequests) {
       if (linkConflictLoadedRef.current.has(request.id)) continue;
       if (!LINKING_EDITOR_STATUSES.has(request.status)) continue;
       if (request.linkedGuestMembers.length === 0) continue;
       linkConflictLoadedRef.current.add(request.id);
       void refreshLinkConflicts(request, request.linkedGuestMembers);
     }
-  }, [requests, refreshLinkConflicts]);
+  }, [shownRequests, refreshLinkConflicts]);
 
   function handleLinkMember(
     request: PublicBookingRequestData,
@@ -1400,7 +1432,7 @@ export function PublicBookingRequestsPanel({
     setError("");
     try {
       const reason = declineReasons[request.id]?.trim();
-      const response = await fetch(`/api/admin/booking-requests/${request.id}/decline`, {
+      const response = await fetchWithRecentAuth(`/api/admin/booking-requests/${request.id}/decline`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1420,6 +1452,7 @@ export function PublicBookingRequestsPanel({
           setRequests((current) =>
             current.filter((candidate) => candidate.id !== request.id),
           );
+          setPinnedRequest((current) => (current?.id === request.id ? null : current));
           setDeclineRecovery({
             requestId: request.id,
             heldBookingId: request.heldBookingId,
@@ -1531,20 +1564,20 @@ export function PublicBookingRequestsPanel({
           </Button>
         ))}
         <DatasetResetButton
-          disabled={filter === "QUEUE"}
-          onReset={() => setFilter("QUEUE")}
+          disabled={filter === "QUEUE" && page === 1}
+          onReset={() => { setFilter("QUEUE"); setPage(1); }}
         />
       </div>
 
       {loading ? (
         <div className="py-8 text-center">Loading...</div>
-      ) : requests.length === 0 ? (
+      ) : shownRequests.length === 0 ? (
         <div className="py-8 text-center text-muted-foreground">
           No booking requests found for this filter.
         </div>
       ) : (
         <div className="space-y-4">
-          {requests.map((request) => {
+          {shownRequests.map((request) => {
             const isActioning = actioningId === request.id;
             // #2263: a member whole-lodge request has ONE admin lifecycle —
             // approve directly with a priced headcount, or decline. The quote,
@@ -1571,6 +1604,7 @@ export function PublicBookingRequestsPanel({
                 className={request.id === requestId ? "border-warning-6" : undefined}
               >
                 <CardHeader>
+                  {request === pinnedRequest ? <PinnedQueueRecordNote /> : null}
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div>
                       <CardTitle className="text-lg">
@@ -2662,59 +2696,51 @@ export function PublicBookingRequestsPanel({
           })}
         </div>
       )}
+      {queuePage.pagination ? (
+        <Pagination {...queuePage.pagination} aria-label="Booking request pages" />
+      ) : null}
 
       {/* #1791: per-decline requester-email choice, mirroring the #1705/#1769a
           pattern. Declining always emails the requester (contactEmail is always
           present), so the dialog is shown on every decline. Both choices decline
           the request; the choice itself is recorded in the audit log. */}
-      <Dialog
+      <NotifyChoiceDialog
         open={declineDialogOpen}
-        onOpenChange={(open) => {
-          if (!open) setDeclineDialogOpen(false);
+        onOpenChange={setDeclineDialogOpen}
+        submitting={actioningId !== null}
+        title="Email the requester about this decline?"
+        description="The request is declined either way. Choose whether the requester receives the standard decline email — your choice is recorded in the audit log."
+        summary={
+          // #2263: the whole-lodge consequence is folded INTO this dialog
+          // rather than chained after it as a second dialog — one decision,
+          // one prompt. It states what the member will and will not be told,
+          // because the officer writing the note needs to know the note is
+          // not what gets sent.
+          declineChoice && isMemberWholeLodgeRequest(declineChoice) ? (
+            <p className="text-sm text-muted-foreground">
+              This is a whole-lodge request. Declining it releases nothing and
+              changes no capacity — the lodge was never held for it. If you
+              email the member they receive one fixed sentence saying the
+              whole lodge was not available for those dates: never your note,
+              and never anything about who else has the lodge. Your note is
+              kept in the audit log.
+            </p>
+          ) : null
+        }
+        actions={{
+          kind: "choice",
+          withoutEmail: {
+            label: "Decline without emailing",
+            variant: "outline",
+            onSelect: () => confirmDecline(false),
+          },
+          withEmail: {
+            label: "Decline and email requester",
+            variant: "destructive",
+            onSelect: () => confirmDecline(true),
+          },
         }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Email the requester about this decline?</DialogTitle>
-            <DialogDescription>
-              The request is declined either way. Choose whether the requester
-              receives the standard decline email — your choice is recorded in
-              the audit log.
-            </DialogDescription>
-            {/* #2263: the whole-lodge consequence is folded INTO this dialog
-                rather than chained after it as a second dialog — one decision,
-                one prompt. It states what the member will and will not be told,
-                because the officer writing the note needs to know the note is
-                not what gets sent. */}
-            {declineChoice && isMemberWholeLodgeRequest(declineChoice) ? (
-              <p className="text-sm text-muted-foreground">
-                This is a whole-lodge request. Declining it releases nothing and
-                changes no capacity — the lodge was never held for it. If you
-                email the member they receive one fixed sentence saying the
-                whole lodge was not available for those dates: never your note,
-                and never anything about who else has the lodge. Your note is
-                kept in the audit log.
-              </p>
-            ) : null}
-          </DialogHeader>
-          <DialogFooter className="gap-2 sm:gap-2">
-            <Button
-              variant="outline"
-              disabled={actioningId !== null}
-              onClick={() => confirmDecline(false)}
-            >
-              Decline without emailing
-            </Button>
-            <Button
-              variant="destructive"
-              disabled={actioningId !== null}
-              onClick={() => confirmDecline(true)}
-            >
-              Decline and email requester
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      />
       </div>
     </div>
   );

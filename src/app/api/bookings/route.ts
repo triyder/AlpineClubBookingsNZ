@@ -17,6 +17,7 @@ import { ARRIVAL_TIME_ERROR_MESSAGE, ARRIVAL_TIME_PATTERN } from "@/lib/arrival-
 import { getLodgeCapacity } from "@/lib/lodge-capacity";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { ApiError } from "@/lib/api-error";
+import { isTransactionContention } from "@/lib/prisma-errors";
 import { getMemberCreditBalance } from "@/lib/member-credit";
 import { findUnpaidMemberGuests } from "@/lib/booking-member-guest-subscriptions";
 import logger from "@/lib/logger";
@@ -126,11 +127,8 @@ import {
   normalizeGuestStayRanges,
 } from "@/lib/booking-guest-stay-range-input";
 import { parseJsonRequestBody } from "@/lib/api-json";
-import {
-  addDaysDateOnly,
-  isDateOnlyString,
-  parseDateOnly,
-} from "@/lib/date-only";
+import { addDaysDateOnly } from "@/lib/date-only";
+import { parsedDateOnlySchema } from "@/lib/date-only-schema";
 import { dateOnlyInstantOf } from "@/lib/club-time";
 import { clubTime } from "@/lib/club-time/server";
 import { resolveOptionalActiveLodgeId } from "@/lib/lodges";
@@ -147,13 +145,9 @@ import { clubFormatValues } from "@/lib/club-format-server";
 import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
 import { lodgeGuestLimitMessage } from "@/lib/lodge-booking-readiness";
 
-const dateOnlyString = z.string().refine(isDateOnlyString, {
-  message: "Date must be YYYY-MM-DD",
-});
-
 const createBookingSchema = z.object({
-  checkIn: dateOnlyString.transform(parseDateOnly),
-  checkOut: dateOnlyString.transform(parseDateOnly),
+  checkIn: parsedDateOnlySchema,
+  checkOut: parsedDateOnlySchema,
   guests: z
     .array(
       z.object({
@@ -242,6 +236,34 @@ const createBookingSchema = z.object({
   confirmOverCapacity: z.boolean().optional(),
   notifyMember: z.boolean().optional(),
 });
+
+/**
+ * A create that ran out of its lock(1) budget (`INV-LOCK-006`) or lost a write
+ * conflict: Prisma's P2028 / P2034, judged by `isTransactionContention`.
+ * Nothing was committed - the booking, its guests, payment rows and any credit
+ * roll back together and no provider call runs before commit - so the honest
+ * answer is a retryable 503, not the 400 "your request was wrong" of the
+ * generic fallback. The raw Prisma message stays in the log only (#1888).
+ */
+const BOOKING_CREATE_CONTENDED_CODE = "BOOKING_CREATE_CONTENDED";
+const BOOKING_CREATE_CONTENDED_MESSAGE =
+  "The booking system is busy right now. Nothing was saved, so please try again in a moment.";
+const BOOKING_CREATE_RETRY_AFTER_SECONDS = 2;
+
+function bookingCreateContendedResponse(
+  err: unknown,
+  logMessage: string,
+): NextResponse | null {
+  if (!isTransactionContention(err)) return null;
+  logger.warn({ err }, logMessage);
+  return NextResponse.json(
+    { error: BOOKING_CREATE_CONTENDED_MESSAGE, code: BOOKING_CREATE_CONTENDED_CODE },
+    {
+      status: 503,
+      headers: { "Retry-After": String(BOOKING_CREATE_RETRY_AFTER_SECONDS) },
+    },
+  );
+}
 
 export async function POST(request: NextRequest) {
   // #2388: taken at the top so the collapsed-refusal timing floor covers the
@@ -1620,6 +1642,11 @@ export async function POST(request: NextRequest) {
           { status: err.status },
         );
       }
+      const contended = bookingCreateContendedResponse(
+        err,
+        "Draft booking create contended; nothing was saved",
+      );
+      if (contended) return contended;
       // #1888 — unexpected (non-typed) errors must not leak their message to
       // the client; the raw error stays in the log only.
       logger.error({ err }, "Failed to create draft booking");
@@ -1781,6 +1808,11 @@ export async function POST(request: NextRequest) {
           { status: waitlistErr.status },
         );
       }
+      const contended = bookingCreateContendedResponse(
+        waitlistErr,
+        "Waitlisted booking create contended; nothing was saved",
+      );
+      if (contended) return contended;
       logger.error({ err: waitlistErr }, "Failed to create waitlisted booking");
       return NextResponse.json({ error: "Failed to create waitlisted booking" }, { status: 500 });
     }
@@ -1862,6 +1894,11 @@ export async function POST(request: NextRequest) {
         { status: err.status },
       );
     }
+    const contended = bookingCreateContendedResponse(
+      err,
+      "Booking create contended; nothing was saved",
+    );
+    if (contended) return contended;
     // #1888 — unexpected (non-typed) errors must not leak their message to
     // the client; the raw error stays in the log only.
     logger.error({ err }, "Failed to create booking");

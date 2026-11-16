@@ -21,6 +21,8 @@ import {
 import { UNASSIGNED_MEMBERSHIP_TYPE_VALUE } from "@/lib/membership-type-filter";
 import { fixedClubClock } from "@/lib/club-time";
 import { clubTime } from "@/lib/club-time/server";
+import { clubDownloadFilename } from "@/lib/club-download-filename";
+import { getClubIdentity } from "@/lib/club-identity-settings";
 import { formatDateOnly } from "@/lib/date-only";
 import { escapeCsvCell } from "@/lib/csv";
 import { isDeletedAccountRecord, notDeletedAccountWhere } from "@/lib/deleted-account";
@@ -29,6 +31,7 @@ import {
   grantMembershipAdminDietaryAccess,
   readMemberDietaryRequirementsByIds,
 } from "@/lib/member-dietary";
+import { requireRecentAuth } from "@/lib/require-recent-auth";
 
 const AGE_TIER_VALUES = Object.values(AgeTier);
 const SUBSCRIPTION_STATUS_FILTERS = [
@@ -58,6 +61,8 @@ const csvEscape = escapeCsvCell;
 export async function GET(req: NextRequest) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
+  const recent = await requireRecentAuth();
+  if (!recent.ok) return recent.response;
   const flags = await loadMemberFieldsFlags();
   // The club's own temporal API, bound to the PERSISTED club timezone (CT-4,
   // #2870; INV-CONFIG-002) rather than the container's environment.
@@ -529,11 +534,16 @@ export async function GET(req: NextRequest) {
       },
     });
 
+    const filename = clubDownloadFilename(
+      (await getClubIdentity()).shortName,
+      `members-${today}`,
+      "csv",
+    );
     return new Response(csv, {
       status: 200,
       headers: {
         "Content-Type": "text/csv; charset=utf-8",
-        "Content-Disposition": `attachment; filename="tac-members-${today}.csv"`,
+        "Content-Disposition": `attachment; filename="${filename}"`,
       },
     });
   } catch (error) {

@@ -10,7 +10,7 @@ import {
   recordedChangeFeeCents,
 } from "@/lib/booking-payment-state";
 import { refundAppealCeilingParts } from "@/lib/manual-refund-task-settlement-rules";
-import { isPaymentOwedBookingStatus } from "@/lib/booking-status";
+import { isBookingOwnAmountOwed } from "@/lib/booking-status";
 import { isSwitchableToInternetBanking } from "@/lib/booking-payment-flow";
 import {
   getNetCollectedCashParts,
@@ -40,6 +40,7 @@ export function resolveBookingDetailPayment({
   access,
   party,
   amountOwed,
+  supersededHeldBackCents = 0,
 }: {
   booking: BookingDetailRecord;
   modules: FeatureFlags;
@@ -48,6 +49,8 @@ export function resolveBookingDetailPayment({
   party: BookingDetailLinkedParty;
   /** #3991: the page's one read of what is owed (`readBookingAmountOwed`, via the history loader). */
   amountOwed: BookingAmountOwed;
+  /** #4872: the payment's live superseded-capture hold-back (`loadSupersededHeldBackCents`); none by default. */
+  supersededHeldBackCents?: number;
 }) {
   const { canManageBooking, isBookingOwner, nonOwnerAdminViewer, canSeeOwnerCredit } = viewer;
   const { isDeleted } = access;
@@ -124,7 +127,7 @@ export function resolveBookingDetailPayment({
   // #3827 (`INV-PAY-118`): net of every hand-back still promised back by bank
   // transfer, of the credit minted from late cash and (#4124) of the card
   // refunds still owed - the figure the appeal route caps at.
-  const appealCeiling = refundAppealCeilingParts(booking.payment, booking.creditsFromCancellation);
+  const appealCeiling = refundAppealCeilingParts(booking.payment, booking.creditsFromCancellation, supersededHeldBackCents);
   const maxRefundableCents = appealCeiling.ceilingCents;
   // #4124: the card refund still owed that lowered it, for the appeal form's
   // "still being refunded to your card" line. Owner-only: the line is
@@ -195,8 +198,7 @@ export function resolveBookingDetailPayment({
     isBookingOwner &&
     !isDeleted &&
     !internetBankingPayment &&
-    isPaymentOwedBookingStatus(booking.status) &&
-    (!booking.payment || booking.payment.status !== "SUCCEEDED");
+    isBookingOwnAmountOwed(booking);
 
   // Issue #778: surface auto-applied member credit (display only). #3991: the
   // LEDGER credit the intent is minted against, from the page's one read — not
@@ -206,18 +208,16 @@ export function resolveBookingDetailPayment({
   const showCreditApplied =
     canManageBooking &&
     creditAppliedCents > 0 &&
-    isPaymentOwedBookingStatus(booking.status) &&
-    booking.payment?.status !== "SUCCEEDED";
+    isBookingOwnAmountOwed(booking);
   // #3750: through the one home, so a change fee recorded on the payment is
   // part of what the page says is due.
   const amountDueAfterCreditCents = amountOwed.dueCents; // floored at zero
   // #3955 review F8: a change fee recorded on an unpaid booking's payment is
   // owed with the price, so the card shows it as its own row and the
   // breakdown adds up to the amount due.
-  const changeFeeOwedCents =
-    isPaymentOwedBookingStatus(booking.status) && booking.payment?.status !== "SUCCEEDED"
-      ? recordedChangeFeeCents(booking.payment)
-      : 0;
+  const changeFeeOwedCents = isBookingOwnAmountOwed(booking)
+    ? recordedChangeFeeCents(booking.payment)
+    : 0;
   const showAmountBreakdown = showCreditApplied || changeFeeOwedCents > 0;
   // What the pay card charges: net of credit only where the card says so.
   const cardAmountDueCents = showCreditApplied

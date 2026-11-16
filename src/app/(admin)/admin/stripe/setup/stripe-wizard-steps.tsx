@@ -1,4 +1,5 @@
 "use client";
+import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 
 import { useState } from "react";
 import { AlertTriangle, CheckCircle2, ExternalLink } from "lucide-react";
@@ -12,6 +13,8 @@ import type { WizardStepHelpers } from "@/components/admin/integration-wizard";
 import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
 import { ADMIN_FULL_ADMIN_ONLY_ACTION_REASON } from "@/hooks/use-admin-area-edit-access";
 import { useClubTime } from "@/components/club-time-provider";
+import { FocusedActionError } from "@/components/focused-action-error";
+import { useActionFailure } from "@/hooks/use-action-failure";
 import { parseInstant, type BoundClubTime } from "@/lib/club-time";
 import type {
   StripeCredentialKey,
@@ -56,7 +59,7 @@ function SetStatus({ set, setAt }: { set: boolean; setAt: string | null }) {
 }
 
 async function writeCredential(key: StripeCredentialKey, value: string): Promise<void> {
-  const res = await fetch(CREDENTIALS_ENDPOINT, {
+  const res = await fetchWithRecentAuth(CREDENTIALS_ENDPOINT, {
     method: "POST",
     credentials: "same-origin",
     headers: { "Content-Type": "application/json" },
@@ -139,7 +142,7 @@ export function CredentialsStep({
   const [secretKey, setSecretKey] = useState("");
   const [publishableKey, setPublishableKey] = useState("");
   const [saving, setSaving] = useStepSaving(helpers);
-  const [error, setError] = useState("");
+  const failure = useActionFailure();
   const [success, setSuccess] = useState("");
   /*
     #2264 — the key SHAPE ("sk_test_…") is an example and now sits under the
@@ -157,7 +160,7 @@ export function CredentialsStep({
 
   async function handleSave() {
     setSaving(true);
-    setError("");
+    failure.clear();
     setSuccess("");
     try {
       // Write only the fields the operator actually filled in (Replace flow).
@@ -171,7 +174,7 @@ export function CredentialsStep({
       );
       helpers.refresh();
     } catch (saveError) {
-      setError(
+      failure.fail(
         saveError instanceof Error ? saveError.message : "Failed to save.",
       );
     } finally {
@@ -269,14 +272,11 @@ export function CredentialsStep({
         </FieldHint>
       </div>
 
-      {error ? (
-        <div
-          role="alert"
-          className="rounded-md border border-danger-6 bg-danger-3 px-3 py-2 text-sm text-danger-11"
-        >
-          {error}
-        </div>
-      ) : null}
+      <FocusedActionError
+        id="stripe-wizard-credentials-error"
+        error={failure.error}
+        attentionKey={failure.attentionKey}
+      />
       {success ? (
         <div
           role="status"
@@ -397,7 +397,7 @@ export function WebhookStep({
 }) {
   const [webhookSecret, setWebhookSecret] = useState("");
   const [saving, setSaving] = useStepSaving(helpers);
-  const [error, setError] = useState("");
+  const failure = useActionFailure();
   const [success, setSuccess] = useState("");
   // #2264 — same split as the key fields: the example shape becomes a hint, the
   // "replace" instruction stays a placeholder.
@@ -407,7 +407,7 @@ export function WebhookStep({
 
   async function handleSave() {
     setSaving(true);
-    setError("");
+    failure.clear();
     setSuccess("");
     try {
       if (webhookSecret.trim())
@@ -417,7 +417,7 @@ export function WebhookStep({
       setSuccess("Signing secret saved.");
       helpers.refresh();
     } catch (saveError) {
-      setError(
+      failure.fail(
         saveError instanceof Error ? saveError.message : "Failed to save.",
       );
     } finally {
@@ -520,14 +520,11 @@ export function WebhookStep({
         </FieldHint>
       </div>
 
-      {error ? (
-        <div
-          role="alert"
-          className="rounded-md border border-danger-6 bg-danger-3 px-3 py-2 text-sm text-danger-11"
-        >
-          {error}
-        </div>
-      ) : null}
+      <FocusedActionError
+        id="stripe-wizard-webhook-error"
+        error={failure.error}
+        attentionKey={failure.attentionKey}
+      />
       {success ? (
         <div
           role="status"

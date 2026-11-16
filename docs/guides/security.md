@@ -15,6 +15,25 @@ configure the `magicLink` and `googleLogin` modules you enable on
 [Modules](modules.md). See [`SECURITY.md`](../SECURITY.md) and the
 [disclosure policy](../../SECURITY.md) for the wider security posture.
 
+Destructive admin actions — restore, credentials, roles, erasure, refunds, the
+member export, and the others listed with them — call the same fresh-proof
+check. It is off, so this page has nothing new to configure, and the five
+minutes is not a setting.
+See [Confirm it's you](../SECURITY.md#confirm-its-you-4616).
+
+When officer sign-in is switched on (#4620), the same page also has an
+**Officer two-factor** card. A Full Admin can require an authenticator app or a
+passkey for Full Admins and for officers whose role can edit Finance or
+Support & System, and can set a grace period of 0 to 60 days (14 by default).
+Anyone else who can open the page sees that card but cannot change it. The
+same Full Admin sees who has not set one up yet. Resetting a lost factor is a
+button on the other person's account, after the Full Admin has confirmed it is
+them. It emails that person and ends their sessions. A club with one Full
+Admin uses `pnpm run auth:reset-factors -- --member <email>` instead.
+
+Suspected exposure or account compromise? Follow the [privacy-incident
+procedure](privacy-incidents.md) for containment, evidence and notification.
+
 ## When you'd use it
 
 - You want to raise password strength requirements for the whole club.
@@ -51,7 +70,7 @@ configure the `magicLink` and `googleLogin` modules you enable on
 3. In **Email sign-in link**, click **Edit**, confirm the enable toggle is on,
    set the link's expiry (a whole number of minutes between 5 and 60; default
    15), then **Save**. For **Google sign-in**, first set up and verify the
-   credentials in-app at **Admin → Integrations → Google sign-in** (no env vars);
+   credentials in-app at **Admin → Integrations → Google Sign-in Setup** (no env vars);
    the enable toggle on this card stays locked until a real Google OAuth round-trip
    verifies. Once verified, click **Edit**, turn it on, then **Save**.
 
@@ -64,7 +83,7 @@ configure the `magicLink` and `googleLogin` modules you enable on
 | Sign members out after (hours) | The most time a signed-in session lasts from sign-in, however active | Default 168 hours (7 days), 8 to 720; nothing extends it; the lodge kiosk keeps its own 30 days ([details](../SECURITY.md#maximum-session-age-4611)) |
 | Email sign-in link (magic link) | Passwordless single-use email sign-in | Requires the `magicLink` module and configured transactional email; additive to password login, never a replacement, for existing verified members only |
 | Magic-link expiry | How long a sign-in link stays valid | Default 15 minutes |
-| Google sign-in | Sign in with a linked Google account | Requires the `googleLogin` module **and** Google OAuth credentials entered + verified in-app (Admin → Integrations → Google — encrypted at rest, no env vars); the module can't be enabled until verification passes; a member links their own Google account from their profile; no account is ever created from Google |
+| Google sign-in | Sign in with a linked Google account | Requires the `googleLogin` module **and** Google OAuth credentials entered + verified in-app (Admin → Integrations → Google Sign-in Setup — encrypted at rest, no env vars); the module can't be enabled until verification passes; a member links their own Google account from their profile; no account is ever created from Google |
 
 Two-factor authentication is a related sign-in control, but it is switched on as
 the `twoFactor` module on [Modules](modules.md).
@@ -74,7 +93,7 @@ the `twoFactor` module on [Modules](modules.md).
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | The email sign-in card is inert | The `magicLink` module is off, or email delivery isn't configured | Enable it on [Modules](modules.md); configure transactional email in [`CONFIGURATION.md`](../../CONFIGURATION.md) |
-| No Google button appears for members | The `googleLogin` module is off, or the credentials aren't set up / verified | Set up and verify Google at Admin → Integrations → Google sign-in, then enable the module on Login & Security |
+| No Google button appears for members | The `googleLogin` module is off, or the credentials aren't set up / verified | Set up and verify Google at Admin → Integrations → Google Sign-in Setup, then enable the module on Login & Security |
 | Can't turn on Google sign-in (toggle locked) | Google hasn't been verified yet, or a credential was replaced (re-locks) | Run the Verify step in the Google sign-in setup wizard |
 | Stored Google credentials stopped working after an `AUTH_SECRET` rotation, or a data-encryption key was removed or unset | Encrypted credentials can no longer be decrypted (see [`DEPLOYMENT.md`](../../DEPLOYMENT.md#adding-a-data-encryption-key-4456)) | Re-enter and re-verify them in the Google sign-in setup wizard |
 | A member can't sign in with Google | Their Google account isn't linked | They link it from their own profile while signed in; unlinked accounts are refused |

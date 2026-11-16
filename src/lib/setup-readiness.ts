@@ -2,7 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { bookableAgeTierEnum } from "@/lib/age-tier-schema";
 import { isHttpUrl } from "@/lib/http-url";
-import { adminAnchorHref, adminHref, adminTabHref, getAdminPage } from "@/lib/admin-hubs";
+import { adminHref, adminTabHref, getAdminPage } from "@/lib/admin-hubs";
+import { xeroMappingHref } from "@/lib/admin-hubs/xero-setup";
 import {
   CLUB_TIME_ZONE_FALLBACK,
   CLUB_TIME_ZONE_MAX_LENGTH,
@@ -16,6 +17,7 @@ import {
 import { usableClubCurrencyCode } from "@/lib/club-format";
 import { clubFormatXeroBaseCurrencyMismatch } from "@/lib/club-format-copy";
 import { xeroBaseCurrencyMismatch } from "@/lib/xero-base-currency";
+import { SEED_COMMAND_DETAILS } from "@/lib/seed-commands";
 /*
   TYPE-ONLY, and it has to stay that way. `environment-role.ts` imports
   `@/lib/prisma`, and this module is imported by the `tsx` entrypoints
@@ -40,13 +42,11 @@ import {
   type AdminModuleSettingsSnapshot,
 } from "./admin-modules";
 import { resolveEmailDeliveryConfigFromEnv } from "@/lib/email-delivery";
-import {
-  XERO_REQUIRED_REPORT_OAUTH_SCOPES,
-  detectLegacyProviderEnv,
-} from "@/lib/xero-config";
+import { XERO_REQUIRED_REPORT_OAUTH_SCOPES, detectLegacyProviderEnv } from "@/lib/xero-config";
 import { authSecretWeaknessReason } from "@/lib/integration-crypto";
 import { DATA_ENCRYPTION_KEYS_ENV, DATA_ENCRYPTION_LEGACY_KEY_ENV } from "@/lib/data-encryption-key-material";
 import { buildDataEncryptionKeyCheck, type DataKeyRingSource, type DataKeyUsageSnapshot } from "@/lib/setup-readiness-data-keys";
+import { buildDatabaseRoleCheck, type DatabaseRoleSnapshot } from "@/lib/setup-readiness-database-role";
 
 export const SETUP_STEP_IDS = [
   "club-config",
@@ -55,6 +55,7 @@ export const SETUP_STEP_IDS = [
   "runtime-env",
   "auth-secret-strength",
   "data-encryption-keys",
+  "database-role",
   "seed-admin",
   "feature-flags",
   "booking-policies",
@@ -227,6 +228,8 @@ export interface SetupDatabaseSnapshot {
   lodgesNotSetUpForBookings?: string[];
   /** Stored data by the key each row names (#4456). Undefined when not checked. */
   dataKeyUsage?: DataKeyUsageSnapshot;
+  /** Server-reported connection privileges, omitted when the read fails. */
+  databaseRole?: DatabaseRoleSnapshot;
 }
 
 /*
@@ -1053,9 +1056,9 @@ const ENVIRONMENT_ROLE_VERSUS_RUNTIME_ROLE_DETAIL =
  * 3. **PRODUCTION** — complete, and the message SAYS production, because an
  *    operator who has just stood up a copy needs to see at a glance that they
  *    are looking at the live club and not at their copy.
- * 4. **NON_PRODUCTION** — complete, naming which source decided it. A declared
- *    non-production and an administrator-forced one are both fine and are
- *    different facts, so the message distinguishes them.
+ * 4. **NON_PRODUCTION** — declared by the deployment: a WARNING until acknowledged
+ *    (#4980), because a live site copied from `.env.example` lands here too. Forced
+ *    by the safer override alone: complete, since an administrator chose it here.
  * 5. **UNKNOWN** — blocked, naming both sources, the repair, and the
  *    APP_RUNTIME_ROLE trap. Two quite different situations land here — nothing
  *    declared, and a declaration this app refuses to interpret — so the
@@ -1157,14 +1160,14 @@ function buildEnvironmentRoleCheck(
 
   // 4. Confirmed non-production.
   if (resolution.role === "NON_PRODUCTION") {
+    const forcedByAdministrator = resolution.decidedBy === "database-safer-override";
     return applyProgress(
       {
         ...base,
-        status: "complete",
-        message:
-          resolution.decidedBy === "database-safer-override"
-            ? "This installation is treated as NON-PRODUCTION because an administrator has switched the safer override on."
-            : "This installation is declared NON-PRODUCTION — a copy, a staging site or a developer's checkout.",
+        status: forcedByAdministrator ? "complete" : "warning",
+        message: forcedByAdministrator
+          ? "This installation is treated as NON-PRODUCTION because an administrator has switched the safer override on."
+          : `This installation is declared NON-PRODUCTION — a copy, a staging site or a developer's checkout. If this is the club's live site, members are getting no email and Xero contact addresses are being replaced. Set APP_ENVIRONMENT_ROLE=production and restart. If it really is a copy, acknowledge this step.`,
         /*
           THE WITHHELD COUNT GOES FIRST. It answers the question an operator
           meeting an unexpected non-production installation actually has — "is
@@ -1316,7 +1319,7 @@ function buildSeedAdminCheck(
         details: [
           "Run setup:check again inside an environment with database access, or review /admin/setup after login.",
         ],
-        href: "/admin/members",
+        href: adminHref("members"),
       },
       progress,
     );
@@ -1334,12 +1337,12 @@ function buildSeedAdminCheck(
       message:
         adminCount > 0
           ? `${adminCount} administrator account${adminCount === 1 ? "" : "s"} found.`
-          : "Run the seed command after setting SEED_ADMIN_EMAIL and SEED_ADMIN_PASSWORD.",
+          : "Run the seed command after setting SEED_ADMIN_EMAIL, SEED_ADMIN_PASSWORD and SEED_LODGE_PASSWORD.",
       details:
         adminCount > 0
           ? ["Admin login is available."]
-          : ["Command: pnpm run db:seed"],
-      href: "/admin/members",
+          : [...SEED_COMMAND_DETAILS],
+      href: adminHref("members"),
     },
     progress,
   );
@@ -1676,7 +1679,7 @@ function buildKeyRateHolderCheck(
           ? "A built-in membership type needs repair. Open Membership Types to reactivate it or restore its booking behavior."
           : "Full and Non-Member membership types are ready.",
       details: db ? warnings : ["Check membership types after connecting the database."],
-      href: "/admin/membership-types",
+      href: adminHref("membership-types"),
     },
     progress,
   );
@@ -2073,8 +2076,8 @@ function buildXeroMappingCheck(
         status: "warning",
         required: false,
         message: "Xero mapping database state was not checked.",
-        details: [`Review mappings on ${getAdminPage("xero").label} after connecting Xero.`],
-        href: adminAnchorHref("xero", "xero-section-mappings"),
+        details: [`Review mappings in ${getAdminPage("xero-setup").label} after connecting Xero.`],
+        href: xeroMappingHref(),
       },
       progress,
     );
@@ -2129,7 +2132,7 @@ function buildXeroMappingCheck(
         `Hut fee item mappings: ${hutFeeMappings}`,
         `Joining fee mappings: ${entranceFeeMappings}`,
       ],
-      href: adminAnchorHref("xero", "xero-section-mappings"),
+      href: xeroMappingHref(),
     },
     progress,
   );
@@ -2168,6 +2171,7 @@ export function buildSetupReadiness(
       buildRuntimeEnvCheck(env, progress),
       buildAuthSecretStrengthCheck(env, progress),
       applyProgress(buildDataEncryptionKeyCheck(readEnv(env, DATA_ENCRYPTION_KEYS_ENV), input.database?.dataKeyUsage, readEnv(env, "AUTH_SECRET") ?? readEnv(env, "NEXTAUTH_SECRET"), readEnv(env, DATA_ENCRYPTION_LEGACY_KEY_ENV), input.dataKeySource ?? "shell"), progress),
+      applyProgress(buildDatabaseRoleCheck(input.database?.databaseRole), progress),
       buildSeedAdminCheck(input.database, progress),
       buildFeatureFlagCheck(input.database, progress),
     ],
@@ -2234,34 +2238,11 @@ export function buildSetupReadiness(
   };
 }
 
-export function renderSetupCheckReport(readiness: SetupReadiness): string {
-  const lines = [
-    `Setup readiness: ${readiness.status}`,
-    `Complete ${readiness.summary.complete}/${readiness.summary.total}, warnings ${readiness.summary.warning}, blocked ${readiness.summary.blocked}, skipped ${readiness.summary.skipped}`,
-    "",
-  ];
-
-  for (const category of readiness.categories) {
-    lines.push(`${category.title} (${category.status})`);
-    for (const check of category.checks) {
-      const progressLabel =
-        check.progress === "open" ? "" : `, ${check.progress}`;
-      lines.push(
-        `- ${check.title}: ${check.status}${progressLabel} - ${check.message}`,
-      );
-      for (const detail of check.details) {
-        lines.push(`  ${detail}`);
-      }
-    }
-    lines.push("");
-  }
-
-  return lines.join("\n").trimEnd();
-}
-
 export function getSetupRequiredEnvNames(): string[] {
   return [
     ...REQUIRED_RUNTIME_ENV,
+    // Wizard reminder only; an unset ring remains valid at runtime.
+    DATA_ENCRYPTION_KEYS_ENV,
     "AUTH_SECRET or NEXTAUTH_SECRET",
     // Stripe credentials (secret/publishable keys, webhook signing secret) are
     // captured in-app now (#2082) — they are no longer required env.

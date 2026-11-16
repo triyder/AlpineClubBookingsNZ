@@ -53,7 +53,12 @@ vi.mock("next/navigation", () => ({
 vi.mock("@/lib/auth", () => ({ auth: mocks.auth }));
 
 vi.mock("@/lib/prisma", () => ({
-  prisma: { member: { findUnique: mocks.memberFindUnique } },
+  prisma: {
+    member: { findUnique: mocks.memberFindUnique },
+    webAuthnCredential: { findMany: async () => [] },
+    deletionRequest: { findFirst: async () => null },
+    emailChangeToken: { findFirst: async () => null },
+  },
 }));
 
 vi.mock("@/lib/promo", () => ({
@@ -106,7 +111,7 @@ vi.mock("../notification-preferences", () => ({
   NotificationPreferences: () => <section>Notification preferences</section>,
 }));
 
-vi.mock("../family-group-section", () => ({
+vi.mock("@/components/profile/family-group-section", () => ({
   FamilyGroupSection: () => <section>Family group section</section>,
 }));
 
@@ -153,6 +158,7 @@ const MODULE_FLAGS = {
   hutLeaders: false,
   communications: false,
   skifieldConditions: false,
+  skifieldWhakapapa: false,
   twoFactor: false,
   analytics: false,
 };

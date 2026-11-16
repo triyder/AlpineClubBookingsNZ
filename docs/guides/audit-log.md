@@ -508,7 +508,7 @@ and the data download rather than every page that happens to quote an entry.
 
 `Category` is optional in the database, and **82 of the platform's places that
 record an audit entry used not to set one**. As of this release **none do**: all
-544 now record a category, measured on every build rather than estimated.
+555 now record a category, measured on every build rather than estimated.
 
 **And a new one can no longer forget.** Recording an entry without a category is
 now refused three separate ways. Giving the 82 places a category and stopping the
@@ -530,7 +530,7 @@ that order and both landing in this release; this is the second:
    maintenance script outside the normal path.
 
 The practical effect for you: an entry recorded the ordinary way — through the
-platform’s own recording step, which is how every one of the 544 places does it —
+platform’s own recording step, which is how every one of the 555 places does it —
 cannot be born without a category any more. **It is not a mathematical
 guarantee**, and it is worth saying so rather than overclaiming: someone writing
 directly to the database table in a migration, or building a query by hand, is
@@ -793,6 +793,9 @@ for a change that did not happen, and a change cannot happen without its entry.
 | `integration.credential.set` on `xero-oauth:token-set` | Xero is connected (`cause: oauth-connect`), or its access token is refreshed automatically (`cause: token-refresh`) | The connecting administrator, or **System** with `systemActor: xero-token-refresh` |
 | `integration.credential.deleted` on `xero-oauth:token-set` | Xero is disconnected (`cause: oauth-disconnect`), or the tokens are destroyed because somebody saved a new Xero client id or secret (`cause: verify-reset`) | The administrator |
 | `security.two_factor.enrolled` | A member turns on two-factor sign-in | The member themself |
+| `security.two_factor.passkey_registered` | A member saves a passkey | The member themself. Metadata is the name and credential id, never the public key |
+| `security.two_factor.passkey_removed` | A member removes a passkey | The member themself. Metadata is the name and credential id |
+| `security.two_factor.passkey_counter_regressed` | A passkey reports a counter that went backwards, or a counter update lost the compare-and-set | The member themself. Metadata is the credential id and the two counters |
 | `security.two_factor.recovery_codes_replaced` | A member replaces their recovery codes, which invalidates every unused one | The member themself |
 | `security.two_factor.cleared` | An account erasure, or the former-member retention job (#4457), clears a member's second factor | The administrator who approved the erasure, or **System** with `systemActor: former-member-anonymisation` |
 | `security.two_factor.secret_rewrapped` | `pnpm run data-keys:reencrypt` re-encrypts the member's authenticator secret, unchanged, under the current data-encryption key (#4456); their app keeps working | **System** with `systemActor: data-key-reencrypt` |

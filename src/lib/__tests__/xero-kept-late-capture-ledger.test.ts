@@ -25,12 +25,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  *    settled from the Stripe account - the caps `xero-booking-invoice.test.ts`
  *    pins;
  *  - the change payment's supplementary invoice (case e2): a WAITING one naming
- *    the capture, or one the reaper retired `STALE_WAITING_PAYMENT` (re-queued
- *    from that row), is released as the gross ask paid from Stripe, which
- *    `xero-supplementary-invoices.test.ts` pins. #4324: with none waiting the
- *    model releases NOTHING, as the real release then answers `none-queued`
- *    on a cancelled booking - it used to invent a paid invoice, which hid
- *    that a kept change capture went unrecorded;
+ *    the capture is released as the gross ask paid from Stripe, which
+ *    `xero-supplementary-invoices.test.ts` pins. One the reaper retired
+ *    `STALE_WAITING_PAYMENT` is set PENDING by the keep's plan (the real
+ *    revival's guarded update; this store cannot run that SQL) and the
+ *    release model then sends that PENDING row once. #4324: with none waiting
+ *    or revived the model releases NOTHING, as the real release then answers
+ *    `none-queued` on a cancelled booking - it used to invent a paid invoice,
+ *    which hid that a kept change capture went unrecorded;
  *  - (#3924 round 6) the "Paid another way" close's own writes - the money on
  *    the payment, its record, and the one Xero row it queues - whose order and
  *    locks `card-refund-paid-another-way.test.ts` pins. What it queues is the
@@ -173,7 +175,9 @@ vi.mock("@/lib/logger", () => ({
 vi.mock("@/lib/audit", () => ({ logAudit: vi.fn() }));
 vi.mock("@/lib/email", () => ({ sendAdminXeroSyncErrorAlert: vi.fn() }));
 vi.mock("@/lib/xero-token-store", () => ({ isXeroConnected: async () => false }));
-vi.mock("@/lib/xero-sync", () => ({
+vi.mock("@/lib/xero-sync", async (importOriginal) => {
+  const actualXeroSync = (await importOriginal()) as typeof import("@/lib/xero-sync");
+  return {
   buildXeroIdempotencyKey: (...parts: unknown[]) => parts.join(":"),
   sanitizeForJson: (value: unknown) => value,
   startXeroSyncOperation: async (input: Record<string, unknown>) => {
@@ -206,6 +210,11 @@ vi.mock("@/lib/xero-sync", () => ({
       .table("xeroObjectLink")
       .filter((l) => l.localModel === "Payment" && l.localId === paymentId && l.role === "REFUND_CREDIT_NOTE" && l.active)
       .reduce((sum, l) => sum + ((l.metadata as { amountCents: number }).amountCents ?? 0), 0),
+  // #4936: the same links' recorded cents, for many payments in one read. The
+  // real bulk read over this harness's tables, so a voided or unrounded link
+  // counts here exactly as it does in production (no hand-copied rule).
+  readActiveRefundNoteMetadataCentsByPayment: (paymentIds: readonly string[]) =>
+    actualXeroSync.readActiveRefundNoteMetadataCentsByPayment(paymentIds, h.db as never),
   findCanonicalPaymentRefundCreditNote: async () => null,
   upsertXeroObjectLink: async (link: Record<string, unknown>) => {
     h.writeLinks([link]);
@@ -214,7 +223,8 @@ vi.mock("@/lib/xero-sync", () => ({
     const row = h.table("xeroSyncOperation").find((r) => r.id === claim.id)!;
     row.status = "FAILED";
   },
-}));
+};
+});
 vi.mock("@/lib/xero-api-client", () => ({
   getAuthenticatedXeroClient: async () => ({
     tenantId: "tenant",
@@ -305,26 +315,50 @@ vi.mock("@/lib/stripe", () => ({
     return { created: 1781053200, latest_charge: { created: 1781053200 } };
   },
 }));
-vi.mock("@/lib/xero-supplementary-invoice-late-capture", async (importOriginal) => ({
-  // The REAL retired codes the keep's evidence reads (#4324).
-  RETIRED_CODES_ANSWERING_CAPTURE: (
-    (await importOriginal()) as typeof import("@/lib/xero-supplementary-invoice-late-capture")
-  ).RETIRED_CODES_ANSWERING_CAPTURE,
+// The keep's evidence reads the REAL retired codes (#4324), from
+// `xero-supplementary-invoice-capture-rules`, which is not mocked.
+vi.mock("@/lib/xero-supplementary-invoice-late-capture", () => ({
   // The approval task decides (`decideLateCapture`'s task arm), as every late capture here has one.
   lateCaptureRefundState: async ({ paymentIntentId }: { paymentIntentId: string }) => {
     const task = h.table("manualRefundTask").find((r) => r.lateCaptureApprovalIntentId === paymentIntentId);
     return task?.status === "DISMISSED" ? "kept" : task?.status === "OPEN" ? "awaiting-decision" : "refunded";
   },
+  // The keep's in-transaction revival (#4382). The real write is a guarded
+  // updateMany; this store is not where that SQL runs. A STALE_WAITING_PAYMENT
+  // row on the anchor becomes PENDING before finish. CAPTURED and COVERED stay.
+  reviveRetiredChangeInvoiceForKeptCapture: async ({
+    paymentIntentId,
+    anchorId,
+  }: {
+    paymentIntentId: string;
+    anchorId: string;
+  }) => {
+    const retired = h.table("xeroSyncOperation").filter(
+      (r) =>
+        r.queueType === "SUPPLEMENTARY_INVOICE" &&
+        r.status === "CANCELLED" &&
+        r.lastErrorCode === "STALE_WAITING_PAYMENT" &&
+        r.localId === anchorId &&
+        (r.requestPayload as { paymentIntentId?: string }).paymentIntentId === paymentIntentId,
+    );
+    for (const row of retired) {
+      row.status = "PENDING";
+      row.startedAt = null;
+      row.completedAt = null;
+      row.lastErrorCode = null;
+      row.lastErrorMessage = null;
+    }
+  },
   // MODEL of the change's supplementary invoice (case e2): see the docblock.
   releaseXeroSupplementaryInvoiceForCapturedPaymentIntent: async (paymentIntentId: string) => {
     const capture = h.table("paymentTransaction").find((r) => r.stripePaymentIntentId === paymentIntentId)!;
-    // A waiting one is released; one the reaper retired (`STALE_WAITING_PAYMENT`) is re-queued from that row.
+    // A waiting invoice, or one the keep already revived to PENDING, is sent once.
     const waiting = h
       .table("xeroSyncOperation")
       .find(
         (r) =>
           r.queueType === "SUPPLEMENTARY_INVOICE" &&
-          (r.status === "WAITING_PAYMENT" || (r.status === "CANCELLED" && r.lastErrorCode === "STALE_WAITING_PAYMENT")) &&
+          (r.status === "WAITING_PAYMENT" || r.status === "PENDING") &&
           (r.requestPayload as { paymentIntentId?: string }).paymentIntentId === paymentIntentId,
       );
     if (!waiting) return { released: 0, queueOperationIds: [], outcome: "none-queued" };
@@ -368,7 +402,7 @@ import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { recordAdditionalCaptureReceipt } from "@/lib/additional-capture-xero-receipt";
 import { createXeroPaymentForInvoice } from "@/lib/xero-invoice-payments";
 import type { ClubTimeZone } from "@/lib/club-time";
-import { xeroClaim } from "@/lib/__tests__/helpers/xero-claim";
+import { TEST_XERO_CLAIMED_AT, xeroClaim } from "@/lib/__tests__/helpers/xero-claim";
 
 const ZONE = "Pacific/Auckland" as ClubTimeZone;
 const CAPTURED_AT = new Date("2026-06-10T01:00:00.000Z"); // 10 Jun at the club
@@ -584,7 +618,10 @@ async function runOutbox() {
   for (const row of h.table("xeroSyncOperation").filter(
     (r) => r.queueType === "ADDITIONAL_CAPTURE_RECEIPT" && r.status === "PENDING",
   )) {
+    // As the real outbox's claim: RUNNING with this claim's `startedAt`, which
+    // the receipt's guarded plan store (#4434, `INV-INT-029`) matches on.
     row.status = "RUNNING";
+    row.startedAt = TEST_XERO_CLAIMED_AT;
     await recordAdditionalCaptureReceipt({ syncOperation: xeroClaim(row.id) }, receiptProviders).catch(() => undefined);
   }
   for (const note of h.table("xeroSyncOperation").filter(
@@ -776,18 +813,36 @@ describe("a kept late capture is counted once in Xero", () => {
   /**
    * #4324 (`INV-PAY-144`): a change invoice the reaper RETIRED still answers
    * the capture it names (`RETIRED_CODES_ANSWERING_CAPTURE`), though every row
-   * the change has is CANCELLED - so the keep leaves it to the late-success
-   * release and never raises the kept-capture invoice or a receipt beside it.
+   * the change has is CANCELLED. #4382: the keep re-queues a
+   * `STALE_WAITING_PAYMENT` row before finish; the release model sends that
+   * PENDING row once. CAPTURED and COVERED stay retired. Never a kept-capture
+   * invoice or a receipt beside it.
    */
   const keptRows = (queueType: string) => h.table("xeroSyncOperation").filter((r) => r.queueType === queueType);
-  it("MUTATION (e2) a change invoice retired STALE_WAITING_PAYMENT is re-queued by the release and records the capture once", async () => {
+  it("MUTATION (e2) a change invoice retired STALE_WAITING_PAYMENT is PENDING when the plan returns, and the release sends it once", async () => {
     seed({ kind: "ADDITIONAL", cents: 2500, primaryInvoice: { cents: 30000 }, change: { invoice: "retired" } });
-    await keep();
-    await runOutbox();
-    expect(books()).toEqual({ income: 2500, stripe: 2500, receivable: 0 });
+    task().status = "DISMISSED";
+    const plan = await planKeptLateCaptureXeroRecord({
+      manualRefundTaskId: TASK,
+      bookingId: BOOKING,
+      paymentIntentId: INTENT,
+      actingMemberId: "treasurer",
+      clubZone: ZONE,
+      store: h.db as never,
+    });
+    expect(plan).toEqual({ kind: "change-payment", paymentIntentId: INTENT });
+    expect(keptRows("SUPPLEMENTARY_INVOICE")).toEqual([
+      expect.objectContaining({ id: expect.any(String), status: "PENDING", lastErrorCode: null }),
+    ]);
     expect(keptRows("KEPT_LATE_CAPTURE_INVOICE")).toHaveLength(0);
     expect(keptRows("ADDITIONAL_CAPTURE_RECEIPT")).toHaveLength(0);
+    expect(books()).toEqual({ income: 0, stripe: 0, receivable: 0 });
+    await finishKeptLateCaptureXeroRecord(plan);
+    await runOutbox();
+    expect(books()).toEqual({ income: 2500, stripe: 2500, receivable: 0 });
     expect(keptRows("SUPPLEMENTARY_INVOICE")).toEqual([expect.objectContaining({ status: "SUCCEEDED" })]);
+    expect(keptRows("KEPT_LATE_CAPTURE_INVOICE")).toHaveLength(0);
+    expect(keptRows("ADDITIONAL_CAPTURE_RECEIPT")).toHaveLength(0);
   });
 
   for (const retiredCode of ["STALE_WAITING_PAYMENT_CAPTURED", "STALE_WAITING_PAYMENT_COVERED"]) {

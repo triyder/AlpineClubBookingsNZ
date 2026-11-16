@@ -17,7 +17,8 @@ vi.mock("next/dynamic", () => ({
 }));
 
 vi.mock("@/components/club-identity-provider", () => ({
-  useClubIdentity: () => ({ name: "Test Club", bookingsName: "Bookings" }),
+  // The real identity always carries a short name; the CSV filename is built from it (#4932).
+  useClubIdentity: () => ({ name: "Test Club", shortName: "Mt Hutt SC", bookingsName: "Bookings" }),
 }));
 
 let lodgeOptions: {
@@ -49,6 +50,7 @@ import { ClubTimeProvider } from "@/components/club-time-provider";
 import { ENVIRONMENT_CLUB_ZONE } from "@/lib/__tests__/helpers/environment-club-zone";
 import { getReportsDatasetDefaults } from "@/lib/admin-dataset-reset-state";
 import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone";
+import { itShowsEveryRefusal } from "@/lib/__tests__/support/failed-write-cases";
 
 const EMPTY_REPORT = {
   summary: {
@@ -350,7 +352,11 @@ describe("ReportsPage quick ranges", () => {
     const createObjectUrl = vi.fn<(blob: Blob) => string>(() => "blob:report");
     Object.defineProperty(URL, "createObjectURL", { configurable: true, value: createObjectUrl });
     Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
-    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+    // Records the name the browser would save the file under instead of downloading.
+    const downloadNames: string[] = [];
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
+      downloadNames.push(this.download);
+    });
 
     render(<ReportsPage />);
     const warning = await screen.findByRole("alert");
@@ -365,6 +371,8 @@ describe("ReportsPage quick ranges", () => {
     await waitFor(() => expect(csvButton).toBeEnabled());
     fireEvent.click(csvButton);
 
+    // Named from the club's short name, not the reference club's initials (#4932).
+    expect(downloadNames).toEqual([expect.stringMatching(/^mt-hutt-sc-report-\d{4}-\d{2}-\d{2}\.csv$/)]);
     const blob = createObjectUrl.mock.calls[0][0] as Blob;
     const csv = await blob.text();
     expect(csv).toContain("Booked Revenue,100.00");
@@ -443,6 +451,60 @@ describe("stale responses never own the screen (#2378 fix round)", () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(bookingsCard?.textContent).toContain("1");
     expect(bookingsCard?.textContent).not.toContain("4");
+  });
+});
+
+describe("a range the API refuses (#4937)", () => {
+  it("shows the API's message in place of the previous range's figures", async () => {
+    const message =
+      "Reports cover at most 732 days (about two years); this range is 3653 days. Choose a shorter range.";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        url.includes("from=2020-01-01")
+          ? new Response(JSON.stringify({ error: message }), {
+              status: 400,
+              headers: { "Content-Type": "application/json" },
+            })
+          : new Response(JSON.stringify(EMPTY_REPORT), {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            }),
+      ),
+    );
+
+    render(<ReportsPage />);
+    expect(await screen.findByText("Total Bookings")).toBeInTheDocument();
+
+    fireEvent.change(await screen.findByLabelText("From"), {
+      target: { value: "2020-01-01" },
+    });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(message);
+    expect(screen.queryByText("Total Bookings")).not.toBeInTheDocument();
+  });
+
+  // A refusal is not always JSON: the proxy answers a crashed route with HTML
+  // (ALP-589).
+  describe("whatever the refusal looks like", () => {
+    afterEach(() => vi.unstubAllGlobals());
+
+    itShowsEveryRefusal({
+      fallback: "Failed to fetch reports",
+      submit: async (answer) => {
+        vi.stubGlobal(
+          "fetch",
+          vi.fn(async (url: string) =>
+            url.includes("from=2020-01-01") ? answer() : Response.json(EMPTY_REPORT),
+          ),
+        );
+        render(<ReportsPage />);
+        expect(await screen.findByText("Total Bookings")).toBeInTheDocument();
+        fireEvent.change(await screen.findByLabelText("From"), {
+          target: { value: "2020-01-01" },
+        });
+      },
+    });
   });
 });
 

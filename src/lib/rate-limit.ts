@@ -401,8 +401,8 @@ export async function applyMemberScopedRateLimit(
 
 // Pre-configured rate limiters for common routes
 export const rateLimiters = {
-  /** Login: 10 attempts per 15 minutes */
-  login: { id: "login", limit: 10, windowSeconds: 15 * 60, authSensitive: true } as RateLimitConfig,
+  /** Login per address: 30 per 15 minutes, a shared-network backstop to the per-account throttle */
+  login: { id: "login", limit: 30, windowSeconds: 15 * 60, authSensitive: true } as RateLimitConfig,
   /** Register: 5 attempts per hour */
   register: { id: "register", limit: 5, windowSeconds: 60 * 60, authSensitive: true } as RateLimitConfig,
   /** Membership application: 3 submissions per hour */
@@ -462,6 +462,8 @@ export const rateLimiters = {
   familyGroupJoinRequest: { id: "family-group-join-request", limit: 3, windowSeconds: 60 * 60 } as RateLimitConfig,
   /** Personal data export: 5 per day */
   dataExport: { id: "data-export", limit: 5, windowSeconds: 24 * 60 * 60 } as RateLimitConfig,
+  /** Full Admin subject access report (#4915): 20 per officer per day */
+  subjectAccessReport: { id: "subject-access-report", limit: 20, windowSeconds: 24 * 60 * 60 } as RateLimitConfig,
   /** Account deletion request: 3 per day */
   deletionRequest: { id: "deletion-request", limit: 3, windowSeconds: 24 * 60 * 60 } as RateLimitConfig,
   /** Membership cancellation request: 3 per day */

@@ -12,7 +12,8 @@ password throttle, what a refused or throttled sign-in answers, the
 per-account limits on password-reset and sign-in-link requests, anything that
 keys a limit on an account rather than an internet address, any code that
 writes `passwordHash`, the session token's `jwt` callback and
-`sessionIssuedAt`, or `lastAuthenticatedAt` and `requireRecentAuth`.
+`sessionIssuedAt`, `lastAuthenticatedAt` and `requireRecentAuth`, or a
+passkey used as a second sign-in step.
 
 Index: [`docs/DOMAIN_INVARIANTS.md`](../DOMAIN_INVARIANTS.md) — every `INV-*` ID
 with a one-line description of what it covers. ID scheme and allocation rules:
@@ -83,8 +84,9 @@ This file holds only the rules.
   budget** (#4640). Change-password uses the authenticated member's stored
   email after session validation; a refused claim answers HTTP 429 with
   `LOGIN_THROTTLED` without comparing the password. Emailed sign-in links, Google, two-factor code
-  entry and lodge PIN sign-in are unaffected, and the per-address limiter is
-  unchanged.
+  entry and lodge PIN sign-in are unaffected by this per-account count.
+  Emailed sign-in links and Google share the Auth.js address limit
+  (`INV-AUTH-011`); two-factor code entry and lodge PIN sign-in have their own.
 - **A store failure never becomes a sign-in outage.** The claim falls back to a
   bounded per-process count at the budget divided as the auth-sensitive
   limiters divide theirs (#1142).
@@ -136,7 +138,8 @@ This file holds only the rules.
   returning, before the write in an enclosing block — nor listed as exempt
   with its reason: a generated or deliberately unusable hash (placeholders,
   imports, erasure, the demo seed, SQL fixtures). An exempt writer's value
-  must trace to random bytes, the erased-account sentinel or an inline
+  must trace to random bytes, the imported unusable-placeholder constant,
+  the erased-account sentinel or an inline
   literal; a stored parameter or copied hash, to the screened or generated
   writer its `valueFrom` names. A copy is refused if its object is changed;
   an alias or call that changes the screened object voids a screen. Only the
@@ -177,19 +180,128 @@ This file holds only the rules.
 - **A session records when the person last proved who they are.**
   `requireRecentAuth` in
   [`require-recent-auth.ts`](../../src/lib/require-recent-auth.ts) is the one
-  check (`INV-SSOT`). It passes only when `lastAuthenticatedAt` is a finite
-  epoch millisecond and is not older than five minutes. A missing stamp fails
-  closed. No route calls it yet.
+  check (`INV-SSOT`). Listed routes call it (`INV-AUTH-010`). While the
+  officer sign-in switch is off, the check does not read the session, and a
+  missing stamp still passes. While the switch is on, it passes only when
+  `lastAuthenticatedAt` is a finite epoch millisecond and is not older than
+  five minutes, and a missing stamp fails closed.
 - **The five minutes is a security floor, not a club setting.**
-- **Only sign-in completion, or consuming a reauthentication challenge, writes
-  the stamp.** The `jwt` callback in [`auth.ts`](../../src/lib/auth.ts) sets it
-  when a sign-in mints the token and when a two-factor session challenge is
-  consumed, and again when it claims a `SessionReauthChallenge`. A
-  `session.update()` payload that carries the field is ignored. The challenge
-  is server-minted, stored as a keyed hash, bound to one member, and consumed
-  by one status-guarded claim.
-- **The proof is an authenticator-app code, a passkey once one exists, or the
-  password only when the person has neither.** An emailed code and a recovery
-  code are never accepted. A failed proof counts toward the two-factor lockout,
-  or the per-account password throttle when the proof is the password.
+- **A password proof writes the stamp only when no authenticator factor is
+  still owed.** An email factor does not count as owed, so that password step
+  writes it and the later emailed code does not. An authenticator-app consume
+  writes it, including enrolment. An emailed link, Google, a recovery code,
+  and an emailed code do not, and none of them clears a stamp already there.
+  The `jwt` callback in [`auth.ts`](../../src/lib/auth.ts) decides this from
+  server-side facts: the credentials provider, the member row after reload,
+  and the kind prefixed into the hashed two-factor challenge. A
+  reauthentication challenge still writes it. A `session.update()` payload
+  that carries the time, or a proof kind, is ignored. Each challenge is
+  server-minted, stored as a keyed hash, and bound to one member. The
+  reauthentication challenge is consumed by one status-guarded claim.
+- **The confirm dialog accepts an authenticator-app code, a passkey once one
+  exists (`INV-AUTH-009`), or the password only when the person has neither.**
+  An emailed code and a recovery code are never accepted there. A failed proof
+  counts toward the two-factor lockout, or the per-account password throttle
+  when the proof is the password.
 - **The confirm dialog replays the refused request once, with the same body.**
+
+## INV-AUTH-009
+
+- **A passkey enrols a member without changing `twoFactorEnabled`.** That flag
+  still means an authenticator app or an emailed code. `isSecondFactorEnrolled`
+  in [`second-factor-enrolment.ts`](../../src/lib/second-factor-enrolment.ts)
+  is the only enrolment rule (`INV-SSOT`): true when the flag is on, a passkey
+  is stored, or the session already says enrolled.
+- **An officer's second factor is an authenticator app or a passkey.**
+  `satisfiesOfficerSecondFactor` is true for a stored passkey, or for the flag
+  on with method `TOTP`. Email never qualifies. Who must enrol, and the refusal
+  to remove their last such factor, are `INV-AUTH-012`.
+- **The relying party comes from `NEXTAUTH_URL`.** The id is its hostname and
+  the expected origin is its origin. A missing or unparseable URL throws. No
+  host is hardcoded (`INV-CONFIG-001`).
+- **A challenge is single-use and lasts two minutes,** the same duration as a
+  two-factor session challenge. The plaintext is stored. The row is claimed
+  with `deleteMany` before the signature is checked, and the claim succeeds
+  only when one row is deleted.
+- **A backwards counter is refused and audited, and the stored counter stays.**
+  The stored counter is passed into verification. Zero followed by zero
+  succeeds. A higher counter is saved with `updateMany` where the id and the
+  counter still equal the verified value; a lost claim is refused and audited.
+  Audit metadata is the passkey name or credential id and the two counters,
+  never the public key.
+
+## INV-AUTH-010
+
+- **Listed admin routes require a fresh proof first.** The route list and the
+  operation list live in
+  [`step-up-routes.ts`](../../src/lib/step-up-routes.ts). A handler that
+  reaches a listed operation calls `requireRecentAuth` after its authorisation
+  guard and before it reads the body. An authorisation failure is never the
+  step-up refusal. `OFFICER_SIGN_IN_ENFORCED` defaults to false, and only
+  #4620 sets it true. While it is false the check does not read the session.
+  While it is true a missing stamp fails closed. Refreshing a Xero token
+  (`saveXeroTokens`) is not a listed operation. Typed confirmations stay.
+
+## INV-AUTH-011
+
+- **The Auth.js per-address sign-in limiter exempts only exact `signout` and
+  `session` POST actions.** Neither action consumes its counter or is refused
+  by it. Match the full parsed path after `/api/auth/`, never a query, header or
+  body field. Credential callbacks, magic-link callbacks, provider sign-in
+  starts and unknown POST actions count by default. GETs remain uncounted.
+- **The budget is `rateLimiters.login` in `rate-limit.ts`: 30 per 15 minutes.**
+  Keep counter id `login`, the shared store and its reduced per-process
+  fallback. The per-account password throttle remains a separate control.
+- **A refusal is a wait, never a bad-password or invalid-link claim.** Return
+  HTTP 429 with the standard retry/rate-limit headers and a next-auth-readable
+  `url`, carrying `ADDRESS_THROTTLED` as both error and code. The code and
+  message live in `login-throttle-policy.ts` (`INV-SSOT`), distinct from
+  `LOGIN_THROTTLED`. The message is identical for every account. A refused
+  magic-link attempt never reaches token consumption and offers a deliberate
+  retry with the token retained only in memory after URL scrubbing.
+
+## INV-AUTH-012
+
+- **The officer requirement is recomputed on every session refresh.**
+  `isOfficerTwoFactorRequired` is the only "must enrol" check. It is true only
+  when `OFFICER_SIGN_IN_ENFORCED` is on, the club policy is on, the member is not the
+  lodge kiosk, they can still sign in, and they are a Full Admin or hold a role
+  that requires it. Full Admin stays required whatever a role definition says.
+  Not required drops only that role. `twoFactorRequired` stays the club-wide
+  module and is not this rule.
+- **Only an authenticator app or a passkey satisfies it.** That check is
+  `satisfiesOfficerSecondFactor` (`INV-AUTH-009`). An emailed code does not.
+- **Grace starts once, on first exposure, and a reset does not start another.**
+  Resetting a required officer closes their grace. A member reset before the
+  rule reached them still gets their first grace period. The deadline is a
+  club civil date (`INV-DATE`). After it, only the enrolment pages, the
+  profile security card, and sign-out stay open. While the release
+  constant is off, nobody is required and nothing is stamped. #4620 is the edit
+  that turns the constant on.
+- **A required officer's app or passkey is owed at a password sign-in.** That
+  password does not write the recent-proof stamp (`INV-AUTH-008`).
+- **A required officer cannot remove their last satisfying factor.**
+  `assertLastFactorRemovable` refuses that delete. A member the rule does not
+  require can still remove a passkey.
+- **A lost factor has a way back.** Any other Full Admin may reset it after
+  their own step-up, never themselves. The officer is emailed and their
+  sessions end. The operator command is the way back when that Full Admin is
+  the only one.
+
+## INV-AUTH-013
+
+- **Password and PIN hashing and verification go through one server-only module**:
+  [`password-hashing.ts`](../../src/lib/password-hashing.ts). Its asynchronous
+  native bcrypt calls run off the main event loop, including refused sign-ins'
+  dummy comparison. Runtime code, operator scripts and seeds never import a
+  bcrypt library elsewhere; the password-writer census enforces this boundary.
+- **Accounts awaiting a password store the shared precomputed unusable bcrypt
+  hash**, never a freshly computed throwaway hash or a non-bcrypt marker.
+  `UNUSABLE_PLACEHOLDER_PASSWORD_HASH` is distinct from `DUMMY_PASSWORD_HASH`;
+  both encode `PASSWORD_BCRYPT_COST`, as new account passwords do. The cost is
+  checked against a real hash by the parity test. A placeholder later granted
+  login still spends a full comparison until the screened setup/reset flow
+  supplies its real password.
+- **Stored bcrypt hashes retain their verification behaviour**, including byte
+  truncation and Unicode. PINs keep their separate cost policy; no hash is
+  rewritten merely by deploying the module.

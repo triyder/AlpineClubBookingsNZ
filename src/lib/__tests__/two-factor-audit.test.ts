@@ -98,6 +98,40 @@ describe("two-factor system actors (INV-PRIV-020)", () => {
       }),
       db,
     );
+    await recordTwoFactorClear(db, {
+      before: {
+        twoFactorEnabled: false,
+        twoFactorMethod: null,
+        authenticatorApp: false,
+        passkeyCount: 1,
+      },
+      actor,
+      subjectMemberId: "member-1",
+    });
+    expect(createAuditLog).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        action: TWO_FACTOR_AUDIT_ACTIONS.cleared,
+        metadata: expect.objectContaining({ passkeyCount: 1, authenticatorApp: false }),
+      }),
+      db,
+    );
+  });
+
+  it("records an officer reset even when there was no factor to clear (#4618)", async () => {
+    await recordTwoFactorClear(db, {
+      before: { twoFactorEnabled: false, twoFactorMethod: null, authenticatorApp: false },
+      actor: { kind: "admin", memberId: "admin-1" },
+      subjectMemberId: "member-1",
+      recordWhenEmpty: true,
+    });
+    expect(createAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: TWO_FACTOR_AUDIT_ACTIONS.cleared,
+        actorMemberId: "admin-1",
+        subjectMemberId: "member-1",
+      }),
+      db,
+    );
   });
 });
 

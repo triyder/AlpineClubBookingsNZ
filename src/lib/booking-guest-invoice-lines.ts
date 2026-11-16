@@ -1,6 +1,6 @@
 /**
  * THE ONE per-guest invoice line builder (fork #115, lifted out of
- * `buildInvoiceLineItems` in `xero-booking-invoices.ts`).
+ * `buildInvoiceLineItems`, now in `xero-booking-invoice-lines.ts`).
  *
  * Pure and provider-neutral: a booking's guests and stay range in, one line per
  * price-homogeneous run of each guest's nights out, all in integer cents. The

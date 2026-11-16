@@ -35,6 +35,8 @@ only the ID heading lines were added.
 
 - External provider calls should not be placed inside long database
   transactions unless there is a documented reason.
+- A provider call held inside a lock has an explicit client deadline, zero
+  in-lock retries, and a transaction timeout that fits both (#4919).
 
 ## INV-INT-004
 
@@ -358,7 +360,7 @@ legitimately depend on being offered an out-of-service lodge.
   `src/lib/xero-account-mapping-keys.ts`, the one registry the picker, API
   allowlist, resolver and seed derive from; `accountsForMappingKey` is a
   picker's only filter.
-- **NOT structural: the stored code, and this rule says so.** Judging it needs
+- **NOT structural: the stored code.** Judging it needs
   the org's chart, so config transfer and the API are TRUSTED for the value.
   `mappingWriteViolation` refuses only what the registry sees: unknown key,
   account code on an item-only key, item code on a key reading none, blank code.
@@ -372,9 +374,10 @@ legitimately depend on being offered an out-of-service lodge.
 - **The prompt is in TWO places**, the mapping row and the `xero-mappings` setup
   step: the mappings section is collapsed by default.
 - **`goodwillWriteOffs` is the first instance**: whole EXPENSE class, falling
-  back to `hutFeeRefunds`, reclassifying nothing. Only an `ADMIN_ADJUSTMENT` lot
-  routes to it; a member's own money stays on `hutFeeRefunds` even with no note
-  yet (`INV-PAY-023`). Pinned by `xero-account-mapping-registry.test.ts`,
+  back to `hutFeeRefunds`, reclassifying nothing. Only a noteless legacy
+  `ADMIN_ADJUSTMENT` mint, or a Goodwill grant while unset, routes to it.
+  Member's own money stays on `hutFeeRefunds` (`INV-PAY-023`). Pinned by
+  `xero-account-mapping-registry.test.ts`,
   `goodwill-write-off-account.test.ts`.
 
 ## Bulk person-contact seeding (#2939)
@@ -619,6 +622,27 @@ Pinned by `xero-account-credit-note-stamp.test.ts`,
 `xero-inbound-reconciliation.test.ts`, `xero-booking-repair.test.ts` and,
 against real PostgreSQL, `xero-account-credit-note-stamp.realdb.test.ts`.
 
+## A manual credit grant's Xero note (#4431)
+
+### INV-INT-037
+
+An approved positive manual grant queues one `ADMIN_GRANT_CREDIT_NOTE` on that
+credit. The worker stamps that row and no other, and a replay does not create a
+second note.
+
+- **Queued with the credit.** Approval writes the `MemberCredit` row and the
+  outbox row in the same transaction. The note's Xero id does not exist yet, so
+  approval does not call Xero. The account is the one the requester chose.
+- **The stamp is that row.** One update, matching the credit's id, type and
+  amount, and only while `xeroCreditNoteId` is null. The same note id is
+  success. A different id fails and is not overwritten. The link role is
+  `ADMIN_GRANT_CREDIT_NOTE`.
+- **No new lock.** The stamp moves no balance (`INV-LOCK-001`). It uses no new
+  key or order (`INV-LOCK-002`) and no new site (`INV-LOCK-003`).
+
+Pinned by `xero-admin-grant-credit-note.test.ts`, `member-credit.test.ts` and
+`xero-operation-outbox-payload.test.ts`.
+
 ## One outcome per Xero operation row (#4356)
 
 ### INV-INT-029
@@ -697,6 +721,34 @@ Pinned by `organiser-extra-note-record.test.ts`,
 `organiser-extra-adjustment.test.ts` and, on real PostgreSQL,
 `organiser-late-note-after-reset.realdb.test.ts` and
 `organiser-run-claim-check.realdb.test.ts`.
+
+## An abandoned inbound reconcile's operation row (#4921 prerequisite)
+
+### INV-INT-038
+
+A later attempt at an inbound Xero webhook reconcile never runs under an
+abandoned attempt's claim, and recovers the row that attempt left RUNNING.
+
+- **Nothing else reaps it.** The outbox and the waiting-invoice reaper read
+  OUTBOUND rows only; the stale reset is an officer's.
+- **Never shared.** `startInboundReconcileOperation`
+  (`xero-inbound/reconcile-operation.ts`) starts with
+  `shareActiveOperation: false`, so the active-correlation-key clash (#1354)
+  is never answered with another attempt's row.
+- **Taken over in place.** An INBOUND `WEBHOOK_RECONCILE` row RUNNING past
+  `STALE_RUNNING_XERO_OPERATION_MINUTES` is re-claimed under a fresh
+  `startedAt` in one `updateMany` guarded on the claim read: of racing
+  takeovers, or a takeover and Mark failed, exactly one wins. A loser reads
+  again: a row Mark failed ended lets it insert its own.
+- **The abandoned claim's late outcome is refused** (`INV-INT-029`) while the
+  new claim runs and after it fails or succeeds; only a late success may
+  still land on a row no claim holds, as for any row.
+- **A live row is left alone.** Any other active row for the key fails the
+  attempt as in flight; the event is retried after its backoff.
+- **Outbound starts are unchanged.** Only this caller opts out of sharing.
+
+Pinned by `xero-inbound-reconcile-operation.test.ts`, `xero-sync.test.ts`
+and, against real PostgreSQL, `xero-inbound-abandoned-operation.realdb.test.ts`.
 
 ## Stored outbox payloads (#3971)
 

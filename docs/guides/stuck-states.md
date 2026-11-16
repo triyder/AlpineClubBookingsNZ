@@ -46,10 +46,11 @@ by watching **data** — see [`ARCHITECTURE.md`](../ARCHITECTURE.md)
 This critical Finance item means a bank-transfer settlement figure alert failed
 three times. The existing Xero inbound job retries unsent markers older than ten
 minutes, using the same cooldown claim as invoice deliveries. After three failed
-sends it stops emailing; the item remains visible in Stuck States. Open Payments,
-check the amount against Xero, and read the booking's staff timeline for the
-settlement figure marker. No payment amount or booking status is changed by the
-retry (#4446).
+sends it stops emailing; the item remains visible in Stuck States. Each row
+under the signal names the booking and its owner (#4959): open the booking, check
+the amount against Xero, and read its staff timeline for the settlement figure
+marker. **Open** goes to Payments. No payment amount or booking status is changed
+by the retry (#4446).
 
 ### Close a card refund Stripe gave up on
 
@@ -67,9 +68,13 @@ button is disabled, and the banner above the list says why.
 
 **Settle each one on this list here, never with a new refund in the Stripe
 dashboard** (owner decision 7 on #4361, 25 Oct 2026). A new dashboard refund
-on a booking paid by bank transfer is credited in Xero twice (#4327). An old
-group organiser's refund, or a stale group payment's, is not on this list:
-ask a developer to settle it. Each row offers:
+on a booking paid by bank transfer is credited in Xero twice (#4327). A dead
+refund out of the group organiser's card is on this list too: pay the
+organiser. A newer per-joiner refund offers **Try the card again**; the old
+whole-group refund does not. **Paid another way** on either records a refund
+Stripe already holds and pays nobody again, or records the bank payment and
+emails officers to credit the group's invoice in Xero by hand. Never a new
+dashboard refund. A charge-backed row offers:
 
 - **Paid another way** - you paid the member back yourself, for example by
   bank transfer (below).
@@ -109,9 +114,8 @@ The officers' email and the [audit log](audit-log.md) (under **Payment**) say
 which, and name the Stripe refund. Check the booking and the Stripe refunds,
 then settle anything still owed with **Paid another way**. One exception: if
 the refund the email names has since failed - it then shows here as a refund
-Stripe failed later, a row of its own - do **not** close this one with **Paid
-another way**. The two may be the same money, and that row asks for it again,
-so ask a developer to reconcile them (#4492).
+Stripe failed later, a row of its own - **Paid another way** is not offered on
+this row until that refund has gone back to the card. The row says why (#4492).
 
 **A refund Stripe refused** (#4083, #4096). When a booking change or a
 cancellation refunds a card and Stripe answers straight away that the refund
@@ -130,10 +134,11 @@ cancelled booking that Stripe refuses is held on the payments board for a
 treasurer to approve, whatever the club's setting, and approving it asks
 Stripe again as a fresh request. A late-charge refund from the booking repair
 tool that Stripe refuses fails, and running the repair again asks Stripe
-afresh. An old group organiser's refund, or the refund of a stale group
-payment, fails and is retried automatically as a fresh request; if the
-officers' alert says it failed for good, ask a developer to settle it: it is
-not on the list below.
+afresh. An old group organiser's refund, and the refund of a stale group payment,
+are retried automatically and then listed below. The newer per-joiner refund
+can be tried on the organiser's card again; the old whole-group refund
+cannot, and is settled with **Paid another way**. A bank close credits the
+group's invoice in Xero by hand. Never a new dashboard refund.
 
 **A refund Stripe accepted and failed later** (#4104). Stripe can accept a card
 refund as pending and report it failed days later, for example when the card
@@ -239,7 +244,11 @@ cancellation's, an approved refund request's, a booking change's, a late card
 charge's or a superseded payment's - queues a Xero refund credit note for
 exactly the amount paid back, worded as a bank transfer ("Refund requested via
 internet banking") and dated the day you closed it, as long as the app has a
-Xero invoice to credit. If the payment's invoice is still on its way to Xero,
+Xero invoice to credit. When a card note already covers some of what you pay
+back, closing also queues an invoice for that covered amount, recording the
+failed card refund's money back in the Stripe account, and the bank-transfer
+note is for the full amount. Paying back less than the card note leaves the
+difference on the Xero reconciliation report. If the payment's invoice is still on its way to Xero,
 the app does not know of one yet: the dialog says no note is queued, and you
 check Xero and record the refund there by hand if it needs one.
 
@@ -338,18 +347,6 @@ while the dialog is open, the dialog says so; if it happens just as you mark it
 resolved, the app refuses and the list refreshes, so you only ever resolve the
 amount you saw.
 
-This action does not cover two kinds of refund:
-
-- A group organiser's refund for a member of their group comes out of the
-  organiser's combined card payment, so it is not listed here.
-- An old group cancellation refund (from before #3653) belongs to the group as
-  a whole, not to one booking, so it is not listed either. What it still has to
-  send counts in Refunds owed as one club-wide amount (owner decision on #3372,
-  8 Oct 2026).
-
-Those two still show in the **Exhausted recovery operations** count. Ask a
-developer to reconcile them.
-
 ### Try the card again
 
 Use this when you want the app to ask Stripe to refund the card again, for
@@ -389,12 +386,15 @@ could pay the member more than they are owed:
   refund Stripe failed later that is not asked for again, or the rest of a
   part close that is still owed;
 - a refund Stripe failed later is on the same payment, whether it is still
-  owed or has since been sent again. The two may be the same money, so check
-  what the member is owed and settle it with **Paid another way**.
+  owed or has since been sent again. The two may be the same money, so **Paid
+  another way** is not offered either, and the row says why (#4492). The same
+  is true of a refund that replaces a superseded payment while that failed
+  refund has not gone back to the card, and of a failed refund that died
+  because the superseded charge was already sent back.
 
-Where **Paid another way** cannot close the refund either - a refund that
-replaces a superseded payment whose charge no longer holds exactly what it
-owes - the row says to ask a developer instead.
+Where **Paid another way** cannot close the refund for a different reason - a
+refund that replaces a superseded payment whose charge no longer holds exactly
+what it owes - the row says to ask a developer instead.
 
 If the list changes while the dialog is open, for example someone else
 settles the refund, the request is refused and the list refreshes.
@@ -424,6 +424,10 @@ A refund with nothing left owed and no Stripe refund matched to it is not
 listed - for example when the payment holds nothing more to refund because of
 a refund of another amount. It still shows in the **Exhausted recovery operations** count: ask a
 developer to reconcile it.
+
+The rows under **Exhausted recovery operations** name each operation's
+booking and owner and what it was for. A row that is also on **Card refunds
+Stripe gave up on** says to settle it there (#4959).
 
 ### Pick the refund a voided bank refund note recorded
 
@@ -498,8 +502,8 @@ To collect it by hand:
 2. If that one request already asks for both changes' money, nothing more is
    needed once the member pays it.
 3. Otherwise ask the member for the second change's amount another way, such as
-   the supplementary invoice the Xero repair tool raises for a change whose
-   card request stopped, and record it as paid the usual way.
+   the supplementary invoice the Xero repair tool raises unpaid for a change
+   whose card request stopped, and record it as paid when the money arrives.
 
 ## Settings reference
 
@@ -516,21 +520,31 @@ The page has no settings. What it shows:
 
 ### Who sees the named rows
 
-A few signals expand into a short list naming the individual members or bookings
-behind the count — **Members with no reachable email address** lists the members,
-and **Bookings without required adult member cover** names each booking's owner.
-Those named rows are membership-roll detail, so they appear **only if you also
-have Membership view access**. An admin with Stuck States access but not
-Membership sees the same signal, the same count, and the same **Open** link to
-work it — just not the individual names and per-member deep links. This keeps
-the queue useful to support staff (they can see a problem exists and hand it on)
-without widening who can read the membership roll.
+Signals that point at particular records expand into a short list naming the
+members or bookings behind the count — **Members with no reachable email
+address** lists the members; **Bookings without required adult member cover**
+and **Bookings with unnamed guests** name each booking and its owner; and the
+payment signals (cancelled bookings with an unrecorded refund, the three
+recovery-operation signals, the two stale group settlements and undelivered
+bank transfer amount alerts) name each booking and its owner too (#4959).
+
+Each row is read with the same filter as the count, so the list and the count
+never disagree. At most 50 rows show; a longer list ends "and N more". Each
+signal's **Open** link goes to its rows on this page, or to [Background
+Jobs](background-jobs.md) for operations the app is still retrying.
+
+The named rows are membership-roll detail, so they appear **only if you also
+have Membership view access**. The payment rows also show amounts, so they need
+**Finance view as well**. An admin without them sees the same signal and the
+same count — just not the names or links. This keeps the queue useful to
+support staff (they can see a problem exists and hand it on) without widening
+who can read the membership roll or the club's money.
 
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
-| **Bookings with unnamed guests** shows a count | An upcoming school/organisation or member whole-lodge booking still lists generated placeholders ("Guest 2", "School Child 5"), so the chore list and arrival roster would print those instead of real people | Most bookers are chased automatically as check-in approaches, but not all of them: a school list the contact already **confirmed** while leaving the placeholder names in place gets no further prompt, and a booking still held for approval is not chased at all. So work the list — open each booking and edit the guest names yourself. Renaming a guest does not change their age group or the price. **This never holds up a stay** — the booking, check-in and [Chore Roster](roster.md) all work exactly as normal while the count stands |
+| **Bookings with unnamed guests** shows a count | An upcoming school/organisation or member whole-lodge booking still lists generated placeholders ("Guest 2", "School Child 5"), so the chore list and arrival roster would print those instead of real people | Most bookers are chased automatically as check-in approaches, but not all of them: a school list the contact already **confirmed** while leaving the placeholder names in place gets no further prompt, and a booking still held for approval is not chased at all. So open each booking named under the signal and edit the guest names yourself. Renaming a guest does not change their age group or the price. **This never holds up a stay** — the booking, check-in and [Chore Roster](roster.md) all work exactly as normal while the count stands |
 | **Bookings without required adult member cover** shows a count | A booking that was confirmed with the adult-member cover the club requires has since lost it — an officer overrode the refusal, a membership lapsed, another booking on the same account was cancelled, or a payment or lifecycle change removed the person who was covering it. It only appears where the lodge is set to **stop** a non-compliant booking and to allow cover from another booking on the same account (see [Booking Policies](booking-policies.md)) | Open the booking. Four things clear it, and any one of them is enough: put a qualifying adult member back on the party or on another confirmed booking on the same account for those nights, amend the booking so the uncovered nights go away, approve a policy exception for it, or cancel it. The entry clears itself once one of those is true — there is nothing to tick off. **The stay is never held up over this and nothing is ever cancelled automatically**: the beds and the payments are untouched while the count stands, and the booking owner has already been emailed once about it |
 | A signal reappears after you act | The underlying record is still in the stuck state | Follow the **Open** link and complete the resolution there; the signal clears on the next generation |
 | A payment/Xero signal is Critical | A settlement or sync didn't complete | Open it and reconcile; see [Payments](payments.md) / [Xero Sync](xero.md) |

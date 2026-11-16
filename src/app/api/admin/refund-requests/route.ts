@@ -2,15 +2,20 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
+import {
+  adminListPage,
+  adminQueueCreatedOrder,
+  adminListPageQueryFields,
+} from "@/lib/admin-list-page";
 import { OPEN_HAND_BACKS_FOR_REFUND_APPEAL_SELECT, refundAppealCeilingParts } from "@/lib/manual-refund-task-settlement-rules";
 import { netCollectedCardRefundSelect } from "@/lib/additional-ledger-gap";
 import { organiserCardAppealCeilingFor } from "@/lib/organiser-child-refund";
 import { readApprovedAppealOutcomes } from "@/lib/refund-appeal-outcome";
+import { readSupersededCaptureHeldBack } from "@/lib/superseded-capture-hold-back";
 
 const querySchema = z.object({
   status: z.enum(["PENDING", "APPROVED", "REJECTED", "ALL"]).optional().default("PENDING"),
-  page: z.coerce.number().int().min(1).optional().default(1),
-  pageSize: z.coerce.number().int().min(1).max(100).optional().default(25),
+  ...adminListPageQueryFields,
 });
 
 export async function GET(req: NextRequest) {
@@ -28,6 +33,8 @@ export async function GET(req: NextRequest) {
 
   const { status, page, pageSize } = parsed.data;
   const where = status === "ALL" ? {} : { status };
+  // The pending queue reads oldest first (INV-OPS-020).
+  const direction = adminQueueCreatedOrder(status === "PENDING");
 
   const [requests, total] = await Promise.all([
     prisma.refundRequest.findMany({
@@ -88,7 +95,7 @@ export async function GET(req: NextRequest) {
           },
         },
       },
-      orderBy: { createdAt: "desc" },
+      orderBy: [{ createdAt: direction }, { id: direction }],
       take: pageSize,
       skip: (page - 1) * pageSize,
     }),
@@ -109,7 +116,9 @@ export async function GET(req: NextRequest) {
       // card refund still owed that it netted (`appealCardRefundOwedCents`, the
       // screen's "Less ... not yet made" line) - never the rows.
       const { payment: loadedPayment, ...bookingRest } = listed.booking;
-      const ceiling = refundAppealCeilingParts(loadedPayment, listed.booking.creditsFromCancellation);
+      // #4872 (`INV-PAY-150`): less a live superseded capture's hold-back, which the approval nets too.
+      const heldBackCents = loadedPayment ? (await readSupersededCaptureHeldBack(prisma, loadedPayment.id)).totalCents : 0;
+      const ceiling = refundAppealCeilingParts(loadedPayment, listed.booking.creditsFromCancellation, heldBackCents);
       // The payment's own columns only, named: never its hand-back or card-refund rows.
       const screenPayment = loadedPayment && {
         id: loadedPayment.id,
@@ -144,5 +153,5 @@ export async function GET(req: NextRequest) {
     }),
   );
 
-  return NextResponse.json({ data, page, pageSize, total });
+  return NextResponse.json({ data, ...adminListPage({ page, pageSize, total }) });
 }

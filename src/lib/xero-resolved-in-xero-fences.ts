@@ -4,6 +4,12 @@
 // hand, because a new row does not carry the old row's mark.
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import {
+  CARD_REFUND_REVERSAL_INVOICE_ROLE,
+  liveCardRefundReversalCents,
+  NOT_CARD_REFUND_REVERSAL_INVOICE,
+  raisedCardRefundReversalCents,
+} from "@/lib/xero-card-refund-reversal-outbox";
 import { XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE } from "@/lib/xero-operation-outbox-payload";
 import { parsePaymentCreditNoteRetryInput } from "@/lib/xero-payment-credit-note-payload";
 import { countsTowardRefundNoteCoverage, refundNoteIdSets } from "@/lib/xero-refund-note-status";
@@ -189,7 +195,73 @@ export async function sumRefundCreditNoteCoverageCents(
   resolved: ResolvedRefundCreditNoteCoverage,
   db: Prisma.TransactionClient = prisma,
 ): Promise<number> {
-  return (await sumCoveredRefundCreditNoteCents(paymentId, db)) + resolved.coveredCents;
+  const gross = (await sumCoveredRefundCreditNoteCents(paymentId, db)) + resolved.coveredCents;
+  // #4369 (`INV-PAY-151`): a reversal invoice that has reached Xero and is not
+  // voided or deleted undoes that much of the card note. One still queued, or
+  // one with no amount on the link, changes nothing.
+  const reversals = await db.xeroObjectLink.findMany({
+    where: activeCardRefundReversalLinksWhere(paymentId),
+    select: { role: true, metadata: true },
+  });
+  return Math.max(0, gross - reversals.reduce((sum, link) => sum + reversalLinkCents(link), 0));
+}
+
+/**
+ * The active reversal-invoice links of one payment, or of many (#4936). The one
+ * filter `sumRefundCreditNoteCoverageCents` and its bulk counterpart
+ * `readCardRefundReversalCentsByPayment` select by (`INV-SSOT`). #4370: with
+ * `retired`, also the links a voided or deleted invoice retired.
+ */
+function activeCardRefundReversalLinksWhere(
+  localId: string | { in: string[] },
+  { retired = false }: { retired?: boolean } = {},
+): Prisma.XeroObjectLinkWhereInput {
+  return {
+    localModel: "Payment",
+    localId,
+    xeroObjectType: "INVOICE",
+    role: CARD_REFUND_REVERSAL_INVOICE_ROLE,
+    ...(retired ? {} : { active: true }),
+  };
+}
+
+/**
+ * The cents one reversal link takes off coverage. The role is checked on the
+ * row as well as in the query: a credit note also stores amountCents, and only
+ * this role undoes coverage (`INV-PAY-151`).
+ */
+function reversalLinkCents(link: { role: string | null; metadata: unknown }, cents = liveCardRefundReversalCents): number {
+  return link.role === CARD_REFUND_REVERSAL_INVOICE_ROLE ? cents(link.metadata) : 0;
+}
+
+/**
+ * #4936 after #4369: what live reversal invoices take off each payment's
+ * coverage, in one query for many payments - exactly the `reversed` figure
+ * `sumRefundCreditNoteCoverageCents` subtracts for the same payment. The
+ * health check's link pre-filter subtracts it too, so its bound stays at or
+ * below that sum. A payment with no live reversal is absent from the map.
+ */
+export async function readCardRefundReversalCentsByPayment(
+  paymentIds: readonly string[],
+  db: Pick<Prisma.TransactionClient, "xeroObjectLink"> = prisma,
+  /**
+   * #4370: "raised" sums every reversal that reached Xero at the cents it was
+   * raised for, voided or deleted since included - the failed refunds a
+   * reversal answered. The default is the live figure above.
+   */
+  which: "live" | "raised" = "live",
+): Promise<Map<string, number>> {
+  const centsByPayment = new Map<string, number>();
+  if (paymentIds.length === 0) return centsByPayment;
+  const links = await db.xeroObjectLink.findMany({
+    where: activeCardRefundReversalLinksWhere({ in: [...paymentIds] }, { retired: which === "raised" }),
+    select: { localId: true, role: true, metadata: true },
+  });
+  for (const link of links) {
+    const cents = reversalLinkCents(link, which === "raised" ? raisedCardRefundReversalCents : liveCardRefundReversalCents);
+    if (cents > 0) centsByPayment.set(link.localId, (centsByPayment.get(link.localId) ?? 0) + cents);
+  }
+  return centsByPayment;
 }
 
 /**
@@ -243,6 +315,7 @@ export async function findResolvedBookingInvoiceCreate(
       operationType: "CREATE",
       localModel: "Payment",
       localId: paymentId,
+      ...NOT_CARD_REFUND_REVERSAL_INVOICE,
     },
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     select: { id: true, manuallyResolvedAt: true },

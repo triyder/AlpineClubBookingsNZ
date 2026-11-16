@@ -18,7 +18,7 @@ The area list is each registered admin page's top-level URL directory, taken
 from the [hub registry](../src/lib/admin-hubs/index.ts), whose own census ties
 every entry to its page on disk, so it is exhaustive and will not silently miss a
 surface. A hub's directory under `src/app/(admin)/admin/` (such as `website/`,
-`finance/`, `rules/`, `system/` or `messages/`) is not an area: it holds areas. An area keeps
+`finance/`, `rules/`, `system/`, `messages/`, `booking-desk/` or `membership/`) is not an area: it holds areas. An area keeps
 its row, and its URL, when its pages move under a hub (epic #4468): the Website
 hub's areas live in `website/` (C4 #4801), the Finance hub's areas
 (`internet-banking`, `payments`, `refund-requests`, `reports`,
@@ -30,7 +30,16 @@ the Help & system hub's areas (`ai-assistant`, `ai-diagnostics`,
 `issue-reports`, `stuck-states`, `testing`) in `system/` (C7 #4804), and the
 Messages & email hub's areas (`booking-messages`, `communications`,
 `email-messages`, `message-board`, `notices`, `notification-recipients`,
-`notification-rules`, `notifications`) in `messages/` (C8 #4805). The
+`notification-rules`, `notifications`) in `messages/` (C8 #4805), and the
+Bookings hub's areas (`bed-allocation`, `book`, `booking-approvals`,
+`booking-change-requests`, `booking-requests`, `bookings`, `waitlist`) in
+`booking-desk/` (C10 #4807), and the Members hub's areas (`committee`,
+`deletion-requests`, `family-groups`, `induction`, `member-applications`,
+`member-fields`, `members`, `membership-cancellations`, `membership-setup`,
+`membership-types`, `subscription-categories`, `subscription-lockout`) in
+`membership/` (C9 #4806). Member
+detail, member merge, induction print and induction settings are not areas; they
+live under `members/` and `induction/`. The
 count that used to stand here said 70 and was measured once; it had already
 drifted from the table below by the time #2989 added a row, so it is stated as a
 rule rather than as a figure nobody re-measures.
@@ -117,7 +126,7 @@ For what an officer sees and does on each screen, use the
 | `maintenance-reports` | lodge | `multi-lodge/lodge-scoping-contract.md` (scoping), `SECURITY.md` (QR bearer token) | [guide](guides/maintenance-reports.md) | — (maintenanceReports module, on by default; outside #2050) |
 | `member-applications` | membership | `ARCHITECTURE.md` (membership application / nominations) | [guide](guides/member-applications.md) | 2 |
 | `member-fields` | membership | — | [guide](guides/member-fields.md) | 2 |
-| `members` | membership | `ARCHITECTURE.md` (members, CSV import, roles) | [guide](guides/members.md) | 2 |
+| `members` | membership (subject access report: Full Admin only) | `ARCHITECTURE.md` (members, CSV import, roles); [access requests](PRIVACY_RETENTION.md#answering-an-access-request) | [guide](guides/members.md) | 2 |
 | `membership-cancellations` | membership | `CANCELLATIONS.md`, `ARCHITECTURE.md` (cancellation review queue) | [guide](guides/membership-cancellations.md) (Settings tab included) | 2 |
 | `membership-setup` | membership | `ARCHITECTURE.md` (membership types) | [guide](guides/membership-setup.md) | 2 |
 | `membership-types` | membership | `ARCHITECTURE.md` (seasonal membership types) | [guide](guides/membership-types.md) | 2 |
@@ -128,7 +137,7 @@ For what an officer sees and does on each screen, use the
 | `notifications` | support | email registry, `ARCHITECTURE.md` (email) | [guide](guides/notifications.md) | 4 |
 | `page-content` | content | `PUBLIC_PAGE_CONTENT_TOKENS.md` | [guide](guides/page-content.md) | 4 |
 | `payments` | finance | `ARCHITECTURE.md` (Stripe), `finance-dashboard/README.md` | [guide](guides/payments.md) | 1 |
-| `privacy-retention` | support (settings); membership:view additionally for application/member previews | [retention schedule](PRIVACY_RETENTION.md) | [retention schedule and controls](PRIVACY_RETENTION.md) | — (#4457) |
+| `privacy-retention` | support (settings); membership:view additionally for application/member previews; bookings:edit additionally for the after-stay dietary period and switch | [retention schedule](PRIVACY_RETENTION.md) | [retention schedule and controls](PRIVACY_RETENTION.md) | — (#4457, #4916) |
 | `promo-codes` | bookings | `ARCHITECTURE.md` (promo codes / redemptions) | [guide](guides/promo-codes.md) | 1 |
 | `refund-requests` | finance | `CANCELLATIONS.md`, `ARCHITECTURE.md` (refund recovery) | [guide](guides/refund-requests.md) | 2 |
 | `reports` | finance | `finance-dashboard/README.md` | [guide](guides/reports.md) | 1 |
@@ -142,6 +151,7 @@ For what an officer sees and does on each screen, use the
 | `site-style` | content | — | [guide](guides/site-style.md) | 4 |
 | `stripe` | finance | [`guides/integrations.md`](guides/integrations.md) (Stripe Setup), [`guides/payments.md`](guides/payments.md) | [guide](guides/integrations.md) (`stripe/setup` wizard) | — (guided setup epic #2078; postdates #2050) |
 | `stuck-states` | support | `ARCHITECTURE.md` (stuck-state dashboard) | [guide](guides/stuck-states.md) | 4 |
+| `subscription-categories` | membership | `AUTHORITATIVE_FEES.md` (subscription category billing axis) | [guide](guides/subscription-categories.md) | — (subscription-category-decoupling; postdates #2050) |
 | `subscription-lockout` | membership | `ARCHITECTURE.md` (subscription lockout) | [guide](guides/subscription-lockout.md) | 2 |
 | `subscriptions` | finance | `ARCHITECTURE.md` (membership subscription billing) | [guide](guides/subscriptions.md) | 2 |
 | `testing` | overview (allowlisted) | TEST-ONLY: `testing/route-error` is the route-error probe for the #4467 boundary E2E. In a real production runtime it calls `notFound()` before any await and has no loading boundary above it, so the answer is a real 404 status; elsewhere it runs the admin guard itself before reading its cookie (`src/lib/route-error-probe.ts`) | — (not an operator surface) | — |
@@ -152,7 +162,7 @@ For what an officer sees and does on each screen, use the
 
 ## Summary
 
-- **84** admin route areas, one row each. `src/app/(admin)/admin` holds more directories that aren't areas: `__tests__`; `_lib`, shared server helpers with no route (Next.js treats an `_`-prefixed folder as private); and each hub directory that pages have moved into (`website`, `finance`, `rules`, `system`, `messages`), which holds areas rather than being one. `src/lib/__tests__/coverage-matrix-areas.test.ts` checks this count, that every area directory has exactly one row, and that each row's permission area matches the route map.
+- **85** admin route areas, one row each. `src/app/(admin)/admin` holds more directories that aren't areas: `__tests__`; `_lib`, shared server helpers with no route (Next.js treats an `_`-prefixed folder as private); and each hub directory that pages have moved into (`website`, `finance`, `rules`, `system`, `messages`, `booking-desk`, `membership`), which holds areas rather than being one. `src/lib/__tests__/coverage-matrix-areas.test.ts` checks this count, that every area directory has exactly one row, and that each row's permission area matches the route map.
 - **2** areas are already served by a **feature hub** (`display` → lobby-display,
   `lodges` → multi-lodge). #2050 should extend, not duplicate, those hubs.
 - **13** areas have **no reference coverage** beyond their operator guide
@@ -188,7 +198,8 @@ flagging for #2050 scoping:
 
 Two batch-1 route dirs are pure `redirect()` pages, so they are **folded** into
 the [Booking Requests](guides/booking-requests.md) guide rather than given their
-own page: `booking-approvals` redirects to `/admin/booking-requests?tab=approvals`
+own page: `booking-approvals` redirects to Booking Requests' approvals tab
+(`/admin/booking-requests?tab=approvals` while the hub switch is off)
 and `booking-change-requests` to `?tab=changes`. Their matrix rows link to that
 guide with the redirect noted. `seasons` has **no direct sidebar entry** (ADR-005)
 — it is reached from **Fees → Hut Fees** or the lodge hub, and the
@@ -274,9 +285,9 @@ pages, and a feature-gated display cluster; the guides document the reality:
   by default**, so `/admin/display` 404s in the seed; the capture stack had the
   module **enabled** to shoot the hub plus **Devices**, **Layouts**,
   **Templates**, **Reference**, and the template **preview**. On current `main`
-  the hub is a **five-card** hub — Devices, **Visual builder** (#2048),
-  Layouts (Advanced), Templates, Reference — and the guide documents the Visual
-  builder card at hub level (the no-HTML authoring path most operators should
+  the hub is a **five-card** hub — Display Devices, **Display Builder** (the
+  visual builder, #2048), Display Layouts, Display Templates, Display Reference —
+  and the guide documents the Display Builder card at hub level (the no-HTML authoring path most operators should
   use), deferring the full builder walk-through to the `lobby-display/` feature
   hub rather than duplicating it. Because the committed `admin-display` capture
   predates the builder card (and `admin-display-templates` predates the #2047
@@ -321,9 +332,11 @@ feature-gated surfaces; the guides document the reality:
   screenshot — the [Integrations](guides/integrations.md) guide describes it in
   prose, matching the batch-2 Xero pattern. The page is now a thin hub with a
   single **Xero Setup** card.
-- **`communications` and `mountain-conditions` are gated but ON by default.**
-  Their modules (`communications`, `skifieldConditions`) default **on** in the
-  seed, so both render and are captured. `communications` lives in the **Members**
+- **`communications` and `mountain-conditions` render in the capture.**
+  `communications` defaults **on** in the seed; `mountain-conditions` is gated
+  by `skifieldWhakapapa`, which a fresh install leaves off and the E2E prepare
+  step (`e2e/setup/enable-e2e-modules.ts`) turns on (#4932), so both render and
+  are captured. `communications` lives in the **Members**
   sidebar section (permission area `membership`), not support.
 - **`display` stays a feature hub.** The lobby TV display module (`lobbyDisplay`)
   is **off** by default, so `/admin/display` 404s in the seed; rather than a new

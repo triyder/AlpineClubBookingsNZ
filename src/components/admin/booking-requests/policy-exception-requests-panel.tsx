@@ -1,8 +1,10 @@
 "use client";
+import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { adminHref } from "@/lib/admin-hubs";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -25,6 +27,8 @@ import { formatStayDateOrNull } from "@/lib/club-time";
 import { formatPolicyExceptionRequestAge } from "@/lib/booking-exception-request-shared";
 import type { PolicyExceptionReasonCode } from "@/lib/booking-policy-exceptions";
 import { HostingCoverageOverridePrompt } from "@/components/hosting-coverage-override-prompt";
+import { Pagination } from "@/components/admin/admin-pagination";
+import { useAdminQueuePage } from "@/components/admin/use-admin-queue-page";
 
 /**
  * #2526 — the Booking Officer's booking-policy exception queue.
@@ -187,7 +191,7 @@ export interface PolicyExceptionRequestsPanelProps {
 }
 
 export function PolicyExceptionRequestsPanel({
-  basePath = "/admin/booking-requests?tab=exceptions",
+  basePath = `${adminHref("booking-requests")}?tab=exceptions`,
   showHeading = false,
   canEdit = true,
 }: PolicyExceptionRequestsPanelProps) {
@@ -201,6 +205,10 @@ export function PolicyExceptionRequestsPanel({
   const [items, setItems] = useState<QueueItem[]>([]);
   const [filter, setFilter] = useState<StatusFilter>("REQUESTED");
   const [loadedFilter, setLoadedFilter] = useState<StatusFilter | null>(null);
+  // INV-OPS-020: the shared pager replaces the old fixed 100-row read. Like the
+  // status filter, the page lives in this panel's state, not the URL.
+  const queuePage = useAdminQueuePage({ filterKey: filter });
+  const { page, receive } = queuePage;
   const [loading, setLoading] = useState(true);
   const [loadFailed, setLoadFailed] = useState(false);
   const [error, setError] = useState("");
@@ -266,14 +274,16 @@ export function PolicyExceptionRequestsPanel({
     setError("");
     try {
       const response = await fetch(
-        `/api/admin/booking-exception-requests?status=${filter}&pageSize=100`,
+        `/api/admin/booking-exception-requests?status=${filter}&page=${page}`,
       );
       const data = await response.json();
       if (!response.ok) {
         throw new Error(data.error || "Failed to load exception requests");
       }
       if (!isCurrentRequest()) return false;
-      setItems(Array.isArray(data?.data) ? data.data : []);
+      const rows: QueueItem[] = Array.isArray(data?.data) ? data.data : [];
+      setItems(rows);
+      receive(data, rows.length);
       setLoadedFilter(filter);
       return true;
     } catch (err) {
@@ -292,7 +302,7 @@ export function PolicyExceptionRequestsPanel({
         setLoading(false);
       }
     }
-  }, [filter]);
+  }, [filter, page, receive]);
 
   useEffect(() => {
     fetchItems();
@@ -370,7 +380,7 @@ export function PolicyExceptionRequestsPanel({
     setDecisionInFlight((current) => new Set(current).add(item.id));
     setError("");
     try {
-      const response = await fetch(
+      const response = await fetchWithRecentAuth(
         `/api/admin/booking-exception-requests/${item.id}`,
         {
           method: "PATCH",
@@ -780,7 +790,7 @@ export function PolicyExceptionRequestsPanel({
                       {item.requestedBy ? (
                         <Link
                           href={buildHrefWithReturnTo(
-                            `/admin/members/${item.requestedBy.id}`,
+                            `${adminHref("member-detail", { id: item.requestedBy.id })}`,
                             basePath,
                           )}
                           className="text-info-11 hover:underline"
@@ -1008,6 +1018,9 @@ export function PolicyExceptionRequestsPanel({
             })}
           </div>
         )}
+        {!loadFailed && loadedFilter === filter && queuePage.pagination ? (
+          <Pagination {...queuePage.pagination} aria-label="Policy exception request pages" />
+        ) : null}
       </div>
     </div>
   );

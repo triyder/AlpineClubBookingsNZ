@@ -14,6 +14,8 @@ import {
   type AuditMemberScope,
   type AuditTimelineCategory,
 } from "@/lib/audit-query";
+import { dateOnlyStringSchema } from "@/lib/date-only-schema";
+import { adminListPageQueryFields } from "@/lib/admin-list-page";
 
 const adminAuditLogQuerySchema = z.object({
   eventType: z.string().max(160).optional(),
@@ -24,14 +26,13 @@ const adminAuditLogQuerySchema = z.object({
     .enum(["involves", "actor", "subject"])
     .optional()
     .default("involves"),
-  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  from: dateOnlyStringSchema.optional(),
+  to: dateOnlyStringSchema.optional(),
   outcome: z.string().max(40).optional(),
   severity: z.string().max(40).optional(),
   entityType: z.string().max(80).optional(),
   q: z.string().max(160).optional(),
-  page: z.coerce.number().int().min(1).optional().default(1),
-  pageSize: z.coerce.number().int().min(1).max(100).optional().default(25),
+  ...adminListPageQueryFields,
 });
 
 type AdminAuditLogFilters = {

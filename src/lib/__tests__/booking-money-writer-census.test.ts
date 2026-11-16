@@ -25,10 +25,15 @@ const REVIEWED_WRITERS = [
   "e2e/setup/seed-second-lodge.ts|booking|create,deleteMany,update|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents|3",
   "e2e/setup/seed-second-lodge.ts|bookingGuest|create|priceCents|1",
   "e2e/setup/seed-second-lodge.ts|bookingGuestNight|create|priceCents,priceSource|1",
+  // #4940: the demo seed's booking shell and priced-guest writers moved here, shared with the load volume seeder; the headline is derived.
+  "prisma/demo-seed-writers.ts|booking|create|finalPriceCents,promoAdjustmentCents,totalPriceCents|1",
+  "prisma/demo-seed-writers.ts|bookingGuest|create|priceCents|1",
+  "prisma/demo-seed-writers.ts|bookingGuestNight|create|priceCents,priceSource|1",
   // #4162: +1, the three cancelled bank-transfer bookings whose refunds are back on the refund list (one create, in a loop).
-  "prisma/demo-seed.ts|booking|create,deleteMany|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents|12",
-  "prisma/demo-seed.ts|bookingGuest|create,deleteMany|priceCents|2",
-  "prisma/demo-seed.ts|bookingGuestNight|create,deleteMany|priceCents,priceSource|2",
+  // #4940: -2 bookings and the guest/night creates, now the shared writers above.
+  "prisma/demo-seed.ts|booking|create,deleteMany|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents|10",
+  "prisma/demo-seed.ts|bookingGuest|deleteMany||1",
+  "prisma/demo-seed.ts|bookingGuestNight|deleteMany||1",
   "prisma/demo-seed.ts|promoRedemption|deleteMany||1",
   "prisma/demo-seed.ts|promoRedemptionAllocation|deleteMany||1",
   "prisma/migrations/20260928020000_booking_owner_optional_member/migration.sql|promoRedemptionAllocation|rawSql|discountCents|1",
@@ -73,6 +78,7 @@ const REVIEWED_WRITERS = [
   "src/lib/group-booking.ts|bookingGuestNight|opaquePayload||1",
   "src/lib/group-cancel.ts|booking|opaquePayload||1",
   "src/lib/internet-banking-payment-cron.ts|booking|opaquePayload||1",
+  "src/lib/member-dietary-booking-writes.ts|bookingGuest|opaquePayload||1",
   "src/lib/member-guest-consent-service.ts|bookingGuest|opaquePayload||1",
   // #4317 review rounds 4 and 6: the restore's createMany also writes a capped in-progress promotion's rows scaled to the cap, or none for a code that cannot be scaled (scaleCappedCarriedRows via scaleSurvivors: INV-MONEY-029's one rule-derived amount, owner decision 24 Oct 2026 on #4302). No new site.
   "src/lib/night-adjustment-write.ts|bookingGuestNightAdjustment|createMany,deleteMany,opaquePayload|amountCents|4",
@@ -190,6 +196,17 @@ const REVIEWED_NON_MONEY_OPAQUE_WRITERS = new Map<
     {
       reason: "internet-banking expiry lifecycle only",
       sourceShape: /data:\s*\{[\s\S]*?status:\s*BookingStatus\.CANCELLED/,
+    },
+  ],
+  [
+    // #4916: the post-stay dietary clear (`INV-PRIV-023`). Opaque only because
+    // it spreads the dietary erasure patch, which holds `dietaryRequirements`
+    // alone; it writes no name and nothing that holds money.
+    "src/lib/member-dietary-booking-writes.ts|bookingGuest|opaquePayload||1",
+    {
+      reason: "post-stay clear: the dietary erasure patch only",
+      sourceShape:
+        /tx\.bookingGuest\.updateMany\(\{\s*where:\s*\{\s*\.\.\.where,\s*id:\s*\{\s*in:\s*rows\.map\(row\s*=>\s*row\.id\)\s*\}\s*\},\s*data:\s*\{\s*\.\.\.DIETARY_ERASURE_PATCH\s*\},?\s*\}\)/,
     },
   ],
   [

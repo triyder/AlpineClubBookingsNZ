@@ -7,6 +7,7 @@ import logger from "@/lib/logger";
 import { buildXeroObjectUrl } from "@/lib/xero-links";
 import { getXeroOrgShortCode } from "@/lib/xero-link-short-code";
 import { canReplayXeroInboundEvent } from "@/lib/xero-stale-operations";
+import { adminListPageField } from "@/lib/admin-list-page";
 import {
   inboundEventCategoriesForXeroObjectType,
   inboundEventCategoryFilter,
@@ -18,6 +19,7 @@ import {
   type ClubTimeZone,
 } from "@/lib/club-time";
 import { clubTimeZone } from "@/lib/club-time/server";
+import { dateOnlyStringSchema } from "@/lib/date-only-schema";
 
 const querySchema = z.object({
   status: z.string().optional().default("all"),
@@ -27,10 +29,10 @@ const querySchema = z.object({
   localId: z.string().trim().optional().default(""),
   resourceId: z.string().trim().optional().default(""),
   eventType: z.string().trim().optional().default("all"),
-  createdFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-  createdTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  createdFrom: dateOnlyStringSchema.optional(),
+  createdTo: dateOnlyStringSchema.optional(),
   limit: z.coerce.number().int().min(1).max(100).optional().default(25),
-  page: z.coerce.number().int().min(1).optional().default(1),
+  page: adminListPageField,
   pageSize: z.coerce.number().int().min(1).max(100).optional(),
 });
 
@@ -41,9 +43,9 @@ const querySchema = z.object({
  * `XeroSyncOperation.createdAt` / `XeroInboundEvent.createdAt` are INSTANTS, and
  * the operator typing a date means the club's calendar day — so the window is
  * derived from the PERSISTED club timezone (`INV-CONFIG-002`), not from the
- * container's `TZ`. The zod schema has already pinned the shape to
- * `^\d{4}-\d{2}-\d{2}$`, so `requireCalendarDate` cannot throw on a bound that
- * reached here.
+ * container's `TZ`. The zod schema has already refused anything but a real
+ * calendar day (`dateOnlyStringSchema`), so `requireCalendarDate` cannot throw
+ * on a bound that reached here.
  */
 function startOfInputDate(date: string, zone: ClubTimeZone) {
   return startOfClubDay(requireCalendarDate(date), zone);

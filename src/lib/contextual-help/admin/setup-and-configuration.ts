@@ -108,7 +108,7 @@ export const adminSetupAndConfigurationHelpEntries: HelpEntry[] = [
     ),
   ),
   entry(
-    "/admin/membership-setup",
+    getAdminPage("membership-setup").oldPath,
     help(
       "Membership & Members setup",
       "Membership & Members groups the setup pages that define membership policy, profile fields, and subscription access behavior.",
@@ -144,7 +144,7 @@ export const adminSetupAndConfigurationHelpEntries: HelpEntry[] = [
       "Bookings Setup groups the setup pages that shape booking eligibility, pricing, capacity, and member-facing booking copy. It also holds what was the Booking Rules page.",
       [
         "Open Booking Policies before changing cancellation, minimum-stay, public-request, or group-discount behavior.",
-        "Review Hut Fees & Seasons and Age Groups before accepting priced bookings.",
+        "Review Seasons and Age Groups before accepting priced bookings.",
         "Open Rooms & Beds to change bed-allocation inventory, or to change a lodge's allocation preferences.",
         "Open Booking Messages when booking, payment, cancellation, or group-booking wording needs an operator-approved update.",
         "Check module and permission gates if a setup card is hidden for the current admin: a card shows only to an admin who can open its page.",
@@ -156,9 +156,9 @@ export const adminSetupAndConfigurationHelpEntries: HelpEntry[] = [
             "Rules that affect holds, cancellation, minimum stays, public requests, and group discounts.",
         },
         {
-          name: "Hut Fees & Seasons",
+          name: "Seasons",
           description:
-            "Season windows and nightly rates used by booking pricing.",
+            "Season windows (name, type, dates, and active state) that booking pricing reads. Nightly rates are set under Fees.",
         },
         {
           name: "Rooms & Beds",
@@ -257,7 +257,7 @@ export const adminSetupAndConfigurationHelpEntries: HelpEntry[] = [
     ),
   ),
   entry(
-    "/admin/subscription-lockout",
+    getAdminPage("subscription-lockout").oldPath,
     help(
       "Subscription Lockout",
       "Subscription Lockout controls whether unpaid or overdue subscriptions restrict member access or booking behavior.",
@@ -286,7 +286,7 @@ export const adminSetupAndConfigurationHelpEntries: HelpEntry[] = [
     ),
   ),
   entry(
-    "/admin/membership-types",
+    getAdminPage("membership-types").oldPath,
     help(
       "Membership Types",
       "Membership Types define seasonal member categories, booking rate behavior, subscription behavior, and optional Xero contact-group rules.",
@@ -372,7 +372,7 @@ export const adminSetupAndConfigurationHelpEntries: HelpEntry[] = [
     ),
   ),
   entry(
-    "/admin/member-fields",
+    getAdminPage("member-fields").oldPath,
     help(
       "Member Fields",
       "Member Fields controls optional member-profile fields and how they appear in profile or admin workflows.",
@@ -431,7 +431,7 @@ export const adminSetupAndConfigurationHelpEntries: HelpEntry[] = [
     ),
   ),
   entry(
-    "/admin/committee",
+    getAdminPage("committee").oldPath,
     help(
       "Committee",
       "Committee manages master roles, role email aliases, and public/member-visible committee assignments.",
