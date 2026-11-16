@@ -1483,26 +1483,14 @@ async function batchRefusal(params: {
   }, 60_000);
 
   it("#130 with several codes switched on, the work party is dropped, not carried", async () => {
-    const settings = await prisma.clubModuleSettings.findUnique({ where: { id: "default" } });
-    await prisma.clubModuleSettings.upsert({
-      where: { id: "default" },
-      create: { id: "default", multiPromoCodes: true },
-      update: { multiPromoCodes: true },
-    });
-    try {
+    await withSeveralCodes(async () => {
       await seed("unpaid");
       await apply(await quote());
       const figures = await removalQuote();
       expect(figures).toMatchObject({ newFinalPriceCents: PRICE_CENTS, priceDiffCents: DISCOUNT_CENTS });
       await removalApply(figures);
       expect(await workPartyRedemptions()).toEqual([]);
-    } finally {
-      if (settings) {
-        await prisma.clubModuleSettings.update({ where: { id: "default" }, data: { multiPromoCodes: settings.multiPromoCodes } });
-      } else {
-        await prisma.clubModuleSettings.delete({ where: { id: "default" } });
-      }
-    }
+    });
   }, 60_000);
 
   it("#130 refuses a booking that is not on that work party, writing nothing", async () => {
@@ -1531,19 +1519,27 @@ async function batchRefusal(params: {
 
   /** Run with several codes per booking switched on, putting the club's switch back afterwards. */
   async function withSeveralCodes(run: () => Promise<void>): Promise<void> {
-    const settings = await prisma.clubModuleSettings.findUnique({ where: { id: "default" } });
+    const settings = await prisma.clubModuleSettings.findUnique({
+      where: { id: "default" },
+      select: { multiPromoCodes: true },
+    });
     await prisma.clubModuleSettings.upsert({
       where: { id: "default" },
       create: { id: "default", multiPromoCodes: true },
       update: { multiPromoCodes: true },
+      select: { id: true },
     });
     try {
       await run();
     } finally {
       if (settings) {
-        await prisma.clubModuleSettings.update({ where: { id: "default" }, data: { multiPromoCodes: settings.multiPromoCodes } });
+        await prisma.clubModuleSettings.update({
+          where: { id: "default" },
+          data: { multiPromoCodes: settings.multiPromoCodes },
+          select: { id: true },
+        });
       } else {
-        await prisma.clubModuleSettings.delete({ where: { id: "default" } });
+        await prisma.clubModuleSettings.delete({ where: { id: "default" }, select: { id: true } });
       }
     }
   }
