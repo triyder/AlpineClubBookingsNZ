@@ -482,7 +482,6 @@ async function seedCardPayment(shape: "paid" | "part-paid", price: number): Prom
       amountCents: price - ASK_CENTS,
       status: "SUCCEEDED",
       additionalAmountCents: ASK_CENTS,
-      billedToOrganiserCents: 0,
       additionalPaymentStatus: "PENDING",
     });
   }
@@ -936,7 +935,6 @@ async function batchRefusal(params: {
     expect(await prisma.payment.findUniqueOrThrow({ where: { id: PAYMENT_ID } })).toMatchObject({
       amountCents: PRICE_CENTS - ASK_CENTS,
       additionalAmountCents: 0,
-      billedToOrganiserCents: 0,
       // Only the excess consumed the capture's refundable headroom, as credit.
       refundedAmountCents: DISCOUNT_CENTS - ASK_CENTS,
     });
