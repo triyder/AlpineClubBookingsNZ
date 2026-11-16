@@ -98,6 +98,7 @@ export interface HostingCoverageLinkedMovePromptData {
  */
 export interface LinkedMoveMoneyFacts {
   combinedAmountDueCents: number;
+  /** Every cent coming back to the member, freed applied credit included (`combineLinkedMoveQuote`, fork #132). */
   combinedRefundCents: number;
   combinedChangeFeeCents: number;
   /**
@@ -211,7 +212,7 @@ export function formatLinkedMoveMoneySentence(
         `${formatCents(facts.combinedRefundCents, format)} would come back to you, ` +
         `across ${all}. Those two do not cancel each other out: each booking ` +
         `settles on its own, so the amount payable is paid on its own booking ` +
-        `page and the refund comes back separately.`,
+        `page and what comes back is returned separately.`,
     );
   } else if (facts.combinedRefundCents > 0) {
     parts.push(
