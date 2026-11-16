@@ -90,7 +90,7 @@ stays for the agent-doc ceilings below.
 | `INV-ADDPAY-039` | 1570 |
 | `INV-SSOT-001` | 1531 |
 | `INV-PRIV-016` | 1512 |
-| `INV-HOST-051` | 1443 |
+| `INV-HOST-051` | 1442 |
 | `INV-HOST-053` | 1434 |
 | `INV-OPS-013` | 1354 |
 | `INV-CONFIG-004` | 1304 |
