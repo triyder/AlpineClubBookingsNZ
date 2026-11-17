@@ -6,17 +6,17 @@ import {
   formatViolationsDetail,
 } from "@/lib/booking-policies"
 import { z } from "zod"
-import { isDateOnlyString, parseDateOnly } from "@/lib/date-only"
+import { parsedDateOnlySchema } from "@/lib/date-only-schema"
 import { resolveOptionalActiveLodgeId } from "@/lib/lodges"
 import { prisma } from "@/lib/prisma"
-
-const dateOnlyString = z.string().refine(isDateOnlyString, {
-  message: "Date must be YYYY-MM-DD",
-})
+import { loadCancellationPolicy } from "@/lib/cancellation"
+import { describeCancellationSchedule } from "@/lib/cancellation-schedule"
+import { clubFormat } from "@/lib/club-format-server"
+import logger from "@/lib/logger"
 
 const bookingPolicyCheckQuerySchema = z.object({
-  checkIn: dateOnlyString.transform(parseDateOnly),
-  checkOut: dateOnlyString.transform(parseDateOnly),
+  checkIn: parsedDateOnlySchema,
+  checkOut: parsedDateOnlySchema,
   // Lodge being booked (multi-lodge phase 8): minimum-stay overrides resolve
   // per lodge. Omitted = the club's default lodge.
   lodgeId: z.string().min(1).nullish(),
@@ -67,5 +67,34 @@ export async function GET(request: NextRequest) {
     violations: review.violations,
     exceptionReview: review,
     message: result.valid ? null : formatViolationsDetail(result.violations),
+    cancellationSchedule: await loadCancellationScheduleRows(checkIn, effectiveLodgeId),
   })
+}
+
+/**
+ * The club's current cancellation schedule for this lodge and check-in, as the
+ * rows the booking wizard's review step shows before the member commits money
+ * (#4946). Same loader the cancel flow settles with, same formatter the booking
+ * page and admin preview use, so the three never disagree.
+ *
+ * Null when it cannot be read: the date precheck this route exists for must not
+ * fail because of a disclosure, and the review step shows a neutral fallback
+ * line instead of rows.
+ */
+async function loadCancellationScheduleRows(
+  checkIn: Date,
+  lodgeId: string,
+): Promise<string[] | null> {
+  try {
+    const [rules, money] = await Promise.all([
+      loadCancellationPolicy(checkIn, lodgeId),
+      clubFormat(),
+    ])
+    return describeCancellationSchedule(rules, money.format).map(
+      (row) => row.description,
+    )
+  } catch (err) {
+    logger.error({ err, lodgeId }, "Failed to load the cancellation schedule for the policy check")
+    return null
+  }
 }

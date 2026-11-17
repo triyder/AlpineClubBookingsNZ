@@ -167,3 +167,60 @@ export function useWorkPartyPrefill({
     takePendingWorkPartySelection: takePendingSelection,
   };
 }
+
+/**
+ * The booking wizard's hook-up to the prefill. It is kept here, not in
+ * `use-booking-wizard.ts`, because that file is past upstream's hard size
+ * ceiling (#4926). It derives the prefill's inputs from the wizard's own state,
+ * and it ticks the joined work party through the wizard's setters.
+ *
+ * The wizard calls it after every existing effect, so their order is unchanged.
+ */
+export function useWizardWorkPartyPrefill(wizard: {
+  searchParams: { get(name: string): string | null } | null;
+  lodges: ReadonlyArray<{ id: string }>;
+  lodgesLoading: boolean;
+  lodgesFailed: boolean;
+  lodgesForbidden: boolean;
+  lodgeId: string | null;
+  scopedLodgeId: string | null;
+  step: string;
+  checkIn: string | null;
+  subscriptionLoading: boolean;
+  bookingBlockedBySubscription: boolean;
+  handleLodgeChange: (lodgeId: string) => void;
+  handleDateSelect: (checkIn: string, checkOut: string) => Promise<void>;
+  setSelectedWorkPartyEventId: (id: string) => void;
+  setAttendingWorkParty: (attending: boolean) => void;
+}) {
+  const prefill = useWorkPartyPrefill({
+    workPartyId: wizard.searchParams?.get("workParty")?.trim() || null,
+    lodgeIds: wizard.lodges.map((lodge) => lodge.id),
+    lodgesSettled: !wizard.lodgesLoading && !wizard.lodgesFailed && !wizard.lodgesForbidden,
+    lodgeId: wizard.lodgeId,
+    scopedLodgeId: wizard.scopedLodgeId,
+    onDatesStep: wizard.step === "dates",
+    memberStarted: wizard.checkIn !== null || wizard.step !== "dates",
+    bookingBlocked: wizard.subscriptionLoading ? null : wizard.bookingBlockedBySubscription,
+    selectLodge: wizard.handleLodgeChange,
+    selectDates: (ci, co) => void wizard.handleDateSelect(ci, co),
+  });
+
+  /**
+   * When the review step's working bees arrive, tick the work party a Join came
+   * from, once, unless the member has already chosen one. Returns true when it
+   * ticked. It is read when the response lands, after render.
+   */
+  function tickJoinedWorkParty(
+    events: ReadonlyArray<{ id: string }>,
+    selectedWorkPartyEventId: string | null,
+  ): boolean {
+    const joined = prefill.takePendingWorkPartySelection(events);
+    if (!joined || selectedWorkPartyEventId) return false;
+    wizard.setSelectedWorkPartyEventId(joined);
+    wizard.setAttendingWorkParty(true);
+    return true;
+  }
+
+  return { workPartyPrefillNotice: prefill.workPartyPrefillNotice, tickJoinedWorkParty };
+}

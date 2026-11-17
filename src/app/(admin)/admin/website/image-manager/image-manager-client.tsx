@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { ApiRefusalError, apiErrorMessageFromBody, apiRefusalFromResponse, refusalMessageOr, readApiObjectOrEmpty } from "@/lib/api-error-message";
 import {
   FolderOpen,
   Folder,
@@ -47,6 +48,15 @@ type DialogMode =
   | { kind: "delete-dir"; path: string }
   | { kind: "delete-image"; dir: string; filename: string }
   | null;
+
+// What a refused dialog action says when the route gives no sentence of its
+// own, or the request never gets an answer (#4976, ALP-589).
+const DIALOG_FAILURE: Record<NonNullable<DialogMode>["kind"], string> = {
+  "create-dir": "Failed to create directory",
+  "rename-dir": "Failed to rename directory",
+  "delete-dir": "Failed to delete directory",
+  "delete-image": "Failed to delete image",
+};
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -146,7 +156,7 @@ export function ImageManagerClient() {
           method: "POST",
           body: formData,
         });
-        const data = (await res.json()) as {
+        const data = (await readApiObjectOrEmpty(res)) as {
           results?: Array<{ filename: string; ok: boolean; error?: string }>;
           error?: string;
         };
@@ -154,7 +164,7 @@ export function ImageManagerClient() {
         // single { error } message rather than per-file results — surface it.
         if (!res.ok || !data.results) {
           if (res.status === 403) setForbidden(true);
-          throw new Error(data.error ?? "Upload failed");
+          throw new ApiRefusalError(apiErrorMessageFromBody(data, "Upload failed"));
         }
         const failed = data.results.filter((r) => !r.ok);
         const succeeded = data.results.filter((r) => r.ok);
@@ -169,7 +179,7 @@ export function ImageManagerClient() {
           toast.error(`${f.filename}: ${f.error ?? "Upload failed"}`);
         }
       } catch (err: unknown) {
-        toast.error(err instanceof Error ? err.message : "Upload failed");
+        toast.error(refusalMessageOr(err, "Upload failed"));
       } finally {
         setUploading(false);
         if (fileInputRef.current) fileInputRef.current.value = "";
@@ -236,6 +246,7 @@ export function ImageManagerClient() {
 
   const handleDialogConfirm = async () => {
     if (!dialog) return;
+    const fallback = DIALOG_FAILURE[dialog.kind];
     setDialogBusy(true);
     setForbidden(false);
 
@@ -251,8 +262,7 @@ export function ImageManagerClient() {
         });
         if (!res.ok) {
           if (res.status === 403) setForbidden(true);
-          const d = (await res.json()) as { error?: string };
-          throw new Error(d.error ?? "Failed to create directory");
+          throw await apiRefusalFromResponse(res, fallback);
         }
         toast.success("Directory created");
         await loadDirectories();
@@ -269,8 +279,7 @@ export function ImageManagerClient() {
         });
         if (!res.ok) {
           if (res.status === 403) setForbidden(true);
-          const d = (await res.json()) as { error?: string };
-          throw new Error(d.error ?? "Failed to rename directory");
+          throw await apiRefusalFromResponse(res, fallback);
         }
         toast.success("Directory renamed");
         // If the renamed dir was selected, update selection
@@ -291,8 +300,7 @@ export function ImageManagerClient() {
         });
         if (!res.ok) {
           if (res.status === 403) setForbidden(true);
-          const d = (await res.json()) as { error?: string };
-          throw new Error(d.error ?? "Failed to delete directory");
+          throw await apiRefusalFromResponse(res, fallback);
         }
         toast.success("Directory deleted");
         if (
@@ -312,8 +320,7 @@ export function ImageManagerClient() {
         });
         if (!res.ok) {
           if (res.status === 403) setForbidden(true);
-          const d = (await res.json()) as { error?: string };
-          throw new Error(d.error ?? "Failed to delete image");
+          throw await apiRefusalFromResponse(res, fallback);
         }
         toast.success("Image deleted");
         await loadImages(selectedDir);
@@ -321,7 +328,7 @@ export function ImageManagerClient() {
 
       setDialog(null);
     } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "An error occurred");
+      toast.error(refusalMessageOr(err, fallback));
     } finally {
       setDialogBusy(false);
     }
@@ -391,48 +398,58 @@ export function ImageManagerClient() {
                 const isSelected = dir === selectedDir;
                 const depth = dirDepth(dir);
                 return (
-                  <li key={dir ?? "__root__"}>
-                    <div
-                      className={cn(
-                        "group flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors",
-                        isSelected
-                          ? "bg-muted font-medium text-foreground"
-                          : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
-                      )}
+                  <li
+                    key={dir ?? "__root__"}
+                    className={cn(
+                      "group flex items-center rounded-md pr-2 text-sm transition-colors",
+                      isSelected
+                        ? "bg-muted text-foreground"
+                        : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
+                    )}
+                  >
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      className={cn("h-auto min-w-0 flex-1 justify-start py-1.5 pr-2", isSelected ? "font-medium" : "font-normal")}
                       style={{ paddingLeft: `${8 + depth * 12}px` }}
+                      aria-current={isSelected ? "true" : undefined}
                       onClick={() => setSelectedDir(dir)}
                     >
                       {isSelected ? (
-                        <FolderOpen className="h-4 w-4 shrink-0 text-warning-11" />
+                        <FolderOpen aria-hidden="true" className="h-4 w-4 shrink-0 text-warning-11" />
                       ) : (
-                        <Folder className="h-4 w-4 shrink-0 text-muted-foreground group-hover:text-warning-11" />
+                        <Folder aria-hidden="true" className="h-4 w-4 shrink-0 text-muted-foreground group-hover:text-warning-11" />
                       )}
-                      <span className="flex-1 truncate">{dirLabel(dir)}</span>
-                      {dir && canEdit && (
-                        <span className="flex shrink-0 items-center gap-0.5 opacity-0 group-hover:opacity-100">
-                          <button
-                            title="Rename"
-                            className="rounded p-0.5 hover:bg-accent"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              openRenameDir(dir);
-                            }}
-                          >
-                            <Pencil className="h-3 w-3 text-muted-foreground" />
-                          </button>
-                          <button
-                            title="Delete"
-                            className="rounded p-0.5 hover:bg-danger-3"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              openDeleteDir(dir);
-                            }}
-                          >
-                            <Trash2 className="h-3 w-3 text-danger-11" />
-                          </button>
-                        </span>
-                      )}
-                    </div>
+                      <span className="truncate">{dirLabel(dir)}</span>
+                    </Button>
+                    {dir && canEdit && (
+                      // One rule hides the actions only where hover exists and the
+                      // row is neither hovered nor focused; touch screens always see them.
+                      <span className="flex shrink-0 items-center gap-0.5 [@media(hover:hover)]:[.group:not(:hover,:focus-within)_&]:opacity-0">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          title="Rename"
+                          aria-label={`Rename folder ${dirLabel(dir)}`}
+                          className="h-6 w-6 [&_svg]:size-3.5"
+                          onClick={() => openRenameDir(dir)}
+                        >
+                          <Pencil aria-hidden="true" className="text-muted-foreground" />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          title="Delete"
+                          aria-label={`Delete folder ${dirLabel(dir)}`}
+                          className="h-6 w-6 hover:bg-danger-3 [&_svg]:size-3.5"
+                          onClick={() => openDeleteDir(dir)}
+                        >
+                          <Trash2 aria-hidden="true" className="text-danger-11" />
+                        </Button>
+                      </span>
+                    )}
                   </li>
                 );
               })}

@@ -387,7 +387,7 @@ the owner's checklist for rebuilding it.
 
 | Required check | Status | Job | What it gates |
 | --- | --- | --- | --- |
-| `verify` | applied | `ci.yml` → `verify` | knip, PR-body gates and the other cheap checks itself, then one fail-closed same-attempt poll of four independent full-suite test shards (#3431) and the `Typecheck`, `Lint` and `Production build` jobs (#4425; those three are not required contexts themselves). It no longer runs the dependency audit (#2946) |
+| `verify` | applied | `ci.yml` → `verify` | knip, PR-body gates and the other cheap checks itself, then one fail-closed same-attempt poll of four independent full-suite test shards (#3431), the `Typecheck`, `Lint` and `Production build` jobs (#4425) and `Real-PostgreSQL suites (all)` (`realdb-all`, every `*.realdb.test.ts` file against one Postgres service; #4907, owner decision 11 Nov 2026). None of those jobs is a required context itself; a failed, cancelled, timed-out, skipped or missing one fails `verify`. It no longer runs the dependency audit (#2946) |
 | `Migration drift check` | applied | `ci.yml` → `migration-drift` | migrations reproduce `schema.prisma`; real-Postgres lock harnesses. On a pull request that changes nothing in `CHANGE_SCOPES.migrations` (`scripts/ci/change-scope.mjs`), its migration-only steps skip (drift, partial indexes, two migration tests; a step-level skip, #4425). Every real-Postgres proof that imports app code still runs |
 | `Data migration verification` | applied | `ci.yml` → `data-migration-verification` | data-rewriting migrations against realistic pre-state; its two migration-only proofs skip like `Migration drift check`, and the school naming races always run (#4425) |
 | `Static analysis gate` | applied | `ci.yml` → `static-analysis` | Semgrep: four registry packs **plus** `.semgrep/rules/**` and their fixtures |
@@ -436,6 +436,30 @@ An unknown diff keeps the section required. The size check
 (`scripts/ci/check-pr-size.mjs`) only ever warns: over 800 changed lines, not
 counting files `.gitattributes` marks `linguist-generated`, with no `large-pr:`
 line. `pnpm run pr:check` reports that check as `WARN`.
+
+**The concurrency declaration is owed for what a file is, not only its name**
+(#5038). `verify` and `pnpm run pr:check` require a complete
+`## Concurrency And Lock Impact` section, and refuse a ticked `N/A`, when the
+pull request changes `prisma/schema.prisma`, anything under
+`prisma/migrations/`, or a non-test file under `src/lib` or `src/app/api` whose
+path names a sensitive area (booking, capacity, payment, refund, credit,
+settlement, waitlist, webhook, cron, Xero, Stripe, membership, member lifecycle)
+and which could take part in a race. Such a file is exempt only when its whole
+text, at the pull request's head and at its merge base, is synchronous and
+holds no transaction, database write, raw SQL, lock or lock-helper call,
+database client or re-export, and every local module it imports at runtime,
+followed through the whole import graph at the head, holds none either.
+Message wording, constants, types and pure calculations are exempt. An `async`
+route that only calls a writer in another module is not, and nor is a
+synchronous file that forwards to one (`return settleBooking(id)`).
+
+The gate reads the whole file, never the changed lines, and reads it from git
+rather than the working tree. It fails closed: a deleted or renamed-away file, a
+file it cannot read and a diff it cannot resolve all count as sensitive. The one
+definition is `isConcurrencySensitiveChange` in
+`scripts/ci/check-pr-concurrency-declaration.mjs`. Its patterns over-match on
+purpose, so widen them freely and narrow one only with a measured list of the
+files that become exempt.
 
 **Adding a required context is a three-step sequence, and doing it out of
 order breaks every open pull request** — whenever a job producing a required
@@ -491,9 +515,6 @@ and adding one would require disabling default setup); `Semgrep OSS`
 SARIF — not a second scan);
 `semgrep-cloud-platform/scan` (a Semgrep AppSec Platform App
 configured outside this repository); `dependency-review`;
-`Real-PostgreSQL suites (all, advisory)` (`ci.yml` → `realdb-all`, #4458: every
-`*.realdb.test.ts` file against one Postgres service; no job may `needs:` it, and
-making it required is a separate owner step);
 `Markdown relative-link check (offline)`; `Scheduled secret sweep` (#2852),
 weekly and unrequirable; and the clock-rollover canary, which
 its own workflow comment says must never become a pull-request check.

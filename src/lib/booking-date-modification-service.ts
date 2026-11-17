@@ -1,8 +1,9 @@
+import { assertEditQuotedFigures, unchangedPriceQuotedFigures } from "@/lib/edit-quoted-figures";
+import type { EditQuotedFigures } from "@/lib/edit-quoted-figures";
 import { queueOrganiserExtraForChange } from "@/lib/organiser-extra-invoice-queue";
 import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
 import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
-import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 import { isUnpaidConfirmedWholeLodge } from "@/lib/booking-payment-flow";
 import { bookingAmountOwedCents, bookingWorthCents, recordedChangeFeeCents as feeOnPayment } from "@/lib/booking-payment-state";
 import {
@@ -89,8 +90,9 @@ import {
   calculateModificationSettlementOptions,
   rateSnapshotUpdateForRepricedGuest,
   type BookingModificationSettlementMethod,
-  type LoadedBookingForModify,
 } from "@/lib/booking-modify";
+// Imported directly, not through the barrel: route tests mock the barrel whole.
+import { EDIT_DOOR_BOOKING_INCLUDE } from "@/lib/booking-modify-validation";
 import { creditGiveBackHistory } from "@/lib/booking-credit-give-back-marker";
 import { assertNoBookingMemberNightConflicts } from "@/lib/booking-member-night-conflicts";
 import { markCrossFamilyGuestsOnBooking } from "@/lib/member-guest-add-policy";
@@ -101,12 +103,8 @@ import {
   requireMemberCreditRecipient,
 } from "@/lib/member-credit";
 import { clearStaleCreditElection } from "@/lib/booking-credit-election";
-import {
-  daysUntilDate,
-  getNonMemberHoldPolicy,
-  loadCancellationPolicy,
-} from "@/lib/cancellation";
-import { calculateChangeFee } from "@/lib/change-fee";
+import { getNonMemberHoldPolicy } from "@/lib/cancellation";
+import { lateNoticeChangeFee } from "@/lib/late-notice-change-fee";
 import {
   cleanupChoreAssignmentsForDateChange,
   cleanupChoreAssignmentsForGuestStayRanges,
@@ -119,7 +117,7 @@ import {
 } from "@/lib/date-only";
 import { storedDateOnly } from "@/lib/stored-calendar-day";
 import { sendBookingModifiedEmail } from "@/lib/email";
-import { reserveOrganiserChildModificationRefund } from "@/lib/organiser-child-refund";
+import { reserveModificationRefundDebts } from "@/lib/booking-modification-settlement";
 import logger from "@/lib/logger";
 import {
   recordBookingNightAdjustments,
@@ -381,28 +379,7 @@ export async function modifyBookingDates({
     // capacity check and the claim consume ONLY this post-lock snapshot.
     const booking = await tx.booking.findUnique({
       where: { id: bookingId },
-      include: {
-        guests: {
-          include: {
-            nights: { select: { stayDate: true, priceCents: true, priceSource: true } },
-          },
-        },
-        payment: { include: { transactions: { orderBy: [...LEDGER_ROWS_OLDEST_FIRST] } } },
-        member: true,
-        // #3369: the owner may be an Organisation; bookingOwner() reads both.
-        organisation: { select: { name: true, email: true } },
-        promoRedemptions: {
-          include: {
-            guestTargets: { select: { bookingGuestId: true } },
-            promoCode: {
-              include: {
-                assignments: { select: { memberId: true } },
-                lodges: { select: { lodgeId: true } },
-              },
-            },
-          },
-        },
-      },
+      include: EDIT_DOOR_BOOKING_INCLUDE,
     });
 
     if (!booking) {
@@ -788,18 +765,17 @@ export async function modifyBookingDates({
     const checkInChanged =
       newCheckIn.getTime() !== new Date(booking.checkIn).getTime();
 
-    // #4317 (D8): every date change is priced, so every one is charged the
-    // ordinary change fee its policy tier sets.
+    // A check-in move of a booking that has been paid is charged the late-notice
+    // fee its policy sets. One that has not been paid is repriced with no fee
+    // (owner decision, 10 Nov 2026).
     if (checkInChanged) {
-      const policy = await loadCancellationPolicy(booking.checkIn, booking.lodgeId, tx);
-      const feeResult = calculateChangeFee({
-        // #3123 — one club day for both operands.
-        daysUntilOriginalCheckIn: daysUntilDate(booking.checkIn, todayAtClub),
-        daysUntilNewCheckIn: daysUntilDate(newCheckIn, todayAtClub),
-        originalFinalPriceCents: booking.finalPriceCents,
-        policyRules: policy,
+      changeFeeCents = await lateNoticeChangeFee({
+        booking,
+        lodgeId: booking.lodgeId,
+        newCheckIn,
+        db: tx,
+        todayAtClub,
       });
-      changeFeeCents = feeResult.feeCents;
     }
 
     // Settle the date change through the same policy-based machinery the batch
@@ -814,7 +790,7 @@ export async function modifyBookingDates({
     // options and the save, so a capture between two reads cannot split them.
     const reduction = await readReductionAgainstUnpaidAsk(tx, booking, netChargeCents);
     const settlementOptions = await calculateModificationSettlementOptions({
-      booking: booking as unknown as LoadedBookingForModify,
+      booking,
       netChargeCents,
       reduction,
       db: tx, // locked transaction; see `CancellationPolicyDb`
@@ -827,7 +803,7 @@ export async function modifyBookingDates({
       );
     }
     const payments = await applyPaymentAdjustments(tx, {
-      booking: booking as unknown as LoadedBookingForModify,
+      booking,
       priceDiffCents,
       changeFeeCents,
       reduction,
@@ -906,9 +882,9 @@ export async function modifyBookingDates({
     const appliedBeforeClamp = isRepriceablePrePayment
       ? await deriveBookingAppliedCreditCents(bookingId, tx)
       : 0;
-    // #3750 (#3955 review F1, `INV-PAY-119`): a change fee recorded on the
-    // payment is owed with the price, so credit is kept up to the booking's
-    // worth and the $0 decision reads what it owes — with any fee this edit just added (#4661).
+    // A change fee already recorded on the payment is owed with the price, so
+    // credit is kept up to the booking's worth. A new ordinary edit of an
+    // unpaid booking adds none (owner decision, 10 Nov 2026).
     const recordedChangeFeeCents = feeOnPayment(booking.payment) + payments.changeFeeAddedToAmountOwedCents;
     // #4661 review F1: what a card intent must now be for, as the batch lifecycle compares.
     let owedCents = bookingWorthCents({ finalPriceCents: newFinalPriceCents, changeFeeCents: recordedChangeFeeCents });
@@ -1236,7 +1212,7 @@ export async function modifyBookingDates({
           // #3954: what an unpaid ask took of this reduction, for the Xero repair pass.
           ...unpaidAskOffsetHistory(payments),
           ...primaryInvoiceSettlementHistory(payments), // #3980: the gap's anchor
-          ...changeFeeAddedToAmountOwedHistory(payments.changeFeeAddedToAmountOwedCents), // #4661: the settle's fee line
+          ...changeFeeAddedToAmountOwedHistory(payments.changeFeeAddedToAmountOwedCents), // empty: a new ordinary edit adds no fee to the amount owed
           // #2390: the same sentence the member was shown at the edit, kept on
           // the booking's own history so the split has an answer later.
           ...(promoCoverage ? { promoCoverageNote: promoCoverage.message } : {}),
@@ -1298,8 +1274,11 @@ export async function modifyBookingDates({
         booking.payment?.id,
       );
     }
-    // #3653: an organiser-settled child's refund debt, before this edit commits.
-    await reserveOrganiserChildModificationRefund(tx, {
+    // #3653, #4992: the card refund this edit owes (an organiser's, or the member's
+    // own with its frozen plan), written before this edit commits.
+    const ownCardRefund = await reserveModificationRefundDebts(tx, {
+      door: "dateChange",
+      pendingRefundAmountCents: payments.pendingRefundAmountCents,
       plan: payments.organiserChildRefund,
       bookingId,
       payment: booking.payment,
@@ -1380,6 +1359,7 @@ export async function modifyBookingDates({
       xeroRefundAmountCents,
       appliedCreditGivenBackCents: payments.appliedCreditGivenBackCents,
       xeroAdditionalAmountCents,
+      ownCardRefund,
       organiserChildRefund: payments.organiserChildRefund,
       zeroDollarAutoPaid,
       paymentId: booking.payment?.id ?? null,
@@ -1397,10 +1377,8 @@ export async function modifyBookingDates({
     format,
     bookingId,
     result,
-    idempotencyKeyPrefix: `mod_dates_refund_${bookingId}`,
-    failureMessage: "Stripe refund failed after date change - enqueueing recovery",
-    recoveryFailureMessage:
-      "Failed to enqueue payment recovery for Stripe refund failure after date change",
+    door: "dateChange",
+    failureMessage: "Stripe refund failed after date change; the pre-persisted debt stays owed",
   });
 
   const additionalMint = await createModificationAdditionalPaymentIntent({
@@ -1563,7 +1541,7 @@ async function dispatchDatePostTransactionSideEffects({
     // issued invoice falls back to the full delta inside classify when null.
     settlementAmountCents: result.xeroRefundAmountCents,
     settlementMethod: result.settlementMethod,
-    refundedThroughStripe: result.hasSucceededPayment,
+    refundedThroughStripe: result.hasSucceededPayment, paymentId: result.paymentId,
     appliedCreditGiveBackCents: result.appliedCreditGivenBackCents,
     // #3653: the organiser child refund raises the one note, after Stripe.
     organiserChildRefundOwnsCreditNote: result.organiserChildRefund !== null,
@@ -1705,6 +1683,8 @@ export async function adminShiftBookingDates({
    */
   hostingCoverageOverride?: HostingCoverageOverrideInput | null;
   input: {
+    /** #4924 (`INV-MOD-062`): the shift preview's figures; see `BatchModifyInput`. */
+    quotedFigures?: EditQuotedFigures;
     checkIn?: string;
     checkOut?: string;
     confirmOverCapacity?: boolean;
@@ -1941,6 +1921,14 @@ export async function adminShiftBookingDates({
       // the shift's edit-policy gate reads.
       today: clubTodayDateOnly,
     }, format);
+
+    // #4924 (`INV-MOD-062`): a shift moves no money, so the officer's preview
+    // can only go stale if the stored price moved since; checked on the
+    // post-lock re-read, before the first write below.
+    assertEditQuotedFigures(
+      input.quotedFigures,
+      unchangedPriceQuotedFigures(booking.finalPriceCents),
+    );
 
     // #3276: a shift moves every night by the same delta and no money moves, so
     // the recorded build-up moves with it — captured before the rewrite below

@@ -18,6 +18,8 @@ export const PRIVACY_RETENTION_CLASSIFICATION = {
   TwoFactorRecoveryCode: "personal",
   TwoFactorSessionChallenge: "personal",
   SessionReauthChallenge: "personal",
+  WebAuthnCredential: "personal",
+  WebAuthnChallenge: "personal",
   MemberApplication: "personal",
   NominationToken: "personal",
   PartnerInviteToken: "personal",
@@ -31,6 +33,15 @@ export const PRIVACY_RETENTION_CLASSIFICATION = {
   MembershipType: "non-personal",
   MembershipAnnualFee: "non-personal",
   MembershipAnnualFeeComponent: "non-personal",
+  // Second billing axis (subscription-category-decoupling): the same shape as
+  // MembershipType/MembershipAnnualFee/-Component above — a club-defined
+  // catalog entry and its flat-fee pricing config, no individual subject of
+  // its own. The personal linkage lives on the charge/assignment rows that
+  // reference a category by id (MembershipSubscriptionCharge,
+  // SeasonalMembershipAssignment), both already "personal" above.
+  SubscriptionCategory: "non-personal",
+  SubscriptionCategoryFee: "non-personal",
+  SubscriptionCategoryFeeComponent: "non-personal",
   JoiningFee: "non-personal",
   MembershipTypeAgeTier: "non-personal",
   XeroContactGroupRule: "non-personal",
@@ -67,6 +78,7 @@ export const PRIVACY_RETENTION_CLASSIFICATION = {
   PaymentTransaction: "personal",
   PaymentRefund: "personal",
   UnrecognisedStripePayment: "personal",
+  StripeDispute: "personal",
   RateLimitCounter: "personal",
   LoginThrottle: "personal",
   AlertCooldown: "personal",
@@ -130,6 +142,7 @@ export const PRIVACY_RETENTION_CLASSIFICATION = {
   LodgeSettings: "personal",
   EmailMessageSetting: "personal",
   ClubIdentitySettings: "personal",
+  PrivacyHostingSettings: "personal",
   ClubTimeSettings: "personal",
   ClubFormatSettings: "personal",
   ClubTaxSettings: "non-personal",
@@ -226,4 +239,9 @@ export const PRIVACY_RETENTION_CLASSIFICATION = {
   MemberMoneySourcePosting: "personal",
   MemberMoneyRefundReservation: "personal",
   MemberMoneyRefundReservationRelease: "personal",
+  MemberMoneyExportManifest: "personal",
+  MemberMoneyExportCoverage: "personal",
+  // #4520: a balance transaction names a member's payment intent or refund; a payout is the club's own.
+  StripeBalanceTransactionEvidence: "personal",
+  StripePayout: "non-personal",
 } as const;

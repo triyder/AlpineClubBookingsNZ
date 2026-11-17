@@ -25,8 +25,8 @@ Do not infer a staging host from production DNS guesses.
 ## Auth Path
 
 - Sign-in path: `/login`
-- Seeded admin account after `prisma/seed.ts`: the `SEED_ADMIN_EMAIL` value
-  from `.env.staging`.
+- Seeded admin account after `run --rm seed` (which runs `prisma/seed.ts`):
+  the `SEED_ADMIN_EMAIL` value from `.env.staging`.
 - Required post-seed action for shared staging: change the seed admin password
   before sharing the environment.
 
@@ -65,7 +65,7 @@ docker compose --env-file .env.staging -p tacbookings-staging \
 
 docker compose --env-file .env.staging -p tacbookings-staging \
   -f docker-compose.yml -f docker-compose.staging.yml \
-  exec app ./node_modules/.bin/tsx --conditions=react-server prisma/seed.ts
+  run --rm seed
 ```
 
 Verify the target:
@@ -135,6 +135,22 @@ Only include authenticated routes that the staging test account is allowed to
 access. If a page depends on Stripe, Xero, SES, or finance data that is not
 configured in staging, record the dependency and use seeded or demo data instead
 of production credentials.
+
+### Dialogs at high zoom
+
+Every dialog built on the shared `DialogContent` caps its height to the viewport
+and scrolls inside, because the page behind it is locked (#4967). The command
+palette scrolls its own list instead, so its search box stays on screen. Side
+sheets (`sheet.tsx`) are separate and not covered. At 400% browser zoom (about
+320 × 256 CSS pixels), open a long confirmation, the manual-refund completion
+dialog and the admin command palette. Scroll each to its final button or item
+and activate it. Scroll back to the top to reach the close button, and check
+that dropdowns open fully and dialogs with their own height cap still fit.
+Dialogs that keep a fixed header and footer around an inner scrolling body
+(`flex max-h-[90vh] flex-col`) are unchanged by #4967, so look at each of
+those by hand: the body can get very little height at this size.
+`pnpm run test:e2e:a11y-fixture` checks the shared dialog, confirmation and
+command palette at 320 × 256 without a database.
 
 ## Shared Staging Notes
 
@@ -296,7 +312,7 @@ fix was needed.**
     old step's focus target unmounts and focus falls back to `<body>` — #1149
     deliberately **announces** the transition via `aria-live` rather than moving
     focus, so this is the accepted design, not a gap.
-- **Admin members table** (`src/app/(admin)/admin/members/_components/member-table.tsx`):
+- **Admin members table** (`src/app/(admin)/admin/membership/members/_components/member-table.tsx`):
   - The six sortable columns render real `<button>`s inside `<th aria-sort>`
     cells. They are keyboard-focusable with a visible focus-visible ring (2px
     `--ring` box-shadow). **Enter** toggles direction
@@ -346,4 +362,141 @@ cards in the product still have no heading semantics. Changing the primitive
 touches every card in ~167 files and would put the wrong level on many of them,
 so it is not a fix to make in passing — tracked in #2796, which also records
 that this same trap has now been patched per-page three times (#1242,
-`roster-editor.tsx`, and this one).
+`roster-editor.tsx`, and this one). Superseded for the member-facing screens
+by #4951 below.
+
+## #4951 Member Screen Headings and Tab Titles (2026-11-12)
+
+Static fix. Two gaps a screen-reader user hits on the screens a member reaches
+from an email link or their account:
+
+- **No level-1 heading.** Each single-card screen's card title now renders as
+  the page's `<h1>` (`headingLevel={1}`) in every render state: loading,
+  invalid link, form, success, error. A loading state with no visible title
+  carries an sr-only `<h1>`. Covered: `/pay/[token]` (including the "Checking
+  your payment..." and redirect-return answer screens), `/reset-password`,
+  `/change-password`, `/verify-email`, `/confirm-email-change`, `/login/magic`,
+  `/family-invite/[token]`, `/membership-cancellation/[token]`,
+  `/lodge-maintenance/[token]`, `/maintenance-report`, `/nominations/[token]`,
+  `/notices/[id]`, `/join/[code]`, `/join/verify/[token]`,
+  `/school-bookings/confirm/[token]`, `/lodge-instructions`,
+  `/hut-leader-instructions` and the `/booking-requests` respond and verify
+  screens. Pages that already had an `<h1>` (dashboard, bookings, a single
+  booking, the guest-consent screen) give their cards level 2, including the
+  shared cards only those pages render (recent news, message board, lodge
+  kiosk, additional payment, confirm booking, waitlist offer, refund appeal,
+  self-remove and group booking). A notice body is admin-written HTML, so an H1
+  an admin puts in it is rendered as an H2 and the notice keeps one level-1
+  heading. That is a small size change for that heading only.
+- **Identical tab titles.** These routes now set a fixed page title that the
+  root template turns into `<Page> | <Club>`: `/pay/[token]`,
+  `/reset-password`, `/change-password`, `/verify-email`,
+  `/confirm-email-change`, `/login`, `/login/magic`, `/family-invite/[token]`,
+  `/membership-cancellation/[token]`, `/nominations/[token]`, `/notices/[id]`,
+  `/dashboard`, `/bookings`, `/bookings/[id]`, `/bookings/consent/[guestId]`,
+  `/lodge-instructions`, `/school-bookings/confirm/[token]` and the
+  `/booking-requests` respond and verify screens. Client pages get theirs from a
+  small server `layout.tsx`. Titles never carry a name, amount or token, and
+  `/notices/[id]` is a fixed "Notice" so the title needs no second access check.
+
+Pinned by `src/app/(public)/__tests__/single-card-screen-headings.test.tsx`,
+`src/app/__tests__/member-token-screen-headings.test.tsx`,
+`src/app/__tests__/client-loading-state-headings.test.tsx`, the `/pay` page
+suite, and `src/app/__tests__/member-route-titles.test.ts`. The
+`card-title-classification-census.test.ts` census keeps the member-facing
+roots, and the shared member cards it lists, fully classified and ratchets the
+remainder (`docs/ARCHITECTURE.md` -> "Card titles and heading semantics (#2796)").
+
+Not done here, and still true after it:
+
+- The admin and finance card titles, and the member components that several
+  kinds of page share (the edit-booking panel, the booking editor and the
+  guest-consent card), are swept by area, each sweep lowering the census
+  baseline.
+- These member routes still show the default tab title: `/profile`, `/book`,
+  `/induction`, `/maintenance-report`, `/forgot-password`, `/register`,
+  `/login/verify`, `/login/enroll` and `/chores/[token]`.
+- Lodge and hut-leader instruction bodies are admin-written HTML shown as
+  written, so an H1 inside one adds a second level-1 heading to that page.
+- The membership application page (`/join/apply`, under `src/app/(website)`)
+  is outside the census roots. Its "Application submitted" state has no
+  level-1 heading, and the right level depends on whether the page is embedded
+  in a CMS page that already has one.
+- The collapsible profile cards put their level-2 title inside a `<summary>`.
+  That is valid HTML, but whether each screen reader lists it in its heading
+  list is untested.
+- A real screen-reader walkthrough, which stays a human manual-QA task.
+
+## #4949 Action Outcomes Announced (2026-11-14)
+
+Member, payment and sign-in screens showed what had just happened (a declined
+card, a wrong sign-in code, a finished cancellation) as a coloured box that
+appeared already filled. Some screen-reader and browser pairs skip text inserted
+that way, so a blind member could not tell whether the action worked. The rule
+that now governs the surfaces below is in `docs/UX_FLOW_MAP.md` ("An outcome is
+never a bare styled box"): a failure goes in `FocusedActionError`, a result or
+progress line goes in a `StatusRegion` (a `role="status"` region mounted before
+the request, one home in `src/components/status-region.tsx`), and a control
+that disappears hands focus to the outcome that replaces it.
+
+Surfaces fixed, each with a component test in `src/components/__tests__/`,
+`src/lib/__tests__/` or beside its page:
+
+- **Card payments.** `PaymentForm` (decline alert, and a success status that
+  takes the focus Pay Now held), `SetupForm` (failed card save) and
+  `BookingPaymentWrapper` ("Preparing payment..." status). Both forms own their
+  failure, so the `onError` prop is gone and no caller shows the same decline a
+  second time.
+- **Pay-link page** (`/pay/[token]`). Loading and "Checking your payment..."
+  status lines, the card-start and fresh-link failures as alerts, and focus on
+  the "new link sent" confirmation and on "Checking your payment..." once the
+  card form is gone.
+- **Payment buttons.** Switch to internet banking and the guest payment link.
+- **Cancel booking.** One frame keeps a status region and an error alert
+  mounted across every step. Focus moves to each step's heading, back to
+  **Cancel Booking** after "Keep booking" or "Try Again", and to the override
+  reason when a cancellation is refused for want of a hosting override. The
+  success panel lives in `cancel-booking-success-panel.tsx` with its wording
+  unchanged.
+- **Sign-in and account.** Forgot, reset and change password, both
+  two-factor panels, the five profile cards (delete account, notification
+  preferences, Google account, two-factor security, data export) and delete
+  booking. Reset-password sets `aria-invalid` on each failing field, names its
+  own error first in `aria-describedby` and focuses the first failing field.
+  Change password has one form-level error and no field errors.
+- **Other public flows.** The contact form, the booking-request reply page,
+  and the membership-cancellation, nomination and partner-invite cards. Where the
+  reply or confirmation replaces the button that had focus (booking-request
+  reply, membership-cancellation and nomination cards), it takes the focus.
+
+Stated limits:
+
+- This is an automated, DOM-level check of roles, text and focus. It was not
+  run with a real screen reader (NVDA, JAWS or VoiceOver), which remains a human
+  manual-QA task as in the earlier sections.
+- The axe scan in the browser tests (#4466) checks a page as it first settles,
+  so it does not see text that appears only after an action. These component
+  tests are what hold the announcements in place.
+- Admin screens were out of scope.
+- A status line that is on screen from the moment its screen first renders
+  mounts already filled, so the "mounted before it is filled" rule cannot hold
+  for it. The pay-link page's "Loading..." and `BookingPaymentWrapper`'s
+  "Preparing payment..." carry `role="status"` but are not guaranteed to be read.
+  The same holds for the pay-link page's "Checking your payment...": it replaces
+  the whole page (a redirect return, #4955, or a card success), so the status
+  region is mounted with the text in it and takes the focus.
+- Not converted, because they are outside the locations #4949 lists: the
+  "Preparing payment..." line in `StripeProvider`; in `AdditionalPaymentCard`, the
+  "Loading payment details..." line, the box that reports a failure to load the
+  payment form and its own "Payment successful!" panel; the "Payment complete"
+  line on the organiser's group settlement; and the pay-link page's final
+  "Payment received" card, which replaces the whole page; and the pay-link page's
+  "Your payment did not go through" notice after a failed redirect return (#4955),
+  which appears with the pay options, not after an action on that page. Each is
+  plain text, not a status region.
+- Several outcomes are both a live region and the element that takes focus (the
+  cancel flow's loading line, the account-deletion confirmation, the fresh-link
+  confirmation, "Checking your payment...", the payment success and the
+  membership-cancellation and nomination confirmations). Whether a given screen
+  reader reads such a line once or twice is untested, so the manual screen-reader
+  pass should listen for it.

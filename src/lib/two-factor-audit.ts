@@ -48,11 +48,16 @@ export type TwoFactorRequestContext = StructuredAuditEvent["request"];
  * factor or issues codes. Which job may record which action is
  * `assertTwoFactorActorMayAct`'s.
  */
+/** The operator command that clears a lost officer factor (#4618). May only clear. */
+export const OFFICER_FACTOR_RESET_JOB_NAME = "officer-factor-reset";
+
 export const TWO_FACTOR_SYSTEM_ACTORS = [
   /** The retention job anonymising a former member after their period (#4457). */
   FORMER_MEMBER_ANONYMISATION_JOB_NAME,
   /** The operator's re-encrypt moving stored data to the current data key (#4456). */
   DATA_KEY_REENCRYPT_JOB_NAME,
+  /** The operator command for a club whose Full Admin has lost their factor (#4618). */
+  OFFICER_FACTOR_RESET_JOB_NAME,
 ] as const;
 
 export type TwoFactorSystemActor = (typeof TWO_FACTOR_SYSTEM_ACTORS)[number];
@@ -93,6 +98,15 @@ export const TWO_FACTOR_AUDIT_ACTIONS = {
    * sign the member in, and the member is told to generate a new set.
    */
   recoveryCodesRetired: "security.two_factor.recovery_codes_retired",
+  /** A passkey was saved. The row names it; the public key stays in the table. */
+  passkeyRegistered: "security.two_factor.passkey_registered",
+  /** A passkey was removed. */
+  passkeyRemoved: "security.two_factor.passkey_removed",
+  /**
+   * The authenticator's counter went backwards, or the compare-and-set that
+   * would have stored the new counter lost. The row keeps the old counter.
+   */
+  passkeyCounterRegressed: "security.two_factor.passkey_counter_regressed",
 } as const;
 
 /** The actions only the data-key re-encrypt records, and nobody else. */
@@ -222,6 +236,16 @@ type TwoFactorMutationDetails = {
   recoveryCodesIssued?: number;
   /** How many unused recovery codes the event retired, when it retired any. Never the codes. */
   recoveryCodesRetired?: number;
+  /** Passkey display name. Never the public key. */
+  passkeyName?: string;
+  /** WebAuthn credential id (the authenticator's id), not the row id. */
+  credentialId?: string;
+  /** Counter stored before this ceremony. */
+  storedCounter?: number;
+  /** Counter the authenticator reported, or the value the lost update would have stored. */
+  reportedCounter?: number;
+  /** How many passkeys the member held when a clear was recorded. */
+  passkeyCount?: number;
   request?: TwoFactorRequestContext;
 };
 
@@ -258,6 +282,9 @@ const SUMMARIES: Record<Exclude<TwoFactorAuditAction, typeof TWO_FACTOR_AUDIT_AC
     "Two-factor authenticator secret re-encrypted under the current data key",
   [TWO_FACTOR_AUDIT_ACTIONS.recoveryCodesRetired]:
     "Two-factor recovery codes retired by a data-encryption key change",
+  [TWO_FACTOR_AUDIT_ACTIONS.passkeyRegistered]: "Passkey registered",
+  [TWO_FACTOR_AUDIT_ACTIONS.passkeyRemoved]: "Passkey removed",
+  [TWO_FACTOR_AUDIT_ACTIONS.passkeyCounterRegressed]: "Passkey counter refused",
 };
 
 /**
@@ -304,6 +331,15 @@ export async function recordTwoFactorMutation(
         ...(params.recoveryCodesRetired === undefined
           ? {}
           : { recoveryCodesRetired: params.recoveryCodesRetired }),
+        ...(params.passkeyName === undefined ? {} : { passkeyName: params.passkeyName }),
+        ...(params.credentialId === undefined ? {} : { credentialId: params.credentialId }),
+        ...(params.storedCounter === undefined ? {} : { storedCounter: params.storedCounter }),
+        ...(params.reportedCounter === undefined
+          ? {}
+          : { reportedCounter: params.reportedCounter }),
+        ...(params.passkeyCount === undefined || params.passkeyCount === 0
+          ? {}
+          : { passkeyCount: params.passkeyCount }),
       },
       // Declared, not defaulted: the member reads the generic event only.
       memberDisclosure: { visibility: "internal" },
@@ -324,11 +360,21 @@ export type TwoFactorClearEvidence = {
   readonly twoFactorEnabled: boolean;
   readonly twoFactorMethod: "TOTP" | "EMAIL" | null;
   readonly authenticatorApp: boolean;
+  /** Stored passkeys. A passkey-only member (flag still off) is still a clear. */
+  readonly passkeyCount?: number;
 };
+
+function clearEvidenceIsEmpty(before: TwoFactorClearEvidence): boolean {
+  return (
+    !before.twoFactorEnabled &&
+    !before.authenticatorApp &&
+    (before.passkeyCount ?? 0) === 0
+  );
+}
 
 /** Read {@link TwoFactorClearEvidence} on the caller's transaction, after its row lock. */
 export async function readTwoFactorClearEvidence(
-  tx: Pick<Prisma.TransactionClient, "member">,
+  tx: Pick<Prisma.TransactionClient, "member" | "webAuthnCredential">,
   memberId: string,
 ): Promise<TwoFactorClearEvidence | null> {
   const before = await tx.member.findUnique({
@@ -336,17 +382,20 @@ export async function readTwoFactorClearEvidence(
     select: { twoFactorEnabled: true, twoFactorMethod: true, totpSecret: true },
   });
   if (!before) return null;
+  const passkeyCount = await tx.webAuthnCredential.count({ where: { memberId } });
   return {
     twoFactorEnabled: before.twoFactorEnabled,
     twoFactorMethod: before.twoFactorMethod,
     authenticatorApp: Boolean(before.totpSecret),
+    passkeyCount,
   };
 }
 
 /**
  * Record the clear of a second factor read beforehand as `before`, on the
  * transaction that clears it. A member with no second factor has nothing
- * cleared and gets no row.
+ * cleared and gets no row, unless `recordWhenEmpty`: an officer reset still
+ * ends sessions and grace, so it always leaves a row (#4618).
  */
 export async function recordTwoFactorClear(
   tx: AuditLogClient,
@@ -355,16 +404,18 @@ export async function recordTwoFactorClear(
     actor: Exclude<TwoFactorActor, { kind: "member" }>;
     subjectMemberId: string;
     request?: TwoFactorRequestContext;
+    recordWhenEmpty?: boolean;
   },
 ): Promise<void> {
   const { before } = params;
-  if (!before || (!before.twoFactorEnabled && !before.authenticatorApp)) return;
+  if (!params.recordWhenEmpty && (!before || clearEvidenceIsEmpty(before))) return;
   await recordTwoFactorMutation(tx, {
     action: TWO_FACTOR_AUDIT_ACTIONS.cleared,
     actor: params.actor,
     subjectMemberId: params.subjectMemberId,
-    method: before.twoFactorMethod,
-    authenticatorApp: before.authenticatorApp,
+    method: before?.twoFactorMethod ?? null,
+    authenticatorApp: before?.authenticatorApp ?? false,
+    passkeyCount: before?.passkeyCount,
     request: params.request,
   });
 }
@@ -375,7 +426,7 @@ export async function recordTwoFactorClear(
  * record the clear on that same transaction.
  */
 export async function recordErasureTwoFactorClear(
-  tx: Pick<Prisma.TransactionClient, "member" | "auditLog">,
+  tx: Pick<Prisma.TransactionClient, "member" | "auditLog" | "webAuthnCredential">,
   params: {
     memberId: string;
     adminMemberId: string;

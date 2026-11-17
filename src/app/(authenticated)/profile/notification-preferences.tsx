@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
+import { FocusedActionError } from "@/components/focused-action-error";
+import { CLUB_NOTICE_SCOPE } from "@/lib/email/bulk-audience";
 
 interface Preferences {
   bookingConfirmation: boolean;
@@ -11,6 +13,7 @@ interface Preferences {
   bookingCancelled: boolean;
   bookingAddedByFamily: boolean;
   choreRoster: boolean;
+  clubNotices: boolean;
   marketingEmails: boolean;
 }
 
@@ -40,15 +43,20 @@ const PREFERENCE_LABELS: Record<keyof Preferences, { label: string; description:
     label: "Chore Roster",
     description: "Your assigned chores during your stay",
   },
+  clubNotices: {
+    label: "Club notices",
+    description: CLUB_NOTICE_SCOPE,
+  },
   marketingEmails: {
-    label: "Club Communications",
-    description: "General club news and updates",
+    label: "Club newsletters",
+    description: "Optional club news and newsletters",
   },
 };
 
 // #1285: Which categories a member can actually switch off. Check-in reminders
 // and chore rosters are optional/operational and are honored on the send path;
-// Club Communications (marketing) is honored by the bulk-send recipient filter.
+// Club notices and Club newsletters are honored by the shared bulk-email rule
+// (#4987, src/lib/email/bulk-audience.ts).
 const TOGGLEABLE_KEYS: Array<keyof Preferences> = [
   "bookingReminder",
   // #2284 (S2): an FYI, not an essential transactional email, so it is
@@ -56,6 +64,7 @@ const TOGGLEABLE_KEYS: Array<keyof Preferences> = [
   // it before sending).
   "bookingAddedByFamily",
   "choreRoster",
+  "clubNotices",
   "marketingEmails",
 ];
 
@@ -213,11 +222,7 @@ export function NotificationPreferences() {
         ))}
       </div>
 
-      {error && (
-        <div className="rounded-md bg-danger-3 border border-danger-6 p-3 text-sm text-danger-11">
-          {error}
-        </div>
-      )}
+      <FocusedActionError id="notification-preferences-error" error={error ?? ""} />
 
       {editing && (
         <div className="flex gap-3 pt-2">

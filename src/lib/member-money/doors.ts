@@ -6,9 +6,8 @@ import "server-only";
  * Prisma client; `./index` stays importable by a plain-Node operator command.
  *
  * A door resolves its context before its transaction opens, then, inside it,
- * posts the same lines its legacy writer just wrote. Only the legacy chokepoints
- * and member merge call these (`member-money-journal-inert-census.test.ts`);
- * from #4628 also the bank-transfer binding doors and the pending-charge syncs.
+ * posts the same lines its legacy writer just wrote. Only the callers listed as
+ * DOORS in `member-money-journal-writer-census.test.ts` call these.
  */
 export type { BookingChargeEvent } from "./internal/booking-charges";
 export { isBookingJournalInactive, type BookingJournalContext } from "./internal/journal-activity";
@@ -29,3 +28,6 @@ export { postCardRefundCash } from "./internal/refund-cash";
 export { postPaidAnotherWayClose, type PaidAnotherWayJournalClose, type PaidAnotherWayRest } from "./internal/refund-closes";
 export { cardRefundObligationOfRecoveryKey, resolveCardRefundObligation, type CardRefundRecoveryRow } from "./internal/refund-obligation-map";
 export { MemberMoneyReservationRefused } from "./internal/store";
+
+// #4525 (M13): the primary booking invoice's export manifest, planned beside the sender's lines and recorded after its link.
+export { planPrimaryInvoiceManifest, recordPrimaryInvoiceManifest } from "./internal/primary-invoice-manifest";

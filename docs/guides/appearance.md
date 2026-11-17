@@ -15,12 +15,12 @@ The cards are:
 
 | Card | Opens | What it does |
 | --- | --- | --- |
-| **Club Identity** | `/admin/appearance/identity` | Club name, short name, hut-leader label, and your lodge's public details (covered below). |
+| **Club Identity** | `/admin/appearance/identity` | Club name, short name, hut-leader label, your lodge's public details, and where members' data is held (covered below). |
 | **Site Style** | `/admin/site-style` | The public theme, brand colours, fonts, logo, and first-run style completion. See [Site Style](site-style.md). |
 | **Site Content** | `/admin/site-content` | Shared site chrome such as the footer columns. See [Site Content](site-content.md). |
 | **Page Content** | `/admin/page-content` | The database-backed public pages, menus, tokens, and publishing state. See [Page Content](page-content.md). |
 | **Site Banners** | `/admin/site-banners` | Dated notice banners for public visitors and members. See [Site Banners](site-banners.md). |
-| **Mountain Conditions** | `/admin/mountain-conditions` | The Whakapapa Snow.nz condition widget content. See [Mountain Conditions](mountain-conditions.md). |
+| **Mountain Conditions** | `/admin/mountain-conditions` | The cached Whakapapa (Mt Ruapehu) conditions report; shown only when the Whakapapa conditions report module is on. See [Mountain Conditions](mountain-conditions.md). |
 | **Image Manager** | `/admin/image-manager` | Upload and organise images used by the content editors. See [Image Manager](image-manager.md). |
 
 Everything here is edited under the **content** permission area: you need
@@ -82,6 +82,15 @@ change these pages.
    per lodge in the **Edit** form under **Setup → Lodges**
    ([Lodges](lodges.md#edit-a-lodges-identity)); both screens edit the same
    lodge record.
+5. Under **Where members' data is held**, click **Edit** and enter the
+   **Hosting provider** (the company that runs your server and database) and
+   **Where your data is held** (the country or region; name both if your
+   database and backups are held in different places). Each is one line of
+   plain text, at most 120 characters; leave one blank if you don't know it.
+   Click **Save hosting details**. The `{{data-hosting}}` page token publishes
+   these values, with wording that points members to your Privacy Officer for
+   a blank one ([token catalogue](../PUBLIC_PAGE_CONTENT_TOKENS.md)). Keep them
+   current — the [privacy-incident guide](privacy-incidents.md) relies on them.
 
 ## Settings reference
 
@@ -110,7 +119,7 @@ change these pages.
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
-| A card is missing from the hub | The feature is gated off (e.g. Mountain Conditions needs the `skifieldConditions` module) | Enable the module at **Admin → Modules** |
+| A card is missing from the hub | The feature is gated off (e.g. Mountain Conditions needs the `skifieldWhakapapa` module) | Enable the module at **Admin → Modules** |
 | Everything is read-only | Your admin role can view but not edit under the content area | Ask a full admin for content edit access |
 | A changed name still shows the old value | The DB-first identity cache updates within a few seconds; a stale tab may hold the old value | Reload the page |
 | A field went back to the old default | You cleared it — blank falls back to the file configuration | Re-enter the value and save |

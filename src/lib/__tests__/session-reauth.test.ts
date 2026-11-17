@@ -31,6 +31,9 @@ const mockPrisma = vi.hoisted(() => ({
     findUnique: vi.fn(),
     update: vi.fn().mockResolvedValue({ id: "member-1" }),
   },
+  webAuthnCredential: {
+    findFirst: vi.fn().mockResolvedValue(null),
+  },
 }));
 
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
@@ -38,9 +41,10 @@ vi.mock("@/lib/login-throttle", () => ({
   claimPasswordAttempt: mockClaim,
   clearPasswordAttempts: mockClear,
 }));
-vi.mock("bcryptjs", () => ({
-  default: { compare: mockCompare },
-}));
+vi.mock("@/lib/password-hashing", async (importOriginal) => {
+  const { passwordHashingModuleMock } = await import("@/lib/__tests__/helpers/password-hashing-mock");
+  return passwordHashingModuleMock(await importOriginal(), { verifyPassword: mockCompare });
+});
 
 import { LOGIN_THROTTLED_CODE } from "@/lib/login-throttle-policy";
 import {

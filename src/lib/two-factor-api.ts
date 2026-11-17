@@ -1,10 +1,14 @@
 import { NextResponse } from "next/server";
 import { auth, updateSession } from "@/lib/auth";
+import { FactorResetBlocksEnrolmentError } from "@/lib/officer-factor-reset";
 import { prisma } from "@/lib/prisma";
+import { isSecondFactorEnrolled } from "@/lib/second-factor-enrolment";
+import { memberHasStoredPasskey } from "@/lib/webauthn";
 import {
   clearTwoFactorLockout,
   createTwoFactorSessionChallenge,
   getActiveTwoFactorLockout,
+  type TwoFactorChallengeProof,
 } from "@/lib/two-factor";
 
 const TWO_FACTOR_MEMBER_SELECT = {
@@ -72,7 +76,9 @@ export async function requireTwoFactorApiSession(): Promise<TwoFactorApiGuardRes
   return { ok: true, session, member };
 }
 
-export async function markTwoFactorSessionVerified() {
+export async function markTwoFactorSessionVerified(
+  proof: TwoFactorChallengeProof,
+) {
   const session = await auth();
   if (!session?.user?.id) {
     return;
@@ -82,11 +88,13 @@ export async function markTwoFactorSessionVerified() {
 
   // The session-update trigger is reachable by any authenticated client, so
   // the jwt callback only honours twoFactorVerified when the update carries
-  // this single-use, server-minted challenge token. The raw token never
-  // leaves the server: it is consumed by the jwt callback inside this same
-  // updateSession() call.
+  // this single-use, server-minted challenge token. The proof kind is a
+  // prefix of that token, inside the hash. No session field carries it.
+  // The raw token never leaves the server: it is consumed by the jwt
+  // callback inside this same updateSession() call.
   const twoFactorChallengeToken = await createTwoFactorSessionChallenge(
     session.user.id,
+    proof,
   );
 
   await updateSession({
@@ -97,6 +105,22 @@ export async function markTwoFactorSessionVerified() {
     // The extra token field is not part of the public Session shape, so the
     // literal needs an assertion to pass through unstable_update's typing.
   } as unknown as Parameters<typeof updateSession>[0]);
+}
+
+/** The session's issue time, for the reset-versus-enrolment check. */
+export function enrolmentSessionIssuedAt(session: {
+  user?: { sessionIssuedAt?: number | null } | null;
+}): Date | null {
+  const value = session.user?.sessionIssuedAt;
+  return typeof value === "number" && Number.isFinite(value) ? new Date(value) : null;
+}
+
+export function factorResetEnrolmentResponse(error: unknown): NextResponse | null {
+  if (!(error instanceof FactorResetBlocksEnrolmentError)) return null;
+  return NextResponse.json(
+    { error: "Sign in again before setting up a second factor." },
+    { status: 409 },
+  );
 }
 
 export function passwordChangeRequiredResponse() {
@@ -119,14 +143,20 @@ export function twoFactorLockoutResponse(member: TwoFactorApiMember) {
   );
 }
 
-export function getTwoFactorStatusPayload(
+export async function getTwoFactorStatusPayload(
   session: NonNullable<TwoFactorApiSession>,
   member: TwoFactorApiMember,
 ) {
+  const hasPasskey = await memberHasStoredPasskey(member.id);
   return {
     required: session.user.twoFactorRequired,
     verified: session.user.twoFactorVerified,
-    enrolled: member.twoFactorEnabled,
+    enrolled: isSecondFactorEnrolled({
+      twoFactorEnabled: member.twoFactorEnabled,
+      hasPasskey,
+      sessionEnrolled: session.user.twoFactorEnrolled,
+    }),
+    hasPasskey,
     method: member.twoFactorMethod,
     email: member.email,
     forcePasswordChange: member.forcePasswordChange,

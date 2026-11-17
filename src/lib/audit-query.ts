@@ -734,7 +734,7 @@ function entityDrilldownLink(
     case "Member":
       return {
         label: "Open member",
-        href: `/admin/members/${encodeURIComponent(entityId)}`,
+        href: `${adminHref("member-detail", { id: entityId })}`,
         kind: "member",
         primary: true,
       };
@@ -764,14 +764,14 @@ function entityDrilldownLink(
     case "DeletionRequest":
       return {
         label: "Open deletion requests",
-        href: "/admin/deletion-requests",
+        href: adminHref("deletion-requests"),
         kind: "admin",
         primary: true,
       };
     case "MembershipCancellationRequest":
       return {
         label: "Open cancellations",
-        href: "/admin/membership-cancellations",
+        href: adminHref("membership-cancellations"),
         kind: "admin",
         primary: true,
       };
@@ -785,7 +785,7 @@ function entityDrilldownLink(
     case "FamilyGroup":
       return {
         label: "Open family groups",
-        href: "/admin/family-groups",
+        href: adminHref("family-groups"),
         kind: "admin",
         primary: true,
       };
@@ -826,7 +826,7 @@ function actionFallbackDrilldownLink(
     ) {
       return {
         label: "Open member",
-        href: `/admin/members/${encodeURIComponent(targetId)}`,
+        href: `${adminHref("member-detail", { id: targetId })}`,
         kind: "member",
         primary: true,
       };
@@ -844,7 +844,7 @@ function actionFallbackDrilldownLink(
   if (normalized.includes("deletion")) {
     return {
       label: "Open deletion requests",
-      href: "/admin/deletion-requests",
+      href: adminHref("deletion-requests"),
       kind: "admin",
       primary: true,
     };
@@ -852,7 +852,7 @@ function actionFallbackDrilldownLink(
   if (normalized.startsWith("membership_cancellation.")) {
     return {
       label: "Open cancellations",
-      href: "/admin/membership-cancellations",
+      href: adminHref("membership-cancellations"),
       kind: "admin",
       primary: true,
     };
@@ -939,7 +939,7 @@ export function buildAuditDrilldownLinks(params: {
   if (params.subjectMemberId) {
     addDrilldownLink(links, {
       label: "Open member",
-      href: `/admin/members/${encodeURIComponent(params.subjectMemberId)}`,
+      href: `${adminHref("member-detail", { id: params.subjectMemberId })}`,
       kind: "member",
       primary: true,
     });
@@ -1134,9 +1134,9 @@ function serializeSubjectForAudience(params: {
  * is the truncation hole closed by construction rather than by a second check.
  *
  * ONE FUNCTION, EXHAUSTIVE ON AUDIENCE, rather than three ternaries spread
- * through the serializer. `INV-PRIV-012` already records why that shape matters
- * on this surface: a guard living inside one query was measured to survive
- * deletion with the word left behind in a comment. A free-text field added to
+ * through the serializer. A guard living inside one query was measured to
+ * survive deletion with the word left behind in a comment (history on #3232).
+ * A free-text field added to
  * the timeline later has to be answered for HERE, for both audiences, or it
  * does not compile.
  */

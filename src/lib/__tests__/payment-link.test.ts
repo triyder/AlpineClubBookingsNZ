@@ -173,7 +173,7 @@ import {
   mintSplitGuestPaymentLinkIfAbsent,
 } from "@/lib/payment-link-split-guest";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
-import { SWITCHED_TO_INTERNET_BANKING_BODY } from "@/lib/payment-recovery-contract";
+import { BOOKING_ALREADY_PAID_CODE, SWITCHED_TO_INTERNET_BANKING_BODY } from "@/lib/payment-recovery-contract";
 import { UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE } from "@/lib/stripe-charge-currency";
 
 const mockedFindUnique = vi.mocked(prisma.paymentLink.findUnique);
@@ -1184,7 +1184,8 @@ describe("createPaymentIntentForPaymentLink", () => {
       baseLink({ booking: baseBooking({ status: BookingStatus.PAID }) }) as never
     );
 
-    await expect(createPaymentIntentForPaymentLink(RAW_TOKEN)).rejects.toMatchObject({ status: 410 });
+    // #4955: coded, so the pay page reads it as the server saying "paid".
+    await expect(createPaymentIntentForPaymentLink(RAW_TOKEN)).rejects.toMatchObject({ status: 410, code: BOOKING_ALREADY_PAID_CODE });
     expect(mockedFindOrCreateCustomer).not.toHaveBeenCalled();
   });
 
@@ -2153,6 +2154,22 @@ describe("issueSplitGuestPaymentLink (#1967)", () => {
     expect(sendSplitGuestPaymentLinkEmail).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["is not PENDING", { status: BookingStatus.CONFIRMED }],
+    ["carries no non-members", { hasNonMembers: false }],
+  ])(
+    "returns not_payable when the child %s, through the shared split-guest child rule (INV-SSOT)",
+    async (_label, overrides) => {
+      mockedBookingFindUnique.mockResolvedValue(splitChild(overrides) as never);
+
+      const result = await issueSplitGuestPaymentLink("child-1", CLUB_FORMAT_TEST);
+
+      expect(result).toEqual({ outcome: "not_payable" });
+      expect(mockedPaymentLinkCreate).not.toHaveBeenCalled();
+      expect(sendSplitGuestPaymentLinkEmail).not.toHaveBeenCalled();
+    }
+  );
+
   it("returns not_payable when the parent payment carries a saved card — the cron will auto-charge (#1967 FIX-5)", async () => {
     mockedBookingFindUnique.mockResolvedValue(
       splitChild({
@@ -2206,7 +2223,7 @@ describe("issueSplitGuestPaymentLink (#1967)", () => {
     mockedPaymentLinkFindFirst.mockResolvedValue(null);
     mockedPaymentLinkCreate.mockResolvedValue({ id: "pl-1" } as never);
 
-    expect(await issueSplitGuestPaymentLink("child-1", CLUB_FORMAT_TEST)).toEqual({ outcome: "sent" });
+    expect(await issueSplitGuestPaymentLink("child-1", CLUB_FORMAT_TEST)).toMatchObject({ outcome: "sent" });
 
     mockedBookingFindUnique.mockResolvedValueOnce(splitChild({ finalPriceCents: 0 }) as never);
     expect(await issueSplitGuestPaymentLink("child-1", CLUB_FORMAT_TEST)).toEqual({ outcome: "not_payable" });
@@ -2235,7 +2252,12 @@ describe("issueSplitGuestPaymentLink (#1967)", () => {
 
     const result = await issueSplitGuestPaymentLink("child-1", CLUB_FORMAT_TEST);
 
-    expect(result).toEqual({ outcome: "sent" });
+    expect(result).toMatchObject({
+      outcome: "sent",
+      emailLogId: "log-2",
+      recipientMemberId: "member-1",
+      sentTo: "tara@example.com",
+    });
     expect(mockedPaymentLinkCreate).toHaveBeenCalled();
     expect(sendSplitGuestPaymentLinkEmail).toHaveBeenCalled();
   });
@@ -2300,7 +2322,7 @@ describe("issueSplitGuestPaymentLink (#1967)", () => {
 
     const result = await issueSplitGuestPaymentLink("child-1", CLUB_FORMAT_TEST);
 
-    expect(result).toEqual({ outcome: "sent" });
+    expect(result).toMatchObject({ outcome: "sent" });
     expect(mockedPaymentLinkCreate).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ bookingId: "child-1" }),
@@ -2366,7 +2388,7 @@ describe("issueSplitGuestPaymentLink (#1967)", () => {
 
     const result = await issueSplitGuestPaymentLink("child-1", CLUB_FORMAT_TEST);
 
-    expect(result).toEqual({ outcome: "sent" });
+    expect(result).toMatchObject({ outcome: "sent" });
     // Revocation and mint are one atomic step under the lodge lock:
     // exactly-one-active-link is preserved.
     expect(mockedUpdateMany).toHaveBeenCalledWith(

@@ -39,7 +39,8 @@
  *    release takes the invoice back paid (F2); A and B both paid and kept,
  *    both orders - each captured dollar recorded once, the double payment
  *    alerted once (F3); a carrier whose receipt is still queued gets A's
- *    invoice unpaid, so its receipt records it rather than standing down (F6);
+ *    invoice unpaid, so its receipt records it rather than standing down, and
+ *    records the rest on the primary when that invoice has room (F6, #4434);
  *  - #4422: a declined A's stale-tab capture racing its cancel after B was paid
  *    and released, the webhook first and the runner first - handed to the
  *    superseded refund once, both invoices still on B summing to its capture,
@@ -235,6 +236,7 @@ function deferred() {
         door: "guestAdd",
         failureMessage: "race-3403: the mint failed",
         result: {
+          ownCardRefund: null,
           pendingRefundAmountCents: 0,
           organiserChildRefund: null,
           paymentId: PAYMENT_ID,
@@ -461,7 +463,7 @@ function deferred() {
           async (tx) => {
             const rows = await tx.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid()::int AS pid`;
             pid = rows[0]?.pid ?? 0;
-            const { lockSupplementaryInvoiceAnchor } = await import("@/lib/xero-operation-outbox");
+            const { lockSupplementaryInvoiceAnchor } = await import("@/lib/xero-supplementary-invoice-enqueue");
             await lockSupplementaryInvoiceAnchor(tx, anchorId);
             held.resolve();
             await release;
@@ -1064,6 +1066,8 @@ function deferred() {
         it("the receipt decides first: it records B, and A's invoice moved onto B goes out unpaid", async () => {
           const { a, b, plan } = await race("receipt");
           expect(plan).toMatchObject({ target: "PRIMARY_INVOICE", invoiceId: "inv_race_3403_primary", capturedCents: await captured(b) });
+          const legs = ((plan ?? {}) as { legs?: Array<{ amountCents: number }> }).legs ?? [];
+          expect(legs.reduce((sum, leg) => sum + leg.amountCents, 0)).toBeLessThanOrEqual(await captured(b));
           expect(await invoiceFor(MOD_A)).toMatchObject({ status: "PENDING", waitsOn: b, parkedFrom: a, recordPayment: false });
           // Exactly one recorder of B's capture: its receipt.
           expect(await recordersOf(b)).toEqual({ invoicedCents: 0, receipts: 1 });
@@ -1077,7 +1081,14 @@ function deferred() {
           expect(receiptRun).toMatchObject({ status: "rejected" });
           const { readCaptureRecorder } = await import("@/lib/additional-capture-recorder");
           const recorder = await readCaptureRecorder({ bookingId: BOOKING_ID, primaryInvoiceId: "inv_race_3403_primary", paymentIntentId: b, bookingModificationId: MOD_B });
-          expect(recorder).toMatchObject({ kind: "receipt", target: { kind: "CHANGE_INVOICE", operation: { id: (await invoiceFor(MOD_A)).id } } });
+          // The next run pays A's invoice first, then the primary (#4434).
+          expect(recorder).toMatchObject({
+            kind: "receipt",
+            targets: [
+              { kind: "CHANGE_INVOICE", operation: { id: (await invoiceFor(MOD_A)).id } },
+              { kind: "PRIMARY_INVOICE" },
+            ],
+          });
           expect(await recordersOf(b)).toEqual({ invoicedCents: 0, receipts: 1 });
         });
       });
@@ -1256,7 +1267,15 @@ function deferred() {
     });
 
     describe("review 2 (9a0c129d4), F6", () => {
-      it("a carrier with no invoice of its own whose receipt is still queued: the move writes A's invoice unpaid, so B's receipt records B instead of standing down", async () => {
+      /**
+       * B has no invoice of its own. A's cancel moves A's invoice onto B unpaid
+       * before B's receipt is picked up. The receipt records A's invoice up to
+       * its room, then whatever of B's capture is left on the primary when the
+       * primary has room (#4434). `primaryAmountDue` is Xero's AmountDue in dollars.
+       * `ownInvoiceAfterMove` queues B's own change invoice after the move, while
+       * B's receipt is still waiting (H2): it names B's capture and records a payment.
+       */
+      async function carrierReceipt(primaryAmountDue: number, options: { ownInvoiceAfterMove?: boolean } = {}) {
         await seedPaidBooking();
         const a = await priceIncrease(MOD_A, A_CENTS);
         stripe.failCancels = 1;
@@ -1269,10 +1288,23 @@ function deferred() {
         await drainCancels();
         const invoiceA = await invoiceFor(MOD_A);
         expect(invoiceA).toMatchObject({ status: "PENDING", waitsOn: b, parkedFrom: a, recordPayment: false });
+        const ownCents = options.ownInvoiceAfterMove ? B_CENTS : 0;
+        if (options.ownInvoiceAfterMove) {
+          await editXeroLeg(MOD_B, B_CENTS, b);
+          // Newer than A's moved invoice, naming B's capture, and paying.
+          expect(await invoiceFor(MOD_B)).toMatchObject({ waitsOn: b, cents: B_CENTS, recordPayment: true });
+        }
         // Unpaid, it is never B's recorder: B's receipt does not stand down to it.
         const { readCaptureRecorder } = await import("@/lib/additional-capture-recorder");
         const recorder = await readCaptureRecorder({ bookingId: BOOKING_ID, primaryInvoiceId: "inv_race_3403_primary", paymentIntentId: b, bookingModificationId: MOD_B });
-        expect(recorder).toMatchObject({ kind: "receipt", target: { kind: "CHANGE_INVOICE", operation: { id: invoiceA.id } } });
+        expect(recorder).toMatchObject({
+          kind: "receipt",
+          targets: [
+            { kind: "CHANGE_INVOICE", operation: { id: invoiceA.id } },
+            { kind: "PRIMARY_INVOICE" },
+          ],
+          alreadyRecordedCents: ownCents,
+        });
 
         // A's invoice reaches Xero (the outbox's create, a seeded fact here), then the receipt
         // runs through the outbox's claim and the real worker; Xero is a fake.
@@ -1295,25 +1327,72 @@ function deferred() {
               body: {
                 invoices: meta.context.includes("inv_race_3403_mod_a")
                   ? [{ invoiceID: "inv_race_3403_mod_a", status: "AUTHORISED", amountDue: A_CENTS / 100, payments: [] }]
-                  : [{ invoiceID: "inv_race_3403_primary", status: "AUTHORISED", amountDue: 1_000, payments: [] }],
+                  : [{ invoiceID: "inv_race_3403_primary", status: "AUTHORISED", amountDue: primaryAmountDue, payments: [] }],
               },
             })) as never,
             createXeroPaymentForInvoice: async (input: { invoiceId: string; amountCents: number }) => {
               sent.push({ invoiceId: input.invoiceId, amountCents: input.amountCents });
-              return "pay_race_3403_receipt_b";
+              return `pay_race_3403_receipt_b_${sent.length}`;
             },
             readStripeCaptureDocumentDate: async () => null,
           } as never,
         );
 
-        // B's capture is recorded once, by its own receipt, against the invoice that bills A's part
-        // of it; no invoice records it. What A's invoice has no room for - B's own change, which
-        // has no invoice - is not guessed onto another document: the receipt tells an officer.
         expect(await captured(b)).toBe(A_CENTS + B_CENTS);
-        expect(sent).toEqual([{ invoiceId: "inv_race_3403_mod_a", amountCents: A_CENTS }]);
-        expect(await recordersOf(b)).toEqual({ invoicedCents: 0, receipts: 1 });
+        expect(await recordersOf(b)).toEqual({ invoicedCents: ownCents, receipts: 1 });
         const done = await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: receipt!.id }, select: { status: true, responsePayload: true } });
-        expect(done).toMatchObject({ status: "SUCCEEDED", responsePayload: { unrecordedCents: B_CENTS } });
+        return { sent, done };
+      }
+
+      function unrecordedAlerts(alert: { mock: { calls: unknown[][] } }) {
+        return alert.mock.calls.filter((call) => (call[0] as { errorType: string }).errorType === "ADDITIONAL_CAPTURE_NOT_RECORDED");
+      }
+
+      it("a carrier with no invoice of its own whose receipt is still queued: the primary has room, so the receipt records the whole capture", async () => {
+        const email = await import("@/lib/email");
+        const alert = vi.spyOn(email, "sendAdminXeroSyncErrorAlert").mockResolvedValue({ deliveryAllowed: true, recipients: 1, sent: 1, queuedForRetry: 0, notDelivered: 0 } as never);
+        try {
+          // B's capture is recorded once, by its own receipt: A's invoice for A's part, the primary for B's own change.
+          const { sent, done } = await carrierReceipt(1_000);
+          expect(sent).toEqual([
+            { invoiceId: "inv_race_3403_mod_a", amountCents: A_CENTS },
+            { invoiceId: "inv_race_3403_primary", amountCents: B_CENTS },
+          ]);
+          expect(done).toMatchObject({ status: "SUCCEEDED", responsePayload: { unrecordedCents: 0 } });
+          expect(unrecordedAlerts(alert)).toEqual([]);
+        } finally {
+          alert.mockRestore();
+        }
+      });
+
+      it("the same carrier when the primary has no room: A's invoice is recorded and the rest is left for an officer", async () => {
+        const email = await import("@/lib/email");
+        const alert = vi.spyOn(email, "sendAdminXeroSyncErrorAlert").mockResolvedValue({ deliveryAllowed: true, recipients: 1, sent: 1, queuedForRetry: 0, notDelivered: 0 } as never);
+        try {
+          const { sent, done } = await carrierReceipt(0);
+          expect(sent).toEqual([{ invoiceId: "inv_race_3403_mod_a", amountCents: A_CENTS }]);
+          expect(done).toMatchObject({ status: "SUCCEEDED", responsePayload: { unrecordedCents: B_CENTS } });
+          expect(unrecordedAlerts(alert)).toHaveLength(1);
+        } finally {
+          alert.mockRestore();
+        }
+      });
+
+      it("H2: B's own paying invoice queued after the move names B too - it records B's part and the receipt records A's, once each", async () => {
+        const email = await import("@/lib/email");
+        const alert = vi.spyOn(email, "sendAdminXeroSyncErrorAlert").mockResolvedValue({ deliveryAllowed: true, recipients: 1, sent: 1, queuedForRetry: 0, notDelivered: 0 } as never);
+        try {
+          // Before #4434 the newest invoice naming B decided: B's paying invoice, so the receipt stood down and A's part was recorded nowhere.
+          const { sent, done } = await carrierReceipt(1_000, { ownInvoiceAfterMove: true });
+          expect(sent).toEqual([{ invoiceId: "inv_race_3403_mod_a", amountCents: A_CENTS }]);
+          expect(done).toMatchObject({ status: "SUCCEEDED", responsePayload: { unrecordedCents: 0 } });
+          // The receipt's legs and the paying invoice's billed cents add up to the capture.
+          const legs = (done.responsePayload as { plan: { legs: Array<{ amountCents: number }> } }).plan.legs;
+          expect(legs.reduce((sum, leg) => sum + leg.amountCents, 0) + B_CENTS).toBe(A_CENTS + B_CENTS);
+          expect(unrecordedAlerts(alert)).toEqual([]);
+        } finally {
+          alert.mockRestore();
+        }
       });
     });
 
@@ -1376,9 +1455,30 @@ function deferred() {
         const a = await priceIncrease(MOD_A, A_CENTS);
         stripe.failCancels = 1;
         const b = await priceIncrease(MOD_B, B_CENTS);
-        const { enqueueXeroSupplementaryInvoiceOperation } = await import("@/lib/xero-operation-outbox");
-        // The repair's QUEUE_SUPPLEMENTARY_INVOICE for an ordinary edit: no plan, the enqueue's defaults.
-        const repair = () => enqueueXeroSupplementaryInvoiceOperation({ bookingId: BOOKING_ID, bookingModificationId: MOD_A, priceDiffCents: A_CENTS, changeFeeCents: 0 });
+        const [{ enqueueXeroSupplementaryInvoiceOperation }, { planSupplementaryInvoicePayment }] = await Promise.all([
+          import("@/lib/xero-supplementary-invoice-enqueue"),
+          import("@/lib/xero-booking-repair-payments"),
+        ]);
+        // The repair's QUEUE_SUPPLEMENTARY_INVOICE for an ordinary edit: the
+        // explicit plan from A's own request, not the enqueue's paid default.
+        const payment = await prisma.payment.findUniqueOrThrow({ where: { id: PAYMENT_ID }, include: { transactions: true } });
+        const plan = planSupplementaryInvoicePayment({
+          payment,
+          bookingModificationId: MOD_A,
+          expectedNetAmountCents: A_CENTS,
+          hasOpenIntentMintRecovery: false,
+          chargeKind: "ordinary",
+        });
+        if (plan.outcome !== "queue") throw new Error(`race-3403: A's repair plan was ${plan.outcome}`);
+        const repair = () =>
+          enqueueXeroSupplementaryInvoiceOperation(
+            { bookingId: BOOKING_ID, bookingModificationId: MOD_A, priceDiffCents: A_CENTS, changeFeeCents: 0 },
+            {
+              recordPayment: plan.recordPayment,
+              waitForConfirmedAdditionalPayment: plan.waitForConfirmedAdditionalPayment,
+              paymentIntentId: plan.paymentIntentId,
+            },
+          );
 
         const release = deferred();
         const { pid, holder } = await holdAnchor(MOD_A, release.promise);
@@ -1406,6 +1506,97 @@ function deferred() {
       it.each(["repair", "move"] as const)("%s first: one invoice for A's change, waiting on B", async (first) => {
         const { a, b } = await race(first);
         expect(await invoiceFor(MOD_A)).toMatchObject({ status: "WAITING_PAYMENT", waitsOn: b, parkedFrom: a, cents: A_CENTS });
+      });
+    });
+
+    describe("#4413: a repaired ordinary invoice follows the edit's own request", () => {
+      /** The primary invoice's own outbox row, completed before the edit, so repair will bill the difference. */
+      async function seedPrimaryInvoiceOperation() {
+        await prisma.xeroSyncOperation.create({
+          data: {
+            id: "race-3403-primary-invoice",
+            direction: "OUTBOUND",
+            entityType: "INVOICE",
+            operationType: "CREATE",
+            localModel: "Payment",
+            localId: PAYMENT_ID,
+            status: "SUCCEEDED",
+            xeroObjectType: "INVOICE",
+            xeroObjectId: "inv_race_3403_primary",
+            queueType: "BOOKING_INVOICE",
+            completedAt: new Date("2026-06-01T00:00:00.000Z"),
+            startedAt: new Date("2026-06-01T00:00:00.000Z"),
+            requestPayload: { queueType: "BOOKING_INVOICE", bookingId: BOOKING_ID },
+          },
+        });
+      }
+
+      async function applyRepair() {
+        const { runBookingXeroRepair } = await import("@/lib/xero-booking-repair");
+        return runBookingXeroRepair(CLUB_FORMAT_TEST, { scope: { bookingId: BOOKING_ID }, apply: true });
+      }
+
+      it("an unpaid card ask waits until its capture, which releases it once, and a second run queues nothing", async () => {
+        await seedPaidBooking();
+        await seedPrimaryInvoiceOperation();
+        const intent = await priceIncrease(MOD_A, A_CENTS, { xeroLeg: false });
+        const first = await applyRepair();
+        const action = first.passes[0]!.bookings[0]!.actions.find((candidate) => candidate.type === "QUEUE_SUPPLEMENTARY_INVOICE");
+        expect(action?.status).toBe("queued");
+        expect(action?.payload).toMatchObject({
+          recordPayment: true,
+          waitForConfirmedAdditionalPayment: true,
+          paymentIntentId: intent,
+        });
+        expect(await invoiceFor(MOD_A)).toMatchObject({ status: "WAITING_PAYMENT", waitsOn: intent, recordPayment: true, cents: A_CENTS });
+
+        // The member pays the parked ask. The live capture release sends the invoice, and a second release finds nothing left waiting.
+        await payWithCard(intent);
+        expect(await invoiceFor(MOD_A)).toMatchObject({ status: "PENDING", waitsOn: intent, recordPayment: true });
+        const { releaseXeroSupplementaryInvoiceOperationsForPaymentIntent } = await import("@/lib/xero-operation-outbox");
+        expect(await releaseXeroSupplementaryInvoiceOperationsForPaymentIntent(intent)).toMatchObject({ released: 0 });
+
+        const again = await applyRepair();
+        expect(again.passes.at(-1)!.bookings[0]!.actions.map((candidate) => candidate.type)).not.toContain("QUEUE_SUPPLEMENTARY_INVOICE");
+        expect(await invoices()).toHaveLength(1);
+      });
+
+      it("an ask a later request already carries waits on that later request", async () => {
+        await seedPaidBooking();
+        await seedPrimaryInvoiceOperation();
+        const a = await priceIncrease(MOD_A, A_CENTS, { xeroLeg: false });
+        await declineCard(a);
+        const b = await priceIncrease(MOD_B, B_CENTS, { xeroLeg: false });
+
+        await applyRepair();
+
+        expect(await invoiceFor(MOD_A)).toMatchObject({
+          status: "WAITING_PAYMENT",
+          waitsOn: b,
+          parkedFrom: a,
+          recordPayment: true,
+          cents: A_CENTS,
+        });
+      });
+
+      it("a bank-transfer edit is raised unpaid, with no Stripe payment recorded", async () => {
+        await seedPaidBooking("INTERNET_BANKING");
+        await seedPrimaryInvoiceOperation();
+        await prisma.bookingModification.create({
+          data: {
+            id: MOD_A,
+            bookingId: BOOKING_ID,
+            memberId: MEMBER_ID,
+            modificationType: "GUEST_ADD",
+            previousData: {},
+            newData: {},
+            priceDiffCents: A_CENTS,
+          },
+        });
+        const report = await applyRepair();
+        const action = report.passes[0]!.bookings[0]!.actions.find((candidate) => candidate.type === "QUEUE_SUPPLEMENTARY_INVOICE");
+        expect(action?.payload).toMatchObject({ recordPayment: false, waitForConfirmedAdditionalPayment: false, paymentIntentId: null });
+        expect(await invoiceFor(MOD_A)).toMatchObject({ status: "PENDING", recordPayment: false, waitsOn: null, cents: A_CENTS });
       });
     });
 

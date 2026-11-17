@@ -28,16 +28,15 @@ import { REQUEST_PATH_HEADER } from "@/lib/internal-return-path";
 import { CSP_NONCE_HEADER } from "@/lib/csp";
 import { getDefaultLodgeCapacity } from "@/lib/lodge-capacity";
 import {
-  MEMBER_ONBOARDING_GATE_SELECT,
   isOnboardingGateExemptPath,
   shouldShowMemberOnboarding,
 } from "@/lib/member-onboarding";
+import { loadSignedInMember } from "@/lib/signed-in-member";
 import { getCurrentSiteBanners } from "@/lib/site-banners";
 import { getWebsiteThemeRenderState } from "@/lib/club-theme";
-import {
-  buildTwoFactorGatePath,
-  isTwoFactorSessionBlocked,
-} from "@/lib/two-factor-gate";
+import { officerClaimsAreGated } from "@/lib/officer-two-factor-claims";
+import { factorGateRedirect } from "@/lib/two-factor-gate";
+import { OfficerGraceBanner } from "@/components/officer-grace-banner";
 
 export default async function AuthenticatedLayout({
   children,
@@ -61,11 +60,9 @@ export default async function AuthenticatedLayout({
     redirect(buildLoginPath(requestedPath, authBounceRef));
   }
 
-  // Check DB directly for force password change and active status (JWT may be stale)
-  const member = await prisma.member.findUnique({
-    where: { id: session.user.id },
-    select: MEMBER_ONBOARDING_GATE_SELECT,
-  });
+  // Check DB directly for force password change and active status (JWT may be
+  // stale). Shared with the page beneath this layout for the render (#4938).
+  const member = await loadSignedInMember(session.user.id);
 
   // Redirect deleted/deactivated accounts even if JWT is still valid, and a
   // member whose login is switched off (#3603): the token refresh already ends
@@ -79,20 +76,27 @@ export default async function AuthenticatedLayout({
   }
 
   const requestedPath = requestHeaders.get(REQUEST_PATH_HEADER);
-  if (
-    isTwoFactorSessionBlocked({
-      sessionUser: session.user,
-      member,
-    })
-  ) {
-    redirect(
-      buildTwoFactorGatePath({
-        sessionUser: session.user,
-        member,
-        callbackPath: requestedPath,
-      }),
-    );
+  const factorGate = factorGateRedirect({
+    sessionUser: session.user,
+    member,
+    callbackPath: requestedPath,
+    pathname: requestedPath,
+  });
+  if (factorGate) {
+    redirect(factorGate);
   }
+  const officerGraceReminder =
+    session.user.officerTwoFactorRequired === true &&
+    session.user.twoFactorSatisfiesOfficer !== true &&
+    session.user.officerTwoFactorGraceEndsAt != null &&
+    !officerClaimsAreGated(
+      {
+        officerTwoFactorRequired: true,
+        twoFactorSatisfiesOfficer: false,
+        officerTwoFactorGraceEndsAt: session.user.officerTwoFactorGraceEndsAt,
+      },
+      new Date(),
+    );
 
   // Lodge-only accounts can only access /lodge/* routes. Combined access-role
   // accounts continue to their requested member or finance workspace.
@@ -219,6 +223,9 @@ export default async function AuthenticatedLayout({
           Skip to main content
         </a>
         <SiteBanners banners={siteBanners} />
+        {officerGraceReminder ? (
+          <OfficerGraceBanner endsAt={session.user.officerTwoFactorGraceEndsAt ?? null} />
+        ) : null}
         <NavBar user={user} features={effectiveModules} />
         <HelpWidgetProvider>
           <main

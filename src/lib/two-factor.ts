@@ -23,6 +23,7 @@ import {
   legacyReadsRetired,
 } from "@/lib/data-encryption-keys";
 import { assertLegacyWriteAllowed } from "@/lib/data-encryption-legacy-write-guard";
+import { assertEnrolmentNotSuperseded } from "@/lib/officer-factor-reset";
 import { prisma } from "@/lib/prisma";
 import {
   LEGACY_ENCRYPTION_VERSION,
@@ -49,7 +50,7 @@ const NO_KEY_MESSAGE =
   "AUTH_SECRET or NEXTAUTH_SECRET is required for two-factor authentication";
 
 const TWO_FACTOR_EMAIL_CODE_TTL_MS = 10 * 60 * 1000;
-const TWO_FACTOR_SESSION_CHALLENGE_TTL_MS = 2 * 60 * 1000;
+export const TWO_FACTOR_SESSION_CHALLENGE_TTL_MS = 2 * 60 * 1000;
 const TWO_FACTOR_RECOVERY_CODE_COUNT = 10;
 const TWO_FACTOR_TOTP_PERIOD_SECONDS = 30;
 const TWO_FACTOR_TOTP_WINDOW = 1;
@@ -321,17 +322,51 @@ export async function verifyTwoFactorEmailCode(memberId: string, code: string) {
   return updated.count === 1;
 }
 
+/** Prefixed into the hashed session challenge before the secret. */
+export type TwoFactorChallengeProof = "TOTP" | "EMAIL" | "RECOVERY" | "PASSKEY";
+
+function isTwoFactorChallengeProof(
+  value: unknown,
+): value is TwoFactorChallengeProof {
+  return (
+    value === "TOTP" ||
+    value === "EMAIL" ||
+    value === "RECOVERY" ||
+    value === "PASSKEY"
+  );
+}
+
+/**
+ * The proof prefixed into a session-challenge token, or null when the token
+ * has none. A token minted before the prefix (two-minute life, no migration)
+ * is null, so it cannot start the recent-proof clock.
+ */
+export function twoFactorChallengeProofKind(
+  token: string,
+): TwoFactorChallengeProof | null {
+  const separator = token.indexOf(".");
+  if (separator <= 0) return null;
+  const prefix = token.slice(0, separator);
+  return isTwoFactorChallengeProof(prefix) ? prefix : null;
+}
+
 // Mints a single-use, server-side proof that this member just passed a
 // two-factor challenge. Only the HMAC hash is stored; the raw token travels
 // through the Auth.js session update within the same request and is consumed
 // by the jwt callback, so a client-forged POST to /api/auth/session can never
 // flip twoFactorVerified.
 //
+// The proof kind is a prefix of that token (`TOTP.`, `EMAIL.`, `RECOVERY.`, `PASSKEY.`)
+// and is inside the hashed secret, so swapping the prefix fails the hash.
+//
 // Not refused while a ring is missing (#4456 review): short-lived, like the email
 // code above. It never leaves the sign-in that mints it, lives two minutes and is
 // consumed under the same key.
-export async function createTwoFactorSessionChallenge(memberId: string) {
-  const token = randomBytes(32).toString("hex");
+export async function createTwoFactorSessionChallenge(
+  memberId: string,
+  proof: TwoFactorChallengeProof,
+) {
+  const token = `${proof}.${randomBytes(32).toString("hex")}`;
   const expiresAt = new Date(Date.now() + TWO_FACTOR_SESSION_CHALLENGE_TTL_MS);
 
   await prisma.$transaction([
@@ -450,6 +485,8 @@ export async function replaceRecoveryCodes(params: {
   /** Who replaced them: the member themself on the regenerate route (#3454). Never a job. */
   actor: TwoFactorPersonActor;
   request?: TwoFactorRequestContext;
+  /** Issue time of the session writing the codes. A reset newer than it refuses. */
+  sessionIssuedAt?: Date | null;
 }) {
   const { memberId } = params;
   assertTwoFactorActorMayAct(
@@ -463,6 +500,7 @@ export async function replaceRecoveryCodes(params: {
   // or neither does (#3454): replacing them invalidates every unused code, the
   // same class of credential change as an enrolment.
   await prisma.$transaction(async (tx) => {
+    await assertEnrolmentNotSuperseded(tx, memberId, params.sessionIssuedAt ?? null);
     await assertTwoFactorWriteAllowed(tx);
     await tx.twoFactorRecoveryCode.deleteMany({ where: { memberId } });
     await tx.twoFactorRecoveryCode.createMany({
@@ -492,6 +530,8 @@ export async function enrollTwoFactor(params: {
   /** Who enrolled — the member themself on the enrolment routes (#3454). Never a job. */
   actor: TwoFactorPersonActor;
   request?: TwoFactorRequestContext;
+  /** Issue time of the session enrolling. A reset newer than it refuses. */
+  sessionIssuedAt?: Date | null;
 }) {
   // A member actor must be the member being enrolled (#3454 review).
   assertTwoFactorActorMayAct(TWO_FACTOR_AUDIT_ACTIONS.enrolled, params.actor, params.memberId);
@@ -506,6 +546,7 @@ export async function enrollTwoFactor(params: {
   // or neither does (#3454). It was an array transaction, which cannot write a
   // row through `createAuditLog`.
   await prisma.$transaction(async (tx) => {
+    await assertEnrolmentNotSuperseded(tx, params.memberId, params.sessionIssuedAt ?? null);
     await assertTwoFactorWriteAllowed(tx);
     await tx.member.update({
       where: { id: params.memberId },

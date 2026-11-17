@@ -1,9 +1,8 @@
 import { LATE_CAPTURE_REFUNDED_OUTSIDE_APP_NOTE } from "@/lib/late-capture-outside-app-note";
 import { UNMATCHED_APP_LEDGER_MATCH_LABEL, UNMATCHED_APP_STRIPE_PAYMENT_NOTE, UNRECOGNISED_STRIPE_PAYMENT_NOTE } from "@/lib/unrecognised-stripe-payment-note";
-import {
-  EMAIL_AUDIT_DEFAULTS,
-  type EmailAuditTemplateName,
-} from "@/lib/email-message-audit-defaults";
+import { STRIPE_DISPUTE_HOLD_NOTE, STRIPE_DISPUTE_NEXT_STEP, stripeDisputeSubjectLabel } from "@/lib/stripe-dispute-note";
+import { EMAIL_AUDIT_DEFAULTS, type EmailAuditTemplateName } from "@/lib/email-message-audit-defaults";
+import { FORK_ADMIN_SYSTEM_TEMPLATE_NAMES, FORK_APPROVED_EMAIL_TEMPLATE_TOKENS, FORK_REQUIRED_TEMPLATE_TOKENS, FORK_TEMPLATE_TRIGGER_METADATA } from "@/lib/email-message-registry-fork";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import { creditReleaseCadenceSummary } from "@/lib/additional-payment-chase";
 import { paymentRequestCauseSentence } from "@/lib/additional-ask-cause";
@@ -66,7 +65,7 @@ export interface EmailTemplateDefinition {
   defaultDeliveryMode: NotificationDeliveryModeValue;
 }
 
-const ADMIN_SYSTEM_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
+const ADMIN_SYSTEM_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([...FORK_ADMIN_SYSTEM_TEMPLATE_NAMES,
   "admin-membership-application-pending",
   "admin-minors-review",
   "admin-owner-substitution",
@@ -143,6 +142,9 @@ const ADMIN_SYSTEM_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
   "admin-unrecognised-stripe-payment",
   // #4624: the app's own booking payment that matches no payment record.
   "admin-unmatched-app-stripe-payment",
+  // #4911: a cardholder's dispute (chargeback) of a card payment, when it opens
+  // and when it closes. Same audience, sender and lock.
+  "admin-stripe-dispute",
   "admin-pending-deadline",
   "admin-booking-bumped",
   "admin-capacity-warning",
@@ -164,9 +166,6 @@ const ADMIN_SYSTEM_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
   // LOCKED_DELIVERY_TEMPLATE_NAMES: no money moves, and a club that would rather
   // read the queue than the mail must be allowed to mute it.
   "admin-maintenance-report",
-  // Fork #121: a food order, to the Food Orders settings address. Mutable, not
-  // delivery-locked: no money moves and every order stays in the history.
-  "food-order-placed",
   // #49 (owner decision "second template"): the version-only notice a Lodge
   // Operations editor who does not receive the Daily digest is sent while
   // syncing with the Alpine Central Server is paused. Its own template so a
@@ -248,6 +247,9 @@ const LOCKED_DELIVERY_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
   "admin-unrecognised-stripe-payment",
   // #4624: the same lock - a member was charged and the booking does not show it.
   "admin-unmatched-app-stripe-payment",
+  // #4911: the same lock - Stripe took the money back outside the app, nothing
+  // reaches Xero, and a dispute nobody answers in time is lost.
+  "admin-stripe-dispute",
   // #3638: the same lock for the same reason as #2774 — this alert says the
   // club may hold the price twice (a card payment and a Xero payment on one
   // booking), and nothing is refunded or credited automatically, so muting it
@@ -496,9 +498,7 @@ const REQUIRED_TOKEN_ALTERNATIVES: Partial<
   "pre-arrival-reminder": { doorCodeNote: ["doorCode"] },
 };
 
-const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>> = {
-  // Fork #121: an override that dropped the item list would send an empty order.
-  "food-order-placed": ["itemsText"],
+const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>> = { ...FORK_REQUIRED_TEMPLATE_TOKENS,
   "booking-confirmed": [
     "CLUB_LODGE_TRAVEL_NOTE",
     "doorCodeNote",
@@ -553,6 +553,7 @@ const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>
     "joinerName", "changeSummary", "additionalAmount", "xeroInvoiceNumber",
   ],
   "password-reset": ["token"],
+  "officer-factor-reset": ["firstName"],
   "admin-password-reset": ["token"],
   "member-setup-invite": ["token"],
   // #2034: the tokenised /login/magic?token=<token> link is the essential body
@@ -710,6 +711,9 @@ const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>
   "admin-unrecognised-stripe-payment": ["amount", "paymentIntentId", "unrecognisedPaymentNote"],
   // #4624: {{unmatchedAppPaymentNote}} says the money is the booking's and what to do.
   "admin-unmatched-app-stripe-payment": ["amount", "bookingId", "paymentIntentId", "unmatchedAppPaymentNote"],
+  // #4911: {{disputeNextStep}} says what to do for this stage and outcome, and
+  // {{disputeHoldNote}} that the app holds the payment's refunds and credits.
+  "admin-stripe-dispute": ["amount", "bookingId", "outcome", "disputeNextStep", "disputeHoldNote"],
   // #2774: {{handBackConflictNote}} is the whole message - it is the sentence
   // that says whether the money went out or was withheld. An override that drops
   // it turns a reconciliation notice into an unexplained mention of a booking, on
@@ -836,6 +840,9 @@ const REQUIRED_SUBJECT_TEMPLATE_TOKENS: Partial<
   "admin-late-capture-hand-back-conflict": ["handBackConflictLabel"],
   // #4042: a stored subject naming one situation would title the other's alert.
   "admin-manual-refund-task": ["handBackLabel"],
+  // #4911: one template for a dispute opening and closing; a stored subject
+  // naming one would title the other.
+  "admin-stripe-dispute": ["disputeSubjectLabel"],
 };
 
 /**
@@ -890,7 +897,12 @@ const FORBIDDEN_SUBJECT_PHRASES: Partial<
 
 const TEMPLATE_TRIGGER_METADATA: Partial<
   Record<EmailAuditTemplateName, { triggerSummary: string; frequency: string }>
-> = {
+> = { ...FORK_TEMPLATE_TRIGGER_METADATA,
+  "officer-factor-reset": {
+    triggerSummary:
+      "A Full Admin, or the operator break-glass command, cleared this member's authenticator app and passkeys",
+    frequency: "Each time that reset commits",
+  },
   "admin-daily-digest": {
     triggerSummary: "Scheduled admin alert summary",
     frequency: "Daily at the configured cron time",
@@ -1046,6 +1058,12 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
     frequency:
       "Once ever per Stripe payment - claim-guarded; a send nobody received is retried by Stripe's redelivery of the payment's notification, and a copy one recipient missed while another got it is re-sent by the email retry job",
   },
+  "admin-stripe-dispute": {
+    triggerSummary:
+      "A cardholder disputed a card payment with their bank (a chargeback), or a dispute closed - won, lost or closed with no funds taken - so Stripe took or returned the money outside the app; nothing is sent to Xero",
+    frequency:
+      "Twice ever per dispute - once when it opens and once when it closes, each claim-guarded; a send nobody received is retried by Stripe's redelivery of the dispute's notification, and a copy one recipient missed while another got it is re-sent by the email retry job",
+  },
   "admin-unrecognised-stripe-payment": {
     triggerSummary:
       "A payment succeeded on the club's Stripe account that the app did not create - a Stripe Payment Link, a Checkout page or a dashboard charge - so there is no booking for it and nothing was sent to Xero",
@@ -1150,11 +1168,6 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
   "bulk-communication": {
     triggerSummary: "Admin bulk communication send",
     frequency: "Per admin send action",
-  },
-  "food-order-placed": {
-    triggerSummary:
-      "A member placed a food order for a lodge; sent to the food officer email in the Food Orders settings",
-    frequency: "Per food order",
   },
   "website-contact": {
     triggerSummary: "Website contact form submission",
@@ -1666,6 +1679,13 @@ export function sampleValue(token: string): string {
   if (token === "unmatchedAppPaymentNote") return UNMATCHED_APP_STRIPE_PAYMENT_NOTE;
   if (token === "ledgerMatch") return UNMATCHED_APP_LEDGER_MATCH_LABEL.APP_INTENT_NO_TRANSACTION;
   if (token === "chargeId") return "ch_example";
+  // #4911: previewed as the opened alert, the one every dispute sends first.
+  if (token === "disputeSubjectLabel") return stripeDisputeSubjectLabel("opened", "open");
+  if (token === "disputeNextStep") return STRIPE_DISPUTE_NEXT_STEP.OPEN;
+  if (token === "disputeHoldNote") return STRIPE_DISPUTE_HOLD_NOTE;
+  if (token === "outcome") return "open";
+  if (token === "disputeId") return "dp_example";
+  if (token === "bookingOwner") return "Sam Member";
   if (token === "checkoutSessionId") return "cs_example";
   if (token === "paymentLinkId") return "plink_example";
   if (token === "stripeDashboardUrl") return "https://dashboard.stripe.com/payments/pi_example";
@@ -1880,6 +1900,10 @@ const TEMPLATE_SAMPLE_VALUE_OVERRIDES: Partial<
   "group-organiser-joiner-refund": {
     refundSentence: organiserJoinerAppealRefundSentence("$123.45", "Sam Joiner"),
   },
+  // #4911: Stripe's reason code as the sender words it, not the bare token name.
+  "admin-stripe-dispute": {
+    reason: "fraudulent",
+  },
   "group-organiser-extra-invoice": {
     joinerName: "Sam Joiner",
     // The sender's own wording of a change (`bookingModificationTypeLabel`).
@@ -1944,7 +1968,7 @@ const EMAIL_TEMPLATE_KEYS = EMAIL_TEMPLATE_DEFINITIONS.map(
 
 export const EMAIL_TEMPLATE_KEY_SET = new Set<string>(EMAIL_TEMPLATE_KEYS);
 
-const APPROVED_EMAIL_TEMPLATE_TOKENS = [
+const APPROVED_EMAIL_TEMPLATE_TOKENS = [...FORK_APPROVED_EMAIL_TEMPLATE_TOKENS,
   "BASE_URL",
   "CLUB_BOOKINGS_NAME",
   "CLUB_EMAIL_FROM_NAME",
@@ -2256,6 +2280,15 @@ const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   // #4624: the unmatched app payment's instruction, and what the app found for it.
   "unmatchedAppPaymentNote",
   "ledgerMatch",
+  // #4911: a cardholder's dispute - which alert it is, what to do, what the
+  // app holds, and the facts a treasurer finds it by in Stripe.
+  "disputeSubjectLabel",
+  "disputeNextStep",
+  "disputeHoldNote",
+  "outcome",
+  "openedAt",
+  "bookingOwner",
+  "disputeId",
   "receivedAt",
   "chargeId",
   "checkoutSessionId",
@@ -2380,13 +2413,6 @@ const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   "summary",
   "answersText",
   "maintenanceReportUrl",
-  // Fork #121: the food-order email's tokens; none carries a bearer token or secret.
-  "officerLabel",
-  "neededBy",
-  "orderedBy",
-  "itemsText",
-  "notes",
-  "foodOrderUrl",
   // #49: the Daily digest's central-server-version entry. `serverVersionNote`
   // is the composed sentence (empty while the versions match); the other two
   // are the raw numbers behind it. None carries a key, a URL or a member.

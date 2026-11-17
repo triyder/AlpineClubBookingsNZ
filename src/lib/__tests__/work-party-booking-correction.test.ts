@@ -358,8 +358,14 @@ describe("the officer-only internal-code admission (census)", () => {
 
   it("still refuses every other internal code in applyPromoCodeChanges", () => {
     const plan = readFileSync(path.join(root, "lib", "booking-modify-plan.ts"), "utf8");
+    const rules = readFileSync(path.join(root, "lib", "promo-code-list-rules.ts"), "utf8");
+    // The admission is the one helper (in the promo-list leaf, as on thatskiff33#5149), used at the one refusal.
+    expect(rules).toContain(
+      "return !promoCode.internal || promoCode.id === admittedInternalPromoCodeId;",
+    );
+    expect(plan).toContain('import { enteredPromoCodeAdmitted, promoCodeListRefusal } from "@/lib/promo-code-list-rules";');
     expect(plan).toContain(
-      "(promoCode.internal && promoCode.id !== officerWorkPartyPromoCodeId)",
+      "if (!enteredPromoCodeAdmitted(promoCode, officerWorkPartyPromoCodeId)) {",
     );
     // Defaulted to null, so a caller that passes nothing admits nothing.
     expect(plan).toContain("officerWorkPartyPromoCodeId = null,");

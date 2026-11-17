@@ -121,8 +121,10 @@ export const HTML_TOKEN_CATALOGUE: readonly HtmlTokenDefinition[] = [
     token: "skifield-whakapapa",
     kind: "embed",
     description:
-      "This will fetch the Whakapapa report and render road status, " +
-      "conditions, and the Facilities, Food & Drink, and Lifts groups.",
+      "Whakapapa (Mt Ruapehu) only. This will fetch the Whakapapa report " +
+      "and render road status, conditions, and the Facilities, Food & " +
+      "Drink, and Lifts groups. Needs the Whakapapa conditions report " +
+      "module; for any other ski field use skifield-conditions.",
     example: "{{skifield-whakapapa}}",
     allowsLegacySingleBrace: true,
     contexts: ["page-content-body"],
@@ -261,6 +263,14 @@ export const HTML_TOKEN_CATALOGUE: readonly HtmlTokenDefinition[] = [
     contexts: ["page-content-body"],
   },
   {
+    token: "data-hosting",
+    kind: "text",
+    description: "Hosting disclosure set in Club Identity > Where members' data is held; blank fields ask the Privacy Officer.",
+    example: "{{data-hosting}}",
+    allowsLegacySingleBrace: false,
+    contexts: ["page-content-body"],
+  },
+  {
     token: "club-name",
     kind: "text",
     description:
@@ -343,6 +353,14 @@ export const HTML_TOKEN_CATALOGUE: readonly HtmlTokenDefinition[] = [
     example: "{{hut-leader-lower}}",
     allowsLegacySingleBrace: false,
     contexts: ["page-content-body", "lodge-instructions"],
+  },
+  {
+    token: "email-log-retention",
+    kind: "text",
+    description: "Inserts the club's current email-log retention policy, including whether automatic deletion is switched on.",
+    example: "Email logs: {{email-log-retention}}.",
+    allowsLegacySingleBrace: false,
+    contexts: ["page-content-body"],
   },
   {
     token: "facebook-url",

@@ -21,7 +21,9 @@ import { auditCategoryBadgeClass } from "@/lib/audit-category-badges";
 import { useClubTime } from "@/components/club-time-provider";
 import { formatAuditMetadataJson } from "@/lib/audit-metadata-amounts";
 import { useClubFormat } from "@/components/club-format-provider";
+import { formatAdminListRange } from "@/lib/admin-list-page";
 
+import { adminHref } from "@/lib/admin-hubs";
 type AuditTimelineProps = {
   endpoint: string;
   pageSize?: number;
@@ -64,7 +66,7 @@ function getEntityHref(entry: AuditTimelineEntry, showAdminEntityLinks: boolean)
   }
 
   if (showAdminEntityLinks && entry.entityType === "Member") {
-    return `/admin/members/${entry.entityId}`;
+    return `${adminHref("member-detail", { id: entry.entityId })}`;
   }
 
   return null;
@@ -148,9 +150,7 @@ export function AuditTimeline({
       return "No records";
     }
 
-    const start = (page - 1) * pageSize + 1;
-    const end = Math.min(page * pageSize, total);
-    return `${start}-${end} of ${total}`;
+    return formatAdminListRange({ page, pageSize, total });
   }, [page, pageSize, total]);
 
   return (

@@ -56,7 +56,7 @@ vi.mock("@/lib/module-settings", async (importOriginal) => {
   };
 });
 
-import AdminBookingsPage from "@/app/(admin)/admin/bookings/page";
+import AdminBookingsPage from "@/app/(admin)/admin/booking-desk/bookings/page";
 import { DiagnosticsViewStatePublisher } from "@/components/help-widget/diagnostics-view-state-publisher";
 import type { DiagnosticsViewState } from "@/components/help-widget/help-widget-context";
 import { getDiagnosticsPageContextRoute } from "@/lib/diagnostics/page-context/registry";
@@ -82,6 +82,7 @@ const MODULES_OFF = {
   hutLeaders: false,
   communications: false,
   skifieldConditions: false,
+  skifieldWhakapapa: false,
   twoFactor: false,
   magicLink: false,
   googleLogin: false,

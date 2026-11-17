@@ -8,6 +8,7 @@ import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { checkCapacityForGuestRanges } from "@/lib/capacity";
 import { buildShiftPreviewResponse } from "@/lib/booking-shift-preview";
+import { unchangedPriceQuotedFigures, type EditQuotedFigures } from "@/lib/edit-quoted-figures";
 import { getDefaultLodgeId, lodgeNullTolerantScope } from "@/lib/lodges";
 import { getLodgeCapacity } from "@/lib/lodge-capacity";
 import {
@@ -27,11 +28,7 @@ import {
   toEditTimeGroupDiscountConfig,
   toSeasonRateData,
 } from "@/lib/policies/booking-route-decisions";
-import { calculateChangeFee } from "@/lib/change-fee";
-import {
-  daysUntilDate,
-  loadCancellationPolicy,
-} from "@/lib/cancellation";
+import { lateNoticeChangeFee } from "@/lib/late-notice-change-fee";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { ApiError } from "@/lib/api-error";
 import {
@@ -89,7 +86,7 @@ import {
 import { selectedIndexesForStoredGuestTargets } from "@/lib/promo-stored-guest-targets";
 import {
   modifyQuoteSchema,
-  OVERRIDE_DATE_ONLY_QUOTE_FIELDS,
+  isDateOnlyOverrideViolation,
   type NormalizedAddGuest,
 } from "@/lib/booking-modify-quote-request";
 import {
@@ -180,6 +177,7 @@ import { getMemberCreditBalance } from "@/lib/member-credit";
 import { previewPaidReductionCreditGiveBackCents } from "@/lib/booking-modify-credit-give-back";
 import logger from "@/lib/logger";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
+import { classifyModificationRequest } from "@/lib/booking-edit-price-class";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { lodgeGuestLimitMessage } from "@/lib/lodge-booking-readiness";
 
@@ -460,17 +458,7 @@ export async function POST(
   }
   if (
     adminOverride &&
-    (OVERRIDE_DATE_ONLY_QUOTE_FIELDS.some((field) => {
-      const value = parsed.data[field];
-      return Array.isArray(value) ? value.length > 0 : Boolean(value);
-    }) ||
-      // #2266: checked explicitly — `Boolean(0)` is false, so a credit
-      // election of 0 cents would otherwise slip past the date-only contract.
-      applyCreditCents !== undefined ||
-      // Same trap, same fix: `otherLodgeId: null` CLEARS the election and is
-      // falsy, so the list membership above would let it through a date-only
-      // override.
-      requestedOtherLodgeId !== undefined)
+    isDateOnlyOverrideViolation(parsed.data)
   ) {
     return NextResponse.json(
       { error: "Admin override edits change dates only" },
@@ -479,9 +467,9 @@ export async function POST(
   }
 
   // #3123 — the CLUB's day, from its persisted zone (`INV-CONFIG-002`),
-  // resolved ONCE for this whole quote. Five decisions below read it: the edit
-  // policy here, the late-notice change fee's two `daysUntilDate` operands, the
-  // promotion's validity window, and the reduction refund's settlement tier.
+  // resolved ONCE for this whole quote. The decisions below read it: the edit
+  // policy here, the late-notice change fee (through `lateNoticeChangeFee`),
+  // the promotion's validity window, and the reduction refund's settlement tier.
   // They are the same question, so they must not be able to answer it
   // differently — a quote whose fee said one day and whose refund tier said
   // another would be internally inconsistent across club midnight.
@@ -560,32 +548,29 @@ export async function POST(
   }
   // Quote-priced bookings are blocked at preview time too (#1032) — except
   // for identity-only requests (#1099), which never touch the pricing engine
-  // and therefore cannot disturb the negotiated basis.
-  const requestedStructuralChange = Boolean(
-    newCheckInStr ||
-      newCheckOutStr ||
-      addGuests?.length ||
-      removeGuestIds?.length ||
-      guestStayRanges?.length ||
-      // #2337: a link re-rates a guest — structural, so the preview prices it
-      // rather than echoing the stored totals.
-      linkGuestToMember?.length ||
-      // The other-lodge rate election re-rates guests for the same reason.
-      requestedOtherLodgeId !== undefined ||
-      otherLodgeMemberGuestIds !== undefined ||
-      promoChangeRequested,
-  );
-  const requestIsIdentityOnly =
-    !requestedStructuralChange && Boolean(guestUpdates?.length);
-  // #2266: a credit election with nothing structural is price-preserving by the
-  // same argument as an identity-only name fix — the apply route only writes
-  // Booking.creditElectionCents (#2265) and touches neither price nor capacity,
-  // so the preview must echo the stored money rather than reprice at current
-  // rates (a season-rate change would otherwise surface a phantom price diff).
-  const requestIsCreditElectionOnly =
-    !requestedStructuralChange &&
-    !guestUpdates?.length &&
-    applyCreditCents !== undefined;
+  // and therefore cannot disturb the negotiated basis. #2266: a credit election
+  // with nothing structural is price-preserving by the same argument — the
+  // apply route only writes Booking.creditElectionCents (#2265) — so the
+  // preview echoes the stored money rather than reprice at current rates.
+  //
+  // ALP-573: the classification is `modifyBookingBatch`'s own, from the same
+  // function. This route used to spell it out separately, and a rename that
+  // resent the stored names was identity-only here and structural there: the
+  // preview echoed $0 and the save repriced.
+  const priceClass = classifyModificationRequest({
+    checkIn: newCheckInStr,
+    checkOut: newCheckOutStr,
+    addGuests,
+    removeGuestIds,
+    guestStayRanges,
+    linkGuestToMember,
+    otherLodgeId: requestedOtherLodgeId,
+    otherLodgeMemberGuestIds,
+    ...promoRequest,
+    guestUpdates,
+    applyCreditCents,
+  });
+  const requestIsIdentityOnly = priceClass.identityOnly;
   // #2337: mirror the apply path's member-link gate exactly. The member-ORIGIN
   // fence keeps a SCHOOL whole-lodge booking's students out of the re-rate, and a
   // member-whole-lodge link-only request is exempt from the quote-priced block
@@ -642,7 +627,7 @@ export async function POST(
   const quotePriced = await isQuotePricedBooking(prisma, bookingId);
   if (
     !requestIsIdentityOnly &&
-    !requestIsCreditElectionOnly &&
+    !priceClass.creditElectionOnly &&
     !requestIsMemberLinkExempt &&
     !requestIsOtherLodgeRateExempt &&
     quotePriced
@@ -664,19 +649,14 @@ export async function POST(
    * exemptions exist to prevent (owner decision, 21 Aug 2026: "two
    * hand-maintained lists drift; one cannot").
    *
-   * THE PREDICATE IS THE SAME ONE, arrived at through this route's own names.
-   * `requestIsIdentityOnly` already requires `!requestedStructuralChange`, and
-   * THIS route's `requestedStructuralChange` includes the other-lodge fields — so
-   * `requestIsIdentityOnly || requestIsCreditElectionOnly` here is exactly the
-   * save path's `pricePreservingModification`. The pair is checked by the fence
-   * tests on both sides rather than by agreement between two comments.
+   * THE PREDICATE IS THE SAME ONE: `priceClass.pricePreserving` is the save
+   * path's `pricePreservingModification`, from `classifyModificationRequest`.
    *
    * Read on the module client rather than a transaction because a preview opens
    * none and writes nothing: a race with a completing review costs a stale quote,
    * which the save then refuses under its own locks.
    */
-  const previewIsPricePreserving =
-    requestIsIdentityOnly || requestIsCreditElectionOnly;
+  const previewIsPricePreserving = priceClass.pricePreserving;
   if (!previewIsPricePreserving) {
     const pendingReview = await findOpenEditFinancialReviewTask(
       bookingId,
@@ -856,19 +836,22 @@ export async function POST(
   // Identity-only preview (#1099): a name fix never reprices, so the quote is
   // the stored state with zero deltas — no pricing engine, no capacity check,
   // safe for quoted and legacy bookings alike. #2266 routes a credit-only
-  // election through the same echo for the same reason.
-  if (requestIsIdentityOnly || requestIsCreditElectionOnly) {
+  // election through the same echo for the same reason. The save holds the
+  // stored final price on exactly these edits (ALP-573), so the zeros below
+  // are what it settles.
+  if (previewIsPricePreserving) {
     const refused = await dependantIdentityResponse([], new Set());
     if (refused) return refused;
+    const unchangedFigures = unchangedPriceQuotedFigures(booking.finalPriceCents);
     return NextResponse.json({
       availableCreditCents,
       newTotalPriceCents: booking.totalPriceCents,
       newDiscountCents: booking.discountCents,
       newPromoAdjustmentCents: booking.promoAdjustmentCents,
-      newFinalPriceCents: booking.finalPriceCents,
-      priceDiffCents: 0,
-      changeFeeCents: 0,
-      netChargeCents: 0,
+      // #4924 (`INV-MOD-062`): what the save compares; this edit moves no money.
+      // Spread so the figures shown and the figures bound are one object.
+      ...unchangedFigures,
+      quotedFigures: unchangedFigures,
       settlementOptions: null,
       capacityAvailable: true,
       minimumStayValid: true,
@@ -1975,25 +1958,17 @@ export async function POST(
   const checkInChanged =
     newCheckIn.getTime() !== new Date(booking.checkIn).getTime();
 
-  // #2266: no change fee on a DRAFT — nothing has been committed to, exactly
-  // like fiddling with dates in the wizard before saving. Mirrors the
-  // calculateModificationChangeFee guard on the apply path.
-  if (
-    !skipBookingLifecycleRules &&
-    checkInChanged &&
-    !isInProgressEdit &&
-    booking.status !== "DRAFT"
-  ) {
-    const policy = await loadCancellationPolicy(booking.checkIn, bookingLodgeId);
-    const feeResult = calculateChangeFee({
-      // #3123 — one club day for both operands, so the two day-counts cannot
-      // straddle club midnight and quote a fee neither tier justifies.
-      daysUntilOriginalCheckIn: daysUntilDate(booking.checkIn, todayAtClub),
-      daysUntilNewCheckIn: daysUntilDate(newCheckIn, todayAtClub),
-      originalFinalPriceCents: booking.finalPriceCents,
-      policyRules: policy,
+  // An unchanged check-in, a skipped lifecycle and a stay already under way
+  // charge nothing. An unpaid booking, a draft included, is zero inside
+  // `lateNoticeChangeFee` (owner decision, 10 Nov 2026).
+  if (!skipBookingLifecycleRules && checkInChanged && !isInProgressEdit) {
+    changeFeeCents = await lateNoticeChangeFee({
+      booking,
+      lodgeId: bookingLodgeId,
+      newCheckIn,
+      db: prisma,
+      todayAtClub,
     });
-    changeFeeCents = feeResult.feeCents;
 
     if (changeFeeCents > 0) {
       itemizedChanges.push({
@@ -2328,6 +2303,10 @@ export async function POST(
   });
 
   return NextResponse.json({
+    // #4924 (`INV-MOD-062`): the figures the panel sends back on Save, where the
+    // save refuses 409 `EDIT_PRICE_CHANGED` if its own differ. The same values
+    // as the fields below; `netChargeCents` is before the unpaid-ask offset.
+    quotedFigures: { newFinalPriceCents, priceDiffCents, changeFeeCents, netChargeCents } satisfies EditQuotedFigures,
     newTotalPriceCents,
     newDiscountCents,
     newPromoAdjustmentCents,

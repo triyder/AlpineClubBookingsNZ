@@ -1,4 +1,5 @@
 "use client";
+import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 
 import { adminHref } from "@/lib/admin-hubs";
 
@@ -10,17 +11,14 @@ import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { DatasetResetButton } from "@/components/admin/dataset-reset-button";
+import { Pagination } from "@/components/admin/admin-pagination";
+import { fetchOffPageQueueRecord, useAdminQueuePage } from "@/components/admin/use-admin-queue-page";
+import { PinnedQueueRecordNote } from "@/components/admin/pinned-queue-record-note";
+import { parseAdminListPageParam } from "@/lib/admin-list-page";
 import { bookingOwner } from "@/lib/booking-owner";
 import { buildBookingRequestDatasetPath } from "@/lib/admin-dataset-reset-state";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { NotifyChoiceDialog } from "@/components/admin/notify-choice-dialog";
 import { Textarea } from "@/components/ui/textarea";
 import {
   AdminViewOnlySectionBanner,
@@ -101,6 +99,7 @@ function buildBookingApprovalsPath(
   fixedSearchParams: Record<string, string>,
   status: ReviewFilter,
   bookingId: string | null,
+  page: number,
 ) {
   return buildBookingRequestDatasetPath({
     basePath,
@@ -110,11 +109,12 @@ function buildBookingApprovalsPath(
     defaultStatus: "PENDING",
     recordKey: "bookingId",
     recordId: bookingId,
+    page,
   });
 }
 
 export function BookingApprovalsPanel({
-  basePath = "/admin/booking-requests",
+  basePath = adminHref("booking-requests"),
   fixedSearchParams = EMPTY_SEARCH_PARAMS,
   showHeading = true,
   canEdit = true,
@@ -135,6 +135,14 @@ export function BookingApprovalsPanel({
   const [filter, setFilter] = useState<ReviewFilter>(
     isReviewFilter(initialFilter) ? initialFilter : defaultFilter,
   );
+  const queuePage = useAdminQueuePage({
+    filterKey: filter,
+    initialPage: parseAdminListPageParam(searchParams.get("page")),
+  });
+  const { page, setPage, receive, beginLoad } = queuePage;
+  // INV-OPS-020: a deep-linked booking that is not on the loaded page is read
+  // by id and pinned above it, so the link always lands on its booking.
+  const [pinnedBooking, setPinnedBooking] = useState<BookingReviewData | null>(null);
   const [loading, setLoading] = useState(true);
   const [reviewingId, setReviewingId] = useState<string | null>(null);
   const [notesById, setNotesById] = useState<Record<string, string>>({});
@@ -165,28 +173,36 @@ export function BookingApprovalsPanel({
     fixedSearchParams,
     filter,
     focusedBookingId,
+    page,
   );
 
   const fetchBookings = useCallback(async () => {
+    const isCurrent = beginLoad();
     setLoading(true);
     setError("");
     try {
-      const response = await fetch(`/api/admin/booking-reviews?status=${filter}`);
+      const response = await fetch(`/api/admin/booking-reviews?status=${filter}&page=${page}`);
       const data = await response.json();
       if (!response.ok) {
         throw new Error(data.error || "Failed to load booking reviews");
       }
-      setBookings(Array.isArray(data?.data) ? data.data : []);
+      const rows: BookingReviewData[] = Array.isArray(data?.data) ? data.data : [];
+      const pinned = await fetchOffPageQueueRecord("/api/admin/booking-reviews", "bookingId", focusedBookingId, rows);
+      if (!isCurrent()) return true; // a newer read owns the list
+      setBookings(rows);
+      receive(data, rows.length);
+      setPinnedBooking(pinned);
       return true;
     } catch (err) {
+      if (!isCurrent()) return true;
       setError(err instanceof Error ? err.message : "Failed to load booking reviews");
       return false;
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
     // setState functions are referentially stable; they are listed so the
     // manual dependencies match what the React Compiler infers.
-  }, [filter, setBookings, setError, setLoading]);
+  }, [beginLoad, filter, page, receive, focusedBookingId, setBookings, setError, setLoading, setPinnedBooking]);
 
   useEffect(() => {
     fetchBookings();
@@ -217,7 +233,7 @@ export function BookingApprovalsPanel({
       bookingId,
       decision,
       noEmails:
-        bookings.find((booking) => booking.id === bookingId)?.noEmails === true,
+        shownBookings.find((booking) => booking.id === bookingId)?.noEmails === true,
     });
     setNotifyDialogOpen(true);
   }
@@ -260,7 +276,7 @@ export function BookingApprovalsPanel({
     setReviewingId(bookingId);
     setError("");
     try {
-      const response = await fetch(`/api/admin/bookings/${bookingId}/review`, {
+      const response = await fetchWithRecentAuth(`/api/admin/bookings/${bookingId}/review`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -285,6 +301,7 @@ export function BookingApprovalsPanel({
           setBookings((current) =>
             current.filter((booking) => booking.id !== bookingId),
           );
+          setPinnedBooking((current) => (current?.id === bookingId ? null : current));
           setDecisionRecovery({ bookingId, message: recoveryBase });
           setRecoveryAttentionVersion((version) => version + 1);
           const refreshed = await fetchBookings();
@@ -345,6 +362,8 @@ export function BookingApprovalsPanel({
     by some screen-reader/browser pairings. It sits OUTSIDE the `space-y-6`
     stack so the empty wrapper an edit-capable admin gets costs no layout.
   */
+  const shownBookings = pinnedBooking ? [pinnedBooking, ...bookings] : bookings;
+
   const viewOnlyBanner = (
     <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-6">
       Your admin role can view bookings awaiting approval but cannot decide
@@ -362,7 +381,7 @@ export function BookingApprovalsPanel({
           <p className="mt-1 text-muted-foreground">
             Review bookings that need admin approval before they can be paid.
             See also{" "}
-            <Link className="underline" href="/admin/booking-requests?tab=changes">
+            <Link className="underline" href={`${adminHref("booking-requests")}?tab=changes`}>
               booking change requests
             </Link>{" "}
             and{" "}
@@ -420,28 +439,30 @@ export function BookingApprovalsPanel({
           </Button>
         ))}
         <DatasetResetButton
-          disabled={filter === defaultFilter}
-          onReset={() => setFilter(defaultFilter)}
+          disabled={filter === defaultFilter && page === 1}
+          onReset={() => { setFilter(defaultFilter); setPage(1); }}
         />
       </div>
 
       {loading ? (
         <div className="py-8 text-center">Loading...</div>
-      ) : bookings.length === 0 ? (
+      ) : shownBookings.length === 0 ? (
         <div className="py-8 text-center text-muted-foreground">
           No {filter === "ALL" ? "" : filter.toLowerCase() + " "}booking reviews found.
         </div>
       ) : (
         <div className="space-y-4">
-          {bookings.map((booking) => {
+          {shownBookings.map((booking) => {
             const decided = booking.adminReviewStatus !== "PENDING";
             const highlighted = booking.id === focusedBookingId;
+            const pinned = booking === pinnedBooking;
             return (
               <Card
                 key={booking.id}
                 className={highlighted ? "border-warning-6" : undefined}
               >
                 <CardHeader>
+                  {pinned ? <PinnedQueueRecordNote /> : null}
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div>
                       <CardTitle className="text-lg">
@@ -449,7 +470,7 @@ export function BookingApprovalsPanel({
                       </CardTitle>
                       <p className="text-sm text-muted-foreground">
                         Created {clubTime.instantDateTime(new Date(booking.createdAt))} —{" "}
-                        <Link href={`/admin/bookings/${booking.id}`} className="underline">
+                        <Link href={`${adminHref("bookings")}/${booking.id}`} className="underline">
                           view booking
                         </Link>
                       </p>
@@ -574,73 +595,75 @@ export function BookingApprovalsPanel({
           })}
         </div>
       )}
+      {queuePage.pagination ? (
+        <Pagination {...queuePage.pagination} aria-label="Booking approvals pages" />
+      ) : null}
 
       {/* #1790: per-decision member-email choice, mirroring the #1695/#1705
           pattern. Both approve and reject email the member either way, so the
           dialog always asks; the choice itself is recorded in the audit log.
           It suppresses only the review approval/rejection notice — the shared
           cancellation flow behind a reject is unaffected. */}
-      <Dialog
+      <NotifyChoiceDialog
         open={notifyDialogOpen}
-        onOpenChange={(open) => {
-          if (!open && reviewingId === null) setNotifyDialogOpen(false);
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
-              {notifyChoice?.noEmails
-                ? notifyChoice.decision === "REJECTED"
-                  ? "Decline this booking?"
-                  : "Approve this booking?"
-                : notifyChoice?.decision === "REJECTED"
-                  ? "Email the member about this decline?"
-                  : "Email the member about this approval?"}
-            </DialogTitle>
-            <DialogDescription>
-              {notifyChoice?.noEmails
-                ? notifyChoice.decision === "REJECTED"
-                  ? "The booking will be declined and cancelled. Nothing at all is emailed to the member — not even the standard cancellation notice."
-                  : "The booking will be approved."
-                : notifyChoice?.decision === "REJECTED"
-                  ? "The booking is declined and cancelled either way, and the member always receives the standard cancellation notice. Choose whether they also receive the review-declined explainer email — your choice is recorded in the audit log."
-                  : "The booking is approved either way. Choose whether the member receives the standard review-approved email — your choice is recorded in the audit log."}
-            </DialogDescription>
-          </DialogHeader>
-          {/* #2259: with the booking's "No emails" switch on, the review
-              outcome email is withheld whatever is chosen — and so, on the
-              reject path, is the cancellation notice the copy above would
-              otherwise promise. No choice is offered. */}
-          {notifyChoice?.noEmails && <BookingNoEmailsNotice />}
-          <DialogFooter className="gap-2 sm:gap-2">
-            <Button
-              variant="outline"
-              disabled={reviewingId !== null}
-              onClick={() =>
-                notifyChoice?.noEmails ? confirmSilenced() : confirmNotify(false)
+        onOpenChange={setNotifyDialogOpen}
+        submitting={reviewingId !== null}
+        title={
+          notifyChoice?.noEmails
+            ? notifyChoice.decision === "REJECTED"
+              ? "Decline this booking?"
+              : "Approve this booking?"
+            : notifyChoice?.decision === "REJECTED"
+              ? "Email the member about this decline?"
+              : "Email the member about this approval?"
+        }
+        description={
+          notifyChoice?.noEmails
+            ? notifyChoice.decision === "REJECTED"
+              ? "The booking will be declined and cancelled. Nothing at all is emailed to the member — not even the standard cancellation notice."
+              : "The booking will be approved."
+            : notifyChoice?.decision === "REJECTED"
+              ? "The booking is declined and cancelled either way, and the member always receives the standard cancellation notice. Choose whether they also receive the review-declined explainer email — your choice is recorded in the audit log."
+              : "The booking is approved either way. Choose whether the member receives the standard review-approved email — your choice is recorded in the audit log."
+        }
+        // #2259: with the booking's "No emails" switch on, the review outcome
+        // email is withheld whatever is chosen — and so, on the reject path,
+        // is the cancellation notice the copy above would otherwise promise.
+        // No choice is offered.
+        notice={notifyChoice?.noEmails ? <BookingNoEmailsNotice /> : null}
+        actions={
+          notifyChoice?.noEmails
+            ? {
+                kind: "single",
+                action: {
+                  label:
+                    notifyChoice.decision === "REJECTED"
+                      ? "Reject booking"
+                      : "Approve booking",
+                  variant: "outline",
+                  onSelect: confirmSilenced,
+                },
               }
-            >
-              {notifyChoice?.noEmails
-                ? notifyChoice.decision === "REJECTED"
-                  ? "Reject booking"
-                  : "Approve booking"
-                : notifyChoice?.decision === "REJECTED"
-                  ? "Reject without emailing"
-                  : "Approve without emailing"}
-            </Button>
-            {!notifyChoice?.noEmails && (
-              <Button
-                disabled={reviewingId !== null}
-                onClick={() => confirmNotify(true)}
-              >
-                {notifyChoice?.decision === "REJECTED"
-                  ? "Reject and email member"
-                  : "Approve and email member"}
-              </Button>
-            )}
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+            : {
+                kind: "choice",
+                withoutEmail: {
+                  label:
+                    notifyChoice?.decision === "REJECTED"
+                      ? "Reject without emailing"
+                      : "Approve without emailing",
+                  variant: "outline",
+                  onSelect: () => confirmNotify(false),
+                },
+                withEmail: {
+                  label:
+                    notifyChoice?.decision === "REJECTED"
+                      ? "Reject and email member"
+                      : "Approve and email member",
+                  onSelect: () => confirmNotify(true),
+                },
+              }
+        }
+      />
       </div>
     </div>
   );

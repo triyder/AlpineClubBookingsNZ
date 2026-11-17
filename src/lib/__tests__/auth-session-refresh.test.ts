@@ -61,11 +61,10 @@ vi.mock("next-auth/providers/credentials", () => ({
   default: vi.fn((config) => config),
 }));
 
-vi.mock("bcryptjs", () => ({
-  default: {
-    compare: vi.fn().mockResolvedValue(true),
-  },
-}));
+vi.mock("@/lib/password-hashing", async (importOriginal) => {
+  const { passwordHashingModuleMock } = await import("@/lib/__tests__/helpers/password-hashing-mock");
+  return passwordHashingModuleMock(await importOriginal(), { verifyPassword: vi.fn().mockResolvedValue(true) });
+});
 
 vi.mock("next-auth", () => {
   class CredentialsSignin extends Error {
@@ -82,13 +81,33 @@ vi.mock("@/lib/logger", () => ({
   default: { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 
+// #4618 review: lets one test stand in a required officer's refresh claims
+// while the release switch stays off; every other test uses the real resolver.
+const officerClaimsOverride = vi.hoisted(() => ({
+  claims: null as null | Record<string, unknown>,
+}));
+vi.mock("@/lib/officer-two-factor", async (importOriginal) => {
+  const actual = (await importOriginal()) as typeof import("@/lib/officer-two-factor");
+  return {
+    ...actual,
+    resolveOfficerTwoFactorClaims: async (
+      input: Parameters<typeof actual.resolveOfficerTwoFactorClaims>[0],
+    ) =>
+      officerClaimsOverride.claims ?? actual.resolveOfficerTwoFactorClaims(input),
+  };
+});
+
 vi.mock("@/lib/module-settings", () => ({
   loadEffectiveModuleFlags: mockLoadEffectiveModuleFlags,
 }));
 
-vi.mock("@/lib/two-factor", () => ({
-  consumeTwoFactorSessionChallenge: mockConsumeTwoFactorSessionChallenge,
-}));
+vi.mock("@/lib/two-factor", async (importOriginal) => {
+  const actual = (await importOriginal()) as typeof import("@/lib/two-factor");
+  return {
+    ...actual,
+    consumeTwoFactorSessionChallenge: mockConsumeTwoFactorSessionChallenge,
+  };
+});
 
 vi.mock("@/lib/session-reauth", () => ({
   consumeSessionReauthChallenge: mockConsumeSessionReauthChallenge,
@@ -182,10 +201,14 @@ describe("auth session refresh", () => {
         sessionsRevokedAt: true,
         twoFactorEnabled: true,
         twoFactorMethod: true,
+        webAuthnCredentials: { select: { id: true }, take: 1 },
         postLoginLanding: true,
         // #4612: with role and the rows, the record's classification, which
         // decides the lodge kiosk account's longer idle window.
         financeAccessLevel: true,
+        // #4618: the officer grace stamp and the last factor reset.
+        twoFactorGraceStartedAt: true,
+        factorsResetAt: true,
       },
     });
     expect(refreshedToken).toEqual(
@@ -481,6 +504,41 @@ describe("auth session refresh", () => {
     );
   });
 
+  it("keeps a passkey-only member verified after the challenge", async () => {
+    mockLoadEffectiveModuleFlags.mockResolvedValue({ twoFactor: true });
+    mockFindUnique.mockResolvedValue({
+      role: "MEMBER",
+      accessRoles: [{ role: "USER" }],
+      forcePasswordChange: false,
+      emailVerified: true,
+      passwordChangedAt: null,
+      twoFactorEnabled: false,
+      twoFactorMethod: null,
+      webAuthnCredentials: [{ id: "passkey-1" }],
+    });
+
+    const refreshedToken = await authConfig.callbacks.jwt?.({
+      token: {
+        id: "member-1",
+        role: "MEMBER",
+        forcePasswordChange: false,
+        isEmailVerified: true,
+        sessionIssuedAt: Date.now(),
+        twoFactorVerified: true,
+        twoFactorVerifiedByChallenge: true,
+      },
+    } as never);
+
+    expect(refreshedToken).toEqual(
+      expect.objectContaining({
+        hasPasskey: true,
+        twoFactorEnrolled: true,
+        twoFactorVerified: true,
+        twoFactorVerifiedByChallenge: true,
+      }),
+    );
+  });
+
   it("projects the refreshed token role into the session", async () => {
     const session = await authConfig.callbacks.session?.({
       session: {
@@ -521,8 +579,13 @@ describe("auth session refresh", () => {
       twoFactorRequired: false,
       twoFactorVerified: false,
       twoFactorEnrolled: false,
+      hasPasskey: false,
       twoFactorMethod: null,
       postLoginLanding: null,
+      // #4618: a token without the officer claims projects as not required.
+      officerTwoFactorRequired: false,
+      officerTwoFactorGraceEndsAt: null,
+      twoFactorSatisfiesOfficer: false,
     });
   });
 
@@ -915,31 +978,43 @@ describe("auth session refresh", () => {
     });
   });
 
-  function signedInMember() {
+  function signedInMember(security?: {
+    twoFactorEnabled?: boolean;
+    twoFactorMethod?: "TOTP" | "EMAIL" | null;
+    passkey?: boolean;
+  }) {
     mockFindUnique.mockResolvedValue({
       role: "MEMBER",
       accessRoles: [{ role: "USER" }],
       forcePasswordChange: false,
       emailVerified: true,
       passwordChangedAt: null,
-      twoFactorEnabled: false,
-      twoFactorMethod: null,
+      twoFactorEnabled: security?.twoFactorEnabled ?? false,
+      twoFactorMethod: security?.twoFactorMethod ?? null,
+      webAuthnCredentials: security?.passkey ? [{ id: "passkey-1" }] : [],
     });
   }
 
-  it("stamps lastAuthenticatedAt when sign-in completes, and a refresh does not move it", async () => {
-    signedInMember();
-    const signedIn = await authConfig.callbacks.jwt?.({
+  const signingInUser = {
+    id: "member-1",
+    role: "MEMBER",
+    forcePasswordChange: false,
+    isEmailVerified: true,
+    twoFactorEnabled: false,
+    twoFactorMethod: null,
+  };
+
+  function signIn(provider: string) {
+    return authConfig.callbacks.jwt?.({
       token: {},
-      user: {
-        id: "member-1",
-        role: "MEMBER",
-        forcePasswordChange: false,
-        isEmailVerified: true,
-        twoFactorEnabled: false,
-        twoFactorMethod: null,
-      },
+      user: signingInUser,
+      account: { provider },
     } as never);
+  }
+
+  it("stamps a password sign-in when no authenticator is owed, and a refresh does not move it", async () => {
+    signedInMember();
+    const signedIn = await signIn("credentials");
     expect(signedIn).toEqual(
       expect.objectContaining({ lastAuthenticatedAt: Date.now() }),
     );
@@ -949,6 +1024,173 @@ describe("auth session refresh", () => {
     } as never);
     expect(refreshed).toEqual(expect.objectContaining({ lastAuthenticatedAt: 1_000 }));
     expect(mockConsumeSessionReauthChallenge).not.toHaveBeenCalled();
+  });
+
+  it("stamps a password sign-in when the second factor is email", async () => {
+    signedInMember({ twoFactorEnabled: true, twoFactorMethod: "EMAIL" });
+    mockLoadEffectiveModuleFlags.mockResolvedValue({ twoFactor: true });
+    const signedIn = await signIn("credentials");
+    expect(signedIn).toEqual(
+      expect.objectContaining({ lastAuthenticatedAt: Date.now() }),
+    );
+  });
+
+  it("does not stamp a password sign-in while an authenticator app is still owed", async () => {
+    signedInMember({ twoFactorEnabled: true, twoFactorMethod: "TOTP" });
+    mockLoadEffectiveModuleFlags.mockResolvedValue({ twoFactor: true });
+    const signedIn = await signIn("credentials");
+    expect(signedIn?.id).toBe("member-1");
+    expect(signedIn).not.toHaveProperty("lastAuthenticatedAt");
+  });
+
+  it("does not stamp a required officer's password sign-in when they hold a passkey (#4618 review)", async () => {
+    signedInMember({ passkey: true });
+    officerClaimsOverride.claims = {
+      officerTwoFactorRequired: true,
+      twoFactorSatisfiesOfficer: true,
+      officerTwoFactorGraceEndsAt: null,
+      shouldStampGrace: false,
+    };
+    try {
+      const signedIn = await signIn("credentials");
+      expect(signedIn?.id).toBe("member-1");
+      expect(signedIn).not.toHaveProperty("lastAuthenticatedAt");
+    } finally {
+      officerClaimsOverride.claims = null;
+    }
+  });
+
+  it("still stamps a passkey holder's password sign-in when only the module is on", async () => {
+    signedInMember({ passkey: true });
+    mockLoadEffectiveModuleFlags.mockResolvedValue({ twoFactor: true });
+    const signedIn = await signIn("credentials");
+    expect(signedIn).toEqual(expect.objectContaining({ lastAuthenticatedAt: Date.now() }));
+  });
+
+  it("does not stamp an emailed-link sign-in", async () => {
+    signedInMember();
+    const signedIn = await signIn("magic-link");
+    expect(signedIn?.id).toBe("member-1");
+    expect(signedIn).not.toHaveProperty("lastAuthenticatedAt");
+  });
+
+  it("does not stamp a Google sign-in", async () => {
+    signedInMember();
+    const signedIn = await signIn("google");
+    expect(signedIn?.id).toBe("member-1");
+    expect(signedIn).not.toHaveProperty("lastAuthenticatedAt");
+  });
+
+  it("stamps when an authenticator-app challenge is consumed", async () => {
+    signedInMember();
+    mockConsumeTwoFactorSessionChallenge.mockResolvedValue(true);
+    const stamped = await authConfig.callbacks.jwt?.({
+      token: {
+        id: "member-1",
+        sessionIssuedAt: Date.now(),
+        lastAuthenticatedAt: 1_000,
+      },
+      trigger: "update",
+      session: {
+        user: {
+          twoFactorChallengeToken: `TOTP.${"ab".repeat(32)}`,
+          lastAuthenticatedAt: 9_999,
+          proof: "recovery",
+        },
+      },
+    } as never);
+    expect(mockConsumeTwoFactorSessionChallenge).toHaveBeenCalledWith(
+      "member-1",
+      `TOTP.${"ab".repeat(32)}`,
+    );
+    expect(stamped).toEqual(
+      expect.objectContaining({
+        lastAuthenticatedAt: Date.now(),
+        twoFactorVerified: true,
+      }),
+    );
+  });
+
+  it("does not stamp a recovery-code sign-in, and does not read a proof kind off the session", async () => {
+    signedInMember({ twoFactorEnabled: true, twoFactorMethod: "TOTP" });
+    mockLoadEffectiveModuleFlags.mockResolvedValue({ twoFactor: true });
+    const signedIn = await signIn("credentials");
+    expect(signedIn).not.toHaveProperty("lastAuthenticatedAt");
+
+    mockConsumeTwoFactorSessionChallenge.mockResolvedValue(true);
+    const finished = await authConfig.callbacks.jwt?.({
+      token: signedIn,
+      trigger: "update",
+      session: {
+        user: {
+          twoFactorChallengeToken: `RECOVERY.${"ab".repeat(32)}`,
+          lastAuthenticatedAt: Date.now(),
+          proof: "TOTP",
+        },
+      },
+    } as never);
+    expect(finished?.twoFactorVerified).toBe(true);
+    expect(finished).not.toHaveProperty("lastAuthenticatedAt");
+  });
+
+  it("an emailed code does not stamp and does not clear a password stamp", async () => {
+    signedInMember();
+    mockConsumeTwoFactorSessionChallenge.mockResolvedValue(true);
+    const token = `EMAIL.${"ab".repeat(32)}`;
+    const kept = await authConfig.callbacks.jwt?.({
+      token: {
+        id: "member-1",
+        sessionIssuedAt: Date.now(),
+        lastAuthenticatedAt: 1_000,
+      },
+      trigger: "update",
+      session: {
+        user: {
+          twoFactorChallengeToken: token,
+          lastAuthenticatedAt: Date.now(),
+          proof: "TOTP",
+        },
+      },
+    } as never);
+    expect(kept).toEqual(
+      expect.objectContaining({
+        lastAuthenticatedAt: 1_000,
+        twoFactorVerified: true,
+      }),
+    );
+
+    const fresh = await authConfig.callbacks.jwt?.({
+      token: { id: "member-1", sessionIssuedAt: Date.now() },
+      trigger: "update",
+      session: { user: { twoFactorChallengeToken: token } },
+    } as never);
+    expect(fresh?.twoFactorVerified).toBe(true);
+    expect(fresh).not.toHaveProperty("lastAuthenticatedAt");
+  });
+
+  it("does not stamp a challenge minted before the proof prefix existed", async () => {
+    signedInMember();
+    mockConsumeTwoFactorSessionChallenge.mockResolvedValue(true);
+    const consumed = await authConfig.callbacks.jwt?.({
+      token: { id: "member-1", sessionIssuedAt: Date.now() },
+      trigger: "update",
+      session: { user: { twoFactorChallengeToken: "ab".repeat(32) } },
+    } as never);
+    expect(consumed?.twoFactorVerified).toBe(true);
+    expect(consumed).not.toHaveProperty("lastAuthenticatedAt");
+  });
+
+  it("does not stamp when the authenticator-app challenge is rejected", async () => {
+    signedInMember({ twoFactorEnabled: true, twoFactorMethod: "TOTP" });
+    mockLoadEffectiveModuleFlags.mockResolvedValue({ twoFactor: true });
+    mockConsumeTwoFactorSessionChallenge.mockResolvedValue(false);
+    const rejected = await authConfig.callbacks.jwt?.({
+      token: { id: "member-1", sessionIssuedAt: Date.now() },
+      trigger: "update",
+      session: { user: { twoFactorChallengeToken: `TOTP.${"ab".repeat(32)}` } },
+    } as never);
+    expect(rejected).not.toHaveProperty("lastAuthenticatedAt");
+    expect(rejected?.twoFactorVerified).toBe(false);
   });
 
   it("leaves a token with no lastAuthenticatedAt unstamped on refresh", async () => {

@@ -5,6 +5,7 @@ import {
   cancelPaymentIntentIfCancellable,
   getPaymentIntent,
 } from "@/lib/stripe";
+import { followSupersededAskInvoicesForIntentSafely } from "@/lib/superseded-ask-invoice-carry";
 import {
   enqueueXeroAccountCreditNoteOperation,
   enqueueXeroAppliedCreditAllocationOperation,
@@ -13,10 +14,10 @@ import {
   enqueueXeroCreditNoteAllocationOperation,
   enqueueXeroModificationCreditNoteOperation,
   enqueueXeroRefundCreditNoteOperation,
-  enqueueXeroSupplementaryInvoiceOperation,
   processQueuedXeroOutboxOperations,
   releaseXeroSupplementaryInvoiceOperationsForPaymentIntent,
 } from "@/lib/xero-operation-outbox";
+import { enqueueXeroSupplementaryInvoiceOperation } from "@/lib/xero-supplementary-invoice-enqueue";
 import {
   enqueueXeroSyncOperationRetry,
   processQueuedXeroOperationRetries,
@@ -68,6 +69,10 @@ export type RepairDependencies = {
   // is the LIVE settlement's own release function so the two legs cannot come
   // to disagree about what releasing means.
   releaseXeroSupplementaryInvoiceOperationsForPaymentIntent: typeof releaseXeroSupplementaryInvoiceOperationsForPaymentIntent;
+  // #3403 (`INV-PAY-140`): after a waiting enqueue, the same follow the live
+  // edit calls, holding nothing. Injected so a test can see the call without
+  // taking the carry's locks.
+  followSupersededAskInvoicesForIntentSafely: typeof followSupersededAskInvoicesForIntentSafely;
   processQueuedXeroOutboxOperations: typeof processQueuedXeroOutboxOperations;
   processQueuedXeroOperationRetries: typeof processQueuedXeroOperationRetries;
   upsertXeroObjectLink: typeof upsertXeroObjectLink;
@@ -106,6 +111,7 @@ const defaultDependencies: RepairDependencies = {
   enqueueXeroAppliedCreditAllocationOperation,
   enqueueXeroSyncOperationRetry,
   releaseXeroSupplementaryInvoiceOperationsForPaymentIntent,
+  followSupersededAskInvoicesForIntentSafely,
   processQueuedXeroOutboxOperations,
   processQueuedXeroOperationRetries,
   upsertXeroObjectLink,

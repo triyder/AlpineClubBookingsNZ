@@ -57,14 +57,20 @@ const POPULATION_PUBLISHERS = [
 ] as const;
 
 /** The published sentence, in the one wording both publishers use. */
-// Both publishers say "<n> test files, six test helpers and one CI script
+// Both publishers say "<n> test files, seven test helpers and one CI script
 // import". The middle clause is what #2975's helper forced: the KIND of importer
 // changed, not just the count, and a regex that only reached the number would
 // have gone on matching a sentence that had become false.
 // #3276 added a second helper (the shared night-writer scanner), so the clause
 // counts helpers too — still exact; #3278 adds the third shared scanner.
+// #5199: the sentence no longer carries a count of test files. That number
+// changed with almost every pull request; two branches that each added a test
+// made the identical edit, git merged them without a conflict, and `main`
+// published a wrong number three times. The KINDS are still exact.
 const PUBLISHED_POPULATION =
-  /(\d+)\s+test files,\s+six\s+test\s+helpers and\s+one CI script import\b/;
+  /\btest files across the suite,\s+seven\s+test\s+helpers and\s+one CI script import\b/i;
+/** A count of test files, in any wording close to the old sentence. */
+const PUBLISHED_COUNT = /\b\d+\s+test\s+files,\s+seven\s+test\s+helpers\b/;
 
 /*
   HOW AN IMPORTER IS COUNTED, because every previous count of this got it wrong
@@ -547,8 +553,8 @@ describe("INV-SSOT-004: the two lists say what they are", () => {
   bullet being drifted from is the one that says two statements of a fact with
   nothing comparing them IS the defect. This suite is the comparison.
 */
-describe("INV-SSOT-004: the published importer count is measured, not inherited", () => {
-  it("agrees with the tree, and both publishers agree with each other", () => {
+describe("INV-SSOT-004: the stripper's importers are named by kind, and no count is published", () => {
+  it("names every non-test importer, and both publishers carry the count-free sentence", () => {
     const { tests, others } = measuredImporters();
 
     expect(
@@ -567,6 +573,8 @@ describe("INV-SSOT-004: the published importer count is measured, not inherited"
       // on being false while every number in it stayed right.
       "scripts/ci/check-website-render-modes.mjs",
       "src/lib/__tests__/helpers/admin-route-explicit-permissions.ts",
+      // #4920: lock inventories and isolation census share SQL masking.
+      "src/lib/__tests__/support/advisory-lock-source.ts",
       // #4477: bracket matching reuses the canonical literal masker.
       "src/lib/__tests__/support/balanced-brackets.ts",
       // #3276: the ONE AST scanner for BookingGuestNight writers, shared by the
@@ -592,19 +600,17 @@ describe("INV-SSOT-004: the published importer count is measured, not inherited"
     ]);
 
     for (const publisher of POPULATION_PUBLISHERS) {
-      const published = PUBLISHED_POPULATION.exec(
-        readFileSync(path.join(REPO_ROOT, publisher), "utf8"),
-      );
+      const text = readFileSync(path.join(REPO_ROOT, publisher), "utf8");
 
       expect(
-        published,
-        `${publisher} no longer contains the sentence "<n> test files, six test helpers and one CI script import…". It is one of the two places ${INVARIANT_ID} publishes this population; if the wording changed, change ${PUBLISHED_POPULATION} with it rather than letting this comparison quietly stop happening.`,
-      ).not.toBeNull();
+        PUBLISHED_POPULATION.test(text),
+        `${publisher} no longer contains the sentence "test files across the suite, seven test helpers and one CI script import…". It is one of the two places ${INVARIANT_ID} states which KINDS of file import the stripper; if the kinds changed, change the list above, PUBLISHED_POPULATION and both publishers together.`,
+      ).toBe(true);
 
       expect(
-        Number(published?.[1]),
-        `${publisher} publishes ${published?.[1]} test files; the tree holds ${tests.length}. MEASURE the number, do not increment it: the module is imported through four different path forms, and two further files name the path as data without importing it. This has drifted three times. The other publisher is ${POPULATION_PUBLISHERS.filter((other) => other !== publisher).join(", ")}.`,
-      ).toBe(tests.length);
+        PUBLISHED_COUNT.test(text),
+        `${publisher} states a COUNT of test files again. Do not publish one (#5199): the tree holds ${tests.length} today and it changes with almost every pull request, so two branches that each add a test make the identical edit, merge without a conflict, and leave main publishing a wrong number.`,
+      ).toBe(false);
     }
   });
 });

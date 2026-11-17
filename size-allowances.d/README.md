@@ -76,6 +76,31 @@ reason: the new sparse-night branch is four lines of policy inside an
   it across indented continuation lines as above. A reviewer weighs this, so a
   bare "needed" is refused.
 
+### Function allowances
+
+The same file carries `function:` entries for the function-length ratchet
+(#4927), which judges functions over 300 lines the way the file-size ratchet
+judges files (the figure below is illustrative):
+
+```markdown
+function: src/lib/booking-cancel.ts#performBookingCancellation
+lines: 2114
+reason: the guard belongs inside the claim it protects until #4516 splits the
+  cancellation into its phases.
+```
+
+- `function:` — `<path>#<name>`, the name as `pnpm run quality:budget` prints it:
+  `name`, `Class.method`, `Class.constructor`, `Class.get x`, `Class.set x`,
+  `Class.#private`, or `default`; a repeated name in one file carries ` (2)`. One entry per function.
+- `lines:` — the function's real length after this change, from its first token
+  to its closing one, leading comment excluded.
+- `reason:` — as for a file.
+
+The rules below apply to it as to a file: it may let a function already over
+300 lines grow, never a new function or one crossing 300 for the first time.
+The hard ceiling is the exception: it is a file rule (#4926), and a function
+allowance has no upper bound of its own.
+
 ## What an allowance may and may not do
 
 It may let a file that was **already over its budget** on the base ref grow.
@@ -86,10 +111,16 @@ It may **not**:
 - let a file **renamed into** the budgeted scope — from `prisma/`, `scripts/`,
   or a `__tests__/` path — inherit a ceiling from outside it;
 - carry a file **over its budget for the first time**. A module still inside its
-  budget has the cheapest split available to it, so it should take it.
+  budget has the cheapest split available to it, so it should take it;
+- take a file past its **hard ceiling** of three times its budget — 2,100 lines
+  for a domain module, 750 for a route handler, 1,500 for a page shell (owner
+  decision, 11 Nov 2026,
+  [#4926](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4926)).
+  A file already past it may only stay the same length or shrink; split a
+  cohesive part out first. No file is exempt.
 
-Each of those is refused by name, with the reason, rather than ignored. They are
-the bypasses [#2987](https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/2987)
+Each of those is refused by name, with the reason, rather than ignored. The first
+three are the bypasses [#2987](https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/2987)
 closed, and an escape hatch that quietly reopened one would be worse than no
 escape hatch at all.
 
@@ -143,4 +174,5 @@ not enough — check when the diff changes.)
 ## Where the rules live
 
 [`docs/MAINTENANCE.md`](../docs/MAINTENANCE.md) → "File-size budget ratchet" is
-the canonical description of the gate, its budgets and this escape.
+the canonical description of the gate, its budgets and this escape;
+"Function-length ratchet" in the same file describes the function gate.

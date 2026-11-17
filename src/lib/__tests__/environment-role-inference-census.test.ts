@@ -124,6 +124,11 @@ const NOT_ENVIRONMENT_SAFETY_READS: Allowance[] = [
     reason: "Secure cookie attribute — plain HTTP in local development.",
   },
   {
+    file: "src/app/api/admin/menu-role/route.ts",
+    reads: 1,
+    reason: "Secure cookie attribute on the admin menu-role preference cookie.",
+  },
+  {
     // #3228 moved this read out of `pin-login/route.ts`. Three routes now write
     // this cookie (sign in, renew, lock) and the attribute set — `Secure`
     // included — belongs to the session module, so they cannot disagree about
@@ -248,6 +253,12 @@ const NOT_ENVIRONMENT_SAFETY_READS: Allowance[] = [
     reads: 1,
     reason:
       "Warn-only diagnostic on the seasonal-assignment path; changes no outcome.",
+  },
+  {
+    file: "src/lib/test-only-override.ts",
+    reads: 2,
+    reason:
+      "NODE_ENV === 'test' gates the in-memory Xero and Stripe client overrides (#4908): refusing them outside the test runner, not deciding whether this is production.",
   },
   {
     file: "src/app/(admin)/admin/rules/promo-codes/promo-codes-page-client.tsx",

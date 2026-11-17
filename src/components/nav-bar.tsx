@@ -2,10 +2,9 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { signOut } from "next-auth/react";
 import { useState } from "react";
 import { Menu, Mountain, LogOut, User, ChevronDown } from "lucide-react";
-import { ThemeSwitcher } from "@/components/theme-switcher";
+import { ThemeMenuItems, ThemeSwitcher } from "@/components/theme-switcher";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -28,6 +27,7 @@ import type { FeatureFlags } from "@/config/schema";
 import { FINANCE_WORKSPACE_PATH } from "@/lib/admin-permissions";
 import { servedAdminPathname } from "@/lib/admin-hubs";
 import { buildProfilePathWithReturnTo } from "@/lib/internal-return-path";
+import { signOutToLogin } from "@/lib/sign-out";
 import { cn } from "@/lib/utils";
 
 interface NavBarUser {
@@ -234,13 +234,12 @@ export function NavBar({ user, features, surface = "member" }: NavBarProps) {
                 </Link>
               </DropdownMenuItem>
               <DropdownMenuSeparator />
-              <div className="px-2 py-1.5">
-                <ThemeSwitcher />
-              </div>
+              <DropdownMenuLabel>Theme</DropdownMenuLabel>
+              <ThemeMenuItems />
               <DropdownMenuSeparator />
               <DropdownMenuItem
                 className="cursor-pointer text-danger-11 focus:bg-danger-3 focus:text-danger-11"
-                onClick={() => signOut({ callbackUrl: "/login" })}
+                onClick={() => signOutToLogin()}
               >
                 <LogOut className="mr-2 h-4 w-4" />
                 Log out
@@ -308,7 +307,7 @@ export function NavBar({ user, features, surface = "member" }: NavBarProps) {
               <button
                 onClick={() => {
                   setMobileOpen(false);
-                  signOut({ callbackUrl: "/login" });
+                  void signOutToLogin();
                 }}
                 className="mt-4 flex w-full items-center gap-2 rounded-md px-3 py-2.5 text-sm font-medium text-danger-11 transition-colors hover:bg-danger-3"
               >

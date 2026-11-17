@@ -3,6 +3,7 @@ import { z } from "zod";
 import { getAuditRequestContext } from "@/lib/audit";
 import { saveSeasonalMembershipAssignment } from "@/lib/seasonal-membership-assignments";
 import { requireAdmin } from "@/lib/session-guards";
+import { dateOnlyStringSchema } from "@/lib/date-only-schema";
 
 const paramsSchema = z.object({
   id: z.string().min(1),
@@ -12,9 +13,13 @@ const saveSchema = z
   .object({
     seasonYear: z.number().int().min(2020).max(2040),
     membershipTypeId: z.string().min(1),
-    applyFrom: z
-      .string()
-      .regex(/^\d{4}-\d{2}-\d{2}$/)
+    // Subscription-category decoupling: the independent billing axis. An
+    // explicit null means "Individual" — unchanged per-type billing.
+    // Omitted means "no opinion" — the lib preserves the member's current
+    // category rather than clearing it (see saveSeasonalMembershipAssignment's
+    // own doc comment); never coerce an omitted value to null here.
+    subscriptionCategoryId: z.string().min(1).nullable().optional(),
+    applyFrom: dateOnlyStringSchema
       .nullable()
       .optional(),
     reason: z.string().trim().min(1).max(1000),
@@ -59,6 +64,10 @@ export async function PATCH(
     adminMemberId: guard.session.user.id,
     seasonYear: parsedBody.data.seasonYear,
     membershipTypeId: parsedBody.data.membershipTypeId,
+    // NOT `?? null`: an omitted field must stay `undefined` so the lib
+    // preserves the member's current category, rather than being coerced into
+    // the explicit-clear value a real `null` means.
+    subscriptionCategoryId: parsedBody.data.subscriptionCategoryId,
     applyFrom: parsedBody.data.applyFrom ?? null,
     reason: parsedBody.data.reason,
     previewToken: parsedBody.data.previewToken,

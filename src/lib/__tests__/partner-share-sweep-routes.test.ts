@@ -12,6 +12,7 @@ import { NextRequest } from "next/server";
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
     seasonalMembershipAssignment: { findUnique: vi.fn().mockResolvedValue(null) },
     member: {
       findUnique: vi.fn(),
@@ -107,9 +108,13 @@ vi.mock("@/lib/age-tier", () => ({
   computeAgeTier: vi.fn().mockResolvedValue("ADULT"),
   getSeasonStartDate: vi.fn().mockReturnValue(new Date("2026-04-01")),
 }));
-vi.mock("@/lib/xero", () => ({
+vi.mock("@/lib/xero-token-store", () => ({
   isXeroConnected: vi.fn().mockResolvedValue(false),
+}));
+vi.mock("@/lib/xero-contact-groups", () => ({
   syncManagedXeroContactGroupForMember: vi.fn(),
+}));
+vi.mock("@/lib/xero-contacts", () => ({
   updateXeroContact: vi.fn(),
 }));
 vi.mock("@/lib/booking-cancel", () => ({
@@ -227,6 +232,7 @@ function putMember(id: string, body: Record<string, unknown>) {
 function mockTransaction() {
   vi.mocked(prisma.$transaction).mockImplementation((async (op: any) =>
     op({
+      $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
       $executeRaw: prisma.$executeRaw,
       member: {
         findUnique: prisma.member.findUnique,
@@ -261,6 +267,15 @@ function mockTransaction() {
         deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
       },
       sessionReauthChallenge: {
+        deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+      },
+      // #4617: erasure reads the passkey count, then deletes the credentials
+      // and their challenges, on this same transaction.
+      webAuthnCredential: {
+        count: vi.fn().mockResolvedValue(0),
+        deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+      },
+      webAuthnChallenge: {
         deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
       },
       bedAllocation: prisma.bedAllocation,

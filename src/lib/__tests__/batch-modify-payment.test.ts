@@ -1,12 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+// Fakes below model a correctly locked caller: the caller-held lock checks
+// (#4929) are proven against PostgreSQL in bed-allocation-lock-held.realdb.test.ts.
+vi.mock("@/lib/global-lock-held", () => ({ assertGlobalLockHeld: vi.fn() }));
+vi.mock("@/lib/lodge-capacity-lock", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/lodge-capacity-lock")),
+  assertLodgeCapacityLockHeld: vi.fn(),
+}));
+
 const mockPlanStripeRefundAllocation = vi.hoisted(() => vi.fn());
 import { NextRequest } from "next/server";
 import { z } from "zod";
 import { requireCalendarDate } from "@/lib/club-time";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { ORGANISER_REFUND_DEBT_STATES, primeOrganiserRefundDebt } from "./support/organiser-refund-debt-reread";
-import { expectQueuedOnce, ownCardRefundPlan, OWN_CARD_REFUND_STATES, primeOwnCardRefund } from "./support/own-card-refund-outcome";
+import { expectPrePersistedEditRefund, ownCardRefundPlan, OWN_CARD_REFUND_STATES, primeOwnCardRefund } from "./support/own-card-refund-outcome";
 
 // #3123 (`INV-LOCK-004`) — the CLUB's day, resolved by the caller BEFORE it opens
 // its transaction and threaded in. Pinned to the frozen clock's club day, so
@@ -56,6 +64,9 @@ const mockRunPaymentRecoveryOperationNow = vi.fn();
 const mockRecoveryOperationFindUnique = vi.fn().mockResolvedValue(null);
 const mockProcessPaymentRecoveryOperations = vi.fn();
 const mockEnqueueBookingModificationRefundRecovery = vi.fn();
+const mockMarkBookingModificationRefundRecoverySucceeded = vi.fn<(...args: unknown[]) => Promise<{ count: number }>>(async () => ({ count: 1 }));
+// #4992: a refused or part-made own-card refund re-plans the edit's pre-persisted row.
+const mockRecoveryOperationUpdateMany = vi.fn<(...args: unknown[]) => Promise<{ count: number }>>(async () => ({ count: 1 }));
 const mockEnqueueAdditionalPaymentIntentRecovery = vi.fn();
 const mockLoadCancellationPolicy = vi.fn();
 const mockAssertLinkedBookingMembersCanBeBooked = vi.fn().mockResolvedValue(undefined);
@@ -68,6 +79,7 @@ const mockEnqueueXeroBookingInvoiceOperation = vi.fn().mockResolvedValue({ queue
 const mockEnqueueXeroBookingInvoiceUpdateOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_booking_update", message: "queued" });
 const mockEnqueueXeroSupplementaryInvoiceOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_supplementary", message: "queued" });
 const mockEnqueueXeroModificationCreditNoteOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_mod_credit_note", message: "queued" });
+const mockEnqueueXeroRefundCreditNoteOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_refund_credit_note", message: "queued" });
 const mockEnqueueXeroModificationAccountCreditNoteOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_mod_account_credit_note", message: "queued" });
 const mockKickQueuedXeroOutboxOperationsIfConnected = vi.fn().mockResolvedValue(null);
 const mockRecordSkippedXeroBookingInvoiceUpdateOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_skip", message: "skipped" });
@@ -110,6 +122,7 @@ vi.mock("@/lib/prisma", () => ({
     manualRefundTask: { aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })), findMany: vi.fn().mockResolvedValue([]) },
     paymentRecoveryOperation: {
       findUnique: (...args: unknown[]) => mockRecoveryOperationFindUnique(...args),
+      updateMany: (...args: unknown[]) => mockRecoveryOperationUpdateMany(...args),
       // #3954: no increase is waiting on its mint's recovery for a reduction to net off.
       findMany: vi.fn(async () => []),
     },
@@ -290,6 +303,9 @@ vi.mock("@/lib/payment-recovery", () => ({
     mockProcessPaymentRecoveryOperations(...args),
   enqueueBookingModificationRefundRecovery: (...args: unknown[]) =>
     mockEnqueueBookingModificationRefundRecovery(...args),
+  // #4992: the edit's own close of its pre-persisted card refund row.
+  markBookingModificationRefundRecoverySucceeded: (...args: unknown[]) =>
+    mockMarkBookingModificationRefundRecoverySucceeded(...args),
   enqueueAdditionalPaymentIntentRecovery: (...args: unknown[]) =>
     mockEnqueueAdditionalPaymentIntentRecovery(...args),
 }));
@@ -311,18 +327,23 @@ vi.mock("@/lib/chore-cleanup", () => ({
   }),
 }));
 
-vi.mock("@/lib/xero", () => ({
+vi.mock("@/lib/xero-supplementary-invoices", () => ({
   createXeroSupplementaryInvoice: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock("@/lib/xero-modification-credit-notes", () => ({
   createXeroCreditNoteForModification: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock("@/lib/xero-operation-outbox", () => ({
   enqueueXeroBookingInvoiceOperation: mockEnqueueXeroBookingInvoiceOperation,
   enqueueXeroBookingInvoiceUpdateOperation: mockEnqueueXeroBookingInvoiceUpdateOperation,
-  enqueueXeroSupplementaryInvoiceOperation: mockEnqueueXeroSupplementaryInvoiceOperation,
   enqueueXeroModificationCreditNoteOperation: mockEnqueueXeroModificationCreditNoteOperation,
+  enqueueXeroRefundCreditNoteOperation: mockEnqueueXeroRefundCreditNoteOperation,
   enqueueXeroModificationAccountCreditNoteOperation: mockEnqueueXeroModificationAccountCreditNoteOperation,
   kickQueuedXeroOutboxOperationsIfConnected: mockKickQueuedXeroOutboxOperationsIfConnected,
   recordSkippedXeroBookingInvoiceUpdateOperation: mockRecordSkippedXeroBookingInvoiceUpdateOperation,
+}));
+vi.mock("@/lib/xero-supplementary-invoice-enqueue", () => ({
+  enqueueXeroSupplementaryInvoiceOperation: mockEnqueueXeroSupplementaryInvoiceOperation,
 }));
 
 vi.mock("@/lib/logger", () => ({
@@ -3050,18 +3071,13 @@ describe("PUT /api/bookings/[id]/modify", () => {
       });
 
       await Promise.resolve();
-      expect(mockEnqueueXeroModificationCreditNoteOperation).toHaveBeenCalledWith(
-        {
-          bookingId: "bk1",
-          refundAmountCents: 5000,
-          bookingModificationId: "mod_1",
-          // `INV-PAY-101`: a member's ordinary edit refunds the card.
-          refundMethod: "card",
-        },
-        {
-          createdByMemberId: "m1",
-        }
-      );
+      // #3993: a card refund of a price cut is the payment's refund note, not a
+      // modification note the card-paid invoice cannot take.
+      expect(mockEnqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith("pay_1", 5000, {
+        refundMethod: "card",
+        createdByMemberId: "m1",
+      });
+      expect(mockEnqueueXeroModificationCreditNoteOperation).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
     }
@@ -3177,10 +3193,9 @@ describe("PUT /api/bookings/[id]/modify", () => {
       expect(tx.manualRefundTask.create).not.toHaveBeenCalled();
 
       await Promise.resolve();
-      expect(mockEnqueueXeroModificationCreditNoteOperation).toHaveBeenCalledWith(
-        expect.objectContaining({ bookingId: "bk1", refundAmountCents: 5000 }),
-        expect.anything(),
-      );
+      // #3993: the card refund is the payment's refund note.
+      expect(mockEnqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith("pay_1", 5000, expect.objectContaining({ refundMethod: "card" }));
+      expect(mockEnqueueXeroModificationCreditNoteOperation).not.toHaveBeenCalled();
       expect(sendBookingModifiedEmail).toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
@@ -3577,7 +3592,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
     });
   });
 
-  it("enqueues refund recovery when the Stripe refund call fails after a price-decrease modification", async () => {
+  it("leaves the refund recovery it wrote before commit owed when the Stripe refund call fails (#818, #4992)", async () => {
     const booking = makeBooking();
     const tx = makeTx(booking);
 
@@ -3636,7 +3651,8 @@ describe("PUT /api/bookings/[id]/modify", () => {
     expect(mockRefundPaymentTransactions).toHaveBeenCalledWith(
       expect.objectContaining({ amountCents: 5000 })
     );
-    expect(mockEnqueueBookingModificationRefundRecovery).toHaveBeenCalledWith({
+    // #4992: written once, on the edit's transaction, before the attempt.
+    expect(mockEnqueueBookingModificationRefundRecovery).toHaveBeenCalledExactlyOnceWith({
       bookingId: "bk1",
       paymentId: "pay_1",
       bookingModificationId: "mod_1",
@@ -3645,7 +3661,9 @@ describe("PUT /api/bookings/[id]/modify", () => {
       // so retries replay identical keys.
       stripeKeyPrefix: "mod_batch_refund_bk1_mod_1",
       allocationPlan: [{ paymentTransactionId: "txn_refund", amountCents: 5000 }],
+      store: tx,
     });
+    expect(mockMarkBookingModificationRefundRecoverySucceeded).not.toHaveBeenCalled();
     // Nonzero price changes supersede pending primary intents stranded at
     // any other amount (#1161).
     expect(tx.paymentTransaction.findMany).toHaveBeenCalledWith(
@@ -3751,8 +3769,9 @@ describe("PUT /api/bookings/[id]/modify", () => {
 
   // #4070: removing Bob refunds $50 to the member's own card. The email says
   // the refund was made only when Stripe made it; one the Stripe call could not
-  // make is queued for the recovery runner and on its way.
-  it.each(OWN_CARD_REFUND_STATES)("an own-card reduction's email refund destination: $label -> $destination (#4070)", async ({ answer, queued, destination }) => {
+  // make stays owed on the row the edit wrote before it committed (#4992), and
+  // is on its way.
+  it.each(OWN_CARD_REFUND_STATES)("an own-card reduction's email refund destination: $label -> $destination (#4070)", async ({ answer, destination }) => {
     const booking = makeBooking();
     const tx = makeTx(booking);
     mockTransaction.mockImplementation((fn: (innerTx: typeof tx) => unknown) => fn(tx));
@@ -3780,7 +3799,14 @@ describe("PUT /api/bookings/[id]/modify", () => {
 
     expect(response.status).toBe(200);
     expect(mockRefundPaymentTransactions).toHaveBeenCalledWith(expect.objectContaining({ paymentId: "pay_1", amountCents: 5000 }));
-    expectQueuedOnce(mockEnqueueBookingModificationRefundRecovery, queued, 5000, answer);
+    expectPrePersistedEditRefund(
+      {
+        refund: mockRefundPaymentTransactions,
+        enqueue: mockEnqueueBookingModificationRefundRecovery,
+        close: mockMarkBookingModificationRefundRecoverySucceeded,
+      },
+      { answer, destination, pendingCents: 5000, bookingModificationId: "mod_1", reservedInTransaction: true },
+    );
     await new Promise((resolve) => setTimeout(resolve, 0));
     const { sendBookingModifiedEmail } = await import("@/lib/email");
     expect(sendBookingModifiedEmail).toHaveBeenCalledWith(
@@ -4057,18 +4083,13 @@ describe("PUT /api/bookings/[id]/modify", () => {
     );
 
     await Promise.resolve();
-    expect(mockEnqueueXeroModificationCreditNoteOperation).toHaveBeenCalledWith(
-      {
-        bookingId: "bk1",
-        refundAmountCents: 4000,
-        bookingModificationId: "mod_1",
-        // `INV-PAY-101`: a member's ordinary edit refunds the card.
-        refundMethod: "card",
-      },
-      {
-        createdByMemberId: "m1",
-      }
-    );
+    // #3993: a card refund of a price cut is the payment's refund note, not a
+    // modification note the card-paid invoice cannot take.
+    expect(mockEnqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith("pay_1", 4000, {
+      refundMethod: "card",
+      createdByMemberId: "m1",
+    });
+    expect(mockEnqueueXeroModificationCreditNoteOperation).not.toHaveBeenCalled();
   });
 
   it("rejects paid reductions without a settlement method", async () => {
@@ -4191,6 +4212,8 @@ describe("PUT /api/bookings/[id]/modify", () => {
       paymentId: "pay_1",
       amountCents: 3750,
       store: tx,
+      // #4872: no live superseded capture here, so nothing is held back.
+      heldBackByTransaction: new Map(),
     });
 
     await Promise.resolve();

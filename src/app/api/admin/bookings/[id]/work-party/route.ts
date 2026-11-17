@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAdmin } from "@/lib/session-guards";
+import { requireRecentAuth } from "@/lib/require-recent-auth";
 import { prisma } from "@/lib/prisma";
 import { getClientIp } from "@/lib/rate-limit";
 import { ApiError } from "@/lib/api-error";
@@ -11,7 +12,7 @@ import { calendarDateOfDateOnlyInstant } from "@/lib/club-time";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
-import { isQuotePricedBooking } from "@/lib/booking-modify-validation";
+import { isQuotePricedBooking } from "@/lib/booking-modify-quote-priced";
 import { multiPromoCodesEnabled } from "@/lib/promo-redemption-slot";
 import { findActiveWorkPartyEventsForRange } from "@/lib/work-party";
 import { bookingPromoRedemptions } from "@/lib/booking-promo-redemptions";
@@ -166,6 +167,12 @@ export async function POST(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
   const { id } = await params;
+
+  // INV-AUTH-010: the handler can refund through the canonical booking edit (to
+  // the card, a bank hand-back, or the group organiser), so it asks for a fresh
+  // proof after the guard and before it reads the body.
+  const recent = await requireRecentAuth();
+  if (!recent.ok) return recent.response;
 
   let body: unknown;
   try {

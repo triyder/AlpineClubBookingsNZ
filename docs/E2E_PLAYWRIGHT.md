@@ -11,14 +11,18 @@ the demo seed (`prisma/demo-seed.ts`).
 | Spec | Matrix row | Journey |
 | --- | --- | --- |
 | `e2e/booking-create-rate-isolation.spec.ts` | Booking-create retry isolation (#2599, Medium) | Provider-independent real-route proof: unauthenticated attempt/retry probes stop at the auth boundary only after the production `bookingCreate` limiter runs, and read-only snapshots prove each exact synthetic-IP key advanced in the shared PostgreSQL `RateLimitCounter` store rather than the in-process fallback. Run before the waitlist and whole-lodge specs on the same prepared isolated stack. |
+| `e2e/shared-network-sign-out.spec.ts` | Shared-network sign-in budget (#4917) | From a private synthetic address, a signed-in member spends the address sign-in budget with credential POSTs until one answers 429 with `ADDRESS_THROTTLED` and `Retry-After`. Log out still ends the session, and a password sign-in from that address shows the network wait. A retry takes a fresh address |
+| `e2e/passkey-second-factor.spec.ts` | Passkey as a second sign-in step (#4617) | Profile saves a passkey through a virtual authenticator (CDP `WebAuthn.addVirtualAuthenticator`, ctap2, internal transport, user verification, resident key, automatic presence). Sign out, then password and "Use your passkey", then the confirm-it's-you dialog uses the same passkey. The authenticator is attached before registration |
 | `e2e/two-factor-login.spec.ts` | Global two-factor enforcement (Critical) | Forced TOTP enrollment on first login, recovery codes, protected-route gating for unverified sessions, wrong-code rejection, TOTP re-login, single-use recovery codes; successful product actions must render the Payments heading or the protected **Confirm member details** dialog with its **Save and continue** or **Confirm details are correct** control (#4246) |
 | `e2e/two-factor-email.spec.ts` | Global two-factor enforcement — email method (Critical) | Forced **email-code** enrollment on first login (send → capture the emailed code from the mailpit SMTP capture → enroll → recovery codes), then an email-code re-login that rejects a wrong code and accepts the emailed one. The code is read back over mailpit's HTTP API (`e2e/helpers/mailpit.ts`); no live mail provider is used. Enrollment Continue and accepted verification must render the member dashboard |
 | `e2e/two-factor-navigation.spec.ts` | Two-factor completion navigation (#4060, High) | Dedicated `USER` + `LODGE` and actual `LODGE`-only accounts drive enrollment Continue and valid TOTP verification in a fresh context directly. Assert the protected member dashboard or lodge kiosk without corrective navigation, fixed sleeps or URL-only completion. Each attempt recreates and finally removes its own synthetic accounts through the explicit `E2E_DATABASE_URL` isolated-stack contract; shared personas are untouched |
 | `e2e/booking.spec.ts` | Create booking with capacity lock (Critical) | Member books a bed through `/book` (confirm-details gate → dates → guests → review → payment step) with the booker **pre-selected by default** (#1680); while payment is owed the booking holds **no** bed (issue #737 — only committed money reserves capacity); the same member cannot hold the same lodge night twice; the booker can also opt out (remove themselves) and continue with another guest to a priced review |
+| `e2e/booking-wizard-work.spec.ts` | Booking wizard keeps work in the tab (#4950, Low) | Member picks dates and types a non-member guest on `/book`, follows **Open Family Group in your profile**, opens `/book` again and then refreshes: the notice, the step and the guest come back each time. **Start again** clears it and a further refresh restores nothing. Books nothing, so retries need no reset |
 | `e2e/adult-member-hosting.spec.ts` | Adult-member hosting enforcement and same-owner coverage (#2569, #2576; High) | Three serial journeys: the operator card saves and states the consequence and qualifying-host dimensions independently; an enforcing club refuses a booking with no qualifying adult-member cover and persists no live booking; and another booking on the same account supplies cover, after which member cancellation of that source is refused while an officer can acknowledge the exact stranded bookings and nights, give a private reason, cancel, and verify the resulting incident and audit evidence. The spec restores the shared club-wide hosting policy to **Disabled** in `afterAll` and cancels every booking it creates. |
 | `e2e/locked-out-pickup-and-pay.spec.ts` | Locked-out pick-up-and-pay (#2779, Critical) | The journey the owner ruled the `HARD_BLOCK` payment-path asymmetry exists to serve (11 Aug 2026). The club is put into **Stop them booking** with the Xero module on — both snapshotted and restored in `afterAll`, because the lockout is inert while Xero is off and the mode gates every other spec's bookings. `lyle-lockedout@demo.alpineclub.test` is refused their own booking with 403 `SUBSCRIPTION_REQUIRED`; the admin then saves a **priced** on-behalf draft for them; the member's dashboard shows it labelled "Saved for you by the club" with a **Review & pay** control, and the booking page states both the pay control and the 72-hour deletion deadline; finally `create-payment-intent` admits that same still-unpaid member and the booking moves to `PAYMENT_PENDING`; the member's own draft list carries it at the price the admin quoted. The closing card charge is Stripe-gated and skips without test-mode keys. The pay step itself runs in BOTH modes and proves the admission in both, but the response it asserts is provider-shaped: 200 with a `clientSecret` where genuine test-mode keys are configured, and — where they are not, which is every fork's CI, since GitHub never hands a fork's `pull_request` run the repository secrets (#2820) — the post-admission provider failure (500, with the booking already moved to `PAYMENT_PENDING`, because the pay transaction commits before Stripe is called). Any refusal shape still fails the test. Window base index 28 (attempts 28 / 44 / 60), asserted disjoint from every other spec by `src/lib/__tests__/e2e-stay-window-disjointness.test.ts`. |
 | `e2e/stripe-payment.spec.ts` | Stripe payment success/failure (Critical) | In-wizard step-4 card payment with Stripe test cards: `4242…` confirms the booking and the paid booking occupies its beds; `4000 0000 0000 0002` declines and leaves it payable. **Skips unless genuine Stripe test-mode keys are configured** |
 | `e2e/admin-roles.spec.ts` | Role boundaries (High) | One persona per bundled access role (ADMIN_READONLY, ADMIN_BOOKINGS, ADMIN_MEMBERSHIP, ADMIN_CONTENT, FINANCE_USER, FINANCE_ADMIN, LODGE). Each asserts an in-area page renders and an out-of-area page is blocked (redirect), per the authoritative matrix in `src/lib/admin-permissions.ts` and the `/finance` (finance-auth) and `/lodge` (kiosk) gates |
+| `e2e/admin-hubs.spec.ts` | Admin hubs (#4814, High) | **Skipped until `ADMIN_HUBS_LIVE` is true** (C18 #4815). Every static, menu-listed page that has moved answers 307 from its old URL to its hub URL with `?hub=1` kept and no second admin redirect (one test per page, generated from `ADMIN_PAGES`), a tripwire per hub other than Home fails if the hub has no moved page, and each retired page's URL lands on `retiredAdminPageHref` in one hop. Each seeded admin persona and the Full Admin see exactly their row of the per-role hub table C14's unit test pins; the Treasurer is given Content Manager for one test (removed in `finally`) and switches between the two menus. The Preview as role check is a `test.fixme` until C15 (#4812) builds the preview control. Ctrl/Cmd+K opens **Search admin features**; the Full Admin reaches Page Content from it, and a Content Manager's search for "Payments" gets **No matching admin pages.** Every other spec asks the registry for the admin addresses it expects, through `adminUrlPattern(adminHref(…))` for a page URL and `adminHrefPattern(adminHref(…))` or `a[href^="${adminHref(…)}"]` for a link (`e2e/helpers/admin-url.ts`), so none names an admin path by hand. Their first run with the hubs on is C18's (#4815) |
 | `e2e/waitlist.spec.ts` | Waitlist / force-confirm / offer (High) | Member is refused a seeded-full night and joins the waitlist (WAITLISTED); admin force-confirms it off the waitlist (overbook branch) through `/admin/waitlist`; member accepts a seeded, non-expired offer through the offer card; the admin waitlist surfaces offer + expiry state |
 | `e2e/double-bed-sharing.spec.ts` | Partner relationship and reviewed bed-allocation removal (#1742, #2594, High) | Partner declaration/admission and shared-double placement. S4 previews then applies removal through the production `POST`/`PUT /api/admin/bed-allocation/allocations/removal` boundary and proves the surviving second occupant is promoted to primary. This is the production-stack shared-double consequence proof; stale refresh and permission affordances remain in focused component/route suites. |
 | `e2e/bed-allocation.spec.ts` | Admin bed allocation, reviewed moves, booking confirmation, and reviewed removal (#2252, #2366, #2594, #2595, High) | Approves and allocates the seeded Ken booking, then proves every move entry point uses the reviewed confirmation seam. A pointer drop opens the dialog without writing, switches to **This person on this booking**, shows the exact changing/unchanged/total counts and approval consequence, and sends the typed scope plus preview digest only after confirmation while preserving the original lodge nights. A keyboard drop opens the same dialog, Cancel writes nothing and restores focus, and the chip menu can confirm a current-bed person-scope all-noop without changing placement or approval. The reviewed-removal journey opens the shared dialog from Reset, the chip menu, a pointer drop to the unallocated bucket, and booking detail; applies an approved person-wide removal with auto-allocation enabled; proves no replacement; and restores the exact guest-nights and approvals. Retry cleanup repairs a killed worker's placement and approval state through product APIs. |
@@ -116,12 +120,23 @@ each attempt. Stripe retains its test-mode credential prerequisite and loud skip
 when keys are absent. Neither project uses live provider credentials.
 
 For a small, database-free test of the fixture, run
-`pnpm run test:e2e:a11y-fixture`. It serves synthetic pages through Playwright
-routing and checks both clean pages and expected axe failures with attached
-reports. `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` may select a preinstalled browser
-for this contract test. CI does not run it, so run it locally before pushing any
+`pnpm run test:e2e:a11y-fixture` from the repository root. The axe specs serve
+synthetic pages through Playwright routing and check both clean pages and
+expected axe failures with attached reports.
+`PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` may select a preinstalled browser for
+this contract test. CI does not run it, so run it locally before pushing any
 change to `e2e/helpers/accessibility.ts`, its allowlist or the Playwright
-config: without it, broken instrumentation would leave the journeys green. Run real journeys against a prepared local stack via
+config: without it, broken instrumentation would leave the journeys green.
+
+The dialog-viewport spec (#4967) is different. It starts a local Vite server on
+127.0.0.1 and mounts the real shared dialog, confirmation, `Select` and command
+palette with the app's `globals.css`, then checks at 320 × 256 that their
+buttons, close button, search box and last items stay reachable. Run it
+locally before changing `src/components/ui/dialog.tsx`, `command.tsx`,
+`select.tsx`, `src/components/confirm-dialog.tsx` or `src/app/globals.css`.
+CI does not run it; `dialog-viewport-cap.test.tsx` is the CI guard.
+
+Run real journeys against a prepared local stack via
 `E2E_PRESERVE_AUTH_STATE=1 pnpm run test:e2e:run --project=mobile --no-deps` (setup storage states must
 already exist). CI discovers mobile through the existing Playwright config.
 
@@ -233,8 +248,9 @@ providers, and `scripts/e2e-stack.sh` refuses to run if it sees `sk_live`/
   `DEMO_SEED_PASSWORD`.
 - Personas: the suite signs in as `alice@demo.alpineclub.test` (PAID
   subscription; books and pays), `bob@demo.alpineclub.test` (drives TOTP
-  two-factor enrollment), and `evan@demo.alpineclub.test` (drives email-code
-  two-factor enrollment). TOTP secrets and recovery codes captured during
+  two-factor enrollment), `evan@demo.alpineclub.test` (drives email-code
+  two-factor enrollment) and `pip-passkey@demo.alpineclub.test` (enrols a
+  passkey). TOTP secrets and recovery codes captured during
   enrollment are stored under `e2e/.auth/` (gitignored) and cleared at the
   start of each run; the email-code persona needs no stored secret because its
   code is read live from mailpit each time.
@@ -464,7 +480,7 @@ A run used to take ~29 minutes: each of the two E2E jobs built the app image
 | `E2E shard (2/3)`, `(3/3)` | the other two thirds of the `chromium` spec files, each on its own stack |
 | `E2E multi-lodge` | **required check.** Runs the `multi-lodge` project itself, on the restored database plus the second-lodge seed |
 
-Every browser job runs one composite action, `.github/actions/e2e-run`: load the image, restore the dump (`E2E_DB_SNAPSHOT`, which also sets the snapshot's club day), prepare, run, report, tear down. The two required jobs may not use `needs:`: GitHub counts a skipped required check as passing. So they start at once and wait in a step for this run's two artifacts (`scripts/ci/wait-for-run-artifacts.mjs`), failing at once if the image or database job fails. They do not idle: an earlier layout had them only poll, which held two runners for the whole run and, under the account's concurrent-job cap, left shards queued for 25 minutes.
+Every browser job runs one composite action, `.github/actions/e2e-run`: load the image, restore the dump (`E2E_DB_SNAPSHOT`, which also sets the snapshot's club day), prepare, run, summarise flaky tests ([Flaky tests in CI](#flaky-tests-in-ci)), report, tear down. The two required jobs may not use `needs:`: GitHub counts a skipped required check as passing. So they start at once and wait in a step for this run's two artifacts (`scripts/ci/wait-for-run-artifacts.mjs`), failing at once if the image or database job fails. They do not idle: an earlier layout had them only poll, which held two runners for the whole run and, under the account's concurrent-job cap, left shards queued for 25 minutes.
 
 Each shard has its own stack and database, so `workers: 1` still means nothing
 interleaves on a database. Every shard runs `setup`. `pre-setup` runs only in
@@ -567,6 +583,32 @@ one click instead of a stuck page. A spec that wants to assert the failure path
 should therefore look for that explanation, not for an indefinite
 "Confirming the organisation name…".
 
+## Flaky tests in CI
+
+Every browser job (all single-lodge shards, multi-lodge and the rollover proof)
+adds **Flaky Playwright tests** to its GitHub job summary. The table lists each
+test that passed only after a retry: spec, full title, project, failed attempts
+and total attempts. Each also emits a warning annotation. A clean run says
+**No flaky tests**.
+
+The policy is **warn on any flaky test, with no failure threshold**. Retries and
+the required `Playwright E2E` test verdict stay unchanged. Once Playwright has
+run, missing, unreadable or malformed JSON fails the reporting step; absence of
+evidence is not a clean run. A job that failed before Playwright started skips
+the step. The CI-only JSON reporter writes `.artifacts/playwright-results.json`,
+separate from the HTML report and test attachments. That path is one constant,
+`PLAYWRIGHT_RESULTS_FILE` in `scripts/ci/playwright-results-file.mjs`: the
+config writes to it and the summariser reads it by default, so neither workflow
+step names the path. Playwright loads the config and its imports as CommonJS,
+which cannot run `import.meta`, so the config never imports a CLI entry such as
+the summariser; `playwright-config-loading.test.ts` checks this. Rollover `--list` probes use only the list reporter and are
+not summarised.
+
+When a test appears, inspect the HTML report and retained retry evidence, then
+file an issue with its spec, project and run link. Check the Flake invariants
+below and investigate a real intermittent product defect as well; a retry
+passing is not a reason to ignore the failure. No cross-run history is kept.
+
 ## Flake invariants — read before writing a spec (issue #2302)
 
 Five specs flaked on `main` over the last week of July 2026
@@ -576,7 +618,7 @@ two mechanisms below**, and in four of the five a *single* transient failure was
 turned into three by the retry policy. Neither mechanism is a "timing" problem,
 so neither is fixed by a longer timeout, an extra retry, or a `waitForTimeout`.
 The third invariant — no fixed dates — is the standing rule that stops a further
-class from joining them; invariants 4–6 were learned from later flakes.
+class from joining them; invariants 4–7 were learned from later flakes.
 
 ### 1. Retries re-run against the database the failed attempt left behind
 
@@ -1009,6 +1051,42 @@ Two rules follow:
   wizard specs await `wizardCursorSave` (`e2e/helpers/wizard-cursor.ts`)
   before pressing Connect, because the post-OAuth page resumes on the stored
   step.
+
+### 7. A spec must not consume a seeded precondition another spec asserts (issue #5160)
+
+Each CI shard has its own database, but spec files are dealt to shards by
+duration, so adding one spec can move two others into the same shard and
+change their order. `two-factor-login.spec.ts` asserts that Bob has never
+enrolled a second factor. `passkey-second-factor.spec.ts` signed Bob in, which
+enrolled him, and when a reshuffle ran it first the TOTP spec failed all three
+attempts.
+
+If a spec asserts a seeded starting state, no other spec may change it. A spec
+that needs the same starting state gets its own seeded persona or creates its
+own account (`two-factor-navigation.spec.ts`), and the persona's comment in
+`e2e/helpers/personas.ts` says which spec owns it. The passkey spec now signs
+in as Pip (`PASSKEY_ENROLLEE`). Test this by running the two specs in both
+orders against one fresh seed.
+
+### 8. The request after an admin write can beat the cache clear (issue #5205)
+
+An admin write route clears the public caches with `revalidatePath` and
+`revalidateTag`. In a Route Handler, Next applies those as the response
+finishes, not before it is sent. A spec that sends its next request in the same
+instant can still be answered from the stored copy. On this repository's CI the
+specs nearly always lost that race and passed; on a faster runner
+`static-cms-pages`, `analytics-consent` and `raw-css-secret-reflection` failed
+on changes that touched none of them.
+
+A spec that asserts "the public site shows what the admin just saved" polls for
+it, never on the first request and never after a sleep. The three specs above
+share one 10-second bound in `e2e/helpers/public-cache.ts`. For a stored CMS
+page that the spec warmed just before the write, a pass inside it is still the
+write clearing the store, because the page could not age out in under 300
+seconds. For a page served from the tagged layout caches it only waits for the
+change: those entries live 15 seconds from their last rebuild, which a spec
+does not control, so the unit tier pins those invalidations.
+`club-identity-smoke.spec.ts` keeps its own, longer wait for the same reason.
 
 ### What is deliberately NOT the fix
 

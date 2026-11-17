@@ -7,6 +7,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { FieldHint, useFieldHint } from "@/components/ui/field-hint";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { FocusedActionError } from "@/components/focused-action-error";
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState("");
@@ -49,7 +50,7 @@ export default function ForgotPasswordPage() {
       <Card className="w-full max-w-md">
         <CardHeader className="space-y-1">
           <h1 className="sr-only">Reset your password</h1>
-          <CardTitle className="text-2xl font-bold text-center">Check your email</CardTitle>
+          <CardTitle headingLevel={2} className="text-2xl font-bold text-center">Check your email</CardTitle>
           <CardDescription className="text-center">
             If an account exists for <strong>{email}</strong>, we&apos;ve sent a password
             reset link. The link expires in 1 hour.
@@ -68,7 +69,7 @@ export default function ForgotPasswordPage() {
     <Card className="w-full max-w-md">
       <CardHeader className="space-y-1">
         <h1 className="sr-only">Reset your password</h1>
-        <CardTitle className="text-2xl font-bold text-center">Forgot your password?</CardTitle>
+        <CardTitle headingLevel={2} className="text-2xl font-bold text-center">Forgot your password?</CardTitle>
         <CardDescription className="text-center">
           Enter your email address and we&apos;ll send you a reset link.
         </CardDescription>
@@ -76,11 +77,7 @@ export default function ForgotPasswordPage() {
 
       <form onSubmit={handleSubmit}>
         <CardContent className="space-y-4">
-          {error && (
-            <div className="rounded-md bg-destructive/10 border border-destructive/20 px-4 py-3 text-sm text-destructive">
-              {error}
-            </div>
-          )}
+          <FocusedActionError id="forgot-password-error" error={error} />
 
           <div className="space-y-2">
             <Label htmlFor="email">Email</Label>
