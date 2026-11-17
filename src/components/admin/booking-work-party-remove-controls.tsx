@@ -196,19 +196,21 @@ export function BookingWorkPartyRemoveControls({
             <Button variant="outline" onClick={() => setOpen(false)} disabled={busy}>
               Cancel
             </Button>
-            {!noEmails && figures ? (
-              <>
-                <Button variant="outline" onClick={() => send("apply", false)} disabled={busy}>
-                  Remove without emailing
+            {figures ? (
+              !noEmails ? (
+                <>
+                  <Button variant="outline" onClick={() => send("apply", false)} disabled={busy}>
+                    Remove without emailing
+                  </Button>
+                  <Button onClick={() => send("apply", true)} disabled={busy}>
+                    {busy ? "Saving…" : "Remove and email member"}
+                  </Button>
+                </>
+              ) : (
+                <Button onClick={() => send("apply")} disabled={busy}>
+                  {busy ? "Saving…" : "Remove from work party"}
                 </Button>
-                <Button onClick={() => send("apply", true)} disabled={busy}>
-                  {busy ? "Saving…" : "Remove and email member"}
-                </Button>
-              </>
-            ) : figures ? (
-              <Button onClick={() => send("apply")} disabled={busy}>
-                {busy ? "Saving…" : "Remove from work party"}
-              </Button>
+              )
             ) : null}
           </DialogFooter>
         </DialogContent>

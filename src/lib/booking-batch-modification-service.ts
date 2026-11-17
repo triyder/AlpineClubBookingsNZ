@@ -1081,8 +1081,7 @@ export async function modifyBookingBatch({
       input,
       today: clubTodayDateOnly,
       finishedStayCorrection: Boolean(finishedStayCorrection),
-      // Fork #127/#130: a started stay is priced whole, so the promotion runs.
-      workPartyCorrection: Boolean(officerWorkPartyCorrection),
+      workPartyCorrection: Boolean(officerWorkPartyCorrection), // Fork #127/#130: a started stay is priced whole
     });
     if (finishedStayCorrection) {
       // The flag only ASKS for the mode. A stay that has not finished took its
@@ -1304,8 +1303,7 @@ export async function modifyBookingBatch({
           // borrows ADMIN only for the reviewed minimum-stay override) prices
           // the party under the family boundary it was actually planned under.
           skipAuthorization: guestPlan.guestAuthorizationIsAdmin,
-          // Fork #127/#130: here it gates only the bed check, and a work-party correction moves no bed.
-          skipBookingLifecycleRules: dates.skipBookingLifecycleRules || Boolean(officerWorkPartyCorrection),
+          skipBookingLifecycleRules: dates.skipBookingLifecycleRules || Boolean(officerWorkPartyCorrection), // Fork #127/#130: here only the bed check; a correction moves no bed
           // Multi-lodge: season rates are resolved for the booking's lodge.
           seasonRateData: await loadActiveSeasonRates(tx, bookingLodgeId),
           // Issue #1668: over-capacity warns-and-confirms under admin override.
