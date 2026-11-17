@@ -1,4 +1,5 @@
 "use client";
+import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -17,6 +18,7 @@ import {
 } from "@/components/admin/view-only-action";
 import { useClubTime } from "@/components/club-time-provider";
 import { requireInstant } from "@/lib/club-time";
+import { ApiRefusalError, apiErrorMessageFromResponse, refusalMessageOr } from "@/lib/api-error-message";
 
 // Multi-lodge kiosks: one shared login per lodge device. Each account can
 // bind to a lodge (a MemberLodgeAccess STAFF grant, managed through this
@@ -106,9 +108,8 @@ function AccountCard({
         setSaveMessage({ type: "error", text: ADMIN_FORBIDDEN_SAVE_REASON });
         return;
       }
-      const data = await res.json();
       if (!res.ok) {
-        setSaveMessage({ type: "error", text: data.error || "Failed to save" });
+        setSaveMessage({ type: "error", text: await apiErrorMessageFromResponse(res, "Failed to save changes") });
         return;
       }
       setPassword("");
@@ -338,13 +339,13 @@ export default function AdminLodgePage() {
 
   const load = useCallback(async () => {
     try {
-      const res = await fetch("/api/admin/lodge");
-      if (!res.ok) throw new Error("Failed to load lodge account");
+      const res = await fetchWithRecentAuth("/api/admin/lodge");
+      if (!res.ok) throw new ApiRefusalError("Failed to load lodge account");
       const data = await res.json();
       setAccounts(data.accounts ?? (data.lodge ? [data.lodge] : []));
       setDefaultLodgeName(data.defaultLodgeName ?? null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load");
+      setError(refusalMessageOr(err, "Failed to load lodge account"));
     } finally {
       setLoading(false);
     }
@@ -358,7 +359,7 @@ export default function AdminLodgePage() {
     setCreating(true);
     setCreateMessage(null);
     try {
-      const res = await fetch("/api/admin/lodge", {
+      const res = await fetchWithRecentAuth("/api/admin/lodge", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -371,9 +372,8 @@ export default function AdminLodgePage() {
         setCreateMessage({ type: "error", text: ADMIN_FORBIDDEN_SAVE_REASON });
         return;
       }
-      const data = await res.json();
       if (!res.ok) {
-        setCreateMessage({ type: "error", text: data.error || "Failed to create account" });
+        setCreateMessage({ type: "error", text: await apiErrorMessageFromResponse(res, "Failed to create account") });
         return;
       }
       setAdding(false);

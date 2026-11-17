@@ -9,9 +9,13 @@ contacts. It records purpose, retention and the end action in one table.
 purpose; it does not introduce an automatic deletion period. Settings records
 are personal because they retain the updating officer's identifier.
 
+The starter Privacy Policy uses `{{email-log-retention}}` to describe the current
+email-log setting on every render. Edited policy pages should use this token too;
+see the [upgrade instructions](UPGRADING.md#correct-the-starter-privacy-policy-4914).
+
 ## Automatic retention and operator review
 
-The three new automatic jobs cover old email logs, rejected membership
+Four automatic jobs exist. Three cover old email logs, rejected membership
 applications and former-member profile anonymisation. They ship **OFF**.
 Their periods are club settings, with defaults of **2 years**, **1 year from
 reviewedAt**, and **7 years from explicit leavingDate**, respectively. Review
@@ -34,13 +38,84 @@ NULL until an officer explicitly records their leaving date. Anonymisation prese
 booking / payment links and financial references needed for reconciliation;
 it does not promise to scrub every historical narrative or provider record.
 
-Only those three jobs are added here. Existing token, audit, report,
+The fourth job clears each stay's dietary/allergy note (`BookingGuest.dietaryRequirements`)
+a club-set number of days after the stay ends, for member and non-member guests
+alike and on a booking of any status (`INV-PRIV-023`). It **ships ON** with a
+default of **30 days** (owner decision, 11 Nov 2026, on
+[#4916](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4916)), so
+the first nightly run after a club upgrades clears every past stay's note whose
+stay ended more than 30 days ago. A club that wants to keep them switches
+**Enable after-stay dietary clearing** off before or as part of upgrading.
+A stay that ends today or within the period keeps its note. The switch is
+separate from the dietary field itself: turning the field off hides notes and
+never clears them, and does not stop this job. Changing the period or switch
+requires support edit and bookings edit permission. The page shows how many
+notes the next run would clear, never the notes. A note an officer re-enters on
+an older stay is cleared the next night. Cleared notes cannot be restored except
+from a backup taken before the run.
+
+Only those four jobs are added here. Existing token, audit, report,
 communications and cron-run lifecycles continue under their own rules. A row
 marked “keep” has no new automatic cleanup. Approved member erasure remains a
 separate lifecycle. Backups and external providers have their own lifecycle;
 see [backups](guides/backups.md), the
 [audit retention runbook](AUDIT_RETENTION_ARCHIVE_RUNBOOK.md) and
 [security notes](SECURITY.md).
+
+## Answering an access request
+
+Anyone may ask the club for a copy of the personal information it holds about
+them. Two downloads produce the same file, from the same builder
+(`INV-PRIV-025`):
+
+- **A member** downloads their own copy from **Profile → Download My Data**,
+  at most five times a day. Each download is recorded in their activity.
+- **A Full Admin** produces the copy for anyone else from **Admin → Members →
+  a member → Lifecycle & Deletion → Subject access report**. Only Full Admins
+  see the card, the server checks the role again, and it asks you to confirm
+  your sign-in first. Each officer may produce 20 reports a day. Every report is
+  recorded in the audit log under `privacy`, naming you and the person.
+
+The card finds the person three ways:
+
+1. **This member**, including a dependant with no login: use
+   **Download this member's report** on their own page.
+2. **By email**, for a member, an applicant or someone who sent a booking
+   request. If more than one member record uses the address (a parent and a
+   dependant, say), the report is refused: open the right member's page instead.
+3. **A non-member guest, by name.** Guest records hold no email address, so a
+   guest cannot be found by email. Search their name, pick the stay they
+   describe (name and dates), and download that row's report.
+   Each stay is its own guest record, so a guest who stayed several times needs
+   one report per stay.
+
+Before you send a file, check who is asking:
+
+- the request comes from the address on the record, or the person proves who
+  they are another way (for a guest, by describing the stay);
+- a parent or guardian asking for a dependant has the right to see the record;
+- you send the file only to the person it is about, or to someone they
+  authorised in writing.
+
+What the file contains, and what it leaves out:
+
+- Every personal record the club holds about the person, or a named exclusion
+  with its reason in the file's `exclusions` list. Review the exclusions and add
+  anything the person is owed by hand.
+- Only the person's own rows. On a booking someone else made, the file shows the
+  person's own guest row, never the other guests or the booker.
+- Records filed by email address (email log, applications, booking requests)
+  are withheld when the address belongs to another member record as well. The
+  file says
+  `emailKeyedRecords: withheld`; check those records by hand with the address's
+  owner in mind.
+- A member's whole-lodge booking request shows the status they see on "My
+  requests" (pending, approved, declined or withdrawn), not the booking
+  officer's working state, and no price. This follows the owner's decision of
+  15 Nov 2026 on #4915. It assumes those officer-side fields are not personal
+  information the member must be given; confirm that with the club's privacy
+  adviser before relying on it.
+- Money is in integer cents, labelled with the currency.
 
 ## Model schedule
 
@@ -56,6 +131,8 @@ see [backups](guides/backups.md), the
 | `TwoFactorRecoveryCode` | Member recovery credentials | While enrolled; used codes retained until recovery-code replacement / account cleanup | Delete on replacement / account cleanup |
 | `TwoFactorSessionChallenge` | Member authentication and recovery challenges | Until used / expired; existing token cleanup rules apply | Delete through existing token cleanup; otherwise keep until lifecycle cleanup |
 | `SessionReauthChallenge` | Proof a signed-in member just confirmed who they are | Until used or expired (two minutes); deleted with the member | Delete on use, expiry housekeeping, or member erasure |
+| `WebAuthnCredential` | Passkey public key, name and use counter | While the member keeps the passkey; deleted with the member | Delete when the member removes it, or on member erasure |
+| `WebAuthnChallenge` | Single-use passkey challenge | Two minutes; deleted with the member | Delete on use, expiry housekeeping, or member erasure |
 | `MemberApplication` | Application, family and nominator information | Rejected: default 1 year after reviewedAt, configurable, only when enabled; other statuses kept for application / membership administration | Delete eligible rejected applications; keep other applications |
 | `NominationToken` | Applicant nomination and nominator identity | Application administration; removed with deleted application | Delete with application |
 | `PartnerInviteToken` | Invitation recipient, inviter and family link | Until expired / confirmed under existing invitation cleanup | Delete through existing invitation cleanup |
@@ -74,7 +151,8 @@ see [backups](guides/backups.md), the
 | `MemberLifecycleActionRequest` | Membership lifecycle decisions, requesters, subjects and reviewers | Kept while member / for membership administration; no new automatic deletion for this model | Keep |
 | `Booking` | Stay participants, guest details, stay history and financial evidence | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
 | `BookingEvent` | Stay participants, guest details, stay history and financial evidence | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
-| `BookingGuest` | Stay participants, guest details, stay history and financial evidence | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
+| `BookingGuest` | Stay participants, guest details, stay history and financial evidence (the dietary note is scheduled on its own line below) | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
+| `BookingGuest.dietaryRequirements` | Per-stay dietary/allergy note for the kitchen and hut leader during the stay | Default 30 days after the stay's departure date (`stayEnd`), configurable 1–365, while the switch is on (ships on) | Clear the value; the guest row is kept |
 | `BookingGuestNight` | Stay participants, guest details, stay history and financial evidence | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
 | `BookingGuestNightAdjustment` | Stay participants, guest details, stay history and financial evidence | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
 | `GroupBooking` | Group organiser, joining contacts, guest snapshots and settlement | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
@@ -95,6 +173,7 @@ see [backups](guides/backups.md), the
 | `PaymentTransaction` | Payment, refund, recovery and officer decision evidence | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
 | `PaymentRefund` | Payment, refund, recovery and officer decision evidence | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
 | `UnrecognisedStripePayment` | Stripe payments no app path settled: provider references, amount, the description the payer saw or typed, and for the app's own payment its booking id | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
+| `StripeDispute` | A cardholder's dispute (chargeback) of a card payment: Stripe references, amounts, Stripe's reason code and outcome, and the matched payment and booking ids | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
 | `RateLimitCounter` | Pseudonymous requester keys for abuse prevention | Until counter reset / existing rate-limit cleanup | Delete through existing cleanup |
 | `LoginThrottle` | Pseudonymous per-account keys (an HMAC of the sign-in email, never the address) and a count of recent password attempts, for abuse prevention (#4609) | Until a valid password or a completed password reset; once idle for an hour, until the next daily `data-pruning` run at the latest | Delete on that sign-in or reset, by the daily `data-pruning` job, and sooner by a ten-minute sweep in a process handling password sign-ins |
 | `AlertCooldown` | Alert deduplication keys that may reference an entity | Kept for the operational purpose while needed; no new automatic deletion | Keep |
@@ -134,6 +213,7 @@ see [backups](guides/backups.md), the
 | `MirotalkSettings` | Club configuration and last updating officer | While configuration is in use; keep updater attribution for administration | Keep |
 | `LodgeSettings` | Club configuration and last updating officer | While configuration is in use; keep updater attribution for administration | Keep |
 | `EmailMessageSetting` | Club configuration and last updating officer | While configuration is in use; keep updater attribution for administration | Keep |
+| `PrivacyHostingSettings` | Hosting disclosure and last updating officer | While configuration is in use; keep updater attribution for administration | Keep |
 | `ClubIdentitySettings` | Club configuration and last updating officer | While configuration is in use; keep updater attribution for administration | Keep |
 | `ClubTimeSettings` | Club configuration and last updating officer | While configuration is in use; keep updater attribution for administration | Keep |
 | `ClubFormatSettings` | Club configuration and last updating officer | While configuration is in use; keep updater attribution for administration | Keep |
@@ -214,6 +294,9 @@ see [backups](guides/backups.md), the
 | `MemberMoneyRefundReservation` | Reserved refund amounts linked to financial obligations and captures | Kept for financial records | Keep |
 | `MemberMoneyRefundReservationRelease` | Release evidence for reserved refund amounts | Kept for financial records | Keep |
 | `MemberMoneySourcePosting` | Exact financial source and journal-line coverage | Kept for financial records | Keep |
+| `MemberMoneyExportManifest` | Booking, sent Xero invoice id and what its lines cover | Kept for financial records | Keep |
+| `MemberMoneyExportCoverage` | Journal components a sent invoice bills | Kept for financial records | Keep |
+| `StripeBalanceTransactionEvidence` | Stripe balance-transaction figures and the payment intent, refund and payout they belong to | Kept for financial records | Keep |
 
 ## Maintaining coverage
 

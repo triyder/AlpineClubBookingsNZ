@@ -45,6 +45,7 @@ const SINGLETON_DELEGATES = [
   "bookingRequestSettings",
   "internetBankingPaymentSettings",
   "clubIdentitySettings",
+  "privacyHostingSettings",
   "emailMessageSetting",
   "groupDiscountSetting",
   "membershipNominationSettings",
@@ -80,6 +81,7 @@ const MODULES = {
   induction: true, workParties: true, promoCodes: true, hutLeaders: true,
   communications: true, memberNotices: true, eventsCalendar: true,
   skifieldConditions: true,
+  skifieldWhakapapa: true,
   twoFactor: false, analytics: false,
   // Every travelling module flag is a non-null Boolean; the #2200 dry-run
   // `constraints.required` audit rejects a projected null, so the fixture must
@@ -178,6 +180,43 @@ describe("config-transfer club-settings", () => {
       },
     ]);
   });
+
+  // #4932: before the split, skifieldConditions also switched the Whakapapa
+  // report on, so an older bundle's answer must carry across to the new flag.
+  it.each([true, false])(
+    "carries a pre-#4932 bundle's skifieldConditions=%s to skifieldWhakapapa",
+    async (value) => {
+      const older = Object.fromEntries(
+        Object.entries({ ...MODULES, skifieldConditions: value }).filter(
+          ([key]) => key !== "skifieldWhakapapa",
+        ),
+      );
+      const plan = await clubSettingsImporter.plan({
+        format: CLUB_FORMAT_TEST,
+        db: stubDb({
+          clubModuleSettings: { ...MODULES, skifieldConditions: value, skifieldWhakapapa: !value },
+        }),
+        files: new Map([
+          [
+            "club-settings/club-module-settings.json",
+            strToU8(JSON.stringify(older)),
+          ],
+        ]),
+        manifest: {} as never,
+        mode: "merge",
+        resolutions: new Map(),
+      });
+      expect(plan.errors).toEqual([]);
+      expect(plan.items).toEqual([
+        {
+          entity: "club-module-settings",
+          key: "default",
+          action: "update",
+          changedFields: ["skifieldWhakapapa"],
+        },
+      ]);
+    },
+  );
 
   // #3819 retired #3416's club-wide switch in favour of a per-lodge setting.
   // A bundle from a release that still exported it must import cleanly, and
@@ -686,6 +725,11 @@ describe("club-settings exports effective defaults for an unsaved singleton (#21
       // that answer rather than switching a target install to treasurer approval.
       lateCaptureRefundNeedsApproval:
         DEFAULT_BOOKING_DEFAULTS.lateCaptureRefundNeedsApproval,
+      // #4932: the three booking timings export their shipped defaults.
+      preArrivalReminderDays: DEFAULT_BOOKING_DEFAULTS.preArrivalReminderDays,
+      additionalPaymentReminderDays:
+        DEFAULT_BOOKING_DEFAULTS.additionalPaymentReminderDays,
+      policyExceptionHoldDays: DEFAULT_BOOKING_DEFAULTS.policyExceptionHoldDays,
     });
     expect(readJson(files, "booking-request-settings")).toEqual({
       ...DEFAULT_BOOKING_REQUEST_SETTINGS,
@@ -777,11 +821,16 @@ describe("club-settings exports effective defaults for an unsaved singleton (#21
     const result = await clubSettingsImporter.apply(applyCtx(tx, files, "merge"));
 
     // Effect on what the app reads: none. Effect on the database: the row is
-    // MATERIALISED — the cost the owner accepted on #2171. Except for the two
-    // all-null override-only singletons, which create nothing (test below).
-    expect(result.created).toBe(
-      SINGLETONS.length - DEFAULTS_INTENTIONALLY_PARTIAL.size,
+    // MATERIALISED — the cost the owner accepted on #2171. Except for a
+    // singleton whose effective defaults are all null — the two override-only
+    // ones and privacy-hosting-settings (#4918) — which creates nothing.
+    const allNullDefaults = SINGLETONS.filter((spec) =>
+      Object.values(spec.defaults()).every((value) => value === null),
     );
+    expect(allNullDefaults.map((spec) => spec.entity).sort()).toEqual(
+      [...DEFAULTS_INTENTIONALLY_PARTIAL, "privacy-hosting-settings"].sort(),
+    );
+    expect(result.created).toBe(SINGLETONS.length - allNullDefaults.length);
     expect(delegates.bookingRequestSettings.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
         create: { id: "default", ...DEFAULT_BOOKING_REQUEST_SETTINGS },
@@ -1540,6 +1589,34 @@ describe("#2200 singleton dry-run validation (bounds, required, enum)", () => {
       /nonMemberHoldDays — .*out of range.*1–365/,
     );
   });
+
+  // #4932: the three booking timings carry the admin form's 1–30 bound.
+  it("rejects a booking timing outside the admin 1–30 range, and accepts one inside it", async () => {
+    for (const field of [
+      "preArrivalReminderDays",
+      "additionalPaymentReminderDays",
+      "policyExceptionHoldDays",
+    ]) {
+      for (const bad of [0, 31]) {
+        const zip = singletonBundle("booking-defaults", {
+          nonMemberHoldEnabled: true,
+          nonMemberHoldDays: 7,
+          waitlistCrossLodgeOrder: "OWN_LODGE_FIRST",
+          [field]: bad,
+        });
+        const plan = await buildImportPlan(stubDb({}), zip, { format: CLUB_FORMAT_TEST, mode: "merge" });
+        expect(plan.errors.join(" ")).toMatch(new RegExp(`${field} — .*out of range.*1–30`));
+      }
+      const zip = singletonBundle("booking-defaults", {
+        nonMemberHoldEnabled: true,
+        nonMemberHoldDays: 7,
+        waitlistCrossLodgeOrder: "OWN_LODGE_FIRST",
+        [field]: 14,
+      });
+      const plan = await buildImportPlan(stubDb({}), zip, { format: CLUB_FORMAT_TEST, mode: "merge" });
+      expect(plan.errors).toEqual([]);
+    }
+  });
 });
 
 describe("a pre-#2543 bundle's `enabled` key still imports to the right mode (#2543/#2561)", () => {
@@ -1761,5 +1838,45 @@ describe("a pre-#2543 bundle's `enabled` key still imports to the right mode (#2
     const plan = await buildImportPlan(stubDb({}), zip, { format: CLUB_FORMAT_TEST, mode: "overwrite" });
     expect(plan.errors).toEqual([]);
     expect(plan.categories[0].errors).toEqual([]);
+  });
+});
+
+describe("privacy hosting config portability (#4918)", () => {
+  it("exports and imports both disclosure values", async () => {
+    const values = { hostingProvider: "Example Host", dataLocation: "New Zealand" };
+    const db = stubDb({ privacyHostingSettings: values });
+    const exported = await buildConfigExport({
+      db,
+      categories: ["club-settings"],
+      includeDoorCodes: false,
+      appVersion: "0.10.1",
+      prismaMigration: null,
+      generatedAt: "2026-07-08T00:00:00.000Z",
+    });
+    const { files } = readBundle(exported.zip);
+    expect(JSON.parse(strFromU8(files.get("club-settings/privacy-hosting-settings.json")!))).toEqual(values);
+    const { tx, delegates } = stubTx({});
+    await clubSettingsImporter.apply(applyCtx(tx, files, "merge"));
+    expect(delegates.privacyHostingSettings.upsert).toHaveBeenCalledWith(expect.objectContaining({ create: { id: "default", ...values } }));
+  });
+  it("normalizes disclosure values even when the bundle has unknown fields", async () => {
+    const files = new Map([["club-settings/privacy-hosting-settings.json", strToU8(JSON.stringify({
+      hostingProvider: "  Example Host  ", dataLocation: "  ", futureField: true,
+    }))]]);
+    const fresh = stubTx({});
+    await clubSettingsImporter.apply(applyCtx(fresh.tx, files, "merge"));
+    expect(fresh.delegates.privacyHostingSettings.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: { id: "default", hostingProvider: "Example Host", dataLocation: null },
+    }));
+    const existing = stubTx({ privacyHostingSettings: { hostingProvider: "Old Host", dataLocation: "Old Place" } });
+    await clubSettingsImporter.apply(applyCtx(existing.tx, files, "overwrite"));
+    expect(existing.delegates.privacyHostingSettings.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      update: { hostingProvider: "Example Host", dataLocation: null },
+    }));
+  });
+  it("leaves the row alone when an old bundle has no hosting entity", async () => {
+    const { tx, delegates } = stubTx({ privacyHostingSettings: { hostingProvider: "Local", dataLocation: null } });
+    await clubSettingsImporter.apply(applyCtx(tx, new Map(), "merge"));
+    expect(delegates.privacyHostingSettings.upsert).not.toHaveBeenCalled();
   });
 });

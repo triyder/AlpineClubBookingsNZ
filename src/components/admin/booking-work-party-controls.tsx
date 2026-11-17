@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -142,7 +143,7 @@ function BookingWorkPartyAddControls({
     setBusy(true);
     setError("");
     try {
-      const res = await fetch(`/api/admin/bookings/${bookingId}/work-party`, {
+      const res = await fetchWithRecentAuth(`/api/admin/bookings/${bookingId}/work-party`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(
@@ -198,16 +199,7 @@ function BookingWorkPartyAddControls({
   }
 
   const selected = options?.find((o) => o.id === selectedId) ?? null;
-  // A choice only where there is one: never for an organiser-paid joiner,
-  // whose money has the organiser's one disposition (#129 decision 5).
-  const offersChoice =
-    settlementOptions !== null &&
-    !settlementOptions.paidByOrganiser &&
-    settlementOptions.methods.length > 1;
   const chosenMethod = settlementMethod ?? settlementOptions?.methods[0] ?? "credit";
-  // Every cent coming back as credit: all the money back (the one sum,
-  // `editTotalMoneyBackCents`) less what is refunded to the card (#129, #132).
-  const creditBackCents = figures ? editTotalMoneyBackCents(figures) - figures.refundAmountCents : 0;
 
   /** A new choice clears the figures and re-runs the dry run with it. */
   function chooseSettlement(method: BookingModificationSettlementMethod) {
@@ -291,32 +283,13 @@ function BookingWorkPartyAddControls({
                 </div>
               </div>
             )}
-            {selected && settlementOptions?.paidByOrganiser && (
-              <p data-testid="work-party-organiser-disposition">
-                The group organiser paid for this booking, so any money back
-                goes to the organiser, the way they paid: to their card, or by
-                bank transfer.
-              </p>
-            )}
-            {selected && offersChoice && (
-              <OptionCardGroup label="How the discount comes back">
-                <OptionCard
-                  title="Club credit"
-                  selected={chosenMethod === "credit"}
-                  onSelect={() => chooseSettlement("credit")}
-                  disabled={busy}
-                >
-                  Held on the member&apos;s account for a later booking.
-                </OptionCard>
-                <OptionCard
-                  title="Refund to card"
-                  selected={chosenMethod === "card"}
-                  onSelect={() => chooseSettlement("card")}
-                  disabled={busy}
-                >
-                  Back to the card the booking was paid with.
-                </OptionCard>
-              </OptionCardGroup>
+            {selected && settlementOptions && (
+              <WorkPartySettlementChoice
+                options={settlementOptions}
+                chosenMethod={chosenMethod}
+                busy={busy}
+                onChoose={chooseSettlement}
+              />
             )}
             {figures && selected && (
               <div
@@ -324,31 +297,7 @@ function BookingWorkPartyAddControls({
                 data-testid="work-party-figures"
                 aria-live="polite"
               >
-                <p>
-                  New total: <strong>{money(figures.newFinalPriceCents)}</strong>{" "}
-                  (was {money(figures.previousFinalPriceCents)})
-                </p>
-                {figures.refundAmountCents > 0 && (
-                  <p>
-                    {settlementOptions?.paidByOrganiser
-                      ? "Returned to the group organiser: "
-                      : "Refunded to card: "}
-                    <strong>{money(figures.refundAmountCents)}</strong>
-                  </p>
-                )}
-                {(figures.refundAmountCents === 0 || creditBackCents > 0) && (
-                  <p>
-                    Account credit to the member:{" "}
-                    <strong>
-                      {money(creditBackCents)}
-                    </strong>
-                  </p>
-                )}
-                {figures.additionalAmountCents > 0 && (
-                  <p>
-                    Still to pay: <strong>{money(figures.additionalAmountCents)}</strong>
-                  </p>
-                )}
+                <WorkPartyMoneyBackLines figures={figures} options={settlementOptions} money={money} />
                 {noEmails && <BookingNoEmailsNotice />}
               </div>
             )}
@@ -362,23 +311,25 @@ function BookingWorkPartyAddControls({
             <Button variant="outline" onClick={() => setOpen(false)} disabled={busy}>
               Cancel
             </Button>
-            {!noEmails && figures ? (
-              <>
-                <Button
-                  variant="outline"
-                  onClick={() => send("apply", false)}
-                  disabled={busy || !selectedId}
-                >
-                  Add without emailing
+            {figures ? (
+              !noEmails ? (
+                <>
+                  <Button
+                    variant="outline"
+                    onClick={() => send("apply", false)}
+                    disabled={busy || !selectedId}
+                  >
+                    Add without emailing
+                  </Button>
+                  <Button onClick={() => send("apply", true)} disabled={busy || !selectedId}>
+                    {busy ? "Saving…" : "Add and email member"}
+                  </Button>
+                </>
+              ) : (
+                <Button onClick={() => send("apply")} disabled={busy || !selectedId}>
+                  {busy ? "Saving…" : "Add to work party"}
                 </Button>
-                <Button onClick={() => send("apply", true)} disabled={busy || !selectedId}>
-                  {busy ? "Saving…" : "Add and email member"}
-                </Button>
-              </>
-            ) : figures ? (
-              <Button onClick={() => send("apply")} disabled={busy || !selectedId}>
-                {busy ? "Saving…" : "Add to work party"}
-              </Button>
+              )
             ) : (
               <Button
                 onClick={() => send("preview")}
@@ -391,5 +342,99 @@ function BookingWorkPartyAddControls({
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+/**
+ * How the discount comes back: the organiser's one disposition for an
+ * organiser-paid joiner (#129 decision 5), otherwise club credit or a refund to
+ * the card where the booking offers both. Split out of the dialog, past 300
+ * lines.
+ */
+function WorkPartySettlementChoice({
+  options,
+  chosenMethod,
+  busy,
+  onChoose,
+}: {
+  options: WorkPartySettlementOptions;
+  chosenMethod: BookingModificationSettlementMethod;
+  busy: boolean;
+  onChoose: (method: BookingModificationSettlementMethod) => void;
+}) {
+  if (options.paidByOrganiser) {
+    return (
+      <p data-testid="work-party-organiser-disposition">
+        The group organiser paid for this booking, so any money back
+        goes to the organiser, the way they paid: to their card, or by
+        bank transfer.
+      </p>
+    );
+  }
+  // A choice only where there is one.
+  if (options.methods.length <= 1) return null;
+  return (
+    <OptionCardGroup label="How the discount comes back">
+      <OptionCard
+        title="Club credit"
+        selected={chosenMethod === "credit"}
+        onSelect={() => onChoose("credit")}
+        disabled={busy}
+      >
+        Held on the member&apos;s account for a later booking.
+      </OptionCard>
+      <OptionCard
+        title="Refund to card"
+        selected={chosenMethod === "card"}
+        onSelect={() => onChoose("card")}
+        disabled={busy}
+      >
+        Back to the card the booking was paid with.
+      </OptionCard>
+    </OptionCardGroup>
+  );
+}
+
+/** The dry run's figures: the new total and every cent that comes back or is still owed. */
+function WorkPartyMoneyBackLines({
+  figures,
+  options,
+  money,
+}: {
+  figures: WorkPartyCorrectionFigures;
+  options: WorkPartySettlementOptions | null;
+  money: (cents: number) => string;
+}) {
+  // Every cent coming back as credit: all the money back (the one sum,
+  // `editTotalMoneyBackCents`) less what is refunded to the card (#129, #132).
+  const creditBackCents = editTotalMoneyBackCents(figures) - figures.refundAmountCents;
+  return (
+    <>
+      <p>
+        New total: <strong>{money(figures.newFinalPriceCents)}</strong>{" "}
+        (was {money(figures.previousFinalPriceCents)})
+      </p>
+      {figures.refundAmountCents > 0 && (
+        <p>
+          {options?.paidByOrganiser
+            ? "Returned to the group organiser: "
+            : "Refunded to card: "}
+          <strong>{money(figures.refundAmountCents)}</strong>
+        </p>
+      )}
+      {(figures.refundAmountCents === 0 || creditBackCents > 0) && (
+        <p>
+          Account credit to the member:{" "}
+          <strong>
+            {money(creditBackCents)}
+          </strong>
+        </p>
+      )}
+      {figures.additionalAmountCents > 0 && (
+        <p>
+          Still to pay: <strong>{money(figures.additionalAmountCents)}</strong>
+        </p>
+      )}
+    </>
   );
 }

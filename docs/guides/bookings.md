@@ -16,6 +16,12 @@ date-only lodge night (no times), matching the rules in
 [`money.md`](../invariants/money.md) and
 [`booking-dates-and-capacity.md`](../invariants/booking-dates-and-capacity.md).
 
+Officers with Bookings edit access can also send a new booking confirmation,
+pre-arrival reminder or separate guest payment link from the booking's
+**Send a fresh copy of a booking email** panel. See
+[Email Deliverability](email-deliverability.md#send-a-fresh-copy-of-a-booking-email)
+for recipients, link replacement and failure history.
+
 ## When you'd use it
 
 - A member calls to ask about their booking and you need to find it by name or
@@ -40,7 +46,11 @@ date-only lodge night (no times), matching the rules in
 
 2. The calendar shows the month with each night's remaining beds (for example
    "14 beds") and coloured bars for the bookings on those nights. The colour
-   legend under the calendar maps each colour to a booking status.
+   legend under the calendar maps each colour to a booking status. A row of
+   status pills above it switches each status on or off, including **Awaiting
+   Review**, whose bookings hold beds. Only **Cancelled** starts switched off.
+   The browser remembers which statuses you switched off, and a status added
+   later shows by default.
 
 ### Find a specific booking
 
@@ -281,8 +291,10 @@ booking is refused with a message pointing there; settle it as described in
 
 ### Read the results table
 
-1. The toolbar shows "Showing N of M bookings found". Sort any sortable column
-   (Member, Last Updated, Stay, Guests, Total, Status) by clicking its header.
+1. The toolbar shows the count, "M bookings found"; when there is more than one
+   page, the pager below the table gives the range ("Showing 26–50 of 101").
+   Sort any sortable column (Member, Last Updated, Stay, Guests, Total,
+   Status) by clicking its header.
 2. Each row shows the member, the stay dates and nights, the guest count
    (total and how many are non-members), the price, the status chip, and the
    payment method. A **Review** chip on the Status cell links straight to the
@@ -414,6 +426,11 @@ members and non-members alike.
 - **It belongs to this stay.** A member changing their profile later does not
   change the booking, and changing the booking does not change their profile.
   Use it for a one-off trip requirement, or to record a non-member's needs.
+- **It is cleared after the stay.** By default every guest's value is removed
+  30 days after their stay ends, whatever the booking's status. The club sets
+  the period, or switches it off, under **Admin → Privacy retention**. A value
+  you type on a stay that ended longer ago than that is cleared again the next
+  night.
 - **Who sees it.** Booking officers with **bookings view** see the card;
   **bookings edit** adds an **Edit** button on each guest. The hut leader
   running the stay sees the values on the lodge kiosk. The member who made the

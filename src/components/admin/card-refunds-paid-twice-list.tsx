@@ -1,5 +1,7 @@
 "use client";
+import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 
+import { adminHref } from "@/lib/admin-hubs";
 import { useId, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -108,7 +110,7 @@ export function CardRefundsPaidTwiceList({ rows }: { rows: CardRefundPaidTwicePa
     setBusy(true);
     setError("");
     try {
-      const res = await fetch(`/api/admin/payments/card-refunds/${target.operationId}/paid-twice-resolved`, {
+      const res = await fetchWithRecentAuth(`/api/admin/payments/card-refunds/${target.operationId}/paid-twice-resolved`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -163,7 +165,7 @@ export function CardRefundsPaidTwiceList({ rows }: { rows: CardRefundPaidTwicePa
             >
               <div>
                 <div className="text-sm font-medium">
-                  <Link href={`/admin/bookings/${row.bookingId}`} className="underline">
+                  <Link href={`${adminHref("bookings")}/${row.bookingId}`} className="underline">
                     Booking {row.bookingReference}
                   </Link>
                   {" - "}

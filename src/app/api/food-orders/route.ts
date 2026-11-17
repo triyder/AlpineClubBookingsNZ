@@ -18,6 +18,7 @@ import {
   FOOD_ORDER_ITEM_QUANTITY_MAX,
   FOOD_ORDER_MAX_ITEMS,
   FOOD_ORDER_NOTES_MAX_LENGTH,
+  FOOD_ORDER_RATE_LIMIT,
   foodOrderItemsProblem,
   isFoodOrderUnit,
   parseFoodOrderQuantity,
@@ -26,7 +27,7 @@ import { foodOfficerEmail, loadFoodOrderSettings } from "@/lib/food-order-settin
 import { createFoodOrder } from "@/lib/food-orders";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
-import { applyMemberScopedRateLimit, rateLimiters } from "@/lib/rate-limit";
+import { applyMemberScopedRateLimit } from "@/lib/rate-limit";
 import { requireActiveSession } from "@/lib/session-guards";
 
 /**
@@ -106,7 +107,7 @@ export async function POST(request: NextRequest) {
   const { memberId } = guard;
 
   const limited = await applyMemberScopedRateLimit(
-    rateLimiters.foodOrderMember,
+    FOOD_ORDER_RATE_LIMIT,
     request,
     memberId,
   );

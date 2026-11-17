@@ -15,6 +15,8 @@ import {
   withoutDatasetQueryKeys,
 } from "@/lib/admin-dataset-reset-state";
 import { loadAdminXeroContactGroups } from "@/lib/admin-xero-contact-groups";
+import { ADMIN_LOAD_FAILED_ERROR, ADMIN_LOAD_NETWORK_ERROR } from "@/lib/admin-query-error";
+import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
 import { getAgeTierLabel, useAgeTierOptions } from "@/lib/use-age-tier-options";
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
 import { cn } from "@/lib/utils";
@@ -39,6 +41,7 @@ import { Alert } from "@/components/ui/alert";
 import { MemberLoginStageChip } from "@/components/admin/member-login-stage-chip";
 import { MemberDetailLink } from "@/components/admin/member-detail-link";
 import { AdminPageHeader } from "@/components/admin/admin-page-header";
+import { AdminLoadError } from "@/components/admin/admin-load-error";
 import { AdminDataTable } from "@/components/admin/admin-data-table";
 import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
 import {
@@ -48,6 +51,13 @@ import {
 import { DatasetResetButton } from "@/components/admin/dataset-reset-button";
 import { SortHeader } from "@/components/admin/sort-header";
 import { Pagination } from "@/components/admin/admin-pagination";
+import {
+  ADMIN_LIST_DEFAULT_PAGE_SIZE,
+  adminListPage,
+  formatAdminListRange,
+  parseAdminListPageParam,
+  setAdminListPageParam,
+} from "@/lib/admin-list-page";
 import { StatusChip } from "@/components/ui/status-chip";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Spinner } from "@/components/ui/spinner";
@@ -132,6 +142,7 @@ interface Subscription {
 }
 
 interface Summary { total: number; paid: number; unpaid: number; overdue: number; notInvoiced: number; notRequired: number; }
+const EMPTY_SUMMARY: Summary = { total: 0, paid: 0, unpaid: 0, overdue: 0, notInvoiced: 0, notRequired: 0 };
 interface XeroContactGroup { id: string; name: string; contactCount: number; }
 type MembershipSyncMode = "incremental" | "backfill";
 type SubscriptionSortBy =
@@ -156,11 +167,6 @@ const subscriptionSortColumns = new Set<SubscriptionSortBy>([
 
 /** Where this page is served under the switch: its own address, as officers see it. */
 const SUBSCRIPTIONS_HREF = adminHref("subscriptions");
-
-function parsePageParam(value: string | null) {
-  const page = Number(value);
-  return Number.isInteger(page) && page > 0 ? page : 1;
-}
 
 /**
  * `fallbackYear` is passed in rather than read from a module constant (CT-4,
@@ -261,12 +267,16 @@ export default function SubscriptionsPage() {
   const [xeroContactGroup, setXeroContactGroup] = useState(searchParams.get("xeroContactGroup") || "all");
   const [sortBy, setSortBy] = useState<SubscriptionSortBy>(() => getSortBy(searchParams.get("sortBy")));
   const [sortDir, setSortDir] = useState<SortDir>(() => getSortDir(searchParams.get("sortDir")));
-  const [page, setPage] = useState(() => parsePageParam(searchParams.get("page")));
-  const [pageSize] = useState(25);
+  const [page, setPage] = useState(() => parseAdminListPageParam(searchParams.get("page")));
+  const [pageSize] = useState(ADMIN_LIST_DEFAULT_PAGE_SIZE);
   const [data, setData] = useState<Subscription[]>([]);
   const [total, setTotal] = useState(0);
-  const [summary, setSummary] = useState<Summary>({ total: 0, paid: 0, unpaid: 0, overdue: 0, notInvoiced: 0, notRequired: 0 });
+  const [summary, setSummary] = useState<Summary>(EMPTY_SUMMARY);
   const [loading, setLoading] = useState(false);
+  // #4961: the third outcome of the read. Without it a failed load showed zero
+  // counts and "No subscriptions found", or kept last season's rows under this
+  // season's name.
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [syncing, setSyncing] = useState<MembershipSyncMode | null>(null);
   const [syncActionPending, setSyncActionPending] = useState(false);
   const syncActionInFlight = useRef(false);
@@ -305,8 +315,8 @@ export default function SubscriptionsPage() {
         `/api/admin/xero/sync-memberships?seasonYear=${seasonYear}&mode=${mode}`,
         { method: "POST" }
       );
-      const data = await res.json();
       if (res.ok) {
+        const data = await res.json();
         setSyncMessage({
           type: "success",
           text:
@@ -316,10 +326,10 @@ export default function SubscriptionsPage() {
         });
         fetchData();
       } else {
-        setSyncMessage({ type: "error", text: data.error || "Sync failed" });
+        setSyncMessage({ type: "error", text: await apiErrorMessageFromResponse(res, "Sync failed") });
       }
     } catch {
-      setSyncMessage({ type: "error", text: "Sync failed — check Xero connection" });
+      setSyncMessage({ type: "error", text: "Sync failed" });
     } finally {
       setSyncing(null);
       setSyncActionPending(false);
@@ -374,12 +384,15 @@ export default function SubscriptionsPage() {
           }),
         },
       );
-      const json = await res.json();
       if (res.ok) {
+        const json = await res.json();
         setSyncMessage({ type: "success", text: json.message || "Subscription updated." });
         fetchData();
       } else {
-        setSyncMessage({ type: "error", text: json.error || "Manual payment failed." });
+        setSyncMessage({
+          type: "error",
+          text: await apiErrorMessageFromResponse(res, "Manual payment failed."),
+        });
       }
     } catch {
       setSyncMessage({ type: "error", text: "Manual payment failed." });
@@ -405,7 +418,7 @@ export default function SubscriptionsPage() {
     if (xeroContactGroup !== "all") params.set("xeroContactGroup", xeroContactGroup);
     if (sortBy !== "member") params.set("sortBy", sortBy);
     if (sortDir !== getDefaultSortDir(sortBy)) params.set("sortDir", sortDir);
-    if (page > 1) params.set("page", String(page));
+    setAdminListPageParam(params, page);
     return params;
   }, [seasonYear, status, ageTier, xeroContactGroup, sortBy, sortDir, page, searchParams]);
 
@@ -420,6 +433,14 @@ export default function SubscriptionsPage() {
   }, [buildSubscriptionsSearchParams, router]);
 
   const fetchData = useCallback(async () => {
+    // #4961: a failed read clears the previous query's rows and counts, so last
+    // season's figures never sit under this season's name. The Xero group flag
+    // is the route's to report and is left as it was.
+    const clearDataset = () => {
+      setData([]);
+      setTotal(0);
+      setSummary(EMPTY_SUMMARY);
+    };
     setLoading(true);
     try {
       const params = buildSubscriptionsSearchParams();
@@ -436,12 +457,19 @@ export default function SubscriptionsPage() {
         setTotal(json.total);
         setSummary(json.summary);
         setXeroContactGroupsLoaded(json.xeroContactGroupsLoaded !== false);
+        setLoadError(null);
+      } else {
+        clearDataset();
+        setLoadError(await apiErrorMessageFromResponse(res, ADMIN_LOAD_FAILED_ERROR));
       }
+    } catch {
+      clearDataset();
+      setLoadError(ADMIN_LOAD_NETWORK_ERROR);
     } finally { setLoading(false); }
   }, [ageTier, buildSubscriptionsSearchParams, page, pageSize, sortBy, sortDir, status]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
-  const totalPages = Math.ceil(total / pageSize);
+  const { totalPages } = adminListPage({ page, pageSize, total });
   // The manual mark-paid action column only exists for finance-edit users.
   const columnCount = canEditFinance ? 9 : 8;
 
@@ -651,44 +679,57 @@ export default function SubscriptionsPage() {
         </Alert>
       )}
 
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
-        <SummaryCard title="Total" icon={Users} value={summary.total} />
-        <SummaryCard
-          title="Paid"
-          icon={CheckCircle2}
-          iconClassName="text-success"
-          valueClassName="text-success"
-          value={summary.paid}
+      {/* #4961: no counts are drawn while the load has failed — zero Unpaid
+          would read as a real answer. */}
+      {loadError ? (
+        <AdminLoadError
+          title="Subscriptions could not be loaded"
+          message={loadError}
+          onRetry={fetchData}
+          data-testid="subscriptions-load-error"
         />
-        <SummaryCard
-          title="Unpaid"
-          icon={Clock}
-          iconClassName="text-warning"
-          valueClassName="text-warning"
-          value={summary.unpaid}
-        />
-        <SummaryCard
-          title="Overdue"
-          icon={AlertCircle}
-          iconClassName="text-danger"
-          valueClassName="text-danger"
-          value={summary.overdue}
-        />
-        <SummaryCard
-          title="Not Required"
-          icon={ShieldCheck}
-          iconClassName="text-info"
-          valueClassName="text-info"
-          value={summary.notRequired}
-        />
-      </div>
+      ) : (
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
+          <SummaryCard title="Total" icon={Users} value={summary.total} />
+          <SummaryCard
+            title="Paid"
+            icon={CheckCircle2}
+            iconClassName="text-success"
+            valueClassName="text-success"
+            value={summary.paid}
+          />
+          <SummaryCard
+            title="Unpaid"
+            icon={Clock}
+            iconClassName="text-warning"
+            valueClassName="text-warning"
+            value={summary.unpaid}
+          />
+          <SummaryCard
+            title="Overdue"
+            icon={AlertCircle}
+            iconClassName="text-danger"
+            valueClassName="text-danger"
+            value={summary.overdue}
+          />
+          <SummaryCard
+            title="Not Required"
+            icon={ShieldCheck}
+            iconClassName="text-info"
+            valueClassName="text-info"
+            value={summary.notRequired}
+          />
+        </div>
+      )}
 
       <AdminDataTable
         aria-label="Subscriptions"
         toolbar={
-          <p>
-            Showing {data.length} of {total} subscription{total === 1 ? "" : "s"}
-          </p>
+          loadError ? null : (
+            <p>
+              {total} subscription{total === 1 ? "" : "s"}
+            </p>
+          )
         }
       >
         <TableHeader>
@@ -713,6 +754,12 @@ export default function SubscriptionsPage() {
                 </div>
               </TableCell>
             </TableRow>
+          ) : loadError ? (
+            <TableRow>
+              <TableCell colSpan={columnCount} className="py-10 text-center text-muted-foreground">
+                No subscriptions are shown because they could not be loaded.
+              </TableCell>
+            </TableRow>
           ) : data.length === 0 ? (
             <TableRow>
               <TableCell colSpan={columnCount} className="p-0">
@@ -730,7 +777,7 @@ export default function SubscriptionsPage() {
                   <MemberDetailLink
                     canViewMembership={canViewMembership}
                     href={buildHrefWithReturnTo(
-                      `/admin/members/${sub.memberId}`,
+                      `${adminHref("member-detail", { id: sub.memberId })}`,
                       currentSubscriptionsPath,
                     )}
                     className="rounded-sm text-foreground hover:text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -842,7 +889,7 @@ export default function SubscriptionsPage() {
         page={page}
         totalPages={totalPages}
         onPageChange={setPage}
-        summary={`Showing ${(page - 1) * pageSize + 1}-${Math.min(page * pageSize, total)} of ${total}`}
+        summary={formatAdminListRange({ page, pageSize, total })}
       />
     </div>
   );

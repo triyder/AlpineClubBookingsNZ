@@ -38,18 +38,14 @@ import {
   BOOKING_PARTY_GUESTS_MAX, guestRequestSchemaError, guestStayFieldsSchema,
 } from "@/lib/booking-guest-stay-range-input";
 import { resolvePromoPreviewStaysOrRefusal } from "@/lib/promo-preview-stay-ranges";
-import { isDateOnlyString, parseDateOnly } from "@/lib/date-only";
 import { isOpenWorkPartyEvent, workPartyWindowOverlapsStay } from "@/lib/work-party";
+import { parsedDateOnlySchema } from "@/lib/date-only-schema";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 import { normalizePromoCodeInput } from "@/lib/promo-code-list-rules";
 import { computeMemberGuestBoundary } from "@/lib/booking-guests";
 import { loadMemberGuestAddPolicy, planMemberGuestConsentWrites } from "@/lib/member-guest-add-policy";
 import { guestConsentStatus } from "@/lib/member-guest-consent";
 import { promoPreviewEditContext, promoPreviewEditFieldsSchema } from "@/lib/promo-preview-edit";
-
-const dateOnlyString = z.string().refine(isDateOnlyString, {
-  message: "Date must be YYYY-MM-DD",
-});
 
 const validateSchema = z
   .object({
@@ -58,8 +54,8 @@ const validateSchema = z
     // promo server-side; the internal code is never sent to or accepted
     // from the client.
     workPartyEventId: z.string().min(1).optional(),
-    checkIn: dateOnlyString.transform(parseDateOnly),
-    checkOut: dateOnlyString.transform(parseDateOnly),
+    checkIn: parsedDateOnlySchema,
+    checkOut: parsedDateOnlySchema,
     guests: z
       .array(
         z.object({

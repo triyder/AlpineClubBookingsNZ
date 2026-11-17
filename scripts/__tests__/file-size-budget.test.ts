@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { run } from "../ci/check-file-size-budget";
 import { evaluateComputedRatchet } from "../lib/file-size-base";
 import { ALLOWANCE_DIR } from "../lib/file-size-allowances";
+import { FUNCTION_LENGTH_LIMIT } from "../lib/function-length-ratchet";
 
 import {
   PRODUCTION_LIMIT,
@@ -16,6 +17,7 @@ import {
   countLines,
   findOversizedProductionFiles,
   findUnclassifiedFiles,
+  hardCeilingFor,
   isProductionFile,
   isRatchetExcludedTestFile,
   scanRepository,
@@ -286,7 +288,7 @@ describe("budget classification", () => {
       limit: ROUTE_HANDLER_LIMIT,
     });
     expect(
-      budgetForFile("src/app/(admin)/admin/members/page.tsx"),
+      budgetForFile("src/app/(admin)/admin/membership/members/page.tsx"),
     ).toMatchObject({
       slug: "route-page-shell",
       limit: ROUTE_PAGE_LIMIT,
@@ -297,7 +299,7 @@ describe("budget classification", () => {
     });
     // A co-located client component under app/ is a domain module, not a shell.
     expect(
-      budgetForFile("src/app/(admin)/admin/members/members-client.tsx"),
+      budgetForFile("src/app/(admin)/admin/membership/members/members-client.tsx"),
     ).toMatchObject({
       slug: "domain-module",
       limit: PRODUCTION_LIMIT,
@@ -387,6 +389,26 @@ describe("summariseSizeDebt", () => {
 });
 
 describe("the gate, end to end, against real commits", () => {
+  it("judges function length in the same run, failing a function that grew past the limit (#4927)", () => {
+    // The function-length ratchet is a phase of this command, not a command of
+    // its own, so the CI step and the epic-sync census run it unwired. A file
+    // well inside its budget proves the failure is the function phase's.
+    const repo = newRepo();
+    const door = (lines: number) =>
+      ["export function cancel(n: number) {", ...Array(lines - 2).fill("  n += 1;"), "}", ""].join("\n");
+    mkdirSync(path.join(repo.root, "src/lib"), { recursive: true });
+    writeFileSync(path.join(repo.root, "src/lib/door.ts"), door(FUNCTION_LENGTH_LIMIT), "utf8");
+    const base = repo.commit("base");
+    writeFileSync(path.join(repo.root, "src/lib/door.ts"), door(FUNCTION_LENGTH_LIMIT + 1), "utf8");
+
+    const result = captureRun(repo.root, ["--base", base]);
+    expect(result.code).toBe(1);
+    expect(result.stdout).toContain("File-size budget ratchet: OK");
+    expect(result.stderr).toContain("Function-length ratchet: FAILED");
+    expect(result.stderr).toContain("src/lib/door.ts#cancel");
+    expect(result.stderr).toContain("the function grew past the limit");
+  });
+
   it("passes on a clean checkout of the base ref", () => {
     // #2979 acceptance criterion 2, in its most important form: a tree with 283
     // over-budget files and nothing changed since the base must be GREEN,
@@ -774,6 +796,46 @@ describe("the deliberate escape: a declared allowance", () => {
     expect(result.stdout).toContain("src/lib/big.ts  ->  1300 LOC");
     expect(result.stdout).toContain(`${ALLOWANCE_DIR}/2980-big.md`);
     expect(result.stdout).toContain("lifting that tree out is a refactor of its own");
+  });
+
+  it("prints the change's effect on tree-wide size debt, on a pass and on a failure (#4926)", () => {
+    const grown = overBudgetRepo();
+    grown.repo.write("src/lib/big.ts", 1300);
+    grown.repo.allow("4926-big.md", `file: src/lib/big.ts\nlines: 1300\nreason: ${REASON}\n`);
+    grown.repo.commit("grew, with an allowance");
+    const passed = captureRun(grown.repo.root, ["--base", grown.base]);
+    expect(passed.code).toBe(0);
+    expect(passed.stdout).toContain("Size debt change from this PR: +100 lines\n");
+
+    const shrunk = overBudgetRepo();
+    shrunk.repo.write("src/lib/big.ts", 1150);
+    shrunk.repo.write("src/lib/brand-new.ts", 900);
+    shrunk.repo.commit("shrank one, added an over-budget one");
+    const failed = captureRun(shrunk.repo.root, ["--base", shrunk.base]);
+    expect(failed.code).toBe(1);
+    // -50 from the shrink, +200 from the new file the gate refuses.
+    expect(failed.stderr).toContain("Size debt change from this PR: +150 lines\n");
+
+    const same = overBudgetRepo();
+    same.repo.write("src/lib/keep.ts", 20);
+    same.repo.commit("touched an in-budget file");
+    expect(captureRun(same.repo.root, ["--base", same.base]).stdout).toContain(
+      "Size debt change from this PR: 0 lines\n",
+    );
+  });
+
+  it("refuses an allowance past the hard ceiling of three budgets, and says to split (#4926)", () => {
+    const { repo, base } = overBudgetRepo();
+    repo.write("src/lib/big.ts", 2101);
+    repo.allow("4926-big.md", `file: src/lib/big.ts\nlines: 2101\nreason: ${REASON}\n`);
+    repo.commit("grew past the ceiling, with an allowance");
+
+    const result = captureRun(repo.root, ["--base", base]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("an allowance cannot take a file past 3 times its budget");
+    expect(result.stderr).toContain("domain module, <= 700 LOC, hard ceiling 2100 LOC");
+    expect(result.stderr).toContain("split a cohesive part out first");
+    expect(result.stderr).not.toContain("ALLOWED GROWTH");
   });
 
   it("fails when the recorded length is not the file's real length", () => {
@@ -1177,5 +1239,35 @@ describe("this repository", () => {
     const scan = scanRepository(path.join(REPO_ROOT, "no-such-directory-2687"));
     expect(scan.gitError).not.toBeNull();
     expect(scan.productionStats).toEqual([]);
+  });
+});
+
+/**
+ * #4926 — the three ceilings are restated in prose on purpose: the issue asks the
+ * two docs to state them, and a reader of either should not have to multiply.
+ * A number repeated in prose drifts (INV-SSOT-001), so this is the pin that ties
+ * those restatements to `HARD_CEILING_MULTIPLE` instead of leaving the next
+ * change of the multiple, or of a budget, to remember every place.
+ */
+describe("the hard ceiling the docs state (#4926)", () => {
+  const [domain, handler, page] = [PRODUCTION_LIMIT, ROUTE_HANDLER_LIMIT, ROUTE_PAGE_LIMIT].map(
+    (limit) => hardCeilingFor({ limit }).toLocaleString("en-US"),
+  );
+  const prose = (doc: string) =>
+    readFileSync(path.join(REPO_ROOT, doc), "utf8").replace(/\s+/g, " ");
+
+  it.each(["docs/MAINTENANCE.md", "size-allowances.d/README.md"])(
+    "%s names the three ceilings the code derives",
+    (doc) => {
+      expect(prose(doc)).toContain(
+        `${domain} lines for a domain module, ${handler} for a route handler, ${page} for a page shell`,
+      );
+    },
+  );
+
+  it("MAINTENANCE.md also lists them beside the finding kind that refuses past them", () => {
+    expect(prose("docs/MAINTENANCE.md")).toContain(
+      `(${domain} / ${handler} / ${page} lines), refused as \`allowance-over-hard-ceiling\``,
+    );
   });
 });

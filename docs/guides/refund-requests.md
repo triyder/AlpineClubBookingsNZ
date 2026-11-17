@@ -34,6 +34,12 @@ payment not yet made (being retried, or stopped and listed on [Stuck States](stu
    Appeals** and **Manual Credit Approvals**. **Reset** restores Pending while
    preserving unrelated URL context.
 
+   **Refund Appeals** shows 25 appeals a page, with a total line such as
+   "Showing 1–25 of 40" and previous and next arrows with page numbers when
+   there is more than one page. **Pending** lists the oldest appeal first; the other filters
+   list the newest first. Changing the filter returns to page 1, and the page
+   stays in the address. **Manual Credit Approvals** is not paged.
+
    ![Refunds & Credits page: the status filter, the Refund Appeals section, and the Manual Credit Approvals section](../images/admin/admin-refund-requests.png)
 
 ### Approve or reject a refund appeal
@@ -41,9 +47,11 @@ payment not yet made (being retried, or stopped and listed on [Stuck States](stu
 1. On a pending appeal, click **Review**. Set the **Refund Amount ($)** (pre-filled
    to the smaller of the requested and maximum refundable amount; the max is shown)
    and optional **Admin Notes** (visible to the member).
-2. Click **Approve & Refund** — a dialog asks whether to email the member; the
-   refund is processed either way and your choice is recorded in the audit log. Or
-   click **Reject** (also with an email choice).
+2. Click **Approve & Refund** — a dialog repeats the refund amount and asks
+   whether to email the member; the refund is processed either way and your
+   choice is recorded in the audit log. Or click **Reject** (also with an email
+   choice). Check the amount: if it is wrong, click **Go back**, which closes the
+   dialog without refunding and keeps what you typed.
 
    If the appeal's booking has **No emails** switched on
    ([Bookings](bookings.md#turn-off-all-emails-for-one-booking)), the outcome
@@ -122,8 +130,13 @@ payment not yet made (being retried, or stopped and listed on [Stuck States](stu
 
 1. On a pending manual credit approval, click **Approve** or **Reject**. If *you*
    raised the request, you cannot approve it — "Needs another admin to approve this
-   request" — this is the two-person rule. An approved adjustment is applied to the
-   member's credit ledger.
+   request" — this is the two-person rule. A credit grant shows the Xero account
+   the requester chose (the member's own money, or goodwill). You cannot change
+   it. A grant requested before that choice existed has to be rejected and asked
+   for again. A deduction against credit that already has a Xero note is refused
+   and stays pending, because the note would stay at its full amount. An approved
+   adjustment is applied to the member's credit ledger. A grant also queues its
+   Xero credit note at that moment.
 
 ## Settings reference
 

@@ -27,7 +27,7 @@
  *    or their family, which another officer must then do;
  *  - a dry run for the confirm dialog and a figures check on the save, so the
  *    officer is charged-or-credited exactly what they were shown (#4030 C4);
- *  - a started stay (#127) priced whole (`INV-MOD-062`), so every night in the
+ *  - a started stay (#127) priced whole (`INV-MOD-063`), so every night in the
  *    window is discounted, slept or not; and Remove (#130), the same edit with
  *    the code taken off, its increase owed on the booking.
  *
@@ -54,8 +54,11 @@ import { reauthorizeBookingOfficerFromDb } from "@/lib/booking-exception-approva
 import { defaultCorrectionSettlementMethod } from "@/lib/booking-finished-stay-correction";
 import { bookingPromoRedemptions } from "@/lib/booking-promo-redemptions";
 import { bookingOwner } from "@/lib/booking-owner";
-import { activeLifecycleEditRefusal, isFinishedStay } from "@/lib/booking-edit-policy";
-import { isQuotePricedBooking } from "@/lib/booking-modify-validation";
+import {
+  activeLifecycleEditRefusal,
+  isFinishedStay,
+} from "@/lib/booking-edit-policy";
+import { isQuotePricedBooking } from "@/lib/booking-modify-quote-priced";
 import type { BookingModificationSettlementMethod } from "@/lib/booking-modify";
 import { multiPromoCodesEnabled } from "@/lib/promo-redemption-slot";
 import { PROMO_WORK_PARTY_EXCLUSION_MESSAGE } from "@/lib/promo-code-list-rules";

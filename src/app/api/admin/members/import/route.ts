@@ -1,9 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { AgeTier, Gender, Title } from "@prisma/client";
 import { z } from "zod";
-import { hash } from "bcryptjs";
-import { PASSWORD_BCRYPT_COST } from "@/lib/password-hashing";
-import { randomBytes } from "crypto";
+import { UNUSABLE_PLACEHOLDER_PASSWORD_HASH } from "@/lib/password-hashing";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
@@ -55,6 +53,7 @@ import {
   normalizeImportedDietaryRequirements,
 } from "@/lib/member-dietary-field";
 import { grantMembershipAdminDietaryAccess } from "@/lib/member-dietary";
+import { requireRecentAuth } from "@/lib/require-recent-auth";
 
 const nullableImportString = (max: number) =>
   z.string().max(max).optional().nullable();
@@ -238,6 +237,8 @@ export async function POST(req: NextRequest) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
   const session = guard.session;
+  const recent = await requireRecentAuth();
+  if (!recent.ok) return recent.response;
   // Rate limit: 5 imports per hour
   const rateLimitResponse = await applyRateLimit(
     { id: "member-import", limit: 5, windowSeconds: 60 * 60 },
@@ -598,16 +599,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(results, { status: 200 });
   }
 
-  // Pre-compute password hashes BEFORE opening the transaction. bcrypt at cost
-  // 13 takes a few hundred ms each; hashing inside an interactive transaction
-  // exceeded Prisma's default 5s timeout at ~10 rows and rolled back the whole
-  // import (issue #768). The transaction below now only does fast inserts.
-  const membersToCreate = await Promise.all(
-    validatedRows.map(async (row) => ({
-      ...row,
-      passwordHash: await hash(randomBytes(16).toString("hex"), PASSWORD_BCRYPT_COST),
-    })),
-  );
+  // No per-row hashing: imported accounts use the shared unusable hash until
+  // the member sets a password through the screened setup/reset flow (#4934).
+  // Keep expensive password work out of this transaction (#768).
 
   // All-or-nothing: create all members in a transaction
   try {
@@ -623,7 +617,7 @@ export async function POST(req: NextRequest) {
           rowNum: number;
           rowNote: string | null;
         }> = [];
-        for (const row of membersToCreate) {
+        for (const row of validatedRows) {
           const member = await tx.member.create({
             data: {
               email: row.email,
@@ -658,7 +652,7 @@ export async function POST(req: NextRequest) {
               leavingDate: null,
               canLogin: row.canLogin,
               emailVerified: true, // Admin-imported members don't need email verification
-              passwordHash: row.passwordHash,
+              passwordHash: UNUSABLE_PLACEHOLDER_PASSWORD_HASH,
             },
             select: {
               id: true,
@@ -780,7 +774,7 @@ export async function POST(req: NextRequest) {
     if (isPrismaUniqueConstraintError(err)) {
       if (
         isLoginEmailUniqueConflict(err, {
-          canClaimLoginEmail: membersToCreate.some((row) => row.canLogin),
+          canClaimLoginEmail: validatedRows.some((row) => row.canLogin),
         })
       ) {
         return NextResponse.json(

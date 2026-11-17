@@ -1,5 +1,7 @@
 "use client";
+import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 
+import { adminHref } from "@/lib/admin-hubs";
 import { useId, useState } from "react";
 import Link from "next/link";
 import { Landmark } from "lucide-react";
@@ -131,7 +133,7 @@ export function BankRefundVoidsToAnswerPanel({
     setError("");
     try {
       const pick = target.mode === "pick";
-      const res = await fetch(`/api/admin/payments/bank-refund-voids/${target.row.linkId}/${pick ? "pick" : "answered"}`, {
+      const res = await fetchWithRecentAuth(`/api/admin/payments/bank-refund-voids/${target.row.linkId}/${pick ? "pick" : "answered"}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(pick ? { lineId: pickedLineId, confirmed: true } : { note, confirmed: true }),
@@ -193,7 +195,7 @@ export function BankRefundVoidsToAnswerPanel({
               <li key={row.linkId} className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-muted p-2">
                 <div>
                   <div className="text-sm font-medium">
-                    <Link href={`/admin/bookings/${row.bookingId}`} className="underline">
+                    <Link href={`${adminHref("bookings")}/${row.bookingId}`} className="underline">
                       Booking {row.bookingReference}
                     </Link>
                     {" - "}

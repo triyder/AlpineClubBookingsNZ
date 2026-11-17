@@ -17,6 +17,12 @@ the full local gate.
 ## Accessibility lint ratchets (#4466)
 
 The full `eslint-plugin-jsx-a11y` recommended configuration applies to JSX/TSX.
+The component mapping covers TableRow, TableCell, TableHead and Button. Because
+jsx-a11y treats native table rows as interactive, the local
+`accessibility/no-mouse-only-table-row` rule also requires a button or link
+inside a clickable row (#4970); a link with its own `onClick` is a separate
+action and does not count. Keep the row's mouse shortcut and put keyboard
+activation on that control.
 The local `accessibility/minimum-text-size` rule rejects static sizes below 12px
 in Tailwind classes, inline `fontSize` properties, CSS declarations and CSS
 `@apply` classes. Absolute CSS units (including `pt`) are converted to pixels;
@@ -53,7 +59,8 @@ Five local rules in `scripts/eslint/design-system.mjs` report what bypasses the
 primitives in `src/components/ui/`, each naming the one to use:
 `design-system/no-raw-button`, `no-raw-input`, `no-raw-select` and
 `no-raw-table` for the intrinsic JSX element, and `no-native-confirm` for the
-browser's confirm box: called through `window`, `globalThis`, `self`, `top` or
+browser's confirm box. A radio is `Radio` from `src/components/ui/radio.tsx`.
+The confirm rule covers a call through `window`, `globalThis`, `self`, `top` or
 `parent`, destructured from one of them, or called bare when the name resolves
 to the global. A `confirm` from `useConfirm()` is the sanctioned one.
 Today's usages are recorded in `eslint-suppressions.json` with the debt above,
@@ -91,7 +98,7 @@ Not covered: `React.createElement`, an element named through a variable
 
 The pattern is in [`UX_FLOW_MAP.md`](UX_FLOW_MAP.md#forms-4467). A form on it
 is tested in jsdom, like
-`src/app/(admin)/admin/committee/__tests__/committee-role-form.test.tsx`:
+`src/app/(admin)/admin/membership/committee/__tests__/committee-role-form.test.tsx`:
 
 - **Assert the wiring by resolving it.** Read the control's
   `aria-describedby`, look each id up with `document.getElementById`, and
@@ -122,7 +129,8 @@ unrelated responses from each mock. Import
 per test. These helpers have no credentials, network calls, database or Vitest
 dependency. Unit and realdb tests can use them directly; Playwright's Node-side
 fixtures can use them behind a test transport adapter. They do not install HTTP
-routes or replace either provider SDK automatically.
+routes or replace either provider SDK automatically; the transports below are
+the only way to point app code at them.
 
 ```ts
 const xero = new XeroFake();
@@ -149,22 +157,113 @@ successful refunds, later failure, and dashboard refunds. Pending refunds reserv
 capture capacity; failed refunds release it. `snapshot().events` retains immutable
 Stripe event payloads for delivery/replay tests, including the subscribed
 `charge.refunded` (with a charge/refund-list projection) and `refund.failed` events.
-Tests still need transport/SDK adapters to drive production webhook handlers.
 Taxes, fees, FX, API pagination,
 authentication, rate limits and transport failures are outside these models.
 
+### Driving production code through the fakes
+
+The test transports put the fakes behind the app's own provider clients (#4908),
+so production writers, inbound sync and webhook handlers run unmocked:
+
+```ts
+import { setXeroClientForTests, resetXeroClientForTests } from "@/lib/xero-test-client-override";
+// Stripe: setStripeClientForTests from "@/lib/stripe-test-client-override"
+const fake = new XeroFake("race-1234-");
+setXeroClientForTests(xeroTransport(fake));
+await createXeroInvoiceForBooking(bookingId); // the production push
+expect(fake.snapshot().invoices).toHaveLength(1);
+// afterAll: resetXeroClientForTests()
+```
+
+[`xeroTransport`](../src/test/providers/xero-transport.ts) serves the
+`accountingApi` calls for invoices, payments, credit notes, allocations and
+contacts. Replies are native Xero JSON (invoices through `invoiceWire`) passed
+through xero-node's own deserializer. Every call still goes through
+`callXeroApi` and `withXeroRetry`, so `failNext({ statusCode: 429, ... })`
+reaches the app as the real `XeroDailyLimitError`. Both injected failures and
+fake refusals leave as xero-node does, a JSON string; a refusal is a 400
+`ValidationException` carrying the fake's message, which the app's own error
+readers parse.
+[`stripeTransport`](../src/test/providers/stripe-transport.ts) serves payment
+intents, captures and refunds through `setStripeClientForTests`, and its
+`events()` returns the fake's events as Stripe delivers them, ready for
+`processStripeWebhookEvent`. Fake refusals come back as the SDK's
+`StripeInvalidRequestError`, and a reused idempotency key with other
+parameters as `StripeIdempotencyError`. A call either transport does not model
+throws rather than guessing, and neither ever touches the network. Xero lists page as Xero
+does (`page` and `pageSize`). Not modelled: Xero payment dates and the
+organisation record; Stripe payment-method
+collection (an intent is authorised on create) and any `expand` but an
+intent's `latest_charge`. While a Xero session is installed, `isXeroConnected()`
+reports connected, so the journeys that check it first take their Xero path.
+
+`setXeroClientForTests` and `setStripeClientForTests` throw unless `NODE_ENV`
+is `test`, and every read re-checks it, so production cannot set
+the override. Both seams are built from one rule,
+[`createTestOnlyOverride`](../src/lib/test-only-override.ts). No environment variable reaches it.
+[`production-import-census.test.ts`](../src/test/providers/production-import-census.test.ts)
+fails if any non-test file under `src/` imports test code: `src/test/`, a
+`__tests__` directory or a `*.test.*` / `*.spec.*` file. The existing
+`vi.mock` suites stay as they are; new money journeys should prefer the
+transports.
+
+Two realdb suites prove the path end to end:
+[`xero-invoice-round-trip.realdb.test.ts`](../src/test/providers/xero-invoice-round-trip.realdb.test.ts)
+pushes a booking invoice, pays it in parts in the fake and reconciles each
+state, and
+[`stripe-webhook-round-trip.realdb.test.ts`](../src/test/providers/stripe-webhook-round-trip.realdb.test.ts)
+delivers a dashboard refund, its redelivery and a later `refund.failed`. A
+ledger stage writes its own per-pair proofs on these transports.
+
+### Contract fixtures and sandbox captures
+
 The fixture contract suite pins selected behavior to
 [`provider-contracts.json`](../src/test/providers/fixtures/provider-contracts.json).
-**These fixtures are synthetic examples, not sandbox recordings.** Their public
-API references and repository error-example source are recorded in the JSON;
-sandbox conformance remains unverified. Do not regenerate expectations from the
-fake. Future sandbox captures need sanitized, independently reviewed fixtures.
+**These fixtures are synthetic examples, not sandbox recordings** (their
+`provenance.kind` is `synthetic`). Their public API references and repository
+error-example source are recorded in the JSON; sandbox conformance remains
+unverified. Do not regenerate expectations from the fake.
 
-Run the four new suites with:
+A reviewed recording goes beside it as
+`provider-contracts.recorded-sandbox.json`, with the same keys. When that file
+exists the suite runs against it instead, and its title names the kind and
+capture date it ran. A recording's `provenance` sets `kind` to
+`recorded-sandbox`, `capturedOn` to the capture date, `apiVersions` to the Xero
+and Stripe API versions used, and `reviewedIn` to the issue or PR holding the
+review. The suite refuses a recording missing any of these, and any fixture
+holding an email address, a credential, a Xero GUID or a Stripe object id.
+
+**Capturing sandbox fixtures (owner step).** Only the owner captures, against a
+Xero demo company and Stripe test mode, never the club's live organisation or
+account:
+
+1. In Xero, create a contact and an $80.00 invoice, record a $50.00 payment,
+   create a $30.00 credit note and allocate it, then try allocating another
+   $10.00 credit note to the paid invoice. Remove the allocation, void the note
+   and delete the payment. Save the invoice, credit note and payment replies and
+   the refusal for each key in the `xero` block.
+2. In Stripe test mode, authorise $80.00 with manual capture, capture $50.00,
+   refund $20.00, let it succeed, then fail it with Stripe's test card for a
+   failed refund. Make a $50.00 refund in the dashboard, try a further $0.01
+   refund, and save the replies and the `charge.refunded` event for each key in
+   the `stripe` block.
+3. Sanitise: keep only the fields the synthetic file pins, replace every
+   provider id with the alias the fake mints (`invoice-1`, `intent-1`, and so
+   on), and remove every name, email, tenant id, account id and token.
+4. Fill in `provenance`, run the contract suite, and open a PR. The PR is
+   reviewed by someone other than the person who captured the fixture, who
+   checks the sanitising line by line before merge. Where the recording and the
+   fakes disagree, the fake is fixed; the recording stands.
+
+Run the provider suites with:
 
 ```sh
-pnpm exec vitest run src/test/providers/provider-fakes.test.ts src/test/providers/provider-contracts.test.ts src/test/providers/ledger-scenarios.test.ts src/test/providers/round-trip.test.ts --maxWorkers=1
+pnpm run test:named src/test/providers/provider-fakes.test.ts src/test/providers/provider-contracts.test.ts src/test/providers/ledger-scenarios.test.ts src/test/providers/round-trip.test.ts src/test/providers/provider-transports.test.ts src/test/providers/production-import-census.test.ts
 ```
+
+The two realdb suites need the race harness's disposable PostgreSQL
+(`RUN_CONCURRENCY_RACE_TESTS=1` and `CONCURRENCY_RACE_DATABASE_URL`) and run in
+the `realdb-all` CI job.
 
 The fast-check properties use fixed seeds (4460 and 4461) and the shared frozen
 clock. They compare independently imported state with outbound journal totals
@@ -580,9 +679,11 @@ their purpose. Every other file is a root of exactly one project:
   and `.cts` test/spec file and `__tests__/` directory under `src/` and
   `scripts/`, plus `vitest.config.mts` and the two setup files. It supplies
   `vitest/globals` and Node's types.
-- **`tsconfig.e2e.json`** — the Playwright suite: `e2e/**/*.ts` and
-  `playwright.config.ts`, with Node's types and nothing from Vitest. Specs
-  reach application code through imports (`@/lib/...`), never by listing it.
+- **`tsconfig.e2e.json`** — the Playwright suite: `e2e/**/*.ts`,
+  `playwright.config.ts` and the contract specs and their React fixtures under
+  `scripts/e2e-contracts/` (`.ts` and `.tsx`), with Node's types and nothing
+  from Vitest. Specs reach application code through imports (`@/lib/...`),
+  never by listing it.
 
 Vitest also collects JavaScript test files. The `scripts/**/*.test.mjs`
 suites — each the test of a tool that runs under a bare `node`, so both stay
@@ -591,11 +692,14 @@ That is not a loss: before #2693 they were loaded with `allowJs: true,
 checkJs: false`, which produced no diagnostics either. Their names are pinned in
 `src/lib/__tests__/typecheck-project-coverage.test.ts`, so a new JavaScript
 test fails that contract until it is either written in TypeScript (the default)
-or named there deliberately. Four JavaScript modules that TypeScript tests
-import — `eslint.config.mjs`, `scripts/ci/server-only-boundary-selftest.mjs`,
-`scripts/sync-user-guide-wiki.mjs` and `load/lib/contention-invariant.js` —
-carry a sibling `.d.mts` / `.d.ts` declaring their exports; the same contract
-pins each pair.
+or named there deliberately. The JavaScript modules that TypeScript tests
+import — `eslint.config.mjs`, `scripts/ci/check-allow-builds.mjs`,
+`scripts/ci/server-only-boundary-selftest.mjs`,
+`scripts/sync-user-guide-wiki.mjs`, the k6 harness's pure helpers under
+`load/lib/` (`contention-invariant.js`, `stay-window.js`, `target-guard.js` and
+`volume-users.js`) and the Stripe stub `load/stripe-stub/server.mjs` — carry a
+sibling `.d.mts` / `.d.ts` declaring their exports; the same contract pins each
+pair.
 
 Put a supported new Vitest test under `src/` or `scripts/` and the existing
 patterns cover it; put one somewhere else and you must add the pattern.
@@ -1302,14 +1406,18 @@ The other convention that is load-bearing rather than stylistic, for the same
 reason as the frozen clock: written the obvious way, the assertion reports green
 or red on something other than what it claims to check.
 
-Eighteen admin and member surfaces render a **permanently mounted** `role="alert"`
+Admin, member and public surfaces render a **permanently mounted** `role="alert"`
 that a failed action populates and then takes focus, so a keyboard or
 screen-reader user is not left on a control that has just been re-enabled while
-the explanation appears elsewhere on the page. Sixteen use
-`src/components/focused-action-error.tsx`; `policy-exception-requests-panel.tsx`
-and `roster-editor.tsx` call the same failure primitive directly through
-`useActionAttention`. Since #2934 every one of them focuses and scrolls through
+the explanation appears elsewhere on the page. Nearly all use
+`src/components/focused-action-error.tsx` (grep for `<FocusedActionError` for
+the current list); `policy-exception-requests-panel.tsx` and `roster-editor.tsx`
+call the same failure primitive directly through `useActionAttention`. Since #2934 every one of them focuses and scrolls through
 `src/hooks/use-scroll-to-feedback.ts` — see "Attention after an action" below.
+A component that holds its own failure takes the message and the counter that
+re-fires an identical repeat from `useActionFailure`
+(`src/hooks/use-action-failure.ts`); test a repeat by failing twice with the
+same message and asserting the alert holds focus each time.
 
 Assert that contract with the shared helper, never by hand:
 
@@ -1428,13 +1536,15 @@ discriminated by a named test in the tree already:
   (#4116).
 
 `admin-attention-primitive-contract.test.ts` is the census that keeps the admin
-tree routed through the module: a direct `scrollIntoView` / `scrollTo`, or a
-focus deferred to `requestAnimationFrame`, fails it, and its one exclusion is
-listed beside the primitive in `DIRECT_SCROLL_EXCLUSIONS`. A bare effect-driven
+tree and the member `/book` wizard (#4945) routed through the module: a direct
+`scrollIntoView` / `scrollTo`, or a focus deferred to `requestAnimationFrame`,
+fails it, and its exclusions are listed beside the primitive in
+`DIRECT_SCROLL_EXCLUSIONS`, each with the exact number of direct scrolls it
+covers, so a second scroll in an excluded file fails too. A bare effect-driven
 `.focus()` passes it, which is a stated limit rather than an oversight — the
 module says why, and names the four surfaces that still hand-roll their
 attention. It scans the tree from disk, so `pnpm run test:related` cannot reach
-it; run it by name when an admin file gains a scroll or a focus.
+it; run it by name when a censused file gains a scroll or a focus.
 
 ## A fake store applies `where` through one evaluator
 
@@ -1908,14 +2018,18 @@ on. Expect a batch of realdb files to
 take as long as running them one after another. Inside one file the old rules
 still apply: a suite owns its own fixtures and queued work.
 
-CI runs every one of these files in the advisory `realdb-all` job (#4458), in
-one `vitest run` on one Postgres service, with `RUN_CONCURRENCY_RACE_TESTS=1`.
+CI runs every one of these files in the `realdb-all` job,
+`Real-PostgreSQL suites (all)` (#4458), in one `vitest run` on one Postgres
+service, with `RUN_CONCURRENCY_RACE_TESTS=1`. It blocks a merge through the
+required `verify` check, whose same-attempt poll fails unless this job succeeded
+(#4907); it is not a branch-protection context of its own.
 The file list is `scripts/ci/realdb-files.mjs`: every `*.realdb.test.*` file
 under `src/` minus `scripts/ci/realdb-quarantine.txt`, which names a suite that
 is red for a known reason, or cannot share the process, with its issue or PR.
 Add a realdb file and it joins the job with no edit. `realdb-ci-coverage-census.test.ts` fails when a file is
 neither run nor quarantined, when the job stops setting
-`RUN_CONCURRENCY_RACE_TESTS=1`, or when any other job names `realdb-all`. The
+`RUN_CONCURRENCY_RACE_TESTS=1`, when any job `needs:` it or it gains a
+job-level `if:` or `needs:`, or when anything but `verify`'s poll names it. The
 job points `DATA_MIGRATION_VERIFICATION_DATABASE_URL` at the same race service
 (those three suites create scratch databases of their own), and its last step,
 `scripts/ci/check-realdb-ran.mjs`, reads Vitest's JSON report and fails when a
@@ -1924,7 +2038,9 @@ gate is unset skips green otherwise. The seed suite
 (`booking-ledger-history-seed`) is quarantined because
 `scripts/booking-ledger-seed-gate.sh` runs it against a database of its own. The
 per-file steps in `migration-drift` and `data-migration-verification` stay: they
-are required checks and this job is not.
+report sooner, inside their own required checks. A flaky suite now blocks every
+pull request, so quarantine it with its issue rather than loosening the no-skip
+check.
 
 ## Mocking a money seam: never in a test that asserts its money
 

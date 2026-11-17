@@ -53,7 +53,6 @@ vi.mock("@/lib/club-time/server", async () => {
   };
 });
 vi.mock("@/lib/rate-limit", () => ({
-  rateLimiters: { foodOrderMember: { id: "food-order-member" } },
   applyMemberScopedRateLimit: async () =>
     mocks.rateLimited
       ? NextResponse.json({ error: "Too many requests" }, { status: 429 })

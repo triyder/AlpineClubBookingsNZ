@@ -79,12 +79,12 @@ This page is read-only. Its controls:
 | Control | What it does | Default | Notes / constraints |
 | --- | --- | --- | --- |
 | Quick Range | Preset date range | Custom | This Month, Last Month, Next Month, Last Quarter, Year to Date, Last Year |
-| From / To | The reporting date range | month-of (today - 3 months) to end-of-month of today | NZ date-only, club time zone; To must be after From |
+| From / To | The reporting date range | month-of (today - 3 months) to end-of-month of today | NZ date-only, club time zone; To must be after From; at most 732 days, both ends counted (#4937) |
 | Lodge | Scope metrics to one lodge | All lodges | Only shown with more than one active lodge |
 | Deleted | Include soft-deleted bookings | Hide deleted | Include deleted, or Deleted only |
 | Reset | Restore the date range and Deleted filter | start of the month three months prior through current month-end; Hide deleted | Keeps the selected lodge; disabled at defaults |
 | Update | Re-run the query | — | — |
-| CSV | Download the figures as CSV | — | Filename `tac-report-<date>.csv` |
+| CSV | Download the figures as CSV | — | Filename `<club>-report-<date>.csv`, from the club's short name |
 | Download PDF | Generate a printable PDF | — | Falls back to the browser print dialog on error; always rendered light-on-white regardless of your theme |
 
 Notes: **Booked Revenue** is the booking system's price allocated over lodge
@@ -160,6 +160,7 @@ long ranges readable.
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | A red error banner appears | The date range is invalid (To not after From) or the query failed | Fix the dates and click **Update** |
+| The banner says Reports cover at most 732 days | The range is longer than about two years; the figures are hidden rather than left showing the previous range | Run one report per year (or per two years) and combine the exports |
 | CSV / PDF buttons are greyed out | The data has not finished loading | Wait for the dashboard to load, then export |
 | A chart says "No … data for this period" | There is no matching data in the range | Widen the range or change the Deleted / Lodge filter |
 | Occupancy shows 0% | No bed-nights were occupied in the range, or capacity is unset | Check the range and the lodge's capacity setup |

@@ -21,6 +21,8 @@ import {
   XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE,
   XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE,
 } from "@/lib/xero-operation-outbox-payload";
+import { XERO_OUTBOX_CARD_REFUND_REVERSAL_INVOICE_TYPE } from "@/lib/xero-card-refund-reversal-outbox";
+import { XERO_OUTBOX_ADMIN_GRANT_CREDIT_NOTE_TYPE } from "@/lib/admin-grant-credit-note-payload";
 import { getModificationNetAmountCents } from "@/lib/xero-booking-repair-analysis";
 import type { Prisma, XeroSyncOperation } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
@@ -34,6 +36,10 @@ import {
   readAppliedCreditLedgerQueueType,
 } from "@/lib/xero-applied-credit-operation-serialization";
 import { asArray, asRecord, readNumber, readString } from "@/lib/xero-json";
+import {
+  modificationNoteCreateWasSent,
+  modificationNoteInvoiceRefusalRetryReason,
+} from "@/lib/xero-modification-note-refusal";
 import {
   parsePaymentCreditNoteRetryInput,
   readCashRefundMethod,
@@ -96,12 +102,43 @@ import {
 } from "@/lib/subscription-charge-already-paid";
 
 /**
- * The `@/lib/xero` module namespace, named because an `import()` type written
- * inline in a PARAMETER annotation is one of the two shapes Semgrep cannot
- * parse (#3318) - the module is still loaded dynamically, at the one call site
- * that does it.
+ * The Xero document services a retry calls, each from its focused module
+ * (#4930: the `@/lib/xero` facade that bundled them is gone). They are still
+ * loaded dynamically, at the one call site that does it; the type is named
+ * because an `import()` type written inline in a PARAMETER annotation is one of
+ * the two shapes Semgrep cannot parse (#3318).
  */
-type XeroModule = typeof import("@/lib/xero");
+type XeroModule = Awaited<ReturnType<typeof loadXeroDocumentServices>>;
+
+async function loadXeroDocumentServices() {
+  const [bookingInvoices, contacts, creditNotes, entranceFees, payments, membershipSync, modificationNotes, refundNotes, supplementary] = await Promise.all([
+    import("@/lib/xero-booking-invoices"),
+    import("@/lib/xero-contacts"),
+    import("@/lib/xero-credit-notes"),
+    import("@/lib/xero-entrance-fee-invoices"),
+    import("@/lib/xero-invoice-payments"),
+    import("@/lib/xero-membership-sync"),
+    import("@/lib/xero-modification-credit-notes"),
+    import("@/lib/xero-refund-note-settlement"),
+    import("@/lib/xero-supplementary-invoices"),
+  ]);
+  return {
+    allocateCreditNoteToInvoice: creditNotes.allocateCreditNoteToInvoice,
+    checkMembershipStatus: membershipSync.checkMembershipStatus,
+    createUnappliedXeroCreditNote: creditNotes.createUnappliedXeroCreditNote,
+    createUnappliedXeroCreditNoteForModification: creditNotes.createUnappliedXeroCreditNoteForModification,
+    createXeroCreditNote: creditNotes.createXeroCreditNote,
+    createXeroCreditNoteForModification: modificationNotes.createXeroCreditNoteForModification,
+    createXeroEntranceFeeInvoice: entranceFees.createXeroEntranceFeeInvoice,
+    createXeroInvoiceForBooking: bookingInvoices.createXeroInvoiceForBooking,
+    createXeroPaymentForInvoice: payments.createXeroPaymentForInvoice,
+    createXeroSupplementaryInvoice: supplementary.createXeroSupplementaryInvoice,
+    findOrCreateXeroContact: contacts.findOrCreateXeroContact,
+    finishRefundCreditNoteSettlement: refundNotes.finishRefundCreditNoteSettlement,
+    updateXeroBookingInvoiceForBooking: bookingInvoices.updateXeroBookingInvoiceForBooking,
+    updateXeroContact: contacts.updateXeroContact,
+  };
+}
 
 type RetryableOperation = Pick<
   XeroSyncOperation,
@@ -127,6 +164,7 @@ type RetryableOperation = Pick<
   // that omit it simply fall back to payload-based delta detection.
   queueType?: XeroSyncOperation["queueType"];
   lastErrorCode?: XeroSyncOperation["lastErrorCode"]; // #4688: optional; Retry's own refusal reads the stored row
+  lastErrorMessage?: XeroSyncOperation["lastErrorMessage"]; // #3993: a paid-off allocation or a shortfall before create
 };
 
 export class XeroOperationRetryError extends Error {
@@ -184,6 +222,38 @@ function groupSettlementInvoiceRequeuePayload(
  * already raised (the task's link) and records only a missing payment. FAILED
  * or PARTIAL (the payment failed); null for any other row.
  */
+/**
+ * #4369 (`INV-PAY-151`): a failed card refund's Stripe reversal is replayed
+ * from its queued payload, back to PENDING. The worker re-uses an invoice
+ * already raised and records only a missing payment. A voided invoice is
+ * completed and not raised again. FAILED or PARTIAL; null for any other row.
+ * This must run before the generic invoice repair, which would send it as a
+ * booking invoice.
+ */
+function cardRefundReversalInvoiceRequeuePayload(
+  operation: RetryableOperation,
+): Record<string, unknown> | null {
+  if (
+    operation.direction !== "OUTBOUND" ||
+    operation.entityType !== "INVOICE" ||
+    operation.operationType !== "CREATE" ||
+    operation.localModel !== "Payment"
+  ) {
+    return null;
+  }
+  const queued = readQueuedOutboxPayload(operation.requestPayload);
+  return queued?.queueType === XERO_OUTBOX_CARD_REFUND_REVERSAL_INVOICE_TYPE
+    ? {
+        queueType: queued.queueType,
+        bookingId: queued.bookingId,
+        paymentId: queued.paymentId,
+        closeTaskId: queued.closeTaskId,
+        amountCents: queued.amountCents,
+        closedOn: queued.closedOn,
+      }
+    : null;
+}
+
 function keptLateCaptureInvoiceRequeuePayload(
   operation: RetryableOperation,
 ): Record<string, unknown> | null {
@@ -525,6 +595,20 @@ export function refuseRetryIfResolvedInXero(operation: ResolvedMarkReadable): vo
  * only the shape the requeue arm handles - a Payment allocation, ALLOCATE for
  * the allocation and UPDATE for the deallocation.
  */
+function isAdminGrantCreditNoteRetry(
+  operation: Pick<RetryableOperation, "entityType" | "operationType" | "localModel" | "requestPayload"> & {
+    queueType?: string | null;
+  },
+): boolean {
+  const queueType = operation.queueType ?? readQueueType(operation.requestPayload);
+  return (
+    queueType === XERO_OUTBOX_ADMIN_GRANT_CREDIT_NOTE_TYPE &&
+    operation.entityType === "CREDIT_NOTE" &&
+    operation.operationType === "CREATE" &&
+    operation.localModel === "MemberCredit"
+  );
+}
+
 function appliedCreditRequeueType(
   operation: Pick<RetryableOperation, "entityType" | "localModel" | "operationType" | "requestPayload"> & {
     queueType?: string | null;
@@ -1064,6 +1148,12 @@ export function getXeroOperationRetryMeta(operation: RetryableOperation): XeroOp
     return { supported: true, reason: null };
   }
   if (
+    isAdminGrantCreditNoteRetry(operation) &&
+    (operation.status === "FAILED" || operation.status === "PARTIAL")
+  ) {
+    return { supported: true, reason: null };
+  }
+  if (
     operation.localModel === "ManualRefundTask" &&
     (operation.queueType === XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE ||
       readQueuedOutboxPayload(operation.requestPayload)?.queueType ===
@@ -1076,6 +1166,21 @@ export function getXeroOperationRetryMeta(operation: RetryableOperation): XeroOp
           supported: false,
           reason:
             "Only a failed or partial kept-payment invoice with its queued amount can be retried.",
+        };
+  }
+  if (
+    operation.localModel === "Payment" &&
+    (operation.queueType === XERO_OUTBOX_CARD_REFUND_REVERSAL_INVOICE_TYPE ||
+      readQueuedOutboxPayload(operation.requestPayload)?.queueType ===
+        XERO_OUTBOX_CARD_REFUND_REVERSAL_INVOICE_TYPE)
+  ) {
+    return cardRefundReversalInvoiceRequeuePayload(operation) &&
+      (operation.status === "FAILED" || operation.status === "PARTIAL")
+      ? { supported: true, reason: null }
+      : {
+          supported: false,
+          reason:
+            "Only a failed or partial failed-card-refund reversal with its queued amount can be retried.",
         };
   }
   // #3953: a change's card payment receipt is retried on its own row, any stored plan kept.
@@ -1134,6 +1239,12 @@ export function getXeroOperationRetryMeta(operation: RetryableOperation): XeroOp
     }
 
     if (operation.entityType === "CREDIT_NOTE" && operation.operationType === "CREATE") {
+      // #3993: an edit note the invoice cannot take is not replayed. A payment's
+      // refund note is not this row, even if its message happens to say the same.
+      if (operation.localModel === "BookingModification") {
+        const refusal = modificationNoteInvoiceRefusalRetryReason(operation);
+        if (refusal) return { supported: false, reason: refusal };
+      }
       if (parseRefundCreditNoteRepairInput(operation)) {
         return { supported: true, reason: null };
       }
@@ -1283,6 +1394,8 @@ export function getXeroOperationRetryMeta(operation: RetryableOperation): XeroOp
     }
 
     if (operation.localModel === "BookingModification" && operation.localId) {
+      const refusal = modificationNoteInvoiceRefusalRetryReason(operation);
+      if (refusal) return { supported: false, reason: refusal };
       return { supported: true, reason: null };
     }
 
@@ -1312,6 +1425,11 @@ export function getXeroOperationRetryMeta(operation: RetryableOperation): XeroOp
     const queued = readQueuedOutboxPayload(operation.requestPayload);
     if (queued?.queueType === XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE) {
       return { supported: true, reason: null };
+    }
+    // #3993: an edit note's allocation row Xero refused as paid off is Resolved, not replayed.
+    if (operation.localModel === "BookingModification") {
+      const refusal = modificationNoteInvoiceRefusalRetryReason(operation);
+      if (refusal) return { supported: false, reason: refusal };
     }
     return parseAllocationRetryInput(operation)
       ? { supported: true, reason: null }
@@ -1434,6 +1552,11 @@ export async function retryXeroSyncOperation(
     };
   }
 
+  if (isAdminGrantCreditNoteRetry(operation)) {
+    await requeueOutboxRowForRetry(operation, null, ["FAILED", "PARTIAL"], "admin grant credit note");
+    return { message: "Queued admin grant credit note retry." };
+  }
+
   // #3635: the kept late capture's invoice and #3642's group invoice rows go
   // back to the outbox the same way, through one requeue.
   const keptLateCapturePayload = keptLateCaptureInvoiceRequeuePayload(operation);
@@ -1445,6 +1568,17 @@ export async function retryXeroSyncOperation(
       "kept-payment invoice",
     );
     return { message: "Queued the kept-payment Xero invoice for retry." };
+  }
+
+  const cardRefundReversalPayload = cardRefundReversalInvoiceRequeuePayload(operation);
+  if (cardRefundReversalPayload) {
+    await requeueOutboxRowForRetry(
+      operation,
+      cardRefundReversalPayload,
+      ["FAILED", "PARTIAL"],
+      "failed-card-refund reversal",
+    );
+    return { message: "Queued the failed-card-refund reversal invoice for retry." };
   }
 
   // #3924 round 9: a late capture's released change invoice, so its worker's
@@ -1491,7 +1625,7 @@ export async function retryXeroSyncOperation(
     return { message: "Queued the membership subscription invoice for retry." };
   }
 
-  const xero = await import("@/lib/xero");
+  const xero = await loadXeroDocumentServices();
   const createdByMemberId = options?.createdByMemberId ?? undefined;
 
   if (operation.status === "PARTIAL") {
@@ -2015,6 +2149,8 @@ export async function retryXeroSyncOperation(
         repairExistingLink: true,
         ...(modificationRefundMethod ? { refundMethod: modificationRefundMethod } : {}),
         ...(modificationNoteWording ? { noteWording: modificationNoteWording } : {}),
+        // #3993: a retried row that already sent its create may have a note in Xero.
+        ...(modificationNoteCreateWasSent(operation.requestPayload) ? { earlierCreateSent: true } : {}),
         format,
       });
       return { message: "Retried Xero modification credit note creation." };

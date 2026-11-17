@@ -19,7 +19,8 @@ to read the queues and membership **edit** to approve or reject.
 ## When you'd use it
 
 - A member has asked (through their profile) to delete their account and you need
-  to review it.
+  to review it. Until you approve or reject it, the member's profile shows the
+  date they asked, in place of the request button.
 - A member record was created in error (a typo duplicate with no meaningful
   history) and an admin has raised a permanent hard-delete for a second admin to
   approve.
@@ -32,7 +33,10 @@ to read the queues and membership **edit** to approve or reject.
 1. Go to **Admin → Monitoring & Support → Deletion Requests**. The page shows
    **Member self-service requests** and **Admin-initiated deletion requests**,
    sharing one status selector (**Pending**, **Approved**, **Rejected**, **All**).
-   **Reset** restores Pending and page 1 in both queues together.
+   **Reset** restores Pending and page 1 in both queues together. Each queue
+   shows a total line such as "Showing 1–25 of 40" and pages 25 at a time;
+   **Pending** lists the oldest request first, so the one waiting longest is at
+   the top, while **Approved**, **Rejected** and **All** list the newest first.
 
    ![Deletion Requests page: the status selector, the Member self-service requests card, and the Admin-initiated deletion requests card](../images/admin/admin-deletion-requests.png)
 
@@ -53,6 +57,8 @@ to read the queues and membership **edit** to approve or reject.
 3. **Reject** lets you choose **Reject without emailing** or **Reject and email
    member** (with an optional reason sent to the member). If the member has no
    email on file, it is a single **Reject Request** with no notification.
+   Either way the request button returns on the member's profile, so a member
+   you reject without emailing will see it come back and may ask you why.
 
 ### Approve or reject an admin-initiated hard-delete
 

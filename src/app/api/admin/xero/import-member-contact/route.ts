@@ -1,6 +1,4 @@
-import { randomBytes } from "crypto";
-import { hash } from "bcryptjs";
-import { PASSWORD_BCRYPT_COST } from "@/lib/password-hashing";
+import { UNUSABLE_PLACEHOLDER_PASSWORD_HASH } from "@/lib/password-hashing";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { logAudit } from "@/lib/audit";
@@ -20,17 +18,15 @@ import {
   lockXeroContactHome,
   XeroContactTwoHomesError,
 } from "@/lib/xero-contact-home";
-import {
-  callXeroApi,
-  getAuthenticatedXeroClient,
-  refreshXeroContactCachesFromContact,
-  syncMemberSubscriptionHistoryForLinkedContact,
-} from "@/lib/xero";
+import { callXeroApi, getAuthenticatedXeroClient } from "@/lib/xero-api-client";
+import { refreshXeroContactCachesFromContact } from "@/lib/xero-contact-cache";
+import { syncMemberSubscriptionHistoryForLinkedContact } from "@/lib/xero-membership-sync";
 import { getXeroApiErrorInfo } from "@/lib/xero-api-errors";
 import {
   importedMemberRecovery,
   xeroPartialSuccessBody,
 } from "@/lib/xero-partial-success";
+import { requireRecentAuth } from "@/lib/require-recent-auth";
 
 const importMemberContactSchema = z.object({
   xeroContactId: z.string().trim().min(1),
@@ -65,6 +61,8 @@ export async function POST(request: NextRequest) {
   if (!guard.ok) return guard.response;
   const session = guard.session;
   let body: unknown;
+  const recent = await requireRecentAuth();
+  if (!recent.ok) return recent.response;
   try {
     body = await request.json();
   } catch {
@@ -171,7 +169,7 @@ export async function POST(request: NextRequest) {
       select: { id: true },
     });
     const canLogin = !existingLoginForEmail;
-    const placeholderHash = await hash(randomBytes(32).toString("hex"), PASSWORD_BCRYPT_COST);
+    const placeholderHash = UNUSABLE_PLACEHOLDER_PASSWORD_HASH;
 
     const storedXeroLink = buildXeroContactUrl(cachedContact.contactId);
     const member = await prisma.$transaction(async (tx) => {

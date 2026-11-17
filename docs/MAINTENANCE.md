@@ -373,6 +373,28 @@ safe (`browserslist` above is the standing example).
   dropped `heroku-api-key` and a UUID `CRON_SECRET`. `targetRules` is not the fix
   either; in 8.28.0 it silently voids the allowlist entirely.
 
+### Refreshing container image digests
+
+Third-party containers use tag plus digest (`INV-OPS-017`). Dependabot updates
+Dockerfile and Compose references, but does not update workflow environment
+values, workflow services or shell assignments. When it changes Compose's
+PostgreSQL pin, copy that exact reference to every PostgreSQL service in
+`.github/workflows/ci.yml`; `deployment-image-contracts.test.ts` rejects drift.
+The deploy's Caddy helpers read Compose directly, so they need no copied pin.
+
+For Semgrep (`SEMGREP_IMAGE` in `ci.yml`) and the backup drill (`PG_IMAGE` in
+`scripts/backup-restore-drill.sh`), resolve the existing tag's registry manifest
+index digest, preserving its version and platform coverage. Use the digest of
+the multi-architecture index, rather than one platform's manifest. Keep the
+backup drill on Debian `postgres:16`; its measured restore baseline uses that
+variant. Review intentional version upgrades separately.
+
+Run `node scripts/ci/check-image-pins.mjs` and
+`pnpm run test:named scripts/ci/check-image-pins.test.mjs src/lib/__tests__/deployment-image-contracts.test.ts src/lib/__tests__/deploy-caddy-image-script-contract.test.ts`.
+The image check shares the existing action-pin CI step; required check and
+scanner step names stay unchanged. A rejected unsupported shape needs an
+explicit parser extension and test, rather than bypassing the check.
+
 ### Two Semgrep scans run per pull request, and only one of them blocks
 
 This trips up every reader of a `nosemgrep` annotation, so it is written down
@@ -822,7 +844,7 @@ enforces is:
 
 > Current size debt may stay. New debt and debt growth may not appear silently.
 
-**No ceiling is written down.** For each file a change touches, the check reads
+**No per-file ceiling is written down.** For each file a change touches, the check reads
 how long that file was on `origin/main` and compares. From that:
 
 - a file that was **within** its budget may not go over it;
@@ -835,6 +857,12 @@ how long that file was on `origin/main` and compares. From that:
 - an already-over-budget file **may** grow if the change says so out loud, in a
   per-pull-request allowance that names the file, its new length and why
   splitting is worse — see "When a file legitimately has to grow" below;
+- but never past its **hard ceiling** of three times its budget — 2,100 lines
+  for a domain module, 750 for a route handler, 1,500 for a page shell (owner
+  decision, 11 Nov 2026,
+  [#4926](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4926)). No
+  allowance can take a file past it, and a file already past it may only stay
+  the same length or shrink. No file is exempt;
 - a file **renamed within** the budgeted scope keeps its predecessor's ceiling,
   so moving an oversized module does not read as a pile of brand-new debt. A
   file renamed **into** the scope from outside it — from `prisma/`, `scripts/`,
@@ -848,6 +876,13 @@ how long that file was on `origin/main` and compares. From that:
   unfetched `origin/main`. The same goes for a run that finds **no production
   files at all**: "scanned and found nothing wrong" and "scanned nothing" are
   the same empty result and must not be the same message.
+
+Every run on a change also prints `Size debt change from this PR: +N lines`
+(or a negative number), pass or fail: how far the change moves the tree-wide
+figure `--report` totals. A run of small declared increases is invisible one
+change at a time; the tree-wide total, from `--report`, is not. A file moved out
+of the budgeted scope counts as debt removed, exactly as `--report` would count
+it, so check the diff before reading a negative figure as a split.
 
 ```bash
 pnpm run quality:budget                    # verify (also a step in CI's `verify` job)
@@ -1003,7 +1038,20 @@ format and the rules. In short:
 - it may **not** cover a new file, a file renamed into the budgeted scope, or a
   file crossing its budget for the first time. Each is refused by name. An
   allowance lets an already-over-budget file grow; it is not a way to arrive
-  over budget.
+  over budget;
+- it may **not** take a file past its **hard ceiling** of three times its
+  budget (2,100 / 750 / 1,500 lines), refused as `allowance-over-hard-ceiling`.
+
+**The hard ceiling** (owner decision, 11 Nov 2026,
+[#4926](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4926)) exists
+because an escape judged one change at a time needs a limit on the total. As
+measured in #4926 at 11 Nov 2026, `src/lib/payment-recovery.ts` went from 1,881
+lines on 21 Aug 2026 to 3,617 through 33 allowances, each step reasonable on its
+own. The multiple is
+`HARD_CEILING_MULTIPLE` in `scripts/lib/file-size-budget.ts`. A file at or past
+the ceiling can only stay or shrink, so the next change that needs it longer
+splits a cohesive part out first. There is no exemption mechanism — the owner
+chose that over naming `src/lib/bed-allocation.ts` as one.
 
 **`pnpm run quality:budget:update` is gone** (#2979) — if you remember typing it,
 or find it in an old branch or an old pull request comment, the allowance above
@@ -1030,6 +1078,69 @@ and by how much in total — run `pnpm run quality:budget --report`, or read the
 `File-size budget ratchet` section of `pnpm run quality:report`. Both compute it
 from the tree through the same function, so neither can drift from the other or
 from the gate.
+
+### Function-length ratchet
+
+The file-size budget measures whole files, so a 2,000-line function inside a
+file that is already allowed to be long passes it. `performBookingCancellation`
+is exactly that: one function of more than two thousand lines in a file whose
+size debt the file-size ratchet accepts (#4927). So `pnpm run quality:budget`
+runs a second ratchet in the same run, over functions, with the same rule:
+
+> Current length debt may stay. New debt and debt growth may not appear silently.
+
+**The ceiling is 300 lines** (`FUNCTION_LENGTH_LIMIT` in
+`scripts/lib/function-length-ratchet.ts`), a function a reviewer can still hold
+in their head in one sitting. Measured on 13 Nov 2026, 323 of 13,565 production
+functions are over it, carrying 93,716 lines of length debt; run
+`pnpm run quality:budget --report` for the current figure and the longest ten.
+
+**What counts as a function** is what a reader opens and reads top to bottom: a
+top-level `function` declaration, a function or arrow assigned to a top-level
+`const`/`let` (including one passed to a wrapping call such as `forwardRef(…)`
+or `memo(…)`, measured as the whole declaration), and a method, constructor, accessor or arrow-valued field of a
+top-level class (named `Class.member`). A function nested inside one of those is
+part of its length, not a unit of its own, so keeping a long function's phases
+as inner closures does not shorten it. Known limit: methods and function-valued
+properties of an object literal (such as `export const config = { jwt() {…} }`,
+or `wrap({ handler: async () => {…} })`) and namespace members are not measured,
+so a long function written in one of those shapes is not judged. A span runs from the first token to the
+closing token; the leading doc comment does not count. `scripts/lib/function-length.ts`
+is the measurement.
+
+For each production file a change touches (the same scope and the same base ref
+as the file-size ratchet, so `--base` means the same thing to both):
+
+- a function that was **within** 300 lines may not go over;
+- a function **already over** may not exceed the length it had on the base ref;
+- a **new** function may not arrive over 300.
+
+A function is matched by name within its file. A git rename of the file keeps
+each function's base length, and so does a function moved to another file the
+change touches or out of a file it deletes, provided that name exists in only
+one of the change's files on each side. A function moved in from outside the
+budgeted scope is judged as new. A split is therefore recognised as progress: the
+moved function keeps its old length as its ceiling and the old file loses it. Renaming
+a long function is not followed: the ratchet cannot tell a rename from a
+deletion plus a new function, so keep the name or split it while you are there.
+
+**When a function legitimately has to grow**, splitting it stays the preferred
+answer. Where the split is genuinely worse, declare it in this change's
+`size-allowances.d/` fragment, exactly as for a file, with `function:` naming
+`<path>#<name>` (the figure below is illustrative):
+
+```markdown
+function: src/lib/booking-cancel.ts#performBookingCancellation
+lines: 2114
+reason: the guard belongs inside the claim it protects until #4516 splits the
+  cancellation into its phases.
+```
+
+The same rules apply as for a file allowance: the recorded length must be the
+function's real length, it is one-shot, an unneeded one fails, and it may not
+cover a new function or carry one over 300 for the first time. The hard ceiling
+is a file rule; a function allowance has no upper bound of its own.
+[`size-allowances.d/README.md`](../size-allowances.d/README.md) has the format.
 
 ### Quality report
 
@@ -1082,14 +1193,14 @@ were off by two orders of magnitude.
 | `src/lib/contextual-help.ts` (deleted) | Split (#2689) into 16 modules under `src/lib/contextual-help/`. `index.ts` **is** the registry (path matching, longest-prefix resolution, fallbacks, question attachment) rather than a barrel, and keeps the same three exported accessors; entry content sits in one module per **admin sidebar section** (`admin/*.ts`, matching `buildAdminNavSections` in `admin-sidebar.tsx`) — plus one `appearance-and-website` module split off Setup & Configuration, because `/admin/appearance` is an item in that section rather than a section of its own and folding its seven pages back would take that module to ~810 lines, over budget — with `finance.ts`, `questions-*.ts`, `fallbacks.ts`, and the two leaves `types.ts` and `booking-status-glossary.ts`. Content stayed TypeScript by owner decision — the typed shape is the schema check. Largest module 580 LOC. The structural move was proved value-for-value for every one of the 68 resolved paths: a JSON dump keyed by path — both scopes, both fallbacks, nested resolution and `normalisePath` — was byte-identical before and after (106,917 bytes, same sha256). The same PR then reconciled the shadowed second `/admin/notifications` entry against the live page and folded its accurate delivery-mode field into the surviving entry. The registry now has 68 entries with 68 unique paths (67 admin, one finance), and a permanent test rejects any future duplicate as unreachable text. |
 | `src/lib/admin-bed-allocation.ts` (deleted) | Split (#2688) into eighteen modules named for one responsibility each, all under the 700-LOC budget, with **no barrel** — every one of its 31 non-test importers names the module it depends on, because a re-export facade would have left the monolith in place under a new name and recreated the same dependency magnet. The two barrel rows in this table are precedents for a *published API*, not for hiding a split. It had grown to 55 exports over 80 functions covering room and bed inventory, board assembly, allocation writing, range assignment, audit recording and date arithmetic. The modules, by concern: leaves `-admin-contract` (shared error and db-client types), `-display-names` (how a member and a guest are named), `-admin-settings` (the settings read/write bound to `prisma`), `-date-range` (the board's lodge-night range and its parse); wire shapes `-board-payload` (types only) and `-range-report` (client-safe); pure `-warnings` (the board's warnings); reads `-board-records` (queries and DTO serialisers) and `-board` (payload assembly, officer-card counter); writers `-placement` (the shared write chokepoint all three manual paths pass through, carrying the D-12 consent refusal and the ADR-001 whole-lodge-hold refusal), `-manual-writes` (single night, bulk nights, same-date move, delete), `-range-assign` (#2251 range assignment) with `-range-audit` (its audit record, which stores counts, night runs and booking ids but never other bookings' guest or member names), `-auto-allocate` ("Run auto allocation"), `-approval` (approval plus the #776 booking row lock), `-bunk-pairing` (the #1675 bunk rule and its room-row lock), `-rooms` (room inventory, config import, delete guards) and `-beds` (bed inventory, retire/delete guards). Every function body moved verbatim; the live sizes are whatever the tree currently carries, not a number recorded here. |
 | `src/lib/payment-link.ts` | Split (#2956) by responsibility into the core record module — token resolution, the refusal vocabulary, the payable/paid status tests and the two revocation helpers — plus `payment-link-context` (what the public pay page shows), `payment-link-intent` (the Stripe intent a token may mint, and its recovery error), `payment-link-reissue` (the expired-link "email me a fresh one" mint) and `payment-link-split-guest` (the split non-member child's mint and on-demand issue). **No compatibility barrel**, on the `admin-bed-allocation` precedent above: the core imports none of the four, each flow module imports the core, and every caller names the module it depends on. Every function body moved verbatim; the one deliberate unification was the born-expired test, which two mint sites had written with different operators and which now lives once in `payment-link-expiry.ts`. Live sizes are whatever the tree carries. |
-| `src/lib/bed-allocation.ts` | **Accepted, oversized, and deliberately not split** (owner decision, 9 Aug 2026, #2688). It is 13 exports across 69 functions: a small public surface around one first-fit allocation algorithm whose function bodies are long because the algorithm is. That is cohesion, not sprawl, and the budget is a signal about sprawl. Splitting it would produce files that must be read together to follow one algorithm, which makes capacity code — money code — harder to reason about, not easier. The sibling that WAS split, `admin-bed-allocation.ts`, was the opposite shape: 55 exports over 80 functions of unrelated responsibilities. Grow this file only with the algorithm; a genuinely independent concern with its own API and tests may still be extracted, and anything else is a reason to re-read this row rather than to add here. The ratchet holds its ceiling at whatever length `origin/main` currently carries for it. |
+| `src/lib/bed-allocation.ts` | **Accepted, oversized, and deliberately not split** (owner decision, 9 Aug 2026, #2688). It is 13 exports across 69 functions: a small public surface around one first-fit allocation algorithm whose function bodies are long because the algorithm is. That is cohesion, not sprawl, and the budget is a signal about sprawl. Splitting it would produce files that must be read together to follow one algorithm, which makes capacity code — money code — harder to reason about, not easier. The sibling that WAS split, `admin-bed-allocation.ts`, was the opposite shape: 55 exports over 80 functions of unrelated responsibilities. It is past the hard ceiling of 2,100 lines, which applies to it like any other file (owner decision, 11 Nov 2026, [#4926](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4926), replacing #2688's "grow this file only with the algorithm"): it may stay or shrink, and the next change that needs it longer must first extract a cohesive part — a genuinely independent concern with its own API and tests is the natural candidate. |
 | `src/lib/email.ts` | Split (#1137) into a re-export facade over cohesive `src/lib/email/` modules (`core`, `admin-alerts`, `account`, `booking`, `membership`, `family`, `waitlist`, `groups`, `booking-requests`, `chores`, `ses-feedback`, plus non-re-exported `internal` plumbing). The `admin-alerts` surface was itself split (#1210) by **domain/source** — `admin-alerts.ts` is now a barrel re-exporting `admin-alerts-shared` (plumbing + `getAdminEmails`), `admin-alerts-booking`, `admin-alerts-membership`, `admin-alerts-finance`, and `admin-alerts-ops`. When an alerts/email module next exceeds the ~700 LOC soft cap, split it along the **domain axis** (booking/capacity, membership lifecycle, finance/Xero/payments, ops) — not by audience, which is fuzzy because most alerts fan out to all admins — and keep the facade barrel's exports byte-identical so `src/lib/email.ts` and every importer keep resolving. |
 | `src/lib/xero-hardening.ts` | Accepted as-is for now: central Xero hardening policy and diagnostics boundary. The `xero-hardening-canonical-links.ts` ↔ `xero-hardening-report.ts` clone pair (112 duplicated lines / 2 clones, jscpd 2026-07-07) is recorded as accepted under this same disposition (#1524 C4, owner-ticked 2026-07; same subsystem call as #1208 items 5/6). |
 | `src/lib/finance-sync-xero-datasets.ts` | Split (#1531, #1524 C3) into a re-export barrel over cohesive `src/lib/finance-sync-xero-datasets/` modules (`constants`, `types`, `date-format`, `report-snapshot`, `invoice-helpers`, `open-invoices`, `aged-invoices-snapshot`, `open-invoices-snapshot`, `report-sync`, `monthly-facts`, `chart-of-accounts`, `invoice-sync`). Behavior-preserving verbatim motion with an acyclic import graph (`constants`/`types`/`date-format` are leaves; the sync orchestrators sit on top); the barrel re-exports the unchanged public surface (29 functions/consts + the `FinanceMonthlyFactsWindowInput` type). The self-duplicated clone regions were deduped: the accounts-receivable and accounts-payable invoice builders now share one generic `buildFinanceOpenInvoicesSnapshot` (each snapshot's persisted invoice shape is supplied verbatim by the caller, keeping `expectedPaymentDate`/`plannedPaymentDate` divergent), and the aged + open-invoice builders share `updateContactDueDateRange`/`compareOpenInvoicePayloadsByDueDate`/`deriveSnapshotCurrency`. jscpd (min-tokens 70) dropped from 186 duplicated lines / 7 clones to 38 / 3 (2026-07-08); the 3 residual clones are the intentionally-separate AR-vs-AP payload literals plus two short prefix regions whose further extraction would over-abstract. |
 | `src/lib/finance-dashboard-page.ts` | Split (#2957) by **view**: the file keeps only the page-level loading (club zone, lodges, seasons, sync status), the selection labels and the `view` dispatch, and one module per dashboard view sits under `src/lib/finance-dashboard-page/` (`bookings-view`, `pnl-view` for revenue and costs, `ratios-view`, `pricing-sensitivity-view`, `balance-sheet-views` for cash, balance sheet and working capital, `sync-health-view`), with the shared view-model shapes and the projection helpers every view uses in `model.ts` and the derived chart palette in `series-colors.ts`. Every builder body moved verbatim, and there is **no barrel re-export**: the client, the route and the tests import the module that owns the symbol, so the old file cannot quietly become the dependency magnet again. A later view goes in its own module beside these; anything that two views need goes in `model.ts` (or a small named leaf, as the Xero reports source note does), never back into the facade. |
 | `src/app/(authenticated)/bookings/[id]/page.tsx` | Split (#2958) by **domain responsibility**, on the #2957/#2956 shape: the page keeps only the shell — auth, the club clock, the read, the viewer gate and redirect, the D-12 arrival-instructions gate, and the composition of sections — and everything else moved verbatim into two route-local directories. `_lib/` holds the server-side loading, projection and orchestration, one module per domain seam: `load-booking-detail` (the one `findUnique` and its `BookingDetailRecord`), `booking-detail-viewer` (who is looking), `booking-detail-consent` (the #2250 self-removal and #2307 consent cards), `booking-detail-history` (audit rows, events, the once-read #3033 review flag, narrative, timeline), `booking-detail-edit-access` (cancel/modify/override/room/name gates and the two panel gates), `booking-detail-linked-party` (split children and the organiser group), `booking-detail-payment` (the money projection and the pay-door gates), `booking-detail-editor-data` (the `BookingEditorData` payload with its admin-only spreads), `booking-detail-messages` (merge data and the rendered booking messages) and `booking-detail-admin-tools` (every admin-gated read the tools card is fed). `_components/` holds one server section per cohesive render block (`booking-status-banners`, `booking-admin-tools-section`, `booking-consent-cards`, `booking-linked-party-sections`, `booking-review-notices`, `booking-stay-preferences`, `booking-payment-cards`, `booking-lifecycle-actions`, `booking-cancellation-outcome`, `booking-notes-and-history`), each taking the projection groups it names and destructuring them at its top so the JSX moved byte-for-byte. **No barrel**; each module exports its result type and the page composes them in the order the section rail declares. Canonical booking lifecycle, settlement and authorization services stayed where they were and are called exactly as before. The thirteen source-contract suites that read the page were pointed at the module that now owns each pinned symbol, with no assertion changed in meaning. A new section goes in its own `_components/` module and a new server-side read in the `_lib/` module for its domain (or a new one), never back into the page. **Measured against the base at merge time: `page.tsx` went 2,792 -> 388 LOC** (route-page-shell budget 500), and the route directory's production files went 3 files / 2,915 LOC -> 23 files / 3,933 LOC. **This row is the one home for those numbers.** They are measurements rather than facts about the design, so a second copy goes stale silently: the branch first recorded 2,761, which was the page's length at the *branch point* and stopped being true once the branch merged the epic twice and took #3269's thirty-line addition into `load-booking-detail`. Nothing else states them — the changelog fragment and the split's own census docblock point here instead — and a later change re-measures here rather than adding a number of its own. |
-| `src/app/(admin)/admin/members/[id]/page.tsx` | Queued for future route-shell thinning as member-detail sections continue to move local state out. |
-| `src/app/(admin)/admin/family-groups/page.tsx` | Route-shell thinning completed (#1530, closes the #1524 C2 carry-over). The request-review duplication with `src/components/admin/family-group-editor.tsx` was extracted to a shared `FamilyGroupRequestReviewSection` (`src/components/admin/family-groups/request-review-section.tsx`) that both the admin page and the editor render; the per-request state and the approve/reject/search handlers now live there once (behaviour-preserving — the two prior copies differed only by a `member`/`adult` noun and their refresh callback, now props). jscpd (min-tokens 70) across the pair drops from the catalogued 225 duplicated lines / 7 clones to 29 lines / 3 clones — the residue is the unavoidable shared UI-import block plus the create/edit member-search combobox, left inline because its surrounding selected-member badges differ between the two forms. page.tsx thinned 786 → 565 LOC; editor 715 → 499 LOC. |
+| `src/app/(admin)/admin/membership/members/[id]/page.tsx` | Queued for future route-shell thinning as member-detail sections continue to move local state out. |
+| `src/app/(admin)/admin/membership/family-groups/page.tsx` | Route-shell thinning completed (#1530, closes the #1524 C2 carry-over). The request-review duplication with `src/components/admin/family-group-editor.tsx` was extracted to a shared `FamilyGroupRequestReviewSection` (`src/components/admin/family-groups/request-review-section.tsx`) that both the admin page and the editor render; the per-request state and the approve/reject/search handlers now live there once (behaviour-preserving — the two prior copies differed only by a `member`/`adult` noun and their refresh callback, now props). jscpd (min-tokens 70) across the pair drops from the catalogued 225 duplicated lines / 7 clones to 29 lines / 3 clones — the residue is the unavoidable shared UI-import block plus the create/edit member-search combobox, left inline because its surrounding selected-member badges differ between the two forms. page.tsx thinned 786 → 565 LOC; editor 715 → 499 LOC. |
 
 ## Operational Repair Tools
 
@@ -1102,7 +1213,7 @@ spelling to copy unless a runbook explicitly gives you another one. (One does:
 command `./node_modules/.bin/tsx --conditions=react-server ...` in full. That is
 correct and supported — what is never correct is a bare `pnpm exec tsx`.) The reason
 is not tidiness.
-`@/lib/prisma`, `@/lib/audit`, `@/lib/email`, `@/lib/xero` and `@/lib/stripe`
+`@/lib/prisma`, `@/lib/audit`, `@/lib/email`, `@/lib/xero-api-client` and `@/lib/stripe`
 each carry `import "server-only"` (`INV-OPS-013`, #2850), which is what makes
 the production build refuse to ship any of them to a member's browser. Since
 #3204 the club-timezone seed and the two environment-role readers carry it too,
@@ -1453,6 +1564,23 @@ its allocation refused) reports `MISSING_CREDIT_NOTE_ALLOCATION` with that
 operation's retry, never a fresh allocation; while a retry is running on it,
 or where the retry is refused, the report says the allocation is blocked and
 offers nothing, and you check again later or allocate it by hand in Xero.
+Since #3993 a paid-off allocation (Xero says the invoice has already been paid
+off, or the amount is greater than the amount outstanding) and a modification
+note the invoice cannot take are not retried and are not safe to apply: the
+report asks for manual review. For a card refund that already produced both
+notes, keep the refund note, which carries the Stripe refund payment. Void the
+modification note only after confirming it has no allocations or refunds. On
+the Xero operations screen, Resolve the partial operation and its failed
+requeue and allocate rows. Do not mark the row non-replayable, which warns
+forever. Do not void the refund note: inbound sync would retire its link and
+the next nightly run would raise another. A paid-off note recorded with any
+other method (or none) names no refund note: check how the money went back
+before allocating, refunding or voiding it. If the invoice cannot take the note
+on a re-run whose earlier attempt already sent the create to Xero (a worker
+that died before completing), the row says so and stays retryable: check Xero
+for an existing note for that edit before treating it as not created. This
+change does not perform that remedy, and it uses no production Xero, Stripe,
+or database.
 Since #4762 the same holds for an invoice-clearing note whose operation the
 retry refuses: reported blocked with the reason and the invoices left to
 allocate by hand, never a fresh allocation of the whole note against the
@@ -1900,6 +2028,45 @@ release is one you will not roll back. If a rollback becomes unavoidable
 afterwards, first reset the rewritten rows from their audit rows (each
 `booking-payment.stored-night-price.rate-derived` strand entry carries
 `fromPriceCents` and `fromSource` per night), then route back.
+
+### Settle open edit reviews and re-base frozen headlines (#4343)
+
+`pnpm run bookings:edit-review-cleanup` is the owner's one-off for edit reviews
+left from before every edit was priced automatically. It does nothing until it
+is run. Census (the default) and `--dry-run` keep nothing. `--apply` needs
+`--actor <memberId>` and is the only mode that writes.
+
+Census reports open edit reviews, frozen headlines (a booking that has a review,
+none of them still open, and a total that is not the sum of its guests),
+dismissed shortenings whose money stayed inside the guest's stored total, and
+the existing ledger night-line census. Dry-run prints the decision for each
+open review and, for each frozen headline, the four money columns before and
+after. That preview runs inside a transaction it rolls back.
+
+Apply settles each open review through the ordinary refund, credit or charge
+path, and charges the change fee when the edit moved check-in and had not
+already charged one. That fee is priced on the club day the edit was saved,
+through the normal late-notice fee rule, so an unpaid booking carries none. A
+review it cannot price, and one whose guest was removed after the review was
+raised, is closed with a note and no money moved; a removal that lands during
+the run is caught under the settlement lock and the review is dismissed
+instead. A resolver refusal stays open and is listed. The headline pass then re-bases each
+frozen booking through the same writer a review closure uses. It moves no cash,
+card charge, account credit or Xero document. A second apply changes nothing.
+
+Run it only from the image that contains this change, after that colour is the
+only one serving, and never during a mixed-colour window. Point `DATABASE_URL`
+at a non-production copy for the dry-run. Name the database yourself:
+
+```bash
+DATABASE_URL=<non-prod copy> pnpm run bookings:edit-review-cleanup
+DATABASE_URL=<non-prod copy> pnpm run bookings:edit-review-cleanup -- --dry-run
+DATABASE_URL=<non-prod copy> pnpm run bookings:edit-review-cleanup -- --apply --actor <memberId>
+```
+
+The before-values are on the booking's `PRICE_REBASE` history row and the audit
+entry, which is how a headline can be put back by hand. Do not roll production
+back below `5bab5c49`.
 
 ### Census the booking money verdicts, night-price provenance and edit reviews (#3278, #3531)
 
@@ -2487,9 +2654,9 @@ Check the booking, the recorded refunds and Stripe before moving more money.
 If money remains owed, settle it with **Paid another way** in
 [Stuck States](guides/stuck-states.md), rather than another Stripe dashboard
 refund. If nothing remains owed, ask a developer to reconcile the held row. A
-row held under #4858 whose named refund has since failed (it then has a
-failed-later row of its own) is a developer's too, never a **Paid another way**
-close: that row asks for the same money again (#4492).
+row held under #4858 whose named refund has since failed stays on that list
+without **Paid another way** until the failed refund has gone back to the card.
+The row says why (#4492).
 A preflight read or recording failure uses normal backoff and sends nothing;
 an intent with more than 100 refunds requires investigation because the single
 page cannot establish complete evidence. No production repair runs automatically.
@@ -3051,7 +3218,7 @@ dump file first; the script never touches S3 itself.
 To fetch a backup safely, use read-only S3 credentials from a workstation (never
 the production host) to copy one object out of the backup bucket. The backups
 live under the `tacbookings_s3backup/` prefix of the configured bucket. Read the
-destination **bucket** and **region** from **Admin → Integrations → Database
+destination **bucket** and **region** from **Admin → Monitoring & Support → Database
 Backups** (`/admin/backups`) — since #2095 the backup configuration lives in the
 encrypted in-app store, not in `BACKUP_S3_*` environment variables. Use your OWN
 read-only S3 credentials (from your operator secret store) rather than the app's
@@ -3114,7 +3281,11 @@ Every production deploy ships a tagged release (#4465), cut with
 [`scripts/release/cut-release.mjs`](../scripts/release/cut-release.mjs). `main`
 only moves through pull requests, so the release is cut in two phases with the
 release-prep pull request between them — the order v0.13.2 was cut in. Both
-phases print their whole plan and change nothing without `--execute`.
+phases print their whole plan and change nothing without `--execute`. The
+deploy script enforces the rule (#4978, `INV-OPS-019`): it refuses a commit no
+annotated `vX.Y.Z` tag on `origin` points at, unless
+`ALLOW_UNTAGGED_DEPLOY_COMMIT=1` and a written `UNTAGGED_DEPLOY_COMMIT_REASON`
+are set — see [`DEPLOYMENT.md`](../DEPLOYMENT.md#the-deploy-refuses-a-commit-that-is-not-a-release-4978).
 
 1. From a clean checkout of `origin/main`, prepare the release-prep commit:
 
@@ -3130,7 +3301,16 @@ phases print their whole plan and change nothing without `--execute`.
    local tag for the version that `origin` does not have, and a release that
    is prepared but not yet tagged (`package.json` ahead of `origin`'s latest
    tag, with that version's section in `CHANGELOG.md`) — publish that one, or
-   fold late fragments into it, rather than planning a lower version. The version is the
+   fold late fragments into it, rather than planning a lower version. It also
+   refuses, dry run included, while the upgrade documents are not ready
+   (`scripts/release/upgrade-docs.mjs`, #4979): `docs/UPGRADING.md` must have
+   exactly one `## Unreleased`, with only its fixed guide sections above it and
+   no release-specific `(#NNNN)` section there, and
+   `docs/PRODUCTION_UPGRADE_RUNBOOK.md`'s opening paragraph must either say
+   "This runbook is release-agnostic" or name a release no older than the
+   version being cut (the census in step 3 holds the release-prep pull request
+   to the same threshold, through `package.json`). Fix them in a pull request
+   to `main`, then re-run. The version is the
    latest `vX.Y.Z` tag **on `origin`** (never this clone's tags) plus a minor
    bump when any fragment
    is named `*.feature.md`, or a patch bump otherwise
@@ -3138,8 +3318,9 @@ phases print their whole plan and change nothing without `--execute`.
    overrides it and `--date YYYY-MM-DD` overrides the release date. With
    `--execute` it creates `release/v<version>`, sets `package.json`'s
    `"version"` (`pnpm-lock.yaml` does not record it), compiles the changelog
-   (step 2) and commits. It never pushes. If it stops part way it prints how to
-   inspect the branch or abandon it.
+   (step 2), files the release documents (step 3) and commits. It never
+   pushes. If it stops part way it prints how to inspect the branch or abandon
+   it.
 2. The compile step runs `scripts/release/compile-changelog.mjs` — on its own:
 
    ```bash
@@ -3168,18 +3349,75 @@ phases print their whole plan and change nothing without `--execute`.
    If a file removal fails during apply, the compiler restores the original
    changelog and fragments so you can fix the I/O cause and retry. If that
    restoration itself fails, stop and inspect the named files before retrying.
-3. Check `README.md`, `DEPLOYMENT.md`, `CONFIGURATION.md`, this maintenance
-   guide, and `docs/ARCHITECTURE.md` for dependency, release, GHCR, migration,
+3. The same commit brings the release documents up to date (#4979, #4983).
+   **A release's upgrade steps are filed under that release**: the tool
+   records the release boundary in the upgrade guide and the release notes as
+   well as the changelog, so nobody rolls them by hand.
+
+   - **The upgrade guide is folded.** `release:cut prepare` renames
+     `docs/UPGRADING.md`'s `## Unreleased` block to
+     `## v<previous> → v<version>`, `<previous>` being the same latest tag on
+     `origin`, and leaves a fresh, empty `## Unreleased` above it. When
+     nothing was waiting, the new section says the release has no manual
+     upgrade steps, so every tag has a section. Text above `## Unreleased`
+     and every released section are left untouched. It refuses a guide that
+     already has the version's section, one with a step added since the
+     previous tag to a released section that tag already had, or any tracked
+     document (bar `CHANGELOG.md` and `changelog.d/`) that links the guide's
+     `#unreleased` anchor: the link would be left on the empty section, so
+     link the step's own heading instead. Prose that says "see Unreleased"
+     with no link is not found: name the step instead. A release section that
+     arrives whole between two tags, such as a fork merging an upstream
+     release, is not a late step. It reads the previous tag's guide from that
+     tag's commit and refuses when the commit is not in the clone (a shallow
+     clone), rather than skip the check. Read the folded section: it should
+     open with `### Upgrade checklist for this release`, the ordered
+     before / during / after list, and the plan says so when it does not.
+     `--amend` moves steps added under the fresh `## Unreleased` to the end
+     of the untagged release's section.
+   - **A notes stub is written.** `docs/releases/v<version>.md` links the
+     version's changelog and upgrade-guide sections. It carries an unfinished
+     marker (`<!-- release-notes:unfinished -->`), a note saying it is a stub
+     and a placeholder paragraph, and `publish` refuses while any of the three
+     is still in the page. `docs/releases/README.md` lists the page first under
+     "Published release notes". The documentation hub links the index, not a
+     version, so it needs no edit.
+   - **The runbook stays release-agnostic.**
+     `docs/PRODUCTION_UPGRADE_RUNBOOK.md` names no release pair; its §7 and §8
+     are blank templates an operator fills in offline. If it has been
+     re-scoped to one release, re-scope it to the new tag, templates included.
+     Never write a rehearsal date, result or "confirmed by" into it: only the
+     owner attests a rehearsal, and not in the public repository.
+   - **Every windowed migration is reached.** A census
+     (`src/lib/__tests__/upgrade-docs-scope.test.ts`) fails a pull request when
+     a windowed ledger row is not named in the runbook's
+     [§2.4](PRODUCTION_UPGRADE_RUNBOOK.md#24-windowed-migration-deploy-sequence).
+     It cannot judge the checklist. List the ledger's windowed rows with
+     `awk -F'\t' '$4 == "windowed" { print $1 }' docs/BLUE_GREEN_MIGRATION_SAFETY.tsv`
+     and confirm that each one added since the previous tag is reached from the
+     checklist's "During the window" part. The checklist links; it never copies
+     a migration's text.
+
+   The dry run lists each of these. The fold files only what sits under
+   `## Unreleased`: an upgrade step written anywhere else is left where it is,
+   so move any such step under `## Unreleased` in a pull request before you
+   prepare. Then, before merging the release-prep pull request, read the new
+   upgrade section and drop any step that no longer applies, and write the
+   notes page, deleting the marker, the stub note and the placeholder.
+4. Check `README.md`, `DEPLOYMENT.md`, `CONFIGURATION.md`, this maintenance
+   guide, `docs/ARCHITECTURE.md`, `docs/UPGRADING.md` and
+   `docs/PRODUCTION_UPGRADE_RUNBOOK.md` for dependency, release, GHCR, migration,
    validation, and public/private workflow drift.
-4. Confirm any new or changed migrations that touch hot tables or potentially
+5. Confirm any new or changed migrations that touch hot tables or potentially
    breaking SQL are represented in `docs/BLUE_GREEN_MIGRATION_SAFETY.tsv`, or
    document why no ledger entry is needed.
-5. Run local release validation without live provider credentials, then rely on
+6. Run local release validation without live provider credentials, then rely on
    GitHub Actions for Docker image build, static analysis, secret scanning,
    dependency review, and GHCR publication.
-6. Push `release/v<version>` and open the release-prep pull request from the
-   template (`pnpm run pr:check <body-file>` first). It merges like any other.
-7. After it merges, tag the merged commit and publish the GitHub release:
+7. Push `release/v<version>` and open the release-prep pull request from the
+   template (`pnpm run pr:check <body-file>` first), with the notes page
+   written. It merges like any other.
+8. After it merges, tag the merged commit and publish the GitHub release:
 
    ```bash
    git fetch origin main
@@ -3194,8 +3432,16 @@ phases print their whole plan and change nothing without `--execute`.
    repositories are refused. It refuses when:
 
    - the commit is not on `origin/main`'s **first-parent** chain — only a
-     commit CI pushed to `main` has GHCR images, so only its tag can be
-     deployed (a release-prep branch commit inside a merge never was);
+     commit pushed to `main` gets a CI run that publishes GHCR images (a
+     release-prep branch commit inside a merge never was);
+   - its `ci.yml` push run on `main` has not published its images: GitHub
+     reports no run whose `Publish GHCR images` job succeeded, because the run
+     is still going, failed, was cancelled by hand, or never started
+     (`INV-OPS-021`). The refusal names the commit and the run. Wait for the
+     run, or re-run it with `gh run rerun <run-id>` and publish once that job
+     succeeds. The check runs in the dry run too, on the commit that would be
+     tagged (on a resume, the tagged commit), and refuses when GitHub's
+     answer cannot be read — a fine-grained token needs **Actions: Read**;
    - `origin` already has the version's tag on another commit, or the version
      is not newer than `origin`'s latest tag — nothing new was prepared;
    - `CHANGELOG.md` has no section for the version, or still has entries
@@ -3210,13 +3456,32 @@ phases print their whole plan and change nothing without `--execute`.
      be folded into a patch release: carry it, or revert the release-prep
      merge and prepare again as minor. Or **carry** them:
      `pnpm run release:cut publish --carry-late-fragments --execute` publishes
-     anyway and lists them as carried into the next release.
+     anyway and lists them as carried into the next release;
+   - `docs/UPGRADING.md` has no `## v<previous> → v<version>` section, or still
+     has upgrade steps under `## Unreleased` — a pull request with its own
+     upgrade step merged while the release-prep one was open. They would ship
+     in this tag but read as the next release's. Fold them:
+     `pnpm run release:cut prepare --amend --execute` moves them into the
+     untagged version's section (and rolls the guide if prep never did).
+     `--carry-late-fragments` does **not** carry upgrade steps, because a
+     step a club never sees under its release is the harm this check stops;
+   - `docs/UPGRADING.md` has more `### ` steps in an already-released section
+     than the previous tag's copy of that section — a late pull request merged
+     its step into the wrong section. Rewording a released step's title adds no
+     step, so it is not refused. `prepare` refuses this too, before it has
+     written anything: move the step under `## Unreleased` in a pull request,
+     then run `prepare` again. After a refused `publish`, move it the same way,
+     then fold it with `--amend`;
+   - `docs/releases/v<version>.md` is missing, or still carries the unfinished
+     marker, the stub note or the placeholder paragraph. Write the page through
+     a pull request, then publish.
 
    The dry run also checks `gh auth status` and that `gh` can reach the
-   repository, and says which release body it will use: the section itself,
-   or — over 120,000 characters, below GitHub's 125,000 limit — a short body
-   with the entry count and a link to the section in `CHANGELOG.md` at the
-   tag. With `--execute` it writes the body to a file, creates the annotated
+   repository, prints the CI run that published the commit's images, and
+   says which release body it will use: the section itself, or — over
+   120,000 characters, below GitHub's 125,000 limit — a short body with the
+   entry count and a link to the section in `CHANGELOG.md` at the tag. With
+   `--execute` it writes the body to a file, creates the annotated
    `v<version>` tag, and only then pushes the tag and runs
    `gh release create`. A failure prints the re-run, always with
    `--commit <sha>` of the commit being tagged, and the re-run resumes: a
@@ -3231,7 +3496,7 @@ phases print their whole plan and change nothing without `--execute`.
    version's notes.
    Add validation evidence, migration notes, image names and non-blocking
    maintainability follow-ups to the published release by hand.
-8. Deploy the tag (`DEPLOYMENT.md`, "Cut the release first").
+9. Deploy the tag (`DEPLOYMENT.md`, "Cut the release first").
 
 ## GitHub Actions Availability
 

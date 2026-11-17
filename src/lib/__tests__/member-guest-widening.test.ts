@@ -790,8 +790,12 @@ describe("consent columns have exactly one writer", () => {
       "the merge classification of consentRespondedByMemberId",
     // D-12 exclusion sites and the one deliberate non-exclusion.
     "src/lib/double-bed-sharing.ts": "D-12: pending guests do not anchor an offer",
-    "src/app/api/member/data-export/route.ts":
+    // #4915 moved the member export's reads into the shared subject access
+    // builder; the guest-appearance section reads the subject's own row's state.
+    "src/lib/subject-access-export.ts":
       "deliberately NOT excluded — a data-subject export includes their own pending rows",
+    "src/lib/subject-access-export-sections.ts":
+      "a subject's own guest rows on others' bookings, consent state included, not excluded",
     "src/lib/email-templates/member-guest.ts": "the consent email renderers",
     "src/lib/email/member-guest.ts": "the consent email senders",
     // The per-request policy read and the pure write plan every add path uses.
@@ -864,7 +868,7 @@ describe("consent columns have exactly one writer", () => {
     // It touches no database and no row — the booking does not exist yet —
     // and every shape it builds is one of the eight legal sub-states, which
     // its own test asserts through `classifyMemberGuestConsent`.
-    "src/app/(authenticated)/book/_components/member-guest-preview.tsx":
+    "src/components/book/member-guest-preview.tsx":
       "the wizard's pre-persistence consent prediction",
     // --- MG4's pipeline half (#2309, MG4-D-b). The booking-request approval
     // is the one guest write that REUSES a row rather than creating it, so it
@@ -909,6 +913,11 @@ describe("consent columns have exactly one writer", () => {
     // owed. A null status means no message was ever sent about that row.
     "src/lib/booking-batch-modification-service.ts":
       "the batch edit reads a removed guest's consent state to decide who is owed a withdrawal notice",
+    // #5149: the identity-only pricing echo, moved verbatim out of the batch
+    // service. A READER: it carries each guest's stored `consentStatus` into
+    // the echoed night rates unchanged, and writes nothing.
+    "src/lib/booking-identity-only-pricing.ts":
+      "the identity-only pricing echo carries each guest's stored consent status through unchanged; it writes nothing",
     // The same read on the single-guest removal route. It is the ONE of the
     // three callers of removeBookingGuestInTransaction that owes a withdrawal
     // notice — the decline endpoint and the expiry sweep each have their own

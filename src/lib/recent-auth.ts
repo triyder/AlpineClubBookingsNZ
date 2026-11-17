@@ -45,6 +45,67 @@ export function isWithinRecentAuthWindow(
   );
 }
 
+/**
+ * How a sign-in was proved, from server-side facts only (#4994, INV-AUTH-008).
+ * `email` is an emailed code. `recovery` is a recovery code.
+ */
+export type RecentAuthSignInProof =
+  | "password"
+  | "TOTP"
+  | "passkey"
+  | "magic-link"
+  | "google"
+  | "email"
+  | "recovery";
+
+/**
+ * Whether this proof starts the five-minute clock.
+ *
+ * A password counts only when no authenticator factor is still owed. An
+ * authenticator-app proof and a passkey always count. An emailed link, Google,
+ * an emailed code, and a recovery code never do.
+ */
+export function recentAuthSignInCounts(
+  proof: RecentAuthSignInProof,
+  owesAuthenticatorApp: boolean,
+): boolean {
+  if (proof === "password") return !owesAuthenticatorApp;
+  return proof === "TOTP" || proof === "passkey";
+}
+
+/**
+ * Whether a password sign-in still owes a stronger factor, so it must not
+ * start the clock. The club-wide module owes an authenticator app (#4994). A
+ * required officer owes an app or a passkey (#4618, INV-AUTH-012), whether or
+ * not the module is on. An emailed code is never owed: the password is that
+ * sign-in's proof.
+ */
+export function passwordSignInOwesStrongerFactor(input: {
+  moduleRequired: boolean;
+  officerRequired: boolean;
+  twoFactorEnabled?: boolean | null;
+  twoFactorMethod?: string | null;
+  hasPasskey?: boolean | null;
+}): boolean {
+  const hasApp = input.twoFactorEnabled === true && input.twoFactorMethod !== "EMAIL";
+  if (input.officerRequired) return hasApp || input.hasPasskey === true;
+  return input.moduleRequired && hasApp;
+}
+
+/**
+ * The verify-route method prefixed into a two-factor challenge, as a sign-in
+ * proof. Anything else, including a token minted with no prefix, is not one.
+ */
+export function recentAuthSignInProofFromChallengeKind(
+  kind: string | null,
+): RecentAuthSignInProof | null {
+  if (kind === "TOTP") return "TOTP";
+  if (kind === "PASSKEY") return "passkey";
+  if (kind === "EMAIL") return "email";
+  if (kind === "RECOVERY") return "recovery";
+  return null;
+}
+
 export function isReauthRequiredPayload(body: unknown): boolean {
   return (
     typeof body === "object" &&

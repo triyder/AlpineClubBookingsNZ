@@ -12,6 +12,7 @@ import { buildLocalAdminUrl } from "@/lib/xero-record-links";
 import { isStaleRunningXeroOperation } from "@/lib/xero-stale-operations";
 import { refundNoteResolveShape, resolveCreditNotePrompt } from "@/lib/xero-resolve-refund-note";
 import { findSupersededRefundNoteRowIds } from "@/lib/xero-operation-resolve-guards";
+import { adminListPageField } from "@/lib/admin-list-page";
 import {
   endOfClubDayInclusive,
   requireCalendarDate,
@@ -19,6 +20,7 @@ import {
   type ClubTimeZone,
 } from "@/lib/club-time";
 import { clubTimeZone } from "@/lib/club-time/server";
+import { dateOnlyStringSchema } from "@/lib/date-only-schema";
 
 const querySchema = z.object({
   status: z.string().optional().default("all"),
@@ -28,11 +30,11 @@ const querySchema = z.object({
   localId: z.string().trim().optional().default(""),
   operationType: z.string().trim().optional().default("all"),
   resourceId: z.string().trim().optional().default(""),
-  createdFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-  createdTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  createdFrom: dateOnlyStringSchema.optional(),
+  createdTo: dateOnlyStringSchema.optional(),
   failureState: z.enum(["all", "ACTIVE", "REPAIRED", "SUPERSEDED"]).optional().default("all"),
   limit: z.coerce.number().int().min(1).max(100).optional().default(25),
-  page: z.coerce.number().int().min(1).optional().default(1),
+  page: adminListPageField,
   pageSize: z.coerce.number().int().min(1).max(100).optional(),
 });
 
@@ -43,9 +45,9 @@ const querySchema = z.object({
  * `XeroSyncOperation.createdAt` / `XeroInboundEvent.createdAt` are INSTANTS, and
  * the operator typing a date means the club's calendar day — so the window is
  * derived from the PERSISTED club timezone (`INV-CONFIG-002`), not from the
- * container's `TZ`. The zod schema has already pinned the shape to
- * `^\d{4}-\d{2}-\d{2}$`, so `requireCalendarDate` cannot throw on a bound that
- * reached here.
+ * container's `TZ`. The zod schema has already refused anything but a real
+ * calendar day (`dateOnlyStringSchema`), so `requireCalendarDate` cannot throw
+ * on a bound that reached here.
  */
 function startOfInputDate(date: string, zone: ClubTimeZone) {
   return startOfClubDay(requireCalendarDate(date), zone);

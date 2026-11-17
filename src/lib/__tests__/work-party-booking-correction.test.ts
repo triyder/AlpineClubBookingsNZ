@@ -395,35 +395,23 @@ describe("the officer-only internal-code admission (census)", () => {
       .filter((file) => /\bofficerWorkPartyCorrection\b/.test(readFileSync(file, "utf8")))
       .map(rel)
       .filter((file) => file !== "src/lib/booking-batch-modification-service.ts")
+      .filter((file) => file !== "src/lib/booking-modify-plan.ts")
       .sort();
-    // The batch service declares it as `officerWorkPartyCorrection?:`; the
-    // correction module is the one file that passes it.
+    // The batch service declares it as `officerWorkPartyCorrection?:` and
+    // hands it on to the promo engine in the plan; the correction module is
+    // the one file that passes it in.
     expect(callers).toEqual(["src/lib/work-party-booking-correction.ts"]);
   });
 
-  it("only the batch service hands the admission to the promo engine", () => {
-    const callers = files
-      .filter((file) => /\bofficerWorkPartyPromoCodeId\b/.test(readFileSync(file, "utf8")))
-      .map(rel)
-      .sort();
-    expect(callers).toEqual([
-      "src/lib/booking-batch-modification-service.ts",
-      "src/lib/booking-modify-plan.ts",
-    ]);
-  });
-
-  it("#130: only the batch service hands the removal to the promo engine", () => {
-    const callers = files
-      .filter((file) => /\bofficerWorkPartyRemovalPromoCodeId\b/.test(readFileSync(file, "utf8")))
-      .map(rel)
-      .sort();
-    expect(callers).toEqual([
-      "src/lib/booking-batch-modification-service.ts",
-      "src/lib/booking-modify-plan.ts",
-    ]);
+  it("only the batch service hands the correction to the promo engine (Add admits, #130 Remove drops)", () => {
+    const service = readFileSync(path.join(root, "lib", "booking-batch-modification-service.ts"), "utf8");
     const plan = readFileSync(path.join(root, "lib", "booking-modify-plan.ts"), "utf8");
-    // Defaulted to null, so a caller that passes nothing drops nothing.
-    expect(plan).toContain("officerWorkPartyRemovalPromoCodeId = null,");
+    expect(service).toContain("officerWorkPartyCorrection: officerWorkPartyCorrection ?? null,");
+    // Defaulted to null, so a caller that passes nothing admits or drops nothing.
+    expect(plan).toContain("officerWorkPartyCorrection = null,");
+    expect(plan).toContain(
+      "const requested = withoutRemovedWorkPartyCode(requestedPromoCodeListFor(input, storedCodes, multiPromoCodes), existing, officerWorkPartyCorrection);",
+    );
   });
 
   it("#127: only the batch service asks the edit policy for the work-party mode", () => {
@@ -434,14 +422,20 @@ describe("the officer-only internal-code admission (census)", () => {
     expect(callers).toEqual(["src/lib/booking-batch-modification-service.ts"]);
   });
 
-  it("M1: only the batch service tells the pricing pass that an edit moves no bed", () => {
-    const callers = files
-      .filter((file) => /\bmovesNoBed:/.test(readFileSync(file, "utf8")))
-      .map(rel)
-      .sort();
-    expect(callers).toEqual(["src/lib/booking-batch-modification-service.ts"]);
+  it("M1: a work-party correction skips only the pricing pass's bed check", () => {
+    const service = readFileSync(path.join(root, "lib", "booking-batch-modification-service.ts"), "utf8");
     const plan = readFileSync(path.join(root, "lib", "booking-modify-plan.ts"), "utf8");
-    expect(plan).toContain("movesNoBed = false,");
+    expect(service).toContain(
+      "skipBookingLifecycleRules: dates.skipBookingLifecycleRules || Boolean(officerWorkPartyCorrection),",
+    );
+    // Inside calculateModifiedPricing the flag gates the capacity branch and
+    // nothing else; a second use would also skip it for a correction.
+    const pricing = plan.slice(
+      plan.indexOf("export async function calculateModifiedPricing("),
+      plan.indexOf("export function resolvePromoBeneficiarySelection("),
+    );
+    expect(pricing.match(/\bskipBookingLifecycleRules\b/g)).toHaveLength(3);
+    expect(pricing).toContain("  if (skipBookingLifecycleRules) {");
   });
 
   it("is not a request-body field on any route", () => {
@@ -454,10 +448,18 @@ describe("the officer-only internal-code admission (census)", () => {
 
   it("still refuses every other internal code in applyPromoCodeChanges", () => {
     const plan = readFileSync(path.join(root, "lib", "booking-modify-plan.ts"), "utf8");
-    expect(plan).toContain(
-      "(promoCode.internal && promoCode.id !== officerWorkPartyPromoCodeId)",
+    const rules = readFileSync(path.join(root, "lib", "promo-code-list-rules.ts"), "utf8");
+    // The admission is the one helper (in the promo-list leaf, as on thatskiff33#5149), used at the one refusal.
+    expect(rules).toContain(
+      "return !promoCode.internal || promoCode.id === admittedInternalPromoCodeId;",
     );
-    // Defaulted to null, so a caller that passes nothing admits nothing.
-    expect(plan).toContain("officerWorkPartyPromoCodeId = null,");
+    expect(plan).toContain(
+      'import { admittedWorkPartyCodeId, enteredPromoCodeAdmitted, promoCodeListRefusal, withoutRemovedWorkPartyCode, type WorkPartyCodeCorrection } from "@/lib/promo-code-list-rules";',
+    );
+    expect(plan).toContain(
+      "if (!enteredPromoCodeAdmitted(promoCode, admittedWorkPartyCodeId(officerWorkPartyCorrection))) {",
+    );
+    // A Remove admits nothing.
+    expect(rules).toContain('return correction?.direction === "add" ? correction.promoCodeId : null;');
   });
 });

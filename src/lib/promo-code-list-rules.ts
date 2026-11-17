@@ -53,3 +53,43 @@ export function promoCodeListRefusal(input: {
   if (input.typedCodes.length > 1) return ONE_PROMO_CODE_PER_BOOKING_MESSAGE;
   return null;
 }
+
+/**
+ * Whether a code an edit names may be applied. Internal promos (work party
+ * events) cannot be entered as codes, and a code renamed between the unlocked
+ * read and the lock is not found (`promoCode` undefined). Fork #119: the one
+ * exception is the internal code `admittedInternalPromoCodeId` names, the work
+ * party an officer's "Add booking to work party" is adding. That is a service
+ * argument the batch service receives beside `tx`, never a request-body field,
+ * so no member route can set it; every other internal code is still refused as
+ * not found. Its one caller is `applyPromoCodeChanges`.
+ */
+export function enteredPromoCodeAdmitted<T extends { id: string; internal: boolean }>(
+  promoCode: T | undefined,
+  admittedInternalPromoCodeId: string | null,
+): promoCode is T {
+  if (!promoCode) return false;
+  return !promoCode.internal || promoCode.id === admittedInternalPromoCodeId;
+}
+
+/** Fork #119/#130: the work party an officer's correction adds or removes, by its internal code. */
+export type WorkPartyCodeCorrection = { readonly promoCodeId: string; readonly direction: "add" | "remove" };
+
+/** The one internal code a correction admits: an Add's. A Remove (#130) admits none. */
+export function admittedWorkPartyCodeId(correction: WorkPartyCodeCorrection | null): string | null {
+  return correction?.direction === "add" ? correction.promoCodeId : null;
+}
+
+/**
+ * Fork #130: with several codes on, a stored internal code a list leaves out
+ * is carried; the officer removing that work party drops it instead.
+ */
+export function withoutRemovedWorkPartyCode<E extends { code: string }>(
+  requested: E[] | null,
+  stored: ReadonlyArray<{ promoCodeId: string; promoCode: { code: string } }>,
+  correction: WorkPartyCodeCorrection | null,
+): E[] | null {
+  if (correction?.direction !== "remove") return requested;
+  const removed = stored.find((row) => row.promoCodeId === correction.promoCodeId)?.promoCode.code;
+  return requested?.filter((entry) => entry.code !== removed) ?? null;
+}

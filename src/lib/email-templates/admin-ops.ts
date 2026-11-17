@@ -98,11 +98,11 @@ export function adminDailyDigestTemplate(
   const p = emailPalette();
   const rows: Array<{ label: string; value: string; link: string }> = [];
 
-  if (sections.newBookings > 0) rows.push({ label: "New Bookings", value: String(sections.newBookings), link: "/admin/bookings" });
+  if (sections.newBookings > 0) rows.push({ label: "New Bookings", value: String(sections.newBookings), link: adminHref("bookings") });
   if (sections.paymentFailures > 0) rows.push({ label: "Payment Failures", value: String(sections.paymentFailures), link: adminHref("payments") });
-  if (sections.capacityWarnings > 0) rows.push({ label: "Capacity Warnings", value: String(sections.capacityWarnings), link: "/admin/bookings" });
-  if (sections.bookingsBumped > 0) rows.push({ label: "Bookings Bumped", value: String(sections.bookingsBumped), link: "/admin/bookings" });
-  if (sections.pendingDeadlines > 0) rows.push({ label: "Pending Deadlines", value: String(sections.pendingDeadlines), link: "/admin/bookings" });
+  if (sections.capacityWarnings > 0) rows.push({ label: "Capacity Warnings", value: String(sections.capacityWarnings), link: adminHref("bookings") });
+  if (sections.bookingsBumped > 0) rows.push({ label: "Bookings Bumped", value: String(sections.bookingsBumped), link: adminHref("bookings") });
+  if (sections.pendingDeadlines > 0) rows.push({ label: "Pending Deadlines", value: String(sections.pendingDeadlines), link: adminHref("bookings") });
   if (sections.xeroErrors > 0) rows.push({ label: "Xero Errors", value: String(sections.xeroErrors), link: adminHref("xero") });
 
   const tableRowsHtml = rows
@@ -278,7 +278,7 @@ export function websiteContactTemplate(data: {
 
 /**
  * `admin-email-failure`, as the retry cron sends it: a member's email has now
- * failed MAX_ATTEMPTS times and will not be tried again.
+ * failed EMAIL_RETRY_MAX_ATTEMPTS times and will not be tried again.
  *
  * This is the shape the registry's default body describes, which is why it is
  * the one `REGISTRY_KEY_RENDERERS` maps the key to. Moved out of

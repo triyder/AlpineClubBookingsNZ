@@ -14,13 +14,14 @@ import {
   dismissalMessage,
   nightPricesRecordedMessage,
 } from "@/lib/manual-refund-task-copy";
+import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
 import {
-  ManualBookingPaymentError,
   MANUAL_PAYMENT_NOTE_MAX,
   resolveManualRefundTask,
 } from "@/lib/manual-refund-task-resolution";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { bankRefundVoidAnswerBodySchema, bankRefundVoidAnswerMessage, prepareBankRefundVoidAnswer, reconcileHandMadeNoteAfterCompletion } from "@/lib/bank-refund-void-answer";
+import { requireRecentAuth } from "@/lib/require-recent-auth";
 
 const noteField = z.string().max(MANUAL_PAYMENT_NOTE_MAX).optional().nullable();
 // Explicit confirmation so closing a money task is never a single-click
@@ -164,6 +165,8 @@ export async function POST(
   const { id } = await params;
 
   let body: unknown;
+  const recent = await requireRecentAuth();
+  if (!recent.ok) return recent.response;
   try {
     body = await request.json();
   } catch {

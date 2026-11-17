@@ -62,7 +62,7 @@ vi.mock("@/lib/capacity", () => ({ acquireLodgeCapacityLock: vi.fn(async () => u
 vi.mock("@/lib/lodges", () => ({ getDefaultLodgeId: vi.fn(async () => "lodge-1") }));
 vi.mock("@/lib/booking-row-lock", () => ({ lockBookingRowForOwnerRead: vi.fn(async () => undefined) }));
 vi.mock("@/lib/booking-exception-approval", () => ({ reauthorizeBookingOfficerFromDb: vi.fn(async () => true) }));
-vi.mock("@/lib/booking-modify-validation", () => ({ isQuotePricedBooking: vi.fn(async () => false) }));
+vi.mock("@/lib/booking-modify-quote-priced", () => ({ isQuotePricedBooking: vi.fn(async () => false) }));
 vi.mock("@/lib/promo-redemption-slot", () => ({ multiPromoCodesEnabled: vi.fn(async () => false) }));
 vi.mock("@/lib/booking-batch-modification-service", () => ({
   modifyBookingBatch: vi.fn(async (args: Record<string, unknown>) => {

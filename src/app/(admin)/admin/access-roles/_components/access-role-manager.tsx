@@ -1,4 +1,5 @@
 "use client";
+import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 
 import { useCallback, useEffect, useState } from "react";
 import { Lock, Pencil, Plus, Trash2, Users } from "lucide-react";
@@ -34,6 +35,14 @@ import {
   ACCESS_ROLE_DESCRIPTIONS,
   ACCESS_ROLE_LABELS,
 } from "@/lib/access-roles";
+import {
+  BUILT_IN_ROLES_TWO_FACTOR_NOTE,
+  RoleTwoFactorField,
+  RoleTwoFactorSummary,
+  twoFactorChoiceFromStored,
+  twoFactorRoleBody,
+  type TwoFactorChoice,
+} from "./access-role-two-factor";
 import type { AccessRole } from "@prisma/client";
 
 type ManagedAccessRole = {
@@ -44,6 +53,8 @@ type ManagedAccessRole = {
   description: string;
   sortOrder: number;
   permissions: AdminPermissionMatrix;
+  /** null is Default, true Required, false Not required (#4618). */
+  requiresTwoFactor?: boolean | null;
   memberCount: number;
 };
 
@@ -51,6 +62,7 @@ type RoleFormState = {
   label: string;
   description: string;
   permissions: AdminPermissionMatrix;
+  twoFactor: TwoFactorChoice;
 };
 
 const EMPTY_PERMISSIONS: AdminPermissionMatrix = {
@@ -62,6 +74,22 @@ const EMPTY_PERMISSIONS: AdminPermissionMatrix = {
   content: "none",
   support: "none",
 };
+
+const EMPTY_FORM: RoleFormState = {
+  label: "",
+  description: "",
+  permissions: EMPTY_PERMISSIONS,
+  twoFactor: "default",
+};
+
+function formFromRole(role: ManagedAccessRole): RoleFormState {
+  return {
+    label: role.label,
+    description: role.description,
+    permissions: role.permissions,
+    twoFactor: twoFactorChoiceFromStored(role.requiresTwoFactor),
+  };
+}
 
 const LEVEL_LABELS: Record<AdminPermissionLevel, string> = {
   none: "None",
@@ -95,11 +123,7 @@ export function AccessRoleManager({
   const [editingRole, setEditingRole] = useState<ManagedAccessRole | null>(
     null,
   );
-  const [form, setForm] = useState<RoleFormState>({
-    label: "",
-    description: "",
-    permissions: EMPTY_PERMISSIONS,
-  });
+  const [form, setForm] = useState<RoleFormState>(EMPTY_FORM);
   const [formError, setFormError] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -131,18 +155,14 @@ export function AccessRoleManager({
 
   const openCreate = () => {
     setEditingRole(null);
-    setForm({ label: "", description: "", permissions: EMPTY_PERMISSIONS });
+    setForm(EMPTY_FORM);
     setFormError("");
     setDialogOpen(true);
   };
 
   const openEdit = (role: ManagedAccessRole) => {
     setEditingRole(role);
-    setForm({
-      label: role.label,
-      description: role.description,
-      permissions: role.permissions,
-    });
+    setForm(formFromRole(role));
     setFormError("");
     setDialogOpen(true);
   };
@@ -151,7 +171,7 @@ export function AccessRoleManager({
     setSaving(true);
     setFormError("");
     try {
-      const response = await fetch(
+      const response = await fetchWithRecentAuth(
         editingRole
           ? `/api/admin/access-roles/${editingRole.id}`
           : "/api/admin/access-roles",
@@ -162,6 +182,7 @@ export function AccessRoleManager({
             label: form.label,
             description: form.description,
             permissions: form.permissions,
+            ...twoFactorRoleBody(form.twoFactor),
           }),
         },
       );
@@ -188,7 +209,7 @@ export function AccessRoleManager({
     setDeleting(true);
     setDeleteError("");
     try {
-      const response = await fetch(
+      const response = await fetchWithRecentAuth(
         `/api/admin/access-roles/${deletingRole.id}`,
         { method: "DELETE" },
       );
@@ -281,6 +302,7 @@ export function AccessRoleManager({
                       )
                       .join(" · ") || "No admin area access"}
                   </p>
+                  <RoleTwoFactorSummary role={role} />
                 </div>
                 <div className="flex shrink-0 gap-2">
                   <Button
@@ -331,6 +353,7 @@ export function AccessRoleManager({
           <p className="text-xs text-muted-foreground sm:col-span-2">
             These roles are built in and cannot be edited or deleted. Full
             Admin always keeps full permissions.
+            {BUILT_IN_ROLES_TWO_FACTOR_NOTE}
           </p>
         </CardContent>
       </Card>
@@ -426,6 +449,11 @@ export function AccessRoleManager({
                 ))}
               </div>
             </div>
+            <RoleTwoFactorField
+              value={form.twoFactor}
+              permissions={form.permissions}
+              onChange={(twoFactor) => setForm((current) => ({ ...current, twoFactor }))}
+            />
             <AdminPermissionMatrixTable matrix={form.permissions} />
           </div>
           <DialogFooter>

@@ -2,12 +2,18 @@
  * N-09: Bulk Member Communication
  * POST /api/admin/communications/send
  * Admin-only. Rate limited to BULK_SENDMAIL_LIMIT sends per hour.
- * Respects marketingEmails notification preference.
+ * Each send declares a category (club notice or newsletter); who receives it
+ * is decided by the shared bulk-email rule (#4987, INV-PRIV-026).
  * Sanitises input to prevent HTML/header injection.
+ *
+ * GET returns the rate limit and, given `?recipientFilter=&category=`, how many
+ * accounts that audience reaches and how many the category's preference rule
+ * excludes, for the page's live count and confirmation step (#4964, #4987). It
+ * sends nothing and never touches the hourly quota; it must stay a GET, because
+ * the POST spends the quota before it reads its body.
  */
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
-import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import { checkRateLimit, type RateLimitConfig } from "@/lib/rate-limit";
 import {
@@ -15,7 +21,12 @@ import {
 } from "@/lib/email-templates/communications";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
-import { MEMBER_LEVEL_ROLE_VALUES } from "@/lib/member-roles";
+import {
+  BULK_RECIPIENT_FILTERS,
+  bulkCommunicationCounts,
+  selectBulkCommunicationRecipients,
+} from "@/lib/bulk-communication-recipients";
+import { BULK_EMAIL_CATEGORIES } from "@/lib/email/bulk-audience";
 import { renderEmailHtml } from "@/lib/email-theme";
 
 const DEFAULT_BULK_SENDMAIL_LIMIT = 1;
@@ -34,6 +45,10 @@ const bulkSendRateLimit: RateLimitConfig = {
   windowSeconds: 60 * 60, // 1 hour
 };
 
+// A request that names no category gets the opt-in newsletter rule, so an older
+// page still open during a deploy can never widen who is emailed.
+const categorySchema = z.enum(BULK_EMAIL_CATEGORIES).default("newsletter");
+
 const sendSchema = z.object({
   subject: z
     .string()
@@ -44,19 +59,52 @@ const sendSchema = z.object({
     .string()
     .min(1, "Body is required")
     .max(10000, "Body must be under 10,000 characters"),
-  recipientFilter: z.enum(["all", "members-only", "admins-only", "custom"]),
+  recipientFilter: z.enum(BULK_RECIPIENT_FILTERS),
   memberIds: z.array(z.string()).optional(),
+  category: categorySchema,
 });
 
-export async function GET() {
+// The page offers only the named audiences; `custom` needs a member list, which
+// a query string is no place for.
+const countQuerySchema = z.object({
+  recipientFilter: z.enum(BULK_RECIPIENT_FILTERS).exclude(["custom"]).optional(),
+  category: categorySchema,
+});
+
+export async function GET(request: NextRequest) {
   const guard = await requireAdmin({
     permission: { area: "membership", level: "view" },
   });
   if (!guard.ok) return guard.response;
 
-  return NextResponse.json({
+  const parsed = countQuerySchema.safeParse(
+    Object.fromEntries(request.nextUrl.searchParams),
+  );
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Invalid query parameters", details: parsed.error.flatten() },
+      { status: 400 },
+    );
+  }
+
+  const rateLimit = {
     limit: bulkSendRateLimit.limit,
     windowSeconds: bulkSendRateLimit.windowSeconds,
+  };
+  const { recipientFilter, category } = parsed.data;
+  if (!recipientFilter) return NextResponse.json(rateLimit);
+
+  // Counts only, never addresses: a membership:view admin may call this.
+  const selection = await selectBulkCommunicationRecipients(
+    recipientFilter,
+    undefined,
+    category,
+  );
+  return NextResponse.json({
+    ...rateLimit,
+    recipientFilter,
+    category,
+    ...bulkCommunicationCounts(selection),
   });
 }
 
@@ -101,41 +149,26 @@ export async function POST(request: Request) {
     body: messageBody,
     recipientFilter,
     memberIds,
+    category,
   } = parsed.data;
 
-  // Build recipient query
-  const whereClause: Record<string, unknown> = { active: true };
-  if (recipientFilter === "members-only") {
-    whereClause.role = { in: [...MEMBER_LEVEL_ROLE_VALUES] };
-  } else if (recipientFilter === "admins-only") {
-    whereClause.role = "ADMIN";
-  } else if (recipientFilter === "custom") {
-    if (!memberIds || memberIds.length === 0) {
-      return NextResponse.json(
-        { error: "memberIds required for custom filter" },
-        { status: 400 },
-      );
-    }
-    whereClause.id = { in: memberIds };
+  if (
+    recipientFilter === "custom" &&
+    (!memberIds || memberIds.length === 0)
+  ) {
+    return NextResponse.json(
+      { error: "memberIds required for custom filter" },
+      { status: 400 },
+    );
   }
-  // "all" uses just { active: true }
 
-  const recipients = await prisma.member.findMany({
-    where: whereClause,
-    select: {
-      id: true,
-      email: true,
-      notificationPreference: {
-        select: { marketingEmails: true },
-      },
-    },
-  });
-
-  // Filter out members who have marketingEmails: false
-  // Default (no preference record) is marketingEmails: false, so exclude those too
-  const eligibleRecipients = recipients.filter(
-    (r) => r.notificationPreference?.marketingEmails === true,
+  const selection = await selectBulkCommunicationRecipients(
+    recipientFilter,
+    memberIds,
+    category,
   );
+  const eligibleRecipients = selection.eligible;
+  const counts = bulkCommunicationCounts(selection);
 
   // Generate the email HTML (using escapeHtml inside the template)
   const html = await renderEmailHtml(() => bulkCommunicationTemplate(subject, messageBody));
@@ -190,17 +223,17 @@ export async function POST(request: Request) {
     details: JSON.stringify({
       subject,
       recipientFilter,
-      totalRecipients: recipients.length,
-      eligibleRecipients: eligibleRecipients.length,
+      category,
+      ...counts,
       queued,
     }),
   });
 
   return NextResponse.json({
     success: true,
-    totalRecipients: recipients.length,
-    eligibleRecipients: eligibleRecipients.length,
+    category,
+    ...counts,
     queued,
-    filteredByPreference: recipients.length - eligibleRecipients.length,
+    filteredByPreference: counts.optedOut + counts.neverOptedIn,
   });
 }

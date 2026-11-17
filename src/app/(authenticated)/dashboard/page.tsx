@@ -3,6 +3,7 @@ import Link from "next/link";
 import { auth } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
+import { loadSignedInMember } from "@/lib/signed-in-member";
 import { LodgeKioskCard } from "@/components/dashboard/lodge-kiosk-card";
 import {
   Card,
@@ -45,7 +46,7 @@ import {
 import { clubTime } from "@/lib/club-time/server";
 import { getMemberCreditBalance } from "@/lib/member-credit";
 import {
-  isDashboardPaymentOwed,
+  loadDashboardPaymentSnapshots,
   summarizeMemberPaymentOwed,
 } from "@/lib/member-dashboard";
 import {
@@ -76,6 +77,17 @@ import {
   PAYMENT_OWED_BOOKING_STATUSES,
 } from "@/lib/booking-status";
 import { checkCapacity } from "@/lib/capacity";
+import {
+  BOOKING_LIST_LODGE_SELECT,
+  bookingListLodgeLabel,
+  countActiveLodgesForBookingList,
+} from "@/lib/lodges";
+import { BookingListLodgeName } from "@/components/booking/booking-list-lodge-name";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = {
+  title: "Dashboard",
+};
 
 /*
   The three tightest slots on this page — the upcoming-events list (a fixed-width
@@ -147,7 +159,7 @@ function SummaryLinkCard({
     >
       <Card className="h-full transition-colors group-hover:border-ring group-hover:bg-accent group-focus-visible:border-ring group-focus-visible:bg-accent">
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-          <CardTitle className="text-sm font-medium">{title}</CardTitle>
+          <CardTitle headingLevel={2} className="text-sm font-medium">{title}</CardTitle>
           <span className="flex items-center gap-1 text-muted-foreground transition-colors group-hover:text-foreground group-focus-visible:text-foreground">
             {icon}
             <ChevronRight
@@ -254,6 +266,7 @@ export default async function DashboardPage() {
     creditBalanceCents,
     availablePromoCodes,
     lockers,
+    activeLodgeCount,
   ] = await Promise.all([
     prisma.booking.findMany({
       where: {
@@ -279,6 +292,8 @@ export default async function DashboardPage() {
         id: true,
         memberId: true,
         lodgeId: true,
+        // INV-CAP-039: the Next Stay card names this row's own lodge.
+        lodge: BOOKING_LIST_LODGE_SELECT,
         checkIn: true,
         checkOut: true,
         status: true,
@@ -302,6 +317,7 @@ export default async function DashboardPage() {
         status: true,
         finalPriceCents: true,
         createdAt: true,
+        lodge: BOOKING_LIST_LODGE_SELECT,
         _count: { select: { guests: true } },
       },
     }),
@@ -328,6 +344,7 @@ export default async function DashboardPage() {
         // and a CTA, never rendered: the acting admin's identity belongs on the
         // booking detail page's own "Created by …" line, not on a dashboard card.
         createdById: true,
+        lodge: BOOKING_LIST_LODGE_SELECT,
         _count: { select: { guests: true } },
       },
     }),
@@ -350,6 +367,7 @@ export default async function DashboardPage() {
             status: true,
             additionalAmountCents: true,
             additionalPaymentStatus: true,
+            changeFeeCents: true,
           },
         },
       },
@@ -361,6 +379,9 @@ export default async function DashboardPage() {
       orderBy: { name: "asc" },
       select: { id: true, name: true },
     }),
+    // INV-CAP-039: decides, with `bookingListLodgeLabel`, whether the rows
+    // below name their lodge. In this set so it costs no extra round trip.
+    countActiveLodgesForBookingList(prisma),
   ]);
 
   const nextStay = upcomingBookings[0] ?? null;
@@ -394,17 +415,16 @@ export default async function DashboardPage() {
     }
   }
 
-  const paymentOwed = summarizeMemberPaymentOwed(paymentOwedBookings);
-  const paymentOwedBookingIds = paymentOwedBookings
-    .filter(isDashboardPaymentOwed)
-    .map((booking) => booking.id);
+  const paymentOwed = summarizeMemberPaymentOwed(
+    await loadDashboardPaymentSnapshots(paymentOwedBookings),
+  );
   const nextStayHref = nextStay
     ? buildHrefWithReturnTo(`/bookings/${nextStay.id}`, "/dashboard")
     : "/book";
   const paymentOwedHref =
-    paymentOwed.bookingCount === 1 && paymentOwedBookingIds.length === 1
+    paymentOwed.bookingIds.length === 1
       ? buildHrefWithReturnTo(
-          `/bookings/${paymentOwedBookingIds[0]}`,
+          `/bookings/${paymentOwed.bookingIds[0]}`,
           "/dashboard",
         )
       : "/bookings";
@@ -418,23 +438,21 @@ export default async function DashboardPage() {
   );
   const firstPromoCode = availablePromoCodes[0] ?? null;
 
-  // Lodge induction status for the member-portal card.
-  const inductionInfo = await prisma.member.findUnique({
-    where: { id: memberId },
-    select: {
-      requiresInduction: true,
-      inductions: {
-        orderBy: { createdAt: "desc" },
-        take: 1,
-        select: {
-          status: true,
-          requiredSignOffs: true,
-          _count: { select: { signOffs: true } },
-        },
+  // Lodge induction status for the member-portal card. The flag comes from
+  // the member row the layout already read this render (#4938); the latest
+  // induction is its own table, keyed by the member.
+  const [signedInMember, latestInduction] = await Promise.all([
+    loadSignedInMember(memberId),
+    prisma.memberInduction.findFirst({
+      where: { memberId },
+      orderBy: { createdAt: "desc" },
+      select: {
+        status: true,
+        requiredSignOffs: true,
+        _count: { select: { signOffs: true } },
       },
-    },
-  });
-  const latestInduction = inductionInfo?.inductions[0] ?? null;
+    }),
+  ]);
   const inductionComplete = latestInduction?.status === "COMPLETED";
   const inductionStatusText = inductionComplete
     ? "Complete"
@@ -442,7 +460,7 @@ export default async function DashboardPage() {
       ? `In progress · ${latestInduction._count.signOffs}/${latestInduction.requiredSignOffs} signed`
       : "Not started";
   const inductionNeedsAction =
-    Boolean(inductionInfo?.requiresInduction) && !inductionComplete;
+    Boolean(signedInMember?.requiresInduction) && !inductionComplete;
 
   const modules = await loadEffectiveModuleFlags();
 
@@ -590,6 +608,9 @@ export default async function DashboardPage() {
                   club.format,
                 )}
               </div>
+              <BookingListLodgeName
+                lodgeLabel={bookingListLodgeLabel(activeLodgeCount, nextStay.lodge)}
+              />
               <p className="text-xs text-muted-foreground mt-1">
                 {nextStay._count.guests} guest
                 {nextStay._count.guests !== 1 ? "s" : ""} ·{" "}
@@ -642,7 +663,7 @@ export default async function DashboardPage() {
           </div>
           <p className="text-xs text-muted-foreground mt-1">
             {paymentOwed.totalCents > 0
-              ? `${paymentOwed.bookingCount} booking${paymentOwed.bookingCount !== 1 ? "s" : ""} need payment`
+              ? `${paymentOwed.bookingIds.length} ${paymentOwed.bookingIds.length === 1 ? "booking needs" : "bookings need"} payment`
               : "No payment due"}
           </p>
         </SummaryLinkCard>
@@ -724,7 +745,7 @@ export default async function DashboardPage() {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Quick Book</CardTitle>
+            <CardTitle headingLevel={2} className="text-sm font-medium">Quick Book</CardTitle>
             <Mountain className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -740,7 +761,7 @@ export default async function DashboardPage() {
         {modules.induction && (
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">
+              <CardTitle headingLevel={2} className="text-sm font-medium">
                 Lodge Induction
               </CardTitle>
               <ClipboardCheck className="h-4 w-4 text-muted-foreground" />
@@ -769,7 +790,7 @@ export default async function DashboardPage() {
         {modules.maintenanceReports && (
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">
+              <CardTitle headingLevel={2} className="text-sm font-medium">
                 Lodge Maintenance Issue
               </CardTitle>
               <Wrench className="h-4 w-4 text-muted-foreground" />
@@ -794,7 +815,7 @@ export default async function DashboardPage() {
         {modules.lockers && (
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Lockers</CardTitle>
+              <CardTitle headingLevel={2} className="text-sm font-medium">Lockers</CardTitle>
               <House className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
@@ -821,7 +842,7 @@ export default async function DashboardPage() {
         {modules.commsPortal && (
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">
+              <CardTitle headingLevel={2} className="text-sm font-medium">
                 Message Board
               </CardTitle>
               <MessageSquare className="h-4 w-4 text-muted-foreground" />
@@ -887,6 +908,12 @@ export default async function DashboardPage() {
                         {" — "}
                         {formatStayDate(booking.checkOut, club.format)}
                       </p>
+                      <BookingListLodgeName
+                        lodgeLabel={bookingListLodgeLabel(
+                          activeLodgeCount,
+                          booking.lodge,
+                        )}
+                      />
                       <p className="text-xs text-muted-foreground">
                         {booking._count.guests} guest
                         {booking._count.guests !== 1 ? "s" : ""} ·{" "}
@@ -977,6 +1004,12 @@ export default async function DashboardPage() {
                         {" — "}
                         {formatStayDate(booking.checkOut, club.format)}
                       </p>
+                      <BookingListLodgeName
+                        lodgeLabel={bookingListLodgeLabel(
+                          activeLodgeCount,
+                          booking.lodge,
+                        )}
+                      />
                       <p className="text-xs text-muted-foreground">
                         {booking._count.guests} guest
                         {booking._count.guests !== 1 ? "s" : ""} ·{" "}

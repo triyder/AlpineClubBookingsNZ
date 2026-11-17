@@ -15,10 +15,9 @@ import {
   requestedPromoCodeListFor,
   splitRequestedPromoCodes,
 } from "@/lib/booking-modify-promo-request";
-import { promoCodeListRefusal } from "@/lib/promo-code-list-rules";
+import { admittedWorkPartyCodeId, enteredPromoCodeAdmitted, promoCodeListRefusal, withoutRemovedWorkPartyCode, type WorkPartyCodeCorrection } from "@/lib/promo-code-list-rules";
 import {
   AdminReviewStatus,
-  BookingStatus,
   type AgeTier,
   type BookingGuest,
   type BookingGuestNightPriceSource,
@@ -61,12 +60,8 @@ import {
   cleanupChoreAssignmentsForDateChange,
   cleanupChoreAssignmentsForGuestStayRanges,
 } from "@/lib/chore-cleanup";
-import {
-  daysUntilDate,
-  loadCancellationPolicy,
-  type CancellationPolicyDb,
-} from "@/lib/cancellation";
-import { calculateChangeFee } from "@/lib/change-fee";
+import { type CancellationPolicyDb } from "@/lib/cancellation";
+import { lateNoticeChangeFee } from "@/lib/late-notice-change-fee";
 import {
   checkCapacityForGuestRanges,
   checkCapacityForPartnerSharedAdmission,
@@ -389,10 +384,10 @@ export function resolveGuestNameUpdates({
   allowWhenFullyPaid = false,
   allowTypoFixWhenFullyPaid = false,
 }: {
-  booking: Pick<
-    LoadedBookingForModify,
-    "guests" | "status" | "finalPriceCents" | "payment"
-  >;
+  // Renames read guest identity only, so callers need not load night sets.
+  booking: Pick<LoadedBookingForModify, "status" | "finalPriceCents" | "payment"> & {
+    guests: BookingGuest[];
+  };
   input: Pick<BatchModifyInput, "guestUpdates" | "removeGuestIds">;
   /**
    * Quoted (booking-request) bookings are exempt from the paid-name lock
@@ -524,7 +519,7 @@ export function resolveGuestMemberLinks({
   input,
   role,
 }: {
-  booking: Pick<LoadedBookingForModify, "guests" | "wholeLodgeHold">;
+  booking: Pick<LoadedBookingForModify, "wholeLodgeHold"> & { guests: BookingGuest[] };
   input: Pick<
     BatchModifyInput,
     "linkGuestToMember" | "removeGuestIds" | "guestUpdates"
@@ -1600,7 +1595,6 @@ export async function calculateModifiedPricing(
     confirmOverCapacity = false,
     partnerSharedGuests = [],
     skipAuthorization = false,
-    movesNoBed = false,
   }: {
     booking: LoadedBookingForModify;
     bookingId: string;
@@ -1649,8 +1643,6 @@ export async function calculateModifiedPricing(
      * for a beyond-family target.
      */
     skipAuthorization?: boolean;
-    /** Fork #127/#130: a work-party correction moves no guest or night, so it claims no bed. */
-    movesNoBed?: boolean;
     /**
      * #2543 — the mode this request resolved, forwarded to every rate resolution
      * and to the price call below, so all four agree and none of them reads the
@@ -1762,7 +1754,7 @@ export async function calculateModifiedPricing(
   const pricingLodgeId = booking.lodgeId ?? (await getDefaultLodgeId(tx));
   let capacity: Awaited<ReturnType<typeof checkCapacityForGuestRanges>>;
   let capacityOverridden = false;
-  if (skipBookingLifecycleRules || movesNoBed) {
+  if (skipBookingLifecycleRules) {
     capacity = { available: true, minAvailable: Number.POSITIVE_INFINITY, nightDetails: [] };
   } else if (partnerSharedGuests.length > 0) {
     // Partner-shared admission (#1746): fail-loud on any rejection — the
@@ -2089,22 +2081,13 @@ export async function applyPromoCodeChanges(
     newTotalPriceCents,
     guestNightRates,
     todayAtClub,
-    officerWorkPartyPromoCodeId = null,
-    officerWorkPartyRemovalPromoCodeId = null,
+    officerWorkPartyCorrection = null,
   }: {
     booking: LoadedBookingForModify;
     bookingId: string;
     input: BatchModifyInput;
     inProgressPlan: BookingEditGuestRangePlan | null;
-    /**
-     * Fork #119: the ONE internal (work-party) promo an officer's "Add booking
-     * to work party" may apply, by id. A service argument the batch service
-     * receives beside `tx`, never a request-body field, so no member route can
-     * set it; every other internal code is still refused as not found.
-     */
-    officerWorkPartyPromoCodeId?: string | null;
-    /** Fork #130: the work party an officer removes; dropped, never carried. */
-    officerWorkPartyRemovalPromoCodeId?: string | null;
+    officerWorkPartyCorrection?: WorkPartyCodeCorrection | null; // Fork #119/#130: the one internal code an Add admits or a Remove drops
     newCheckIn: Date;
     newTotalPriceCents: number;
     guestNightRates: Array<{
@@ -2175,11 +2158,7 @@ export async function applyPromoCodeChanges(
   const multiPromoCodes = promoRequestReadsMultiPromoSwitch(input, storedCodes)
     ? await multiPromoCodesEnabled(tx)
     : true;
-  // Fork #130: with several codes on, a stored internal code a list leaves out
-  // is carried; the officer removing that work party drops it instead.
-  const removedCode = existing.find((row) => row.promoCodeId === officerWorkPartyRemovalPromoCodeId)?.promoCode.code;
-  const requested =
-    requestedPromoCodeListFor(input, storedCodes, multiPromoCodes)?.filter((entry) => entry.code !== removedCode) ?? null;
+  const requested = withoutRemovedWorkPartyCode(requestedPromoCodeListFor(input, storedCodes, multiPromoCodes), existing, officerWorkPartyCorrection);
 
   if (requested === null) {
     // No promo change asked for: re-price every code the booking carries
@@ -2276,13 +2255,7 @@ export async function applyPromoCodeChanges(
     }
     const id = incomingIds.find((row) => row.code === entry.code)?.id;
     const promoCode = incomingRows.find((row) => row.id === id && row.code === entry.code);
-    // Internal promos (work party events) cannot be entered as codes; a code
-    // renamed between the unlocked read and the lock is not found. Fork #119:
-    // the one exception is the work party an officer is adding the booking to.
-    if (
-      !promoCode ||
-      (promoCode.internal && promoCode.id !== officerWorkPartyPromoCodeId)
-    ) {
+    if (!enteredPromoCodeAdmitted(promoCode, admittedWorkPartyCodeId(officerWorkPartyCorrection))) {
       throw new ApiError("Promo code not found", 400);
     }
     applications.push({
@@ -2425,22 +2398,15 @@ export async function calculateModificationChangeFee({
   if (skipBookingLifecycleRules || !checkInChanged) {
     return 0;
   }
-  // #2266: no change fee on a DRAFT — nothing has been committed to, exactly
-  // like moving the dates in the wizard before saving. Member draft edits do
-  // not take the admin skip above, so the guard must be explicit.
-  if (booking.status === BookingStatus.DRAFT) {
-    return 0;
-  }
-  const policy = await loadCancellationPolicy(booking.checkIn, booking.lodgeId, db);
-  const feeResult = calculateChangeFee({
-    // #3123 — one club day for both operands, so the old and new day-counts
-    // cannot be measured from two different todays.
-    daysUntilOriginalCheckIn: daysUntilDate(booking.checkIn, todayAtClub),
-    daysUntilNewCheckIn: daysUntilDate(newCheckIn, todayAtClub),
-    originalFinalPriceCents: booking.finalPriceCents,
-    policyRules: policy,
+  // Unpaid bookings, drafts included, are zero inside `lateNoticeChangeFee`
+  // (owner decision, 10 Nov 2026). A draft has had nothing paid.
+  return lateNoticeChangeFee({
+    booking,
+    lodgeId: booking.lodgeId,
+    newCheckIn,
+    db,
+    todayAtClub,
   });
-  return feeResult.feeCents;
 }
 
 /**
@@ -2618,7 +2584,7 @@ export async function applyGuestChanges(
    *        parked call site passes an EMPTY future-night list on purpose, because
    *        a strand whose total is frozen is not buying anything, so a night the
    *        edit newly puts it on is unknown as well.
-   *      - `buildIdentityOnlyPricing` (`booking-batch-modification-service.ts`),
+   *      - `buildIdentityOnlyPricing` (`booking-identity-only-pricing.ts`),
    *        which echoes a strand's stored night prices back unchanged on a
    *        name-only correction — including the blanks, byte for byte. It
    *        creates no new blank; it declines to repair one.

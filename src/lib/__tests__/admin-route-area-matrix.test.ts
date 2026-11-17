@@ -59,10 +59,15 @@ for (const { rawPath, resolverPath } of routes) {
   actualAreaByRoute[rawPath] = requirement?.area ?? "__unresolved__";
 }
 
-// Only route that intentionally resolves to the `overview` catch-all: the
-// cross-area pending-counts aggregate that feeds the sidebar badges. Every
-// other overview landing is an unmapped route and a real finding.
-const OVERVIEW_ALLOWLIST = ["/api/admin/pending-counts"] as const;
+// Routes that intentionally resolve to the `overview` catch-all. Every other
+// overview landing is an unmapped route and a real finding.
+//   - pending-counts: the cross-area badge aggregate.
+//   - menu-role: the sidebar preference (C14 #4811). The catch-all is not the
+//     gate; the handler admits any admin and answers 404 while hubs are off.
+const OVERVIEW_ALLOWLIST = [
+  "/api/admin/pending-counts",
+  "/api/admin/menu-role",
+] as const;
 
 // Frozen snapshot of the COMPLETE /api/admin route -> area assignment, derived
 // from getAdminRouteRequirement() over the working tree. See the
@@ -75,8 +80,9 @@ const OVERVIEW_ALLOWLIST = ["/api/admin/pending-counts"] as const;
 //     records).
 //   - /api/admin/members/[id]/lodge-access -> membership (a member attribute
 //     written from member admin, governed by membership:edit).
-//   - /api/admin/pending-counts -> overview (the cross-area badge aggregate; the
-//     only intended overview API route).
+//   - /api/admin/pending-counts -> overview (the cross-area badge aggregate).
+//   - /api/admin/menu-role -> overview (the sidebar preference; the handler's
+//     any-admin check is the gate, not this catch-all).
 //   - member-prefix finance carve-outs (credits, xero-link/push/unlink) ->
 //     finance via SPECIAL_ROUTE_AREA_PATTERNS, not membership.
 const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
@@ -194,6 +200,7 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/bookings/[id]/copy": "bookings",
   "/api/admin/bookings/[id]/eligible-family": "bookings",
   "/api/admin/bookings/[id]/exclusive-hold": "bookings",
+  "/api/admin/bookings/[id]/fresh-email-copy": "bookings",
   "/api/admin/bookings/[id]/force-confirm": "bookings",
   // #3029: one guest's dietary/allergy note for this stay, bookings:edit.
   "/api/admin/bookings/[id]/guest-dietary": "bookings",
@@ -409,6 +416,8 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/members/import": "membership",
   "/api/admin/members/send-password-reset": "membership",
   "/api/admin/members/send-setup-invite": "membership",
+  "/api/admin/members/subject-access": "membership",
+  "/api/admin/members/subject-access/guests": "membership",
   "/api/admin/membership-cancellation-requests": "membership",
   "/api/admin/membership-cancellation-requests/[requestId]/participants/[participantId]":
     "membership",
@@ -422,6 +431,9 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/membership-types/[id]/merge": "membership",
   "/api/admin/membership-types/reorder": "membership",
   "/api/admin/membership-types/roll-forward": "membership",
+  // The role-menu cookie (C14 #4811). The path has no area of its own, so it
+  // lands on the overview catch-all; the handler's `any-admin` is the gate.
+  "/api/admin/menu-role": "overview",
   "/api/admin/modules": "support",
   "/api/admin/mountain-conditions": "content",
   "/api/admin/notification-delivery-policies": "support",
@@ -452,6 +464,7 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   // settle dialog before completing - a finance read, gated as the queue is.
   "/api/admin/payments/manual-refund-tasks/[id]/still-owed": "finance",
   "/api/admin/pending-counts": "overview",
+  "/api/admin/privacy-hosting": "content",
   "/api/admin/privacy-retention": "support",
   "/api/admin/promo-codes": "bookings",
   "/api/admin/promo-codes/[id]": "bookings",
@@ -470,7 +483,9 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   // request-path header (absent header ⇒ full-ADMIN fallback, silently
   // excluding support-area admins). See admin-permissions.ts.
   "/api/admin/security/magic-link": "support",
+  "/api/admin/security/officer-two-factor": "support",
   "/api/admin/security/password-policy": "support",
+  "/api/admin/security/two-factor-reset/[memberId]": "support",
   "/api/admin/setup": "support",
   "/api/admin/setup/finance-report-mappings": "finance",
   "/api/admin/setup/finance-report-mappings/backfill": "finance",
@@ -486,6 +501,8 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/subscriptions": "finance",
   "/api/admin/subscriptions/[id]/manual-payment": "finance",
   "/api/admin/subscription-billing": "finance",
+  "/api/admin/subscription-categories": "membership",
+  "/api/admin/subscription-categories/[id]": "membership",
   "/api/admin/waitlist": "bookings",
   "/api/admin/work-parties": "lodge",
   "/api/admin/work-parties/[id]": "lodge",
@@ -723,6 +740,7 @@ const EXPECTED_PAGE_AREAS: Record<string, AdminPermissionArea> = {
   "/admin/site-style": "content",
   "/admin/stripe/setup": "finance",
   "/admin/stuck-states": "support",
+  "/admin/subscription-categories": "membership",
   "/admin/subscription-lockout": "membership",
   "/admin/subscriptions": "finance",
   "/admin/testing/route-error": "overview",

@@ -302,12 +302,29 @@ describe("xero operation outbox payload parsing", () => {
       "GROUP_SETTLEMENT_INVOICE_VOID",
       "MEMBERSHIP_SUBSCRIPTION_INVOICE",
       "KEPT_LATE_CAPTURE_INVOICE",
+      "CARD_REFUND_REVERSAL_INVOICE",
       "ADDITIONAL_CAPTURE_RECEIPT",
       "ORGANISER_EXTRA_ADJUSTMENT",
+      "ADMIN_GRANT_CREDIT_NOTE",
     ]);
     expect(new Set(XERO_OUTBOX_QUEUE_TYPES).size).toBe(
       XERO_OUTBOX_QUEUE_TYPES.length
     );
+  });
+
+  it("ALP-580: reads a card-refund reversal's close day only when it is a real day", () => {
+    const queued = {
+      queueType: "CARD_REFUND_REVERSAL_INVOICE",
+      bookingId: "booking_1",
+      paymentId: "payment_1",
+      closeTaskId: "task_close_1",
+      amountCents: 8000,
+      closedOn: "2026-07-01",
+    };
+    expect(readQueuedOutboxPayload(queued)).toEqual(queued);
+    for (const closedOn of [undefined, "", "01/07/2026", "2026-02-30"]) {
+      expect(readQueuedOutboxPayload({ ...queued, closedOn })).toBeNull();
+    }
   });
 
   // #3971: the payload carries no charge id; a pre-fix row's blanked one is ignored.
@@ -361,7 +378,7 @@ describe("xero operation outbox payload parsing", () => {
       expect(readQueuedOutboxPayload({ ...queued, capturedCents })).toBeNull();
     }
     // A receipt without its capture day would be dated on some later day.
-    for (const capturedOn of [undefined, "", "10/06/2026"]) {
+    for (const capturedOn of [undefined, "", "10/06/2026", "2026-02-30"]) {
       expect(readQueuedOutboxPayload({ ...queued, capturedOn })).toBeNull();
     }
     expect(readQueuedOutboxPayload({ ...queued, manualRefundTaskId: undefined })).toBeNull();
@@ -382,10 +399,13 @@ describe("xero operation outbox payload parsing", () => {
     };
     expect(readQueuedOutboxPayload(queued)).toEqual(queued);
     const plan = { target: "GAP_INVOICE", invoiceId: "inv_gap", amountCents: 8000, capturedCents: 8000, date: "2026-06-30" };
-    expect(readQueuedOutboxPayload({ ...queued, plan })).toEqual({ ...queued, plan });
+    // A legacy decision (#3953, before #4434) reads as its one leg.
+    const legacyLeg = { target: "GAP_INVOICE", invoiceId: "inv_gap", amountCents: 8000 };
+    expect(readQueuedOutboxPayload({ ...queued, plan })).toEqual({ ...queued, plan: { ...plan, legs: [legacyLeg] } });
     expect(readQueuedOutboxPayload({ ...queued, paymentIntentId: undefined })).toBeNull();
     // A decision that does not parse never lets a retry decide again.
     expect(readQueuedOutboxPayload({ ...queued, plan: { ...plan, amountCents: 12.5 } })).toBeNull();
+    expect(readQueuedOutboxPayload({ ...queued, plan: { ...plan, date: "2026-02-30" } })).toBeNull();
     expect(getQueuedOutboxExpectedOperation("ADDITIONAL_CAPTURE_RECEIPT")).toEqual({
       entityType: "PAYMENT",
       operationType: "CREATE",
@@ -415,13 +435,38 @@ describe("xero operation outbox payload parsing", () => {
       ["GROUP_SETTLEMENT_INVOICE_VOID", "INVOICE"],
       ["MEMBERSHIP_SUBSCRIPTION_INVOICE", "INVOICE"],
       ["KEPT_LATE_CAPTURE_INVOICE", "INVOICE"],
+      ["CARD_REFUND_REVERSAL_INVOICE", "INVOICE"],
       ["ADDITIONAL_CAPTURE_RECEIPT", "PAYMENT"],
+      ["ADMIN_GRANT_CREDIT_NOTE", "CREDIT_NOTE"],
     ]);
     for (const queueType of XERO_OUTBOX_QUEUE_TYPES) {
       expect(getQueuedOutboxExpectedOperation(queueType).entityType).toBe(
         expectedEntityTypes.get(queueType)
       );
     }
+  });
+});
+
+describe("admin grant credit note payload (#4431)", () => {
+  it("parses the queue type and expects a credit-note create on the credit row", () => {
+    const queued = {
+      queueType: "ADMIN_GRANT_CREDIT_NOTE" as const,
+      amountCents: 2500,
+      mappingKey: "hutFeeRefunds" as const,
+      memberCreditId: "credit_1",
+    };
+    expect(readQueuedOutboxPayload(queued)).toEqual(queued);
+    expect(readQueuedOutboxPayload({ ...queued, mappingKey: "goodwillWriteOffs" })).toEqual({
+      ...queued,
+      mappingKey: "goodwillWriteOffs",
+    });
+    expect(readQueuedOutboxPayload({ ...queued, amountCents: 0 })).toBeNull();
+    expect(readQueuedOutboxPayload({ ...queued, mappingKey: "somethingElse" })).toBeNull();
+    expect(getQueuedOutboxExpectedOperation("ADMIN_GRANT_CREDIT_NOTE")).toEqual({
+      entityType: "CREDIT_NOTE",
+      operationType: "CREATE",
+      localModels: ["MemberCredit"],
+    });
   });
 });
 

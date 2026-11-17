@@ -10,11 +10,11 @@
  */
 import "server-only";
 
+import { cache } from "react";
 import NextAuth, { CredentialsSignin, type NextAuthConfig } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import Google from "next-auth/providers/google";
-import bcrypt from "bcryptjs";
-import { DUMMY_PASSWORD_HASH } from "./password-hashing";
+import { burnDummyPasswordCompare, verifyPassword } from "./password-hashing";
 import { prisma } from "./prisma";
 import { getAuthSecret, getAuthTrustHost } from "./runtime-config";
 import logger from "./logger";
@@ -38,15 +38,27 @@ import {
   loadSessionMemberSecurity,
 } from "./session-member-security";
 import { loadEffectiveModuleFlags } from "./module-settings";
-import { loadClubSessionMaxAgeHours } from "./login-security-settings";
+import { loadLoginSecurityRefresh } from "./login-security-settings";
+import { OFFICER_SIGN_IN_ENFORCED } from "./officer-sign-in-switch";
+import { resolveOfficerTwoFactorClaims } from "./officer-two-factor";
+import { clubTimeZone } from "./club-time/server";
 import { isSessionPastMaxAge } from "./session-max-age";
 import {
   ACCOUNT_SESSION_IDLE_SECONDS,
   isKioskSessionMember,
   resolveRequestSessionIdleSeconds,
 } from "./session-idle-expiry";
+import { isSecondFactorEnrolled } from "./second-factor-enrolment";
+import {
+  passwordSignInOwesStrongerFactor,
+  recentAuthSignInCounts,
+  recentAuthSignInProofFromChallengeKind,
+} from "./recent-auth";
 import { consumeSessionReauthChallenge } from "./session-reauth";
-import { consumeTwoFactorSessionChallenge } from "./two-factor";
+import {
+  consumeTwoFactorSessionChallenge,
+  twoFactorChallengeProofKind,
+} from "./two-factor";
 import { hashActionToken, isActionTokenFormat } from "./action-tokens";
 import {
   linkGoogleAccount,
@@ -81,9 +93,6 @@ class LoginThrottledError extends CredentialsSignin {
 class MagicLinkPasswordChangeRequiredError extends CredentialsSignin {
   override code = "PASSWORD_CHANGE_REQUIRED";
 }
-
-const burnDummyCompare = (password: string) =>
-  bcrypt.compare(password, DUMMY_PASSWORD_HASH);
 
 declare module "next-auth" {
   interface Session {
@@ -128,6 +137,16 @@ declare module "next-auth" {
       twoFactorRequired: boolean;
       twoFactorVerified: boolean;
       twoFactorEnrolled: boolean;
+      /**
+       * Officer rule (#4618). Independent of `twoFactorRequired`, which stays
+       * the club-wide module. Absent on a token that has not been refreshed.
+       */
+      officerTwoFactorRequired?: boolean;
+      twoFactorSatisfiesOfficer?: boolean;
+      /** Epoch ms, or null when they are not required or they already satisfy. */
+      officerTwoFactorGraceEndsAt?: number | null;
+      /** A passkey is stored. The public key is not. Absent means none. */
+      hasPasskey?: boolean;
       twoFactorMethod: "TOTP" | "EMAIL" | null;
       /**
        * Post-login landing preference (#2090). null = follow the role default
@@ -142,6 +161,7 @@ declare module "next-auth" {
     isEmailVerified: boolean;
     twoFactorEnabled: boolean;
     twoFactorMethod: "TOTP" | "EMAIL" | null;
+    hasPasskey?: boolean;
   }
 }
 
@@ -226,7 +246,7 @@ export const authConfig = {
         // #4609: claimed before any Member read or password compare, so a
         // throttled real account and an unknown email answer identically.
         if (!(await claimPasswordAttempt(email)).allowed) {
-          await burnDummyCompare(password);
+          await burnDummyPasswordCompare(password);
           throw new LoginThrottledError();
         }
 
@@ -244,11 +264,11 @@ export const authConfig = {
         // Still burns the dummy compare, so the refusal is timing-identical to
         // an unknown email and cannot be used to enumerate deleted accounts.
         if (!member || !member.active || isDeletedAccountRecord(member)) {
-          await burnDummyCompare(password);
+          await burnDummyPasswordCompare(password);
           return null;
         }
 
-        const isValid = await bcrypt.compare(password, member.passwordHash);
+        const isValid = await verifyPassword(password, member.passwordHash);
         if (!isValid) {
           return null;
         }
@@ -284,10 +304,11 @@ export const authConfig = {
       },
     }),
     // Passwordless magic-link sign-in (#2034). Additive to the password
-    // provider above and returns the EXACT same user shape, so the unchanged
-    // jwt/session callbacks stamp role, the admin-permission matrix, and the
-    // 2FA claims identically — a 2FA-enabled member still lands on
-    // /login/verify. This provider NEVER sets twoFactorVerified.
+    // provider above and returns the same user shape, so role, the
+    // admin-permission matrix, and the 2FA claims are filled the same way —
+    // a 2FA-enabled member still lands on /login/verify. An emailed link does
+    // not start the recent-proof clock (INV-AUTH-008). This provider NEVER
+    // sets twoFactorVerified.
     Credentials({
       id: "magic-link",
       name: "magic-link",
@@ -510,9 +531,10 @@ export const authConfig = {
         }
       }
 
-      // Eligible: record the login timestamp, then allow — the unchanged
-      // jwt/session callbacks stamp the member identity (never the Google sub)
-      // and leave 2FA to be challenged as usual.
+      // Eligible: record the login timestamp, then allow. The jwt callback
+      // stamps the member identity (never the Google sub) and leaves 2FA to
+      // be challenged as usual. Google does not start the recent-proof clock
+      // (INV-AUTH-008).
       try {
         await prisma.member.update({
           where: { id: user.id as string },
@@ -546,7 +568,12 @@ export const authConfig = {
       }
       return true;
     },
-    async jwt({ token, user, trigger, session }) {
+    async jwt({ token, user, account, trigger, session }) {
+      // Only the sign-in call carries `user`. A password is the credentials
+      // provider. Whether it still owes an authenticator is known after the
+      // member reload below, so the stamp waits until then.
+      const passwordSignIn =
+        Boolean(user) && account?.provider === "credentials";
       if (user) {
         token.role = user.role;
         token.accessRoles = [];
@@ -554,11 +581,15 @@ export const authConfig = {
         token.forcePasswordChange = user.forcePasswordChange;
         token.isEmailVerified = user.isEmailVerified;
         token.sessionIssuedAt = Date.now();
-        token.lastAuthenticatedAt = Date.now();
         token.sessionInvalidated = false;
         token.twoFactorVerified = false;
         token.twoFactorVerifiedByChallenge = false;
-        token.twoFactorEnrolled = user.twoFactorEnabled;
+        token.hasPasskey = user.hasPasskey === true;
+        token.twoFactorEnrolled = isSecondFactorEnrolled({
+          twoFactorEnabled: user.twoFactorEnabled === true,
+          hasPasskey: user.hasPasskey === true,
+          sessionEnrolled: false,
+        });
         token.twoFactorMethod = user.twoFactorMethod;
       }
 
@@ -578,21 +609,30 @@ export const authConfig = {
         // twoFactorVerified must never be trusted here. Verification is only
         // honoured when the update carries the single-use challenge token
         // minted server-side by markTwoFactorSessionVerified().
+        const challengeToken = session.user.twoFactorChallengeToken;
         const challengeVerified = await consumeTwoFactorSessionChallenge(
           token.id,
-          session.user.twoFactorChallengeToken,
+          challengeToken,
         );
         if (challengeVerified) {
           token.twoFactorVerified = true;
           token.twoFactorVerifiedByChallenge = true;
-          // Sign-in finishes when the second factor is consumed.
-          token.lastAuthenticatedAt = Date.now();
+          // The kind is the prefix of the hashed token, not a session field.
+          // An authenticator app or a passkey starts the clock. A miss never
+          // clears a stamp that is already there.
+          const proof = recentAuthSignInProofFromChallengeKind(
+            twoFactorChallengeProofKind(challengeToken),
+          );
+          if (proof !== null && recentAuthSignInCounts(proof, false)) {
+            token.lastAuthenticatedAt = Date.now();
+          }
         }
       }
 
-      // #4616 (INV-AUTH-008): lastAuthenticatedAt is never copied off the
-      // client payload. Only a consumed server-minted challenge, or the
-      // sign-in branch above, writes it.
+      // #4616 / #4994 (INV-AUTH-008): the time and the proof kind are never
+      // read off the client payload. A password that owes no authenticator,
+      // an authenticator-app consume, or a reauthentication challenge writes
+      // the stamp. Anything else leaves it as it was.
       if (
         trigger === "update" &&
         typeof token.id === "string" &&
@@ -628,13 +668,53 @@ export const authConfig = {
         const member = await loadSessionMemberSecurity(token.id);
 
         if (member) {
-          const [modules, clubSessionMaxAgeHours] = await Promise.all([
+          const [modules, loginSecurity] = await Promise.all([
             loadEffectiveModuleFlags(),
-            // #4611: read on every refresh, so a changed setting reaches
-            // existing sessions on their next one.
-            loadClubSessionMaxAgeHours(),
+            // #4611 and #4618: session age and the officer policy, one read
+            // on every refresh, so a changed setting reaches existing sessions
+            // on their next one.
+            loadLoginSecurityRefresh(),
           ]);
+          const clubSessionMaxAgeHours = loginSecurity.sessionMaxAgeHours;
           const twoFactorRequired = modules.twoFactor === true;
+          // The officer claims are a separate fact from the module flag.
+          // While the release is off they stay false and nothing is stamped.
+          const zone = OFFICER_SIGN_IN_ENFORCED ? await clubTimeZone() : null;
+          const officerClaims = await resolveOfficerTwoFactorClaims({
+            releaseEnabled: OFFICER_SIGN_IN_ENFORCED,
+            policyEnabled: loginSecurity.officerTwoFactorPolicy,
+            graceDays: loginSecurity.officerTwoFactorGraceDays,
+            member: {
+              id: token.id,
+              canLogin: member.canLogin,
+              role: member.role,
+              financeAccessLevel: member.financeAccessLevel,
+              accessRoles: member.accessRoles,
+              twoFactorEnabled: member.twoFactorEnabled,
+              twoFactorMethod: member.twoFactorMethod,
+              hasPasskey: member.hasPasskey,
+              twoFactorGraceStartedAt: member.twoFactorGraceStartedAt,
+              factorsResetAt: member.factorsResetAt,
+            },
+            zone,
+            now: new Date(),
+          });
+          // A later refresh has no `user`, so it cannot stamp again. A required
+          // officer with an app or a passkey gets no password stamp even when
+          // the club-wide module is off (INV-AUTH-012).
+          const owesAuthenticatorApp = passwordSignInOwesStrongerFactor({
+            moduleRequired: twoFactorRequired,
+            officerRequired: officerClaims.officerTwoFactorRequired,
+            twoFactorEnabled: member.twoFactorEnabled,
+            twoFactorMethod: member.twoFactorMethod,
+            hasPasskey: member.hasPasskey,
+          });
+          if (
+            passwordSignIn &&
+            recentAuthSignInCounts("password", owesAuthenticatorApp)
+          ) {
+            token.lastAuthenticatedAt = Date.now();
+          }
           const kioskAccount = isKioskSessionMember(member);
 
           token.role = member.canLogin === false ? "USER" : member.role;
@@ -686,11 +766,20 @@ export const authConfig = {
             isRevokedMemberSession(member, sessionIssuedAt, token.id) ||
             pastMaxAge;
           token.twoFactorRequired = twoFactorRequired;
-          token.twoFactorEnrolled = member.twoFactorEnabled;
+          token.officerTwoFactorRequired = officerClaims.officerTwoFactorRequired;
+          token.twoFactorSatisfiesOfficer = officerClaims.twoFactorSatisfiesOfficer;
+          token.officerTwoFactorGraceEndsAt = officerClaims.officerTwoFactorGraceEndsAt;
+          const enrolled = isSecondFactorEnrolled({
+            twoFactorEnabled: member.twoFactorEnabled,
+            hasPasskey: member.hasPasskey,
+            sessionEnrolled: false,
+          });
+          token.hasPasskey = member.hasPasskey === true;
+          token.twoFactorEnrolled = enrolled;
           token.twoFactorMethod = member.twoFactorMethod ?? null;
           if (!twoFactorRequired) {
             token.twoFactorVerified = true;
-          } else if (!member.twoFactorEnabled) {
+          } else if (!enrolled) {
             token.twoFactorVerified = false;
             token.twoFactorVerifiedByChallenge = false;
           } else if (user) {
@@ -718,6 +807,9 @@ export const authConfig = {
           // session.
           token.sessionInvalidated = true;
           token.kioskAccount = false;
+          token.officerTwoFactorRequired = false;
+          token.twoFactorSatisfiesOfficer = false;
+          token.officerTwoFactorGraceEndsAt = null;
         }
       }
 
@@ -762,8 +854,15 @@ export const authConfig = {
         session.user.lastAuthenticatedAt = token.lastAuthenticatedAt;
       }
       session.user.twoFactorRequired = Boolean(token.twoFactorRequired);
+      session.user.officerTwoFactorRequired = token.officerTwoFactorRequired === true;
+      session.user.twoFactorSatisfiesOfficer = token.twoFactorSatisfiesOfficer === true;
+      session.user.officerTwoFactorGraceEndsAt =
+        typeof token.officerTwoFactorGraceEndsAt === "number"
+          ? token.officerTwoFactorGraceEndsAt
+          : null;
       session.user.twoFactorVerified = Boolean(token.twoFactorVerified);
       session.user.twoFactorEnrolled = Boolean(token.twoFactorEnrolled);
+      session.user.hasPasskey = token.hasPasskey === true;
       session.user.twoFactorMethod =
         token.twoFactorMethod === "TOTP" || token.twoFactorMethod === "EMAIL"
           ? token.twoFactorMethod
@@ -845,7 +944,13 @@ const nextAuth = NextAuth(buildRequestAuthConfig);
 export const { handlers, signIn, signOut, unstable_update: updateSession } =
   nextAuth;
 
-export async function auth() {
+/**
+ * Memoised per server-component render (#4938): every caller in one render
+ * shares one refresh, the next request refreshes again (INV-AUTH-007), and
+ * outside a render `cache()` memoises nothing. Wrap only here — a second
+ * `cache()` is a second memo. docs/SECURITY.md has the detail.
+ */
+export const auth = cache(async () => {
   const session = await nextAuth.auth();
 
   if (session?.user?.sessionInvalidated) {
@@ -853,7 +958,7 @@ export async function auth() {
   }
 
   return session;
-}
+});
 
 /**
  * Diagnostics-only raw session probe (#1669). Returns the UNWRAPPED

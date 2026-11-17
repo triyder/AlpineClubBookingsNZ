@@ -19,13 +19,16 @@ import {
   createModificationAdditionalPaymentIntent,
   drainSupersededPrimaryIntents,
   executeBookingModificationRefund,
+  reserveModificationRefundDebts,
+  type BookingModificationPaymentContext,
 } from "@/lib/booking-modification-settlement";
 import {
   applyLifecycleTransitions,
   applyPaymentAdjustments,
   isQuotePricedBooking,
-  type LoadedBookingForLifecycle,
 } from "@/lib/booking-modify";
+// Imported directly, not through the barrel: route tests mock the barrel whole.
+import { EDIT_DOOR_BOOKING_INCLUDE } from "@/lib/booking-modify-validation";
 import { bookingOwner } from "@/lib/booking-owner";
 import { isUnpaidConfirmedWholeLodge } from "@/lib/booking-payment-flow";
 import {
@@ -50,14 +53,12 @@ import { sendBookingModifiedEmail } from "@/lib/email/booking";
 import { editRefundBankTransferPayee, raiseEditRefundHandBackIfOwed } from "@/lib/edit-refund-hand-back";
 import { fullReductionReturnRoute } from "@/lib/booking-guest-acceptance-return-route";
 import { getDefaultLodgeId } from "@/lib/lodges";
-import { reserveOrganiserChildModificationRefund } from "@/lib/organiser-child-refund";
 import { queueOrganiserExtraForChange } from "@/lib/organiser-extra-invoice-queue";
 import logger from "@/lib/logger";
 import {
   clampAppliedCreditToBookingPrice,
 } from "@/lib/member-credit";
 import { recordBookingNightAdjustments } from "@/lib/night-adjustment-write";
-import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 import { prisma } from "@/lib/prisma";
 import { formatCents } from "@/lib/utils";
 import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
@@ -143,6 +144,8 @@ export type GuestAcceptanceReprice =
       refundAmountCents: number;
       /** The Stripe slice of `refundAmountCents`, refunded after commit. */
       pendingRefundAmountCents: number;
+      /** #4992: the own-card debt this transaction reserved, with its frozen plan; null when none was written. */
+      ownCardRefund: BookingModificationPaymentContext["ownCardRefund"];
       /**
        * #3653 (composed by #3829): non-null when that slice goes back to the
        * group organiser's card out of the combined payment; its debt is reserved
@@ -199,28 +202,7 @@ export async function repriceBookingAfterGuestAcceptance(
   const { bookingId, todayAtClub, format, journal } = params;
   const booking = await tx.booking.findUnique({
     where: { id: bookingId },
-    include: {
-      guests: {
-        include: {
-          nights: { select: { stayDate: true, priceCents: true, priceSource: true } },
-        },
-      },
-      // #4019 review: with its transactions, which `isUnpaidConfirmedWholeLodge` reads.
-      payment: { include: { transactions: { orderBy: [...LEDGER_ROWS_OLDEST_FIRST] } } },
-      member: true,
-      organisation: { select: { name: true, email: true } },
-      promoRedemptions: {
-        include: {
-          guestTargets: { select: { bookingGuestId: true } },
-          promoCode: {
-            include: {
-              assignments: { select: { memberId: true } },
-              lodges: { select: { lodgeId: true } },
-            },
-          },
-        },
-      },
-    },
+    include: EDIT_DOOR_BOOKING_INCLUDE,
   });
   if (!booking) return { repriced: false, reason: "BOOKING_STATUS" };
   const redemptions = bookingPromoRedemptions(booking).filter((redemption) => redemption.promoCode);
@@ -269,13 +251,12 @@ export async function repriceBookingAfterGuestAcceptance(
     promoAdjustmentCents: newPromoAdjustmentCents,
   });
   const priceDiffCents = newFinalPriceCents - booking.finalPriceCents;
-  const loaded = booking as unknown as LoadedBookingForLifecycle;
   // #3502: a credit-paid ($0) booking too - this path never mints a card ask.
   const priceSettled =
     hasCapturedPayment(booking.payment) ||
     canAskCardForIncrease(booking) ||
     isPaidLikeBookingStatus(booking.status) ||
-    hasIssuedPrimaryXeroInvoice(loaded);
+    hasIssuedPrimaryXeroInvoice(booking);
   if (priceDiffCents > 0 && priceSettled) {
     logger.warn(
       { bookingId, priceDiffCents },
@@ -287,8 +268,8 @@ export async function repriceBookingAfterGuestAcceptance(
   // D-3813-5: how the whole reduction goes back, decided BEFORE anything is
   // written, so a reduction that cannot be returned in full moves no code.
   // #3954: the unpaid ask, read ONCE, for the return route and the save.
-  const reduction = await readReductionAgainstUnpaidAsk(tx, loaded, priceDiffCents);
-  const returnRoute = await fullReductionReturnRoute(tx, booking, loaded, priceDiffCents, reduction, todayAtClub);
+  const reduction = await readReductionAgainstUnpaidAsk(tx, booking, priceDiffCents);
+  const returnRoute = await fullReductionReturnRoute(tx, booking, priceDiffCents, reduction, todayAtClub);
   if (returnRoute === null) {
     logger.warn(
       { bookingId, priceDiffCents },
@@ -339,6 +320,7 @@ export async function repriceBookingAfterGuestAcceptance(
       bookingModificationId: null,
       priceDiffCents: 0,
       refundAmountCents: 0,
+      ownCardRefund: null,
       pendingRefundAmountCents: 0,
       organiserChildRefund: null,
       accountCreditAmountCents: 0,
@@ -346,7 +328,7 @@ export async function repriceBookingAfterGuestAcceptance(
       xeroAdditionalAmountCents: 0,
       settlementMethod: null,
       creditReturnedAsApplied: false,
-      hasIssuedXeroInvoice: hasIssuedPrimaryXeroInvoice(loaded),
+      hasIssuedXeroInvoice: hasIssuedPrimaryXeroInvoice(booking),
       hasSucceededPayment: false, bankTransferRefundPayee: null,
       paymentStatus: booking.payment?.status ?? null,
       paymentId: booking.payment?.id ?? null,
@@ -363,7 +345,7 @@ export async function repriceBookingAfterGuestAcceptance(
 
   // The ordinary edit machinery from here (see the module docblock).
   const adjusted = await applyPaymentAdjustments(tx, {
-    booking: loaded,
+    booking,
     priceDiffCents,
     changeFeeCents: 0,
     reduction,
@@ -418,7 +400,7 @@ export async function repriceBookingAfterGuestAcceptance(
     paymentImpact = { ...adjusted, accountCreditAmountCents: clamp.refundedExcessCents };
   }
   const lifecycle = await applyLifecycleTransitions(tx, {
-    booking: loaded,
+    booking,
     bookingId,
     newCheckIn: booking.checkIn,
     newFinalPriceCents,
@@ -519,9 +501,11 @@ export async function repriceBookingAfterGuestAcceptance(
   });
   // #3954: a smaller re-issued ask, and a billed offset's note, are durable from this commit.
   await queueEditAskFollowUps(tx, { bookingId, paymentId: booking.payment?.id ?? null, bookingModificationId: bookingModification.id, door: "guestAcceptanceReprice", settled: paymentImpact });
-  // #3653 (composed by #3829): an organiser-settled child's refund debt, before
-  // this re-price commits, as every edit door reserves it.
-  await reserveOrganiserChildModificationRefund(tx, {
+  // #3653 (composed by #3829), #4992: the card refund this re-price owes (an
+  // organiser's, or the member's own with its frozen plan), before it commits.
+  const ownCardRefund = await reserveModificationRefundDebts(tx, {
+    door: "guestAcceptanceReprice",
+    pendingRefundAmountCents: paymentImpact.pendingRefundAmountCents,
     plan: adjusted.organiserChildRefund,
     bookingId,
     payment: booking.payment,
@@ -533,6 +517,7 @@ export async function repriceBookingAfterGuestAcceptance(
     bookingModificationId: bookingModification.id,
     priceDiffCents,
     refundAmountCents: paymentImpact.refundAmountCents,
+    ownCardRefund,
     pendingRefundAmountCents: paymentImpact.pendingRefundAmountCents,
     organiserChildRefund: adjusted.organiserChildRefund
       ? { amountCents: adjusted.organiserChildRefund.amountCents }
@@ -583,6 +568,7 @@ export async function settleGuestAcceptanceRepriceAfterCommit(params: {
   // this modification and durable recovery on failure (#818).
   const { pendingRefundAmountCents, organiserChildRefund, paymentId, additionalAsk, retiredAdditionalAsks, hasSucceededPayment, hasIssuedXeroInvoice, paymentCustomerId, priceLines } = reprice;
   const paymentContext = {
+    ownCardRefund: reprice.ownCardRefund,
     pendingRefundAmountCents, organiserChildRefund, paymentId, additionalAsk, retiredAdditionalAsks,
     hasSucceededPayment, hasIssuedXeroInvoice, paymentCustomerId, priceLines, bookingModificationId,
     memberEmail: reprice.owner.email,
@@ -594,10 +580,8 @@ export async function settleGuestAcceptanceRepriceAfterCommit(params: {
     format,
     bookingId,
     result: paymentContext,
-    idempotencyKeyPrefix: `guest_accept_refund_${bookingId}`,
-    failureMessage: "Stripe refund failed after a guest-acceptance re-price - enqueueing recovery",
-    recoveryFailureMessage:
-      "Failed to enqueue guest-acceptance re-price refund recovery - manual reconciliation required",
+    door: "guestAcceptanceReprice",
+    failureMessage: "Stripe refund failed after a guest-acceptance re-price; the pre-persisted debt stays owed",
   });
   // #3954: the retired asks die at Stripe and the smaller one is minted - the
   // only ask a re-price can mint, since it never raises a settled price.
@@ -617,7 +601,7 @@ export async function settleGuestAcceptanceRepriceAfterCommit(params: {
       datesChanged: false,
       settlementAmountCents: reprice.xeroRefundAmountCents,
       settlementMethod: reprice.settlementMethod,
-      refundedThroughStripe: reprice.hasSucceededPayment,
+      refundedThroughStripe: reprice.hasSucceededPayment, paymentId,
       ...(reprice.creditReturnedAsApplied ? { refundMethod: "account-credit" as const } : {}),
       // An acceptance never raises a settled booking's price (see
       // `repriceBookingAfterGuestAcceptance`), so there is no Stripe ask to wait on.
